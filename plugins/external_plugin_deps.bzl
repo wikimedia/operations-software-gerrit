@@ -4,4 +4,7 @@ load(":lfs/external_plugin_deps.bzl", lfs="external_plugin_deps")
 load(":webhooks/external_plugin_deps.bzl", webhooks="external_plugin_deps")
 
 def external_plugin_deps():
-    pass
+    gitiles()
+    go_import()
+    lfs()
+    webhooks()
