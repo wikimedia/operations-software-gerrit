@@ -12,7 +12,6 @@ CUSTOM_PLUGINS = [
     "delete-project",
     "gitiles",
     "go-import",
-    "its-base",
     "its-phabricator",
     "lfs",
     "reviewers",
