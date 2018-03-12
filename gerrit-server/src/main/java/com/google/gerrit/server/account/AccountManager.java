@@ -14,6 +14,7 @@
 
 package com.google.gerrit.server.account;
 
+import static com.google.gerrit.server.account.ExternalId.SCHEME_USERNAME;
 import static java.util.stream.Collectors.toSet;
 
 import com.google.common.base.Strings;
@@ -107,8 +108,22 @@ public class AccountManager {
       try (ReviewDb db = schema.open()) {
         ExternalId id = findExternalId(db, who.getExternalIdKey());
         if (id == null) {
+          if (who.getUserName() != null) {
+            ExternalId.Key key = ExternalId.Key.create(SCHEME_USERNAME, who.getUserName());
+            ExternalId existingId = findExternalId(db, key);
+            if (existingId != null) {
+              // An inconsistency is detected in the database, having a record for scheme "username:"
+              // but no record for scheme "gerrit:". Try to recover by linking
+              // "gerrit:" identity to the existing account.
+              log.warn(
+                  "User {} already has an account; link new identity to the existing account.",
+                  who.getUserName());
+              return link(existingId.accountId(), who);
+            }
+          }
           // New account, automatically create and return.
           //
+          log.info("External ID not found. Attempting to create new account.");
           return create(db, who);
         }
 
@@ -132,7 +147,7 @@ public class AccountManager {
   }
 
   private void update(ReviewDb db, AuthRequest who, ExternalId extId)
-      throws OrmException, IOException, ConfigInvalidException {
+      throws OrmException, IOException {
     IdentifiedUser user = userFactory.create(extId.accountId());
     Account toUpdate = null;
 
@@ -315,7 +330,7 @@ public class AccountManager {
       String errorMessage,
       Exception e,
       boolean logException)
-      throws AccountUserNameException, OrmException, IOException, ConfigInvalidException {
+      throws AccountUserNameException, OrmException, IOException {
     if (logException) {
       log.error(errorMessage, e);
     } else {
@@ -346,15 +361,18 @@ public class AccountManager {
    *     this time.
    */
   public AuthResult link(Account.Id to, AuthRequest who)
-      throws AccountException, OrmException, IOException, ConfigInvalidException {
+      throws AccountException, OrmException, IOException {
     try (ReviewDb db = schema.open()) {
+      log.info("Link another authentication identity to an existing account");
       ExternalId extId = findExternalId(db, who.getExternalIdKey());
       if (extId != null) {
         if (!extId.accountId().equals(to)) {
           throw new AccountException("Identity in use by another account");
         }
+        log.info("Updating existing external ID data");
         update(db, who, extId);
       } else {
+        log.info("Linking new external ID to the existing account");
         externalIdsUpdateFactory
             .create()
             .insert(
@@ -389,7 +407,7 @@ public class AccountManager {
    *     this time.
    */
   public AuthResult updateLink(Account.Id to, AuthRequest who)
-      throws OrmException, AccountException, IOException, ConfigInvalidException {
+      throws OrmException, AccountException, IOException {
     try (ReviewDb db = schema.open()) {
       Collection<ExternalId> filteredExtIdsByScheme =
           ExternalId.from(db.accountExternalIds().byAccount(to).toList())
@@ -421,7 +439,7 @@ public class AccountManager {
    *     at this time.
    */
   public AuthResult unlink(Account.Id from, AuthRequest who)
-      throws AccountException, OrmException, IOException, ConfigInvalidException {
+      throws AccountException, OrmException, IOException {
     try (ReviewDb db = schema.open()) {
       ExternalId extId = findExternalId(db, who.getExternalIdKey());
       if (extId != null) {
