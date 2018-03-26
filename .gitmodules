@@ -62,3 +62,6 @@
 	path = plugins/its-phabricator
 	url = https://gerrit.googlesource.com/plugins/its-phabricator
 	branch = .
+[submodule "plugins/wikimedia"]
+	path = plugins/wikimedia
+	url = https://gerrit.wikimedia.org/r/operations/software/gerrit/plugins/wikimedia
