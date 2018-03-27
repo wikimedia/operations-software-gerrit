@@ -74,6 +74,6 @@
         branch = .
 
 [submodule "motd"]
-	path = motd
+	path = plugins/motd
 	url = https://gerrit.googlesource.com/plugins/motd
         branch = .
