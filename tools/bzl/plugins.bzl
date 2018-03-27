@@ -15,6 +15,7 @@ CUSTOM_PLUGINS = [
     "its-phabricator",
     "lfs",
     "reviewers",
+    "reviewers-by-blame",
     "webhooks",
 ]
 
