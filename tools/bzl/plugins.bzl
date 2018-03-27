@@ -14,6 +14,7 @@ CUSTOM_PLUGINS = [
     "go-import",
     "its-phabricator",
     "lfs",
+    "motd",
     "reviewers",
     "reviewers-by-blame",
     "webhooks",

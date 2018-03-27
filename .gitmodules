@@ -72,3 +72,8 @@
 	path = plugins/reviewers-by-blame
 	url = https://gerrit.googlesource.com/plugins/reviewers-by-blame
         branch = .
+
+[submodule "motd"]
+	path = motd
+	url = https://gerrit.googlesource.com/plugins/motd
+        branch = .
