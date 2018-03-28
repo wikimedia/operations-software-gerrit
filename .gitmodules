@@ -79,6 +79,6 @@
         branch = .
 
 [submodule "zuul"]
-	path = zuul
+	path = plugins/zuul
 	url = https://gerrit.googlesource.com/plugins/zuul
         branch = .
