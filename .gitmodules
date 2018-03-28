@@ -77,3 +77,8 @@
 	path = plugins/motd
 	url = https://gerrit.googlesource.com/plugins/motd
         branch = .
+
+[submodule "zuul"]
+	path = zuul
+	url = https://gerrit.googlesource.com/plugins/zuul
+        branch = .
