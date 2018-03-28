@@ -18,6 +18,7 @@ CUSTOM_PLUGINS = [
     "reviewers",
     "reviewers-by-blame",
     "webhooks",
+    "zuul",
 ]
 
 CUSTOM_PLUGINS_TEST_DEPS = [
