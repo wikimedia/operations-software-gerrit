@@ -1,3 +1,8 @@
+[submodule "plugins/avatars-external"]
+	path = plugins/avatars-external
+	url = https://gerrit.googlesource.com/plugins/avatars-external
+	branch = .
+
 [submodule "plugins/commit-message-length-validator"]
 	path = plugins/commit-message-length-validator
 	url = https://gerrit.googlesource.com/plugins/commit-message-length-validator
@@ -11,6 +16,11 @@
 [submodule "plugins/hooks"]
 	path = plugins/hooks
 	url = https://gerrit.googlesource.com/plugins/hooks
+	branch = .
+
+[submodule "plugins/motd"]
+	path = plugins/motd
+	url = https://gerrit.googlesource.com/plugins/motd
 	branch = .
 
 [submodule "plugins/replication"]
@@ -66,19 +76,15 @@
 [submodule "plugins/wikimedia"]
 	path = plugins/wikimedia
 	url = https://gerrit.wikimedia.org/r/operations/software/gerrit/plugins/wikimedia
-        branch = .
+	branch = .
 
 [submodule "plugins/reviewers-by-blame"]
 	path = plugins/reviewers-by-blame
 	url = https://gerrit.googlesource.com/plugins/reviewers-by-blame
-        branch = .
+	branch = .
 
-[submodule "motd"]
-	path = plugins/motd
-	url = https://gerrit.googlesource.com/plugins/motd
-        branch = .
-
-[submodule "zuul"]
+[submodule "plugins/zuul"]
 	path = plugins/zuul
 	url = https://gerrit.googlesource.com/plugins/zuul
-        branch = .
+	branch = .
+
