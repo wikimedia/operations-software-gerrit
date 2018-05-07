@@ -1025,7 +1025,7 @@ public class ChangeIT extends AbstractDaemonTest {
     String oldETag = rsrc.getETag();
     Timestamp oldTs = rsrc.getChange().getLastUpdatedOn();
 
-    //create a group named "ab" with one user: testUser
+    // create a group named "ab" with one user: testUser
     TestAccount testUser = accounts.create("abcd", "abcd@test.com", "abcd");
     String testGroup = createGroupWithRealName("ab");
     GroupApi groupApi = gApi.groups().id(testGroup);
@@ -1069,7 +1069,7 @@ public class ChangeIT extends AbstractDaemonTest {
     String oldETag = rsrc.getETag();
     Timestamp oldTs = rsrc.getChange().getLastUpdatedOn();
 
-    //create a group named "kobe" with one user: lee
+    // create a group named "kobe" with one user: lee
     TestAccount testUser = accounts.create("kobebryant", "kobebryant@test.com", "kobebryant");
     TestAccount myGroupUser = accounts.create("lee", "lee@test.com", "lee");
 
@@ -1078,7 +1078,7 @@ public class ChangeIT extends AbstractDaemonTest {
     groupApi.description("test group");
     groupApi.addMembers(myGroupUser.fullName);
 
-    //ensure that user "user" is not in the group
+    // ensure that user "user" is not in the group
     groupApi.removeMembers(testUser.fullName);
 
     AddReviewerInput in = new AddReviewerInput();
@@ -2244,7 +2244,7 @@ public class ChangeIT extends AbstractDaemonTest {
                     ListChangesOption.ALL_REVISIONS,
                     ListChangesOption.CURRENT_COMMIT,
                     ListChangesOption.CURRENT_REVISION));
-    assertThat(changeInfo.revisions.size()).isEqualTo(2);
+    assertThat(changeInfo.revisions).hasSize(2);
     assertThat(changeInfo.subject).isEqualTo(in.subject);
     assertThat(changeInfo.revisions.get(changeInfo.currentRevision).commit.parents.get(0).commit)
         .isEqualTo(parent);
@@ -2288,7 +2288,7 @@ public class ChangeIT extends AbstractDaemonTest {
                     ListChangesOption.CURRENT_COMMIT,
                     ListChangesOption.CURRENT_REVISION));
 
-    assertThat(changeInfo.revisions.size()).isEqualTo(2);
+    assertThat(changeInfo.revisions).hasSize(2);
     assertThat(changeInfo.subject).isEqualTo(in.subject);
     assertThat(changeInfo.revisions.get(changeInfo.currentRevision).commit.parents.get(0).commit)
         .isEqualTo(parent);

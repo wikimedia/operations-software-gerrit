@@ -60,16 +60,15 @@ import org.slf4j.LoggerFactory;
 
 public class ElasticAccountIndex extends AbstractElasticIndex<Account.Id, AccountState>
     implements AccountIndex {
-  static class AccountMapping {
+  public static class AccountMapping {
     MappingProperties accounts;
 
-    AccountMapping(Schema<AccountState> schema) {
+    public AccountMapping(Schema<AccountState> schema) {
       this.accounts = ElasticMapping.createMapping(schema);
     }
   }
 
-  static final String ACCOUNTS = "accounts";
-  static final String ACCOUNTS_PREFIX = ACCOUNTS + "_";
+  public static final String ACCOUNTS = "accounts";
 
   private static final Logger log = LoggerFactory.getLogger(ElasticAccountIndex.class);
 
@@ -84,7 +83,7 @@ public class ElasticAccountIndex extends AbstractElasticIndex<Account.Id, Accoun
       JestClientBuilder clientBuilder,
       @Assisted Schema<AccountState> schema) {
     // No parts of FillArgs are currently required, just use null.
-    super(cfg, null, sitePaths, schema, clientBuilder, ACCOUNTS_PREFIX);
+    super(cfg, null, sitePaths, schema, clientBuilder, ACCOUNTS);
     this.accountCache = accountCache;
     this.mapping = new AccountMapping(schema);
   }

@@ -12,19 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package com.google.gerrit.server.config;
-
-import static java.lang.annotation.RetentionPolicy.RUNTIME;
-
-import com.google.inject.BindingAnnotation;
-import java.lang.annotation.Retention;
+package com.google.gerrit.server.query;
 
 /**
- * Marker on a string holding a unique identifier for the server.
- *
- * <p>This value is generated on first use and stored in {@code gerrit.serverId} in {@code
- * gerrit.config}.
+ * Matches all documents in the index, with additional filtering done in the subclass's {@code
+ * match} method.
  */
-@Retention(RUNTIME)
-@BindingAnnotation
-public @interface GerritServerId {}
+public abstract class PostFilterPredicate<T> extends Predicate<T> implements Matchable<T> {}

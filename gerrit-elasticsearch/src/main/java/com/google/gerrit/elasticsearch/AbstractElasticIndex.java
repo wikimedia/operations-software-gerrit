@@ -62,6 +62,7 @@ abstract class AbstractElasticIndex<K, V> implements Index<K, V> {
   private final Schema<V> schema;
   private final FillArgs fillArgs;
   private final SitePaths sitePaths;
+  private final String indexNameRaw;
 
   protected final String indexName;
   protected final JestHttpClient client;
@@ -82,10 +83,11 @@ abstract class AbstractElasticIndex<K, V> implements Index<K, V> {
     this.queryBuilder = new ElasticQueryBuilder();
     this.indexName =
         String.format(
-            "%s%s%04d",
+            "%s%s_%04d",
             Strings.nullToEmpty(cfg.getString("elasticsearch", null, "prefix")),
             indexName,
             schema.getVersion());
+    this.indexNameRaw = indexName;
     this.client = clientBuilder.build();
   }
 
@@ -101,7 +103,7 @@ abstract class AbstractElasticIndex<K, V> implements Index<K, V> {
 
   @Override
   public void markReady(boolean ready) throws IOException {
-    IndexUtils.setReady(sitePaths, indexName, schema.getVersion(), ready);
+    IndexUtils.setReady(sitePaths, indexNameRaw, schema.getVersion(), ready);
   }
 
   @Override
@@ -159,20 +161,23 @@ abstract class AbstractElasticIndex<K, V> implements Index<K, V> {
   }
 
   private String toDoc(V v) throws IOException {
-    XContentBuilder builder = jsonBuilder().startObject();
-    for (Values<V> values : schema.buildFields(v, fillArgs)) {
-      String name = values.getField().getName();
-      if (values.getField().isRepeatable()) {
-        builder.field(
-            name,
-            Streams.stream(values.getValues()).filter(e -> shouldAddElement(e)).collect(toList()));
-      } else {
-        Object element = Iterables.getOnlyElement(values.getValues(), "");
-        if (shouldAddElement(element)) {
-          builder.field(name, element);
+    try (XContentBuilder builder = jsonBuilder().startObject()) {
+      for (Values<V> values : schema.buildFields(v, fillArgs)) {
+        String name = values.getField().getName();
+        if (values.getField().isRepeatable()) {
+          builder.field(
+              name,
+              Streams.stream(values.getValues())
+                  .filter(e -> shouldAddElement(e))
+                  .collect(toList()));
+        } else {
+          Object element = Iterables.getOnlyElement(values.getValues(), "");
+          if (shouldAddElement(element)) {
+            builder.field(name, element);
+          }
         }
       }
+      return builder.endObject().string();
     }
-    return builder.endObject().string();
   }
 }

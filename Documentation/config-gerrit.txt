@@ -2408,6 +2408,21 @@ to permit fast restarts.
 +
 By default, true.
 
+[[httpd.gracefulStopTimeout]]httpd.gracefulStopTimeout::
++
+Set a graceful stop time. If set, the daemon ensures that all incoming
+calls are preserved for a maximum period of time, before starting
+the graceful shutdown process. Sites behind a workload balancer such as
+HAProxy would need this to be set for avoiding serving errors during
+rolling restarts.
++
+Values should use common unit suffixes to express their setting:
++
+* s, sec, second, seconds
+* m, min, minute, minutes
++
+By default, 0 seconds (immediate shutdown).
+
 [[httpd.inheritChannel]]httpd.inheritChannel::
 +
 If true, permits the daemon to inherit its server socket channel
@@ -2632,7 +2647,9 @@ A link:http://lucene.apache.org/[Lucene] index is used.
 +
 * `ELASTICSEARCH` look into link:#elasticsearch[Elasticsearch section]
 +
-An link:http://www.elasticsearch.org/[Elasticsearch] index is used.
+An link:https://www.elastic.co/products/elasticsearch[Elasticsearch] index is
+used. Refer to the link:#elasticsearch[Elasticsearch section] for further
+configuration details.
 
 +
 By default, `LUCENE`.
@@ -2672,7 +2689,12 @@ Maximum limit to allow for search queries. Requesting results above this
 limit will truncate the list (but will still set `_more_changes` on
 result lists). Set to 0 for no limit.
 +
-Defaults to no limit.
+When `index.type` is set to `ELASTICSEARCH`, this value should not exceed
+the `index.max_result_window` value configured on the Elasticsearch
+server. If a value is not configured during site initialization, defaults to
+10000, which is the default value of `index.max_result_window` in Elasticsearch.
++
+When `index.type` is set to `LUCENE`, defaults to no limit.
 
 [[index.maxPages]]index.maxPages::
 +
@@ -2769,8 +2791,8 @@ Sample Lucene index configuration:
 [[elasticsearch]]
 === Section elasticsearch
 
-WARNING: The Elasticsearch support is incomplete. Online reindexing
-is still considered as beta.
+WARNING: The Elasticsearch support has only been tested with Elasticsearch
+version 2.4.x. Support for other versions is not guaranteed.
 
 Open and closed changes are indexed in a single index, separated
 into types 'open_changes' and 'closed_changes' respectively.
@@ -3827,7 +3849,7 @@ By default, MIXED.
 Only used when `sendemail.from` is set to `USER`.
 List of allowed domains. If user's email matches one of the domains, emails will
 be sent as USER, otherwise as MIXED mode. Wildcards may be specified by
-including `*` to match any number of characters, for example `*.example.com`
+including `\*` to match any number of characters, for example `*.example.com`
 matches any subdomain of `example.com`.
 +
 By default, `*`.

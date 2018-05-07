@@ -57,16 +57,15 @@ import org.slf4j.LoggerFactory;
 
 public class ElasticGroupIndex extends AbstractElasticIndex<AccountGroup.UUID, AccountGroup>
     implements GroupIndex {
-  static class GroupMapping {
+  public static class GroupMapping {
     MappingProperties groups;
 
-    GroupMapping(Schema<AccountGroup> schema) {
+    public GroupMapping(Schema<AccountGroup> schema) {
       this.groups = ElasticMapping.createMapping(schema);
     }
   }
 
-  static final String GROUPS = "groups";
-  static final String GROUPS_PREFIX = GROUPS + "_";
+  public static final String GROUPS = "groups";
 
   private static final Logger log = LoggerFactory.getLogger(ElasticGroupIndex.class);
 
@@ -81,7 +80,7 @@ public class ElasticGroupIndex extends AbstractElasticIndex<AccountGroup.UUID, A
       JestClientBuilder clientBuilder,
       @Assisted Schema<AccountGroup> schema) {
     // No parts of FillArgs are currently required, just use null.
-    super(cfg, null, sitePaths, schema, clientBuilder, GROUPS_PREFIX);
+    super(cfg, null, sitePaths, schema, clientBuilder, GROUPS);
     this.groupCache = groupCache;
     this.mapping = new GroupMapping(schema);
   }

@@ -17,6 +17,7 @@ package com.google.gerrit.lucene;
 import com.google.common.collect.ImmutableMap;
 import com.google.gerrit.lifecycle.LifecycleModule;
 import com.google.gerrit.server.config.GerritServerConfig;
+import com.google.gerrit.server.index.AbstractVersionManager;
 import com.google.gerrit.server.index.IndexConfig;
 import com.google.gerrit.server.index.IndexModule;
 import com.google.gerrit.server.index.SingleVersionModule;
@@ -90,6 +91,7 @@ public class LuceneIndexModule extends LifecycleModule {
   private static class MultiVersionModule extends LifecycleModule {
     @Override
     public void configure() {
+      bind(AbstractVersionManager.class).to(LuceneVersionManager.class);
       listener().to(LuceneVersionManager.class);
     }
   }

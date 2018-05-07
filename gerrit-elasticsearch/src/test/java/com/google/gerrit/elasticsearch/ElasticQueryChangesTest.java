@@ -14,7 +14,8 @@
 
 package com.google.gerrit.elasticsearch;
 
-import com.google.gerrit.elasticsearch.ElasticTestUtils.ElasticNodeInfo;
+import com.google.gerrit.elasticsearch.testing.ElasticTestUtils;
+import com.google.gerrit.elasticsearch.testing.ElasticTestUtils.ElasticNodeInfo;
 import com.google.gerrit.server.query.change.AbstractQueryChangesTest;
 import com.google.gerrit.testutil.InMemoryModule;
 import com.google.gerrit.testutil.InMemoryRepositoryManager.Repo;
@@ -23,12 +24,15 @@ import com.google.inject.Injector;
 import java.util.concurrent.ExecutionException;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.Config;
-import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TestName;
 
 public class ElasticQueryChangesTest extends AbstractQueryChangesTest {
+  @Rule public final TestName testName = new TestName();
+
   private static ElasticNodeInfo nodeInfo;
 
   @BeforeClass
@@ -38,16 +42,6 @@ public class ElasticQueryChangesTest extends AbstractQueryChangesTest {
       return;
     }
     nodeInfo = ElasticTestUtils.startElasticsearchNode();
-
-    ElasticTestUtils.createAllIndexes(nodeInfo);
-  }
-
-  @After
-  public void cleanupIndex() {
-    if (nodeInfo != null) {
-      ElasticTestUtils.deleteAllIndexes(nodeInfo);
-      ElasticTestUtils.createAllIndexes(nodeInfo);
-    }
   }
 
   @AfterClass
@@ -63,7 +57,9 @@ public class ElasticQueryChangesTest extends AbstractQueryChangesTest {
   protected Injector createInjector() {
     Config elasticsearchConfig = new Config(config);
     InMemoryModule.setDefaults(elasticsearchConfig);
-    ElasticTestUtils.configure(elasticsearchConfig, nodeInfo.port);
+    String indicesPrefix = testName.getMethodName().toLowerCase() + "_";
+    ElasticTestUtils.configure(elasticsearchConfig, nodeInfo.port, indicesPrefix);
+    ElasticTestUtils.createAllIndexes(nodeInfo, indicesPrefix);
     return Guice.createInjector(new InMemoryModule(elasticsearchConfig, notesMigration));
   }
 

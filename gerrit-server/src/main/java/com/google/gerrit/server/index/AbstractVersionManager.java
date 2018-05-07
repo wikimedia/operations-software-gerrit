@@ -35,12 +35,14 @@ public abstract class AbstractVersionManager implements LifecycleListener {
   public static class Version<V> {
     public final Schema<V> schema;
     public final int version;
+    public final boolean exists;
     public final boolean ready;
 
-    public Version(Schema<V> schema, int version, boolean ready) {
+    public Version(Schema<V> schema, int version, boolean exists, boolean ready) {
       checkArgument(schema == null || schema.getVersion() == version);
       this.schema = schema;
       this.version = version;
+      this.exists = exists;
       this.ready = ready;
     }
   }
@@ -119,6 +121,16 @@ public abstract class AbstractVersionManager implements LifecycleListener {
     return false;
   }
 
+  /**
+   * Tells if an index with this name is currently known or not.
+   *
+   * @param name index name
+   * @return true if index is known and can be used, otherwise false.
+   */
+  public boolean isKnownIndex(String name) {
+    return defs.get(name) != null;
+  }
+
   protected <K, V, I extends Index<K, V>> void initIndex(
       IndexDefinition<K, V, I> def, GerritIndexStatus cfg) {
     TreeMap<Integer, Version<V>> versions = scanVersions(def, cfg);
@@ -179,10 +191,12 @@ public abstract class AbstractVersionManager implements LifecycleListener {
     }
   }
 
-  protected abstract <V> boolean isDirty(Collection<Version<V>> inUse, Version<V> v);
-
   protected abstract <K, V, I extends Index<K, V>> TreeMap<Integer, Version<V>> scanVersions(
       IndexDefinition<K, V, I> def, GerritIndexStatus cfg);
+
+  private <V> boolean isDirty(Collection<Version<V>> inUse, Version<V> v) {
+    return !inUse.contains(v) && v.exists;
+  }
 
   private boolean isLatestIndexVersion(String name, OnlineReindexer<?, ?, ?> reindexer) {
     int readVersion = defs.get(name).getIndexCollection().getSearchIndex().getSchema().getVersion();

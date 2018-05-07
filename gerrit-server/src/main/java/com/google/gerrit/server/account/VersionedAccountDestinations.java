@@ -27,7 +27,7 @@ import org.eclipse.jgit.lib.FileMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Preferences for user accounts. */
+/** User configured named destinations. */
 public class VersionedAccountDestinations extends VersionedMetaData {
   private static final Logger log = LoggerFactory.getLogger(VersionedAccountDestinations.class);
 
@@ -53,6 +53,9 @@ public class VersionedAccountDestinations extends VersionedMetaData {
 
   @Override
   protected void onLoad() throws IOException, ConfigInvalidException {
+    if (revision == null) {
+      return;
+    }
     String prefix = DestinationList.DIR_NAME + "/";
     for (PathInfo p : getPathInfos(true)) {
       if (p.fileMode == FileMode.REGULAR_FILE) {

@@ -14,48 +14,78 @@
 
 package com.google.gerrit.acceptance.pgm;
 
-import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth8.assertThat;
 
-import com.google.gerrit.launcher.GerritLauncher;
-import com.google.gerrit.testutil.TempFileUtil;
-import java.io.File;
-import org.junit.After;
-import org.junit.Before;
+import com.google.common.io.MoreFiles;
+import com.google.common.io.RecursiveDeleteOption;
+import com.google.gerrit.acceptance.NoHttpd;
+import com.google.gerrit.acceptance.StandaloneSiteTest;
+import com.google.gerrit.elasticsearch.testing.ElasticTestUtils;
+import com.google.gerrit.elasticsearch.testing.ElasticTestUtils.ElasticNodeInfo;
+import com.google.gerrit.extensions.api.GerritApi;
+import com.google.gerrit.extensions.common.ChangeInput;
+import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.testutil.ConfigSuite;
+import java.nio.file.Files;
+import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import org.eclipse.jgit.lib.Config;
+import org.junit.AfterClass;
 import org.junit.Test;
 
-public class ReindexIT {
-  private File sitePath;
+@NoHttpd
+public class ReindexIT extends StandaloneSiteTest {
 
-  @Before
-  public void createTempDirectory() throws Exception {
-    sitePath = TempFileUtil.createTempDirectory();
+  @ConfigSuite.Config
+  public static Config elasticsearch() throws InterruptedException, ExecutionException {
+    if (elasticNodeInfo == null) {
+      elasticNodeInfo = ElasticTestUtils.startElasticsearchNode();
+    }
+    String indicesPrefix = UUID.randomUUID().toString();
+    ElasticTestUtils.createAllIndexes(elasticNodeInfo, indicesPrefix);
+
+    Config cfg = new Config();
+    ElasticTestUtils.configure(cfg, elasticNodeInfo.port, indicesPrefix);
+    return cfg;
   }
 
-  @After
-  public void destroySite() throws Exception {
-    if (sitePath != null) {
-      TempFileUtil.cleanup();
+  private static ElasticNodeInfo elasticNodeInfo;
+
+  @Test
+  public void reindexFromScratch() throws Exception {
+    Project.NameKey project = new Project.NameKey("project");
+    String changeId;
+    try (ServerContext ctx = startServer()) {
+      GerritApi gApi = ctx.getInjector().getInstance(GerritApi.class);
+      gApi.projects().create("project");
+
+      ChangeInput in = new ChangeInput();
+      in.project = project.get();
+      in.branch = "master";
+      in.subject = "Test change";
+      in.newBranch = true;
+      changeId = gApi.changes().create(in).info().changeId;
+    }
+
+    MoreFiles.deleteRecursively(sitePaths.index_dir, RecursiveDeleteOption.ALLOW_INSECURE);
+    Files.createDirectory(sitePaths.index_dir);
+    assertServerStartupFails();
+
+    runGerrit("reindex", "-d", sitePaths.site_path.toString(), "--show-stack-trace");
+
+    try (ServerContext ctx = startServer()) {
+      GerritApi gApi = ctx.getInjector().getInstance(GerritApi.class);
+      assertThat(gApi.changes().query("message:Test").get().stream().map(c -> c.changeId))
+          .containsExactly(changeId);
     }
   }
 
-  @Test
-  public void reindexEmptySite() throws Exception {
-    initSite();
-    runGerrit("reindex", "-d", sitePath.toString(), "--show-stack-trace");
-  }
-
-  private void initSite() throws Exception {
-    runGerrit(
-        "init",
-        "-d",
-        sitePath.getPath(),
-        "--batch",
-        "--no-auto-start",
-        "--skip-plugins",
-        "--show-stack-trace");
-  }
-
-  private static void runGerrit(String... args) throws Exception {
-    assertThat(GerritLauncher.mainImpl(args)).isEqualTo(0);
+  @AfterClass
+  public static void stopElasticServer() {
+    if (elasticNodeInfo != null) {
+      elasticNodeInfo.node.close();
+      elasticNodeInfo.elasticDir.delete();
+      elasticNodeInfo = null;
+    }
   }
 }

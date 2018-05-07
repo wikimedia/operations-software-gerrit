@@ -26,7 +26,9 @@ import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
+import com.google.common.collect.MultimapBuilder;
 import com.google.common.collect.Sets;
 import com.google.gerrit.elasticsearch.ElasticMapping.MappingProperties;
 import com.google.gerrit.reviewdb.client.Account;
@@ -76,24 +78,24 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /** Secondary index implementation using Elasticsearch. */
-class ElasticChangeIndex extends AbstractElasticIndex<Change.Id, ChangeData>
+public class ElasticChangeIndex extends AbstractElasticIndex<Change.Id, ChangeData>
     implements ChangeIndex {
   private static final Logger log = LoggerFactory.getLogger(ElasticChangeIndex.class);
 
-  static class ChangeMapping {
-    MappingProperties openChanges;
-    MappingProperties closedChanges;
+  public static class ChangeMapping {
+    public MappingProperties openChanges;
+    public MappingProperties closedChanges;
 
-    ChangeMapping(Schema<ChangeData> schema) {
+    public ChangeMapping(Schema<ChangeData> schema) {
       MappingProperties mapping = ElasticMapping.createMapping(schema);
       this.openChanges = mapping;
       this.closedChanges = mapping;
     }
   }
 
-  static final String CHANGES_PREFIX = "changes_";
-  static final String OPEN_CHANGES = "open_changes";
-  static final String CLOSED_CHANGES = "closed_changes";
+  public static final String CHANGES = "changes";
+  public static final String OPEN_CHANGES = "open_" + CHANGES;
+  public static final String CLOSED_CHANGES = "closed_" + CHANGES;
 
   private final ChangeMapping mapping;
   private final Provider<ReviewDb> db;
@@ -108,7 +110,7 @@ class ElasticChangeIndex extends AbstractElasticIndex<Change.Id, ChangeData>
       SitePaths sitePaths,
       JestClientBuilder clientBuilder,
       @Assisted Schema<ChangeData> schema) {
-    super(cfg, fillArgs, sitePaths, schema, clientBuilder, CHANGES_PREFIX);
+    super(cfg, fillArgs, sitePaths, schema, clientBuilder, CHANGES);
     this.db = db;
     this.changeDataFactory = changeDataFactory;
     mapping = new ChangeMapping(schema);
@@ -134,7 +136,7 @@ class ElasticChangeIndex extends AbstractElasticIndex<Change.Id, ChangeData>
     Bulk bulk =
         new Bulk.Builder()
             .defaultIndex(indexName)
-            .defaultType("changes")
+            .defaultType(CHANGES)
             .addAction(insert(insertIndex, cd))
             .addAction(delete(deleteIndex, cd.getId()))
             .refresh(true)
@@ -300,9 +302,23 @@ class ElasticChangeIndex extends AbstractElasticIndex<Change.Id, ChangeData>
         // Changed lines.
         int added = addedElement.getAsInt();
         int deleted = deletedElement.getAsInt();
-        if (added != 0 && deleted != 0) {
-          cd.setChangedLines(added, deleted);
+        cd.setChangedLines(added, deleted);
+      }
+
+      // Star.
+      JsonElement starredElement = source.get(ChangeField.STAR.getName());
+      if (starredElement != null) {
+        ListMultimap<Account.Id, String> stars =
+            MultimapBuilder.hashKeys().arrayListValues().build();
+        JsonArray starBy = starredElement.getAsJsonArray();
+        if (starBy.size() > 0) {
+          for (int i = 0; i < starBy.size(); i++) {
+            String[] indexableFields = starBy.get(i).getAsString().split(":");
+            Account.Id id = Account.Id.parse(indexableFields[0]);
+            stars.put(id, indexableFields[1]);
+          }
         }
+        cd.setStars(stars);
       }
 
       // Mergeable.
