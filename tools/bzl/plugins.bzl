@@ -4,13 +4,25 @@ CORE_PLUGINS = [
     "hooks",
     "replication",
     "reviewnotes",
-    "singleusergroup",
+    # "singleusergroup",
 ]
 
 CUSTOM_PLUGINS = [
     # Add custom core plugins here
+    "delete-project",
+    "gitiles",
+    "go-import",
+    "its-phabricator",
+    "lfs",
+    "motd",
+    "reviewers",
+    "reviewers-by-blame",
+    "webhooks",
+    "zuul",
 ]
 
 CUSTOM_PLUGINS_TEST_DEPS = [
     # Add custom core plugins with tests deps here
+    "go-import",
+    "webhooks",
 ]
