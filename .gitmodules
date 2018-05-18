@@ -88,3 +88,7 @@
 	url = https://gerrit.googlesource.com/plugins/zuul
 	branch = .
 
+[submodule "plugins/quota"]
+	path = plugins/quota
+	url = https://gerrit.googlesource.com/plugins/quota
+	branch = .
