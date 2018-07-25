@@ -46,6 +46,7 @@ import com.google.gerrit.server.group.GroupsUpdate;
 import com.google.gerrit.server.group.InternalGroup;
 import com.google.gerrit.server.group.ServerInitiated;
 import com.google.gerrit.server.index.group.GroupField;
+import com.google.gerrit.server.index.group.GroupIndex;
 import com.google.gerrit.server.index.group.GroupIndexCollection;
 import com.google.gerrit.server.schema.SchemaCreator;
 import com.google.gerrit.server.util.ManualRequestContext;
@@ -108,6 +109,8 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
 
   @Inject protected GroupIndexCollection indexes;
 
+  @Inject private GroupIndexCollection groupIndexes;
+
   protected LifecycleManager lifecycle;
   protected Injector injector;
   protected ReviewDb db;
@@ -123,6 +126,7 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
     lifecycle.add(injector);
     injector.injectMembers(this);
     lifecycle.start();
+    initAfterLifecycleStart();
     setUpDatabase();
   }
 
@@ -142,6 +146,8 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
     requestContext.setContext(newRequestContext(userId));
     currentUserInfo = gApi.accounts().id(userId.get()).get();
   }
+
+  protected void initAfterLifecycleStart() throws Exception {}
 
   protected RequestContext newRequestContext(Account.Id requestUserId) {
     final CurrentUser requestUser = userFactory.create(requestUserId);
@@ -381,6 +387,19 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
     gApi.groups().id(group1.id).index();
     assertQuery("description:" + group1.description);
     assertQuery("description:" + newDescription, group1);
+  }
+
+  @Test
+  public void byDeletedGroup() throws Exception {
+    GroupInfo group = createGroup(name("group"));
+    String query = "uuid:" + group.id;
+    assertQuery(query, group);
+
+    AccountGroup account = db.accountGroups().get(new AccountGroup.Id(group.groupId));
+    for (GroupIndex index : groupIndexes.getWriteIndexes()) {
+      index.delete(account.getGroupUUID());
+    }
+    assertQuery(query);
   }
 
   private Account.Id createAccountOutsideRequestContext(

@@ -16,10 +16,13 @@ package com.google.gerrit.elasticsearch;
 
 import static com.google.gerrit.server.index.account.AccountField.ID;
 
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.gerrit.elasticsearch.ElasticMapping.MappingProperties;
+import com.google.gerrit.elasticsearch.builders.QueryBuilder;
+import com.google.gerrit.elasticsearch.builders.SearchSourceBuilder;
+import com.google.gerrit.elasticsearch.bulk.BulkRequest;
+import com.google.gerrit.elasticsearch.bulk.IndexRequest;
+import com.google.gerrit.elasticsearch.bulk.UpdateRequest;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.query.DataSource;
@@ -28,7 +31,6 @@ import com.google.gerrit.index.query.QueryParseException;
 import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountState;
-import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.index.IndexUtils;
 import com.google.gerrit.server.index.account.AccountField;
@@ -36,72 +38,68 @@ import com.google.gerrit.server.index.account.AccountIndex;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.google.gwtorm.server.OrmException;
 import com.google.gwtorm.server.ResultSet;
-import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.assistedinject.Assisted;
-import io.searchbox.client.JestResult;
-import io.searchbox.core.Bulk;
-import io.searchbox.core.Bulk.Builder;
-import io.searchbox.core.Search;
-import io.searchbox.core.search.sort.Sort;
-import io.searchbox.core.search.sort.Sort.Sorting;
+import com.google.inject.assistedinject.AssistedInject;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
-import org.eclipse.jgit.lib.Config;
-import org.elasticsearch.index.query.QueryBuilder;
-import org.elasticsearch.search.builder.SearchSourceBuilder;
+import org.apache.http.HttpStatus;
+import org.apache.http.StatusLine;
+import org.elasticsearch.client.Response;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class ElasticAccountIndex extends AbstractElasticIndex<Account.Id, AccountState>
     implements AccountIndex {
-  static class AccountMapping {
-    MappingProperties accounts;
+  private static final Logger log = LoggerFactory.getLogger(ElasticAccountIndex.class);
 
-    AccountMapping(Schema<AccountState> schema) {
-      this.accounts = ElasticMapping.createMapping(schema);
+  static class AccountMapping {
+    final MappingProperties accounts;
+
+    AccountMapping(Schema<AccountState> schema, ElasticQueryAdapter adapter) {
+      this.accounts = ElasticMapping.createMapping(schema, adapter);
     }
   }
 
-  static final String ACCOUNTS = "accounts";
-
-  private static final Logger log = LoggerFactory.getLogger(ElasticAccountIndex.class);
+  private static final String ACCOUNTS = "accounts";
 
   private final AccountMapping mapping;
   private final Provider<AccountCache> accountCache;
+  private final Schema<AccountState> schema;
 
-  @Inject
+  @AssistedInject
   ElasticAccountIndex(
-      @GerritServerConfig Config cfg,
+      ElasticConfiguration cfg,
       SitePaths sitePaths,
       Provider<AccountCache> accountCache,
-      JestClientBuilder clientBuilder,
+      ElasticRestClientProvider client,
       @Assisted Schema<AccountState> schema) {
-    super(cfg, sitePaths, schema, clientBuilder, ACCOUNTS);
+    super(cfg, sitePaths, schema, client, ACCOUNTS);
     this.accountCache = accountCache;
-    this.mapping = new AccountMapping(schema);
+    this.mapping = new AccountMapping(schema, client.adapter());
+    this.schema = schema;
   }
 
   @Override
   public void replace(AccountState as) throws IOException {
-    Bulk bulk =
-        new Bulk.Builder()
-            .defaultIndex(indexName)
-            .defaultType(ACCOUNTS)
-            .addAction(insert(ACCOUNTS, as))
-            .refresh(true)
-            .build();
-    JestResult result = client.execute(bulk);
-    if (!result.isSucceeded()) {
+    BulkRequest bulk =
+        new IndexRequest(getId(as), indexName, type, client.adapter())
+            .add(new UpdateRequest<>(schema, as));
+
+    String uri = getURI(type, BULK);
+    Response response = postRequest(bulk, uri, getRefreshParam());
+    int statusCode = response.getStatusLine().getStatusCode();
+    if (statusCode != HttpStatus.SC_OK) {
       throw new IOException(
           String.format(
               "Failed to replace account %s in index %s: %s",
-              as.getAccount().getId(), indexName, result.getErrorMessage()));
+              as.getAccount().getId(), indexName, statusCode));
     }
   }
 
@@ -112,14 +110,13 @@ public class ElasticAccountIndex extends AbstractElasticIndex<Account.Id, Accoun
   }
 
   @Override
-  protected Builder addActions(Builder builder, Account.Id c) {
-    return builder.addAction(delete(ACCOUNTS, c));
+  protected String getDeleteActions(Account.Id a) {
+    return delete(type, a);
   }
 
   @Override
   protected String getMappings() {
-    ImmutableMap<String, AccountMapping> mappings = ImmutableMap.of("mappings", mapping);
-    return gson.toJson(mappings);
+    return getMappingsForSingleType(ACCOUNTS, mapping.accounts);
   }
 
   @Override
@@ -128,28 +125,21 @@ public class ElasticAccountIndex extends AbstractElasticIndex<Account.Id, Accoun
   }
 
   private class QuerySource implements DataSource<AccountState> {
-    private final Search search;
+    private final String search;
     private final Set<String> fields;
 
     QuerySource(Predicate<AccountState> p, QueryOptions opts) throws QueryParseException {
       QueryBuilder qb = queryBuilder.toQueryBuilder(p);
       fields = IndexUtils.accountFields(opts);
       SearchSourceBuilder searchSource =
-          new SearchSourceBuilder()
+          new SearchSourceBuilder(client.adapter())
               .query(qb)
               .from(opts.start())
               .size(opts.limit())
               .fields(Lists.newArrayList(fields));
 
-      Sort sort = new Sort(AccountField.ID.getName(), Sorting.ASC);
-      sort.setIgnoreUnmapped();
-
-      search =
-          new Search.Builder(searchSource.toString())
-              .addType(ACCOUNTS)
-              .addIndex(indexName)
-              .addSort(ImmutableList.of(sort))
-              .build();
+      JsonArray sortArray = getSortArray(AccountField.ID.getName());
+      search = getSearch(searchSource, sortArray);
     }
 
     @Override
@@ -161,9 +151,13 @@ public class ElasticAccountIndex extends AbstractElasticIndex<Account.Id, Accoun
     public ResultSet<AccountState> read() throws OrmException {
       try {
         List<AccountState> results = Collections.emptyList();
-        JestResult result = client.execute(search);
-        if (result.isSucceeded()) {
-          JsonObject obj = result.getJsonObject().getAsJsonObject("hits");
+        String uri = getURI(type, SEARCH);
+        Response response = postRequest(search, uri, Collections.emptyMap());
+        StatusLine statusLine = response.getStatusLine();
+        if (statusLine.getStatusCode() == HttpStatus.SC_OK) {
+          String content = getContent(response);
+          JsonObject obj =
+              new JsonParser().parse(content).getAsJsonObject().getAsJsonObject("hits");
           if (obj.get("hits") != null) {
             JsonArray json = obj.getAsJsonArray("hits");
             results = Lists.newArrayListWithCapacity(json.size());
@@ -172,7 +166,7 @@ public class ElasticAccountIndex extends AbstractElasticIndex<Account.Id, Accoun
             }
           }
         } else {
-          log.error(result.getErrorMessage());
+          log.error(statusLine.getReasonPhrase());
         }
         final List<AccountState> r = Collections.unmodifiableList(results);
         return new ResultSet<AccountState>() {
@@ -194,11 +188,6 @@ public class ElasticAccountIndex extends AbstractElasticIndex<Account.Id, Accoun
       } catch (IOException e) {
         throw new OrmException(e);
       }
-    }
-
-    @Override
-    public String toString() {
-      return search.toString();
     }
 
     private AccountState toAccountState(JsonElement json) {

@@ -54,10 +54,9 @@ public class GetPureRevert implements RestReadView<ChangeResource> {
   private final PatchSetUtil psUtil;
 
   @Option(
-    name = "--claimed-original",
-    aliases = {"-o"},
-    usage = "SHA1 (40 digit hex) of the original commit"
-  )
+      name = "--claimed-original",
+      aliases = {"-o"},
+      usage = "SHA1 (40 digit hex) of the original commit")
   @Nullable
   private String claimedOriginal;
 
@@ -130,8 +129,8 @@ public class GetPureRevert implements RestReadView<ChangeResource> {
               .create(projectCache.checkedGet(notes.getProjectName()))
               .newThreeWayMerger(oi, repo.getConfig());
       merger.setBase(claimedRevertCommit.getParent(0));
-      merger.merge(claimedRevertCommit, claimedOriginalCommit);
-      if (merger.getResultTreeId() == null) {
+      boolean success = merger.merge(claimedRevertCommit, claimedOriginalCommit);
+      if (!success || merger.getResultTreeId() == null) {
         // Merge conflict during rebase
         return new PureRevertInfo(false);
       }

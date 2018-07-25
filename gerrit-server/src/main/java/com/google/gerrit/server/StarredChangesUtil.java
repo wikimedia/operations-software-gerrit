@@ -304,9 +304,9 @@ public class StarredChangesUtil {
       return ref != null ? ref.getObjectId() : ObjectId.zeroId();
     } catch (IOException e) {
       log.error(
-          String.format(
-              "Getting star object ID for account %d on change %d failed",
-              accountId.get(), changeId.get()),
+          "Getting star object ID for account {} on change {} failed",
+          accountId.get(),
+          changeId.get(),
           e);
       return ObjectId.zeroId();
     }
@@ -477,6 +477,11 @@ public class StarredChangesUtil {
 
   private void deleteRef(Repository repo, String refName, ObjectId oldObjectId)
       throws IOException, OrmException {
+    if (ObjectId.zeroId().equals(oldObjectId)) {
+      // ref doesn't exist
+      return;
+    }
+
     RefUpdate u = repo.updateRef(refName);
     u.setForceUpdate(true);
     u.setExpectedOldObjectId(oldObjectId);

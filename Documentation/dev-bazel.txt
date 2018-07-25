@@ -239,6 +239,12 @@ To exclude tests that have been marked as flaky:
   bazel test --test_tag_filters=-flaky //...
 ----
 
+To exclude tests that require a Docker host:
+
+----
+  bazel test --test_tag_filters=-docker //...
+----
+
 To ignore cached test results:
 
 ----
@@ -255,13 +261,26 @@ The following values are currently supported for the group name:
 
 * annotation
 * api
+* docker
 * edit
+* elastic
 * git
 * notedb
 * pgm
 * rest
 * server
 * ssh
+
+[[elasticsearch]]
+=== Elasticsearch
+
+Successfully running the Elasticsearch tests requires Docker, and
+may require setting the local
+link:https://www.elastic.co/guide/en/elasticsearch/reference/current/vm-max-map-count.html[virtual memory].
+
+If Docker is not available, the Elasticsearch tests will be skipped.
+Note that Bazel currently does not show
+link:https://github.com/bazelbuild/bazel/issues/3476[the skipped tests].
 
 == Dependencies
 
@@ -357,6 +376,19 @@ And corresponding WORKSPACE excerpt:
 To consume the JGit dependency from the development tree, edit
 `lib/jgit/jgit.bzl` setting LOCAL_JGIT_REPO to a directory holding a
 JGit repository.
+
+[[bazel-local-caches]]
+
+To accelerate builds, several caches are activated per default:
+
+* ~/.gerritcodereview/bazel-cache/downloaded-artifacts
+* ~/.gerritcodereview/bazel-cache/repository
+* ~/.gerritcodereview/bazel-cache/cas
+
+Currently none of these caches have a maximum size limit. See
+link:https://github.com/bazelbuild/bazel/issues/5139[this bazel issue] for
+details. Users should watch the cache sizes and clean them manually if
+necessary.
 
 GERRIT
 ------

@@ -70,21 +70,24 @@ public class SystemLog {
   }
 
   public AsyncAppender createAsyncAppender(String name, Layout layout) {
+    return createAsyncAppender(name, layout, false);
+  }
+
+  public AsyncAppender createAsyncAppender(String name, Layout layout, boolean forPlugin) {
     AsyncAppender async = new AsyncAppender();
     async.setName(name);
     async.setBlocking(true);
     async.setBufferSize(config.getInt("core", "asyncLoggingBufferSize", 64));
     async.setLocationInfo(false);
 
-    if (shouldConfigure()) {
+    if (forPlugin || shouldConfigure()) {
       async.addAppender(createAppender(site.logs_dir, name, layout));
     } else {
       Appender appender = LogManager.getLogger(name).getAppender(name);
       if (appender != null) {
         async.addAppender(appender);
       } else {
-        log.warn(
-            "No appender with the name: " + name + " was found. " + name + " logging is disabled");
+        log.warn("No appender with the name: {} was found. {} logging is disabled", name, name);
       }
     }
     async.activateOptions();

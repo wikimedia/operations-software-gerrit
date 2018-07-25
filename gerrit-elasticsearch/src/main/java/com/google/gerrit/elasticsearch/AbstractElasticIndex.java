@@ -15,38 +15,48 @@
 package com.google.gerrit.elasticsearch;
 
 import static com.google.gson.FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES;
-import static java.util.stream.Collectors.toList;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.apache.commons.codec.binary.Base64.decodeBase64;
-import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 
-import com.google.common.base.Strings;
 import com.google.common.collect.FluentIterable;
-import com.google.common.collect.Iterables;
-import com.google.common.collect.Streams;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.io.CharStreams;
+import com.google.gerrit.elasticsearch.ElasticMapping.MappingProperties;
+import com.google.gerrit.elasticsearch.builders.SearchSourceBuilder;
+import com.google.gerrit.elasticsearch.bulk.DeleteRequest;
 import com.google.gerrit.index.Index;
 import com.google.gerrit.index.Schema;
-import com.google.gerrit.index.Schema.Values;
-import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.index.IndexUtils;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.google.gwtorm.protobuf.ProtobufCodec;
-import io.searchbox.client.JestResult;
-import io.searchbox.client.http.JestHttpClient;
-import io.searchbox.core.Bulk;
-import io.searchbox.core.Delete;
-import io.searchbox.indices.CreateIndex;
-import io.searchbox.indices.DeleteIndex;
-import io.searchbox.indices.IndicesExists;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.Reader;
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
-import org.eclipse.jgit.lib.Config;
-import org.elasticsearch.common.xcontent.XContentBuilder;
+import java.util.Map;
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpStatus;
+import org.apache.http.entity.ContentType;
+import org.apache.http.nio.entity.NStringEntity;
+import org.elasticsearch.client.Response;
 
 abstract class AbstractElasticIndex<K, V> implements Index<K, V> {
+  protected static final String BULK = "_bulk";
+  protected static final String MAPPINGS = "mappings";
+  protected static final String ORDER = "order";
+  protected static final String SEARCH = "_search";
+  protected static final String SETTINGS = "settings";
+
   protected static <T> List<T> decodeProtos(
       JsonObject doc, String fieldName, ProtobufCodec<T> codec) {
     JsonArray field = doc.getAsJsonArray(fieldName);
@@ -58,33 +68,52 @@ abstract class AbstractElasticIndex<K, V> implements Index<K, V> {
         .toList();
   }
 
+  static String getContent(Response response) throws IOException {
+    HttpEntity responseEntity = response.getEntity();
+    String content = "";
+    if (responseEntity != null) {
+      InputStream contentStream = responseEntity.getContent();
+      try (Reader reader = new InputStreamReader(contentStream)) {
+        content = CharStreams.toString(reader);
+      }
+    }
+    return content;
+  }
+
   private final Schema<V> schema;
   private final SitePaths sitePaths;
   private final String indexNameRaw;
 
+  protected final String type;
+  protected final ElasticRestClientProvider client;
   protected final String indexName;
-  protected final JestHttpClient client;
   protected final Gson gson;
   protected final ElasticQueryBuilder queryBuilder;
 
   AbstractElasticIndex(
-      @GerritServerConfig Config cfg,
+      ElasticConfiguration cfg,
       SitePaths sitePaths,
       Schema<V> schema,
-      JestClientBuilder clientBuilder,
-      String indexName) {
+      ElasticRestClientProvider client,
+      String indexName,
+      String indexType) {
     this.sitePaths = sitePaths;
     this.schema = schema;
     this.gson = new GsonBuilder().setFieldNamingPolicy(LOWER_CASE_WITH_UNDERSCORES).create();
     this.queryBuilder = new ElasticQueryBuilder();
-    this.indexName =
-        String.format(
-            "%s%s_%04d",
-            Strings.nullToEmpty(cfg.getString("elasticsearch", null, "prefix")),
-            indexName,
-            schema.getVersion());
+    this.indexName = cfg.getIndexName(indexName, schema.getVersion());
     this.indexNameRaw = indexName;
-    this.client = clientBuilder.build();
+    this.client = client;
+    this.type = client.adapter().getType(indexType);
+  }
+
+  AbstractElasticIndex(
+      ElasticConfiguration cfg,
+      SitePaths sitePaths,
+      Schema<V> schema,
+      ElasticRestClientProvider client,
+      String indexName) {
+    this(cfg, sitePaths, schema, client, indexName, indexName);
   }
 
   @Override
@@ -94,7 +123,7 @@ abstract class AbstractElasticIndex<K, V> implements Index<K, V> {
 
   @Override
   public void close() {
-    client.shutdownClient();
+    // Do nothing. Client is closed by the provider.
   }
 
   @Override
@@ -103,77 +132,114 @@ abstract class AbstractElasticIndex<K, V> implements Index<K, V> {
   }
 
   @Override
-  public void delete(K c) throws IOException {
-    Bulk bulk = addActions(new Bulk.Builder(), c).refresh(true).build();
-    JestResult result = client.execute(bulk);
-    if (!result.isSucceeded()) {
+  public void delete(K id) throws IOException {
+    String uri = getURI(type, BULK);
+    Response response = postRequest(getDeleteActions(id), uri, getRefreshParam());
+    int statusCode = response.getStatusLine().getStatusCode();
+    if (statusCode != HttpStatus.SC_OK) {
       throw new IOException(
-          String.format(
-              "Failed to delete change %s in index %s: %s",
-              c, indexName, result.getErrorMessage()));
+          String.format("Failed to delete %s from index %s: %s", id, indexName, statusCode));
     }
   }
 
   @Override
   public void deleteAll() throws IOException {
     // Delete the index, if it exists.
-    JestResult result = client.execute(new IndicesExists.Builder(indexName).build());
-    if (result.isSucceeded()) {
-      result = client.execute(new DeleteIndex.Builder(indexName).build());
-      if (!result.isSucceeded()) {
+    String endpoint = indexName + client.adapter().indicesExistParam();
+    Response response = client.get().performRequest("HEAD", endpoint);
+    int statusCode = response.getStatusLine().getStatusCode();
+    if (statusCode == HttpStatus.SC_OK) {
+      response = client.get().performRequest("DELETE", indexName);
+      statusCode = response.getStatusLine().getStatusCode();
+      if (statusCode != HttpStatus.SC_OK) {
         throw new IOException(
-            String.format("Failed to delete index %s: %s", indexName, result.getErrorMessage()));
+            String.format("Failed to delete index %s: %s", indexName, statusCode));
       }
     }
 
     // Recreate the index.
-    result = client.execute(new CreateIndex.Builder(indexName).settings(getMappings()).build());
-    if (!result.isSucceeded()) {
-      String error =
-          String.format("Failed to create index %s: %s", indexName, result.getErrorMessage());
+    String indexCreationFields = concatJsonString(getSettings(), getMappings());
+    response = performRequest("PUT", indexCreationFields, indexName, Collections.emptyMap());
+    statusCode = response.getStatusLine().getStatusCode();
+    if (statusCode != HttpStatus.SC_OK) {
+      String error = String.format("Failed to create index %s: %s", indexName, statusCode);
       throw new IOException(error);
     }
   }
 
-  protected abstract Bulk.Builder addActions(Bulk.Builder builder, K c);
+  protected abstract String getDeleteActions(K id);
 
   protected abstract String getMappings();
 
+  private String getSettings() {
+    return gson.toJson(ImmutableMap.of(SETTINGS, ElasticSetting.createSetting()));
+  }
+
   protected abstract String getId(V v);
 
-  protected Delete delete(String type, K c) {
-    String id = c.toString();
-    return new Delete.Builder(id).index(indexName).type(type).build();
+  protected String getMappingsForSingleType(String candidateType, MappingProperties properties) {
+    return getMappingsFor(client.adapter().getType(candidateType), properties);
   }
 
-  protected io.searchbox.core.Index insert(String type, V v) throws IOException {
-    String id = getId(v);
-    String doc = toDoc(v);
-    return new io.searchbox.core.Index.Builder(doc).index(indexName).type(type).id(id).build();
+  protected String getMappingsFor(String type, MappingProperties properties) {
+    JsonObject mappingType = new JsonObject();
+    mappingType.add(type, gson.toJsonTree(properties));
+    JsonObject mappings = new JsonObject();
+    mappings.add(MAPPINGS, gson.toJsonTree(mappingType));
+    return gson.toJson(mappings);
   }
 
-  private static boolean shouldAddElement(Object element) {
-    return !(element instanceof String) || !((String) element).isEmpty();
+  protected String delete(String type, K id) {
+    return new DeleteRequest(id.toString(), indexName, type, client.adapter()).toString();
   }
 
-  private String toDoc(V v) throws IOException {
-    try (XContentBuilder builder = jsonBuilder().startObject()) {
-      for (Values<V> values : schema.buildFields(v)) {
-        String name = values.getField().getName();
-        if (values.getField().isRepeatable()) {
-          builder.field(
-              name,
-              Streams.stream(values.getValues())
-                  .filter(e -> shouldAddElement(e))
-                  .collect(toList()));
-        } else {
-          Object element = Iterables.getOnlyElement(values.getValues(), "");
-          if (shouldAddElement(element)) {
-            builder.field(name, element);
-          }
-        }
-      }
-      return builder.endObject().string();
-    }
+  protected void addNamedElement(String name, JsonObject element, JsonArray array) {
+    JsonObject arrayElement = new JsonObject();
+    arrayElement.add(name, element);
+    array.add(arrayElement);
+  }
+
+  protected Map<String, String> getRefreshParam() {
+    Map<String, String> params = new HashMap<>();
+    params.put("refresh", "true");
+    return params;
+  }
+
+  protected String getSearch(SearchSourceBuilder searchSource, JsonArray sortArray) {
+    JsonObject search = new JsonParser().parse(searchSource.toString()).getAsJsonObject();
+    search.add("sort", sortArray);
+    return gson.toJson(search);
+  }
+
+  protected JsonArray getSortArray(String idFieldName) {
+    JsonObject properties = new JsonObject();
+    properties.addProperty(ORDER, "asc");
+    client.adapter().setIgnoreUnmapped(properties);
+
+    JsonArray sortArray = new JsonArray();
+    addNamedElement(idFieldName, properties, sortArray);
+    return sortArray;
+  }
+
+  protected String getURI(String type, String request) throws UnsupportedEncodingException {
+    String encodedType = URLEncoder.encode(type, UTF_8.toString());
+    String encodedIndexName = URLEncoder.encode(indexName, UTF_8.toString());
+    return encodedIndexName + "/" + encodedType + "/" + request;
+  }
+
+  protected Response postRequest(Object payload, String uri, Map<String, String> params)
+      throws IOException {
+    return performRequest("POST", payload, uri, params);
+  }
+
+  private String concatJsonString(String target, String addition) {
+    return target.substring(0, target.length() - 1) + "," + addition.substring(1);
+  }
+
+  private Response performRequest(
+      String method, Object payload, String uri, Map<String, String> params) throws IOException {
+    String payloadStr = payload instanceof String ? (String) payload : payload.toString();
+    HttpEntity entity = new NStringEntity(payloadStr, ContentType.APPLICATION_JSON);
+    return client.get().performRequest(method, uri, params, entity);
   }
 }

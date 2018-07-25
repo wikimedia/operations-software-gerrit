@@ -69,6 +69,8 @@ public interface AccountConstants extends Constants {
 
   String publishCommentsOnPush();
 
+  String workInProgressByDefault();
+
   String myMenu();
 
   String myMenuInfo();
@@ -128,6 +130,8 @@ public interface AccountConstants extends Constants {
   String buttonClearPassword();
 
   String buttonGeneratePassword();
+
+  String revokePassword();
 
   String linkObtainPassword();
 

@@ -14,13 +14,11 @@
 
 package com.google.gerrit.elasticsearch;
 
-import com.google.common.base.MoreObjects;
 import com.google.common.primitives.Ints;
 import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.index.Index;
 import com.google.gerrit.index.IndexDefinition;
 import com.google.gerrit.index.Schema;
-import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.index.GerritIndexStatus;
 import com.google.gerrit.server.index.OnlineUpgradeListener;
@@ -29,28 +27,28 @@ import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.Collection;
+import java.util.List;
 import java.util.TreeMap;
-import org.eclipse.jgit.lib.Config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 @Singleton
-public class ElasticVersionManager extends VersionManager {
-  private static final Logger log = LoggerFactory.getLogger(ElasticVersionManager.class);
+public class ElasticIndexVersionManager extends VersionManager {
+  private static final Logger log = LoggerFactory.getLogger(ElasticIndexVersionManager.class);
 
   private final String prefix;
   private final ElasticIndexVersionDiscovery versionDiscovery;
 
   @Inject
-  ElasticVersionManager(
-      @GerritServerConfig Config cfg,
+  ElasticIndexVersionManager(
+      ElasticConfiguration cfg,
       SitePaths sitePaths,
       DynamicSet<OnlineUpgradeListener> listeners,
       Collection<IndexDefinition<?, ?, ?>> defs,
       ElasticIndexVersionDiscovery versionDiscovery) {
-    super(sitePaths, listeners, defs, VersionManager.getOnlineUpgrade(cfg));
+    super(sitePaths, listeners, defs, VersionManager.getOnlineUpgrade(cfg.getConfig()));
     this.versionDiscovery = versionDiscovery;
-    prefix = MoreObjects.firstNonNull(cfg.getString("index", null, "prefix"), "gerrit");
+    prefix = cfg.prefix;
   }
 
   @Override
@@ -58,13 +56,15 @@ public class ElasticVersionManager extends VersionManager {
       IndexDefinition<K, V, I> def, GerritIndexStatus cfg) {
     TreeMap<Integer, Version<V>> versions = new TreeMap<>();
     try {
-      for (String version : versionDiscovery.discover(prefix, def.getName())) {
+      List<String> discovered = versionDiscovery.discover(prefix, def.getName());
+      log.debug("Discovered versions for {}: {}", def.getName(), discovered);
+      for (String version : discovered) {
         Integer v = Ints.tryParse(version);
         if (v == null || version.length() != 4) {
           log.warn("Unrecognized version in index {}: {}", def.getName(), version);
           continue;
         }
-        versions.put(v, new Version<V>(null, v, true, cfg.getReady(def.getName(), v)));
+        versions.put(v, new Version<>(null, v, true, cfg.getReady(def.getName(), v)));
       }
     } catch (IOException e) {
       log.error("Error scanning index: " + def.getName(), e);

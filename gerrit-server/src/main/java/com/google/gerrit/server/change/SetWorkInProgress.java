@@ -32,6 +32,8 @@ import com.google.gerrit.server.change.WorkInProgressOp.Input;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
+import com.google.gerrit.server.project.NoSuchProjectException;
+import com.google.gerrit.server.project.ProjectControl;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.RetryHelper;
 import com.google.gerrit.server.update.RetryingRestModifyView;
@@ -39,14 +41,19 @@ import com.google.gerrit.server.update.UpdateException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
+import java.io.IOException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Singleton
 public class SetWorkInProgress extends RetryingRestModifyView<ChangeResource, Input, Response<?>>
     implements UiAction<ChangeResource> {
+  private static final Logger log = LoggerFactory.getLogger(SetWorkInProgress.class);
   private final WorkInProgressOp.Factory opFactory;
   private final Provider<ReviewDb> db;
   private final Provider<CurrentUser> self;
   private final PermissionBackend permissionBackend;
+  private final ProjectControl.GenericFactory projectControlFactory;
 
   @Inject
   SetWorkInProgress(
@@ -54,21 +61,25 @@ public class SetWorkInProgress extends RetryingRestModifyView<ChangeResource, In
       RetryHelper retryHelper,
       Provider<ReviewDb> db,
       Provider<CurrentUser> self,
-      PermissionBackend permissionBackend) {
+      PermissionBackend permissionBackend,
+      ProjectControl.GenericFactory projectControlFactory) {
     super(retryHelper);
     this.opFactory = opFactory;
     this.db = db;
     this.self = self;
     this.permissionBackend = permissionBackend;
+    this.projectControlFactory = projectControlFactory;
   }
 
   @Override
   protected Response<?> applyImpl(
       BatchUpdate.Factory updateFactory, ChangeResource rsrc, Input input)
-      throws RestApiException, UpdateException, PermissionBackendException {
+      throws RestApiException, UpdateException, PermissionBackendException, NoSuchProjectException,
+          IOException {
     Change change = rsrc.getChange();
     if (!rsrc.isUserOwner()
-        && !permissionBackend.user(self).test(GlobalPermission.ADMINISTRATE_SERVER)) {
+        && !permissionBackend.user(rsrc.getUser()).test(GlobalPermission.ADMINISTRATE_SERVER)
+        && !projectControlFactory.controlFor(rsrc.getProject(), rsrc.getUser()).isOwner()) {
       throw new AuthException("not allowed to set work in progress");
     }
 
@@ -90,6 +101,14 @@ public class SetWorkInProgress extends RetryingRestModifyView<ChangeResource, In
 
   @Override
   public Description getDescription(ChangeResource rsrc) {
+    boolean isProjectOwner;
+    try {
+      isProjectOwner =
+          projectControlFactory.controlFor(rsrc.getProject(), rsrc.getUser()).isOwner();
+    } catch (IOException | NoSuchProjectException e) {
+      isProjectOwner = false;
+      log.error("Cannot retrieve project owner ACL", e);
+    }
     return new Description()
         .setLabel("WIP")
         .setTitle("Set Work In Progress")
@@ -98,6 +117,10 @@ public class SetWorkInProgress extends RetryingRestModifyView<ChangeResource, In
                 rsrc.getChange().getStatus() == Status.NEW && !rsrc.getChange().isWorkInProgress(),
                 or(
                     rsrc.isUserOwner(),
-                    permissionBackend.user(self).testCond(GlobalPermission.ADMINISTRATE_SERVER))));
+                    or(
+                        isProjectOwner,
+                        permissionBackend
+                            .user(self)
+                            .testCond(GlobalPermission.ADMINISTRATE_SERVER)))));
   }
 }

@@ -20,11 +20,13 @@ import static com.google.gerrit.server.permissions.RefPermission.CREATE_CHANGE;
 import static com.google.gerrit.server.query.change.ChangeData.asChanges;
 
 import com.google.common.base.Strings;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.TimeUtil;
 import com.google.gerrit.common.data.LabelType;
 import com.google.gerrit.extensions.api.changes.MoveInput;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
+import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.webui.UiAction;
@@ -116,6 +118,9 @@ public class Move extends RetryingRestModifyView<ChangeResource, MoveInput, Chan
     Change change = rsrc.getChange();
     Project.NameKey project = rsrc.getProject();
     IdentifiedUser caller = rsrc.getUser().asIdentifiedUser();
+    if (input.destinationBranch == null) {
+      throw new BadRequestException("destination branch is required");
+    }
     input.destinationBranch = RefNames.fullName(input.destinationBranch);
 
     if (change.getStatus().isClosed()) {
@@ -135,12 +140,13 @@ public class Move extends RetryingRestModifyView<ChangeResource, MoveInput, Chan
       throw new AuthException("move not permitted", denied);
     }
 
+    Op op = new Op(input);
     try (BatchUpdate u =
         updateFactory.create(dbProvider.get(), project, caller, TimeUtil.nowTs())) {
-      u.addOp(change.getId(), new Op(input));
+      u.addOp(change.getId(), op);
       u.execute();
     }
-    return json.noOptions().format(project, rsrc.getId());
+    return json.noOptions().format(op.getChange());
   }
 
   private class Op implements BatchUpdateOp {
@@ -151,6 +157,11 @@ public class Move extends RetryingRestModifyView<ChangeResource, MoveInput, Chan
 
     Op(MoveInput input) {
       this.input = input;
+    }
+
+    @Nullable
+    public Change getChange() {
+      return change;
     }
 
     @Override
@@ -252,7 +263,7 @@ public class Move extends RetryingRestModifyView<ChangeResource, MoveInput, Chan
         // Only keep veto votes, defined as votes where:
         // 1- the label function allows minimum values to block submission.
         // 2- the vote holds the minimum value.
-        if (type.isMaxNegative(psa) && type.getFunction().isBlock()) {
+        if (type == null || (type.isMaxNegative(psa) && type.getFunction().isBlock())) {
           continue;
         }
 

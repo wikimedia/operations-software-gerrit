@@ -505,6 +505,17 @@ public class AccountIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void deleteStarLabelsFromChangeWithoutStarLabels() throws Exception {
+    PushOneCommit.Result r = createChange();
+    String triplet = project.get() + "~master~" + r.getChangeId();
+    assertThat(gApi.accounts().self().getStars(triplet)).isEmpty();
+
+    gApi.accounts().self().setStars(triplet, new StarsInput());
+
+    assertThat(gApi.accounts().self().getStars(triplet)).isEmpty();
+  }
+
+  @Test
   public void starWithDefaultAndIgnoreLabel() throws Exception {
     PushOneCommit.Result r = createChange();
     String triplet = project.get() + "~master~" + r.getChangeId();
@@ -647,9 +658,8 @@ public class AccountIT extends AbstractDaemonTest {
 
   @Test
   @GerritConfig(
-    name = "auth.registerEmailPrivateKey",
-    value = "HsOc6l+2lhS9G7sE/RsnS7Z6GJjdRDX14co="
-  )
+      name = "auth.registerEmailPrivateKey",
+      value = "HsOc6l+2lhS9G7sE/RsnS7Z6GJjdRDX14co=")
   public void addEmailSendsConfirmationEmail() throws Exception {
     String email = "new.email@example.com";
     EmailInput input = newEmailInput(email, false);

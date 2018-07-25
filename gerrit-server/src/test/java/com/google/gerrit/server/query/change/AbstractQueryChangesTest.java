@@ -218,6 +218,7 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     lifecycle.add(injector);
     injector.injectMembers(this);
     lifecycle.start();
+    initAfterLifecycleStart();
     setUpDatabase();
   }
 
@@ -226,6 +227,8 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     lifecycle.stop();
     db.close();
   }
+
+  protected void initAfterLifecycleStart() throws Exception {}
 
   protected void setUpDatabase() throws Exception {
     try (ReviewDb underlyingDb = inMemoryDatabase.getDatabase().open()) {
@@ -822,7 +825,13 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     ChangeInserter ins4 = newChangeWithTopic(repo, "feature2-fixup");
     Change change4 = insert(repo, ins4);
 
-    Change change5 = insert(repo, newChange(repo));
+    ChangeInserter ins5 = newChangeWithTopic(repo, "https://gerrit.local");
+    Change change5 = insert(repo, ins5);
+
+    ChangeInserter ins6 = newChangeWithTopic(repo, "git_gerrit_training");
+    Change change6 = insert(repo, ins6);
+
+    Change change_no_topic = insert(repo, newChange(repo));
 
     assertQuery("intopic:foo");
     assertQuery("intopic:feature1", change1);
@@ -830,8 +839,9 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     assertQuery("topic:feature2", change2);
     assertQuery("intopic:feature2", change4, change3, change2);
     assertQuery("intopic:fixup", change4);
-    assertQuery("topic:\"\"", change5);
-    assertQuery("intopic:\"\"", change5);
+    assertQuery("intopic:gerrit", change6, change5);
+    assertQuery("topic:\"\"", change_no_topic);
+    assertQuery("intopic:\"\"", change_no_topic);
   }
 
   @Test
@@ -875,6 +885,26 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     assertQuery("message:1234");
     assertQuery("message:12345", change1);
     assertQuery("message:12346", change2);
+  }
+
+  @Test
+  public void byMessageMixedCase() throws Exception {
+    TestRepository<Repo> repo = createProject("repo");
+    RevCommit commit1 = repo.parseBody(repo.commit().message("Hello gerrit").create());
+    Change change1 = insert(repo, newChangeForCommit(repo, commit1));
+    RevCommit commit2 = repo.parseBody(repo.commit().message("Hello Gerrit").create());
+    Change change2 = insert(repo, newChangeForCommit(repo, commit2));
+
+    assertQuery("message:gerrit", change2, change1);
+    assertQuery("message:Gerrit", change2, change1);
+  }
+
+  @Test
+  public void byMessageSubstring() throws Exception {
+    TestRepository<Repo> repo = createProject("repo");
+    RevCommit commit1 = repo.parseBody(repo.commit().message("https://gerrit.local").create());
+    Change change1 = insert(repo, newChangeForCommit(repo, commit1));
+    assertQuery("message:gerrit", change1);
   }
 
   @Test
@@ -2588,6 +2618,26 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     assertQuery("query:query2", change2);
     assertQuery("query:query3", change2);
     assertQuery("query:query4");
+  }
+
+  @Test
+  public void byOwnerInvalidQuery() throws Exception {
+    TestRepository<Repo> repo = createProject("repo");
+    insert(repo, newChange(repo), userId);
+    String nameEmail = user.asIdentifiedUser().getNameEmail();
+    assertQuery("owner: \"" + nameEmail + "\"\\");
+  }
+
+  @Test
+  public void byDeletedChange() throws Exception {
+    TestRepository<Repo> repo = createProject("repo");
+    Change change = insert(repo, newChange(repo));
+
+    String query = "change:" + change.getId();
+    assertQuery(query, change);
+
+    gApi.changes().id(change.getChangeId()).delete();
+    assertQuery(query);
   }
 
   protected ChangeInserter newChange(TestRepository<Repo> repo) throws Exception {

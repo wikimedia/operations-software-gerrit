@@ -58,6 +58,7 @@ limitations under the License.
       element.projectName = 'test-project';
       element._projectConfig = {
         private_by_default: {},
+        work_in_progress_by_default: {},
       };
     });
 
@@ -117,7 +118,6 @@ limitations under the License.
       element.branch = 'test-branch';
       element.topic = 'test-topic';
       element.subject = 'first change created with polygerrit ui';
-      element.$.wipChangeCheckBox.checked = true;
       assert.isFalse(element.$.privateChangeCheckBox.checked);
 
       element.$.branchInput.bindValue = configInputObj.branch;

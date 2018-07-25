@@ -550,6 +550,9 @@ request.
 ----
 Alternatively, click *Ready* from the Change screen.
 
+Only change owners, project owners and site administrators can mark changes as
+`work-in-progress` and `ready`.
+
 [[wip-polygerrit]]
 In the new PolyGerrit UI, you can mark a change as WIP, by selecting *WIP* from
 the *More* menu. The Change screen updates with a yellow header, indicating that
@@ -823,6 +826,12 @@ plugin is available, Gerrit offers a copy-to-clipboard icon next to IDs and
 commands that need to be copied frequently, such as the Change-Ids, commit IDs
 and download commands. Note that this option is only shown if the Flash plugin
 is available and the JavaScript Clipboard API is unavailable.
+
+- [[work-in-progress-by-default]]`Set new changes work-in-progress`:
++
+Whether new changes are uploaded as work-in-progress per default. This
+preference just sets the default; the behavior can still be overridden using a
+link:user-upload.html#wip[push option].
 
 [[my-menu]]
 In addition it is possible to customize the menu entries of the `My`

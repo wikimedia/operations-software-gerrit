@@ -8,6 +8,7 @@ load(
 )
 
 TEST_DEPS = [
+    "//gerrit-elasticsearch:elasticsearch_test_utils",
     "//gerrit-gpg:gpg_tests",
     "//gerrit-gwtui:ui_tests",
     "//gerrit-httpd:httpd_tests",
@@ -36,7 +37,7 @@ DEPS = [
     "//lib/gwt:tapestry",
     "//lib/gwt:w3c-css-sac",
     "//lib/jetty:servlets",
-    "//lib/prolog:compiler_lib",
+    "//lib/prolog:compiler-lib",
     # TODO(davido): I do not understand why it must be on the Eclipse classpath
     #'//Documentation:index',
 ]
