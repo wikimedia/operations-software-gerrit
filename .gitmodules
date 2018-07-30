@@ -25,7 +25,7 @@
 
 [submodule "plugins/go-import"]
 	path = plugins/go-import
-	url = https://gerrit.googlesource.com/plugins/go-import
+	url = https://gerrit.wikimedia.org/r/operations/software/gerrit/plugins/go-import
 	branch = .
 
 [submodule "plugins/hooks"]
