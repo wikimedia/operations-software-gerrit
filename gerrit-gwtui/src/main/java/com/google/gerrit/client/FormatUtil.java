@@ -137,7 +137,7 @@ public class FormatUtil {
     if (size == 0) {
       return Resources.C.notAvailable();
     }
-    int p = Math.abs(Math.round(delta * 100 / size));
-    return p + "%";
+    long percentage = Math.abs(Math.round(delta * 100.0 / size));
+    return percentage + "%";
   }
 }

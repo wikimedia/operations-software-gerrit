@@ -98,7 +98,7 @@
       },
       _canStartReview: {
         type: Boolean,
-        computed: '_computeCanStartReview(_loggedIn, _change, _account)',
+        computed: '_computeCanStartReview(_change)',
       },
       _comments: Object,
       /** @type {?} */
@@ -885,9 +885,10 @@
 
     _handleReloadChange(e) {
       return this._reload().then(() => {
-        // If the change was rebased, we need to reload the page with the
-        // latest patch.
-        if (e.detail.action === 'rebase') {
+        // If the change was rebased or submitted, we need to reload the page
+        // with the latest patch.
+        const action = e.detail.action;
+        if (action === 'rebase' || action === 'submit') {
           Gerrit.Nav.navigateToChange(this._change);
         }
       });
@@ -1109,9 +1110,9 @@
       ]);
     },
 
-    _computeCanStartReview(loggedIn, change, account) {
-      return !!(loggedIn && change.work_in_progress &&
-          change.owner._account_id === account._account_id);
+    _computeCanStartReview(change) {
+      return !!(change.actions && change.actions.ready &&
+          change.actions.ready.enabled);
     },
 
     _computeReplyDisabled() { return false; },

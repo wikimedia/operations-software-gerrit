@@ -24,6 +24,7 @@ import com.google.gerrit.extensions.annotations.PluginName;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.server.AccessPath;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.DynamicOptions;
 import com.google.gerrit.server.IdentifiedUser;
@@ -269,16 +270,18 @@ public abstract class BaseCommand implements Command {
    *   public void run() throws Exception {
    *     runImp();
    *   }
-   * });
+   * },
+   * accessPath);
    * </pre>
    *
    * <p>If the function throws an exception, it is translated to a simple message for the client, a
    * non-zero exit code, and the stack trace is logged.
    *
    * @param thunk the runnable to execute on the thread, performing the command's logic.
+   * @param accessPath the path used by the end user for running the SSH command
    */
-  protected void startThread(CommandRunnable thunk) {
-    final TaskThunk tt = new TaskThunk(thunk);
+  protected void startThread(final CommandRunnable thunk, AccessPath accessPath) {
+    final TaskThunk tt = new TaskThunk(thunk, accessPath);
 
     if (isAdminHighPriorityCommand()) {
       // Admin commands should not block the main work threads (there
@@ -414,11 +417,13 @@ public abstract class BaseCommand implements Command {
   private final class TaskThunk implements CancelableRunnable, ProjectRunnable {
     private final CommandRunnable thunk;
     private final String taskName;
+    private final AccessPath accessPath;
     private Project.NameKey projectName;
 
-    private TaskThunk(CommandRunnable thunk) {
+    private TaskThunk(final CommandRunnable thunk, AccessPath accessPath) {
       this.thunk = thunk;
       this.taskName = getTaskName();
+      this.accessPath = accessPath;
     }
 
     @Override
@@ -439,6 +444,7 @@ public abstract class BaseCommand implements Command {
         final Thread thisThread = Thread.currentThread();
         final String thisName = thisThread.getName();
         int rc = 0;
+        context.getSession().setAccessPath(accessPath);
         final Context old = sshScope.set(context);
         try {
           context.started = TimeUtil.nowMs();

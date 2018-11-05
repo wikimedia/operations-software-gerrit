@@ -1034,6 +1034,7 @@ entity is returned.
     ],
     "can_upload": true,
     "can_add": true,
+    "can_add_tags": true,
     "config_visible": true,
     "groups": {
       "c2ce4749a32ceb82cd6adcce65b8216e12afb41c": {
@@ -1135,6 +1136,7 @@ entity is returned.
     ],
     "can_upload": true,
     "can_add": true,
+    "can_add_tags": true,
     "config_visible": true,
     "groups": {
       "global:Anonymous-Users": {
@@ -3054,16 +3056,17 @@ limit] of a project.
 |===============================
 |Field Name        ||Description
 |`value`           |optional|
-The effective value of the max object size limit as a formatted string. +
+The effective value in bytes of the max object size limit. +
 Not set if there is no limit for the object size.
 |`configured_value`|optional|
 The max object size limit that is configured on the project as a
 formatted string. +
 Not set if there is no limit for the object size configured on project
 level.
-|`inherited_value` |optional|
-The max object size limit that is inherited as a formatted string. +
-Not set if there is no global limit for the object size.
+|`summary`         |optional|
+A string describing whether the value was inherited or overridden from
+the parent project or global config. +
+Not set if not inherited or overridden.
 |===============================
 
 [[project-access-input]]
@@ -3184,6 +3187,12 @@ Whether content merge should be enabled for the project (`TRUE`,
 |`require_change_id`                           |`INHERIT` if not set|
 Whether the usage of Change-Ids is required for the project (`TRUE`,
 `FALSE`, `INHERIT`).
+|`enable_signed_push`                           |`INHERIT` if not set|
+Whether signed push validation is enabled on the project  (`TRUE`,
+`FALSE`, `INHERIT`).
+|`require_signed_push`                          |`INHERIT` if not set|
+Whether signed push validation is required on the project  (`TRUE`,
+`FALSE`, `INHERIT`).
 |`max_object_size_limit`     |optional|
 Max allowed Git object size for this project.
 Common unit suffixes of 'k', 'm', or 'g' are supported.
@@ -3291,8 +3300,6 @@ The path to the `GerritSiteHeader.html` file.
 |`footer`        |optional|
 The path to the `GerritSiteFooter.html` file.
 |=============================
-
-----
 
 GERRIT
 ------

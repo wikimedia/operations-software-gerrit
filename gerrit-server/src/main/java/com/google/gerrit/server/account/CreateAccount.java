@@ -120,9 +120,8 @@ public class CreateAccount implements RestModifyView<TopLevelResource, AccountIn
       throw new BadRequestException("username must match URL");
     }
 
-    if (!username.matches(Account.USER_NAME_PATTERN)) {
-      throw new BadRequestException(
-          "Username '" + username + "' must contain only letters, numbers, _, - or .");
+    if (!ExternalId.isValidUsername(username)) {
+      throw new BadRequestException("Invalid username '" + username + "'");
     }
 
     Set<AccountGroup.UUID> groups = parseGroups(input.groups);

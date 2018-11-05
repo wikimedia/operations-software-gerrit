@@ -17,6 +17,7 @@ package com.google.gerrit.server.project;
 import static com.google.gerrit.common.data.PermissionRule.Action.ALLOW;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
@@ -47,6 +48,7 @@ import com.google.gerrit.server.git.BranchOrderSection;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.ProjectConfig;
 import com.google.gerrit.server.git.ProjectLevelConfig;
+import com.google.gerrit.server.git.TransferConfig;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
@@ -95,6 +97,8 @@ public class ProjectState {
   private final ProjectConfig config;
   private final Map<String, ProjectLevelConfig> configs;
   private final Set<AccountGroup.UUID> localOwners;
+  private final long globalMaxObjectSizeLimit;
+  private final boolean inheritProjectMaxObjectSizeLimit;
 
   /** Prolog rule state. */
   private volatile PrologMachineCopy rulesMachine;
@@ -116,17 +120,18 @@ public class ProjectState {
 
   @Inject
   public ProjectState(
-      final SitePaths sitePaths,
-      final ProjectCache projectCache,
-      final AllProjectsName allProjectsName,
-      final AllUsersName allUsersName,
-      final ProjectControl.AssistedFactory projectControlFactory,
-      final PrologEnvironment.Factory envFactory,
-      final GitRepositoryManager gitMgr,
-      final RulesCache rulesCache,
-      final List<CommentLinkInfo> commentLinks,
-      final CapabilityCollection.Factory limitsFactory,
-      @Assisted final ProjectConfig config) {
+      SitePaths sitePaths,
+      ProjectCache projectCache,
+      AllProjectsName allProjectsName,
+      AllUsersName allUsersName,
+      ProjectControl.AssistedFactory projectControlFactory,
+      PrologEnvironment.Factory envFactory,
+      GitRepositoryManager gitMgr,
+      RulesCache rulesCache,
+      List<CommentLinkInfo> commentLinks,
+      CapabilityCollection.Factory limitsFactory,
+      TransferConfig transferConfig,
+      @Assisted ProjectConfig config) {
     this.sitePaths = sitePaths;
     this.projectCache = projectCache;
     this.isAllProjects = config.getProject().getNameKey().equals(allProjectsName);
@@ -143,6 +148,8 @@ public class ProjectState {
         isAllProjects
             ? limitsFactory.create(config.getAccessSection(AccessSection.GLOBAL_CAPABILITIES))
             : null;
+    this.globalMaxObjectSizeLimit = transferConfig.getMaxObjectSizeLimit();
+    this.inheritProjectMaxObjectSizeLimit = transferConfig.getInheritProjectMaxObjectSizeLimit();
 
     if (isAllProjects && !Permission.canBeOnAllProjects(AccessSection.ALL, Permission.OWNER)) {
       localOwners = Collections.emptySet();
@@ -254,8 +261,58 @@ public class ProjectState {
     return cfg;
   }
 
-  public long getMaxObjectSizeLimit() {
-    return config.getMaxObjectSizeLimit();
+  public static class EffectiveMaxObjectSizeLimit {
+    public long value;
+    public String summary;
+  }
+
+  private static final String MAY_NOT_SET = "This project may not set a higher limit.";
+
+  @VisibleForTesting
+  public static final String INHERITED_FROM_PARENT = "Inherited from parent project '%s'.";
+
+  @VisibleForTesting
+  public static final String OVERRIDDEN_BY_PARENT =
+      "Overridden by parent project '%s'. " + MAY_NOT_SET;
+
+  @VisibleForTesting
+  public static final String INHERITED_FROM_GLOBAL = "Inherited from the global config.";
+
+  @VisibleForTesting
+  public static final String OVERRIDDEN_BY_GLOBAL =
+      "Overridden by the global config. " + MAY_NOT_SET;
+
+  public EffectiveMaxObjectSizeLimit getEffectiveMaxObjectSizeLimit() {
+    EffectiveMaxObjectSizeLimit result = new EffectiveMaxObjectSizeLimit();
+
+    result.value = config.getMaxObjectSizeLimit();
+
+    if (inheritProjectMaxObjectSizeLimit) {
+      for (ProjectState parent : parents()) {
+        long parentValue = parent.config.getMaxObjectSizeLimit();
+        if (parentValue > 0 && result.value > 0) {
+          if (parentValue < result.value) {
+            result.value = parentValue;
+            result.summary = String.format(OVERRIDDEN_BY_PARENT, parent.config.getName());
+          }
+        } else if (parentValue > 0) {
+          result.value = parentValue;
+          result.summary = String.format(INHERITED_FROM_PARENT, parent.config.getName());
+        }
+      }
+    }
+
+    if (globalMaxObjectSizeLimit > 0 && result.value > 0) {
+      if (globalMaxObjectSizeLimit < result.value) {
+        result.value = globalMaxObjectSizeLimit;
+        result.summary = OVERRIDDEN_BY_GLOBAL;
+      }
+    } else if (globalMaxObjectSizeLimit > result.value) {
+      // zero means "no limit", in this case the max is more limiting
+      result.value = globalMaxObjectSizeLimit;
+      result.summary = INHERITED_FROM_GLOBAL;
+    }
+    return result;
   }
 
   /** Get the sections that pertain only to this project. */

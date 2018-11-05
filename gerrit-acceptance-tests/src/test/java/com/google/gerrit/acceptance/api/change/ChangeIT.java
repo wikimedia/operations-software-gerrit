@@ -209,16 +209,6 @@ public class ChangeIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void reflog() throws Exception {
-    // Tests are using DfsRepository which does not implement getReflogReader,
-    // so this will always fail.
-    // TODO: change this if/when DfsRepository#getReflogReader is implemented.
-    exception.expect(MethodNotAllowedException.class);
-    exception.expectMessage("reflog not supported");
-    gApi.projects().name(project.get()).branch("master").reflog();
-  }
-
-  @Test
   public void get() throws Exception {
     PushOneCommit.Result r = createChange();
     String triplet = project.get() + "~master~" + r.getChangeId();
@@ -403,7 +393,7 @@ public class ChangeIT extends AbstractDaemonTest {
 
     setApiUser(user);
     exception.expect(AuthException.class);
-    exception.expectMessage("not allowed to set work in progress");
+    exception.expectMessage("not allowed to toggle work in progress");
     gApi.changes().id(changeId).setWorkInProgress();
   }
 
@@ -449,7 +439,7 @@ public class ChangeIT extends AbstractDaemonTest {
 
     setApiUser(user);
     exception.expect(AuthException.class);
-    exception.expectMessage("not allowed to set ready for review");
+    exception.expectMessage("not allowed to toggle work in progress");
     gApi.changes().id(changeId).setReadyForReview();
   }
 
@@ -624,7 +614,6 @@ public class ChangeIT extends AbstractDaemonTest {
   @Test
   public void reviewAndMoveToWorkInProgress() throws Exception {
     PushOneCommit.Result r = createChange();
-    r.assertOkStatus();
     assertThat(r.getChange().change().isWorkInProgress()).isFalse();
 
     ReviewInput in = ReviewInput.noScore().setWorkInProgress(true);
@@ -638,7 +627,6 @@ public class ChangeIT extends AbstractDaemonTest {
   @Test
   public void reviewAndSetWorkInProgressAndAddReviewerAndVote() throws Exception {
     PushOneCommit.Result r = createChange();
-    r.assertOkStatus();
     assertThat(r.getChange().change().isWorkInProgress()).isFalse();
 
     ReviewInput in =
@@ -655,7 +643,6 @@ public class ChangeIT extends AbstractDaemonTest {
   @Test
   public void reviewWithWorkInProgressAndReadyReturnsError() throws Exception {
     PushOneCommit.Result r = createChange();
-    r.assertOkStatus();
     ReviewInput in = ReviewInput.noScore();
     in.ready = true;
     in.workInProgress = true;
@@ -664,13 +651,53 @@ public class ChangeIT extends AbstractDaemonTest {
   }
 
   @Test
+  @TestProjectInput(cloneAs = "user")
+  public void reviewWithWorkInProgressChangeOwner() throws Exception {
+    PushOneCommit push = pushFactory.create(db, user.getIdent(), testRepo);
+    PushOneCommit.Result r = push.to("refs/for/master");
+    r.assertOkStatus();
+    assertThat(r.getChange().change().getOwner()).isEqualTo(user.id);
+
+    setApiUser(user);
+    ReviewInput in = ReviewInput.noScore().setWorkInProgress(true);
+    gApi.changes().id(r.getChangeId()).current().review(in);
+    ChangeInfo info = gApi.changes().id(r.getChangeId()).get();
+    assertThat(info.workInProgress).isTrue();
+  }
+
+  @Test
+  @TestProjectInput(cloneAs = "user")
+  public void reviewWithWithWorkInProgressAdmin() throws Exception {
+    PushOneCommit push = pushFactory.create(db, user.getIdent(), testRepo);
+    PushOneCommit.Result r = push.to("refs/for/master");
+    r.assertOkStatus();
+    assertThat(r.getChange().change().getOwner()).isEqualTo(user.id);
+
+    setApiUser(admin);
+    ReviewInput in = ReviewInput.noScore().setWorkInProgress(true);
+    gApi.changes().id(r.getChangeId()).current().review(in);
+    ChangeInfo info = gApi.changes().id(r.getChangeId()).get();
+    assertThat(info.workInProgress).isTrue();
+  }
+
+  @Test
   public void reviewWithWorkInProgressByNonOwnerReturnsError() throws Exception {
     PushOneCommit.Result r = createChange();
-    r.assertOkStatus();
     ReviewInput in = ReviewInput.noScore().setWorkInProgress(true);
     setApiUser(user);
-    ReviewResult result = gApi.changes().id(r.getChangeId()).revision("current").review(in);
-    assertThat(result.error).isEqualTo(PostReview.ERROR_ONLY_OWNER_CAN_MODIFY_WORK_IN_PROGRESS);
+    exception.expect(AuthException.class);
+    exception.expectMessage("not allowed to toggle work in progress");
+    gApi.changes().id(r.getChangeId()).current().review(in);
+  }
+
+  @Test
+  public void reviewWithReadyByNonOwnerReturnsError() throws Exception {
+    PushOneCommit.Result r = createChange();
+    ReviewInput in = ReviewInput.noScore().setReady(true);
+    setApiUser(user);
+    exception.expect(AuthException.class);
+    exception.expectMessage("not allowed to toggle work in progress");
+    gApi.changes().id(r.getChangeId()).current().review(in);
   }
 
   @Test
@@ -1021,6 +1048,7 @@ public class ChangeIT extends AbstractDaemonTest {
 
       String ref = new Change.Id(id).toRefPrefix() + "1";
       eventRecorder.assertRefUpdatedEvents(projectName.get(), ref, null, commit, commit, null);
+      eventRecorder.assertChangeDeletedEvents(changeId, deleteAs.email);
     } finally {
       removePermission(project, "refs/*", Permission.DELETE_OWN_CHANGES);
       removePermission(project, "refs/*", Permission.DELETE_CHANGES);
@@ -2033,6 +2061,58 @@ public class ChangeIT extends AbstractDaemonTest {
     PushOneCommit.Result r = createChange();
     String changeId = r.getChangeId();
     gApi.changes().id(changeId).revision(r.getCommit().name()).review(ReviewInput.approve());
+
+    setApiUser(user);
+    exception.expect(AuthException.class);
+    exception.expectMessage("remove reviewer not permitted");
+    gApi.changes().id(r.getChangeId()).reviewer(admin.getId().toString()).remove();
+  }
+
+  @Test
+  public void removeReviewerSelfFromMergedChangeNotPermitted() throws Exception {
+    PushOneCommit.Result r = createChange();
+    String changeId = r.getChangeId();
+
+    setApiUser(user);
+    recommend(changeId);
+
+    setApiUser(admin);
+    approve(changeId);
+    gApi.changes().id(changeId).revision(r.getCommit().name()).submit();
+
+    setApiUser(user);
+    exception.expect(AuthException.class);
+    exception.expectMessage("remove reviewer not permitted");
+    gApi.changes().id(r.getChangeId()).reviewer("self").remove();
+  }
+
+  @Test
+  public void removeReviewerSelfFromAbandonedChangePermitted() throws Exception {
+    PushOneCommit.Result r = createChange();
+    String changeId = r.getChangeId();
+
+    setApiUser(user);
+    recommend(changeId);
+
+    setApiUser(admin);
+    gApi.changes().id(changeId).abandon();
+
+    setApiUser(user);
+    gApi.changes().id(r.getChangeId()).reviewer("self").remove();
+    eventRecorder.assertReviewerDeletedEvents(changeId, user.email);
+  }
+
+  @Test
+  public void removeOtherReviewerFromAbandonedChangeNotPermitted() throws Exception {
+    PushOneCommit.Result r = createChange();
+    String changeId = r.getChangeId();
+
+    setApiUser(user);
+    recommend(changeId);
+
+    setApiUser(admin);
+    approve(changeId);
+    gApi.changes().id(changeId).abandon();
 
     setApiUser(user);
     exception.expect(AuthException.class);

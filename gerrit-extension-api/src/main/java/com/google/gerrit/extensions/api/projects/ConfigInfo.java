@@ -14,6 +14,7 @@
 
 package com.google.gerrit.extensions.api.projects;
 
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.extensions.client.InheritableBoolean;
 import com.google.gerrit.extensions.client.ProjectState;
 import com.google.gerrit.extensions.client.SubmitType;
@@ -53,9 +54,17 @@ public class ConfigInfo {
   }
 
   public static class MaxObjectSizeLimitInfo {
-    public String value;
-    public String configuredValue;
-    public String inheritedValue;
+    /** The effective value in bytes. Null if not set. */
+    @Nullable public String value;
+
+    /** The value configured explicitly on the project as a formatted string. Null if not set. */
+    @Nullable public String configuredValue;
+
+    /**
+     * Whether the value was inherited or overridden from the project's parent hierarchy or global
+     * config. Null if not inherited or overridden.
+     */
+    @Nullable public String summary;
   }
 
   public static class ConfigParameterInfo {

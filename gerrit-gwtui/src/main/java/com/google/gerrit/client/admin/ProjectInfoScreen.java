@@ -429,14 +429,14 @@ public class ProjectInfoScreen extends ProjectScreen {
     setSubmitType(result.submitType());
     setState(result.state());
     maxObjectSizeLimit.setText(result.maxObjectSizeLimit().configuredValue());
-    if (result.maxObjectSizeLimit().inheritedValue() != null) {
-      effectiveMaxObjectSizeLimit.setVisible(true);
+    if (result.maxObjectSizeLimit().value() != null) {
       effectiveMaxObjectSizeLimit.setText(
           AdminMessages.I.effectiveMaxObjectSizeLimit(result.maxObjectSizeLimit().value()));
-      effectiveMaxObjectSizeLimit.setTitle(
-          AdminMessages.I.globalMaxObjectSizeLimit(result.maxObjectSizeLimit().inheritedValue()));
+      if (result.maxObjectSizeLimit().summary() != null) {
+        effectiveMaxObjectSizeLimit.setTitle(result.maxObjectSizeLimit().summary());
+      }
     } else {
-      effectiveMaxObjectSizeLimit.setVisible(false);
+      effectiveMaxObjectSizeLimit.setText(AdminMessages.I.noMaxObjectSizeLimit());
     }
 
     saveProject.setEnabled(false);
@@ -501,6 +501,9 @@ public class ProjectInfoScreen extends ProjectScreen {
     } else {
       textBox.setValue(param.value());
       addWidget(g, textBox, param);
+    }
+    if (textBox.getValue().length() > textBox.getVisibleLength()) {
+      textBox.setVisibleLength(textBox.getValue().length());
     }
     saveEnabler.listenTo(textBox);
     return textBox;

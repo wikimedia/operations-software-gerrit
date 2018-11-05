@@ -39,7 +39,6 @@ import com.google.gerrit.server.config.ProjectConfigEntry;
 import com.google.gerrit.server.extensions.webui.UiActions;
 import com.google.gerrit.server.git.MetaDataUpdate;
 import com.google.gerrit.server.git.ProjectConfig;
-import com.google.gerrit.server.git.TransferConfig;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -61,7 +60,6 @@ public class PutConfig implements RestModifyView<ProjectResource, ConfigInput> {
   private final Provider<MetaDataUpdate.User> metaDataUpdateFactory;
   private final ProjectCache projectCache;
   private final ProjectState.Factory projectStateFactory;
-  private final TransferConfig config;
   private final DynamicMap<ProjectConfigEntry> pluginConfigEntries;
   private final PluginConfigFactory cfgFactory;
   private final AllProjectsName allProjects;
@@ -75,7 +73,6 @@ public class PutConfig implements RestModifyView<ProjectResource, ConfigInput> {
       Provider<MetaDataUpdate.User> metaDataUpdateFactory,
       ProjectCache projectCache,
       ProjectState.Factory projectStateFactory,
-      TransferConfig config,
       DynamicMap<ProjectConfigEntry> pluginConfigEntries,
       PluginConfigFactory cfgFactory,
       AllProjectsName allProjects,
@@ -86,7 +83,6 @@ public class PutConfig implements RestModifyView<ProjectResource, ConfigInput> {
     this.metaDataUpdateFactory = metaDataUpdateFactory;
     this.projectCache = projectCache;
     this.projectStateFactory = projectStateFactory;
-    this.config = config;
     this.pluginConfigEntries = pluginConfigEntries;
     this.cfgFactory = cfgFactory;
     this.allProjects = allProjects;
@@ -190,14 +186,13 @@ public class PutConfig implements RestModifyView<ProjectResource, ConfigInput> {
               "Cannot update " + projectName + ": " + e.getCause().getMessage());
         }
         log.warn("Failed to update config of project {}.", projectName, e);
-        throw new ResourceConflictException("Cannot update " + projectName);
+        throw new ResourceConflictException("Cannot update " + projectName, e);
       }
 
-      ProjectState state = projectStateFactory.create(projectConfig);
+      ProjectState state = projectStateFactory.create(ProjectConfig.read(md));
       return new ConfigInfoImpl(
           serverEnableSignedPush,
           state.controlFor(user.get()),
-          config,
           pluginConfigEntries,
           cfgFactory,
           allProjects,

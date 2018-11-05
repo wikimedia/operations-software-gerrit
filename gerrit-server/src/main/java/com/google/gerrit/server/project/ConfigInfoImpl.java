@@ -30,7 +30,7 @@ import com.google.gerrit.server.config.PluginConfig;
 import com.google.gerrit.server.config.PluginConfigFactory;
 import com.google.gerrit.server.config.ProjectConfigEntry;
 import com.google.gerrit.server.extensions.webui.UiActions;
-import com.google.gerrit.server.git.TransferConfig;
+import com.google.gerrit.server.project.ProjectState.EffectiveMaxObjectSizeLimit;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -40,7 +40,6 @@ public class ConfigInfoImpl extends ConfigInfo {
   public ConfigInfoImpl(
       boolean serverEnableSignedPush,
       ProjectControl control,
-      TransferConfig config,
       DynamicMap<ProjectConfigEntry> pluginConfigEntries,
       PluginConfigFactory cfgFactory,
       AllProjectsName allProjects,
@@ -114,14 +113,7 @@ public class ConfigInfoImpl extends ConfigInfo {
     this.privateByDefault = privateByDefault;
     this.workInProgressByDefault = workInProgressByDefault;
 
-    MaxObjectSizeLimitInfo maxObjectSizeLimit = new MaxObjectSizeLimitInfo();
-    maxObjectSizeLimit.value =
-        config.getEffectiveMaxObjectSizeLimit(projectState) == config.getMaxObjectSizeLimit()
-            ? config.getFormattedMaxObjectSizeLimit()
-            : p.getMaxObjectSizeLimit();
-    maxObjectSizeLimit.configuredValue = p.getMaxObjectSizeLimit();
-    maxObjectSizeLimit.inheritedValue = config.getFormattedMaxObjectSizeLimit();
-    this.maxObjectSizeLimit = maxObjectSizeLimit;
+    this.maxObjectSizeLimit = getMaxObjectSizeLimit(projectState, p);
 
     this.submitType = p.getSubmitType();
     this.state =
@@ -144,6 +136,16 @@ public class ConfigInfoImpl extends ConfigInfo {
     this.theme = projectState.getTheme();
 
     this.extensionPanelNames = projectState.getConfig().getExtensionPanelSections();
+  }
+
+  private MaxObjectSizeLimitInfo getMaxObjectSizeLimit(ProjectState projectState, Project p) {
+    MaxObjectSizeLimitInfo info = new MaxObjectSizeLimitInfo();
+    EffectiveMaxObjectSizeLimit limit = projectState.getEffectiveMaxObjectSizeLimit();
+    long value = limit.value;
+    info.value = value == 0 ? null : String.valueOf(value);
+    info.configuredValue = p.getMaxObjectSizeLimit();
+    info.summary = limit.summary;
+    return info;
   }
 
   private Map<String, Map<String, ConfigParameterInfo>> getPluginConfig(

@@ -17,6 +17,7 @@ package com.google.gerrit.server.account;
 import static java.util.stream.Collectors.toSet;
 
 import com.google.gerrit.reviewdb.client.Account;
+import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.query.account.InternalAccountQuery;
 import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
@@ -109,7 +110,7 @@ public class AccountResolver {
       return Collections.emptySet();
     }
 
-    if (nameOrEmail.matches(Account.USER_NAME_PATTERN)) {
+    if (ExternalId.isValidUsername(nameOrEmail)) {
       AccountState who = byId.getByUsername(nameOrEmail);
       if (who != null) {
         return Collections.singleton(who.getAccount().getId());

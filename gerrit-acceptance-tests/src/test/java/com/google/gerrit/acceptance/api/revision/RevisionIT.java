@@ -313,8 +313,9 @@ public class RevisionIT extends AbstractDaemonTest {
     assertThat(orig.get().messages).hasSize(1);
     ChangeApi cherry = orig.revision(r.getCommit().name()).cherryPick(in);
 
-    Collection<ChangeMessageInfo> messages =
-        gApi.changes().id(project.get() + "~master~" + r.getChangeId()).get().messages;
+    ChangeInfo changeInfoWithDetails =
+        gApi.changes().id(project.get() + "~master~" + r.getChangeId()).get();
+    Collection<ChangeMessageInfo> messages = changeInfoWithDetails.messages;
     assertThat(messages).hasSize(2);
 
     String cherryPickedRevision = cherry.get().currentRevision;
@@ -328,8 +329,10 @@ public class RevisionIT extends AbstractDaemonTest {
     origIt.next();
     assertThat(origIt.next().message).isEqualTo(expectedMessage);
 
-    assertThat(cherry.get().messages).hasSize(1);
-    Iterator<ChangeMessageInfo> cherryIt = cherry.get().messages.iterator();
+    ChangeInfo cherryPickChangeInfoWithDetails = cherry.get();
+    assertThat(cherryPickChangeInfoWithDetails.workInProgress).isNull();
+    assertThat(cherryPickChangeInfoWithDetails.messages).hasSize(1);
+    Iterator<ChangeMessageInfo> cherryIt = cherryPickChangeInfoWithDetails.messages.iterator();
     expectedMessage = "Patch Set 1: Cherry Picked from branch master.";
     assertThat(cherryIt.next().message).isEqualTo(expectedMessage);
 
@@ -374,6 +377,19 @@ public class RevisionIT extends AbstractDaemonTest {
     assertThat(cherry.get().topic).isNull();
     cherry.current().review(ReviewInput.approve());
     cherry.current().submit();
+  }
+
+  @Test
+  public void cherryPickWorkInProgressChange() throws Exception {
+    PushOneCommit.Result r = pushTo("refs/for/master%wip");
+    CherryPickInput in = new CherryPickInput();
+    in.destination = "foo";
+    in.message = "cherry pick message";
+    gApi.projects().name(project.get()).branch(in.destination).create(new BranchInput());
+    ChangeApi orig = gApi.changes().id(project.get() + "~master~" + r.getChangeId());
+
+    ChangeApi cherry = orig.revision(r.getCommit().name()).cherryPick(in);
+    assertThat(cherry.get().workInProgress).isTrue();
   }
 
   @Test

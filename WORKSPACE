@@ -14,11 +14,9 @@ http_archive(
 
 http_archive(
     name = "io_bazel_rules_closure",
-    build_file_content = "exports_files([\"0001-Replace-native-http-git-_archive-with-Skylark-rules.patch\"])",
-    patches = ["//:0001-Replace-native-http-git-_archive-with-Skylark-rules.patch"],
-    sha256 = "a80acb69c63d5f6437b099c111480a4493bad4592015af2127a2f49fb7512d8d",
-    strip_prefix = "rules_closure-0.7.0",
-    url = "https://github.com/bazelbuild/rules_closure/archive/0.7.0.tar.gz",
+    sha256 = "4dd84dd2bdd6c9f56cb5a475d504ea31d199c34309e202e9379501d01c3067e5",
+    strip_prefix = "rules_closure-3103a773820b59b76345f94c231cb213e0d404e2",
+    urls = ["https://github.com/bazelbuild/rules_closure/archive/3103a773820b59b76345f94c231cb213e0d404e2.tar.gz"],
 )
 
 # File is specific to Polymer and copied from the Closure Github -- should be
@@ -26,13 +24,14 @@ http_archive(
 # https://github.com/google/closure-compiler/blob/master/contrib/externs/polymer-1.0.js
 http_file(
     name = "polymer_closure",
+    downloaded_file_path = "polymer_closure.js",
     sha256 = "5a589bdba674e1fec7188e9251c8624ebf2d4d969beb6635f9148f420d1e08b1",
     urls = ["https://raw.githubusercontent.com/google/closure-compiler/775609aad61e14aef289ebec4bfc09ad88877f9e/contrib/externs/polymer-1.0.js"],
 )
 
 load("@bazel_skylib//:lib.bzl", "versions")
 
-versions.check(minimum_bazel_version = "0.14.0")
+versions.check(minimum_bazel_version = "0.17.1")
 
 load("@io_bazel_rules_closure//closure:defs.bzl", "closure_repositories")
 
@@ -70,30 +69,24 @@ maven_jar(
     sha1 = "83cd2cd674a217ade95a4bb83a8a14f351f48bd0",
 )
 
-GUICE_VERS = "4.1.0"
+GUICE_VERS = "4.2.0"
 
 maven_jar(
     name = "guice-library",
     artifact = "com.google.inject:guice:" + GUICE_VERS,
-    sha1 = "eeb69005da379a10071aa4948c48d89250febb07",
+    sha1 = "25e1f4c1d528a1cffabcca0d432f634f3132f6c8",
 )
 
 maven_jar(
     name = "guice-assistedinject",
     artifact = "com.google.inject.extensions:guice-assistedinject:" + GUICE_VERS,
-    sha1 = "af799dd7e23e6fe8c988da12314582072b07edcb",
+    sha1 = "e7270305960ad7db56f7e30cb9df6be9ff1cfb45",
 )
 
 maven_jar(
     name = "guice-servlet",
     artifact = "com.google.inject.extensions:guice-servlet:" + GUICE_VERS,
-    sha1 = "90ac2db772d9b85e2b05417b74f7464bcc061dcb",
-)
-
-maven_jar(
-    name = "multibindings",
-    artifact = "com.google.inject.extensions:guice-multibindings:" + GUICE_VERS,
-    sha1 = "3b27257997ac51b0f8d19676f1ea170427e86d51",
+    sha1 = "f57581625c36c148f088d9f52a568d5bdf12c61d",
 )
 
 maven_jar(
@@ -446,10 +439,18 @@ maven_jar(
     sha1 = "b60e33a6bd0d71831e0c249816d01e6c1dd90a47",
 )
 
+AUTO_VALUE_VERSION = "1.6.2"
+
 maven_jar(
     name = "auto-value",
-    artifact = "com.google.auto.value:auto-value:1.4.1",
-    sha1 = "8172ebbd7970188aff304c8a420b9f17168f6f48",
+    artifact = "com.google.auto.value:auto-value:" + AUTO_VALUE_VERSION,
+    sha1 = "e7eae562942315a983eea3e191b72d755c153620",
+)
+
+maven_jar(
+    name = "auto-value-annotations",
+    artifact = "com.google.auto.value:auto-value-annotations:" + AUTO_VALUE_VERSION,
+    sha1 = "ed193d86e0af90cc2342aedbe73c5d86b03fa09b",
 )
 
 maven_jar(
@@ -574,8 +575,8 @@ maven_jar(
 
 maven_jar(
     name = "dropwizard-core",
-    artifact = "io.dropwizard.metrics:metrics-core:4.0.2",
-    sha1 = "ec9878842d510cabd6bd6a9da1bebae1ae0cd199",
+    artifact = "io.dropwizard.metrics:metrics-core:4.0.3",
+    sha1 = "bb562ee73f740bb6b2bf7955f97be6b870d9e9f0",
 )
 
 # When updading Bouncy Castle, also update it in bazlets.
@@ -673,13 +674,6 @@ maven_jar(
     name = "hamcrest-core",
     artifact = "org.hamcrest:hamcrest-core:1.3",
     sha1 = "42a25dc3219429f0e5d060061f71acb49bf010a0",
-)
-
-# Only needed when jgit is built from the development tree
-maven_jar(
-    name = "hamcrest-library",
-    artifact = "org.hamcrest:hamcrest-library:1.3",
-    sha1 = "4785a3c21320980282f9f33d0d1264a69040538f",
 )
 
 TRUTH_VERS = "0.35"
@@ -843,8 +837,8 @@ maven_jar(
 
 maven_jar(
     name = "postgresql",
-    artifact = "org.postgresql:postgresql:9.4.1211",
-    sha1 = "721e3017fab68db9f0b08537ec91b8d757973ca8",
+    artifact = "org.postgresql:postgresql:42.2.4",
+    sha1 = "dff98730c28a4b3a3263f0cf4abb9a3392f815a7",
 )
 
 maven_jar(
@@ -874,28 +868,28 @@ maven_jar(
 
 maven_jar(
     name = "asciidoctor",
-    artifact = "org.asciidoctor:asciidoctorj:1.5.6",
-    sha1 = "bb757d4b8b0f8438ce2ed781f6688cc6c01d9237",
+    artifact = "org.asciidoctor:asciidoctorj:1.5.7",
+    sha1 = "8e8c1d8fc6144405700dd8df3b177f2801ac5987",
 )
 
 maven_jar(
     name = "jruby",
-    artifact = "org.jruby:jruby-complete:9.1.13.0",
-    sha1 = "8903bf42272062e87a7cbc1d98919e0729a9939f",
+    artifact = "org.jruby:jruby-complete:9.1.17.0",
+    sha1 = "76716d529710fc03d1d429b43e3cedd4419f78d4",
 )
 
 maven_jar(
     name = "elasticsearch-rest-client",
-    artifact = "org.elasticsearch.client:elasticsearch-rest-client:6.3.1",
-    sha1 = "99de036a2cd99dbecec1cc84f5d0e19032e74fa7",
+    artifact = "org.elasticsearch.client:elasticsearch-rest-client:6.4.2",
+    sha1 = "a2baf2d4fdf03f31fbd39351a32bee25fcdfa1cf",
 )
 
-JACKSON_VERSION = "2.6.6"
+JACKSON_VERSION = "2.9.7"
 
 maven_jar(
     name = "jackson-core",
     artifact = "com.fasterxml.jackson.core:jackson-core:" + JACKSON_VERSION,
-    sha1 = "02eb801df67aacaf5b1deb4ac626e1964508e47b",
+    sha1 = "4b7f0e0dc527fab032e9800ed231080fdc3ac015",
 )
 
 maven_jar(
