@@ -34,7 +34,8 @@ def main():
         if file == 'gerrit.war':
             artifact_id = 'gerrit'
             packaging = 'war'
-        elif file.startswith('plugins/') and file.endswith('.jar'):
+        elif ((file.startswith('plugins/') or file.startswith('lib/')) and
+              file.endswith('.jar')):
             group_id = '%s.gerrit.plugins' % group_id
             artifact_id = os.path.splitext(os.path.basename(file))[0]
             packaging = 'jar'
