@@ -43,6 +43,11 @@
 	url = https://gerrit.googlesource.com/plugins/its-phabricator
 	branch = .
 
+[submodule "plugins/javamelody"]
+	path = plugins/javamelody
+	url = https://gerrit.googlesource.com/plugins/javamelody
+	branch = .
+
 [submodule "plugins/lfs"]
 	path = plugins/lfs
 	url = https://gerrit.googlesource.com/plugins/lfs
