@@ -1,4 +1,4 @@
-// Copyright (C) 2016 The Android Open Source Project
+// Copyright (C) 2018 The Android Open Source Project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,9 +23,9 @@ import org.eclipse.jgit.lib.Config;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 
-public class ElasticQueryAccountsTest extends AbstractQueryAccountsTest {
+public class ElasticV7QueryAccountsTest extends AbstractQueryAccountsTest {
   private static ElasticNodeInfo nodeInfo;
-  private static ElasticContainer<?> container;
+  private static ElasticContainer container;
 
   @BeforeClass
   public static void startIndexService() {
@@ -34,7 +34,7 @@ public class ElasticQueryAccountsTest extends AbstractQueryAccountsTest {
       return;
     }
 
-    container = ElasticContainer.createAndStart();
+    container = ElasticContainer.createAndStart(ElasticVersion.V7_0);
     nodeInfo = new ElasticNodeInfo(container.getHttpHost().getPort());
   }
 
@@ -43,10 +43,6 @@ public class ElasticQueryAccountsTest extends AbstractQueryAccountsTest {
     if (container != null) {
       container.stop();
     }
-  }
-
-  private String testName() {
-    return testName.getMethodName().toLowerCase() + "_";
   }
 
   @Override
@@ -59,7 +55,7 @@ public class ElasticQueryAccountsTest extends AbstractQueryAccountsTest {
   protected Injector createInjector() {
     Config elasticsearchConfig = new Config(config);
     InMemoryModule.setDefaults(elasticsearchConfig);
-    String indicesPrefix = testName();
+    String indicesPrefix = getSanitizedMethodName();
     ElasticTestUtils.configure(elasticsearchConfig, nodeInfo.port, indicesPrefix);
     return Guice.createInjector(new InMemoryModule(elasticsearchConfig, notesMigration));
   }

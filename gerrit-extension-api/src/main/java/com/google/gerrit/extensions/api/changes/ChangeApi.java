@@ -92,9 +92,13 @@ public interface ChangeApi {
 
   void setPrivate(boolean value, @Nullable String message) throws RestApiException;
 
-  void setWorkInProgress(String message) throws RestApiException;
+  default void setPrivate(boolean value) throws RestApiException {
+    setPrivate(value, null);
+  }
 
-  void setReadyForReview(String message) throws RestApiException;
+  void setWorkInProgress(@Nullable String message) throws RestApiException;
+
+  void setReadyForReview(@Nullable String message) throws RestApiException;
 
   default void setWorkInProgress() throws RestApiException {
     setWorkInProgress(null);
@@ -178,6 +182,11 @@ public interface ChangeApi {
   SuggestedReviewersRequest suggestReviewers() throws RestApiException;
 
   SuggestedReviewersRequest suggestReviewers(String query) throws RestApiException;
+
+  /**
+   * Retrieve reviewers ({@code ReviewerState.REVIEWER} and {@code ReviewerState.CC}) on the change.
+   */
+  List<ReviewerInfo> reviewers() throws RestApiException;
 
   ChangeInfo get(EnumSet<ListChangesOption> options) throws RestApiException;
 
@@ -446,6 +455,11 @@ public interface ChangeApi {
 
     @Override
     public SuggestedReviewersRequest suggestReviewers(String query) throws RestApiException {
+      throw new NotImplementedException();
+    }
+
+    @Override
+    public List<ReviewerInfo> reviewers() throws RestApiException {
       throw new NotImplementedException();
     }
 

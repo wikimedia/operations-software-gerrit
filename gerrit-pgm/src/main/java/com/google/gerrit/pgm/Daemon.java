@@ -20,6 +20,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
+import com.google.gerrit.audit.AuditModule;
 import com.google.gerrit.common.EventBroker;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.elasticsearch.ElasticIndexModule;
@@ -75,6 +76,7 @@ import com.google.gerrit.server.git.receive.ReceiveCommitsExecutorModule;
 import com.google.gerrit.server.index.DummyIndexModule;
 import com.google.gerrit.server.index.IndexModule;
 import com.google.gerrit.server.index.IndexModule.IndexType;
+import com.google.gerrit.server.index.OnlineUpgrader;
 import com.google.gerrit.server.index.VersionManager;
 import com.google.gerrit.server.mail.SignedTokenEmailTokenVerifier;
 import com.google.gerrit.server.mail.receive.MailReceiver;
@@ -193,6 +195,7 @@ public class Daemon extends SiteProgram {
   private AbstractModule luceneModule;
   private Module emailModule;
   private Module testSysModule;
+  private Module auditEventModule;
 
   private Runnable serverStarted;
   private IndexType indexType;
@@ -310,6 +313,11 @@ public class Daemon extends SiteProgram {
   }
 
   @VisibleForTesting
+  public void setAuditEventModuleForTesting(Module module) {
+    auditEventModule = module;
+  }
+
+  @VisibleForTesting
   public void setLuceneModule(LuceneIndexModule m) {
     luceneModule = m;
     inMemoryTest = true;
@@ -382,19 +390,6 @@ public class Daemon extends SiteProgram {
     modules.add(new DropWizardMetricMaker.RestModule());
     modules.add(new LogFileCompressor.Module());
 
-    // Plugin module needs to be inserted *before* the index module.
-    // There is the concept of LifecycleModule, in Gerrit's own extension
-    // to Guice, which has these:
-    //  listener().to(SomeClassImplementingLifecycleListener.class);
-    // and the start() methods of each such listener are executed in the
-    // order they are declared.
-    // Makes sure that PluginLoader.start() is executed before the
-    // LuceneIndexModule.start() so that plugins get loaded and the respective
-    // Guice modules installed so that the on-line reindexing will happen
-    // with the proper classes (e.g. group backends, custom Prolog
-    // predicates) and the associated rules ready to be evaluated.
-    modules.add(new PluginModule());
-
     // Index module shutdown must happen before work queue shutdown, otherwise
     // work queue can get stuck waiting on index futures that will never return.
     modules.add(createIndexModule());
@@ -421,7 +416,18 @@ public class Daemon extends SiteProgram {
     } else {
       modules.add(new SmtpEmailSender.Module());
     }
+    if (auditEventModule != null) {
+      modules.add(auditEventModule);
+    } else {
+      modules.add(new AuditModule());
+    }
     modules.add(new SignedTokenEmailTokenVerifier.Module());
+    modules.add(new PluginModule());
+    if (VersionManager.getOnlineUpgrade(config)
+        // Schema upgrade is handled by OnlineNoteDbMigrator in this case.
+        && !migrateToNoteDb()) {
+      modules.add(new OnlineUpgrader.Module());
+    }
     modules.add(new PluginRestApiModule());
     modules.add(new RestCacheAdminModule());
     modules.add(new GpgModule(config));
@@ -489,19 +495,11 @@ public class Daemon extends SiteProgram {
     if (luceneModule != null) {
       return luceneModule;
     }
-    boolean onlineUpgrade =
-        VersionManager.getOnlineUpgrade(config)
-            // Schema upgrade is handled by OnlineNoteDbMigrator in this case.
-            && !migrateToNoteDb();
     switch (indexType) {
       case LUCENE:
-        return onlineUpgrade
-            ? LuceneIndexModule.latestVersionWithOnlineUpgrade()
-            : LuceneIndexModule.latestVersionWithoutOnlineUpgrade();
+        return LuceneIndexModule.latestVersion();
       case ELASTICSEARCH:
-        return onlineUpgrade
-            ? ElasticIndexModule.latestVersionWithOnlineUpgrade()
-            : ElasticIndexModule.latestVersionWithoutOnlineUpgrade();
+        return ElasticIndexModule.latestVersion();
       default:
         throw new IllegalStateException("unsupported index.type = " + indexType);
     }

@@ -2,7 +2,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>com.google.gerrit</groupId>
   <artifactId>gerrit-plugin-api</artifactId>
-  <version>2.15.6</version>
+  <version>2.15.8</version>
   <packaging>jar</packaging>
   <name>Gerrit Code Review - Plugin API</name>
   <description>API for Gerrit Plugins</description>
@@ -44,6 +44,9 @@
       <name>Edwin Kempin</name>
     </developer>
     <developer>
+      <name>Han-Wen Nienhuys</name>
+    </developer>
+    <developer>
       <name>Hugo Arès</name>
     </developer>
     <developer>
@@ -54,6 +57,9 @@
     </developer>
     <developer>
       <name>Luca Milanesio</name>
+    </developer>
+    <developer>
+      <name>Marco Miller</name>
     </developer>
     <developer>
       <name>Martin Fick</name>

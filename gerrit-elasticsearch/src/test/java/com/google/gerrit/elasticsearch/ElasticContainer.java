@@ -14,21 +14,19 @@
 
 package com.google.gerrit.elasticsearch;
 
-import com.google.common.collect.ImmutableSet;
-import java.util.Set;
 import org.apache.http.HttpHost;
 import org.junit.internal.AssumptionViolatedException;
-import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.elasticsearch.ElasticsearchContainer;
 
 /* Helper class for running ES integration tests in docker container */
-public class ElasticContainer<SELF extends ElasticContainer<SELF>> extends GenericContainer<SELF> {
+public class ElasticContainer extends ElasticsearchContainer {
   private static final int ELASTICSEARCH_DEFAULT_PORT = 9200;
 
-  public static ElasticContainer<?> createAndStart(ElasticVersion version) {
+  public static ElasticContainer createAndStart(ElasticVersion version) {
     // Assumption violation is not natively supported by Testcontainers.
     // See https://github.com/testcontainers/testcontainers-java/issues/343
     try {
-      ElasticContainer<?> container = new ElasticContainer<>(version);
+      ElasticContainer container = new ElasticContainer(version);
       container.start();
       return container;
     } catch (Throwable t) {
@@ -36,41 +34,26 @@ public class ElasticContainer<SELF extends ElasticContainer<SELF>> extends Gener
     }
   }
 
-  public static ElasticContainer<?> createAndStart() {
-    return createAndStart(ElasticVersion.V2_4);
-  }
-
   private static String getImageName(ElasticVersion version) {
     switch (version) {
-      case V2_4:
-        return "elasticsearch:2.4.6-alpine";
       case V5_6:
-        return "docker.elastic.co/elasticsearch/elasticsearch:5.6.12";
+        return "docker.elastic.co/elasticsearch/elasticsearch:5.6.14";
       case V6_2:
         return "docker.elastic.co/elasticsearch/elasticsearch-oss:6.2.4";
       case V6_3:
         return "docker.elastic.co/elasticsearch/elasticsearch-oss:6.3.2";
       case V6_4:
-        return "docker.elastic.co/elasticsearch/elasticsearch-oss:6.4.2";
+        return "docker.elastic.co/elasticsearch/elasticsearch-oss:6.4.3";
+      case V6_5:
+        return "docker.elastic.co/elasticsearch/elasticsearch-oss:6.5.4";
+      case V7_0:
+        return "docker.elastic.co/elasticsearch/elasticsearch-oss:7.0.0-alpha2";
     }
     throw new IllegalStateException("No tests for version: " + version.name());
   }
 
   private ElasticContainer(ElasticVersion version) {
     super(getImageName(version));
-  }
-
-  @Override
-  protected void configure() {
-    addExposedPort(ELASTICSEARCH_DEFAULT_PORT);
-
-    // https://github.com/docker-library/elasticsearch/issues/58
-    addEnv("-Ees.network.host", "0.0.0.0");
-  }
-
-  @Override
-  public Set<Integer> getLivenessCheckPortNumbers() {
-    return ImmutableSet.of(getMappedPort(ELASTICSEARCH_DEFAULT_PORT));
   }
 
   public HttpHost getHttpHost() {

@@ -1,9 +1,7 @@
-package(default_visibility = ["//visibility:public"])
-
-load("//tools/bzl:asciidoc.bzl", "documentation_attributes")
-load("//tools/bzl:asciidoc.bzl", "genasciidoc")
-load("//tools/bzl:asciidoc.bzl", "genasciidoc_zip")
+load("//tools/bzl:asciidoc.bzl", "documentation_attributes", "genasciidoc", "genasciidoc_zip")
 load("//tools/bzl:license.bzl", "license_map")
+
+package(default_visibility = ["//visibility:public"])
 
 exports_files([
     "replace_macros.py",
@@ -40,7 +38,6 @@ filegroup(
         ":prettify_files",
         "//:LICENSES.txt",
     ],
-    visibility = ["//visibility:public"],
 )
 
 license_map(
@@ -51,7 +48,6 @@ license_map(
         "//gerrit-gwtui:ui_module",
         "//polygerrit-ui/app:polygerrit_ui",
     ],
-    visibility = ["//visibility:public"],
 )
 
 license_map(
@@ -60,7 +56,6 @@ license_map(
         "//gerrit-gwtui:ui_module",
         "//polygerrit-ui/app:polygerrit_ui",
     ],
-    visibility = ["//visibility:public"],
 )
 
 DOC_DIR = "Documentation"
@@ -88,7 +83,6 @@ genasciidoc(
     srcs = SRCS,
     attributes = documentation_attributes(),
     backend = "html5",
-    visibility = ["//visibility:public"],
 )
 
 genasciidoc_zip(
@@ -97,7 +91,6 @@ genasciidoc_zip(
     attributes = documentation_attributes(),
     backend = "html5",
     directory = DOC_DIR,
-    visibility = ["//visibility:public"],
 )
 
 genasciidoc_zip(
@@ -107,5 +100,4 @@ genasciidoc_zip(
     backend = "html5",
     directory = DOC_DIR,
     searchbox = False,
-    visibility = ["//visibility:public"],
 )

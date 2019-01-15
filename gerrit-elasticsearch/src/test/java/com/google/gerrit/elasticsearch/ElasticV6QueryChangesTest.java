@@ -26,7 +26,7 @@ import org.junit.BeforeClass;
 public class ElasticV6QueryChangesTest extends AbstractQueryChangesTest {
 
   private static ElasticNodeInfo nodeInfo;
-  private static ElasticContainer<?> container;
+  private static ElasticContainer container;
 
   @BeforeClass
   public static void startIndexService() {
@@ -35,7 +35,7 @@ public class ElasticV6QueryChangesTest extends AbstractQueryChangesTest {
       return;
     }
 
-    container = ElasticContainer.createAndStart(ElasticVersion.V6_4);
+    container = ElasticContainer.createAndStart(ElasticVersion.V6_5);
     nodeInfo = new ElasticNodeInfo(container.getHttpHost().getPort());
   }
 
@@ -44,10 +44,6 @@ public class ElasticV6QueryChangesTest extends AbstractQueryChangesTest {
     if (container != null) {
       container.stop();
     }
-  }
-
-  private String testName() {
-    return testName.getMethodName().toLowerCase() + "_";
   }
 
   @Override
@@ -60,7 +56,7 @@ public class ElasticV6QueryChangesTest extends AbstractQueryChangesTest {
   protected Injector createInjector() {
     Config elasticsearchConfig = new Config(config);
     InMemoryModule.setDefaults(elasticsearchConfig);
-    String indicesPrefix = testName();
+    String indicesPrefix = getSanitizedMethodName();
     ElasticTestUtils.configure(elasticsearchConfig, nodeInfo.port, indicesPrefix);
     return Guice.createInjector(new InMemoryModule(elasticsearchConfig, notesMigration));
   }

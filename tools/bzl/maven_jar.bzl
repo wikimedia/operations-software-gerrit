@@ -6,6 +6,8 @@ MAVEN_CENTRAL = "MAVEN_CENTRAL:"
 
 MAVEN_LOCAL = "MAVEN_LOCAL:"
 
+ECLIPSE = "ECLIPSE:"
+
 def _maven_release(ctx, parts):
     """induce jar and url name from maven coordinates."""
     if len(parts) not in [3, 4]:
@@ -164,15 +166,15 @@ def _maven_jar_impl(ctx):
 maven_jar = repository_rule(
     attrs = {
         "artifact": attr.string(mandatory = True),
+        "attach_source": attr.bool(default = True),
+        "exclude": attr.string_list(),
+        "repository": attr.string(default = MAVEN_CENTRAL),
         "sha1": attr.string(),
         "src_sha1": attr.string(),
-        "_download_script": attr.label(default = Label("//tools:download_file.py")),
-        "repository": attr.string(default = MAVEN_CENTRAL),
-        "attach_source": attr.bool(default = True),
         "unsign": attr.bool(default = False),
-        "deps": attr.string_list(),
         "exports": attr.string_list(),
-        "exclude": attr.string_list(),
+        "deps": attr.string_list(),
+        "_download_script": attr.label(default = Label("//tools:download_file.py")),
     },
     local = True,
     implementation = _maven_jar_impl,

@@ -1,8 +1,6 @@
-package(
-    default_visibility = ["//visibility:public"],
-)
-
 load("//tools/bzl:junit.bzl", "junit_tests")
+
+package(default_visibility = ["//visibility:public"])
 
 SRCS = glob(
     ["src/main/java/**/*.java"],
@@ -14,7 +12,6 @@ java_library(
     name = "httpd",
     srcs = SRCS,
     resources = RESOURCES,
-    visibility = ["//visibility:public"],
     deps = [
         "//gerrit-common:annotations",
         "//gerrit-common:server",

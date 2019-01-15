@@ -1,3 +1,5 @@
+load("//tools/bzl:junit.bzl", "junit_tests")
+
 java_library(
     name = "elasticsearch",
     srcs = glob(["src/main/java/**/*.java"]),
@@ -26,8 +28,6 @@ java_library(
     ],
 )
 
-load("//tools/bzl:junit.bzl", "junit_tests")
-
 java_library(
     name = "elasticsearch_test_utils",
     testonly = 1,
@@ -46,6 +46,7 @@ java_library(
         "//lib/httpcomponents:httpcore",
         "//lib/jgit/org.eclipse.jgit:jgit",
         "//lib/testcontainers",
+        "//lib/testcontainers:testcontainers-elasticsearch",
     ],
 )
 
@@ -67,25 +68,17 @@ TYPES = [
 
 SUFFIX = "sTest.java"
 
-ELASTICSEARCH_TESTS = {i: "src/test/java/com/google/gerrit/elasticsearch/ElasticQuery" + i.capitalize() + SUFFIX for i in TYPES}
-
 ELASTICSEARCH_TESTS_V5 = {i: "src/test/java/com/google/gerrit/elasticsearch/ElasticV5Query" + i.capitalize() + SUFFIX for i in TYPES}
 
 ELASTICSEARCH_TESTS_V6 = {i: "src/test/java/com/google/gerrit/elasticsearch/ElasticV6Query" + i.capitalize() + SUFFIX for i in TYPES}
+
+ELASTICSEARCH_TESTS_V7 = {i: "src/test/java/com/google/gerrit/elasticsearch/ElasticV7Query" + i.capitalize() + SUFFIX for i in TYPES}
 
 ELASTICSEARCH_TAGS = [
     "docker",
     "elastic",
     "exclusive",
 ]
-
-[junit_tests(
-    name = "elasticsearch_query_%ss_test" % name,
-    size = "large",
-    srcs = [src],
-    tags = ELASTICSEARCH_TAGS,
-    deps = ELASTICSEARCH_DEPS,
-) for name, src in ELASTICSEARCH_TESTS.items()]
 
 [junit_tests(
     name = "elasticsearch_query_%ss_test_v5" % name,
@@ -102,6 +95,17 @@ ELASTICSEARCH_TAGS = [
     tags = ELASTICSEARCH_TAGS,
     deps = ELASTICSEARCH_DEPS,
 ) for name, src in ELASTICSEARCH_TESTS_V6.items()]
+
+[junit_tests(
+    name = "elasticsearch_query_%ss_test_v7" % name,
+    size = "large",
+    srcs = [src],
+    tags = ELASTICSEARCH_TAGS,
+    deps = ELASTICSEARCH_DEPS + [
+        "//lib/httpcomponents:httpasyncclient",
+        "//lib/httpcomponents:httpclient",
+    ],
+) for name, src in ELASTICSEARCH_TESTS_V7.items()]
 
 junit_tests(
     name = "elasticsearch_tests",

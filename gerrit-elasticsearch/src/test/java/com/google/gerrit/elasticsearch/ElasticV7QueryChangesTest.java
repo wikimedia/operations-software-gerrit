@@ -1,4 +1,4 @@
-// Copyright (C) 2017 The Android Open Source Project
+// Copyright (C) 2018 The Android Open Source Project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,17 +15,24 @@
 package com.google.gerrit.elasticsearch;
 
 import com.google.gerrit.elasticsearch.ElasticTestUtils.ElasticNodeInfo;
-import com.google.gerrit.server.query.group.AbstractQueryGroupsTest;
+import com.google.gerrit.server.query.change.AbstractQueryChangesTest;
 import com.google.gerrit.testutil.InMemoryModule;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.protocol.HttpClientContext;
+import org.apache.http.impl.nio.client.CloseableHttpAsyncClient;
+import org.apache.http.impl.nio.client.HttpAsyncClients;
 import org.eclipse.jgit.lib.Config;
+import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 
-public class ElasticQueryGroupsTest extends AbstractQueryGroupsTest {
+public class ElasticV7QueryChangesTest extends AbstractQueryChangesTest {
+
   private static ElasticNodeInfo nodeInfo;
-  private static ElasticContainer<?> container;
+  private static ElasticContainer container;
+  private static CloseableHttpAsyncClient client;
 
   @BeforeClass
   public static void startIndexService() {
@@ -34,8 +41,10 @@ public class ElasticQueryGroupsTest extends AbstractQueryGroupsTest {
       return;
     }
 
-    container = ElasticContainer.createAndStart();
+    container = ElasticContainer.createAndStart(ElasticVersion.V7_0);
     nodeInfo = new ElasticNodeInfo(container.getHttpHost().getPort());
+    client = HttpAsyncClients.createDefault();
+    client.start();
   }
 
   @AfterClass
@@ -45,8 +54,14 @@ public class ElasticQueryGroupsTest extends AbstractQueryGroupsTest {
     }
   }
 
-  private String testName() {
-    return testName.getMethodName().toLowerCase() + "_";
+  @After
+  public void closeIndex() {
+    client.execute(
+        new HttpPost(
+            String.format(
+                "http://localhost:%d/%s*/_close", nodeInfo.port, getSanitizedMethodName())),
+        HttpClientContext.create(),
+        null);
   }
 
   @Override
@@ -59,7 +74,7 @@ public class ElasticQueryGroupsTest extends AbstractQueryGroupsTest {
   protected Injector createInjector() {
     Config elasticsearchConfig = new Config(config);
     InMemoryModule.setDefaults(elasticsearchConfig);
-    String indicesPrefix = testName();
+    String indicesPrefix = getSanitizedMethodName();
     ElasticTestUtils.configure(elasticsearchConfig, nodeInfo.port, indicesPrefix);
     return Guice.createInjector(new InMemoryModule(elasticsearchConfig, notesMigration));
   }
