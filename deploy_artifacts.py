@@ -29,14 +29,15 @@ def main():
     os.chdir(os.path.dirname(__file__))
     opts = parse_args()
 
-    group_id = 'com.googlesource'
+    base_group_id = 'com.googlesource'
     for file in opts.files:
         if file == 'gerrit.war':
+            group_id = base_group_id
             artifact_id = 'gerrit'
             packaging = 'war'
         elif ((file.startswith('plugins/') or file.startswith('lib/')) and
               file.endswith('.jar')):
-            group_id = '%s.gerrit.plugins' % group_id
+            group_id = '%s.gerrit.plugins' % base_group_id
             artifact_id = os.path.splitext(os.path.basename(file))[0]
             packaging = 'jar'
         else:
