@@ -73,11 +73,6 @@
 	url = https://gerrit.googlesource.com/plugins/reviewers
 	branch = .
 
-[submodule "plugins/reviewers-by-blame"]
-	path = plugins/reviewers-by-blame
-	url = https://gerrit.googlesource.com/plugins/reviewers-by-blame
-	branch = .
-
 [submodule "plugins/reviewnotes"]
 	path = plugins/reviewnotes
 	url = https://gerrit.googlesource.com/plugins/reviewnotes
