@@ -28,6 +28,11 @@
 	url = https://gerrit.wikimedia.org/r/operations/software/gerrit/plugins/go-import
 	branch = .
 
+[submodule "plugins/healthcheck"]
+        path = plugins/healthcheck
+        url = https://gerrit.googlesource.com/plugins/healthcheck
+        branch = .
+
 [submodule "plugins/hooks"]
 	path = plugins/hooks
 	url = https://gerrit.googlesource.com/plugins/hooks

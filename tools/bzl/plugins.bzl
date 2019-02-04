@@ -13,6 +13,7 @@ CUSTOM_PLUGINS = [
     "javamelody",
     "gitiles",
     "go-import",
+    "healthcheck",
     "its-phabricator",
     "lfs",
     "motd",
