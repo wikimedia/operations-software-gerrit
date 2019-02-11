@@ -102,3 +102,8 @@
 	path = plugins/zuul
 	url = https://gerrit.googlesource.com/plugins/zuul
 	branch = .
+
+[submodule "plugins/zuul-status"]
+	path = plugins/zuul-status
+	url = https://gerrit.googlesource.com/plugins/zuul-status
+	branch = .

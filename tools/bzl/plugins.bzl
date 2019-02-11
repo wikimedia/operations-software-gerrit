@@ -21,6 +21,7 @@ CUSTOM_PLUGINS = [
     "reviewers",
     "webhooks",
     "zuul",
+    "zuul-status",
 ]
 
 CUSTOM_PLUGINS_TEST_DEPS = [
