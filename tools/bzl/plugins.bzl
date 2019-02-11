@@ -18,7 +18,6 @@ CUSTOM_PLUGINS = [
     "lfs",
     "motd",
     "reviewers",
-    "reviewers-by-blame",
     "webhooks",
     "zuul",
 ]
