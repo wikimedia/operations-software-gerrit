@@ -1,34 +1,104 @@
+[submodule "plugins/avatars-external"]
+	path = plugins/avatars-external
+	url = https://gerrit.googlesource.com/plugins/avatars-external
+	branch = .
+
 [submodule "plugins/codemirror-editor"]
 	path = plugins/codemirror-editor
-	url = ../plugins/codemirror-editor
+	url = https://gerrit.googlesource.com/plugins/codemirror-editor
 	branch = .
 
 [submodule "plugins/commit-message-length-validator"]
 	path = plugins/commit-message-length-validator
-	url = ../plugins/commit-message-length-validator
+	url = https://gerrit.googlesource.com/plugins/commit-message-length-validator
+	branch = .
+
+[submodule "plugins/delete-project"]
+	path = plugins/delete-project
+	url = https://gerrit.googlesource.com/plugins/delete-project
 	branch = .
 
 [submodule "plugins/download-commands"]
 	path = plugins/download-commands
-	url = ../plugins/download-commands
+	url = https://gerrit.googlesource.com/plugins/download-commands
+	branch = .
+
+[submodule "plugins/gitiles"]
+	path = plugins/gitiles
+	url = https://gerrit.googlesource.com/plugins/gitiles
+	branch = .
+
+[submodule "plugins/go-import"]
+	path = plugins/go-import
+	url = https://gerrit.wikimedia.org/r/operations/software/gerrit/plugins/go-import
+	branch = .
+
+[submodule "plugins/healthcheck"]
+	path = plugins/healthcheck
+	url = https://gerrit.wikimedia.org/r/operations/software/gerrit/plugins/healthcheck
 	branch = .
 
 [submodule "plugins/hooks"]
 	path = plugins/hooks
-	url = ../plugins/hooks
+	url = https://gerrit.googlesource.com/plugins/hooks
+	branch = .
+
+[submodule "plugins/its-base"]
+	path = plugins/its-base
+	url = https://gerrit.googlesource.com/plugins/its-base
+	branch = .
+
+[submodule "plugins/its-phabricator"]
+	path = plugins/its-phabricator
+	url = https://gerrit.googlesource.com/plugins/its-phabricator
+	branch = .
+
+[submodule "plugins/javamelody"]
+	path = plugins/javamelody
+	url = https://gerrit.googlesource.com/plugins/javamelody
+	branch = .
+
+[submodule "plugins/lfs"]
+	path = plugins/lfs
+	url = https://gerrit.googlesource.com/plugins/lfs
+	branch = .
+
+[submodule "plugins/motd"]
+	path = plugins/motd
+	url = https://gerrit.googlesource.com/plugins/motd
+	branch = .
+
+[submodule "plugins/quota"]
+	path = plugins/quota
+	url = https://gerrit.googlesource.com/plugins/quota
+	branch = .
+
+[submodule "plugins/reviewers"]
+	path = plugins/reviewers
+	url = https://gerrit.googlesource.com/plugins/reviewers
 	branch = .
 
 [submodule "plugins/replication"]
 	path = plugins/replication
-	url = ../plugins/replication
+	url = https://gerrit.googlesource.com/plugins/replication
 	branch = .
 
 [submodule "plugins/reviewnotes"]
 	path = plugins/reviewnotes
-	url = ../plugins/reviewnotes
+	url = https://gerrit.googlesource.com/plugins/reviewnotes
 	branch = .
 
-[submodule "plugins/singleusergroup"]
-	path = plugins/singleusergroup
-	url = ../plugins/singleusergroup
+[submodule "plugins/webhooks"]
+	path = plugins/webhooks
+	url = https://gerrit.googlesource.com/plugins/webhooks
+	branch = .
+
+[submodule "plugins/wikimedia"]
+	path = plugins/wikimedia
+	url = https://gerrit.wikimedia.org/r/operations/software/gerrit/plugins/wikimedia
+	branch = .
+
+[submodule "plugins/zuul"]
+	path = plugins/zuul
+	url = https://gerrit.googlesource.com/plugins/zuul
 	branch = .
