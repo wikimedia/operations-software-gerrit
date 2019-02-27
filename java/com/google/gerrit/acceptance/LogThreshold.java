@@ -1,4 +1,4 @@
-// Copyright (C) 2016 The Android Open Source Project
+// Copyright (C) 2019 The Android Open Source Project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,20 +11,17 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+package com.google.gerrit.acceptance;
 
-package com.google.gerrit.extensions.common;
+import static java.lang.annotation.ElementType.METHOD;
+import static java.lang.annotation.ElementType.TYPE;
+import static java.lang.annotation.RetentionPolicy.RUNTIME;
 
-import com.google.gerrit.extensions.client.UiType;
-import java.util.Set;
+import java.lang.annotation.Retention;
+import java.lang.annotation.Target;
 
-public class GerritInfo {
-  public String allProjects;
-  public String allUsers;
-  public Boolean docSearch;
-  public String docUrl;
-  public Boolean editGpgKeys;
-  public String reportBugUrl;
-  public String reportBugText;
-  public Set<UiType> webUis;
-  public String primaryWeblinkName;
+@Target({TYPE, METHOD})
+@Retention(RUNTIME)
+public @interface LogThreshold {
+  String level() default "DEBUG";
 }

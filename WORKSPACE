@@ -32,7 +32,7 @@ http_file(
 
 load("@bazel_skylib//lib:versions.bzl", "versions")
 
-versions.check(minimum_bazel_version = "0.19.0")
+versions.check(minimum_bazel_version = "0.22.0")
 
 load("@io_bazel_rules_closure//closure:defs.bzl", "closure_repositories")
 
@@ -1091,8 +1091,8 @@ maven_jar(
 # and httpasyncclient as necessary.
 maven_jar(
     name = "elasticsearch-rest-client",
-    artifact = "org.elasticsearch.client:elasticsearch-rest-client:6.6.0",
-    sha1 = "f0ce1ea819fedde731511b440b025e4fb5a2f5f7",
+    artifact = "org.elasticsearch.client:elasticsearch-rest-client:6.6.1",
+    sha1 = "dc1c9284ffca28cd169fae2776c3956e90b76c00",
 )
 
 JACKSON_VERSION = "2.9.8"
@@ -1294,6 +1294,13 @@ bower_archive(
     package = "polymerlabs/promise-polyfill",
     sha1 = "a3b598c06cbd7f441402e666ff748326030905d6",
     version = "1.0.0",
+)
+
+bower_archive(
+    name = "resemblejs",
+    package = "rsmbl/Resemble.js",
+    sha1 = "49d5f022417c389b630d6f7ee667aa9540075c42",
+    version = "2.10.1",
 )
 
 bower_archive(
