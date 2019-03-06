@@ -43,6 +43,11 @@
 	url = https://gerrit.googlesource.com/plugins/hooks
 	branch = .
 
+[submodule "plugins/image-diff"]
+        path = plugins/image-diff
+        url = https://gerrit.googlesource.com/plugins/image-diff
+        branch = .
+
 [submodule "plugins/its-base"]
 	path = plugins/its-base
 	url = https://gerrit.googlesource.com/plugins/its-base

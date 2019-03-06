@@ -15,6 +15,7 @@ CUSTOM_PLUGINS = [
     "gitiles",
     "go-import",
     "healthcheck",
+    "image-diff",
     "its-phabricator",
     "lfs",
     "motd",
