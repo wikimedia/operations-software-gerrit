@@ -35,7 +35,7 @@
 
 [submodule "plugins/healthcheck"]
 	path = plugins/healthcheck
-	url = https://gerrit.wikimedia.org/r/operations/software/gerrit/plugins/healthcheck
+	url = https://gerrit.googlesource.com/plugins/healthcheck
 	branch = .
 
 [submodule "plugins/hooks"]
