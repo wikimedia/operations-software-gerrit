@@ -21,6 +21,7 @@ CUSTOM_PLUGINS = [
     "motd",
     "reviewers",
     "webhooks",
+    "wikimedia",
     "zuul",
     "zuul-status",
 ]
