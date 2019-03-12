@@ -25,9 +25,11 @@
     'diff_view',
     'publish_comments_on_push',
     'work_in_progress_by_default',
+    'default_base_for_merges',
     'signed_off_by',
     'email_format',
     'size_bar_in_change_table',
+    'relative_date_in_change_table',
   ];
 
   const GERRIT_DOCS_BASE_URL = 'https://gerrit-review.googlesource.com/' +
@@ -64,8 +66,6 @@
       },
       _accountNameMutable: Boolean,
       _accountInfoChanged: Boolean,
-      /** @type {?} */
-      _diffPrefs: Object,
       _changeTableColumnsNotDisplayed: Array,
       /** @type {?} */
       _localPrefs: {
@@ -92,10 +92,8 @@
         type: Boolean,
         value: false,
       },
-      _diffPrefsChanged: {
-        type: Boolean,
-        value: false,
-      },
+      /** @type {?} */
+      _diffPrefsChanged: Boolean,
       /** @type {?} */
       _editPrefsChanged: Boolean,
       _menuChanged: {
@@ -149,7 +147,6 @@
 
     observers: [
       '_handlePrefsChanged(_localPrefs.*)',
-      '_handleDiffPrefsChanged(_diffPrefs.*)',
       '_handleMenuChanged(_localMenu.splices)',
       '_handleChangeTableChanged(_localChangeTableColumns, _showNumber)',
     ],
@@ -166,6 +163,7 @@
         this.$.httpPass.loadData(),
         this.$.identities.loadData(),
         this.$.editPrefs.loadData(),
+        this.$.diffPrefs.loadData(),
       ];
 
       promises.push(this.$.restAPI.getPreferences().then(prefs => {
@@ -174,10 +172,6 @@
         this._copyPrefs('_localPrefs', 'prefs');
         this._cloneMenu(prefs.my);
         this._cloneChangeTableColumns();
-      }));
-
-      promises.push(this.$.restAPI.getDiffPreferences().then(prefs => {
-        this._diffPrefs = prefs;
       }));
 
       promises.push(this.$.restAPI.getConfig().then(config => {
@@ -277,9 +271,9 @@
       this._prefsChanged = true;
     },
 
-    _handleDiffPrefsChanged() {
-      if (this._isLoading()) { return; }
-      this._diffPrefsChanged = true;
+    _handleRelativeDateInChangeTable() {
+      this.set('_localPrefs.relative_date_in_change_table',
+          this.$.relativeDateInChangeTable.checked);
     },
 
     _handleShowSizeBarsInFileListChanged() {
@@ -318,24 +312,6 @@
       });
     },
 
-    _handleDiffLineWrappingChanged() {
-      this.set('_diffPrefs.line_wrapping', this.$.diffLineWrapping.checked);
-    },
-
-    _handleDiffShowTabsChanged() {
-      this.set('_diffPrefs.show_tabs', this.$.diffShowTabs.checked);
-    },
-
-    _handleShowTrailingWhitespaceChanged() {
-      this.set('_diffPrefs.show_whitespace_errors',
-          this.$.showTrailingWhitespace.checked);
-    },
-
-    _handleDiffSyntaxHighlightingChanged() {
-      this.set('_diffPrefs.syntax_highlighting',
-          this.$.diffSyntaxHighlighting.checked);
-    },
-
     _handleSaveChangeTable() {
       this.set('prefs.change_table', this._localChangeTableColumns);
       this.set('prefs.legacycid_in_change_table', this._showNumber);
@@ -346,10 +322,7 @@
     },
 
     _handleSaveDiffPreferences() {
-      return this.$.restAPI.saveDiffPreferences(this._diffPrefs)
-          .then(() => {
-            this._diffPrefsChanged = false;
-          });
+      this.$.diffPrefs.save();
     },
 
     _handleSaveEditPreferences() {
