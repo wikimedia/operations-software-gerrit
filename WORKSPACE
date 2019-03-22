@@ -15,9 +15,9 @@ http_archive(
 
 http_archive(
     name = "io_bazel_rules_closure",
-    sha256 = "0e6de40666f2ebb2b30dc0339745a274d9999334a249b05a3b1f46462e489adf",
-    strip_prefix = "rules_closure-87d24b1df8b62405de8dd059cb604fd9d4b1e395",
-    urls = ["https://github.com/bazelbuild/rules_closure/archive/87d24b1df8b62405de8dd059cb604fd9d4b1e395.tar.gz"],
+    sha256 = "ddce3b3a3909f99b28b25071c40b7fec7e2e1d1d1a4b2e933f3082aa99517105",
+    strip_prefix = "rules_closure-316e6133888bfc39fb860a4f1a31cfcbae485aef",
+    urls = ["https://github.com/bazelbuild/rules_closure/archive/316e6133888bfc39fb860a4f1a31cfcbae485aef.tar.gz"],
 )
 
 # File is specific to Polymer and copied from the Closure Github -- should be
@@ -212,18 +212,18 @@ maven_jar(
     sha1 = "94ad16d728b374d65bd897625f3fbb3da223a2b6",
 )
 
-FLOGGER_VERS = "0.3.1"
+FLOGGER_VERS = "0.4"
 
 maven_jar(
     name = "flogger",
     artifact = "com.google.flogger:flogger:" + FLOGGER_VERS,
-    sha1 = "585030fe1ec709760cbef997a459729fb965df0e",
+    sha1 = "9c8863dcc913b56291c0c88e6d4ca9715b43df98",
 )
 
 maven_jar(
     name = "flogger-log4j-backend",
     artifact = "com.google.flogger:flogger-log4j-backend:" + FLOGGER_VERS,
-    sha1 = "d5085e3996bddc4b105d53b886190cc9a8811a9e",
+    sha1 = "17aa5e31daa1354187e14b6978597d630391c028",
 )
 
 maven_jar(
@@ -1087,12 +1087,12 @@ maven_jar(
     sha1 = "76716d529710fc03d1d429b43e3cedd4419f78d4",
 )
 
-# When upgrading elasticsearch-rest-client, also upgrade http-niocore
+# When upgrading elasticsearch-rest-client, also upgrade httpcore-nio
 # and httpasyncclient as necessary.
 maven_jar(
     name = "elasticsearch-rest-client",
-    artifact = "org.elasticsearch.client:elasticsearch-rest-client:6.6.1",
-    sha1 = "dc1c9284ffca28cd169fae2776c3956e90b76c00",
+    artifact = "org.elasticsearch.client:elasticsearch-rest-client:6.6.2",
+    sha1 = "2c429141e488091c358aa43b1e6873d457464c5d",
 )
 
 JACKSON_VERSION = "2.9.8"
@@ -1103,18 +1103,18 @@ maven_jar(
     sha1 = "0f5a654e4675769c716e5b387830d19b501ca191",
 )
 
-TESTCONTAINERS_VERSION = "1.10.3"
+TESTCONTAINERS_VERSION = "1.10.7"
 
 maven_jar(
     name = "testcontainers",
     artifact = "org.testcontainers:testcontainers:" + TESTCONTAINERS_VERSION,
-    sha1 = "e561ce99fc616b383d85f35ce881e58e8de59ae7",
+    sha1 = "e7575fedfd010ca1ad80c8c9bf971a8057b1ff8a",
 )
 
 maven_jar(
     name = "testcontainers-elasticsearch",
     artifact = "org.testcontainers:elasticsearch:" + TESTCONTAINERS_VERSION,
-    sha1 = "0cb114ecba0ed54a116e2be2f031bc45ca4cbfc8",
+    sha1 = "1ee43ebd81aea1f29bf60a56643bad80c134f998",
 )
 
 maven_jar(
