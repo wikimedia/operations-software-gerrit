@@ -44,9 +44,9 @@
 	branch = .
 
 [submodule "plugins/image-diff"]
-        path = plugins/image-diff
-        url = https://gerrit.googlesource.com/plugins/image-diff
-        branch = .
+	path = plugins/image-diff
+	url = https://gerrit.googlesource.com/plugins/image-diff
+	branch = .
 
 [submodule "plugins/its-base"]
 	path = plugins/its-base
@@ -78,14 +78,19 @@
 	url = https://gerrit.googlesource.com/plugins/quota
 	branch = .
 
-[submodule "plugins/reviewers"]
-	path = plugins/reviewers
-	url = https://gerrit.googlesource.com/plugins/reviewers
+[submodule "plugins/readonly"]
+	path = plugins/readonly
+	url = https://gerrit.googlesource.com/plugins/readonly
 	branch = .
 
 [submodule "plugins/replication"]
 	path = plugins/replication
 	url = https://gerrit.googlesource.com/plugins/replication
+	branch = .
+
+[submodule "plugins/reviewers"]
+	path = plugins/reviewers
+	url = https://gerrit.googlesource.com/plugins/reviewers
 	branch = .
 
 [submodule "plugins/reviewnotes"]

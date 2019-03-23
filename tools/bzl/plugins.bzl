@@ -19,6 +19,7 @@ CUSTOM_PLUGINS = [
     "its-phabricator",
     "lfs",
     "motd",
+    "readonly",
     "reviewers",
     "webhooks",
     "wikimedia",
