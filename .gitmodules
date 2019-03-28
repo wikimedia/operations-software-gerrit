@@ -75,7 +75,7 @@
 
 [submodule "plugins/quota"]
 	path = plugins/quota
-	url = https://gerrit.googlesource.com/plugins/quota
+	url = https://gerrit.wikimedia.org/r/operations/software/gerrit/plugins/quota
 	branch = .
 
 [submodule "plugins/readonly"]
