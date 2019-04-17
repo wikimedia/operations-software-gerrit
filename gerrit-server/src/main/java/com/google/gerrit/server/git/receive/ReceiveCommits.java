@@ -619,9 +619,7 @@ class ReceiveCommits {
     }
 
     List<ReplaceRequest> updated =
-        replaceByChange
-            .values()
-            .stream()
+        replaceByChange.values().stream()
             .filter(r -> !r.skip && r.inputCommand.getResult() == OK)
             .sorted(comparingInt(r -> r.notes.getChangeId().get()))
             .collect(toList());
@@ -2777,6 +2775,10 @@ class ReceiveCommits {
     }
   }
 
+  private String messageForCommit(RevCommit c, String msg) {
+    return String.format("commit %s: %s", c.abbreviate(RevId.ABBREV_LEN).name(), msg);
+  }
+
   private boolean validCommit(
       RevWalk rw,
       PermissionBackend.ForRef perm,
@@ -2803,11 +2805,16 @@ class ReceiveCommits {
               ? commitValidatorsFactory.forMergedCommits(perm, user.asIdentifiedUser())
               : commitValidatorsFactory.forReceiveCommits(
                   perm, branch, user.asIdentifiedUser(), sshInfo, repo, rw);
-      messages.addAll(validators.validate(receiveEvent));
+      for (CommitValidationMessage m : validators.validate(receiveEvent)) {
+        messages.add(new CommitValidationMessage(messageForCommit(c, m.getMessage()), m.isError()));
+      }
     } catch (CommitValidationException e) {
       logDebug("Commit validation failed on {}", c.name());
-      messages.addAll(e.getMessages());
-      reject(cmd, e.getMessage());
+      for (CommitValidationMessage m : e.getMessages()) {
+        // TODO(hanwen): drop the non-error messages?
+        messages.add(new CommitValidationMessage(messageForCommit(c, m.getMessage()), m.isError()));
+      }
+      reject(cmd, messageForCommit(c, e.getMessage()));
       return false;
     }
     validCommits.add(c.copy());

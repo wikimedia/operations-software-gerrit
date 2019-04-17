@@ -18,6 +18,8 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.gerrit.server.api.ApiUtil.asRestApiException;
 
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ListMultimap;
+import com.google.common.collect.MultimapBuilder.ListMultimapBuilder;
 import com.google.gerrit.extensions.api.changes.ChangeApi;
 import com.google.gerrit.extensions.api.changes.Changes;
 import com.google.gerrit.extensions.api.changes.CherryPickInput;
@@ -26,6 +28,7 @@ import com.google.gerrit.extensions.api.changes.DraftApi;
 import com.google.gerrit.extensions.api.changes.DraftInput;
 import com.google.gerrit.extensions.api.changes.FileApi;
 import com.google.gerrit.extensions.api.changes.RebaseInput;
+import com.google.gerrit.extensions.api.changes.RelatedChangesInfo;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.api.changes.ReviewResult;
 import com.google.gerrit.extensions.api.changes.RevisionApi;
@@ -34,6 +37,7 @@ import com.google.gerrit.extensions.api.changes.RobotCommentApi;
 import com.google.gerrit.extensions.api.changes.SubmitInput;
 import com.google.gerrit.extensions.client.SubmitType;
 import com.google.gerrit.extensions.common.ActionInfo;
+import com.google.gerrit.extensions.common.ApprovalInfo;
 import com.google.gerrit.extensions.common.CommentInfo;
 import com.google.gerrit.extensions.common.CommitInfo;
 import com.google.gerrit.extensions.common.EditInfo;
@@ -45,7 +49,13 @@ import com.google.gerrit.extensions.restapi.BinaryResult;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
+import com.google.gerrit.reviewdb.client.PatchSetApproval;
+import com.google.gerrit.reviewdb.server.ReviewDb;
+import com.google.gerrit.server.ApprovalsUtil;
+import com.google.gerrit.server.account.AccountDirectory.FillOptions;
+import com.google.gerrit.server.account.AccountLoader;
 import com.google.gerrit.server.change.ApplyFix;
+import com.google.gerrit.server.change.ChangeJson;
 import com.google.gerrit.server.change.CherryPick;
 import com.google.gerrit.server.change.Comments;
 import com.google.gerrit.server.change.CreateDraftComment;
@@ -57,6 +67,7 @@ import com.google.gerrit.server.change.GetCommit;
 import com.google.gerrit.server.change.GetDescription;
 import com.google.gerrit.server.change.GetMergeList;
 import com.google.gerrit.server.change.GetPatch;
+import com.google.gerrit.server.change.GetRelated;
 import com.google.gerrit.server.change.GetRevisionActions;
 import com.google.gerrit.server.change.ListRevisionComments;
 import com.google.gerrit.server.change.ListRevisionDrafts;
@@ -77,6 +88,7 @@ import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.assistedinject.Assisted;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -123,8 +135,12 @@ class RevisionApiImpl implements RevisionApi {
   private final TestSubmitType testSubmitType;
   private final TestSubmitType.Get getSubmitType;
   private final Provider<GetMergeList> getMergeList;
+  private final GetRelated getRelated;
   private final PutDescription putDescription;
   private final GetDescription getDescription;
+  private final ApprovalsUtil approvalsUtil;
+  private final Provider<ReviewDb> db;
+  private final AccountLoader.Factory accountLoaderFactory;
 
   @Inject
   RevisionApiImpl(
@@ -162,8 +178,12 @@ class RevisionApiImpl implements RevisionApi {
       TestSubmitType testSubmitType,
       TestSubmitType.Get getSubmitType,
       Provider<GetMergeList> getMergeList,
+      GetRelated getRelated,
       PutDescription putDescription,
       GetDescription getDescription,
+      ApprovalsUtil approvalsUtil,
+      Provider<ReviewDb> db,
+      AccountLoader.Factory accountLoaderFactory,
       @Assisted RevisionResource r) {
     this.repoManager = repoManager;
     this.changes = changes;
@@ -199,8 +219,12 @@ class RevisionApiImpl implements RevisionApi {
     this.testSubmitType = testSubmitType;
     this.getSubmitType = getSubmitType;
     this.getMergeList = getMergeList;
+    this.getRelated = getRelated;
     this.putDescription = putDescription;
     this.getDescription = getDescription;
+    this.approvalsUtil = approvalsUtil;
+    this.db = db;
+    this.accountLoaderFactory = accountLoaderFactory;
     this.revision = r;
   }
 
@@ -561,6 +585,51 @@ class RevisionApiImpl implements RevisionApi {
         }
       }
     };
+  }
+
+  @Override
+  public RelatedChangesInfo related() throws RestApiException {
+    try {
+      return getRelated.apply(revision);
+    } catch (Exception e) {
+      throw asRestApiException("Cannot get related changes", e);
+    }
+  }
+
+  @Override
+  public ListMultimap<String, ApprovalInfo> votes() throws RestApiException {
+    ListMultimap<String, ApprovalInfo> result =
+        ListMultimapBuilder.treeKeys().arrayListValues().build();
+    try {
+      Iterable<PatchSetApproval> approvals =
+          approvalsUtil.byPatchSet(
+              db.get(),
+              revision.getNotes(),
+              revision.getChangeResource().getUser(),
+              revision.getPatchSet().getId(),
+              null,
+              null);
+      AccountLoader accountLoader =
+          accountLoaderFactory.create(
+              EnumSet.of(
+                  FillOptions.ID, FillOptions.NAME, FillOptions.EMAIL, FillOptions.USERNAME));
+      for (PatchSetApproval approval : approvals) {
+        String label = approval.getLabel();
+        ApprovalInfo info =
+            ChangeJson.getApprovalInfo(
+                approval.getAccountId(),
+                Integer.valueOf(approval.getValue()),
+                null,
+                approval.getTag(),
+                approval.getGranted());
+        accountLoader.put(info);
+        result.get(label).add(info);
+      }
+      accountLoader.fill();
+    } catch (Exception e) {
+      throw asRestApiException("Cannot get votes", e);
+    }
+    return result;
   }
 
   @Override

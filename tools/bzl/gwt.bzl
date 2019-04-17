@@ -162,7 +162,8 @@ def _gwt_binary_impl(ctx):
         gwt_user_agent_modules.append(ua.zip)
         module = ua.module
 
-    cmd = "external/local_jdk/bin/java %s -Dgwt.normalizeTimestamps=true -cp %s %s -war %s -deploy %s " % (
+    cmd = "%s %s -Dgwt.normalizeTimestamps=true -cp %s %s -war %s -deploy %s " % (
+        ctx.attr._jdk[java_common.JavaRuntimeInfo].java_executable_exec_path,
         " ".join(ctx.attr.jvm_args),
         ":".join(paths),
         GWT_COMPILER,
@@ -195,17 +196,17 @@ def _gwt_binary_impl(ctx):
     )
 
 def _get_transitive_closure(ctx):
-    deps = depset()
+    deps = []
     for dep in ctx.attr.module_deps:
-        deps += dep.java.transitive_runtime_deps
-        deps += dep.java.transitive_source_jars
+        deps.append(dep.java.transitive_runtime_deps)
+        deps.append(dep.java.transitive_source_jars)
     for dep in ctx.attr.deps:
         if hasattr(dep, "java"):
-            deps += dep.java.transitive_runtime_deps
+            deps.append(dep.java.transitive_runtime_deps)
         elif hasattr(dep, "files"):
-            deps += dep.files
+            deps.append(dep.files)
 
-    return deps
+    return depset(transitive = deps)
 
 gwt_binary = rule(
     attrs = {
@@ -218,7 +219,8 @@ gwt_binary = rule(
         "user_agent": attr.string(),
         "deps": attr.label_list(allow_files = jar_filetype),
         "_jdk": attr.label(
-            default = Label("//tools/defaults:jdk"),
+            default = Label("@bazel_tools//tools/jdk:current_java_runtime"),
+            cfg = "host",
         ),
         "_zip": attr.label(
             default = Label("@bazel_tools//tools/zip:zipper"),

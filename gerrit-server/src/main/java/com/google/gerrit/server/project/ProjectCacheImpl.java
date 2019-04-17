@@ -16,6 +16,7 @@ package com.google.gerrit.server.project;
 
 import static java.util.stream.Collectors.toSet;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Throwables;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
@@ -226,8 +227,7 @@ public class ProjectCacheImpl implements ProjectCache {
 
   @Override
   public Set<AccountGroup.UUID> guessRelevantGroupUUIDs() {
-    return all()
-        .stream()
+    return all().stream()
         .map(n -> byName.getIfPresent(n.get()))
         .filter(Objects::nonNull)
         .flatMap(p -> p.getConfig().getAllGroupUUIDs().stream())
@@ -336,5 +336,15 @@ public class ProjectCacheImpl implements ProjectCache {
     public SortedSet<Project.NameKey> load(ListKey key) throws Exception {
       return mgr.list();
     }
+  }
+
+  @VisibleForTesting
+  public void evictAllByName() {
+    byName.invalidateAll();
+  }
+
+  @VisibleForTesting
+  public long sizeAllByName() {
+    return byName.size();
   }
 }

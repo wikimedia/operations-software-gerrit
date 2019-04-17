@@ -14,9 +14,9 @@ http_archive(
 
 http_archive(
     name = "io_bazel_rules_closure",
-    sha256 = "4f2c173ebf95e94d98a0d5cb799e734536eaf3eca280eb15e124f5e5ef8b6e39",
-    strip_prefix = "rules_closure-6fd76e645b5c622221c9920f41a4d0bc578a3046",
-    urls = ["https://github.com/bazelbuild/rules_closure/archive/6fd76e645b5c622221c9920f41a4d0bc578a3046.tar.gz"],
+    sha256 = "0e6de40666f2ebb2b30dc0339745a274d9999334a249b05a3b1f46462e489adf",
+    strip_prefix = "rules_closure-87d24b1df8b62405de8dd059cb604fd9d4b1e395",
+    urls = ["https://github.com/bazelbuild/rules_closure/archive/87d24b1df8b62405de8dd059cb604fd9d4b1e395.tar.gz"],
 )
 
 # File is specific to Polymer and copied from the Closure Github -- should be
@@ -31,7 +31,7 @@ http_file(
 
 load("@bazel_skylib//lib:versions.bzl", "versions")
 
-versions.check(minimum_bazel_version = "0.19.0")
+versions.check(minimum_bazel_version = "0.22.0")
 
 load("@io_bazel_rules_closure//closure:defs.bzl", "closure_repositories")
 
@@ -896,8 +896,8 @@ maven_jar(
 # and httpasyncclient as necessary.
 maven_jar(
     name = "elasticsearch-rest-client",
-    artifact = "org.elasticsearch.client:elasticsearch-rest-client:6.5.4",
-    sha1 = "552175b06e34df96f114d1c8aaa908e535c8f1be",
+    artifact = "org.elasticsearch.client:elasticsearch-rest-client:6.6.1",
+    sha1 = "dc1c9284ffca28cd169fae2776c3956e90b76c00",
 )
 
 JACKSON_VERSION = "2.9.8"
@@ -908,18 +908,18 @@ maven_jar(
     sha1 = "0f5a654e4675769c716e5b387830d19b501ca191",
 )
 
-TESTCONTAINERS_VERSION = "1.10.3"
+TESTCONTAINERS_VERSION = "1.10.6"
 
 maven_jar(
     name = "testcontainers",
     artifact = "org.testcontainers:testcontainers:" + TESTCONTAINERS_VERSION,
-    sha1 = "e561ce99fc616b383d85f35ce881e58e8de59ae7",
+    sha1 = "435c94ec099e229e62295cec4feec91c192aa764",
 )
 
 maven_jar(
     name = "testcontainers-elasticsearch",
     artifact = "org.testcontainers:elasticsearch:" + TESTCONTAINERS_VERSION,
-    sha1 = "0cb114ecba0ed54a116e2be2f031bc45ca4cbfc8",
+    sha1 = "143a88bd8f5c5a917e5bac5a728bb6a7fc54a50c",
 )
 
 maven_jar(
