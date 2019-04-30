@@ -63,11 +63,6 @@
 	url = https://gerrit.googlesource.com/plugins/motd
 	branch = .
 
-[submodule "plugins/quota"]
-	path = plugins/quota
-	url = https://gerrit.googlesource.com/plugins/quota
-	branch = .
-
 [submodule "plugins/replication"]
 	path = plugins/replication
 	url = https://gerrit.googlesource.com/plugins/replication
