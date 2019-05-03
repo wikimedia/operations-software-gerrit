@@ -33,12 +33,9 @@ Most of this documentation refers to either type as a plugin.
 [[getting-started]]
 == Getting started
 
-To get started with the development of a plugin clone the sample
-plugins:
-
-----
-$ git clone https://gerrit.googlesource.com/plugins/examples
-----
+To get started with the development of a plugin, take a look at
+the samples in the
+link:https://gerrit.googlesource.com/plugins/examples[examples plugin project].
 
 This is a project that demonstrates the various features of the
 plugin API. It can be taken as an example to develop an own plugin.
@@ -2786,8 +2783,8 @@ public class MyPlugin implements MailFilter {
 }
 ----
 
-[[ssh-command-interception]]
-== SSH Command Interception
+[[ssh-command-creation-interception]]
+== SSH Command Creation Interception
 
 Gerrit provides an extension point that allows a plugin to intercept
 creation of SSH commands and override the functionality with its own
@@ -2908,6 +2905,40 @@ public class MyPluginModule extends AbstractModule {
     bind(SubmitRule.class).annotatedWith(Exports.named("myPlugin")).to(MyPluginRules.class);
   }
 }
+----
+
+[[ssh-command-execution-interception]]
+== SSH Command Execution Interception
+Gerrit provides an extension point that enables plugins to check and
+prevent an SSH command from being run.
+
+[source, java]
+----
+import com.google.gerrit.sshd.SshExecuteCommandInterceptor;
+
+@Singleton
+public class SshExecuteCommandInterceptorImpl implements SshExecuteCommandInterceptor {
+  private final Provider<SshSession> sessionProvider;
+
+  @Inject
+  SshExecuteCommandInterceptorImpl(Provider<SshSession> sessionProvider) {
+    this.sessionProvider = sessionProvider;
+  }
+
+  @Override
+  public boolean accept(String command, List<String> arguments) {
+    if (command.startsWith("gerrit") && !"10.1.2.3".equals(sessionProvider.get().getRemoteAddressAsString())) {
+      return false;
+    }
+    return true;
+  }
+}
+----
+
+And then declare it in your SSH module:
+[source, java]
+----
+  DynamicSet.bind(binder(), SshExecuteCommandInterceptor.class).to(SshExecuteCommandInterceptorImpl.class);
 ----
 
 Plugin authors should also consider binding their SubmitRule using a `Gerrit-BatchModule`.

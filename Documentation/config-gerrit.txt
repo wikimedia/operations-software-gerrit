@@ -3049,14 +3049,6 @@ Note that the site initialization program only allows to configure a single
 server. To configure multiple servers the `gerrit.config` file must be edited
 manually.
 
-[[elasticsearch.maxRetryTimeout]]elasticsearch.maxRetryTimeout::
-+
-Sets the maximum timeout to honor in case of multiple retries of the same request.
-+
-The value is in the usual time-unit format like `1 m`, `5 m`.
-+
-Defaults to `30000 ms`.
-
 [[elasticsearch.numberOfShards]]elasticsearch.numberOfShards::
 +
 Sets the number of shards to use per index. Refer to the
@@ -5072,7 +5064,7 @@ The placeholders can have the following values:
 
 +
 The time zone cannot be specified but is always the system default
-time zone.
+time zone. Hours must be zero-padded, i.e. `06:00` rather than `6:00`.
 
 The section (and optionally the subsection) in which the `interval` and
 `startTime` keys must be set depends on the background job for which a

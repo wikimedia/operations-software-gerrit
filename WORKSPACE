@@ -15,9 +15,23 @@ http_archive(
 
 http_archive(
     name = "io_bazel_rules_closure",
-    sha256 = "ddce3b3a3909f99b28b25071c40b7fec7e2e1d1d1a4b2e933f3082aa99517105",
-    strip_prefix = "rules_closure-316e6133888bfc39fb860a4f1a31cfcbae485aef",
-    urls = ["https://github.com/bazelbuild/rules_closure/archive/316e6133888bfc39fb860a4f1a31cfcbae485aef.tar.gz"],
+    sha256 = "1c05fea22c9630cf1047f25d008780756373a60ddd4d2a6993cf9858279c5da6",
+    strip_prefix = "rules_closure-50d3dc9e6d27a5577a0f95708466718825d579f4",
+    urls = ["https://github.com/bazelbuild/rules_closure/archive/50d3dc9e6d27a5577a0f95708466718825d579f4.tar.gz"],
+)
+
+# Transitive dependency of rules_closure and protobuf
+http_archive(
+    name = "net_zlib",
+    build_file = "//:lib/zlib/BUILD",
+    sha256 = "c3e5e9fdd5004dcb542feda5ee4f0ff0744628baf8ed2dd5d66f8ca1197cb1a1",
+    strip_prefix = "zlib-1.2.11",
+    urls = ["https://zlib.net/zlib-1.2.11.tar.gz"],
+)
+
+bind(
+    name = "zlib",
+    actual = "@net_zlib//:zlib",
 )
 
 # File is specific to Polymer and copied from the Closure Github -- should be
@@ -254,8 +268,8 @@ maven_jar(
 
 maven_jar(
     name = "protobuf",
-    artifact = "com.google.protobuf:protobuf-java:3.6.1",
-    sha1 = "0d06d46ecfd92ec6d0f3b423b4cd81cb38d8b924",
+    artifact = "com.google.protobuf:protobuf-java:3.7.1",
+    sha1 = "0bce1b6dc9e4531169542ab37a1c8641bcaa8afb",
 )
 
 load("//lib:guava.bzl", "GUAVA_BIN_SHA1", "GUAVA_VERSION")
@@ -284,30 +298,30 @@ maven_jar(
     sha1 = "28c59f58f5adcc307604602e2aa89e2aca14c554",
 )
 
-SLF4J_VERS = "1.7.7"
+SLF4J_VERS = "1.7.26"
 
 maven_jar(
     name = "log-api",
     artifact = "org.slf4j:slf4j-api:" + SLF4J_VERS,
-    sha1 = "2b8019b6249bb05d81d3a3094e468753e2b21311",
+    sha1 = "77100a62c2e6f04b53977b9f541044d7d722693d",
 )
 
 maven_jar(
     name = "log-ext",
     artifact = "org.slf4j:slf4j-ext:" + SLF4J_VERS,
-    sha1 = "09a8f58c784c37525d2624062414358acf296717",
+    sha1 = "31cdf122e000322e9efcb38913e9ab07825b17ef",
 )
 
 maven_jar(
     name = "impl-log4j",
     artifact = "org.slf4j:slf4j-log4j12:" + SLF4J_VERS,
-    sha1 = "58f588119ffd1702c77ccab6acb54bfb41bed8bd",
+    sha1 = "12f5c685b71c3027fd28bcf90528ec4ec74bf818",
 )
 
 maven_jar(
     name = "jcl-over-slf4j",
     artifact = "org.slf4j:jcl-over-slf4j:" + SLF4J_VERS,
-    sha1 = "56003dcd0a31deea6391b9e2ef2f2dc90b205a92",
+    sha1 = "33fbc2d93de829fa5e263c5ce97f5eab8f57d53e",
 )
 
 maven_jar(
@@ -755,8 +769,8 @@ maven_jar(
 
 maven_jar(
     name = "dropwizard-core",
-    artifact = "io.dropwizard.metrics:metrics-core:4.0.3",
-    sha1 = "bb562ee73f740bb6b2bf7955f97be6b870d9e9f0",
+    artifact = "io.dropwizard.metrics:metrics-core:4.0.5",
+    sha1 = "b81ef162970cdb9f4512ee2da09715a856ff4c4c",
 )
 
 # When updating Bouncy Castle, also update it in bazlets.
@@ -836,15 +850,15 @@ maven_jar(
 # elasticsearch-rest-client explicitly depends on this version
 maven_jar(
     name = "httpasyncclient",
-    artifact = "org.apache.httpcomponents:httpasyncclient:4.1.2",
-    sha1 = "95aa3e6fb520191a0970a73cf09f62948ee614be",
+    artifact = "org.apache.httpcomponents:httpasyncclient:4.1.4",
+    sha1 = "f3a3240681faae3fa46b573a4c7e50cec9db0d86",
 )
 
 # elasticsearch-rest-client explicitly depends on this version
 maven_jar(
     name = "httpcore-nio",
-    artifact = "org.apache.httpcomponents:httpcore-nio:4.4.5",
-    sha1 = "f4be009e7505f6ceddf21e7960c759f413f15056",
+    artifact = "org.apache.httpcomponents:httpcore-nio:4.4.11",
+    sha1 = "7d0a97d01d39cff9aa3e6db81f21fddb2435f4e6",
 )
 
 # Test-only dependencies below.
@@ -1091,8 +1105,8 @@ maven_jar(
 # and httpasyncclient as necessary.
 maven_jar(
     name = "elasticsearch-rest-client",
-    artifact = "org.elasticsearch.client:elasticsearch-rest-client:6.6.2",
-    sha1 = "2c429141e488091c358aa43b1e6873d457464c5d",
+    artifact = "org.elasticsearch.client:elasticsearch-rest-client:7.0.0",
+    sha1 = "121d12f1c71f318be1a654e8a956e38d5b68e98a",
 )
 
 JACKSON_VERSION = "2.9.8"
@@ -1103,18 +1117,18 @@ maven_jar(
     sha1 = "0f5a654e4675769c716e5b387830d19b501ca191",
 )
 
-TESTCONTAINERS_VERSION = "1.10.7"
+TESTCONTAINERS_VERSION = "1.11.2"
 
 maven_jar(
     name = "testcontainers",
     artifact = "org.testcontainers:testcontainers:" + TESTCONTAINERS_VERSION,
-    sha1 = "e7575fedfd010ca1ad80c8c9bf971a8057b1ff8a",
+    sha1 = "eae47ed24bb07270d4b60b5e2c3444c5bf3c8ea9",
 )
 
 maven_jar(
     name = "testcontainers-elasticsearch",
     artifact = "org.testcontainers:elasticsearch:" + TESTCONTAINERS_VERSION,
-    sha1 = "1ee43ebd81aea1f29bf60a56643bad80c134f998",
+    sha1 = "a327bd8cb68eb7146b36d754aee98a8018132d8f",
 )
 
 maven_jar(
@@ -1125,14 +1139,14 @@ maven_jar(
 
 maven_jar(
     name = "visible-assertions",
-    artifact = "org.rnorth.visible-assertions:visible-assertions:2.1.0",
-    sha1 = "f2fcff2862860828ac38a5e1f14d941787c06b13",
+    artifact = "org.rnorth.visible-assertions:visible-assertions:2.1.2",
+    sha1 = "20d31a578030ec8e941888537267d3123c2ad1c1",
 )
 
 maven_jar(
     name = "jna",
-    artifact = "net.java.dev.jna:jna:4.5.1",
-    sha1 = "65bd0cacc9c79a21c6ed8e9f588577cd3c2f85b9",
+    artifact = "net.java.dev.jna:jna:5.2.0",
+    sha1 = "ed8b772eb077a9cb50e44e90899c66a9a6c00e67",
 )
 
 load("//tools/bzl:js.bzl", "bower_archive", "npm_binary")
