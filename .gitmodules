@@ -73,11 +73,6 @@
 	url = https://gerrit.googlesource.com/plugins/motd
 	branch = .
 
-[submodule "plugins/quota"]
-	path = plugins/quota
-	url = https://gerrit.wikimedia.org/r/operations/software/gerrit/plugins/quota
-	branch = .
-
 [submodule "plugins/readonly"]
 	path = plugins/readonly
 	url = https://gerrit.googlesource.com/plugins/readonly
