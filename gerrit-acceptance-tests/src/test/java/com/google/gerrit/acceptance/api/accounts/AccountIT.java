@@ -677,6 +677,23 @@ public class AccountIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void addEmailAndSetPreferred() throws Exception {
+    String email = "foo.bar@example.com";
+    EmailInput input = new EmailInput();
+    input.email = email;
+    input.noConfirmation = true;
+    input.preferred = true;
+    gApi.accounts().self().addEmail(input);
+
+    // Account is reindexed twice; once on adding the new email,
+    // and then again on setting the email preferred.
+    accountIndexedCounter.assertReindexOf(admin, 2);
+
+    String preferred = gApi.accounts().self().get().email;
+    assertThat(preferred).isEqualTo(email);
+  }
+
+  @Test
   public void deleteEmail() throws Exception {
     String email = "foo.bar@example.com";
     EmailInput input = newEmailInput(email);
@@ -691,6 +708,56 @@ public class AccountIT extends AbstractDaemonTest {
 
     resetCurrentApiUser();
     assertThat(getEmails()).doesNotContain(email);
+  }
+
+  @Test
+  public void deletePreferredEmail() throws Exception {
+    String previous = gApi.accounts().self().get().email;
+    String email = "foo.bar.baz@example.com";
+    EmailInput input = new EmailInput();
+    input.email = email;
+    input.noConfirmation = true;
+    input.preferred = true;
+    gApi.accounts().self().addEmail(input);
+
+    // Account is reindexed twice; once on adding the new email,
+    // and then again on setting the email preferred.
+    accountIndexedCounter.assertReindexOf(admin, 2);
+
+    // The new preferred email is set
+    assertThat(gApi.accounts().self().get().email).isEqualTo(email);
+
+    accountIndexedCounter.clear();
+    gApi.accounts().self().deleteEmail(input.email);
+
+    // Account is reindexed twice; once on removing the new email,
+    // and then again on unsetting the email preferred.
+    accountIndexedCounter.assertReindexOf(admin, 2);
+
+    resetCurrentApiUser();
+    assertThat(getEmails()).containsExactly(previous);
+    assertThat(gApi.accounts().self().get().email).isNull();
+  }
+
+  @Test
+  @Sandboxed
+  public void deleteAllEmails() throws Exception {
+    EmailInput input = new EmailInput();
+    input.email = "foo.bar@example.com";
+    input.noConfirmation = true;
+    gApi.accounts().self().addEmail(input);
+
+    resetCurrentApiUser();
+    Set<String> allEmails = getEmails();
+    assertThat(allEmails).hasSize(2);
+
+    for (String email : allEmails) {
+      gApi.accounts().self().deleteEmail(email);
+    }
+
+    resetCurrentApiUser();
+    assertThat(getEmails()).isEmpty();
+    assertThat(gApi.accounts().self().get().email).isNull();
   }
 
   @Test
@@ -1529,13 +1596,27 @@ public class AccountIT extends AbstractDaemonTest {
     String id = key.getKeyIdString();
     addExternalIdEmail(admin, "test1@example.com");
 
+    sender.clear();
     assertKeyMapContains(key, addGpgKey(key.getPublicKeyArmored()));
     assertKeys(key);
+    assertThat(sender.getMessages()).hasSize(1);
+    assertThat(sender.getMessages().get(0).body()).contains("new GPG keys have been added");
 
     setApiUser(user);
     exception.expect(ResourceNotFoundException.class);
     exception.expectMessage(id);
     gApi.accounts().self().gpgKey(id).get();
+  }
+
+  @Test
+  public void adminCannotAddGpgKeyToOtherAccount() throws Exception {
+    TestKey key = validKeyWithoutExpiration();
+    addExternalIdEmail(user, "test1@example.com");
+
+    sender.clear();
+    setApiUser(admin);
+    exception.expect(ResourceNotFoundException.class);
+    addGpgKey(user, key.getPublicKeyArmored());
   }
 
   @Test
@@ -1545,14 +1626,21 @@ public class AccountIT extends AbstractDaemonTest {
     String id = key.getKeyIdString();
     PGPPublicKey pk = key.getPublicKey();
 
+    sender.clear();
     GpgKeyInfo info = addGpgKey(armor(pk)).get(id);
     assertThat(info.userIds).hasSize(2);
     assertIteratorSize(2, getOnlyKeyFromStore(key).getUserIDs());
+    assertThat(sender.getMessages()).hasSize(1);
+    assertThat(sender.getMessages().get(0).body()).contains("new GPG keys have been added");
 
     pk = PGPPublicKey.removeCertification(pk, "foo:myId");
+    sender.clear();
     info = addGpgKey(armor(pk)).get(id);
     assertThat(info.userIds).hasSize(1);
     assertIteratorSize(1, getOnlyKeyFromStore(key).getUserIDs());
+    // TODO: Issue 10769: Adding an already existing key should not result in a notification email
+    assertThat(sender.getMessages()).hasSize(1);
+    assertThat(sender.getMessages().get(0).body()).contains("new GPG keys have been added");
   }
 
   @Test
@@ -1568,7 +1656,7 @@ public class AccountIT extends AbstractDaemonTest {
 
     exception.expect(ResourceConflictException.class);
     exception.expectMessage("GPG key already associated with another account");
-    addGpgKey(key.getPublicKeyArmored());
+    addGpgKey(user, key.getPublicKeyArmored());
   }
 
   @Test
@@ -1592,9 +1680,12 @@ public class AccountIT extends AbstractDaemonTest {
     addGpgKey(key.getPublicKeyArmored());
     assertKeys(key);
 
+    sender.clear();
     gApi.accounts().self().gpgKey(id).delete();
     accountIndexedCounter.assertReindexOf(admin);
     assertKeys();
+    assertThat(sender.getMessages()).hasSize(1);
+    assertThat(sender.getMessages().get(0).body()).contains("GPG keys have been deleted");
 
     exception.expect(ResourceNotFoundException.class);
     exception.expectMessage(id);
@@ -1659,40 +1750,109 @@ public class AccountIT extends AbstractDaemonTest {
     assertThat(info).hasSize(1);
     assertSequenceNumbers(info);
     SshKeyInfo key = info.get(0);
-    String inital = AccountCreator.publicKey(admin.sshKey, admin.email);
-    assertThat(key.sshPublicKey).isEqualTo(inital);
+    String initial = AccountCreator.publicKey(admin.sshKey, admin.email);
+    assertThat(key.sshPublicKey).isEqualTo(initial);
     accountIndexedCounter.assertNoReindex();
 
     // Add a new key
+    sender.clear();
     String newKey = AccountCreator.publicKey(AccountCreator.genSshKey(), admin.email);
     gApi.accounts().self().addSshKey(newKey);
     info = gApi.accounts().self().listSshKeys();
     assertThat(info).hasSize(2);
     assertSequenceNumbers(info);
     accountIndexedCounter.assertReindexOf(admin);
+    assertThat(sender.getMessages()).hasSize(1);
+    assertThat(sender.getMessages().get(0).body()).contains("new SSH keys have been added");
 
     // Add an existing key (the request succeeds, but the key isn't added again)
-    gApi.accounts().self().addSshKey(inital);
+    sender.clear();
+    gApi.accounts().self().addSshKey(initial);
     info = gApi.accounts().self().listSshKeys();
     assertThat(info).hasSize(2);
     assertSequenceNumbers(info);
     accountIndexedCounter.assertNoReindex();
+    // TODO: Issue 10769: Adding an already existing key should not result in a notification email
+    assertThat(sender.getMessages()).hasSize(1);
+    assertThat(sender.getMessages().get(0).body()).contains("new SSH keys have been added");
 
     // Add another new key
+    sender.clear();
     String newKey2 = AccountCreator.publicKey(AccountCreator.genSshKey(), admin.email);
     gApi.accounts().self().addSshKey(newKey2);
     info = gApi.accounts().self().listSshKeys();
     assertThat(info).hasSize(3);
     assertSequenceNumbers(info);
     accountIndexedCounter.assertReindexOf(admin);
+    assertThat(sender.getMessages()).hasSize(1);
+    assertThat(sender.getMessages().get(0).body()).contains("new SSH keys have been added");
 
     // Delete second key
+    sender.clear();
     gApi.accounts().self().deleteSshKey(2);
     info = gApi.accounts().self().listSshKeys();
     assertThat(info).hasSize(2);
     assertThat(info.get(0).seq).isEqualTo(1);
     assertThat(info.get(1).seq).isEqualTo(3);
     accountIndexedCounter.assertReindexOf(admin);
+    assertThat(sender.getMessages()).hasSize(1);
+    assertThat(sender.getMessages().get(0).body()).contains("SSH keys have been deleted");
+  }
+
+  @Test
+  @UseSsh
+  public void adminCanAddOrRemoveSshKeyOnOtherAccount() throws Exception {
+    // The test account should initially have exactly one ssh key
+    List<SshKeyInfo> info = gApi.accounts().id(user.username).listSshKeys();
+    assertThat(info).hasSize(1);
+    assertSequenceNumbers(info);
+    SshKeyInfo key = info.get(0);
+    String initial = AccountCreator.publicKey(user.sshKey, user.email);
+    assertThat(key.sshPublicKey).isEqualTo(initial);
+    accountIndexedCounter.assertNoReindex();
+
+    // Add a new key
+    sender.clear();
+    String newKey = AccountCreator.publicKey(AccountCreator.genSshKey(), user.email);
+    gApi.accounts().id(user.username).addSshKey(newKey);
+    info = gApi.accounts().id(user.username).listSshKeys();
+    assertThat(info).hasSize(2);
+    assertSequenceNumbers(info);
+    accountIndexedCounter.assertReindexOf(user);
+
+    assertThat(sender.getMessages()).hasSize(1);
+    Message message = sender.getMessages().get(0);
+    assertThat(message.rcpt()).containsExactly(user.emailAddress);
+    assertThat(message.body()).contains("new SSH keys have been added");
+
+    // Delete key
+    sender.clear();
+    gApi.accounts().id(user.username).deleteSshKey(1);
+    info = gApi.accounts().id(user.username).listSshKeys();
+    assertThat(info).hasSize(1);
+    accountIndexedCounter.assertReindexOf(user);
+
+    assertThat(sender.getMessages()).hasSize(1);
+    message = sender.getMessages().get(0);
+    assertThat(message.rcpt()).containsExactly(user.emailAddress);
+    assertThat(message.body()).contains("SSH keys have been deleted");
+  }
+
+  @Test
+  @UseSsh
+  public void userCannotAddSshKeyToOtherAccount() throws Exception {
+    String newKey = AccountCreator.publicKey(AccountCreator.genSshKey(), admin.email);
+    setApiUser(user);
+    exception.expect(AuthException.class);
+    gApi.accounts().id(admin.username).addSshKey(newKey);
+  }
+
+  @Test
+  @UseSsh
+  public void userCannotDeleteSshKeyOfOtherAccount() throws Exception {
+    setApiUser(user);
+    exception.expect(ResourceNotFoundException.class);
+    gApi.accounts().id(admin.username).deleteSshKey(0);
   }
 
   // reindex is tested by {@link AbstractQueryAccountsTest#reindex}
@@ -1876,6 +2036,92 @@ public class AccountIT extends AbstractDaemonTest {
     assertThat(info.name).isEqualTo("Something Else");
   }
 
+  @Test
+  public void userCanGenerateNewHttpPassword() throws Exception {
+    sender.clear();
+    String newPassword = gApi.accounts().self().generateHttpPassword();
+    assertThat(newPassword).isNotNull();
+    assertThat(sender.getMessages()).hasSize(1);
+    assertThat(sender.getMessages().get(0).body()).contains("HTTP password was added or updated");
+  }
+
+  @Test
+  public void adminCanGenerateNewHttpPasswordForUser() throws Exception {
+    setApiUser(admin);
+    sender.clear();
+    String newPassword = gApi.accounts().id(user.username).generateHttpPassword();
+    assertThat(newPassword).isNotNull();
+    assertThat(sender.getMessages()).hasSize(1);
+    assertThat(sender.getMessages().get(0).body()).contains("HTTP password was added or updated");
+  }
+
+  @Test
+  public void userCannotGenerateNewHttpPasswordForOtherUser() throws Exception {
+    setApiUser(user);
+    exception.expect(AuthException.class);
+    gApi.accounts().id(admin.username).generateHttpPassword();
+  }
+
+  @Test
+  public void userCannotExplicitlySetHttpPassword() throws Exception {
+    setApiUser(user);
+    exception.expect(AuthException.class);
+    gApi.accounts().self().setHttpPassword("my-new-password");
+  }
+
+  @Test
+  public void userCannotExplicitlySetHttpPasswordForOtherUser() throws Exception {
+    setApiUser(user);
+    exception.expect(AuthException.class);
+    gApi.accounts().id(admin.username).setHttpPassword("my-new-password");
+  }
+
+  @Test
+  public void userCanRemoveHttpPassword() throws Exception {
+    setApiUser(user);
+    sender.clear();
+    assertThat(gApi.accounts().self().setHttpPassword(null)).isNull();
+    assertThat(sender.getMessages()).hasSize(1);
+    assertThat(sender.getMessages().get(0).body()).contains("HTTP password was deleted");
+  }
+
+  @Test
+  public void userCannotRemoveHttpPasswordForOtherUser() throws Exception {
+    setApiUser(user);
+    exception.expect(AuthException.class);
+    gApi.accounts().id(admin.username).setHttpPassword(null);
+  }
+
+  @Test
+  public void adminCanExplicitlySetHttpPasswordForUser() throws Exception {
+    setApiUser(admin);
+    String httpPassword = "new-password-for-user";
+    sender.clear();
+    assertThat(gApi.accounts().id(user.username).setHttpPassword(httpPassword))
+        .isEqualTo(httpPassword);
+    assertThat(sender.getMessages()).hasSize(1);
+    assertThat(sender.getMessages().get(0).body()).contains("HTTP password was added or updated");
+  }
+
+  @Test
+  public void adminCanRemoveHttpPasswordForUser() throws Exception {
+    setApiUser(admin);
+    sender.clear();
+    assertThat(gApi.accounts().id(user.username).setHttpPassword(null)).isNull();
+    assertThat(sender.getMessages()).hasSize(1);
+    assertThat(sender.getMessages().get(0).body()).contains("HTTP password was deleted");
+  }
+
+  @Test
+  public void cannotGenerateHttpPasswordWhenUsernameIsNotSet() throws Exception {
+    setApiUser(admin);
+    int userId = accountCreator.create().id.get();
+    assertThat(gApi.accounts().id(userId).get().username).isNull();
+    exception.expect(ResourceConflictException.class);
+    exception.expectMessage("username");
+    gApi.accounts().id(userId).generateHttpPassword();
+  }
+
   private void assertGroups(String user, List<String> expected) throws Exception {
     List<String> actual =
         gApi.accounts().id(user).getGroups().stream().map(g -> g.name).collect(toList());
@@ -1981,9 +2227,15 @@ public class AccountIT extends AbstractDaemonTest {
   }
 
   private Map<String, GpgKeyInfo> addGpgKey(String armored) throws Exception {
+    return addGpgKey(admin, armored);
+  }
+
+  private Map<String, GpgKeyInfo> addGpgKey(TestAccount account, String armored) throws Exception {
     Map<String, GpgKeyInfo> gpgKeys =
-        gApi.accounts().self().putGpgKeys(ImmutableList.of(armored), ImmutableList.<String>of());
-    accountIndexedCounter.assertReindexOf(gApi.accounts().self().get());
+        gApi.accounts()
+            .id(account.username)
+            .putGpgKeys(ImmutableList.of(armored), ImmutableList.<String>of());
+    accountIndexedCounter.assertReindexOf(gApi.accounts().id(account.username).get());
     return gpgKeys;
   }
 

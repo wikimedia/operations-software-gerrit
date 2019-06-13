@@ -1,4 +1,4 @@
-// Copyright (C) 2015 The Android Open Source Project
+// Copyright (C) 2019 The Android Open Source Project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,67 +14,47 @@
 
 package com.google.gerrit.server.mail.send;
 
-import com.google.common.base.Joiner;
 import com.google.gerrit.common.errors.EmailException;
 import com.google.gerrit.extensions.api.changes.RecipientType;
-import com.google.gerrit.reviewdb.client.AccountSshKey;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.mail.Address;
 import com.google.inject.assistedinject.Assisted;
 import com.google.inject.assistedinject.AssistedInject;
-import java.util.List;
 
-public class AddKeySender extends OutgoingEmail {
+public class HttpPasswordUpdateSender extends OutgoingEmail {
   public interface Factory {
-    AddKeySender create(IdentifiedUser user, AccountSshKey sshKey);
-
-    AddKeySender create(IdentifiedUser user, List<String> gpgKey);
+    HttpPasswordUpdateSender create(IdentifiedUser user, String operation);
   }
 
   private final IdentifiedUser user;
-  private final AccountSshKey sshKey;
-  private final List<String> gpgKeys;
+  private final String operation;
 
   @AssistedInject
-  public AddKeySender(
-      EmailArguments ea, @Assisted IdentifiedUser user, @Assisted AccountSshKey sshKey) {
-    super(ea, "addkey");
+  public HttpPasswordUpdateSender(
+      EmailArguments ea, @Assisted IdentifiedUser user, @Assisted String operation) {
+    super(ea, "HttpPasswordUpdate");
     this.user = user;
-    this.sshKey = sshKey;
-    this.gpgKeys = null;
-  }
-
-  @AssistedInject
-  public AddKeySender(
-      EmailArguments ea, @Assisted IdentifiedUser user, @Assisted List<String> gpgKeys) {
-    super(ea, "addkey");
-    this.user = user;
-    this.sshKey = null;
-    this.gpgKeys = gpgKeys;
+    this.operation = operation;
   }
 
   @Override
   protected void init() throws EmailException {
     super.init();
-    setHeader("Subject", String.format("[Gerrit Code Review] New %s Keys Added", getKeyType()));
+    setHeader("Subject", "[Gerrit Code Review] HTTP password was " + operation);
     add(RecipientType.TO, new Address(getEmail()));
   }
 
   @Override
   protected boolean shouldSendMessage() {
-    if (sshKey == null && (gpgKeys == null || gpgKeys.isEmpty())) {
-      // Don't email if no keys were added.
-      return false;
-    }
-
+    // Always send an email if the HTTP password is updated.
     return true;
   }
 
   @Override
   protected void format() throws EmailException {
-    appendText(textTemplate("AddKey"));
+    appendText(textTemplate("HttpPasswordUpdate"));
     if (useHtml()) {
-      appendHtml(soyHtmlTemplate("AddKeyHtml"));
+      appendHtml(soyHtmlTemplate("HttpPasswordUpdateHtml"));
     }
   }
 
@@ -86,34 +66,12 @@ public class AddKeySender extends OutgoingEmail {
     return getUserNameEmailFor(user.getAccountId());
   }
 
-  public String getKeyType() {
-    if (sshKey != null) {
-      return "SSH";
-    } else if (gpgKeys != null) {
-      return "GPG";
-    }
-    return "Unknown";
-  }
-
-  public String getSshKey() {
-    return (sshKey != null) ? sshKey.getSshPublicKey() + "\n" : null;
-  }
-
-  public String getGpgKeys() {
-    if (gpgKeys != null) {
-      return Joiner.on("\n").join(gpgKeys);
-    }
-    return null;
-  }
-
   @Override
   protected void setupSoyContext() {
     super.setupSoyContext();
     soyContextEmailData.put("email", getEmail());
-    soyContextEmailData.put("gpgKeys", getGpgKeys());
-    soyContextEmailData.put("keyType", getKeyType());
-    soyContextEmailData.put("sshKey", getSshKey());
     soyContextEmailData.put("userNameEmail", getUserNameEmail());
+    soyContextEmailData.put("operation", operation);
   }
 
   @Override

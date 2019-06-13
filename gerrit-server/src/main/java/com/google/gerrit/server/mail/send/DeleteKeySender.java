@@ -1,4 +1,4 @@
-// Copyright (C) 2015 The Android Open Source Project
+// Copyright (C) 2019 The Android Open Source Project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,59 +22,55 @@ import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.mail.Address;
 import com.google.inject.assistedinject.Assisted;
 import com.google.inject.assistedinject.AssistedInject;
+import java.util.Collections;
 import java.util.List;
 
-public class AddKeySender extends OutgoingEmail {
+public class DeleteKeySender extends OutgoingEmail {
   public interface Factory {
-    AddKeySender create(IdentifiedUser user, AccountSshKey sshKey);
+    DeleteKeySender create(IdentifiedUser user, AccountSshKey sshKey);
 
-    AddKeySender create(IdentifiedUser user, List<String> gpgKey);
+    DeleteKeySender create(IdentifiedUser user, List<String> gpgKeyFingerprints);
   }
 
   private final IdentifiedUser user;
   private final AccountSshKey sshKey;
-  private final List<String> gpgKeys;
+  private final List<String> gpgKeyFingerprints;
 
   @AssistedInject
-  public AddKeySender(
+  public DeleteKeySender(
       EmailArguments ea, @Assisted IdentifiedUser user, @Assisted AccountSshKey sshKey) {
-    super(ea, "addkey");
+    super(ea, "deletekey");
     this.user = user;
+    this.gpgKeyFingerprints = Collections.emptyList();
     this.sshKey = sshKey;
-    this.gpgKeys = null;
   }
 
   @AssistedInject
-  public AddKeySender(
-      EmailArguments ea, @Assisted IdentifiedUser user, @Assisted List<String> gpgKeys) {
-    super(ea, "addkey");
+  public DeleteKeySender(
+      EmailArguments ea, @Assisted IdentifiedUser user, @Assisted List<String> gpgKeyFingerprints) {
+    super(ea, "deletekey");
     this.user = user;
+    this.gpgKeyFingerprints = gpgKeyFingerprints;
     this.sshKey = null;
-    this.gpgKeys = gpgKeys;
   }
 
   @Override
   protected void init() throws EmailException {
     super.init();
-    setHeader("Subject", String.format("[Gerrit Code Review] New %s Keys Added", getKeyType()));
+    setHeader("Subject", String.format("[Gerrit Code Review] %s Keys Deleted", getKeyType()));
     add(RecipientType.TO, new Address(getEmail()));
   }
 
   @Override
   protected boolean shouldSendMessage() {
-    if (sshKey == null && (gpgKeys == null || gpgKeys.isEmpty())) {
-      // Don't email if no keys were added.
-      return false;
-    }
-
     return true;
   }
 
   @Override
   protected void format() throws EmailException {
-    appendText(textTemplate("AddKey"));
+    appendText(textTemplate("DeleteKey"));
     if (useHtml()) {
-      appendHtml(soyHtmlTemplate("AddKeyHtml"));
+      appendHtml(soyHtmlTemplate("DeleteKeyHtml"));
     }
   }
 
@@ -89,19 +85,19 @@ public class AddKeySender extends OutgoingEmail {
   public String getKeyType() {
     if (sshKey != null) {
       return "SSH";
-    } else if (gpgKeys != null) {
+    } else if (gpgKeyFingerprints != null) {
       return "GPG";
     }
-    return "Unknown";
+    throw new IllegalStateException("key type is not SSH or GPG");
   }
 
   public String getSshKey() {
     return (sshKey != null) ? sshKey.getSshPublicKey() + "\n" : null;
   }
 
-  public String getGpgKeys() {
-    if (gpgKeys != null) {
-      return Joiner.on("\n").join(gpgKeys);
+  public String getGpgKeyFingerprints() {
+    if (!gpgKeyFingerprints.isEmpty()) {
+      return Joiner.on("\n").join(gpgKeyFingerprints);
     }
     return null;
   }
@@ -110,7 +106,7 @@ public class AddKeySender extends OutgoingEmail {
   protected void setupSoyContext() {
     super.setupSoyContext();
     soyContextEmailData.put("email", getEmail());
-    soyContextEmailData.put("gpgKeys", getGpgKeys());
+    soyContextEmailData.put("gpgKeyFingerprints", getGpgKeyFingerprints());
     soyContextEmailData.put("keyType", getKeyType());
     soyContextEmailData.put("sshKey", getSshKey());
     soyContextEmailData.put("userNameEmail", getUserNameEmail());

@@ -6,31 +6,51 @@ load("//lib/codemirror:cm.bzl", "CM_VERSION", "DIFF_MATCH_PATCH_VERSION")
 load("//plugins:external_plugin_deps.bzl", "external_plugin_deps")
 
 http_archive(
+    name = "bazel_toolchains",
+    sha256 = "88e818f9f03628eef609c8429c210ecf265ffe46c2af095f36c7ef8b1855fef5",
+    strip_prefix = "bazel-toolchains-92dd8a7a518a2fb7ba992d47c8b38299fe0be825",
+    urls = [
+        "https://mirror.bazel.build/github.com/bazelbuild/bazel-toolchains/archive/92dd8a7a518a2fb7ba992d47c8b38299fe0be825.tar.gz",
+        "https://github.com/bazelbuild/bazel-toolchains/archive/92dd8a7a518a2fb7ba992d47c8b38299fe0be825.tar.gz",
+    ],
+)
+
+load("@bazel_toolchains//rules:rbe_repo.bzl", "rbe_autoconfig")
+
+# Creates a default toolchain config for RBE.
+# Use this as is if you are using the rbe_ubuntu16_04 container,
+# otherwise refer to RBE docs.
+rbe_autoconfig(name = "rbe_default")
+
+http_archive(
+    name = "bazel_toolchains",
+    sha256 = "88e818f9f03628eef609c8429c210ecf265ffe46c2af095f36c7ef8b1855fef5",
+    strip_prefix = "bazel-toolchains-92dd8a7a518a2fb7ba992d47c8b38299fe0be825",
+    urls = [
+        "https://mirror.bazel.build/github.com/bazelbuild/bazel-toolchains/archive/92dd8a7a518a2fb7ba992d47c8b38299fe0be825.tar.gz",
+        "https://github.com/bazelbuild/bazel-toolchains/archive/92dd8a7a518a2fb7ba992d47c8b38299fe0be825.tar.gz",
+    ],
+)
+
+load("@bazel_toolchains//rules:rbe_repo.bzl", "rbe_autoconfig")
+
+# Creates a default toolchain config for RBE.
+# Use this as is if you are using the rbe_ubuntu16_04 container,
+# otherwise refer to RBE docs.
+rbe_autoconfig(name = "rbe_default")
+
+http_archive(
     name = "bazel_skylib",
-    sha256 = "bbccf674aa441c266df9894182d80de104cabd19be98be002f6d478aaa31574d",
-    strip_prefix = "bazel-skylib-2169ae1c374aab4a09aa90e65efe1a3aad4e279b",
-    urls = ["https://github.com/bazelbuild/bazel-skylib/archive/2169ae1c374aab4a09aa90e65efe1a3aad4e279b.tar.gz"],
+    sha256 = "2ea8a5ed2b448baf4a6855d3ce049c4c452a6470b1efd1504fdb7c1c134d220a",
+    strip_prefix = "bazel-skylib-0.8.0",
+    urls = ["https://github.com/bazelbuild/bazel-skylib/archive/0.8.0.tar.gz"],
 )
 
 http_archive(
     name = "io_bazel_rules_closure",
-    sha256 = "34abd9170fdbfdfc6f3b63f2c18cee3cbcb2ddbd5e3c97324add0aa7809ed875",
-    strip_prefix = "rules_closure-9d543facf886631e4ed379996e60ce3533188adc",
-    urls = ["https://github.com/bazelbuild/rules_closure/archive/9d543facf886631e4ed379996e60ce3533188adc.tar.gz"],
-)
-
-# Transitive dependency of rules_closure and protobuf
-http_archive(
-    name = "net_zlib",
-    build_file = "//:lib/zlib/BUILD",
-    sha256 = "c3e5e9fdd5004dcb542feda5ee4f0ff0744628baf8ed2dd5d66f8ca1197cb1a1",
-    strip_prefix = "zlib-1.2.11",
-    urls = ["https://zlib.net/zlib-1.2.11.tar.gz"],
-)
-
-bind(
-    name = "zlib",
-    actual = "@net_zlib//:zlib",
+    sha256 = "d075b084e6f4109d1b1ab877495ac72c1a6c4dbc593980967e0b7359f4254d7e",
+    strip_prefix = "rules_closure-78f1192664acf66ca1de24116cbcc98e1698f26b",
+    urls = ["https://github.com/bazelbuild/rules_closure/archive/78f1192664acf66ca1de24116cbcc98e1698f26b.tar.gz"],
 )
 
 # File is specific to Polymer and copied from the Closure Github -- should be
@@ -45,7 +65,7 @@ http_file(
 
 load("@bazel_skylib//lib:versions.bzl", "versions")
 
-versions.check(minimum_bazel_version = "0.22.0")
+versions.check(minimum_bazel_version = "0.25.0")
 
 load("@io_bazel_rules_closure//closure:defs.bzl", "closure_repositories")
 
@@ -53,6 +73,7 @@ load("@io_bazel_rules_closure//closure:defs.bzl", "closure_repositories")
 closure_repositories(
     omit_aopalliance = True,
     omit_args4j = True,
+    omit_bazel_skylib = True,
     omit_javax_inject = True,
 )
 
@@ -205,12 +226,6 @@ maven_jar(
     artifact = "com.google.gerrit:gwtorm:1.18",
     sha1 = "f326dec463439a92ccb32f05b38345e21d0b5ecf",
     src_sha1 = "e0b973d5cafef3d145fa80cdf032fcead1186d29",
-)
-
-maven_jar(
-    name = "protobuf",
-    artifact = "com.google.protobuf:protobuf-java:3.0.0-beta-2",
-    sha1 = "de80fe047052445869b96f6def6baca7182c95af",
 )
 
 maven_jar(
@@ -910,30 +925,28 @@ maven_jar(
 # and httpasyncclient as necessary.
 maven_jar(
     name = "elasticsearch-rest-client",
-    artifact = "org.elasticsearch.client:elasticsearch-rest-client:7.0.0",
-    sha1 = "121d12f1c71f318be1a654e8a956e38d5b68e98a",
+    artifact = "org.elasticsearch.client:elasticsearch-rest-client:7.1.1",
+    sha1 = "ca04d8012f92cac561be343b931ec73302b2ff3e",
 )
-
-JACKSON_VERSION = "2.9.8"
 
 maven_jar(
     name = "jackson-core",
-    artifact = "com.fasterxml.jackson.core:jackson-core:" + JACKSON_VERSION,
+    artifact = "com.fasterxml.jackson.core:jackson-core:2.9.8",
     sha1 = "0f5a654e4675769c716e5b387830d19b501ca191",
 )
 
-TESTCONTAINERS_VERSION = "1.11.2"
+TESTCONTAINERS_VERSION = "1.11.3"
 
 maven_jar(
     name = "testcontainers",
     artifact = "org.testcontainers:testcontainers:" + TESTCONTAINERS_VERSION,
-    sha1 = "eae47ed24bb07270d4b60b5e2c3444c5bf3c8ea9",
+    sha1 = "154b69dd976416734b2fc809fb86e173ad9aa25b",
 )
 
 maven_jar(
     name = "testcontainers-elasticsearch",
     artifact = "org.testcontainers:elasticsearch:" + TESTCONTAINERS_VERSION,
-    sha1 = "a327bd8cb68eb7146b36d754aee98a8018132d8f",
+    sha1 = "90713b61f5748d8894c31a20f955bd7f81ac2ece",
 )
 
 maven_jar(
@@ -1086,8 +1099,8 @@ bower_archive(
 bower_archive(
     name = "polymer-resin",
     package = "polymer/polymer-resin",
-    sha1 = "93ac118f2b9209cfbfd6dc8022d9492743d17f24",
-    version = "1.2.7",
+    sha1 = "94c29926c20ea3a9b636f26b3e0d689ead8137e5",
+    version = "2.0.1",
 )
 
 bower_archive(
