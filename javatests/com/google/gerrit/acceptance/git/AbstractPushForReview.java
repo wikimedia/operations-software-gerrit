@@ -77,6 +77,8 @@ import com.google.gerrit.extensions.common.EditInfo;
 import com.google.gerrit.extensions.common.LabelInfo;
 import com.google.gerrit.extensions.common.RevisionInfo;
 import com.google.gerrit.extensions.common.testing.EditInfoSubject;
+import com.google.gerrit.extensions.registration.DynamicSet;
+import com.google.gerrit.extensions.registration.RegistrationHandle;
 import com.google.gerrit.mail.Address;
 import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.reviewdb.client.BooleanProjectConfig;
@@ -87,16 +89,21 @@ import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.reviewdb.client.RefNames;
 import com.google.gerrit.reviewdb.client.RevId;
 import com.google.gerrit.server.ChangeMessagesUtil;
+import com.google.gerrit.server.events.CommitReceivedEvent;
 import com.google.gerrit.server.git.receive.NoteDbPushOption;
 import com.google.gerrit.server.git.receive.ReceiveConstants;
+import com.google.gerrit.server.git.validators.CommitValidationListener;
+import com.google.gerrit.server.git.validators.CommitValidationMessage;
 import com.google.gerrit.server.git.validators.CommitValidators.ChangeIdValidator;
 import com.google.gerrit.server.group.SystemGroupBackend;
 import com.google.gerrit.server.project.testing.Util;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.testing.FakeEmailSender.Message;
 import com.google.gerrit.testing.TestTimeUtil;
+import com.google.inject.Inject;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -104,6 +111,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.eclipse.jgit.api.errors.GitAPIException;
@@ -132,6 +140,8 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
   }
 
   private LabelType patchSetLock;
+
+  @Inject private DynamicSet<CommitValidationListener> commitValidators;
 
   @BeforeClass
   public static void setTimeForTesting() {
@@ -747,36 +757,44 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
     assertUploadTag(r.getChange(), ChangeMessagesUtil.TAG_UPLOADED_WIP_PATCH_SET);
 
     // Pushing a new patch set without --wip doesn't remove the wip flag from the change.
-    r = amendChange(r.getChangeId(), "refs/for/master");
+    String changeId = r.getChangeId();
+    r = amendChange(changeId, "refs/for/master");
     r.assertOkStatus();
     r.assertMessage(" [WIP]");
     assertThat(r.getChange().change().isWorkInProgress()).isTrue();
     assertUploadTag(r.getChange(), ChangeMessagesUtil.TAG_UPLOADED_WIP_PATCH_SET);
 
     // Remove the wip flag from the change.
-    r = amendChange(r.getChangeId(), "refs/for/master%ready");
+    r = amendChange(changeId, "refs/for/master%ready");
     r.assertOkStatus();
     r.assertNotMessage(" [WIP]");
     assertThat(r.getChange().change().isWorkInProgress()).isFalse();
     assertUploadTag(r.getChange(), ChangeMessagesUtil.TAG_UPLOADED_PATCH_SET);
 
     // Normal push: wip flag is not added back.
-    r = amendChange(r.getChangeId(), "refs/for/master");
+    r = amendChange(changeId, "refs/for/master");
     r.assertOkStatus();
     r.assertNotMessage(" [WIP]");
     assertThat(r.getChange().change().isWorkInProgress()).isFalse();
     assertUploadTag(r.getChange(), ChangeMessagesUtil.TAG_UPLOADED_PATCH_SET);
 
     // Make the change work-in-progress again.
-    r = amendChange(r.getChangeId(), "refs/for/master%wip");
+    r = amendChange(changeId, "refs/for/master%wip");
     r.assertOkStatus();
     r.assertMessage(" [WIP]");
     assertThat(r.getChange().change().isWorkInProgress()).isTrue();
     assertUploadTag(r.getChange(), ChangeMessagesUtil.TAG_UPLOADED_WIP_PATCH_SET);
 
     // Can't use --wip and --ready together.
-    r = amendChange(r.getChangeId(), "refs/for/master%wip,ready");
+    r = amendChange(changeId, "refs/for/master%wip,ready");
     r.assertErrorStatus();
+
+    // Pushing directly to the branch removes the work-in-progress flag
+    String master = "refs/heads/master";
+    assertPushOk(pushHead(testRepo, master, false), master);
+    ChangeInfo result = Iterables.getOnlyElement(gApi.changes().query(changeId).get());
+    assertThat(result.status).isEqualTo(ChangeStatus.MERGED);
+    assertThat(result.workInProgress).isNull();
   }
 
   private void assertUploadTag(ChangeData cd, String expectedTag) throws Exception {
@@ -2253,6 +2271,88 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
     assertThat(gApi.changes().query(q).get()).isEmpty();
     assertThat(gApi.projects().name(project.get()).branch(master).get().revision)
         .isEqualTo(Iterables.getLast(commits).name());
+  }
+
+  private static class TestValidator implements CommitValidationListener {
+    private final AtomicInteger count = new AtomicInteger();
+    private final boolean validateAll;
+
+    TestValidator(boolean validateAll) {
+      this.validateAll = validateAll;
+    }
+
+    TestValidator() {
+      this(false);
+    }
+
+    @Override
+    public List<CommitValidationMessage> onCommitReceived(CommitReceivedEvent receiveEvent) {
+      count.incrementAndGet();
+      return Collections.emptyList();
+    }
+
+    @Override
+    public boolean shouldValidateAllCommits() {
+      return validateAll;
+    }
+
+    public int count() {
+      return count.get();
+    }
+  }
+
+  @Test
+  public void skipValidation() throws Exception {
+    String master = "refs/heads/master";
+    TestValidator validator = new TestValidator();
+    RegistrationHandle handle = commitValidators.add("test-validator", validator);
+    RegistrationHandle handle2 = null;
+
+    try {
+      // Validation listener is called on normal push
+      PushOneCommit push =
+          pushFactory.create(db, admin.getIdent(), testRepo, "change1", "a.txt", "content");
+      PushOneCommit.Result r = push.to(master);
+      r.assertOkStatus();
+      assertThat(validator.count()).isEqualTo(1);
+
+      // Push is rejected and validation listener is not called when not allowed
+      // to use skip option
+      PushOneCommit push2 =
+          pushFactory.create(db, admin.getIdent(), testRepo, "change2", "b.txt", "content");
+      push2.setPushOptions(ImmutableList.of(PUSH_OPTION_SKIP_VALIDATION));
+      r = push2.to(master);
+      r.assertErrorStatus("not permitted: skip validation");
+      assertThat(validator.count()).isEqualTo(1);
+
+      // Validation listener is not called when skip option is used
+      grantSkipValidation(project, master, SystemGroupBackend.REGISTERED_USERS);
+      PushOneCommit push3 =
+          pushFactory.create(db, admin.getIdent(), testRepo, "change2", "b.txt", "content");
+      push3.setPushOptions(ImmutableList.of(PUSH_OPTION_SKIP_VALIDATION));
+      r = push3.to(master);
+      r.assertOkStatus();
+      assertThat(validator.count()).isEqualTo(1);
+
+      // Validation listener that needs to validate all commits gets called even
+      // when the skip option is used.
+      TestValidator validator2 = new TestValidator(true);
+      handle2 = commitValidators.add("test-validator-2", validator2);
+      PushOneCommit push4 =
+          pushFactory.create(db, admin.getIdent(), testRepo, "change2", "b.txt", "content");
+      push4.setPushOptions(ImmutableList.of(PUSH_OPTION_SKIP_VALIDATION));
+      r = push4.to(master);
+      r.assertOkStatus();
+      // First listener was not called; its count remains the same.
+      assertThat(validator.count()).isEqualTo(1);
+      // Second listener was called.
+      assertThat(validator2.count()).isEqualTo(1);
+    } finally {
+      handle.remove();
+      if (handle2 != null) {
+        handle2.remove();
+      }
+    }
   }
 
   @Test

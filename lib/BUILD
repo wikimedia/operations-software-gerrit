@@ -65,7 +65,7 @@ java_library(
     name = "protobuf",
     data = ["//lib:LICENSE-protobuf"],
     visibility = ["//visibility:public"],
-    exports = ["@protobuf//jar"],
+    exports = ["@com_google_protobuf//:protobuf_java"],
 )
 
 java_library(
@@ -503,4 +503,10 @@ java_library(
     data = ["//lib:LICENSE-postgresql"],
     visibility = ["//visibility:public"],
     exports = ["@postgresql//jar"],
+)
+
+sh_test(
+    name = "nongoogle_test",
+    srcs = ["nongoogle_test.sh"],
+    data = ["//tools:nongoogle.bzl"],
 )

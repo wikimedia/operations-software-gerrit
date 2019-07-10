@@ -4,6 +4,8 @@ load(
     "default_java_toolchain",
 )
 
+exports_files(["nongoogle.bzl"])
+
 py_binary(
     name = "merge_jars",
     srcs = ["merge_jars.py"],
@@ -21,8 +23,10 @@ default_java_toolchain(
     visibility = ["//visibility:public"],
 )
 
-# This EP warnings list is based on:
+# Error Prone errors enabled by default; see ../.bazelrc for how this is
+# enabled. This warnings list is originally based on:
 # https://github.com/bazelbuild/BUILD_file_generator/blob/master/tools/bazel_defs/java.bzl
+# However, feel free to add any additional errors. Thus far they have all been pretty useful.
 java_package_configuration(
     name = "error_prone",
     javacopts = [
@@ -38,6 +42,7 @@ java_package_configuration(
         "-Xep:CannotMockFinalClass:WARN",
         "-Xep:ClassCanBeStatic:WARN",
         "-Xep:ClassNewInstance:WARN",
+        "-Xep:DateFormatConstant:ERROR",
         "-Xep:DefaultCharset:ERROR",
         "-Xep:DoubleCheckedLocking:WARN",
         "-Xep:ElementsCountedInLoop:WARN",
@@ -94,5 +99,12 @@ package_group(
     packages = [
         "//java/...",
         "//javatests/...",
+        "//plugins/codemirror-editor/...",
+        "//plugins/commit-message-length-validator/...",
+        "//plugins/download-commands/...",
+        "//plugins/hooks/...",
+        "//plugins/replication/...",
+        "//plugins/reviewnotes/...",
+        "//plugins/singleusergroup/...",
     ],
 )

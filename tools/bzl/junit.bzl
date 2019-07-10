@@ -28,14 +28,14 @@ public class %s {}
 
 _PREFIXES = ("org", "com", "edu")
 
-def _SafeIndex(l, val):
-    for i, v in enumerate(l):
+def _SafeIndex(j, val):
+    for i, v in enumerate(j):
         if val == v:
             return i
     return -1
 
 def _AsClassName(fname):
-    fname = [x.path for x in fname.files][0]
+    fname = [x.path for x in fname.files.to_list()][0]
     toks = fname[:-5].split("/")
     findex = -1
     for s in _PREFIXES:

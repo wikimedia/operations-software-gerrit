@@ -3052,15 +3052,15 @@ manually.
 [[elasticsearch.numberOfShards]]elasticsearch.numberOfShards::
 +
 Sets the number of shards to use per index. Refer to the
-link:https://www.elastic.co/guide/en/elasticsearch/reference/current/_basic_concepts.html#getting-started-shards-and-replicas[
+link:https://www.elastic.co/guide/en/elasticsearch/reference/current/getting-started-concepts.html#getting-started-shards-and-replicas[
 Elasticsearch documentation] for details.
 +
-Defaults to 5.
+Defaults to 5 for Elasticsearch versions 5 and 6, and to 1 starting with Elasticsearch 7.
 
 [[elasticsearch.numberOfReplicas]]elasticsearch.numberOfReplicas::
 +
 Sets the number of replicas to use per index. Refer to the
-link:https://www.elastic.co/guide/en/elasticsearch/reference/current/_basic_concepts.html#getting-started-shards-and-replicas[
+link:https://www.elastic.co/guide/en/elasticsearch/reference/current/getting-started-concepts.html#getting-started-shards-and-replicas[
 Elasticsearch documentation] for details.
 +
 Defaults to 1.
@@ -3147,6 +3147,14 @@ an encrypted connection.
 If true, Gerrit will perform StartTLS extended operation.
 +
 By default, false, StartTLS will not be enabled.
+
+[[ldap.supportAnonymous]]ldap.supportAnonymous::
++
+If false, Gerrit will provide credentials only at connection open, this is
+required for some `LDAP` implementations that do not allow anonymous bind
+for StartTLS or for reauthentication.
++
+By default, true.
 
 [[ldap.sslVerify]]ldap.sslVerify::
 +

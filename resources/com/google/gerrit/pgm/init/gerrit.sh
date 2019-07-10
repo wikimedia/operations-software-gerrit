@@ -265,7 +265,7 @@ fi
 if test -z "$JAVA" ; then
   echo >&2 "Cannot find a JRE or JDK. Please ensure that the JAVA_HOME environment"
   echo >&2 "variable or container.javaHome in $GERRIT_SITE/etc/gerrit.config is"
-  echo >&2 "set to a valid >=1.7 JRE location"
+  echo >&2 "set to a valid >=1.8 JRE location"
   exit 1
 fi
 
@@ -434,8 +434,8 @@ case "$ACTION" in
       fi
     fi
 
+    PID=`cat "$GERRIT_PID"`
     if test $UID = 0; then
-        PID=`cat "$GERRIT_PID"`
         if test -f "/proc/${PID}/oom_score_adj" ; then
             echo -1000 > "/proc/${PID}/oom_score_adj"
         else
