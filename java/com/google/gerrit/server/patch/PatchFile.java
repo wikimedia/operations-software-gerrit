@@ -87,6 +87,14 @@ public class PatchFile {
     }
   }
 
+  private String getOldName() {
+    String name = entry.getOldName();
+    if (name != null) {
+      return name;
+    }
+    return entry.getNewName();
+  }
+
   /**
    * Extract a line from the file, as a string.
    *
@@ -100,7 +108,7 @@ public class PatchFile {
     switch (file) {
       case 0:
         if (a == null) {
-          a = load(aTree, entry.getOldName());
+          a = load(aTree, getOldName());
         }
         return a.getString(line - 1);
 
@@ -109,33 +117,6 @@ public class PatchFile {
           b = load(bTree, entry.getNewName());
         }
         return b.getString(line - 1);
-
-      default:
-        throw new NoSuchEntityException();
-    }
-  }
-
-  /**
-   * Return number of lines in file.
-   *
-   * @param file the file index to extract.
-   * @return number of lines in file.
-   * @throws IOException the patch or complete file content cannot be read.
-   * @throws NoSuchEntityException the file is not exist.
-   */
-  public int getLineCount(int file) throws IOException, NoSuchEntityException {
-    switch (file) {
-      case 0:
-        if (a == null) {
-          a = load(aTree, entry.getOldName());
-        }
-        return a.size();
-
-      case 1:
-        if (b == null) {
-          b = load(bTree, entry.getNewName());
-        }
-        return b.size();
 
       default:
         throw new NoSuchEntityException();

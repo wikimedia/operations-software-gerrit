@@ -84,8 +84,11 @@ closure_repositories(
 # Golang support for PolyGerrit local dev server.
 http_archive(
     name = "io_bazel_rules_go",
-    sha256 = "6776d68ebb897625dead17ae510eac3d5f6342367327875210df44dbe2aeeb19",
-    url = "https://github.com/bazelbuild/rules_go/releases/download/0.17.1/rules_go-0.17.1.tar.gz",
+    sha256 = "f04d2373bcaf8aa09bccb08a98a57e721306c8f6043a2a0ee610fd6853dcde3d",
+    urls = [
+        "https://storage.googleapis.com/bazel-mirror/github.com/bazelbuild/rules_go/releases/download/0.18.6/rules_go-0.18.6.tar.gz",
+        "https://github.com/bazelbuild/rules_go/releases/download/0.18.6/rules_go-0.18.6.tar.gz",
+    ],
 )
 
 load("@io_bazel_rules_go//go:deps.bzl", "go_register_toolchains", "go_rules_dependencies")
@@ -1116,8 +1119,8 @@ maven_jar(
 # and httpasyncclient as necessary.
 maven_jar(
     name = "elasticsearch-rest-client",
-    artifact = "org.elasticsearch.client:elasticsearch-rest-client:7.2.0",
-    sha1 = "39cf34068b0af284eaa9b8bd86a131cb24b322d5",
+    artifact = "org.elasticsearch.client:elasticsearch-rest-client:7.3.1",
+    sha1 = "f5793c89b50a159cbb3e15e17bb981ff854cbe51",
 )
 
 maven_jar(
@@ -1126,18 +1129,18 @@ maven_jar(
     sha1 = "0f5a654e4675769c716e5b387830d19b501ca191",
 )
 
-TESTCONTAINERS_VERSION = "1.11.3"
+TESTCONTAINERS_VERSION = "1.12.0"
 
 maven_jar(
     name = "testcontainers",
     artifact = "org.testcontainers:testcontainers:" + TESTCONTAINERS_VERSION,
-    sha1 = "154b69dd976416734b2fc809fb86e173ad9aa25b",
+    sha1 = "ac89643ce1ddde504da09172086aba0c7df10bff",
 )
 
 maven_jar(
     name = "testcontainers-elasticsearch",
     artifact = "org.testcontainers:elasticsearch:" + TESTCONTAINERS_VERSION,
-    sha1 = "90713b61f5748d8894c31a20f955bd7f81ac2ece",
+    sha1 = "cd9020f1803396c45ef935312bf232f9b17332b0",
 )
 
 maven_jar(
@@ -1156,6 +1159,12 @@ maven_jar(
     name = "jna",
     artifact = "net.java.dev.jna:jna:5.2.0",
     sha1 = "ed8b772eb077a9cb50e44e90899c66a9a6c00e67",
+)
+
+maven_jar(
+    name = "javax-activation",
+    artifact = "javax.activation:activation:1.1.1",
+    sha1 = "485de3a253e23f645037828c07f1d7f1af40763a",
 )
 
 load("//tools/bzl:js.bzl", "bower_archive", "npm_binary")

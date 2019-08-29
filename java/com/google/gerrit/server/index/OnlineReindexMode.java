@@ -1,4 +1,4 @@
-// Copyright (C) 2014 The Android Open Source Project
+// Copyright (C) 2019 The Android Open Source Project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,23 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package com.google.gerrit.extensions.api.changes;
+package com.google.gerrit.server.index;
 
-import com.google.gerrit.extensions.restapi.DefaultInput;
-import java.util.Set;
+import java.util.Optional;
 
-public class HashtagsInput {
-  @DefaultInput public Set<String> add;
-  public Set<String> remove;
+public class OnlineReindexMode {
+  private static ThreadLocal<Boolean> isOnlineReindex = new ThreadLocal<>();
 
-  public HashtagsInput() {}
-
-  public HashtagsInput(Set<String> add) {
-    this.add = add;
+  public static boolean isActive() {
+    return Optional.ofNullable(isOnlineReindex.get()).orElse(Boolean.FALSE);
   }
 
-  public HashtagsInput(Set<String> add, Set<String> remove) {
-    this(add);
-    this.remove = remove;
+  public static void begin() {
+    isOnlineReindex.set(Boolean.TRUE);
+  }
+
+  public static void end() {
+    isOnlineReindex.set(Boolean.FALSE);
   }
 }

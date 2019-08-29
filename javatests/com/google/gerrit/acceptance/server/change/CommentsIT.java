@@ -115,6 +115,11 @@ public class CommentsIT extends AbstractDaemonTest {
       assertThat(result).hasSize(1);
       CommentInfo actual = Iterables.getOnlyElement(result.get(comment.path));
       assertThat(comment).isEqualTo(infoToDraft(path).apply(actual));
+
+      List<CommentInfo> list = getDraftCommentsAsList(changeId);
+      assertThat(list).hasSize(1);
+      actual = list.get(0);
+      assertThat(comment).isEqualTo(infoToDraft(path).apply(actual));
     }
   }
 
@@ -137,6 +142,10 @@ public class CommentsIT extends AbstractDaemonTest {
       assertThat(result).hasSize(1);
       assertThat(Lists.transform(result.get(path), infoToDraft(path)))
           .containsExactly(c1, c2, c3, c4);
+
+      List<CommentInfo> list = getDraftCommentsAsList(changeId);
+      assertThat(list).hasSize(4);
+      assertThat(Lists.transform(list, infoToDraft(path))).containsExactly(c1, c2, c3, c4);
     }
   }
 
@@ -239,6 +248,9 @@ public class CommentsIT extends AbstractDaemonTest {
       assertThat(result).isNotEmpty();
       assertThat(Lists.transform(result.get(file), infoToInput(file)))
           .containsExactly(c1, c2, c3, c4);
+
+      List<CommentInfo> list = getPublishedCommentsAsList(changeId);
+      assertThat(Lists.transform(list, infoToInput(file))).containsExactly(c1, c2, c3, c4);
     }
 
     // for the commit message comments on the auto-merge are not possible
@@ -257,6 +269,9 @@ public class CommentsIT extends AbstractDaemonTest {
       Map<String, List<CommentInfo>> result = getPublishedComments(changeId, revId);
       assertThat(result).isNotEmpty();
       assertThat(Lists.transform(result.get(file), infoToInput(file))).containsExactly(c1, c2, c3);
+
+      List<CommentInfo> list = getPublishedCommentsAsList(changeId);
+      assertThat(Lists.transform(list, infoToInput(file))).containsExactly(c1, c2, c3);
     }
   }
 
@@ -281,6 +296,7 @@ public class CommentsIT extends AbstractDaemonTest {
     String changeId = r.getChangeId();
     String revId = r.getCommit().getName();
     assertThat(getPublishedComments(changeId, revId)).isEmpty();
+    assertThat(getPublishedCommentsAsList(changeId)).isEmpty();
 
     List<CommentInput> expectedComments = new ArrayList<>();
     for (Integer line : lines) {
@@ -296,6 +312,10 @@ public class CommentsIT extends AbstractDaemonTest {
     assertThat(result).isNotEmpty();
     List<CommentInfo> actualComments = result.get(file);
     assertThat(Lists.transform(actualComments, infoToInput(file)))
+        .containsExactlyElementsIn(expectedComments);
+
+    List<CommentInfo> list = getPublishedCommentsAsList(changeId);
+    assertThat(Lists.transform(list, infoToInput(file)))
         .containsExactlyElementsIn(expectedComments);
   }
 
@@ -532,6 +552,13 @@ public class CommentsIT extends AbstractDaemonTest {
 
   @Test
   public void publishCommentsAllRevisions() throws Exception {
+    PushOneCommit.Result result = createChange();
+    String changeId = result.getChangeId();
+
+    pushFactory
+        .create(db, admin.getIdent(), testRepo, SUBJECT, FILE_NAME, "initial content\n", changeId)
+        .to("refs/heads/master");
+
     PushOneCommit.Result r1 =
         pushFactory
             .create(db, admin.getIdent(), testRepo, SUBJECT, FILE_NAME, "old boring content\n")
@@ -556,7 +583,7 @@ public class CommentsIT extends AbstractDaemonTest {
     addDraft(
         r1.getChangeId(),
         r1.getCommit().getName(),
-        newDraft(FILE_NAME, Side.PARENT, 2, "what happened to this?"));
+        newDraft(FILE_NAME, Side.PARENT, createLineRange(1, 0, 7), "what happened to this?"));
     addDraft(
         r2.getChangeId(),
         r2.getCommit().getName(),
@@ -641,8 +668,8 @@ public class CommentsIT extends AbstractDaemonTest {
                 + project.get()
                 + "/+/"
                 + c
-                + "/1/a.txt@a2 \n"
-                + "PS1, Line 2: \n"
+                + "/1/a.txt@a1 \n"
+                + "PS1, Line 1: initial\n"
                 + "what happened to this?\n"
                 + "\n"
                 + "\n"
@@ -670,7 +697,7 @@ public class CommentsIT extends AbstractDaemonTest {
                 + "/+/"
                 + c
                 + "/2/a.txt@a1 \n"
-                + "PS2, Line 1: \n"
+                + "PS2, Line 1: initial content\n"
                 + "comment 1 on base\n"
                 + "\n"
                 + "\n"
@@ -700,7 +727,7 @@ public class CommentsIT extends AbstractDaemonTest {
                 + "/+/"
                 + c
                 + "/2/a.txt@2 \n"
-                + "PS2, Line 2: nten\n"
+                + "PS2, Line 2: cntent\n"
                 + "typo: content\n"
                 + "\n"
                 + "\n");
@@ -1103,9 +1130,17 @@ public class CommentsIT extends AbstractDaemonTest {
     return gApi.changes().id(changeId).revision(revId).comments();
   }
 
+  private List<CommentInfo> getPublishedCommentsAsList(String changeId) throws Exception {
+    return gApi.changes().id(changeId).commentsAsList();
+  }
+
   private Map<String, List<CommentInfo>> getDraftComments(String changeId, String revId)
       throws Exception {
     return gApi.changes().id(changeId).revision(revId).drafts();
+  }
+
+  private List<CommentInfo> getDraftCommentsAsList(String changeId) throws Exception {
+    return gApi.changes().id(changeId).draftsAsList();
   }
 
   private CommentInfo getDraftComment(String changeId, String revId, String uuid) throws Exception {
@@ -1135,7 +1170,7 @@ public class CommentsIT extends AbstractDaemonTest {
 
   private DraftInput newDraft(String path, Side side, Comment.Range range, String message) {
     DraftInput d = new DraftInput();
-    return populate(d, path, side, null, range, message, false);
+    return populate(d, path, side, null, range.startLine, range, message, false);
   }
 
   private DraftInput newDraftOnParent(String path, int parent, int line, String message) {
@@ -1148,23 +1183,25 @@ public class CommentsIT extends AbstractDaemonTest {
       String path,
       Side side,
       Integer parent,
+      int line,
       Comment.Range range,
       String message,
       Boolean unresolved) {
-    int line = range.startLine;
     c.path = path;
     c.side = side;
     c.parent = parent;
     c.line = line != 0 ? line : null;
     c.message = message;
     c.unresolved = unresolved;
-    if (line != 0) c.range = range;
+    if (range != null) {
+      c.range = range;
+    }
     return c;
   }
 
   private static <C extends Comment> C populate(
       C c, String path, Side side, Integer parent, int line, String message, Boolean unresolved) {
-    return populate(c, path, side, parent, createLineRange(line, 1, 5), message, unresolved);
+    return populate(c, path, side, parent, line, null, message, unresolved);
   }
 
   private static Comment.Range createLineRange(int line, int startChar, int endChar) {
