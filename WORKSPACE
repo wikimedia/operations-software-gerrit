@@ -65,9 +65,26 @@ http_file(
     urls = ["https://raw.githubusercontent.com/google/closure-compiler/35d2b3340ff23a69441f10fa3bc820691c2942f2/contrib/externs/polymer-1.0.js"],
 )
 
-load("@bazel_skylib//lib:versions.bzl", "versions")
+# Check Bazel version when invoked by Bazel directly
+load("//tools/bzl:bazelisk_version.bzl", "bazelisk_version")
 
-versions.check(minimum_bazel_version = "0.26.1")
+bazelisk_version(name = "bazelisk_version")
+
+load("@bazelisk_version//:check.bzl", "check_bazel_version")
+
+check_bazel_version()
+
+# Rules Python
+http_archive(
+    name = "rules_python",
+    sha256 = "b5bab4c47e863e0fbb77df4a40c45ca85f98f5a2826939181585644c9f31b97b",
+    strip_prefix = "rules_python-9d68f24659e8ce8b736590ba1e4418af06ec2552",
+    urls = ["https://github.com/bazelbuild/rules_python/archive/9d68f24659e8ce8b736590ba1e4418af06ec2552.tar.gz"],
+)
+
+load("@rules_python//python:repositories.bzl", "py_repositories")
+
+py_repositories()
 
 load("@io_bazel_rules_closure//closure:defs.bzl", "closure_repositories")
 
@@ -106,6 +123,17 @@ http_archive(
 load("@bazel_gazelle//:deps.bzl", "gazelle_dependencies", "go_repository")
 
 gazelle_dependencies()
+
+# Protobuf rules support
+http_archive(
+    name = "rules_proto",
+    sha256 = "602e7161d9195e50246177e7c55b2f39950a9cf7366f74ed5f22fd45750cd208",
+    strip_prefix = "rules_proto-97d8af4dc474595af3900dd85cb3a29ad28cc313",
+    urls = [
+        "https://mirror.bazel.build/github.com/bazelbuild/rules_proto/archive/97d8af4dc474595af3900dd85cb3a29ad28cc313.tar.gz",
+        "https://github.com/bazelbuild/rules_proto/archive/97d8af4dc474595af3900dd85cb3a29ad28cc313.tar.gz",
+    ],
+)
 
 # Dependencies for PolyGerrit local dev server.
 go_repository(
@@ -1119,8 +1147,8 @@ maven_jar(
 # and httpasyncclient as necessary.
 maven_jar(
     name = "elasticsearch-rest-client",
-    artifact = "org.elasticsearch.client:elasticsearch-rest-client:7.3.1",
-    sha1 = "f5793c89b50a159cbb3e15e17bb981ff854cbe51",
+    artifact = "org.elasticsearch.client:elasticsearch-rest-client:7.3.2",
+    sha1 = "38721e908cad8a30fa3f8e659c0571150a60cab3",
 )
 
 maven_jar(
@@ -1129,18 +1157,18 @@ maven_jar(
     sha1 = "0f5a654e4675769c716e5b387830d19b501ca191",
 )
 
-TESTCONTAINERS_VERSION = "1.12.0"
+TESTCONTAINERS_VERSION = "1.12.1"
 
 maven_jar(
     name = "testcontainers",
     artifact = "org.testcontainers:testcontainers:" + TESTCONTAINERS_VERSION,
-    sha1 = "ac89643ce1ddde504da09172086aba0c7df10bff",
+    sha1 = "1dc8666ead914c5515d087f75ffe92629414caf6",
 )
 
 maven_jar(
     name = "testcontainers-elasticsearch",
     artifact = "org.testcontainers:elasticsearch:" + TESTCONTAINERS_VERSION,
-    sha1 = "cd9020f1803396c45ef935312bf232f9b17332b0",
+    sha1 = "2491f792627a1f15d341bfcd6dd0ea7e3541d82f",
 )
 
 maven_jar(

@@ -3,6 +3,8 @@ load(
     "JDK9_JVM_OPTS",
     "default_java_toolchain",
 )
+load("@rules_java//java:defs.bzl", "java_package_configuration")
+load("@rules_python//python:defs.bzl", "py_binary")
 
 exports_files(["nongoogle.bzl"])
 

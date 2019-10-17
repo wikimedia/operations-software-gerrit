@@ -18,6 +18,8 @@
 
 # See https://github.com/bazelbuild/bazel/issues/1017 for background.
 
+load("@rules_java//java:defs.bzl", "java_test")
+
 _OUTPUT = """import org.junit.runners.Suite;
 import org.junit.runner.RunWith;
 
@@ -55,7 +57,7 @@ def _impl(ctx):
         ctx.attr.outname,
     ))
 
-_GenSuite = rule(
+_gen_suite = rule(
     attrs = {
         "srcs": attr.label_list(allow_files = True),
         "outname": attr.string(),
@@ -73,7 +75,7 @@ POST_JDK8_OPTS = [
 
 def junit_tests(name, srcs, **kwargs):
     s_name = name.replace("-", "_") + "TestSuite"
-    _GenSuite(
+    _gen_suite(
         name = s_name,
         srcs = srcs,
         outname = s_name,
@@ -84,7 +86,7 @@ def junit_tests(name, srcs, **kwargs):
         "//:java9": POST_JDK8_OPTS,
         "//conditions:default": [],
     })
-    native.java_test(
+    java_test(
         name = name,
         test_class = s_name,
         srcs = srcs + [":" + s_name],

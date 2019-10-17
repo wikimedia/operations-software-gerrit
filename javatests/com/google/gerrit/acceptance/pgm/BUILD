@@ -1,3 +1,4 @@
+load("@rules_java//java:defs.bzl", "java_library")
 load("//javatests/com/google/gerrit/acceptance:tests.bzl", "acceptance_tests")
 
 acceptance_tests(
@@ -29,7 +30,7 @@ acceptance_tests(
         "pgm",
         "no_windows",
     ],
-    vm_args = ["-Xmx512m"],
+    vm_args = ["-Xmx1024m"],
     deps = [
         ":util",
         "//java/com/google/gerrit/elasticsearch",
