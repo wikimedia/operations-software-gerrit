@@ -55,6 +55,7 @@ limitations under the License.
 <link rel="import" href="./core/gr-error-manager/gr-error-manager.html">
 <link rel="import" href="./core/gr-keyboard-shortcuts-dialog/gr-keyboard-shortcuts-dialog.html">
 <link rel="import" href="./core/gr-main-header/gr-main-header.html">
+<link rel="import" href="./core/gr-message-header/gr-message-header.html">
 <link rel="import" href="./core/gr-navigation/gr-navigation.html">
 <link rel="import" href="./core/gr-reporting/gr-reporting.html">
 <link rel="import" href="./core/gr-router/gr-router.html">
@@ -158,6 +159,12 @@ limitations under the License.
           class$="[[_computeShadowClass(_isShadowDom)]]">
       </gr-main-header>
     </gr-fixed-panel>
+    <template
+        is="dom-repeat"
+        items="[[_getMessages(_serverConfig)]]"
+        as="message">
+      <gr-message-header message="{{message}}"></gr-message-header>
+    </template>
     <main>
       <template is="dom-if" if="[[_showChangeListView]]" restamp="true">
         <gr-change-list-view
@@ -223,16 +230,16 @@ limitations under the License.
         <gr-endpoint-decorator name="footer-left"></gr-endpoint-decorator>
       </div>
       <div>
-        <a class="feedback"
-            href$="[[_feedbackUrl]]"
-            rel="noopener"
-            target="_blank"
-            hidden$="[[!_showFeedbackUrl(_feedbackUrl)]]">Send feedback</a>
-        <template is="dom-if" if="[[_computeShowGwtUiLink(_serverConfig)]]">
-          |
-          <a id="gwtLink" href$="[[computeGwtUrl(_path)]]" rel="external">Switch to Old UI</a>
+        <template is="dom-if" if="[[_feedbackUrl]]">
+          <a class="feedback"
+              href$="[[_feedbackUrl]]"
+              rel="noopener"
+              target="_blank">Send feedback</a> |
         </template>
-        | Press &ldquo;?&rdquo; for keyboard shortcuts
+        <template is="dom-if" if="[[_computeShowGwtUiLink(_serverConfig)]]">
+          <a id="gwtLink" href$="[[computeGwtUrl(_path)]]" rel="external">Switch to Old UI</a> |
+        </template>
+        Press &ldquo;?&rdquo; for keyboard shortcuts
         <gr-endpoint-decorator name="footer-right"></gr-endpoint-decorator>
       </div>
     </footer>

@@ -226,7 +226,7 @@ public class AccountManager {
     if (newEmail != null && !newEmail.equals(oldEmail)) {
       ExternalId extIdWithNewEmail =
           ExternalId.create(extId.key(), extId.accountId(), newEmail, extId.password());
-      checkEmailNotUsed(extIdWithNewEmail);
+      checkEmailNotUsed(extId.accountId(), extIdWithNewEmail);
       accountUpdates.add(u -> u.replaceExternalId(extId, extIdWithNewEmail));
 
       if (oldEmail != null && oldEmail.equals(user.getAccount().getPreferredEmail())) {
@@ -236,7 +236,6 @@ public class AccountManager {
 
     if (!Strings.isNullOrEmpty(who.getDisplayName())
         && !Objects.equals(user.getAccount().getFullName(), who.getDisplayName())) {
-      accountUpdates.add(u -> u.setFullName(who.getDisplayName()));
       if (realm.allowsEdit(AccountFieldName.FULL_NAME)) {
         accountUpdates.add(a -> a.setFullName(who.getDisplayName()));
       } else {
@@ -278,7 +277,7 @@ public class AccountManager {
     ExternalId extId =
         ExternalId.createWithEmail(who.getExternalIdKey(), newId, who.getEmailAddress());
     logger.atFine().log("Created external Id: %s", extId);
-    checkEmailNotUsed(extId);
+    checkEmailNotUsed(newId, extId);
     ExternalId userNameExtId =
         who.getUserName().isPresent() ? createUsername(newId, who.getUserName().get()) : null;
 
@@ -353,7 +352,8 @@ public class AccountManager {
     return ExternalId.create(SCHEME_USERNAME, username, accountId);
   }
 
-  private void checkEmailNotUsed(ExternalId extIdToBeCreated) throws IOException, AccountException {
+  private void checkEmailNotUsed(Account.Id accountId, ExternalId extIdToBeCreated)
+      throws IOException, AccountException {
     String email = extIdToBeCreated.email();
     if (email == null) {
       return;
@@ -364,14 +364,18 @@ public class AccountManager {
       return;
     }
 
-    logger.atWarning().log(
-        "Email %s is already assigned to account %s;"
-            + " cannot create external ID %s with the same email for account %s.",
-        email,
-        existingExtIdsWithEmail.iterator().next().accountId().get(),
-        extIdToBeCreated.key().get(),
-        extIdToBeCreated.accountId().get());
-    throw new AccountException("Email '" + email + "' in use by another account");
+    for (ExternalId externalId : existingExtIdsWithEmail) {
+      if (externalId.accountId().get() != accountId.get()) {
+        logger.atWarning().log(
+            "Email %s is already assigned to account %s;"
+                + " cannot create external ID %s with the same email for account %s.",
+            email,
+            externalId.accountId().get(),
+            extIdToBeCreated.key().get(),
+            extIdToBeCreated.accountId().get());
+        throw new AccountException("Email '" + email + "' in use by another account");
+      }
+    }
   }
 
   private void addGroupMember(AccountGroup.UUID groupUuid, IdentifiedUser user)
@@ -386,7 +390,7 @@ public class AccountManager {
     try {
       groupsUpdate.updateGroup(groupUuid, groupUpdate);
     } catch (NoSuchGroupException e) {
-      throw new AccountException(String.format("Group %s not found", groupUuid));
+      throw new AccountException(String.format("Group %s not found", groupUuid), e);
     }
   }
 
@@ -412,7 +416,7 @@ public class AccountManager {
     } else {
       ExternalId newExtId =
           ExternalId.createWithEmail(who.getExternalIdKey(), to, who.getEmailAddress());
-      checkEmailNotUsed(newExtId);
+      checkEmailNotUsed(to, newExtId);
       accountsUpdateProvider
           .get()
           .update(

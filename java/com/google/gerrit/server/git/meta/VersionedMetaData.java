@@ -22,7 +22,9 @@ import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.git.LockFailureException;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
+import com.google.gerrit.server.util.CommitMessageUtil;
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
 import java.io.StringReader;
 import java.util.ArrayList;
@@ -325,14 +327,8 @@ public abstract class VersionedMetaData {
         }
 
         if (update.insertChangeId()) {
-          ObjectId id =
-              ChangeIdUtil.computeChangeId(
-                  res,
-                  getRevision(),
-                  commit.getAuthor(),
-                  commit.getCommitter(),
-                  commit.getMessage());
-          commit.setMessage(ChangeIdUtil.insertId(commit.getMessage(), id));
+          commit.setMessage(
+              ChangeIdUtil.insertId(commit.getMessage(), CommitMessageUtil.generateChangeId()));
         }
 
         src = rw.parseCommit(inserter.insert(commit));
@@ -419,14 +415,7 @@ public abstract class VersionedMetaData {
             update.fireGitRefUpdatedEvent(ru);
             return revision;
           case LOCK_FAILURE:
-            throw new LockFailureException(
-                "Cannot update "
-                    + ru.getName()
-                    + " in "
-                    + db.getDirectory()
-                    + ": "
-                    + ru.getResult(),
-                ru);
+            throw new LockFailureException(errorMsg(ru, db.getDirectory()), ru);
           case FORCED:
           case IO_FAILURE:
           case NOT_ATTEMPTED:
@@ -437,14 +426,14 @@ public abstract class VersionedMetaData {
           case REJECTED_MISSING_OBJECT:
           case REJECTED_OTHER_REASON:
           default:
-            throw new IOException(
-                "Cannot update "
-                    + ru.getName()
-                    + " in "
-                    + db.getDirectory()
-                    + ": "
-                    + ru.getResult());
+            throw new IOException(errorMsg(ru, db.getDirectory()));
         }
+      }
+
+      private String errorMsg(RefUpdate ru, File location) {
+        return String.format(
+            "Cannot update %s in %s: %s (%s)",
+            ru.getName(), location, ru.getResult(), ru.getRefLogMessage());
       }
     };
   }

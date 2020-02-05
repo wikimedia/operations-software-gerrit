@@ -87,7 +87,10 @@ public class CreateTag implements RestCollectionCreateView<ProjectResource, TagR
     if (input.ref != null && !ref.equals(input.ref)) {
       throw new BadRequestException("ref must match URL");
     }
-    if (input.revision == null) {
+    if (input.revision != null) {
+      input.revision = input.revision.trim();
+    }
+    if (Strings.isNullOrEmpty(input.revision)) {
       input.revision = Constants.HEAD;
     }
 
@@ -144,7 +147,7 @@ public class CreateTag implements RestCollectionCreateView<ProjectResource, TagR
         }
       }
     } catch (InvalidRevisionException e) {
-      throw new BadRequestException("Invalid base revision");
+      throw new BadRequestException("Invalid base revision", e);
     } catch (GitAPIException e) {
       logger.atSevere().withCause(e).log("Cannot create tag \"%s\"", ref);
       throw new IOException(e);

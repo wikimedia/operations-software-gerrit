@@ -47,6 +47,7 @@ import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.reviewdb.client.RefNames;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.IdentifiedUser;
+import com.google.gerrit.server.UsedAt;
 import com.google.gerrit.server.account.GroupBackend;
 import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.server.config.AllUsersName;
@@ -240,7 +241,7 @@ public class CreateProject
     }
   }
 
-  // TODO(dpursehouse): Add @UsedAt annotation
+  @UsedAt(UsedAt.Project.COLLABNET)
   public ProjectState createProject(CreateProjectArgs args)
       throws BadRequestException, ResourceConflictException, IOException, ConfigInvalidException {
     final Project.NameKey nameKey = args.getProject();
@@ -274,9 +275,10 @@ public class CreateProject
               + nameKey.get()
               + " because the name is already occupied by another project."
               + " The other project has the same name, only spelled in a"
-              + " different case.");
+              + " different case.",
+          e);
     } catch (RepositoryNotFoundException badName) {
-      throw new BadRequestException("invalid project name: " + nameKey);
+      throw new BadRequestException("invalid project name: " + nameKey, badName);
     } catch (ConfigInvalidException e) {
       String msg = "Cannot create " + nameKey;
       logger.atSevere().withCause(e).log(msg);

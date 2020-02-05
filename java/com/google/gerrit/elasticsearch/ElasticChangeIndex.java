@@ -21,7 +21,6 @@ import static com.google.gerrit.server.index.change.ChangeIndexRewriter.CLOSED_S
 import static com.google.gerrit.server.index.change.ChangeIndexRewriter.OPEN_STATUSES;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
-import static org.apache.commons.codec.binary.Base64.decodeBase64;
 
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableListMultimap;
@@ -68,7 +67,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import org.apache.commons.codec.binary.Base64;
 import org.apache.http.HttpStatus;
 import org.elasticsearch.client.Response;
 
@@ -225,8 +223,7 @@ class ElasticChangeIndex extends AbstractElasticIndex<Change.Id, ChangeData>
     }
 
     ChangeData cd =
-        changeDataFactory.create(
-            db.get(), CHANGE_CODEC.decode(Base64.decodeBase64(c.getAsString())));
+        changeDataFactory.create(db.get(), CHANGE_CODEC.decode(decodeBase64(c.getAsString())));
 
     // Any decoding that is done here must also be done in {@link LuceneChangeIndex}.
 
@@ -407,7 +404,7 @@ class ElasticChangeIndex extends AbstractElasticIndex<Change.Id, ChangeData>
   private Iterable<byte[]> getByteArray(JsonObject source, String name) {
     JsonElement element = source.get(name);
     return element != null
-        ? Iterables.transform(element.getAsJsonArray(), e -> Base64.decodeBase64(e.getAsString()))
+        ? Iterables.transform(element.getAsJsonArray(), e -> decodeBase64(e.getAsString()))
         : Collections.emptyList();
   }
 
@@ -419,7 +416,7 @@ class ElasticChangeIndex extends AbstractElasticIndex<Change.Id, ChangeData>
     }
     ChangeField.parseSubmitRecords(
         FluentIterable.from(records)
-            .transform(i -> new String(decodeBase64(i.toString()), UTF_8))
+            .transform(i -> new String(decodeBase64(i.getAsString()), UTF_8))
             .toList(),
         opts,
         out);

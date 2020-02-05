@@ -4,16 +4,8 @@ load(
     "default_java_toolchain",
 )
 load("@rules_java//java:defs.bzl", "java_package_configuration")
-load("@rules_python//python:defs.bzl", "py_binary")
 
 exports_files(["nongoogle.bzl"])
-
-py_binary(
-    name = "merge_jars",
-    srcs = ["merge_jars.py"],
-    main = "merge_jars.py",
-    visibility = ["//visibility:public"],
-)
 
 default_java_toolchain(
     name = "error_prone_warnings_toolchain",
@@ -91,6 +83,7 @@ java_package_configuration(
         "-Xep:TypeParameterUnusedInFormals:WARN",
         "-Xep:URLEqualsHashCode:WARN",
         "-Xep:UnsynchronizedOverridesSynchronized:WARN",
+        "-Xep:UnusedException:ERROR",
         "-Xep:WaitNotInLoop:WARN",
     ],
     packages = ["error_prone_packages"],

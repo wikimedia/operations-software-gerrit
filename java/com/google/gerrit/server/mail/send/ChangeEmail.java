@@ -181,6 +181,7 @@ public abstract class ChangeEmail extends NotificationEmail {
     setChangeSubjectHeader();
     setHeader(MailHeader.CHANGE_ID.fieldName(), "" + change.getKey().get());
     setHeader(MailHeader.CHANGE_NUMBER.fieldName(), "" + change.getChangeId());
+    setHeader(MailHeader.PROJECT.fieldName(), "" + change.getProject());
     setChangeUrlHeader();
     setCommitIdHeader();
 
@@ -298,7 +299,7 @@ public abstract class ChangeEmail extends NotificationEmail {
             args.patchSetUtil.get(
                 changeData.db(), changeData.notes(), new PatchSet.Id(change.getId(), patchSetId));
       } catch (OrmException e) {
-        throw new PatchListNotAvailableException("Failed to get patchSet");
+        throw new PatchListNotAvailableException("Failed to get patchSet", e);
       }
     }
     return args.patchListCache.get(change, ps);

@@ -9,7 +9,7 @@ config file that controls many host specific settings for Gerrit.
 The contents of the `etc/gerrit.config` file are cached at startup
 by Gerrit. For most properties, if they are modified in this file, Gerrit
 needs to be restarted before it will use the new values. Some properties
-support being link:#reloadConfig[`reloaded`]' without restart.
+support being link:#reloadConfig[`reloaded`] without restart.
 
 Sample `etc/gerrit.config`:
 ----
@@ -1313,7 +1313,7 @@ The default limit is 1024kB.
 [[change.strictLabels]]change.strictLabels::
 +
 Reject invalid label votes: invalid labels or invalid values. This
-configuration option is provided for backwards compaitbility and may
+configuration option is provided for backwards compatibility and may
 be removed in future gerrit versions.
 +
 Default is false.
@@ -1617,7 +1617,7 @@ Setting this too high may cause the JVM to run out of heap space
 when handling very big binary files, such as device firmware or
 CD-ROM ISO images.
 +
-Defaults to 25% of the available JVM heap, limited to 2048m.
+Defaults to 25% of the available JVM heap, limited to 2g.
 +
 Common unit suffixes of 'k', 'm', or 'g' are supported.
 
@@ -2218,7 +2218,7 @@ should set this to the URL of their issue tracker, if necessary.
 +
 Text to be displayed in the link to the bug report URL.
 +
-Only used when `gerrit.reportBugUrl` is set.
+Only used when `gerrit.reportBugUrl` is set and only supported in GWT (Old UI).
 +
 Defaults to "Report Bug".
 
@@ -2276,11 +2276,12 @@ NoteDb, Gerrit will not be able to use that instance of NoteDb. The serverId
 used to create the NoteDb will show in the resulting exception message in case
 the value differs.
 
-[[gerrit.ui]]gerrit.ui::
+[[gerrit.enableGwtUi]]gerrit.enableGwtUi::
 +
-Configure which UI is the default. Valid values are `polygerrit` and `gwt`.
+Allow to switch to the GWT UI. When this option is enabled, the user can switch
+the UI from PolyGerrit (the default) to GWT.
 +
-Defaults to `polygerrit`.
+Defaults to true.
 
 [[gitweb]]
 === Section gitweb
@@ -2502,57 +2503,122 @@ The httpd section configures the embedded servlet container.
 
 [[httpd.listenUrl]]httpd.listenUrl::
 +
-Specifies the URLs the internal HTTP daemon should listen for
-connections on.  The special hostname '*' may be used to listen
-on all local addresses.  A context path may optionally be included,
-placing Gerrit Code Review's web address within a subdirectory of
-the server.
+Configuration for the listening sockets of the internal HTTP daemon.
+Each entry of `listenUrl` combines the following options for a
+listening socket: protocol, network address, port and context path.
 +
-Multiple protocol schemes are supported:
+_Protocol_ can be either `http://`, `https://`, `proxy-http://` or
+`proxy-https://`. The latter two are special forms of `http://` with
+awareness of a reverse proxy (see below). _Network address_ selects
+the interface and/or scope of the listening socket. For notes
+examples, see below. _Port_ is the TCP port number and is optional
+(default value depends on the protocol). _Context path_ is the
+optional "base URI" for the Gerrit Code Review as application to
+serve on.
 +
-* `http://`'hostname'`:`'port'
+**Protocol** schemes:
++
+* `http://`
 +
 Plain-text HTTP protocol.  If port is not supplied, defaults to 80,
 the standard HTTP port.
 +
-* `https://`'hostname'`:`'port'
+* `https://`
 +
 SSL encrypted HTTP protocol.  If port is not supplied, defaults to
 443, the standard HTTPS port.
 +
-Externally facing production sites are encouraged to use a reverse
-proxy configuration and `proxy-https://` (below), rather than using
-the embedded servlet container to implement the SSL processing.
-The proxy server with SSL support is probably easier to configure,
-provides more configuration options to control cipher usage, and
-is likely using natively compiled encryption algorithms, resulting
-in higher throughput.
+For configuration of the certificate and private key, see
+<<httpd.sslKeyStore,httpd.sslKeyStore>>.
 +
-* `proxy-http://`'hostname'`:`'port'
+[NOTE]
+SSL/TLS configuration capabilities of Gerrit internal HTTP daemon
+are very limited. Externally facing production sites are strongly
+encouraged to use a reverse proxy configuration to handle SSL/TLS
+and use a `proxy-https://` scheme here (below) for security and
+performance reasons.
++
+* `proxy-http://`
 +
 Plain-text HTTP relayed from a reverse proxy.  If port is not
 supplied, defaults to 8080.
 +
-Like http, but additional header parsing features are
-enabled to honor X-Forwarded-For, X-Forwarded-Host and
-X-Forwarded-Server.  These headers are typically set by Apache's
-link:http://httpd.apache.org/docs/2.2/mod/mod_proxy.html#x-headers[mod_proxy].
+Like `http://`, but additional header parsing features are
+enabled to honor `X-Forwarded-For`, `X-Forwarded-Host` and
+`X-Forwarded-Server`.  These headers are typically set by Apache's
+link:https://httpd.apache.org/docs/2.4/mod/mod_proxy.html#x-headers[mod_proxy].
 +
-* `proxy-https://`'hostname'`:`'port'
+[NOTE]
+--
+For secruity reasons, make sure to only allow connections from a
+trusted reverse proxy in your network, as clients could otherwise
+easily spoof these headers and thus spoof their originating IP
+address effectively. If the reverse proxy is running on the same
+machine as Gerrit daemon, the use of a _loopback_ network address
+to bind to (see below) is strongly recommended to mitigate this.
+
+If not using Apache's mod_proxy, validate that your reverse proxy
+sets these headers on all requests. If not, either configure it to
+sanitize them from the origin, or use the `http://` scheme instead.
+--
 +
-Plain text HTTP relayed from a reverse proxy that has already
+* `proxy-https://`
++
+Plain-text HTTP relayed from a reverse proxy that has already
 handled the SSL encryption/decryption.  If port is not supplied,
 defaults to 8080.
 +
-Behaves exactly like proxy-http, but also sets the scheme to assume
-'https://' is the proper URL back to the server.
+Behaves exactly like `proxy-http://`, but also sets the scheme to
+assume `https://` is the proper URL back to the server.
 
 +
 --
+**Network address** forms:
+
+* Loopback (localhost): `127.0.0.1` (IPv4) or `[::1]` (IPv6).
+* All (unspecified): `0.0.0.0` (IPv4), `[::]` (IPv6) or `*`
+  (IPv4 and IPv6)
+* Interface IP address, e.g. `1.2.3.4` (IPv4) or
+  `[2001:db8::a00:20ff:fea7:ccea]` (IPv6)
+* Hostname, resolved at startup time to an address.
+
+**Context path** is the local part of the URL to be used to access
+Gerrit on ('base URL'). E.g. `/gerrit/` to serve Gerrit on that URI
+as base. If set, consider to align this with the
+<<gerrit.canonicalWebUrl,gerrit.canonicalWebUrl>> setting. Correct
+settings may depend on the reverse proxy configuration as well. By
+default, this is `/` so that Gerrit serves requests on the root.
+
 If multiple values are supplied, the daemon will listen on all
 of them.
 
-By default, http://*:8080.
+Examples:
+
+----
+[httpd]
+    listenUrl = proxy-https://127.0.0.1:9999/gerrit/
+[gerrit]
+    # Reverse proxy is configured to serve with SSL/TLS on
+    # example.com and to relay requests on /gerrit/ onto
+    # http://127.0.0.1:9999/gerrit/
+    canonicalWebUrl = https://example.com/gerrit/
+----
+
+----
+[httpd]
+    # Listen on specific external interface with plaintext
+    # HTTP on IPv6.
+    listenUrl = http://[2001:db8::a00:20ff:fea7:ccea]
+
+    # Also listen on specific internal interface for use with
+    # reverse proxy run on another host.
+    listenUrl = proxy-https://192.168.100.123
+----
+
+See also the page on link:config-reverseproxy.html[reverse proxy]
+configuration.
+
+By default, `\http://*:8080`.
 --
 
 [[httpd.reuseAddress]]httpd.reuseAddress::
@@ -2744,7 +2810,7 @@ Example of using a security library secure.jar under $GERRIT_SITE/lib
 that provides a org.anyorg.MySecureHeaderFilter Servlet Filter that enforces
 a trusted username in the `TRUSTED_USER` HTTP Header and
 org.anyorg.MySecureIPFilter that performs source IP security filtering:
-
++
 ----
 [auth]
 	type = HTTP
@@ -4087,7 +4153,8 @@ Default is 256.
 The default size of the background execution thread pool in
 which miscellaneous tasks are handled.
 +
-Default is 1.
+Default and minimum is 2 so that a single, potentially longer executing
+task (e.g. GC), is not blocking the entire execution.
 
 [[execution.fanOutThreadPoolSize]]execution.fanOutThreadPoolSize::
 +
@@ -4432,8 +4499,8 @@ By default, `false`.
 [[sshd.backend]]sshd.backend::
 +
 Starting from version 0.9.0 Apache SSHD project added support for NIO2
-IoSession. To use the new NIO2 session the `backend` option must be set
-to `NIO2`. Otherwise, this option must be set to `MINA`.
+IoSession. To use the old MINA session the `backend` option must be set
+to `MINA`.
 +
 By default, `NIO2`.
 
@@ -4979,6 +5046,13 @@ in the link:#schedule-configuration[Schedule Configuration] section.
 
 [[urlAlias]]
 === Section urlAlias
+
+[NOTE]
+urlAlias settings are only supported in GWT (Old UI) and only effective
+in GWT pages. Plugins that serve their own pages (e.g. gitiles) may
+ignore these settings. An alternative is serving Gerrit behind a
+link:config-reverseproxy.html[reverse proxy] and configure URL rewriting
+in the proxy configuration.
 
 URL aliases define regular expressions for URL tokens that are mapped
 to target URL tokens.
