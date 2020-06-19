@@ -10,6 +10,8 @@ CORE_PLUGINS = [
     "reviewnotes",
     "singleusergroup",
     "webhooks",
+    "its-base",
+    "its-phabricator",
 ]
 
 CUSTOM_PLUGINS = [
