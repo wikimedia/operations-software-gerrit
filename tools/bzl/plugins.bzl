@@ -12,6 +12,7 @@ CORE_PLUGINS = [
     "webhooks",
     "its-base",
     "its-phabricator",
+    "zuul",
 ]
 
 CUSTOM_PLUGINS = [
