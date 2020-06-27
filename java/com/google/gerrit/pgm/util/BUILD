@@ -24,6 +24,7 @@ java_library(
         "//lib:jgit",
         "//lib/flogger:api",
         "//lib/guice",
+        "//lib/log:jsonevent-layout",
         "//lib/log:log4j",
     ],
 )
