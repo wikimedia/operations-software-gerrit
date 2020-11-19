@@ -23,8 +23,8 @@ def declare_nongoogle_deps():
 
     maven_jar(
         name = "dropwizard-core",
-        artifact = "io.dropwizard.metrics:metrics-core:4.1.11",
-        sha1 = "7f05969f40bf7296eac0dbb36c78ada28bf975f6",
+        artifact = "io.dropwizard.metrics:metrics-core:4.1.14",
+        sha1 = "14cf9dd67619a0390812dddb232df339e3383d35",
     )
 
     SSHD_VERS = "2.4.0"
@@ -96,14 +96,14 @@ def declare_nongoogle_deps():
     # and httpasyncclient as necessary.
     maven_jar(
         name = "elasticsearch-rest-client",
-        artifact = "org.elasticsearch.client:elasticsearch-rest-client:7.8.0",
-        sha1 = "ab28f6110bdc7d2ec886e1d6ff29a6c8ee30b883",
+        artifact = "org.elasticsearch.client:elasticsearch-rest-client:7.8.1",
+        sha1 = "59feefe006a96a39f83b0dfb6780847e06c1d0a8",
     )
 
     maven_jar(
         name = "jackson-core",
-        artifact = "com.fasterxml.jackson.core:jackson-core:2.11.1",
-        sha1 = "8b02908d53183fdf9758e7e20f2fdee87613a962",
+        artifact = "com.fasterxml.jackson.core:jackson-core:2.11.3",
+        sha1 = "c2351800432bdbdd8284c3f5a7f0782a352aa84a",
     )
 
     # Google internal dependencies: these are developed at Google, so there is

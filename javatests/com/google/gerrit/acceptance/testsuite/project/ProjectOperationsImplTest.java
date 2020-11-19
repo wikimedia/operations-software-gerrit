@@ -38,9 +38,12 @@ import static java.util.stream.Collectors.toList;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
+import com.google.gerrit.acceptance.testsuite.group.GroupOperations;
 import com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.TestPermission;
 import com.google.gerrit.common.data.Permission;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.projects.BranchInfo;
 import com.google.gerrit.extensions.api.projects.ConfigInput;
 import com.google.gerrit.server.project.ProjectConfig;
@@ -56,6 +59,7 @@ import org.junit.Test;
 public class ProjectOperationsImplTest extends AbstractDaemonTest {
 
   @Inject private ProjectOperations projectOperations;
+  @Inject private GroupOperations groupsOperations;
 
   @Test
   public void defaultName() throws Exception {
@@ -81,6 +85,20 @@ public class ProjectOperationsImplTest extends AbstractDaemonTest {
     assertThat(branches).isNotEmpty();
     assertThat(branches.stream().map(x -> x.ref).collect(toList()))
         .isEqualTo(ImmutableList.of("HEAD", "refs/meta/config", "refs/heads/master"));
+  }
+
+  @Test
+  public void permissionOnly() throws Exception {
+    Project.NameKey key = projectOperations.newProject().permissionOnly(true).create();
+    String head = gApi.projects().name(key.get()).head();
+    assertThat(head).isEqualTo(RefNames.REFS_CONFIG);
+  }
+
+  @Test
+  public void createWithOwners() throws Exception {
+    AccountGroup.UUID uuid = groupsOperations.newGroup().create();
+    Project.NameKey key = projectOperations.newProject().addOwner(uuid).create();
+    assertPermissions(key, groupRef(uuid), "refs/*", false, Permission.OWNER);
   }
 
   @Test

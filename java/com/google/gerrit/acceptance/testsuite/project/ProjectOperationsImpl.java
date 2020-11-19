@@ -91,11 +91,12 @@ public class ProjectOperationsImpl implements ProjectOperations {
 
     CreateProjectArgs args = new CreateProjectArgs();
     args.setProjectName(name);
+    args.permissionsOnly = projectCreation.permissionOnly().orElse(false);
     args.branch = Collections.singletonList(Constants.R_HEADS + Constants.MASTER);
     args.createEmptyCommit = projectCreation.createEmptyCommit().orElse(true);
     projectCreation.parent().ifPresent(p -> args.newParent = p);
     // ProjectCreator wants non-null owner IDs.
-    args.ownerIds = new ArrayList<>();
+    args.ownerIds = new ArrayList<>(projectCreation.owners());
     projectCreation.submitType().ifPresent(st -> args.submitType = st);
     projectCreator.createProject(args);
     return Project.nameKey(name);

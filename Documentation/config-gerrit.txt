@@ -2769,7 +2769,8 @@ By default, `gerrit`.
 +
 Enable (or disable) the `'$site_path'/logs/httpd_log` request log.
 If enabled, an NCSA combined log format request log file is written
-out by the internal HTTP daemon.
+out by the internal HTTP daemon. The httpd log format is documented
+link:logs.html#_httpd_log[here].
 +
 `log4j.appender` with the name `httpd_log` can be configured to overwrite
 programmatic configuration.
@@ -3256,9 +3257,10 @@ Defaults to 10000.
 When security is enabled in Elasticsearch, the username and password must be provided.
 Note that the same username and password are used for all servers.
 
-For further information about Elasticsearch security, please refer to the documentation:
-
-* link:https://www.elastic.co/guide/en/elastic-stack-overview/6.6/security-getting-started.html[Elasticsearch 6.6,role=external,window=_blank]
+For further information about Elasticsearch security, please refer to
+link:https://www.elastic.co/guide/en/elasticsearch/reference/current/security-getting-started.html[the documentation,role=external,window=_blank].
+This is the current documentation link. Select another Elasticsearch version
+from the dropdown menu available on that page if need be.
 
 [[elasticsearch.username]]elasticsearch.username::
 +
@@ -4825,6 +4827,21 @@ Values should use common unit suffixes to express their setting:
 +
 By default, 30s.
 
+[[sshd.gracefulStopTimeout]]sshd.gracefulStopTimeout::
++
+Set a graceful stop time. If set, Gerrit ensures that all open SSH
+sessions are preserved for a maximum period of time, before forcing the
+shutdown of the SSH daemon. During this period, no new requests
+will be accepted. This option is meant to be used in setups performing
+rolling restarts.
++
+Values should use common unit suffixes to express their setting:
++
+* s, sec, second, seconds
+* m, min, minute, minutes
++
+By default, 0 seconds (immediate shutdown).
+
 [[sshd.maxConnectionsPerUser]]sshd.maxConnectionsPerUser::
 +
 Maximum number of concurrent SSH sessions that a user account
@@ -4950,6 +4967,7 @@ By default, `host/canonical.host.name`
 +
 Enable (or disable) the `'$site_path'/logs/sshd_log` request log.
 If enabled, a request log file is written out by the SSH daemon.
+The sshd log format is documented link:logs.html#_sshd_log[here].
 +
 `log4j.appender` with the name `sshd_log` can be configured to overwrite
 programmatic configuration.
@@ -5443,6 +5461,76 @@ Sample `etc/jgit.config` file:
 [core]
   trustFolderStat = false
 ----
+
+[[jgit-gc]]
+=== Section gc
+
+Options in section gc are used when command link:cmd-gc.html[gerrit gc] is used
+or scheduled via options link:cmd-gc.html#gc.startTime[gc.startTime] and
+link:cmd-gc.html#gc.interval[gc.interval].
+
+[[gc.auto]]gc.auto::
++
+When there are approximately more than this many loose objects in the repository,
+auto gc will pack them. Some commands use this command to perform a light-weight
+garbage collection from time to time. The default value is 6700.
++
+Setting this to 0 disables not only automatic packing based on the number of
+loose objects, but any other heuristic auto gc will otherwise use to determine
+if there’s work to do, such as link:#gc.autoPackLimit[gc.autoPackLimit].
+
+[[gc.autodetach]]gc.autodetach::
++
+Makes auto gc run in a background thread. Default is `true`.
+
+[[gc.autopacklimit]]gc.autopacklimit::
++
+When there are more than this many packs that are not marked with `*.keep` file
+in the repository, auto gc consolidates them into one larger pack. The
+default value is 50. Setting this to 0 disables it. Setting `gc.auto` to 0 will
+also disable this.
+
+[[gc.packRefs]]gc.packRefs::
++
+This variable determines whether gc runs git pack-refs. The default is `true`.
+
+[[gc.reflogExpire]]gc.reflogExpire::
++
+Removes reflog entries older than this time; defaults to 90 days. The value "now"
+expires all entries immediately, and "never" suppresses expiration altogether.
+
+[[gc.reflogExpireUnreachable]]gc.reflogExpireUnreachable::
++
+Removes reflog entries older than this time and not reachable from the
+current tip; defaults to 30 days. The value "now" expires all entries immediately,
+and "never" suppresses expiration altogether.
+
+[[jgit-protocol]]
+=== Section protocol
+
+[[protocol.version]]protocol.version::
++
+If set, the server will accept requests from a client attempting to communicate
+using the specified protocol version. Otherwise communication falls back to version 0.
+If set in file `etc/jgit.config` this option will be used for all repositories of
+the site. It can be overridden for a given repository by configuring a different
+value in the repository's `config` file.
++
+Supported versions:
+0:: the original wire protocol.
+1:: the original wire protocol with the addition of a version string in the initial response from the server.
+2:: wire protocol version 2. Speeds up fetches from repositories with many refs by allowing the client
+    to specify which refs to list before the server lists them.
+
+[[jgit-receive]]
+=== Section receive
+
+[[receive.autogc]]receive.autogc::
++
+By default, `git-receive-pack` will run auto gc after receiving data from git-push and updating refs.
+You can stop it by setting this variable to `false`. This is recommended in gerrit to avoid the
+additional load this creates. Instead schedule gc using link:cmd-gc.html#gc.startTime[gc.startTime]
+and link:cmd-gc.html#gc.interval[gc.interval] or e.g. in a cron job that runs gc in a separate process.
 
 GERRIT
 ------

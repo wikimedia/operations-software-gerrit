@@ -236,15 +236,15 @@ maven_jar(
     sha1 = GUAVA_BIN_SHA1,
 )
 
-CAFFEINE_VERS = "2.8.0"
+CAFFEINE_VERS = "2.8.5"
 
 maven_jar(
     name = "caffeine",
     artifact = "com.github.ben-manes.caffeine:caffeine:" + CAFFEINE_VERS,
-    sha1 = "6000774d7f8412ced005a704188ced78beeed2bb",
+    sha1 = "f0eafef6e1529a44e36549cd9d1fc06d3a57f384",
 )
 
-CAFFEINE_GUAVA_SHA256 = "3a66ee3ec70971dee0bae6e56bda7b8742bc4bedd7489161bfbbaaf7137d89e1"
+CAFFEINE_GUAVA_SHA256 = "a7ce6d29c40bccd688815a6734070c55b20cd326351a06886a6144005aa32299"
 
 # TODO(davido): Rename guava.jar to caffeine-guava.jar on fetch to prevent potential
 # naming collision between caffeine guava adapter and guava library itself.
@@ -781,8 +781,8 @@ maven_jar(
 # Keep this version of Soy synchronized with the version used in Gitiles.
 maven_jar(
     name = "soy",
-    artifact = "com.google.template:soy:2019-10-08",
-    sha1 = "4518bf8bac2dbbed684849bc209c39c4cb546237",
+    artifact = "com.google.template:soy:2020-08-24",
+    sha1 = "e774bf5cc95923d2685292883fe219e231346e50",
 )
 
 maven_jar(
@@ -866,30 +866,30 @@ maven_jar(
     sha1 = "42a25dc3219429f0e5d060061f71acb49bf010a0",
 )
 
-TRUTH_VERS = "1.0.1"
+TRUTH_VERS = "1.1"
 
 maven_jar(
     name = "truth",
     artifact = "com.google.truth:truth:" + TRUTH_VERS,
-    sha1 = "361459309085bd9441cb97b62f160e8b353a93c0",
+    sha1 = "6a096a16646559c24397b03f797d0c9d75ee8720",
 )
 
 maven_jar(
     name = "truth-java8-extension",
     artifact = "com.google.truth.extensions:truth-java8-extension:" + TRUTH_VERS,
-    sha1 = "ef07b2cc2201472381fdd3bcf773310e22bb9080",
+    sha1 = "258db6eb8df61832c5c059ed2bc2e1c88683e92f",
 )
 
 maven_jar(
     name = "truth-liteproto-extension",
     artifact = "com.google.truth.extensions:truth-liteproto-extension:" + TRUTH_VERS,
-    sha1 = "bd1f5ac8a5f66e60cd1738f7b95c97a582ffcef9",
+    sha1 = "bf65afa13aa03330e739bcaa5d795fe0f10fbf20",
 )
 
 maven_jar(
     name = "truth-proto-extension",
     artifact = "com.google.truth.extensions:truth-proto-extension:" + TRUTH_VERS,
-    sha1 = "039aa2d7c9196b30d367eac7cb467ecaa726e23d",
+    sha1 = "64cba89cf87c1d84cb8c81d06f0b9c482f10b4dc",
 )
 
 maven_jar(
@@ -898,48 +898,48 @@ maven_jar(
     sha1 = "7e060dd5b19431e6d198e91ff670644372f60fbd",
 )
 
-JETTY_VERS = "9.4.30.v20200611"
+JETTY_VERS = "9.4.32.v20200930"
 
 maven_jar(
     name = "jetty-servlet",
     artifact = "org.eclipse.jetty:jetty-servlet:" + JETTY_VERS,
-    sha1 = "ca3dea2cd34ee88cec017001603af0c9e74781d6",
+    sha1 = "4253dd46c099e0bca4dd763fc1e10774e10de00a",
 )
 
 maven_jar(
     name = "jetty-security",
     artifact = "org.eclipse.jetty:jetty-security:" + JETTY_VERS,
-    sha1 = "1a5261f6ad4081ad9e9bb01416d639931d391273",
+    sha1 = "16a6110fa40e49050146de5f597ab3a3a3fa83b5",
 )
 
 maven_jar(
     name = "jetty-server",
     artifact = "org.eclipse.jetty:jetty-server:" + JETTY_VERS,
-    sha1 = "e5ede3724d062717d0c04e4c77f74fe8115c2a6f",
+    sha1 = "d2d89099be5237cf68254bc943a7d800d3ee1945",
 )
 
 maven_jar(
     name = "jetty-jmx",
     artifact = "org.eclipse.jetty:jetty-jmx:" + JETTY_VERS,
-    sha1 = "653559eaec0f9a335a0d12e90bc764b28f341241",
+    sha1 = "5e8e87a6f89b8eabf5b5b1765e3d758209001570",
 )
 
 maven_jar(
     name = "jetty-http",
     artifact = "org.eclipse.jetty:jetty-http:" + JETTY_VERS,
-    sha1 = "cd6223382e4f82b9ea807d8cdb04a23e5d629f1c",
+    sha1 = "5fdcefd82178d11f895690f4fe6e843be69394b3",
 )
 
 maven_jar(
     name = "jetty-io",
     artifact = "org.eclipse.jetty:jetty-io:" + JETTY_VERS,
-    sha1 = "9c360d08e903b2dbd5d1f8e889a32046948628ce",
+    sha1 = "0d0f32c3b511d6b3a542787f95ed229731588810",
 )
 
 maven_jar(
     name = "jetty-util",
     artifact = "org.eclipse.jetty:jetty-util:" + JETTY_VERS,
-    sha1 = "39ec6aa4745952077f5407cb1394d8ba2db88b13",
+    sha1 = "efefd29006dcc9c9960a679263504287ce4e6896",
 )
 
 maven_jar(

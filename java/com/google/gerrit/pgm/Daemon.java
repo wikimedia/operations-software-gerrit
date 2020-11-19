@@ -204,6 +204,7 @@ public class Daemon extends SiteProgram {
   private AbstractModule luceneModule;
   private Module emailModule;
   private List<Module> testSysModules = new ArrayList<>();
+  private List<Module> testSshModules = new ArrayList<>();
   private Module auditEventModule;
 
   private Runnable serverStarted;
@@ -335,6 +336,11 @@ public class Daemon extends SiteProgram {
   }
 
   @VisibleForTesting
+  public void addAdditionalSshModuleForTesting(@Nullable Module... modules) {
+    testSshModules.addAll(Arrays.asList(modules));
+  }
+
+  @VisibleForTesting
   public void start() throws IOException {
     if (dbInjector == null) {
       dbInjector = createDbInjector(true /* enableMetrics */);
@@ -346,9 +352,7 @@ public class Daemon extends SiteProgram {
     sysInjector.getInstance(PluginGuiceEnvironment.class).setDbCfgInjector(dbInjector, cfgInjector);
     manager.add(dbInjector, cfgInjector, sysInjector);
 
-    if (!consoleLog) {
-      manager.add(ErrorLogFile.start(getSitePath(), config));
-    }
+    manager.add(ErrorLogFile.start(getSitePath(), config, consoleLog));
 
     sshd &= !sshdOff();
     if (sshd) {
@@ -529,6 +533,8 @@ public class Daemon extends SiteProgram {
             replica,
             sysInjector.getInstance(DownloadConfig.class),
             sysInjector.getInstance(LfsPluginAuthCommand.Module.class)));
+
+    modules.addAll(testSshModules);
     if (!replica) {
       modules.add(new IndexCommandsModule(sysInjector));
       modules.add(new SequenceCommandsModule());
