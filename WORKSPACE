@@ -31,11 +31,11 @@ load("//tools:nongoogle.bzl", "declare_nongoogle_deps")
 
 http_archive(
     name = "bazel_toolchains",
-    sha256 = "88e818f9f03628eef609c8429c210ecf265ffe46c2af095f36c7ef8b1855fef5",
-    strip_prefix = "bazel-toolchains-92dd8a7a518a2fb7ba992d47c8b38299fe0be825",
+    sha256 = "726b5423e1c7a3866a3a6d68e7123b4a955e9fcbe912a51e0f737e6dab1d0af2",
+    strip_prefix = "bazel-toolchains-3.1.0",
     urls = [
-        "https://mirror.bazel.build/github.com/bazelbuild/bazel-toolchains/archive/92dd8a7a518a2fb7ba992d47c8b38299fe0be825.tar.gz",
-        "https://github.com/bazelbuild/bazel-toolchains/archive/92dd8a7a518a2fb7ba992d47c8b38299fe0be825.tar.gz",
+        "https://mirror.bazel.build/github.com/bazelbuild/bazel-toolchains/releases/download/3.1.0/bazel-toolchains-3.1.0.tar.gz",
+        "https://github.com/bazelbuild/bazel-toolchains/releases/download/3.1.0/bazel-toolchains-3.1.0.tar.gz",
     ],
 )
 
@@ -824,26 +824,30 @@ maven_jar(
     sha1 = "fd369423346b2f1525c413e33f8cf95b09c92cbd",
 )
 
-# Note that all of the following org.apache.httpcomponents have newer versions,
-# but 4.4.1 is the only version that is available for all of them.
-HTTPCOMP_VERS = "4.4.1"
+# Base the following org.apache.httpcomponents versions on what
+# elasticsearch-rest-client explicitly depends on, except for
+# commons-codec (non-http) which is not necessary yet. Note that
+# below httpcore version(s) differs from the HTTPCOMP_VERS range,
+# upstream: that specific dependency has no HTTPCOMP_VERS version
+# equivalent currently.
+HTTPCOMP_VERS = "4.5.2"
 
 maven_jar(
     name = "fluent-hc",
     artifact = "org.apache.httpcomponents:fluent-hc:" + HTTPCOMP_VERS,
-    sha1 = "96fb842b68a44cc640c661186828b60590c71261",
+    sha1 = "7bfdfa49de6d720ad3c8cedb6a5238eec564dfed",
 )
 
 maven_jar(
     name = "httpclient",
     artifact = "org.apache.httpcomponents:httpclient:" + HTTPCOMP_VERS,
-    sha1 = "016d0bc512222f1253ee6b64d389c84e22f697f0",
+    sha1 = "733db77aa8d9b2d68015189df76ab06304406e50",
 )
 
 maven_jar(
     name = "httpcore",
-    artifact = "org.apache.httpcomponents:httpcore:" + HTTPCOMP_VERS,
-    sha1 = "f5aa318bda4c6c8d688c9d00b90681dcd82ce636",
+    artifact = "org.apache.httpcomponents:httpcore:4.4.4",
+    sha1 = "b31526a230871fbe285fbcbe2813f9c0839ae9b0",
 )
 
 # Test-only dependencies below.
@@ -898,48 +902,48 @@ maven_jar(
     sha1 = "7e060dd5b19431e6d198e91ff670644372f60fbd",
 )
 
-JETTY_VERS = "9.4.32.v20200930"
+JETTY_VERS = "9.4.33.v20201020"
 
 maven_jar(
     name = "jetty-servlet",
     artifact = "org.eclipse.jetty:jetty-servlet:" + JETTY_VERS,
-    sha1 = "4253dd46c099e0bca4dd763fc1e10774e10de00a",
+    sha1 = "101609e8e5365c4406e4448099459eb605ac551f",
 )
 
 maven_jar(
     name = "jetty-security",
     artifact = "org.eclipse.jetty:jetty-security:" + JETTY_VERS,
-    sha1 = "16a6110fa40e49050146de5f597ab3a3a3fa83b5",
+    sha1 = "c150bf2aca6cb1636e7195f844a2bb156546e50e",
 )
 
 maven_jar(
     name = "jetty-server",
     artifact = "org.eclipse.jetty:jetty-server:" + JETTY_VERS,
-    sha1 = "d2d89099be5237cf68254bc943a7d800d3ee1945",
+    sha1 = "f586ff2ee048ad2575866c1833d854288f402307",
 )
 
 maven_jar(
     name = "jetty-jmx",
     artifact = "org.eclipse.jetty:jetty-jmx:" + JETTY_VERS,
-    sha1 = "5e8e87a6f89b8eabf5b5b1765e3d758209001570",
+    sha1 = "56b723070eeafc51b943cd9bf1a064a037e806a7",
 )
 
 maven_jar(
     name = "jetty-http",
     artifact = "org.eclipse.jetty:jetty-http:" + JETTY_VERS,
-    sha1 = "5fdcefd82178d11f895690f4fe6e843be69394b3",
+    sha1 = "ad28940f89ffde6ec1bd1656fe3f8493b01ba3c2",
 )
 
 maven_jar(
     name = "jetty-io",
     artifact = "org.eclipse.jetty:jetty-io:" + JETTY_VERS,
-    sha1 = "0d0f32c3b511d6b3a542787f95ed229731588810",
+    sha1 = "9e4b0048285b71f4769908780f957a470eca11da",
 )
 
 maven_jar(
     name = "jetty-util",
     artifact = "org.eclipse.jetty:jetty-util:" + JETTY_VERS,
-    sha1 = "efefd29006dcc9c9960a679263504287ce4e6896",
+    sha1 = "c88807f210ab216aa831b48569ef50bd797384bc",
 )
 
 maven_jar(
