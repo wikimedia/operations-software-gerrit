@@ -1,4 +1,4 @@
-// Copyright (C) 2020 The Android Open Source Project
+// Copyright (C) 2021 The Android Open Source Project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,28 +19,29 @@ import io.gatling.core.feeder.FeederBuilder
 import io.gatling.core.structure.ScenarioBuilder
 import io.gatling.http.Predef.http
 
+import scala.collection.mutable
 import scala.concurrent.duration._
 
-class SubmitChange extends GerritSimulation {
-  private val data: FeederBuilder = jsonFile(resource).convert(keys).queue
+class SubmitChangeInBranch extends GerritSimulation {
+  private val data: FeederBuilder = jsonFile(resource).convert(keys).circular
+  private var changesCopy: mutable.Queue[Int] = mutable.Queue[Int]()
   private val projectName = className
-  private var createChange = new CreateChange(projectName)
 
   override def relativeRuntimeWeight = 10
 
-  def this(createChange: CreateChange) {
-    this()
-    this.createChange = createChange
-  }
-
-  val test: ScenarioBuilder = scenario(uniqueName)
+  private val test: ScenarioBuilder = scenario(uniqueName)
       .feed(data)
       .exec(session => {
-        session.set(numberKey, createChange.number)
+        if (changesCopy.isEmpty) {
+          changesCopy = createChange.numbers.clone()
+        }
+        session.set(numberKey, changesCopy.dequeue())
       })
       .exec(http(uniqueName).post("${url}${" + numberKey + "}/submit"))
 
   private val createProject = new CreateProject(projectName)
+  private val createBranch = new CreateBranch(projectName)
+  private val createChange = new CreateChange(projectName, createBranch)
   private val approveChange = new ApproveChange(createChange)
   private val deleteProject = new DeleteProject(projectName)
 
@@ -49,17 +50,21 @@ class SubmitChange extends GerritSimulation {
       nothingFor(stepWaitTime(createProject) seconds),
       atOnceUsers(single)
     ),
+    createBranch.test.inject(
+      nothingFor(stepWaitTime(createBranch) seconds),
+      atOnceUsers(numberOfUsers)
+    ),
     createChange.test.inject(
       nothingFor(stepWaitTime(createChange) seconds),
-      atOnceUsers(single)
+      atOnceUsers(numberOfUsers)
     ),
     approveChange.test.inject(
       nothingFor(stepWaitTime(approveChange) seconds),
-      atOnceUsers(single)
+      atOnceUsers(numberOfUsers)
     ),
     test.inject(
       nothingFor(stepWaitTime(this) seconds),
-      atOnceUsers(single)
+      atOnceUsers(numberOfUsers)
     ),
     deleteProject.test.inject(
       nothingFor(stepWaitTime(deleteProject) seconds),

@@ -19,27 +19,48 @@ import io.gatling.core.feeder.FeederBuilder
 import io.gatling.core.structure.ScenarioBuilder
 import io.gatling.http.Predef._
 
+import scala.collection.mutable
 import scala.concurrent.duration._
 
 class CreateChange extends ProjectSimulation {
-  private val data: FeederBuilder = jsonFile(resource).convert(keys).queue
-  private val numberKey = "_number"
+  private val data: FeederBuilder = jsonFile(resource).convert(keys).circular
+  private val weightPerUser = 0.1
+  private var createBranch: Option[CreateBranch] = None
+  private var branchesCopy: mutable.Queue[String] = mutable.Queue[String]()
   var number = 0
+  var numbers: mutable.Queue[Int] = mutable.Queue[Int]()
 
-  override def relativeRuntimeWeight = 2
+  override def relativeRuntimeWeight: Int = 2 + (numberOfUsers * weightPerUser).toInt
 
   def this(projectName: String) {
     this()
     this.projectName = projectName
   }
 
+  def this(projectName: String, createBranch: CreateBranch) {
+    this()
+    this.projectName = projectName
+    this.createBranch = Some(createBranch)
+  }
+
   val test: ScenarioBuilder = scenario(uniqueName)
       .feed(data)
+      .exec(session => {
+        var branchId = "master"
+        if (createBranch.nonEmpty) {
+          if (branchesCopy.isEmpty) {
+            branchesCopy = createBranch.get.branches.clone()
+          }
+          branchId = branchesCopy.dequeue()
+        }
+        session.set("branch", branchId)
+      })
       .exec(httpRequest
           .body(ElFileBody(body)).asJson
-          .check(regex("\"" + numberKey + "\":(\\d+),").saveAs(numberKey)))
+          .check(regex("\"_" + numberKey + "\":(\\d+),").saveAs(numberKey)))
       .exec(session => {
         number = session(numberKey).as[Int]
+        numbers += number
         session
       })
 
@@ -54,11 +75,11 @@ class CreateChange extends ProjectSimulation {
     ),
     test.inject(
       nothingFor(stepWaitTime(this) seconds),
-      atOnceUsers(single)
+      atOnceUsers(numberOfUsers)
     ),
     deleteChange.test.inject(
       nothingFor(stepWaitTime(deleteChange) seconds),
-      atOnceUsers(single)
+      atOnceUsers(numberOfUsers)
     ),
     deleteProject.test.inject(
       nothingFor(stepWaitTime(deleteProject) seconds),

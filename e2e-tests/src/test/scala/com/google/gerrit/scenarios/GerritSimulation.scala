@@ -23,6 +23,8 @@ import io.gatling.http.request.builder.HttpRequestBuilder
 class GerritSimulation extends Simulation {
   implicit val conf: GatlingGitConfiguration = GatlingGitConfiguration()
 
+  protected val numberKey: String = "number"
+
   private val packageName = getClass.getPackage.getName
   private val path = packageName.replaceAllLiterally(".", "/")
 
@@ -34,6 +36,7 @@ class GerritSimulation extends Simulation {
   protected val uniqueName: String = className + "-" + hashCode()
   protected val single = 1
 
+  val numberOfUsers: Int = replaceProperty("number_of_users", single).toInt
   val replicationDelay: Int = replaceProperty("replication_delay", 15).toInt
   private val powerFactor = replaceProperty("power_factor", 1.0).toDouble
   protected val SecondsPerWeightUnit = 2
@@ -63,9 +66,9 @@ class GerritSimulation extends Simulation {
   protected val keys: PartialFunction[(String, Any), Any] = {
     case ("entries", entries) =>
       replaceProperty("projects_entries", "1", entries.toString)
-    case ("number", number) =>
-      val precedes = replaceKeyWith("_number", 0, number.toString)
-      replaceProperty("number", 1, precedes)
+    case (`numberKey`, number) =>
+      val precedes = replaceKeyWith("_" + numberKey, 0, number.toString)
+      replaceProperty(numberKey, 1, precedes)
     case ("parent", parent) =>
       replaceProperty("parent", "All-Projects", parent.toString)
     case ("project", project) =>
@@ -89,6 +92,11 @@ class GerritSimulation extends Simulation {
   }
 
   protected def replaceProperty(term: String, default: Any, in: String): String = {
+    val value = getProperty(term, default)
+    replaceKeyWith(term, value, in)
+  }
+
+  protected def getProperty(term: String, default: Any): String = {
     val property = packageName + "." + term
     var value = default
     default match {
@@ -100,7 +108,7 @@ class GerritSimulation extends Simulation {
       case _: Integer =>
         value = Integer.getInteger(property, default.asInstanceOf[Integer])
     }
-    replaceKeyWith(term, value, in)
+    value.toString
   }
 
   protected def replaceKeyWith(term: String, value: Any, in: String): String = {

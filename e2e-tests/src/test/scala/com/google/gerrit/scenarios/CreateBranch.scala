@@ -1,4 +1,4 @@
-// Copyright (C) 2020 The Android Open Source Project
+// Copyright (C) 2021 The Android Open Source Project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,31 +17,35 @@ package com.google.gerrit.scenarios
 import io.gatling.core.Predef.{atOnceUsers, _}
 import io.gatling.core.feeder.FeederBuilder
 import io.gatling.core.structure.ScenarioBuilder
-import io.gatling.http.Predef.http
+import io.gatling.http.Predef._
 
+import scala.collection.mutable
 import scala.concurrent.duration._
 
-class SubmitChange extends GerritSimulation {
-  private val data: FeederBuilder = jsonFile(resource).convert(keys).queue
-  private val projectName = className
-  private var createChange = new CreateChange(projectName)
+class CreateBranch extends ProjectSimulation {
+  private val data: FeederBuilder = jsonFile(resource).convert(keys).circular
+  private val branchIdKey = "branchId"
+  private var counter = 0
+  var branches: mutable.Queue[String] = mutable.Queue[String]()
 
-  override def relativeRuntimeWeight = 10
-
-  def this(createChange: CreateChange) {
+  def this(projectName: String) {
     this()
-    this.createChange = createChange
+    this.projectName = projectName
   }
 
   val test: ScenarioBuilder = scenario(uniqueName)
       .feed(data)
       .exec(session => {
-        session.set(numberKey, createChange.number)
+        counter += 1
+        val branchId = "branch-" + counter
+        branches += branchId
+        session.set(branchIdKey, branchId)
       })
-      .exec(http(uniqueName).post("${url}${" + numberKey + "}/submit"))
+      .exec(http(uniqueName)
+          .post("${url}${" + branchIdKey + "}")
+          .body(ElFileBody(body)).asJson)
 
   private val createProject = new CreateProject(projectName)
-  private val approveChange = new ApproveChange(createChange)
   private val deleteProject = new DeleteProject(projectName)
 
   setUp(
@@ -49,17 +53,9 @@ class SubmitChange extends GerritSimulation {
       nothingFor(stepWaitTime(createProject) seconds),
       atOnceUsers(single)
     ),
-    createChange.test.inject(
-      nothingFor(stepWaitTime(createChange) seconds),
-      atOnceUsers(single)
-    ),
-    approveChange.test.inject(
-      nothingFor(stepWaitTime(approveChange) seconds),
-      atOnceUsers(single)
-    ),
     test.inject(
       nothingFor(stepWaitTime(this) seconds),
-      atOnceUsers(single)
+      atOnceUsers(numberOfUsers)
     ),
     deleteProject.test.inject(
       nothingFor(stepWaitTime(deleteProject) seconds),
