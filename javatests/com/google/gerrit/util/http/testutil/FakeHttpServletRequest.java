@@ -17,6 +17,7 @@ package com.google.gerrit.util.http.testutil;
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
 
 import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
@@ -66,6 +67,7 @@ public class FakeHttpServletRequest implements HttpServletRequest {
   private String contextPath;
   private String servletPath;
   private String path;
+  private String method;
 
   public FakeHttpServletRequest() {
     this("gerrit.example.com", 80, "", SERVLET_PATH);
@@ -80,6 +82,7 @@ public class FakeHttpServletRequest implements HttpServletRequest {
     attributes = Maps.newConcurrentMap();
     parameters = LinkedListMultimap.create();
     headers = LinkedListMultimap.create();
+    method = "GET";
   }
 
   @Override
@@ -104,6 +107,11 @@ public class FakeHttpServletRequest implements HttpServletRequest {
 
   @Override
   public String getContentType() {
+    List<String> contentType = headers.get("Content-Type");
+    if (contentType != null && !contentType.isEmpty()) {
+      return contentType.get(0);
+    }
+
     return null;
   }
 
@@ -257,7 +265,15 @@ public class FakeHttpServletRequest implements HttpServletRequest {
 
   @Override
   public Cookie[] getCookies() {
-    return new Cookie[0];
+    return Splitter.on(";").splitToList(Strings.nullToEmpty(getHeader("Cookie"))).stream()
+        .filter(s -> !s.isEmpty())
+        .map(
+            (String cookieValue) -> {
+              String[] kv = cookieValue.split("=");
+              return new Cookie(kv[0], kv[1]);
+            })
+        .collect(toList())
+        .toArray(new Cookie[0]);
   }
 
   @Override
@@ -288,7 +304,11 @@ public class FakeHttpServletRequest implements HttpServletRequest {
 
   @Override
   public String getMethod() {
-    return "GET";
+    return method;
+  }
+
+  public void setMethod(String method) {
+    this.method = method;
   }
 
   @Override

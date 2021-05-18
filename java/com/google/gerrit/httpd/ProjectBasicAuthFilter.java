@@ -22,6 +22,7 @@ import com.google.common.base.MoreObjects;
 import com.google.common.base.Strings;
 import com.google.common.flogger.FluentLogger;
 import com.google.common.io.BaseEncoding;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.client.GitBasicAuthPolicy;
 import com.google.gerrit.extensions.registration.DynamicItem;
@@ -51,6 +52,7 @@ import javax.servlet.ServletResponse;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpServletResponseWrapper;
+import org.eclipse.jgit.http.server.GitSmartHttpTools;
 
 /**
  * Authenticates the current user by HTTP basic authentication.
@@ -99,9 +101,19 @@ class ProjectBasicAuthFilter implements Filter {
     HttpServletRequest req = (HttpServletRequest) request;
     Response rsp = new Response((HttpServletResponse) response);
 
-    if (session.get().isSignedIn() || verify(req, rsp)) {
+    if (isSignedInGitRequest(req) || verify(req, rsp)) {
       chain.doFilter(req, rsp);
     }
+  }
+
+  private boolean isSignedInGitRequest(HttpServletRequest req) {
+    boolean isGitRequest = req.getRequestURI() != null && GitSmartHttpTools.isGitClient(req);
+    boolean isAlreadySignedIn = session.get().isSignedIn();
+    boolean res = isAlreadySignedIn && isGitRequest;
+    logger.atFine().log(
+        "HTTP:%s %s signedIn=%s (isAlreadySignedIn=%s, isGitRequest=%s)",
+        req.getMethod(), req.getRequestURI(), res, isAlreadySignedIn, isGitRequest);
+    return res;
   }
 
   private boolean verify(HttpServletRequest req, Response rsp) throws IOException {
@@ -144,7 +156,10 @@ class ProjectBasicAuthFilter implements Filter {
     if (gitBasicAuthPolicy == GitBasicAuthPolicy.HTTP
         || gitBasicAuthPolicy == GitBasicAuthPolicy.HTTP_LDAP) {
       if (PasswordVerifier.checkPassword(who.externalIds(), username, password)) {
-        return succeedAuthentication(who);
+        logger.atFine().log(
+            "HTTP:%s %s username/password authentication succeeded",
+            req.getMethod(), req.getRequestURI());
+        return succeedAuthentication(who, null);
       }
     }
 
@@ -157,11 +172,13 @@ class ProjectBasicAuthFilter implements Filter {
 
     try {
       AuthResult whoAuthResult = accountManager.authenticate(whoAuth);
-      setUserIdentified(whoAuthResult.getAccountId());
+      setUserIdentified(whoAuthResult.getAccountId(), whoAuthResult);
+      logger.atFine().log(
+          "HTTP:%s %s Realm authentication succeeded", req.getMethod(), req.getRequestURI());
       return true;
     } catch (NoSuchUserException e) {
       if (PasswordVerifier.checkPassword(who.externalIds(), username, password)) {
-        return succeedAuthentication(who);
+        return succeedAuthentication(who, null);
       }
       logger.atWarning().withCause(e).log(authenticationFailedMsg(username, req));
       rsp.sendError(SC_UNAUTHORIZED);
@@ -183,8 +200,8 @@ class ProjectBasicAuthFilter implements Filter {
     }
   }
 
-  private boolean succeedAuthentication(AccountState who) {
-    setUserIdentified(who.account().id());
+  private boolean succeedAuthentication(AccountState who, @Nullable AuthResult whoAuthResult) {
+    setUserIdentified(who.account().id(), whoAuthResult);
     return true;
   }
 
@@ -201,11 +218,15 @@ class ProjectBasicAuthFilter implements Filter {
     return String.format("Authentication from %s failed for %s", req.getRemoteAddr(), username);
   }
 
-  private void setUserIdentified(Account.Id id) {
+  private void setUserIdentified(Account.Id id, @Nullable AuthResult whoAuthResult) {
     WebSession ws = session.get();
     ws.setUserAccountId(id);
     ws.setAccessPathOk(AccessPath.GIT, true);
     ws.setAccessPathOk(AccessPath.REST_API, true);
+
+    if (whoAuthResult != null) {
+      ws.login(whoAuthResult, false);
+    }
   }
 
   private String encoding(HttpServletRequest req) {
