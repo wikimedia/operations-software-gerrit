@@ -4,5 +4,103 @@
   <groupId>org.wikimedia</groupId>
   <artifactId>gerrit</artifactId>
   <version>1.0</version>
-  <name>Gerrit artifact uploader</name>
+  <name>Gerrit packaging for Wikimedia</name>
+
+  <properties>
+    <gerrit.version>3.2.7</gerrit.version>
+  </properties>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>copy</id>
+            <phase>package</phase>
+            <goals>
+              <goal>copy</goal>
+            </goals>
+          </execution>
+        </executions>
+
+        <configuration>
+          <artifactItems>
+            <artifactItem>
+              <groupId>com.google.gerrit</groupId>
+              <artifactId>gerrit-war</artifactId>
+              <version>${gerrit.version}</version>
+              <type>war</type>
+              <outputDirectory>${project.basedir}</outputDirectory>
+              <destFileName>gerrit.war</destFileName>
+            </artifactItem>
+          </artifactItems>
+        </configuration>
+
+      </plugin>
+    </plugins>
+  </build>
+
+  <!-- See https://wikitech.wikimedia.org/wiki/Archiva -->
+  <repositories>
+    <!-- disable Maven central -->
+    <repository>
+      <id>central</id>
+      <url>http://repo1.maven.org/maven2</url>
+      <releases>
+        <enabled>false</enabled>
+      </releases>
+      <snapshots>
+        <enabled>false</enabled>
+      </snapshots>
+    </repository>
+    <repository>
+      <id>wikimedia.mirrored</id>
+      <name>Wikimedia Mirrored Repository</name>
+      <url>https://archiva.wikimedia.org/repository/mirrored</url>
+      <releases>
+        <enabled>true</enabled>
+        <checksumPolicy>fail</checksumPolicy>
+      </releases>
+      <snapshots>
+        <enabled>false</enabled>
+      </snapshots>
+    </repository>
+
+    <repository>
+      <id>wikimedia.releases</id>
+      <name>Wikimedia Release Repository</name>
+      <url>https://archiva.wikimedia.org/repository/releases</url>
+      <releases>
+        <enabled>true</enabled>
+        <checksumPolicy>fail</checksumPolicy>
+      </releases>
+      <snapshots>
+        <enabled>false</enabled>
+      </snapshots>
+    </repository>
+
+  </repositories>
+
+  <pluginRepositories>
+    <!-- disable Maven central -->
+    <pluginRepository>
+      <id>central</id>
+      <url>http://repo1.maven.org/maven2</url>
+      <releases>
+        <enabled>false</enabled>
+      </releases>
+      <snapshots>
+        <enabled>false</enabled>
+      </snapshots>
+    </pluginRepository>
+
+    <pluginRepository>
+      <id>wikimedia.mirrored</id>
+      <name>Wikimedia Mirrored Repository</name>
+      <url>https://archiva.wikimedia.org/repository/mirrored/</url>
+    </pluginRepository>
+  </pluginRepositories>
+
 </project>
