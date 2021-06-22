@@ -22,10 +22,11 @@
 	url = ../plugins/download-commands
 	branch = .
 
+# Forked for T240264
 [submodule "plugins/gitiles"]
 	path = plugins/gitiles
-	url = ../plugins/gitiles
-	branch = .
+	url = https://gerrit.wikimedia.org/r/operations/software/gerrit/plugins/gitiles.git
+	branch = wmf/stable-3.2
 
 [submodule "plugins/hooks"]
 	path = plugins/hooks
