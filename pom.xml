@@ -26,6 +26,9 @@
         </executions>
 
         <configuration>
+          <!-- Ensure `gerrit.war` is always written -->
+          <overWriteReleases>true</overWriteReleases>
+
           <artifactItems>
             <artifactItem>
               <groupId>com.google.gerrit</groupId>
