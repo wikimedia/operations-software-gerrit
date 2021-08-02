@@ -7,7 +7,7 @@
   <name>Gerrit packaging for Wikimedia</name>
 
   <properties>
-    <gerrit.version>3.2.11</gerrit.version>
+    <gerrit.version>3.3.5</gerrit.version>
   </properties>
 
   <build>
