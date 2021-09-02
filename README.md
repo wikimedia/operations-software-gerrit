@@ -7,3 +7,4 @@ Get the Gerrit upstream war by:
 - mvn package
 - git add pom.xml gerrit.war
 - git commit -m 'Gerrit vX.Y.Z'
+- ./deploy_artifacts.py --version=X.Y.Z gerrit.war
