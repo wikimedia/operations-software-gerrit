@@ -45,6 +45,7 @@ const SEARCH_OPERATORS: ReadonlyArray<string> = [
   'age:',
   'age:1week', // Give an example age
   'assignee:',
+  'attention:',
   'author:',
   'before:',
   'branch:',
@@ -313,6 +314,8 @@ export class GrSearchBar extends KeyboardShortcutMixin(
         // Fetch projects.
         return this.projectSuggestions(predicate, expression);
 
+      case 'assignee':
+      case 'attention':
       case 'author':
       case 'cc':
       case 'commentby':
