@@ -98,10 +98,7 @@ public class GitProtocolV2IT extends StandaloneSiteTest {
                   .group(SystemGroupBackend.REGISTERED_USERS))
           .update();
 
-      // Set protocol.version=2 in target repository
-      execute(
-          ImmutableList.of("git", "config", "protocol.version", "2"),
-          sitePaths.site_path.resolve("git").resolve(project.get() + Constants.DOT_GIT).toFile());
+      setProtocolV2(project);
 
       // Retrieve HTTP url
       String url = config.getString("gerrit", null, "canonicalweburl");
@@ -217,14 +214,7 @@ public class GitProtocolV2IT extends StandaloneSiteTest {
       Project.NameKey allRefsVisibleProject = Project.nameKey("all-refs-visible");
       gApi.projects().create(allRefsVisibleProject.get());
 
-      // Set protocol.version=2 in target repository
-      execute(
-          ImmutableList.of("git", "config", "protocol.version", "2"),
-          sitePaths
-              .site_path
-              .resolve("git")
-              .resolve(allRefsVisibleProject.get() + Constants.DOT_GIT)
-              .toFile());
+      setProtocolV2(allRefsVisibleProject);
 
       // Set up project permission to allow reading all refs
       projectOperations
@@ -280,14 +270,7 @@ public class GitProtocolV2IT extends StandaloneSiteTest {
       Project.NameKey privateProject = Project.nameKey("private-project");
       gApi.projects().create(privateProject.get());
 
-      // Set protocol.version=2 in target repository
-      execute(
-          ImmutableList.of("git", "config", "protocol.version", "2"),
-          sitePaths
-              .site_path
-              .resolve("git")
-              .resolve(privateProject.get() + Constants.DOT_GIT)
-              .toFile());
+      setProtocolV2(privateProject);
 
       // Disallow general read permissions for anonymous users
       projectOperations
@@ -356,8 +339,14 @@ public class GitProtocolV2IT extends StandaloneSiteTest {
                 UTF_8));
   }
 
+  private void setProtocolV2(Project.NameKey projectName) throws Exception {
+    execute(
+        ImmutableList.of("git", "config", "protocol.version", "2"),
+        sitePaths.site_path.resolve("git").resolve(projectName.get() + Constants.DOT_GIT).toFile());
+  }
+
   private static void assertGitProtocolV2Refs(String commit, String out) {
-    assertThat(out).contains("git< version 2");
+    assertThat(out).containsMatch("(git|ls-remote)< version 2");
     assertThat(out).contains("refs/changes/01/1/1");
     assertThat(out).contains("refs/changes/01/1/meta");
     assertThat(out).contains(commit);

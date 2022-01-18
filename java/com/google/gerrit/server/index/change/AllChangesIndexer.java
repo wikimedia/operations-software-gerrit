@@ -14,44 +14,42 @@
 
 package com.google.gerrit.server.index.change;
 
-import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.util.concurrent.Futures.successfulAsList;
 import static com.google.common.util.concurrent.Futures.transform;
 import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 import static com.google.gerrit.server.git.QueueProvider.QueueType.BATCH;
 
+import com.google.auto.value.AutoValue;
 import com.google.common.base.Stopwatch;
+import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.flogger.FluentLogger;
-import com.google.common.primitives.Ints;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.UncheckedExecutionException;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Project;
-import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.index.SiteIndexer;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.MultiProgressMonitor;
 import com.google.gerrit.server.git.MultiProgressMonitor.Task;
+import com.google.gerrit.server.git.MultiProgressMonitor.VolatileTask;
 import com.google.gerrit.server.index.IndexExecutor;
 import com.google.gerrit.server.index.OnlineReindexMode;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ChangeNotes.Factory.ChangeNotesResult;
+import com.google.gerrit.server.notedb.ChangeNotes.Factory.ScanResult;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.inject.Inject;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
-import org.eclipse.jgit.errors.RepositoryNotFoundException;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.jgit.lib.ProgressMonitor;
 import org.eclipse.jgit.lib.Repository;
-import org.eclipse.jgit.lib.TextProgressMonitor;
 
 /**
  * Implementation that can index all changes on a host or within a project. Used by Gerrit's
@@ -60,7 +58,18 @@ import org.eclipse.jgit.lib.TextProgressMonitor;
  */
 public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, ChangeIndex> {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
+  private MultiProgressMonitor mpm;
+  private VolatileTask doneTask;
+  private Task failedTask;
   private static final int PROJECT_SLICE_MAX_REFS = 1000;
+
+  private static class ProjectsCollectionFailure extends Exception {
+    private static final long serialVersionUID = 1L;
+
+    public ProjectsCollectionFailure(String message) {
+      super(message);
+    }
+  }
 
   private final ChangeData.Factory changeDataFactory;
   private final GitRepositoryManager repoManager;
@@ -85,126 +94,49 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
     this.projectCache = projectCache;
   }
 
-  private static class ProjectSlice {
-    private final Project.NameKey name;
-    private final int slice;
-    private final int slices;
+  @AutoValue
+  public abstract static class ProjectSlice {
+    public abstract Project.NameKey name();
 
-    ProjectSlice(Project.NameKey name, int slice, int slices) {
-      this.name = name;
-      this.slice = slice;
-      this.slices = slices;
-    }
+    public abstract int slice();
 
-    public Project.NameKey getName() {
-      return name;
-    }
+    public abstract int slices();
 
-    public int getSlice() {
-      return slice;
-    }
+    public abstract ScanResult scanResult();
 
-    public int getSlices() {
-      return slices;
+    private static ProjectSlice create(Project.NameKey name, int slice, int slices, ScanResult sr) {
+      return new AutoValue_AllChangesIndexer_ProjectSlice(name, slice, slices, sr);
     }
   }
 
   @Override
   public Result indexAll(ChangeIndex index) {
-    ProgressMonitor pm = new TextProgressMonitor();
-    pm.beginTask("Collecting projects", ProgressMonitor.UNKNOWN);
-    List<ProjectSlice> projectSlices = new ArrayList<>();
-    int changeCount = 0;
+    // The simplest approach to distribute indexing would be to let each thread grab a project
+    // and index it fully. But if a site has one big project and 100s of small projects, then
+    // in the beginning all CPUs would be busy reindexing projects. But soon enough all small
+    // projects have been reindexed, and only the thread that reindexes the big project is
+    // still working. The other threads would idle. Reindexing the big project on a single
+    // thread becomes the critical path. Bringing in more CPUs would not speed up things.
+    //
+    // To avoid such situations, we split big repos into smaller parts and let
+    // the thread pool index these smaller parts. This splitting introduces an overhead in the
+    // workload setup and there might be additional slow-downs from multiple threads
+    // concurrently working on different parts of the same project. But for Wikimedia's Gerrit,
+    // which had 2 big projects, many middle sized ones, and lots of smaller ones, the
+    // splitting of repos into smaller parts reduced indexing time from 1.5 hours to 55 minutes
+    // in 2020.
+
     Stopwatch sw = Stopwatch.createStarted();
-    int projectsFailed = 0;
-    for (Project.NameKey name : projectCache.all()) {
-      try (Repository repo = repoManager.openRepository(name)) {
-        // The simplest approach to distribute indexing would be to let each thread grab a project
-        // and index it fully. But if a site has one big project and 100s of small projects, then
-        // in the beginning all CPUs would be busy reindexing projects. But soon enough all small
-        // projects have been reindexed, and only the thread that reindexes the big project is
-        // still working. The other threads would idle. Reindexing the big project on a single
-        // thread becomes the critical path. Bringing in more CPUs would not speed up things.
-        //
-        // To avoid such situations, we split big repos into smaller parts and let
-        // the thread pool index these smaller parts. This splitting introduces an overhead in the
-        // workload setup and there might be additional slow-downs from multiple threads
-        // concurrently working on different parts of the same project. But for Wikimedia's Gerrit,
-        // which had 2 big projects, many middle sized ones, and lots of smaller ones, the
-        // splitting of repos into smaller parts reduced indexing time from 1.5 hours to 55 minutes
-        // in 2020.
-        int size = estimateSize(repo);
-        changeCount += size;
-        int slices = 1 + size / PROJECT_SLICE_MAX_REFS;
-        if (slices > 1) {
-          verboseWriter.println("Submitting " + name + " for indexing in " + slices + " slices");
-        }
-        for (int slice = 0; slice < slices; slice++) {
-          projectSlices.add(new ProjectSlice(name, slice, slices));
-        }
-      } catch (IOException e) {
-        logger.atSevere().withCause(e).log("Error collecting project %s", name);
-        projectsFailed++;
-        if (projectsFailed > projectCache.all().size() / 2) {
-          logger.atSevere().log("Over 50%% of the projects could not be collected: aborted");
-          return Result.create(sw, false, 0, 0);
-        }
-      }
-      pm.update(1);
-    }
-    pm.endTask();
-    setTotalWork(changeCount);
-
-    // projectSlices are currently grouped by projects. First all slices for project1, followed
-    // by all slices for project2, and so on. As workers pick tasks sequentially, multiple threads
-    // would typically work concurrently on different slices of the same project. While this is not
-    // a big issue, shuffling the list beforehand helps with ungrouping the project slices, so
-    // different slices are less likely to be worked on concurrently.
-    // This shuffling gave a 6% runtime reduction for Wikimedia's Gerrit in 2020.
-    Collections.shuffle(projectSlices);
-    return indexAll(index, projectSlices);
-  }
-
-  private int estimateSize(Repository repo) throws IOException {
-    // Estimate size based on IDs that show up in ref names. This is not perfect, since patch set
-    // refs may exist for changes whose metadata was never successfully stored. But that's ok, as
-    // the estimate is just used as a heuristic for sorting projects.
-    long size =
-        repo.getRefDatabase().getRefsByPrefix(RefNames.REFS_CHANGES).stream()
-            .map(r -> Change.Id.fromRef(r.getName()))
-            .filter(Objects::nonNull)
-            .distinct()
-            .count();
-    return Ints.saturatedCast(size);
-  }
-
-  private SiteIndexer.Result indexAll(ChangeIndex index, List<ProjectSlice> projectSlices) {
-    Stopwatch sw = Stopwatch.createStarted();
-    MultiProgressMonitor mpm = new MultiProgressMonitor(progressOut, "Reindexing changes");
-    Task projTask = mpm.beginSubTask("project-slices", projectSlices.size());
-    checkState(totalWork >= 0);
-    Task doneTask = mpm.beginSubTask(null, totalWork);
-    Task failedTask = mpm.beginSubTask("failed", MultiProgressMonitor.UNKNOWN);
-
-    List<ListenableFuture<?>> futures = new ArrayList<>();
     AtomicBoolean ok = new AtomicBoolean(true);
-
-    for (ProjectSlice projectSlice : projectSlices) {
-      Project.NameKey name = projectSlice.getName();
-      int slice = projectSlice.getSlice();
-      int slices = projectSlice.getSlices();
-      ListenableFuture<?> future =
-          executor.submit(
-              reindexProject(
-                  indexerFactory.create(executor, index),
-                  name,
-                  slice,
-                  slices,
-                  doneTask,
-                  failedTask));
-      String description = "project " + name + " (" + slice + "/" + slices + ")";
-      addErrorListener(future, description, projTask, ok);
-      futures.add(future);
+    mpm = new MultiProgressMonitor(progressOut, "Reindexing changes");
+    doneTask = mpm.beginVolatileSubTask("changes");
+    failedTask = mpm.beginSubTask("failed", MultiProgressMonitor.UNKNOWN);
+    List<ListenableFuture<?>> futures;
+    try {
+      futures = new SliceScheduler(index, ok).schedule();
+    } catch (ProjectsCollectionFailure e) {
+      logger.atSevere().log(e.getMessage());
+      return Result.create(sw, false, 0, 0);
     }
 
     try {
@@ -238,7 +170,13 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
 
   public Callable<Void> reindexProject(
       ChangeIndexer indexer, Project.NameKey project, Task done, Task failed) {
-    return reindexProject(indexer, project, 0, 1, done, failed);
+    try (Repository repo = repoManager.openRepository(project)) {
+      return reindexProject(
+          indexer, project, 0, 1, ChangeNotes.Factory.scanChangeIds(repo), done, failed);
+    } catch (IOException e) {
+      logger.atSevere().log(e.getMessage());
+      return null;
+    }
   }
 
   public Callable<Void> reindexProject(
@@ -246,9 +184,10 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
       Project.NameKey project,
       int slice,
       int slices,
+      ScanResult scanResult,
       Task done,
       Task failed) {
-    return new ProjectIndexer(indexer, project, slice, slices, done, failed);
+    return new ProjectIndexer(indexer, project, slice, slices, scanResult, done, failed);
   }
 
   private class ProjectIndexer implements Callable<Void> {
@@ -256,6 +195,7 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
     private final Project.NameKey project;
     private final int slice;
     private final int slices;
+    private final ScanResult scanResult;
     private final ProgressMonitor done;
     private final ProgressMonitor failed;
 
@@ -264,32 +204,30 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
         Project.NameKey project,
         int slice,
         int slices,
+        ScanResult scanResult,
         ProgressMonitor done,
         ProgressMonitor failed) {
       this.indexer = indexer;
       this.project = project;
       this.slice = slice;
       this.slices = slices;
+      this.scanResult = scanResult;
       this.done = done;
       this.failed = failed;
     }
 
     @Override
     public Void call() throws Exception {
-      try (Repository repo = repoManager.openRepository(project)) {
-        OnlineReindexMode.begin();
-
-        // Order of scanning changes is undefined. This is ok if we assume that packfile locality is
-        // not important for indexing, since sites should have a fully populated DiffSummary cache.
-        // It does mean that reindexing after invalidating the DiffSummary cache will be expensive,
-        // but the goal is to invalidate that cache as infrequently as we possibly can. And besides,
-        // we don't have concrete proof that improving packfile locality would help.
-        notesFactory.scan(repo, project, id -> (id.get() % slices) == slice).forEach(r -> index(r));
-      } catch (RepositoryNotFoundException rnfe) {
-        logger.atSevere().log(rnfe.getMessage());
-      } finally {
-        OnlineReindexMode.end();
-      }
+      OnlineReindexMode.begin();
+      // Order of scanning changes is undefined. This is ok if we assume that packfile locality is
+      // not important for indexing, since sites should have a fully populated DiffSummary cache.
+      // It does mean that reindexing after invalidating the DiffSummary cache will be expensive,
+      // but the goal is to invalidate that cache as infrequently as we possibly can. And besides,
+      // we don't have concrete proof that improving packfile locality would help.
+      notesFactory
+          .scan(scanResult, project, id -> (id.get() % slices) == slice)
+          .forEach(r -> index(r));
+      OnlineReindexMode.end();
       return null;
     }
 
@@ -327,6 +265,105 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
     @Override
     public String toString() {
       return "Index all changes of project " + project.get();
+    }
+  }
+
+  private class SliceScheduler {
+    final ChangeIndex index;
+    final AtomicBoolean ok;
+    final AtomicInteger changeCount = new AtomicInteger(0);
+    final AtomicInteger projectsFailed = new AtomicInteger(0);
+    final List<ListenableFuture<?>> sliceIndexerFutures = new ArrayList<>();
+    final List<ListenableFuture<?>> sliceCreationFutures = new ArrayList<>();
+    VolatileTask projTask = mpm.beginVolatileSubTask("project-slices");
+    Task slicingProjects;
+
+    public SliceScheduler(ChangeIndex index, AtomicBoolean ok) {
+      this.index = index;
+      this.ok = ok;
+    }
+
+    private List<ListenableFuture<?>> schedule() throws ProjectsCollectionFailure {
+      ImmutableSortedSet<Project.NameKey> projects = projectCache.all();
+      int projectCount = projects.size();
+      slicingProjects = mpm.beginSubTask("Slicing projects", projectCount);
+      for (Project.NameKey name : projects) {
+        sliceCreationFutures.add(executor.submit(new ProjectSliceCreator(name)));
+      }
+
+      try {
+        mpm.waitForNonFinalTask(
+            transform(
+                successfulAsList(sliceCreationFutures),
+                x -> {
+                  projTask.finalizeTotal();
+                  doneTask.finalizeTotal();
+                  return null;
+                },
+                directExecutor()));
+      } catch (UncheckedExecutionException e) {
+        logger.atSevere().withCause(e).log("Error project slice creation");
+        ok.set(false);
+      }
+
+      if (projectsFailed.get() > projectCount / 2) {
+        throw new ProjectsCollectionFailure(
+            "Over 50%% of the projects could not be collected: aborted");
+      }
+
+      slicingProjects.endTask();
+      setTotalWork(changeCount.get());
+
+      return sliceIndexerFutures;
+    }
+
+    private class ProjectSliceCreator implements Callable<Void> {
+      final Project.NameKey name;
+
+      public ProjectSliceCreator(Project.NameKey name) {
+        this.name = name;
+      }
+
+      @Override
+      public Void call() throws IOException {
+        try (Repository repo = repoManager.openRepository(name)) {
+          ScanResult sr = ChangeNotes.Factory.scanChangeIds(repo);
+          int size = sr.all().size();
+          if (size > 0) {
+            changeCount.addAndGet(size);
+            int slices = 1 + size / PROJECT_SLICE_MAX_REFS;
+            if (slices > 1) {
+              verboseWriter.println(
+                  "Submitting " + name + " for indexing in " + slices + " slices");
+            }
+
+            doneTask.updateTotal(size);
+            projTask.updateTotal(slices);
+
+            for (int slice = 0; slice < slices; slice++) {
+              ProjectSlice projectSlice = ProjectSlice.create(name, slice, slices, sr);
+              ListenableFuture<?> future =
+                  executor.submit(
+                      reindexProject(
+                          indexerFactory.create(executor, index),
+                          name,
+                          slice,
+                          slices,
+                          projectSlice.scanResult(),
+                          doneTask,
+                          failedTask));
+              String description = "project " + name + " (" + slice + "/" + slices + ")";
+              addErrorListener(future, description, projTask, ok);
+              sliceIndexerFutures.add(future);
+            }
+          }
+        } catch (IOException e) {
+          logger.atSevere().withCause(e).log("Error collecting project %s", name);
+          projectsFailed.incrementAndGet();
+        }
+        slicingProjects.update(1);
+        return null;
+      }
     }
   }
 }

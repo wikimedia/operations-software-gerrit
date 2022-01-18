@@ -66,12 +66,14 @@ import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
 import org.eclipse.jgit.errors.ConfigInvalidException;
+import org.eclipse.jgit.errors.RepositoryNotFoundException;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
@@ -106,13 +108,50 @@ public class ChangeNotes extends AbstractChangeNotes<ChangeNotes> {
       this.projectCache = projectCache;
     }
 
+    @AutoValue
+    public abstract static class ScanResult {
+      abstract ImmutableSet<Change.Id> fromPatchSetRefs();
+
+      abstract ImmutableSet<Change.Id> fromMetaRefs();
+
+      public SetView<Change.Id> all() {
+        return Sets.union(fromPatchSetRefs(), fromMetaRefs());
+      }
+    }
+
+    public static ScanResult scanChangeIds(Repository repo) throws IOException {
+      ImmutableSet.Builder<Change.Id> fromPs = ImmutableSet.builder();
+      ImmutableSet.Builder<Change.Id> fromMeta = ImmutableSet.builder();
+      for (Ref r : repo.getRefDatabase().getRefsByPrefix(RefNames.REFS_CHANGES)) {
+        Change.Id id = Change.Id.fromRef(r.getName());
+        if (id != null) {
+          (r.getName().endsWith(RefNames.META_SUFFIX) ? fromMeta : fromPs).add(id);
+        }
+      }
+      return new AutoValue_ChangeNotes_Factory_ScanResult(fromPs.build(), fromMeta.build());
+    }
+
     public ChangeNotes createChecked(Change c) {
       return createChecked(c.getProject(), c.getId());
     }
 
-    public ChangeNotes createChecked(Project.NameKey project, Change.Id changeId) {
+    public ChangeNotes createChecked(
+        Repository repo,
+        Project.NameKey project,
+        Change.Id changeId,
+        @Nullable ObjectId metaRevId) {
       Change change = newChange(project, changeId);
-      return new ChangeNotes(args, change, true, null).load();
+      return new ChangeNotes(args, change, true, null, metaRevId).load(repo);
+    }
+
+    public ChangeNotes createChecked(
+        Project.NameKey project, Change.Id changeId, @Nullable ObjectId metaRevId) {
+      Change change = newChange(project, changeId);
+      return new ChangeNotes(args, change, true, null, metaRevId).load();
+    }
+
+    public ChangeNotes createChecked(Project.NameKey project, Change.Id changeId) {
+      return createChecked(project, changeId, null);
     }
 
     public static Change newChange(Project.NameKey project, Change.Id changeId) {
@@ -123,6 +162,11 @@ public class ChangeNotes extends AbstractChangeNotes<ChangeNotes> {
     public ChangeNotes create(Project.NameKey project, Change.Id changeId) {
       checkArgument(project != null, "project is required");
       return new ChangeNotes(args, newChange(project, changeId), true, null).load();
+    }
+
+    public ChangeNotes create(Repository repository, Project.NameKey project, Change.Id changeId) {
+      checkArgument(project != null, "project is required");
+      return new ChangeNotes(args, newChange(project, changeId), true, null).load(repository);
     }
 
     /**
@@ -179,13 +223,14 @@ public class ChangeNotes extends AbstractChangeNotes<ChangeNotes> {
     }
 
     public List<ChangeNotes> create(
+        Repository repo,
         Project.NameKey project,
         Collection<Change.Id> changeIds,
         Predicate<ChangeNotes> predicate) {
       List<ChangeNotes> notes = new ArrayList<>();
       for (Change.Id cid : changeIds) {
         try {
-          ChangeNotes cn = create(project, cid);
+          ChangeNotes cn = create(repo, project, cid);
           if (cn.getChange() != null && predicate.test(cn)) {
             notes.add(cn);
           }
@@ -196,6 +241,28 @@ public class ChangeNotes extends AbstractChangeNotes<ChangeNotes> {
         }
       }
       return notes;
+    }
+
+    /* TODO: This is now unused in the Gerrit code-base, however it is kept in the code
+    /* because it is a public method in a stable branch.
+     * It can be removed in master branch where we have more flexibility to change the API
+     * interface.
+     */
+    public List<ChangeNotes> create(
+        Project.NameKey project,
+        Collection<Change.Id> changeIds,
+        Predicate<ChangeNotes> predicate) {
+      try (Repository repo = args.repoManager.openRepository(project)) {
+        return create(repo, project, changeIds, predicate);
+      } catch (RepositoryNotFoundException e) {
+        // The repository does not exist, hence it does not contain
+        // any change.
+      } catch (IOException e) {
+        logger.atWarning().withCause(e).log(
+            "Unable to open project=%s when trying to retrieve changeId=%s from NoteDb",
+            project, changeIds);
+      }
+      return Collections.emptyList();
     }
 
     public ListMultimap<Project.NameKey, ChangeNotes> create(Predicate<ChangeNotes> predicate)
@@ -222,8 +289,11 @@ public class ChangeNotes extends AbstractChangeNotes<ChangeNotes> {
     public Stream<ChangeNotesResult> scan(
         Repository repo, Project.NameKey project, Predicate<Change.Id> changeIdPredicate)
         throws IOException {
-      ScanResult sr = scanChangeIds(repo);
+      return scan(scanChangeIds(repo), project, changeIdPredicate);
+    }
 
+    public Stream<ChangeNotesResult> scan(
+        ScanResult sr, Project.NameKey project, Predicate<Change.Id> changeIdPredicate) {
       Stream<Change.Id> idStream = sr.all().stream();
       if (changeIdPredicate != null) {
         idStream = idStream.filter(changeIdPredicate);
@@ -295,29 +365,6 @@ public class ChangeNotes extends AbstractChangeNotes<ChangeNotes> {
       @Nullable
       abstract ChangeNotes maybeNotes();
     }
-
-    @AutoValue
-    abstract static class ScanResult {
-      abstract ImmutableSet<Change.Id> fromPatchSetRefs();
-
-      abstract ImmutableSet<Change.Id> fromMetaRefs();
-
-      SetView<Change.Id> all() {
-        return Sets.union(fromPatchSetRefs(), fromMetaRefs());
-      }
-    }
-
-    private static ScanResult scanChangeIds(Repository repo) throws IOException {
-      ImmutableSet.Builder<Change.Id> fromPs = ImmutableSet.builder();
-      ImmutableSet.Builder<Change.Id> fromMeta = ImmutableSet.builder();
-      for (Ref r : repo.getRefDatabase().getRefsByPrefix(RefNames.REFS_CHANGES)) {
-        Change.Id id = Change.Id.fromRef(r.getName());
-        if (id != null) {
-          (r.getName().endsWith(RefNames.META_SUFFIX) ? fromMeta : fromPs).add(id);
-        }
-      }
-      return new AutoValue_ChangeNotes_Factory_ScanResult(fromPs.build(), fromMeta.build());
-    }
   }
 
   private final boolean shouldExist;
@@ -339,12 +386,21 @@ public class ChangeNotes extends AbstractChangeNotes<ChangeNotes> {
   private ImmutableListMultimap<PatchSet.Id, PatchSetApproval> approvals;
   private ImmutableSet<Comment.Key> commentKeys;
 
-  @VisibleForTesting
-  public ChangeNotes(Args args, Change change, boolean shouldExist, @Nullable RefCache refs) {
-    super(args, change.getId());
+  public ChangeNotes(
+      Args args,
+      Change change,
+      boolean shouldExist,
+      @Nullable RefCache refs,
+      @Nullable ObjectId metaSha1) {
+    super(args, change.getId(), metaSha1);
     this.change = new Change(change);
     this.shouldExist = shouldExist;
     this.refs = refs;
+  }
+
+  @VisibleForTesting
+  public ChangeNotes(Args args, Change change, boolean shouldExist, @Nullable RefCache refs) {
+    this(args, change, shouldExist, refs, null);
   }
 
   public Change getChange() {

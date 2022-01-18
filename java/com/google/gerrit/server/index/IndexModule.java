@@ -51,6 +51,7 @@ import com.google.gerrit.server.index.group.GroupIndexRewriter;
 import com.google.gerrit.server.index.group.GroupIndexer;
 import com.google.gerrit.server.index.group.GroupIndexerImpl;
 import com.google.gerrit.server.index.group.GroupSchemaDefinitions;
+import com.google.gerrit.server.index.options.IsFirstInsertForEntry;
 import com.google.gerrit.server.index.project.ProjectIndexDefinition;
 import com.google.gerrit.server.index.project.ProjectIndexerImpl;
 import com.google.inject.Inject;
@@ -59,6 +60,7 @@ import com.google.inject.Key;
 import com.google.inject.Provides;
 import com.google.inject.ProvisionException;
 import com.google.inject.Singleton;
+import com.google.inject.multibindings.OptionalBinder;
 import java.util.Collection;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -143,6 +145,9 @@ public class IndexModule extends LifecycleModule {
     }
 
     DynamicSet.setOf(binder(), OnlineUpgradeListener.class);
+    OptionalBinder.newOptionalBinder(binder(), IsFirstInsertForEntry.class)
+        .setDefault()
+        .toInstance(IsFirstInsertForEntry.NO);
   }
 
   @Provides
@@ -208,12 +213,13 @@ public class IndexModule extends LifecycleModule {
       return interactiveExecutor;
     }
     int threads = this.threads;
-    if (threads < 0) {
-      return MoreExecutors.newDirectExecutorService();
-    } else if (threads == 0) {
+    if (threads == 0) {
       threads =
           config.getInt(
               "index", null, "threads", Runtime.getRuntime().availableProcessors() / 2 + 1);
+    }
+    if (threads < 0) {
+      return MoreExecutors.newDirectExecutorService();
     }
     return MoreExecutors.listeningDecorator(
         workQueue.createQueue(threads, "Index-Interactive", true));
@@ -227,11 +233,13 @@ public class IndexModule extends LifecycleModule {
     if (batchExecutor != null) {
       return batchExecutor;
     }
-    int threads = config.getInt("index", null, "batchThreads", 0);
+    int threads = this.threads;
+    if (threads == 0) {
+      threads =
+          config.getInt("index", null, "batchThreads", Runtime.getRuntime().availableProcessors());
+    }
     if (threads < 0) {
       return MoreExecutors.newDirectExecutorService();
-    } else if (threads == 0) {
-      threads = Runtime.getRuntime().availableProcessors();
     }
     return MoreExecutors.listeningDecorator(workQueue.createQueue(threads, "Index-Batch", true));
   }

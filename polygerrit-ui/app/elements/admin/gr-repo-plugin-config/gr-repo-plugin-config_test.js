@@ -39,8 +39,11 @@ suite('gr-repo-plugin-config tests', () => {
   });
 
   test('_computeDisabled', () => {
-    assert.isFalse(element._computeDisabled('true'));
-    assert.isTrue(element._computeDisabled('false'));
+    assert.isFalse(element._computeDisabled(false, true));
+    assert.isTrue(element._computeDisabled(false, undefined));
+    assert.isTrue(element._computeDisabled(false, null));
+    assert.isTrue(element._computeDisabled(false, false));
+    assert.isTrue(element._computeDisabled(true, true));
   });
 
   test('_handleChange', () => {
@@ -75,7 +78,7 @@ suite('gr-repo-plugin-config tests', () => {
     test('ARRAY type option', () => {
       element.pluginData = {
         name: 'testName',
-        config: {plugin: {value: 'test', type: 'ARRAY'}},
+        config: {plugin: {value: 'test', type: 'ARRAY', editable: true}},
       };
       flush();
 
@@ -90,7 +93,7 @@ suite('gr-repo-plugin-config tests', () => {
     test('BOOLEAN type option', () => {
       element.pluginData = {
         name: 'testName',
-        config: {plugin: {value: 'true', type: 'BOOLEAN'}},
+        config: {plugin: {value: 'true', type: 'BOOLEAN', editable: true}},
       };
       flush();
 
@@ -109,7 +112,7 @@ suite('gr-repo-plugin-config tests', () => {
     test('INT/LONG/STRING type option', () => {
       element.pluginData = {
         name: 'testName',
-        config: {plugin: {value: 'test', type: 'STRING'}},
+        config: {plugin: {value: 'test', type: 'STRING', editable: true}},
       };
       flush();
 
@@ -130,7 +133,9 @@ suite('gr-repo-plugin-config tests', () => {
       const permitted_values = ['test', 'newTest'];
       element.pluginData = {
         name: 'testName',
-        config: {plugin: {value: 'test', type: 'LIST', permitted_values}},
+        config: {plugin:
+          {value: 'test', type: 'LIST', editable: true, permitted_values},
+        },
       };
       flush();
 
