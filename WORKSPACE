@@ -228,38 +228,6 @@ maven_jar(
     sha1 = "28c59f58f5adcc307604602e2aa89e2aca14c554",
 )
 
-SLF4J_VERS = "1.7.26"
-
-maven_jar(
-    name = "log-api",
-    artifact = "org.slf4j:slf4j-api:" + SLF4J_VERS,
-    sha1 = "77100a62c2e6f04b53977b9f541044d7d722693d",
-)
-
-maven_jar(
-    name = "log-ext",
-    artifact = "org.slf4j:slf4j-ext:" + SLF4J_VERS,
-    sha1 = "31cdf122e000322e9efcb38913e9ab07825b17ef",
-)
-
-maven_jar(
-    name = "impl-log4j",
-    artifact = "org.slf4j:slf4j-log4j12:" + SLF4J_VERS,
-    sha1 = "12f5c685b71c3027fd28bcf90528ec4ec74bf818",
-)
-
-maven_jar(
-    name = "jcl-over-slf4j",
-    artifact = "org.slf4j:jcl-over-slf4j:" + SLF4J_VERS,
-    sha1 = "33fbc2d93de829fa5e263c5ce97f5eab8f57d53e",
-)
-
-maven_jar(
-    name = "log4j",
-    artifact = "log4j:log4j:1.2.17",
-    sha1 = "5af35056b4d257e4b64b9e8069c0746e8b08629f",
-)
-
 maven_jar(
     name = "json-smart",
     artifact = "net.minidev:json-smart:1.1.1",
