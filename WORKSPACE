@@ -34,11 +34,11 @@ load("//tools:nongoogle.bzl", "TESTCONTAINERS_VERSION", "declare_nongoogle_deps"
 
 http_archive(
     name = "rbe_jdk11",
-    sha256 = "766796de71916118e528b9f4334c29c9c9b4e926227bf3264dee555e6a4306c8",
-    strip_prefix = "rbe_autoconfig-2.0.0",
+    sha256 = "5939e2a4e56d1fc53b6c44c6db97ee068c9f4bd18e86c762f6ab8b4fff5e294b",
+    strip_prefix = "rbe_autoconfig-3.0.0",
     urls = [
-        "https://gerrit-bazel.storage.googleapis.com/rbe_autoconfig/v2.0.0.tar.gz",
-        "https://github.com/davido/rbe_autoconfig/archive/v2.0.0.tar.gz",
+        "https://gerrit-bazel.storage.googleapis.com/rbe_autoconfig/v3.0.0.tar.gz",
+        "https://github.com/davido/rbe_autoconfig/archive/v3.0.0.tar.gz",
     ],
 )
 
@@ -224,38 +224,6 @@ maven_jar(
     name = "juniversalchardet",
     artifact = "com.github.albfernandez:juniversalchardet:2.0.0",
     sha1 = "28c59f58f5adcc307604602e2aa89e2aca14c554",
-)
-
-SLF4J_VERS = "1.7.26"
-
-maven_jar(
-    name = "log-api",
-    artifact = "org.slf4j:slf4j-api:" + SLF4J_VERS,
-    sha1 = "77100a62c2e6f04b53977b9f541044d7d722693d",
-)
-
-maven_jar(
-    name = "log-ext",
-    artifact = "org.slf4j:slf4j-ext:" + SLF4J_VERS,
-    sha1 = "31cdf122e000322e9efcb38913e9ab07825b17ef",
-)
-
-maven_jar(
-    name = "impl-log4j",
-    artifact = "org.slf4j:slf4j-log4j12:" + SLF4J_VERS,
-    sha1 = "12f5c685b71c3027fd28bcf90528ec4ec74bf818",
-)
-
-maven_jar(
-    name = "jcl-over-slf4j",
-    artifact = "org.slf4j:jcl-over-slf4j:" + SLF4J_VERS,
-    sha1 = "33fbc2d93de829fa5e263c5ce97f5eab8f57d53e",
-)
-
-maven_jar(
-    name = "log4j",
-    artifact = "log4j:log4j:1.2.17",
-    sha1 = "5af35056b4d257e4b64b9e8069c0746e8b08629f",
 )
 
 maven_jar(
