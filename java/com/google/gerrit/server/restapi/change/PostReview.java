@@ -16,12 +16,12 @@ package com.google.gerrit.server.restapi.change;
 
 import static com.google.common.base.MoreObjects.firstNonNull;
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.gerrit.entities.Patch.PATCHSET_LEVEL;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.REVIEWER;
 import static com.google.gerrit.server.permissions.LabelPermission.ForUser.ON_BEHALF_OF;
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.groupingBy;
 import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toList;
@@ -43,7 +43,6 @@ import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Address;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.entities.Comment;
 import com.google.gerrit.entities.FixReplacement;
 import com.google.gerrit.entities.FixSuggestion;
@@ -55,14 +54,14 @@ import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.RobotComment;
 import com.google.gerrit.exceptions.StorageException;
-import com.google.gerrit.extensions.api.changes.AddReviewerInput;
-import com.google.gerrit.extensions.api.changes.AddReviewerResult;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput.CommentInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput.DraftHandling;
 import com.google.gerrit.extensions.api.changes.ReviewInput.RobotCommentInput;
 import com.google.gerrit.extensions.api.changes.ReviewResult;
+import com.google.gerrit.extensions.api.changes.ReviewerInput;
+import com.google.gerrit.extensions.api.changes.ReviewerResult;
 import com.google.gerrit.extensions.client.Comment.Range;
 import com.google.gerrit.extensions.client.DiffPreferencesInfo.Whitespace;
 import com.google.gerrit.extensions.client.ReviewerState;
@@ -81,7 +80,10 @@ import com.google.gerrit.extensions.validators.CommentForValidation;
 import com.google.gerrit.extensions.validators.CommentValidationContext;
 import com.google.gerrit.extensions.validators.CommentValidationFailure;
 import com.google.gerrit.extensions.validators.CommentValidator;
-import com.google.gerrit.server.ApprovalsUtil;
+import com.google.gerrit.metrics.Counter1;
+import com.google.gerrit.metrics.Description;
+import com.google.gerrit.metrics.Field;
+import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.CommentsUtil;
@@ -90,18 +92,22 @@ import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.PublishCommentUtil;
 import com.google.gerrit.server.ReviewerSet;
+import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountResolver;
-import com.google.gerrit.server.change.AddReviewersEmail;
-import com.google.gerrit.server.change.AddReviewersOp.Result;
+import com.google.gerrit.server.account.AccountState;
+import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.change.EmailReviewComments;
+import com.google.gerrit.server.change.ModifyReviewersEmail;
 import com.google.gerrit.server.change.NotifyResolver;
-import com.google.gerrit.server.change.ReviewerAdder;
-import com.google.gerrit.server.change.ReviewerAdder.ReviewerAddition;
+import com.google.gerrit.server.change.ReviewerModifier;
+import com.google.gerrit.server.change.ReviewerModifier.ReviewerModification;
+import com.google.gerrit.server.change.ReviewerOp.Result;
 import com.google.gerrit.server.change.RevisionResource;
 import com.google.gerrit.server.change.WorkInProgressOp;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.extensions.events.CommentAdded;
+import com.google.gerrit.server.extensions.events.ReviewerAdded;
 import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.notedb.ChangeNotes;
@@ -123,7 +129,7 @@ import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.update.CommentsRejectedException;
-import com.google.gerrit.server.update.Context;
+import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.LabelVote;
 import com.google.gerrit.server.util.time.TimeUtil;
@@ -152,6 +158,29 @@ import org.eclipse.jgit.lib.ObjectId;
 public class PostReview implements RestModifyView<RevisionResource, ReviewInput> {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
+  @Singleton
+  private static class Metrics {
+    final Counter1<String> draftHandling;
+
+    @Inject
+    Metrics(MetricMaker metricMaker) {
+      draftHandling =
+          metricMaker.newCounter(
+              "change/post_review/draft_handling",
+              new Description(
+                      "Total number of draft handling option "
+                          + "(KEEP, PUBLISH, PUBLISH_ALL_REVISIONS) "
+                          + "selected by users while posting a review.")
+                  .setRate()
+                  .setUnit("count"),
+              Field.ofString("type", Metadata.Builder::eventType)
+                  .description(
+                      "The type of the draft handling option"
+                          + " (KEEP, PUBLISH, PUBLISH_ALL_REVISIONS).")
+                  .build());
+    }
+  }
+
   private static final String ERROR_ADDING_REVIEWER = "error adding reviewer";
   public static final String ERROR_WIP_READY_MUTUALLY_EXCLUSIVE =
       "work_in_progress and ready are mutually exclusive";
@@ -161,6 +190,7 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
   private final BatchUpdate.Factory updateFactory;
   private final ChangeResource.Factory changeResourceFactory;
   private final ChangeData.Factory changeDataFactory;
+  private final AccountCache accountCache;
   private final ApprovalsUtil approvalsUtil;
   private final ChangeMessagesUtil cmUtil;
   private final CommentsUtil commentsUtil;
@@ -170,8 +200,9 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
   private final AccountResolver accountResolver;
   private final EmailReviewComments.Factory email;
   private final CommentAdded commentAdded;
-  private final ReviewerAdder reviewerAdder;
-  private final AddReviewersEmail addReviewersEmail;
+  private final ReviewerModifier reviewerModifier;
+  private final Metrics metrics;
+  private final ModifyReviewersEmail modifyReviewersEmail;
   private final NotifyResolver notifyResolver;
   private final WorkInProgressOp.Factory workInProgressOpFactory;
   private final ProjectCache projectCache;
@@ -179,6 +210,7 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
   private final PluginSetContext<CommentValidator> commentValidators;
   private final PluginSetContext<OnPostReview> onPostReviews;
   private final ReplyAttentionSetUpdates replyAttentionSetUpdates;
+  private final ReviewerAdded reviewerAdded;
   private final boolean strictLabels;
   private final boolean publishPatchSetLevelComment;
 
@@ -187,6 +219,7 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
       BatchUpdate.Factory updateFactory,
       ChangeResource.Factory changeResourceFactory,
       ChangeData.Factory changeDataFactory,
+      AccountCache accountCache,
       ApprovalsUtil approvalsUtil,
       ChangeMessagesUtil cmUtil,
       CommentsUtil commentsUtil,
@@ -196,8 +229,9 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
       AccountResolver accountResolver,
       EmailReviewComments.Factory email,
       CommentAdded commentAdded,
-      ReviewerAdder reviewerAdder,
-      AddReviewersEmail addReviewersEmail,
+      ReviewerModifier reviewerModifier,
+      Metrics metrics,
+      ModifyReviewersEmail modifyReviewersEmail,
       NotifyResolver notifyResolver,
       @GerritServerConfig Config gerritConfig,
       WorkInProgressOp.Factory workInProgressOpFactory,
@@ -205,10 +239,12 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
       PermissionBackend permissionBackend,
       PluginSetContext<CommentValidator> commentValidators,
       PluginSetContext<OnPostReview> onPostReviews,
-      ReplyAttentionSetUpdates replyAttentionSetUpdates) {
+      ReplyAttentionSetUpdates replyAttentionSetUpdates,
+      ReviewerAdded reviewerAdded) {
     this.updateFactory = updateFactory;
     this.changeResourceFactory = changeResourceFactory;
     this.changeDataFactory = changeDataFactory;
+    this.accountCache = accountCache;
     this.commentsUtil = commentsUtil;
     this.publishCommentUtil = publishCommentUtil;
     this.psUtil = psUtil;
@@ -218,8 +254,9 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
     this.accountResolver = accountResolver;
     this.email = email;
     this.commentAdded = commentAdded;
-    this.reviewerAdder = reviewerAdder;
-    this.addReviewersEmail = addReviewersEmail;
+    this.reviewerModifier = reviewerModifier;
+    this.metrics = metrics;
+    this.modifyReviewersEmail = modifyReviewersEmail;
     this.notifyResolver = notifyResolver;
     this.workInProgressOpFactory = workInProgressOpFactory;
     this.projectCache = projectCache;
@@ -227,6 +264,7 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
     this.commentValidators = commentValidators;
     this.onPostReviews = onPostReviews;
     this.replyAttentionSetUpdates = replyAttentionSetUpdates;
+    this.reviewerAdded = reviewerAdded;
     this.strictLabels = gerritConfig.getBoolean("change", "strictLabels", false);
     this.publishPatchSetLevelComment =
         gerritConfig.getBoolean("event", "comment-added", "publishPatchSetLevelComment", true);
@@ -253,6 +291,7 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
 
     logger.atFine().log("strict label checking is %s", (strictLabels ? "enabled" : "disabled"));
 
+    metrics.draftHandling.increment(input.drafts == null ? "N/A" : input.drafts.name());
     input.drafts = firstNonNull(input.drafts, DraftHandling.KEEP);
     logger.atFine().log("draft handling = %s", input.drafts);
 
@@ -266,6 +305,9 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
       input.comments = cleanUpComments(input.comments);
       checkComments(revision, input.comments);
     }
+    if (input.draftIdsToPublish != null) {
+      checkDraftIds(revision, input.draftIdsToPublish, input.drafts);
+    }
     if (input.robotComments != null) {
       input.robotComments = cleanUpComments(input.robotComments);
       checkRobotComments(revision, input.robotComments);
@@ -276,15 +318,15 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
     }
     logger.atFine().log("notify handling = %s", input.notify);
 
-    Map<String, AddReviewerResult> reviewerJsonResults = null;
-    List<ReviewerAddition> reviewerResults = Lists.newArrayList();
+    Map<String, ReviewerResult> reviewerJsonResults = null;
+    List<ReviewerModification> reviewerResults = Lists.newArrayList();
     boolean hasError = false;
     boolean confirm = false;
     if (input.reviewers != null) {
       reviewerJsonResults = Maps.newHashMap();
-      for (AddReviewerInput reviewerInput : input.reviewers) {
-        ReviewerAddition result =
-            reviewerAdder.prepare(revision.getNotes(), revision.getUser(), reviewerInput, true);
+      for (ReviewerInput reviewerInput : input.reviewers) {
+        ReviewerModification result =
+            reviewerModifier.prepare(revision.getNotes(), revision.getUser(), reviewerInput, true);
         reviewerJsonResults.put(reviewerInput.reviewer, result.result);
         if (result.result.error != null) {
           logger.atFine().log(
@@ -313,7 +355,7 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
 
     try (BatchUpdate bu =
         updateFactory.create(revision.getChange().getProject(), revision.getUser(), ts)) {
-      Account.Id id = revision.getUser().getAccountId();
+      Account account = revision.getUser().asIdentifiedUser().getAccount();
       boolean ccOrReviewer = false;
       if (input.labels != null && !input.labels.isEmpty()) {
         ccOrReviewer = input.labels.values().stream().anyMatch(v -> v != 0);
@@ -326,7 +368,7 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
         // Check if user was already CCed or reviewing prior to this review.
         ReviewerSet currentReviewers =
             approvalsUtil.getReviewers(revision.getChangeResource().getNotes());
-        ccOrReviewer = currentReviewers.all().contains(id);
+        ccOrReviewer = currentReviewers.all().contains(account.id());
         if (ccOrReviewer) {
           logger.atFine().log("calling user is already cc/reviewer on the change");
         }
@@ -336,10 +378,11 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
       // updated set of reviewers. Also keep track of whether the user added
       // themselves as a reviewer or to the CC list.
       logger.atFine().log("adding reviewer additions");
-      for (ReviewerAddition reviewerResult : reviewerResults) {
+      for (ReviewerModification reviewerResult : reviewerResults) {
         reviewerResult.op.suppressEmail(); // Send a single batch email below.
+        reviewerResult.op.suppressEvent(); // Send events below, if possible as batch.
         bu.addOp(revision.getChange().getId(), reviewerResult.op);
-        if (!ccOrReviewer && reviewerResult.reviewers.contains(id)) {
+        if (!ccOrReviewer && reviewerResult.reviewers.contains(account)) {
           logger.atFine().log("calling user is explicitly added as reviewer or CC");
           ccOrReviewer = true;
         }
@@ -350,8 +393,10 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
         // isn't being explicitly added, and isn't voting on any label.
         // Automatically CC them on this change so they receive replies.
         logger.atFine().log("CCing calling user");
-        ReviewerAddition selfAddition = reviewerAdder.ccCurrentUser(revision.getUser(), revision);
+        ReviewerModification selfAddition =
+            reviewerModifier.ccCurrentUser(revision.getUser(), revision);
         selfAddition.op.suppressEmail();
+        selfAddition.op.suppressEvent();
         bu.addOp(revision.getChange().getId(), selfAddition.op);
       }
 
@@ -384,7 +429,7 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
       bu.addOp(
           revision.getChange().getId(), new Op(projectState, revision.getPatchSet().id(), input));
 
-      // Notify based on ReviewInput, ignoring the notify settings from any AddReviewerInputs.
+      // Notify based on ReviewInput, ignoring the notify settings from any ReviewerInputs.
       NotifyResolver.Result notify = notifyResolver.resolve(input.notify, input.notifyDetails);
       bu.setNotify(notify);
 
@@ -395,12 +440,14 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
 
       // Re-read change to take into account results of the update.
       ChangeData cd = changeDataFactory.create(revision.getProject(), revision.getChange().getId());
-      for (ReviewerAddition reviewerResult : reviewerResults) {
+      for (ReviewerModification reviewerResult : reviewerResults) {
         reviewerResult.gatherResults(cd);
       }
 
-      // Sending from AddReviewersOp was suppressed so we can send a single batch email here.
+      // Sending emails and events from ReviewersOps was suppressed so we can send a single batch
+      // email/event here.
       batchEmailReviewers(revision.getUser(), revision.getChange(), reviewerResults, notify);
+      batchReviewerEvents(revision.getUser(), cd, revision.getPatchSet(), reviewerResults, ts);
     }
 
     return Response.ok(output);
@@ -437,30 +484,74 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
   private void batchEmailReviewers(
       CurrentUser user,
       Change change,
-      List<ReviewerAddition> reviewerAdditions,
+      List<ReviewerModification> reviewerModifications,
       NotifyResolver.Result notify) {
     try (TraceContext.TraceTimer ignored = newTimer("batchEmailReviewers")) {
       List<Account.Id> to = new ArrayList<>();
       List<Account.Id> cc = new ArrayList<>();
+      List<Account.Id> removed = new ArrayList<>();
       List<Address> toByEmail = new ArrayList<>();
       List<Address> ccByEmail = new ArrayList<>();
-      for (ReviewerAddition addition : reviewerAdditions) {
-        Result reviewAdditionResult = addition.op.getResult();
-        if (addition.state() == ReviewerState.REVIEWER
+      List<Address> removedByEmail = new ArrayList<>();
+      for (ReviewerModification modification : reviewerModifications) {
+        Result reviewAdditionResult = modification.op.getResult();
+        if (modification.state() == ReviewerState.REVIEWER
             && (!reviewAdditionResult.addedReviewers().isEmpty()
                 || !reviewAdditionResult.addedReviewersByEmail().isEmpty())) {
-          to.addAll(addition.reviewers);
-          toByEmail.addAll(addition.reviewersByEmail);
-        } else if (addition.state() == ReviewerState.CC
+          to.addAll(modification.reviewers.stream().map(Account::id).collect(toImmutableSet()));
+          toByEmail.addAll(modification.reviewersByEmail);
+        } else if (modification.state() == ReviewerState.CC
             && (!reviewAdditionResult.addedCCs().isEmpty()
                 || !reviewAdditionResult.addedCCsByEmail().isEmpty())) {
-          cc.addAll(addition.reviewers);
-          ccByEmail.addAll(addition.reviewersByEmail);
+          cc.addAll(modification.reviewers.stream().map(Account::id).collect(toImmutableSet()));
+          ccByEmail.addAll(modification.reviewersByEmail);
+        } else if (modification.state() == ReviewerState.REMOVED
+            && (reviewAdditionResult.deletedReviewer().isPresent()
+                || reviewAdditionResult.deletedReviewerByEmail().isPresent())) {
+          reviewAdditionResult.deletedReviewer().ifPresent(d -> removed.add(d));
+          reviewAdditionResult.deletedReviewerByEmail().ifPresent(d -> removedByEmail.add(d));
         }
       }
-      addReviewersEmail.emailReviewersAsync(
-          user.asIdentifiedUser(), change, to, cc, toByEmail, ccByEmail, notify);
+      modifyReviewersEmail.emailReviewersAsync(
+          user.asIdentifiedUser(),
+          change,
+          to,
+          cc,
+          removed,
+          toByEmail,
+          ccByEmail,
+          removedByEmail,
+          notify);
     }
+  }
+
+  private void batchReviewerEvents(
+      CurrentUser user,
+      ChangeData cd,
+      PatchSet patchSet,
+      List<ReviewerModification> reviewerModifications,
+      Timestamp when) {
+    List<AccountState> newlyAddedReviewers = new ArrayList<>();
+
+    // There are no events for CCs and reviewers added/deleted by email.
+    for (ReviewerModification modification : reviewerModifications) {
+      Result reviewerAdditionResult = modification.op.getResult();
+      if (modification.state() == ReviewerState.REVIEWER) {
+        newlyAddedReviewers.addAll(
+            reviewerAdditionResult.addedReviewers().stream()
+                .map(psa -> psa.accountId())
+                .map(accountId -> accountCache.get(accountId))
+                .flatMap(Streams::stream)
+                .collect(toList()));
+      } else if (modification.state() == ReviewerState.REMOVED) {
+        // There is no batch event for reviewer removals, hence fire the event for each
+        // modification that deleted a reviewer immediately.
+        modification.op.sendEvent();
+      }
+    }
+
+    // Fire a batch event for all newly added reviewers.
+    reviewerAdded.fire(cd, patchSet, newlyAddedReviewers, user.asIdentifiedUser().state(), when);
   }
 
   private RevisionResource onBehalfOf(RevisionResource rev, LabelTypes labelTypes, ReviewInput in)
@@ -483,8 +574,8 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
     Iterator<Map.Entry<String, Short>> itr = in.labels.entrySet().iterator();
     while (itr.hasNext()) {
       Map.Entry<String, Short> ent = itr.next();
-      LabelType type = labelTypes.byLabel(ent.getKey());
-      if (type == null) {
+      Optional<LabelType> type = labelTypes.byLabel(ent.getKey());
+      if (!type.isPresent()) {
         logger.atFine().log("label %s not found", ent.getKey());
         if (strictLabels) {
           throw new BadRequestException(
@@ -499,15 +590,15 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
         logger.atFine().log(
             "skipping on behalf of permission check for label %s"
                 + " because caller is an internal user",
-            type.getName());
+            type.get().getName());
       } else {
         try {
-          perm.check(new LabelPermission.WithValue(ON_BEHALF_OF, type, ent.getValue()));
+          perm.check(new LabelPermission.WithValue(ON_BEHALF_OF, type.get(), ent.getValue()));
         } catch (AuthException e) {
           throw new AuthException(
               String.format(
                   "not permitted to modify label \"%s\" on behalf of \"%s\"",
-                  type.getName(), in.onBehalfOf),
+                  type.get().getName(), in.onBehalfOf),
               e);
         }
       }
@@ -539,8 +630,8 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
     Iterator<Map.Entry<String, Short>> itr = labels.entrySet().iterator();
     while (itr.hasNext()) {
       Map.Entry<String, Short> ent = itr.next();
-      LabelType lt = labelTypes.byLabel(ent.getKey());
-      if (lt == null) {
+      Optional<LabelType> lt = labelTypes.byLabel(ent.getKey());
+      if (!lt.isPresent()) {
         logger.atFine().log("label %s not found", ent.getKey());
         if (strictLabels) {
           throw new BadRequestException(
@@ -557,7 +648,7 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
         continue;
       }
 
-      if (lt.getValue(ent.getValue()) == null) {
+      if (lt.get().getValue(ent.getValue()) == null) {
         logger.atFine().log("label value %s not found", ent.getValue());
         if (strictLabels) {
           throw new BadRequestException(
@@ -571,10 +662,10 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
 
       short val = ent.getValue();
       try {
-        perm.check(new LabelPermission.WithValue(lt, val));
+        perm.check(new LabelPermission.WithValue(lt.get(), val));
       } catch (AuthException e) {
         throw new AuthException(
-            String.format("Applying label \"%s\": %d is restricted", lt.getName(), val), e);
+            String.format("Applying label \"%s\": %d is restricted", lt.get().getName(), val), e);
       }
     }
   }
@@ -628,6 +719,41 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
         ensureValidPatchsetLevelComment(path, comment);
         ensureValidInReplyTo(revision.getNotes(), comment.inReplyTo);
       }
+    }
+  }
+
+  /**
+   * Asserts that the draft IDs to publish are valid, i.e. they exist and belong to the current
+   * user. If the {@code draftHandling} parameter is equal to {@link DraftHandling#PUBLISH}, then
+   * draft IDs should all correspond to the target revision, otherwise we throw a
+   * BadRequestException.
+   */
+  private void checkDraftIds(
+      RevisionResource resource, List<String> draftIds, DraftHandling draftHandling)
+      throws BadRequestException {
+    Map<String, HumanComment> draftsByUuid =
+        commentsUtil.draftByChangeAuthor(resource.getNotes(), resource.getUser().getAccountId())
+            .stream()
+            .collect(Collectors.toMap(c -> c.key.uuid, c -> c));
+    List<String> nonExistingDraftIds =
+        draftIds.stream().filter(id -> !draftsByUuid.containsKey(id)).collect(toList());
+    if (!nonExistingDraftIds.isEmpty()) {
+      throw new BadRequestException("Non-existing draft IDs: " + nonExistingDraftIds);
+    }
+    if (draftHandling == DraftHandling.PUBLISH_ALL_REVISIONS
+        || draftHandling == DraftHandling.KEEP) {
+      return;
+    }
+    List<String> draftsForOtherRevisions =
+        draftIds.stream()
+            .filter(id -> draftsByUuid.get(id).key.patchSetId != resource.getPatchSet().number())
+            .collect(toList());
+    if (!draftsForOtherRevisions.isEmpty()) {
+      throw new BadRequestException(
+          String.format(
+              "Draft comments for other revisions cannot be published when DraftHandling = PUBLISH."
+                  + " (draft IDs: %s)",
+              draftsForOtherRevisions));
     }
   }
 
@@ -890,7 +1016,7 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
     private IdentifiedUser user;
     private ChangeNotes notes;
     private PatchSet ps;
-    private ChangeMessage message;
+    private String mailMessage;
     private List<Comment> comments = new ArrayList<>();
     private List<LabelVote> labelDelta = new ArrayList<>();
     private Map<String, Short> approvals = new HashMap<>();
@@ -928,8 +1054,8 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
     }
 
     @Override
-    public void postUpdate(Context ctx) {
-      if (message == null) {
+    public void postUpdate(PostUpdateContext ctx) {
+      if (mailMessage == null) {
         return;
       }
       NotifyResolver.Result notify = ctx.getNotify(notes.getChangeId());
@@ -941,7 +1067,8 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
                   notes,
                   ps,
                   user,
-                  message,
+                  mailMessage,
+                  ctx.getWhen(),
                   comments,
                   in.message,
                   labelDelta,
@@ -952,7 +1079,7 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
               String.format("Repository %s not found", ctx.getProject().get()), ex);
         }
       }
-      String comment = message.getMessage();
+      String comment = mailMessage;
       if (publishPatchSetLevelComment) {
         // TODO(davido): Remove this workaround when patch set level comments are exposed in comment
         // added event. For backwards compatibility, patchset level comment has a higher priority
@@ -968,9 +1095,23 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
         }
       }
       commentAdded.fire(
-          notes.getChange(), ps, user.state(), comment, approvals, oldApprovals, ctx.getWhen());
+          ctx.getChangeData(notes),
+          ps,
+          user.state(),
+          comment,
+          approvals,
+          oldApprovals,
+          ctx.getWhen());
     }
 
+    /**
+     * Publishes draft and input comments. Input comments are those passed as input in the request
+     * body.
+     *
+     * @param ctx context for performing the change update.
+     * @param newRobotComments robot comments. Used only for validation in this method.
+     * @return true if any input comments where published.
+     */
     private boolean insertComments(ChangeContext ctx, List<RobotComment> newRobotComments)
         throws CommentsRejectedException {
       Map<String, List<CommentInput>> inputComments = in.comments;
@@ -978,28 +1119,71 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
         inputComments = Collections.emptyMap();
       }
 
-      // HashMap instead of Collections.emptyMap() avoids warning about remove() on immutable
-      // object.
+      // Use HashMap to avoid warnings when calling remove() in resolveInputCommentsAndDrafts().
       Map<String, HumanComment> drafts = new HashMap<>();
-      // If there are inputComments we need the deduplication loop below, so we have to read (and
-      // publish) drafts here.
+
       if (!inputComments.isEmpty() || in.drafts != DraftHandling.KEEP) {
-        if (in.drafts == DraftHandling.PUBLISH_ALL_REVISIONS) {
-          drafts = changeDrafts(ctx);
-        } else {
-          drafts = patchSetDrafts(ctx);
-        }
+        drafts =
+            in.drafts == DraftHandling.PUBLISH_ALL_REVISIONS
+                ? changeDrafts(ctx)
+                : patchSetDrafts(ctx);
       }
 
-      // This will be populated with Comment-s created from inputComments.
-      List<HumanComment> toPublish = new ArrayList<>();
-
+      // Existing published comments
       Set<CommentSetEntry> existingComments =
           in.omitDuplicateComments ? readExistingComments(ctx) : Collections.emptySet();
 
-      // Deduplication:
-      // - Ignore drafts with the same ID as an inputComment here. These are deleted later.
-      // - Swallow comments that already exist.
+      // Input comments should be deduplicated from existing drafts
+      List<HumanComment> inputCommentsToPublish =
+          resolveInputCommentsAndDrafts(inputComments, existingComments, drafts, ctx);
+
+      switch (in.drafts) {
+        case PUBLISH:
+        case PUBLISH_ALL_REVISIONS:
+          Collection<HumanComment> filteredDrafts =
+              in.draftIdsToPublish == null
+                  ? drafts.values()
+                  : drafts.values().stream()
+                      .filter(draft -> in.draftIdsToPublish.contains(draft.key.uuid))
+                      .collect(Collectors.toList());
+
+          validateComments(
+              ctx,
+              Streams.concat(
+                  drafts.values().stream(),
+                  inputCommentsToPublish.stream(),
+                  newRobotComments.stream()));
+          publishCommentUtil.publish(ctx, ctx.getUpdate(psId), filteredDrafts, in.tag);
+          comments.addAll(drafts.values());
+          break;
+        case KEEP:
+          validateComments(
+              ctx, Streams.concat(inputCommentsToPublish.stream(), newRobotComments.stream()));
+          break;
+      }
+      commentsUtil.putHumanComments(
+          ctx.getUpdate(psId), HumanComment.Status.PUBLISHED, inputCommentsToPublish);
+      comments.addAll(inputCommentsToPublish);
+      return !inputCommentsToPublish.isEmpty();
+    }
+
+    /**
+     * Returns the subset of {@code inputComments} that do not have a matching comment (with same
+     * id) neither in {@code existingComments} nor in {@code drafts}.
+     *
+     * <p>Entries in {@code drafts} that have a matching entry in {@code inputComments} will be
+     * removed.
+     *
+     * @param inputComments new comments provided as {@link CommentInput} entries in the API.
+     * @param existingComments existing published comments in the database.
+     * @param drafts existing draft comments in the database. This map can be modified.
+     */
+    private List<HumanComment> resolveInputCommentsAndDrafts(
+        Map<String, List<CommentInput>> inputComments,
+        Set<CommentSetEntry> existingComments,
+        Map<String, HumanComment> drafts,
+        ChangeContext ctx) {
+      List<HumanComment> inputCommentsToPublish = new ArrayList<>();
       for (Map.Entry<String, List<CommentInput>> entry : inputComments.entrySet()) {
         String path = entry.getKey();
         for (CommentInput inputComment : entry.getValue()) {
@@ -1031,32 +1215,10 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
           if (existingComments.contains(CommentSetEntry.create(comment))) {
             continue;
           }
-          toPublish.add(comment);
+          inputCommentsToPublish.add(comment);
         }
       }
-
-      CommentValidationContext commentValidationCtx =
-          CommentValidationContext.create(
-              ctx.getChange().getChangeId(), ctx.getChange().getProject().get());
-      switch (in.drafts) {
-        case PUBLISH:
-        case PUBLISH_ALL_REVISIONS:
-          validateComments(
-              commentValidationCtx,
-              Streams.concat(
-                  drafts.values().stream(), toPublish.stream(), newRobotComments.stream()));
-          publishCommentUtil.publish(ctx, ctx.getUpdate(psId), drafts.values(), in.tag);
-          comments.addAll(drafts.values());
-          break;
-        case KEEP:
-          validateComments(
-              commentValidationCtx, Stream.concat(toPublish.stream(), newRobotComments.stream()));
-          break;
-      }
-      ChangeUpdate changeUpdate = ctx.getUpdate(psId);
-      commentsUtil.putHumanComments(changeUpdate, HumanComment.Status.PUBLISHED, toPublish);
-      comments.addAll(toPublish);
-      return !toPublish.isEmpty();
+      return inputCommentsToPublish;
     }
 
     /**
@@ -1064,8 +1226,11 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
      * contract of {@link CommentValidator#validateComments(CommentValidationContext,
      * ImmutableList)}.
      */
-    private void validateComments(CommentValidationContext ctx, Stream<Comment> comments)
+    private void validateComments(ChangeContext ctx, Stream<? extends Comment> comments)
         throws CommentsRejectedException {
+      CommentValidationContext commentValidationCtx =
+          CommentValidationContext.create(
+              ctx.getChange().getChangeId(), ctx.getChange().getProject().get());
       String changeMessage = Strings.nullToEmpty(in.message).trim();
       ImmutableList<CommentForValidation> draftsForValidation =
           Stream.concat(
@@ -1088,7 +1253,8 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
                           changeMessage.length())))
               .collect(toImmutableList());
       ImmutableList<CommentValidationFailure> draftValidationFailures =
-          PublishCommentUtil.findInvalidComments(ctx, commentValidators, draftsForValidation);
+          PublishCommentUtil.findInvalidComments(
+              commentValidationCtx, commentValidators, draftsForValidation);
       if (!draftValidationFailures.isEmpty()) {
         throw new CommentsRejectedException(draftValidationFailures);
       }
@@ -1262,7 +1428,10 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
       ChangeUpdate update = ctx.getUpdate(psId);
       for (Map.Entry<String, Short> ent : allApprovals.entrySet()) {
         String name = ent.getKey();
-        LabelType lt = requireNonNull(labelTypes.byLabel(name), name);
+        LabelType lt =
+            labelTypes
+                .byLabel(name)
+                .orElseThrow(() -> new IllegalStateException("no label config for " + name));
 
         PatchSetApproval c = current.remove(lt.getName());
         String normName = lt.getName();
@@ -1324,11 +1493,7 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
       return !del.isEmpty() || !ups.isEmpty();
     }
 
-    /**
-     * Approval is copied over if it doesn't exist in the approvals of the current patch-set
-     * according to change notes (which means it was computed in {@link
-     * com.google.gerrit.server.ApprovalInference})
-     */
+    /** Approval is copied over if it doesn't exist in the approvals of the current patch-set. */
     private boolean isApprovalCopiedOver(
         PatchSetApproval patchSetApproval, ChangeNotes changeNotes) {
       return !changeNotes.getApprovals().get(changeNotes.getChange().currentPatchSetId()).stream()
@@ -1358,7 +1523,10 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
       List<String> disallowed = new ArrayList<>(labelTypes.getLabelTypes().size());
 
       for (PatchSetApproval psa : del) {
-        LabelType lt = requireNonNull(labelTypes.byLabel(psa.label()));
+        LabelType lt =
+            labelTypes
+                .byLabel(psa.label())
+                .orElseThrow(() -> new IllegalStateException("no label config for " + psa.label()));
         String normName = lt.getName();
         if (!lt.isAllowPostSubmit()) {
           disallowed.add(normName);
@@ -1370,7 +1538,10 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
       }
 
       for (PatchSetApproval psa : ups) {
-        LabelType lt = requireNonNull(labelTypes.byLabel(psa.label()));
+        LabelType lt =
+            labelTypes
+                .byLabel(psa.label())
+                .orElseThrow(() -> new IllegalStateException("no label config for " + psa.label()));
         String normName = lt.getName();
         if (!lt.isAllowPostSubmit()) {
           disallowed.add(normName);
@@ -1418,9 +1589,9 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
           continue;
         }
 
-        LabelType lt = labelTypes.byLabel(a.labelId());
-        if (lt != null) {
-          current.put(lt.getName(), a);
+        Optional<LabelType> lt = labelTypes.byLabel(a.labelId());
+        if (lt.isPresent()) {
+          current.put(lt.get().getName(), a);
         } else {
           del.add(a);
         }
@@ -1468,10 +1639,9 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
         return false;
       }
 
-      message =
-          ChangeMessagesUtil.newMessage(
-              psId, user, ctx.getWhen(), "Patch Set " + psId.get() + ":" + buf, in.tag);
-      cmUtil.addChangeMessage(ctx.getUpdate(psId), message);
+      mailMessage =
+          cmUtil.setChangeMessage(
+              ctx.getUpdate(psId), "Patch Set " + psId.get() + ":" + buf, in.tag);
       return true;
     }
 

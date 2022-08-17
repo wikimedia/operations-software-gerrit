@@ -18,7 +18,8 @@
 import '../../../test/common-test-setup-karma.js';
 import './gr-cursor-manager.js';
 import {html} from '@polymer/polymer/lib/utils/html-tag.js';
-import {AbortStop, CursorMoveResult, GrCursorManager} from './gr-cursor-manager.js';
+import {AbortStop, CursorMoveResult} from '../../../api/core.js';
+import {GrCursorManager} from './gr-cursor-manager.js';
 
 const basicTestFixutre = fixtureFromTemplate(html`
     <ul>
@@ -254,6 +255,25 @@ suite('gr-cursor-manager tests', () => {
     assert.isTrue(cursor.target.focus.called);
   });
 
+  suite('circular options', () => {
+    const options = {circular: true};
+    setup(() => {
+      cursor.stops = [...list.querySelectorAll('li')];
+    });
+
+    test('previous() on first element goes to last element', () => {
+      cursor.setCursor(list.children[0]);
+      cursor.previous(options);
+      assert.equal(cursor.index, list.children.length - 1);
+    });
+
+    test('next() on last element goes to first element', () => {
+      cursor.setCursor(list.children[list.children.length - 1]);
+      cursor.next(options);
+      assert.equal(cursor.index, 0);
+    });
+  });
+
   suite('_scrollToTarget', () => {
     let scrollStub;
     setup(() => {
@@ -282,12 +302,10 @@ suite('gr-cursor-manager tests', () => {
     test('Called when top is visible, bottom is not, scroll is lower', () => {
       const visibleStub = sinon.stub(cursor, '_targetIsVisible').callsFake(
           () => visibleStub.callCount === 2);
-      sinon.stub(cursor, '_getWindowDims').returns({
-        scrollX: 123,
-        scrollY: 15,
-        innerHeight: 1000,
-        pageYOffset: 0,
-      });
+      window.scrollX = 123;
+      window.scrollY = 15;
+      window.innerHeight = 1000;
+      window.pageYOffset = 0;
       sinon.stub(cursor, '_calculateScrollToValue').returns(20);
       cursor._scrollToTarget();
       assert.isTrue(scrollStub.called);
@@ -298,12 +316,10 @@ suite('gr-cursor-manager tests', () => {
     test('Called when top is visible, bottom not, scroll is higher', () => {
       const visibleStub = sinon.stub(cursor, '_targetIsVisible').callsFake(
           () => visibleStub.callCount === 2);
-      sinon.stub(cursor, '_getWindowDims').returns({
-        scrollX: 123,
-        scrollY: 25,
-        innerHeight: 1000,
-        pageYOffset: 0,
-      });
+      window.scrollX = 123;
+      window.scrollY = 25;
+      window.innerHeight = 1000;
+      window.pageYOffset = 0;
       sinon.stub(cursor, '_calculateScrollToValue').returns(20);
       cursor._scrollToTarget();
       assert.isFalse(scrollStub.called);
@@ -311,12 +327,10 @@ suite('gr-cursor-manager tests', () => {
     });
 
     test('_calculateScrollToValue', () => {
-      sinon.stub(cursor, '_getWindowDims').returns({
-        scrollX: 123,
-        scrollY: 25,
-        innerHeight: 300,
-        pageYOffset: 0,
-      });
+      window.scrollX = 123;
+      window.scrollY = 25;
+      window.innerHeight = 300;
+      window.pageYOffset = 0;
       assert.equal(cursor._calculateScrollToValue(1000, {offsetHeight: 10}),
           905);
     });

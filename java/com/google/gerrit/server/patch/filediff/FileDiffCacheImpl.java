@@ -16,7 +16,6 @@ package com.google.gerrit.server.patch.filediff;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static org.eclipse.jgit.lib.Constants.EMPTY_TREE_ID;
 
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
@@ -26,11 +25,15 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Streams;
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Patch;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.client.DiffPreferencesInfo.Whitespace;
 import com.google.gerrit.server.cache.CacheModule;
 import com.google.gerrit.server.git.GitRepositoryManager;
+import com.google.gerrit.server.logging.Metadata;
+import com.google.gerrit.server.logging.TraceContext;
+import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.gerrit.server.patch.AutoMerger;
 import com.google.gerrit.server.patch.ComparisonType;
 import com.google.gerrit.server.patch.DiffNotAvailableException;
@@ -43,6 +46,7 @@ import com.google.gerrit.server.patch.gitfilediff.GitFileDiffCacheImpl;
 import com.google.gerrit.server.patch.gitfilediff.GitFileDiffCacheImpl.DiffAlgorithmFactory;
 import com.google.inject.Inject;
 import com.google.inject.Module;
+import com.google.inject.Singleton;
 import com.google.inject.name.Named;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -71,10 +75,10 @@ import org.eclipse.jgit.revwalk.RevWalk;
  * Cache for the single file diff between two commits for a single file path. This cache adds extra
  * Gerrit logic such as identifying edits due to rebase.
  *
- * <p>If the {@link FileDiffCacheKey#oldCommit()} is equal to {@link
- * org.eclipse.jgit.lib.Constants#EMPTY_TREE_ID}, the git diff will be evaluated against the empty
- * tree.
+ * <p>If the {@link FileDiffCacheKey#oldCommit()} is equal to {@link ObjectId#zeroId()}, the git
+ * diff will be evaluated against the empty tree.
  */
+@Singleton
 public class FileDiffCacheImpl implements FileDiffCache {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
@@ -93,7 +97,7 @@ public class FileDiffCacheImpl implements FileDiffCache {
         persist(DIFF, FileDiffCacheKey.class, FileDiffOutput.class)
             .maximumWeight(10 << 20)
             .weigher(FileDiffWeigher.class)
-            .version(4)
+            .version(8)
             .keySerializer(FileDiffCacheKey.Serializer.INSTANCE)
             .valueSerializer(FileDiffOutput.Serializer.INSTANCE)
             .loader(FileDiffLoader.class);
@@ -151,44 +155,56 @@ public class FileDiffCacheImpl implements FileDiffCache {
 
     @Override
     public FileDiffOutput load(FileDiffCacheKey key) throws IOException, DiffNotAvailableException {
-      return loadAll(ImmutableList.of(key)).get(key);
+      try (TraceTimer timer =
+          TraceContext.newTimer(
+              "Loading a single key from file diff cache",
+              Metadata.builder().filePath(key.newFilePath()).build())) {
+        return loadAll(ImmutableList.of(key)).get(key);
+      }
     }
 
     @Override
     public Map<FileDiffCacheKey, FileDiffOutput> loadAll(Iterable<? extends FileDiffCacheKey> keys)
         throws DiffNotAvailableException {
-      ImmutableMap.Builder<FileDiffCacheKey, FileDiffOutput> result = ImmutableMap.builder();
+      try (TraceTimer timer = TraceContext.newTimer("Loading multiple keys from file diff cache")) {
+        ImmutableMap.Builder<FileDiffCacheKey, FileDiffOutput> result = ImmutableMap.builder();
 
-      Map<Project.NameKey, List<FileDiffCacheKey>> keysByProject =
-          Streams.stream(keys).distinct().collect(Collectors.groupingBy(FileDiffCacheKey::project));
+        Map<Project.NameKey, List<FileDiffCacheKey>> keysByProject =
+            Streams.stream(keys)
+                .distinct()
+                .collect(Collectors.groupingBy(FileDiffCacheKey::project));
 
-      for (Project.NameKey project : keysByProject.keySet()) {
-        List<FileDiffCacheKey> fileKeys = new ArrayList<>();
+        for (Project.NameKey project : keysByProject.keySet()) {
+          List<FileDiffCacheKey> fileKeys = new ArrayList<>();
 
-        try (Repository repo = repoManager.openRepository(project);
-            ObjectReader reader = repo.newObjectReader();
-            RevWalk rw = new RevWalk(reader)) {
+          try (Repository repo = repoManager.openRepository(project);
+              ObjectReader reader = repo.newObjectReader();
+              RevWalk rw = new RevWalk(reader)) {
 
-          for (FileDiffCacheKey key : keysByProject.get(project)) {
-            if (key.newFilePath().equals(Patch.COMMIT_MSG)) {
-              result.put(key, createMagicPathEntry(key, reader, rw, MagicPath.COMMIT));
-            } else if (key.newFilePath().equals(Patch.MERGE_LIST)) {
-              result.put(key, createMagicPathEntry(key, reader, rw, MagicPath.MERGE_LIST));
-            } else {
-              fileKeys.add(key);
+            for (FileDiffCacheKey key : keysByProject.get(project)) {
+              if (key.newFilePath().equals(Patch.COMMIT_MSG)) {
+                result.put(key, createMagicPathEntry(key, reader, rw, MagicPath.COMMIT));
+              } else if (key.newFilePath().equals(Patch.MERGE_LIST)) {
+                result.put(key, createMagicPathEntry(key, reader, rw, MagicPath.MERGE_LIST));
+              } else {
+                fileKeys.add(key);
+              }
             }
+            result.putAll(createFileEntries(reader, fileKeys, rw));
+          } catch (IOException e) {
+            logger.atWarning().log("Failed to open the repository %s: %s", project, e.getMessage());
           }
-          result.putAll(createFileEntries(reader, fileKeys, rw));
-        } catch (IOException e) {
-          logger.atWarning().log("Failed to open the repository %s: %s", project, e.getMessage());
         }
+        return result.build();
       }
-      return result.build();
     }
 
     private ComparisonType getComparisonType(
         RevWalk rw, ObjectReader reader, ObjectId oldCommitId, ObjectId newCommitId)
         throws IOException {
+      if (oldCommitId.equals(ObjectId.zeroId())) {
+        return ComparisonType.againstRoot();
+      }
       RevCommit oldCommit = DiffUtil.getRevCommit(rw, oldCommitId);
       RevCommit newCommit = DiffUtil.getRevCommit(rw, newCommitId);
       for (int i = 0; i < newCommit.getParentCount(); i++) {
@@ -211,7 +227,7 @@ public class FileDiffCacheImpl implements FileDiffCache {
     }
 
     /**
-     * Creates a {@link FileDiffOutput} entry for the "Commit message" and "Merge list" file paths.
+     * Creates a {@link FileDiffOutput} entry for the "Commit message" or "Merge list" magic paths.
      */
     private FileDiffOutput createMagicPathEntry(
         FileDiffCacheKey key, ObjectReader reader, RevWalk rw, MagicPath magicPath) {
@@ -219,7 +235,10 @@ public class FileDiffCacheImpl implements FileDiffCache {
         RawTextComparator cmp = comparatorFor(key.whitespace());
         ComparisonType comparisonType =
             getComparisonType(rw, reader, key.oldCommit(), key.newCommit());
-        RevCommit aCommit = DiffUtil.getRevCommit(rw, key.oldCommit());
+        RevCommit aCommit =
+            key.oldCommit().equals(ObjectId.zeroId())
+                ? null
+                : DiffUtil.getRevCommit(rw, key.oldCommit());
         RevCommit bCommit = DiffUtil.getRevCommit(rw, key.newCommit());
         return magicPath == MagicPath.COMMIT
             ? createCommitEntry(reader, aCommit, bCommit, comparisonType, cmp, key.diffAlgorithm())
@@ -248,16 +267,19 @@ public class FileDiffCacheImpl implements FileDiffCache {
       }
     }
 
+    /**
+     * Creates a commit entry. {@code oldCommit} is null if the comparison is against a root commit.
+     */
     private FileDiffOutput createCommitEntry(
         ObjectReader reader,
-        RevCommit oldCommit,
+        @Nullable RevCommit oldCommit,
         RevCommit newCommit,
         ComparisonType comparisonType,
         RawTextComparator rawTextComparator,
         GitFileDiffCacheImpl.DiffAlgorithm diffAlgorithm)
         throws IOException {
       Text aText =
-          comparisonType.isAgainstParentOrAutoMerge()
+          oldCommit == null || comparisonType.isAgainstParentOrAutoMerge()
               ? Text.EMPTY
               : Text.forCommit(reader, oldCommit);
       Text bText = Text.forCommit(reader, newCommit);
@@ -272,16 +294,20 @@ public class FileDiffCacheImpl implements FileDiffCache {
           diffAlgorithm);
     }
 
+    /**
+     * Creates a merge list entry. {@code oldCommit} is null if the comparison is against a root
+     * commit.
+     */
     private FileDiffOutput createMergeListEntry(
         ObjectReader reader,
-        RevCommit oldCommit,
+        @Nullable RevCommit oldCommit,
         RevCommit newCommit,
         ComparisonType comparisonType,
         RawTextComparator rawTextComparator,
         GitFileDiffCacheImpl.DiffAlgorithm diffAlgorithm)
         throws IOException {
       Text aText =
-          comparisonType.isAgainstParentOrAutoMerge()
+          oldCommit == null || comparisonType.isAgainstParentOrAutoMerge()
               ? Text.EMPTY
               : Text.forMergeList(comparisonType, reader, oldCommit);
       Text bText = Text.forMergeList(comparisonType, reader, newCommit);
@@ -297,7 +323,7 @@ public class FileDiffCacheImpl implements FileDiffCache {
     }
 
     private static FileDiffOutput createMagicFileDiffOutput(
-        ObjectId oldCommit,
+        @Nullable ObjectId oldCommit,
         ObjectId newCommit,
         ComparisonType comparisonType,
         RawTextComparator rawTextComparator,
@@ -317,7 +343,7 @@ public class FileDiffCacheImpl implements FileDiffCache {
       FileHeader fileHeader = new FileHeader(rawHdr, edits, PatchType.UNIFIED);
       Patch.ChangeType changeType = FileHeaderUtil.getChangeType(fileHeader);
       return FileDiffOutput.builder()
-          .oldCommitId(oldCommit)
+          .oldCommitId(oldCommit == null ? ObjectId.zeroId() : oldCommit)
           .newCommitId(newCommit)
           .comparisonType(comparisonType)
           .oldPath(FileHeaderUtil.getOldPath(fileHeader))
@@ -364,6 +390,19 @@ public class FileDiffCacheImpl implements FileDiffCache {
 
       for (AugmentedFileDiffCacheKey augmentedKey : allFileDiffs.keySet()) {
         AllFileGitDiffs allDiffs = allFileDiffs.get(augmentedKey);
+        GitFileDiff mainGitDiff = allDiffs.mainDiff().gitDiff();
+
+        if (mainGitDiff.isNegative()) {
+          // If the result of the git diff computation was negative, i.e. due to timeout, cache a
+          // negative result.
+          result.put(
+              augmentedKey.key(),
+              FileDiffOutput.createNegative(
+                  mainGitDiff.newPath().orElse(""),
+                  augmentedKey.key().oldCommit(),
+                  augmentedKey.key().newCommit()));
+          continue;
+        }
 
         FileEdits rebaseFileEdits = FileEdits.empty();
         if (!augmentedKey.ignoreRebase()) {
@@ -371,12 +410,13 @@ public class FileDiffCacheImpl implements FileDiffCache {
         }
         List<Edit> rebaseEdits = rebaseFileEdits.edits();
 
-        RevTree aTree = rw.parseTree(allDiffs.mainDiff().gitKey().oldTree());
+        ObjectId oldTreeId = allDiffs.mainDiff().gitKey().oldTree();
+
+        RevTree aTree = oldTreeId.equals(ObjectId.zeroId()) ? null : rw.parseTree(oldTreeId);
         RevTree bTree = rw.parseTree(allDiffs.mainDiff().gitKey().newTree());
-        GitFileDiff mainGitDiff = allDiffs.mainDiff().gitDiff();
 
         Long oldSize =
-            mainGitDiff.oldMode().isPresent() && mainGitDiff.oldPath().isPresent()
+            aTree != null && mainGitDiff.oldMode().isPresent() && mainGitDiff.oldPath().isPresent()
                 ? new FileSizeEvaluator(reader, aTree)
                     .compute(
                         mainGitDiff.oldId(),
@@ -425,7 +465,7 @@ public class FileDiffCacheImpl implements FileDiffCache {
     private List<AugmentedFileDiffCacheKey> wrapKeys(List<FileDiffCacheKey> keys, RevWalk rw) {
       List<AugmentedFileDiffCacheKey> result = new ArrayList<>();
       for (FileDiffCacheKey key : keys) {
-        if (key.oldCommit().equals(EMPTY_TREE_ID)) {
+        if (key.oldCommit().equals(ObjectId.zeroId())) {
           result.add(AugmentedFileDiffCacheKey.builder().key(key).ignoreRebase(true).build());
           continue;
         }

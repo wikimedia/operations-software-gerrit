@@ -185,6 +185,7 @@ const styleSheet = safeStyleSheet`
     --vote-text-color: black;
     --status-text-color: white;
     --tooltip-text-color: white;
+    --tooltip-button-text-color: var(--gerrit-blue-dark);
     --negative-red-text-color: var(--red-600);
     --positive-green-text-color: var(--green-700);
     --indirect-ancestor-text-color: var(--green-700);
@@ -253,6 +254,7 @@ const styleSheet = safeStyleSheet`
     --status-wip: #795548;
     --status-private: var(--purple-500);
     --status-conflict: var(--red-600);
+    --status-revert-created: #e64a19;
     --status-active: var(--blue-700);
     --status-ready: var(--pink-800);
     --status-custom: var(--purple-900);
@@ -283,7 +285,7 @@ const styleSheet = safeStyleSheet`
     --font-weight-bold: 500;
     --font-weight-h1: 400;
     --font-weight-h2: 400;
-    --font-weight-h3: 400;
+    --font-weight-h3: var(--font-weight-bold, 500);
     --context-control-button-font: var(--font-weight-normal) var(--font-size-normal) var(--font-family);
     --code-hint-font-weight: 500;
     --image-diff-button-font: var(--font-weight-normal) var(--font-size-normal) var(--font-family);
@@ -336,6 +338,7 @@ const styleSheet = safeStyleSheet`
     --coverage-covered: #e0f2f1;
     --coverage-not-covered: #ffd1a4;
     --ranged-comment-hint-text-color: var(--orange-900);
+    --token-highlighting-color: #fffd54;
 
     /* syntax colors */
     --syntax-attr-color: #219;
@@ -376,8 +379,7 @@ const styleSheet = safeStyleSheet`
     /* misc */
     --border-radius: 4px;
     --reply-overlay-z-index: 1000;
-    /* Base 64 encoded 1x1px of #681da8 */
-    --line-length-indicator: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQYV2PIlF2xAgAD+AHXfBDdKAAAAABJRU5ErkJggg==');
+    --line-length-indicator-color: #681da8;
 
     /* paper and iron component overrides */
     --iron-overlay-backdrop-background-color: black;

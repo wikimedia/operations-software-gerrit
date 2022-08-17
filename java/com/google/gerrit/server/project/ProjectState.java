@@ -15,13 +15,12 @@
 package com.google.gerrit.server.project;
 
 import static com.google.common.base.Preconditions.checkState;
-import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.gerrit.entities.PermissionRule.Action.ALLOW;
-import static java.util.Comparator.comparing;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.AccessSection;
@@ -37,6 +36,7 @@ import com.google.gerrit.entities.Permission;
 import com.google.gerrit.entities.PermissionRule;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.StoredCommentLinkInfo;
+import com.google.gerrit.entities.SubmitRequirement;
 import com.google.gerrit.entities.SubscribeSection;
 import com.google.gerrit.extensions.api.projects.CommentLinkInfo;
 import com.google.gerrit.extensions.client.SubmitType;
@@ -63,8 +63,8 @@ import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.Config;
 
 /**
- * Cached information on a project. Must not contain any data derived from parents other than it's
- * immediate parent's {@link com.google.gerrit.entities.Project.NameKey}.
+ * State of a project, aggregated from the project and its parents. This is obtained from the {@link
+ * ProjectCache}. It should not be persisted across requests
  */
 public class ProjectState {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -136,8 +136,8 @@ public class ProjectState {
   }
 
   /**
-   * @return cached computation of all global capabilities. This should only be invoked on the state
-   *     from {@link ProjectCache#getAllProjects()}. Null on any other project.
+   * Returns cached computation of all global capabilities. This should only be invoked on the state
+   * from {@link ProjectCache#getAllProjects()}. Null on any other project.
    */
   public CapabilityCollection getCapabilityCollection() {
     return capabilities;
@@ -266,35 +266,18 @@ public class ProjectState {
 
   /** Get the sections that pertain only to this project. */
   List<SectionMatcher> getLocalAccessSections() {
-    List<SectionMatcher> sm = localAccessSections;
-    if (sm == null) {
-      ImmutableList<AccessSection> fromConfig =
-          cachedConfig.getAccessSections().values().stream()
-              .sorted(comparing(AccessSection::getName))
-              .collect(toImmutableList());
-      sm = new ArrayList<>(fromConfig.size());
-      for (AccessSection section : fromConfig) {
-        if (isAllProjects) {
-          List<Permission.Builder> copy = new ArrayList<>();
-          for (Permission p : section.getPermissions()) {
-            if (Permission.canBeOnAllProjects(section.getName(), p.getName())) {
-              copy.add(p.toBuilder());
-            }
-          }
-          section =
-              AccessSection.builder(section.getName())
-                  .modifyPermissions(permissions -> permissions.addAll(copy))
-                  .build();
-        }
-
-        SectionMatcher matcher = SectionMatcher.wrap(getNameKey(), section);
-        if (matcher != null) {
-          sm.add(matcher);
-        }
-      }
-      localAccessSections = sm;
+    if (localAccessSections != null) {
+      return localAccessSections;
     }
-    return sm;
+    List<SectionMatcher> sm = new ArrayList<>(cachedConfig.getAccessSections().values().size());
+    for (AccessSection section : cachedConfig.getAccessSections().values()) {
+      SectionMatcher matcher = SectionMatcher.wrap(getNameKey(), section);
+      if (matcher != null) {
+        sm.add(matcher);
+      }
+    }
+    localAccessSections = sm;
+    return localAccessSections;
   }
 
   /**
@@ -314,9 +297,9 @@ public class ProjectState {
   }
 
   /**
-   * @return all {@link AccountGroup}'s to which the owner privilege for 'refs/*' is assigned for
-   *     this project (the local owners), if there are no local owners the local owners of the
-   *     nearest parent project that has local owners are returned
+   * Returns all {@link AccountGroup}'s to which the owner privilege for 'refs/*' is assigned for
+   * this project (the local owners), if there are no local owners the local owners of the nearest
+   * parent project that has local owners are returned
    */
   public Set<AccountGroup.UUID> getOwners() {
     for (ProjectState p : tree()) {
@@ -328,10 +311,10 @@ public class ProjectState {
   }
 
   /**
-   * @return all {@link AccountGroup}'s that are allowed to administrate the complete project. This
-   *     includes all groups to which the owner privilege for 'refs/*' is assigned for this project
-   *     (the local owners) and all groups to which the owner privilege for 'refs/*' is assigned for
-   *     one of the parent projects (the inherited owners).
+   * Returns all {@link AccountGroup}'s that are allowed to administrate the complete project. This
+   * includes all groups to which the owner privilege for 'refs/*' is assigned for this project (the
+   * local owners) and all groups to which the owner privilege for 'refs/*' is assigned for one of
+   * the parent projects (the inherited owners).
    */
   public Set<AccountGroup.UUID> getAllOwners() {
     Set<AccountGroup.UUID> result = new HashSet<>();
@@ -344,16 +327,16 @@ public class ProjectState {
   }
 
   /**
-   * @return an iterable that walks through this project and then the parents of this project.
-   *     Starts from this project and progresses up the hierarchy to All-Projects.
+   * Returns an iterable that walks through this project and then the parents of this project.
+   * Starts from this project and progresses up the hierarchy to All-Projects.
    */
   public Iterable<ProjectState> tree() {
     return () -> new ProjectHierarchyIterator(projectCache, allProjectsName, ProjectState.this);
   }
 
   /**
-   * @return an iterable that walks in-order from All-Projects through the project hierarchy to this
-   *     project.
+   * Returns an iterable that walks in-order from All-Projects through the project hierarchy to this
+   * project.
    */
   public Iterable<ProjectState> treeInOrder() {
     List<ProjectState> projects = Lists.newArrayList(tree());
@@ -362,8 +345,8 @@ public class ProjectState {
   }
 
   /**
-   * @return an iterable that walks through the parents of this project. Starts from the immediate
-   *     parent of this project and progresses up the hierarchy to All-Projects.
+   * Returns an iterable that walks through the parents of this project. Starts from the immediate
+   * parent of this project and progresses up the hierarchy to All-Projects.
    */
   public FluentIterable<ProjectState> parents() {
     return FluentIterable.from(tree()).skip(1);
@@ -390,6 +373,21 @@ public class ProjectState {
       }
     }
     return false;
+  }
+
+  /** Get all submit requirements for a project, including those from parent projects. */
+  public Map<String, SubmitRequirement> getSubmitRequirements() {
+    Map<String, SubmitRequirement> requirements = new LinkedHashMap<>();
+    for (ProjectState s : treeInOrder()) {
+      for (SubmitRequirement requirement : s.getConfig().getSubmitRequirementSections().values()) {
+        String lowerName = requirement.name().toLowerCase();
+        SubmitRequirement old = requirements.get(lowerName);
+        if (old == null || old.allowOverrideInChildProjects()) {
+          requirements.put(lowerName, requirement);
+        }
+      }
+    }
+    return ImmutableMap.copyOf(requirements);
   }
 
   /** All available label types. */

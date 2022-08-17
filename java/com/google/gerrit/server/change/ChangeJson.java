@@ -31,6 +31,7 @@ import static com.google.gerrit.extensions.client.ListChangesOption.REVIEWED;
 import static com.google.gerrit.extensions.client.ListChangesOption.REVIEWER_UPDATES;
 import static com.google.gerrit.extensions.client.ListChangesOption.SKIP_DIFFSTAT;
 import static com.google.gerrit.extensions.client.ListChangesOption.SUBMITTABLE;
+import static com.google.gerrit.extensions.client.ListChangesOption.SUBMIT_REQUIREMENTS;
 import static com.google.gerrit.extensions.client.ListChangesOption.TRACKING_IDS;
 import static com.google.gerrit.server.ChangeMessagesUtil.createChangeMessageInfo;
 import static com.google.gerrit.server.util.AttentionSetUtil.additionsOnly;
@@ -59,6 +60,8 @@ import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.entities.SubmitRecord;
 import com.google.gerrit.entities.SubmitRecord.Status;
+import com.google.gerrit.entities.SubmitRequirement;
+import com.google.gerrit.entities.SubmitRequirementResult;
 import com.google.gerrit.entities.SubmitTypeRecord;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.FixInput;
@@ -66,7 +69,6 @@ import com.google.gerrit.extensions.client.ListChangesOption;
 import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.common.ApprovalInfo;
-import com.google.gerrit.extensions.common.AttentionSetInfo;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.ChangeMessageInfo;
 import com.google.gerrit.extensions.common.LabelInfo;
@@ -75,6 +77,8 @@ import com.google.gerrit.extensions.common.PluginDefinedInfo;
 import com.google.gerrit.extensions.common.ProblemInfo;
 import com.google.gerrit.extensions.common.ReviewerUpdateInfo;
 import com.google.gerrit.extensions.common.RevisionInfo;
+import com.google.gerrit.extensions.common.SubmitRecordInfo;
+import com.google.gerrit.extensions.common.SubmitRequirementResultInfo;
 import com.google.gerrit.extensions.common.TrackingIdInfo;
 import com.google.gerrit.extensions.restapi.Url;
 import com.google.gerrit.index.RefState;
@@ -92,8 +96,11 @@ import com.google.gerrit.server.ReviewerStatusUpdate;
 import com.google.gerrit.server.StarredChangesUtil;
 import com.google.gerrit.server.account.AccountInfoComparator;
 import com.google.gerrit.server.account.AccountLoader;
+import com.google.gerrit.server.cancellation.RequestCancelledException;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.TrackingFooters;
+import com.google.gerrit.server.experiments.ExperimentFeatures;
+import com.google.gerrit.server.experiments.ExperimentFeaturesConstants;
 import com.google.gerrit.server.index.change.ChangeField;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
@@ -105,12 +112,12 @@ import com.google.gerrit.server.project.RemoveReviewerControl;
 import com.google.gerrit.server.project.SubmitRuleOptions;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.ChangeData.ChangedLines;
+import com.google.gerrit.server.util.AttentionSetUtil;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import com.google.inject.assistedinject.Assisted;
 import java.io.IOException;
-import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -248,6 +255,7 @@ public class ChangeJson {
       TrackingFooters trackingFooters,
       Metrics metrics,
       RevisionJson.Factory revisionJsonFactory,
+      ExperimentFeatures experimentFeatures,
       @GerritServerConfig Config cfg,
       @Assisted Iterable<ListChangesOption> options,
       @Assisted Optional<PluginDefinedInfosFactory> pluginDefinedInfosFactory) {
@@ -266,7 +274,9 @@ public class ChangeJson {
     this.revisionJson = revisionJsonFactory.create(options);
     this.options = Sets.immutableEnumSet(options);
     this.includeMergeable = MergeabilityComputationBehavior.fromConfig(cfg).includeInApi();
-    this.lazyLoad = containsAnyOf(this.options, REQUIRE_LAZY_LOAD);
+    this.lazyLoad =
+        containsAnyOf(this.options, REQUIRE_LAZY_LOAD)
+            || lazyloadSubmitRequirements(this.options, experimentFeatures);
     this.pluginDefinedInfosFactory = pluginDefinedInfosFactory;
 
     logger.atFine().log("options = %s", options);
@@ -362,9 +372,54 @@ public class ChangeJson {
     return reqInfos;
   }
 
+  private Collection<SubmitRecordInfo> submitRecordsFor(ChangeData cd) {
+    List<SubmitRecordInfo> submitRecordInfos = new ArrayList<>();
+    for (SubmitRecord record : cd.submitRecords(SUBMIT_RULE_OPTIONS_STRICT)) {
+      submitRecordInfos.add(submitRecordToInfo(record));
+    }
+    return submitRecordInfos;
+  }
+
+  private Collection<SubmitRequirementResultInfo> submitRequirementsFor(ChangeData cd) {
+    Collection<SubmitRequirementResultInfo> reqInfos = new ArrayList<>();
+    Map<SubmitRequirement, SubmitRequirementResult> requirements = cd.submitRequirements();
+    for (Map.Entry<SubmitRequirement, SubmitRequirementResult> entry : requirements.entrySet()) {
+      reqInfos.add(SubmitRequirementsJson.toInfo(entry.getKey(), entry.getValue()));
+    }
+    return reqInfos;
+  }
+
   private static LegacySubmitRequirementInfo requirementToInfo(
       LegacySubmitRequirement req, Status status) {
     return new LegacySubmitRequirementInfo(status.name(), req.fallbackText(), req.type());
+  }
+
+  private SubmitRecordInfo submitRecordToInfo(SubmitRecord record) {
+    SubmitRecordInfo info = new SubmitRecordInfo();
+    if (record.status != null) {
+      info.status = SubmitRecordInfo.Status.valueOf(record.status.name());
+    }
+    info.ruleName = record.ruleName;
+    info.errorMessage = record.errorMessage;
+    if (record.labels != null) {
+      info.labels = new ArrayList<>();
+      for (SubmitRecord.Label label : record.labels) {
+        SubmitRecordInfo.Label labelInfo = new SubmitRecordInfo.Label();
+        labelInfo.label = label.label;
+        if (label.status != null) {
+          labelInfo.status = SubmitRecordInfo.Label.Status.valueOf(label.status.name());
+        }
+        labelInfo.appliedBy = accountLoader.get(label.appliedBy);
+        info.labels.add(labelInfo);
+      }
+    }
+    if (record.requirements != null) {
+      info.requirements = new ArrayList<>();
+      for (LegacySubmitRequirement requirement : record.requirements) {
+        info.requirements.add(requirementToInfo(requirement, record.status));
+      }
+    }
+    return info;
   }
 
   private static void finish(ChangeInfo info) {
@@ -462,6 +517,11 @@ public class ChangeJson {
             cache.put(Change.id(info._number), info);
           }
         } catch (RuntimeException e) {
+          Optional<RequestCancelledException> requestCancelledException =
+              RequestCancelledException.getFromCausalChain(e);
+          if (requestCancelledException.isPresent()) {
+            throw e;
+          }
           logger.atWarning().withCause(e).log(
               "Omitting corrupt change %s from results", cd.getId());
         }
@@ -549,11 +609,7 @@ public class ChangeJson {
               .collect(
                   toImmutableMap(
                       a -> a.account().get(),
-                      a ->
-                          new AttentionSetInfo(
-                              accountLoader.get(a.account()),
-                              Timestamp.from(a.timestamp()),
-                              a.reason())));
+                      a -> AttentionSetUtil.createAttentionSetInfo(a, accountLoader)));
     }
     out.assignee = in.getAssignee() != null ? accountLoader.get(in.getAssignee()) : null;
     out.hashtags = cd.hashtags();
@@ -612,6 +668,10 @@ public class ChangeJson {
 
     out.labels = labelsJson.labelsFor(accountLoader, cd, has(LABELS), has(DETAILED_LABELS));
     out.requirements = requirementsFor(cd);
+    out.submitRecords = submitRecordsFor(cd);
+    if (has(SUBMIT_REQUIREMENTS)) {
+      out.submitRequirements = submitRequirementsFor(cd);
+    }
 
     if (out.labels != null && has(DETAILED_LABELS)) {
       // If limited to specific patch sets but not the current patch set, don't
@@ -882,5 +942,21 @@ public class ChangeJson {
       return pluginDefinedInfosFactory.get().createPluginDefinedInfos(cds);
     }
     return ImmutableListMultimap.of();
+  }
+
+  private static boolean lazyloadSubmitRequirements(
+      Set<ListChangesOption> changeOptions, ExperimentFeatures experimentFeatures) {
+    // TODO(ghareeb,hiesel): Remove this method.
+    // We are testing the new submit requirements with users in lieu of upgrading the change index
+    // to a version that supports the new requirements.
+    // Upgrading now, before the feature is finalized would be counter productive, because the index
+    // format might change while we iterate over the feature.
+    // Allowing changes to lazyload parameters will slow down dashboards for users who have this
+    // feature enabled, but will backfill submit requirements that weren't loaded from the index by
+    // simply computing them.
+    return changeOptions.contains(SUBMIT_REQUIREMENTS)
+        && experimentFeatures.isFeatureEnabled(
+            ExperimentFeaturesConstants
+                .GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS_BACKFILLING_ON_DASHBOARD);
   }
 }

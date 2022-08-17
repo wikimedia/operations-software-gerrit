@@ -20,7 +20,7 @@
  * limitations under the License.
  */
 
-import {CommentRange} from './core';
+import {CommentRange, CursorMoveResult} from './core';
 
 /**
  * Diff type in preferences
@@ -53,6 +53,35 @@ export declare interface DiffInfo {
 }
 
 /**
+ * Represents a "generic" text range in the code (e.g. text selection)
+ */
+export declare interface TextRange {
+  /** first line of the range (1-based inclusive). */
+  start_line: number;
+  /** first column of the range (in the first line) (1-based inclusive). */
+  start_column: number;
+  /** last line of the range (1-based inclusive). */
+  end_line: number;
+  /** last column of the range (in the end line) (1-based inclusive). */
+  end_column: number;
+}
+
+/**
+ * Represents a syntax block in a code (e.g. method, function, class, if-else).
+ */
+export declare interface SyntaxBlock {
+  /** Name of the block (e.g. name of the method/class)*/
+  name: string;
+  /**
+   * Where does this block syntatically starts and ends (line number and
+   * column).
+   */
+  range: TextRange;
+  /** Sub-blocks of the current syntax block (e.g. methods of a class) */
+  children: SyntaxBlock[];
+}
+
+/**
  * The DiffFileMetaInfo entity contains meta information about a file diff.
  * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#diff-file-meta-info
  */
@@ -65,6 +94,12 @@ export declare interface DiffFileMetaInfo {
   lines: number;
   // TODO: Not documented.
   language?: string;
+  /**
+   * The first level of syntax blocks tree (outline) within the current file.
+   * It contains an hierarchical structure where each block contains its
+   * sub-blocks (children).
+   */
+  syntax_tree?: SyntaxBlock[];
 }
 
 export declare type ChangeType =
@@ -171,13 +206,45 @@ export declare interface DiffPreferencesInfo {
   font_size: number;
   // TODO: Missing documentation
   show_file_comment_button?: boolean;
+  line_wrapping?: boolean;
 }
 
+/**
+ * Event details when a token is highlighted.
+ */
+export declare interface TokenHighlightEventDetails {
+  token: string;
+  element: Element;
+  side: Side;
+  range: TextRange;
+}
+
+/**
+ * Listens to changes in token highlighting - when a new token starts or stopped
+ * being highlighted. undefined is sent if the event is about a clear in
+ * highlighting.
+ */
+export type TokenHighlightListener = (
+  tokenHighlightEvent?: TokenHighlightEventDetails
+) => void;
+
+export declare interface ImageDiffPreferences {
+  automatic_blink?: boolean;
+}
+
+export declare type DiffResponsiveMode =
+  | 'FULL_RESPONSIVE'
+  | 'SHRINK_ONLY'
+  | 'NONE';
 export declare interface RenderPreferences {
   hide_left_side?: boolean;
   disable_context_control_buttons?: boolean;
   show_file_comment_button?: boolean;
   hide_line_length_indicator?: boolean;
+  use_block_expansion?: boolean;
+  image_diff_prefs?: ImageDiffPreferences;
+  responsive_mode?: DiffResponsiveMode;
+  num_lines_rendered_at_once?: number;
 }
 
 /**
@@ -251,6 +318,51 @@ export declare interface MovedLinkClickedEventDetail {
   lineNum: LineNumber;
 }
 
+export declare interface LineNumberEventDetail {
+  side: Side;
+  lineNum: LineNumber;
+}
+
+/** All types of button for expanding diff sections */
+export enum ContextButtonType {
+  ABOVE = 'above',
+  BELOW = 'below',
+  BLOCK_ABOVE = 'block-above',
+  BLOCK_BELOW = 'block-below',
+  ALL = 'all',
+}
+
+/** Details to be externally accessed when expanding diffs */
+export declare interface DiffContextExpandedExternalDetail {
+  expandedLines: number;
+  buttonType: ContextButtonType;
+}
+
+/**
+ * Details to be externally accessed when hovering context
+ * expansion buttons
+ */
+export declare interface DiffContextButtonHoveredDetail {
+  linesToExpand: number;
+  buttonType: ContextButtonType;
+}
+
+export declare type ImageDiffAction =
+  | {type: 'overview-image-clicked'}
+  | {type: 'overview-frame-dragged'}
+  | {type: 'magnifier-clicked'}
+  | {type: 'magnifier-dragged'}
+  | {type: 'version-switcher-clicked'; button: 'base' | 'revision' | 'switch'}
+  | {
+      type: 'highlight-changes-changed';
+      value: boolean;
+      source: 'controls' | 'magnifier';
+    }
+  | {type: 'zoom-level-changed'; scale: number | 'fit'}
+  | {type: 'follow-mouse-changed'; value: boolean}
+  | {type: 'background-color-changed'; value: string}
+  | {type: 'automatic-blink-changed'; value: boolean};
+
 export enum GrDiffLineType {
   ADD = 'add',
   BOTH = 'both',
@@ -281,10 +393,96 @@ export declare interface DiffLayer {
    * @param textElement The rendered text of one side of the diff.
    * @param lineNumberElement The rendered line number of one side of the diff.
    * @param line Describes the line that should be annotated.
+   * @param side Which side of the diff is being annotated.
    */
   annotate(
     textElement: HTMLElement,
     lineNumberElement: HTMLElement,
-    line: GrDiffLine
+    line: GrDiffLine,
+    side: Side
   ): void;
+}
+
+/** Data used by GrAnnotation to generate elements. */
+export declare interface ElementSpec {
+  tagName: string;
+  attributes?: {[key: string]: unknown};
+}
+
+/** Used to annotate segments of an HTMLElement with a class string. */
+export declare interface GrAnnotation {
+  /**
+   * Annotates the [offset, offset+length) text segment in the parent with the
+   * element definition provided as arguments.
+   *
+   * @param parent the node whose contents will be annotated.
+   * If parent is Text then parent.parentNode must not be null
+   * @param offset the 0-based offset from which the annotation will
+   * start.
+   * @param length of the annotated text.
+   * @param elementSpec the spec to create the
+   * annotating element.
+   */
+  annotateWithElement(
+    el: HTMLElement,
+    start: number,
+    length: number,
+    elementSpec: ElementSpec
+  ): void;
+
+  /**
+   * Surrounds the element's text at specified range in an ANNOTATION_TAG
+   * element. If the element has child elements, the range is split and
+   * applied as deeply as possible.
+   */
+  annotateElement(
+    el: HTMLElement,
+    start: number,
+    length: number,
+    className: string
+  ): void;
+}
+
+/** An instance of the GrDiff Webcomponent */
+export declare interface GrDiff extends HTMLElement {
+  /**
+   * Return line number element for reading only,
+   *
+   * This is useful e.g. to determine where on screen certain lines are,
+   * whether they are covered up etc.
+   */
+  getLineNumEls(side: Side): readonly HTMLElement[];
+}
+
+/** A service to interact with the line cursor in gr-diff instances. */
+export declare interface GrDiffCursor {
+  // The current setup requires API users to register GrDiff instances with the
+  // cursor, but we do not at this point want to expose the API that GrDiffCursor
+  // uses to the public as it is likely to change. So for now, we allow any type
+  // and cast. This works fine so long as API users do provide whatever the
+  // gr-diff tag creates.
+  replaceDiffs(diffs: unknown[]): void;
+  unregisterDiff(diff: unknown): void;
+
+  isAtStart(): boolean;
+  isAtEnd(): boolean;
+
+  moveLeft(): void;
+  moveRight(): void;
+
+  moveDown(): CursorMoveResult;
+  moveUp(): CursorMoveResult;
+
+  moveToFirstChunk(): void;
+  moveToLastChunk(): void;
+
+  moveToNextChunk(): CursorMoveResult;
+  moveToPreviousChunk(): CursorMoveResult;
+
+  moveToNextCommentThread(): CursorMoveResult;
+  moveToPreviousCommentThread(): CursorMoveResult;
+
+  createCommentInPlace(): void;
+  resetScrollMode(): void;
+  moveToLineNumber(lineNum: number, side: Side, path?: string): void;
 }

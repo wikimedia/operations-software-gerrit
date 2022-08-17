@@ -24,10 +24,10 @@ import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.index.query.QueryParseException;
-import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.FanOutExecutor;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountState;
+import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.change.ReviewerSuggestion;
 import com.google.gerrit.server.change.SuggestedReviewer;
 import com.google.gerrit.server.config.GerritServerConfig;
@@ -216,7 +216,7 @@ public class ReviewerRecommender {
 
       for (ChangeData cd : result) {
         for (Account.Id reviewer : cd.reviewers().all()) {
-          if (Strings.isNullOrEmpty(query) || accountMatchesQuery(reviewer, query)) {
+          if (accountMatchesQuery(reviewer, query)) {
             suggestions
                 .computeIfAbsent(reviewer, (ignored) -> new MutableDouble(0))
                 .add(baseWeight);
@@ -234,7 +234,8 @@ public class ReviewerRecommender {
   private boolean accountMatchesQuery(Account.Id id, String query) {
     Optional<Account> account = accountCache.get(id).map(AccountState::account);
     if (account.isPresent() && account.get().isActive()) {
-      if ((account.get().fullName() != null && account.get().fullName().startsWith(query))
+      if (Strings.isNullOrEmpty(query)
+          || (account.get().fullName() != null && account.get().fullName().startsWith(query))
           || (account.get().preferredEmail() != null
               && account.get().preferredEmail().startsWith(query))) {
         return true;

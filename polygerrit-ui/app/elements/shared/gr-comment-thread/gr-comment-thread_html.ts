@@ -17,6 +17,9 @@
 import {html} from '@polymer/polymer/lib/utils/html-tag';
 
 export const htmlTemplate = html`
+  <style include="gr-a11y-styles">
+    /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+  </style>
   <style include="shared-styles">
     :host {
       font-family: var(--font-family);
@@ -80,10 +83,6 @@ export const htmlTemplate = html`
       justify-content: space-between;
       padding: 0 var(--spacing-s) var(--spacing-s);
     }
-    .descriptionText {
-      margin-left: var(--spacing-m);
-      font-style: italic;
-    }
     .fileName {
       padding: var(--spacing-m) var(--spacing-s) var(--spacing-m);
     }
@@ -106,6 +105,27 @@ export const htmlTemplate = html`
       border-top: 1px solid var(--border-color);
       background-color: var(--background-color-primary);
     }
+
+    /* In saved state the "reply" and "quote" buttons are 28px height.
+     * top:4px  positions the 20px icon vertically centered.
+     * Currently in draft state the "save" and "cancel" buttons are 20px
+     * height, so the link icon does not need a top:4px in gr-comment_html.
+     */
+    .link-icon {
+      position: relative;
+      top: 4px;
+      cursor: pointer;
+    }
+    .fileName gr-copy-clipboard {
+      display: inline-block;
+      visibility: hidden;
+      vertical-align: top;
+      --gr-button-padding: 0px;
+    }
+    .fileName:focus-within gr-copy-clipboard,
+    .fileName:hover gr-copy-clipboard {
+      visibility: visible;
+    }
   </style>
 
   <template is="dom-if" if="[[showFilePath]]">
@@ -120,6 +140,10 @@ export const htmlTemplate = html`
           >
             [[_computeDisplayPath(path)]]
           </a>
+          <gr-copy-clipboard
+            hideInput=""
+            text="[[_computeDisplayPath(path)]]"
+          ></gr-copy-clipboard>
         </template>
       </div>
     </template>
@@ -127,13 +151,19 @@ export const htmlTemplate = html`
       <template is="dom-if" if="[[!_isPatchsetLevelComment(path)]]">
         <a
           href$="[[_getDiffUrlForComment(projectName, changeNum, path, patchNum)]]"
-          >[[_computeDisplayLine()]]</a
+          >[[_computeDisplayLine(lineNum, range)]]</a
         >
       </template>
     </div>
   </template>
   <div id="container">
-    <div class$="[[_computeHostClass(unresolved, isRobotComment)]] comment-box">
+    <h3 class="assistive-tech-only">
+      [[_computeAriaHeading(_orderedComments)]]
+    </h3>
+    <div
+      class$="[[_computeHostClass(unresolved, isRobotComment)]] comment-box"
+      tabindex="0"
+    >
       <template
         id="commentList"
         is="dom-repeat"
@@ -155,7 +185,7 @@ export const htmlTemplate = html`
           project-config="[[_projectConfig]]"
           on-create-fix-comment="_handleCommentFix"
           on-comment-discard="_handleCommentDiscard"
-          on-comment-save="_handleCommentSavedOrDiscarded"
+          on-copy-comment-link="handleCopyLink"
         ></gr-comment>
       </template>
       <div
@@ -164,6 +194,16 @@ export const htmlTemplate = html`
       >
         <span id="unresolvedLabel">[[_getUnresolvedLabel(unresolved)]]</span>
         <div id="actions">
+          <iron-icon
+            class="link-icon"
+            on-click="handleCopyLink"
+            class="copy"
+            title="Copy link to this comment"
+            icon="gr-icons:link"
+            role="button"
+            tabindex="0"
+          >
+          </iron-icon>
           <gr-button
             id="replyBtn"
             link=""
@@ -197,13 +237,16 @@ export const htmlTemplate = html`
         </div>
       </div>
     </div>
-    <template is="dom-if" if="[[_shouldShowCommentContext(_diff)]]">
+    <template
+      is="dom-if"
+      if="[[_shouldShowCommentContext(changeNum, showCommentContext, _diff)]]"
+    >
       <div class="diff-container">
         <gr-diff
           id="diff"
           change-num="[[changeNum]]"
           diff="[[_diff]]"
-          layers="[[_getLayers(_diff)]]"
+          layers="[[layers]]"
           path="[[path]]"
           prefs="[[_prefs]]"
           render-prefs="[[_renderPrefs]]"
@@ -211,10 +254,8 @@ export const htmlTemplate = html`
         >
         </gr-diff>
         <div class="view-diff-container">
-          <a href="[[_getUrlForViewDiff(comments)]]">
-            <gr-button link class="view-diff-button" on-click="_handleViewDiff">
-              View Diff
-            </gr-button>
+          <a href="[[_getUrlForViewDiff(comments, changeNum, projectName)]]">
+            <gr-button link class="view-diff-button">View Diff</gr-button>
           </a>
         </div>
       </div>

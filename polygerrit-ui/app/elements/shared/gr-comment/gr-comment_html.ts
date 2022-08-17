@@ -89,10 +89,7 @@ export const htmlTemplate = html`
       justify-content: flex-end;
     }
     .rightActions gr-button {
-      --gr-button: {
-        height: 20px;
-        padding: 0 var(--spacing-s);
-      }
+      --gr-button-padding: 0 var(--spacing-s);
     }
     .editMessage {
       display: none;
@@ -190,10 +187,8 @@ export const htmlTemplate = html`
     }
     #deleteBtn {
       display: none;
-      --gr-button: {
-        color: var(--deemphasized-text-color);
-        padding: 0;
-      }
+      --gr-button-text-color: var(--deemphasized-text-color);
+      --gr-button-padding: 0;
     }
     #deleteBtn.showDeleteButtons {
       display: block;
@@ -236,17 +231,20 @@ export const htmlTemplate = html`
       margin-left: var(--spacing-s);
     }
     .headerLeft gr-account-label {
-      --gr-account-label-text-style: {
-        font-weight: var(--font-weight-bold);
-      }
       --account-max-length: 130px;
       width: 150px;
+    }
+    .headerLeft gr-account-label::part(gr-account-label-text) {
+      font-weight: var(--font-weight-bold);
     }
     .draft gr-account-label {
       width: unset;
     }
     .portedMessage {
       margin: 0 var(--spacing-m);
+    }
+    .link-icon {
+      cursor: pointer;
     }
   </style>
   <div id="container" class="container">
@@ -259,7 +257,7 @@ export const htmlTemplate = html`
           <gr-account-label
             account="[[_getAuthor(comment, _selfAccount)]]"
             class$="[[_computeAccountLabelClass(draft)]]"
-            hide-status=""
+            hideStatus
           >
           </gr-account-label>
         </template>
@@ -269,19 +267,13 @@ export const htmlTemplate = html`
               >From patchset [[comment.patch_set]]</span
             ></a
           >
-          <a
-            href="https://bugs.chromium.org/p/gerrit/issues/entry?template=Porting+Comments"
-            target="_blank"
-          >
-            <iron-icon icon="gr-icons:bug" title="report a problem"></iron-icon>
-          </a>
         </template>
         <gr-tooltip-content
           class="draftTooltip"
-          has-tooltip=""
+          has-tooltip
           title="[[_computeDraftTooltip(_unableToSave)]]"
           max-width="20em"
-          show-icon=""
+          show-icon
         >
           <span class="draftLabel">[[_computeDraftText(_unableToSave)]]</span>
         </gr-tooltip-content>
@@ -316,7 +308,7 @@ export const htmlTemplate = html`
       <template is="dom-if" if="[[comment.updated]]">
         <span class="date" tabindex="0" on-click="_handleAnchorClick">
           <gr-date-formatter
-            has-tooltip=""
+            withTooltip
             date-str="[[comment.updated]]"
           ></gr-date-formatter>
         </span>
@@ -324,7 +316,7 @@ export const htmlTemplate = html`
       <div class="show-hide" tabindex="0">
         <label
           class="show-hide"
-          aria-label="[[_computeShowHideAriaLabel(collapsed)]]"
+          aria-label$="[[_computeShowHideAriaLabel(collapsed)]]"
         >
           <input
             type="checkbox"
@@ -360,7 +352,7 @@ export const htmlTemplate = html`
           <div class="respectfulReviewTip">
             <div>
               <gr-tooltip-content
-                has-tooltip=""
+                has-tooltip
                 title="Tips for respectful code reviews."
               >
                 <iron-icon
@@ -411,6 +403,18 @@ export const htmlTemplate = html`
         </div>
         <template is="dom-if" if="[[draft]]">
           <div class="rightActions">
+            <template is="dom-if" if="[[hasPublishedComment(comments)]]">
+              <iron-icon
+                class="link-icon"
+                on-click="handleCopyLink"
+                class="copy"
+                title="Copy link to this comment"
+                icon="gr-icons:link"
+                role="button"
+                tabindex="0"
+              >
+              </iron-icon>
+            </template>
             <gr-button
               link=""
               class="action cancel hideOnPublished"
@@ -440,6 +444,18 @@ export const htmlTemplate = html`
         </template>
       </div>
       <div class="robotActions" hidden$="[[!_showRobotActions]]">
+        <template is="dom-if" if="[[hasPublishedComment(comments)]]">
+          <iron-icon
+            class="link-icon"
+            on-click="handleCopyLink"
+            class="copy"
+            title="Copy link to this comment"
+            icon="gr-icons:link"
+            role="button"
+            tabindex="0"
+          >
+          </iron-icon>
+        </template>
         <template is="dom-if" if="[[isRobotComment]]">
           <gr-endpoint-decorator name="robot-comment-controls">
             <gr-endpoint-param name="comment" value="[[comment]]">
@@ -476,20 +492,6 @@ export const htmlTemplate = html`
         on-cancel="_handleCancelDeleteComment"
       >
       </gr-confirm-delete-comment-dialog>
-    </gr-overlay>
-    <gr-overlay id="confirmDiscardOverlay" with-backdrop="">
-      <gr-dialog
-        id="confirmDiscardDialog"
-        confirm-label="Discard"
-        confirm-on-enter=""
-        on-confirm="_handleConfirmDiscard"
-        on-cancel="_closeConfirmDiscardOverlay"
-      >
-        <div class="header" slot="header">Discard comment</div>
-        <div class="main" slot="main">
-          Are you sure you want to discard this draft comment?
-        </div>
-      </gr-dialog>
     </gr-overlay>
   </template>
 `;

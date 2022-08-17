@@ -25,10 +25,9 @@ public class PreconditionFailedException extends RestApiException {
 
   /**
    * @param msg message to return to the client describing the error.
-   * @cause original cause of the failed precondition.
+   * @param cause original cause of the failed precondition.
    */
   public PreconditionFailedException(String msg, Throwable cause) {
-    super(msg);
-    initCause(cause);
+    super(msg, cause);
   }
 }

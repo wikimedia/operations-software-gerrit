@@ -21,14 +21,24 @@
 // variables. If an application wants to use Polymer global variable -
 // the app must assign/import it and do not rely on the Polymer variable
 // exposed by shared gr-diff component.
+import '../api/embed';
 import '../scripts/bundled-polymer';
 import '../elements/diff/gr-diff/gr-diff';
 import '../elements/diff/gr-diff-cursor/gr-diff-cursor';
-import {initDiffAppContext} from './gr-diff-app-context-init';
+import {TokenHighlightLayer} from '../elements/diff/gr-diff-builder/token-highlight-layer';
+import {GrDiffCursor} from '../elements/diff/gr-diff-cursor/gr-diff-cursor';
 import {GrAnnotation} from '../elements/diff/gr-diff-highlight/gr-annotation';
+import {initDiffAppContext} from './gr-diff-app-context-init';
 
 // Setup appContext for diff.
 // TODO (dmfilippov): find a better solution
 initDiffAppContext();
 // Setup global variables for existing usages of this component
+window.grdiff = {
+  GrAnnotation,
+  GrDiffCursor,
+  TokenHighlightLayer,
+};
+
+// TODO(oler): Remove when clients have adjusted to namespaced globals above
 window.GrAnnotation = GrAnnotation;

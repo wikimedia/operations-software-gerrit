@@ -18,6 +18,7 @@ import static com.google.gerrit.extensions.client.GeneralPreferencesInfo.EmailSt
 import static com.google.gerrit.extensions.client.GeneralPreferencesInfo.EmailStrategy.DISABLED;
 import static java.util.Objects.requireNonNull;
 
+import com.google.common.base.Throwables;
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
@@ -25,14 +26,17 @@ import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Address;
 import com.google.gerrit.entities.EmailHeader;
 import com.google.gerrit.entities.EmailHeader.AddressList;
+import com.google.gerrit.entities.EmailHeader.StringEmailHeader;
 import com.google.gerrit.exceptions.EmailException;
 import com.google.gerrit.extensions.api.changes.RecipientType;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo.EmailFormat;
 import com.google.gerrit.mail.MailHeader;
+import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.change.NotifyResolver;
 import com.google.gerrit.server.permissions.PermissionBackendException;
+import com.google.gerrit.server.update.RetryableAction.ActionType;
 import com.google.gerrit.server.validators.OutgoingEmailValidationListener;
 import com.google.gerrit.server.validators.ValidationException;
 import com.google.template.soy.jbcsrc.api.SoySauce;
@@ -92,12 +96,27 @@ public abstract class OutgoingEmail {
     this.messageId = messageId;
   }
 
-  /**
-   * Format and enqueue the message for delivery.
-   *
-   * @throws EmailException
-   */
+  /** Format and enqueue the message for delivery. */
   public void send() throws EmailException {
+    try {
+      args.retryHelper
+          .action(
+              ActionType.SEND_EMAIL,
+              "sendEmail",
+              () -> {
+                sendImpl();
+                return null;
+              })
+          .retryWithTrace(Exception.class::isInstance)
+          .call();
+    } catch (Exception e) {
+      Throwables.throwIfUnchecked(e);
+      Throwables.throwIfInstanceOf(e, EmailException.class);
+      throw new EmailException("sending email failed", e);
+    }
+  }
+
+  private void sendImpl() throws EmailException {
     if (!args.emailSender.isEnabled()) {
       // Server has explicitly disabled email sending.
       //
@@ -127,18 +146,40 @@ public abstract class OutgoingEmail {
         Optional<AccountState> fromUser = args.accountCache.get(fromId);
         if (fromUser.isPresent()) {
           GeneralPreferencesInfo senderPrefs = fromUser.get().generalPreferences();
+          CurrentUser user = args.currentUserProvider.get();
+          boolean isImpersonating = user.isIdentifiedUser() && user.isImpersonating();
+          if (isImpersonating && user.getAccountId() != fromId) {
+            // This should not be possible, if this is the case it means the RequestContext is not
+            // set up correctly.
+            throw new EmailException(
+                String.format(
+                    "User %s is sending email from %s, while acting on behalf of %s",
+                    user.asIdentifiedUser().getRealUser().getAccountId(),
+                    fromId,
+                    user.getAccountId()));
+          }
           if (senderPrefs != null && senderPrefs.getEmailStrategy() == CC_ON_OWN_COMMENTS) {
-            // If we are impersonating a user, make sure they receive a CC of
-            // this message so they can always review and audit what we sent
-            // on their behalf to others.
+            // Include the sender in email if they enabled email notifications on their own
+            // comments.
             //
             logger.atFine().log(
                 "CC email sender %s because the email strategy of this user is %s",
                 fromUser.get().account().id(), CC_ON_OWN_COMMENTS);
             add(RecipientType.CC, fromId);
+          } else if (isImpersonating) {
+            // If we are impersonating a user, make sure they receive a CC of
+            // this message regardless of email strategy, unless email notifications are explicitly
+            // disabled for this user. This way they can always review and audit what we sent
+            // on their behalf to others.
+            logger.atFine().log(
+                "CC email sender %s because the email is sent on behalf of and email notifications"
+                    + " are enabled for this user.",
+                fromUser.get().account().id());
+            add(RecipientType.CC, fromId);
+
           } else if (!notify.accounts().containsValue(fromId) && rcptTo.remove(fromId)) {
             // If they don't want a copy, but we queued one up anyway,
-            // drop them from the recipient lists.
+            // drop them from the recipient lists, but only if the user is not being impersonated.
             //
             logger.atFine().log(
                 "Not CCing email sender %s because the email strategy of this user is not %s but"
@@ -261,7 +302,7 @@ public abstract class OutgoingEmail {
     if (messageId != null) {
       String message = "<" + messageId.id() + suffix + "@" + getGerritHost() + ">";
       message = message.replaceAll("\\s", "");
-      va.headers.put(FieldName.MESSAGE_ID, new EmailHeader.String(message));
+      va.headers.put(FieldName.MESSAGE_ID, new StringEmailHeader(message));
     }
   }
 
@@ -343,7 +384,7 @@ public abstract class OutgoingEmail {
 
   /** Set a header in the outgoing message. */
   protected void setHeader(String name, String value) {
-    headers.put(name, new EmailHeader.String(value));
+    headers.put(name, new StringEmailHeader(value));
   }
 
   /** Remove a header from the outgoing message. */
@@ -504,9 +545,9 @@ public abstract class OutgoingEmail {
   }
 
   /**
+   * Returns whether this email is visible to the given account
+   *
    * @param to account.
-   * @throws PermissionBackendException
-   * @return whether this email is visible to the given account.
    */
   protected boolean isVisibleTo(Account.Id to) throws PermissionBackendException {
     return true;

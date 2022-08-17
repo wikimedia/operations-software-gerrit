@@ -41,12 +41,11 @@ import (
 )
 
 var (
-	plugins               = flag.String("plugins", "", "comma seperated plugin paths to serve")
-	port                  = flag.String("port", "localhost:8081", "address to serve HTTP requests on")
-	host                  = flag.String("host", "gerrit-review.googlesource.com", "Host to proxy requests to")
-	scheme                = flag.String("scheme", "https", "URL scheme")
-	cdnPattern            = regexp.MustCompile("https://cdn.googlesource.com/polygerrit_ui/[0-9.]*")
-	bundledPluginsPattern = regexp.MustCompile("https://cdn.googlesource.com/polygerrit_assets/[0-9.]*")
+	plugins    = flag.String("plugins", "", "comma seperated plugin paths to serve")
+	port       = flag.String("port", "localhost:8081", "address to serve HTTP requests on")
+	host       = flag.String("host", "gerrit-review.googlesource.com", "Host to proxy requests to")
+	scheme     = flag.String("scheme", "https", "URL scheme")
+	cdnPattern = regexp.MustCompile("https://cdn.googlesource.com/polygerrit_ui/[0-9.]*")
 )
 
 func main() {
@@ -121,8 +120,8 @@ func addDevHeadersMiddleware(h http.Handler) http.Handler {
 
 func addDevHeaders(writer http.ResponseWriter) {
 	writer.Header().Set("Access-Control-Allow-Origin", "*")
+	writer.Header().Set("Access-Control-Allow-Headers", "cache-control,x-test-origin")
 	writer.Header().Set("Cache-Control", "public, max-age=10, must-revalidate")
-
 }
 
 func handleSrcRequest(compiledSrcPath string, dirListingMux *http.ServeMux, writer http.ResponseWriter, originalRequest *http.Request) {
@@ -185,10 +184,10 @@ func handleSrcRequest(compiledSrcPath string, dirListingMux *http.ServeMux, writ
 		//   'page/page.mjs' -> '/node_modules/page.mjs'
 		//   '@polymer/iron-icon' -> '/node_modules/@polymer/iron-icon.js'
 		//   './element/file' -> './element/file.js'
-		moduleImportRegexp = regexp.MustCompile(`(?m)^(import.*|export.* from )['"](.*?)(\.(m?)js)?['"];$`)
+		moduleImportRegexp = regexp.MustCompile(`(import[^'";]*|export[^'";]*from ?)['"]([^;\s]*?)(\.(m?)js)?['"];`)
 		data = moduleImportRegexp.ReplaceAll(data, []byte("$1'$2.${4}js';"))
 
-		moduleImportRegexp = regexp.MustCompile(`(?m)^(import.*|export.* from )['"]([^/.].*)['"];$`)
+		moduleImportRegexp = regexp.MustCompile(`(import[^'";]*|export[^'";]*from ?)['"]([^/.;\s][^;\s]*)['"];`)
 		data = moduleImportRegexp.ReplaceAll(data, []byte("$1'/node_modules/$2';"))
 
 		// The es module version of rxjs can be found in the _esm2015/ directory.
@@ -199,9 +198,16 @@ func handleSrcRequest(compiledSrcPath string, dirListingMux *http.ServeMux, writ
 		moduleImportRegexp = regexp.MustCompile("(?m)^((import|export).*'/node_modules/)tslib.js';$")
 		data = moduleImportRegexp.ReplaceAll(data, []byte("${1}tslib/tslib.es6.js';"))
 
-		// 'lit-element' imports and exports have to be resolved to 'lit-element/lit-element.js'.
-		moduleImportRegexp = regexp.MustCompile("(?m)^((import|export).*'/node_modules/)lit-(element|html).js';$")
-		data = moduleImportRegexp.ReplaceAll(data, []byte("${1}lit-${3}/lit-${3}.js';"))
+		// 'lit.js' has to be resolved as 'lit/index.js'.
+		moduleImportRegexp = regexp.MustCompile("(?m)^((import|export).*'/node_modules/)lit.js';$")
+		data = moduleImportRegexp.ReplaceAll(data, []byte("${1}lit/index.js';"))
+		// Some lit imports 'a.js' have to be resolved as 'a/a.js'.
+		moduleImportRegexp = regexp.MustCompile(`((import|export)[^'";]*'/node_modules/(@lit/)?)(lit-element|lit-html|reactive-element).js';`)
+		data = moduleImportRegexp.ReplaceAll(data, []byte("${1}${4}/${4}.js';"))
+
+		// 'immer' imports and exports have to be resolved to 'immer/dist/immer.esm.js'.
+		moduleImportRegexp = regexp.MustCompile("(?m)^((import|export).*'/node_modules/)immer.js';$")
+		data = moduleImportRegexp.ReplaceAll(data, []byte("${1}/immer/dist/immer.esm.js';"))
 
 		if strings.HasSuffix(normalizedContentPath, "/node_modules/page/page.js") {
 			// Can't import page.js directly, because this is undefined.
@@ -394,9 +400,6 @@ func rewriteHostPage(reader io.Reader) io.Reader {
 	// contains window.INITIAL_DATA=...
 	// Here we rely on the fact that the <script> snippet that we want to append to is the first one.
 	if len(*plugins) > 0 {
-		// If the host page contains a reference to a plugin bundle that would be preloaded, then remove it.
-		replaced = bundledPluginsPattern.ReplaceAllString(replaced, "")
-
 		insertionPoint := strings.Index(replaced, "</script>")
 		builder := new(strings.Builder)
 		builder.WriteString(

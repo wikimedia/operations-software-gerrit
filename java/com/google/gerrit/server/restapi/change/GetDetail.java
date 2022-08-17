@@ -16,6 +16,7 @@ package com.google.gerrit.server.restapi.change;
 
 import com.google.gerrit.extensions.client.ListChangesOption;
 import com.google.gerrit.extensions.common.ChangeInfo;
+import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestReadView;
@@ -34,7 +35,7 @@ public class GetDetail implements RestReadView<ChangeResource>, DynamicOptions.B
   }
 
   @Option(name = "-O", usage = "Output option flags, in hex")
-  void setOptionFlagsHex(String hex) {
+  void setOptionFlagsHex(String hex) throws BadRequestException {
     delegate.setOptionFlagsHex(hex);
   }
 

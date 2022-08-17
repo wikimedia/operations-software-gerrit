@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 import {EventApi} from '@polymer/polymer/lib/legacy/polymer.dom';
 import {check} from './common-util';
 
@@ -34,6 +33,17 @@ function isElementWithShadowRoot(
   el: Element | ShadowRoot
 ): el is ElementWithShadowRoot {
   return 'shadowRoot' in el;
+}
+
+export function isElement(node: Node): node is Element {
+  return node.nodeType === 1;
+}
+
+export function isElementTarget(
+  target: EventTarget | null | undefined
+): target is Element {
+  if (!target) return false;
+  return 'nodeType' in target && isElement(target as Node);
 }
 
 // TODO: maybe should have a better name for this
@@ -170,7 +180,7 @@ export function windowLocationReload() {
  *  getEventPath(e); // eg: div.class1>p#pid.class2
  * }
  */
-export function getEventPath<T extends PolymerEvent>(e?: T) {
+export function getEventPath<T extends MouseEvent>(e?: T) {
   if (!e) return '';
 
   let path = e.composedPath();
@@ -226,7 +236,7 @@ export function strToClassName(str = '', prefix = 'generated_') {
 // document.activeElement is not enough, because it's not getting activeElement
 // without looking inside of shadow roots. This will find best activeElement.
 export function findActiveElement(
-  root: DocumentOrShadowRoot | null,
+  root: Document | ShadowRoot | null,
   ignoreDialogs?: boolean
 ): HTMLElement | null {
   if (root === null) {
@@ -256,7 +266,7 @@ export function findActiveElement(
 export function isSafari() {
   return (
     /^((?!chrome|android).)*safari/i.test(navigator.userAgent) ||
-    (/iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream)
+    /iPad|iPhone|iPod/.test(navigator.userAgent)
   );
 }
 
@@ -291,4 +301,168 @@ export function toggleClass(el: Element, className: string, bool?: boolean) {
   } else {
     el.classList.remove(className);
   }
+}
+
+/**
+ * For matching the `key` property of KeyboardEvents. These are known to work
+ * with Firefox, Safari and Chrome.
+ */
+export enum Key {
+  ENTER = 'Enter',
+  ESC = 'Escape',
+  TAB = 'Tab',
+  SPACE = ' ',
+  LEFT = 'ArrowLeft',
+  RIGHT = 'ArrowRight',
+  UP = 'ArrowUp',
+  DOWN = 'ArrowDown',
+}
+
+export enum Modifier {
+  ALT_KEY,
+  CTRL_KEY,
+  META_KEY,
+  SHIFT_KEY,
+}
+
+export enum ComboKey {
+  G = 'g',
+  V = 'v',
+}
+
+export interface Binding {
+  key: string | Key;
+  /** Defaults to false. */
+  docOnly?: boolean;
+  /** Defaults to not being a combo shortcut. */
+  combo?: ComboKey;
+  /** Defaults to no modifiers. */
+  modifiers?: Modifier[];
+}
+
+const ALPHA_NUM = new RegExp(/^[A-Za-z0-9]$/);
+
+/**
+ * For "normal" keys we do not check that the SHIFT modifier is pressed or not,
+ * because that depends on the keyboard layout. Just checking the key string is
+ * sufficient.
+ *
+ * But for some special keys it is important whether SHIFT is pressed at the
+ * same time, for example we want to distinguish Enter from Shift+Enter.
+ */
+function shiftMustMatch(key: string | Key) {
+  return Object.values(Key).includes(key as Key);
+}
+
+/**
+ * For a-zA-Z0-9 and for Enter, Tab, etc. we want to check the ALT modifier.
+ *
+ * But for special chars like []/? we don't care whether the user is pressing
+ * the ALT modifier to produce the special char. For example on a German
+ * keyboard layout you have to press ALT to produce a [.
+ */
+function altMustMatch(key: string | Key) {
+  return ALPHA_NUM.test(key) || Object.values(Key).includes(key as Key);
+}
+
+export function eventMatchesShortcut(
+  e: KeyboardEvent,
+  shortcut: Binding
+): boolean {
+  if (e.key !== shortcut.key) return false;
+  const modifiers = shortcut.modifiers ?? [];
+  if (e.ctrlKey !== modifiers.includes(Modifier.CTRL_KEY)) return false;
+  if (e.metaKey !== modifiers.includes(Modifier.META_KEY)) return false;
+  if (
+    altMustMatch(e.key) &&
+    e.altKey !== modifiers.includes(Modifier.ALT_KEY)
+  ) {
+    return false;
+  }
+  if (
+    shiftMustMatch(e.key) &&
+    e.shiftKey !== modifiers.includes(Modifier.SHIFT_KEY)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function addGlobalShortcut(
+  shortcut: Binding,
+  listener: (e: KeyboardEvent) => void
+) {
+  return addShortcut(document.body, shortcut, listener);
+}
+
+export function addShortcut(
+  element: HTMLElement,
+  shortcut: Binding,
+  listener: (e: KeyboardEvent) => void,
+  options: {
+    shouldSuppress: boolean;
+  } = {
+    shouldSuppress: false,
+  }
+) {
+  const wrappedListener = (e: KeyboardEvent) => {
+    if (e.repeat) return;
+    if (options.shouldSuppress && shouldSuppress(e)) return;
+    if (eventMatchesShortcut(e, shortcut)) {
+      listener(e);
+    }
+  };
+  element.addEventListener('keydown', wrappedListener);
+  return () => element.removeEventListener('keydown', wrappedListener);
+}
+
+export function modifierPressed(e: KeyboardEvent) {
+  return e.altKey || e.ctrlKey || e.metaKey || e.shiftKey;
+}
+
+export function shiftPressed(e: KeyboardEvent) {
+  return e.shiftKey;
+}
+
+/**
+ * When you listen on keyboard events, then within Gerrit's web app you may want
+ * to avoid firing in certain common scenarios such as key strokes from <input>
+ * elements. But this can also be undesirable, for example Ctrl-Enter from
+ * <input> should trigger a save event.
+ *
+ * The shortcuts-service has a stateful method `shouldSuppress()` with
+ * reporting functionality, which delegates to here.
+ */
+export function shouldSuppress(e: KeyboardEvent): boolean {
+  // Note that when you listen on document, then `e.currentTarget` will be the
+  // document and `e.target` will be `<gr-app>` due to shadow dom, but by
+  // using the composedPath() you can actually find the true origin of the
+  // event.
+  const rootTarget = e.composedPath()[0];
+  if (!isElementTarget(rootTarget)) return false;
+  const tagName = rootTarget.tagName;
+  const type = rootTarget.getAttribute('type');
+
+  if (
+    // Suppress shortcuts on <input> and <textarea>, but not on
+    // checkboxes, because we want to enable workflows like 'click
+    // mark-reviewed and then press ] to go to the next file'.
+    (tagName === 'INPUT' && type !== 'checkbox') ||
+    tagName === 'TEXTAREA' ||
+    // Suppress shortcuts if the key is 'enter'
+    // and target is an anchor or button or paper-tab.
+    (e.keyCode === 13 &&
+      (tagName === 'A' ||
+        tagName === 'BUTTON' ||
+        tagName === 'GR-BUTTON' ||
+        tagName === 'PAPER-TAB'))
+  ) {
+    return true;
+  }
+  const path: EventTarget[] = e.composedPath() ?? [];
+  for (const el of path) {
+    if (!isElementTarget(el)) continue;
+    if (el.tagName === 'GR-OVERLAY') return true;
+  }
+  return false;
 }

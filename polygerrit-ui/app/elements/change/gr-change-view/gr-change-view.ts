@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 import '@polymer/paper-tabs/paper-tabs';
+import '../../../styles/gr-a11y-styles';
 import '../../../styles/shared-styles';
 import '../../diff/gr-comment-api/gr-comment-api';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
@@ -23,7 +24,6 @@ import '../../shared/gr-account-link/gr-account-link';
 import '../../shared/gr-button/gr-button';
 import '../../shared/gr-change-star/gr-change-star';
 import '../../shared/gr-change-status/gr-change-status';
-import '../../shared/gr-date-formatter/gr-date-formatter';
 import '../../shared/gr-editable-content/gr-editable-content';
 import '../../shared/gr-linked-text/gr-linked-text';
 import '../../shared/gr-overlay/gr-overlay';
@@ -48,36 +48,48 @@ import {htmlTemplate} from './gr-change-view_html';
 import {
   KeyboardShortcutMixin,
   Shortcut,
+  ShortcutListener,
+  ShortcutSection,
 } from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
 import {GrEditConstants} from '../../edit/gr-edit-constants';
 import {pluralize} from '../../../utils/string-util';
-import {windowLocationReload} from '../../../utils/dom-util';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
+import {querySelectorAll, windowLocationReload} from '../../../utils/dom-util';
+import {
+  GeneratedWebLink,
+  GerritNav,
+} from '../../core/gr-navigation/gr-navigation';
 import {getPluginEndpoints} from '../../shared/gr-js-api-interface/gr-plugin-endpoints';
 import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {RevisionInfo as RevisionInfoClass} from '../../shared/revision-info/revision-info';
 import {DiffViewMode} from '../../../api/diff';
-import {PrimaryTab, SecondaryTab} from '../../../constants/constants';
+import {
+  ChangeStatus,
+  DefaultBase,
+  PrimaryTab,
+  SecondaryTab,
+} from '../../../constants/constants';
 
 import {NO_ROBOT_COMMENTS_THREADS_MSG} from '../../../constants/messages';
 import {appContext} from '../../../services/app-context';
-import {ChangeStatus} from '../../../constants/constants';
 import {
   computeAllPatchSets,
   computeLatestPatchNum,
-  fetchChangeUpdates,
   hasEditBasedOnCurrentPatchSet,
   hasEditPatchsetLoaded,
   PatchSet,
 } from '../../../utils/patch-set-util';
-import {changeStatuses} from '../../../utils/change-util';
 import {
   changeIsAbandoned,
   changeIsMerged,
   changeIsOpen,
+  changeStatuses,
+  isCc,
+  isInvolved,
+  isOwner,
+  isReviewer,
 } from '../../../utils/change-util';
 import {EventType as PluginEventType} from '../../../api/plugin';
-import {customElement, property, observe} from '@polymer/decorators';
+import {customElement, observe, property} from '@polymer/decorators';
 import {GrApplyFixDialog} from '../../diff/gr-apply-fix-dialog/gr-apply-fix-dialog';
 import {GrFileListHeader} from '../gr-file-list-header/gr-file-list-header';
 import {GrEditableContent} from '../../shared/gr-editable-content/gr-editable-content';
@@ -87,59 +99,58 @@ import {GrChangeStar} from '../../shared/gr-change-star/gr-change-star';
 import {GrChangeActions} from '../gr-change-actions/gr-change-actions';
 import {
   AccountDetailInfo,
-  ChangeInfo,
-  NumericChangeId,
-  PatchRange,
   ActionNameToActionInfoMap,
-  CommitId,
-  PatchSetNum,
-  ParentPatchSetNum,
-  EditPatchSetNum,
-  ServerInfo,
-  ConfigInfo,
-  PreferencesInfo,
-  CommitInfo,
-  RevisionInfo,
-  EditInfo,
-  LabelNameToInfoMap,
-  UrlEncodedCommentId,
-  QuickLabelInfo,
   ApprovalInfo,
-  ElementPropertyDeepChange,
+  BasePatchSetNum,
   ChangeId,
+  ChangeInfo,
+  CommitId,
+  CommitInfo,
+  ConfigInfo,
+  EditInfo,
+  EditPatchSetNum,
+  LabelNameToInfoMap,
+  NumericChangeId,
+  ParentPatchSetNum,
+  PatchRange,
+  PatchSetNum,
+  PreferencesInfo,
+  QuickLabelInfo,
   RelatedChangeAndCommitInfo,
   RelatedChangesInfo,
-  BasePatchSetNum,
+  RevisionInfo,
+  ServerInfo,
+  UrlEncodedCommentId,
 } from '../../../types/common';
 import {DiffPreferencesInfo} from '../../../types/diff';
-import {GrReplyDialog, FocusTarget} from '../gr-reply-dialog/gr-reply-dialog';
+import {FocusTarget, GrReplyDialog} from '../gr-reply-dialog/gr-reply-dialog';
 import {GrIncludedInDialog} from '../gr-included-in-dialog/gr-included-in-dialog';
 import {GrDownloadDialog} from '../gr-download-dialog/gr-download-dialog';
 import {GrChangeMetadata} from '../gr-change-metadata/gr-change-metadata';
 import {
-  GrCommentApi,
   ChangeComments,
+  GrCommentApi,
 } from '../../diff/gr-comment-api/gr-comment-api';
 import {assertIsDefined, hasOwnProperty} from '../../../utils/common-util';
 import {GrEditControls} from '../../edit/gr-edit-controls/gr-edit-controls';
 import {
   CommentThread,
-  UIDraft,
-  DraftInfo,
   isDraftThread,
   isRobot,
+  isUnresolved,
+  UIDraft,
 } from '../../../utils/comment-util';
 import {
   PolymerDeepPropertyChange,
-  PolymerSpliceChange,
   PolymerSplice,
+  PolymerSpliceChange,
 } from '@polymer/polymer/interfaces';
 import {AppElementChangeViewParams} from '../../gr-app-types';
 import {DropdownLink} from '../../shared/gr-dropdown/gr-dropdown';
 import {PaperTabsElement} from '@polymer/paper-tabs/paper-tabs';
 import {
-  GrFileList,
   DEFAULT_NUM_FILES_SHOWN,
+  GrFileList,
 } from '../gr-file-list/gr-file-list';
 import {
   ChangeViewState,
@@ -148,43 +159,56 @@ import {
   ParsedChangeInfo,
 } from '../../../types/types';
 import {
-  CustomKeyboardEvent,
+  CloseFixPreviewEvent,
   EditableContentSaveEvent,
+  EventType,
   OpenFixPreviewEvent,
   ShowAlertEventDetail,
   SwitchTabEvent,
-  ThreadListModifiedEvent,
   TabState,
-  EventType,
-  CloseFixPreviewEvent,
 } from '../../../types/events';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {GrMessagesList} from '../gr-messages-list/gr-messages-list';
 import {GrThreadList} from '../gr-thread-list/gr-thread-list';
 import {
   fireAlert,
+  fireDialogChange,
   fireEvent,
   firePageError,
-  fireDialogChange,
+  fireReload,
   fireTitleChange,
 } from '../../../utils/event-util';
-import {GerritView} from '../../../services/router/router-model';
+import {GerritView, routerView$} from '../../../services/router/router-model';
 import {takeUntil} from 'rxjs/operators';
 import {aPluginHasRegistered$} from '../../../services/checks/checks-model';
 import {Subject} from 'rxjs';
-import {debounce, DelayedTask} from '../../../utils/async-util';
-import {Timing} from '../../../constants/reporting';
+import {debounce, DelayedTask, throttleWrap} from '../../../utils/async-util';
+import {Interaction, Timing} from '../../../constants/reporting';
+import {ChangeStates} from '../../shared/gr-change-status/gr-change-status';
+import {getRevertCreatedChangeIds} from '../../../utils/message-util';
+import {
+  changeComments$,
+  drafts$,
+} from '../../../services/comments/comments-model';
+import {
+  getAddedByReason,
+  getRemovedByReason,
+  hasAttention,
+} from '../../../utils/attention-set-util';
+import {listen} from '../../../services/shortcuts/shortcuts-service';
 
-const MIN_LINES_FOR_COMMIT_COLLAPSE = 17;
+const MIN_LINES_FOR_COMMIT_COLLAPSE = 18;
 
 const REVIEWERS_REGEX = /^(R|CC)=/gm;
 const MIN_CHECK_INTERVAL_SECS = 0;
 
 const REPLY_REFIT_DEBOUNCE_INTERVAL_MS = 500;
 
+const ACCIDENTAL_STARRING_LIMIT_MS = 10 * 1000;
+
 const TRAILING_WHITESPACE_REGEX = /[ \t]+$/gm;
 
-const MSG_PREFIX = '#message-';
+const PREFIX = '#message-';
 
 const ReloadToastMessage = {
   NEWER_REVISION: 'A newer patch set has been uploaded',
@@ -223,8 +247,11 @@ export interface GrChangeView {
 
 export type ChangeViewPatchRange = Partial<PatchRange>;
 
+// This avoids JSC_DYNAMIC_EXTENDS_WITHOUT_JSDOC closure compiler error.
+const base = KeyboardShortcutMixin(PolymerElement);
+
 @customElement('gr-change-view')
-export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
+export class GrChangeView extends base {
   static get template() {
     return htmlTemplate;
   }
@@ -268,20 +295,8 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
   @property({type: Boolean})
   hasParent?: boolean;
 
-  @property({type: Object})
-  keyEventTarget = document.body;
-
   @property({type: Boolean})
   disableEdit = false;
-
-  @property({type: Boolean})
-  disableDiffPrefs = false;
-
-  @property({
-    type: Boolean,
-    computed: '_computeDiffPrefsDisabled(disableDiffPrefs, _loggedIn)',
-  })
-  _diffPrefsDisabled?: boolean;
 
   @property({type: Array})
   _commentThreads?: CommentThread[];
@@ -406,7 +421,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
 
   @property({
     type: String,
-    computed: '_computeReplyButtonLabel(_diffDrafts.*, _canStartReview)',
+    computed: '_computeReplyButtonLabel(_diffDrafts, _canStartReview)',
   })
   _replyButtonLabel = 'Reply';
 
@@ -426,7 +441,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     type: String,
     computed: '_computeChangeStatusChips(_change, _mergeable, _submitEnabled)',
   })
-  _changeStatuses?: string[];
+  _changeStatuses?: ChangeStates[];
 
   /** If false, then the "Show more" button was used to expand. */
   @property({type: Boolean})
@@ -503,43 +518,89 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
   _activeTabs: string[] = [PrimaryTab.FILES, SecondaryTab.CHANGE_LOG];
 
   @property({type: Boolean})
+  unresolvedOnly = false;
+
+  @property({type: Boolean})
   _showAllRobotComments = false;
 
   @property({type: Boolean})
   _showRobotCommentsButton = false;
 
-  _throttledToggleChangeStar?: EventListener;
+  _throttledToggleChangeStar?: (e: KeyboardEvent) => void;
 
   @property({type: Boolean})
   _showChecksTab = false;
 
+  @property({type: Boolean})
+  private isViewCurrent = false;
+
   @property({type: String})
   _tabState?: TabState;
 
+  @property({type: Object})
+  revertedChange?: ChangeInfo;
+
+  @property({type: String})
+  scrollCommentId?: UrlEncodedCommentId;
+
+  @property({
+    type: Array,
+    computed: '_computeResolveWeblinks(_change, _commitInfo, _serverConfig)',
+  })
+  resolveWeblinks?: GeneratedWebLink[];
+
   restApiService = appContext.restApiService;
 
-  checksService = appContext.checksService;
+  private readonly commentsService = appContext.commentsService;
 
-  keyboardShortcuts() {
-    return {
-      [Shortcut.SEND_REPLY]: null, // DOC_ONLY binding
-      [Shortcut.EMOJI_DROPDOWN]: null, // DOC_ONLY binding
-      [Shortcut.REFRESH_CHANGE]: '_handleRefreshChange',
-      [Shortcut.OPEN_REPLY_DIALOG]: '_handleOpenReplyDialog',
-      [Shortcut.OPEN_DOWNLOAD_DIALOG]: '_handleOpenDownloadDialogShortcut',
-      [Shortcut.TOGGLE_DIFF_MODE]: '_handleToggleDiffMode',
-      [Shortcut.TOGGLE_CHANGE_STAR]: '_throttledToggleChangeStar',
-      [Shortcut.UP_TO_DASHBOARD]: '_handleUpToDashboard',
-      [Shortcut.EXPAND_ALL_MESSAGES]: '_handleExpandAllMessages',
-      [Shortcut.COLLAPSE_ALL_MESSAGES]: '_handleCollapseAllMessages',
-      [Shortcut.OPEN_DIFF_PREFS]: '_handleOpenDiffPrefsShortcut',
-      [Shortcut.EDIT_TOPIC]: '_handleEditTopic',
-      [Shortcut.DIFF_AGAINST_BASE]: '_handleDiffAgainstBase',
-      [Shortcut.DIFF_AGAINST_LATEST]: '_handleDiffAgainstLatest',
-      [Shortcut.DIFF_BASE_AGAINST_LEFT]: '_handleDiffBaseAgainstLeft',
-      [Shortcut.DIFF_RIGHT_AGAINST_LATEST]: '_handleDiffRightAgainstLatest',
-      [Shortcut.DIFF_BASE_AGAINST_LATEST]: '_handleDiffBaseAgainstLatest',
-    };
+  private readonly shortcuts = appContext.shortcutsService;
+
+  private replyDialogResizeObserver?: ResizeObserver;
+
+  override keyboardShortcuts(): ShortcutListener[] {
+    return [
+      listen(Shortcut.SEND_REPLY, _ => {}), // docOnly
+      listen(Shortcut.EMOJI_DROPDOWN, _ => {}), // docOnly
+      listen(Shortcut.REFRESH_CHANGE, _ => fireReload(this, true)),
+      listen(Shortcut.OPEN_REPLY_DIALOG, _ => this._handleOpenReplyDialog()),
+      listen(Shortcut.OPEN_DOWNLOAD_DIALOG, _ =>
+        this._handleOpenDownloadDialog()
+      ),
+      listen(Shortcut.TOGGLE_DIFF_MODE, _ => this._handleToggleDiffMode()),
+      listen(Shortcut.TOGGLE_CHANGE_STAR, e => {
+        if (this._throttledToggleChangeStar) {
+          this._throttledToggleChangeStar(e);
+        }
+      }),
+      listen(Shortcut.UP_TO_DASHBOARD, _ => this._determinePageBack()),
+      listen(Shortcut.EXPAND_ALL_MESSAGES, _ =>
+        this._handleExpandAllMessages()
+      ),
+      listen(Shortcut.COLLAPSE_ALL_MESSAGES, _ =>
+        this._handleCollapseAllMessages()
+      ),
+      listen(Shortcut.OPEN_DIFF_PREFS, _ =>
+        this._handleOpenDiffPrefsShortcut()
+      ),
+      listen(Shortcut.EDIT_TOPIC, _ => this.$.metadata.editTopic()),
+      listen(Shortcut.DIFF_AGAINST_BASE, _ => this._handleDiffAgainstBase()),
+      listen(Shortcut.DIFF_AGAINST_LATEST, _ =>
+        this._handleDiffAgainstLatest()
+      ),
+      listen(Shortcut.DIFF_BASE_AGAINST_LEFT, _ =>
+        this._handleDiffBaseAgainstLeft()
+      ),
+      listen(Shortcut.DIFF_RIGHT_AGAINST_LATEST, _ =>
+        this._handleDiffRightAgainstLatest()
+      ),
+      listen(Shortcut.DIFF_BASE_AGAINST_LATEST, _ =>
+        this._handleDiffBaseAgainstLatest()
+      ),
+      listen(Shortcut.OPEN_SUBMIT_DIALOG, _ => this._handleOpenSubmitDialog()),
+      listen(Shortcut.TOGGLE_ATTENTION_SET, _ =>
+        this._handleToggleAttentionSet()
+      ),
+    ];
   }
 
   disconnected$ = new Subject();
@@ -548,12 +609,24 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
 
   private scrollTask?: DelayedTask;
 
-  /** @override */
-  ready() {
+  private lastStarredTimestamp?: number;
+
+  override ready() {
     super.ready();
     aPluginHasRegistered$.pipe(takeUntil(this.disconnected$)).subscribe(b => {
       this._showChecksTab = b;
     });
+    routerView$.pipe(takeUntil(this.disconnected$)).subscribe(view => {
+      this.isViewCurrent = view === GerritView.CHANGE;
+    });
+    drafts$.pipe(takeUntil(this.disconnected$)).subscribe(drafts => {
+      this._diffDrafts = {...drafts};
+    });
+    changeComments$
+      .pipe(takeUntil(this.disconnected$))
+      .subscribe(changeComments => {
+        this._changeComments = changeComments;
+      });
   }
 
   constructor() {
@@ -573,23 +646,13 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
       this._handleShowBackgroundContent()
     );
 
-    this.addEventListener('diff-comments-modified', () =>
-      this._handleReloadCommentThreads()
-    );
-
-    this.addEventListener(
-      'thread-list-modified',
-      (e: ThreadListModifiedEvent) => this._handleReloadDiffComments(e)
-    );
-
     this.addEventListener('open-reply-dialog', () => this._openReplyDialog());
   }
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
-    this._throttledToggleChangeStar = this._throttleWrap(e =>
-      this._handleToggleChangeStar(e as CustomKeyboardEvent)
+    this._throttledToggleChangeStar = throttleWrap<KeyboardEvent>(_ =>
+      this._handleToggleChangeStar()
     );
     this._getServerConfig().then(config => {
       this._serverConfig = config;
@@ -606,30 +669,28 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
       this._setDiffViewMode();
     });
 
+    this.replyDialogResizeObserver = new ResizeObserver(() =>
+      this.$.replyOverlay.center()
+    );
+    this.replyDialogResizeObserver.observe(this.$.replyDialog);
+
     getPluginLoader()
       .awaitPluginsLoaded()
       .then(() => {
-        this._dynamicTabHeaderEndpoints = getPluginEndpoints().getDynamicEndpoints(
-          'change-view-tab-header'
-        );
-        this._dynamicTabContentEndpoints = getPluginEndpoints().getDynamicEndpoints(
-          'change-view-tab-content'
-        );
+        this._dynamicTabHeaderEndpoints =
+          getPluginEndpoints().getDynamicEndpoints('change-view-tab-header');
+        this._dynamicTabContentEndpoints =
+          getPluginEndpoints().getDynamicEndpoints('change-view-tab-content');
         if (
           this._dynamicTabContentEndpoints.length !==
           this._dynamicTabHeaderEndpoints.length
         ) {
-          console.warn('Different number of tab headers and tab content.');
+          this.reporting.error(new Error('Mismatch of headers and content.'));
         }
       })
       .then(() => this._initActiveTabs(this.params));
 
-    this.addEventListener('comment-save', e => this._handleCommentSave(e));
-    this.addEventListener('comment-refresh', () => this._reloadDrafts());
-    this.addEventListener('comment-discard', e =>
-      this._handleCommentDiscard(e)
-    );
-    this.addEventListener('change-message-deleted', () => this._reload());
+    this.addEventListener('change-message-deleted', () => fireReload(this));
     this.addEventListener('editable-content-save', e =>
       this._handleCommitMessageSave(e)
     );
@@ -638,28 +699,21 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     );
     this.addEventListener('open-fix-preview', e => this._onOpenFixPreview(e));
     this.addEventListener('close-fix-preview', e => this._onCloseFixPreview(e));
-    window.addEventListener('scroll', this.handleScroll);
     document.addEventListener('visibilitychange', this.handleVisibilityChange);
 
     this.addEventListener(EventType.SHOW_PRIMARY_TAB, e =>
       this._setActivePrimaryTab(e)
     );
-    this.addEventListener('show-secondary-tab', e =>
-      this._setActiveSecondaryTab(e)
-    );
     this.addEventListener('reload', e => {
-      e.stopPropagation();
-      this._reload(
+      this.loadData(
         /* isLocationChange= */ false,
         /* clearPatchset= */ e.detail && e.detail.clearPatchset
       );
     });
   }
 
-  /** @override */
-  disconnectedCallback() {
+  override disconnectedCallback() {
     this.disconnected$.next();
-    window.removeEventListener('scroll', this.handleScroll);
     document.removeEventListener(
       'visibilitychange',
       this.handleVisibilityChange
@@ -704,15 +758,10 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
   }
 
   _onCloseFixPreview(e: CloseFixPreviewEvent) {
-    if (e.detail.fixApplied) this._reload();
+    if (e.detail.fixApplied) fireReload(this);
   }
 
-  _handleToggleDiffMode(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e) || this.modifierPressed(e)) {
-      return;
-    }
-
-    e.preventDefault();
+  _handleToggleDiffMode() {
     if (this.viewState.diffMode === DiffViewMode.SIDE_BY_SIDE) {
       this.$.fileListHeader.setDiffViewMode(DiffViewMode.UNIFIED);
     } else {
@@ -735,7 +784,8 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
       activeTabName?: string;
       activeTabIndex?: number;
       scrollIntoView?: boolean;
-    }
+    },
+    src?: string
   ) {
     if (!paperTabs) return;
     const {activeTabName, activeTabIndex, scrollIntoView} = activeDetails;
@@ -755,7 +805,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
       }
     }
     if (activeIndex === -1) {
-      console.warn('tab not found with given info', activeDetails);
+      this.reporting.error(new Error(`tab not found for ${activeDetails}`));
       return;
     }
     const tabName = tabs[activeIndex].dataset['name'];
@@ -765,7 +815,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     if (paperTabs.selected !== activeIndex) {
       // paperTabs.selected is undefined during rendering
       if (paperTabs.selected !== undefined) {
-        this.reporting.reportInteraction('show-tab', {tabName});
+        this.reporting.reportInteraction(Interaction.SHOW_TAB, {tabName, src});
       }
       paperTabs.selected = activeIndex;
     }
@@ -776,14 +826,17 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
    * Changes active primary tab.
    */
   _setActivePrimaryTab(e: SwitchTabEvent) {
-    const primaryTabs = this.shadowRoot!.querySelector<PaperTabsElement>(
-      '#primaryTabs'
+    const primaryTabs =
+      this.shadowRoot!.querySelector<PaperTabsElement>('#primaryTabs');
+    const activeTabName = this._setActiveTab(
+      primaryTabs,
+      {
+        activeTabName: e.detail.tab,
+        activeTabIndex: e.detail.value,
+        scrollIntoView: e.detail.scrollIntoView,
+      },
+      (e.composedPath()?.[0] as Element | undefined)?.tagName
     );
-    const activeTabName = this._setActiveTab(primaryTabs, {
-      activeTabName: e.detail.tab,
-      activeTabIndex: e.detail.value,
-      scrollIntoView: e.detail.scrollIntoView,
-    });
     if (activeTabName) {
       this._activeTabs = [activeTabName, this._activeTabs[1]];
 
@@ -792,12 +845,10 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
         activeTabName
       );
       if (pluginIndex !== -1) {
-        this._selectedTabPluginEndpoint = this._dynamicTabContentEndpoints[
-          pluginIndex
-        ];
-        this._selectedTabPluginHeader = this._dynamicTabHeaderEndpoints[
-          pluginIndex
-        ];
+        this._selectedTabPluginEndpoint =
+          this._dynamicTabContentEndpoints[pluginIndex];
+        this._selectedTabPluginHeader =
+          this._dynamicTabHeaderEndpoints[pluginIndex];
       } else {
         this._selectedTabPluginEndpoint = '';
         this._selectedTabPluginHeader = '';
@@ -806,21 +857,28 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     this._tabState = e.detail.tabState;
   }
 
-  /**
-   * Changes active secondary tab.
-   */
-  _setActiveSecondaryTab(e: SwitchTabEvent) {
-    const secondaryTabs = this.shadowRoot!.querySelector<PaperTabsElement>(
-      '#secondaryTabs'
-    );
-    const activeTabName = this._setActiveTab(secondaryTabs, {
-      activeTabName: e.detail.tab,
-      activeTabIndex: e.detail.value,
-      scrollIntoView: e.detail.scrollIntoView,
-    });
-    if (activeTabName) {
-      this._activeTabs = [this._activeTabs[0], activeTabName];
+  _onPaperTabClick(e: MouseEvent) {
+    let target = e.target as HTMLElement | null;
+    let tabName: string | undefined;
+    // target can be slot child of papertab, so we search for tabName in parents
+    do {
+      tabName = target?.dataset?.['name'];
+      if (tabName) break;
+      target = target?.parentElement as HTMLElement | null;
+    } while (target);
+
+    if (tabName === PrimaryTab.COMMENT_THREADS) {
+      // Show unresolved threads by default only if they are present
+      const hasUnresolvedThreads =
+        (this._commentThreads ?? []).filter(thread => isUnresolved(thread))
+          .length > 0;
+      if (hasUnresolvedThreads) this.unresolvedOnly = true;
     }
+
+    this.reporting.reportInteraction(Interaction.SHOW_TAB, {
+      tabName,
+      src: 'paper-tab-click',
+    });
   }
 
   _handleCommitMessageSave(e: EditableContentSaveEvent) {
@@ -913,6 +971,14 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     }, {} as {[patchset: string]: number});
   }
 
+  /**
+   * Returns `this` as the visibility observer target for the keyboard shortcut
+   * mixin to decide whether shortcuts should be enabled or not.
+   */
+  _computeObserverTarget() {
+    return this;
+  }
+
   _computeText(patch: RevisionInfo, commentThreads: CommentThread[]) {
     const commentCount = this._robotCommentCountPerPatchSet(commentThreads);
     const commentCnt = commentCount[patch._number] || 0;
@@ -976,30 +1042,6 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     );
   }
 
-  _handleReloadCommentThreads() {
-    // Get any new drafts that have been saved in the diff view and show
-    // in the comment thread view.
-    this._reloadDrafts().then(() => {
-      this._commentThreads = this._changeComments?.getAllThreadsForChange();
-      flush();
-    });
-  }
-
-  _handleReloadDiffComments(
-    e: CustomEvent<{rootId: UrlEncodedCommentId; path: string}>
-  ) {
-    // Keeps the file list counts updated.
-    this._reloadDrafts().then(() => {
-      // Get any new drafts that have been saved in the thread view and show
-      // in the diff view.
-      this.$.fileList.reloadCommentsForThreadWithRootId(
-        e.detail.rootId,
-        e.detail.path
-      );
-      flush();
-    });
-  }
-
   _computeTotalCommentCounts(
     unresolvedCount: number,
     changeComments: ChangeComments
@@ -1016,79 +1058,6 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
       (unresolvedString && draftString ? ', ' : '') +
       draftString
     );
-  }
-
-  _handleCommentSave(e: CustomEvent<{comment: DraftInfo}>) {
-    const draft = e.detail.comment;
-    if (!draft.__draft || !draft.path) return;
-    if (!this._patchRange)
-      throw new Error('missing required _patchRange property');
-
-    draft.patch_set = draft.patch_set || this._patchRange.patchNum;
-
-    // The use of path-based notification helpers (set, push) can’t be used
-    // because the paths could contain dots in them. A new object must be
-    // created to satisfy Polymer’s dirty checking.
-    // https://github.com/Polymer/polymer/issues/3127
-    const diffDrafts = {...this._diffDrafts};
-    if (!diffDrafts[draft.path]) {
-      diffDrafts[draft.path] = [draft];
-      this._diffDrafts = diffDrafts;
-      return;
-    }
-    for (let i = 0; i < diffDrafts[draft.path].length; i++) {
-      if (diffDrafts[draft.path][i].id === draft.id) {
-        diffDrafts[draft.path][i] = draft;
-        this._diffDrafts = diffDrafts;
-        return;
-      }
-    }
-    diffDrafts[draft.path].push(draft);
-    diffDrafts[draft.path].sort(
-      (c1, c2) =>
-        // No line number means that it’s a file comment. Sort it above the
-        // others.
-        (c1.line || -1) - (c2.line || -1)
-    );
-    this._diffDrafts = diffDrafts;
-  }
-
-  _handleCommentDiscard(e: CustomEvent<{comment: DraftInfo}>) {
-    const draft = e.detail.comment;
-    if (!draft.__draft || !draft.path) {
-      return;
-    }
-
-    if (!this._diffDrafts || !this._diffDrafts[draft.path]) {
-      return;
-    }
-    let index = -1;
-    for (let i = 0; i < this._diffDrafts[draft.path].length; i++) {
-      if (this._diffDrafts[draft.path][i].id === draft.id) {
-        index = i;
-        break;
-      }
-    }
-    if (index === -1) {
-      // It may be a draft that hasn’t been added to _diffDrafts since it was
-      // never saved.
-      return;
-    }
-
-    if (!this._patchRange)
-      throw new Error('missing required _patchRange property');
-    draft.patch_set = draft.patch_set || this._patchRange.patchNum;
-
-    // The use of path-based notification helpers (set, push) can’t be used
-    // because the paths could contain dots in them. A new object must be
-    // created to satisfy Polymer’s dirty checking.
-    // https://github.com/Polymer/polymer/issues/3127
-    const diffDrafts = {...this._diffDrafts};
-    diffDrafts[draft.path].splice(index, 1);
-    if (diffDrafts[draft.path].length === 0) {
-      delete diffDrafts[draft.path];
-    }
-    this._diffDrafts = diffDrafts;
   }
 
   _handleReplyTap(e: MouseEvent) {
@@ -1158,7 +1127,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
       {once: true}
     );
     this.$.replyOverlay.cancel();
-    this._reload();
+    fireReload(this);
   }
 
   _handleReplyCancel() {
@@ -1182,22 +1151,11 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     this._openReplyDialog(target);
   }
 
-  readonly handleScroll = () => {
-    this.scrollTask = debounce(
-      this.scrollTask,
-      () => (this.viewState.scrollTop = document.body.scrollTop),
-      150
-    );
-  };
-
   _setShownFiles(e: CustomEvent<{length: number}>) {
     this._shownFileCount = e.detail.length;
   }
 
-  _expandAllDiffs(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) {
-      return;
-    }
+  _expandAllDiffs() {
     this.$.fileList.expandAllDiffs();
   }
 
@@ -1205,9 +1163,41 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     this.$.fileList.collapseAllDiffs();
   }
 
+  /**
+   * ChangeView is never re-used for different changes. It is safer and simpler
+   * to just re-create another change view when the user switches to a new
+   * change page. Thus we need a reliable way to detect that the change view
+   * does not match the current change number anymore.
+   *
+   * If this method returns true, then the change view should not do anything
+   * anymore. The app element makes sure that an obsolete change view is not
+   * shown anymore, so if the change view is still and doing some update to
+   * itself, then that is not dangerous. But for example it should not call
+   * navigateToChange() anymore. That would very likely cause erroneous
+   * behavior.
+   */
+  private isChangeObsolete() {
+    // While this._changeNum is undefined the change view is fresh and has just
+    // not updated it to params.changeNum yet. Not obsolete in that case.
+    if (this._changeNum === undefined) return false;
+    // this.params reflects the current state of the URL. If this._changeNum
+    // does not match it anymore, then this view must be considered obsolete.
+    return this._changeNum !== this.params?.changeNum;
+  }
+
   _paramsChanged(value: AppElementChangeViewParams) {
     if (value.view !== GerritView.CHANGE) {
       this._initialLoadComplete = false;
+      querySelectorAll(this, 'gr-overlay').forEach(overlay =>
+        (overlay as GrOverlay).close()
+      );
+      return;
+    }
+
+    if (this.isChangeObsolete()) {
+      // Tell the app element that we are not going to handle the new change
+      // number and that they have to create a new change view.
+      fireEvent(this, EventType.RECREATE_CHANGE_VIEW);
       return;
     }
 
@@ -1215,13 +1205,14 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
       this.restApiService.setInProjectLookup(value.changeNum, value.project);
     }
 
+    if (value.basePatchNum === undefined)
+      value.basePatchNum = ParentPatchSetNum;
+
     const patchChanged =
       this._patchRange &&
       value.patchNum !== undefined &&
-      value.basePatchNum !== undefined &&
       (this._patchRange.patchNum !== value.patchNum ||
         this._patchRange.basePatchNum !== value.basePatchNum);
-    const changeChanged = this._changeNum !== value.changeNum;
 
     let rightPatchNumChanged =
       this._patchRange &&
@@ -1230,15 +1221,20 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
 
     const patchRange: ChangeViewPatchRange = {
       patchNum: value.patchNum,
-      basePatchNum: value.basePatchNum || ParentPatchSetNum,
+      basePatchNum: value.basePatchNum,
     };
 
     this.$.fileList.collapseAllDiffs();
     this._patchRange = patchRange;
+    this.scrollCommentId = value.commentId;
+
+    const patchKnown =
+      !patchRange.patchNum ||
+      (this._allPatchSets ?? []).some(ps => ps.num === patchRange.patchNum);
 
     // If the change has already been loaded and the parameter change is only
     // in the patch range, then don't do a full reload.
-    if (!changeChanged && patchChanged) {
+    if (this._changeNum !== undefined && patchChanged && patchKnown) {
       if (!patchRange.patchNum) {
         patchRange.patchNum = computeLatestPatchNum(this._allPatchSets);
         rightPatchNumChanged = true;
@@ -1251,7 +1247,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
 
     this._initialLoadComplete = false;
     this._changeNum = value.changeNum;
-    this._reload(true).then(() => {
+    this.loadData(true).then(() => {
       this._performPostLoadTasks();
     });
 
@@ -1266,18 +1262,13 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     let primaryTab = PrimaryTab.FILES;
     if (params && params.queryMap && params.queryMap.has('tab')) {
       primaryTab = params.queryMap.get('tab') as PrimaryTab;
+    } else if (params && 'commentId' in params) {
+      primaryTab = PrimaryTab.COMMENT_THREADS;
     }
     this._setActivePrimaryTab(
       new CustomEvent('initActiveTab', {
         detail: {
           tab: primaryTab,
-        },
-      })
-    );
-    this._setActiveSecondaryTab(
-      new CustomEvent('initActiveTab', {
-        detail: {
-          tab: SecondaryTab.CHANGE_LOG,
         },
       })
     );
@@ -1301,11 +1292,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     this._sendShowChangeEvent();
 
     setTimeout(() => {
-      if (this.viewState.scrollTop) {
-        document.documentElement.scrollTop = document.body.scrollTop = this.viewState.scrollTop;
-      } else {
-        this._maybeScrollToMessage(window.location.hash);
-      }
+      this._maybeScrollToMessage(window.location.hash);
       this._initialLoadComplete = true;
     });
   }
@@ -1349,7 +1336,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     assertIsDefined(this._change, '_change');
     if (!this._patchRange)
       throw new Error('missing required _patchRange property');
-    const hash = MSG_PREFIX + e.detail.id;
+    const hash = PREFIX + e.detail.id;
     const url = GerritNav.getUrlForChange(
       this._change,
       this._patchRange.patchNum,
@@ -1361,8 +1348,8 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
   }
 
   _maybeScrollToMessage(hash: string) {
-    if (hash.startsWith(MSG_PREFIX) && this.messagesList) {
-      this.messagesList.scrollToMessage(hash.substr(MSG_PREFIX.length));
+    if (hash.startsWith(PREFIX) && this.messagesList) {
+      this.messagesList.scrollToMessage(hash.substr(PREFIX.length));
     }
   }
 
@@ -1411,13 +1398,6 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
 
       if (this.viewState.showReplyDialog) {
         this._openReplyDialog(this.$.replyDialog.FocusTarget.ANY);
-        // TODO(kaspern@): Find a better signal for when to call center.
-        setTimeout(() => {
-          this.$.replyOverlay.center();
-        }, 100);
-        setTimeout(() => {
-          this.$.replyOverlay.center();
-        }, 1000);
         this.set('viewState.showReplyDialog', false);
       }
     });
@@ -1432,7 +1412,6 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
 
   _resetFileListViewState() {
     this.set('viewState.selectedFileIndex', 0);
-    this.set('viewState.scrollTop', 0);
     if (
       !!this.viewState.changeNum &&
       this.viewState.changeNum !== this._changeNum
@@ -1487,7 +1466,8 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     const parentCount = hasOwnProperty(parentCounts, 1) ? parentCounts[1] : 1;
 
     const preferFirst =
-      this._prefs && this._prefs.default_base_for_merges === 'FIRST_PARENT';
+      this._prefs &&
+      this._prefs.default_base_for_merges === DefaultBase.FIRST_PARENT;
 
     if (parentCount > 1 && preferFirst && !patchRange.patchNum) {
       return -1;
@@ -1500,29 +1480,14 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     return GerritNav.getUrlForChange(change);
   }
 
-  _computeShowCommitInfo(
-    changeStatuses: string[],
-    current_revision: RevisionInfo
-  ) {
-    return (
-      changeStatuses.length === 1 &&
-      changeStatuses[0] === 'Merged' &&
-      current_revision
-    );
-  }
-
   _computeReplyButtonLabel(
-    changeRecord?: ElementPropertyDeepChange<
-      GrChangeView,
-      '_diffDrafts'
-    > | null,
+    drafts?: {[path: string]: UIDraft[]},
     canStartReview?: boolean
   ) {
-    if (changeRecord === undefined || canStartReview === undefined) {
+    if (drafts === undefined || canStartReview === undefined) {
       return 'Reply';
     }
 
-    const drafts = (changeRecord && changeRecord.base) || {};
     const draftCount = Object.keys(drafts).reduce(
       (count, file) => count + drafts[file].length,
       0
@@ -1535,43 +1500,61 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     return label;
   }
 
-  _handleOpenReplyDialog(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e) || this.modifierPressed(e)) {
-      return;
-    }
+  _handleOpenReplyDialog() {
     this._getLoggedIn().then(isLoggedIn => {
       if (!isLoggedIn) {
         fireEvent(this, 'show-auth-required');
         return;
       }
-
-      e.preventDefault();
       this._openReplyDialog(this.$.replyDialog.FocusTarget.ANY);
     });
   }
 
-  _handleOpenDownloadDialogShortcut(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e) || this.modifierPressed(e)) {
-      return;
-    }
-
-    e.preventDefault();
-    this._handleOpenDownloadDialog();
+  _handleOpenSubmitDialog() {
+    if (!this._submitEnabled) return;
+    this.$.actions.showSubmitDialog();
   }
 
-  _handleEditTopic(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e) || this.modifierPressed(e)) {
-      return;
+  _handleToggleAttentionSet() {
+    if (!this._change || !this._account?._account_id) return;
+    if (!this._loggedIn || !isInvolved(this._change, this._account)) return;
+    if (!this._change.attention_set) this._change.attention_set = {};
+    if (hasAttention(this._account, this._change)) {
+      const reason = getRemovedByReason(this._account, this._serverConfig);
+      if (this._change.attention_set)
+        delete this._change.attention_set[this._account._account_id];
+      fireAlert(this, 'Removing you from the attention set ...');
+      this.restApiService
+        .removeFromAttentionSet(
+          this._change._number,
+          this._account._account_id,
+          reason
+        )
+        .then(() => {
+          fireEvent(this, 'hide-alert');
+        });
+    } else {
+      const reason = getAddedByReason(this._account, this._serverConfig);
+      fireAlert(this, 'Adding you to the attention set ...');
+      this._change.attention_set[this._account._account_id!] = {
+        account: this._account,
+        reason,
+        reason_account: this._account,
+      };
+      this.restApiService
+        .addToAttentionSet(
+          this._change._number,
+          this._account._account_id,
+          reason
+        )
+        .then(() => {
+          fireEvent(this, 'hide-alert');
+        });
     }
-
-    e.preventDefault();
-    this.$.metadata.editTopic();
+    this._change = {...this._change};
   }
 
-  _handleDiffAgainstBase(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) {
-      return;
-    }
+  _handleDiffAgainstBase() {
     assertIsDefined(this._change, '_change');
     if (!this._patchRange)
       throw new Error('missing required _patchRange property');
@@ -1582,10 +1565,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     GerritNav.navigateToChange(this._change, this._patchRange.patchNum);
   }
 
-  _handleDiffBaseAgainstLeft(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) {
-      return;
-    }
+  _handleDiffBaseAgainstLeft() {
     assertIsDefined(this._change, '_change');
     if (!this._patchRange)
       throw new Error('missing required _patchRange property');
@@ -1596,10 +1576,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     GerritNav.navigateToChange(this._change, this._patchRange.basePatchNum);
   }
 
-  _handleDiffAgainstLatest(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) {
-      return;
-    }
+  _handleDiffAgainstLatest() {
     assertIsDefined(this._change, '_change');
     if (!this._patchRange)
       throw new Error('missing required _patchRange property');
@@ -1615,10 +1592,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     );
   }
 
-  _handleDiffRightAgainstLatest(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) {
-      return;
-    }
+  _handleDiffRightAgainstLatest() {
     assertIsDefined(this._change, '_change');
     const latestPatchNum = computeLatestPatchNum(this._allPatchSets);
     if (!this._patchRange)
@@ -1634,10 +1608,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     );
   }
 
-  _handleDiffBaseAgainstLatest(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) {
-      return;
-    }
+  _handleDiffBaseAgainstLatest() {
     assertIsDefined(this._change, '_change');
     if (!this._patchRange)
       throw new Error('missing required _patchRange property');
@@ -1652,63 +1623,24 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     GerritNav.navigateToChange(this._change, latestPatchNum);
   }
 
-  _handleRefreshChange(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) {
-      return;
-    }
-    e.preventDefault();
-    this._reload(/* isLocationChange= */ false, /* clearPatchset= */ true);
-  }
-
-  _handleToggleChangeStar(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e) || this.modifierPressed(e)) {
-      return;
-    }
-    e.preventDefault();
+  _handleToggleChangeStar() {
     this.$.changeStar.toggleStar();
   }
 
-  _handleUpToDashboard(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e) || this.modifierPressed(e)) {
-      return;
-    }
-
-    e.preventDefault();
-    this._determinePageBack();
-  }
-
-  _handleExpandAllMessages(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e) || this.modifierPressed(e)) {
-      return;
-    }
-
-    e.preventDefault();
+  _handleExpandAllMessages() {
     if (this.messagesList) {
       this.messagesList.handleExpandCollapse(true);
     }
   }
 
-  _handleCollapseAllMessages(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e) || this.modifierPressed(e)) {
-      return;
-    }
-
-    e.preventDefault();
+  _handleCollapseAllMessages() {
     if (this.messagesList) {
       this.messagesList.handleExpandCollapse(false);
     }
   }
 
-  _handleOpenDiffPrefsShortcut(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e) || this.modifierPressed(e)) {
-      return;
-    }
-
-    if (this._diffPrefsDisabled) {
-      return;
-    }
-
-    e.preventDefault();
+  _handleOpenDiffPrefsShortcut() {
+    if (!this._loggedIn) return;
     this.$.fileList.openDiffPrefs();
   }
 
@@ -1731,7 +1663,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
           labelDict.approved &&
           labelDict.approved._account_id === removed._account_id
         ) {
-          this._reload();
+          fireReload(this);
           return;
         }
       }
@@ -1765,8 +1697,6 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
       // the following code should be executed no matter open succeed or not
       this._resetReplyOverlayFocusStops();
       this.$.replyDialog.open(section);
-      flush();
-      this.$.replyOverlay.center();
     });
     fireDialogChange(this, {opened: true});
     this._changeViewAriaHidden = true;
@@ -1815,7 +1745,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
       changeIsOpen(change)
     ) {
       fireAlert(this, 'Change edit not found. Please create a change edit.');
-      GerritNav.navigateToChange(change);
+      fireReload(this, true);
       return;
     }
 
@@ -1828,7 +1758,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
         this,
         'Change edits cannot be created if change is merged or abandoned. Redirected to non edit mode.'
       );
-      GerritNav.navigateToChange(change);
+      fireReload(this, true);
       return;
     }
 
@@ -1866,6 +1796,32 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     }
   }
 
+  computeRevertSubmitted(change?: ChangeInfo | ParsedChangeInfo) {
+    if (!change?.messages) return;
+    Promise.all(
+      getRevertCreatedChangeIds(change.messages).map(changeId =>
+        this.restApiService.getChange(changeId)
+      )
+    ).then(changes => {
+      // if a change is deleted then getChanges returns null for that changeId
+      changes = changes.filter(
+        change => change && change.status !== ChangeStatus.ABANDONED
+      );
+      if (!changes.length) return;
+      const submittedRevert = changes.find(
+        change => change?.status === ChangeStatus.MERGED
+      );
+      if (!this._changeStatuses) return;
+      if (submittedRevert) {
+        this.revertedChange = submittedRevert;
+        this.push('_changeStatuses', ChangeStates.REVERT_SUBMITTED);
+      } else {
+        if (changes[0]) this.revertedChange = changes[0];
+        this.push('_changeStatuses', ChangeStates.REVERT_CREATED);
+      }
+    });
+  }
+
   _getChangeDetail() {
     if (!this._changeNum)
       throw new Error('missing required changeNum property');
@@ -1888,10 +1844,10 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
         // TODO(TS): code needs second thought,
         // it might be that nulls were assigned to trigger some bindings
         if (!change.topic) {
-          change.topic = (null as unknown) as undefined;
+          change.topic = null as unknown as undefined;
         }
         if (!change.reviewer_updates) {
-          change.reviewer_updates = (null as unknown) as undefined;
+          change.reviewer_updates = null as unknown as undefined;
         }
         const latestRevisionSha = this._getLatestRevisionSHA(change);
         if (!latestRevisionSha)
@@ -1910,8 +1866,9 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
         // Slice returns a number as a string, convert to an int.
         this._lineHeight = Number(lineHeight.slice(0, lineHeight.length - 2));
 
-        this._change = change;
         this.changeService.updateChange(change);
+        this._change = change;
+        this.computeRevertSubmitted(change);
         if (
           !this._patchRange ||
           !this._patchRange.patchNum ||
@@ -2028,10 +1985,6 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
       });
   }
 
-  _reloadDraftsWithCallback(e: CustomEvent<{resolve: () => void}>) {
-    return this._reloadDrafts().then(() => e.detail.resolve());
-  }
-
   /**
    * Fetches a new changeComment object, and data for all types of comments
    * (comments, robot comments, draft comments) is requested.
@@ -2041,38 +1994,18 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     // a new change being loaded and then paired with outdated comments.
     this._changeComments = undefined;
     this._commentThreads = undefined;
-    this._diffDrafts = undefined;
     this._draftCommentThreads = undefined;
     this._robotCommentThreads = undefined;
     if (!this._changeNum)
       throw new Error('missing required changeNum property');
 
-    return this.$.commentAPI
-      .loadAll(this._changeNum, this._patchRange?.patchNum)
-      .then(comments => {
-        this._recomputeComments(comments);
-      });
+    this.commentsService.loadAll(this._changeNum, this._patchRange?.patchNum);
   }
 
-  /**
-   * Fetches a new changeComment object, but only updated data for drafts is
-   * requested.
-   *
-   * TODO(taoalpha): clean up this and _reloadComments, as single comment
-   * can be a thread so it does not make sense to only update drafts
-   * without updating threads
-   */
-  _reloadDrafts() {
-    if (!this._changeNum)
-      throw new Error('missing required changeNum property');
-    return this.$.commentAPI
-      .reloadDrafts(this._changeNum)
-      .then(comments => this._recomputeComments(comments));
-  }
-
-  _recomputeComments(comments: ChangeComments) {
+  @observe('_changeComments')
+  changeCommentsChanged(comments?: ChangeComments) {
+    if (!comments) return;
     this._changeComments = comments;
-    this._diffDrafts = {...this._changeComments.drafts};
     this._commentThreads = this._changeComments.getAllThreadsForChange();
     this._draftCommentThreads = this._commentThreads
       .filter(isDraftThread)
@@ -2100,10 +2033,11 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
    * Some non-core data loading may still be in-flight when the core data
    * promise resolves.
    */
-  _reload(isLocationChange?: boolean, clearPatchset?: boolean) {
+  loadData(isLocationChange?: boolean, clearPatchset?: boolean): Promise<void> {
+    if (this.isChangeObsolete()) return Promise.resolve();
     if (clearPatchset && this._change) {
       GerritNav.navigateToChange(this._change);
-      return Promise.resolve([]);
+      return Promise.resolve();
     }
     this._loading = true;
     this.reporting.time(Timing.CHANGE_RELOAD);
@@ -2116,7 +2050,6 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     // are loaded.
     const detailCompletes = this._getChangeDetail();
     allDataPromises.push(detailCompletes);
-    this.checksService.reloadAll();
 
     // Resolves when the loading flag is set to false, meaning that some
     // change content may start appearing.
@@ -2128,7 +2061,11 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
       .then(() => {
         this.reporting.timeEnd(Timing.CHANGE_RELOAD);
         if (isLocationChange) {
-          this.reporting.changeDisplayed();
+          this.reporting.changeDisplayed({
+            isOwner: isOwner(this._change, this._account),
+            isReviewer: isReviewer(this._change, this._account),
+            isCc: isCc(this._change, this._account),
+          });
         }
       });
 
@@ -2139,10 +2076,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     });
     allDataPromises.push(projectConfigLoaded);
 
-    // Resolves when change comments have loaded (comments, drafts and robot
-    // comments).
-    const commentsLoaded = this._reloadComments();
-    allDataPromises.push(commentsLoaded);
+    this._reloadComments();
 
     let coreDataPromise;
 
@@ -2160,20 +2094,12 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
         loadingFlagSet,
       ]);
 
-      // Promise resolves when mergeability information has loaded.
-      const mergeabilityLoaded = detailAndPatchResourcesLoaded.then(() =>
+      // _getChangeDetail triggers reload of change actions already.
+
+      // The core data is loaded when mergeability is known.
+      coreDataPromise = detailAndPatchResourcesLoaded.then(() =>
         this._getMergeability()
       );
-      allDataPromises.push(mergeabilityLoaded);
-
-      // Promise resovles when the change actions have loaded.
-      const actionsLoaded = detailAndPatchResourcesLoaded.then(() =>
-        this.$.actions.reload()
-      );
-      allDataPromises.push(actionsLoaded);
-
-      // The core data is loaded when both mergeability and actions are known.
-      coreDataPromise = Promise.all([mergeabilityLoaded, actionsLoaded]);
     } else {
       // Resolves when the file list has loaded.
       const fileListReload = loadingFlagSet.then(() =>
@@ -2190,15 +2116,11 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
       });
       allDataPromises.push(latestCommitMessageLoaded);
 
-      // Promise resolves when mergeability information has loaded.
-      const mergeabilityLoaded = loadingFlagSet.then(() =>
-        this._getMergeability()
-      );
-      allDataPromises.push(mergeabilityLoaded);
-
       // Core data is loaded when mergeability has been loaded.
-      coreDataPromise = Promise.all([mergeabilityLoaded]);
+      coreDataPromise = loadingFlagSet.then(() => this._getMergeability());
     }
+
+    allDataPromises.push(coreDataPromise);
 
     if (isLocationChange) {
       this._editingCommitMessage = false;
@@ -2227,6 +2149,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     }
 
     Promise.all(allDataPromises).then(() => {
+      // Loading of commments data is no longer part of this reporting
       this.reporting.timeEnd(Timing.CHANGE_DATA);
       if (isLocationChange) {
         this.reporting.changeFullyLoaded();
@@ -2269,7 +2192,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     return Promise.all(promises);
   }
 
-  _getMergeability() {
+  _getMergeability(): Promise<void> {
     if (!this._change) {
       this._mergeable = null;
       return Promise.resolve();
@@ -2305,16 +2228,30 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
       });
   }
 
-  _computeCanStartReview(change: ChangeInfo) {
+  _computeResolveWeblinks(
+    change?: ChangeInfo,
+    commitInfo?: CommitInfo,
+    config?: ServerInfo
+  ) {
+    if (!change || !commitInfo || !config) {
+      return [];
+    }
+    return GerritNav.getResolveConflictsWeblinks(
+      change.project,
+      commitInfo.commit,
+      {
+        weblinks: commitInfo.resolve_conflicts_web_links,
+        config,
+      }
+    );
+  }
+
+  _computeCanStartReview(change: ChangeInfo): boolean {
     return !!(
       change.actions &&
       change.actions.ready &&
       change.actions.ready.enabled
     );
-  }
-
-  _computeReplyDisabled() {
-    return false;
   }
 
   _computeChangePermalinkAriaLabel(changeNum: NumericChangeId) {
@@ -2325,7 +2262,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
    * Returns the text to be copied when
    * click the copy icon next to change subject
    */
-  _computeCopyTextForTitle(change: ChangeInfo) {
+  _computeCopyTextForTitle(change: ChangeInfo): string {
     return (
       `${change._number}: ${change.subject} | ` +
       `${location.protocol}//${location.host}` +
@@ -2351,9 +2288,13 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     }
 
     this._updateCheckTimerHandle = window.setTimeout(() => {
+      if (!this.isViewCurrent) {
+        this._startUpdateCheckTimer();
+        return;
+      }
       assertIsDefined(this._change, '_change');
       const change = this._change;
-      fetchChangeUpdates(change, this.restApiService).then(result => {
+      this.changeService.fetchChangeUpdates(change).then(result => {
         let toastMessage = null;
         if (!result.isLatest) {
           toastMessage = ReloadToastMessage.NEWER_REVISION;
@@ -2375,7 +2316,12 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
         // reply, or the change might have been reloaded, or it could be in the
         // process of being reloaded.
         const changeWasReloaded = change !== this._change;
-        if (!toastMessage || this._loading || changeWasReloaded) {
+        if (
+          !toastMessage ||
+          this._loading ||
+          changeWasReloaded ||
+          !this.isViewCurrent
+        ) {
           this._startUpdateCheckTimer();
           return;
         }
@@ -2389,12 +2335,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
               dismissOnNavigation: true,
               showDismiss: true,
               action: 'Reload',
-              callback: () => {
-                this._reload(
-                  /* isLocationChange= */ false,
-                  /* clearPatchset= */ true
-                );
-              },
+              callback: () => fireReload(this, true),
             },
             composed: true,
             bubbles: true,
@@ -2455,9 +2396,10 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
 
   _handleFileActionTap(e: CustomEvent<{path: string; action: string}>) {
     e.preventDefault();
-    const controls = this.$.fileListHeader.shadowRoot!.querySelector<GrEditControls>(
-      '#editControls'
-    );
+    const controls =
+      this.$.fileListHeader.shadowRoot!.querySelector<GrEditControls>(
+        '#editControls'
+      );
     if (!controls) throw new Error('Missing edit controls');
     assertIsDefined(this._change, '_change');
     if (!this._patchRange)
@@ -2553,13 +2495,24 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
   }
 
   _handleToggleStar(e: CustomEvent<{change: ChangeInfo; starred: boolean}>) {
+    if (e.detail.starred) {
+      this.reporting.reportInteraction('change-starred-from-change-view');
+      this.lastStarredTimestamp = Date.now();
+    } else {
+      if (
+        this.lastStarredTimestamp &&
+        Date.now() - this.lastStarredTimestamp < ACCIDENTAL_STARRING_LIMIT_MS
+      ) {
+        this.reporting.reportInteraction('change-accidentally-starred');
+      }
+    }
     this.restApiService.saveChangeStarred(
       e.detail.change._number,
       e.detail.starred
     );
   }
 
-  _getRevisionInfo(change: ChangeInfo | ParsedChangeInfo) {
+  _getRevisionInfo(change: ChangeInfo | ParsedChangeInfo): RevisionInfoClass {
     return new RevisionInfoClass(change);
   }
 
@@ -2568,10 +2521,6 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     revisions: {[revisionId: string]: RevisionInfo}
   ) {
     return currentRevision && revisions && revisions[currentRevision];
-  }
-
-  _computeDiffPrefsDisabled(disableDiffPrefs: boolean, loggedIn: boolean) {
-    return disableDiffPrefs || !loggedIn;
   }
 
   /**
@@ -2584,7 +2533,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
   /**
    * Wrapper for using in the element template and computed properties
    */
-  _hasEditBasedOnCurrentPatchSet(allPatchSets: PatchSet[]) {
+  _hasEditBasedOnCurrentPatchSet(allPatchSets: PatchSet[]): boolean {
     return hasEditBasedOnCurrentPatchSet(allPatchSets);
   }
 
@@ -2596,7 +2545,7 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
       ChangeViewPatchRange,
       ChangeViewPatchRange
     >
-  ) {
+  ): boolean {
     const patchRange = patchRangeRecord.base;
     if (!patchRange) {
       return false;
@@ -2615,6 +2564,10 @@ export class GrChangeView extends KeyboardShortcutMixin(PolymerElement) {
     return this.shadowRoot!.querySelector<GrRelatedChangesList>(
       '#relatedChanges'
     );
+  }
+
+  createTitle(shortcutName: Shortcut, section: ShortcutSection) {
+    return this.shortcuts.createTitle(shortcutName, section);
   }
 }
 

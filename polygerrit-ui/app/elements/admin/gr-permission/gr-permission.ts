@@ -148,8 +148,7 @@ export class GrPermission extends PolymerElement {
     this.addEventListener('access-saved', () => this._handleAccessSaved());
   }
 
-  /** @override */
-  ready() {
+  override ready() {
     super.ready();
     this._setupValues();
   }
@@ -381,6 +380,10 @@ export class GrPermission extends PolymerElement {
     if (this.groups && !this.groups[groupId]) {
       this.groups[groupId] = {name: this.$.groupAutocomplete.text};
     }
+
+    // Clear the text of the auto-complete box, so that the user can add the
+    // next group.
+    this.$.groupAutocomplete.text = '';
 
     // Wait for new rule to get value populated via gr-rule-editor, and then
     // add to permission values as well, so that the change gets propagated

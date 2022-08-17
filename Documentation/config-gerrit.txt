@@ -652,6 +652,43 @@ This parameter only affects git over http and git over SSH traffic.
 +
 By default this is set to false.
 
+[[auth.userNameCaseInsensitive]]auth.userNameCaseInsensitive::
++
+If set the username will be handled case insensitively but case preserving,
+i.e. a user can login with `johndoe` or `JohnDoe` for the same account
+created for `JohnDoe`. The form of the username used during account creation
+will be used wherever the username is displayed. Sandbox branches created
+for a user can also only be created for this original form.
++
+Note, that this does not work for all existing accounts, if they were
+not originally created with all lowercase, since the note keys of the
+external IDs will not match the new scheme. For more details refer to
+the link:config-accounts.html#external-ids[External ID documentation].
++
+Gerrit provides the
+link:pgm-ChangeExternalIdCaseSensitivity.html[offline]
+and the online link:externalid-case-insensitivity.html#online-migration[online]
+tools to migrate existing accounts to match the new scheme.
++
+Naturally, if there were two accounts only different in capitalization,
+e.g. `johndoe` and `JohnDoe`, the account `JohnDoe` will not be able
+to authenticate anymore after setting this option. If such duplicate
+accounts exist the migration tool will fail, since the newly computed
+note name would be identical and thus conflict. These duplicates thus
+have to be deleted manually by deleting the respective external ID.
++
+For newly initialized sites this option defaults to true.
++
+Default is false.
+
+[[auth.userNameCaseInsensitiveMigrationMode]]auth.userNameCaseInsensitiveMigrationMode::
++
+Setting migration mode to true allows to fallback to case sensitive
+behaviour if the migrated external ID cannot be found. This allows to
+trigger the migration while Gerrit process is running.
++
+Default is false.
+
 [[auth.enableRunAs]]auth.enableRunAs::
 +
 If true HTTP REST APIs will accept the `X-Gerrit-RunAs` HTTP request
@@ -808,18 +845,21 @@ varies by the cache. For most caches where the in-memory size of each
 entry is relatively the same, memoryLimit is currently defined to be
 the number of entries held by the cache (each entry costs 1).
 +
-For caches where the size of an entry can vary significantly between
-individual entries (notably `"diff"`, `"diff_intraline"`), memoryLimit
-is an approximation of the total number of bytes stored by the cache.
-Larger entries that represent bigger patch sets or longer source files
-will consume a bigger portion of the memoryLimit. For these caches the
-memoryLimit should be set to roughly the amount of RAM (in bytes) the
-administrator can dedicate to the cache.
+For caches where the size of an entry can vary significantly between individual
+entries (notably `"git_modified_files"`, `"modified_files"`, `"git_file_diff"`,
+`"gerrit_file_diff"`, `"diff_intraline"`), memoryLimit is an approximation of
+the total number of bytes stored by the cache.  Larger entries that represent
+bigger patch sets or longer source files will consume a bigger portion of the
+memoryLimit. For these caches the memoryLimit should be set to roughly the
+amount of RAM (in bytes) the administrator can dedicate to the cache.
 +
 Default is 1024 for most caches, except:
 +
 * `"adv_bases"`: default is `4096`
-* `"diff"`: default is `10m` (10 MiB of memory)
+* `"git_modified_files"`: default is `10m` (10 MiB of memory)
+* `"modified_files"`: default is `10m` (10 MiB of memory)
+* `"git_file_diff"`: default is `10m` (10 MiB of memory)
+* `"gerrit_file_diff"`: default is `10m` (10 MiB of memory)
 * `"diff_intraline"`: default is `10m` (10 MiB of memory)
 * `"diff_summary"`: default is `10m` (10 MiB of memory)
 * `"external_ids_map"`: default is `2` and should not be changed
@@ -916,6 +956,12 @@ information is obtained from NoteDb data in the `All-Users` repo.
 +
 If direct updates are made to `All-Users`, this cache should be flushed.
 
+cache `"approvals"`::
++
+Cache entries contain approvals for a given patch set. This includes
+approvals granted on this patch set as well as approvals copied from
+earlier patch sets.
+
 cache `"adv_bases"`::
 +
 Used only for push over smart HTTP when branch level access controls
@@ -944,16 +990,38 @@ or multiple replica nodes.
 The cache should be flushed whenever NoteDb change metadata in a repository is
 modified outside of Gerrit.
 
-cache `"diff"`::
+cache `"git_modified_files"`::
 +
-Each item caches the differences between two commits, at both the
-directory and file levels.  Gerrit uses this cache to accelerate
-the display of affected file names, as well as file contents.
+Each item caches the list of git modified files between two git trees
+corresponding to two different commits. This cache does not read the actual
+file contents nor does it include the edits (modified regions) of the files.
+
+cache `"modified_files"`::
++
+Each item caches the list of modified files between two commits. This cache
+is similar to the `git_modified_files` cache but performs extra logic including
+filtering out files that are untouched by both commits because they were purely
+modified between the parent commits.
+
+cache `"git_file_diff"`::
++
+Each item caches the pure git diff between two git trees for a specific file
+path. The diff includes all the file attributes (old/new paths, change/patch
+types) as well as the list of edits corresponding to the modified regions in
+the file.
+
+cache `"gerrit_file_diff"`::
++
+Each item caches the diff between two git commits for a specific file path.
+This cache is similar to the `git_file_diff` cache but performs extra logic
+including identifying the edits that are due to rebase. The diff for the
+"commit message" and "merge list" can also be requested from this cache.
 +
 Entries in this cache are relatively large, so memoryLimit is an
 estimate in bytes of memory used. Administrators should try to target
 cache.diff.memoryLimit to fit all changes users will view in a 1 or 2
-day span.
+day span. The same applies for other diff caches: `"git_modified_files"`,
+`"modified_files"` and `"git_file_diff"`.
 
 cache `"diff_intraline"`::
 +
@@ -1168,9 +1236,9 @@ See also link:cmd-flush-caches.html[gerrit flush-caches].
 
 ==== [[cache_options]]Cache Options
 
-[[cache.diff.timeout]]cache.diff.timeout::
+[[cache.git_file_diff.timeout]]cache.git_file_diff.timeout::
 +
-Maximum number of milliseconds to wait for diff data before giving up and
+Maximum number of milliseconds to wait for git diff data before giving up and
 falling back on a simpler diff algorithm that will not be able to break down
 modified regions into smaller ones. This is a work around for an infinite loop
 bug in the default difference algorithm implementation.
@@ -1292,15 +1360,16 @@ Default is true.
 
 [[change.cacheAutomerge]]change.cacheAutomerge::
 +
-When reviewing merge commits, the left-hand side shows the output of the
-result of JGit's automatic merge algorithm. This option controls whether
-this output is cached in the change repository, or if only the diff is
-cached in the persistent `diff` cache.
+When reviewing merge commits, the left-hand side shows the output of the result
+of JGit's automatic merge algorithm. This option controls whether this output is
+cached in the change repository, or if only the diff is cached in the persistent
+diff caches (`"git_modified_files"`, `modified_files`, `"git_file_diff"`,
+`"file_diff"`).
 +
 If true, automerge results are stored in the repository under
 `refs/cache-automerge/*`; the results of diffing the change against its
-automerge base are stored in the diff cache. If false, no extra data is
-stored in the repository, only the diff cache. This can result in slight
+automerge base are stored in the diff caches. If false, no extra data is
+stored in the repository, only the diff caches. This can result in slight
 performance improvements by reducing the number of refs in the repo.
 +
 Default is true.
@@ -1409,7 +1478,23 @@ This config can have the following states:
   query operator. Gerrit does not serve `mergeable` in
   link:rest-api-changes.html#change-info[ChangeInfo].
 
+NOTE: Gerrit would only render conflict changes section on change
+screen if `API_REF_UPDATED_AND_CHANGE_REINDEX` value is set.
+
 Default is `NEVER`.
+
+[[change.conflictsPredicateEnabled]]change.conflictsPredicateEnabled::
+
++
+This setting determines when Gerrit renders conflict changes section on change
+screen and also supports `conflicts` predicate. This computation is expensive,
+computing ConflictsPredicate has a runtime complexity of O(nˆ2) with n number
+of open changes on a branch. When set to false GUI will silently ignore the
+error message and leave the conflict changes section on change screen empty.
+See also implications on rendering of conflict changes section in configuration
+section:link:#change.mergeabilityComputationBehavior[change.mergeabilityComputationBehavior].
+
+Default is true.
 
 [[change.move]]change.move::
 +
@@ -1427,21 +1512,6 @@ link:https://bugs.chromium.org/p/gerrit/issues/detail?id=9877[issue
 9877]).
 +
 By default true.
-
-[[change.replyLabel]]change.replyLabel::
-+
-Label name for the reply button. In the user interface an ellipsis (…)
-is appended.
-+
-Default is "Reply". In the user interface it becomes "Reply…".
-
-[[change.replyTooltip]]change.replyTooltip::
-+
-Tooltip for the reply button. In the user interface a note about the
-keyboard shortcut is appended.
-+
-Default is "Reply and score". In the user interface it becomes "Reply
-and score (Shortcut: a)".
 
 [[change.robotCommentSizeLimit]]change.robotCommentSizeLimit::
 +
@@ -1971,7 +2041,7 @@ Default is 1 hour.
   scheme = http
   scheme = anon_http
   scheme = anon_git
-  scheme = repo_download
+  scheme = repo
 ----
 
 The download section configures the allowed download methods.
@@ -2028,12 +2098,13 @@ Anonymous Git download is allowed.  This is not default, it is also
 necessary to set <<gerrit.canonicalGitUrl,gerrit.canonicalGitUrl>>
 variable.
 +
-* `repo_download`
+* `repo`
 +
 Gerrit advertises patch set downloads with the `repo download`
 command, assuming that all projects managed by this instance are
-generally worked on with the repo multi-repository tool.  This is
-not default, as not all instances will deploy repo.
+generally worked on with the
+https://gerrit.googlesource.com/git-repo[repo multi-repository tool].
+This is not default, as not all instances will deploy repo.
 
 +
 If `download.scheme` is not specified, SSH, HTTP and Anonymous HTTP
@@ -2143,6 +2214,9 @@ access controls and settings. These are inherited into every
 other project managed by the running server. The name is
 relative to `gerrit.basePath`.
 +
+The link:#cache_names[persisted_projects cache] must be
+flushed after this setting is changed.
++
 Defaults to `All-Projects` if not set.
 
 [[gerrit.defaultBranch]]gerrit.defaultBranch::
@@ -2248,6 +2322,25 @@ located under the `/lib` directory.
 +
 By default unset.
 
+[[gerrit.installIndexModule]]gerrit.installIndexModule::
++
+Class name of the Guice modules to load as alternate implementation
+for the Gerrit indexes backend.
+Classes are resolved using the primary Gerrit class loader, hence the
+class needs to be either declared in Gerrit or an additional JAR
+located under the `/lib` directory.
++
+NOTE: The `gerrit.installIndexModule` has precedence over the
+`index.type`.
++
+By default unset.
++
+Example:
+----
+[gerrit]
+  installIndexModule = com.google.gerrit.elasticsearch.ElasticIndexModule
+----
++
 [[gerrit.installModule]]gerrit.installModule::
 +
 Repeatable list of class name of additional Guice modules to load at
@@ -3068,23 +3161,13 @@ Gerrit server.
 
 [[index.type]]index.type::
 +
-Type of secondary indexing employed by Gerrit.  The supported
-values are:
+*(DEPRECATED)* The only supported value is `LUCENE`, which is the default,
+that means a link:http://lucene.apache.org/[Lucene]
+index is used.
 +
-* `LUCENE`
+For using other indexing backends (e.g. ElasticSearch), refer to
+`gerrit.installIndexModule` setting.
 +
-A link:http://lucene.apache.org/[Lucene] index is used.
-+
-+
-* `ELASTICSEARCH` look into link:#elasticsearch[Elasticsearch section]
-+
-An link:https://www.elastic.co/products/elasticsearch[Elasticsearch,role=external,window=_blank] index is
-used. Refer to the link:#elasticsearch[Elasticsearch section] for further
-configuration details.
-
-+
-By default, `LUCENE`.
-
 [[index.threads]]index.threads::
 +
 Number of threads to use for indexing in normal interactive operations. Setting
@@ -3119,11 +3202,6 @@ Defaults to true.
 Maximum limit to allow for search queries. Requesting results above this
 limit will truncate the list (but will still set `_more_changes` on
 result lists). Set to 0 for no limit.
-+
-When `index.type` is set to `ELASTICSEARCH`, this value should not exceed
-the `index.max_result_window` value configured on the Elasticsearch
-server. If a value is not configured during site initialization, defaults to
-10000, which is the default value of `index.max_result_window` in Elasticsearch.
 +
 When `index.type` is set to `LUCENE`, defaults to no limit.
 
@@ -3193,7 +3271,7 @@ Defaults to `true`.
 +
 Whether the scheduled indexer is enabled. If the scheduled indexer is
 disabled you must implement other means to keep the group index for the
-replica up-to-date (e.g. by using ElasticSearch for the indexes).
+replica up-to-date.
 +
 Defaults to `true`.
 
@@ -3325,95 +3403,6 @@ Sample Lucene index configuration:
   enableIOThrottle = false
 
 ----
-
-[[elasticsearch]]
-=== Section elasticsearch
-
-WARNING: Support for Elasticsearch is still experimental and is not recommended
-for production use. For compatibility information, please refer to the
-link:https://www.gerritcodereview.com/elasticsearch.html[project homepage,role=external,window=_blank].
-
-Note that when Gerrit is configured to use Elasticsearch, the Elasticsearch
-server(s) must be reachable during the site initialization.
-
-[[elasticsearch.prefix]]elasticsearch.prefix::
-+
-This setting can be used to prefix index names to allow multiple Gerrit
-instances in a single Elasticsearch cluster. Prefix `gerrit1_` would result in a
-change index named `gerrit1_changes_0001`.
-+
-Not set by default.
-
-[[elasticsearch.server]]elasticsearch.server::
-+
-Elasticsearch server URI in the form `http[s]://hostname:port`. The `port` is
-optional and defaults to `9200` if not specified.
-+
-At least one server must be specified. May be specified multiple times to
-configure multiple Elasticsearch servers.
-+
-Note that the site initialization program only allows to configure a single
-server. To configure multiple servers the `gerrit.config` file must be edited
-manually.
-
-[[elasticsearch.numberOfShards]]elasticsearch.numberOfShards::
-+
-Sets the number of shards to use per index. Refer to the
-link:https://www.elastic.co/guide/en/elasticsearch/reference/current/index-modules.html#_static_index_settings[
-Elasticsearch documentation,role=external,window=_blank] for details.
-+
-Defaults to 1.
-
-[[elasticsearch.numberOfReplicas]]elasticsearch.numberOfReplicas::
-+
-Sets the number of replicas to use per index. Refer to the
-link:https://www.elastic.co/guide/en/elasticsearch/reference/current/index-modules.html#dynamic-index-settings[
-Elasticsearch documentation,role=external,window=_blank] for details.
-+
-Defaults to 1.
-
-[[elasticsearch.maxResultWindow]]elasticsearch.maxResultWindow::
-+
-Sets the maximum value of `from + size` for searches to use per index. Refer to the
-link:https://www.elastic.co/guide/en/elasticsearch/reference/current/index-modules.html#dynamic-index-settings[
-Elasticsearch documentation,role=external,window=_blank] for details.
-+
-Defaults to 10000.
-
-[[elasticsearch.connectTimeout]]elasticsearch.connectTimeout::
-+
-Sets the timeout for connecting to elasticsearch.
-+
-Defaults to `1 second`.
-
-[[elasticsearch.socketTimeout]]elasticsearch.socketTimeout::
-+
-Sets the timeout for the underlying connection. For more information, refer to
-link:#httpd.idleTimeout[`httpd.idleTimeout`].
-+
-Defaults to `30 seconds`.
-
-==== Elasticsearch Security
-
-When security is enabled in Elasticsearch, the username and password must be provided.
-Note that the same username and password are used for all servers.
-
-For further information about Elasticsearch security, please refer to
-link:https://www.elastic.co/guide/en/elasticsearch/reference/current/security-getting-started.html[the documentation,role=external,window=_blank].
-This is the current documentation link. Select another Elasticsearch version
-from the dropdown menu available on that page if need be.
-
-[[elasticsearch.username]]elasticsearch.username::
-+
-Username used to connect to Elasticsearch.
-+
-If a password is set, defaults to `elastic`, otherwise not set by default.
-
-[[elasticsearch.password]]elasticsearch.password::
-+
-Password used to connect to Elasticsearch.
-+
-Not set by default.
 
 [[event]]
 === Section event
@@ -4298,8 +4287,28 @@ and updating references, not the time to index the pack. Values can
 be specified using standard time unit abbreviations ('ms', 'sec',
 'min', etc.).
 +
+After the timeout is exceeded the task processing the receive gets a
+cancellation signal that allows the tast to finish gracefully.
+link:#receive.cancellationTimeout[receive.cancellationTimeout]
+defines how much time the task has to react to the cancellation signal
+before it is focefully cancelled.
++
+The receive timeout cannot be overriden by setting a higher
+link:user-upload.html#deadline[deadline] on the git push request.
++
 Default is 4 minutes. If no unit is specified, milliseconds
 is assumed.
+
+[[receive.cancellationTimeout]]receive.cancellationTimeout::
++
+Defines the time that a receive task has to react to a cancellation
+signal and finish gracefully after link:#receive.timeout[receive.timeout]
+is exceeded. If the receive task is still not terminated after the
+cancellation timeout is exceeded the task is forcefully cancelled.
+Values can be specified using standard time unit abbreviations ('ms',
+'sec', 'min', etc.).
++
+Default is 5 seconds. If no unit is specified, milliseconds is assumed.
 
 [[receive.trustedKey]]receive.trustedKey::
 +
@@ -4421,8 +4430,7 @@ and assumes milliseconds if not specified.
 [[retry.retryWithTraceOnFailure]]retry.retryWithTraceOnFailure::
 +
 Whether Gerrit should automatically retry operations on failure with tracing
-enabled. The automatically generated traces can help with debugging. Please
-note that only some of the REST endpoints support automatic retry.
+enabled. The automatically generated traces can help with debugging.
 +
 By default this is set to false.
 
@@ -5254,13 +5262,25 @@ operations are collected in memory while a request is running. At the
 end of the request the performance events are handed over to the
 link:dev-plugins.html#performance-logger[PerformanceLogger] plugins.
 This means if performance logging is enabled, the memory footprint of
-requests is slightly increased.
+requests can be markedly increased.
+In one recorded case the impact was an overall heap increase of 40%
+(using the metrics-reporter-graphite plugin), in other instances the
+heap increase wasn't nearly as dramatic and the impact is most likely
+dependent on which plugin is used.
 +
-This setting has no effect if no
-link:dev-plugins.html#performance-logger[PerformanceLogger] plugins are
-installed, because then performance logging is always disabled.
+By default, false.
+
+[[tracing.exportPerformanceMetrics]]tracing.exportPerformanceMetrics::
 +
-By default, true.
+Whether to export performance metrics.
++
+Performace logged when link:#tracing.performanceLogging[`performanceLogging`] is
+enabled, can be exported as metrics.
++
+NOTE: Since the payload returned could be of tens of thousands metrics,
+assess the latency of the metrics endpoint before enabling this option.
++
+By default, false.
 
 [[tracing.traceid]]
 ==== Subsection tracing.<trace-id>
@@ -5283,12 +5303,26 @@ By default, unset (all request types are matched).
 [[tracing.traceid.requestUriPattern]]tracing.<trace-id>.requestUriPattern::
 +
 Regular expression to match request URIs for which request tracing
-should be always enabled. Request URIs are only available for REST
-requests. Request URIs never include the '/a' prefix.
+should be enabled except if they match
+link:tracing.traceid.excludedRequestUriPattern[excludedRequestUriPattern].
+Request URIs are only available for REST requests. Request URIs never include
+the '/a' prefix.
 +
 May be specified multiple times.
 +
 By default, unset (all request URIs are matched).
+
+[[tracing.traceid.excludedRequestUriPattern]]tracing.<trace-id>.excludedRequestUriPattern::
++
+Regular expression to match request URIs for which request tracing
+should not be enabled even if they match
+link:#tracing.traceid.requestUriPattern[requestUriPattern].
+Request URIs are only available for REST requests. Request URIs never include
+the '/a' prefix.
++
+May be specified multiple times.
++
+By default, unset (no request URIs are excluded).
 
 [[tracing.traceid.account]]tracing.<trace-id>.account::
 +
@@ -5303,6 +5337,91 @@ By default, unset (all accounts are matched).
 +
 Regular expression to match project names for which request tracing
 should be always enabled.
++
+May be specified multiple times.
++
+By default, unset (all projects are matched).
+
+[[deadline.id]]
+==== Subsection deadline.<id>
+
+There can be multiple `deadline.<id>` subsections to configure deadlines for
+request executions. For a deadline to apply all conditions of the
+`deadline.<id>` subsection must match. The subsection name is the ID of the
+deadline configuration and allows to track back an applied deadline to its
+configuration.
+
+Clients can override the deadlines that are configured here by setting a
+deadline on the request.
+
+Deadlines are only supported for `REST`, `SSH` and `GIT_RECEIVE` requests, but
+not for `GIT_UPLOAD` requests.
+
+[[deadline.id.timeout]]deadline.<id>.timeout::
++
+Timeout after which matching requests should be cancelled.
++
+Values must be specified using standard time unit abbreviations ('ms', 'sec',
+'min', etc.).
++
+For some requests additional timeout configurations may apply, e.g.
+link:#receive.timeout[receive.timeout] for git pushes.
++
+By default, unset.
+
+[[deadline.id.isAdvisory]]deadline.<id>.isAdvisory::
++
+Whether this deadline is an advisory deadline. Advisory deadlines do not cause
+requests to be aborted when they are exceeded. Instead, if an advisory deadline
+is exceeded, only the `cancellation/advisory_deadline_count` metrics is
+incremented and a log is written. This is useful to test how many requests would
+be affected by a new deadline configuration.
++
+By default, `false`.
+
+[[deadline.id.requestType]]deadline.<id>.requestType::
++
+Type of request to which the deadline applies (can be `GIT_RECEIVE`, `REST` and
+`SSH`).
++
+May be specified multiple times.
++
+By default, unset (all request types are matched).
+
+[[deadline.id.requestUriPattern]]deadline.<id>.requestUriPattern::
++
+Regular expression to match request URIs to which the deadline applies except if
+they match
+link:#deadline.id.excludedRequestUriPattern[excludedRequestUriPattern]. Request
+URIs are only available for REST requests. Request URIs never include the '/a'
+prefix.
++
+May be specified multiple times.
++
+By default, unset (all request URIs are matched).
+
+[[deadline.id.excludedRequestUriPattern]]deadline.<id>.excludedRequestUriPattern::
++
+Regular expression to match request URIs to which the deadline should not be
+applied even if they match
+link:#deadline.id.requestUriPattern[requestUriPattern]. Request URIs are only
+available for REST requests. Request URIs never include the '/a' prefix.
++
+May be specified multiple times.
++
+By default, unset (no request URIs are excluded).
+
+[[deadline.id.account]]deadline.<id>.account::
++
+Account ID of an account to which the deadline applies.
++
+May be specified multiple times.
++
+By default, unset (all accounts are matched).
+
+[[deadline.id.projectPattern]]deadline.<id>.projectPattern::
++
+Regular expression to match project names to which the deadline applies.
 +
 May be specified multiple times.
 +
@@ -5481,7 +5600,7 @@ By default this is "Gerrit Code Review".
 Email address that Gerrit refers to itself as when it creates a
 new Git commit, such as a merge commit during change submission.
 +
-If not set, Gerrit generates this as "gerrit@`hostname`", where
+If not set, Gerrit generates this as "gerrit@``hostname``", where
 `hostname` is the hostname of the system Gerrit is running on.
 +
 By default, not set, generating the value at startup.

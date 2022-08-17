@@ -23,6 +23,9 @@ import com.google.auto.value.AutoValue;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
+import com.google.gerrit.acceptance.FakeGroupAuditService.FakeGroupAuditServiceModule;
+import com.google.gerrit.acceptance.ReindexGroupsAtStartup.ReindexGroupsAtStartupModule;
+import com.google.gerrit.acceptance.ReindexProjectsAtStartup.ReindexProjectsAtStartupModule;
 import com.google.gerrit.acceptance.config.ConfigAnnotationParser;
 import com.google.gerrit.acceptance.config.GerritConfig;
 import com.google.gerrit.acceptance.config.GerritConfigs;
@@ -43,22 +46,26 @@ import com.google.gerrit.acceptance.testsuite.project.ProjectOperationsImpl;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperationsImpl;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.extensions.annotations.Exports;
 import com.google.gerrit.extensions.config.FactoryModule;
+import com.google.gerrit.index.IndexType;
+import com.google.gerrit.index.testing.FakeIndexModule;
 import com.google.gerrit.lucene.LuceneIndexModule;
 import com.google.gerrit.pgm.Daemon;
 import com.google.gerrit.pgm.Init;
 import com.google.gerrit.server.config.GerritRuntime;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.SitePath;
-import com.google.gerrit.server.experiments.ConfigExperimentFeatures;
-import com.google.gerrit.server.git.receive.AsyncReceiveCommits;
+import com.google.gerrit.server.experiments.ConfigExperimentFeatures.ConfigExperimentFeaturesModule;
+import com.google.gerrit.server.git.receive.AsyncReceiveCommits.AsyncReceiveCommitsModule;
+import com.google.gerrit.server.git.validators.CommitValidationListener;
 import com.google.gerrit.server.index.options.AutoFlush;
 import com.google.gerrit.server.schema.JdbcAccountPatchReviewStore;
 import com.google.gerrit.server.ssh.NoSshModule;
 import com.google.gerrit.server.util.ReplicaUtil;
 import com.google.gerrit.server.util.SocketUtil;
 import com.google.gerrit.server.util.SystemLog;
-import com.google.gerrit.testing.FakeEmailSender;
+import com.google.gerrit.testing.FakeEmailSender.FakeEmailSenderModule;
 import com.google.gerrit.testing.InMemoryRepositoryManager;
 import com.google.gerrit.testing.SshMode;
 import com.google.gerrit.testing.TestLoggingActivator;
@@ -110,6 +117,8 @@ public class GerritServer implements AutoCloseable {
   public abstract static class Description {
     public static Description forTestClass(
         org.junit.runner.Description testDesc, String configName) {
+      VerifyNoPiiInChangeNotes verifyNoPiiInChangeNotes =
+          get(VerifyNoPiiInChangeNotes.class, testDesc.getTestClass());
       return new AutoValue_GerritServer_Description(
           testDesc,
           configName,
@@ -118,6 +127,7 @@ public class GerritServer implements AutoCloseable {
           has(Sandboxed.class, testDesc.getTestClass()),
           has(SkipProjectClone.class, testDesc.getTestClass()),
           has(UseSsh.class, testDesc.getTestClass()),
+          verifyNoPiiInChangeNotes != null && verifyNoPiiInChangeNotes.value(),
           false, // @UseSystemTime is only valid on methods.
           get(UseClockStep.class, testDesc.getTestClass()),
           get(UseTimezone.class, testDesc.getTestClass()),
@@ -137,6 +147,11 @@ public class GerritServer implements AutoCloseable {
         // on class level.
         useClockStep = get(UseClockStep.class, testDesc.getTestClass());
       }
+      VerifyNoPiiInChangeNotes verifyNoPiiInChangeNotes =
+          testDesc.getAnnotation(VerifyNoPiiInChangeNotes.class);
+      if (verifyNoPiiInChangeNotes == null) {
+        verifyNoPiiInChangeNotes = get(VerifyNoPiiInChangeNotes.class, testDesc.getTestClass());
+      }
 
       return new AutoValue_GerritServer_Description(
           testDesc,
@@ -152,6 +167,7 @@ public class GerritServer implements AutoCloseable {
               || has(SkipProjectClone.class, testDesc.getTestClass()),
           testDesc.getAnnotation(UseSsh.class) != null
               || has(UseSsh.class, testDesc.getTestClass()),
+          verifyNoPiiInChangeNotes != null && verifyNoPiiInChangeNotes.value(),
           testDesc.getAnnotation(UseSystemTime.class) != null,
           useClockStep,
           testDesc.getAnnotation(UseTimezone.class) != null
@@ -196,6 +212,8 @@ public class GerritServer implements AutoCloseable {
     abstract boolean skipProjectClone();
 
     abstract boolean useSshAnnotation();
+
+    abstract boolean verifyNoPiiInChangeNotes();
 
     boolean useSsh() {
       return useSshAnnotation() && SshMode.useSsh();
@@ -279,7 +297,6 @@ public class GerritServer implements AutoCloseable {
    * @param baseConfig default config values; merged with config from {@code desc} and then written
    *     into {@code site/etc/gerrit.config}.
    * @param site temp directory where site will live.
-   * @throws Exception
    */
   public static void init(Description desc, Config baseConfig, Path site) throws Exception {
     checkArgument(!desc.memory(), "can't initialize site path for in-memory test: %s", desc);
@@ -292,6 +309,12 @@ public class GerritServer implements AutoCloseable {
     gerritConfig.load();
     gerritConfig.merge(cfg);
     mergeTestConfig(gerritConfig);
+    String configuredIndexBackend = cfg.getString("index", null, "type");
+    if (configuredIndexBackend == null) {
+      // Propagate index type to pgms that run off of the gerrit.config file on local disk.
+      IndexType indexType = IndexType.fromEnvironment().orElse(new IndexType("fake"));
+      gerritConfig.setString("index", null, "type", indexType.isLucene() ? "lucene" : "fake");
+    }
     gerritConfig.save();
 
     Init init = new Init();
@@ -327,7 +350,6 @@ public class GerritServer implements AutoCloseable {
    * @param testSysModule additional Guice module to use.
    * @param testSshModule additional Guice module to use.
    * @return started server.
-   * @throws Exception
    */
   public static GerritServer initAndStart(
       TemporaryFolder temporaryFolder,
@@ -364,7 +386,6 @@ public class GerritServer implements AutoCloseable {
    * @param additionalArgs additional command-line arguments for the daemon program; only allowed if
    *     the test is not in-memory.
    * @return started server.
-   * @throws Exception
    */
   public static GerritServer start(
       Description desc,
@@ -390,9 +411,9 @@ public class GerritServer implements AutoCloseable {
               }
             },
             site);
-    daemon.setEmailModuleForTesting(new FakeEmailSender.Module());
+    daemon.setEmailModuleForTesting(new FakeEmailSenderModule());
     daemon.setAuditEventModuleForTesting(
-        MoreObjects.firstNonNull(testAuditModule, new FakeGroupAuditService.Module()));
+        MoreObjects.firstNonNull(testAuditModule, new FakeGroupAuditServiceModule()));
     if (testSysModule != null) {
       daemon.addAdditionalSysModuleForTesting(testSysModule);
     }
@@ -400,6 +421,15 @@ public class GerritServer implements AutoCloseable {
       daemon.addAdditionalSshModuleForTesting(testSshModule);
     }
     daemon.setEnableSshd(desc.useSsh());
+    daemon.addAdditionalSysModuleForTesting(
+        new AbstractModule() {
+          @Override
+          protected void configure() {
+            bind(CommitValidationListener.class)
+                .annotatedWith(Exports.named("object-visibility-listener"))
+                .to(GitObjectVisibilityChecker.class);
+          }
+        });
 
     if (desc.memory()) {
       checkArgument(additionalArgs.length == 0, "cannot pass args to in-memory server");
@@ -428,10 +458,29 @@ public class GerritServer implements AutoCloseable {
     cfg.setString("gitweb", null, "cgi", "");
     cfg.setString(
         "accountPatchReviewDb", null, "url", JdbcAccountPatchReviewStore.TEST_IN_MEMORY_URL);
+
+    String configuredIndexBackend = cfg.getString("index", null, "type");
+    IndexType indexType;
+    if (configuredIndexBackend != null) {
+      // Explicitly configured index backend from gerrit.config trumps any other ways to configure
+      // index backends so that Reindex tests can be explicit about the backend they want to test
+      // against.
+      indexType = new IndexType(configuredIndexBackend);
+    } else {
+      // Allow configuring the index backend based on sys/env variables so that integration tests
+      // can be run against different index backends.
+      indexType = IndexType.fromEnvironment().orElse(new IndexType("fake"));
+    }
+    if (indexType.isLucene()) {
+      daemon.setIndexModule(
+          LuceneIndexModule.singleVersionAllLatest(
+              0, ReplicaUtil.isReplica(baseConfig), AutoFlush.ENABLED));
+    } else {
+      daemon.setIndexModule(FakeIndexModule.latestVersion(false));
+    }
+
     daemon.setEnableHttpd(desc.httpd());
-    daemon.setLuceneModule(
-        LuceneIndexModule.singleVersionAllLatest(
-            0, ReplicaUtil.isReplica(baseConfig), AutoFlush.ENABLED));
+    daemon.setInMemory(true);
     daemon.setDatabaseForTesting(
         ImmutableList.of(
             new InMemoryTestingDatabaseModule(cfg, site, inMemoryRepoManager),
@@ -441,9 +490,9 @@ public class GerritServer implements AutoCloseable {
                 bind(GerritRuntime.class).toInstance(GerritRuntime.DAEMON);
               }
             },
-            new ConfigExperimentFeatures.Module()));
+            new ConfigExperimentFeaturesModule()));
     daemon.addAdditionalSysModuleForTesting(
-        new ReindexProjectsAtStartup.Module(), new ReindexGroupsAtStartup.Module());
+        new ReindexProjectsAtStartupModule(), new ReindexGroupsAtStartupModule());
     daemon.start();
     return new GerritServer(desc, null, createTestInjector(daemon), daemon, null);
   }
@@ -456,6 +505,8 @@ public class GerritServer implements AutoCloseable {
       String[] additionalArgs)
       throws Exception {
     requireNonNull(site);
+    daemon.addAdditionalSysModuleForTesting(
+        new ReindexProjectsAtStartupModule(), new ReindexGroupsAtStartupModule());
     ExecutorService daemonService = Executors.newSingleThreadExecutor();
     String[] args =
         Stream.concat(
@@ -534,7 +585,7 @@ public class GerritServer implements AutoCloseable {
             factory(PushOneCommit.Factory.class);
             install(InProcessProtocol.module());
             install(new NoSshModule());
-            install(new AsyncReceiveCommits.Module());
+            install(new AsyncReceiveCommitsModule());
             factory(ProjectResetter.Builder.Factory.class);
           }
 

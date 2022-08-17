@@ -48,7 +48,7 @@ export const changeState$: Observable<ChangeState> = privateState$;
 export function updateState(change?: ParsedChangeInfo) {
   const current = privateState$.getValue();
   // We want to make it easy for subscribers to react to change changes, so we
-  // are explicitly emitting and additional `undefined` when the change number
+  // are explicitly emitting an additional `undefined` when the change number
   // changes. So if you are subscribed to the latestPatchsetNumber for example,
   // then you can rely on emissions even if the old and the new change have the
   // same latestPatchsetNumber.
@@ -92,6 +92,11 @@ export const repo$ = change$.pipe(
   distinctUntilChanged()
 );
 
+export const labels$ = change$.pipe(
+  map(change => change?.labels),
+  distinctUntilChanged()
+);
+
 export const latestPatchNum$ = change$.pipe(
   map(change => computeLatestPatchNum(computeAllPatchSets(change))),
   distinctUntilChanged()
@@ -105,12 +110,11 @@ export const latestPatchNum$ = change$.pipe(
  * Note that this selector can emit a patchNum without the change being
  * available!
  */
-export const currentPatchNum$: Observable<
-  PatchSetNum | undefined
-> = changeAndRouterConsistent$.pipe(
-  withLatestFrom(routerPatchNum$, latestPatchNum$),
-  map(
-    ([_, routerPatchNum, latestPatchNum]) => routerPatchNum || latestPatchNum
-  ),
-  distinctUntilChanged()
-);
+export const currentPatchNum$: Observable<PatchSetNum | undefined> =
+  changeAndRouterConsistent$.pipe(
+    withLatestFrom(routerPatchNum$, latestPatchNum$),
+    map(
+      ([_, routerPatchNum, latestPatchNum]) => routerPatchNum || latestPatchNum
+    ),
+    distinctUntilChanged()
+  );

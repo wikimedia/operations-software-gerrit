@@ -17,11 +17,9 @@
 
 import '../../../styles/gr-table-styles';
 import '../../../styles/shared-styles';
-import '../../shared/gr-date-formatter/gr-date-formatter';
 import '../../shared/gr-account-link/gr-account-link';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-group-audit-log_html';
-import {ListViewMixin} from '../../../mixins/gr-list-view-mixin/gr-list-view-mixin';
 import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {customElement, property} from '@polymer/decorators';
 import {
@@ -29,15 +27,15 @@ import {
   AccountInfo,
   EncodedGroupId,
   GroupAuditEventInfo,
+  GroupAuditGroupEventInfo,
+  isGroupAuditGroupEventInfo,
 } from '../../../types/common';
 import {firePageError, fireTitleChange} from '../../../utils/event-util';
 import {appContext} from '../../../services/app-context';
 import {ErrorCallback} from '../../../api/rest';
 
-const GROUP_EVENTS = ['ADD_GROUP', 'REMOVE_GROUP'];
-
 @customElement('gr-group-audit-log')
-export class GrGroupAuditLog extends ListViewMixin(PolymerElement) {
+export class GrGroupAuditLog extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
@@ -53,14 +51,12 @@ export class GrGroupAuditLog extends ListViewMixin(PolymerElement) {
 
   private readonly restApiService = appContext.restApiService;
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     fireTitleChange(this, 'Audit Log');
   }
 
-  /** @override */
-  ready() {
+  override ready() {
     super.ready();
     this._getAuditLogs();
   }
@@ -103,8 +99,8 @@ export class GrGroupAuditLog extends ListViewMixin(PolymerElement) {
     return item;
   }
 
-  _isGroupEvent(type: string) {
-    return GROUP_EVENTS.indexOf(type) !== -1;
+  _isGroupEvent(event: GroupAuditEventInfo): event is GroupAuditGroupEventInfo {
+    return isGroupAuditGroupEventInfo(event);
   }
 
   _computeGroupUrl(group: GroupInfo) {
@@ -128,6 +124,10 @@ export class GrGroupAuditLog extends ListViewMixin(PolymerElement) {
     }
 
     return '';
+  }
+
+  computeLoadingClass(loading: boolean) {
+    return loading ? 'loading' : '';
   }
 }
 

@@ -14,12 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
 import '@polymer/iron-input/iron-input';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../plugins/gr-endpoint-param/gr-endpoint-param';
 import '../../shared/gr-download-commands/gr-download-commands';
 import '../../shared/gr-select/gr-select';
+import '../../shared/gr-textarea/gr-textarea';
+import '../../../styles/gr-font-styles';
 import '../../../styles/gr-form-styles';
 import '../../../styles/gr-subpage-styles';
 import '../../../styles/shared-styles';
@@ -139,8 +140,7 @@ export class GrRepo extends PolymerElement {
 
   private readonly restApiService = appContext.restApiService;
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     this._loadRepo();
 
@@ -190,7 +190,7 @@ export class GrRepo extends PolymerElement {
             }
 
             // If the user is not an owner, is_owner is not a property.
-            this._readOnly = !access[repo].is_owner;
+            this._readOnly = !access[repo]?.is_owner;
           });
         }
       })

@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import '../../../styles/gr-a11y-styles';
 import '../../../styles/shared-styles';
 import '../gr-change-list/gr-change-list';
 import '../../shared/gr-button/gr-button';
@@ -50,14 +51,13 @@ import {
   GrCreateDestinationDialog,
 } from '../gr-create-destination-dialog/gr-create-destination-dialog';
 import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
-import {ChangeListToggleReviewedDetail} from '../gr-change-list-item/gr-change-list-item';
 import {ChangeStarToggleStarDetail} from '../../shared/gr-change-star/gr-change-star';
 import {DashboardViewState} from '../../../types/types';
 import {firePageError, fireTitleChange} from '../../../utils/event-util';
 import {GerritView} from '../../../services/router/router-model';
+import {RELOAD_DASHBOARD_INTERVAL_MS} from '../../../constants/constants';
 
 const PROJECT_PLACEHOLDER_PATTERN = /\${project}/g;
-const RELOAD_DASHBOARD_INTERVAL_MS = 10 * 1000;
 
 export interface GrDashboardView {
   $: {
@@ -123,16 +123,9 @@ export class GrDashboardView extends PolymerElement {
 
   constructor() {
     super();
-  }
-
-  /** @override */
-  connectedCallback() {
-    super.connectedCallback();
-    this._loadPreferences();
-    this.addEventListener('reload', e => {
-      e.stopPropagation();
-      this._reload(this.params);
-    });
+    this.addEventListener('reload', () => this._reload(this.params));
+    // We are not currently verifying if the view is actually visible. We rely
+    // on gr-app-element to restamp the component if view changes
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
         if (
@@ -144,6 +137,11 @@ export class GrDashboardView extends PolymerElement {
         this.lastVisibleTimestampMs = Date.now();
       }
     });
+  }
+
+  override connectedCallback() {
+    super.connectedCallback();
+    this._loadPreferences();
   }
 
   _loadPreferences() {
@@ -256,7 +254,7 @@ export class GrDashboardView extends PolymerElement {
       })
       .catch(err => {
         fireTitleChange(this, title || this._computeTitle(user));
-        console.warn(err);
+        this.reporting.error(err);
       })
       .then(() => {
         this._loading = false;
@@ -376,6 +374,9 @@ export class GrDashboardView extends PolymerElement {
       e.detail.change._number,
       e.detail.starred
     );
+    if (e.detail.starred) {
+      this.reporting.reportInteraction('change-starred-from-dashboard');
+    }
     // When a change is updated the same change may appear elsewhere in the
     // dashboard (but is not the same object), so we must update other
     // occurrences of the same change.
@@ -385,26 +386,6 @@ export class GrDashboardView extends PolymerElement {
           this.set(
             `_results.${dashboardIndex}.results.${changeIndex}.starred`,
             e.detail.starred
-          );
-        }
-      })
-    );
-  }
-
-  _handleToggleReviewed(e: CustomEvent<ChangeListToggleReviewedDetail>) {
-    this.restApiService.saveChangeReviewed(
-      e.detail.change._number,
-      e.detail.reviewed
-    );
-    // When a change is updated the same change may appear elsewhere in the
-    // dashboard (but is not the same object), so we must update other
-    // occurrences of the same change.
-    this._results?.forEach((dashboardChange, dashboardIndex) =>
-      dashboardChange.results.forEach((change, changeIndex) => {
-        if (change.id === e.detail.change.id) {
-          this.set(
-            `_results.${dashboardIndex}.results.${changeIndex}.reviewed`,
-            e.detail.reviewed
           );
         }
       })
@@ -473,6 +454,14 @@ export class GrDashboardView extends PolymerElement {
   _handleDestinationConfirm(e: CustomEvent<CreateDestinationConfirmDetail>) {
     this.$.commandsDialog.branch = e.detail.branch;
     this.$.commandsDialog.open();
+  }
+
+  /**
+   * Returns `this` as the visibility observer target for the keyboard shortcut
+   * mixin to decide whether shortcuts should be enabled or not.
+   */
+  _computeObserverTarget() {
+    return this;
   }
 }
 

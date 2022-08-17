@@ -28,10 +28,6 @@ export const htmlTemplate = html`
     :host(:hover) {
       background-color: var(--hover-background-color);
     }
-    :host([needs-review]) {
-      font-weight: var(--font-weight-bold);
-      color: var(--primary-text-color);
-    }
     .container {
       position: relative;
     }
@@ -131,7 +127,7 @@ export const htmlTemplate = html`
   </td>
   <td
     class="cell subject"
-    hidden$="[[isColumnHidden('Subject', visibleChangeTableColumns)]]"
+    hidden$="[[_computeIsColumnHidden('Subject', visibleChangeTableColumns)]]"
   >
     <a
       title$="[[change.subject]]"
@@ -147,7 +143,7 @@ export const htmlTemplate = html`
   </td>
   <td
     class="cell status"
-    hidden$="[[isColumnHidden('Status', visibleChangeTableColumns)]]"
+    hidden$="[[_computeIsColumnHidden('Status', visibleChangeTableColumns)]]"
   >
     <template is="dom-repeat" items="[[statuses]]" as="status">
       <div class="comma">,</div>
@@ -159,17 +155,17 @@ export const htmlTemplate = html`
   </td>
   <td
     class="cell owner"
-    hidden$="[[isColumnHidden('Owner', visibleChangeTableColumns)]]"
+    hidden$="[[_computeIsColumnHidden('Owner', visibleChangeTableColumns)]]"
   >
     <gr-account-link
-      highlight-attention
+      highlightAttention
       change="[[change]]"
       account="[[change.owner]]"
     ></gr-account-link>
   </td>
   <td
     class="cell assignee"
-    hidden$="[[isColumnHidden('Assignee', visibleChangeTableColumns)]]"
+    hidden$="[[_computeIsColumnHidden('Assignee', visibleChangeTableColumns)]]"
   >
     <template is="dom-if" if="[[change.assignee]]">
       <gr-account-link
@@ -183,7 +179,7 @@ export const htmlTemplate = html`
   </td>
   <td
     class="cell reviewers"
-    hidden$="[[isColumnHidden('Reviewers', visibleChangeTableColumns)]]"
+    hidden$="[[_computeIsColumnHidden('Reviewers', visibleChangeTableColumns)]]"
   >
     <div>
       <template
@@ -193,10 +189,10 @@ export const htmlTemplate = html`
         indexAs="index"
       >
         <gr-account-link
-          hide-avatar=""
-          hide-status=""
-          first-name
-          highlight-attention
+          hideAvatar=""
+          hideStatus=""
+          firstName
+          highlightAttention
           change="[[change]]"
           account="[[reviewer]]"
         ></gr-account-link
@@ -208,14 +204,14 @@ export const htmlTemplate = html`
       </template>
       <template is="dom-if" if="[[_computeAdditionalReviewersCount(change)]]">
         <span title="[[_computeAdditionalReviewersTitle(change, config)]]">
-          +[[_computeAdditionalReviewersCount(change, config)]]
+          +[[_computeAdditionalReviewersCount(change)]]
         </span>
       </template>
     </div>
   </td>
   <td
     class="cell comments"
-    hidden$="[[isColumnHidden('Comments', visibleChangeTableColumns)]]"
+    hidden$="[[_computeIsColumnHidden('Comments', visibleChangeTableColumns)]]"
   >
     <iron-icon
       hidden$="[[!change.unresolved_comment_count]]"
@@ -225,7 +221,7 @@ export const htmlTemplate = html`
   </td>
   <td
     class="cell repo"
-    hidden$="[[isColumnHidden('Repo', visibleChangeTableColumns)]]"
+    hidden$="[[_computeIsColumnHidden('Repo', visibleChangeTableColumns)]]"
   >
     <a class="fullRepo" href$="[[_computeRepoUrl(change)]]">
       [[_computeRepoDisplay(change)]]
@@ -235,12 +231,12 @@ export const htmlTemplate = html`
       href$="[[_computeRepoUrl(change)]]"
       title$="[[_computeRepoDisplay(change)]]"
     >
-      [[_computeRepoDisplay(change, 'true')]]
+      [[_computeTruncatedRepoDisplay(change)]]
     </a>
   </td>
   <td
     class="cell branch"
-    hidden$="[[isColumnHidden('Branch', visibleChangeTableColumns)]]"
+    hidden$="[[_computeIsColumnHidden('Branch', visibleChangeTableColumns)]]"
   >
     <a href$="[[_computeRepoBranchURL(change)]]"> [[change.branch]] </a>
     <template is="dom-if" if="[[change.topic]]">
@@ -254,38 +250,38 @@ export const htmlTemplate = html`
   </td>
   <td
     class="cell updated"
-    hidden$="[[isColumnHidden('Updated', visibleChangeTableColumns)]]"
+    hidden$="[[_computeIsColumnHidden('Updated', visibleChangeTableColumns)]]"
   >
     <gr-date-formatter
-      has-tooltip=""
-      date-str="[[change.updated]]"
+      withTooltip
+      date-str="[[_formatDate(change.updated)]]"
     ></gr-date-formatter>
   </td>
   <td
     class="cell submitted"
-    hidden$="[[isColumnHidden('Submitted', visibleChangeTableColumns)]]"
+    hidden$="[[_computeIsColumnHidden('Submitted', visibleChangeTableColumns)]]"
   >
     <gr-date-formatter
-      has-tooltip=""
-      date-str="[[change.submitted]]"
+      withTooltip
+      date-str="[[_formatDate(change.submitted)]]"
     ></gr-date-formatter>
   </td>
   <td
     class="cell waiting"
-    hidden$="[[isColumnHidden('Waiting', visibleChangeTableColumns)]]"
+    hidden$="[[_computeIsColumnHidden('Waiting', visibleChangeTableColumns)]]"
   >
     <gr-date-formatter
-      has-tooltip=""
-      force-relative=""
-      relative-option-no-ago=""
+      withTooltip
+      forceRelative
+      relativeOptionNoAgo
       date-str="[[_computeWaiting(account, change)]]"
     ></gr-date-formatter>
   </td>
   <td
     class="cell size"
-    hidden$="[[isColumnHidden('Size', visibleChangeTableColumns)]]"
+    hidden$="[[_computeIsColumnHidden('Size', visibleChangeTableColumns)]]"
   >
-    <gr-tooltip-content has-tooltip="" title="[[_computeSizeTooltip(change)]]">
+    <gr-tooltip-content has-tooltip title="[[_computeSizeTooltip(change)]]">
       <template is="dom-if" if="[[_changeSize]]">
         <span>[[_changeSize]]</span>
       </template>

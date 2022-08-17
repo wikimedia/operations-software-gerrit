@@ -19,7 +19,9 @@ import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Sets.SetView;
+import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AttentionSetUpdate;
 import com.google.gerrit.entities.HumanComment;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.extensions.api.changes.AttentionSetInput;
@@ -27,11 +29,11 @@ import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
-import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.CommentsUtil;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.account.AccountResolver;
 import com.google.gerrit.server.account.ServiceUserClassifier;
+import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.change.AddToAttentionSetOp;
 import com.google.gerrit.server.change.AttentionSetUnchangedOp;
 import com.google.gerrit.server.change.CommentThread;
@@ -60,6 +62,7 @@ import org.eclipse.jgit.errors.ConfigInvalidException;
  * This class is used to update the attention set when performing a review or replying on a change.
  */
 public class ReplyAttentionSetUpdates {
+  private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
   private final PermissionBackend permissionBackend;
   private final AddToAttentionSetOp.Factory addToAttentionSetOpFactory;
@@ -123,7 +126,9 @@ public class ReplyAttentionSetUpdates {
       bu.addOp(changeNotes.getChangeId(), new AttentionSetUnchangedOp());
       return;
     }
-    if (serviceUserClassifier.isServiceUser(currentUser.getAccountId())) {
+    boolean isReadyForReview = isReadyForReview(changeNotes, input);
+
+    if (isReadyForReview && serviceUserClassifier.isServiceUser(currentUser.getAccountId())) {
       botsWithNegativeLabelsAddOwnerAndUploader(bu, changeNotes, input);
       return;
     }
@@ -131,7 +136,7 @@ public class ReplyAttentionSetUpdates {
     processRules(
         bu,
         changeNotes,
-        isReadyForReview(changeNotes, input),
+        isReadyForReview,
         currentUser,
         getAllNewComments(changeNotes, input, currentUser));
   }
@@ -314,11 +319,15 @@ public class ReplyAttentionSetUpdates {
     AttentionSetUtil.validateInput(add);
     try {
       Account.Id attentionUserId =
-          getAccountIdAndValidateUser(changeNotes, add.user, accountsChangedInCommit);
+          getAccountIdAndValidateUser(
+              changeNotes, add.user, accountsChangedInCommit, AttentionSetUpdate.Operation.ADD);
       addToAttentionSet(bu, changeNotes, attentionUserId, add.reason, false);
     } catch (AccountResolver.UnresolvableAccountException ex) {
       // This happens only when the account doesn't exist. Silently ignore it. If we threw an error
       // message here, then it would be possible to probe whether an account exists.
+    } catch (AuthException ex) {
+      // adding users without permission to the attention set should fail silently.
+      logger.atFine().log(ex.getMessage());
     }
   }
 
@@ -332,17 +341,25 @@ public class ReplyAttentionSetUpdates {
     AttentionSetUtil.validateInput(remove);
     try {
       Account.Id attentionUserId =
-          getAccountIdAndValidateUser(changeNotes, remove.user, accountsChangedInCommit);
+          getAccountIdAndValidateUser(
+              changeNotes,
+              remove.user,
+              accountsChangedInCommit,
+              AttentionSetUpdate.Operation.REMOVE);
       removeFromAttentionSet(bu, changeNotes, attentionUserId, remove.reason, false);
     } catch (AccountResolver.UnresolvableAccountException ex) {
       // This happens only when the account doesn't exist. Silently ignore it. If we threw an error
       // message here, then it would be possible to probe whether an account exists.
+    } catch (AuthException ex) {
+      // this should never happen since removing users with permissions should work.
+      logger.atSevere().log(ex.getMessage());
     }
   }
 
-  private Account.Id getAccountId(ChangeNotes changeNotes, String user)
+  private Account.Id getAccountId(
+      ChangeNotes changeNotes, String user, AttentionSetUpdate.Operation operation)
       throws ConfigInvalidException, IOException, UnprocessableEntityException,
-          PermissionBackendException {
+          PermissionBackendException, AuthException {
     Account.Id attentionUserId = accountResolver.resolve(user).asUnique().account().id();
     try {
       permissionBackend
@@ -350,22 +367,29 @@ public class ReplyAttentionSetUpdates {
           .change(changeNotes)
           .check(ChangePermission.READ);
     } catch (AuthException e) {
+      // If the change is private, it is okay to add the user to the attention set since that
+      // person will be granted visibility when a reviewer.
       if (!changeNotes.getChange().isPrivate()) {
-        // If the change is private, it is okay to add the user to the attention set since that
-        // person will be granted visibility when a reviewer.
-        throw new UnprocessableEntityException(
-            "Can't add to attention set: Read not permitted for " + attentionUserId, e);
+
+        // Removing users without access is allowed, adding is not allowed
+        if (operation == AttentionSetUpdate.Operation.ADD) {
+          throw new AuthException(
+              "Can't modify attention set: Read not permitted for " + attentionUserId, e);
+        }
       }
     }
     return attentionUserId;
   }
 
   private Account.Id getAccountIdAndValidateUser(
-      ChangeNotes changeNotes, String user, Set<Account.Id> accountsChangedInCommit)
+      ChangeNotes changeNotes,
+      String user,
+      Set<Account.Id> accountsChangedInCommit,
+      AttentionSetUpdate.Operation operation)
       throws ConfigInvalidException, IOException, PermissionBackendException,
-          UnprocessableEntityException, BadRequestException {
+          UnprocessableEntityException, BadRequestException, AuthException {
     try {
-      Account.Id attentionUserId = getAccountId(changeNotes, user);
+      Account.Id attentionUserId = getAccountId(changeNotes, user, operation);
       if (accountsChangedInCommit.contains(attentionUserId)) {
         throw new BadRequestException(
             String.format(

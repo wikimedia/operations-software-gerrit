@@ -32,13 +32,14 @@ import {
   ChangeInfo,
   EmailAddress,
   PreferencesInput,
+  RepoName,
 } from '../../../types/common';
-import {ChangeListToggleReviewedDetail} from '../gr-change-list-item/gr-change-list-item';
 import {ChangeStarToggleStarDetail} from '../../shared/gr-change-star/gr-change-star';
 import {ChangeListViewState} from '../../../types/types';
 import {fireTitleChange} from '../../../utils/event-util';
 import {appContext} from '../../../services/app-context';
 import {GerritView} from '../../../services/router/router-model';
+import {RELOAD_DASHBOARD_INTERVAL_MS} from '../../../constants/constants';
 
 const LOOKUP_QUERY_PATTERNS: RegExp[] = [
   /^\s*i?[0-9a-f]{7,40}\s*$/i, // CHANGE_ID
@@ -48,7 +49,8 @@ const LOOKUP_QUERY_PATTERNS: RegExp[] = [
 
 const USER_QUERY_PATTERN = /^owner:\s?("[^"]+"|[^ ]+)$/;
 
-const REPO_QUERY_PATTERN = /^project:\s?("[^"]+"|[^ ]+)(\sstatus\s?:(open|"open"))?$/;
+const REPO_QUERY_PATTERN =
+  /^project:\s?("[^"]+"|[^ ]+)(\sstatus\s?:(open|"open"))?$/;
 
 const LIMIT_OPERATOR_PATTERN = /\blimit:(\d+)/i;
 
@@ -105,20 +107,46 @@ export class GrChangeListView extends PolymerElement {
   _userId: AccountId | EmailAddress | null = null;
 
   @property({type: String})
-  _repo: string | null = null;
+  _repo: RepoName | null = null;
 
   private readonly restApiService = appContext.restApiService;
+
+  private reporting = appContext.reportingService;
+
+  private lastVisibleTimestampMs = 0;
 
   constructor() {
     super();
     this.addEventListener('next-page', () => this._handleNextPage());
     this.addEventListener('previous-page', () => this._handlePreviousPage());
+    this.addEventListener('reload', () => this.reload());
+    // We are not currently verifying if the view is actually visible. We rely
+    // on gr-app-element to restamp the component if view changes
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        if (
+          Date.now() - this.lastVisibleTimestampMs >
+          RELOAD_DASHBOARD_INTERVAL_MS
+        )
+          this.reload();
+      } else {
+        this.lastVisibleTimestampMs = Date.now();
+      }
+    });
   }
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     this._loadPreferences();
+  }
+
+  reload() {
+    if (this._loading) return;
+    this._loading = true;
+    this._getChanges().then(changes => {
+      this._changes = changes || [];
+      this._loading = false;
+    });
   }
 
   _paramsChanged(value: AppElementParams) {
@@ -273,17 +301,21 @@ export class GrChangeListView extends PolymerElement {
   }
 
   _handleToggleStar(e: CustomEvent<ChangeStarToggleStarDetail>) {
+    if (e.detail.starred) {
+      this.reporting.reportInteraction('change-starred-from-change-list');
+    }
     this.restApiService.saveChangeStarred(
       e.detail.change._number,
       e.detail.starred
     );
   }
 
-  _handleToggleReviewed(e: CustomEvent<ChangeListToggleReviewedDetail>) {
-    this.restApiService.saveChangeReviewed(
-      e.detail.change._number,
-      e.detail.reviewed
-    );
+  /**
+   * Returns `this` as the visibility observer target for the keyboard shortcut
+   * mixin to decide whether shortcuts should be enabled or not.
+   */
+  _computeObserverTarget() {
+    return this;
   }
 }
 

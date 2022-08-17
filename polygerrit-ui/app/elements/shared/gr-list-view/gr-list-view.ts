@@ -35,7 +35,7 @@ declare global {
 }
 
 @customElement('gr-list-view')
-class GrListView extends PolymerElement {
+export class GrListView extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
@@ -53,7 +53,7 @@ class GrListView extends PolymerElement {
   filter?: string;
 
   @property({type: Number})
-  offset?: number;
+  offset = 0;
 
   @property({type: Boolean})
   loading?: boolean;
@@ -63,8 +63,7 @@ class GrListView extends PolymerElement {
 
   private reloadTask?: DelayedTask;
 
-  /** @override */
-  disconnectedCallback() {
+  override disconnectedCallback() {
     this.reloadTask?.cancel();
     super.disconnectedCallback();
   }
@@ -103,8 +102,8 @@ class GrListView extends PolymerElement {
     offset: number,
     direction: number,
     itemsPerPage: number,
-    filter: string,
-    path: string
+    filter: string | undefined,
+    path = ''
   ) {
     // Offset could be a string when passed from the router.
     offset = +(offset || 0);

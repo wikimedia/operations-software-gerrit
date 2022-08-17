@@ -15,17 +15,9 @@
  * limitations under the License.
  */
 import '../../shared/gr-dialog/gr-dialog';
-import '../../../styles/shared-styles';
-import {PolymerElement} from '@polymer/polymer/polymer-element';
-import {htmlTemplate} from './gr-confirm-delete-item-dialog_html';
-import {customElement, property} from '@polymer/decorators';
-
-// TODO(TS): add description for this
-export enum DetailType {
-  BRANCHES = 'branches',
-  ID = 'id',
-  TAGS = 'tags',
-}
+import {sharedStyles} from '../../../styles/shared-styles';
+import {css, html, LitElement} from 'lit';
+import {customElement, property} from 'lit/decorators';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -34,11 +26,7 @@ declare global {
 }
 
 @customElement('gr-confirm-delete-item-dialog')
-export class GrConfirmDeleteItemDialog extends PolymerElement {
-  static get template() {
-    return htmlTemplate;
-  }
-
+export class GrConfirmDeleteItemDialog extends LitElement {
   /**
    * Fired when the confirm button is pressed.
    *
@@ -55,7 +43,38 @@ export class GrConfirmDeleteItemDialog extends PolymerElement {
   item?: string;
 
   @property({type: String})
-  itemType?: DetailType;
+  itemTypeName?: string;
+
+  static override get styles() {
+    return [
+      sharedStyles,
+      css`
+        :host {
+          display: block;
+          width: 30em;
+        }
+      `,
+    ];
+  }
+
+  override render() {
+    const item = this.item ?? 'UNKNOWN ITEM';
+    const itemTypeName = this.itemTypeName ?? 'UNKNOWN ITEM TYPE';
+    return html` <gr-dialog
+      confirm-label="Delete ${itemTypeName}"
+      confirm-on-enter=""
+      @confirm=${this._handleConfirmTap}
+      @cancel=${this._handleCancelTap}
+    >
+      <div class="header" slot="header">${itemTypeName} Deletion</div>
+      <div class="main" slot="main">
+        <label for="branchInput">
+          Do you really want to delete the following ${itemTypeName}?
+        </label>
+        <div>${item}</div>
+      </div>
+    </gr-dialog>`;
+  }
 
   _handleConfirmTap(e: Event) {
     e.preventDefault();
@@ -77,18 +96,5 @@ export class GrConfirmDeleteItemDialog extends PolymerElement {
         bubbles: false,
       })
     );
-  }
-
-  _computeItemName(detailType: DetailType) {
-    if (detailType === DetailType.BRANCHES) {
-      return 'Branch';
-    } else if (detailType === DetailType.TAGS) {
-      return 'Tag';
-    } else if (detailType === DetailType.ID) {
-      return 'ID';
-    }
-    // TODO(TS): should never happen, this is to pass:
-    // not all code returns value
-    return '';
   }
 }

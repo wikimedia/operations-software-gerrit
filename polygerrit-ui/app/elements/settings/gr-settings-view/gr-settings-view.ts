@@ -16,18 +16,15 @@
  */
 import '@polymer/iron-input/iron-input';
 import '@polymer/paper-toggle-button/paper-toggle-button';
+import '../../../styles/gr-font-styles';
 import '../../../styles/gr-form-styles';
 import '../../../styles/gr-menu-page-styles';
 import '../../../styles/gr-page-nav-styles';
 import '../../../styles/shared-styles';
-import {
-  applyTheme as applyDarkTheme,
-  removeTheme as removeDarkTheme,
-} from '../../../styles/themes/dark-theme';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../gr-change-table-editor/gr-change-table-editor';
 import '../../shared/gr-button/gr-button';
-import '../../shared/gr-date-formatter/gr-date-formatter';
+import {GrButton} from '../../shared/gr-button/gr-button';
 import '../../shared/gr-diff-preferences/gr-diff-preferences';
 import '../../shared/gr-page-nav/gr-page-nav';
 import '../../shared/gr-select/gr-select';
@@ -45,7 +42,6 @@ import '../gr-watched-projects-editor/gr-watched-projects-editor';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-settings-view_html';
 import {getDocsBaseUrl} from '../../../utils/url-util';
-import {ChangeTableMixin} from '../../../mixins/gr-change-table-mixin/gr-change-table-mixin';
 import {customElement, property, observe} from '@polymer/decorators';
 import {AppElementParams} from '../../gr-app-types';
 import {GrAccountInfo} from '../gr-account-info/gr-account-info';
@@ -62,10 +58,19 @@ import {
 import {GrSshEditor} from '../gr-ssh-editor/gr-ssh-editor';
 import {GrGpgEditor} from '../gr-gpg-editor/gr-gpg-editor';
 import {GrEmailEditor} from '../gr-email-editor/gr-email-editor';
-import {CustomKeyboardEvent} from '../../../types/events';
 import {fireAlert, fireTitleChange} from '../../../utils/event-util';
 import {appContext} from '../../../services/app-context';
 import {GerritView} from '../../../services/router/router-model';
+import {
+  DateFormat,
+  DefaultBase,
+  DiffViewMode,
+  EmailFormat,
+  EmailStrategy,
+  TimeFormat,
+} from '../../../constants/constants';
+import {columnNames} from '../../change-list/gr-change-list/gr-change-list';
+import {windowLocationReload} from '../../../utils/dom-util';
 
 const PREFS_SECTION_FIELDS: Array<keyof PreferencesInput> = [
   'changes_per_page',
@@ -74,6 +79,8 @@ const PREFS_SECTION_FIELDS: Array<keyof PreferencesInput> = [
   'email_strategy',
   'diff_view',
   'publish_comments_on_push',
+  'disable_keyboard_shortcuts',
+  'disable_token_highlighting',
   'work_in_progress_by_default',
   'default_base_for_merges',
   'signed_off_by',
@@ -112,12 +119,23 @@ export interface GrSettingsView {
     workInProgressByDefault: HTMLInputElement;
     showSizeBarsInFileList: HTMLInputElement;
     publishCommentsOnPush: HTMLInputElement;
+    disableKeyboardShortcuts: HTMLInputElement;
+    disableTokenHighlighting: HTMLInputElement;
     relativeDateInChangeTable: HTMLInputElement;
+    changesPerPageSelect: HTMLInputElement;
+    dateTimeFormatSelect: HTMLInputElement;
+    timeFormatSelect: HTMLInputElement;
+    emailNotificationsSelect: HTMLInputElement;
+    emailFormatSelect: HTMLInputElement;
+    defaultBaseForMergesSelect: HTMLInputElement;
+    diffViewSelect: HTMLInputElement;
+    menu: HTMLFieldSetElement;
+    resetButton: GrButton;
   };
 }
 
 @customElement('gr-settings-view')
-export class GrSettingsView extends ChangeTableMixin(PolymerElement) {
+export class GrSettingsView extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
@@ -162,10 +180,10 @@ export class GrSettingsView extends ChangeTableMixin(PolymerElement) {
   _prefsChanged = false;
 
   @property({type: Boolean})
-  _diffPrefsChanged?: boolean;
+  _diffPrefsChanged = false;
 
   @property({type: Boolean})
-  _editPrefsChanged?: boolean;
+  _editPrefsChanged = false;
 
   @property({type: Boolean})
   _menuChanged = false;
@@ -195,7 +213,7 @@ export class GrSettingsView extends ChangeTableMixin(PolymerElement) {
   _docsBaseUrl?: string | null;
 
   @property({type: Boolean})
-  _emailsChanged?: boolean;
+  _emailsChanged = false;
 
   @property({type: Boolean})
   _showNumber?: boolean;
@@ -207,8 +225,7 @@ export class GrSettingsView extends ChangeTableMixin(PolymerElement) {
 
   private readonly restApiService = appContext.restApiService;
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     // Polymer 2: anchor tag won't work on shadow DOM
     // we need to manually calling scrollIntoView when hash changed
@@ -226,6 +243,7 @@ export class GrSettingsView extends ChangeTableMixin(PolymerElement) {
       this.$.diffPrefs.loadData(),
     ];
 
+    // TODO(dhruvsri): move this to the service
     promises.push(
       this.restApiService.getPreferences().then(prefs => {
         if (!prefs) {
@@ -237,8 +255,10 @@ export class GrSettingsView extends ChangeTableMixin(PolymerElement) {
         this._localMenu = this._cloneMenu(prefs.my);
         this._localChangeTableColumns =
           prefs.change_table.length === 0
-            ? this.columnNames
-            : this.renameProjectToRepoColumn(prefs.change_table);
+            ? columnNames
+            : prefs.change_table.map(column =>
+                column === 'Project' ? 'Repo' : column
+              );
       })
     );
 
@@ -296,7 +316,7 @@ export class GrSettingsView extends ChangeTableMixin(PolymerElement) {
     });
   }
 
-  disconnectedCallback() {
+  override disconnectedCallback() {
     window.removeEventListener('location-change', this.handleLocationChange);
     super.disconnectedCallback();
   }
@@ -378,6 +398,20 @@ export class GrSettingsView extends ChangeTableMixin(PolymerElement) {
     );
   }
 
+  _handleDisableKeyboardShortcutsChanged() {
+    this.set(
+      '_localPrefs.disable_keyboard_shortcuts',
+      this.$.disableKeyboardShortcuts.checked
+    );
+  }
+
+  _handleDisableTokenHighlightingChanged() {
+    this.set(
+      '_localPrefs.disable_token_highlighting',
+      this.$.disableTokenHighlighting.checked
+    );
+  }
+
   _handleWorkInProgressByDefault() {
     this.set(
       '_localPrefs.work_in_progress_by_default',
@@ -452,7 +486,7 @@ export class GrSettingsView extends ChangeTableMixin(PolymerElement) {
     this.$.emailEditor.save();
   }
 
-  _handleNewEmailKeydown(e: CustomKeyboardEvent) {
+  _handleNewEmailKeydown(e: KeyboardEvent) {
     if (e.keyCode === 13) {
       // Enter
       e.stopPropagation();
@@ -485,7 +519,7 @@ export class GrSettingsView extends ChangeTableMixin(PolymerElement) {
     });
   }
 
-  _getFilterDocsLink(docsBaseUrl?: string) {
+  _getFilterDocsLink(docsBaseUrl?: string | null) {
     let base = docsBaseUrl;
     if (!base || !ABSOLUTE_URL_PATTERN.test(base)) {
       base = GERRIT_DOCS_BASE_URL;
@@ -500,13 +534,14 @@ export class GrSettingsView extends ChangeTableMixin(PolymerElement) {
   _handleToggleDark() {
     if (this._isDark) {
       window.localStorage.removeItem('dark-theme');
-      removeDarkTheme();
     } else {
       window.localStorage.setItem('dark-theme', 'true');
-      applyDarkTheme();
     }
-    this._isDark = !!window.localStorage.getItem('dark-theme');
-    fireAlert(this, `Theme changed to ${this._isDark ? 'dark' : 'light'}.`);
+    this.reloadPage();
+  }
+
+  reloadPage() {
+    windowLocationReload();
   }
 
   _showHttpAuth(config?: ServerInfo) {
@@ -524,6 +559,65 @@ export class GrSettingsView extends ChangeTableMixin(PolymerElement) {
    */
   _onTapDarkToggle(e: Event) {
     e.preventDefault();
+  }
+
+  _handleChangesPerPage() {
+    this.set(
+      '_localPrefs.changes_per_page',
+      Number(this.$.changesPerPageSelect.value)
+    );
+  }
+
+  _handleDateFormat() {
+    this.set('_localPrefs.date_format', this.$.dateTimeFormatSelect.value);
+  }
+
+  _handleTimeFormat() {
+    this.set('_localPrefs.time_format', this.$.timeFormatSelect.value);
+  }
+
+  _handleEmailStrategy() {
+    this.set(
+      '_localPrefs.email_strategy',
+      this.$.emailNotificationsSelect.value
+    );
+  }
+
+  _handleEmailFormat() {
+    this.set('_localPrefs.email_format', this.$.emailFormatSelect.value);
+  }
+
+  _handleDefaultBaseForMerges() {
+    this.set(
+      '_localPrefs.default_base_for_merges',
+      this.$.defaultBaseForMergesSelect.value
+    );
+  }
+
+  _handleDiffView() {
+    this.set(
+      '_localPrefs.diff_view',
+      this.$.diffViewSelect.value as DiffViewMode
+    );
+  }
+
+  /**
+   * bind-value has type string so we have to convert anything inputed
+   * to string.
+   *
+   * This is so typescript template checker doesn't fail.
+   */
+  _convertToString(
+    key?:
+      | DateFormat
+      | DefaultBase
+      | DiffViewMode
+      | EmailFormat
+      | EmailStrategy
+      | TimeFormat
+      | number
+  ) {
+    return key !== undefined ? String(key) : '';
   }
 }
 

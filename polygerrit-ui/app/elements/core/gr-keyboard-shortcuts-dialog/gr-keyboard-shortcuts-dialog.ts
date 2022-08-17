@@ -17,15 +17,16 @@
 import '../../shared/gr-button/gr-button';
 import '../gr-key-binding-display/gr-key-binding-display';
 import '../../../styles/shared-styles';
+import '../../../styles/gr-font-styles';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-keyboard-shortcuts-dialog_html';
 import {
-  KeyboardShortcutMixin,
   ShortcutSection,
-  ShortcutListener,
   SectionView,
 } from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
 import {property, customElement} from '@polymer/decorators';
+import {appContext} from '../../../services/app-context';
+import {ShortcutViewListener} from '../../../services/shortcuts/shortcuts-service';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -39,9 +40,7 @@ interface SectionShortcut {
 }
 
 @customElement('gr-keyboard-shortcuts-dialog')
-export class GrKeyboardShortcutsDialog extends KeyboardShortcutMixin(
-  PolymerElement
-) {
+export class GrKeyboardShortcutsDialog extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
@@ -58,34 +57,28 @@ export class GrKeyboardShortcutsDialog extends KeyboardShortcutMixin(
   @property({type: Array})
   _right?: SectionShortcut[];
 
-  private keyboardShortcutDirectoryListener: ShortcutListener;
+  private readonly shortcutListener: ShortcutViewListener;
+
+  private readonly shortcuts = appContext.shortcutsService;
 
   constructor() {
     super();
-    this.keyboardShortcutDirectoryListener = (
-      d?: Map<ShortcutSection, SectionView>
-    ) => this._onDirectoryUpdated(d);
+    this.shortcutListener = (d?: Map<ShortcutSection, SectionView>) =>
+      this._onDirectoryUpdated(d);
   }
 
-  /** @override */
-  ready() {
+  override ready() {
     super.ready();
     this._ensureAttribute('role', 'dialog');
   }
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
-    this.addKeyboardShortcutDirectoryListener(
-      this.keyboardShortcutDirectoryListener
-    );
+    this.shortcuts.addListener(this.shortcutListener);
   }
 
-  /** @override */
-  disconnectedCallback() {
-    this.removeKeyboardShortcutDirectoryListener(
-      this.keyboardShortcutDirectoryListener
-    );
+  override disconnectedCallback() {
+    this.shortcuts.removeListener(this.shortcutListener);
     super.disconnectedCallback();
   }
 

@@ -35,7 +35,7 @@ import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.InvalidChangeOperationException;
 import com.google.gerrit.server.project.NoSuchChangeException;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.Context;
+import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.gerrit.server.update.RepoContext;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -211,7 +211,10 @@ public class RebaseSubmitStrategy extends SubmitStrategy {
                 .setPostMessage(false)
                 .setSendEmail(false)
                 .setMatchAuthorToCommitterDate(
-                    args.project.is(BooleanProjectConfig.MATCH_AUTHOR_TO_COMMITTER_DATE));
+                    args.project.is(BooleanProjectConfig.MATCH_AUTHOR_TO_COMMITTER_DATE))
+                // The votes are automatically copied and they don't count as copied votes. See
+                // method's javadoc.
+                .setStoreCopiedVotes(/* storeCopiedVotes = */ false);
         try {
           rebaseOp.updateRepo(ctx);
         } catch (MergeConflictException | NoSuchChangeException e) {
@@ -270,7 +273,7 @@ public class RebaseSubmitStrategy extends SubmitStrategy {
     }
 
     @Override
-    public void postUpdateImpl(Context ctx) {
+    public void postUpdateImpl(PostUpdateContext ctx) {
       if (rebaseOp != null) {
         rebaseOp.postUpdate(ctx);
       }

@@ -14,20 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {html} from 'lit-html';
-import {classMap} from 'lit-html/directives/class-map';
-import {repeat} from 'lit-html/directives/repeat';
-import {
-  css,
-  customElement,
-  internalProperty,
-  property,
-  PropertyValues,
-  query,
-  TemplateResult,
-} from 'lit-element';
-import {GrLitElement} from '../lit/gr-lit-element';
+import {classMap} from 'lit/directives/class-map';
+import {repeat} from 'lit/directives/repeat';
+import {ifDefined} from 'lit/directives/if-defined';
+import {LitElement, css, html, PropertyValues, TemplateResult} from 'lit';
+import {customElement, property, query, state} from 'lit/decorators';
+import './gr-checks-action';
+import './gr-hovercard-run';
 import '@polymer/paper-tooltip/paper-tooltip';
+import '@polymer/iron-icon/iron-icon';
 import {
   Action,
   Category,
@@ -38,52 +33,77 @@ import {
 } from '../../api/checks';
 import {sharedStyles} from '../../styles/shared-styles';
 import {
-  allActions$,
-  checksPatchsetNumber$,
-  someProvidersAreLoading$,
-  RunResult,
   CheckRun,
-  allLinks$,
+  checksSelectedPatchsetNumber$,
+  RunResult,
+  someProvidersAreLoadingSelected$,
+  topLevelActionsSelected$,
+  topLevelLinksSelected$,
 } from '../../services/checks/checks-model';
 import {
   allResults,
-  fireActionTriggered,
+  firstPrimaryLink,
   hasCompletedWithoutResults,
-  hasResultsOf,
-  iconForCategory,
+  iconFor,
   iconForLink,
+  isCategory,
+  otherPrimaryLinks,
+  secondaryLinks,
   tooltipForLink,
 } from '../../services/checks/checks-util';
-import {
-  assertIsDefined,
-  check,
-  checkRequiredProperty,
-} from '../../utils/common-util';
-import {toggleClass, whenVisible} from '../../utils/dom-util';
+import {assertIsDefined, check} from '../../utils/common-util';
+import {modifierPressed, toggleClass, whenVisible} from '../../utils/dom-util';
 import {durationString} from '../../utils/date-util';
-import {charsOnly, pluralize} from '../../utils/string-util';
-import {fireRunSelectionReset, isAttemptSelected} from './gr-checks-util';
+import {charsOnly} from '../../utils/string-util';
+import {isAttemptSelected, matches} from './gr-checks-util';
 import {ChecksTabState} from '../../types/events';
-import {ConfigInfo, PatchSetNumber} from '../../types/common';
-import {latestPatchNum$} from '../../services/change/change-model';
+import {
+  ConfigInfo,
+  LabelNameToInfoMap,
+  PatchSetNumber,
+} from '../../types/common';
+import {labels$, latestPatchNum$} from '../../services/change/change-model';
 import {appContext} from '../../services/app-context';
 import {repoConfig$} from '../../services/config/config-model';
+import {spinnerStyles} from '../../styles/gr-spinner-styles';
+import {
+  getLabelStatus,
+  getRepresentativeValue,
+  valueString,
+} from '../../utils/label-util';
+import {GerritNav} from '../core/gr-navigation/gr-navigation';
+import {DropdownLink} from '../shared/gr-dropdown/gr-dropdown';
+import {subscribe} from '../lit/subscription-controller';
+import {fontStyles} from '../../styles/gr-font-styles';
 
 @customElement('gr-result-row')
-class GrResultRow extends GrLitElement {
-  @property()
+class GrResultRow extends LitElement {
+  @query('td.nameCol div.name')
+  nameEl?: HTMLElement;
+
+  @property({attribute: false})
   result?: RunResult;
 
-  @property()
+  @state()
   isExpanded = false;
 
   @property({type: Boolean, reflect: true})
   isExpandable = false;
 
-  @property()
+  @state()
   shouldRender = false;
 
-  static get styles() {
+  @state()
+  labels?: LabelNameToInfoMap;
+
+  private checksService = appContext.checksService;
+
+  constructor() {
+    super();
+    subscribe(this, labels$, x => (this.labels = x));
+  }
+
+  static override get styles() {
     return [
       sharedStyles,
       css`
@@ -96,50 +116,54 @@ class GrResultRow extends GrLitElement {
         gr-result-expanded {
           cursor: default;
         }
-        tr {
+        tr.container {
           border-top: 1px solid var(--border-color);
+        }
+        a.link {
+          margin-right: var(--spacing-s);
         }
         iron-icon.link {
           color: var(--link-color);
-          margin-right: var(--spacing-m);
         }
-        td.iconCol {
-          padding-left: var(--spacing-l);
-          padding-right: var(--spacing-m);
+        td.nameCol div.flex {
+          display: flex;
         }
-        .iconCol div {
-          width: 20px;
-        }
-        .nameCol div {
-          width: 165px;
+        td.nameCol .name {
           overflow: hidden;
           text-overflow: ellipsis;
+          margin-right: var(--spacing-s);
+          outline-offset: var(--spacing-xs);
         }
-        .nameCol .attempt {
+        td.nameCol .space {
+          flex-grow: 1;
+        }
+        td.nameCol gr-checks-action {
+          display: none;
+        }
+        tr:focus-within td.nameCol gr-checks-action,
+        tr:hover td.nameCol gr-checks-action {
           display: inline-block;
-          background-color: var(--tag-gray);
-          border-radius: var(--line-height-normal);
-          height: var(--line-height-normal);
-          width: var(--line-height-normal);
-          text-align: center;
-          vertical-align: top;
-          font-size: var(--font-size-small);
-        }
-        .summaryCol {
-          /* Forces this column to get the remaining space that is left over by
-             the other columns. */
-          width: 99%;
-        }
-        .expanderCol div {
-          width: 20px;
+          /* The button should fit into the 20px line-height. The negative
+             margin provides the extra space needed for the vertical padding.
+             Alternatively we could have set the vertical padding to 0, but
+             that would not have been a nice click target. */
+          margin: calc(0px - var(--spacing-s)) 0px;
+          margin-left: var(--spacing-s);
         }
         td {
           white-space: nowrap;
           padding: var(--spacing-s);
         }
+        td.expandedCol,
+        td.nameCol {
+          padding-left: var(--spacing-l);
+        }
+        td.expandedCol,
+        td.expanderCol {
+          padding-right: var(--spacing-l);
+        }
         td .summary-cell {
           display: flex;
-          max-width: calc(100vw - 630px);
         }
         td .summary-cell .summary {
           font-weight: var(--font-weight-bold);
@@ -157,24 +181,31 @@ class GrResultRow extends GrLitElement {
           overflow: hidden;
           text-overflow: ellipsis;
         }
-        tr:hover {
+        tr.container:hover {
           background: var(--hover-background-color);
         }
-        tr td .summary-cell .links,
-        tr td .summary-cell .actions,
-        tr.collapsed:hover td .summary-cell .links,
-        tr.collapsed:hover td .summary-cell .actions,
+        tr.container:focus-within {
+          background: var(--selection-background-color);
+        }
+        tr.container td .summary-cell .links,
+        tr.container td .summary-cell .actions,
+        tr.container.collapsed:focus-within td .summary-cell .links,
+        tr.container.collapsed:focus-within td .summary-cell .actions,
+        tr.container.collapsed:hover td .summary-cell .links,
+        tr.container.collapsed:hover td .summary-cell .actions,
         :host(.dropdown-open) tr td .summary-cell .links,
         :host(.dropdown-open) tr td .summary-cell .actions {
           display: inline-block;
           margin-left: var(--spacing-s);
         }
-        tr.collapsed td .summary-cell .links,
-        tr.collapsed td .summary-cell .actions {
+        tr.container.collapsed td .summary-cell .message {
+          color: var(--deemphasized-text-color);
+        }
+        tr.container.collapsed td .summary-cell .links,
+        tr.container.collapsed td .summary-cell .actions {
           display: none;
         }
-        tr.collapsed:hover .summary-cell .tags,
-        tr.collapsed:hover .summary-cell .label {
+        tr.detailsRow.collapsed {
           display: none;
         }
         td .summary-cell .tags .tag {
@@ -185,30 +216,22 @@ class GrResultRow extends GrLitElement {
           padding: 0 var(--spacing-m);
           margin-left: var(--spacing-s);
         }
-        td .summary-cell .label {
-          color: var(--primary-text-color);
-          display: inline-block;
-          border-radius: 20px;
-          background-color: var(--label-background);
-          padding: 0 var(--spacing-m);
-          margin-left: var(--spacing-s);
-        }
-        .tag.gray {
+        td .summary-cell .tag.gray {
           background-color: var(--tag-gray);
         }
-        .tag.yellow {
+        td .summary-cell .tag.yellow {
           background-color: var(--tag-yellow);
         }
-        .tag.pink {
+        td .summary-cell .tag.pink {
           background-color: var(--tag-pink);
         }
-        .tag.purple {
+        td .summary-cell .tag.purple {
           background-color: var(--tag-purple);
         }
-        .tag.cyan {
+        td .summary-cell .tag.cyan {
           background-color: var(--tag-cyan);
         }
-        .tag.brown {
+        td .summary-cell .tag.brown {
           background-color: var(--tag-brown);
         }
         .actions gr-checks-action,
@@ -223,29 +246,67 @@ class GrResultRow extends GrLitElement {
         #moreMessage {
           display: none;
         }
+        td .summary-cell .label {
+          margin-left: var(--spacing-s);
+          border-radius: var(--border-radius);
+          color: var(--vote-text-color);
+          display: inline-block;
+          padding: 0 var(--spacing-s);
+          text-align: center;
+        }
+        td .summary-cell .label.neutral {
+          background-color: var(--vote-color-neutral);
+        }
+        td .summary-cell .label.recommended,
+        td .summary-cell .label.disliked {
+          line-height: calc(var(--line-height-normal) - 2px);
+          color: var(--chip-color);
+        }
+        td .summary-cell .label.recommended {
+          background-color: var(--vote-color-recommended);
+          border: 1px solid var(--vote-outline-recommended);
+        }
+        td .summary-cell .label.disliked {
+          background-color: var(--vote-color-disliked);
+          border: 1px solid var(--vote-outline-disliked);
+        }
+        td .summary-cell .label.approved {
+          background-color: var(--vote-color-approved);
+        }
+        td .summary-cell .label.rejected {
+          background-color: var(--vote-color-rejected);
+        }
       `,
     ];
   }
 
-  update(changedProperties: PropertyValues) {
+  override updated(changedProperties: PropertyValues) {
     if (changedProperties.has('result')) {
       this.isExpandable = !!this.result?.summary && !!this.result?.message;
     }
-    super.update(changedProperties);
   }
 
-  firstUpdated() {
+  override focus() {
+    if (this.nameEl) this.nameEl.focus();
+  }
+
+  override firstUpdated() {
     const loading = this.shadowRoot?.querySelector('.container');
     assertIsDefined(loading, '"Loading" element');
-    whenVisible(loading, () => this.setAttribute('shouldRender', 'true'), 200);
+    whenVisible(
+      loading,
+      () => {
+        this.shouldRender = true;
+      },
+      200
+    );
   }
 
-  render() {
+  override render() {
     if (!this.result) return '';
     if (!this.shouldRender) {
       return html`
         <tr class="container">
-          <td class="iconCol"></td>
           <td class="nameCol">
             <div><span class="loading">Loading...</span></div>
           </td>
@@ -256,42 +317,46 @@ class GrResultRow extends GrLitElement {
     }
     return html`
       <tr class="${classMap({container: true, collapsed: !this.isExpanded})}">
-        <td class="iconCol" @click="${this.toggleExpanded}">
-          <div>${this.renderIcon()}</div>
-        </td>
-        <td class="nameCol" @click="${this.toggleExpanded}">
-          <div>
-            <span>${this.result.checkName}</span>
-            <span class="attempt" ?hidden="${this.result.isSingleAttempt}"
-              >${this.result.attempt}</span
+        <td class="nameCol" @click="${this.toggleExpandedClick}">
+          <div class="flex">
+            <gr-hovercard-run .run="${this.result}"></gr-hovercard-run>
+            <div
+              class="name"
+              role="button"
+              tabindex="0"
+              @click="${this.toggleExpandedClick}"
+              @keydown="${this.toggleExpandedPress}"
             >
+              ${this.result.checkName}
+            </div>
+            <div class="space"></div>
           </div>
         </td>
         <td class="summaryCol">
           <div class="summary-cell">
-            ${(this.result.links?.slice(0, 1) ?? []).map(this.renderLink)}
+            ${this.renderLink(firstPrimaryLink(this.result))}
             ${this.renderSummary(this.result.summary)}
-            <div class="message" @click="${this.toggleExpanded}">
+            <div class="message" @click="${this.toggleExpandedClick}">
               ${this.isExpanded ? '' : this.result.message}
             </div>
+            ${this.renderLinks()} ${this.renderActions()}
             <div class="tags">
               ${(this.result.tags ?? []).map(t => this.renderTag(t))}
             </div>
-            ${this.renderLabel()} ${this.renderLinks()} ${this.renderActions()}
+            ${this.renderLabel()}
           </div>
-          ${this.renderExpanded()}
         </td>
-        <td class="expanderCol" @click="${this.toggleExpanded}">
+        <td class="expanderCol" @click="${this.toggleExpandedClick}">
           <div
             class="show-hide"
             role="switch"
             tabindex="0"
             ?hidden="${!this.isExpandable}"
-            ?aria-checked="${this.isExpanded}"
+            aria-checked="${this.isExpanded ? 'true' : 'false'}"
             aria-label="${this.isExpanded
               ? 'Collapse result row'
               : 'Expand result row'}"
-            @keydown="${this.toggleExpanded}"
+            @keydown="${this.toggleExpandedPress}"
           >
             <iron-icon
               icon="${this.isExpanded
@@ -301,6 +366,9 @@ class GrResultRow extends GrLitElement {
           </div>
         </td>
       </tr>
+      <tr class="${classMap({detailsRow: true, collapsed: !this.isExpanded})}">
+        <td class="expandedCol" colspan="3">${this.renderExpanded()}</td>
+      </tr>
     `;
   }
 
@@ -309,6 +377,23 @@ class GrResultRow extends GrLitElement {
     return html`<gr-result-expanded
       .result="${this.result}"
     ></gr-result-expanded>`;
+  }
+
+  private toggleExpandedClick(e: MouseEvent) {
+    if (!this.isExpandable) return;
+    e.preventDefault();
+    e.stopPropagation();
+    this.toggleExpanded();
+  }
+
+  private toggleExpandedPress(e: KeyboardEvent) {
+    if (!this.isExpandable) return;
+    if (modifierPressed(e)) return;
+    // Only react to `return` and `space`.
+    if (e.keyCode !== 13 && e.keyCode !== 32) return;
+    e.preventDefault();
+    e.stopPropagation();
+    this.toggleExpanded();
   }
 
   private toggleExpanded() {
@@ -325,26 +410,50 @@ class GrResultRow extends GrLitElement {
     `;
   }
 
-  renderIcon() {
-    if (this.result?.status !== RunStatus.RUNNING) return;
-    return html`<iron-icon icon="gr-icons:timelapse"></iron-icon>`;
-  }
-
   renderLabel() {
+    const category = this.result?.category;
+    if (category !== Category.ERROR && category !== Category.WARNING) return;
     const label = this.result?.labelName;
     if (!label) return;
-    return html`<div class="label">${label}</div>`;
+    if (!this.result?.isLatestAttempt) return;
+    const info = this.labels?.[label];
+    const status = getLabelStatus(info).toLowerCase();
+    const value = getRepresentativeValue(info);
+    // A neutral vote is not interesting for the user to see and is just
+    // cluttering the UI.
+    if (value === 0) return;
+    const valueStr = valueString(value);
+    return html`
+      <div class="label ${status}">
+        <span>${label} ${valueStr}</span>
+        <paper-tooltip offset="5" ?fitToVisibleBounds="${true}">
+          The check result has (probably) influenced this label vote.
+        </paper-tooltip>
+      </div>
+    `;
   }
 
   renderLinks() {
-    const links = (this.result?.links ?? []).slice(1);
+    const links = otherPrimaryLinks(this.result)
+      // Showing the same icons twice without text is super confusing.
+      .filter(
+        (link: Link, index: number, array: Link[]) =>
+          array.findIndex(other => link.icon === other.icon) === index
+      )
+      // 4 is enough for the summary row. All are shown in expanded state.
+      .slice(0, 4);
     if (links.length === 0) return;
-    return html`<div class="links">${links.map(this.renderLink)}</div>`;
+    return html`<div class="links">
+      ${links.map(link => this.renderLink(link))}
+    </div>`;
   }
 
-  renderLink(link: Link) {
+  renderLink(link?: Link) {
+    // The expanded state renders all links in more detail. Hide in summary.
+    if (this.isExpanded) return;
+    if (!link) return;
     const tooltipText = link.tooltip ?? tooltipForLink(link.icon);
-    return html`<a href="${link.url}" target="_blank"
+    return html`<a href="${link.url}" class="link" target="_blank"
       ><iron-icon
         aria-label="external link to details"
         class="link"
@@ -360,6 +469,9 @@ class GrResultRow extends GrLitElement {
     const overflowItems = actions.slice(2).map(action => {
       return {...action, id: action.name};
     });
+    const disabledItems = overflowItems
+      .filter(action => action.disabled)
+      .map(action => action.id);
     return html`<div class="actions">
       ${this.renderAction(actions[0])} ${this.renderAction(actions[1])}
       <gr-dropdown
@@ -372,6 +484,7 @@ class GrResultRow extends GrLitElement {
           toggleClass(this, 'dropdown-open', e.detail.value)}"
         ?hidden="${overflowItems.length === 0}"
         .items="${overflowItems}"
+        .disabledIds="${disabledItems}"
       >
         <iron-icon icon="gr-icons:more-vert" aria-labelledby="moreMessage">
         </iron-icon>
@@ -381,7 +494,7 @@ class GrResultRow extends GrLitElement {
   }
 
   private handleAction(e: CustomEvent<Action>) {
-    fireActionTriggered(this, e.detail);
+    this.checksService.triggerAction(e.detail);
   }
 
   private renderAction(action?: Action) {
@@ -408,24 +521,41 @@ class GrResultRow extends GrLitElement {
   }
 
   renderTag(tag: Tag) {
-    return html`<div class="tag ${tag.color}">${tag.name}</div>`;
+    return html`<div class="tag ${tag.color}">
+      <span>${tag.name}</span>
+      <paper-tooltip offset="5" ?fitToVisibleBounds="${true}">
+        ${tag.tooltip ?? 'A category tag for this check result'}
+      </paper-tooltip>
+    </div>`;
   }
 }
 
 @customElement('gr-result-expanded')
-class GrResultExpanded extends GrLitElement {
-  @property()
+class GrResultExpanded extends LitElement {
+  @property({attribute: false})
   result?: RunResult;
 
-  @property()
+  @state()
   repoConfig?: ConfigInfo;
 
-  static get styles() {
+  private changeService = appContext.changeService;
+
+  static override get styles() {
     return [
       sharedStyles,
       css`
+        .links {
+          white-space: normal;
+        }
+        .links a {
+          display: inline-block;
+          margin-right: var(--spacing-xl);
+        }
+        .links a iron-icon {
+          margin-right: var(--spacing-xs);
+        }
         .message {
-          padding: var(--spacing-m) var(--spacing-m) var(--spacing-m) 0;
+          padding: var(--spacing-m) 0;
         }
       `,
     ];
@@ -433,13 +563,18 @@ class GrResultExpanded extends GrLitElement {
 
   constructor() {
     super();
-    this.subscribe('repoConfig', repoConfig$);
+    subscribe(this, repoConfig$, x => (this.repoConfig = x));
   }
 
-  render() {
+  override render() {
     if (!this.result) return '';
     return html`
-      <gr-endpoint-decorator name="check-result-expanded">
+      ${this.renderFirstPrimaryLink()} ${this.renderOtherPrimaryLinks()}
+      ${this.renderSecondaryLinks()} ${this.renderCodePointers()}
+      <gr-endpoint-decorator
+        name="check-result-expanded"
+        .targetPlugin="${this.result.pluginName}"
+      >
         <gr-endpoint-param
           name="run"
           .value="${this.result}"
@@ -449,98 +584,178 @@ class GrResultExpanded extends GrLitElement {
           .value="${this.result}"
         ></gr-endpoint-param>
         <gr-formatted-text
-          no-trailing-margin=""
+          noTrailingMargin
           class="message"
-          content="${this.result.message}"
-          config="${this.repoConfig}"
+          .content="${this.result.message}"
+          .config="${this.repoConfig?.commentlinks}"
         ></gr-formatted-text>
       </gr-endpoint-decorator>
     `;
   }
+
+  private renderFirstPrimaryLink() {
+    const link = firstPrimaryLink(this.result);
+    if (!link) return;
+    return html`<div class="links">${this.renderLink(link)}</div>`;
+  }
+
+  private renderOtherPrimaryLinks() {
+    const links = otherPrimaryLinks(this.result);
+    if (links.length === 0) return;
+    return html`<div class="links">
+      ${links.map(link => this.renderLink(link))}
+    </div>`;
+  }
+
+  private renderSecondaryLinks() {
+    const links = secondaryLinks(this.result);
+    if (links.length === 0) return;
+    return html`<div class="links">
+      ${links.map(link => this.renderLink(link))}
+    </div>`;
+  }
+
+  private renderCodePointers() {
+    const pointers = this.result?.codePointers ?? [];
+    if (pointers.length === 0) return;
+    const links = pointers.map(pointer => {
+      let rangeText = '';
+      const start = pointer?.range?.start_line;
+      const end = pointer?.range?.end_line;
+      if (start) rangeText += `#${start}`;
+      if (end && start !== end) rangeText += `-${end}`;
+      const change = this.changeService.getChange();
+      assertIsDefined(change);
+      const path = pointer.path;
+      const patchset = this.result?.patchset as PatchSetNumber | undefined;
+      const line = pointer?.range?.start_line;
+      return {
+        icon: LinkIcon.CODE,
+        tooltip: `${path}${rangeText}`,
+        url: GerritNav.getUrlForDiff(change, path, patchset, undefined, line),
+        primary: true,
+      };
+    });
+    return links.map(
+      link => html`<div class="links">${this.renderLink(link, false)}</div>`
+    );
+  }
+
+  private renderLink(link?: Link, targetBlank = true) {
+    if (!link) return;
+    const text = link.tooltip ?? tooltipForLink(link.icon);
+    const target = targetBlank ? '_blank' : undefined;
+    return html`<a href="${link.url}" target="${ifDefined(target)}">
+      <iron-icon
+        class="link"
+        icon="gr-icons:${iconForLink(link.icon)}"
+      ></iron-icon
+      ><span>${text}</span>
+    </a>`;
+  }
 }
 
-const SHOW_ALL_THRESHOLDS: Map<Category | 'SUCCESS', number> = new Map();
-SHOW_ALL_THRESHOLDS.set(Category.ERROR, 20);
-SHOW_ALL_THRESHOLDS.set(Category.WARNING, 20);
-SHOW_ALL_THRESHOLDS.set(Category.INFO, 5);
-SHOW_ALL_THRESHOLDS.set('SUCCESS', 5);
+const CATEGORY_TOOLTIPS: Map<Category, string> = new Map();
+CATEGORY_TOOLTIPS.set(Category.ERROR, 'Must be fixed and is blocking submit');
+CATEGORY_TOOLTIPS.set(
+  Category.WARNING,
+  'Should be checked but is not blocking submit'
+);
+CATEGORY_TOOLTIPS.set(
+  Category.INFO,
+  'Does not have to be checked, for your information only'
+);
+CATEGORY_TOOLTIPS.set(
+  Category.SUCCESS,
+  'Successful runs without results and individual successful results'
+);
 
 @customElement('gr-checks-results')
-export class GrChecksResults extends GrLitElement {
+export class GrChecksResults extends LitElement {
   @query('#filterInput')
   filterInput?: HTMLInputElement;
 
-  @internalProperty()
+  @state()
   filterRegExp = new RegExp('');
 
   /** All runs. Shown should only the selected/filtered ones. */
-  @property()
+  @property({attribute: false})
   runs: CheckRun[] = [];
 
   /**
    * Check names of runs that are selected in the runs panel. When this array
    * is empty, then no run is selected and all runs should be shown.
    */
-  @property()
+  @property({attribute: false})
   selectedRuns: string[] = [];
 
-  @property()
+  @state()
   actions: Action[] = [];
 
-  @property()
+  @state()
   links: Link[] = [];
 
-  @property()
+  @property({attribute: false})
   tabState?: ChecksTabState;
 
-  @property()
+  @state()
   someProvidersAreLoading = false;
 
-  @property()
+  @state()
   checksPatchsetNumber: PatchSetNumber | undefined = undefined;
 
-  @property()
+  @state()
   latestPatchsetNumber: PatchSetNumber | undefined = undefined;
 
   /** Maps checkName to selected attempt number. `undefined` means `latest`. */
-  @property()
+  @property({attribute: false})
   selectedAttempts: Map<string, number | undefined> = new Map<
     string,
     number | undefined
   >();
 
   /** Maintains the state of which result sections should show all results. */
-  @internalProperty()
-  isShowAll: Map<Category | 'SUCCESS', boolean> = new Map();
+  @state()
+  isShowAll: Map<Category, boolean> = new Map();
 
   /**
    * This is the current state of whether a section is expanded or not. As long
    * as isSectionExpandedByUser is false this will be computed by a default rule
    * on every render.
    */
-  private isSectionExpanded = new Map<Category | 'SUCCESS', boolean>();
+  private isSectionExpanded = new Map<Category, boolean>();
 
   /**
    * Keeps track of whether the user intentionally changed the expansion state.
    * Once this is true the default rule for showing a section expanded or not
    * is not applied anymore.
    */
-  private isSectionExpandedByUser = new Map<Category | 'SUCCESS', boolean>();
+  private isSectionExpandedByUser = new Map<Category, boolean>();
 
   private readonly checksService = appContext.checksService;
 
   constructor() {
     super();
-    this.subscribe('actions', allActions$);
-    this.subscribe('links', allLinks$);
-    this.subscribe('checksPatchsetNumber', checksPatchsetNumber$);
-    this.subscribe('latestPatchsetNumber', latestPatchNum$);
-    this.subscribe('someProvidersAreLoading', someProvidersAreLoading$);
+    subscribe(this, topLevelActionsSelected$, x => (this.actions = x));
+    subscribe(this, topLevelLinksSelected$, x => (this.links = x));
+    subscribe(
+      this,
+      checksSelectedPatchsetNumber$,
+      x => (this.checksPatchsetNumber = x)
+    );
+    subscribe(this, latestPatchNum$, x => (this.latestPatchsetNumber = x));
+    subscribe(
+      this,
+      someProvidersAreLoadingSelected$,
+      x => (this.someProvidersAreLoading = x)
+    );
   }
 
-  static get styles() {
+  static override get styles() {
     return [
       sharedStyles,
+      spinnerStyles,
+      fontStyles,
       css`
         :host {
           display: block;
@@ -553,8 +768,12 @@ export class GrChecksResults extends GrLitElement {
             var(--spacing-xl);
           border-bottom: 1px solid var(--border-color);
         }
+        .header.notLatest {
+          background-color: var(--emphasis-color);
+        }
         .headerTopRow,
         .headerBottomRow {
+          max-width: 1600px;
           display: flex;
           justify-content: space-between;
           align-items: flex-end;
@@ -564,15 +783,49 @@ export class GrChecksResults extends GrLitElement {
           border-radius: var(--border-radius);
           padding: 0 var(--spacing-m);
         }
+        .headerTopRow h2 {
+          display: inline-block;
+        }
+        .headerTopRow .loading {
+          display: inline-block;
+          margin-left: var(--spacing-m);
+          color: var(--deemphasized-text-color);
+        }
+        /* The basics of .loadingSpin are defined in shared styles. */
+        .headerTopRow .loadingSpin {
+          display: inline-block;
+          margin-left: var(--spacing-s);
+          width: 18px;
+          height: 18px;
+          vertical-align: top;
+        }
         .headerBottomRow {
           margin-top: var(--spacing-s);
         }
+        .headerTopRow .right,
         .headerBottomRow .right {
           display: flex;
           align-items: center;
         }
-        .headerBottomRow .links iron-icon {
+        .headerTopRow .right .goToLatest {
+          display: none;
+        }
+        .notLatest .headerTopRow .right .goToLatest {
+          display: block;
+        }
+        .headerTopRow .right .goToLatest gr-button {
+          margin-right: var(--spacing-m);
+          --gr-button-padding: var(--spacing-s) var(--spacing-m);
+        }
+        .headerBottomRow iron-icon {
           color: var(--link-color);
+        }
+        .headerBottomRow .space {
+          display: inline-block;
+          width: var(--spacing-xl);
+          height: var(--line-height-normal);
+        }
+        .headerBottomRow a {
           margin-right: var(--spacing-l);
         }
         #moreActions iron-icon {
@@ -598,12 +851,6 @@ export class GrChecksResults extends GrLitElement {
         .filterDiv .selection {
           padding: var(--spacing-s) var(--spacing-m);
         }
-        .filterDiv iron-icon.filter {
-          color: var(--selected-foreground);
-        }
-        .filterDiv gr-button.reset {
-          margin: calc(0px - var(--spacing-s)) var(--spacing-l);
-        }
         .categoryHeader {
           margin-top: var(--spacing-l);
           margin-left: var(--spacing-l);
@@ -616,6 +863,9 @@ export class GrChecksResults extends GrLitElement {
           width: var(--line-height-h3);
           height: var(--line-height-h3);
           margin-right: var(--spacing-s);
+        }
+        .categoryHeader .statusIconWrapper {
+          display: inline-block;
         }
         .categoryHeader .statusIcon {
           position: relative;
@@ -646,7 +896,7 @@ export class GrChecksResults extends GrLitElement {
         }
         .noResultsMessage {
           width: 100%;
-          max-width: 1280px;
+          max-width: 1600px;
           margin-top: var(--spacing-m);
           background-color: var(--background-color-primary);
           box-shadow: var(--elevation-level-1);
@@ -655,7 +905,8 @@ export class GrChecksResults extends GrLitElement {
         }
         table.resultsTable {
           width: 100%;
-          max-width: 1280px;
+          max-width: 1600px;
+          table-layout: fixed;
           margin-top: var(--spacing-m);
           background-color: var(--background-color-primary);
           box-shadow: var(--elevation-level-1);
@@ -665,6 +916,18 @@ export class GrChecksResults extends GrLitElement {
           font-weight: var(--font-weight-bold);
           padding: var(--spacing-s);
         }
+        tr.headerRow th.nameCol {
+          width: 200px;
+          padding-left: var(--spacing-l);
+        }
+        tr.headerRow th.summaryCol {
+          width: 99%;
+        }
+        tr.headerRow th.expanderCol {
+          width: 30px;
+          padding-right: var(--spacing-l);
+        }
+
         gr-button.showAll {
           margin: var(--spacing-m);
         }
@@ -675,20 +938,23 @@ export class GrChecksResults extends GrLitElement {
     ];
   }
 
-  protected updated(changedProperties: PropertyValues) {
+  protected override updated(changedProperties: PropertyValues) {
     super.updated(changedProperties);
     if (changedProperties.has('tabState') && this.tabState) {
       const {statusOrCategory, checkName} = this.tabState;
-      if (
+      if (isCategory(statusOrCategory)) {
+        const expanded = this.isSectionExpanded.get(statusOrCategory);
+        if (!expanded) this.toggleExpanded(statusOrCategory);
+      }
+      if (checkName) {
+        this.scrollElIntoView(`gr-result-row.${charsOnly(checkName)}`);
+      } else if (
         statusOrCategory &&
         statusOrCategory !== RunStatus.RUNNING &&
         statusOrCategory !== RunStatus.RUNNABLE
       ) {
-        let cat = statusOrCategory.toString().toLowerCase();
-        if (statusOrCategory === RunStatus.COMPLETED) cat = 'success';
-        this.scrollElIntoView(`.categoryHeader .${cat}`);
-      } else if (checkName) {
-        this.scrollElIntoView(`gr-result-row.${charsOnly(checkName)}`);
+        const cat = statusOrCategory.toString().toLowerCase();
+        this.scrollElIntoView(`.categoryHeader.${cat} + table gr-result-row`);
       }
     }
   }
@@ -696,26 +962,43 @@ export class GrChecksResults extends GrLitElement {
   private scrollElIntoView(selector: string) {
     this.updateComplete.then(() => {
       let el = this.shadowRoot?.querySelector(selector);
-      // <gr-result-row> has display:contents and cannot be scrolled into view
-      // itself. Thus we are preferring to scroll the first child into view.
-      el = el?.shadowRoot?.firstElementChild ?? el;
-      el?.scrollIntoView({block: 'center'});
+      // el might be a <gr-result-row> with an empty shadowRoot. Let's wait a
+      // moment before trying to find a child element in it.
+      setTimeout(() => {
+        if (el) (el as HTMLElement).focus();
+        // <gr-result-row> has display:contents and cannot be scrolled into view
+        // itself. Thus we are preferring to scroll the first child into view.
+        el = el?.shadowRoot?.firstElementChild ?? el;
+        el?.scrollIntoView({block: 'center'});
+      }, 0);
     });
   }
 
-  render() {
+  override render() {
+    const headerClasses = {
+      header: true,
+      notLatest: !!this.checksPatchsetNumber,
+    };
     return html`
-      <div class="header">
+      <div class="${classMap(headerClasses)}">
         <div class="headerTopRow">
           <div class="left">
             <h2 class="heading-2">Results</h2>
-          </div>
-          <div class="middle">
-            <span ?hidden="${!this.someProvidersAreLoading}">Loading...</span>
+            <div class="loading" ?hidden="${!this.someProvidersAreLoading}">
+              <span>Loading results </span>
+              <span class="loadingSpin"></span>
+            </div>
           </div>
           <div class="right">
+            <div class="goToLatest">
+              <gr-button @click="${this.goToLatestPatchset}" link
+                >Go to latest patchset</gr-button
+              >
+            </div>
             <gr-dropdown-list
-              value="${this.checksPatchsetNumber}"
+              value="${this.checksPatchsetNumber ??
+              this.latestPatchsetNumber ??
+              0}"
               .items="${this.createPatchsetDropdownItems()}"
               @value-change="${this.onPatchsetSelected}"
             ></gr-dropdown-list>
@@ -723,24 +1006,64 @@ export class GrChecksResults extends GrLitElement {
         </div>
         <div class="headerBottomRow">
           <div class="left">${this.renderFilter()}</div>
-          <div class="right">${this.renderLinks()}${this.renderActions()}</div>
+          <div class="right">${this.renderLinksAndActions()}</div>
         </div>
       </div>
       <div class="body">
         ${this.renderSection(Category.ERROR)}
         ${this.renderSection(Category.WARNING)}
-        ${this.renderSection(Category.INFO)} ${this.renderSection('SUCCESS')}
+        ${this.renderSection(Category.INFO)}
+        ${this.renderSection(Category.SUCCESS)}
       </div>
     `;
   }
 
-  private renderLinks() {
-    const links = (this.links ?? []).slice(0, 4);
-    if (links.length === 0) return;
-    return html`<div class="links">${links.map(this.renderLink)}</div>`;
+  private renderLinksAndActions() {
+    const links = this.links ?? [];
+    const primaryLinks = links
+      .filter(a => a.primary)
+      // Showing the same icons twice without text is super confusing.
+      .filter(
+        (link: Link, index: number, array: Link[]) =>
+          array.findIndex(other => link.icon === other.icon) === index
+      )
+      .slice(0, 4);
+    const overflowLinks = links.filter(a => !primaryLinks.includes(a));
+    const overflowLinkItems = overflowLinks.map(link => {
+      return {
+        ...link,
+        id: link.tooltip,
+        name: link.tooltip,
+        target: '_blank',
+        tooltip: undefined,
+      };
+    });
+
+    const actions = this.actions ?? [];
+    const primaryActions = actions.filter(a => a.primary).slice(0, 2);
+    const overflowActions = actions.filter(a => !primaryActions.includes(a));
+    const overflowActionItems = overflowActions.map(action => {
+      return {...action, id: action.name};
+    });
+    const disabledActions = overflowActionItems
+      .filter(action => action.disabled)
+      .map(action => action.id);
+
+    return html`
+      ${primaryLinks.map(this.renderLink)}
+      ${primaryLinks.length > 0 && primaryActions.length > 0
+        ? html`<div class="space"></div>`
+        : ''}
+      ${primaryActions.map(this.renderAction)}
+      ${this.renderOverflow(
+        [...overflowLinkItems, ...overflowActionItems],
+        disabledActions
+      )}
+    `;
   }
 
-  private renderLink(link: Link) {
+  private renderLink(link?: Link) {
+    if (!link) return;
     const tooltipText = link.tooltip ?? tooltipForLink(link.icon);
     return html`<a href="${link.url}" target="_blank"
       ><iron-icon
@@ -752,21 +1075,17 @@ export class GrChecksResults extends GrLitElement {
     >`;
   }
 
-  private renderActions() {
-    const overflowItems = this.actions.slice(2).map(action => {
-      return {...action, id: action.name};
-    });
+  private renderOverflow(items: DropdownLink[], disabledIds: string[] = []) {
+    if (items.length === 0) return;
     return html`
-      ${this.renderAction(this.actions[0])}
-      ${this.renderAction(this.actions[1])}
       <gr-dropdown
         id="moreActions"
         link=""
         vertical-offset="32"
         horizontal-align="right"
         @tap-item="${this.handleAction}"
-        ?hidden="${overflowItems.length === 0}"
-        .items="${overflowItems}"
+        .items="${items}"
+        .disabledIds="${disabledIds}"
       >
         <iron-icon icon="gr-icons:more-vert" aria-labelledby="moreMessage">
         </iron-icon>
@@ -776,7 +1095,7 @@ export class GrChecksResults extends GrLitElement {
   }
 
   private handleAction(e: CustomEvent<Action>) {
-    fireActionTriggered(this, e.detail);
+    this.checksService.triggerAction(e.detail);
   }
 
   private renderAction(action?: Action) {
@@ -788,6 +1107,10 @@ export class GrChecksResults extends GrLitElement {
     const patchset = Number(e.detail.value);
     check(!isNaN(patchset), 'selected patchset must be a number');
     this.checksService.setPatchset(patchset as PatchSetNumber);
+  }
+
+  private goToLatestPatchset() {
+    this.checksService.setPatchset(undefined);
   }
 
   private createPatchsetDropdownItems() {
@@ -829,26 +1152,8 @@ export class GrChecksResults extends GrLitElement {
           placeholder="Filter results by regular expression"
           @input="${this.onInput}"
         />
-        <div class="selection">${this.renderSelectionFilter()}</div>
       </div>
     `;
-  }
-
-  renderSelectionFilter() {
-    const count = this.selectedRuns.length;
-    if (count === 0) return;
-    return html`
-      <iron-icon class="filter" icon="gr-icons:filter"></iron-icon>
-      <span>Filtered by ${pluralize(count, 'run')}</span>
-      <gr-button link class="reset" @click="${this.handleClick}"
-        >Reset View</gr-button
-      >
-    `;
-  }
-
-  handleClick() {
-    this.filterRegExp = new RegExp('');
-    fireRunSelectionReset(this);
   }
 
   onInput() {
@@ -856,16 +1161,13 @@ export class GrChecksResults extends GrLitElement {
     this.filterRegExp = new RegExp(this.filterInput.value, 'i');
   }
 
-  renderSection(category: Category | 'SUCCESS') {
+  renderSection(category: Category) {
     const catString = category.toString().toLowerCase();
-    let allRuns = this.runs.filter(run =>
+    const isWarningOrError =
+      category === Category.WARNING || category === Category.ERROR;
+    const allRuns = this.runs.filter(run =>
       isAttemptSelected(this.selectedAttempts, run)
     );
-    if (category === 'SUCCESS') {
-      allRuns = allRuns.filter(hasCompletedWithoutResults);
-    } else {
-      allRuns = allRuns.filter(r => hasResultsOf(r, category));
-    }
     const all = allRuns.reduce(
       (results: RunResult[], run) => [
         ...results,
@@ -873,28 +1175,26 @@ export class GrChecksResults extends GrLitElement {
       ],
       []
     );
+    const isSelection = this.selectedRuns.length > 0;
     const selected = all.filter(result => this.isRunSelected(result));
-    const filtered = selected.filter(
-      result =>
-        this.filterRegExp.test(result.checkName) ||
-        this.filterRegExp.test(result.summary)
+    const filtered = selected.filter(result =>
+      matches(result, this.filterRegExp)
     );
     let expanded = this.isSectionExpanded.get(category);
     const expandedByUser = this.isSectionExpandedByUser.get(category) ?? false;
     if (!expandedByUser || expanded === undefined) {
-      expanded = selected.length > 0;
+      expanded = selected.length > 0 && (isWarningOrError || isSelection);
       this.isSectionExpanded.set(category, expanded);
     }
     const expandedClass = expanded ? 'expanded' : 'collapsed';
     const icon = expanded ? 'gr-icons:expand-less' : 'gr-icons:expand-more';
     const isShowAll = this.isShowAll.get(category) ?? false;
-    const showAllThreshold = SHOW_ALL_THRESHOLDS.get(category) ?? 5;
     const resultCount = filtered.length;
-    const resultLimit = isShowAll ? 1000 : showAllThreshold;
+    const resultLimit = isShowAll ? 1000 : 20;
     const showAllButton = this.renderShowAllButton(
       category,
       isShowAll,
-      showAllThreshold,
+      resultLimit,
       resultCount
     );
     return html`
@@ -904,14 +1204,17 @@ export class GrChecksResults extends GrLitElement {
           @click="${() => this.toggleExpanded(category)}"
         >
           <iron-icon class="expandIcon" icon="${icon}"></iron-icon>
-          <iron-icon
-            icon="gr-icons:${iconForCategory(category)}"
-            class="statusIcon ${catString}"
-          ></iron-icon>
-          <span class="title">${catString}</span>
-          <span class="count"
-            >${this.renderCount(all, selected, filtered)}</span
-          >
+          <div class="statusIconWrapper">
+            <iron-icon
+              icon="gr-icons:${iconFor(category)}"
+              class="statusIcon ${catString}"
+            ></iron-icon>
+            <span class="title">${catString}</span>
+            <span class="count">${this.renderCount(all, filtered)}</span>
+            <paper-tooltip offset="5"
+              >${CATEGORY_TOOLTIPS.get(category)}</paper-tooltip
+            >
+          </div>
         </h3>
         ${this.renderResults(
           all,
@@ -925,7 +1228,7 @@ export class GrChecksResults extends GrLitElement {
   }
 
   renderShowAllButton(
-    category: Category | 'SUCCESS',
+    category: Category,
     isShowAll: boolean,
     showAllThreshold: number,
     resultCount: number
@@ -935,7 +1238,7 @@ export class GrChecksResults extends GrLitElement {
     const handler = () => this.toggleShowAll(category);
     return html`
       <tr class="showAllRow">
-        <td colspan="4">
+        <td colspan="3">
           <gr-button class="showAll" link @click="${handler}"
             >${message}</gr-button
           >
@@ -944,7 +1247,7 @@ export class GrChecksResults extends GrLitElement {
     `;
   }
 
-  toggleShowAll(category: Category | 'SUCCESS') {
+  toggleShowAll(category: Category) {
     const current = this.isShowAll.get(category) ?? false;
     this.isShowAll.set(category, !current);
     this.requestUpdate();
@@ -975,7 +1278,6 @@ export class GrChecksResults extends GrLitElement {
       <table class="resultsTable">
         <thead>
           <tr class="headerRow">
-            <th class="iconCol"></th>
             <th class="nameCol">Run</th>
             <th class="summaryCol">Summary</th>
             <th class="expanderCol"></th>
@@ -985,9 +1287,9 @@ export class GrChecksResults extends GrLitElement {
           ${repeat(
             filtered,
             result => result.internalResultId,
-            result => html`
+            (result?: RunResult) => html`
               <gr-result-row
-                class="${charsOnly(result.checkName)}"
+                class="${charsOnly(result!.checkName)}"
                 .result="${result}"
               ></gr-result-row>
             `
@@ -998,17 +1300,14 @@ export class GrChecksResults extends GrLitElement {
     `;
   }
 
-  renderCount(all: RunResult[], selected: RunResult[], filtered: RunResult[]) {
+  renderCount(all: RunResult[], filtered: RunResult[]) {
     if (all.length === filtered.length) {
       return html`(${all.length})`;
-    }
-    if (all.length !== selected.length) {
-      return html`<span class="filtered"> - filtered</span>`;
     }
     return html`(${filtered.length} of ${all.length})`;
   }
 
-  toggleExpanded(category: Category | 'SUCCESS') {
+  toggleExpanded(category: Category) {
     const expanded = this.isSectionExpanded.get(category);
     assertIsDefined(expanded, 'expanded must have been set in initial render');
     this.isSectionExpanded.set(category, !expanded);
@@ -1016,8 +1315,10 @@ export class GrChecksResults extends GrLitElement {
     this.requestUpdate();
   }
 
-  computeRunResults(category: Category | 'SUCCESS', run: CheckRun) {
-    if (category === 'SUCCESS') return [this.computeSuccessfulRunResult(run)];
+  computeRunResults(category: Category, run: CheckRun) {
+    if (category === Category.SUCCESS && hasCompletedWithoutResults(run)) {
+      return [this.computeSuccessfulRunResult(run)];
+    }
     return (
       run.results
         ?.filter(result => result.category === category)
@@ -1030,7 +1331,7 @@ export class GrChecksResults extends GrLitElement {
   computeSuccessfulRunResult(run: CheckRun): RunResult {
     const adaptedRun: RunResult = {
       internalResultId: run.internalRunId + '-0',
-      category: Category.INFO, // will not be used, but is required
+      category: Category.SUCCESS,
       summary: run.statusDescription ?? '',
       ...run,
     };
@@ -1056,53 +1357,10 @@ export class GrChecksResults extends GrLitElement {
   }
 }
 
-@customElement('gr-checks-action')
-export class GrChecksAction extends GrLitElement {
-  @property()
-  action!: Action;
-
-  connectedCallback() {
-    super.connectedCallback();
-    checkRequiredProperty(this.action, 'action');
-  }
-
-  static get styles() {
-    return [
-      css`
-        :host {
-          display: inline-block;
-        }
-        gr-button {
-          --padding: var(--spacing-s) var(--spacing-m);
-        }
-        gr-button paper-tooltip {
-          text-transform: none;
-        }
-      `,
-    ];
-  }
-
-  render() {
-    return html`
-      <gr-button link class="action" @click="${this.handleClick}">
-        ${this.action.name}
-        <paper-tooltip ?hidden="${!this.action.tooltip}" offset="5"
-          >${this.action.tooltip}</paper-tooltip
-        >
-      </gr-button>
-    `;
-  }
-
-  handleClick() {
-    fireActionTriggered(this, this.action);
-  }
-}
-
 declare global {
   interface HTMLElementTagNameMap {
     'gr-result-row': GrResultRow;
     'gr-result-expanded': GrResultExpanded;
     'gr-checks-results': GrChecksResults;
-    'gr-checks-action': GrChecksAction;
   }
 }

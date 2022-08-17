@@ -28,7 +28,7 @@ import com.google.gerrit.server.ModuleOverloader;
 import com.google.gerrit.server.config.GerritRuntime;
 import com.google.gerrit.server.config.GerritServerConfigModule;
 import com.google.gerrit.server.config.SitePath;
-import com.google.gerrit.server.experiments.ConfigExperimentFeatures;
+import com.google.gerrit.server.experiments.ConfigExperimentFeatures.ConfigExperimentFeaturesModule;
 import com.google.gerrit.server.git.GitRepositoryManagerModule;
 import com.google.gerrit.server.git.SystemReaderInstaller;
 import com.google.gerrit.server.schema.SchemaModule;
@@ -52,7 +52,7 @@ public abstract class SiteProgram extends AbstractProgram {
       name = "--site-path",
       aliases = {"-d"},
       usage = "Local directory containing site data")
-  private void setSitePath(String path) {
+  void setSitePath(String path) {
     sitePath = Paths.get(path).normalize();
   }
 
@@ -64,7 +64,7 @@ public abstract class SiteProgram extends AbstractProgram {
     this.sitePath = sitePath.normalize();
   }
 
-  /** @return the site path specified on the command line. */
+  /** Returns the site path specified on the command line. */
   protected Path getSitePath() {
     return sitePath;
   }
@@ -76,12 +76,12 @@ public abstract class SiteProgram extends AbstractProgram {
     }
   }
 
-  /** @return provides database connectivity and site path. */
+  /** Provides database connectivity and site path. */
   protected Injector createDbInjector() {
     return createDbInjector(false);
   }
 
-  /** @return provides database connectivity and site path. */
+  /** Provides database connectivity and site path. */
   protected Injector createDbInjector(boolean enableMetrics) {
     List<Module> modules = new ArrayList<>();
 
@@ -131,13 +131,13 @@ public abstract class SiteProgram extends AbstractProgram {
     modules.add(cfgInjector.getInstance(GitRepositoryManagerModule.class));
     // The only implementation of experiments is available in all programs that can use
     // gerrit.config
-    modules.add(new ConfigExperimentFeatures.Module());
+    modules.add(new ConfigExperimentFeaturesModule());
 
     try {
       return Guice.createInjector(
           PRODUCTION,
           ModuleOverloader.override(
-              modules, LibModuleLoader.loadModules(cfgInjector, LibModuleType.DB_MODULE)));
+              modules, LibModuleLoader.loadModules(cfgInjector, LibModuleType.DB_MODULE_TYPE)));
     } catch (CreationException ce) {
       Message first = ce.getErrorMessages().iterator().next();
       Throwable why = first.getCause();

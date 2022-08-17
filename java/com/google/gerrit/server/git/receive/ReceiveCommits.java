@@ -46,6 +46,7 @@ import static org.eclipse.jgit.transport.ReceiveCommand.Result.REJECTED_OTHER_RE
 import com.google.common.base.Joiner;
 import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
+import com.google.common.base.Throwables;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import com.google.common.collect.ImmutableList;
@@ -100,17 +101,28 @@ import com.google.gerrit.extensions.validators.CommentForValidation.CommentType;
 import com.google.gerrit.extensions.validators.CommentValidationContext;
 import com.google.gerrit.extensions.validators.CommentValidationFailure;
 import com.google.gerrit.extensions.validators.CommentValidator;
-import com.google.gerrit.server.ApprovalsUtil;
+import com.google.gerrit.metrics.Counter0;
+import com.google.gerrit.metrics.Counter3;
+import com.google.gerrit.metrics.Description;
+import com.google.gerrit.metrics.Field;
+import com.google.gerrit.metrics.MetricMaker;
+import com.google.gerrit.server.CancellationMetrics;
 import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.CommentsUtil;
 import com.google.gerrit.server.CreateGroupPermissionSyncer;
+import com.google.gerrit.server.DeadlineChecker;
 import com.google.gerrit.server.IdentifiedUser;
+import com.google.gerrit.server.InvalidDeadlineException;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.PublishCommentUtil;
 import com.google.gerrit.server.PublishCommentsOp;
 import com.google.gerrit.server.RequestInfo;
 import com.google.gerrit.server.RequestListener;
 import com.google.gerrit.server.account.AccountResolver;
+import com.google.gerrit.server.approval.ApprovalsUtil;
+import com.google.gerrit.server.cancellation.RequestCancelledException;
+import com.google.gerrit.server.cancellation.RequestStateContext;
+import com.google.gerrit.server.change.AttentionSetUnchangedOp;
 import com.google.gerrit.server.change.ChangeInserter;
 import com.google.gerrit.server.change.NotifyResolver;
 import com.google.gerrit.server.change.SetHashtagsOp;
@@ -172,7 +184,7 @@ import com.google.gerrit.server.submit.MergeOpRepoManager;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.Context;
+import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.gerrit.server.update.RepoContext;
 import com.google.gerrit.server.update.RepoOnlyOp;
 import com.google.gerrit.server.update.RetryHelper;
@@ -187,6 +199,7 @@ import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.gerrit.util.cli.CmdLineParser;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
+import com.google.inject.Singleton;
 import com.google.inject.assistedinject.Assisted;
 import com.google.inject.util.Providers;
 import java.io.IOException;
@@ -309,6 +322,37 @@ class ReceiveCommits {
     return RestApiException.wrap("Error inserting change/patchset", e);
   }
 
+  @Singleton
+  private static class Metrics {
+    private final Counter0 psRevisionMissing;
+    private final Counter3<String, String, String> pushCount;
+
+    @Inject
+    Metrics(MetricMaker metricMaker) {
+      psRevisionMissing =
+          metricMaker.newCounter(
+              "receivecommits/ps_revision_missing",
+              new Description("errors due to patch set revision missing"));
+      pushCount =
+          metricMaker.newCounter(
+              "receivecommits/push_count",
+              new Description("number of pushes"),
+              Field.ofString("kind", (metadataBuilder, fieldValue) -> {})
+                  .description("The push kind (direct vs. magic).")
+                  .build(),
+              Field.ofString(
+                      "project",
+                      (metadataBuilder, fieldValue) -> metadataBuilder.projectName(fieldValue))
+                  .description("The name of the project for which the push is done.")
+                  .build(),
+              Field.ofString("type", (metadataBuilder, fieldValue) -> {})
+                  .description(
+                      "The type of the update (CREATE, UPDATE, CREATE/UPDATE,"
+                          + " UPDATE_NONFASTFORWARD, DELETE).")
+                  .build());
+    }
+  }
+
   // ReceiveCommits has a lot of fields, sorry. Here and in the constructor they are split up
   // somewhat, and kept sorted lexicographically within sections, except where later assignments
   // depend on previous ones.
@@ -317,6 +361,7 @@ class ReceiveCommits {
   private final AccountResolver accountResolver;
   private final AllProjectsName allProjectsName;
   private final BatchUpdate.Factory batchUpdateFactory;
+  private final CancellationMetrics cancellationMetrics;
   private final ChangeEditUtil editUtil;
   private final ChangeIndexer indexer;
   private final ChangeInserter.Factory changeInserterFactory;
@@ -329,10 +374,12 @@ class ReceiveCommits {
   private final Config config;
   private final CreateGroupPermissionSyncer createGroupPermissionSyncer;
   private final CreateRefControl createRefControl;
+  private final DeadlineChecker.Factory deadlineCheckerFactory;
   private final DynamicMap<ProjectConfigEntry> pluginConfigEntries;
   private final DynamicSet<PluginPushOption> pluginPushOptions;
   private final PluginSetContext<ReceivePackInitializer> initializers;
   private final MergedByPushOp.Factory mergedByPushOpFactory;
+  private final Metrics metrics;
   private final PatchSetInfoFactory patchSetInfoFactory;
   private final PatchSetUtil psUtil;
   private final DynamicSet<PerformanceLogger> performanceLoggers;
@@ -401,6 +448,7 @@ class ReceiveCommits {
       AccountResolver accountResolver,
       AllProjectsName allProjectsName,
       BatchUpdate.Factory batchUpdateFactory,
+      CancellationMetrics cancellationMetrics,
       ProjectConfig.Factory projectConfigFactory,
       @GerritServerConfig Config config,
       ChangeEditUtil editUtil,
@@ -413,11 +461,13 @@ class ReceiveCommits {
       BranchCommitValidator.Factory commitValidatorFactory,
       CreateGroupPermissionSyncer createGroupPermissionSyncer,
       CreateRefControl createRefControl,
+      DeadlineChecker.Factory deadlineCheckerFactory,
       DynamicMap<ProjectConfigEntry> pluginConfigEntries,
       DynamicSet<PluginPushOption> pluginPushOptions,
       PluginSetContext<ReceivePackInitializer> initializers,
       PluginSetContext<CommentValidator> commentValidators,
       MergedByPushOp.Factory mergedByPushOpFactory,
+      Metrics metrics,
       PatchSetInfoFactory patchSetInfoFactory,
       PatchSetUtil psUtil,
       DynamicSet<PerformanceLogger> performanceLoggers,
@@ -454,6 +504,7 @@ class ReceiveCommits {
     this.accountResolver = accountResolver;
     this.allProjectsName = allProjectsName;
     this.batchUpdateFactory = batchUpdateFactory;
+    this.cancellationMetrics = cancellationMetrics;
     this.changeFormatter = changeFormatterProvider.get();
     this.changeInserterFactory = changeInserterFactory;
     this.commentsUtil = commentsUtil;
@@ -462,6 +513,7 @@ class ReceiveCommits {
     this.config = config;
     this.createRefControl = createRefControl;
     this.createGroupPermissionSyncer = createGroupPermissionSyncer;
+    this.deadlineCheckerFactory = deadlineCheckerFactory;
     this.editUtil = editUtil;
     this.hashtagsFactory = hashtagsFactory;
     this.setTopicFactory = setTopicFactory;
@@ -472,6 +524,7 @@ class ReceiveCommits {
     this.notesFactory = notesFactory;
     this.optionParserFactory = optionParserFactory;
     this.ormProvider = ormProvider;
+    this.metrics = metrics;
     this.patchSetInfoFactory = patchSetInfoFactory;
     this.permissionBackend = permissionBackend;
     this.pluginConfigEntries = pluginConfigEntries;
@@ -594,17 +647,20 @@ class ReceiveCommits {
   ReceiveCommitsResult processCommands(
       Collection<ReceiveCommand> commands, MultiProgressMonitor progress) throws StorageException {
     checkState(!used, "Tried to re-use a ReceiveCommits objects that is single-use only");
+    long start = TimeUtil.nowNanos();
     parsePushOptions();
+    String clientProvidedDeadlineValue =
+        Iterables.getLast(pushOptions.get("deadline"), /* defaultValue= */ null);
     int commandCount = commands.size();
     try (TraceContext traceContext =
             TraceContext.newTrace(
                 tracePushOption.isPresent(),
                 tracePushOption.orElse(null),
                 (tagName, traceId) -> addMessage(tagName + ": " + traceId));
-        TraceTimer traceTimer =
-            newTimer("processCommands", Metadata.builder().resourceCount(commandCount));
         PerformanceLogContext performanceLogContext =
-            new PerformanceLogContext(config, performanceLoggers)) {
+            new PerformanceLogContext(config, performanceLoggers);
+        TraceTimer traceTimer =
+            newTimer("processCommands", Metadata.builder().resourceCount(commandCount))) {
       RequestInfo requestInfo =
           RequestInfo.builder(RequestInfo.RequestType.GIT_RECEIVE, user, traceContext)
               .project(project.getNameKey())
@@ -619,8 +675,33 @@ class ReceiveCommits {
       Task commandProgress = progress.beginSubTask("refs", UNKNOWN);
       commands =
           commands.stream().map(c -> wrapReceiveCommand(c, commandProgress)).collect(toList());
-      processCommandsUnsafe(commands, progress);
-      rejectRemaining(commands, INTERNAL_SERVER_ERROR);
+
+      try (RequestStateContext requestStateContext =
+          RequestStateContext.open()
+              .addRequestStateProvider(progress)
+              .addRequestStateProvider(
+                  deadlineCheckerFactory.create(start, requestInfo, clientProvidedDeadlineValue))) {
+        processCommandsUnsafe(commands, progress);
+        rejectRemaining(commands, INTERNAL_SERVER_ERROR);
+      } catch (InvalidDeadlineException e) {
+        rejectRemaining(commands, e.getMessage());
+      } catch (RuntimeException e) {
+        Optional<RequestCancelledException> requestCancelledException =
+            RequestCancelledException.getFromCausalChain(e);
+        if (!requestCancelledException.isPresent()) {
+          Throwables.throwIfUnchecked(e);
+        }
+        cancellationMetrics.countCancelledRequest(
+            requestInfo, requestCancelledException.get().getCancellationReason());
+        StringBuilder msg =
+            new StringBuilder(requestCancelledException.get().formatCancellationReason());
+        if (requestCancelledException.get().getCancellationMessage().isPresent()) {
+          msg.append(
+              String.format(
+                  " (%s)", requestCancelledException.get().getCancellationMessage().get()));
+        }
+        rejectRemaining(commands, msg.toString());
+      }
 
       // This sends error messages before the 'done' string of the progress monitor is sent.
       // Currently, the test framework relies on this ordering to understand if pushes completed
@@ -628,17 +709,19 @@ class ReceiveCommits {
       sendErrorMessages();
 
       commandProgress.end();
-      progress.end();
       loggingTags = traceContext.getTags();
       logger.atFine().log("Processing commands done.");
     }
+    progress.end();
     return result.build();
   }
 
   // Process as many commands as possible, but may leave some commands in state NOT_ATTEMPTED.
   private void processCommandsUnsafe(
       Collection<ReceiveCommand> commands, MultiProgressMonitor progress) {
-    logger.atFine().log("Calling user: %s", user.getLoggableName());
+    logger.atFine().log("Calling user: %s, commands: %d", user.getLoggableName(), commands.size());
+
+    // If the list of groups is large, the log entry may get dropped, so separate out.
     logger.atFine().log("Groups: %s", lazy(() -> user.getEffectiveGroups().getKnownGroups()));
 
     if (!projectState.getProject().getState().permitsWrite()) {
@@ -647,8 +730,6 @@ class ReceiveCommits {
       }
       return;
     }
-
-    logger.atFine().log("Parsing %d commands", commands.size());
 
     List<ReceiveCommand> magicCommands = new ArrayList<>();
     List<ReceiveCommand> regularCommands = new ArrayList<>();
@@ -664,6 +745,13 @@ class ReceiveCommits {
     if (!magicCommands.isEmpty() && !regularCommands.isEmpty()) {
       rejectRemaining(commands, "cannot combine normal pushes and magic pushes");
       return;
+    }
+
+    if (!magicCommands.isEmpty()) {
+      metrics.pushCount.increment("magic", project.getName(), getUpdateType(magicCommands));
+    }
+    if (!regularCommands.isEmpty()) {
+      metrics.pushCount.increment("direct", project.getName(), getUpdateType(regularCommands));
     }
 
     try {
@@ -714,6 +802,15 @@ class ReceiveCommits {
     logger.atFine().log(
         "Command results: %s",
         lazy(() -> commands.stream().map(ReceiveCommits::commandToString).collect(joining(","))));
+  }
+
+  private String getUpdateType(List<ReceiveCommand> commands) {
+    return commands.stream()
+        .map(ReceiveCommand::getType)
+        .map(ReceiveCommand.Type::name)
+        .distinct()
+        .sorted()
+        .collect(joining("/"));
   }
 
   private void sendErrorMessages() {
@@ -1519,6 +1616,12 @@ class ReceiveCommits {
     @Option(name = "--trace", metaVar = "NAME", usage = "enable tracing")
     String trace;
 
+    @Option(
+        name = "--deadline",
+        metaVar = "NAME",
+        usage = "deadline after which the push should be aborted")
+    String deadline;
+
     @Option(name = "--base", metaVar = "BASE", usage = "merge base of changes")
     List<ObjectId> base;
 
@@ -1530,6 +1633,14 @@ class ReceiveCommits {
 
     @Option(name = "--remove-private", usage = "remove privacy flag from updated change")
     boolean removePrivate;
+
+    /**
+     * The skip-validation option is defined to allow parsing it using the {@link #cmdLineParser}.
+     * However we do not allow this option for pushes to magic branches. This option is used to fail
+     * with a proper error message.
+     */
+    @Option(name = "--skip-validation", usage = "skips commit validation")
+    boolean skipValidation;
 
     @Option(
         name = "--wip",
@@ -1651,8 +1762,15 @@ class ReceiveCommits {
     }
 
     @UsedAt(UsedAt.Project.GOOGLE)
+    @SuppressWarnings("unused") // unused in upstream, but used at Google
     @Option(name = "--create-cod-token", usage = "create a token for consistency-on-demand")
     private boolean createCodToken;
+
+    @Option(
+        name = "--ignore-automatic-attention-set-rules",
+        aliases = {"-ias", "-ignore-attention-set"},
+        usage = "do not change the attention set on this push")
+    boolean ignoreAttentionSet;
 
     MagicBranchInput(
         IdentifiedUser user, ProjectState projectState, ReceiveCommand cmd, LabelTypes labelTypes) {
@@ -1675,7 +1793,7 @@ class ReceiveCommits {
      * account IDs computed from the commit message itself.
      *
      * @param additionalRecipients recipients parsed from the commit.
-     * @return set of reviewer strings to pass to {@code ReviewerAdder}.
+     * @return set of reviewer strings to pass to {@code ReviewerModifier}.
      */
     ImmutableSet<String> getCombinedReviewers(MailRecipients additionalRecipients) {
       return getCombinedReviewers(reviewer, additionalRecipients.getReviewers());
@@ -1689,7 +1807,7 @@ class ReceiveCommits {
      * account IDs computed from the commit message itself.
      *
      * @param additionalRecipients recipients parsed from the commit.
-     * @return set of CC strings to pass to {@code ReviewerAdder}.
+     * @return set of CC strings to pass to {@code ReviewerModifier}.
      */
     ImmutableSet<String> getCombinedCcs(MailRecipients additionalRecipients) {
       return getCombinedReviewers(cc, additionalRecipients.getCcOnly());
@@ -1812,6 +1930,14 @@ class ReceiveCommits {
           return;
         }
         ref = null; // never happens
+      }
+
+      if (magicBranch.skipValidation) {
+        reject(
+            cmd,
+            String.format(
+                "\"--%s\" option is only supported for direct push", PUSH_OPTION_SKIP_VALIDATION));
+        return;
       }
 
       if (magicBranch.topic != null && magicBranch.topic.length() > ChangeUtil.TOPIC_MAX_LENGTH) {
@@ -2636,6 +2762,9 @@ class ReceiveCommits {
           if (!Strings.isNullOrEmpty(magicBranch.topic)) {
             bu.addOp(changeId, setTopicFactory.create(magicBranch.topic));
           }
+          if (magicBranch.ignoreAttentionSet) {
+            bu.addOp(changeId, new AttentionSetUnchangedOp());
+          }
           bu.addOp(
               changeId,
               new BatchUpdateOp() {
@@ -2790,8 +2919,6 @@ class ReceiveCommits {
      * </ul>
      *
      * @return whether the new commit is valid
-     * @throws IOException
-     * @throws PermissionBackendException
      */
     boolean validateNewPatchSet() throws IOException, PermissionBackendException {
       try (TraceTimer traceTimer = newTimer("validateNewPatchSet")) {
@@ -2836,6 +2963,7 @@ class ReceiveCommits {
         Change change = notes.getChange();
         priorPatchSet = change.currentPatchSetId();
         if (!revisions.containsValue(priorPatchSet)) {
+          metrics.psRevisionMissing.increment();
           logger.atWarning().log(
               "Change %d is missing revision for patch set %s"
                   + " (it has revisions for these patch sets: %s)",
@@ -3143,7 +3271,7 @@ class ReceiveCommits {
     }
 
     @Override
-    public void postUpdate(Context ctx) {
+    public void postUpdate(PostUpdateContext ctx) {
       String refName = cmd.getRefName();
       if (cmd.getType() == ReceiveCommand.Type.UPDATE) { // aka fast-forward
         logger.atFine().log("Updating tag cache on fast-forward of %s", cmd.getRefName());

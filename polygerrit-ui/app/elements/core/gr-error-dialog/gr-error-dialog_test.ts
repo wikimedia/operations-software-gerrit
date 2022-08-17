@@ -17,7 +17,7 @@
 
 import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
 import '../../../test/common-test-setup-karma';
-import {queryAndAssert} from '../../../test/test-utils';
+import {mockPromise, queryAndAssert} from '../../../test/test-utils';
 import {GrDialog} from '../../shared/gr-dialog/gr-dialog';
 import {GrErrorDialog} from './gr-error-dialog';
 
@@ -26,14 +26,17 @@ const basicFixture = fixtureFromElement('gr-error-dialog');
 suite('gr-error-dialog tests', () => {
   let element: GrErrorDialog;
 
-  setup(() => {
+  setup(async () => {
     element = basicFixture.instantiate();
+    await flush();
   });
 
-  test('dismiss tap fires event', done => {
-    element.addEventListener('dismiss', () => done());
+  test('dismiss tap fires event', async () => {
+    const dismissCalled = mockPromise();
+    element.addEventListener('dismiss', () => dismissCalled.resolve());
     MockInteractions.tap(
-      (queryAndAssert(element, '#dialog') as GrDialog).$.confirm
+      (queryAndAssert(element, '#dialog') as GrDialog).confirmButton!
     );
+    await dismissCalled;
   });
 });

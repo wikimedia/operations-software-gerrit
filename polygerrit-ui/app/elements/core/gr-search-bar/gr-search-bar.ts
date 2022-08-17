@@ -22,6 +22,7 @@ import {htmlTemplate} from './gr-search-bar_html';
 import {
   KeyboardShortcutMixin,
   Shortcut,
+  ShortcutListener,
 } from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
 import {customElement, property} from '@polymer/decorators';
 import {ServerInfo} from '../../../types/common';
@@ -31,9 +32,9 @@ import {
   GrAutocomplete,
 } from '../../shared/gr-autocomplete/gr-autocomplete';
 import {getDocsBaseUrl} from '../../../utils/url-util';
-import {CustomKeyboardEvent} from '../../../types/events';
 import {MergeabilityComputationBehavior} from '../../../constants/constants';
 import {appContext} from '../../../services/app-context';
+import {listen} from '../../../services/shortcuts/shortcuts-service';
 
 // Possible static search options for auto complete, without negations.
 const SEARCH_OPERATORS: ReadonlyArray<string> = [
@@ -55,7 +56,6 @@ const SEARCH_OPERATORS: ReadonlyArray<string> = [
   'commentby:',
   'commit:',
   'committer:',
-  'conflicts:',
   'deleted:',
   'delta:',
   'dir:',
@@ -66,16 +66,19 @@ const SEARCH_OPERATORS: ReadonlyArray<string> = [
   'footer:',
   'from:',
   'has:',
+  'has:attention',
   'has:draft',
   'has:edit',
   'has:star',
-  'has:stars',
   'has:unresolved',
   'hashtag:',
+  'inhashtag:',
   'intopic:',
   'is:',
   'is:abandoned',
   'is:assigned',
+  'is:attention',
+  'is:cherrypick',
   'is:closed',
   'is:ignored',
   'is:merge',
@@ -102,11 +105,13 @@ const SEARCH_OPERATORS: ReadonlyArray<string> = [
   'project:',
   'projects:',
   'query:',
+  'repo:',
   'ref:',
   'reviewedby:',
   'reviewer:',
   'reviewer:self',
   'reviewerin:',
+  'rule:',
   'size:',
   'star:',
   'status:',
@@ -144,8 +149,11 @@ export interface GrSearchBar {
   };
 }
 
+// This avoids JSC_DYNAMIC_EXTENDS_WITHOUT_JSDOC closure compiler error.
+const base = KeyboardShortcutMixin(PolymerElement);
+
 @customElement('gr-search-bar')
-export class GrSearchBar extends KeyboardShortcutMixin(PolymerElement) {
+export class GrSearchBar extends base {
   static get template() {
     return htmlTemplate;
   }
@@ -162,9 +170,6 @@ export class GrSearchBar extends KeyboardShortcutMixin(PolymerElement) {
   value = '';
 
   @property({type: Object})
-  keyEventTarget: unknown = document.body;
-
-  @property({type: Object})
   query: AutocompleteQuery;
 
   @property({type: Object})
@@ -177,7 +182,7 @@ export class GrSearchBar extends KeyboardShortcutMixin(PolymerElement) {
   accountSuggestions: SuggestionProvider = () => Promise.resolve([]);
 
   @property({type: String})
-  _inputVal?: string;
+  _inputVal = '';
 
   @property({type: Number})
   _threshold = 1;
@@ -195,7 +200,7 @@ export class GrSearchBar extends KeyboardShortcutMixin(PolymerElement) {
     this.query = (input: string) => this._getSearchSuggestions(input);
   }
 
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     this.restApiService.getConfig().then((serverConfig?: ServerInfo) => {
       const mergeability =
@@ -236,10 +241,8 @@ export class GrSearchBar extends KeyboardShortcutMixin(PolymerElement) {
     }
   }
 
-  keyboardShortcuts() {
-    return {
-      [Shortcut.SEARCH]: '_handleSearch',
-    };
+  override keyboardShortcuts(): ShortcutListener[] {
+    return [listen(Shortcut.SEARCH, _ => this._handleSearch())];
   }
 
   _valueChanged(value: string) {
@@ -308,6 +311,7 @@ export class GrSearchBar extends KeyboardShortcutMixin(PolymerElement) {
 
       case 'parentproject':
       case 'project':
+      case 'repo':
         // Fetch projects.
         return this.projectSuggestions(predicate, expression);
 
@@ -386,16 +390,7 @@ export class GrSearchBar extends KeyboardShortcutMixin(PolymerElement) {
     });
   }
 
-  _handleSearch(e: CustomKeyboardEvent) {
-    const keyboardEvent = this.getKeyboardEvent(e);
-    if (
-      this.shouldSuppressKeyboardShortcut(e) ||
-      (this.modifierPressed(e) && !keyboardEvent.shiftKey)
-    ) {
-      return;
-    }
-
-    e.preventDefault();
+  _handleSearch() {
     this.$.searchInput.focus();
     this.$.searchInput.selectAll();
   }

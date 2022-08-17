@@ -16,22 +16,28 @@
  */
 import {
   ContentLoadNeededEventDetail,
+  DiffContextExpandedExternalDetail,
   MovedLinkClickedEventDetail,
   RenderPreferences,
 } from '../../../api/diff';
 import {getBaseUrl} from '../../../utils/url-util';
+import {fire} from '../../../utils/event-util';
 import {GrDiffLine, GrDiffLineType, LineNumber} from '../gr-diff/gr-diff-line';
+import {GrDiffGroup, GrDiffGroupType} from '../gr-diff/gr-diff-group';
+
+import '../gr-context-controls/gr-context-controls';
 import {
-  GrDiffGroup,
-  GrDiffGroupType,
-  hideInContextControl,
-} from '../gr-diff/gr-diff-group';
+  GrContextControls,
+  GrContextControlsShowConfig,
+} from '../gr-context-controls/gr-context-controls';
 import {BlameInfo} from '../../../types/common';
-import {DiffInfo, DiffPreferencesInfo} from '../../../types/diff';
+import {
+  DiffInfo,
+  DiffPreferencesInfo,
+  DiffResponsiveMode,
+} from '../../../types/diff';
 import {DiffViewMode, Side} from '../../../constants/constants';
 import {DiffLayer} from '../../../types/types';
-import {pluralize} from '../../../utils/string-util';
-import {fire} from '../../../utils/event-util';
 
 /**
  * In JS, unicode code points above 0xFFFF occupy two elements of a string.
@@ -55,15 +61,8 @@ import {fire} from '../../../utils/event-util';
  */
 const REGEX_TAB_OR_SURROGATE_PAIR = /\t|[\uD800-\uDBFF][\uDC00-\uDFFF]/;
 
-const PARTIAL_CONTEXT_AMOUNT = 10;
-
-enum ContextButtonType {
-  ABOVE = 'above',
-  BELOW = 'below',
-  ALL = 'all',
-}
-
-export interface DiffContextExpandedEventDetail {
+export interface DiffContextExpandedEventDetail
+  extends DiffContextExpandedExternalDetail {
   groups: GrDiffGroup[];
   section: HTMLElement;
   numLines: number;
@@ -76,6 +75,26 @@ declare global {
   }
 }
 
+export function getResponsiveMode(
+  prefs: DiffPreferencesInfo,
+  renderPrefs?: RenderPreferences
+): DiffResponsiveMode {
+  if (renderPrefs?.responsive_mode) {
+    return renderPrefs.responsive_mode;
+  }
+  // Backwards compatibility to the line_wrapping param.
+  if (prefs.line_wrapping) {
+    return 'FULL_RESPONSIVE';
+  }
+  return 'NONE';
+}
+
+export function isResponsive(responsiveMode: DiffResponsiveMode) {
+  return (
+    responsiveMode === 'FULL_RESPONSIVE' || responsiveMode === 'SHRINK_ONLY'
+  );
+}
+
 export abstract class GrDiffBuilder {
   private readonly _diff: DiffInfo;
 
@@ -83,7 +102,7 @@ export abstract class GrDiffBuilder {
 
   private readonly _prefs: DiffPreferencesInfo;
 
-  private readonly _renderPrefs?: RenderPreferences;
+  protected readonly _renderPrefs?: RenderPreferences;
 
   protected readonly _outputEl: HTMLElement;
 
@@ -156,13 +175,6 @@ export abstract class GrDiffBuilder {
   static readonly Highlights = {
     ADDED: 'edit_b',
     REMOVED: 'edit_a',
-  };
-
-  // TODO(TS): Replace usages with ContextButtonType enum.
-  static readonly ContextButtonType = {
-    ABOVE: 'above',
-    BELOW: 'below',
-    ALL: 'all',
   };
 
   abstract addColumns(outputEl: HTMLElement, fontSize: number): void;
@@ -324,14 +336,12 @@ export abstract class GrDiffBuilder {
     const leftStart = contextGroups[0].lineRange.left.start_line;
     const leftEnd =
       contextGroups[contextGroups.length - 1].lineRange.left.end_line;
-    const numLines = leftEnd - leftStart + 1;
-
-    if (numLines === 0) console.error('context group without lines');
-
     const firstGroupIsSkipped = !!contextGroups[0].skip;
     const lastGroupIsSkipped = !!contextGroups[contextGroups.length - 1].skip;
 
-    const showAbove = leftStart > 1 && !firstGroupIsSkipped;
+    const containsWholeFile = this._numLinesLeft === leftEnd - leftStart + 1;
+    const showAbove =
+      (leftStart > 1 && !firstGroupIsSkipped) || containsWholeFile;
     const showBelow = leftEnd < this._numLinesLeft && !lastGroupIsSkipped;
 
     if (showAbove) {
@@ -345,7 +355,6 @@ export abstract class GrDiffBuilder {
         contextGroups,
         showAbove,
         showBelow,
-        numLines,
         viewMode
       )
     );
@@ -365,20 +374,21 @@ export abstract class GrDiffBuilder {
     contextGroups: GrDiffGroup[],
     showAbove: boolean,
     showBelow: boolean,
-    numLines: number,
     viewMode: DiffViewMode
   ): HTMLElement {
     const row = this._createElement('tr', 'dividerRow');
+    let showConfig: GrContextControlsShowConfig;
     if (showAbove && !showBelow) {
-      row.classList.add('showAboveOnly');
+      showConfig = 'above';
     } else if (!showAbove && showBelow) {
-      row.classList.add('showBelowOnly');
+      showConfig = 'below';
     } else {
       // Note that !showAbove && !showBelow also intentionally creates
-      // "showBoth". This means the file is completely collapsed, which is
+      // "show-both". This means the file is completely collapsed, which is
       // unusual, but at least happens in one test.
-      row.classList.add('showBoth');
+      showConfig = 'both';
     }
+    row.classList.add(`show-${showConfig}`);
 
     row.appendChild(this._createBlameCell(0));
     if (viewMode === DiffViewMode.SIDE_BY_SIDE) {
@@ -388,54 +398,16 @@ export abstract class GrDiffBuilder {
     const cell = this._createElement('td', 'dividerCell');
     cell.setAttribute('colspan', '3');
     row.appendChild(cell);
-    const verticalFlex = this._createElement('div', 'verticalFlex');
-    cell.appendChild(verticalFlex);
-    const horizontalFlex = this._createElement('div', 'horizontalFlex');
-    verticalFlex.appendChild(horizontalFlex);
 
-    const showAllContainer = this._createElement('div', 'aboveBelowButtons');
-    horizontalFlex.appendChild(showAllContainer);
-    const showAllButton = this._createContextButton(
-      ContextButtonType.ALL,
-      section,
-      contextGroups,
-      numLines
-    );
-    showAllButton.classList.add(
-      showAbove && showBelow
-        ? 'centeredButton'
-        : showAbove
-        ? 'aboveButton'
-        : 'belowButton'
-    );
-    showAllContainer.appendChild(showAllButton);
-
-    const showPartialLinks = numLines > PARTIAL_CONTEXT_AMOUNT;
-    if (showPartialLinks) {
-      const container = this._createElement('div', 'aboveBelowButtons');
-      if (showAbove) {
-        container.appendChild(
-          this._createContextButton(
-            ContextButtonType.ABOVE,
-            section,
-            contextGroups,
-            numLines
-          )
-        );
-      }
-      if (showBelow) {
-        container.appendChild(
-          this._createContextButton(
-            ContextButtonType.BELOW,
-            section,
-            contextGroups,
-            numLines
-          )
-        );
-      }
-      horizontalFlex.appendChild(container);
-    }
-
+    const contextControls = this._createElement(
+      'gr-context-controls'
+    ) as GrContextControls;
+    contextControls.diff = this._diff;
+    contextControls.renderPreferences = this._renderPrefs;
+    contextControls.section = section;
+    contextControls.contextGroups = contextGroups;
+    contextControls.showConfig = showConfig;
+    cell.appendChild(contextControls);
     return row;
   }
 
@@ -465,87 +437,6 @@ export abstract class GrDiffBuilder {
     row.appendChild(this._createElement('td'));
 
     return row;
-  }
-
-  _createContextButton(
-    type: ContextButtonType,
-    section: HTMLElement,
-    contextGroups: GrDiffGroup[],
-    numLines: number
-  ) {
-    const context = PARTIAL_CONTEXT_AMOUNT;
-    const button = this._createElement('gr-button', 'showContext');
-    button.classList.add('contextControlButton');
-    button.setAttribute('link', 'true');
-    button.setAttribute('no-uppercase', 'true');
-
-    let text = '';
-    let groups: GrDiffGroup[] = []; // The groups that replace this one if tapped.
-    let requiresLoad = false;
-    if (type === GrDiffBuilder.ContextButtonType.ALL) {
-      text = `+${pluralize(numLines, 'common line')}`;
-      button.setAttribute(
-        'aria-label',
-        `Show ${pluralize(numLines, 'common line')}`
-      );
-      requiresLoad = contextGroups.find(c => !!c.skip) !== undefined;
-      if (requiresLoad) {
-        // Expanding content would require load of more data
-        text += ' (too large)';
-      }
-      groups.push(...contextGroups);
-    } else if (type === GrDiffBuilder.ContextButtonType.ABOVE) {
-      groups = hideInContextControl(contextGroups, context, numLines);
-      text = `+${context}`;
-      button.classList.add('aboveButton');
-      button.setAttribute(
-        'aria-label',
-        `Show ${pluralize(context, 'line')} above`
-      );
-    } else if (type === GrDiffBuilder.ContextButtonType.BELOW) {
-      groups = hideInContextControl(contextGroups, 0, numLines - context);
-      text = `+${context}`;
-      button.classList.add('belowButton');
-      button.setAttribute(
-        'aria-label',
-        `Show ${pluralize(context, 'line')} below`
-      );
-    }
-    const textSpan = this._createElement('span', 'showContext');
-    textSpan.textContent = text;
-    button.appendChild(textSpan);
-
-    if (requiresLoad) {
-      button.addEventListener('click', e => {
-        e.stopPropagation();
-        const firstRange = groups[0].lineRange;
-        const lastRange = groups[groups.length - 1].lineRange;
-        const lineRange = {
-          left: {
-            start_line: firstRange.left.start_line,
-            end_line: lastRange.left.end_line,
-          },
-          right: {
-            start_line: firstRange.right.start_line,
-            end_line: lastRange.right.end_line,
-          },
-        };
-        fire(button, 'content-load-needed', {
-          lineRange,
-        });
-      });
-    } else {
-      button.addEventListener('click', e => {
-        e.stopPropagation();
-        fire(button, 'diff-context-expanded', {
-          groups,
-          section,
-          numLines,
-        });
-      });
-    }
-
-    return button;
   }
 
   _createLineEl(
@@ -594,9 +485,18 @@ export abstract class GrDiffBuilder {
           button.setAttribute('aria-label', `${number} added`);
         }
       }
+      this._addLineNumberMouseEvents(td, number, side);
     }
-
     return td;
+  }
+
+  _addLineNumberMouseEvents(el: HTMLElement, number: LineNumber, side: Side) {
+    el.addEventListener('mouseenter', () => {
+      fire(el, 'line-mouse-enter', {lineNum: number, side});
+    });
+    el.addEventListener('mouseleave', () => {
+      fire(el, 'line-mouse-leave', {lineNum: number, side});
+    });
   }
 
   _createTextEl(
@@ -616,28 +516,30 @@ export abstract class GrDiffBuilder {
     }
     td.classList.add(line.type);
 
-    if (line.beforeNumber !== 'FILE' && line.beforeNumber !== 'LOST') {
-      const lineLimit = !this._prefs.line_wrapping
-        ? this._prefs.line_length
-        : Infinity;
+    const {beforeNumber, afterNumber} = line;
+    if (beforeNumber !== 'FILE' && beforeNumber !== 'LOST') {
+      const responsiveMode = getResponsiveMode(this._prefs, this._renderPrefs);
       const contentText = this._formatText(
         line.text,
+        responsiveMode,
         this._prefs.tab_size,
-        lineLimit
+        this._prefs.line_length
       );
 
       if (side) {
         contentText.setAttribute('data-side', side);
+        const number = side === Side.LEFT ? beforeNumber : afterNumber;
+        this._addLineNumberMouseEvents(td, number, side);
       }
 
-      if (lineNumberEl) {
+      if (lineNumberEl && side) {
         for (const layer of this.layers) {
           if (typeof layer.annotate === 'function') {
-            layer.annotate(contentText, lineNumberEl, line);
+            layer.annotate(contentText, lineNumberEl, line, side);
           }
         }
       } else {
-        console.error('The lineNumberEl is null, skipping layer annotations.');
+        console.error('lineNumberEl or side not set, skipping layer.annotate');
       }
 
       td.appendChild(contentText);
@@ -645,6 +547,12 @@ export abstract class GrDiffBuilder {
     else if (line.beforeNumber === 'LOST') td.classList.add('lost');
 
     return td;
+  }
+
+  private createLineBreak(responsive: boolean) {
+    return responsive
+      ? this._createElement('wbr')
+      : this._createElement('span', 'br');
   }
 
   /**
@@ -657,9 +565,15 @@ export abstract class GrDiffBuilder {
    * @param tabSize The width of each tab stop.
    * @param lineLimit The column after which to wrap lines.
    */
-  _formatText(text: string, tabSize: number, lineLimit: number): HTMLElement {
+  _formatText(
+    text: string,
+    responsiveMode: DiffResponsiveMode,
+    tabSize: number,
+    lineLimit: number
+  ): HTMLElement {
     const contentText = this._createElement('div', 'contentText');
-
+    contentText.ariaLabel = text;
+    const responsive = isResponsive(responsiveMode);
     let columnPos = 0;
     let textOffset = 0;
     for (const segment of text.split(REGEX_TAB_OR_SURROGATE_PAIR)) {
@@ -673,7 +587,7 @@ export abstract class GrDiffBuilder {
           contentText.appendChild(
             document.createTextNode(segment.substring(rowStart, rowEnd))
           );
-          contentText.appendChild(this._createElement('span', 'br'));
+          contentText.appendChild(this.createLineBreak(responsive));
           columnPos = 0;
           rowStart = rowEnd;
           rowEnd += lineLimit;
@@ -691,7 +605,7 @@ export abstract class GrDiffBuilder {
           // Append a single '\t' character.
           let effectiveTabSize = tabSize - (columnPos % tabSize);
           if (columnPos + effectiveTabSize > lineLimit) {
-            contentText.appendChild(this._createElement('span', 'br'));
+            contentText.appendChild(this.createLineBreak(responsive));
             columnPos = 0;
             effectiveTabSize = tabSize;
           }
@@ -701,7 +615,7 @@ export abstract class GrDiffBuilder {
         } else {
           // Append a single surrogate pair.
           if (columnPos >= lineLimit) {
-            contentText.appendChild(this._createElement('span', 'br'));
+            contentText.appendChild(this.createLineBreak(responsive));
             columnPos = 0;
           }
           contentText.appendChild(
@@ -770,6 +684,7 @@ export abstract class GrDiffBuilder {
     numberOfCells: number;
     movedOutIndex: number;
     movedInIndex: number;
+    lineNumberCols: number[];
   };
 
   /**
@@ -863,11 +778,8 @@ export abstract class GrDiffBuilder {
 
   _buildMoveControls(group: GrDiffGroup) {
     const movedIn = group.adds.length > 0;
-    const {
-      numberOfCells,
-      movedOutIndex,
-      movedInIndex,
-    } = this._getMoveControlsConfig();
+    const {numberOfCells, movedOutIndex, movedInIndex, lineNumberCols} =
+      this._getMoveControlsConfig();
 
     let controlsClass;
     let descriptionIndex;
@@ -884,13 +796,15 @@ export abstract class GrDiffBuilder {
     const cells = [...Array(numberOfCells).keys()].map(() =>
       this._createElement('td')
     );
-    const moveDescriptionDiv = this._createElement('div', 'moveDescription');
-    const icon = this._createElement('iron-icon');
-    icon.setAttribute('icon', 'gr-icons:move-item');
-    moveDescriptionDiv.appendChild(icon);
-    moveDescriptionDiv.appendChild(descriptionTextDiv);
-    cells[descriptionIndex].appendChild(moveDescriptionDiv);
-    cells[descriptionIndex].classList.add('moveLabel');
+    lineNumberCols.forEach(index => {
+      cells[index].classList.add('moveControlsLineNumCol');
+    });
+
+    const moveRangeHeader = this._createElement('gr-range-header');
+    moveRangeHeader.setAttribute('icon', 'gr-icons:move-item');
+    moveRangeHeader.appendChild(descriptionTextDiv);
+    cells[descriptionIndex].classList.add('moveHeader');
+    cells[descriptionIndex].appendChild(moveRangeHeader);
     cells.forEach(c => {
       controls.appendChild(c);
     });
@@ -1005,4 +919,6 @@ ${commit.commit_msg}`;
     while (row && !row.classList.contains('diff-row')) row = row.parentElement;
     return row ? (row.querySelector('.lineNum.' + side) as HTMLElement) : null;
   }
+
+  updateRenderPrefs(_renderPrefs: RenderPreferences) {}
 }

@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 import '../../../styles/shared-styles';
+import '../../shared/gr-tooltip/gr-tooltip';
 import {GrTooltip} from '../../shared/gr-tooltip/gr-tooltip';
 import {customElement, property} from '@polymer/decorators';
 import {flush} from '@polymer/polymer/lib/legacy/polymer.dom';
@@ -45,9 +46,6 @@ export class GrSelectionActionBox extends PolymerElement {
    *
    * @event create-comment-requested
    */
-
-  @property({type: Object})
-  keyEventTarget = document.body;
 
   @property({type: Boolean})
   positionBelow = false;

@@ -21,7 +21,12 @@ import {hasOwnProperty} from '../../utils/common-util';
 import {NumericChangeId} from '../../types/common';
 import {EventDetails} from '../../api/reporting';
 import {PluginApi} from '../../api/plugin';
-import {Execution, LifeCycle, Timing} from '../../constants/reporting';
+import {
+  Execution,
+  Interaction,
+  LifeCycle,
+  Timing,
+} from '../../constants/reporting';
 
 // Latency reporting constants.
 
@@ -67,6 +72,14 @@ const ERROR = {
   CATEGORY: {
     EXCEPTION: 'exception',
     ERROR_DIALOG: 'Error Dialog',
+  },
+};
+
+const PLUGIN = {
+  TYPE: 'plugin-log',
+  CATEGORY: {
+    LIFECYCLE: 'lifecycle',
+    INTERACTION: 'interaction',
   },
 };
 
@@ -406,7 +419,10 @@ export class GrReporting implements ReportingService {
       eventInfo.inBackgroundTab = isInBackgroundTab;
     }
 
-    if (this._flagsService.enabledExperiments.length) {
+    if (
+      name === Timing.APP_STARTED &&
+      this._flagsService.enabledExperiments.length
+    ) {
       eventInfo.enabledExperiments = JSON.stringify(
         this._flagsService.enabledExperiments
       );
@@ -508,11 +524,12 @@ export class GrReporting implements ReportingService {
     }
   }
 
-  changeDisplayed() {
+  changeDisplayed(eventDetails?: EventDetails) {
+    eventDetails = {...eventDetails, ...this._pageLoadDetails()};
     if (hasOwnProperty(this._baselines, Timing.STARTUP_CHANGE_DISPLAYED)) {
-      this.timeEnd(Timing.STARTUP_CHANGE_DISPLAYED, this._pageLoadDetails());
+      this.timeEnd(Timing.STARTUP_CHANGE_DISPLAYED, eventDetails);
     } else {
-      this.timeEnd(Timing.CHANGE_DISPLAYED, this._pageLoadDetails());
+      this.timeEnd(Timing.CHANGE_DISPLAYED, eventDetails);
     }
   }
 
@@ -619,6 +636,18 @@ export class GrReporting implements ReportingService {
     );
   }
 
+  pluginsFailed(pluginsList?: string[]) {
+    if (!pluginsList || pluginsList.length === 0) return;
+    this.reporter(
+      LIFECYCLE.TYPE,
+      LIFECYCLE.CATEGORY.PLUGINS_INSTALLED,
+      LifeCycle.PLUGINS_FAILED,
+      undefined,
+      {pluginsList: pluginsList || []},
+      true
+    );
+  }
+
   /**
    * Reset named Timing.
    */
@@ -713,7 +742,7 @@ export class GrReporting implements ReportingService {
       },
 
       // Stop the timer and report the intervening time.
-      end: () => {
+      end: (eventDetails?: EventDetails) => {
         if (called) {
           throw new Error(`Timer for "${name}" already ended.`);
         }
@@ -725,7 +754,7 @@ export class GrReporting implements ReportingService {
           return timer;
         }
 
-        this._reportTiming(name, time);
+        this._reportTiming(name, time, eventDetails);
         return timer;
       },
 
@@ -772,7 +801,29 @@ export class GrReporting implements ReportingService {
     );
   }
 
-  reportInteraction(eventName: string, details: EventDetails) {
+  reportPluginLifeCycleLog(eventName: string, details: EventDetails) {
+    this.reporter(
+      PLUGIN.TYPE,
+      PLUGIN.CATEGORY.LIFECYCLE,
+      eventName,
+      undefined,
+      details,
+      true
+    );
+  }
+
+  reportPluginInteractionLog(eventName: string, details: EventDetails) {
+    this.reporter(
+      PLUGIN.TYPE,
+      PLUGIN.CATEGORY.INTERACTION,
+      eventName,
+      undefined,
+      details,
+      true
+    );
+  }
+
+  reportInteraction(eventName: string | Interaction, details: EventDetails) {
     this.reporter(
       INTERACTION.TYPE,
       INTERACTION.CATEGORY.DEFAULT,

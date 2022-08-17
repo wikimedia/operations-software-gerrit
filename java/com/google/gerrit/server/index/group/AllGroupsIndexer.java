@@ -103,7 +103,7 @@ public class AllGroupsIndexer extends SiteIndexer<AccountGroup.UUID, InternalGro
                   groupCache.evict(uuid);
                   InternalGroup internalGroup = reindexedGroups.get(uuid);
                   if (internalGroup != null) {
-                    if (isFirstInsertForEntry.equals(isFirstInsertForEntry.YES)) {
+                    if (isFirstInsertForEntry.equals(IsFirstInsertForEntry.YES)) {
                       index.insert(internalGroup);
                     } else {
                       index.replace(internalGroup);

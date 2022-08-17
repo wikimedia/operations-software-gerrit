@@ -30,6 +30,7 @@ import com.google.gerrit.metrics.DisabledMetricMaker;
 import com.google.gerrit.metrics.Field;
 import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.metrics.Timer3;
+import com.google.gerrit.server.cancellation.RequestCancelledException;
 import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.inject.Inject;
@@ -53,7 +54,7 @@ import com.google.inject.Singleton;
  * <p>A plugin context can be manually opened by invoking the newTrace methods. This should only be
  * needed if an extension throws multiple exceptions that need to be handled:
  *
- * <pre>
+ * <pre>{@code
  * public interface Foo {
  *   void doFoo() throws Exception1, Exception2, Exception3;
  * }
@@ -65,7 +66,7 @@ import com.google.inject.Singleton;
  *     fooExtension.get().doFoo();
  *   }
  * }
- * </pre>
+ * }</pre>
  *
  * <p>This class hosts static methods with generic functionality to invoke plugin extensions with a
  * trace context that are commonly used by {@link PluginItemContext}, {@link PluginSetContext} and
@@ -120,11 +121,17 @@ public class PluginContext<T> {
     @Inject
     PluginMetrics(MetricMaker metricMaker) {
       Field<String> pluginNameField =
-          Field.ofString("plugin_name", Metadata.Builder::pluginName).build();
+          Field.ofString("plugin_name", Metadata.Builder::pluginName)
+              .description("The name of the plugin.")
+              .build();
       Field<String> classNameField =
-          Field.ofString("class_name", Metadata.Builder::className).build();
+          Field.ofString("class_name", Metadata.Builder::className)
+              .description("The class of the plugin that was invoked.")
+              .build();
       Field<String> exportValueField =
-          Field.ofString("export_value", Metadata.Builder::exportValue).build();
+          Field.ofString("export_value", Metadata.Builder::exportValue)
+              .description("The export name under which the invoked class is registered.")
+              .build();
 
       this.latency =
           metricMaker.newTimer(
@@ -185,7 +192,8 @@ public class PluginContext<T> {
   }
 
   /**
-   * Runs a plugin extension. All exceptions from the plugin extension are caught and logged.
+   * Runs a plugin extension. All exceptions from the plugin extension are caught and logged (except
+   * {@link RequestCancelledException}.
    *
    * <p>The consumer gets the extension implementation provided that should be invoked.
    *
@@ -204,7 +212,8 @@ public class PluginContext<T> {
     try (TraceContext traceContext = newTrace(extension);
         Timer3.Context<String, String, String> ctx = pluginMetrics.startLatency(extension)) {
       extensionImplConsumer.run(extensionImpl);
-    } catch (Throwable e) {
+    } catch (Exception e) {
+      Throwables.throwIfInstanceOf(e, RequestCancelledException.class);
       pluginMetrics.incrementErrorCount(extension);
       logger.atWarning().withCause(e).log(
           "Failure in %s of plugin %s", extensionImpl.getClass(), extension.getPluginName());
@@ -212,7 +221,8 @@ public class PluginContext<T> {
   }
 
   /**
-   * Runs a plugin extension. All exceptions from the plugin extension are caught and logged.
+   * Runs a plugin extension. All exceptions from the plugin extension are caught and logged (except
+   * {@link RequestCancelledException}.
    *
    * <p>The consumer get the {@link Extension} provided that should be invoked. The extension
    * provides access to the plugin name and the export name.
@@ -233,7 +243,8 @@ public class PluginContext<T> {
     try (TraceContext traceContext = newTrace(extension);
         Timer3.Context<String, String, String> ctx = pluginMetrics.startLatency(extension)) {
       extensionConsumer.run(extension);
-    } catch (Throwable e) {
+    } catch (Exception e) {
+      Throwables.throwIfInstanceOf(e, RequestCancelledException.class);
       pluginMetrics.incrementErrorCount(extension);
       logger.atWarning().withCause(e).log(
           "Failure in %s of plugin %s", extensionImpl.getClass(), extension.getPluginName());
@@ -267,7 +278,7 @@ public class PluginContext<T> {
     try (TraceContext traceContext = newTrace(extension);
         Timer3.Context<String, String, String> ctx = pluginMetrics.startLatency(extension)) {
       extensionImplConsumer.run(extensionImpl);
-    } catch (Throwable e) {
+    } catch (Exception e) {
       Throwables.throwIfInstanceOf(e, exceptionClass);
       Throwables.throwIfUnchecked(e);
       pluginMetrics.incrementErrorCount(extension);
@@ -304,7 +315,7 @@ public class PluginContext<T> {
     try (TraceContext traceContext = newTrace(extension);
         Timer3.Context<String, String, String> ctx = pluginMetrics.startLatency(extension)) {
       extensionConsumer.run(extension);
-    } catch (Throwable e) {
+    } catch (Exception e) {
       Throwables.throwIfInstanceOf(e, exceptionClass);
       Throwables.throwIfUnchecked(e);
       pluginMetrics.incrementErrorCount(extension);

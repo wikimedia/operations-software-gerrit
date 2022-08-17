@@ -136,6 +136,19 @@ ownerin:'GROUP'::
 +
 Changes originally submitted by a user in 'GROUP'.
 
+[[uploader]]
+uploader:'USER'::
++
+Changes where the latest patch set was uploaded by 'USER'.
+The special case of `uploader:self` will find changes uploaded
+by the caller.
+
+[[uploaderin]]
+uploaderin:'GROUP'::
++
+Changes where the latest patch set was uploaded by a user in
+'GROUP'.
+
 [[query]]
 query:'[name=]NAME[,user=USER]'::
 +
@@ -251,6 +264,16 @@ Changes whose designated topic matches 'TOPIC' exactly.  This is
 often combined with 'branch:' and 'project:' operators to select
 all related changes in a series.
 
+[[inhashtag]]
+inhashtag:'HASHTAG'::
++
+Changes where any hashtag contains 'HASHTAG', using a full-text search.
++
+If 'HASHTAG' starts with `^` it matches hashtag names by regular
+expression patterns.  The
+link:http://www.brics.dk/automaton/[dk.brics.automaton
+library,role=external,window=_blank] is used for evaluation of such patterns.
+
 [[hashtag]]
 hashtag:'HASHTAG'::
 +
@@ -311,7 +334,7 @@ path:'PATH'::
 +
 Matches any change touching file at 'PATH'. By default exact path
 matching is used, but regular expressions can be enabled by starting
-with `^`.  For example, to match all XML files use `file:^.*\.xml$`.
+with `^`.  For example, to match all XML files use `file:"^.*\.xml$"`.
 The link:http://www.brics.dk/automaton/[dk.brics.automaton library,role=external,window=_blank]
 is used for the evaluation of such patterns.
 +
@@ -321,8 +344,7 @@ anchoring the match to the start of the string.  To match all Java
 files, use `file:^.*\.java`.
 +
 The entire regular expression pattern, including the `^` character,
-should be double quoted when using more complex construction (like
-ones using a bracket expression). For example, to match all XML
+should be double quoted. For example, to match all XML
 files named like 'name1.xml', 'name2.xml', and 'name3.xml' use
 `file:"^name[1-3].xml"`.
 +
@@ -397,6 +419,8 @@ star, they could be filtered out by '-star:ignore'.
 +
 'star:star' is the same as 'has:star' and 'is:starred'.
 
+Only "ignore" and "star" are supported labels.
+
 [[has]]
 has:draft::
 +
@@ -408,11 +432,6 @@ has:star::
 Same as 'is:starred' and 'star:star', true if the change has been
 starred by the current user with the default label.
 
-[[has-stars]]
-has:stars::
-+
-True if the change has been starred by the current user with any label.
-
 has:edit::
 +
 True if the change has inline edit created by the current user.
@@ -420,6 +439,11 @@ True if the change has inline edit created by the current user.
 has:unresolved::
 +
 True if the change has unresolved comments.
+
+has:attention::
++
+True if the change has attention by the current user.
+
 
 [[is]]
 is:assigned::
@@ -436,6 +460,10 @@ is:unassigned::
 +
 True if the change does not have an assignee.
 
+is:attention::
++
+True if the change has attention by the current user.
+
 is:watched::
 +
 True if this change matches one of the current user's watch filters,
@@ -450,6 +478,12 @@ is:owner::
 +
 True on any change where the current user is the change owner.
 Same as `owner:self`.
+
+is:uploader::
++
+True on any change where the current user is the uploader of
+the latest patch set.
+Same as `uploader:self`.
 
 is:reviewer::
 +
@@ -520,6 +554,16 @@ True if the change is Work In Progress.
 is:merge::
 +
 True if the change is a merge commit.
+
+[[cherrypick]]
+is:cherrypick::
++
+True if the change is a cherrypick of an another change.
+
+This is limited to changes which are cherrypicked using REST API
+or WebUI only. It is not able to identify changes which are
+cherry-picked locally using the git cherry-pick command and then
+pushed to Gerrit.
 
 [[status]]
 status:open, status:pending, status:new::
@@ -599,6 +643,22 @@ rules. Valid statuses are in the `status` field of
 link:rest-api-changes.html#submit-record[SubmitRecord]. This operator
 only applies to the top-level status; individual label statuses can be
 searched link:#labels[by label].
+
+[[rule]]
+rule:'SUBMIT_RULE_NAME'::
++
+Changes where 'SUBMIT_RULE_NAME' returns a submit record with status in {OK,
+FORCED}. This means that the submit rule has passed and is not blocking the
+change submission. 'SUBMIT_RULE_NAME' should be in the form of
+'$plugin_name~$rule_name'. For gerrit core rules, 'SUBMIT_RULE_NAME' should
+be in the form of '$rule_name' (example: `DefaultSubmitRule`), or
+'gerrit~$rule_name' (example: `gerrit~DefaultSubmitRule`).
+
+rule:'SUBMIT_RULE_NAME'='STATUS'::
++
+Changes where 'SUBMIT_RULE_NAME' returns a submit record with status equals to
+'STATUS'. The status can be any of the statuses that are documented for the
+`status` field of link:rest-api-changes.html#submit-record[SubmitRecord].
 
 [[unresolved]]
 unresolved:'RELATION''NUMBER'::
@@ -696,6 +756,22 @@ Instead of a numeric vote, you can provide a label status corresponding
 to one of the fields in the
 link:rest-api-changes.html#submit-record[SubmitRecord] REST API entity.
 
+`label:Code-Review\<=-1`::
++
+Matches changes with either a -1, -2, or any lower score.
+
+`label:Code-Review=MAX`::
++
+Matches changes with label voted with the highest possible score.
+
+`label:Code-Review=MIN`::
++
+Matches changes with label voted with the lowest possible score.
+
+`label:Code-Review=ANY`::
++
+Matches changes with label voted with any score.
+
 `label:Non-Author-Code-Review=need`::
 +
 Matches changes where the submit rules indicate that a label named
@@ -720,14 +796,19 @@ Matches changes with a +2 code review where the reviewer is jsmith.
 The special "owner" parameter corresponds to the change owner.  Matches
 all changes that have a +2 vote from the change owner.
 
+`label:Code-Review=+2,user=non_uploader`::
+`label:Code-Review=ok,user=non_uploader`::
+`label:Code-Review=+2,non_uploader`::
+`label:Code-Review=ok,non_uploader`::
++
+The special "non_uploader" parameter corresponds to any user who's not the
+uploader of the latest patchset. Matches all changes that have a +2 vote from
+a non upoader.
+
 `label:Code-Review=+1,group=ldap/linux.workflow`::
 +
 Matches changes with a +1 code review where the reviewer is in the
 ldap/linux.workflow group.
-
-`label:Code-Review\<=-1`::
-+
-Matches changes with either a -1, -2, or any lower score.
 
 `is:open label:Code-Review+2 label:Verified+1 NOT label:Verified-1 NOT label:Code-Review-2`::
 `is:open label:Code-Review=ok label:Verified=ok`::
@@ -766,24 +847,6 @@ is:visible::
 +
 Magical internal flag to prove the current user has access to read
 the change.  This flag is always added to any query.
-
-starredby:'USER'::
-+
-Matches changes that have been starred by 'USER' with the default label.
-The special case `starredby:self` applies to the caller.
-
-watchedby:'USER'::
-+
-Matches changes that 'USER' has configured watch filters for.
-The special case `watchedby:self` applies to the caller.
-
-draftby:'USER'::
-+
-Matches changes that 'USER' has left unpublished draft comments on.
-Since the drafts are unpublished, it is not possible to see the
-draft text, or even how many drafts there are. The special case
-of `draftby:self` will find changes where the caller has created
-a draft comment.
 
 [[limit]]
 limit:'CNT'::

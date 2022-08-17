@@ -43,17 +43,17 @@ export const htmlTemplate = html`
       <template is="dom-repeat" items="[[_auditLog]]">
         <tr class="table">
           <td class="date">
-            <gr-date-formatter has-tooltip="" date-str="[[item.date]]">
+            <gr-date-formatter withTooltip date-str="[[item.date]]">
             </gr-date-formatter>
           </td>
           <td class="type">[[itemType(item.type)]]</td>
           <td class="member">
-            <template is="dom-if" if="[[_isGroupEvent(item.type)]]">
+            <template is="dom-if" if="[[_isGroupEvent(item)]]">
               <a href$="[[_computeGroupUrl(item.member)]]">
                 [[_getNameForGroup(item.member)]]
               </a>
             </template>
-            <template is="dom-if" if="[[!_isGroupEvent(item.type)]]">
+            <template is="dom-if" if="[[!_isGroupEvent(item)]]">
               <gr-account-link account="[[item.member]]"></gr-account-link>
               [[_getIdForUser(item.member)]]
             </template>

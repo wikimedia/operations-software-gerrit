@@ -14,6 +14,7 @@
 
 package com.google.gerrit.server.mail.receive;
 
+import static com.google.gerrit.entities.Patch.PATCHSET_LEVEL;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.base.Strings;
@@ -23,7 +24,6 @@ import com.google.common.collect.Iterables;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.entities.HumanComment;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.Project;
@@ -44,7 +44,6 @@ import com.google.gerrit.mail.MailHeaderParser;
 import com.google.gerrit.mail.MailMessage;
 import com.google.gerrit.mail.MailMetadata;
 import com.google.gerrit.mail.TextParser;
-import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.CommentsUtil;
 import com.google.gerrit.server.PatchSetUtil;
@@ -52,11 +51,13 @@ import com.google.gerrit.server.PublishCommentUtil;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.account.Emails;
+import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.change.EmailReviewComments;
 import com.google.gerrit.server.config.UrlFormatter;
 import com.google.gerrit.server.extensions.events.CommentAdded;
 import com.google.gerrit.server.mail.MailFilter;
 import com.google.gerrit.server.mail.send.InboundEmailRejectionSender;
+import com.google.gerrit.server.mail.send.InboundEmailRejectionSender.InboundEmailError;
 import com.google.gerrit.server.mail.send.MessageIdGenerator;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
@@ -65,7 +66,7 @@ import com.google.gerrit.server.query.change.InternalChangeQuery;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.Context;
+import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.gerrit.server.update.RetryHelper;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.ManualRequestContext;
@@ -92,7 +93,7 @@ public class MailProcessor {
   private static final ImmutableMap<MailComment.CommentType, CommentForValidation.CommentType>
       MAIL_COMMENT_TYPE_TO_VALIDATION_TYPE =
           ImmutableMap.of(
-              MailComment.CommentType.CHANGE_MESSAGE,
+              MailComment.CommentType.PATCHSET_LEVEL,
                   CommentForValidation.CommentType.CHANGE_MESSAGE,
               MailComment.CommentType.FILE_COMMENT, CommentForValidation.CommentType.FILE_COMMENT,
               MailComment.CommentType.INLINE_COMMENT,
@@ -184,7 +185,7 @@ public class MailProcessor {
       logger.atSevere().log(
           "Message %s is missing required metadata, have %s. Will delete message.",
           message.id(), metadata);
-      sendRejectionEmail(message, InboundEmailRejectionSender.Error.PARSING_ERROR);
+      sendRejectionEmail(message, InboundEmailError.PARSING_ERROR);
       return;
     }
 
@@ -198,7 +199,7 @@ public class MailProcessor {
 
       // We don't want to send an email if no accounts are linked to it.
       if (accountIds.size() > 1) {
-        sendRejectionEmail(message, InboundEmailRejectionSender.Error.UNKNOWN_ACCOUNT);
+        sendRejectionEmail(message, InboundEmailError.UNKNOWN_ACCOUNT);
       }
       return;
     }
@@ -210,14 +211,14 @@ public class MailProcessor {
     }
     if (!accountState.get().account().isActive()) {
       logger.atWarning().log("Mail: Account %s is inactive. Will delete message.", accountId);
-      sendRejectionEmail(message, InboundEmailRejectionSender.Error.INACTIVE_ACCOUNT);
+      sendRejectionEmail(message, InboundEmailError.INACTIVE_ACCOUNT);
       return;
     }
 
     persistComments(buf, message, metadata, accountId);
   }
 
-  private void sendRejectionEmail(MailMessage message, InboundEmailRejectionSender.Error reason) {
+  private void sendRejectionEmail(MailMessage message, InboundEmailError reason) {
     try {
       InboundEmailRejectionSender emailSender =
           emailRejectionSender.create(message.from(), message.id(), reason);
@@ -233,7 +234,14 @@ public class MailProcessor {
       throws UpdateException, RestApiException {
     try (ManualRequestContext ctx = oneOffRequestContext.openAs(sender)) {
       List<ChangeData> changeDataList =
-          queryProvider.get().byLegacyChangeId(Change.id(metadata.changeNumber));
+          queryProvider
+              .get()
+              .enforceVisibility(true)
+              .byLegacyChangeId(Change.id(metadata.changeNumber));
+      if (changeDataList.isEmpty()) {
+        sendRejectionEmail(message, InboundEmailError.CHANGE_NOT_FOUND);
+        return;
+      }
       if (changeDataList.size() != 1) {
         logger.atSevere().log(
             "Message %s references unique change %s,"
@@ -241,7 +249,7 @@ public class MailProcessor {
                 + " Will delete message.",
             message.id(), metadata.changeNumber, changeDataList.size());
 
-        sendRejectionEmail(message, InboundEmailRejectionSender.Error.INTERNAL_EXCEPTION);
+        sendRejectionEmail(message, InboundEmailError.INTERNAL_EXCEPTION);
         return;
       }
       ChangeData cd = Iterables.getOnlyElement(changeDataList);
@@ -277,7 +285,7 @@ public class MailProcessor {
       if (parsedComments.isEmpty()) {
         logger.atWarning().log(
             "Could not parse any comments from %s. Will delete message.", message.id());
-        sendRejectionEmail(message, InboundEmailRejectionSender.Error.PARSING_ERROR);
+        sendRejectionEmail(message, InboundEmailError.PARSING_ERROR);
         return;
       }
 
@@ -298,7 +306,7 @@ public class MailProcessor {
           PublishCommentUtil.findInvalidComments(
               commentValidationCtx, commentValidators, parsedCommentsForValidation);
       if (!commentValidationFailures.isEmpty()) {
-        sendRejectionEmail(message, InboundEmailRejectionSender.Error.COMMENT_REJECTED);
+        sendRejectionEmail(message, InboundEmailError.COMMENT_REJECTED);
         return;
       }
 
@@ -313,7 +321,7 @@ public class MailProcessor {
     private final PatchSet.Id psId;
     private final List<MailComment> parsedComments;
     private final String tag;
-    private ChangeMessage changeMessage;
+    private String mailMessage;
     private List<HumanComment> comments;
     private PatchSet patchSet;
     private ChangeNotes notes;
@@ -332,14 +340,10 @@ public class MailProcessor {
         throw new StorageException("patch set not found: " + psId);
       }
 
-      changeMessage = generateChangeMessage(ctx);
-      changeMessagesUtil.addChangeMessage(ctx.getUpdate(psId), changeMessage);
-
+      mailMessage =
+          changeMessagesUtil.setChangeMessage(ctx.getUpdate(psId), generateChangeMessage(), tag);
       comments = new ArrayList<>();
       for (MailComment c : parsedComments) {
-        if (c.getType() == MailComment.CommentType.CHANGE_MESSAGE) {
-          continue;
-        }
         comments.add(
             persistentCommentFromMailComment(ctx, c, targetPatchSetForComment(ctx, c, patchSet)));
       }
@@ -352,9 +356,9 @@ public class MailProcessor {
     }
 
     @Override
-    public void postUpdate(Context ctx) throws Exception {
+    public void postUpdate(PostUpdateContext ctx) throws Exception {
       String patchSetComment = null;
-      if (parsedComments.get(0).getType() == MailComment.CommentType.CHANGE_MESSAGE) {
+      if (parsedComments.get(0).getType() == MailComment.CommentType.PATCHSET_LEVEL) {
         patchSetComment = parsedComments.get(0).getMessage();
       }
       // Send email notifications
@@ -364,7 +368,8 @@ public class MailProcessor {
               notes,
               patchSet,
               ctx.getUser().asIdentifiedUser(),
-              changeMessage,
+              mailMessage,
+              ctx.getWhen(),
               comments,
               patchSetComment,
               ImmutableList.of(),
@@ -379,27 +384,19 @@ public class MailProcessor {
       // Fire Gerrit event. Note that approvals can't be granted via email, so old and new approvals
       // are always the same here.
       commentAdded.fire(
-          notes.getChange(),
+          ctx.getChangeData(notes),
           patchSet,
           ctx.getAccount(),
-          changeMessage.getMessage(),
+          mailMessage,
           approvals,
           approvals,
           ctx.getWhen());
     }
 
-    private ChangeMessage generateChangeMessage(ChangeContext ctx) {
+    private String generateChangeMessage() {
       String changeMsg = "Patch Set " + psId.get() + ":";
-      if (parsedComments.get(0).getType() == MailComment.CommentType.CHANGE_MESSAGE) {
-        // Add a blank line after Patch Set to follow the default format
-        if (parsedComments.size() > 1) {
-          changeMsg += "\n\n" + numComments(parsedComments.size() - 1);
-        }
-        changeMsg += "\n\n" + parsedComments.get(0).getMessage();
-      } else {
-        changeMsg += "\n\n" + numComments(parsedComments.size());
-      }
-      return ChangeMessagesUtil.newMessage(ctx, changeMsg, tag);
+      changeMsg += "\n\n" + numComments(parsedComments.size());
+      return changeMsg;
     }
 
     private PatchSet targetPatchSetForComment(
@@ -418,7 +415,11 @@ public class MailProcessor {
       // The patch set that this comment is based on is different if this
       // comment was sent in reply to a comment on a previous patch set.
       Side side;
-      if (mailComment.getInReplyTo() != null) {
+      if (mailComment.getType() == MailComment.CommentType.PATCHSET_LEVEL) {
+        fileName = PATCHSET_LEVEL;
+        // Patchset comments do not have side.
+        side = Side.REVISION;
+      } else if (mailComment.getInReplyTo() != null) {
         fileName = mailComment.getInReplyTo().key.filename;
         side = Side.fromShort(mailComment.getInReplyTo().side);
       } else {

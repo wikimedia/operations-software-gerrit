@@ -251,7 +251,7 @@ suite('gr-diff-highlight', () => {
     };
 
     const emulateSelection = (startNode, startOffset, endNode, endOffset) => {
-      const selection = window.getSelection();
+      const selection = document.getSelection();
       const range = document.createRange();
       range.setStart(startNode, startOffset);
       range.setEnd(endNode, endOffset);
@@ -281,7 +281,7 @@ suite('gr-diff-highlight', () => {
 
     teardown(() => {
       contentStubs = null;
-      window.getSelection().removeAllRanges();
+      document.getSelection().removeAllRanges();
     });
 
     test('single first line', () => {
@@ -389,7 +389,7 @@ suite('gr-diff-highlight', () => {
     test('collapsed', () => {
       const content = stubContent(138, 'left');
       emulateSelection(content.firstChild, 5, content.firstChild, 5);
-      assert.isOk(window.getSelection().getRangeAt(0).startContainer);
+      assert.isOk(document.getSelection().getRangeAt(0).startContainer);
       assert.isFalse(!!element.selectedRange);
     });
 
@@ -438,7 +438,7 @@ suite('gr-diff-highlight', () => {
       const contentText = stubContent(140, 'left');
       const contentTd = contentText.parentElement;
 
-      emulateSelection(contentTd.previousElementSibling, 0,
+      emulateSelection(contentTd.parentElement, 0,
           contentText.firstChild, 2);
       assert.isFalse(!!element.selectedRange);
     });
@@ -556,7 +556,7 @@ suite('gr-diff-highlight', () => {
           content.querySelectorAll('hl')[3], 0,
           content.querySelectorAll('span')[1], 0);
       const spyCall = spy.getCall(0);
-      const range = window.getSelection().getRangeAt(0);
+      const range = document.getSelection().getRangeAt(0);
       assert.notDeepEqual(spyCall.returnValue, range);
     });
 
@@ -581,21 +581,6 @@ suite('gr-diff-highlight', () => {
         start_character: 0,
         end_line: 119,
         end_character: element._getLength(startContent),
-      });
-      assert.equal(side, 'right');
-    });
-
-    test('_fixTripleClickSelection empty line', () => {
-      const startContent = stubContent(146, 'right');
-      const endContent = stubContent(165, 'left');
-      emulateSelection(startContent.firstChild, 0,
-          endContent.parentElement.previousElementSibling, 0);
-      const {range, side} = element.selectedRange;
-      assert.deepEqual(range, {
-        start_line: 146,
-        start_character: 0,
-        end_line: 146,
-        end_character: 84,
       });
       assert.equal(side, 'right');
     });

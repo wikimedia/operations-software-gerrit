@@ -17,14 +17,15 @@
 import '../types/globals';
 import {_testOnly_resetPluginLoader} from '../elements/shared/gr-js-api-interface/gr-plugin-loader';
 import {_testOnly_resetEndpoints} from '../elements/shared/gr-js-api-interface/gr-plugin-endpoints';
-import {
-  _testOnly_getShortcutManagerInstance,
-  Shortcut,
-} from '../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
 import {appContext} from '../services/app-context';
 import {RestApiService} from '../services/gr-rest-api/gr-rest-api';
-import {SinonSpy} from 'sinon/pkg/sinon-esm';
+import {SinonSpy} from 'sinon';
 import {StorageService} from '../services/storage/gr-storage';
+import {AuthService} from '../services/gr-auth/gr-auth';
+import {ReportingService} from '../services/gr-reporting/gr-reporting';
+import {CommentsService} from '../services/comments/comments-service';
+import {UserService} from '../services/user/user-service';
+export {query, queryAll, queryAndAssert} from '../utils/common-util';
 
 export interface MockPromise extends Promise<unknown> {
   resolve: (value?: unknown) => void;
@@ -44,68 +45,9 @@ export function isHidden(el: Element | undefined | null) {
   return getComputedStyle(el).display === 'none';
 }
 
-export function queryAll<E extends Element = Element>(
-  el: Element | undefined,
-  selector: string
-): NodeListOf<E> {
-  if (!el) assert.fail('element not defined');
-  const root = el.shadowRoot ?? el;
-  return root.querySelectorAll<E>(selector);
-}
-
-export function query<E extends Element = Element>(
-  el: Element | undefined,
-  selector: string
-): E | undefined {
-  if (!el) return undefined;
-  const root = el.shadowRoot ?? el;
-  return root.querySelector<E>(selector) ?? undefined;
-}
-
-export function queryAndAssert<E extends Element = Element>(
-  el: Element | undefined,
-  selector: string
-): E {
-  const found = query<E>(el, selector);
-  if (!found) assert.fail(`selector '${selector}' did not match anything'`);
-  return found;
-}
-
-// Some tests/elements can define its own binding. We want to restore bindings
-// at the end of the test. The TestKeyboardShortcutBinder store bindings in
-// stack, so it is possible to override bindings in nested suites.
-export class TestKeyboardShortcutBinder {
-  private static stack: TestKeyboardShortcutBinder[] = [];
-
-  static push() {
-    const testBinder = new TestKeyboardShortcutBinder();
-    this.stack.push(testBinder);
-    return _testOnly_getShortcutManagerInstance();
-  }
-
-  static pop() {
-    const item = this.stack.pop();
-    if (!item) {
-      throw new Error('stack is empty');
-    }
-    item._restoreShortcuts();
-  }
-
-  private readonly originalBinding: Map<Shortcut, string[]>;
-
-  constructor() {
-    this.originalBinding = new Map(
-      _testOnly_getShortcutManagerInstance()._testOnly_getBindings()
-    );
-  }
-
-  _restoreShortcuts() {
-    const bindings = _testOnly_getShortcutManagerInstance()._testOnly_getBindings();
-    bindings.clear();
-    this.originalBinding.forEach((value, key) => {
-      bindings.set(key, value);
-    });
-  }
+export function isVisible(el: Element) {
+  assert.ok(el);
+  return getComputedStyle(el).getPropertyValue('display') !== 'none';
 }
 
 // Provide reset plugins function to clear installed plugins between tests.
@@ -166,8 +108,28 @@ export function spyRestApi<K extends keyof RestApiService>(method: K) {
   return sinon.spy(appContext.restApiService, method);
 }
 
+export function stubComments<K extends keyof CommentsService>(method: K) {
+  return sinon.stub(appContext.commentsService, method);
+}
+
+export function stubUsers<K extends keyof UserService>(method: K) {
+  return sinon.stub(appContext.userService, method);
+}
+
 export function stubStorage<K extends keyof StorageService>(method: K) {
   return sinon.stub(appContext.storageService, method);
+}
+
+export function spyStorage<K extends keyof StorageService>(method: K) {
+  return sinon.spy(appContext.storageService, method);
+}
+
+export function stubAuth<K extends keyof AuthService>(method: K) {
+  return sinon.stub(appContext.authService, method);
+}
+
+export function stubReporting<K extends keyof ReportingService>(method: K) {
+  return sinon.stub(appContext.reportingService, method);
 }
 
 export type SinonSpyMember<F extends (...args: any) => any> = SinonSpy<
@@ -191,6 +153,34 @@ export function removeIronOverlayBackdropStyleEl() {
   const el = document.getElementById('backdrop-style');
   if (!el?.parentNode) throw new Error('Backdrop style element not found.');
   el.parentNode?.removeChild(el);
+}
+
+export function removeThemeStyles() {
+  // Do not remove the light theme, because it is only added once statically,
+  // not once per gr-app instantiation.
+  // document.head.querySelector('#light-theme')?.remove();
+  document.head.querySelector('#dark-theme')?.remove();
+}
+
+export function waitUntil(
+  predicate: () => boolean,
+  maxMillis = 100
+): Promise<void> {
+  const start = Date.now();
+  let sleep = 1;
+  return new Promise((resolve, reject) => {
+    const waiter = () => {
+      if (predicate()) {
+        return resolve();
+      }
+      if (Date.now() - start >= maxMillis) {
+        return reject(new Error('Took to long to waitUntil'));
+      }
+      setTimeout(waiter, sleep);
+      sleep *= 2;
+    };
+    waiter();
+  });
 }
 
 /**

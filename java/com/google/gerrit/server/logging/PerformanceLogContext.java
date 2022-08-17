@@ -56,7 +56,7 @@ public class PerformanceLogContext implements AutoCloseable {
     // Do not create performance log entries if performance logging is disabled or if no
     // PerformanceLogger is registered.
     boolean enablePerformanceLogging =
-        gerritConfig.getBoolean("tracing", "performanceLogging", true);
+        gerritConfig.getBoolean("tracing", "performanceLogging", false);
     LoggingContext.getInstance()
         .performanceLogging(
             enablePerformanceLogging && !Iterables.isEmpty(performanceLoggers.entries()));
@@ -92,7 +92,7 @@ public class PerformanceLogContext implements AutoCloseable {
             p -> {
               try (TraceContext traceContext = newPluginTrace(p)) {
                 performanceLogRecords.forEach(r -> r.writeTo(p.get()));
-              } catch (Throwable e) {
+              } catch (RuntimeException e) {
                 logger.atWarning().withCause(e).log(
                     "Failure in %s of plugin %s", p.get().getClass(), p.getPluginName());
               }

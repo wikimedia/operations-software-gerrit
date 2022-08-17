@@ -239,6 +239,12 @@ default. Optional fields are:
   current user.
 --
 
+[[submit-requirements]]
+--
+* `SUBMIT_REQUIREMENTS`: detailed result of the evaluated submit requirements
+  for this change.
+--
+
 [[current-revision]]
 --
 * `CURRENT_REVISION`: describe the current revision (patch set)
@@ -594,8 +600,9 @@ this endpoint too. Fields are described in link:#list-changes[Query Changes].
 ----
 
 As a response, two link:#change-info[ChangeInfo] entities are returned
-that describe information added and removed from the `old` change state.
-Only fields that differ between the change's two states are returned.
+that describe information added and removed from the `old` change state, and
+the two link:#change-info[ChangeInfo] entities that generated the diff are
+returned. Only fields that differ between the change's two states are returned.
 
 .Response
 ----
@@ -619,9 +626,55 @@ Only fields that differ between the change's two states are returned.
       "topic": "new-topic"
     },
     "removed": {
-      "updated": "2013-02-20 12:05:34.111000000",
+      "updated": "2013-02-01 09:59:32.126000000",
       "topic": "old-topic"
-    }
+    },
+    "old_change_info": {
+      "id": "myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940",
+      "project": "myProject",
+      "branch": "master",
+      "attention_set": [],
+      "change_id": "I8473b95934b5732ac55d26311a706c9c2bde9940",
+      "subject": "Implementing Feature X",
+      "status": "NEW",
+      "topic": "old-topic",
+      "created": "2013-02-01 09:59:32.126000000",
+      "updated": "2013-02-01 09:59:32.126000000",
+      "mergeable": true,
+      "insertions": 34,
+      "deletions": 101,
+      "_number": 3965,
+      "owner": {
+        "name": "John Doe"
+      }
+    },
+    "new_change_info": {
+      "id": "myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940",
+      "project": "myProject",
+      "branch": "master",
+      "attention_set": [
+        {
+          "account": {
+            "name": "John Doe"
+          },
+         "last_update": "2013-02-21 11:16:36.775000000",
+         "reason": "reviewer or cc replied"
+        }
+      ],
+      "change_id": "I8473b95934b5732ac55d26311a706c9c2bde9940",
+      "subject": "Implementing Feature X",
+      "status": "NEW",
+      "topic": "new-topic",
+      "created": "2013-02-01 09:59:32.126000000",
+      "updated": "2013-02-21 11:16:36.775000000",
+      "mergeable": true,
+      "insertions": 34,
+      "deletions": 101,
+      "_number": 3965,
+      "owner": {
+        "name": "John Doe"
+      }
+    },
   }
 ----
 
@@ -1741,6 +1794,18 @@ Submitting a change also removes all users from the link:#attention-set[attentio
 As response a link:#change-info[ChangeInfo] entity is returned that
 describes the submitted/merged change.
 
+Submission may submit multiple changes, but we still only return one ChangeInfo
+object. To query for all submitted changes, please use the submission_id that is
+part of the response.
+
+Changes that will also be submitted:
+1. All changes of the same topic if
+link:config-gerrit.html#change.submitWholeTopic[`change.submitWholeTopic`]
+configuration is set to true.
+2. All dependent changes.
+3. The closure of the above (e.g if a dependent change has a topic, all changes
+of *that* topic will also be submitted).
+
 .Response
 ----
   HTTP/1.1 200 OK
@@ -2543,42 +2608,6 @@ Un-marks a change as ignored.
   PUT /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/unignore HTTP/1.0
 ----
 
-[[mark-as-reviewed]]
-=== Mark as Reviewed
---
-'PUT /changes/link:#change-id[\{change-id\}]/reviewed'
---
-
-Marks a change as reviewed.
-
-This allows users to "de-highlight" changes in their dashboard until a new
-patch set is uploaded.
-
-This differs from the link:#ignore[ignore] endpoint, which will mute
-emails and hide the change from dashboard completely until it is
-link:#unignore[unignored] again.
-
-
-.Request
-----
-  PUT /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/reviewed HTTP/1.0
-----
-
-[[mark-as-unreviewed]]
-=== Mark as Unreviewed
---
-'PUT /changes/link:#change-id[\{change-id\}]/unreviewed'
---
-
-Marks a change as unreviewed.
-
-This allows users to "highlight" changes in their dashboard
-
-.Request
-----
-  PUT /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/unreviewed HTTP/1.0
-----
-
 [[get-hashtags]]
 === Get Hashtags
 --
@@ -2786,6 +2815,53 @@ describes the updated change message.
      "date": "2013-03-23 21:34:02.419000000",
      "message": "Change message removed by: Administrator\nReason: spam",
      "_revision_number": 1
+  }
+----
+
+[[check-submit-requirement]]
+=== Check Submit Requirement
+--
+'POST /changes/link:#change-id[\{change-id\}]/check.submit_requirement'
+--
+
+Tests a submit requirement and returns the result as a
+link:#submit-requirement-result-info[SubmitRequirementResultInfo]. The request
+body must contain a link:#submit-requirement-input[SubmitRequirementInput].
+
+Note that this endpoint does not modify the change resource.
+
+.Request
+----
+  POST /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/check.submit_requirement HTTP/1.0
+  Content-Type: application/json; charset=UTF-8
+
+    {
+      "name": "Code-Review",
+      "submittability_expression": "label:Code-Review=+2"
+    }
+----
+
+As response a link:#submit-requirement-result-info[SubmitRequirementResultInfo]
+entity is returned that describes the submit requirement result.
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Disposition: attachment
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    "name": "Code-Review",
+    "status": "SATISFIED",
+    "submittability_expression_result": {
+      "expression": "label:Code-Review=+2",
+      "fulfilled": true,
+      "passingAtoms": [
+        "label:Code-Review=+2"
+      ]
+    },
+    "is_legacy": false
   }
 ----
 
@@ -3246,6 +3322,8 @@ This REST endpoint only suggests accounts that
 * are visible to the calling user
 * are not already reviewer on the change
 * don't own the change
+* are not service users (unless
+  link:config.html#suggest.skipServiceUsers[skipServiceUsers] is set to `false`)
 
 Groups can be excluded from the results by specifying the 'exclude-groups'
 request parameter:
@@ -3360,7 +3438,7 @@ Also, moving a reviewer to CC removes that user from the attention set.
   }
 ----
 
-As response an link:#add-reviewer-result[AddReviewerResult] entity is
+As response an link:#reviewer-result[ReviewerResult] entity is
 returned that describes the newly added reviewers.
 
 .Response
@@ -3572,6 +3650,9 @@ The entries in the map are sorted by label name.
 
 Deletes a single vote from a change. Note, that even when the last vote of
 a reviewer is removed the reviewer itself is still listed on the change.
+
+If another user removed a user's vote, the user with the deleted vote will be
+added to the attention set.
 
 .Request
 ----
@@ -3804,8 +3885,8 @@ Retrieves revision link:#action-info[actions] of the revision of a change.
 }
 ----
 
-The response is a flat map of possible revision actions mapped to their
-link:#action-info[ActionInfo].
+The response is a flat map of possible revision REST endpoint names
+mapped to their link:#action-info[ActionInfo].
 
 [[get-review]]
 === Get Review
@@ -4163,7 +4244,7 @@ to a change simultaneously with a review:
 Each element of the `reviewers` list is an instance of
 link:#reviewer-input[ReviewerInput]. The corresponding result of
 adding each reviewer will be returned in a map of inputs to
-link:#add-reviewer-result[AddReviewerResult]s.
+link:#reviewer-result[ReviewerResult]s.
 
 .Response
 ----
@@ -4403,14 +4484,27 @@ body.
 --
 
 Submits a revision.
+Submitting a change also removes all users from the link:#attention-set[attention set].
 
 .Request
 ----
   POST /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/revisions/674ac754f91e64a0efb8087e59a176484bd534d1/submit HTTP/1.0
 ----
 
-As response a link:#submit-info[SubmitInfo] entity is returned that
-describes the status of the submitted change.
+As response a link:#change-info[ChangeInfo] entity is returned that
+describes the submitted/merged change.
+
+Submission may submit multiple changes, but we still only return one ChangeInfo
+object. To query for all submitted changes, please use the submission_id that is
+part of the response.
+
+Changes that will also be submitted:
+1. All changes of the same topic if
+link:config-gerrit.html#change.submitWholeTopic[`change.submitWholeTopic`]
+configuration is set to true.
+2. All dependent changes.
+3. The closure of the above (e.g if a dependent change has a topic, all changes
+of *that* topic will also be submitted).
 
 .Response
 ----
@@ -4420,7 +4514,19 @@ describes the status of the submitted change.
 
   )]}'
   {
-    "status": "MERGED"
+    "id": "myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940",
+    "project": "myProject",
+    "branch": "master",
+    "change_id": "I8473b95934b5732ac55d26311a706c9c2bde9940",
+    "subject": "Implementing Feature X",
+    "status": "MERGED",
+    "created": "2013-02-01 09:59:32.126000000",
+    "updated": "2013-02-21 11:16:36.775000000",
+    "submitted": "2013-02-21 11:16:36.615000000",
+    "_number": 3965,
+    "owner": {
+      "name": "John Doe"
+    }
   }
 ----
 
@@ -5800,6 +5906,11 @@ The commit message and destination branch must be provided in the request body i
 link:#cherrypick-input[CherryPickInput] entity.  If the commit message
 does not specify a Change-Id, a new one is picked for the destination change.
 
+When cherry-picking a change into a branch that already contains the Change-Id
+that we want to cherry-pick, the cherry-pick will create a new patch-set on the
+destination's branch's appropriate Change-Id. If the change is closed on the
+destination branch, the cherry-pick will fail.
+
 .Request
 ----
   POST /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/revisions/674ac754f91e64a0efb8087e59a176484bd534d1/cherrypick HTTP/1.0
@@ -5936,6 +6047,9 @@ deleting the vote (with same label) from a newer patch set by mistake.
 
 Note, that even when the last vote of a reviewer is removed the reviewer itself
 is still listed on the change.
+
+If another user removed a user's vote, the user with the deleted vote will be
+added to the attention set.
 
 .Request
 ----
@@ -6115,6 +6229,9 @@ Users are added to the attention set if one the following apply:
 * The change is marked ready for review.
 * As an owner/uploader, when someone replies on your change.
 * As a reviewer, when the owner/uploader replies.
+* When the user's vote is deleted by another user.
+* The rules above (except manually adding to the attention set) don't apply
+ for changes that are work in progress.
 
 Users are removed from the attention set if one the following apply:
 
@@ -6258,33 +6375,6 @@ likely allowed to execute it. This may change if state is updated
 at the server or permissions are modified. Not present if false.
 |====================================
 
-[[add-reviewer-result]]
-=== AddReviewerResult
-The `AddReviewerResult` entity describes the result of adding a
-reviewer to a change.
-
-[options="header",cols="1,^1,5"]
-|===========================
-|Field Name    ||Description
-|`input`    ||
-Value of the `reviewer` field from link:#reviewer-input[ReviewerInput]
-set while adding the reviewer.
-|`reviewers`   |optional|
-The newly added reviewers as a list of link:#reviewer-info[
-ReviewerInfo] entities.
-|`ccs`         |optional|
-The newly CCed accounts as a list of link:#reviewer-info[
-ReviewerInfo] entities. This field will only appear if the requested
-`state` for the reviewer was `CC` *and* NoteDb is enabled on the
-server.
-|`error`       |optional|
-Error message explaining why the reviewer could not be added. +
-If a group was specified in the input and an error is returned, it
-means that none of the members were added as reviewer.
-|`confirm`     |`false` if not set|
-Whether adding the reviewer requires confirmation.
-|===========================
-
 [[approval-info]]
 === ApprovalInfo
 The `ApprovalInfo` entity contains information about an approval from a
@@ -6340,7 +6430,13 @@ the link:#attention-set[attention set].
 |Field Name    ||Description
 |`account`     || link:rest-api-accounts.html#account-info[AccountInfo] entity.
 |`last_update` || The link:rest-api.html#timestamp[timestamp] of the last update.
-|`reason`      || The reason of for adding or removing the user.
+|`reason`      ||
+The reason for adding or removing the user.
+If the update was caused by another user, that account is represented by
+account ID in reason as `<GERRIT_ACCOUNT_18419>` and the corresponding
+link:rest-api-accounts.html#account-info[AccountInfo] can be found in `reason_account` field.
+|`reason_account`      ||
+link:rest-api-accounts.html#account-info[AccountInfo] of the user who caused the update.
 
 |===========================
 [[attention-set-input]]
@@ -6429,8 +6525,7 @@ to link:#attention-set-info[AttentionSetInfo] of that account.
 The assignee of the change as an link:rest-api-accounts.html#account-info[
 AccountInfo] entity.
 |`hashtags`           |optional|
-List of hashtags that are set on the change (only populated when NoteDb
-is enabled).
+List of hashtags that are set on the change.
 |`change_id`          ||The Change-Id of the change.
 |`subject`            ||
 The subject of the change (header line of the commit message).
@@ -6477,7 +6572,9 @@ change index doesn't have the data.
 |`unresolved_comment_count`  |optional|
 Number of unresolved inline comment threads across all patch sets. Not set if
 the current change index doesn't have the data.
-|`_number`            ||The legacy numeric ID of the change.
+|`_number`            ||
+The numeric ID of the change. (The underscore is just a relict of a prior
+attempt to deprecate the numeric ID.)
 |`owner`              ||
 The owner of the change as an link:rest-api-accounts.html#account-info[
 AccountInfo] entity.
@@ -6485,9 +6582,16 @@ AccountInfo] entity.
 Actions the caller might be able to perform on this revision. The
 information is a map of view name to link:#action-info[ActionInfo]
 entities.
+|`submit_records`             ||
+List of the link:rest-api-changes.html#submit-record-info[SubmitRecordInfo]
+containing the submit records for the change at the latest patchset.
 |`requirements`             |optional|
 List of the link:rest-api-changes.html#requirement[requirements] to be met before this change
-can be submitted.
+can be submitted. This field is deprecated in favour of `submit_requirements`.
+|`submit_requirements`      |optional|
+List of the link:#submit-requirement-result-info[SubmitRequirementResultInfo]
+containing the evaluated submit requirements for the change.
+Only set if link:#submit-requirements[`SUBMIT_REQUIREMENTS`] is requested.
 |`labels`             |optional|
 The labels of the change as a map that maps the label names to
 link:#label-info[LabelInfo] entries. +
@@ -6622,6 +6726,14 @@ Mutually exclusive with `base_change`.
 |`new_branch`         |optional, default to `false`|
 Allow creating a new branch when set to `true`. Using this option is
 only possible for non-merge commits (if the `merge` field is not set).
+|`validation_options` |optional|
+Map with key-value pairs that are forwarded as options to the commit validation
+listeners (e.g. can be used to skip certain validations). Which validation
+options are supported depends on the installed commit validation listeners.
+Gerrit core doesn't support any validation options, but commit validation
+listeners that are implemented in plugins may. Please refer to the
+documentation of the installed plugins to learn whether they support validation
+options. Unknown validation options are silently ignored.
 |`merge`              |optional|
 The detail of a merge commit as a link:#merge-input[MergeInput] entity.
 If set, the target branch (see  `branch` field) must exist (it is not
@@ -6664,7 +6776,12 @@ link:rest-api-accounts.html#account-info[AccountInfo] entity. +
 Set if the message was posted on behalf of another user.
 |`date`            ||
 The link:rest-api.html#timestamp[timestamp] this message was posted.
-|`message`            ||The text left by the user.
+|`message`            ||
+The text left by the user or Gerrit system. Accounts are served as account IDs
+inlined in the text as `<GERRIT_ACCOUNT_18419>`.
+All accounts, used in message, can be found in `accountsInMessage`
+field.
+|`accountsInMessage`            ||Accounts, used in `message`.
 |`tag`                 |optional|
 Value of the `tag` field from link:#review-input[ReviewInput] set
 while posting the review. Votes/comments that contain `tag` with
@@ -6893,7 +7010,10 @@ link:#git-person-info[GitPersonInfo] entity.
 The subject of the commit (header line of the commit message).
 |`message`     ||The commit message.
 |`web_links`   |optional|
-Links to the commit in external sites as a list of
+Links to the patch set in external sites as a list of
+link:#web-link-info[WebLinkInfo] entities.
+|`resolve_conflicts_web_links`   |optional|
+Links to the commit in external sites for resolving conflicts as a list of
 link:#web-link-info[WebLinkInfo] entities.
 |===========================
 
@@ -7069,6 +7189,9 @@ link:#diff-content[DiffContent] entities.
 |`web_links`       |optional|
 Links to the file diff in external sites as a list of
 link:rest-api-changes.html#diff-web-link-info[DiffWebLinkInfo] entries.
+|`edit_web_links`   |optional|
+Links to edit the file in external sites as a list of
+link:rest-api-changes.html#web-link-info[WebLinkInfo] entries.
 |`binary`          |not set if `false`|Whether the file is binary.
 |==========================
 
@@ -7278,7 +7401,8 @@ and/or remove from, a change.
 [[included-in-info]]
 === IncludedInInfo
 The `IncludedInInfo` entity contains information about the branches a
-change was merged into and tags it was tagged with.
+change was merged into and tags it was tagged with. The branch or tag
+must have 'refs/head/' or 'refs/tags/' prefix respectively.
 
 [options="header",cols="1,^1,5"]
 |=======================
@@ -7670,8 +7794,8 @@ endpoint is the topic of the change being reverted, and the default for the
 RevertSubmission endpoint is `revert-{submission_id}-{timestamp.now}`.
 Topic can't contain quotation marks.
 |`work_in_progress` |optional|
-When present, change is marked as Work In Progress. This will also override
-the notify value to `OWNER`. +
+When present, change is marked as Work In Progress. The `notify` input is
+used if it's present, otherwise it will be overridden to `OWNER`. +
 If not set, the default is false.
 |=============================
 
@@ -7756,6 +7880,13 @@ except `PUBLISH_ALL_REVISIONS` operate only on drafts for a single revision. +
 Only `KEEP` is allowed when used in conjunction with `on_behalf_of`. +
 If not set, the default is `KEEP`. If `on_behalf_of` is set, then no other value
 besides `KEEP` is allowed.
+|`draft_ids_to_publish`                |optional|
+List of draft IDs to be published. The draft IDs should belong to the current
+user and be valid. If `drafts` is set to `PUBLISH`, then draft IDs should
+contain drafts for the same revision that is requested for review. If `drafts`
+is set to `KEEP`, then `draft_ids_to_publish` will be ignored and no draft
+comments will be published. +
+If not set, the default is to publish all drafts according to the `drafts` field.
 |`notify`                              |optional|
 Notify handling that defines to whom email notifications should be sent
 after the review is stored. +
@@ -7773,7 +7904,7 @@ should be posted on behalf of. To use this option the caller must
 have been granted `labelAs-NAME` permission for all keys of labels.
 |`reviewers`                           |optional|
 A list of link:rest-api-changes.html#reviewer-input[ReviewerInput]
-representing reviewers that should be added to the change.
+representing reviewers that should be added/removed to/from the change.
 |`ready`                               |optional|
 If true, and if the change is work in progress, then start review.
 It is an error for both `ready` and `work_in_progress` to be true.
@@ -7806,8 +7937,8 @@ Map of labels to values after the review was posted. Null if any reviewer
 additions were rejected.
 |`reviewers`              |optional|
 Map of account or group identifier to
-link:rest-api-changes.html#add-reviewer-result[AddReviewerResult]
-representing the outcome of adding as a reviewer.
+link:rest-api-changes.html#reviewer-result[ReviewerResult]
+representing the outcome of adding/removing a reviewer.
 Absent if no reviewer additions were requested.
 |`ready`                  |optional|
 If true, the change was moved from WIP to ready for review as a result of this
@@ -7838,24 +7969,25 @@ link:rest-api-changes.html#add-reviewer[add-reviewer] for details.
 
 [[reviewer-input]]
 === ReviewerInput
-The `ReviewerInput` entity contains information for adding a reviewer
-to a change.
+The `ReviewerInput` entity contains information for adding or removing
+reviewers to/from the change.
 
 [options="header",cols="1,^1,5"]
 |=============================
 |Field Name      ||Description
 |`reviewer`      ||
 The link:rest-api-accounts.html#account-id[ID] of one account that
-should be added as reviewer or the link:rest-api-groups.html#group-id[
+should be added/removed as reviewer or the link:rest-api-groups.html#group-id[
 ID] of one internal group for which all members should be added as reviewers. +
 If an ID identifies both an account and a group, only the account is
 added as reviewer to the change.
 External groups, such as LDAP groups, will be silently omitted from a
 link:#set-review[set-review] or
-link:rest-api-changes.html#add-reviewer[add-reviewer] call.
+link:rest-api-changes.html#add-reviewer[add-reviewer] call. A group can only be
+specified for adding reviewers, not for removing them.
 |`state`         |optional|
-Add reviewer in this state. Possible reviewer states are `REVIEWER`
-and `CC`. If not given, defaults to `REVIEWER`.
+Add reviewer in this state. Possible reviewer states are `REVIEWER`,
+`CC` and `REMOVED`. If not given, defaults to `REVIEWER`.
 |`confirmed`     |optional|
 Whether adding the reviewer is confirmed. +
 The Gerrit server may be configured to
@@ -7871,6 +8003,37 @@ Additional information about whom to notify about the update as a map
 of link:user-notify.html#recipient-types[recipient type] to
 link:#notify-info[NotifyInfo] entity.
 |=============================
+
+[[reviewer-result]]
+=== ReviewerResult
+The `ReviewerResult` entity describes the result of modifying reviewers of
+a change.
+
+[options="header",cols="1,^1,5"]
+|===========================
+|Field Name    ||Description
+|`input`    ||
+Value of the `reviewer` field from link:#reviewer-input[ReviewerInput]
+set while adding the reviewer.
+|`reviewers`   |optional|
+The newly added reviewers as a list of link:#reviewer-info[
+ReviewerInfo] entities.
+|`ccs`         |optional|
+The newly CCed accounts as a list of
+link:rest-api-accounts.html#account-info[AccountInfo] entities. This field will
+only appear if the requested `state` for the reviewer was `CC`.
+|`removed`      |optional|
+The newly removed accounts as a list of
+link:rest-api-accounts.html#account-info[AccountInfo] entities.
+This field will only appear if the requested `state` for the reviewer was
+`REMOVED`.
+|`error`       |optional|
+Error message explaining why the reviewer could not be added. +
+If a group was specified in the input and an error is returned, it
+means that none of the members were added as reviewer.
+|`confirm`     |`false` if not set|
+Whether adding the reviewer requires confirmation.
+|===========================
 
 [[revision-info]]
 === RevisionInfo
@@ -8003,27 +8166,6 @@ If `SKIP` the parent filters are not called, allowing the test
 to return results from the input rule.
 |===========================
 
-[[submit-info]]
-=== SubmitInfo
-The `SubmitInfo` entity contains information about the change status
-after submitting.
-
-[options="header",cols="1,^1,5"]
-|==========================
-|Field Name    ||Description
-|`status`      ||
-The status of the change after submitting is `MERGED`.
-|`on_behalf_of`|optional|
-The link:rest-api-accounts.html#account-id[\{account-id\}] of the user on
-whose behalf the action should be done. To use this option the caller must
-have been granted both `Submit` and `Submit (On Behalf Of)` permissions.
-The user named by `on_behalf_of` does not need to be granted the `Submit`
-permission. This feature is aimed for CI solutions: the CI account can be
-granted both permissions, so individual users don't need `Submit` permission
-themselves. Still the changes can be submitted on behalf of real users and
-not with the identity of the CI account.
-|==========================
-
 [[submit-input]]
 === SubmitInput
 The `SubmitInput` entity contains information for submitting a change.
@@ -8083,6 +8225,117 @@ is currently an empty object.
 |`error_message`|optional|
 When status is RULE_ERROR this message provides some text describing
 the failure of the rule predicate.
+|===========================
+
+[[submit-record-info]]
+=== SubmitRecordInfo
+The `SubmitRecordInfo` entity describes results from a submit_rule.
+
+[options="header",cols="1,^1,5"]
+|===========================
+|Field Name      ||Description
+|`rule_name`||
+The name of the submit rule that created this submit record. The submit rule is
+specified in the form of "$plugin~$rule" where `$plugin` is the plugin name
+and `$rule` is the name of the class that implemented the submit rule.
+|`status`||
+`OK`, the change can be submitted. +
+`NOT_READY`, additional labels are required before submit. +
+`CLOSED`, closed changes cannot be submitted. +
+`FORCED`, the change was submitted bypassing the submit rule. +
+`RULE_ERROR`, rule code failed with an error.
+|`labels`|optional|
+A list of labels, each containing the following fields. +
+  * `label`: the label name. +
+  * `status`: the label status: {`OK`, `REJECT`, `MAY`, `NEED`, `IMPOSSIBLE`}. +
+  * `appliedBy`: the link:rest-api-accounts.html#account-info[AccountInfo]
+  that applied the vote to the label.
+|`requirements`|optional|
+List of the link:rest-api-changes.html#requirement[requirements] to be met
+before this change can be submitted.
+|`error_message`|optional|
+When status is RULE_ERROR this message provides some text describing
+the failure of the rule predicate.
+|===========================
+
+[[submit-requirement-expression-info]]
+=== SubmitRequirementExpressionInfo
+The `SubmitRequirementExpressionInfo` describes the result of evaluating a
+single submit requirement expression, for example `label:code-review=+2`.
+
+[options="header",cols="1,6"]
+|===========================
+|Field Name      |Description
+|`expression`|
+The submit requirement expression as a string, for example
+`branch:refs/heads/foo and label:verified=+1`.
+|`fulfilled`|
+True if the submit requirement is fulfilled for the change.
+|`passing_atoms`|
+A list of passing atoms as strings. For the above expression,
+`passing_atoms` can contain ["branch:refs/heads/foo"] if the branch predicate is
+fulfilled for the change.
+|`failing_atoms`|
+A list of failing atoms. This is similar to `passing_atoms` except that it
+contains the list of predicates that are not fulfilled for the change.
+|===========================
+
+[[submit-requirement-input]]
+=== SubmitRequirementInput
+The `SubmitRequirementInput` entity describes a submit requirement.
+
+[options="header",cols="1,^1,5"]
+|===========================
+|Field Name      ||Description
+|`name`||
+The submit requirement name.
+|`description`|optional|
+Description of the submit requirement.
+|`applicability_expression`|optional|
+Query expression that can be evaluated on any change. If evaluated to true on a
+change, the submit requirement is then applicable for this change.
+If not specified, the submit requirement is applicable for all changes.
+|`submittability_expression`||
+Query expression that can be evaluated on any change. If evaluated to true on a
+change, the submit requirement is fulfilled and not blocking change submission.
+|`override_expression`|optional|
+Query expression that can be evaluated on any change. If evaluated to true on a
+change, the submit requirement is overridden and not blocking change submission.
+|`allow_override_in_child_projects`|optional|
+Whether this submit requirement can be overridden in child projects. Default is
+`true`.
+|===========================
+
+[[submit-requirement-result-info]]
+=== SubmitRequirementResultInfo
+The `SubmitRequirementResultInfo` describes the result of evaluating a
+submit requirement on a change.
+
+[options="header",cols="1,^1,5"]
+|===========================
+|Field Name      ||Description
+|`name`||
+The submit requirement name.
+|`description`|optional|
+Description of the submit requirement.
+|`status`||
+Status describing the result of evaluating the submit requirement. The status
+is one of (`SATISFIED`, `UNSATISFIED`, `OVERRIDDEN`, `NOT_APPLICABLE`, `ERROR`).
+|`is_legacy`||
+If true, this submit requirement result was created from a legacy
+link:#submit-record[SubmitRecord]. Otherwise, it was created by evaluating a
+submit requirement.
+|`applicability_expression_result`|optional|
+A link:#submit-requirement-expression-info[SubmitRequirementExpressionInfo]
+containing the result of evaluating the applicability expression. Not set if the
+submit requirement did not define an applicability expression.
+|`submittability_expression_result`||
+A link:#submit-requirement-expression-info[SubmitRequirementExpressionInfo]
+containing the result of evaluating the submittability expression.
+|`override_expression_result`|optional|
+A link:#submit-requirement-expression-info[SubmitRequirementExpressionInfo]
+containing the result of evaluating the override expression. Not set if the
+submit requirement did not define an override expression.
 |===========================
 
 [[submitted-together-info]]

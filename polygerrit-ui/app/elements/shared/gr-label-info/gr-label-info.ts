@@ -14,30 +14,47 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import '../../../styles/gr-font-styles';
 import '../../../styles/gr-voting-styles';
 import '../../../styles/shared-styles';
+import '../gr-vote-chip/gr-vote-chip';
 import '../gr-account-label/gr-account-label';
 import '../gr-account-link/gr-account-link';
+import '../gr-account-chip/gr-account-chip';
 import '../gr-button/gr-button';
 import '../gr-icons/gr-icons';
 import '../gr-label/gr-label';
+import '../gr-tooltip-content/gr-tooltip-content';
 import {dom, EventApi} from '@polymer/polymer/lib/legacy/polymer.dom';
-import {PolymerElement} from '@polymer/polymer/polymer-element';
-import {htmlTemplate} from './gr-label-info_html';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
-import {customElement, property} from '@polymer/decorators';
 import {
-  ChangeInfo,
   AccountInfo,
   LabelInfo,
   ApprovalInfo,
   AccountId,
   isQuickLabelInfo,
   isDetailedLabelInfo,
+  LabelNameToInfoMap,
 } from '../../../types/common';
+import {LitElement, css, html} from 'lit';
+import {customElement, property} from 'lit/decorators';
 import {GrButton} from '../gr-button/gr-button';
-import {getVotingRangeOrDefault} from '../../../utils/label-util';
+import {
+  canVote,
+  getApprovalInfo,
+  getVotingRangeOrDefault,
+  hasNeutralStatus,
+  hasVoted,
+  valueString,
+} from '../../../utils/label-util';
 import {appContext} from '../../../services/app-context';
+import {ParsedChangeInfo} from '../../../types/types';
+import {fontStyles} from '../../../styles/gr-font-styles';
+import {sharedStyles} from '../../../styles/shared-styles';
+import {votingStyles} from '../../../styles/gr-voting-styles';
+import {ifDefined} from 'lit/directives/if-defined';
+import {fireReload} from '../../../utils/event-util';
+import {KnownExperimentId} from '../../../services/flags/flags';
+import {sortReviewers} from '../../../utils/attention-set-util';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -54,16 +71,12 @@ enum LabelClassName {
 
 interface FormattedLabel {
   className?: LabelClassName;
-  account: ApprovalInfo;
+  account: ApprovalInfo | AccountInfo;
   value: string;
 }
 
 @customElement('gr-label-info')
-export class GrLabelInfo extends PolymerElement {
-  static get template() {
-    return htmlTemplate;
-  }
-
+export class GrLabelInfo extends LitElement {
   @property({type: Object})
   labelInfo?: LabelInfo;
 
@@ -71,24 +84,263 @@ export class GrLabelInfo extends PolymerElement {
   label = '';
 
   @property({type: Object})
-  change?: ChangeInfo;
+  change?: ParsedChangeInfo;
 
   @property({type: Object})
   account?: AccountInfo;
 
+  /**
+   * A user is able to delete a vote iff the mutable property is true and the
+   * reviewer that left the vote exists in the list of removable_reviewers
+   * received from the backend.
+   */
   @property({type: Boolean})
   mutable = false;
 
+  /**
+   * if true - show all reviewers that can vote on label
+   * if false - show only reviewers that voted on label
+   */
+  @property({type: Boolean})
+  showAllReviewers = true;
+
+  /** temporary until submit requirements are finished */
+  @property({type: Boolean})
+  showAlwaysOldUI = false;
+
   private readonly restApiService = appContext.restApiService;
+
+  private readonly reporting = appContext.reportingService;
 
   // TODO(TS): not used, remove later
   _xhrPromise?: Promise<void>;
 
+  static override get styles() {
+    return [
+      sharedStyles,
+      fontStyles,
+      votingStyles,
+      css`
+        .placeholder {
+          color: var(--deemphasized-text-color);
+        }
+        .hidden {
+          display: none;
+        }
+        /* Note that most of the .voteChip styles are coming from the
+         gr-voting-styles include. */
+        .voteChip {
+          display: flex;
+          justify-content: center;
+          margin-right: var(--spacing-s);
+          padding: 1px;
+        }
+        .max {
+          background-color: var(--vote-color-approved);
+        }
+        .min {
+          background-color: var(--vote-color-rejected);
+        }
+        .positive {
+          background-color: var(--vote-color-recommended);
+          border-radius: 12px;
+          border: 1px solid var(--vote-outline-recommended);
+          color: var(--chip-color);
+        }
+        .negative {
+          background-color: var(--vote-color-disliked);
+          border-radius: 12px;
+          border: 1px solid var(--vote-outline-disliked);
+          color: var(--chip-color);
+        }
+        .hidden {
+          display: none;
+        }
+        td {
+          vertical-align: top;
+        }
+        tr {
+          min-height: var(--line-height-normal);
+        }
+        gr-tooltip-content {
+          display: block;
+        }
+        gr-button {
+          vertical-align: top;
+        }
+        gr-button::part(paper-button) {
+          height: var(--line-height-normal);
+          width: var(--line-height-normal);
+          padding: 0;
+        }
+        gr-button[disabled] iron-icon {
+          color: var(--border-color);
+        }
+        gr-account-link {
+          --account-max-length: 100px;
+          margin-right: var(--spacing-xs);
+        }
+        iron-icon {
+          height: calc(var(--line-height-normal) - 2px);
+          width: calc(var(--line-height-normal) - 2px);
+        }
+        .labelValueContainer:not(:first-of-type) td {
+          padding-top: var(--spacing-s);
+        }
+        .reviewer-row {
+          padding-top: var(--spacing-s);
+        }
+        .reviewer-row:first-of-type {
+          padding-top: 0;
+        }
+        .reviewer-row gr-account-chip,
+        .reviewer-row gr-tooltip-content {
+          display: inline-block;
+          vertical-align: top;
+        }
+        .reviewer-row .no-votes {
+          color: var(--deemphasized-text-color);
+          margin-left: var(--spacing-xs);
+        }
+        gr-vote-chip {
+          --gr-vote-chip-width: 14px;
+          --gr-vote-chip-height: 14px;
+          margin-right: var(--spacing-s);
+        }
+      `,
+    ];
+  }
+
+  private readonly flagsService = appContext.flagsService;
+
+  override render() {
+    if (
+      this.flagsService.isEnabled(KnownExperimentId.SUBMIT_REQUIREMENTS_UI) &&
+      !this.showAlwaysOldUI
+    ) {
+      return this.renderNewSubmitRequirements();
+    } else {
+      return this.renderOldSubmitRequirements();
+    }
+  }
+
+  private renderNewSubmitRequirements() {
+    const labelInfo = this.labelInfo;
+    if (!labelInfo) return;
+    const reviewers = (this.change?.reviewers['REVIEWER'] ?? [])
+      .filter(
+        reviewer =>
+          (this.showAllReviewers && canVote(labelInfo, reviewer)) ||
+          (!this.showAllReviewers && hasVoted(labelInfo, reviewer))
+      )
+      .sort((r1, r2) => sortReviewers(r1, r2, this.change, this.account));
+    return html`<div>
+      ${reviewers.map(reviewer => this.renderReviewerVote(reviewer))}
+    </div>`;
+  }
+
+  private renderOldSubmitRequirements() {
+    const labelInfo = this.labelInfo;
+    return html` <p
+        class="placeholder ${this.computeShowPlaceholder(
+          labelInfo,
+          this.change?.labels
+        )}"
+      >
+        No votes
+      </p>
+      <table>
+        ${this.mapLabelInfo(labelInfo, this.account, this.change?.labels).map(
+          mappedLabel => this.renderLabel(mappedLabel)
+        )}
+      </table>`;
+  }
+
+  renderReviewerVote(reviewer: AccountInfo) {
+    const labelInfo = this.labelInfo;
+    if (!labelInfo || !isDetailedLabelInfo(labelInfo)) return;
+    const approvalInfo = getApprovalInfo(labelInfo, reviewer);
+    const noVoteYet =
+      !approvalInfo || hasNeutralStatus(labelInfo, approvalInfo);
+    return html`<div class="reviewer-row">
+      <gr-account-chip .account="${reviewer}" .change="${this.change}">
+        <gr-vote-chip
+          slot="vote-chip"
+          .vote="${approvalInfo}"
+          .label="${labelInfo}"
+        ></gr-vote-chip
+      ></gr-account-chip>
+      ${noVoteYet
+        ? this.renderVoteAbility(reviewer)
+        : html`${this.renderRemoveVote(reviewer)}`}
+    </div>`;
+  }
+
+  renderLabel(mappedLabel: FormattedLabel) {
+    const {labelInfo, change} = this;
+    return html` <tr class="labelValueContainer">
+      <td>
+        <gr-tooltip-content
+          has-tooltip
+          title="${this._computeValueTooltip(labelInfo, mappedLabel.value)}"
+        >
+          <gr-label class="${mappedLabel.className} voteChip font-small">
+            ${mappedLabel.value}
+          </gr-label>
+        </gr-tooltip-content>
+      </td>
+      <td>
+        <gr-account-link
+          .account="${mappedLabel.account}"
+          .change="${change}"
+        ></gr-account-link>
+      </td>
+      <td>${this.renderRemoveVote(mappedLabel.account)}</td>
+    </tr>`;
+  }
+
+  private renderVoteAbility(reviewer: AccountInfo) {
+    if (this.labelInfo && isDetailedLabelInfo(this.labelInfo)) {
+      const approvalInfo = getApprovalInfo(this.labelInfo, reviewer);
+      if (approvalInfo?.permitted_voting_range) {
+        const {min, max} = approvalInfo?.permitted_voting_range;
+        return html`<span class="no-votes"
+          >Can vote ${valueString(min)}/${valueString(max)}</span
+        >`;
+      }
+    }
+    return html`<span class="no-votes">No votes</span>`;
+  }
+
+  private renderRemoveVote(reviewer: AccountInfo) {
+    return html`<gr-tooltip-content has-tooltip title="Remove vote">
+      <gr-button
+        link
+        aria-label="Remove vote"
+        @click="${this.onDeleteVote}"
+        data-account-id="${ifDefined(reviewer._account_id)}"
+        class="deleteBtn ${this.computeDeleteClass(
+          reviewer,
+          this.mutable,
+          this.change
+        )}"
+      >
+        <iron-icon icon="gr-icons:delete"></iron-icon>
+      </gr-button>
+    </gr-tooltip-content>`;
+  }
+
   /**
    * This method also listens on change.labels.*,
    * to trigger computation when a label is removed from the change.
+   *
+   * The third parameter is just for *triggering* computation.
    */
-  _mapLabelInfo(labelInfo?: LabelInfo, account?: AccountInfo) {
+  private mapLabelInfo(
+    labelInfo?: LabelInfo,
+    account?: AccountInfo,
+    _?: LabelNameToInfoMap
+  ): FormattedLabel[] {
     const result: FormattedLabel[] = [];
     if (!labelInfo) {
       return result;
@@ -103,7 +355,8 @@ export class GrLabelInfo extends PolymerElement {
           {
             value: ok ? '👍️' : '👎️',
             className: ok ? LabelClassName.POSITIVE : LabelClassName.NEGATIVE,
-            account: ok ? labelInfo.approved : labelInfo.rejected,
+            // executed only if approved or rejected is not undefined
+            account: ok ? labelInfo.approved! : labelInfo.rejected!,
           },
         ];
       }
@@ -138,7 +391,7 @@ export class GrLabelInfo extends PolymerElement {
             labelClassName = LabelClassName.NEGATIVE;
           }
         }
-        const formattedLabel = {
+        const formattedLabel: FormattedLabel = {
           value: `${labelValPrefix}${label.value}`,
           className: labelClassName,
           account: label,
@@ -162,16 +415,16 @@ export class GrLabelInfo extends PolymerElement {
    * @param reviewer An object describing the reviewer that left the
    *     vote.
    */
-  _computeDeleteClass(
+  private computeDeleteClass(
     reviewer: ApprovalInfo,
     mutable: boolean,
-    change: ChangeInfo
+    change?: ParsedChangeInfo
   ) {
     if (!mutable || !change || !change.removable_reviewers) {
       return 'hidden';
     }
     const removable = change.removable_reviewers;
-    if (removable.find(r => r._account_id === reviewer._account_id)) {
+    if (removable.find(r => r._account_id === reviewer?._account_id)) {
       return '';
     }
     return 'hidden';
@@ -181,7 +434,7 @@ export class GrLabelInfo extends PolymerElement {
    * Closure annotation for Polymer.prototype.splice is off.
    * For now, suppressing annotations.
    */
-  _onDeleteVote(e: MouseEvent) {
+  private onDeleteVote(e: MouseEvent) {
     if (!this.change) return;
 
     e.preventDefault();
@@ -205,17 +458,17 @@ export class GrLabelInfo extends PolymerElement {
           return;
         }
         if (this.change) {
-          GerritNav.navigateToChange(this.change);
+          fireReload(this);
         }
       })
       .catch(err => {
-        console.warn(err);
+        this.reporting.error(err);
         target.disabled = false;
         return;
       });
   }
 
-  _computeValueTooltip(labelInfo: LabelInfo, score: string) {
+  _computeValueTooltip(labelInfo: LabelInfo | undefined, score: string) {
     if (
       !labelInfo ||
       !isDetailedLabelInfo(labelInfo) ||
@@ -229,8 +482,13 @@ export class GrLabelInfo extends PolymerElement {
   /**
    * This method also listens change.labels.* in
    * order to trigger computation when a label is removed from the change.
+   *
+   * The second parameter is just for *triggering* computation.
    */
-  _computeShowPlaceholder(labelInfo?: LabelInfo) {
+  private computeShowPlaceholder(
+    labelInfo?: LabelInfo,
+    _?: LabelNameToInfoMap
+  ) {
     if (!labelInfo) {
       return '';
     }

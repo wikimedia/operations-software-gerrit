@@ -17,6 +17,9 @@
 import {html} from '@polymer/polymer/lib/utils/html-tag';
 
 export const htmlTemplate = html`
+  <style include="gr-font-styles">
+    /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+  </style>
   <style include="shared-styles">
     :host {
       display: block;
@@ -74,6 +77,7 @@ export const htmlTemplate = html`
       commands="[[_computeDownloadCommands(change, patchNum, _selectedScheme)]]"
       schemes="[[_schemes]]"
       selected-scheme="{{_selectedScheme}}"
+      show-keyboard-shortcut-tooltips
     ></gr-download-commands>
   </section>
   <section class="flexContainer">

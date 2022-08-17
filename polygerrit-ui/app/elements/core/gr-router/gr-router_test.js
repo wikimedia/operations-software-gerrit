@@ -21,6 +21,8 @@ import {page} from '../../../utils/page-wrapper-utils.js';
 import {GerritNav} from '../gr-navigation/gr-navigation.js';
 import {stubBaseUrl, stubRestApi, addListenerForTest} from '../../../test/test-utils.js';
 import {_testOnly_RoutePattern} from './gr-router.js';
+import {GerritView} from '../../../services/router/router-model.js';
+import {ParentPatchSetNum} from '../../../types/common.js';
 
 const basicFixture = fixtureFromElement('gr-router');
 
@@ -186,10 +188,10 @@ suite('gr-router tests', () => {
       '_handleChangeNumberLegacyRoute',
       '_handleChangeRoute',
       '_handleCommentRoute',
+      '_handleCommentsRoute',
       '_handleDiffRoute',
       '_handleDefaultRoute',
       '_handleChangeLegacyRoute',
-      '_handleDiffLegacyRoute',
       '_handleDocumentationRedirectRoute',
       '_handleDocumentationSearchRoute',
       '_handleDocumentationSearchRedirectRoute',
@@ -201,6 +203,7 @@ suite('gr-router tests', () => {
       '_handleProjectsOldRoute',
       '_handleRepoAccessRoute',
       '_handleRepoDashboardsRoute',
+      '_handleRepoGeneralRoute',
       '_handleRepoListFilterOffsetRoute',
       '_handleRepoListFilterRoute',
       '_handleRepoListOffsetRoute',
@@ -305,12 +308,12 @@ suite('gr-router tests', () => {
 
     test('change', () => {
       const params = {
-        view: GerritNav.View.CHANGE,
+        view: GerritView.CHANGE,
         changeNum: '1234',
         project: 'test',
       };
       const paramsWithQuery = {
-        view: GerritNav.View.CHANGE,
+        view: GerritView.CHANGE,
         changeNum: '1234',
         project: 'test',
         querystring: 'revert&foo=bar',
@@ -338,7 +341,7 @@ suite('gr-router tests', () => {
 
     test('change with repo name encoding', () => {
       const params = {
-        view: GerritNav.View.CHANGE,
+        view: GerritView.CHANGE,
         changeNum: '1234',
         project: 'x+/y+/z+/w',
       };
@@ -348,7 +351,7 @@ suite('gr-router tests', () => {
 
     test('diff', () => {
       const params = {
-        view: GerritNav.View.DIFF,
+        view: GerritView.DIFF,
         changeNum: '42',
         path: 'x+y/path.cpp',
         patchNum: 12,
@@ -382,7 +385,7 @@ suite('gr-router tests', () => {
 
     test('diff with repo name encoding', () => {
       const params = {
-        view: GerritNav.View.DIFF,
+        view: GerritView.DIFF,
         changeNum: '42',
         path: 'x+y/path.cpp',
         patchNum: 12,
@@ -532,72 +535,12 @@ suite('gr-router tests', () => {
   });
 
   suite('param normalization', () => {
-    let projectLookupStub;
-    let generateUrlStub;
-
-    setup(() => {
-      projectLookupStub = stubRestApi('getFromProjectLookup');
-      generateUrlStub = sinon.stub(element, '_generateUrl');
-    });
-
-    suite('_normalizeLegacyRouteParams', () => {
-      let rangeStub;
-      let redirectStub;
-      let show404Stub;
-
-      setup(() => {
-        rangeStub = sinon.stub(element, '_normalizePatchRangeParams')
-            .returns(Promise.resolve());
-        redirectStub = sinon.stub(element, '_redirect');
-        show404Stub = sinon.stub(element, '_show404');
-      });
-
-      test('w/o changeNum', () => {
-        projectLookupStub.returns(Promise.resolve('foo/bar'));
-        const params = {};
-        return element._normalizeLegacyRouteParams(params).then(() => {
-          assert.isFalse(generateUrlStub.calledOnce);
-          assert.isFalse(projectLookupStub.called);
-          assert.isFalse(rangeStub.called);
-          assert.isFalse(redirectStub.called);
-          assert.isFalse(show404Stub.called);
-        });
-      });
-
-      test('w/ changeNum', () => {
-        projectLookupStub.returns(Promise.resolve('foo/bar'));
-        const params = {changeNum: 1234};
-
-        return element._normalizeLegacyRouteParams(params).then(() => {
-          assert.isTrue(generateUrlStub.calledOnce);
-          const updatedParams = generateUrlStub.lastCall.args[0];
-          assert.isTrue(projectLookupStub.called);
-          assert.isTrue(rangeStub.called);
-          assert.equal(updatedParams.project, 'foo/bar');
-          assert.isTrue(redirectStub.calledOnce);
-          assert.isFalse(show404Stub.called);
-        });
-      });
-
-      test('halts on project lookup failure', () => {
-        projectLookupStub.returns(Promise.resolve(undefined));
-        const params = {changeNum: 1234};
-        return element._normalizeLegacyRouteParams(params).then(() => {
-          assert.isFalse(generateUrlStub.calledOnce);
-          assert.isTrue(projectLookupStub.called);
-          assert.isFalse(rangeStub.called);
-          assert.isFalse(redirectStub.called);
-          assert.isTrue(show404Stub.calledOnce);
-        });
-      });
-    });
-
     suite('_normalizePatchRangeParams', () => {
       test('range n..n normalizes to n', () => {
         const params = {basePatchNum: 4, patchNum: 4};
         const needsRedirect = element._normalizePatchRangeParams(params);
         assert.isTrue(needsRedirect);
-        assert.isNotOk(params.basePatchNum);
+        assert.equal(params.basePatchNum, ParentPatchSetNum);
         assert.equal(params.patchNum, 4);
       });
 
@@ -605,7 +548,7 @@ suite('gr-router tests', () => {
         const params = {basePatchNum: 4};
         const needsRedirect = element._normalizePatchRangeParams(params);
         assert.isFalse(needsRedirect);
-        assert.isNotOk(params.basePatchNum);
+        assert.equal(params.basePatchNum, ParentPatchSetNum);
         assert.equal(params.patchNum, 4);
       });
     });
@@ -1124,9 +1067,18 @@ suite('gr-router tests', () => {
       });
 
       test('_handleRepoRoute', () => {
+        const data = {path: '/admin/repos/test'};
+        element._handleRepoRoute(data);
+        assert.isTrue(redirectStub.calledOnce);
+        assert.equal(
+            redirectStub.lastCall.args[0], '/admin/repos/test,general');
+      });
+
+      test('_handleRepoGeneralRoute', () => {
         const data = {params: {0: 4321}};
-        assertDataToParams(data, '_handleRepoRoute', {
+        assertDataToParams(data, '_handleRepoGeneralRoute', {
           view: GerritNav.View.REPO,
+          detail: GerritNav.RepoDetailView.GENERAL,
           repo: 4321,
         });
       });
@@ -1354,58 +1306,19 @@ suite('gr-router tests', () => {
         assert.isTrue(redirectStub.calledWithExactly('/c/12345'));
       });
 
-      test('_handleChangeLegacyRoute', () => {
-        const normalizeRouteStub = sinon.stub(element,
-            '_normalizeLegacyRouteParams');
+      test('_handleChangeLegacyRoute', async () => {
+        stubRestApi('getFromProjectLookup').returns(Promise.resolve('project'));
         const ctx = {
           params: [
             1234, // 0 Change number
-            null, // 1 Unused
-            null, // 2 Unused
-            6, // 3 Base patch number
-            null, // 4 Unused
-            9, // 5 Patch number
+            'comment/6789',
           ],
           querystring: '',
         };
         element._handleChangeLegacyRoute(ctx);
-        assert.isTrue(normalizeRouteStub.calledOnce);
-        assert.deepEqual(normalizeRouteStub.lastCall.args[0], {
-          changeNum: 1234,
-          basePatchNum: 6,
-          patchNum: 9,
-          view: GerritNav.View.CHANGE,
-          querystring: '',
-        });
-      });
-
-      test('_handleDiffLegacyRoute', () => {
-        const normalizeRouteStub = sinon.stub(element,
-            '_normalizeLegacyRouteParams');
-        const ctx = {
-          params: [
-            1234, // 0 Change number
-            null, // 1 Unused
-            3, // 2 Base patch number
-            null, // 3 Unused
-            8, // 4 Patch number
-            'foo/bar', // 5 Diff path
-          ],
-          path: '/c/1234/3..8/foo/bar',
-          hash: 'b123',
-        };
-        element._handleDiffLegacyRoute(ctx);
-        assert.isFalse(redirectStub.called);
-        assert.isTrue(normalizeRouteStub.calledOnce);
-        assert.deepEqual(normalizeRouteStub.lastCall.args[0], {
-          changeNum: 1234,
-          basePatchNum: 3,
-          patchNum: 8,
-          view: GerritNav.View.DIFF,
-          path: 'foo/bar',
-          lineNum: 123,
-          leftSide: true,
-        });
+        await flush();
+        assert.isTrue(redirectStub.calledWithExactly('/c/project/+/1234' +
+            '/comment/6789'));
       });
 
       test('_handleLegacyLinenum w/ @321', () => {
@@ -1464,7 +1377,7 @@ suite('gr-router tests', () => {
           sinon.stub(element, '_generateUrl').returns('foo');
           const ctx = makeParams(null, '');
           assertDataToParams(ctx, '_handleChangeRoute', {
-            view: GerritNav.View.CHANGE,
+            view: GerritView.CHANGE,
             project: 'foo/bar',
             changeNum: 1234,
             basePatchNum: 4,
@@ -1518,7 +1431,7 @@ suite('gr-router tests', () => {
           sinon.stub(element, '_generateUrl').returns('foo');
           const ctx = makeParams('foo/bar/baz', 'b44');
           assertDataToParams(ctx, '_handleDiffRoute', {
-            view: GerritNav.View.DIFF,
+            view: GerritView.DIFF,
             project: 'foo/bar',
             changeNum: 1234,
             basePatchNum: 4,
@@ -1544,8 +1457,25 @@ suite('gr-router tests', () => {
             changeNum: 264833,
             commentId: '00049681_f34fd6a9',
             commentLink: true,
-            view: GerritNav.View.DIFF,
+            view: GerritView.DIFF,
           });
+        });
+
+        test('comments route', () => {
+          const url = '/c/gerrit/+/264833/comments/00049681_f34fd6a9/';
+          const groups = url.match(_testOnly_RoutePattern.COMMENTS_TAB);
+          assert.deepEqual(groups.slice(1), [
+            'gerrit', // project
+            '264833', // changeNum
+            '00049681_f34fd6a9', // commentId
+          ]);
+          assertDataToParams({params: groups.slice(1)},
+              '_handleCommentsRoute', {
+                project: 'gerrit',
+                changeNum: 264833,
+                commentId: '00049681_f34fd6a9',
+                view: GerritView.CHANGE,
+              });
         });
       });
 
@@ -1623,7 +1553,7 @@ suite('gr-router tests', () => {
         const appParams = {
           project: 'foo/bar',
           changeNum: 1234,
-          view: GerritNav.View.CHANGE,
+          view: GerritView.CHANGE,
           patchNum: 3,
           edit: true,
         };

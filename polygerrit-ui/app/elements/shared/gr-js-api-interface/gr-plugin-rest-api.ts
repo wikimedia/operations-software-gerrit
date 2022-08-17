@@ -68,11 +68,6 @@ export class GrPluginRestApi implements RestPluginApi {
     return this.restApi.getAccount();
   }
 
-  getAccountCapabilities(capabilities: string[]) {
-    this.reporting.trackApi(this.plugin, 'rest', 'getAccountCapabilities');
-    return this.restApi.getAccountCapabilities(capabilities);
-  }
-
   getRepos(filter: string, reposPerPage: number, offset?: number) {
     this.reporting.trackApi(this.plugin, 'rest', 'getRepos');
     return this.restApi.getRepos(filter, reposPerPage, offset);
@@ -125,7 +120,7 @@ export class GrPluginRestApi implements RestPluginApi {
   /**
    * Fetch and parse REST API response, if request succeeds.
    */
-  send(
+  send<T>(
     method: HttpMethod,
     url: string,
     payload?: RequestPayload,
@@ -167,7 +162,7 @@ export class GrPluginRestApi implements RestPluginApi {
             Promise.reject(new Error(msg))
           );
         } else {
-          return this.restApi.getResponseObject(response);
+          return this.restApi.getResponseObject(response) as Promise<T>;
         }
       })
       .catch(err => {
@@ -180,29 +175,29 @@ export class GrPluginRestApi implements RestPluginApi {
       });
   }
 
-  get(url: string) {
+  get<T>(url: string) {
     this.reporting.trackApi(this.plugin, 'rest', 'get');
-    return this.send(HttpMethod.GET, url);
+    return this.send<T>(HttpMethod.GET, url);
   }
 
-  post(
+  post<T>(
     url: string,
     payload?: RequestPayload,
     errFn?: ErrorCallback,
     contentType?: string
   ) {
     this.reporting.trackApi(this.plugin, 'rest', 'post');
-    return this.send(HttpMethod.POST, url, payload, errFn, contentType);
+    return this.send<T>(HttpMethod.POST, url, payload, errFn, contentType);
   }
 
-  put(
+  put<T>(
     url: string,
     payload?: RequestPayload,
     errFn?: ErrorCallback,
     contentType?: string
   ) {
     this.reporting.trackApi(this.plugin, 'rest', 'put');
-    return this.send(HttpMethod.PUT, url, payload, errFn, contentType);
+    return this.send<T>(HttpMethod.PUT, url, payload, errFn, contentType);
   }
 
   delete(url: string) {

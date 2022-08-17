@@ -20,11 +20,15 @@ export const htmlTemplate = html`
   <style include="gr-change-metadata-shared-styles">
     /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
   </style>
+  <style include="gr-font-styles">
+    /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+  </style>
   <style include="shared-styles">
     :host {
       display: table;
     }
-    gr-change-requirements {
+    gr-change-requirements,
+    gr-submit-requirements {
       --requirements-horizontal-padding: var(--metadata-horizontal-padding);
     }
     gr-editable-label {
@@ -32,16 +36,6 @@ export const htmlTemplate = html`
     }
     .webLink {
       display: block;
-    }
-    /* CSS Mixins should be applied last. */
-    section.assignee {
-      @apply --change-metadata-assignee;
-    }
-    section.strategy {
-      @apply --change-metadata-strategy;
-    }
-    section.topic {
-      @apply --change-metadata-topic;
     }
     gr-account-chip[disabled],
     gr-linked-chip[disabled] {
@@ -103,7 +97,6 @@ export const htmlTemplate = html`
       max-width: 285px;
     }
     .metadata-title {
-      font-weight: var(--font-weight-bold);
       color: var(--deemphasized-text-color);
       padding-left: var(--metadata-horizontal-padding);
     }
@@ -120,10 +113,14 @@ export const htmlTemplate = html`
       --iron-icon-height: 18px;
       --iron-icon-width: 18px;
     }
+    .submit-requirement-error {
+      color: var(--deemphasized-text-color);
+      padding-left: var(--metadata-horizontal-padding);
+    }
   </style>
   <gr-external-style id="externalStyle" name="change-metadata">
     <div class="metadata-header">
-      <h3 class="metadata-title">Change Info</h3>
+      <h3 class="metadata-title heading-3">Change Info</h3>
       <gr-button link="" class="show-all-button" on-click="_onShowAllClick"
         >[[_computeShowAllLabelText(_showAllSections)]]
         <iron-icon
@@ -143,9 +140,9 @@ export const htmlTemplate = html`
         <span class="title">Submitted</span>
         <span class="value">
           <gr-date-formatter
-            has-tooltip=""
+            withTooltip
             date-str="[[change.submitted]]"
-            show-yesterday=""
+            showYesterday=""
           ></gr-date-formatter>
         </span>
       </section>
@@ -163,21 +160,28 @@ export const htmlTemplate = html`
       </span>
       <span class="value">
         <gr-date-formatter
-          has-tooltip=""
+          withTooltip
           date-str="[[change.updated]]"
-          show-yesterday=""
+          showYesterday
         ></gr-date-formatter>
       </span>
     </section>
     <section
       class$="[[_computeDisplayState(_showAllSections, change, _SECTION.OWNER)]]"
     >
-      <span class="title">Owner</span>
+      <span class="title">
+        <gr-tooltip-content
+          has-tooltip=""
+          title="This user created or uploaded the first patchset of this change."
+        >
+          Owner
+        </gr-tooltip-content>
+      </span>
       <span class="value">
         <gr-account-chip
           account="[[change.owner]]"
           change="[[change]]"
-          highlight-attention
+          highlightAttention
         ></gr-account-chip>
         <template is="dom-if" if="[[_pushCertificateValidation]]">
           <gr-tooltip-content
@@ -194,17 +198,31 @@ export const htmlTemplate = html`
       </span>
     </section>
     <section class$="[[_computeShowRoleClass(change, _CHANGE_ROLE.UPLOADER)]]">
-      <span class="title">Uploader</span>
+      <span class="title">
+        <gr-tooltip-content
+          has-tooltip=""
+          title="This user uploaded the patchset to Gerrit (typically by running the 'git push' command)."
+        >
+          Uploader
+        </gr-tooltip-content>
+      </span>
       <span class="value">
         <gr-account-chip
           account="[[_getNonOwnerRole(change, _CHANGE_ROLE.UPLOADER)]]"
           change="[[change]]"
-          highlight-attention
+          highlightAttention
         ></gr-account-chip>
       </span>
     </section>
     <section class$="[[_computeShowRoleClass(change, _CHANGE_ROLE.AUTHOR)]]">
-      <span class="title">Author</span>
+      <span class="title">
+        <gr-tooltip-content
+          has-tooltip=""
+          title="This user wrote the code change."
+        >
+          Author
+        </gr-tooltip-content>
+      </span>
       <span class="value">
         <gr-account-chip
           account="[[_getNonOwnerRole(change, _CHANGE_ROLE.AUTHOR)]]"
@@ -213,7 +231,14 @@ export const htmlTemplate = html`
       </span>
     </section>
     <section class$="[[_computeShowRoleClass(change, _CHANGE_ROLE.COMMITTER)]]">
-      <span class="title">Committer</span>
+      <span class="title">
+        <gr-tooltip-content
+          has-tooltip=""
+          title="This user committed the code change to the Git repository (typically to the local Git repo before uploading)."
+        >
+          Committer
+        </gr-tooltip-content>
+      </span>
       <span class="value">
         <gr-account-chip
           account="[[_getNonOwnerRole(change, _CHANGE_ROLE.COMMITTER)]]"
@@ -231,7 +256,6 @@ export const htmlTemplate = html`
             id="assigneeValue"
             placeholder="Set assignee..."
             max-count="1"
-            skip-suggest-on-empty=""
             accounts="{{_assignee}}"
             readonly="[[_computeAssigneeReadOnly(_mutable, change)]]"
             suggestions-provider="[[_getReviewerSuggestionsProvider(change)]]"
@@ -335,8 +359,8 @@ export const htmlTemplate = html`
               ></gr-commit-info>
               <gr-tooltip-content
                 id="parentNotCurrentMessage"
-                has-tooltip=""
-                show-icon=""
+                has-tooltip
+                show-icon
                 title$="[[_notCurrentMessage]]"
               ></gr-tooltip-content>
             </li>
@@ -353,6 +377,22 @@ export const htmlTemplate = html`
           <gr-commit-info
             change="[[change]]"
             commit-info="[[_computeMergedCommitInfo(change.current_revision, change.revisions)]]"
+            server-config="[[serverConfig]]"
+          ></gr-commit-info>
+        </span>
+      </section>
+    </template>
+    <template is="dom-if" if="[[_showRevertCreatedAs(change)]]">
+      <section
+        class$="[[_computeDisplayState(_showAllSections, change, _SECTION.REVERT_CREATED_AS)]]"
+      >
+        <span class="title"
+          >[[_getRevertSectionTitle(change, revertedChange)]]</span
+        >
+        <span class="value">
+          <gr-commit-info
+            change="[[change]]"
+            commit-info="[[_computeRevertCommit(change, revertedChange)]]"
             server-config="[[serverConfig]]"
           ></gr-commit-info>
         </span>
@@ -409,7 +449,6 @@ export const htmlTemplate = html`
     <section
       class$="strategy [[_computeDisplayState(_showAllSections, change, _SECTION.STRATEGY)]]"
       hidden$="[[_computeHideStrategy(change)]]"
-      hidden=""
     >
       <span class="title">Strategy</span>
       <span class="value">[[_computeStrategy(change)]]</span>
@@ -444,11 +483,25 @@ export const htmlTemplate = html`
       </span>
     </section>
     <div class="separatedSection">
-      <gr-change-requirements
-        change="{{change}}"
-        account="[[account]]"
-        mutable="[[_mutable]]"
-      ></gr-change-requirements>
+      <template is="dom-if" if="[[_showNewSubmitRequirements(change)]]">
+        <gr-submit-requirements
+          change="[[change]]"
+          account="[[account]]"
+          mutable="[[_mutable]]"
+        ></gr-submit-requirements>
+      </template>
+      <template is="dom-if" if="[[!_showNewSubmitRequirements(change)]]">
+        <gr-change-requirements
+          change="{{change}}"
+          account="[[account]]"
+          mutable="[[_mutable]]"
+        ></gr-change-requirements>
+      </template>
+      <template is="dom-if" if="[[_showNewSubmitRequirementWarning(change)]]">
+        <div class="submit-requirement-error">
+          New Submit Requirements don't work on this change.
+        </div>
+      </template>
     </div>
     <section
       id="webLinks"

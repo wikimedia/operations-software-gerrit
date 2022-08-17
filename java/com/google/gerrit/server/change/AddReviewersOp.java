@@ -23,7 +23,6 @@ import static com.google.gerrit.server.project.ProjectCache.illegalState;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toList;
 
-import com.google.auto.value.AutoValue;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
@@ -31,20 +30,18 @@ import com.google.common.collect.Streams;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Address;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountState;
+import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.extensions.events.ReviewerAdded;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
 import com.google.gerrit.server.project.ProjectCache;
-import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.Context;
+import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 import java.io.IOException;
@@ -52,7 +49,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 
-public class AddReviewersOp implements BatchUpdateOp {
+public class AddReviewersOp extends ReviewerOp {
   public interface Factory {
 
     /**
@@ -75,56 +72,25 @@ public class AddReviewersOp implements BatchUpdateOp {
         boolean forGroup);
   }
 
-  @AutoValue
-  public abstract static class Result {
-    public abstract ImmutableList<PatchSetApproval> addedReviewers();
-
-    public abstract ImmutableList<Address> addedReviewersByEmail();
-
-    public abstract ImmutableList<Account.Id> addedCCs();
-
-    public abstract ImmutableList<Address> addedCCsByEmail();
-
-    static Builder builder() {
-      return new AutoValue_AddReviewersOp_Result.Builder();
-    }
-
-    @AutoValue.Builder
-    abstract static class Builder {
-      abstract Builder setAddedReviewers(Iterable<PatchSetApproval> addedReviewers);
-
-      abstract Builder setAddedReviewersByEmail(Iterable<Address> addedReviewersByEmail);
-
-      abstract Builder setAddedCCs(Iterable<Account.Id> addedCCs);
-
-      abstract Builder setAddedCCsByEmail(Iterable<Address> addedCCsByEmail);
-
-      abstract Result build();
-    }
-  }
-
   private final ApprovalsUtil approvalsUtil;
   private final PatchSetUtil psUtil;
   private final ReviewerAdded reviewerAdded;
   private final AccountCache accountCache;
   private final ProjectCache projectCache;
-  private final AddReviewersEmail addReviewersEmail;
+  private final ModifyReviewersEmail modifyReviewersEmail;
   private final Set<Account.Id> accountIds;
   private final Collection<Address> addresses;
   private final ReviewerState state;
   private final boolean forGroup;
 
-  // Unlike addedCCs, addedReviewers is a PatchSetApproval because the AddReviewerResult returned
+  // Unlike addedCCs, addedReviewers is a PatchSetApproval because the ReviewerResult returned
   // via the REST API is supposed to include vote information.
   private List<PatchSetApproval> addedReviewers = ImmutableList.of();
   private Collection<Address> addedReviewersByEmail = ImmutableList.of();
   private Collection<Account.Id> addedCCs = ImmutableList.of();
   private Collection<Address> addedCCsByEmail = ImmutableList.of();
 
-  private boolean sendEmail = true;
   private Change change;
-  private PatchSet patchSet;
-  private Result opResult;
 
   @Inject
   AddReviewersOp(
@@ -133,7 +99,7 @@ public class AddReviewersOp implements BatchUpdateOp {
       ReviewerAdded reviewerAdded,
       AccountCache accountCache,
       ProjectCache projectCache,
-      AddReviewersEmail addReviewersEmail,
+      ModifyReviewersEmail modifyReviewersEmail,
       @Assisted Set<Account.Id> accountIds,
       @Assisted Collection<Address> addresses,
       @Assisted ReviewerState state,
@@ -144,23 +110,12 @@ public class AddReviewersOp implements BatchUpdateOp {
     this.reviewerAdded = reviewerAdded;
     this.accountCache = accountCache;
     this.projectCache = projectCache;
-    this.addReviewersEmail = addReviewersEmail;
+    this.modifyReviewersEmail = modifyReviewersEmail;
 
     this.accountIds = accountIds;
     this.addresses = addresses;
     this.state = state;
     this.forGroup = forGroup;
-  }
-
-  // TODO(dborowitz): This mutable setter is ugly, but a) it's less ugly than adding boolean args
-  // all the way through the constructor stack, and b) this class is slated to be completely
-  // rewritten.
-  public void suppressEmail() {
-    this.sendEmail = false;
-  }
-
-  void setPatchSet(PatchSet patchSet) {
-    this.patchSet = requireNonNull(patchSet);
   }
 
   @Override
@@ -238,7 +193,7 @@ public class AddReviewersOp implements BatchUpdateOp {
   }
 
   @Override
-  public void postUpdate(Context ctx) throws Exception {
+  public void postUpdate(PostUpdateContext ctx) throws Exception {
     opResult =
         Result.builder()
             .setAddedReviewers(addedReviewers)
@@ -247,13 +202,15 @@ public class AddReviewersOp implements BatchUpdateOp {
             .setAddedCCsByEmail(addedCCsByEmail)
             .build();
     if (sendEmail) {
-      addReviewersEmail.emailReviewersAsync(
+      modifyReviewersEmail.emailReviewersAsync(
           ctx.getUser().asIdentifiedUser(),
           change,
           Lists.transform(addedReviewers, PatchSetApproval::accountId),
           addedCCs,
+          ImmutableSet.of(),
           addedReviewersByEmail,
           addedCCsByEmail,
+          ImmutableSet.of(),
           ctx.getNotify(change.getId()));
     }
     if (!addedReviewers.isEmpty()) {
@@ -262,12 +219,13 @@ public class AddReviewersOp implements BatchUpdateOp {
               .map(r -> accountCache.get(r.accountId()))
               .flatMap(Streams::stream)
               .collect(toList());
-      reviewerAdded.fire(change, patchSet, reviewers, ctx.getAccount(), ctx.getWhen());
+      eventSender =
+          () ->
+              reviewerAdded.fire(
+                  ctx.getChangeData(change), patchSet, reviewers, ctx.getAccount(), ctx.getWhen());
+      if (sendEvent) {
+        sendEvent();
+      }
     }
-  }
-
-  public Result getResult() {
-    checkState(opResult != null, "Batch update wasn't executed yet");
-    return opResult;
   }
 }

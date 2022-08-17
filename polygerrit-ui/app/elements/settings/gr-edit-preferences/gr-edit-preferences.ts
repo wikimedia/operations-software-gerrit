@@ -26,6 +26,9 @@ import {appContext} from '../../../services/app-context';
 
 export interface GrEditPreferences {
   $: {
+    editTabWidth: HTMLInputElement;
+    editColumns: HTMLInputElement;
+    editIndentUnit: HTMLInputElement;
     editSyntaxHighlighting: HTMLInputElement;
     showAutoCloseBrackets: HTMLInputElement;
     showIndentWithTabs: HTMLInputElement;
@@ -57,6 +60,21 @@ export class GrEditPreferences extends PolymerElement {
 
   _handleEditPrefsChanged() {
     this.hasUnsavedChanges = true;
+  }
+
+  _handleEditTabWidthChanged() {
+    this.set('editPrefs.tab_size', Number(this.$.editTabWidth.value));
+    this._handleEditPrefsChanged();
+  }
+
+  _handleEditLineLengthChanged() {
+    this.set('editPrefs.line_length', Number(this.$.editColumns.value));
+    this._handleEditPrefsChanged();
+  }
+
+  _handleEditIndentUnitChanged() {
+    this.set('editPrefs.indent_unit', Number(this.$.editIndentUnit.value));
+    this._handleEditPrefsChanged();
   }
 
   _handleEditSyntaxHighlightingChanged() {
@@ -109,6 +127,16 @@ export class GrEditPreferences extends PolymerElement {
     return this.restApiService.saveEditPreferences(this.editPrefs).then(() => {
       this.hasUnsavedChanges = false;
     });
+  }
+
+  /**
+   * bind-value has type string so we have to convert
+   * anything inputed to string.
+   *
+   * This is so typescript checker doesn't fail.
+   */
+  _convertToString(key?: number) {
+    return key !== undefined ? String(key) : '';
   }
 }
 

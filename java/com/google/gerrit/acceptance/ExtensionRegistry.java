@@ -25,6 +25,8 @@ import com.google.gerrit.extensions.events.CommentAddedListener;
 import com.google.gerrit.extensions.events.GitReferenceUpdatedListener;
 import com.google.gerrit.extensions.events.GroupIndexedListener;
 import com.google.gerrit.extensions.events.ProjectIndexedListener;
+import com.google.gerrit.extensions.events.ReviewerAddedListener;
+import com.google.gerrit.extensions.events.ReviewerDeletedListener;
 import com.google.gerrit.extensions.events.RevisionCreatedListener;
 import com.google.gerrit.extensions.events.TopicEditedListener;
 import com.google.gerrit.extensions.events.WorkInProgressStateChangedListener;
@@ -32,9 +34,11 @@ import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.extensions.registration.PrivateInternals_DynamicMapImpl;
 import com.google.gerrit.extensions.registration.RegistrationHandle;
+import com.google.gerrit.extensions.webui.EditWebLink;
 import com.google.gerrit.extensions.webui.FileHistoryWebLink;
 import com.google.gerrit.extensions.webui.FileWebLink;
 import com.google.gerrit.extensions.webui.PatchSetWebLink;
+import com.google.gerrit.extensions.webui.ResolveConflictsWebLink;
 import com.google.gerrit.server.ExceptionHook;
 import com.google.gerrit.server.account.GroupBackend;
 import com.google.gerrit.server.change.ChangeETagComputation;
@@ -76,6 +80,8 @@ public class ExtensionRegistry {
   private final DynamicSet<GitReferenceUpdatedListener> refUpdatedListeners;
   private final DynamicSet<FileHistoryWebLink> fileHistoryWebLinks;
   private final DynamicSet<PatchSetWebLink> patchSetWebLinks;
+  private final DynamicSet<ResolveConflictsWebLink> resolveConflictsWebLinks;
+  private final DynamicSet<EditWebLink> editWebLinks;
   private final DynamicSet<FileWebLink> fileWebLinks;
   private final DynamicSet<RevisionCreatedListener> revisionCreatedListeners;
   private final DynamicSet<GroupBackend> groupBackends;
@@ -89,6 +95,8 @@ public class ExtensionRegistry {
   private final DynamicMap<ProjectConfigEntry> pluginConfigEntries;
   private final DynamicSet<PluginPushOption> pluginPushOptions;
   private final DynamicSet<OnPostReview> onPostReviews;
+  private final DynamicSet<ReviewerAddedListener> reviewerAddedListeners;
+  private final DynamicSet<ReviewerDeletedListener> reviewerDeletedListeners;
 
   @Inject
   ExtensionRegistry(
@@ -111,6 +119,8 @@ public class ExtensionRegistry {
       DynamicSet<GitReferenceUpdatedListener> refUpdatedListeners,
       DynamicSet<FileHistoryWebLink> fileHistoryWebLinks,
       DynamicSet<PatchSetWebLink> patchSetWebLinks,
+      DynamicSet<ResolveConflictsWebLink> resolveConflictsWebLinks,
+      DynamicSet<EditWebLink> editWebLinks,
       DynamicSet<FileWebLink> fileWebLinks,
       DynamicSet<RevisionCreatedListener> revisionCreatedListeners,
       DynamicSet<GroupBackend> groupBackends,
@@ -122,7 +132,9 @@ public class ExtensionRegistry {
       DynamicMap<PluginProjectPermissionDefinition> pluginProjectPermissionDefinitions,
       DynamicMap<ProjectConfigEntry> pluginConfigEntries,
       DynamicSet<PluginPushOption> pluginPushOption,
-      DynamicSet<OnPostReview> onPostReviews) {
+      DynamicSet<OnPostReview> onPostReviews,
+      DynamicSet<ReviewerAddedListener> reviewerAddedListeners,
+      DynamicSet<ReviewerDeletedListener> reviewerDeletedListeners) {
     this.accountIndexedListeners = accountIndexedListeners;
     this.changeIndexedListeners = changeIndexedListeners;
     this.groupIndexedListeners = groupIndexedListeners;
@@ -142,7 +154,9 @@ public class ExtensionRegistry {
     this.refUpdatedListeners = refUpdatedListeners;
     this.fileHistoryWebLinks = fileHistoryWebLinks;
     this.patchSetWebLinks = patchSetWebLinks;
+    this.editWebLinks = editWebLinks;
     this.fileWebLinks = fileWebLinks;
+    this.resolveConflictsWebLinks = resolveConflictsWebLinks;
     this.revisionCreatedListeners = revisionCreatedListeners;
     this.groupBackends = groupBackends;
     this.accountActivationValidationListeners = accountActivationValidationListeners;
@@ -154,6 +168,8 @@ public class ExtensionRegistry {
     this.pluginConfigEntries = pluginConfigEntries;
     this.pluginPushOptions = pluginPushOption;
     this.onPostReviews = onPostReviews;
+    this.reviewerAddedListeners = reviewerAddedListeners;
+    this.reviewerDeletedListeners = reviewerDeletedListeners;
   }
 
   public Registration newRegistration() {
@@ -244,6 +260,14 @@ public class ExtensionRegistry {
       return add(patchSetWebLinks, patchSetWebLink);
     }
 
+    public Registration add(ResolveConflictsWebLink resolveConflictsWebLink) {
+      return add(resolveConflictsWebLinks, resolveConflictsWebLink);
+    }
+
+    public Registration add(EditWebLink editWebLink) {
+      return add(editWebLinks, editWebLink);
+    }
+
     public Registration add(FileWebLink fileWebLink) {
       return add(fileWebLinks, fileWebLink);
     }
@@ -292,6 +316,14 @@ public class ExtensionRegistry {
 
     public Registration add(OnPostReview onPostReview) {
       return add(onPostReviews, onPostReview);
+    }
+
+    public Registration add(ReviewerAddedListener reviewerAddedListener) {
+      return add(reviewerAddedListeners, reviewerAddedListener);
+    }
+
+    public Registration add(ReviewerDeletedListener reviewerDeletedListener) {
+      return add(reviewerDeletedListeners, reviewerDeletedListener);
     }
 
     private <T> Registration add(DynamicSet<T> dynamicSet, T extension) {

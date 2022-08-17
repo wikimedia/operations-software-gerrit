@@ -156,6 +156,7 @@ import {
 import {firePageError, fireServerError} from '../../../utils/event-util';
 import {ParsedChangeInfo} from '../../../types/types';
 import {ErrorCallback} from '../../../api/rest';
+import {FlagsService, KnownExperimentId} from '../../../services/flags/flags';
 
 const MAX_PROJECT_RESULTS = 25;
 // This value is somewhat arbitrary and not based on research or calculations.
@@ -278,7 +279,8 @@ declare global {
 @customElement('gr-rest-api-interface')
 export class GrRestApiInterface
   extends PolymerElement
-  implements RestApiService {
+  implements RestApiService
+{
   readonly _cache = siteBasedCache; // Shared across instances.
 
   readonly _sharedFetchPromises = fetchPromisesCache; // Shared across instances.
@@ -292,14 +294,17 @@ export class GrRestApiInterface
   // The value is set in created, before any other actions
   private authService: AuthService;
 
+  private flagService: FlagsService;
+
   // The value is set in created, before any other actions
   private readonly _restApiHelper: GrRestApiHelper;
 
-  constructor(authService?: AuthService) {
+  constructor(authService?: AuthService, flagService?: FlagsService) {
     super();
     // TODO: Make the authService constructor parameter required when we have
     // changed all usages of this class to not instantiate via createElement().
     this.authService = authService ?? appContext.authService;
+    this.flagService = flagService ?? appContext.flagsService;
     this._restApiHelper = new GrRestApiHelper(
       this._cache,
       this.authService,
@@ -509,10 +514,10 @@ export class GrRestApiInterface
 
   getGroupMembers(groupName: GroupId | GroupName): Promise<AccountInfo[]> {
     const encodeName = encodeURIComponent(groupName);
-    return (this._restApiHelper.fetchJSON({
+    return this._restApiHelper.fetchJSON({
       url: `/groups/${encodeName}/members/`,
       anonymizedUrl: '/groups/*/members',
-    }) as unknown) as Promise<AccountInfo[]>;
+    }) as unknown as Promise<AccountInfo[]>;
   }
 
   getIncludedGroup(
@@ -590,12 +595,12 @@ export class GrRestApiInterface
   ): Promise<AccountInfo> {
     const encodeName = encodeURIComponent(groupName);
     const encodeMember = encodeURIComponent(`${groupMember}`);
-    return (this._restApiHelper.send({
+    return this._restApiHelper.send({
       method: HttpMethod.PUT,
       url: `/groups/${encodeName}/members/${encodeMember}`,
       parseResponse: true,
       anonymizedUrl: '/groups/*/members/*',
-    }) as unknown) as Promise<AccountInfo>;
+    }) as unknown as Promise<AccountInfo>;
   }
 
   saveIncludedGroup(
@@ -613,9 +618,9 @@ export class GrRestApiInterface
     };
     return this._restApiHelper.send(req).then(response => {
       if (response?.ok) {
-        return (this.getResponseObject(
+        return this.getResponseObject(
           response
-        ) as unknown) as Promise<GroupInfo>;
+        ) as unknown as Promise<GroupInfo>;
       }
       return undefined;
     });
@@ -678,19 +683,27 @@ export class GrRestApiInterface
     });
   }
 
-  savePreferences(prefs: PreferencesInput): Promise<Response> {
+  savePreferences(
+    prefs: PreferencesInput
+  ): Promise<PreferencesInfo | undefined> {
     // Note (Issue 5142): normalize the download scheme with lower case before
     // saving.
     if (prefs.download_scheme) {
       prefs.download_scheme = prefs.download_scheme.toLowerCase();
     }
 
-    return this._restApiHelper.send({
-      method: HttpMethod.PUT,
-      url: '/accounts/self/preferences',
-      body: prefs,
-      reportUrlAsIs: true,
-    });
+    return this._restApiHelper
+      .send({
+        method: HttpMethod.PUT,
+        url: '/accounts/self/preferences',
+        body: prefs,
+        reportUrlAsIs: true,
+      })
+      .then((response: Response) =>
+        this.getResponseObject(response).then(
+          obj => obj as unknown as PreferencesInfo
+        )
+      );
   }
 
   saveDiffPreferences(prefs: DiffPreferenceInput): Promise<Response> {
@@ -833,7 +846,7 @@ export class GrRestApiInterface
     return this._restApiHelper
       .send(req)
       .then(newName =>
-        this._updateCachedAccount({name: (newName as unknown) as string})
+        this._updateCachedAccount({name: newName as unknown as string})
       );
   }
 
@@ -849,7 +862,7 @@ export class GrRestApiInterface
     return this._restApiHelper
       .send(req)
       .then(newName =>
-        this._updateCachedAccount({username: (newName as unknown) as string})
+        this._updateCachedAccount({username: newName as unknown as string})
       );
   }
 
@@ -864,7 +877,7 @@ export class GrRestApiInterface
     };
     return this._restApiHelper.send(req).then(newName =>
       this._updateCachedAccount({
-        display_name: (newName as unknown) as string,
+        display_name: newName as unknown as string,
       })
     );
   }
@@ -881,7 +894,7 @@ export class GrRestApiInterface
     return this._restApiHelper
       .send(req)
       .then(newStatus =>
-        this._updateCachedAccount({status: (newStatus as unknown) as string})
+        this._updateCachedAccount({status: newStatus as unknown as string})
       );
   }
 
@@ -964,7 +977,7 @@ export class GrRestApiInterface
           if (!res) {
             return res;
           }
-          const prefInfo = (res as unknown) as PreferencesInfo;
+          const prefInfo = res as unknown as PreferencesInfo;
           if (this._isNarrowScreen()) {
             // Note that this can be problematic, because the diff will stay
             // unified even after increasing the window width.
@@ -980,22 +993,22 @@ export class GrRestApiInterface
   }
 
   getWatchedProjects() {
-    return (this._fetchSharedCacheURL({
+    return this._fetchSharedCacheURL({
       url: '/accounts/self/watched.projects',
       reportUrlAsIs: true,
-    }) as unknown) as Promise<ProjectWatchInfo[] | undefined>;
+    }) as unknown as Promise<ProjectWatchInfo[] | undefined>;
   }
 
   saveWatchedProjects(
     projects: ProjectWatchInfo[]
   ): Promise<ProjectWatchInfo[]> {
-    return (this._restApiHelper.send({
+    return this._restApiHelper.send({
       method: HttpMethod.POST,
       url: '/accounts/self/watched.projects',
       body: projects,
       parseResponse: true,
       reportUrlAsIs: true,
-    }) as unknown) as Promise<ProjectWatchInfo[]>;
+    }) as unknown as Promise<ProjectWatchInfo[]>;
   }
 
   deleteWatchedProjects(projects: ProjectWatchInfo[]): Promise<Response> {
@@ -1037,63 +1050,58 @@ export class GrRestApiInterface
     offset?: 'n,z' | number,
     options?: string
   ): Promise<ChangeInfo[] | ChangeInfo[][] | undefined> {
-    return this.getConfig(false)
-      .then(config => {
-        // TODO(TS): config can be null/undefined. Need some checks
-        options = options || this._getChangesOptionsHex(config);
-        // Issue 4524: respect legacy token with max sortkey.
-        if (offset === 'n,z') {
-          offset = 0;
+    options = options || this._getChangesOptionsHex();
+    // Issue 4524: respect legacy token with max sortkey.
+    if (offset === 'n,z') {
+      offset = 0;
+    }
+    const params: QueryChangesParams = {
+      O: options,
+      S: offset || 0,
+    };
+    if (changesPerPage) {
+      params.n = changesPerPage;
+    }
+    if (query && query.length > 0) {
+      params.q = query;
+    }
+    const request = {
+      url: '/changes/',
+      params,
+      reportUrlAsIs: true,
+    };
+
+    return Promise.resolve(
+      this._restApiHelper.fetchJSON(request, true) as Promise<
+        ChangeInfo[] | ChangeInfo[][] | undefined
+      >
+    ).then(response => {
+      if (!response) {
+        return;
+      }
+      const iterateOverChanges = (arr: ChangeInfo[]) => {
+        for (const change of arr) {
+          this._maybeInsertInLookup(change);
         }
-        const params: QueryChangesParams = {
-          O: options,
-          S: offset || 0,
-        };
-        if (changesPerPage) {
-          params.n = changesPerPage;
+      };
+      // Response may be an array of changes OR an array of arrays of
+      // changes.
+      if (query instanceof Array) {
+        // Normalize the response to look like a multi-query response
+        // when there is only one query.
+        const responseArray: Array<ChangeInfo[]> =
+          query.length === 1
+            ? [response as ChangeInfo[]]
+            : (response as ChangeInfo[][]);
+        for (const arr of responseArray) {
+          iterateOverChanges(arr);
         }
-        if (query && query.length > 0) {
-          params.q = query;
-        }
-        return {
-          url: '/changes/',
-          params,
-          reportUrlAsIs: true,
-        };
-      })
-      .then(
-        req =>
-          this._restApiHelper.fetchJSON(req, true) as Promise<
-            ChangeInfo[] | ChangeInfo[][] | undefined
-          >
-      )
-      .then(response => {
-        if (!response) {
-          return;
-        }
-        const iterateOverChanges = (arr: ChangeInfo[]) => {
-          for (const change of arr) {
-            this._maybeInsertInLookup(change);
-          }
-        };
-        // Response may be an array of changes OR an array of arrays of
-        // changes.
-        if (query instanceof Array) {
-          // Normalize the response to look like a multi-query response
-          // when there is only one query.
-          const responseArray: Array<ChangeInfo[]> =
-            query.length === 1
-              ? [response as ChangeInfo[]]
-              : (response as ChangeInfo[][]);
-          for (const arr of responseArray) {
-            iterateOverChanges(arr);
-          }
-          return responseArray;
-        } else {
-          iterateOverChanges(response as ChangeInfo[]);
-          return response as ChangeInfo[];
-        }
-      });
+        return responseArray;
+      } else {
+        iterateOverChanges(response as ChangeInfo[]);
+        return response as ChangeInfo[];
+      }
+    });
   }
 
   /**
@@ -1135,7 +1143,7 @@ export class GrRestApiInterface
     });
   }
 
-  _getChangesOptionsHex(config?: ServerInfo) {
+  _getChangesOptionsHex() {
     if (
       window.DEFAULT_DETAIL_HEXES &&
       window.DEFAULT_DETAIL_HEXES.dashboardPage
@@ -1146,9 +1154,6 @@ export class GrRestApiInterface
       ListChangesOption.LABELS,
       ListChangesOption.DETAILED_ACCOUNTS,
     ];
-    if (!config?.change?.enable_attention_set) {
-      options.push(ListChangesOption.REVIEWED);
-    }
 
     return listChangesOptionsToHex(...options);
   }
@@ -1157,7 +1162,8 @@ export class GrRestApiInterface
     if (
       window.DEFAULT_DETAIL_HEXES &&
       window.DEFAULT_DETAIL_HEXES.changePage &&
-      (!config || !(config.receive && config.receive.enable_signed_push))
+      (!config || !(config.receive && config.receive.enable_signed_push)) &&
+      !this.flagService?.isEnabled(KnownExperimentId.SUBMIT_REQUIREMENTS_UI)
     ) {
       return window.DEFAULT_DETAIL_HEXES.changePage;
     }
@@ -1177,6 +1183,9 @@ export class GrRestApiInterface
     ];
     if (config?.receive?.enable_signed_push) {
       options.push(ListChangesOption.PUSH_CERTIFICATES);
+    }
+    if (this.flagService?.isEnabled(KnownExperimentId.SUBMIT_REQUIREMENTS_UI)) {
+      options.push(ListChangesOption.SUBMIT_REQUIREMENTS);
     }
     return listChangesOptionsToHex(...options);
   }
@@ -1218,10 +1227,10 @@ export class GrRestApiInterface
         };
         return this._restApiHelper.fetchRawJSON(req).then(response => {
           if (response?.status === 304) {
-            return (parsePrefixedJSON(
+            return parsePrefixedJSON(
               // urlWithParams already cached
               this._etags.getCachedPayload(urlWithParams)!
-            ) as unknown) as ChangeInfo;
+            ) as unknown as ChangeInfo;
           }
 
           if (response && !response.ok) {
@@ -1243,11 +1252,9 @@ export class GrRestApiInterface
             }
             this._etags.collect(urlWithParams, response, payload.raw);
             // TODO(TS): Why it is always change info?
-            this._maybeInsertInLookup(
-              (payload.parsed as unknown) as ChangeInfo
-            );
+            this._maybeInsertInLookup(payload.parsed as unknown as ChangeInfo);
 
-            return (payload.parsed as unknown) as ChangeInfo;
+            return payload.parsed as unknown as ChangeInfo;
           });
         });
       }
@@ -1527,11 +1534,11 @@ export class GrRestApiInterface
       `/projects/${encodedRepo}/tags` + `?n=${n}&S=${offset}` + encodedFilter;
     // TODO(kaspern): Rename rest api from /projects/ to /repos/ once backend
     // supports it.
-    return (this._restApiHelper.fetchJSON({
+    return this._restApiHelper.fetchJSON({
       url,
       errFn,
       anonymizedUrl: '/projects/*/tags',
-    }) as unknown) as Promise<TagInfo[]>;
+    }) as unknown as Promise<TagInfo[]>;
   }
 
   getPlugins(
@@ -1582,13 +1589,13 @@ export class GrRestApiInterface
     projectName: RepoName,
     projectInfo: ProjectAccessInput
   ): Promise<ChangeInfo> {
-    return (this._restApiHelper.send({
+    return this._restApiHelper.send({
       method: HttpMethod.PUT,
       url: `/projects/${encodeURIComponent(projectName)}/access:review`,
       body: projectInfo,
       parseResponse: true,
       anonymizedUrl: '/projects/*/access:review',
-    }) as unknown) as Promise<ChangeInfo>;
+    }) as unknown as Promise<ChangeInfo>;
   }
 
   getSuggestedGroups(
@@ -1885,7 +1892,7 @@ export class GrRestApiInterface
     baseChange?: ChangeId,
     baseCommit?: string
   ) {
-    return (this._restApiHelper.send({
+    return this._restApiHelper.send({
       method: HttpMethod.POST,
       url: '/changes/',
       body: {
@@ -1900,7 +1907,7 @@ export class GrRestApiInterface
       },
       parseResponse: true,
       reportUrlAsIs: true,
-    }) as unknown) as Promise<ChangeInfo | undefined>;
+    }) as unknown as Promise<ChangeInfo | undefined>;
   }
 
   getFileContent(
@@ -1930,7 +1937,7 @@ export class GrRestApiInterface
       // X-FYI-Content-Type header of the response.
       const type = res.headers.get('X-FYI-Content-Type');
       return this.getResponseObject(res).then(content => {
-        const strContent = (content as unknown) as string | null;
+        const strContent = content as unknown as string | null;
         return {content: strContent, type, ok: true};
       });
     });
@@ -2132,22 +2139,6 @@ export class GrRestApiInterface
     });
   }
 
-  saveChangeReviewed(
-    changeNum: NumericChangeId,
-    reviewed: boolean
-  ): Promise<Response | undefined> {
-    return this.getConfig().then(config => {
-      const isAttentionSetEnabled =
-        !!config && !!config.change && config.change.enable_attention_set;
-      if (isAttentionSetEnabled) return;
-      return this._getChangeURLAndSend({
-        changeNum,
-        method: HttpMethod.PUT,
-        endpoint: reviewed ? '/reviewed' : '/unreviewed',
-      });
-    });
-  }
-
   send(
     method: HttpMethod,
     url: string,
@@ -2325,12 +2316,18 @@ export class GrRestApiInterface
         return {};
       }
       if (!basePatchNum && !patchNum && !path) {
-        return this._getDiffComments(changeNum, '/drafts');
+        return this._getDiffComments(changeNum, '/drafts', {
+          'enable-context': true,
+          'context-padding': 3,
+        });
       }
       return this._getDiffComments(
         changeNum,
         '/drafts',
-        undefined,
+        {
+          'enable-context': true,
+          'context-padding': 3,
+        },
         basePatchNum,
         patchNum,
         path
@@ -2777,28 +2774,28 @@ export class GrRestApiInterface
   }
 
   setChangeTopic(changeNum: NumericChangeId, topic?: string): Promise<string> {
-    return (this._getChangeURLAndSend({
+    return this._getChangeURLAndSend({
       changeNum,
       method: HttpMethod.PUT,
       endpoint: '/topic',
       body: {topic},
       parseResponse: true,
       reportUrlAsIs: true,
-    }) as unknown) as Promise<string>;
+    }) as unknown as Promise<string>;
   }
 
   setChangeHashtag(
     changeNum: NumericChangeId,
     hashtag: HashtagsInput
   ): Promise<Hashtag[]> {
-    return (this._getChangeURLAndSend({
+    return this._getChangeURLAndSend({
       changeNum,
       method: HttpMethod.POST,
       endpoint: '/hashtags',
       body: hashtag,
       parseResponse: true,
       reportUrlAsIs: true,
-    }) as unknown) as Promise<Hashtag[]>;
+    }) as unknown as Promise<Hashtag[]>;
   }
 
   deleteAccountHttpPassword() {
@@ -2810,20 +2807,20 @@ export class GrRestApiInterface
   }
 
   generateAccountHttpPassword(): Promise<Password> {
-    return (this._restApiHelper.send({
+    return this._restApiHelper.send({
       method: HttpMethod.PUT,
       url: '/accounts/self/password.http',
       body: {generate: true},
       parseResponse: true,
       reportUrlAsIs: true,
-    }) as Promise<unknown>) as Promise<Password>;
+    }) as Promise<unknown> as Promise<Password>;
   }
 
   getAccountSSHKeys() {
-    return (this._fetchSharedCacheURL({
+    return this._fetchSharedCacheURL({
       url: '/accounts/self/sshkeys',
       reportUrlAsIs: true,
-    }) as Promise<unknown>) as Promise<SshKeyInfo[] | undefined>;
+    }) as Promise<unknown> as Promise<SshKeyInfo[] | undefined>;
   }
 
   addAccountSSHKey(key: string): Promise<SshKeyInfo> {
@@ -2840,9 +2837,9 @@ export class GrRestApiInterface
         if (!response || (response.status < 200 && response.status >= 300)) {
           return Promise.reject(new Error('error'));
         }
-        return (this.getResponseObject(
+        return this.getResponseObject(
           response
-        ) as unknown) as Promise<SshKeyInfo>;
+        ) as unknown as Promise<SshKeyInfo>;
       })
       .then(obj => {
         if (!obj || !obj.valid) {
@@ -2861,10 +2858,10 @@ export class GrRestApiInterface
   }
 
   getAccountGPGKeys() {
-    return (this._restApiHelper.fetchJSON({
+    return this._restApiHelper.fetchJSON({
       url: '/accounts/self/gpgkeys',
       reportUrlAsIs: true,
-    }) as Promise<unknown>) as Promise<Record<string, GpgKeyInfo>>;
+    }) as Promise<unknown> as Promise<Record<string, GpgKeyInfo>>;
   }
 
   addAccountGPGKey(key: GpgKeysInput) {
@@ -3009,7 +3006,7 @@ export class GrRestApiInterface
     commentID: UrlEncodedCommentId,
     reason: string
   ) {
-    return (this._getChangeURLAndSend({
+    return this._getChangeURLAndSend({
       changeNum,
       method: HttpMethod.POST,
       patchNum,
@@ -3017,7 +3014,7 @@ export class GrRestApiInterface
       body: {reason},
       parseResponse: true,
       anonymizedEndpoint: '/comments/*/delete',
-    }) as unknown) as Promise<CommentInfo>;
+    }) as unknown as Promise<CommentInfo>;
   }
 
   /**

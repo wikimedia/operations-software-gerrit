@@ -14,31 +14,34 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-interface GerritElementExtensions {
+import {ChangeInfo, ConfigInfo, RevisionInfo} from './rest-api';
+import {PluginApi} from './plugin';
+
+export declare interface GerritElementExtensions {
   content?: HTMLElement & {hidden?: boolean};
-  change?: unknown;
-  revision?: unknown;
+  change?: ChangeInfo;
+  revision?: RevisionInfo;
   token?: string;
   repoName?: string;
-  /**
-   * This is a ConfigInfo object as defined here:
-   * https://gerrit-review.googlesource.com/Documentation/rest-api-projects.html#config-info
-   * We neither want to repeat it nor add a dependency on it here.
-   */
-  config?: unknown;
+  config?: ConfigInfo;
+  plugin?: PluginApi;
 }
 
-export type HookCallback = (el: HTMLElement & GerritElementExtensions) => void;
+export type PluginElement = HTMLElement & GerritElementExtensions;
 
-export interface RegisterOptions {
+export type HookCallback<T extends PluginElement> = (el: T) => void;
+
+export declare interface RegisterOptions {
+  /** Defaults to empty string. */
   slot?: string;
-  replace: unknown;
+  /** Defaults to false. */
+  replace?: boolean;
 }
 
-export interface HookApi {
-  onAttached(callback: HookCallback): HookApi;
+export declare interface HookApi<T extends PluginElement> {
+  onAttached(callback: HookCallback<T>): HookApi<T>;
 
-  onDetached(callback: HookCallback): HookApi;
+  onDetached(callback: HookCallback<T>): HookApi<T>;
 
   getAllAttached(): HTMLElement[];
 

@@ -16,10 +16,10 @@ package com.google.gerrit.server.notedb;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.collect.ImmutableListMultimap.toImmutableListMultimap;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.gerrit.entities.RefNames.changeMetaRef;
 import static java.util.Comparator.comparing;
-import static java.util.Objects.requireNonNull;
 
 import com.google.auto.value.AutoValue;
 import com.google.common.annotations.VisibleForTesting;
@@ -37,6 +37,7 @@ import com.google.common.collect.Ordering;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Sets.SetView;
 import com.google.common.flogger.FluentLogger;
+import com.google.errorprone.annotations.FormatMethod;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.AttentionSetUpdate;
@@ -51,6 +52,7 @@ import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.entities.RobotComment;
 import com.google.gerrit.entities.SubmitRecord;
+import com.google.gerrit.entities.SubmitRequirementResult;
 import com.google.gerrit.server.AssigneeStatusUpdate;
 import com.google.gerrit.server.ReviewerByEmailSet;
 import com.google.gerrit.server.ReviewerSet;
@@ -92,6 +94,7 @@ public class ChangeNotes extends AbstractChangeNotes<ChangeNotes> {
   public static final Ordering<ChangeMessage> MESSAGE_BY_TIME =
       Ordering.from(comparing(ChangeMessage::getWrittenOn));
 
+  @FormatMethod
   public static ConfigInvalidException parseException(
       Change.Id changeId, String fmt, Object... args) {
     return new ConfigInvalidException("Change " + changeId + ": " + String.format(fmt, args));
@@ -389,6 +392,7 @@ public class ChangeNotes extends AbstractChangeNotes<ChangeNotes> {
   // ChangeNotesCache from handlers.
   private ImmutableSortedMap<PatchSet.Id, PatchSet> patchSets;
   private ImmutableListMultimap<PatchSet.Id, PatchSetApproval> approvals;
+  private ImmutableListMultimap<PatchSet.Id, PatchSetApproval> approvalsWithCopied;
   private ImmutableSet<Comment.Key> commentKeys;
 
   public ChangeNotes(
@@ -426,28 +430,49 @@ public class ChangeNotes extends AbstractChangeNotes<ChangeNotes> {
     return patchSets;
   }
 
+  /**
+   * Gets the approvals, not including the copied approvals. To get copied approvals as well, use
+   * {@link #getApprovalsWithCopied}, or use {@code ApprovalInference}.
+   */
   public ImmutableListMultimap<PatchSet.Id, PatchSetApproval> getApprovals() {
     if (approvals == null) {
-      approvals = ImmutableListMultimap.copyOf(state.approvals());
+      approvals =
+          state.approvals().stream()
+              .filter(e -> !e.getValue().copied())
+              .collect(toImmutableListMultimap(e -> e.getKey(), e -> e.getValue()));
     }
     return approvals;
+  }
+
+  /**
+   * This method is currently used only in tests. TODO(paiking): Use this method to fetch approvals
+   * (including copied approvals) instead of computing copied approvals on demand. This will be used
+   * by {@code ApprovalCache}.
+   *
+   * @return all approvals, including copied approvals.
+   */
+  public ImmutableListMultimap<PatchSet.Id, PatchSetApproval> getApprovalsWithCopied() {
+    if (approvalsWithCopied == null) {
+      approvalsWithCopied = ImmutableListMultimap.copyOf(state.approvals());
+    }
+    return approvalsWithCopied;
   }
 
   public ReviewerSet getReviewers() {
     return state.reviewers();
   }
 
-  /** @return reviewers that do not currently have a Gerrit account and were added by email. */
+  /** Returns reviewers that do not currently have a Gerrit account and were added by email. */
   public ReviewerByEmailSet getReviewersByEmail() {
     return state.reviewersByEmail();
   }
 
-  /** @return reviewers that were modified during this change's current WIP phase. */
+  /** Returns reviewers that were modified during this change's current WIP phase. */
   public ReviewerSet getPendingReviewers() {
     return state.pendingReviewers();
   }
 
-  /** @return reviewers by email that were modified during this change's current WIP phase. */
+  /** Returns reviewers by email that were modified during this change's current WIP phase. */
   public ReviewerByEmailSet getPendingReviewersByEmail() {
     return state.pendingReviewersByEmail();
   }
@@ -467,8 +492,18 @@ public class ChangeNotes extends AbstractChangeNotes<ChangeNotes> {
   }
 
   /**
-   * @return an ImmutableSet of Account.Ids of all users that have been assigned to this change. The
-   *     order of the set is the order in which they were assigned.
+   * Returns the evaluated submit requirements for the change. We only intend to store submit
+   * requirements in NoteDb for closed changes, hence the result will be an empty list for active
+   * changes, or a list of submit requirements results otherwise. For closed changes, the results
+   * represent the state of evaluating submit requirements for this change when it was merged.
+   */
+  public ImmutableList<SubmitRequirementResult> getSubmitRequirementsResult() {
+    return state.submitRequirementsResult();
+  }
+
+  /**
+   * Returns an ImmutableSet of Account.Ids of all users that have been assigned to this change. The
+   * order of the set is the order in which they were assigned.
    */
   public ImmutableSet<Account.Id> getPastAssignees() {
     return Lists.reverse(state.assigneeUpdates()).stream()
@@ -479,37 +514,37 @@ public class ChangeNotes extends AbstractChangeNotes<ChangeNotes> {
   }
 
   /**
-   * @return an ImmutableList of AssigneeStatusUpdate of all the updates to the assignee field to
-   *     this change. The order of the list is from most recent updates to least recent.
+   * Returns an ImmutableList of AssigneeStatusUpdate of all the updates to the assignee field to
+   * this change. The order of the list is from most recent updates to least recent.
    */
   public ImmutableList<AssigneeStatusUpdate> getAssigneeUpdates() {
     return state.assigneeUpdates();
   }
 
-  /** @return a ImmutableSet of all hashtags for this change sorted in alphabetical order. */
+  /** Returns an ImmutableSet of all hashtags for this change sorted in alphabetical order. */
   public ImmutableSet<String> getHashtags() {
     return ImmutableSortedSet.copyOf(state.hashtags());
   }
 
-  /** @return a list of all users who have ever been a reviewer on this change. */
+  /** Returns a list of all users who have ever been a reviewer on this change. */
   public ImmutableList<Account.Id> getAllPastReviewers() {
     return state.allPastReviewers();
   }
 
   /**
-   * @return submit records stored during the most recent submit; only for changes that were
-   *     actually submitted.
+   * Returns submit records stored during the most recent submit; only for changes that were
+   * actually submitted.
    */
   public ImmutableList<SubmitRecord> getSubmitRecords() {
     return state.submitRecords();
   }
 
-  /** @return all change messages, in chronological order, oldest first. */
+  /** Returns all change messages, in chronological order, oldest first. */
   public ImmutableList<ChangeMessage> getChangeMessages() {
     return state.changeMessages();
   }
 
-  /** @return inline comments on each revision. */
+  /** Returns inline comments on each revision. */
   public ImmutableListMultimap<ObjectId, HumanComment> getHumanComments() {
     return state.publishedComments();
   }
@@ -529,7 +564,7 @@ public class ChangeNotes extends AbstractChangeNotes<ChangeNotes> {
     return state.updateCount();
   }
 
-  /** @return {@link Optional} value of time when the change was merged. */
+  /** Returns {@link Optional} value of time when the change was merged. */
   public Optional<Timestamp> getMergedOn() {
     return Optional.ofNullable(state.mergedOn());
   }
@@ -607,8 +642,20 @@ public class ChangeNotes extends AbstractChangeNotes<ChangeNotes> {
 
   public PatchSet getCurrentPatchSet() {
     PatchSet.Id psId = change.currentPatchSetId();
-    return requireNonNull(
-        getPatchSets().get(psId), () -> String.format("missing current patch set %s", psId.get()));
+    if (psId == null || getPatchSets().get(psId) == null) {
+      // In some cases, the current patch-set doesn't exist yet as it's being created during the
+      // operation (e.g rebase).
+      PatchSet currentPatchset =
+          getPatchSets().values().stream()
+              .max((p1, p2) -> p1.id().get() - p2.id().get())
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          String.format(
+                              "change %s can't load any patchset", getChangeId().toString())));
+      return currentPatchset;
+    }
+    return getPatchSets().get(psId);
   }
 
   @Override

@@ -14,11 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {html} from 'lit-html';
-import {GrLitElement} from '../../lit/gr-lit-element';
-import {customElement, property} from 'lit-element';
-import {cssTemplate} from './gr-key-binding-display.css';
-import {sharedStyles} from '../../../styles/shared-styles';
+import {LitElement, css, html} from 'lit';
+import {customElement, property} from 'lit/decorators';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -27,12 +24,25 @@ declare global {
 }
 
 @customElement('gr-key-binding-display')
-export class GrKeyBindingDisplay extends GrLitElement {
-  static get styles() {
-    return [sharedStyles, cssTemplate];
+export class GrKeyBindingDisplay extends LitElement {
+  static override get styles() {
+    return [
+      css`
+        .key {
+          background-color: var(--chip-background-color);
+          color: var(--primary-text-color);
+          border: 1px solid var(--border-color);
+          border-radius: var(--border-radius);
+          display: inline-block;
+          font-weight: var(--font-weight-bold);
+          padding: var(--spacing-xxs) var(--spacing-m);
+          text-align: center;
+        }
+      `,
+    ];
   }
 
-  render() {
+  override render() {
     const items = this.binding.map((binding, index) => [
       index > 0 ? html` or ` : html``,
       this._computeModifiers(binding).map(

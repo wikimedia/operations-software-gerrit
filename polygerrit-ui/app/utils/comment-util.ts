@@ -27,6 +27,8 @@ import {
   ContextLine,
   BasePatchSetNum,
   RevisionPatchSetNum,
+  AccountInfo,
+  AccountDetailInfo,
 } from '../types/common';
 import {CommentSide, Side, SpecialFilePath} from '../constants/constants';
 import {parseDate} from './date-util';
@@ -110,14 +112,12 @@ export function createCommentThreads(
   const threads: CommentThread[] = [];
   const idThreadMap: CommentIdToCommentThreadMap = {};
   for (const comment of sortedComments) {
-    if (!comment.id) continue;
-    // If the comment is in reply to another comment, find that comment's
     // thread and append to it.
     if (comment.in_reply_to) {
       const thread = idThreadMap[comment.in_reply_to];
       if (thread) {
         thread.comments.push(comment);
-        idThreadMap[comment.id] = thread;
+        if (comment.id) idThreadMap[comment.id] = thread;
         continue;
       }
     }
@@ -129,6 +129,7 @@ export function createCommentThreads(
     const newThread: CommentThread = {
       comments: [comment],
       patchNum: comment.patch_set,
+      diffSide: Side.LEFT,
       commentSide: comment.side ?? CommentSide.REVISION,
       mergeParentNum: comment.parent,
       path: comment.path,
@@ -147,7 +148,7 @@ export function createCommentThreads(
       newThread.line = 'FILE';
     }
     threads.push(newThread);
-    idThreadMap[comment.id] = newThread;
+    if (comment.id) idThreadMap[comment.id] = newThread;
   }
   return threads;
 }
@@ -329,4 +330,55 @@ export function computeDiffFromContext(
     ],
   };
   return diff;
+}
+
+export function getCommentAuthors(
+  threads?: CommentThread[],
+  user?: AccountDetailInfo
+) {
+  if (!threads || !user) return [];
+  const ids = new Set();
+  const authors: AccountInfo[] = [];
+  threads.forEach(t =>
+    t.comments.forEach(c => {
+      if (isDraft(c) && !ids.has(user._account_id)) {
+        ids.add(user._account_id);
+        authors.push(user);
+        return;
+      }
+      if (c.author && !ids.has(c.author._account_id)) {
+        ids.add(c.author._account_id);
+        authors.push(c.author);
+      }
+    })
+  );
+  return authors;
+}
+
+export function computeId(comment: UIComment) {
+  if (comment.id) return comment.id;
+  if (isDraft(comment)) return comment.__draftID;
+  throw new Error('Missing id in root comment.');
+}
+
+/**
+ * Add path info to every comment as CommentInfo returned
+ * from server does not have that.
+ *
+ * TODO(taoalpha): should consider changing BE to send path
+ * back within CommentInfo
+ */
+export function addPath<T>(comments: {[path: string]: T[]} = {}): {
+  [path: string]: Array<T & {path: string}>;
+} {
+  const updatedComments: {[path: string]: Array<T & {path: string}>} = {};
+  for (const filePath of Object.keys(comments)) {
+    const allCommentsForPath = comments[filePath] || [];
+    if (allCommentsForPath.length) {
+      updatedComments[filePath] = allCommentsForPath.map(comment => {
+        return {...comment, path: filePath};
+      });
+    }
+  }
+  return updatedComments;
 }

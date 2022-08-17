@@ -74,6 +74,7 @@ public class GetDiff implements RestReadView<FileResource> {
   @Option(name = "--base", metaVar = "REVISION")
   String base;
 
+  /** 1-based index of the parent's position in the commit object. */
   @Option(name = "--parent", metaVar = "parent-number")
   int parentNum;
 
@@ -143,7 +144,7 @@ public class GetDiff implements RestReadView<FileResource> {
     } else if (parentNum > 0) {
       psf =
           patchScriptFactoryFactory.create(
-              notes, fileName, parentNum - 1, pId, prefs, currentUser.get());
+              notes, fileName, parentNum, pId, prefs, currentUser.get());
     } else {
       psf = patchScriptFactoryFactory.create(notes, fileName, null, pId, prefs, currentUser.get());
     }
@@ -230,20 +231,28 @@ public class GetDiff implements RestReadView<FileResource> {
     }
 
     @Override
+    public ImmutableList<WebLinkInfo> getEditWebLinks() {
+      return webLinks.getEditLinks(projectName.get(), revB, sideB.fileName());
+    }
+
+    @Override
     public ImmutableList<WebLinkInfo> getFileWebLinks(DiffSide.Type type) {
-      String rev;
-      String hash;
-      DiffSide side;
-      if (type == DiffSide.Type.SIDE_A) {
-        rev = revA;
-        hash = hashA;
-        side = sideA;
-      } else {
-        rev = revB;
-        hash = hashB;
-        side = sideB;
-      }
+      String rev = getSideRev(type);
+      String hash = getSideHash(type);
+      DiffSide side = getDiffSide(type);
       return webLinks.getFileLinks(projectName.get(), rev, hash, side.fileName());
+    }
+
+    private String getSideRev(DiffSide.Type sideType) {
+      return DiffSide.Type.SIDE_A == sideType ? revA : revB;
+    }
+
+    private String getSideHash(DiffSide.Type sideType) {
+      return DiffSide.Type.SIDE_A == sideType ? hashA : hashB;
+    }
+
+    private DiffSide getDiffSide(DiffSide.Type sideType) {
+      return DiffSide.Type.SIDE_A == sideType ? sideA : sideB;
     }
   }
 

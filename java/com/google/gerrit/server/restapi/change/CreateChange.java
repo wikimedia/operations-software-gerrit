@@ -19,6 +19,7 @@ import static org.eclipse.jgit.lib.Constants.SIGNED_OFF_BY_TAG;
 
 import com.google.common.base.Joiner;
 import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.Iterables;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
@@ -377,6 +378,8 @@ public class CreateChange
         // create an empty commit
         c = newCommit(oi, rw, author, committer, mergeTip, commitMessage);
       }
+      // Flush inserter so that commit becomes visible to validators
+      oi.flush();
 
       Change.Id changeId = Change.id(seq.nextChangeId());
       ChangeInserter ins = changeInserterFactory.create(changeId, c, input.branch);
@@ -385,6 +388,17 @@ public class CreateChange
       ins.setPrivate(input.isPrivate);
       ins.setWorkInProgress(input.workInProgress || !c.getFilesWithGitConflicts().isEmpty());
       ins.setGroups(groups);
+
+      if (input.validationOptions != null) {
+        ImmutableListMultimap.Builder<String, String> validationOptions =
+            ImmutableListMultimap.builder();
+        input
+            .validationOptions
+            .entrySet()
+            .forEach(e -> validationOptions.put(e.getKey(), e.getValue()));
+        ins.setValidationOptions(validationOptions.build());
+      }
+
       try (BatchUpdate bu = updateFactory.create(projectState.getNameKey(), me, now)) {
         bu.setRepository(git, rw, oi);
         bu.setNotify(

@@ -29,8 +29,9 @@ import com.google.gerrit.server.account.AccountsUpdate;
 import com.google.gerrit.server.account.GroupCache;
 import com.google.gerrit.server.account.ServiceUserClassifier;
 import com.google.gerrit.server.account.externalids.ExternalId;
+import com.google.gerrit.server.account.externalids.ExternalIdFactory;
+import com.google.gerrit.server.group.db.GroupDelta;
 import com.google.gerrit.server.group.db.GroupsUpdate;
-import com.google.gerrit.server.group.db.InternalGroupUpdate;
 import com.google.gerrit.server.notedb.Sequences;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
@@ -52,18 +53,21 @@ public class AccountCreator {
   private final Provider<AccountsUpdate> accountsUpdateProvider;
   private final GroupCache groupCache;
   private final Provider<GroupsUpdate> groupsUpdateProvider;
+  private final ExternalIdFactory externalIdFactory;
 
   @Inject
   AccountCreator(
       Sequences sequences,
       @ServerInitiated Provider<AccountsUpdate> accountsUpdateProvider,
       GroupCache groupCache,
-      @ServerInitiated Provider<GroupsUpdate> groupsUpdateProvider) {
+      @ServerInitiated Provider<GroupsUpdate> groupsUpdateProvider,
+      ExternalIdFactory externalIdFactory) {
     accounts = new HashMap<>();
     this.sequences = sequences;
     this.accountsUpdateProvider = accountsUpdateProvider;
     this.groupCache = groupCache;
     this.groupsUpdateProvider = groupsUpdateProvider;
+    this.externalIdFactory = externalIdFactory;
   }
 
   public synchronized TestAccount create(
@@ -84,11 +88,11 @@ public class AccountCreator {
     String httpPass = null;
     if (username != null) {
       httpPass = "http-pass";
-      extIds.add(ExternalId.createUsername(username, id, httpPass));
+      extIds.add(externalIdFactory.createUsername(username, id, httpPass));
     }
 
     if (email != null) {
-      extIds.add(ExternalId.createEmail(id, email));
+      extIds.add(externalIdFactory.createEmail(id, email));
     }
 
     accountsUpdateProvider
@@ -145,8 +149,8 @@ public class AccountCreator {
     return create("admin2", "admin2@example.com", "Administrator2", null, "Administrators");
   }
 
-  public TestAccount user() throws Exception {
-    return create("user", "user@example.com", "User", null);
+  public TestAccount user1() throws Exception {
+    return create("user1", "user1@example.com", "User1", null);
   }
 
   public TestAccount user2() throws Exception {
@@ -168,10 +172,10 @@ public class AccountCreator {
 
   private void addGroupMember(AccountGroup.UUID groupUuid, Account.Id accountId)
       throws IOException, NoSuchGroupException, ConfigInvalidException {
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta =
+        GroupDelta.builder()
             .setMemberModification(memberIds -> Sets.union(memberIds, ImmutableSet.of(accountId)))
             .build();
-    groupsUpdateProvider.get().updateGroup(groupUuid, groupUpdate);
+    groupsUpdateProvider.get().updateGroup(groupUuid, groupDelta);
   }
 }

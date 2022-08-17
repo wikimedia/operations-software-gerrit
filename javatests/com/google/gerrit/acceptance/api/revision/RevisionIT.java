@@ -47,6 +47,7 @@ import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.RestResponse;
 import com.google.gerrit.acceptance.TestAccount;
 import com.google.gerrit.acceptance.TestProjectInput;
+import com.google.gerrit.acceptance.UseClockStep;
 import com.google.gerrit.acceptance.config.GerritConfig;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
@@ -93,7 +94,9 @@ import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
 import com.google.gerrit.extensions.webui.PatchSetWebLink;
+import com.google.gerrit.extensions.webui.ResolveConflictsWebLink;
 import com.google.gerrit.server.query.change.ChangeData;
+import com.google.gerrit.server.util.AccountTemplateUtil;
 import com.google.gerrit.testing.FakeEmailSender;
 import com.google.inject.Inject;
 import java.io.ByteArrayOutputStream;
@@ -152,7 +155,8 @@ public class RevisionIT extends AbstractDaemonTest {
     PushOneCommit.Result r = createChange();
     String changeId = project.get() + "~master~" + r.getChangeId();
     gApi.changes().id(changeId).current().review(ReviewInput.approve());
-    gApi.changes().id(changeId).current().submit();
+    ChangeInfo changeInfo = gApi.changes().id(changeId).current().submit();
+    assertThat(changeInfo.status).isEqualTo(ChangeStatus.MERGED);
     assertThat(gApi.changes().id(changeId).get().status).isEqualTo(ChangeStatus.MERGED);
   }
 
@@ -626,7 +630,7 @@ public class RevisionIT extends AbstractDaemonTest {
         assertThrows(
             ResourceConflictException.class,
             () -> changeApi.revision(r.getCommit().name()).cherryPickAsInfo(in));
-    assertThat(thrown).hasMessageThat().isEqualTo("Cherry pick failed: merge conflict");
+    assertThat(thrown).hasMessageThat().startsWith("Cherry pick failed: merge conflict");
 
     // Cherry-pick with auto merge should succeed.
     in.allowConflicts = true;
@@ -1196,6 +1200,29 @@ public class RevisionIT extends AbstractDaemonTest {
   }
 
   @Test
+  @UseClockStep
+  public void cherryPickSetsReadyChangeOnNewPatchset() throws Exception {
+    PushOneCommit.Result result = pushTo("refs/for/master");
+    CherryPickInput input = new CherryPickInput();
+    input.destination = "foo";
+    gApi.projects().name(project.get()).branch(input.destination).create(new BranchInput());
+    ChangeApi originalChange = gApi.changes().id(project.get() + "~master~" + result.getChangeId());
+
+    ChangeApi cherryPick = originalChange.revision(result.getCommit().name()).cherryPick(input);
+    String firstCherryPickChangeId = cherryPick.id();
+    cherryPick.setWorkInProgress();
+    gApi.changes()
+        .id(project.get() + "~master~" + result.getChangeId())
+        .revision(result.getCommit().name())
+        .cherryPick(input);
+
+    ChangeInfo secondCherryPickResult =
+        gApi.changes().id(firstCherryPickChangeId).get(ALL_REVISIONS);
+    assertThat(secondCherryPickResult.revisions).hasSize(2);
+    assertThat(secondCherryPickResult.workInProgress).isNull();
+  }
+
+  @Test
   public void canRebase() throws Exception {
     PushOneCommit push = pushFactory.create(admin.newIdent(), testRepo);
     PushOneCommit.Result r1 = push.to("refs/for/master");
@@ -1396,22 +1423,12 @@ public class RevisionIT extends AbstractDaemonTest {
     BadRequestException thrown =
         assertThrows(
             BadRequestException.class,
-            () ->
-                gApi.changes()
-                    .id(r.getChangeId())
-                    .revision(r.getCommit().name())
-                    .files(3)
-                    .keySet());
+            () -> gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).files(3));
     assertThat(thrown).hasMessageThat().isEqualTo("invalid parent number: 3");
     thrown =
         assertThrows(
             BadRequestException.class,
-            () ->
-                gApi.changes()
-                    .id(r.getChangeId())
-                    .revision(r.getCommit().name())
-                    .files(-1)
-                    .keySet());
+            () -> gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).files(-1));
     assertThat(thrown).hasMessageThat().isEqualTo("invalid parent number: -1");
   }
 
@@ -1424,14 +1441,13 @@ public class RevisionIT extends AbstractDaemonTest {
 
     BadRequestException thrown =
         assertThrows(
-            BadRequestException.class,
-            () -> gApi.changes().id(changeId).revision(revId2).files(2).keySet());
+            BadRequestException.class, () -> gApi.changes().id(changeId).revision(revId2).files(2));
     assertThat(thrown).hasMessageThat().isEqualTo("invalid parent number: 2");
 
     thrown =
         assertThrows(
             BadRequestException.class,
-            () -> gApi.changes().id(changeId).revision(revId2).files(-1).keySet());
+            () -> gApi.changes().id(changeId).revision(revId2).files(-1));
     assertThat(thrown).hasMessageThat().isEqualTo("invalid parent number: -1");
   }
 
@@ -1614,16 +1630,26 @@ public class RevisionIT extends AbstractDaemonTest {
 
   @Test
   public void commit() throws Exception {
-    WebLinkInfo expectedWebLinkInfo = new WebLinkInfo("foo", "imageUrl", "url");
-    PatchSetWebLink link =
+    WebLinkInfo expectedPatchSetLinkInfo = new WebLinkInfo("foo", "imageUrl", "url");
+    PatchSetWebLink patchSetLink =
         new PatchSetWebLink() {
           @Override
           public WebLinkInfo getPatchSetWebLink(
               String projectName, String commit, String commitMessage, String branchName) {
-            return expectedWebLinkInfo;
+            return expectedPatchSetLinkInfo;
           }
         };
-    try (Registration registration = extensionRegistry.newRegistration().add(link)) {
+    WebLinkInfo expectedResolveConflictsLinkInfo = new WebLinkInfo("bar", "img", "resolve");
+    ResolveConflictsWebLink resolveConflictsLink =
+        new ResolveConflictsWebLink() {
+          @Override
+          public WebLinkInfo getResolveConflictsWebLink(
+              String projectName, String commit, String commitMessage, String branchName) {
+            return expectedResolveConflictsLinkInfo;
+          }
+        };
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(patchSetLink).add(resolveConflictsLink)) {
       PushOneCommit.Result r = createChange();
       RevCommit c = r.getCommit();
 
@@ -1640,11 +1666,20 @@ public class RevisionIT extends AbstractDaemonTest {
 
       commitInfo = gApi.changes().id(r.getChangeId()).current().commit(true);
       assertThat(commitInfo.webLinks).hasSize(1);
-      WebLinkInfo webLinkInfo = Iterables.getOnlyElement(commitInfo.webLinks);
-      assertThat(webLinkInfo.name).isEqualTo(expectedWebLinkInfo.name);
-      assertThat(webLinkInfo.imageUrl).isEqualTo(expectedWebLinkInfo.imageUrl);
-      assertThat(webLinkInfo.url).isEqualTo(expectedWebLinkInfo.url);
-      assertThat(webLinkInfo.target).isEqualTo(expectedWebLinkInfo.target);
+      WebLinkInfo patchSetLinkInfo = Iterables.getOnlyElement(commitInfo.webLinks);
+      assertThat(patchSetLinkInfo.name).isEqualTo(expectedPatchSetLinkInfo.name);
+      assertThat(patchSetLinkInfo.imageUrl).isEqualTo(expectedPatchSetLinkInfo.imageUrl);
+      assertThat(patchSetLinkInfo.url).isEqualTo(expectedPatchSetLinkInfo.url);
+      assertThat(patchSetLinkInfo.target).isEqualTo(expectedPatchSetLinkInfo.target);
+
+      assertThat(commitInfo.resolveConflictsWebLinks).hasSize(1);
+      WebLinkInfo resolveCommentsLinkInfo =
+          Iterables.getOnlyElement(commitInfo.resolveConflictsWebLinks);
+      assertThat(resolveCommentsLinkInfo.name).isEqualTo(expectedResolveConflictsLinkInfo.name);
+      assertThat(resolveCommentsLinkInfo.imageUrl)
+          .isEqualTo(expectedResolveConflictsLinkInfo.imageUrl);
+      assertThat(resolveCommentsLinkInfo.url).isEqualTo(expectedResolveConflictsLinkInfo.url);
+      assertThat(resolveCommentsLinkInfo.target).isEqualTo(expectedResolveConflictsLinkInfo.target);
     }
   }
 
@@ -1876,7 +1911,11 @@ public class RevisionIT extends AbstractDaemonTest {
     ChangeInfo c = gApi.changes().id(r.getChangeId()).get();
     ChangeMessageInfo message = Iterables.getLast(c.messages);
     assertThat(message.author._accountId).isEqualTo(admin.id().get());
-    assertThat(message.message).isEqualTo("Removed Code-Review+1 by User <user@example.com>\n");
+    assertThat(message.message)
+        .isEqualTo(
+            String.format(
+                "Removed Code-Review+1 by %s\n",
+                AccountTemplateUtil.getAccountTemplate(user.id())));
     assertThat(getReviewers(c.reviewers.get(ReviewerState.REVIEWER)))
         .containsExactlyElementsIn(ImmutableSet.of(admin.id(), user.id()));
   }

@@ -23,7 +23,7 @@ import {
 import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {customElement, property} from '@polymer/decorators';
 import {PluginApi} from '../../../api/plugin';
-import {HookApi} from '../../../api/hook';
+import {HookApi, PluginElement} from '../../../api/hook';
 
 const INIT_PROPERTIES_TIMEOUT_MS = 10000;
 
@@ -33,11 +33,20 @@ export class GrEndpointDecorator extends PolymerElement {
     return htmlTemplate;
   }
 
+  /**
+   * If set, then this endpoint only invokes callbacks registered by the target
+   * plugin. For example this is used for the `check-result-expanded` endpoint.
+   * In that case Gerrit knows which plugin has provided the check result, and
+   * only that plugin has an interest to hook into the endpoint.
+   */
+  @property({type: String})
+  targetPlugin?: string;
+
   @property({type: String})
   name!: string;
 
   @property({type: Object})
-  _domHooks = new Map<HTMLElement, HookApi>();
+  _domHooks = new Map<PluginElement, HookApi<PluginElement>>();
 
   @property({type: Object})
   _initializedPlugins = new Map<string, boolean>();
@@ -49,8 +58,7 @@ export class GrEndpointDecorator extends PolymerElement {
    */
   _endpointCallBack: (info: ModuleInfo) => void = () => {};
 
-  /** @override */
-  disconnectedCallback() {
+  override disconnectedCallback() {
     for (const [el, domHook] of this._domHooks) {
       domHook.handleInstanceDetached(el);
     }
@@ -63,7 +71,7 @@ export class GrEndpointDecorator extends PolymerElement {
     plugin: PluginApi,
     slot?: string
   ): Promise<HTMLElement> {
-    const el = document.createElement(name);
+    const el = document.createElement(name) as PluginElement;
     return this._initProperties(
       el,
       plugin,
@@ -105,33 +113,31 @@ export class GrEndpointDecorator extends PolymerElement {
   }
 
   _initProperties(
-    htmlEl: HTMLElement,
+    el: PluginElement,
     plugin: PluginApi,
     content?: Element | null
   ) {
-    const el = htmlEl as HTMLElement & {
-      plugin?: PluginApi;
-      content?: Element;
-    };
     el.plugin = plugin;
     // The content is (only?) used in ChangeReplyPluginApi.
     // Maybe it would be better for the consumer side to figure out the content
     // with something like el.getRootNode().host, etc.
+    // Also note that the content element could easily end up being an instance
+    // of <gr-endpoint-param>.
     if (content) {
-      el.content = content;
+      el.content = content as HTMLElement;
     }
     const expectProperties = this._getEndpointParams().map(paramEl => {
       const helper = plugin.attributeHelper(paramEl);
       // TODO: this should be replaced by accessing the property directly
       const paramName = paramEl.getAttribute('name');
       if (!paramName) throw Error('plugin endpoint parameter missing a name');
-      return helper
-        .get('value')
-        .then(() =>
-          helper.bind('value', value =>
-            plugin.attributeHelper(el).set(paramName, value)
-          )
-        );
+      return helper.get('value').then(() =>
+        helper.bind('value', value =>
+          // Note that despite the naming this sets the property, not the
+          // attribute. :-)
+          plugin.attributeHelper(el).set(paramName, value)
+        )
+      );
     });
     let timeoutId: number;
     const timeout = new Promise(
@@ -160,6 +166,9 @@ export class GrEndpointDecorator extends PolymerElement {
 
   _initModule({moduleName, plugin, type, domHook, slot}: ModuleInfo) {
     const name = plugin.getPluginName() + '.' + moduleName;
+    if (this.targetPlugin) {
+      if (this.targetPlugin !== plugin.getPluginName()) return;
+    }
     if (this._initializedPlugins.get(name)) {
       return;
     }
@@ -184,20 +193,18 @@ export class GrEndpointDecorator extends PolymerElement {
     });
   }
 
-  /** @override */
-  ready() {
+  override ready() {
     super.ready();
+    if (!this.name) return;
     this._endpointCallBack = (info: ModuleInfo) => this._initModule(info);
     getPluginEndpoints().onNewEndpoint(this.name, this._endpointCallBack);
-    if (this.name) {
-      getPluginLoader()
-        .awaitPluginsLoaded()
-        .then(() =>
-          getPluginEndpoints()
-            .getDetails(this.name)
-            .forEach(this._initModule, this)
-        );
-    }
+    getPluginLoader()
+      .awaitPluginsLoaded()
+      .then(() =>
+        getPluginEndpoints()
+          .getDetails(this.name)
+          .forEach(this._initModule, this)
+      );
   }
 }
 

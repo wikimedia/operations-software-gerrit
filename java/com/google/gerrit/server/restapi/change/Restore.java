@@ -20,9 +20,7 @@ import com.google.common.base.Strings;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Change.Status;
-import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.entities.PatchSet;
-import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.RestoreInput;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
@@ -47,7 +45,7 @@ import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.Context;
+import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.inject.Inject;
@@ -113,7 +111,7 @@ public class Restore
 
     private Change change;
     private PatchSet patchSet;
-    private ChangeMessage message;
+    private String mailMessage;
 
     private Op(RestoreInput input) {
       this.input = input;
@@ -132,28 +130,27 @@ public class Restore
       change.setLastUpdatedOn(ctx.getWhen());
       update.setStatus(change.getStatus());
 
-      message = newMessage(ctx);
-      cmUtil.addChangeMessage(update, message);
+      mailMessage = cmUtil.setChangeMessage(ctx, commentMessage(), ChangeMessagesUtil.TAG_RESTORE);
       return true;
     }
 
-    private ChangeMessage newMessage(ChangeContext ctx) {
+    private String commentMessage() {
       StringBuilder msg = new StringBuilder();
       msg.append("Restored");
       if (!Strings.nullToEmpty(input.message).trim().isEmpty()) {
         msg.append("\n\n");
         msg.append(input.message.trim());
       }
-      return ChangeMessagesUtil.newMessage(ctx, msg.toString(), ChangeMessagesUtil.TAG_RESTORE);
+      return msg.toString();
     }
 
     @Override
-    public void postUpdate(Context ctx) {
+    public void postUpdate(PostUpdateContext ctx) {
       try {
         ReplyToChangeSender emailSender =
             restoredSenderFactory.create(ctx.getProject(), change.getId());
         emailSender.setFrom(ctx.getAccountId());
-        emailSender.setChangeMessage(message.getMessage(), ctx.getWhen());
+        emailSender.setChangeMessage(mailMessage, ctx.getWhen());
         emailSender.setMessageId(
             messageIdGenerator.fromChangeUpdate(ctx.getRepoView(), change.currentPatchSetId()));
         emailSender.send();
@@ -161,12 +158,16 @@ public class Restore
         logger.atSevere().withCause(e).log("Cannot email update for change %s", change.getId());
       }
       changeRestored.fire(
-          change, patchSet, ctx.getAccount(), Strings.emptyToNull(input.message), ctx.getWhen());
+          ctx.getChangeData(change),
+          patchSet,
+          ctx.getAccount(),
+          Strings.emptyToNull(input.message),
+          ctx.getWhen());
     }
   }
 
   @Override
-  public UiAction.Description getDescription(ChangeResource rsrc) {
+  public UiAction.Description getDescription(ChangeResource rsrc) throws IOException {
     UiAction.Description description =
         new UiAction.Description()
             .setLabel("Restore")
@@ -177,27 +178,12 @@ public class Restore
     if (!change.isAbandoned()) {
       return description;
     }
-
-    try {
-      if (!projectCache.get(rsrc.getProject()).map(ProjectState::statePermitsRead).orElse(false)) {
-        return description;
-      }
-    } catch (StorageException e) {
-      logger.atSevere().withCause(e).log(
-          "Failed to check if project state permits write: %s", rsrc.getProject());
+    if (!projectCache.get(rsrc.getProject()).map(ProjectState::statePermitsRead).orElse(false)) {
       return description;
     }
-
-    try {
-      if (psUtil.isPatchSetLocked(rsrc.getNotes())) {
-        return description;
-      }
-    } catch (StorageException e) {
-      logger.atSevere().withCause(e).log(
-          "Failed to check if the current patch set of change %s is locked", change.getId());
+    if (psUtil.isPatchSetLocked(rsrc.getNotes())) {
       return description;
     }
-
     boolean visible = rsrc.permissions().testOrFalse(ChangePermission.RESTORE);
     return description.setVisible(visible);
   }

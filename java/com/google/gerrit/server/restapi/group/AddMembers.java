@@ -46,8 +46,8 @@ import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.config.AuthConfig;
 import com.google.gerrit.server.group.GroupResource;
 import com.google.gerrit.server.group.MemberResource;
+import com.google.gerrit.server.group.db.GroupDelta;
 import com.google.gerrit.server.group.db.GroupsUpdate;
-import com.google.gerrit.server.group.db.InternalGroupUpdate;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.restapi.group.AddMembers.Input;
 import com.google.inject.Inject;
@@ -94,6 +94,7 @@ public class AddMembers implements RestModifyView<GroupResource, Input> {
   private final AccountCache accountCache;
   private final AccountLoader.Factory infoFactory;
   private final Provider<GroupsUpdate> groupsUpdateProvider;
+  private final AuthRequest.Factory authRequestFactory;
 
   @Inject
   AddMembers(
@@ -102,13 +103,15 @@ public class AddMembers implements RestModifyView<GroupResource, Input> {
       AccountResolver accountResolver,
       AccountCache accountCache,
       AccountLoader.Factory infoFactory,
-      @UserInitiated Provider<GroupsUpdate> groupsUpdateProvider) {
+      @UserInitiated Provider<GroupsUpdate> groupsUpdateProvider,
+      AuthRequest.Factory authRequestFactory) {
     this.accountManager = accountManager;
     this.authType = authConfig.getAuthType();
     this.accountResolver = accountResolver;
     this.accountCache = accountCache;
     this.infoFactory = infoFactory;
     this.groupsUpdateProvider = groupsUpdateProvider;
+    this.authRequestFactory = authRequestFactory;
   }
 
   @Override
@@ -177,11 +180,11 @@ public class AddMembers implements RestModifyView<GroupResource, Input> {
 
   public void addMembers(AccountGroup.UUID groupUuid, Set<Account.Id> newMemberIds)
       throws IOException, NoSuchGroupException, ConfigInvalidException {
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta =
+        GroupDelta.builder()
             .setMemberModification(memberIds -> Sets.union(memberIds, newMemberIds))
             .build();
-    groupsUpdateProvider.get().updateGroup(groupUuid, groupUpdate);
+    groupsUpdateProvider.get().updateGroup(groupUuid, groupDelta);
   }
 
   private Optional<Account> createAccountByLdap(String user) throws IOException {
@@ -190,7 +193,7 @@ public class AddMembers implements RestModifyView<GroupResource, Input> {
     }
 
     try {
-      AuthRequest req = AuthRequest.forUser(user);
+      AuthRequest req = authRequestFactory.createForUser(user);
       req.setSkipAuthentication(true);
       return accountCache
           .get(accountManager.authenticate(req).getAccountId())

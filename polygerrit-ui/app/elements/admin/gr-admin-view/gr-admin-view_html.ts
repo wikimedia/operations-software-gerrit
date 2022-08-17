@@ -24,11 +24,6 @@ export const htmlTemplate = html`
     /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
   </style>
   <style include="gr-page-nav-styles">
-    gr-dropdown-list {
-      --trigger-style: {
-        text-transform: none;
-      }
-    }
     .breadcrumbText {
       /* Same as dropdown trigger so chevron spacing is consistent. */
       padding: 5px 4px;
@@ -73,13 +68,18 @@ export const htmlTemplate = html`
         <template is="dom-if" if="[[item.subsection]]">
           <!--If a section has a subsection, render that.-->
           <li class$="[[_computeSelectedClass(item.subsection.view, params)]]">
-            <a
-              class="title"
-              href$="[[_computeLinkURL(item.subsection)]]"
-              rel="noopener"
-            >
-              [[item.subsection.name]]</a
-            >
+            <template is="dom-if" if="[[item.subsection.url]]" as="child">
+              <a
+                class="title"
+                href$="[[_computeLinkURL(item.subsection)]]"
+                rel="noopener"
+              >
+                [[item.subsection.name]]</a
+              >
+            </template>
+            <template is="dom-if" if="[[!item.subsection.url]]" as="child">
+              [[item.subsection.name]]
+            </template>
           </li>
           <!--Loop through the links in the sub-section.-->
           <template

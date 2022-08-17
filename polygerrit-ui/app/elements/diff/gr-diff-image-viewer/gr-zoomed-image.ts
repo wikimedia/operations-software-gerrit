@@ -14,16 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {
-  css,
-  customElement,
-  html,
-  internalProperty,
-  LitElement,
-  property,
-  PropertyValues,
-} from 'lit-element';
-import {StyleInfo, styleMap} from 'lit-html/directives/style-map';
+import {css, html, LitElement, PropertyValues} from 'lit';
+import {customElement, property, state} from 'lit/decorators';
+import {StyleInfo, styleMap} from 'lit/directives/style-map';
 import {Rect} from './util';
 
 /**
@@ -41,9 +34,9 @@ export class GrZoomedImage extends LitElement {
   @property({type: Object})
   frameRect: Rect = {origin: {x: 0, y: 0}, dimensions: {width: 0, height: 0}};
 
-  @internalProperty() protected imageStyles: StyleInfo = {};
+  @state() protected imageStyles: StyleInfo = {};
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
     }
@@ -63,7 +56,7 @@ export class GrZoomedImage extends LitElement {
     }
   `;
 
-  render() {
+  override render() {
     return html`
       <div id="clip">
         <div id="transform" style="${styleMap(this.imageStyles)}">
@@ -73,7 +66,7 @@ export class GrZoomedImage extends LitElement {
     `;
   }
 
-  updated(changedProperties: PropertyValues) {
+  override updated(changedProperties: PropertyValues) {
     if (changedProperties.has('scale') || changedProperties.has('frameRect')) {
       this.updateImageStyles();
     }

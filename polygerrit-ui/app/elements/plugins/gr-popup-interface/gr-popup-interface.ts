@@ -48,7 +48,12 @@ export class GrPopupInterface implements PopupPluginApi {
   _getElement() {
     // TODO(TS): maybe consider removing this if no one is using
     // anything other than native methods on the return
-    return (dom(this.popup) as unknown) as HTMLElement;
+    return dom(this.popup) as unknown as HTMLElement;
+  }
+
+  appendContent(el: HTMLElement) {
+    if (!this.popup) throw new Error('popup element not (yet) available');
+    this.popup.appendChild(el);
   }
 
   /**

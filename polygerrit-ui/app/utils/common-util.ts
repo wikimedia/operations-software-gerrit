@@ -90,6 +90,36 @@ export function assertIsDefined<T>(
   }
 }
 
+export function queryAll<E extends Element = Element>(
+  el: Element,
+  selector: string
+): NodeListOf<E> {
+  if (!el) throw new Error('element not defined');
+  const root = el.shadowRoot ?? el;
+  return root.querySelectorAll<E>(selector);
+}
+
+export function query<E extends Element = Element>(
+  el: Element | null | undefined,
+  selector: string
+): E | undefined {
+  if (!el) return undefined;
+  if (el.shadowRoot) {
+    const r = el.shadowRoot.querySelector<E>(selector);
+    if (r) return r;
+  }
+  return el.querySelector<E>(selector) ?? undefined;
+}
+
+export function queryAndAssert<E extends Element = Element>(
+  el: Element | null | undefined,
+  selector: string
+): E {
+  const found = query<E>(el, selector);
+  if (!found) throw new Error(`selector '${selector}' did not match anything'`);
+  return found;
+}
+
 /**
  * Returns true, if both sets contain the same members.
  */

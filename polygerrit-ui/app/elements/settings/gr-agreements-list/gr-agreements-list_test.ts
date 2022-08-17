@@ -16,7 +16,7 @@
  */
 import '../../../test/common-test-setup-karma';
 import './gr-agreements-list';
-import {stubRestApi} from '../../../test/test-utils';
+import {queryAll, stubRestApi} from '../../../test/test-utils';
 import {GrAgreementsList} from './gr-agreements-list';
 import {ContributorAgreementInfo} from '../../../types/common';
 
@@ -25,7 +25,7 @@ const basicFixture = fixtureFromElement('gr-agreements-list');
 suite('gr-agreements-list tests', () => {
   let element: GrAgreementsList;
 
-  setup(done => {
+  setup(async () => {
     const agreements: ContributorAgreementInfo[] = [
       {
         url: 'some url',
@@ -38,17 +38,16 @@ suite('gr-agreements-list tests', () => {
 
     element = basicFixture.instantiate();
 
-    element.loadData().then(() => {
-      flush(done);
-    });
+    await element.loadData();
+    await flush();
   });
 
   test('renders', () => {
-    const rows = element.root?.querySelectorAll('tbody tr') ?? [];
+    const rows = queryAll<HTMLTableRowElement>(element, 'tbody tr') ?? [];
     assert.equal(rows.length, 1);
 
     const nameCells = Array.from(rows).map(row =>
-      row.querySelectorAll('td')[0].textContent?.trim()
+      queryAll<HTMLTableElement>(row, 'td')[0].textContent?.trim()
     );
 
     assert.equal(nameCells[0], 'Agreements 1');

@@ -78,7 +78,7 @@ message ChangeNotesKeyProto {
 // Instead, we just take the tedious yet simple approach of having a "has_foo"
 // field for each nullable field "foo", indicating whether or not foo is null.
 //
-// Next ID: 27
+// Next ID: 28
 message ChangeNotesStateProto {
   // Effectively required, even though the corresponding ChangeNotesState field
   // is optional, since the field is only absent when NoteDb is disabled, in
@@ -226,6 +226,8 @@ message ChangeNotesStateProto {
   // Epoch millis.
   int64 merged_on_millis = 25;
   bool has_merged_on = 26;
+
+  repeated SubmitRequirementResultProto submit_requirement_result = 27;
 }
 
 // Serialized form of com.google.gerrit.server.query.change.ConflictKey
@@ -266,13 +268,14 @@ message TagSetHolderProto {
 // com.google.gerrit.server.account.externalids.AllExternalIds.
 // Next ID: 2
 message AllExternalIdsProto {
-  // Next ID: 6
+  // Next ID: 7
   message ExternalIdProto {
     string key = 1;
     int32 accountId = 2;
     string email = 3;
     string password = 4;
     bytes blobId = 5;
+    bool isCaseInsensitive = 6;
   }
   repeated ExternalIdProto external_id = 1;
 }
@@ -445,7 +448,7 @@ message LabelValueProto {
 }
 
 // Serialized form of com.google.gerrit.common.data.LabelType.
-// Next ID: 19
+// Next ID: 21
 message LabelTypeProto {
   string name = 1;
   string function = 2; // ENUM as String
@@ -466,6 +469,43 @@ message LabelTypeProto {
   bool can_override = 17;
   repeated string ref_patterns = 18;
   bool copy_all_scores_if_list_of_files_did_not_change = 19;
+  string copy_condition = 20;
+}
+
+// Serialized form of com.google.gerrit.entities.SubmitRequirement.
+// Next ID: 7
+message SubmitRequirementProto {
+  string name = 1;
+  string description = 2;
+  string applicability_expression = 3;
+  string submittability_expression = 4;
+  string override_expression = 5;
+  bool allow_override_in_child_projects = 6;
+}
+
+// Serialized form of com.google.gerrit.entities.SubmitRequirementResult.
+// Next ID: 7
+message SubmitRequirementResultProto {
+  SubmitRequirementProto submit_requirement = 1;
+  SubmitRequirementExpressionResultProto applicability_expression_result = 2;
+  SubmitRequirementExpressionResultProto submittability_expression_result = 3;
+  SubmitRequirementExpressionResultProto override_expression_result = 4;
+
+  // Patchset commit ID at which the submit requirements are evaluated.
+  bytes commit = 5;
+
+  // Whether this result was created from a legacy submit record.
+  bool legacy = 6;
+}
+
+// Serialized form of com.google.gerrit.entities.SubmitRequirementExpressionResult.
+// Next ID: 6
+message SubmitRequirementExpressionResultProto {
+  string expression = 1;
+  string status = 2; // enum as string
+  string error_message = 3;
+  repeated string passing_atoms = 4;
+  repeated string failing_atoms = 5;
 }
 
 // Serialized form of com.google.gerrit.server.project.ConfiguredMimeTypes.
@@ -496,7 +536,7 @@ message StoredCommentLinkInfoProto {
 }
 
 // Serialized form of com.google.gerrit.entities.CachedProjectConfigProto.
-// Next ID: 19
+// Next ID: 20
 message CachedProjectConfigProto {
   ProjectProto project = 1;
   repeated GroupReferenceProto group_list = 2;
@@ -516,6 +556,7 @@ message CachedProjectConfigProto {
   map<string, ExtensionPanelSectionProto> extension_panels = 16;
   map<string, string> plugin_configs = 17;
   map<string, string> project_level_configs = 18;
+  repeated SubmitRequirementProto submit_requirement_sections = 19;
 
   // Next ID: 2
   message ExtensionPanelSectionProto {
@@ -594,7 +635,7 @@ message ModifiedFilesProto {
 
 // Serialized form of a collection of
 // com.google.gerrit.server.patch.gitfilediff.GitFileDiffCacheImpl.Key
-// Next ID: 8
+// Next ID: 9
 message GitFileDiffKeyProto {
   string project = 1;
   bytes a_tree = 2;
@@ -603,10 +644,11 @@ message GitFileDiffKeyProto {
   int32 rename_score = 5;
   string diff_algorithm = 6; // ENUM as string
   string whitepsace = 7; // ENUM as string
+  bool useTimeout = 8;
 }
 
 // Serialized form of com.google.gerrit.server.patch.gitfilediff.GitFileDiff
-// Next ID: 11
+// Next ID: 12
 message GitFileDiffProto {
   message Edit {
     int32 begin_a = 1;
@@ -624,11 +666,12 @@ message GitFileDiffProto {
   string new_mode = 8; // ENUM as string
   string change_type = 9; // ENUM as string
   string patch_type = 10; // ENUM as string
+  bool negative = 11;
 }
 
 // Serialized form of
 // com.google.gerrit.server.patch.fileDiff.FileDiffCacheKey
-// Next ID: 8
+// Next ID: 9
 message FileDiffKeyProto {
   string project = 1;
   bytes old_commit = 2;
@@ -637,11 +680,12 @@ message FileDiffKeyProto {
   int32 rename_score = 5;
   string diff_algorithm = 6;
   string whitespace = 7;
+  bool useTimeout = 8;
 }
 
 // Serialized form of
 // com.google.gerrit.server.patch.filediff.FileDiffOutput
-// Next ID: 12
+// Next ID: 13
 message FileDiffOutputProto {
   // Next ID: 5
   message Edit {
@@ -672,4 +716,20 @@ message FileDiffOutputProto {
   bytes old_commit = 9;
   bytes new_commit = 10;
   ComparisonType comparison_type = 11;
+  bool negative = 12;
+}
+
+// Serialized form of com.google.gerrit.server.approval.ApprovalCacheImpl.Key.
+// Next ID: 5
+message PatchSetApprovalsKeyProto {
+  string project = 1;
+  int32 change_id = 2;
+  int32 patch_set_id = 3;
+  bytes id = 4;
+}
+
+// Repeated version of PatchSetApprovalProto
+// Next ID: 2
+message AllPatchSetApprovalsProto {
+  repeated devtools.gerritcodereview.PatchSetApproval approval = 1;
 }

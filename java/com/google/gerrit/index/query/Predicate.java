@@ -18,9 +18,12 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.collect.Iterables;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Queue;
 
 /**
  * An abstract predicate tree for any form of query.
@@ -41,6 +44,32 @@ import java.util.List;
  * @param <T> type of object the predicate can evaluate in memory.
  */
 public abstract class Predicate<T> {
+  /** Query String that was used to create this predicate. Only set from the Antlr query parser. */
+  private String predicateString = null;
+
+  /**
+   * Boolean indicating if this predicate is a leaf predicate in a composite expression. Only set
+   * from the Antlr query parser.
+   */
+  private boolean isLeaf = false;
+
+  /** Sets the {@link #predicateString} field. This can only be set once. */
+  void setPredicateString(String predicateString) {
+    this.predicateString = this.predicateString == null ? predicateString : this.predicateString;
+  }
+
+  public String getPredicateString() {
+    return predicateString;
+  }
+
+  void setLeaf(boolean isLeaf) {
+    this.isLeaf = isLeaf;
+  }
+
+  public boolean isLeaf() {
+    return isLeaf;
+  }
+
   /** A predicate that matches any input, always, with no cost. */
   @SuppressWarnings("unchecked")
   public static <T> Predicate<T> any() {
@@ -120,11 +149,29 @@ public abstract class Predicate<T> {
     return leafCount;
   }
 
+  /** Returns a list of this predicate and all its descendants. */
+  public List<Predicate<T>> getFlattenedPredicateList() {
+    List<Predicate<T>> result = new ArrayList<>();
+    Queue<Predicate<T>> queue = new LinkedList<>();
+    queue.add(this);
+    while (!queue.isEmpty()) {
+      Predicate<T> current = queue.poll();
+      result.add(current);
+      current.getChildren().forEach(p -> queue.add(p));
+    }
+    return result;
+  }
+
   /** Create a copy of this predicate, with new children. */
   public abstract Predicate<T> copy(Collection<? extends Predicate<T>> children);
 
   public boolean isMatchable() {
     return this instanceof Matchable;
+  }
+
+  /** Whether this predicate can be used in search queries. */
+  public boolean supportedForQueries() {
+    return true;
   }
 
   @SuppressWarnings("unchecked")
@@ -133,7 +180,7 @@ public abstract class Predicate<T> {
     return (Matchable<T>) this;
   }
 
-  /** @return a cost estimate to run this predicate, higher figures cost more. */
+  /** Returns a cost estimate to run this predicate, higher figures cost more. */
   public int estimateCost() {
     if (!isMatchable()) {
       return 1;

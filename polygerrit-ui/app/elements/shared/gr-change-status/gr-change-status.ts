@@ -15,17 +15,28 @@
  * limitations under the License.
  */
 import '../gr-tooltip-content/gr-tooltip-content';
+import '../gr-icons/gr-icons';
 import '../../../styles/shared-styles';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-change-status_html';
 import {customElement, property} from '@polymer/decorators';
+import {
+  GeneratedWebLink,
+  GerritNav,
+} from '../../core/gr-navigation/gr-navigation';
+import {ChangeInfo} from '../../../types/common';
+import {ParsedChangeInfo} from '../../../types/types';
 
-enum ChangeStates {
-  MERGED = 'Merged',
+export enum ChangeStates {
   ABANDONED = 'Abandoned',
+  ACTIVE = 'Active',
   MERGE_CONFLICT = 'Merge Conflict',
-  WIP = 'WIP',
+  MERGED = 'Merged',
   PRIVATE = 'Private',
+  READY_TO_SUBMIT = 'Ready to submit',
+  REVERT_CREATED = 'Revert Created',
+  REVERT_SUBMITTED = 'Revert Submitted',
+  WIP = 'WIP',
 }
 
 const WIP_TOOLTIP =
@@ -43,7 +54,7 @@ const PRIVATE_TOOLTIP =
   'current reviewers (or anyone with "View Private Changes" permission).';
 
 @customElement('gr-change-status')
-class GrChangeStatus extends PolymerElement {
+export class GrChangeStatus extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
@@ -51,21 +62,66 @@ class GrChangeStatus extends PolymerElement {
   @property({type: Boolean, reflectToAttribute: true})
   flat = false;
 
+  @property({type: Object})
+  change?: ChangeInfo | ParsedChangeInfo;
+
   @property({type: String, observer: '_updateChipDetails'})
   status?: ChangeStates;
 
   @property({type: String})
   tooltipText = '';
 
-  _computeStatusString(status: ChangeStates) {
+  @property({type: Object})
+  revertedChange?: ChangeInfo;
+
+  @property({type: Object})
+  resolveWeblinks?: GeneratedWebLink[] = [];
+
+  _computeStatusString(status?: ChangeStates) {
     if (status === ChangeStates.WIP && !this.flat) {
       return 'Work in Progress';
     }
-    return status;
+    return status ?? '';
   }
 
   _toClassName(str?: ChangeStates) {
     return str ? str.toLowerCase().replace(/\s/g, '-') : '';
+  }
+
+  hasStatusLink(
+    revertedChange?: ChangeInfo,
+    resolveWeblinks?: GeneratedWebLink[],
+    status?: ChangeStates
+  ): boolean {
+    const isRevertCreatedOrSubmitted =
+      (status === ChangeStates.REVERT_SUBMITTED ||
+        status === ChangeStates.REVERT_CREATED) &&
+      revertedChange !== undefined;
+    return (
+      isRevertCreatedOrSubmitted ||
+      !!(status === ChangeStates.MERGE_CONFLICT && resolveWeblinks?.length)
+    );
+  }
+
+  getStatusLink(
+    revertedChange?: ChangeInfo,
+    resolveWeblinks?: GeneratedWebLink[],
+    status?: ChangeStates
+  ): string {
+    if (revertedChange) {
+      return GerritNav.getUrlForSearchQuery(`${revertedChange._number}`);
+    }
+    if (status === ChangeStates.MERGE_CONFLICT && resolveWeblinks?.length) {
+      return resolveWeblinks[0].url ?? '';
+    }
+    return '';
+  }
+
+  showResolveIcon(
+    resolveWeblinks?: GeneratedWebLink[],
+    status?: ChangeStates
+  ): boolean {
+    return status === ChangeStates.MERGE_CONFLICT && !!resolveWeblinks?.length;
   }
 
   _updateChipDetails(status?: ChangeStates, previousStatus?: ChangeStates) {

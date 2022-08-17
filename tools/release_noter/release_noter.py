@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import argparse
 import os
@@ -172,7 +172,6 @@ class Components(Enum):
     )
     doc = Component("Documentation", {"document"})
     jgit = Component("JGit", {"jgit"})
-    elastic = Component("Elasticsearch", {"elastic"})
     deps = Component("Other dependency", {"upgrade", "dependenc"})
     otherwise = Component("Other core", {})
 

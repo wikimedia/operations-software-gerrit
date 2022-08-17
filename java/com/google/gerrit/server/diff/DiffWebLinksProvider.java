@@ -24,6 +24,9 @@ public interface DiffWebLinksProvider {
   /** Returns links associated with the diff view */
   ImmutableList<DiffWebLinkInfo> getDiffLinks();
 
-  /** Returns links associated with the diff side */
+  /** Returns edit links associated with the diff view */
+  ImmutableList<WebLinkInfo> getEditWebLinks();
+
+  /** Returns file links associated with the diff side */
   ImmutableList<WebLinkInfo> getFileWebLinks(DiffSide.Type fileInfoType);
 }

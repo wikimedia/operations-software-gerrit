@@ -22,13 +22,13 @@ import '../../../styles/shared-styles';
 import {flush} from '@polymer/polymer/lib/legacy/polymer.dom';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-autocomplete_html';
-import {KeyboardShortcutMixin} from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
 import {property, customElement, observe} from '@polymer/decorators';
 import {GrAutocompleteDropdown} from '../gr-autocomplete-dropdown/gr-autocomplete-dropdown';
 import {PaperInputElementExt} from '../../../types/types';
-import {CustomKeyboardEvent} from '../../../types/events';
 import {fireEvent} from '../../../utils/event-util';
 import {debounce, DelayedTask} from '../../../utils/async-util';
+import {PropertyType} from '../../../types/common';
+import {modifierPressed} from '../../../utils/dom-util';
 
 const TOKENIZE_REGEX = /(?:[^\s"]+|"[^"]*")+/g;
 const DEBOUNCE_WAIT_MS = 200;
@@ -40,9 +40,9 @@ export interface GrAutocomplete {
   };
 }
 
-export type AutocompleteQuery = (
+export type AutocompleteQuery<T = string> = (
   text: string
-) => Promise<AutocompleteSuggestion[]>;
+) => Promise<Array<AutocompleteSuggestion<T>>>;
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -50,21 +50,22 @@ declare global {
   }
 }
 
-export interface AutocompleteSuggestion {
+export interface AutocompleteSuggestion<T = string> {
   name?: string;
   label?: string;
-  value?: string;
-  text?: string;
+  value?: T;
+  text?: T;
 }
 
 export interface AutocompleteCommitEventDetail {
   value: string;
 }
 
-export type AutocompleteCommitEvent = CustomEvent<AutocompleteCommitEventDetail>;
+export type AutocompleteCommitEvent =
+  CustomEvent<AutocompleteCommitEventDetail>;
 
 @customElement('gr-autocomplete')
-export class GrAutocomplete extends KeyboardShortcutMixin(PolymerElement) {
+export class GrAutocomplete extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
@@ -98,7 +99,7 @@ export class GrAutocomplete extends KeyboardShortcutMixin(PolymerElement) {
    *
    */
   @property({type: Object})
-  query: AutocompleteQuery = () => Promise.resolve([]);
+  query?: AutocompleteQuery = () => Promise.resolve([]);
 
   /**
    * The number of characters that must be typed before suggestions are
@@ -175,7 +176,7 @@ export class GrAutocomplete extends KeyboardShortcutMixin(PolymerElement) {
   _suggestionEls = [];
 
   @property({type: Number})
-  _index?: number;
+  _index: number | null = null;
 
   @property({type: Boolean})
   _disableSuggestions = false;
@@ -202,14 +203,12 @@ export class GrAutocomplete extends KeyboardShortcutMixin(PolymerElement) {
       this.$.input.inputElement) as HTMLInputElement;
   }
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     document.addEventListener('click', this.handleBodyClick);
   }
 
-  /** @override */
-  disconnectedCallback() {
+  override disconnectedCallback() {
     document.removeEventListener('click', this.handleBodyClick);
     this.updateSuggestionsTask?.cancel();
     super.disconnectedCallback();
@@ -219,7 +218,7 @@ export class GrAutocomplete extends KeyboardShortcutMixin(PolymerElement) {
     return this.$.input;
   }
 
-  focus() {
+  override focus() {
     this._nativeInput.focus();
   }
 
@@ -236,12 +235,25 @@ export class GrAutocomplete extends KeyboardShortcutMixin(PolymerElement) {
   }
 
   _handleItemSelect(e: CustomEvent) {
-    // Let _handleKeydown deal with keyboard interaction.
-    if (e.detail.trigger !== 'click') {
-      return;
+    if (e.detail.trigger === 'click') {
+      this._selected = e.detail.selected;
+      this._commit();
+      e.stopPropagation();
+      e.preventDefault();
+    } else if (e.detail.trigger === 'enter') {
+      this._handleInputCommit();
+      e.stopPropagation();
+      e.preventDefault();
+    } else if (e.detail.trigger === 'tab') {
+      if (this.tabComplete) {
+        this._handleInputCommit(true);
+        e.stopPropagation();
+        e.preventDefault();
+        this.focus();
+      } else {
+        this._focused = false;
+      }
     }
-    this._selected = e.detail.selected;
-    this._commit();
   }
 
   get _inputElement() {
@@ -296,6 +308,12 @@ export class GrAutocomplete extends KeyboardShortcutMixin(PolymerElement) {
     if (this._disableSuggestions) {
       return;
     }
+
+    const query = this.query;
+    if (!query) {
+      return;
+    }
+
     if (text.length < threshold) {
       this.value = '';
       return;
@@ -306,7 +324,7 @@ export class GrAutocomplete extends KeyboardShortcutMixin(PolymerElement) {
     }
 
     const update = () => {
-      this.query(text).then(suggestions => {
+      query(text).then(suggestions => {
         if (text !== this.text) {
           // Late response.
           return;
@@ -341,15 +359,14 @@ export class GrAutocomplete extends KeyboardShortcutMixin(PolymerElement) {
     return this.$.suggestions.close();
   }
 
-  _computeClass(borderless: boolean) {
+  _computeClass(borderless?: boolean) {
     return borderless ? 'borderless' : '';
   }
 
   /**
-   * _handleKeydown used for key handling in the this.$.input AND all child
-   * autocomplete options.
+   * _handleKeydown used for key handling in the this.$.input.
    */
-  _handleKeydown(e: CustomKeyboardEvent) {
+  _handleKeydown(e: KeyboardEvent) {
     this._focused = true;
     switch (e.keyCode) {
       case 38: // Up
@@ -374,7 +391,7 @@ export class GrAutocomplete extends KeyboardShortcutMixin(PolymerElement) {
         }
         break;
       case 13: // Enter
-        if (this.modifierPressed(e)) {
+        if (modifierPressed(e)) {
           break;
         }
         e.preventDefault();
@@ -502,4 +519,25 @@ export class GrAutocomplete extends KeyboardShortcutMixin(PolymerElement) {
   _computeShowSearchIconClass(showSearchIcon: boolean) {
     return showSearchIcon ? 'showSearchIcon' : '';
   }
+}
+
+/**
+ * Often gr-autocomplete is used for BranchName, RepoName, etc...
+ * GrTypedAutocomplete allows to define more precise typing in templates.
+ * For example, instead of
+ * $: {
+ *   branchSelect: GrAutocomplete
+ * }
+ * you can write
+ * $: {
+ *   branchSelect: GrTypedAutocomplete<BranchName>
+ * }
+ * And later user $.branchSelect.text without type conversion to BranchName.
+ */
+export interface GrTypedAutocomplete<
+  T extends PropertyType<GrAutocomplete, 'text'>
+> extends GrAutocomplete {
+  text: T;
+  value: T;
+  query?: AutocompleteQuery<T>;
 }

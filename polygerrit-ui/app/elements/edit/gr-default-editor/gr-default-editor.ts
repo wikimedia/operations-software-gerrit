@@ -14,14 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import '../../../styles/shared-styles';
-import {PolymerElement} from '@polymer/polymer/polymer-element';
-import {htmlTemplate} from './gr-default-editor_html';
-import {customElement, property} from '@polymer/decorators';
-
-export interface GrDefaultEditor {
-  $: {};
-}
+import {sharedStyles} from '../../../styles/shared-styles';
+import {LitElement, css, html} from 'lit';
+import {customElement, property} from 'lit/decorators';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -30,11 +25,7 @@ declare global {
 }
 
 @customElement('gr-default-editor')
-export class GrDefaultEditor extends PolymerElement {
-  static get template() {
-    return htmlTemplate;
-  }
-
+export class GrDefaultEditor extends LitElement {
   /**
    * Fired when the content of the editor changes.
    *
@@ -42,7 +33,38 @@ export class GrDefaultEditor extends PolymerElement {
    */
 
   @property({type: String})
-  fileContent: string | null = null;
+  fileContent = '';
+
+  static override get styles() {
+    return [
+      sharedStyles,
+      css`
+        textarea {
+          border: none;
+          box-sizing: border-box;
+          font-family: var(--monospace-font-family);
+          font-size: var(--font-size-code);
+          /* usually 16px = 12px + 4px */
+          line-height: calc(var(--font-size-code) + var(--spacing-s));
+          min-height: 60vh;
+          resize: none;
+          white-space: pre;
+          width: 100%;
+        }
+        textarea:focus {
+          outline: none;
+        }
+      `,
+    ];
+  }
+
+  override render() {
+    return html` <textarea
+      id="textarea"
+      .value="${this.fileContent}"
+      @input=${this._handleTextareaInput}
+    ></textarea>`;
+  }
 
   _handleTextareaInput(e: Event) {
     this.dispatchEvent(

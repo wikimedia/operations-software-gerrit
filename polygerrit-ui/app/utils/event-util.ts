@@ -15,7 +15,6 @@
  * limitations under the License.
  */
 
-import {UrlEncodedCommentId} from '../types/common';
 import {FetchRequest} from '../types/types';
 import {
   DialogChangeEventDetail,
@@ -33,21 +32,19 @@ export function fireEvent(target: EventTarget, type: string) {
   );
 }
 
-type HTMLElementEventDetailType<
-  K extends keyof HTMLElementEventMap
-> = HTMLElementEventMap[K] extends CustomEvent<infer DT>
-  ? unknown extends DT
-    ? never
-    : DT
-  : never;
+type HTMLElementEventDetailType<K extends keyof HTMLElementEventMap> =
+  HTMLElementEventMap[K] extends CustomEvent<infer DT>
+    ? unknown extends DT
+      ? never
+      : DT
+    : never;
 
-type DocumentEventDetailType<
-  K extends keyof DocumentEventMap
-> = DocumentEventMap[K] extends CustomEvent<infer DT>
-  ? unknown extends DT
-    ? never
-    : DT
-  : never;
+type DocumentEventDetailType<K extends keyof DocumentEventMap> =
+  DocumentEventMap[K] extends CustomEvent<infer DT>
+    ? unknown extends DT
+      ? never
+      : DT
+    : never;
 
 export function fire<K extends keyof DocumentEventMap>(
   target: Document,
@@ -108,17 +105,6 @@ export function fireIronAnnounce(target: EventTarget, text: string) {
   fire(target, EventType.IRON_ANNOUNCE, {text});
 }
 
-export function fireThreadListModifiedEvent(
-  target: EventTarget,
-  rootId: UrlEncodedCommentId,
-  path: string
-) {
-  fire(target, EventType.THREAD_LIST_MODIFIED, {
-    rootId,
-    path,
-  });
-}
-
 export function fireShowPrimaryTab(
   target: EventTarget,
   tab: string,
@@ -131,6 +117,10 @@ export function fireShowPrimaryTab(
 
 export function fireCloseFixPreview(target: EventTarget, fixApplied: boolean) {
   fire(target, EventType.CLOSE_FIX_PREVIEW, {fixApplied});
+}
+
+export function fireReload(target: EventTarget, clearPatchset?: boolean) {
+  fire(target, EventType.RELOAD, {clearPatchset: !!clearPatchset});
 }
 
 export function waitForEventOnce<K extends keyof HTMLElementEventMap>(

@@ -31,6 +31,12 @@ export interface GrPageNav {
   };
 }
 
+declare global {
+  interface HTMLElementTagNameMap {
+    'gr-page-nav': GrPageNav;
+  }
+}
+
 @customElement('gr-page-nav')
 export class GrPageNav extends PolymerElement {
   static get template() {
@@ -47,12 +53,12 @@ export class GrPageNav extends PolymerElement {
     this.bodyScrollHandler = () => this._handleBodyScroll();
   }
 
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     window.addEventListener('scroll', this.bodyScrollHandler);
   }
 
-  disconnectedCallback() {
+  override disconnectedCallback() {
     window.removeEventListener('scroll', this.bodyScrollHandler);
     super.disconnectedCallback();
   }

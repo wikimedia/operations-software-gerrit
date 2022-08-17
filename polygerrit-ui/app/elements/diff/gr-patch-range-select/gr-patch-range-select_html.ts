@@ -17,6 +17,9 @@
 import {html} from '@polymer/polymer/lib/utils/html-tag';
 
 export const htmlTemplate = html`
+  <style include="gr-a11y-styles">
+    /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+  </style>
   <style include="shared-styles">
     :host {
       align-items: center;
@@ -30,11 +33,8 @@ export const htmlTemplate = html`
       margin: 0 var(--spacing-m);
     }
     gr-dropdown-list {
-      --trigger-style: {
-        color: var(--deemphasized-text-color);
-        text-transform: none;
-        font-family: var(--font-family);
-      }
+      --trigger-style-text-color: var(--deemphasized-text-color);
+      --trigger-style-font-family: var(--font-family);
     }
     @media screen and (max-width: 50em) {
       .filesWeblinks {

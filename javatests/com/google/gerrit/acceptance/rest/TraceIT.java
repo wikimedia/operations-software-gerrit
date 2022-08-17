@@ -24,7 +24,7 @@ import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyZeroInteractions;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.google.auto.value.AutoValue;
 import com.google.common.collect.ImmutableList;
@@ -160,7 +160,7 @@ public class TraceIT extends AbstractDaemonTest {
     try (Registration registration =
         extensionRegistry.newRegistration().add(projectCreationListener)) {
       RestResponse response =
-          adminRestSession.putWithHeader(
+          adminRestSession.putWithHeaders(
               "/projects/new4", new BasicHeader(RestApiServlet.X_GERRIT_TRACE, null));
       assertThat(response.getStatusCode()).isEqualTo(SC_CREATED);
       assertThat(response.getHeader(RestApiServlet.X_GERRIT_TRACE)).isNotNull();
@@ -177,7 +177,7 @@ public class TraceIT extends AbstractDaemonTest {
     try (Registration registration =
         extensionRegistry.newRegistration().add(projectCreationListener)) {
       RestResponse response =
-          adminRestSession.putWithHeader(
+          adminRestSession.putWithHeaders(
               "/projects/new5", new BasicHeader(RestApiServlet.X_GERRIT_TRACE, "issue/123"));
       assertThat(response.getStatusCode()).isEqualTo(SC_CREATED);
       assertThat(response.getHeader(RestApiServlet.X_GERRIT_TRACE)).isEqualTo("issue/123");
@@ -195,7 +195,7 @@ public class TraceIT extends AbstractDaemonTest {
         extensionRegistry.newRegistration().add(projectCreationListener)) {
       // trace ID only specified by trace header
       RestResponse response =
-          adminRestSession.putWithHeader(
+          adminRestSession.putWithHeaders(
               "/projects/new6?trace", new BasicHeader(RestApiServlet.X_GERRIT_TRACE, "issue/123"));
       assertThat(response.getStatusCode()).isEqualTo(SC_CREATED);
       assertThat(response.getHeader(RestApiServlet.X_GERRIT_TRACE)).isEqualTo("issue/123");
@@ -205,7 +205,7 @@ public class TraceIT extends AbstractDaemonTest {
 
       // trace ID only specified by trace request parameter
       response =
-          adminRestSession.putWithHeader(
+          adminRestSession.putWithHeaders(
               "/projects/new7?trace=issue/123",
               new BasicHeader(RestApiServlet.X_GERRIT_TRACE, null));
       assertThat(response.getStatusCode()).isEqualTo(SC_CREATED);
@@ -216,7 +216,7 @@ public class TraceIT extends AbstractDaemonTest {
 
       // same trace ID specified by trace header and trace request parameter
       response =
-          adminRestSession.putWithHeader(
+          adminRestSession.putWithHeaders(
               "/projects/new8?trace=issue/123",
               new BasicHeader(RestApiServlet.X_GERRIT_TRACE, "issue/123"));
       assertThat(response.getStatusCode()).isEqualTo(SC_CREATED);
@@ -227,7 +227,7 @@ public class TraceIT extends AbstractDaemonTest {
 
       // different trace IDs specified by trace header and trace request parameter
       response =
-          adminRestSession.putWithHeader(
+          adminRestSession.putWithHeaders(
               "/projects/new9?trace=issue/123",
               new BasicHeader(RestApiServlet.X_GERRIT_TRACE, "issue/456"));
       assertThat(response.getStatusCode()).isEqualTo(SC_CREATED);
@@ -374,6 +374,7 @@ public class TraceIT extends AbstractDaemonTest {
   }
 
   @Test
+  @GerritConfig(name = "tracing.performanceLogging", value = "true")
   public void performanceLoggingForRestCall() throws Exception {
     PerformanceLogger testPerformanceLogger = mock(PerformanceLogger.class);
     try (Registration registration =
@@ -385,6 +386,7 @@ public class TraceIT extends AbstractDaemonTest {
   }
 
   @Test
+  @GerritConfig(name = "tracing.performanceLogging", value = "true")
   public void performanceLoggingForPush() throws Exception {
     PerformanceLogger testPerformanceLogger = mock(PerformanceLogger.class);
     try (Registration registration =
@@ -397,8 +399,7 @@ public class TraceIT extends AbstractDaemonTest {
   }
 
   @Test
-  @GerritConfig(name = "tracing.performanceLogging", value = "false")
-  public void noPerformanceLoggingIfDisabled() throws Exception {
+  public void noPerformanceLoggingByDefault() throws Exception {
     PerformanceLogger testPerformanceLogger = mock(PerformanceLogger.class);
     try (Registration registration =
         extensionRegistry.newRegistration().add(testPerformanceLogger)) {
@@ -409,7 +410,7 @@ public class TraceIT extends AbstractDaemonTest {
       PushOneCommit.Result r = push.to("refs/heads/master");
       r.assertOkStatus();
 
-      verifyZeroInteractions(testPerformanceLogger);
+      verifyNoInteractions(testPerformanceLogger);
     }
   }
 
@@ -707,6 +708,94 @@ public class TraceIT extends AbstractDaemonTest {
 
       // The logging tag with the project name is also set if tracing is off.
       assertThat(projectCreationListener.tags.get("project")).containsExactly("new24");
+    }
+  }
+
+  @Test
+  @GerritConfig(name = "tracing.issue123.excludedRequestUriPattern", value = "/projects/.*")
+  public void traceExcludedRequestUriPattern() throws Exception {
+    TraceValidatingProjectCreationValidationListener projectCreationListener =
+        new TraceValidatingProjectCreationValidationListener();
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(projectCreationListener)) {
+      RestResponse response = adminRestSession.put("/projects/xyz1");
+      assertThat(response.getStatusCode()).isEqualTo(SC_CREATED);
+      assertThat(response.getHeader(RestApiServlet.X_GERRIT_TRACE)).isNull();
+      assertThat(projectCreationListener.traceId).isNull();
+      assertThat(projectCreationListener.isLoggingForced).isFalse();
+
+      // The logging tag with the project name is also set if tracing is off.
+      assertThat(projectCreationListener.tags.get("project")).containsExactly("xyz1");
+    }
+  }
+
+  @Test
+  @GerritConfig(name = "tracing.issue123.excludedRequestUriPattern", value = "/projects/no-match")
+  public void traceExcludedRequestUriPatternNoMatch() throws Exception {
+    TraceValidatingProjectCreationValidationListener projectCreationListener =
+        new TraceValidatingProjectCreationValidationListener();
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(projectCreationListener)) {
+      RestResponse response = adminRestSession.put("/projects/xyz3");
+      assertThat(response.getStatusCode()).isEqualTo(SC_CREATED);
+      assertThat(response.getHeader(RestApiServlet.X_GERRIT_TRACE)).isNull();
+      assertThat(projectCreationListener.traceId).isEqualTo("issue123");
+      assertThat(projectCreationListener.isLoggingForced).isTrue();
+      assertThat(projectCreationListener.tags.get("project")).containsExactly("xyz3");
+    }
+  }
+
+  @Test
+  @GerritConfig(name = "tracing.issue123.requestUriPattern", value = "/projects/.*")
+  @GerritConfig(name = "tracing.issue123.excludedRequestUriPattern", value = "/projects/xyz2")
+  public void traceRequestUriPatternAndExcludedRequestUriPattern() throws Exception {
+    TraceValidatingProjectCreationValidationListener projectCreationListener =
+        new TraceValidatingProjectCreationValidationListener();
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(projectCreationListener)) {
+      RestResponse response = adminRestSession.put("/projects/xyz2");
+      assertThat(response.getStatusCode()).isEqualTo(SC_CREATED);
+      assertThat(response.getHeader(RestApiServlet.X_GERRIT_TRACE)).isNull();
+      assertThat(projectCreationListener.traceId).isNull();
+      assertThat(projectCreationListener.isLoggingForced).isFalse();
+
+      // The logging tag with the project name is also set if tracing is off.
+      assertThat(projectCreationListener.tags.get("project")).containsExactly("xyz2");
+    }
+  }
+
+  @Test
+  @GerritConfig(name = "tracing.issue123.requestUriPattern", value = "/projects/.*")
+  @GerritConfig(name = "tracing.issue123.excludedRequestUriPattern", value = "/projects/no-match")
+  public void traceRequestUriPatternAndExcludedRequestUriPatternNoMatch() throws Exception {
+    TraceValidatingProjectCreationValidationListener projectCreationListener =
+        new TraceValidatingProjectCreationValidationListener();
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(projectCreationListener)) {
+      RestResponse response = adminRestSession.put("/projects/xyz3");
+      assertThat(response.getStatusCode()).isEqualTo(SC_CREATED);
+      assertThat(response.getHeader(RestApiServlet.X_GERRIT_TRACE)).isNull();
+      assertThat(projectCreationListener.traceId).isEqualTo("issue123");
+      assertThat(projectCreationListener.isLoggingForced).isTrue();
+      assertThat(projectCreationListener.tags.get("project")).containsExactly("xyz3");
+    }
+  }
+
+  @Test
+  @GerritConfig(name = "tracing.issue123.excludedRequestUriPattern", value = "][")
+  public void traceExcludedRequestUriInvalidRegEx() throws Exception {
+    TraceValidatingProjectCreationValidationListener projectCreationListener =
+        new TraceValidatingProjectCreationValidationListener();
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(projectCreationListener)) {
+      RestResponse response = adminRestSession.put("/projects/xyz4");
+      assertThat(response.getStatusCode()).isEqualTo(SC_CREATED);
+      assertThat(response.getHeader(RestApiServlet.X_GERRIT_TRACE)).isNull();
+      assertThat(projectCreationListener.traceId).isNull();
+      assertThat(projectCreationListener.isLoggingForced).isFalse();
+
+      // The logging tag with the project name is also set if tracing is off.
+      assertThat(projectCreationListener.tags.get("project")).containsExactly("xyz4");
     }
   }
 

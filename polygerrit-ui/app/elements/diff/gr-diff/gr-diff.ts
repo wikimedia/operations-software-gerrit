@@ -29,6 +29,7 @@ import {htmlTemplate} from './gr-diff_html';
 import {LineNumber} from './gr-diff-line';
 import {
   getLine,
+  getLineElByChild,
   getLineNumber,
   getRange,
   getSide,
@@ -39,14 +40,22 @@ import {
 } from './gr-diff-utils';
 import {getHiddenScroll} from '../../../scripts/hiddenscroll';
 import {customElement, observe, property} from '@polymer/decorators';
-import {BlameInfo, CommentRange, ImageInfo} from '../../../types/common';
+import {
+  BlameInfo,
+  CommentRange,
+  ImageInfo,
+  NumericChangeId,
+} from '../../../types/common';
 import {
   DiffInfo,
   DiffPreferencesInfo,
   DiffPreferencesInfoKey,
 } from '../../../types/diff';
 import {GrDiffHighlight} from '../gr-diff-highlight/gr-diff-highlight';
-import {GrDiffBuilderElement} from '../gr-diff-builder/gr-diff-builder-element';
+import {
+  GrDiffBuilderElement,
+  getLineNumberCellWidth,
+} from '../gr-diff-builder/gr-diff-builder-element';
 import {
   CoverageRange,
   DiffLayer,
@@ -61,19 +70,23 @@ import {
 import {KeyLocations} from '../gr-diff-processor/gr-diff-processor';
 import {FlattenedNodesObserver} from '@polymer/polymer/lib/utils/flattened-nodes-observer';
 import {PolymerDeepPropertyChange} from '@polymer/polymer/interfaces';
-import {AbortStop} from '../../shared/gr-cursor-manager/gr-cursor-manager';
 import {fireAlert, fireEvent} from '../../../utils/event-util';
 import {MovedLinkClickedEvent} from '../../../types/events';
 import {getContentEditableRange} from '../../../utils/safari-selection-util';
-
+import {AbortStop} from '../../../api/core';
 import {
   CreateCommentEventDetail as CreateCommentEventDetailApi,
   RenderPreferences,
+  GrDiff as GrDiffApi,
 } from '../../../api/diff';
 import {isSafari, toggleClass} from '../../../utils/dom-util';
 import {assertIsDefined} from '../../../utils/common-util';
 import {debounce, DelayedTask} from '../../../utils/async-util';
-import {DiffContextExpandedEventDetail} from '../gr-diff-builder/gr-diff-builder';
+import {
+  DiffContextExpandedEventDetail,
+  getResponsiveMode,
+  isResponsive,
+} from '../gr-diff-builder/gr-diff-builder';
 
 const NO_NEWLINE_BASE = 'No newline at end of base file.';
 const NO_NEWLINE_REVISION = 'No newline at end of revision file.';
@@ -109,7 +122,7 @@ export interface CreateCommentEventDetail extends CreateCommentEventDetailApi {
 }
 
 @customElement('gr-diff')
-export class GrDiff extends PolymerElement {
+export class GrDiff extends PolymerElement implements GrDiffApi {
   static get template() {
     return htmlTemplate;
   }
@@ -148,7 +161,7 @@ export class GrDiff extends PolymerElement {
    */
 
   @property({type: String})
-  changeNum?: string;
+  changeNum?: NumericChangeId;
 
   @property({type: Boolean})
   noAutoRender = false;
@@ -169,7 +182,7 @@ export class GrDiff extends PolymerElement {
   isImageDiff?: boolean;
 
   @property({type: Boolean, reflectToAttribute: true})
-  hidden = false;
+  override hidden = false;
 
   @property({type: Boolean})
   noRenderOnPrefsChange?: boolean;
@@ -230,7 +243,7 @@ export class GrDiff extends PolymerElement {
    * obtained by making the content of the diff table "contentEditable".
    */
   @property({type: Boolean})
-  isContentEditable = isSafari();
+  override isContentEditable = isSafari();
 
   /**
    * Whether the safety check for large diffs when whole-file is set has
@@ -306,20 +319,24 @@ export class GrDiff extends PolymerElement {
     this.addEventListener('moved-link-clicked', e => this._movedLinkClicked(e));
   }
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     this._observeNodes();
     this.isAttached = true;
   }
 
-  /** @override */
-  disconnectedCallback() {
+  override disconnectedCallback() {
     this.isAttached = false;
     this.renderDiffTableTask?.cancel();
     this._unobserveIncrementalNodes();
     this._unobserveNodes();
     super.disconnectedCallback();
+  }
+
+  getLineNumEls(side: Side): HTMLElement[] {
+    return Array.from(
+      this.root?.querySelectorAll<HTMLElement>(`.lineNum.${side}`) ?? []
+    );
   }
 
   showNoChangeMessage(
@@ -549,7 +566,7 @@ export class GrDiff extends PolymerElement {
       el.classList.contains('content') ||
       el.classList.contains('contentText')
     ) {
-      const target = this.$.diffBuilder.getLineElByChild(el);
+      const target = getLineElByChild(el);
       if (target) {
         this._selectLine(target);
       }
@@ -719,33 +736,69 @@ export class GrDiff extends PolymerElement {
     if (!prefs) return;
 
     this.blame = null;
+    this._updatePreferenceStyles(prefs, this.renderPrefs);
 
+    if (this.diff && !this.noRenderOnPrefsChange) {
+      this._debounceRenderDiffTable();
+    }
+  }
+
+  _updatePreferenceStyles(
+    prefs: DiffPreferencesInfo,
+    renderPrefs?: RenderPreferences
+  ) {
     const lineLength =
       this.path === COMMIT_MSG_PATH
         ? COMMIT_MSG_LINE_LENGTH
         : prefs.line_length;
+    const sideBySide = this.viewMode === 'SIDE_BY_SIDE';
     const stylesToUpdate: {[key: string]: string} = {};
 
-    if (prefs.line_wrapping) {
-      this._diffTableClass = 'full-width';
-      if (this.viewMode === 'SIDE_BY_SIDE') {
-        stylesToUpdate['--content-width'] = 'none';
-        stylesToUpdate['--line-limit'] = `${lineLength}ch`;
-      }
-    } else {
-      this._diffTableClass = '';
-      stylesToUpdate['--content-width'] = `${lineLength}ch`;
-    }
+    const responsiveMode = getResponsiveMode(prefs, renderPrefs);
+    const responsive = isResponsive(responsiveMode);
+    this._diffTableClass = responsive ? 'responsive' : '';
+    const lineLimit = `${lineLength}ch`;
+    stylesToUpdate['--line-limit-marker'] =
+      responsiveMode === 'FULL_RESPONSIVE' ? lineLimit : '-1px';
+    stylesToUpdate['--content-width'] = responsive ? 'none' : lineLimit;
+    if (responsiveMode === 'SHRINK_ONLY') {
+      // Calculating ideal (initial) width for the whole table including
+      // width of each table column (content and line number columns) and
+      // border. We also add a 1px correction as some values are calculated
+      // in 'ch'.
 
+      // We might have 1 to 2 columns for content depending if side-by-side
+      // or unified mode
+      const contentWidth = `${sideBySide ? 2 : 1} * ${lineLimit}`;
+
+      // We always have 2 columns for line number
+      const lineNumberWidth = `2 * ${getLineNumberCellWidth(prefs)}px`;
+
+      // border-right in ".section" css definition (in gr-diff_html.ts)
+      const sectionRightBorder = '1px';
+
+      // As some of these calculations are done using 'ch' we end up
+      // having <1px difference between ideal and calculated size for each side
+      // leading to lines using the max columns (e.g. 80) to wrap (decided
+      // exclusively by the browser).This happens even in monospace fonts.
+      // Empirically adding 2px as correction to be sure wrapping won't happen in these
+      // cases so it doesn' block further experimentation with the SHRINK_MODE.
+      // This was previously set to 1px but due to to a more aggressive
+      // text wrapping (via word-break: break-all; - check .contextText)
+      // we need to be even more lenient in some cases.
+      // If we find another way to avoid this correction we will change it.
+      const dontWrapCorrection = '2px';
+      stylesToUpdate[
+        '--diff-max-width'
+      ] = `calc(${contentWidth} + ${lineNumberWidth} + ${sectionRightBorder} + ${dontWrapCorrection})`;
+    } else {
+      stylesToUpdate['--diff-max-width'] = 'none';
+    }
     if (prefs.font_size) {
       stylesToUpdate['--font-size'] = `${prefs.font_size}px`;
     }
 
     this.updateStyles(stylesToUpdate);
-
-    if (this.diff && !this.noRenderOnPrefsChange) {
-      this._debounceRenderDiffTable();
-    }
   }
 
   _renderPrefsChanged(renderPrefs?: RenderPreferences) {
@@ -759,6 +812,10 @@ export class GrDiff extends PolymerElement {
     if (renderPrefs.hide_line_length_indicator) {
       this.classList.add('hide-line-length-indicator');
     }
+    if (this.prefs) {
+      this._updatePreferenceStyles(this.prefs, renderPrefs);
+    }
+    this.$.diffBuilder.updateRenderPrefs(renderPrefs);
   }
 
   _diffChanged(newValue?: DiffInfo) {
@@ -825,9 +882,9 @@ export class GrDiff extends PolymerElement {
     );
     this._setLoading(false);
     this._unobserveIncrementalNodes();
-    this._incrementalNodeObserver = (dom(
-      this
-    ) as PolymerDomWrapper).observeNodes(info => {
+    this._incrementalNodeObserver = (
+      dom(this) as PolymerDomWrapper
+    ).observeNodes(info => {
       const addedThreadEls = info.addedNodes.filter(isThreadEl);
       // Removed nodes do not need to be handled because all this code does is
       // adding a slot for the added thread elements, and the extra slots do
@@ -893,7 +950,7 @@ export class GrDiff extends PolymerElement {
       // Safari is not binding newly created comment-thread
       // with the slot somehow, replace itself will rebind it
       // @see Issue 11182
-      if (lastEl && lastEl.replaceWith) {
+      if (isSafari() && lastEl && lastEl.replaceWith) {
         lastEl.replaceWith(lastEl);
       }
 

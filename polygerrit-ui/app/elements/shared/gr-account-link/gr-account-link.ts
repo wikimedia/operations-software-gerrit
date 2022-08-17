@@ -16,19 +16,14 @@
  */
 
 import '../gr-account-label/gr-account-label';
-import '../../../styles/shared-styles';
-import {PolymerElement} from '@polymer/polymer/polymer-element';
-import {htmlTemplate} from './gr-account-link_html';
 import {GerritNav} from '../../core/gr-navigation/gr-navigation';
-import {customElement, property} from '@polymer/decorators';
 import {AccountInfo, ChangeInfo} from '../../../types/common';
+import {LitElement, css, html} from 'lit';
+import {customElement, property} from 'lit/decorators';
+import {ParsedChangeInfo} from '../../../types/types';
 
 @customElement('gr-account-link')
-class GrAccountLink extends PolymerElement {
-  static get template() {
-    return htmlTemplate;
-  }
-
+export class GrAccountLink extends LitElement {
   @property({type: String})
   voteableText?: string;
 
@@ -41,7 +36,7 @@ class GrAccountLink extends PolymerElement {
    * related features like adding the user as a reviewer.
    */
   @property({type: Object})
-  change?: ChangeInfo;
+  change?: ChangeInfo | ParsedChangeInfo;
 
   /**
    * Should this user be considered to be in the attention set, regardless
@@ -69,6 +64,44 @@ class GrAccountLink extends PolymerElement {
    */
   @property({type: Boolean})
   firstName = false;
+
+  static override get styles() {
+    return [
+      css`
+        :host {
+          display: inline-block;
+          vertical-align: top;
+        }
+        a {
+          color: var(--primary-text-color);
+          text-decoration: none;
+        }
+        gr-account-label::part(gr-account-label-text):hover {
+          text-decoration: underline !important;
+        }
+      `,
+    ];
+  }
+
+  override render() {
+    if (!this.account) return;
+    return html`<span>
+      <a href="${this._computeOwnerLink(this.account)}">
+        <gr-account-label
+          .account="${this.account}"
+          .change="${this.change}"
+          ?forceAttention=${this.forceAttention}
+          ?highlightAttention=${this.highlightAttention}
+          ?hideAvatar=${this.hideAvatar}
+          ?hideStatus=${this.hideStatus}
+          ?firstName=${this.firstName}
+          .voteableText=${this.voteableText}
+          exportparts="gr-account-label-text: gr-account-link-text"
+        >
+        </gr-account-label>
+      </a>
+    </span>`;
+  }
 
   _computeOwnerLink(account?: AccountInfo) {
     if (!account) {

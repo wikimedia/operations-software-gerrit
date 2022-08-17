@@ -14,6 +14,7 @@
 
 package com.google.gerrit.server.mail.send;
 
+import static com.google.gerrit.entities.Patch.PATCHSET_LEVEL;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.base.Strings;
@@ -36,10 +37,9 @@ import com.google.gerrit.mail.MailProcessingUtil;
 import com.google.gerrit.server.CommentsUtil;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.mail.receive.Protocol;
+import com.google.gerrit.server.patch.DiffNotAvailableException;
 import com.google.gerrit.server.patch.PatchFile;
-import com.google.gerrit.server.patch.PatchList;
-import com.google.gerrit.server.patch.PatchListNotAvailableException;
-import com.google.gerrit.server.patch.PatchListObjectTooLargeException;
+import com.google.gerrit.server.patch.filediff.FileDiffOutput;
 import com.google.gerrit.server.util.LabelVote;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
@@ -72,23 +72,23 @@ public class CommentSender extends ReplyToChangeSender {
     public PatchFile fileData;
     public List<Comment> comments = new ArrayList<>();
 
-    /** @return a web link to a comment for a change. */
+    /** Returns a web link to a comment for a change. */
     public String getCommentLink(String uuid) {
       return args.urlFormatter.get().getInlineCommentView(change, uuid).orElse(null);
     }
 
-    /** @return a web link to the comment tab view of a change. */
+    /** Returns a web link to the comment tab view of a change. */
     public String getCommentsTabLink() {
       return args.urlFormatter.get().getCommentsTabView(change).orElse(null);
     }
 
-    /** @return a web link to the findings tab view of a change. */
+    /** Returns a web link to the findings tab view of a change. */
     public String getFindingsTabLink() {
       return args.urlFormatter.get().getFindingsTabView(change).orElse(null);
     }
 
     /**
-     * @return A title for the group, i.e. "Commit Message", "Merge List", or "File [[filename]]".
+     * Returns a title for the group, i.e. "Commit Message", "Merge List", or "File [[filename]]".
      */
     public String getTitle() {
       if (Patch.COMMIT_MSG.equals(filename)) {
@@ -181,8 +181,8 @@ public class CommentSender extends ReplyToChangeSender {
   }
 
   /**
-   * @return a list of FileCommentGroup objects representing the inline comments grouped by the
-   *     file.
+   * Returns a list of FileCommentGroup objects representing the inline comments grouped by the
+   * file.
    */
   private List<CommentSender.FileCommentGroup> getGroupedInlineComments(Repository repo) {
     List<CommentSender.FileCommentGroup> groups = new ArrayList<>();
@@ -198,30 +198,30 @@ public class CommentSender extends ReplyToChangeSender {
         currentGroup = new FileCommentGroup();
         currentGroup.filename = c.key.filename;
         currentGroup.patchSetId = c.key.patchSetId;
-        // Get the patch list:
-        PatchList patchList = null;
+        // Get the modified files:
+        Map<String, FileDiffOutput> modifiedFiles = null;
         try {
-          patchList = getPatchList(c.key.patchSetId);
-        } catch (PatchListObjectTooLargeException e) {
-          logger.atWarning().log("Failed to get patch list: %s", e.getMessage());
-        } catch (PatchListNotAvailableException e) {
-          logger.atSevere().withCause(e).log("Failed to get patch list");
+          modifiedFiles = listModifiedFiles(c.key.patchSetId);
+        } catch (DiffNotAvailableException e) {
+          logger.atSevere().withCause(e).log("Failed to get modified files");
         }
 
         groups.add(currentGroup);
-        if (patchList != null) {
+        if (modifiedFiles != null && !modifiedFiles.isEmpty()) {
           try {
-            currentGroup.fileData = new PatchFile(repo, patchList, c.key.filename);
+            currentGroup.fileData = new PatchFile(repo, modifiedFiles, c.key.filename);
           } catch (IOException e) {
             logger.atWarning().withCause(e).log(
                 "Cannot load %s from %s in %s",
-                c.key.filename, patchList.getNewId().name(), projectState.getName());
+                c.key.filename,
+                modifiedFiles.values().iterator().next().newCommitId().name(),
+                projectState.getName());
             currentGroup.fileData = null;
           }
         }
       }
 
-      if (currentGroup.fileData != null) {
+      if (currentGroup.filename.equals(PATCHSET_LEVEL) || currentGroup.fileData != null) {
         currentGroup.comments.add(c);
       }
     }
@@ -268,7 +268,7 @@ public class CommentSender extends ReplyToChangeSender {
   }
 
   /**
-   * @return the lines of file content in fileData that are encompassed by range on the given side.
+   * Returns the lines of file content in fileData that are encompassed by range on the given side.
    */
   private List<String> getLinesByRange(Comment.Range range, PatchFile fileData, short side) {
     List<String> lines = new ArrayList<>();
@@ -331,9 +331,9 @@ public class CommentSender extends ReplyToChangeSender {
   }
 
   /**
-   * @return a shortened version of the given comment's message. Will be shortened to 100 characters
-   *     or the first line, or following the last period within the first 100 characters, whichever
-   *     is shorter. If the message is shortened, an ellipsis is appended.
+   * Returns a shortened version of the given comment's message. Will be shortened to 100 characters
+   * or the first line, or following the last period within the first 100 characters, whichever is
+   * shorter. If the message is shortened, an ellipsis is appended.
    */
   protected static String getShortenedCommentMessage(String message) {
     int threshold = 100;
@@ -369,8 +369,8 @@ public class CommentSender extends ReplyToChangeSender {
   }
 
   /**
-   * @return grouped inline comment data mapped to data structures that are suitable for passing
-   *     into Soy.
+   * Returns grouped inline comment data mapped to data structures that are suitable for passing
+   * into Soy.
    */
   private List<Map<String, Object>> getCommentGroupsTemplateData(Repository repo) {
     List<Map<String, Object>> commentGroups = new ArrayList<>();
@@ -383,7 +383,9 @@ public class CommentSender extends ReplyToChangeSender {
       List<Map<String, Object>> commentsList = new ArrayList<>();
       for (Comment comment : group.comments) {
         Map<String, Object> commentData = new HashMap<>();
-        commentData.put("lines", getLinesOfComment(comment, group.fileData));
+        if (group.fileData != null) {
+          commentData.put("lines", getLinesOfComment(comment, group.fileData));
+        }
         commentData.put("message", comment.message.trim());
         List<CommentFormatter.Block> blocks = CommentFormatter.parse(comment.message);
         commentData.put("messageBlocks", commentBlocksToSoyData(blocks));

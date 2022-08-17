@@ -32,9 +32,16 @@ import {
   InheritedBooleanInfo,
 } from '../../../types/common';
 import {InheritedBooleanInfoConfiguredValue} from '../../../constants/constants';
-import {GrAutocomplete} from '../../shared/gr-autocomplete/gr-autocomplete';
+import {GrTypedAutocomplete} from '../../shared/gr-autocomplete/gr-autocomplete';
 import {IronAutogrowTextareaElement} from '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
 import {appContext} from '../../../services/app-context';
+import {Subject} from 'rxjs';
+import {
+  repoConfig$,
+  serverConfig$,
+} from '../../../services/config/config-model';
+import {takeUntil} from 'rxjs/operators';
+import {IronInputElement} from '@polymer/iron-input/iron-input';
 
 const SUGGESTIONS_LIMIT = 15;
 const REF_PREFIX = 'refs/heads/';
@@ -42,8 +49,8 @@ const REF_PREFIX = 'refs/heads/';
 export interface GrCreateChangeDialog {
   $: {
     privateChangeCheckBox: HTMLInputElement;
-    branchInput: GrAutocomplete;
-    tagNameInput: HTMLInputElement;
+    branchInput: GrTypedAutocomplete<BranchName>;
+    tagNameInput: IronInputElement;
     messageInput: IronAutogrowTextareaElement;
   };
 }
@@ -57,19 +64,19 @@ export class GrCreateChangeDialog extends PolymerElement {
   repoName?: RepoName;
 
   @property({type: String})
-  branch?: BranchName;
+  branch = '' as BranchName;
 
   @property({type: Object})
   _repoConfig?: ConfigInfo;
 
   @property({type: String})
-  subject?: string;
+  subject = '';
 
   @property({type: String})
   topic?: string;
 
   @property({type: Object})
-  _query?: (input: string) => Promise<{name: string}[]>;
+  _query?: (input: string) => Promise<{name: BranchName}[]>;
 
   @property({type: String})
   baseChange?: ChangeId;
@@ -84,46 +91,37 @@ export class GrCreateChangeDialog extends PolymerElement {
   canCreate = false;
 
   @property({type: Boolean})
-  _privateChangesEnabled?: boolean;
+  _privateChangesEnabled = false;
 
   restApiService = appContext.restApiService;
+
+  disconnected$ = new Subject();
 
   constructor() {
     super();
     this._query = (input: string) => this._getRepoBranchesSuggestions(input);
   }
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
-    if (!this.repoName) {
-      return Promise.resolve();
-    }
+    if (!this.repoName) return;
 
-    const promises = [];
+    repoConfig$.pipe(takeUntil(this.disconnected$)).subscribe(config => {
+      this.privateByDefault = config?.private_by_default;
+    });
 
-    promises.push(
-      this.restApiService.getProjectConfig(this.repoName).then(config => {
-        if (!config) return;
-        this.privateByDefault = config.private_by_default;
-      })
-    );
-
-    promises.push(
-      this.restApiService.getConfig().then(config => {
-        if (!config) {
-          return;
-        }
-
-        this._privateChangesEnabled =
-          config && config.change && !config.change.disable_private_changes;
-      })
-    );
-
-    return Promise.all(promises);
+    serverConfig$.pipe(takeUntil(this.disconnected$)).subscribe(config => {
+      this._privateChangesEnabled =
+        config?.change?.disable_private_changes ?? false;
+    });
   }
 
-  _computeBranchClass(baseChange: boolean) {
+  override disconnectedCallback() {
+    this.disconnected$.next();
+    super.disconnectedCallback();
+  }
+
+  _computeBranchClass(baseChange?: ChangeId) {
     return baseChange ? 'hide' : '';
   }
 
@@ -168,19 +166,19 @@ export class GrCreateChangeDialog extends PolymerElement {
       .getRepoBranches(input, this.repoName, SUGGESTIONS_LIMIT)
       .then(response => {
         if (!response) return [];
-        const branches = [];
+        const branches: Array<{name: BranchName}> = [];
         for (const branchInfo of response) {
           let name: string = branchInfo.ref;
           if (name.startsWith('refs/heads/')) {
             name = name.substring('refs/heads/'.length);
           }
-          branches.push({name});
+          branches.push({name: name as BranchName});
         }
         return branches;
       });
   }
 
-  _formatBooleanString(config: InheritedBooleanInfo) {
+  _formatBooleanString(config?: InheritedBooleanInfo) {
     if (
       config &&
       config.configured_value === InheritedBooleanInfoConfiguredValue.TRUE

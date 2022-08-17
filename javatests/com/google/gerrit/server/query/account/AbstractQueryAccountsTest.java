@@ -58,13 +58,14 @@ import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.ServerInitiated;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountConfig;
+import com.google.gerrit.server.account.AccountDelta;
 import com.google.gerrit.server.account.AccountManager;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.account.Accounts;
 import com.google.gerrit.server.account.AccountsUpdate;
 import com.google.gerrit.server.account.AuthRequest;
-import com.google.gerrit.server.account.InternalAccountUpdate;
 import com.google.gerrit.server.account.externalids.ExternalId;
+import com.google.gerrit.server.account.externalids.ExternalIdKeyFactory;
 import com.google.gerrit.server.account.externalids.ExternalIds;
 import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.server.config.AllUsersName;
@@ -139,12 +140,18 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
 
   @Inject protected ExternalIds externalIds;
 
+  @Inject private ExternalIdKeyFactory externalIdKeyFactory;
+
+  @Inject protected AuthRequest.Factory authRequestFactory;
+
   protected LifecycleManager lifecycle;
   protected Injector injector;
   protected AccountInfo currentUserInfo;
   protected CurrentUser admin;
 
   protected abstract Injector createInjector();
+
+  protected void validateAssumptions() {}
 
   @Before
   public void setUpInjector() throws Exception {
@@ -155,6 +162,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     lifecycle.start();
     initAfterLifecycleStart();
     setUpDatabase();
+    validateAssumptions();
   }
 
   @After
@@ -604,7 +612,6 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
   @Test
   public void reindex() throws Exception {
     AccountInfo user1 = newAccountWithFullName("tester", "Test Usre");
-
     // update account without reindex so that account index is stale
     Account.Id accountId = Account.id(user1._accountId);
     String newName = "Test User";
@@ -615,13 +622,14 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
       md.getCommitBuilder().setCommitter(ident);
       new AccountConfig(accountId, allUsers, repo)
           .load()
-          .setAccountUpdate(InternalAccountUpdate.builder().setFullName(newName).build())
+          .setAccountDelta(AccountDelta.builder().setFullName(newName).build())
           .commit(md);
     }
-
-    assertQuery("name:" + quote(user1.name), user1);
-    assertQuery("name:" + quote(newName));
-
+    // Querying for the account here will not result in a stale document because
+    // we load AccountStates from the cache after reading documents from the index
+    // which means we always read fresh data when matching.
+    //
+    // Reindex document
     gApi.accounts().id(user1.username).index();
     assertQuery("name:" + quote(user1.name));
     assertQuery("name:" + quote(newName), user1);
@@ -656,7 +664,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     List<AccountExternalIdInfo> externalIdInfos = gApi.accounts().self().getExternalIds();
     List<ByteArrayWrapper> blobs = new ArrayList<>();
     for (AccountExternalIdInfo info : externalIdInfos) {
-      Optional<ExternalId> extId = externalIds.get(ExternalId.Key.parse(info.identity));
+      Optional<ExternalId> extId = externalIds.get(externalIdKeyFactory.parse(info.identity));
       assertThat(extId).isPresent();
       blobs.add(new ByteArrayWrapper(extId.get().toByteArray()));
     }
@@ -769,9 +777,10 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
   private Account.Id createAccount(String username, String fullName, String email, boolean active)
       throws Exception {
     try (ManualRequestContext ctx = oneOffRequestContext.open()) {
-      Account.Id id = accountManager.authenticate(AuthRequest.forUser(username)).getAccountId();
+      Account.Id id =
+          accountManager.authenticate(authRequestFactory.createForUser(username)).getAccountId();
       if (email != null) {
-        accountManager.link(id, AuthRequest.forEmail(email));
+        accountManager.link(id, authRequestFactory.createForEmail(email));
       }
       accountsUpdate
           .get()
@@ -788,7 +797,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
   private void addEmails(AccountInfo account, String... emails) throws Exception {
     Account.Id id = Account.id(account._accountId);
     for (String email : emails) {
-      accountManager.link(id, AuthRequest.forEmail(email));
+      accountManager.link(id, authRequestFactory.createForEmail(email));
     }
     accountIndexer.index(id);
   }

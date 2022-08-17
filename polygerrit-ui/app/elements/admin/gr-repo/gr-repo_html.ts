@@ -17,10 +17,16 @@
 import {html} from '@polymer/polymer/lib/utils/html-tag';
 
 export const htmlTemplate = html`
+  <style include="gr-font-styles">
+    /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+  </style>
   <style include="shared-styles">
     /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
   </style>
   <style include="gr-subpage-styles">
+    .info {
+      margin-bottom: var(--spacing-xl);
+    }
     h2.edited:after {
       color: var(--deemphasized-text-color);
       content: ' *';
@@ -87,14 +93,15 @@ export const htmlTemplate = html`
         <fieldset>
           <h3 id="Description" class="heading-3">Description</h3>
           <fieldset>
-            <iron-autogrow-textarea
+            <gr-textarea
               id="descriptionInput"
               class="description"
               autocomplete="on"
               placeholder="<Insert repo description here>"
-              bind-value="{{_repoConfig.description}}"
+              rows="4"
+              text="{{_repoConfig.description}}"
               disabled$="[[_readOnly]]"
-            ></iron-autogrow-textarea>
+            ></gr-textarea>
           </fieldset>
           <h3 id="Options" class="heading-3">Repository Options</h3>
           <fieldset id="options">

@@ -19,18 +19,15 @@ import '../../../styles/shared-styles';
 import '../../shared/gr-list-view/gr-list-view';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-documentation-search_html';
-import {
-  ListViewMixin,
-  ListViewParams,
-} from '../../../mixins/gr-list-view-mixin/gr-list-view-mixin';
 import {getBaseUrl} from '../../../utils/url-util';
 import {customElement, property} from '@polymer/decorators';
 import {DocResult} from '../../../types/common';
 import {fireTitleChange} from '../../../utils/event-util';
 import {appContext} from '../../../services/app-context';
+import {ListViewParams} from '../../gr-app-types';
 
 @customElement('gr-documentation-search')
-export class GrDocumentationSearch extends ListViewMixin(PolymerElement) {
+export class GrDocumentationSearch extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
@@ -48,19 +45,18 @@ export class GrDocumentationSearch extends ListViewMixin(PolymerElement) {
   _loading = true;
 
   @property({type: String})
-  _filter = '';
+  _filter?: string;
 
   private readonly restApiService = appContext.restApiService;
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     fireTitleChange(this, 'Documentation Search');
   }
 
   _paramsChanged(params: ListViewParams) {
     this._loading = true;
-    this._filter = this.getFilterValue(params);
+    this._filter = params?.filter ?? '';
 
     return this._getDocumentationSearches(this._filter);
   }
@@ -84,6 +80,10 @@ export class GrDocumentationSearch extends ListViewMixin(PolymerElement) {
       return '';
     }
     return `${getBaseUrl()}/${url}`;
+  }
+
+  computeLoadingClass(loading: boolean) {
+    return loading ? 'loading' : '';
   }
 }
 

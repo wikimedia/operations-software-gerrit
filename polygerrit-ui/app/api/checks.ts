@@ -14,8 +14,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import {CommentRange} from './core';
+import {ChangeInfo} from './rest-api';
 
-export interface ChecksPluginApi {
+export declare interface ChecksPluginApi {
   /**
    * Must only be called once. You cannot register twice. You cannot unregister.
    */
@@ -27,9 +29,26 @@ export interface ChecksPluginApi {
    * polling interval to pass.
    */
   announceUpdate(): void;
+
+  /**
+   * Updates an individual result.
+   *
+   * This can be used for lazy loading detailed information. For example, if you
+   * are using the `check-result-expanded` endpoint, then you can load more
+   * result details when the user expands a result row.
+   *
+   * The parameter `run` is only used to *find* the correct run for updating the
+   * result. It will only be used for comparing `change`, `patchset`, `attempt`
+   * and `checkName`. Its properties other than `results` will not be updated.
+   *
+   * For us being able to identify the result that you want to update you have
+   * to set the `externalId` property. An undefined `externalId` will result in
+   * an error.
+   */
+  updateResult(run: CheckRun, result: CheckResult): void;
 }
 
-export interface ChecksApiConfig {
+export declare interface ChecksApiConfig {
   /**
    * How often should the provider be called for new CheckData while the user
    * navigates change related pages and the browser tab remains visible?
@@ -38,17 +57,16 @@ export interface ChecksApiConfig {
   fetchPollingIntervalSeconds: number;
 }
 
-export interface ChangeData {
+export declare interface ChangeData {
   changeNumber: number;
   patchsetNumber: number;
   patchsetSha: string;
   repo: string;
-  commmitMessage?: string;
-  /* TODO(brohlfs): Add dep to Rest API types and replace type by ChangeInfo. */
-  changeInfo: unknown;
+  commitMessage?: string;
+  changeInfo: ChangeInfo;
 }
 
-export interface ChecksProvider {
+export declare interface ChecksProvider {
   /**
    * Gerrit calls this method when ...
    * - ... the change or diff page is loaded.
@@ -59,7 +77,7 @@ export interface ChecksProvider {
   fetch(change: ChangeData): Promise<FetchResponse>;
 }
 
-export interface FetchResponse {
+export declare interface FetchResponse {
   responseCode: ResponseCode;
 
   /** Only relevant when the responseCode is ERROR. */
@@ -102,7 +120,7 @@ export enum ResponseCode {
  * runs are completed the users' interest shifts to results: What do I have to
  * fix? The only actions that can be associated with runs are RUN and CANCEL.
  */
-export interface CheckRun {
+export declare interface CheckRun {
   /**
    * Gerrit requests check runs and results from the plugin by change number and
    * patchset number. So these two properties can as well be left empty when
@@ -126,8 +144,8 @@ export interface CheckRun {
    * attempt. Every run has its own attempt numbering, so attempt 3 of run A is
    * not directly related to attempt 3 of run B.
    *
-   * RUNNABLE runs must use `undefined` as attempt.
-   * COMPLETED and RUNNING runs must use an attempt number >=0.
+   * The attempt number must be >=0. Only if you have just one RUNNABLE attempt,
+   * then you can leave it undefined.
    *
    * TBD: Optionally providing aggregate information about former attempts will
    * probably be a useful feature, but we are deferring the exact data modeling
@@ -166,7 +184,8 @@ export interface CheckRun {
 
   /**
    * RUNNABLE:  Not run (yet). Mostly useful for runs that the user can trigger
-   *            (see actions). Cannot contain results.
+   *            (see actions) and for indicating that a check was not run at a
+   *            later attempt. Cannot contain results.
    * RUNNING:   Subsumes "scheduled".
    * COMPLETED: The attempt of the run has finished. Does not indicate at all
    *            whether the run was successful or not. Outcomes can and should
@@ -221,17 +240,30 @@ export interface CheckRun {
   results?: CheckResult[];
 }
 
-export interface Action {
+export declare interface Action {
   name: string;
   tooltip?: string;
   /**
-   * TODO: Maybe drop this property? Do we really need it?
-   *
    * Primary actions will get a more prominent treatment in the UI. For example
    * primary actions might be rendered as buttons versus just menu entries in
    * an overflow menu.
    */
-  primary: boolean;
+  primary?: boolean;
+  /**
+   * Summary actions will get an even more prominent treatment in the UI. They
+   * will show up in the checks summary right below the commit message. This
+   * only affects top-level actions (i.e. actions in FetchResponse).
+   */
+  summary?: boolean;
+  /**
+   * Renders the action button in a disabled state. That can be useful for
+   * actions that are present most of the time, but sometimes don't apply. Then
+   * a grayed out button with a tooltip makes it easier for the user to
+   * understand why an expected action is not available. The tooltip should then
+   * contain a message about why the disabled state was set, not just about what
+   * the action would normally do.
+   */
+  disabled?: boolean;
   callback: ActionCallback;
 }
 
@@ -272,7 +304,7 @@ export type ActionCallback = (
  * If `message` is empty or undefined, then the `Triggering ...` toast will just
  * be hidden and no further toast will be shown.
  */
-export interface ActionResult {
+export declare interface ActionResult {
   /** An empty errorMessage means success. */
   message?: string;
   /**
@@ -290,7 +322,7 @@ export enum RunStatus {
   COMPLETED = 'COMPLETED',
 }
 
-export interface CheckResult {
+export declare interface CheckResult {
   /**
    * An optional opaque identifier not used by Gerrit directly, but might be
    * used by plugin extensions and callbacks.
@@ -298,6 +330,11 @@ export interface CheckResult {
   externalId?: string;
 
   /**
+   * SUCCESS: Indicates that some build, test or check is passing. A COMPLETED
+   *          run without results will also be treated as "passing" and will get
+   *          an artificial SUCCESS result. But you can also make this explicit,
+   *          which also allows one run to have multiple "passing" results,
+   *          maybe along with results of other categories.
    * INFO:    The user will typically not bother to look into this category,
    *          only for looking up something that they are searching for. Can be
    *          used for reporting secondary metrics and analysis, or a wider
@@ -370,6 +407,11 @@ export interface CheckResult {
   links?: Link[];
 
   /**
+   * Links to lines of code. The referenced path must be part of this patchset.
+   */
+  codePointers?: CodePointer[];
+
+  /**
    * Callbacks to the plugin. Must be implemented individually by each
    * plugin. Actions are rendered as buttons. If there are more than two actions
    * per result, then further actions are put into an overflow menu. Sort order
@@ -383,12 +425,13 @@ export interface CheckResult {
 }
 
 export enum Category {
+  SUCCESS = 'SUCCESS',
   INFO = 'INFO',
   WARNING = 'WARNING',
   ERROR = 'ERROR',
 }
 
-export interface Tag {
+export declare interface Tag {
   name: string;
   tooltip?: string;
   color?: TagColor;
@@ -404,19 +447,22 @@ export enum TagColor {
   BROWN = 'brown',
 }
 
-export interface Link {
+export declare interface Link {
   /** Must begin with 'http'. */
   url: string;
   tooltip?: string;
   /**
-   * TODO: Maybe drop this property? Do we really need it?
-   *
    * Primary links will get a more prominent treatment in the UI, e.g. being
    * always visible in the results table or also showing up in the change page
    * summary of checks.
    */
   primary: boolean;
   icon: LinkIcon;
+}
+
+export declare interface CodePointer {
+  path: string;
+  range: CommentRange;
 }
 
 export enum LinkIcon {
@@ -427,4 +473,6 @@ export enum LinkIcon {
   DOWNLOAD_MOBILE = 'download_mobile',
   HELP_PAGE = 'help_page',
   REPORT_BUG = 'report_bug',
+  CODE = 'code',
+  FILE_PRESENT = 'file_present',
 }

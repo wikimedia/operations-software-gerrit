@@ -15,6 +15,7 @@
 package com.google.gerrit.index;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkState;
 import static java.util.Objects.requireNonNull;
 
 import com.google.common.base.CharMatcher;
@@ -22,6 +23,7 @@ import com.google.gerrit.common.Nullable;
 import com.google.gerrit.exceptions.StorageException;
 import java.io.IOException;
 import java.sql.Timestamp;
+import java.util.Optional;
 
 /**
  * Definition of a field stored in the secondary index.
@@ -65,6 +67,11 @@ public final class FieldDef<I, T> {
     T get(I input) throws IOException;
   }
 
+  @FunctionalInterface
+  public interface Setter<I, T> {
+    void set(I object, T value);
+  }
+
   public static class Builder<T> {
     private final FieldType<T> type;
     private final String name;
@@ -81,11 +88,20 @@ public final class FieldDef<I, T> {
     }
 
     public <I> FieldDef<I, T> build(Getter<I, T> getter) {
-      return new FieldDef<>(name, type, stored, false, getter);
+      return new FieldDef<>(name, type, stored, false, getter, null);
+    }
+
+    public <I> FieldDef<I, T> build(Getter<I, T> getter, Setter<I, T> setter) {
+      return new FieldDef<>(name, type, stored, false, getter, setter);
     }
 
     public <I> FieldDef<I, Iterable<T>> buildRepeatable(Getter<I, Iterable<T>> getter) {
-      return new FieldDef<>(name, type, stored, true, getter);
+      return new FieldDef<>(name, type, stored, true, getter, null);
+    }
+
+    public <I> FieldDef<I, Iterable<T>> buildRepeatable(
+        Getter<I, Iterable<T>> getter, Setter<I, Iterable<T>> setter) {
+      return new FieldDef<>(name, type, stored, true, getter, setter);
     }
   }
 
@@ -96,9 +112,15 @@ public final class FieldDef<I, T> {
 
   private final boolean repeatable;
   private final Getter<I, T> getter;
+  private final Optional<Setter<I, T>> setter;
 
   private FieldDef(
-      String name, FieldType<?> type, boolean stored, boolean repeatable, Getter<I, T> getter) {
+      String name,
+      FieldType<?> type,
+      boolean stored,
+      boolean repeatable,
+      Getter<I, T> getter,
+      @Nullable Setter<I, T> setter) {
     checkArgument(
         !(repeatable && type == FieldType.INTEGER_RANGE),
         "Range queries against repeated fields are unsupported");
@@ -107,6 +129,7 @@ public final class FieldDef<I, T> {
     this.stored = stored;
     this.repeatable = repeatable;
     this.getter = requireNonNull(getter);
+    this.setter = Optional.ofNullable(setter);
   }
 
   private static String checkName(String name) {
@@ -115,17 +138,17 @@ public final class FieldDef<I, T> {
     return name;
   }
 
-  /** @return name of the field. */
+  /** Returns name of the field. */
   public String getName() {
     return name;
   }
 
-  /** @return type of the field; for repeatable fields, the inner type, not the iterable type. */
+  /** Returns type of the field; for repeatable fields, the inner type, not the iterable type. */
   public FieldType<?> getType() {
     return type;
   }
 
-  /** @return whether the field should be stored in the index. */
+  /** Returns whether the field should be stored in the index. */
   public boolean isStored() {
     return stored;
   }
@@ -145,7 +168,42 @@ public final class FieldDef<I, T> {
     }
   }
 
-  /** @return whether the field is repeatable. */
+  /**
+   * Set the field contents back to an object. Used to reconstruct fields from indexed values. No-op
+   * if the field can't be reconstructed.
+   *
+   * @param object input object.
+   * @param doc indexed document
+   * @return {@code true} if the field was set, {@code false} otherwise
+   */
+  @SuppressWarnings("unchecked")
+  public boolean setIfPossible(I object, StoredValue doc) {
+    if (!setter.isPresent()) {
+      return false;
+    }
+
+    if (FieldType.STRING_TYPES.stream().anyMatch(t -> t.getName().equals(getType().getName()))) {
+      setter.get().set(object, (T) (isRepeatable() ? doc.asStrings() : doc.asString()));
+      return true;
+    } else if (FieldType.INTEGER_TYPES.stream()
+        .anyMatch(t -> t.getName().equals(getType().getName()))) {
+      setter.get().set(object, (T) (isRepeatable() ? doc.asIntegers() : doc.asInteger()));
+      return true;
+    } else if (FieldType.LONG.getName().equals(getType().getName())) {
+      setter.get().set(object, (T) (isRepeatable() ? doc.asLongs() : doc.asLong()));
+      return true;
+    } else if (FieldType.STORED_ONLY.getName().equals(getType().getName())) {
+      setter.get().set(object, (T) (isRepeatable() ? doc.asByteArrays() : doc.asByteArray()));
+      return true;
+    } else if (FieldType.TIMESTAMP.getName().equals(getType().getName())) {
+      checkState(!isRepeatable(), "can't repeat timestamp values");
+      setter.get().set(object, (T) doc.asTimestamp());
+      return true;
+    }
+    return false;
+  }
+
+  /** Returns whether the field is repeatable. */
   public boolean isRepeatable() {
     return repeatable;
   }

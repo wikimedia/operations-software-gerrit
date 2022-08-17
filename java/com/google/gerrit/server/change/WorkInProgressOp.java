@@ -18,7 +18,6 @@ import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
@@ -30,7 +29,7 @@ import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ChangeUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.Context;
+import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.gerrit.server.update.RepoView;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
@@ -65,7 +64,7 @@ public class WorkInProgressOp implements BatchUpdateOp {
   private Change change;
   private ChangeNotes notes;
   private PatchSet ps;
-  private ChangeMessage cmsg;
+  private String mailMessage;
 
   @Inject
   WorkInProgressOp(
@@ -99,11 +98,11 @@ public class WorkInProgressOp implements BatchUpdateOp {
     }
     change.setLastUpdatedOn(ctx.getWhen());
     update.setWorkInProgress(workInProgress);
-    addMessage(ctx, update);
+    addMessage(ctx);
     return true;
   }
 
-  private void addMessage(ChangeContext ctx, ChangeUpdate update) {
+  private void addMessage(ChangeContext ctx) {
     Change c = ctx.getChange();
     StringBuilder buf =
         new StringBuilder(c.isWorkInProgress() ? "Set Work In Progress" : "Set Ready For Review");
@@ -114,20 +113,18 @@ public class WorkInProgressOp implements BatchUpdateOp {
       buf.append(m);
     }
 
-    cmsg =
-        ChangeMessagesUtil.newMessage(
+    mailMessage =
+        cmUtil.setChangeMessage(
             ctx,
             buf.toString(),
             c.isWorkInProgress()
                 ? ChangeMessagesUtil.TAG_SET_WIP
                 : ChangeMessagesUtil.TAG_SET_READY);
-
-    cmUtil.addChangeMessage(update, cmsg);
   }
 
   @Override
-  public void postUpdate(Context ctx) {
-    stateChanged.fire(change, ps, ctx.getAccount(), ctx.getWhen());
+  public void postUpdate(PostUpdateContext ctx) {
+    stateChanged.fire(ctx.getChangeData(change), ps, ctx.getAccount(), ctx.getWhen());
     NotifyResolver.Result notify = ctx.getNotify(change.getId());
     if (workInProgress
         || notify.handling().compareTo(NotifyHandling.OWNER_REVIEWERS) < 0
@@ -147,9 +144,10 @@ public class WorkInProgressOp implements BatchUpdateOp {
             notes,
             ps,
             ctx.getIdentifiedUser(),
-            cmsg,
+            mailMessage,
+            ctx.getWhen(),
             ImmutableList.of(),
-            cmsg.getMessage(),
+            mailMessage,
             ImmutableList.of(),
             repoView)
         .sendAsync();

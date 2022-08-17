@@ -42,20 +42,23 @@ export const htmlTemplate = html`
       display: inline-block;
     }
     gr-button.addReviewer {
-      --padding: 1px 4px;
+      --gr-button-padding: 1px 0px;
       vertical-align: top;
       top: 1px;
     }
     gr-button {
       line-height: var(--line-height-normal);
-      --gr-button: {
-        padding: 0px 0px;
-      }
+      --gr-button-padding: 0px;
     }
     gr-account-chip {
       line-height: var(--line-height-normal);
       vertical-align: top;
       display: inline-block;
+    }
+    gr-vote-chip {
+      --gr-vote-chip-width: 14px;
+      --gr-vote-chip-height: 14px;
+      margin-right: var(--spacing-s);
     }
   </style>
   <div class="container">
@@ -66,10 +69,15 @@ export const htmlTemplate = html`
           account="[[reviewer]]"
           change="[[change]]"
           on-remove="_handleRemove"
-          highlight-attention
+          highlightAttention
           voteable-text="[[_computeVoteableText(reviewer, change)]]"
           removable="[[_computeCanRemoveReviewer(reviewer, mutable)]]"
         >
+          <gr-vote-chip
+            slot="vote-chip"
+            vote="[[_computeVote(reviewer, change)]]"
+            label="[[_computeCodeReviewLabel(change)]]"
+          ></gr-vote-chip>
         </gr-account-chip>
       </template>
       <div class="controlsContainer" hidden$="[[!mutable]]">

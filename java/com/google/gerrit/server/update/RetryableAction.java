@@ -57,6 +57,7 @@ public class RetryableAction<T> {
     PLUGIN_UPDATE,
     REST_READ_REQUEST,
     REST_WRITE_REQUEST,
+    SEND_EMAIL,
   }
 
   @FunctionalInterface
@@ -174,7 +175,7 @@ public class RetryableAction<T> {
           action,
           options.build(),
           t -> exceptionPredicates.stream().anyMatch(p -> p.test(t)));
-    } catch (Throwable t) {
+    } catch (Exception t) {
       Throwables.throwIfUnchecked(t);
       Throwables.throwIfInstanceOf(t, Exception.class);
       throw new IllegalStateException(t);

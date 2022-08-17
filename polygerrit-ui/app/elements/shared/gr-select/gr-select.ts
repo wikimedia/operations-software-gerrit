@@ -34,7 +34,7 @@ export class GrSelect extends PolymerElement {
   }
 
   @property({type: String, notify: true})
-  bindValue?: string;
+  bindValue?: string | number;
 
   get nativeSelect() {
     // gr-select is not a shadow component
@@ -49,14 +49,12 @@ export class GrSelect extends PolymerElement {
     // It's possible to have a value of 0.
     if (this.bindValue !== undefined) {
       // Set for chrome/safari so it happens instantly
-      this.nativeSelect.value = this.bindValue;
+      this.nativeSelect.value = String(this.bindValue);
       // Async needed for firefox to populate value. It was trying to do it
       // before options from a dom-repeat were rendered previously.
       // See https://bugs.chromium.org/p/gerrit/issues/detail?id=7735
       setTimeout(() => {
-        // TODO(TS): maybe should check for undefined before assigning
-        // or fallback to ''
-        this.nativeSelect.value = this.bindValue!;
+        this.nativeSelect.value = String(this.bindValue);
       }, 1);
     }
   }
@@ -65,7 +63,7 @@ export class GrSelect extends PolymerElement {
     this.bindValue = this.nativeSelect.value;
   }
 
-  focus() {
+  override focus() {
     this.nativeSelect.focus();
   }
 
@@ -75,8 +73,7 @@ export class GrSelect extends PolymerElement {
     this.addEventListener('dom-change', () => this._updateValue());
   }
 
-  /** @override */
-  ready() {
+  override ready() {
     super.ready();
     // If not set via the property, set bind-value to the element value.
     if (this.bindValue === undefined && this.nativeSelect.options.length > 0) {

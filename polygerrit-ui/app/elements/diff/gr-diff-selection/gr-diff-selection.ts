@@ -28,7 +28,12 @@ import {customElement, property, observe} from '@polymer/decorators';
 import {DiffInfo} from '../../../types/diff';
 import {Side} from '../../../constants/constants';
 import {GrDiffBuilderElement} from '../gr-diff-builder/gr-diff-builder-element';
-import {getSide, isThreadEl} from '../gr-diff/gr-diff-utils';
+import {
+  getLineElByChild,
+  getSide,
+  getSideByLineEl,
+  isThreadEl,
+} from '../gr-diff/gr-diff-utils';
 
 /**
  * Possible CSS classes indicating the state of selection. Dynamically added/
@@ -71,8 +76,7 @@ export class GrDiffSelection extends PolymerElement {
     addListener(this, 'down', e => this._handleDown(e));
   }
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     this.classList.add(SelectionClass.RIGHT);
   }
@@ -110,7 +114,7 @@ export class GrDiffSelection extends PolymerElement {
     // Handle the down event on comment thread in Polymer 2
     const handled = this._handleDownOnRangeComment(target);
     if (handled) return;
-    const lineEl = this.diffBuilder.getLineElByChild(target);
+    const lineEl = getLineElByChild(target);
     const blameSelected = this._elementDescendedFromClass(target, 'blame');
     if (!lineEl && !blameSelected) {
       return;
@@ -125,7 +129,7 @@ export class GrDiffSelection extends PolymerElement {
         target,
         'gr-comment'
       );
-      const side = this.diffBuilder.getSideByLineEl(lineEl);
+      const side = getSideByLineEl(lineEl);
 
       targetClasses.push(
         side === 'left' ? SelectionClass.LEFT : SelectionClass.RIGHT
@@ -179,9 +183,9 @@ export class GrDiffSelection extends PolymerElement {
     if (this.classList.contains(SelectionClass.COMMENT)) {
       commentSelected = true;
     }
-    const lineEl = this.diffBuilder.getLineElByChild(target);
+    const lineEl = getLineElByChild(target);
     if (!lineEl) return;
-    const side = this.diffBuilder.getSideByLineEl(lineEl);
+    const side = getSideByLineEl(lineEl);
     const text = this._getSelectedText(side, commentSelected);
     if (text && e.clipboardData) {
       e.clipboardData.setData('Text', text);
@@ -191,7 +195,7 @@ export class GrDiffSelection extends PolymerElement {
 
   _getSelection() {
     const diffHosts = querySelectorAll(document.body, 'gr-diff');
-    if (!diffHosts.length) return window.getSelection();
+    if (!diffHosts.length) return document.getSelection();
 
     const curDiffHost = diffHosts.find(diffHost => {
       if (!diffHost?.shadowRoot?.getSelection) return false;
@@ -201,9 +205,9 @@ export class GrDiffSelection extends PolymerElement {
       return selection && selection.type !== 'None';
     });
 
-    return curDiffHost
-      ? curDiffHost.shadowRoot!.getSelection()
-      : window.getSelection();
+    return curDiffHost?.shadowRoot?.getSelection
+      ? curDiffHost.shadowRoot.getSelection()
+      : document.getSelection();
   }
 
   /**
@@ -224,9 +228,9 @@ export class GrDiffSelection extends PolymerElement {
       return this._getCommentLines(sel, side);
     }
     const range = normalize(sel.getRangeAt(0));
-    const startLineEl = this.diffBuilder.getLineElByChild(range.startContainer);
+    const startLineEl = getLineElByChild(range.startContainer);
     if (!startLineEl) return;
-    const endLineEl = this.diffBuilder.getLineElByChild(range.endContainer);
+    const endLineEl = getLineElByChild(range.endContainer);
     // Happens when triple click in side-by-side mode with other side empty.
     const endsAtOtherEmptySide =
       !endLineEl &&
@@ -265,6 +269,11 @@ export class GrDiffSelection extends PolymerElement {
     endOffset: number,
     side: Side
   ) {
+    const skipChunk = this.diff?.content.find(chunk => chunk.skip);
+    if (skipChunk) {
+      startLineNum -= skipChunk.skip!;
+      if (endLineNum) endLineNum -= skipChunk.skip!;
+    }
     const lines = this._getDiffLines(side).slice(startLineNum - 1, endLineNum);
     if (lines.length) {
       lines[lines.length - 1] = lines[lines.length - 1].substring(0, endOffset);

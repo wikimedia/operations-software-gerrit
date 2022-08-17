@@ -18,12 +18,17 @@ import '../../shared/gr-comment-thread/gr-comment-thread';
 import '../gr-diff/gr-diff';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-diff-host_html';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {
+  GerritNav,
+  GeneratedWebLink,
+} from '../../core/gr-navigation/gr-navigation';
+import {
+  anyLineTooLong,
   getLine,
   getRange,
   getSide,
   rangesEqual,
+  SYNTAX_MAX_LINE_LENGTH,
 } from '../gr-diff/gr-diff-utils';
 import {appContext} from '../../../services/app-context';
 import {
@@ -45,13 +50,13 @@ import {
   Base64ImageFile,
   BlameInfo,
   ChangeInfo,
-  CommentRange,
   EditPatchSetNum,
   NumericChangeId,
   ParentPatchSetNum,
   PatchRange,
   PatchSetNum,
   RepoName,
+  UrlEncodedCommentId,
 } from '../../../types/common';
 import {
   DiffInfo,
@@ -80,9 +85,15 @@ import {
 import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {assertIsDefined} from '../../../utils/common-util';
 import {DiffContextExpandedEventDetail} from '../gr-diff-builder/gr-diff-builder';
+import {TokenHighlightLayer} from '../gr-diff-builder/token-highlight-layer';
 import {Timing} from '../../../constants/reporting';
+import {changeComments$} from '../../../services/comments/comments-model';
+import {takeUntil} from 'rxjs/operators';
+import {ChangeComments} from '../gr-comment-api/gr-comment-api';
+import {Subject} from 'rxjs';
+import {RenderPreferences} from '../../../api/diff';
 
-const MSG_EMPTY_BLAME = 'No blame information for this diff.';
+const EMPTY_BLAME = 'No blame information for this diff.';
 
 const EVENT_AGAINST_PARENT = 'diff-against-parent';
 const EVENT_ZERO_REBASE = 'rebase-percent-zero';
@@ -90,10 +101,6 @@ const EVENT_NONZERO_REBASE = 'rebase-percent-nonzero';
 
 // Disable syntax highlighting if the overall diff is too large.
 const SYNTAX_MAX_DIFF_LENGTH = 20000;
-
-// If any line of the diff is more than the character limit, then disable
-// syntax highlighting for the entire file.
-const SYNTAX_MAX_LINE_LENGTH = 500;
 
 // 120 lines is good enough threshold for full-sized window viewport
 const NUM_OF_LINES_THRESHOLD_FOR_VIEWPORT = 120;
@@ -143,12 +150,6 @@ export class GrDiffHost extends PolymerElement {
    * @event show-auth-required
    */
 
-  /**
-   * Fired when a comment is saved or discarded
-   *
-   * @event diff-comments-modified
-   */
-
   @property({type: Number})
   changeNum?: NumericChangeId;
 
@@ -187,10 +188,13 @@ export class GrDiffHost extends PolymerElement {
   commitRange?: CommitRange;
 
   @property({type: Object, notify: true})
+  editWeblinks?: GeneratedWebLink[];
+
+  @property({type: Object, notify: true})
   filesWeblinks: FilesWebLinks | {} = {};
 
   @property({type: Boolean, reflectToAttribute: true})
-  hidden = false;
+  override hidden = false;
 
   @property({type: Boolean})
   noRenderOnPrefsChange = false;
@@ -233,6 +237,9 @@ export class GrDiffHost extends PolymerElement {
   diff?: DiffInfo;
 
   @property({type: Object})
+  changeComments?: ChangeComments;
+
+  @property({type: Object})
   _fetchDiffPromise: Promise<DiffInfo> | null = null;
 
   @property({type: Object})
@@ -257,6 +264,11 @@ export class GrDiffHost extends PolymerElement {
   @property({type: Array})
   _layers: DiffLayer[] = [];
 
+  @property({type: Object})
+  _renderPrefs: RenderPreferences = {
+    num_lines_rendered_at_once: 128,
+  };
+
   private readonly reporting = appContext.reportingService;
 
   private readonly flags = appContext.flagsService;
@@ -266,6 +278,8 @@ export class GrDiffHost extends PolymerElement {
   private readonly jsAPI = appContext.jsApiService;
 
   private readonly syntaxLayer = new GrSyntaxLayer();
+
+  disconnected$ = new Subject();
 
   constructor() {
     super();
@@ -279,12 +293,6 @@ export class GrDiffHost extends PolymerElement {
       'create-comment',
       e => this._handleCreateComment(e)
     );
-    this.addEventListener('comment-discard', () =>
-      this._handleCommentSaveOrDiscard()
-    );
-    this.addEventListener('comment-save', () =>
-      this._handleCommentSaveOrDiscard()
-    );
     this.addEventListener('render-start', () => this._handleRenderStart());
     this.addEventListener('render-content', () => this._handleRenderContent());
     this.addEventListener('normalize-range', event =>
@@ -295,40 +303,44 @@ export class GrDiffHost extends PolymerElement {
     );
   }
 
-  /** @override */
-  ready() {
+  override ready() {
     super.ready();
     if (this._canReload()) {
       this.reload();
     }
   }
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     this._getLoggedIn().then(loggedIn => {
       this._loggedIn = loggedIn;
     });
+    changeComments$
+      .pipe(takeUntil(this.disconnected$))
+      .subscribe(changeComments => {
+        this.changeComments = changeComments;
+      });
   }
 
-  /** @override */
-  disconnectedCallback() {
+  override disconnectedCallback() {
+    this.disconnected$.next();
     this.clear();
     super.disconnectedCallback();
   }
 
-  initLayers() {
-    return getPluginLoader()
-      .awaitPluginsLoaded()
-      .then(() => {
-        assertIsDefined(this.path, 'path');
-        this._layers = this._getLayers(this.path);
-        this._coverageRanges = [];
-        // We kick off fetching the data here, but we don't return the promise,
-        // so awaiting initLayers() will not wait for coverage data to be
-        // completely loaded.
-        this._getCoverageData();
-      });
+  async initLayers() {
+    const preferencesPromise = appContext.restApiService.getPreferences();
+    await getPluginLoader().awaitPluginsLoaded();
+    const prefs = await preferencesPromise;
+    const enableTokenHighlight = !prefs?.disable_token_highlighting;
+
+    assertIsDefined(this.path, 'path');
+    this._layers = this.getLayers(this.path, enableTokenHighlight);
+    this._coverageRanges = [];
+    // We kick off fetching the data here, but we don't return the promise,
+    // so awaiting initLayers() will not wait for coverage data to be
+    // completely loaded.
+    this._getCoverageData();
   }
 
   diffChanged(diff?: DiffInfo) {
@@ -371,6 +383,7 @@ export class GrDiffHost extends PolymerElement {
       // Not waiting for coverage ranges intentionally as
       // plugin loading should not block the content rendering
 
+      this.editWeblinks = this._getEditWeblinks(diff);
       this.filesWeblinks = this._getFilesWeblinks(diff);
       this.diff = diff;
       const event = (await waitForEventOnce(this, 'render')) as CustomEvent;
@@ -392,16 +405,22 @@ export class GrDiffHost extends PolymerElement {
       if (e instanceof Response) {
         this._handleGetDiffError(e);
       } else {
-        console.warn('Error encountered loading diff:', e);
+        this.reporting.error(e);
       }
     } finally {
       this.reporting.timeEnd(Timing.DIFF_TOTAL);
     }
   }
 
-  private _getLayers(path: string): DiffLayer[] {
+  private getLayers(path: string, enableTokenHighlight: boolean): DiffLayer[] {
+    const layers = [];
+    if (enableTokenHighlight) {
+      layers.push(new TokenHighlightLayer(this));
+    }
+    layers.push(this.syntaxLayer);
     // Get layers from plugins (if any).
-    return [this.syntaxLayer, ...this.jsAPI.getDiffLayers(path)];
+    layers.push(...this.jsAPI.getDiffLayers(path));
+    return layers;
   }
 
   clear() {
@@ -469,13 +488,33 @@ export class GrDiffHost extends PolymerElement {
               });
             })
             .catch(err => {
-              console.warn('Applying coverage from provider failed: ', err);
+              this.reporting.error(err);
             });
         });
       })
       .catch(err => {
-        console.warn('Loading coverage ranges failed: ', err);
+        this.reporting.error(err);
       });
+  }
+
+  _getEditWeblinks(diff: DiffInfo) {
+    if (!this.projectName || !this.commitRange || !this.path) return undefined;
+    return GerritNav.getEditWebLinks(
+      this.projectName,
+      this.commitRange.baseCommit,
+      this.path,
+      {weblinks: diff?.edit_web_links}
+    );
+  }
+
+  @observe('changeComments', 'patchRange', 'file')
+  computeFileThreads(
+    changeComments?: ChangeComments,
+    patchRange?: PatchRange,
+    file?: PatchSetFile
+  ) {
+    if (!changeComments || !patchRange || !file) return;
+    this.threads = changeComments.getThreadsBySideForFile(file, patchRange);
   }
 
   _getFilesWeblinks(diff: DiffInfo) {
@@ -529,8 +568,8 @@ export class GrDiffHost extends PolymerElement {
       .getBlame(this.changeNum, this.patchRange.patchNum, this.path, true)
       .then(blame => {
         if (!blame || !blame.length) {
-          fireAlert(this, MSG_EMPTY_BLAME);
-          return Promise.reject(MSG_EMPTY_BLAME);
+          fireAlert(this, EMPTY_BLAME);
+          return Promise.reject(EMPTY_BLAME);
         }
 
         this._blame = blame;
@@ -690,14 +729,30 @@ export class GrDiffHost extends PolymerElement {
   }
 
   _threadsChanged(threads: CommentThread[]) {
-    // Currently, the only way this is ever changed here is when the initial
-    // threads are loaded, so it's okay performance wise to clear the threads
-    // and recreate them. If this changes in future, we might want to reuse
-    // some DOM nodes here.
-    this._clearThreads();
+    const threadEls = new Set<GrCommentThread>();
+    const rootIdToThreadEl = new Map<UrlEncodedCommentId, GrCommentThread>();
+    for (const threadEl of this.getThreadEls()) {
+      if (threadEl.rootId) {
+        rootIdToThreadEl.set(threadEl.rootId, threadEl);
+      }
+    }
     for (const thread of threads) {
-      const threadEl = this._createThreadElement(thread);
-      this._attachThreadElement(threadEl);
+      const existingThreadEl =
+        thread.rootId && rootIdToThreadEl.get(thread.rootId);
+      if (existingThreadEl) {
+        this._updateThreadElement(existingThreadEl, thread);
+        threadEls.add(existingThreadEl);
+      } else {
+        const threadEl = this._createThreadElement(thread);
+        this._attachThreadElement(threadEl);
+        threadEls.add(threadEl);
+      }
+    }
+    // Remove all threads that are no longer existing.
+    for (const threadEl of this.getThreadEls()) {
+      if (threadEls.has(threadEl)) continue;
+      const parent = threadEl.parentNode;
+      if (parent) parent.removeChild(threadEl);
     }
     const portedThreadsCount = threads.filter(thread => thread.ported).length;
     const portedThreadsWithoutRange = threads.filter(
@@ -746,14 +801,15 @@ export class GrDiffHost extends PolymerElement {
         ? CommentSide.PARENT
         : CommentSide.REVISION;
     if (!this.canCommentOnPatchSetNum(patchNum)) return;
-    const threadEl = this._getOrCreateThread(
-      patchNum,
-      lineNum,
-      side,
-      commentSide,
+    const threadEl = this._getOrCreateThread({
+      comments: [],
       path,
-      range
-    );
+      diffSide: side,
+      commentSide,
+      patchNum,
+      line: lineNum,
+      range,
+    });
     threadEl.addOrEditDraft(lineNum, range);
 
     this.reporting.recordDraftInteraction();
@@ -789,26 +845,13 @@ export class GrDiffHost extends PolymerElement {
    * Gets or creates a comment thread at a given location.
    * May provide a range, to get/create a range comment.
    */
-  _getOrCreateThread(
-    patchNum: PatchSetNum,
-    lineNum: LineNumber | undefined,
-    diffSide: Side,
-    commentSide: CommentSide,
-    path: string,
-    range?: CommentRange
-  ): GrCommentThread {
-    let threadEl = this._getThreadEl(lineNum, diffSide, range);
+  _getOrCreateThread(thread: CommentThread): GrCommentThread {
+    let threadEl = this._getThreadEl(thread);
     if (!threadEl) {
-      threadEl = this._createThreadElement({
-        comments: [],
-        path,
-        diffSide,
-        commentSide,
-        patchNum,
-        line: lineNum,
-        range,
-      });
+      threadEl = this._createThreadElement(thread);
       this._attachThreadElement(threadEl);
+    } else {
+      this._updateThreadElement(threadEl, thread);
     }
     return threadEl;
   }
@@ -831,6 +874,11 @@ export class GrDiffHost extends PolymerElement {
       'slot',
       `${thread.diffSide}-${thread.line || 'LOST'}`
     );
+    this._updateThreadElement(threadEl, thread);
+    return threadEl;
+  }
+
+  _updateThreadElement(threadEl: GrCommentThread, thread: CommentThread) {
     threadEl.comments = thread.comments;
     threadEl.diffSide = thread.diffSide;
     threadEl.isOnParent = thread.commentSide === CommentSide.PARENT;
@@ -856,41 +904,29 @@ export class GrDiffHost extends PolymerElement {
     else threadEl.lineNum = thread.line !== 'FILE' ? thread.line : undefined;
     threadEl.projectName = this.projectName;
     threadEl.range = thread.range;
-    const threadDiscardListener = (e: Event) => {
-      const threadEl = e.currentTarget as Element;
-      const parent = threadEl.parentNode;
-      if (parent) parent.removeChild(threadEl);
-      threadEl.removeEventListener('thread-discard', threadDiscardListener);
-    };
-    threadEl.addEventListener('thread-discard', threadDiscardListener);
-    return threadEl;
   }
 
   /**
    * Gets a comment thread element at a given location.
    * May provide a range, to get a range comment.
    */
-  _getThreadEl(
-    lineNum: LineNumber | undefined,
-    commentSide: Side,
-    range?: CommentRange
-  ): GrCommentThread | null {
+  _getThreadEl(thread: CommentThread): GrCommentThread | null {
     let line: LineInfo;
-    if (commentSide === Side.LEFT) {
-      line = {beforeNumber: lineNum};
-    } else if (commentSide === Side.RIGHT) {
-      line = {afterNumber: lineNum};
+    if (thread.diffSide === Side.LEFT) {
+      line = {beforeNumber: thread.line};
+    } else if (thread.diffSide === Side.RIGHT) {
+      line = {afterNumber: thread.line};
     } else {
-      throw new Error(`Unknown side: ${commentSide}`);
+      throw new Error(`Unknown side: ${thread.diffSide}`);
     }
     function matchesRange(threadEl: GrCommentThread) {
-      return rangesEqual(getRange(threadEl), range);
+      return rangesEqual(getRange(threadEl), thread.range);
     }
 
     const filteredThreadEls = this._filterThreadElsForLocation(
       this.getThreadEls(),
       line,
-      commentSide
+      thread.diffSide
     ).filter(matchesRange);
     return filteredThreadEls.length ? filteredThreadEls[0] : null;
   }
@@ -986,10 +1022,6 @@ export class GrDiffHost extends PolymerElement {
       : null;
   }
 
-  _handleCommentSaveOrDiscard() {
-    fireEvent(this, 'diff-comments-modified');
-  }
-
   _syntaxHighlightingEnabledChanged(_syntaxHighlightingEnabled: boolean) {
     this.syntaxLayer.setEnabled(_syntaxHighlightingEnabled);
   }
@@ -1004,7 +1036,7 @@ export class GrDiffHost extends PolymerElement {
     if (!preferenceChangeRecord?.base?.syntax_highlighting || !diff) {
       return false;
     }
-    if (this._anyLineTooLong(diff)) {
+    if (anyLineTooLong(diff)) {
       fireAlert(
         this,
         `Files with line longer than ${SYNTAX_MAX_LINE_LENGTH} characters` +
@@ -1021,20 +1053,6 @@ export class GrDiffHost extends PolymerElement {
       return false;
     }
     return true;
-  }
-
-  /**
-   * @return whether any of the lines in diff are longer
-   * than SYNTAX_MAX_LINE_LENGTH.
-   */
-  _anyLineTooLong(diff?: DiffInfo) {
-    if (!diff) return false;
-    return diff.content.some(section => {
-      const lines = section.ab
-        ? section.ab
-        : (section.a || []).concat(section.b || []);
-      return lines.some(line => line.length >= SYNTAX_MAX_LINE_LENGTH);
-    });
   }
 
   _listenToViewportRender() {
@@ -1158,7 +1176,6 @@ declare global {
     'normalize-range': CustomEvent;
     'diff-context-expanded': CustomEvent<DiffContextExpandedEventDetail>;
     'create-comment': CustomEvent;
-    'comment-discard': CustomEvent;
     'comment-update': CustomEvent;
     'comment-save': CustomEvent;
     'root-id-changed': CustomEvent;

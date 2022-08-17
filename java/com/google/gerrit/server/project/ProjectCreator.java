@@ -39,7 +39,8 @@ import com.google.gerrit.server.config.RepositoryConfig;
 import com.google.gerrit.server.extensions.events.AbstractNoNotifyEvent;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
-import com.google.gerrit.server.git.RepositoryCaseMismatchException;
+import com.google.gerrit.server.git.GitRepositoryManager.Status;
+import com.google.gerrit.server.git.RepositoryExistsException;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.inject.Inject;
@@ -107,12 +108,9 @@ public class ProjectCreator {
     final Project.NameKey nameKey = args.getProject();
     try {
       final String head = args.permissionsOnly ? RefNames.REFS_CONFIG : args.branch.get(0);
-      try (Repository repo = repoManager.openRepository(nameKey)) {
-        if (repo.getObjectDatabase().exists()) {
-          throw new ResourceConflictException("project \"" + nameKey + "\" exists");
-        }
-      } catch (RepositoryNotFoundException e) {
-        // It does not exist, safe to ignore.
+      Status status = repoManager.getRepositoryStatus(nameKey);
+      if (!status.equals(Status.NON_EXISTENT)) {
+        throw new RepositoryExistsException(nameKey, "Repository status: " + status);
       }
       try (Repository repo = repoManager.createRepository(nameKey)) {
         RefUpdate u = repo.updateRef(Constants.HEAD);
@@ -129,13 +127,11 @@ public class ProjectCreator {
 
         return projectCache.get(nameKey).orElseThrow(illegalState(nameKey));
       }
-    } catch (RepositoryCaseMismatchException e) {
+    } catch (RepositoryExistsException e) {
       throw new ResourceConflictException(
           "Cannot create "
               + nameKey.get()
-              + " because the name is already occupied by another project."
-              + " The other project has the same name, only spelled in a"
-              + " different case.",
+              + " because the name is already occupied by another project.",
           e);
     } catch (RepositoryNotFoundException badName) {
       throw new BadRequestException("invalid project name: " + nameKey, badName);

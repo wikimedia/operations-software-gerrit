@@ -33,6 +33,9 @@ export const htmlTemplate = html`
       /* px because don't have the same font size */
       margin-left: 8px;
     }
+    gr-button {
+      display: block;
+    }
     #actionLoadingMessage {
       align-items: center;
       color: var(--deemphasized-text-color);
@@ -57,10 +60,8 @@ export const htmlTemplate = html`
         flex-wrap: wrap;
       }
       gr-button {
-        --gr-button: {
-          padding: var(--spacing-m);
-          white-space: nowrap;
-        }
+        --gr-button-padding: var(--spacing-m);
+        white-space: nowrap;
       }
       gr-button,
       gr-dropdown {
@@ -84,23 +85,27 @@ export const htmlTemplate = html`
       hidden$="[[_shouldHideActions(_topLevelActions.*, _loading)]]"
     >
       <template is="dom-repeat" items="[[_topLevelPrimaryActions]]" as="action">
-        <gr-button
-          link=""
+        <gr-tooltip-content
           title$="[[action.title]]"
           has-tooltip="[[_computeHasTooltip(action.title)]]"
           position-below="true"
-          data-action-key$="[[action.__key]]"
-          data-action-type$="[[action.__type]]"
-          data-label$="[[action.label]]"
-          disabled$="[[_calculateDisabled(action, _hasKnownChainState)]]"
-          on-click="_handleActionTap"
         >
-          <iron-icon
-            class$="[[_computeHasIcon(action)]]"
-            icon$="gr-icons:[[action.icon]]"
-          ></iron-icon>
-          [[action.label]]
-        </gr-button>
+          <gr-button
+            link=""
+            data-action-key$="[[action.__key]]"
+            class$="[[action.__key]]"
+            data-action-type$="[[action.__type]]"
+            data-label$="[[action.label]]"
+            disabled$="[[_calculateDisabled(action, _hasKnownChainState)]]"
+            on-click="_handleActionTap"
+          >
+            <iron-icon
+              class$="[[_computeHasIcon(action)]]"
+              icon$="gr-icons:[[action.icon]]"
+            ></iron-icon>
+            [[action.label]]
+          </gr-button>
+        </gr-tooltip-content>
       </template>
     </section>
     <section
@@ -112,23 +117,27 @@ export const htmlTemplate = html`
         items="[[_topLevelSecondaryActions]]"
         as="action"
       >
-        <gr-button
-          link=""
+        <gr-tooltip-content
           title$="[[action.title]]"
           has-tooltip="[[_computeHasTooltip(action.title)]]"
           position-below="true"
-          data-action-key$="[[action.__key]]"
-          data-action-type$="[[action.__type]]"
-          data-label$="[[action.label]]"
-          disabled$="[[_calculateDisabled(action, _hasKnownChainState)]]"
-          on-click="_handleActionTap"
         >
-          <iron-icon
-            class$="[[_computeHasIcon(action)]]"
-            icon$="gr-icons:[[action.icon]]"
-          ></iron-icon>
-          [[action.label]]
-        </gr-button>
+          <gr-button
+            link=""
+            data-action-key$="[[action.__key]]"
+            class$="[[action.__key]]"
+            data-action-type$="[[action.__type]]"
+            data-label$="[[action.label]]"
+            disabled$="[[_calculateDisabled(action, _hasKnownChainState)]]"
+            on-click="_handleActionTap"
+          >
+            <iron-icon
+              class$="[[_computeHasIcon(action)]]"
+              icon$="gr-icons:[[action.icon]]"
+            ></iron-icon>
+            [[action.label]]
+          </gr-button>
+        </gr-tooltip-content>
       </template>
     </section>
     <gr-button hidden$="[[!_loading]]" disabled=""
@@ -194,14 +203,6 @@ export const htmlTemplate = html`
       on-cancel="_handleConfirmDialogCancel"
       hidden=""
     ></gr-confirm-revert-dialog>
-    <gr-confirm-revert-submission-dialog
-      id="confirmRevertSubmissionDialog"
-      class="confirmDialog"
-      commit-message="[[commitMessage]]"
-      on-confirm="_handleRevertSubmissionDialogConfirm"
-      on-cancel="_handleConfirmDialogCancel"
-      hidden=""
-    ></gr-confirm-revert-submission-dialog>
     <gr-confirm-abandon-dialog
       id="confirmAbandonDialog"
       class="confirmDialog"

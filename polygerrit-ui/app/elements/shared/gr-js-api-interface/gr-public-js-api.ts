@@ -25,7 +25,7 @@ import {GrAnnotationActionsInterface} from './gr-annotation-actions-js-api';
 import {GrEventHelper} from '../../plugins/gr-event-helper/gr-event-helper';
 import {GrPluginRestApi} from './gr-plugin-rest-api';
 import {getPluginEndpoints} from './gr-plugin-endpoints';
-import {getPluginNameFromUrl, PRELOADED_PROTOCOL, send} from './gr-api-utils';
+import {getPluginNameFromUrl, send} from './gr-api-utils';
 import {GrReportingJsApi} from './gr-reporting-js-api';
 import {EventType, PluginApi, TargetElement} from '../../../api/plugin';
 import {RequestPayload} from '../../../types/common';
@@ -41,7 +41,7 @@ import {ReportingPluginApi} from '../../../api/reporting';
 import {ChangeActionsPluginApi} from '../../../api/change-actions';
 import {ChangeReplyPluginApi} from '../../../api/change-reply';
 import {RestPluginApi} from '../../../api/rest';
-import {HookApi, RegisterOptions} from '../../../api/hook';
+import {HookApi, PluginElement, RegisterOptions} from '../../../api/hook';
 import {AttributeHelperPluginApi} from '../../../api/attribute-helper';
 
 /**
@@ -79,9 +79,10 @@ export class Plugin implements PluginApi {
     this.domHooks = new GrDomHooksManager(this);
 
     if (!url) {
-      console.warn(
-        'Plugin not being loaded from /plugins base path.',
-        'Unable to determine name.'
+      this.report.error(
+        new Error(
+          'Plugin not being loaded from /plugins base path. Unable to determine name.'
+        )
       );
       return this;
     }
@@ -107,11 +108,11 @@ export class Plugin implements PluginApi {
   /**
    * Registers an endpoint for the plugin.
    */
-  registerCustomComponent(
+  registerCustomComponent<T extends PluginElement>(
     endpointName: string,
     moduleName?: string,
     options?: RegisterOptions
-  ): HookApi {
+  ): HookApi<T> {
     this.report.trackApi(this, 'plugin', 'registerCustomComponent');
     return this._registerCustomComponent(endpointName, moduleName, options);
   }
@@ -122,11 +123,11 @@ export class Plugin implements PluginApi {
    * Dynamic plugins are registered by specific prefix, such as
    * 'change-list-header'.
    */
-  registerDynamicCustomComponent(
+  registerDynamicCustomComponent<T extends PluginElement>(
     endpointName: string,
     moduleName?: string,
     options?: RegisterOptions
-  ): HookApi {
+  ): HookApi<T> {
     this.report.trackApi(this, 'plugin', 'registerDynamicCustomComponent');
     const fullEndpointName = `${endpointName}-${this.getPluginName()}`;
     return this._registerCustomComponent(
@@ -137,16 +138,17 @@ export class Plugin implements PluginApi {
     );
   }
 
-  _registerCustomComponent(
+  _registerCustomComponent<T extends PluginElement>(
     endpoint: string,
     moduleName?: string,
     options?: RegisterOptions,
     dynamicEndpoint?: string
-  ): HookApi {
-    const type =
-      options && options.replace ? EndpointType.REPLACE : EndpointType.DECORATE;
-    const slot = (options && options.slot) || '';
-    const domHook = this.domHooks.getDomHook(endpoint, moduleName);
+  ): HookApi<T> {
+    const type = options?.replace
+      ? EndpointType.REPLACE
+      : EndpointType.DECORATE;
+    const slot = options?.slot ?? '';
+    const domHook = this.domHooks.getDomHook<T>(endpoint, moduleName);
     moduleName = moduleName || domHook.getModuleName();
     getPluginEndpoints().registerModule(this, {
       slot,
@@ -163,7 +165,10 @@ export class Plugin implements PluginApi {
    * Returns instance of DOM hook API for endpoint. Creates a placeholder
    * element for the first call.
    */
-  hook(endpointName: string, options?: RegisterOptions) {
+  hook<T extends PluginElement>(
+    endpointName: string,
+    options?: RegisterOptions
+  ): HookApi<T> {
     this.report.trackApi(this, 'plugin', 'hook');
     return this.registerCustomComponent(endpointName, undefined, options);
   }
@@ -187,11 +192,6 @@ export class Plugin implements PluginApi {
     if (window.location.origin === this._url.origin) {
       // Plugin loaded from the same origin as gr-app, getBaseUrl in effect.
       return sameOriginPath;
-    } else if (this._url.protocol === PRELOADED_PROTOCOL) {
-      // Plugin is preloaded, load plugin with ASSETS_PATH or location.origin
-      return window.ASSETS_PATH
-        ? `${window.ASSETS_PATH}${relPath}`
-        : sameOriginPath;
     } else {
       // Plugin loaded from assets bundle, expect assets placed along with it.
       return this._url.href.split('/plugins/' + this._name)[0] + relPath;
@@ -222,9 +222,9 @@ export class Plugin implements PluginApi {
   changeActions(): ChangeActionsPluginApi {
     return new GrChangeActionsInterface(
       this,
-      (this.jsApi.getElement(
+      this.jsApi.getElement(
         TargetElement.CHANGE_ACTIONS
-      ) as unknown) as GrChangeActions
+      ) as unknown as GrChangeActions
     );
   }
 

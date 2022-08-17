@@ -18,13 +18,18 @@
 import {NumericChangeId} from '../../types/common';
 import {EventDetails} from '../../api/reporting';
 import {PluginApi} from '../../api/plugin';
-import {Execution, LifeCycle, Timing} from '../../constants/reporting';
+import {
+  Execution,
+  Interaction,
+  LifeCycle,
+  Timing,
+} from '../../constants/reporting';
 
 export type EventValue = string | number | {error?: Error};
 
 export interface Timer {
   reset(): this;
-  end(): this;
+  end(eventDetails?: EventDetails): this;
   withMaximum(maximum: number): this;
 }
 
@@ -43,7 +48,7 @@ export interface ReportingService {
   beforeLocationChanged(): void;
   locationChanged(page: string): void;
   dashboardDisplayed(): void;
-  changeDisplayed(): void;
+  changeDisplayed(eventDetails?: EventDetails): void;
   changeFullyLoaded(): void;
   diffViewDisplayed(): void;
   diffViewFullyLoaded(): void;
@@ -52,7 +57,8 @@ export interface ReportingService {
   reportExtension(name: string): void;
   pluginLoaded(name: string): void;
   pluginsLoaded(pluginsList?: string[]): void;
-  error(err: unknown, reporter?: string, details?: EventDetails): void;
+  pluginsFailed(pluginsList?: string[]): void;
+  error(err: Error, reporter?: string, details?: EventDetails): void;
   /**
    * Reset named timer.
    */
@@ -89,7 +95,8 @@ export interface ReportingService {
    */
   reportRpcTiming(anonymizedUrl: string, elapsed: number): void;
   reportLifeCycle(eventName: LifeCycle, details?: EventDetails): void;
-
+  reportPluginLifeCycleLog(eventName: string, details?: EventDetails): void;
+  reportPluginInteractionLog(eventName: string, details?: EventDetails): void;
   /**
    * Use this method, if you want to check/count how often a certain code path
    * is executed. For example you can use this method to prove that certain code
@@ -104,7 +111,10 @@ export interface ReportingService {
     object: string,
     method: string
   ): void;
-  reportInteraction(eventName: string, details?: EventDetails): void;
+  reportInteraction(
+    eventName: string | Interaction,
+    details?: EventDetails
+  ): void;
   /**
    * A draft interaction was started. Update the time-between-draft-actions
    * timer.

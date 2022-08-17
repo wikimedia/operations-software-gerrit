@@ -14,40 +14,46 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {html} from 'lit-html';
-import {css, customElement, property} from 'lit-element';
-import {GrLitElement} from '../../lit/gr-lit-element';
+import {LitElement, css, html} from 'lit';
+import {customElement, property} from 'lit/decorators';
+import {subscribe} from '../../lit/subscription-controller';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {appContext} from '../../../services/app-context';
 import {
+  allRunsLatestPatchsetLatestAttempt$,
+  aPluginHasRegistered$,
   CheckResult,
   CheckRun,
-  aPluginHasRegistered$,
-  someProvidersAreLoading$,
-  allRunsLatest$,
-  errorMessage$,
-  loginCallback$,
+  ErrorMessages,
+  errorMessagesLatest$,
+  loginCallbackLatest$,
+  someProvidersAreLoadingFirstTime$,
+  topLevelActionsLatest$,
 } from '../../../services/checks/checks-model';
-import {Category, Link, RunStatus} from '../../../api/checks';
+import {Action, Category, Link, RunStatus} from '../../../api/checks';
 import {fireShowPrimaryTab} from '../../../utils/event-util';
 import '../../shared/gr-avatar/gr-avatar';
+import '../../checks/gr-checks-action';
 import {
+  firstPrimaryLink,
   getResultsOf,
   hasCompletedWithoutResults,
+  hasResults,
   hasResultsOf,
-  iconForCategory,
-  iconForStatus,
+  iconFor,
   isRunning,
   isRunningOrHasCompleted,
+  isStatus,
+  labelFor,
 } from '../../../services/checks/checks-util';
 import {ChangeComments} from '../../diff/gr-comment-api/gr-comment-api';
 import {
   CommentThread,
-  isResolved,
-  isUnresolved,
   getFirstComment,
-  isRobotThread,
   hasHumanReply,
+  isResolved,
+  isRobotThread,
+  isUnresolved,
 } from '../../../utils/comment-util';
 import {pluralize} from '../../../utils/string-util';
 import {AccountInfo} from '../../../types/common';
@@ -55,6 +61,10 @@ import {notUndefined} from '../../../types/types';
 import {uniqueDefinedAvatar} from '../../../utils/account-util';
 import {PrimaryTab} from '../../../constants/constants';
 import {ChecksTabState, CommentTabState} from '../../../types/events';
+import {spinnerStyles} from '../../../styles/gr-spinner-styles';
+import {modifierPressed} from '../../../utils/dom-util';
+import {DropdownLink} from '../../shared/gr-dropdown/gr-dropdown';
+import {fontStyles} from '../../../styles/gr-font-styles';
 
 export enum SummaryChipStyles {
   INFO = 'info',
@@ -63,8 +73,17 @@ export enum SummaryChipStyles {
   UNDEFINED = '',
 }
 
+function handleSpaceOrEnter(e: KeyboardEvent, handler: () => void) {
+  if (modifierPressed(e)) return;
+  // Only react to `return` and `space`.
+  if (e.keyCode !== 13 && e.keyCode !== 32) return;
+  e.preventDefault();
+  e.stopPropagation();
+  handler();
+}
+
 @customElement('gr-summary-chip')
-export class GrSummaryChip extends GrLitElement {
+export class GrSummaryChip extends LitElement {
   @property()
   icon = '';
 
@@ -76,9 +95,10 @@ export class GrSummaryChip extends GrLitElement {
 
   private readonly reporting = appContext.reportingService;
 
-  static get styles() {
+  static override get styles() {
     return [
       sharedStyles,
+      fontStyles,
       css`
         .summaryChip {
           color: var(--chip-color);
@@ -90,6 +110,10 @@ export class GrSummaryChip extends GrLitElement {
           border-radius: 12px;
           border: 1px solid gray;
           vertical-align: top;
+          /* centered position of 20px chips in 24px line-height inline flow */
+          vertical-align: top;
+          position: relative;
+          top: 2px;
         }
         iron-icon {
           width: var(--line-height-small);
@@ -104,6 +128,9 @@ export class GrSummaryChip extends GrLitElement {
           background: var(--warning-background-hover);
           box-shadow: var(--elevation-level-1);
         }
+        .summaryChip.warning:focus-within {
+          background: var(--warning-background-focus);
+        }
         .summaryChip.warning iron-icon {
           color: var(--warning-foreground);
         }
@@ -115,6 +142,9 @@ export class GrSummaryChip extends GrLitElement {
           background: var(--gray-background-hover);
           box-shadow: var(--elevation-level-1);
         }
+        .summaryChip.check:focus-within {
+          background: var(--gray-background-focus);
+        }
         .summaryChip.check iron-icon {
           color: var(--gray-foreground);
         }
@@ -122,7 +152,7 @@ export class GrSummaryChip extends GrLitElement {
     ];
   }
 
-  render() {
+  override render() {
     const chipClass = `summaryChip font-small ${this.styleType}`;
     const grIcon = this.icon ? `gr-icons:${this.icon}` : '';
     return html`<button class="${chipClass}" @click="${this.handleClick}">
@@ -144,19 +174,25 @@ export class GrSummaryChip extends GrLitElement {
 }
 
 @customElement('gr-checks-chip')
-export class GrChecksChip extends GrLitElement {
+export class GrChecksChip extends LitElement {
   @property()
-  icon = '';
+  statusOrCategory?: Category | RunStatus;
 
   @property()
   text = '';
 
-  static get styles() {
+  @property()
+  links: Link[] = [];
+
+  static override get styles() {
     return [
+      fontStyles,
       sharedStyles,
       css`
         :host {
           display: inline-block;
+          position: relative;
+          white-space: nowrap;
         }
         .checksChip {
           color: var(--chip-color);
@@ -167,7 +203,21 @@ export class GrChecksChip extends GrLitElement {
             var(--spacing-s);
           border-radius: 12px;
           border: 1px solid gray;
+          /* centered position of 20px chips in 24px line-height inline flow */
           vertical-align: top;
+          position: relative;
+          top: 2px;
+        }
+        .checksChip.hoverFullLength {
+          position: absolute;
+          z-index: 1;
+          display: none;
+        }
+        .checksChip.hoverFullLength .text {
+          max-width: 400px;
+        }
+        :host(:hover) .checksChip.hoverFullLength {
+          display: inline-block;
         }
         .checksChip .text {
           display: inline-block;
@@ -191,6 +241,9 @@ export class GrChecksChip extends GrLitElement {
           background: var(--error-background-hover);
           box-shadow: var(--elevation-level-1);
         }
+        .checksChip.error:focus-within {
+          background: var(--error-background-focus);
+        }
         .checksChip.error iron-icon {
           color: var(--error-foreground);
         }
@@ -201,6 +254,9 @@ export class GrChecksChip extends GrLitElement {
         .checksChip.warning:hover {
           background: var(--warning-background-hover);
           box-shadow: var(--elevation-level-1);
+        }
+        .checksChip.warning:focus-within {
+          background: var(--warning-background-focus);
         }
         .checksChip.warning iron-icon {
           color: var(--warning-foreground);
@@ -213,6 +269,9 @@ export class GrChecksChip extends GrLitElement {
           background: var(--info-background-hover);
           box-shadow: var(--elevation-level-1);
         }
+        .checksChip.info-outline:focus-within {
+          background: var(--info-background-focus);
+        }
         .checksChip.info-outline iron-icon {
           color: var(--info-foreground);
         }
@@ -224,10 +283,11 @@ export class GrChecksChip extends GrLitElement {
           background: var(--success-background-hover);
           box-shadow: var(--elevation-level-1);
         }
+        .checksChip.check-circle-outline:focus-within {
+          background: var(--success-background-focus);
+        }
         .checksChip.check-circle-outline iron-icon {
           color: var(--success-foreground);
-        }
-        .checksChip.timelapse {
         }
         .checksChip.timelapse {
           border-color: var(--gray-foreground);
@@ -237,6 +297,9 @@ export class GrChecksChip extends GrLitElement {
           background: var(--gray-background-hover);
           box-shadow: var(--elevation-level-1);
         }
+        .checksChip.timelapse:focus-within {
+          background: var(--gray-background-focus);
+        }
         .checksChip.timelapse iron-icon {
           color: var(--gray-foreground);
         }
@@ -244,25 +307,74 @@ export class GrChecksChip extends GrLitElement {
     ];
   }
 
-  render() {
+  override render() {
     if (!this.text) return;
-    const chipClass = `checksChip font-small ${this.icon}`;
-    const grIcon = `gr-icons:${this.icon}`;
+    if (!this.statusOrCategory) return;
+    const icon = iconFor(this.statusOrCategory);
+    const label = labelFor(this.statusOrCategory);
+    const count = Number(this.text);
+    let ariaLabel = label;
+    if (!isNaN(count)) {
+      const type = isStatus(this.statusOrCategory) ? 'run' : 'result';
+      const plural = count > 1 ? 's' : '';
+      ariaLabel = `${this.text} ${label} ${type}${plural}`;
+    }
+    const chipClass = `checksChip font-small ${icon}`;
+    const chipClassFullLength = `${chipClass} hoverFullLength`;
+    const grIcon = `gr-icons:${icon}`;
+    // 15 is roughly the number of chars for the chip exceeding its 120px width.
     return html`
-      <div class="${chipClass}" role="button">
-        <iron-icon icon="${grIcon}"></iron-icon>
+      ${this.text.length > 15
+        ? html` ${this.renderChip(chipClassFullLength, ariaLabel, grIcon)}`
+        : ''}
+      ${this.renderChip(chipClass, ariaLabel, grIcon)}
+    `;
+  }
+
+  private renderChip(clazz: string, ariaLabel: string, icon: string) {
+    return html`
+      <div class="${clazz}" role="link" tabindex="0" aria-label="${ariaLabel}">
+        <iron-icon icon="${icon}"></iron-icon>
         <div class="text">${this.text}</div>
-        <slot></slot>
+        ${this.renderLinks()}
       </div>
     `;
   }
+
+  private renderLinks() {
+    return this.links.map(
+      link => html`
+        <a
+          href="${link.url}"
+          target="_blank"
+          @click="${this.onLinkClick}"
+          @keydown="${this.onLinkKeyDown}"
+          aria-label="Link to check details"
+          ><iron-icon class="launch" icon="gr-icons:launch"></iron-icon
+        ></a>
+      `
+    );
+  }
+
+  private onLinkKeyDown(e: KeyboardEvent) {
+    // Prevents onChipKeyDown() from reacting to <a> link keyboard events.
+    e.stopPropagation();
+  }
+
+  private onLinkClick(e: MouseEvent) {
+    // Prevents onChipClick() from reacting to <a> link clicks.
+    e.stopPropagation();
+  }
 }
 
-/** What is the maximum number of expanded checks chips? */
-const DETAILS_QUOTA = 3;
+/** What is the maximum number of detailed checks chips? */
+const DETAILS_QUOTA: Map<RunStatus | Category, number> = new Map();
+DETAILS_QUOTA.set(Category.ERROR, 7);
+DETAILS_QUOTA.set(Category.WARNING, 2);
+DETAILS_QUOTA.set(RunStatus.RUNNING, 2);
 
 @customElement('gr-change-summary')
-export class GrChangeSummary extends GrLitElement {
+export class GrChangeSummary extends LitElement {
   @property({type: Object})
   changeComments?: ChangeComments;
 
@@ -282,59 +394,95 @@ export class GrChangeSummary extends GrLitElement {
   someProvidersAreLoading = false;
 
   @property()
-  errorMessage?: string;
+  errorMessages: ErrorMessages = {};
 
   @property()
   loginCallback?: () => void;
 
-  /** Is reset when rendering beings and decreases while chips are rendered. */
-  private detailsQuota = DETAILS_QUOTA;
+  @property()
+  actions: Action[] = [];
+
+  private showAllChips = new Map<RunStatus | Category, boolean>();
+
+  private checksService = appContext.checksService;
 
   constructor() {
     super();
-    this.subscribe('runs', allRunsLatest$);
-    this.subscribe('showChecksSummary', aPluginHasRegistered$);
-    this.subscribe('someProvidersAreLoading', someProvidersAreLoading$);
-    this.subscribe('errorMessage', errorMessage$);
-    this.subscribe('loginCallback', loginCallback$);
+    subscribe(this, allRunsLatestPatchsetLatestAttempt$, x => (this.runs = x));
+    subscribe(this, aPluginHasRegistered$, x => (this.showChecksSummary = x));
+    subscribe(
+      this,
+      someProvidersAreLoadingFirstTime$,
+      x => (this.someProvidersAreLoading = x)
+    );
+    subscribe(this, errorMessagesLatest$, x => (this.errorMessages = x));
+    subscribe(this, loginCallbackLatest$, x => (this.loginCallback = x));
+    subscribe(this, topLevelActionsLatest$, x => (this.actions = x));
   }
 
-  static get styles() {
+  static override get styles() {
     return [
       sharedStyles,
+      spinnerStyles,
       css`
         :host {
           display: block;
           color: var(--deemphasized-text-color);
-          max-width: 650px;
+          max-width: 625px;
           margin-bottom: var(--spacing-m);
         }
         .zeroState {
+          color: var(--deemphasized-text-color);
+        }
+        .loading.zeroState {
+          margin-right: var(--spacing-m);
+        }
+        div.error,
+        .login {
+          display: flex;
           color: var(--primary-text-color);
+          padding: 0 var(--spacing-s);
+          margin: var(--spacing-xs) 0;
+          width: 490px;
         }
         div.error {
           background-color: var(--error-background);
-          display: flex;
-          padding: var(--spacing-s);
         }
         div.error iron-icon {
           color: var(--error-foreground);
           width: 16px;
           height: 16px;
           position: relative;
-          top: 2px;
+          top: 4px;
           margin-right: var(--spacing-s);
+        }
+        div.error .right {
+          overflow: hidden;
+        }
+        div.error .right .message {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .login {
+          justify-content: space-between;
+          background: var(--info-background);
+        }
+        .login iron-icon {
+          color: var(--info-foreground);
         }
         .login gr-button {
           margin: -4px var(--spacing-s);
         }
         td.key {
           padding-right: var(--spacing-l);
-          padding-bottom: var(--spacing-m);
+          padding-bottom: var(--spacing-s);
+          line-height: calc(var(--line-height-normal) + var(--spacing-s));
         }
         td.value {
           padding-right: var(--spacing-l);
-          padding-bottom: var(--spacing-m);
+          padding-bottom: var(--spacing-s);
+          line-height: calc(var(--line-height-normal) + var(--spacing-s));
         }
         iron-icon.launch {
           color: var(--gray-foreground);
@@ -348,107 +496,216 @@ export class GrChangeSummary extends GrLitElement {
           vertical-align: top;
           margin-right: var(--spacing-xs);
         }
+        /* The basics of .loadingSpin are defined in shared styles. */
+        .loadingSpin {
+          width: calc(var(--line-height-normal) - 2px);
+          height: calc(var(--line-height-normal) - 2px);
+          display: inline-block;
+          vertical-align: top;
+          position: relative;
+          /* Making up for the 2px reduced height above. */
+          top: 1px;
+        }
+        .actions {
+          margin-left: calc(0px - var(--spacing-m));
+          line-height: var(--line-height-normal);
+        }
+        .actions gr-checks-action,
+        .actions gr-dropdown {
+          vertical-align: top;
+          --gr-button-padding: 0 var(--spacing-m);
+        }
+        .actions #moreMessage {
+          display: none;
+        }
       `,
     ];
   }
 
-  renderChecksError() {
-    if (!this.errorMessage) return;
+  private renderActions() {
+    const actions = this.actions ?? [];
+    const summaryActions = actions.filter(a => a.summary).slice(0, 2);
+    if (summaryActions.length === 0) return;
+    const topActions = summaryActions.slice(0, 2);
+    const overflowActions = summaryActions.slice(2).map(action => {
+      return {...action, id: action.name};
+    });
+    const disabledActionIds = overflowActions
+      .filter(action => action.disabled)
+      .map(action => action.id);
+
     return html`
-      <div class="error zeroState">
-        <div class="left">
-          <iron-icon icon="gr-icons:error"></iron-icon>
-        </div>
-        <div class="right">
-          <div>Error while fetching check results</div>
-          <div>${this.errorMessage}</div>
-        </div>
+      <div class="actions">
+        ${topActions.map(this.renderAction)}
+        ${this.renderOverflow(overflowActions, disabledActionIds)}
       </div>
     `;
   }
 
-  renderChecksLogin() {
-    if (this.errorMessage || !this.loginCallback) return;
+  private renderAction(action?: Action) {
+    if (!action) return;
+    return html`<gr-checks-action .action="${action}"></gr-checks-action>`;
+  }
+
+  private handleAction(e: CustomEvent<Action>) {
+    this.checksService.triggerAction(e.detail);
+  }
+
+  private renderOverflow(items: DropdownLink[], disabledIds: string[] = []) {
+    if (items.length === 0) return;
     return html`
-      <div class="login zeroState">
-        Not logged in
-        <gr-button @click="${this.loginCallback}" link>Sign in</gr-button>
+      <gr-dropdown
+        id="moreActions"
+        link=""
+        vertical-offset="32"
+        horizontal-align="right"
+        @tap-item="${this.handleAction}"
+        .items="${items}"
+        .disabledIds="${disabledIds}"
+      >
+        <iron-icon icon="gr-icons:more-vert" aria-labelledby="moreMessage">
+        </iron-icon>
+        <span id="moreMessage">More</span>
+      </gr-dropdown>
+    `;
+  }
+
+  renderErrorMessages() {
+    return Object.entries(this.errorMessages).map(
+      ([plugin, message]) =>
+        html`
+          <div class="error zeroState">
+            <div class="left">
+              <iron-icon icon="gr-icons:error"></iron-icon>
+            </div>
+            <div class="right">
+              <div class="message" title="${message}">
+                Error while fetching results for ${plugin}: ${message}
+              </div>
+            </div>
+          </div>
+        `
+    );
+  }
+
+  renderChecksLogin() {
+    if (!this.loginCallback) return;
+    return html`
+      <div class="login">
+        <div class="left">
+          <iron-icon
+            class="info-outline"
+            icon="gr-icons:info-outline"
+          ></iron-icon>
+          Not logged in
+        </div>
+        <div class="right">
+          <gr-button @click="${this.loginCallback}" link>Sign in</gr-button>
+        </div>
       </div>
     `;
   }
 
   renderChecksZeroState() {
-    if (this.errorMessage || this.loginCallback) return;
+    if (Object.keys(this.errorMessages).length > 0) return;
+    if (this.loginCallback) return;
     if (this.runs.some(isRunningOrHasCompleted)) return;
-    const msg = this.someProvidersAreLoading ? 'Loading...' : 'No results';
-    return html`<div class="loading zeroState">${msg}</div>`;
+    const msg = this.someProvidersAreLoading ? 'Loading results' : 'No results';
+    return html`<span role="status" class="loading zeroState">${msg}</span>`;
   }
 
   renderChecksChipForCategory(category: Category) {
-    if (this.errorMessage || this.loginCallback) return;
-    const icon = iconForCategory(category);
-    const runs = this.runs.filter(run => hasResultsOf(run, category));
+    const runs = this.runs.filter(run => {
+      if (hasResultsOf(run, category)) return true;
+      return category === Category.SUCCESS && hasCompletedWithoutResults(run);
+    });
     const count = (run: CheckRun) => getResultsOf(run, category);
-    return this.renderChecksChip(icon, runs, category, count);
+    if (category === Category.SUCCESS || category === Category.INFO) {
+      return this.renderChecksChipsCollapsed(runs, category, count);
+    }
+    return this.renderChecksChipsExpanded(runs, category, count);
   }
 
-  renderChecksChipForStatus(
-    status: RunStatus,
-    filter: (run: CheckRun) => boolean
-  ) {
-    if (this.errorMessage || this.loginCallback) return;
-    const icon = iconForStatus(status);
-    const runs = this.runs.filter(filter);
-    return this.renderChecksChip(icon, runs, status, () => []);
+  renderChecksChipRunning() {
+    const runs = this.runs.filter(isRunning);
+    return this.renderChecksChipsExpanded(runs, RunStatus.RUNNING, () => []);
   }
 
-  renderChecksChip(
-    icon: string,
+  renderChecksChipsExpanded(
     runs: CheckRun[],
     statusOrCategory: RunStatus | Category,
     resultFilter: (run: CheckRun) => CheckResult[]
   ) {
-    if (runs.length === 0) {
-      return html``;
-    }
-    if (runs.length <= this.detailsQuota) {
-      this.detailsQuota -= runs.length;
-      return runs.map(run => {
-        const allLinks = resultFilter(run)
-          .reduce(
-            (links, result) => links.concat(result.links ?? []),
-            [] as Link[]
-          )
-          .filter(link => link.primary);
-        const links = allLinks.length === 1 ? allLinks : [];
-        const text = `${run.checkName}`;
-        return html`<gr-checks-chip
-          class="${icon}"
-          .icon="${icon}"
-          .text="${text}"
-          @click="${() => this.onChipClick({checkName: run.checkName})}"
-          >${links.map(
-            link => html`
-              <a href="${link.url}" target="_blank" @click="${this.onLinkClick}"
-                ><iron-icon class="launch" icon="gr-icons:launch"></iron-icon
-              ></a>
-            `
-          )}
-        </gr-checks-chip>`;
-      });
-    }
-    // runs.length > this.detailsQuota
-    this.detailsQuota = 0;
-    const sum = runs.reduce(
+    if (runs.length === 0) return;
+    const showAll = this.showAllChips.get(statusOrCategory) ?? false;
+    let count = showAll ? 999 : DETAILS_QUOTA.get(statusOrCategory) ?? 2;
+    if (count === runs.length - 1) count = runs.length;
+    const more = runs.length - count;
+    return html`${runs
+      .slice(0, count)
+      .map(run =>
+        this.renderChecksChipDetailed(run, statusOrCategory, resultFilter)
+      )}${this.renderChecksChipPlusMore(statusOrCategory, more)}`;
+  }
+
+  private renderChecksChipsCollapsed(
+    runs: CheckRun[],
+    statusOrCategory: RunStatus | Category,
+    resultFilter: (run: CheckRun) => CheckResult[]
+  ) {
+    const count = runs.reduce(
       (sum, run) => sum + (resultFilter(run).length || 1),
       0
     );
-    if (sum === 0) return;
+    if (count === 0) return;
+    const handler = () => this.onChipClick({statusOrCategory});
     return html`<gr-checks-chip
-      class="${icon}"
-      .icon="${icon}"
-      .text="${sum}"
-      @click="${() => this.onChipClick({statusOrCategory})}"
+      .statusOrCategory="${statusOrCategory}"
+      .text="${`${count}`}"
+      @click="${handler}"
+      @keydown="${(e: KeyboardEvent) => handleSpaceOrEnter(e, handler)}"
+    ></gr-checks-chip>`;
+  }
+
+  private renderChecksChipPlusMore(
+    statusOrCategory: RunStatus | Category,
+    count: number
+  ) {
+    if (count <= 0) return;
+    if (this.showAllChips.get(statusOrCategory) === true) return;
+    const handler = () => {
+      this.showAllChips.set(statusOrCategory, true);
+      this.requestUpdate();
+    };
+    return html`<gr-checks-chip
+      .statusOrCategory="${statusOrCategory}"
+      .text="+ ${count} more"
+      @click="${handler}"
+      @keydown="${(e: KeyboardEvent) => handleSpaceOrEnter(e, handler)}"
+    ></gr-checks-chip>`;
+  }
+
+  private renderChecksChipDetailed(
+    run: CheckRun,
+    statusOrCategory: RunStatus | Category,
+    resultFilter: (run: CheckRun) => CheckResult[]
+  ) {
+    const allPrimaryLinks = resultFilter(run)
+      .map(firstPrimaryLink)
+      .filter(notUndefined);
+    const links = allPrimaryLinks.length === 1 ? allPrimaryLinks : [];
+    const text = `${run.checkName}`;
+    const tabState: ChecksTabState = {
+      checkName: run.checkName,
+      statusOrCategory,
+    };
+    const handler = () => this.onChipClick(tabState);
+    return html`<gr-checks-chip
+      .statusOrCategory="${statusOrCategory}"
+      .text="${text}"
+      .links="${links}"
+      @click="${handler}"
+      @keydown="${(e: KeyboardEvent) => handleSpaceOrEnter(e, handler)}"
     ></gr-checks-chip>`;
   }
 
@@ -458,13 +715,7 @@ export class GrChangeSummary extends GrLitElement {
     });
   }
 
-  private onLinkClick(e: MouseEvent) {
-    // Prevents onChipClick() from reacting to <a> link clicks.
-    e.stopPropagation();
-  }
-
-  render() {
-    this.detailsQuota = DETAILS_QUOTA;
+  override render() {
     const commentThreads =
       this.commentThreads?.filter(t => !isRobotThread(t) || hasHumanReply(t)) ??
       [];
@@ -473,23 +724,34 @@ export class GrChangeSummary extends GrLitElement {
     const countUnresolvedComments = unresolvedThreads.length;
     const unresolvedAuthors = this.getAccounts(unresolvedThreads);
     const draftCount = this.changeComments?.computeDraftCount() ?? 0;
+    const hasNonRunningChip = this.runs.some(
+      run => hasCompletedWithoutResults(run) || hasResults(run)
+    );
+    const hasRunningChip = this.runs.some(isRunning);
     return html`
       <div>
         <table>
           <tr ?hidden=${!this.showChecksSummary}>
             <td class="key">Checks</td>
             <td class="value">
-              ${this.renderChecksError()}${this.renderChecksLogin()}
-              ${this.renderChecksZeroState()}${this.renderChecksChipForCategory(
-                Category.ERROR
-              )}${this.renderChecksChipForCategory(
-                Category.WARNING
-              )}${this.renderChecksChipForCategory(
-                Category.INFO
-              )}${this.renderChecksChipForStatus(
-                RunStatus.COMPLETED,
-                hasCompletedWithoutResults
-              )}${this.renderChecksChipForStatus(RunStatus.RUNNING, isRunning)}
+              <div class="checksSummary">
+                ${this.renderChecksZeroState()}${this.renderChecksChipForCategory(
+                  Category.ERROR
+                )}${this.renderChecksChipForCategory(
+                  Category.WARNING
+                )}${this.renderChecksChipForCategory(
+                  Category.INFO
+                )}${this.renderChecksChipForCategory(
+                  Category.SUCCESS
+                )}${hasNonRunningChip && hasRunningChip
+                  ? html`<br />`
+                  : ''}${this.renderChecksChipRunning()}
+                <span
+                  class="loadingSpin"
+                  ?hidden="${!this.someProvidersAreLoading}"
+                ></span>
+                ${this.renderErrorMessages()}${this.renderChecksLogin()}${this.renderActions()}
+              </div>
             </td>
           </tr>
           <tr>
@@ -518,7 +780,7 @@ export class GrChangeSummary extends GrLitElement {
                   account =>
                     html`<gr-avatar
                       .account="${account}"
-                      image-size="32"
+                      imageSize="32"
                     ></gr-avatar>`
                 )}
                 ${countUnresolvedComments} unresolved</gr-summary-chip

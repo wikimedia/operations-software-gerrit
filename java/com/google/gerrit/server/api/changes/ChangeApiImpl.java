@@ -21,8 +21,6 @@ import com.google.common.collect.ListMultimap;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.AbandonInput;
-import com.google.gerrit.extensions.api.changes.AddReviewerInput;
-import com.google.gerrit.extensions.api.changes.AddReviewerResult;
 import com.google.gerrit.extensions.api.changes.AssigneeInput;
 import com.google.gerrit.extensions.api.changes.AttentionSetApi;
 import com.google.gerrit.extensions.api.changes.AttentionSetInput;
@@ -39,6 +37,8 @@ import com.google.gerrit.extensions.api.changes.RestoreInput;
 import com.google.gerrit.extensions.api.changes.RevertInput;
 import com.google.gerrit.extensions.api.changes.ReviewerApi;
 import com.google.gerrit.extensions.api.changes.ReviewerInfo;
+import com.google.gerrit.extensions.api.changes.ReviewerInput;
+import com.google.gerrit.extensions.api.changes.ReviewerResult;
 import com.google.gerrit.extensions.api.changes.RevisionApi;
 import com.google.gerrit.extensions.api.changes.SubmittedTogetherInfo;
 import com.google.gerrit.extensions.api.changes.SubmittedTogetherOption;
@@ -56,6 +56,8 @@ import com.google.gerrit.extensions.common.MergePatchSetInput;
 import com.google.gerrit.extensions.common.PureRevertInfo;
 import com.google.gerrit.extensions.common.RevertSubmissionInfo;
 import com.google.gerrit.extensions.common.RobotCommentInfo;
+import com.google.gerrit.extensions.common.SubmitRequirementInput;
+import com.google.gerrit.extensions.common.SubmitRequirementResultInfo;
 import com.google.gerrit.extensions.common.SuggestedReviewerInfo;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.restapi.BadRequestException;
@@ -74,6 +76,7 @@ import com.google.gerrit.server.restapi.change.AttentionSet;
 import com.google.gerrit.server.restapi.change.ChangeIncludedIn;
 import com.google.gerrit.server.restapi.change.ChangeMessages;
 import com.google.gerrit.server.restapi.change.Check;
+import com.google.gerrit.server.restapi.change.CheckSubmitRequirement;
 import com.google.gerrit.server.restapi.change.CreateMergePatchSet;
 import com.google.gerrit.server.restapi.change.DeleteAssignee;
 import com.google.gerrit.server.restapi.change.DeleteChange;
@@ -91,8 +94,6 @@ import com.google.gerrit.server.restapi.change.ListChangeComments;
 import com.google.gerrit.server.restapi.change.ListChangeDrafts;
 import com.google.gerrit.server.restapi.change.ListChangeRobotComments;
 import com.google.gerrit.server.restapi.change.ListReviewers;
-import com.google.gerrit.server.restapi.change.MarkAsReviewed;
-import com.google.gerrit.server.restapi.change.MarkAsUnreviewed;
 import com.google.gerrit.server.restapi.change.Move;
 import com.google.gerrit.server.restapi.change.PostHashtags;
 import com.google.gerrit.server.restapi.change.PostPrivate;
@@ -166,14 +167,13 @@ class ChangeApiImpl implements ChangeApi {
   private final Provider<ListChangeDrafts> listDraftsProvider;
   private final ChangeEditApiImpl.Factory changeEditApi;
   private final Check check;
+  private final CheckSubmitRequirement checkSubmitRequirement;
   private final Index index;
   private final Move move;
   private final PostPrivate postPrivate;
   private final DeletePrivate deletePrivate;
   private final Ignore ignore;
   private final Unignore unignore;
-  private final MarkAsReviewed markAsReviewed;
-  private final MarkAsUnreviewed markAsUnreviewed;
   private final SetWorkInProgress setWip;
   private final SetReadyForReview setReady;
   private final PutMessage putMessage;
@@ -222,14 +222,13 @@ class ChangeApiImpl implements ChangeApi {
       Provider<ListChangeDrafts> listDraftsProvider,
       ChangeEditApiImpl.Factory changeEditApi,
       Check check,
+      CheckSubmitRequirement checkSubmitRequirement,
       Index index,
       Move move,
       PostPrivate postPrivate,
       DeletePrivate deletePrivate,
       Ignore ignore,
       Unignore unignore,
-      MarkAsReviewed markAsReviewed,
-      MarkAsUnreviewed markAsUnreviewed,
       SetWorkInProgress setWip,
       SetReadyForReview setReady,
       PutMessage putMessage,
@@ -276,14 +275,13 @@ class ChangeApiImpl implements ChangeApi {
     this.listDraftsProvider = listDraftsProvider;
     this.changeEditApi = changeEditApi;
     this.check = check;
+    this.checkSubmitRequirement = checkSubmitRequirement;
     this.index = index;
     this.move = move;
     this.postPrivate = postPrivate;
     this.deletePrivate = deletePrivate;
     this.ignore = ignore;
     this.unignore = unignore;
-    this.markAsReviewed = markAsReviewed;
-    this.markAsUnreviewed = markAsUnreviewed;
     this.setWip = setWip;
     this.setReady = setReady;
     this.putMessage = putMessage;
@@ -467,7 +465,7 @@ class ChangeApiImpl implements ChangeApi {
   }
 
   @Override
-  public AddReviewerResult addReviewer(AddReviewerInput in) throws RestApiException {
+  public ReviewerResult addReviewer(ReviewerInput in) throws RestApiException {
     try {
       return postReviewers.apply(change, in).value();
     } catch (Exception e) {
@@ -716,6 +714,16 @@ class ChangeApiImpl implements ChangeApi {
   }
 
   @Override
+  public SubmitRequirementResultInfo checkSubmitRequirement(SubmitRequirementInput input)
+      throws RestApiException {
+    try {
+      return checkSubmitRequirement.apply(change, input).value();
+    } catch (Exception e) {
+      throw asRestApiException("Cannot check submit requirement", e);
+    }
+  }
+
+  @Override
   public void index() throws RestApiException {
     try {
       index.apply(change, new Input());
@@ -745,22 +753,6 @@ class ChangeApiImpl implements ChangeApi {
       return stars.isIgnored(change);
     } catch (StorageException e) {
       throw asRestApiException("Cannot check if ignored", e);
-    }
-  }
-
-  @Override
-  public void markAsReviewed(boolean reviewed) throws RestApiException {
-    // TODO(dborowitz): Convert to RetryingRestModifyView. Needs to plumb BatchUpdate.Factory into
-    // StarredChangesUtil.
-    try {
-      if (reviewed) {
-        markAsReviewed.apply(change, new Input());
-      } else {
-        markAsUnreviewed.apply(change, new Input());
-      }
-    } catch (StorageException | IllegalLabelException e) {
-      throw asRestApiException(
-          "Cannot mark change as " + (reviewed ? "reviewed" : "unreviewed"), e);
     }
   }
 

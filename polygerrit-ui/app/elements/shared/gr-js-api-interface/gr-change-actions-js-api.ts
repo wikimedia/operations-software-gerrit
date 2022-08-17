@@ -80,7 +80,7 @@ export class GrChangeActionsInterface implements ChangeActionsPluginApi {
    */
   private setEl(el?: GrChangeActionsElement) {
     if (!el) {
-      console.warn('changeActions() is not ready');
+      this.reporting.error(new Error('changeActions() API is not ready'));
       return;
     }
     this.el = el;
@@ -90,13 +90,13 @@ export class GrChangeActionsInterface implements ChangeActionsPluginApi {
    * Ensure GrChangeActionsInterface instance has access to gr-change-actions
    * element and retrieve if the interface was created before element.
    */
-  private ensureEl(): GrChangeActionsElement {
+  ensureEl(): GrChangeActionsElement {
     if (!this.el) {
       const sharedApiElement = appContext.jsApiService;
       this.setEl(
-        (sharedApiElement.getElement(
+        sharedApiElement.getElement(
           TargetElement.CHANGE_ACTIONS
-        ) as unknown) as GrChangeActionsElement
+        ) as unknown as GrChangeActionsElement
       );
     }
     return this.el!;

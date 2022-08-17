@@ -24,16 +24,13 @@ import com.google.gerrit.common.UsedAt;
 import com.google.gerrit.common.UsedAt.Project;
 import com.google.gerrit.extensions.api.config.Server;
 import com.google.gerrit.extensions.client.ListChangesOption;
-import com.google.gerrit.extensions.client.ListOption;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.Url;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -69,7 +66,7 @@ public class IndexPreloadingUtil {
       "is:open owner:${user} -is:wip -is:ignored limit:25";
   public static final String DASHBOARD_INCOMING_QUERY =
       "is:open -owner:${user} -is:wip -is:ignored (reviewer:${user} OR assignee:${user}) limit:25";
-  public static final String CC_QUERY = "is:open -is:ignored cc:${user} limit:10";
+  public static final String CC_QUERY = "is:open -is:ignored -is:wip cc:${user} limit:10";
   public static final String DASHBOARD_RECENTLY_CLOSED_QUERY =
       "is:closed -is:ignored (-is:wip OR owner:self) "
           + "(owner:${user} OR reviewer:${user} OR assignee:${user} "
@@ -91,43 +88,26 @@ public class IndexPreloadingUtil {
               NEW_USER)
           .map(query -> query.replaceAll("\\$\\{user}", "self"))
           .collect(toImmutableList());
+  public static final ImmutableSet<ListChangesOption> DASHBOARD_OPTIONS =
+      ImmutableSet.of(ListChangesOption.LABELS, ListChangesOption.DETAILED_ACCOUNTS);
 
-  public static String getDefaultChangeDetailOptionsAsHex() {
-    Set<ListChangesOption> options =
-        ImmutableSet.of(
-            ListChangesOption.ALL_COMMITS,
-            ListChangesOption.ALL_REVISIONS,
-            ListChangesOption.CHANGE_ACTIONS,
-            ListChangesOption.DETAILED_LABELS,
-            ListChangesOption.DOWNLOAD_COMMANDS,
-            ListChangesOption.MESSAGES,
-            ListChangesOption.SUBMITTABLE,
-            ListChangesOption.WEB_LINKS,
-            ListChangesOption.SKIP_DIFFSTAT);
+  public static final ImmutableSet<ListChangesOption> CHANGE_DETAIL_OPTIONS =
+      ImmutableSet.of(
+          ListChangesOption.ALL_COMMITS,
+          ListChangesOption.ALL_REVISIONS,
+          ListChangesOption.CHANGE_ACTIONS,
+          ListChangesOption.DETAILED_LABELS,
+          ListChangesOption.DOWNLOAD_COMMANDS,
+          ListChangesOption.MESSAGES,
+          ListChangesOption.SUBMITTABLE,
+          ListChangesOption.WEB_LINKS,
+          ListChangesOption.SKIP_DIFFSTAT);
 
-    return ListOption.toHex(options);
-  }
-
-  public static String getDefaultDiffDetailOptionsAsHex() {
-    Set<ListChangesOption> options =
-        ImmutableSet.of(
-            ListChangesOption.ALL_COMMITS,
-            ListChangesOption.ALL_REVISIONS,
-            ListChangesOption.SKIP_DIFFSTAT);
-
-    return ListOption.toHex(options);
-  }
-
-  public static String getDefaultDashboardHex(Server serverApi) throws RestApiException {
-    Set<ListChangesOption> options = EnumSet.noneOf(ListChangesOption.class);
-    options.add(ListChangesOption.LABELS);
-    options.add(ListChangesOption.DETAILED_ACCOUNTS);
-
-    if (!isEnabledAttentionSet(serverApi)) {
-      options.add(ListChangesOption.REVIEWED);
-    }
-    return ListOption.toHex(options);
-  }
+  public static final ImmutableSet<ListChangesOption> DIFF_OPTIONS =
+      ImmutableSet.of(
+          ListChangesOption.ALL_COMMITS,
+          ListChangesOption.ALL_REVISIONS,
+          ListChangesOption.SKIP_DIFFSTAT);
 
   public static String getPath(@Nullable String requestedURL) throws URISyntaxException {
     if (requestedURL == null) {

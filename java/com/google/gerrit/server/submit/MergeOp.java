@@ -36,7 +36,6 @@ import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Change.Status;
-import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.entities.LegacySubmitRequirement;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.Project;
@@ -68,6 +67,7 @@ import com.google.gerrit.server.git.validators.MergeValidators;
 import com.google.gerrit.server.logging.RequestId;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.notedb.ChangeNotes;
+import com.google.gerrit.server.notedb.StoreSubmitRequirementsOp;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.NoSuchProjectException;
 import com.google.gerrit.server.project.SubmitRuleOptions;
@@ -97,6 +97,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.errors.IncorrectObjectTypeException;
 import org.eclipse.jgit.lib.Constants;
@@ -239,6 +241,7 @@ public class MergeOp implements AutoCloseable {
   private final NotifyResolver notifyResolver;
   private final RetryHelper retryHelper;
   private final ChangeData.Factory changeDataFactory;
+  private final StoreSubmitRequirementsOp.Factory storeSubmitRequirementsOpFactory;
 
   // Changes that were updated by this MergeOp.
   private final Map<Change.Id, Change> updatedChanges;
@@ -272,7 +275,8 @@ public class MergeOp implements AutoCloseable {
       NotifyResolver notifyResolver,
       TopicMetrics topicMetrics,
       RetryHelper retryHelper,
-      ChangeData.Factory changeDataFactory) {
+      ChangeData.Factory changeDataFactory,
+      StoreSubmitRequirementsOp.Factory storeSubmitRequirementsOpFactory) {
     this.cmUtil = cmUtil;
     this.batchUpdateFactory = batchUpdateFactory;
     this.internalUserFactory = internalUserFactory;
@@ -289,6 +293,7 @@ public class MergeOp implements AutoCloseable {
     this.topicMetrics = topicMetrics;
     this.changeDataFactory = changeDataFactory;
     this.updatedChanges = new HashMap<>();
+    this.storeSubmitRequirementsOpFactory = storeSubmitRequirementsOpFactory;
   }
 
   @Override
@@ -655,6 +660,16 @@ public class MergeOp implements AutoCloseable {
               toSubmit, updateOrderCalculator, submoduleCommits, subscriptionGraph, dryrun);
       this.allProjects = updateOrderCalculator.getProjectsInOrder();
       List<BatchUpdate> batchUpdates = orm.batchUpdates(allProjects);
+      // Group batch updates by project
+      Map<Project.NameKey, BatchUpdate> batchUpdatesByProject =
+          batchUpdates.stream().collect(Collectors.toMap(b -> b.getProject(), Function.identity()));
+      for (Map.Entry<Change.Id, ChangeData> entry : cs.changesById().entrySet()) {
+        Project.NameKey project = entry.getValue().project();
+        Change.Id changeId = entry.getKey();
+        batchUpdatesByProject
+            .get(project)
+            .addOp(changeId, storeSubmitRequirementsOpFactory.create());
+      }
       try {
         submissionExecutor.setAdditionalBatchUpdateListeners(
             ImmutableList.of(new SubmitStrategyListener(submitInput, strategies, commitStatus)));
@@ -963,14 +978,8 @@ public class MergeOp implements AutoCloseable {
 
                   change.setStatus(Change.Status.ABANDONED);
 
-                  ChangeMessage msg =
-                      ChangeMessagesUtil.newMessage(
-                          change.currentPatchSetId(),
-                          internalUserFactory.create(),
-                          change.getLastUpdatedOn(),
-                          "Project was deleted.",
-                          ChangeMessagesUtil.TAG_MERGED);
-                  cmUtil.addChangeMessage(ctx.getUpdate(change.currentPatchSetId()), msg);
+                  cmUtil.setChangeMessage(
+                      ctx, "Project was deleted.", ChangeMessagesUtil.TAG_MERGED);
 
                   return true;
                 }

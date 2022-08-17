@@ -24,7 +24,7 @@ import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.exceptions.StorageException;
-import com.google.gerrit.server.account.externalids.ExternalId;
+import com.google.gerrit.server.account.externalids.ExternalIdKeyFactory;
 import com.google.gerrit.server.account.externalids.ExternalIds;
 import com.google.gerrit.server.cache.CacheModule;
 import com.google.gerrit.server.config.AllUsersName;
@@ -45,7 +45,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
-import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 
@@ -77,6 +76,7 @@ public class AccountCacheImpl implements AccountCache {
   private final GitRepositoryManager repoManager;
   private final AllUsersName allUsersName;
   private final DefaultPreferencesCache defaultPreferenceCache;
+  private final ExternalIdKeyFactory externalIdKeyFactory;
 
   @Inject
   AccountCacheImpl(
@@ -85,12 +85,14 @@ public class AccountCacheImpl implements AccountCache {
           LoadingCache<CachedAccountDetails.Key, CachedAccountDetails> accountDetailsCache,
       GitRepositoryManager repoManager,
       AllUsersName allUsersName,
-      DefaultPreferencesCache defaultPreferenceCache) {
+      DefaultPreferencesCache defaultPreferenceCache,
+      ExternalIdKeyFactory externalIdKeyFactory) {
     this.externalIds = externalIds;
     this.accountDetailsCache = accountDetailsCache;
     this.repoManager = repoManager;
     this.allUsersName = allUsersName;
     this.defaultPreferenceCache = defaultPreferenceCache;
+    this.externalIdKeyFactory = externalIdKeyFactory;
   }
 
   @Override
@@ -141,10 +143,10 @@ public class AccountCacheImpl implements AccountCache {
   public Optional<AccountState> getByUsername(String username) {
     try {
       return externalIds
-          .get(ExternalId.Key.create(SCHEME_USERNAME, username))
+          .get(externalIdKeyFactory.create(SCHEME_USERNAME, username))
           .map(e -> get(e.accountId()))
           .orElseGet(Optional::empty);
-    } catch (IOException | ConfigInvalidException e) {
+    } catch (IOException e) {
       logger.atWarning().withCause(e).log("Cannot load AccountState for username %s", username);
       return Optional.empty();
     }

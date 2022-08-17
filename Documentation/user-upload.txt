@@ -460,6 +460,23 @@ the command output:
 Given the trace ID an administrator can find the corresponding logs and
 investigate issues more easily.
 
+[[deadline]]
+==== Setting a deadline
+
+When pushing to Gerrit it's possible that the client sets a deadline after which
+the push should be aborted. To do this the `deadline=<deadline>` push option
+must be set on the git push. Values must be specified using standard time unit
+abbreviations ('ms', 'sec', 'min', etc.).
+
+----
+  git push -o deadline=10m ssh://john.doe@git.example.com:29418/kernel/common HEAD:refs/for/master
+----
+
+Setting a deadline for the push overrides any
+link:config-gerrit.html#deadline.id[server-side deadline] that has been
+configured on the host, but not the link:config.html#receive.timeout[receive
+timeout].
+
 [[push_replace]]
 === Replace Changes
 
@@ -622,6 +639,20 @@ exactly `my-merged-commit`. It doesn't walk all of history up to that
 point, which could be slow and create lots of unintended new changes.
 To create multiple new changes, run push multiple times.
 
+[[ignore-attention-set]]
+=== Ignore automatic attention set rules
+
+Normally, we add users to the attention set based on several rules such as adding
+reviewers, replying, and many others. The full rule list is in
+link:user-attention-set.html[Attention Set].
+
+--ignore-automatic-attention-set-rules (also known as -ias and
+-ignore-attention-set) can be used to keep the attention set as it were before
+the push.
+
+----
+  git push ssh://john.doe@git.example.com:29418/kernel/common my-merged-commit:refs/for/master%ias
+----
 
 == repo upload
 

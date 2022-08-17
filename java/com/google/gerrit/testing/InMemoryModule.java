@@ -37,6 +37,7 @@ import com.google.gerrit.server.CacheRefreshExecutor;
 import com.google.gerrit.server.FanOutExecutor;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.GerritPersonIdentProvider;
+import com.google.gerrit.server.LibModuleType;
 import com.google.gerrit.server.PluginUser;
 import com.google.gerrit.server.api.GerritApiModule;
 import com.google.gerrit.server.api.PluginApiModule;
@@ -44,6 +45,7 @@ import com.google.gerrit.server.audit.AuditModule;
 import com.google.gerrit.server.cache.h2.H2CacheModule;
 import com.google.gerrit.server.cache.mem.DefaultMemoryCacheModule;
 import com.google.gerrit.server.change.FileInfoJsonModule;
+import com.google.gerrit.server.config.AllProjectsConfigProvider;
 import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.server.config.AllProjectsNameProvider;
 import com.google.gerrit.server.config.AllUsersName;
@@ -53,7 +55,9 @@ import com.google.gerrit.server.config.AnonymousCowardNameProvider;
 import com.google.gerrit.server.config.AuthConfig;
 import com.google.gerrit.server.config.CanonicalWebUrlModule;
 import com.google.gerrit.server.config.CanonicalWebUrlProvider;
-import com.google.gerrit.server.config.DefaultUrlFormatter;
+import com.google.gerrit.server.config.DefaultUrlFormatter.DefaultUrlFormatterModule;
+import com.google.gerrit.server.config.FileBasedAllProjectsConfigProvider;
+import com.google.gerrit.server.config.FileBasedGlobalPluginConfigProvider;
 import com.google.gerrit.server.config.GerritGlobalModule;
 import com.google.gerrit.server.config.GerritInstanceIdModule;
 import com.google.gerrit.server.config.GerritInstanceNameModule;
@@ -62,14 +66,16 @@ import com.google.gerrit.server.config.GerritRuntime;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.GerritServerId;
 import com.google.gerrit.server.config.GerritServerIdProvider;
+import com.google.gerrit.server.config.GlobalPluginConfigProvider;
 import com.google.gerrit.server.config.SendEmailExecutor;
 import com.google.gerrit.server.config.SitePath;
 import com.google.gerrit.server.config.TrackingFooters;
 import com.google.gerrit.server.config.TrackingFootersProvider;
+import com.google.gerrit.server.experiments.ConfigExperimentFeatures.ConfigExperimentFeaturesModule;
 import com.google.gerrit.server.git.GarbageCollection;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.PerThreadRequestScope;
-import com.google.gerrit.server.git.SearchingChangeCacheImpl;
+import com.google.gerrit.server.git.SearchingChangeCacheImpl.SearchingChangeCacheImplModule;
 import com.google.gerrit.server.git.WorkQueue;
 import com.google.gerrit.server.index.account.AccountSchemaDefinitions;
 import com.google.gerrit.server.index.account.AllAccountsIndexer;
@@ -78,11 +84,11 @@ import com.google.gerrit.server.index.change.ChangeSchemaDefinitions;
 import com.google.gerrit.server.index.group.AllGroupsIndexer;
 import com.google.gerrit.server.index.group.GroupIndexCollection;
 import com.google.gerrit.server.index.group.GroupSchemaDefinitions;
-import com.google.gerrit.server.mail.SignedTokenEmailTokenVerifier;
+import com.google.gerrit.server.mail.SignedTokenEmailTokenVerifier.SignedTokenEmailTokenVerifierModule;
 import com.google.gerrit.server.patch.DiffExecutor;
 import com.google.gerrit.server.permissions.DefaultPermissionBackendModule;
 import com.google.gerrit.server.plugins.ServerInformationImpl;
-import com.google.gerrit.server.project.DefaultProjectNameLockManager;
+import com.google.gerrit.server.project.DefaultProjectNameLockManager.DefaultProjectNameLockManagerModule;
 import com.google.gerrit.server.restapi.RestApiModule;
 import com.google.gerrit.server.schema.JdbcAccountPatchReviewStore;
 import com.google.gerrit.server.schema.SchemaCreator;
@@ -90,10 +96,11 @@ import com.google.gerrit.server.schema.SchemaCreatorImpl;
 import com.google.gerrit.server.securestore.DefaultSecureStore;
 import com.google.gerrit.server.securestore.SecureStore;
 import com.google.gerrit.server.ssh.NoSshKeyCache;
-import com.google.gerrit.server.submit.LocalMergeSuperSetComputation;
-import com.google.gerrit.server.submit.SubscriptionGraph;
-import com.google.gerrit.server.update.SuperprojectUpdateSubmissionListener;
+import com.google.gerrit.server.submit.LocalMergeSuperSetComputation.LocalMergeSuperSetComputationModule;
+import com.google.gerrit.server.submit.SubscriptionGraph.SubscriptionGraphModule;
+import com.google.gerrit.server.update.SuperprojectUpdateSubmissionListener.SuperprojectUpdateSubmissionListenerModule;
 import com.google.gerrit.server.util.ReplicaUtil;
+import com.google.gerrit.testing.FakeEmailSender.FakeEmailSenderModule;
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
@@ -131,7 +138,6 @@ public class InMemoryModule extends FactoryModule {
     cfg.setString("user", null, "name", "Gerrit Code Review");
     cfg.setString("user", null, "email", "gerrit@localhost");
     cfg.unset("cache", null, "directory");
-    cfg.setString("index", null, "type", "lucene");
     cfg.setBoolean("index", "lucene", "testInmemory", true);
     cfg.setInt("sendemail", null, "threadPoolSize", 0);
     cfg.setBoolean("receive", null, "enableSignedPush", false);
@@ -181,11 +187,11 @@ public class InMemoryModule extends FactoryModule {
     factory(PluginUser.Factory.class);
     install(new PluginApiModule());
     install(new DefaultPermissionBackendModule());
-    install(new SearchingChangeCacheImpl.Module());
+    install(new SearchingChangeCacheImplModule());
     factory(GarbageCollection.Factory.class);
     install(new AuditModule());
-    install(new SubscriptionGraph.Module());
-    install(new SuperprojectUpdateSubmissionListener.Module());
+    install(new SubscriptionGraphModule());
+    install(new SuperprojectUpdateSubmissionListenerModule());
 
     bindScope(RequestScoped.class, PerThreadRequestScope.REQUEST);
 
@@ -193,7 +199,9 @@ public class InMemoryModule extends FactoryModule {
     // support Path-based Configs, only FileBasedConfig.
     bind(Path.class).annotatedWith(SitePath.class).toInstance(Paths.get("."));
     bind(Config.class).annotatedWith(GerritServerConfig.class).toInstance(cfg);
-    bind(GerritOptions.class).toInstance(new GerritOptions(false, false, ""));
+    bind(GerritOptions.class).toInstance(new GerritOptions(false, false));
+    bind(AllProjectsConfigProvider.class).to(FileBasedAllProjectsConfigProvider.class);
+    bind(GlobalPluginConfigProvider.class).to(FileBasedGlobalPluginConfigProvider.class);
 
     bind(GitRepositoryManager.class).to(InMemoryRepositoryManager.class);
     bind(InMemoryRepositoryManager.class).in(SINGLETON);
@@ -211,7 +219,7 @@ public class InMemoryModule extends FactoryModule {
             return CanonicalWebUrlProvider.class;
           }
         });
-    install(new DefaultUrlFormatter.Module());
+    install(new DefaultUrlFormatterModule());
     // Replacement of DiffExecutorModule to not use thread pool in the tests
     install(
         new AbstractModule() {
@@ -227,28 +235,36 @@ public class InMemoryModule extends FactoryModule {
         });
     install(new DefaultMemoryCacheModule());
     install(new H2CacheModule());
-    install(new FakeEmailSender.Module());
-    install(new SignedTokenEmailTokenVerifier.Module());
+    install(new FakeEmailSenderModule());
+    install(new SignedTokenEmailTokenVerifierModule());
     install(new GpgModule(cfg));
-    install(new LocalMergeSuperSetComputation.Module());
+    install(new LocalMergeSuperSetComputationModule());
 
     bind(AllAccountsIndexer.class).toProvider(Providers.of(null));
     bind(AllChangesIndexer.class).toProvider(Providers.of(null));
     bind(AllGroupsIndexer.class).toProvider(Providers.of(null));
 
-    IndexType indexType = new IndexType(cfg.getString("index", null, "type"));
-    // For custom index types, callers must provide their own module.
-    if (indexType.isLucene()) {
-      install(luceneIndexModule());
-    } else if (indexType.isElasticsearch()) {
-      install(elasticIndexModule());
+    // Index lib module has a higher priority than index type configuration.
+    String indexModule =
+        cfg.getString("index", null, "install" + LibModuleType.INDEX_MODULE_TYPE.getConfigKey());
+    if (indexModule != null) {
+      install(indexModule(indexModule));
+    } else {
+      String indexTypeCfg = cfg.getString("index", null, "type");
+      IndexType indexType = new IndexType(indexTypeCfg != null ? indexTypeCfg : "fake");
+      if (indexType.isLucene()) {
+        install(luceneIndexModule());
+      } else if (indexType.isFake()) {
+        install(fakeIndexModule());
+      }
     }
     bind(ServerInformationImpl.class);
     bind(ServerInformation.class).to(ServerInformationImpl.class);
     install(new RestApiModule());
     install(new OAuthRestModule());
-    install(new DefaultProjectNameLockManager.Module());
-    install(new FileInfoJsonModule(cfg));
+    install(new DefaultProjectNameLockManagerModule());
+    install(new FileInfoJsonModule());
+    install(new ConfigExperimentFeaturesModule());
 
     bind(ProjectOperations.class).to(ProjectOperationsImpl.class);
   }
@@ -313,8 +329,8 @@ public class InMemoryModule extends FactoryModule {
     return indexModule("com.google.gerrit.lucene.LuceneIndexModule");
   }
 
-  private Module elasticIndexModule() {
-    return indexModule("com.google.gerrit.elasticsearch.ElasticIndexModule");
+  private Module fakeIndexModule() {
+    return indexModule("com.google.gerrit.index.testing.FakeIndexModule");
   }
 
   private Module indexModule(String moduleClassName) {

@@ -21,6 +21,7 @@ import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_BRANCH;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_CHANGE_ID;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_CHERRY_PICK_OF;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_COMMIT;
+import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_COPIED_LABEL;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_CURRENT;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_GROUPS;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_HASHTAGS;
@@ -55,6 +56,7 @@ import com.google.common.collect.Table;
 import com.google.common.collect.Tables;
 import com.google.common.flogger.FluentLogger;
 import com.google.common.primitives.Ints;
+import com.google.errorprone.annotations.FormatMethod;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Address;
@@ -68,6 +70,7 @@ import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.entities.SubmitRecord;
+import com.google.gerrit.entities.SubmitRequirementResult;
 import com.google.gerrit.metrics.Timer0;
 import com.google.gerrit.server.AssigneeStatusUpdate;
 import com.google.gerrit.server.ReviewerByEmailSet;
@@ -125,6 +128,7 @@ class ChangeNotesParser {
   private final List<AssigneeStatusUpdate> assigneeUpdates;
   private final List<SubmitRecord> submitRecords;
   private final ListMultimap<ObjectId, HumanComment> humanComments;
+  private final List<SubmitRequirementResult> submitRequirementResults;
   private final Map<PatchSet.Id, PatchSet.Builder> patchSets;
   private final Set<PatchSet.Id> deletedPatchSets;
   private final Map<PatchSet.Id, PatchSetState> patchSetStates;
@@ -187,6 +191,7 @@ class ChangeNotesParser {
     submitRecords = Lists.newArrayListWithExpectedSize(1);
     allChangeMessages = new ArrayList<>();
     humanComments = MultimapBuilder.hashKeys().arrayListValues().build();
+    submitRequirementResults = new ArrayList<>();
     patchSets = new HashMap<>();
     deletedPatchSets = new HashSet<>();
     patchSetStates = new HashMap<>();
@@ -259,6 +264,7 @@ class ChangeNotesParser {
         submitRecords,
         buildAllMessages(),
         humanComments,
+        submitRequirementResults,
         firstNonNull(isPrivate, false),
         firstNonNull(workInProgress, false),
         firstNonNull(hasReviewStarted, true),
@@ -408,6 +414,9 @@ class ChangeNotesParser {
     // "Status: merged" as non-post-submit.
     for (String line : commit.getFooterLineValues(FOOTER_LABEL)) {
       parseApproval(psId, accountId, realAccountId, commitTimestamp, line);
+    }
+    for (String line : commit.getFooterLineValues(FOOTER_COPIED_LABEL)) {
+      parseCopiedApproval(psId, commitTimestamp, line);
     }
 
     for (ReviewerStateInternal state : ReviewerStateInternal.values()) {
@@ -735,10 +744,14 @@ class ChangeNotesParser {
     }
 
     ChangeMessage changeMessage =
-        new ChangeMessage(ChangeMessage.key(psId.changeId(), commit.name()), accountId, ts, psId);
-    changeMessage.setMessage(changeMsgString.get());
-    changeMessage.setTag(tag);
-    changeMessage.setRealAuthor(realAccountId);
+        ChangeMessage.create(
+            ChangeMessage.key(psId.changeId(), commit.name()),
+            accountId,
+            ts,
+            psId,
+            changeMsgString.get(),
+            realAccountId,
+            tag);
     return allChangeMessages.add(changeMessage);
   }
 
@@ -749,11 +762,13 @@ class ChangeNotesParser {
     Optional<ChangeNoteUtil.CommitMessageRange> range = parseCommitMessageRange(commit);
     return range.map(
         commitMessageRange ->
-            RawParseUtils.decode(
-                enc,
-                raw,
-                commitMessageRange.changeMessageStart(),
-                commitMessageRange.changeMessageEnd() + 1));
+            commitMessageRange.hasChangeMessage()
+                ? RawParseUtils.decode(
+                    enc,
+                    raw,
+                    commitMessageRange.changeMessageStart(),
+                    commitMessageRange.changeMessageEnd() + 1)
+                : null);
   }
 
   private void parseNotes() throws IOException, ConfigInvalidException {
@@ -768,6 +783,9 @@ class ChangeNotesParser {
       for (HumanComment c : e.getValue().getEntities()) {
         humanComments.put(e.getKey(), c);
       }
+      for (SubmitRequirementResult sr : e.getValue().getSubmitRequirementsResult()) {
+        submitRequirementResults.add(sr);
+      }
     }
 
     for (PatchSet.Builder b : patchSets.values()) {
@@ -781,6 +799,77 @@ class ChangeNotesParser {
         b.pushCertificate(Optional.of(rn.getPushCert()));
       }
     }
+  }
+
+  // Footer example: Copied-Label: <LABEL>=VOTE <Gerrit Account>,<Gerrit Real Account> :"<TAG>"
+  // ":<"TAG>"" is optional. <Gerrit Real Account> is also optional, if it was not set.
+  // The label, vote, and the Gerrit account are mandatory (unlike FOOTER_LABEL where Gerrit
+  // Account is also optional since by default it's the committer).
+  private void parseCopiedApproval(PatchSet.Id psId, Timestamp ts, String line)
+      throws ConfigInvalidException {
+    // Copied approvals can't be explicitly removed. They are removed the same way as non-copied
+    // approvals.
+    checkFooter(!line.startsWith("-"), FOOTER_COPIED_LABEL, line);
+
+    Account.Id accountId, realAccountId = null;
+    String labelVoteStr;
+    String tag = null;
+    int tagStart = line.indexOf(":\"");
+    // UUID introduced in https://gerrit-review.googlesource.com/c/gerrit/+/324937
+    // Only parsed for backward compatibility
+    // Footer has the following format in this case:
+    // Copied-Label: <LABEL>=VOTE <Gerrit Account>,<Gerrit Real Account> :"<TAG>"
+    int uuidStart = line.indexOf(", ");
+    // Wired tag that contains uuid delimiter. The uuid is actually not present.
+    if (tagStart != -1 && uuidStart > tagStart) {
+      uuidStart = -1;
+    }
+    int identitiesStart = line.indexOf(' ', uuidStart != -1 ? uuidStart + 2 : 0);
+    // The first account is the accountId, and second (if applicable) is the realAccountId.
+    try {
+      labelVoteStr = line.substring(0, uuidStart != -1 ? uuidStart : identitiesStart);
+    } catch (StringIndexOutOfBoundsException ex) {
+      throw new ConfigInvalidException(ex.getMessage(), ex);
+    }
+    String[] identities =
+        line.substring(identitiesStart + 1, tagStart == -1 ? line.length() : tagStart).split(",");
+    PersonIdent ident = RawParseUtils.parsePersonIdent(identities[0]);
+    checkFooter(ident != null, FOOTER_COPIED_LABEL, line);
+    accountId = parseIdent(ident);
+
+    if (identities.length > 1) {
+      PersonIdent realIdent = RawParseUtils.parsePersonIdent(identities[1]);
+      checkFooter(realIdent != null, FOOTER_COPIED_LABEL, line);
+      realAccountId = parseIdent(realIdent);
+    }
+
+    LabelVote l;
+    try {
+      l = LabelVote.parseWithEquals(labelVoteStr);
+    } catch (IllegalArgumentException e) {
+      ConfigInvalidException pe = parseException("invalid %s: %s", FOOTER_COPIED_LABEL, line);
+      pe.initCause(e);
+      throw pe;
+    }
+
+    if (tagStart != -1) {
+      // tagStart+2 skips ":\"" to parse the actual tag. Tags are in brackets.
+      // line.length()-1 skips the last ".
+      tag = line.substring(tagStart + 2, line.length() - 1);
+    }
+
+    PatchSetApproval.Builder psa =
+        PatchSetApproval.builder()
+            .key(PatchSetApproval.key(psId, accountId, LabelId.create(l.label())))
+            .value(l.value())
+            .granted(ts)
+            .tag(Optional.ofNullable(tag))
+            .copied(true);
+    if (realAccountId != null) {
+      psa.realAccountId(realAccountId);
+    }
+    approvals.putIfAbsent(psa.key(), psa);
+    bufferedApprovals.add(psa);
   }
 
   private void parseApproval(
@@ -811,18 +900,27 @@ class ChangeNotesParser {
     //     user.
     Account.Id effectiveAccountId;
     String labelVoteStr;
-    int s = line.indexOf(' ');
-    if (s > 0) {
+    // UUID introduced in https://gerrit-review.googlesource.com/c/gerrit/+/324937
+    // Only parsed for backward compatibility
+    // Footer has the following format in this case: Label: <LABEL>=VOTE, <UUID> <Gerrit Account>
+    int uuidStart = line.indexOf(", ");
+    int reviewerStart = line.indexOf(' ', uuidStart != -1 ? uuidStart + 2 : 0);
+    if (uuidStart != -1) {
+      labelVoteStr = line.substring(0, uuidStart);
+    } else if (reviewerStart != -1) {
+      labelVoteStr = line.substring(0, reviewerStart);
+    } else {
+      labelVoteStr = line;
+    }
+    if (reviewerStart > 0) {
       // Account in the label line (2) becomes the effective ID of the
       // approval. If there is a real user (3) different from the commit user
       // (2), we actually don't store that anywhere in this case; it's more
       // important to record that the real user (3) actually initiated submit.
-      labelVoteStr = line.substring(0, s);
-      PersonIdent ident = RawParseUtils.parsePersonIdent(line.substring(s + 1));
+      PersonIdent ident = RawParseUtils.parsePersonIdent(line.substring(reviewerStart + 1));
       checkFooter(ident != null, FOOTER_LABEL, line);
       effectiveAccountId = parseIdent(ident);
     } else {
-      labelVoteStr = line;
       effectiveAccountId = committerId;
     }
 
@@ -904,8 +1002,9 @@ class ChangeNotesParser {
         }
       } else {
         checkFooter(rec != null, FOOTER_SUBMITTED_WITH, line);
-        if (line.startsWith("Rule-Name")) {
-          // This is just added for forward compatibility. Ignore this field.
+        if (line.startsWith("Rule-Name: ")) {
+          String ruleName = line.split(": ")[1];
+          rec.ruleName = ruleName;
           continue;
         }
         SubmitRecord.Label label = new SubmitRecord.Label();
@@ -1158,6 +1257,7 @@ class ChangeNotesParser {
     }
     if (!missing.isEmpty()) {
       throw parseException(
+          "%s",
           "Missing footers: " + missing.stream().map(FooterKey::getName).collect(joining(", ")));
     }
   }
@@ -1191,6 +1291,7 @@ class ChangeNotesParser {
     return pending != null && pending.commitId().isPresent();
   }
 
+  @FormatMethod
   private ConfigInvalidException parseException(String fmt, Object... args) {
     return ChangeNotes.parseException(id, fmt, args);
   }

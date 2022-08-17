@@ -33,6 +33,7 @@ import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Normalizes votes on labels according to project config.
@@ -76,10 +77,11 @@ public class LabelNormalizer {
   }
 
   /**
+   * Returns copies of approvals normalized to the defined ranges for the label type. Approvals for
+   * unknown labels are not included in the output
+   *
    * @param notes change notes containing the given approvals.
    * @param approvals list of approvals.
-   * @return copies of approvals normalized to the defined ranges for the label type. Approvals for
-   *     unknown labels are not included in the output.
    */
   public Result normalize(ChangeNotes notes, Collection<PatchSetApproval> approvals) {
     List<PatchSetApproval> unchanged = Lists.newArrayListWithCapacity(approvals.size());
@@ -101,12 +103,12 @@ public class LabelNormalizer {
         unchanged.add(psa);
         continue;
       }
-      LabelType label = labelTypes.byLabel(psa.labelId());
-      if (label == null) {
+      Optional<LabelType> label = labelTypes.byLabel(psa.labelId());
+      if (!label.isPresent()) {
         deleted.add(psa);
         continue;
       }
-      PatchSetApproval copy = applyTypeFloor(label, psa);
+      PatchSetApproval copy = applyTypeFloor(label.get(), psa);
       if (copy.value() != psa.value()) {
         updated.add(copy);
       } else {

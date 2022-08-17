@@ -20,7 +20,11 @@ import './gr-create-change-dialog';
 import {GrCreateChangeDialog} from './gr-create-change-dialog';
 import {BranchName, GitRef, RepoName} from '../../../types/common';
 import {InheritedBooleanInfoConfiguredValue} from '../../../constants/constants';
-import {createChange, createConfig} from '../../../test/test-data-generators';
+import {
+  createChange,
+  createConfig,
+  TEST_CHANGE_ID,
+} from '../../../test/test-data-generators';
 import {stubRestApi} from '../../../test/test-utils';
 
 const basicFixture = fixtureFromElement('gr-create-change-dialog');
@@ -118,24 +122,20 @@ suite('gr-create-change-dialog tests', () => {
     assert.isTrue(saveStub.called);
   });
 
-  test('_getRepoBranchesSuggestions empty', done => {
-    element._getRepoBranchesSuggestions('nonexistent').then(branches => {
-      assert.equal(branches.length, 0);
-      done();
-    });
+  test('_getRepoBranchesSuggestions empty', async () => {
+    const branches = await element._getRepoBranchesSuggestions('nonexistent');
+    assert.equal(branches.length, 0);
   });
 
-  test('_getRepoBranchesSuggestions non-empty', done => {
-    element._getRepoBranchesSuggestions('test-branch').then(branches => {
-      assert.equal(branches.length, 1);
-      assert.equal(branches[0].name, 'test-branch');
-      done();
-    });
+  test('_getRepoBranchesSuggestions non-empty', async () => {
+    const branches = await element._getRepoBranchesSuggestions('test-branch');
+    assert.equal(branches.length, 1);
+    assert.equal(branches[0].name, 'test-branch');
   });
 
   test('_computeBranchClass', () => {
-    assert.equal(element._computeBranchClass(true), 'hide');
-    assert.equal(element._computeBranchClass(false), '');
+    assert.equal(element._computeBranchClass(TEST_CHANGE_ID), 'hide');
+    assert.equal(element._computeBranchClass(undefined), '');
   });
 
   test('_computePrivateSectionClass', () => {

@@ -25,7 +25,9 @@ import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -33,6 +35,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import org.eclipse.jgit.diff.Edit;
 import org.eclipse.jgit.diff.MyersDiff;
 import org.eclipse.jgit.lib.Config;
@@ -250,11 +253,100 @@ class IntraLineLoader implements Callable<IntraLineDiff> {
           wordEdits.set(j, new Edit(ab, ae, bb, be));
         }
 
-        edits.set(i, new ReplaceEdit(e, wordEdits));
+        // Validate that the intra-line edits applied to the "a" text produces the "b" text. If this
+        // check fails, fallback to a single replace edit that covers the whole area.
+        if (isValidTransformation(a, b, wordEdits)) {
+          edits.set(i, new ReplaceEdit(e, wordEdits));
+        } else {
+          edits.set(i, new ReplaceEdit(e, Arrays.asList(new Edit(0, a.size(), 0, b.size()))));
+        }
       }
     }
 
     return new IntraLineDiff(edits);
+  }
+
+  /**
+   * Validate that the application of the list of {@code edits} to the {@code lText} text produces
+   * the {@code rText} text.
+   *
+   * @return true if {@code lText} + {@code edits} results in the {@code rText} text, and false
+   *     otherwise.
+   */
+  private static boolean isValidTransformation(CharText lText, CharText rText, List<Edit> edits) {
+    // Apply replace and delete edits to the left text
+    Optional<String> left =
+        applyEditsToString(
+            toStringBuilder(lText),
+            toStringBuilder(rText).toString(),
+            edits.stream()
+                .filter(e -> e.getType() == Edit.Type.REPLACE || e.getType() == Edit.Type.DELETE)
+                .collect(Collectors.toList()));
+    // Remove insert edits from the right text
+    Optional<String> right =
+        applyEditsToString(
+            toStringBuilder(rText),
+            null,
+            edits.stream()
+                .filter(e -> e.getType() == Edit.Type.INSERT)
+                .collect(Collectors.toList()));
+
+    return left.isPresent() && right.isPresent() && left.get().contentEquals(right.get());
+  }
+
+  /**
+   * Apply edits to the {@code target} string. Replace edits are applied to target and replaced with
+   * a substring from {@code from}. Delete edits are applied to target. Insert edits are removed
+   * from target.
+   *
+   * @return Optional containing the transformed string, or empty if the transformation fails (due
+   *     to index out of bounds).
+   */
+  private static Optional<String> applyEditsToString(
+      StringBuilder target, String from, List<Edit> edits) {
+    // Process edits right to left to avoid re-computation of indices when characters are removed.
+    try {
+      for (int i = edits.size() - 1; i >= 0; i--) {
+        Edit edit = edits.get(i);
+        if (edit.getType() == Edit.Type.REPLACE) {
+          boundaryCheck(target, edit.getBeginA(), edit.getEndA() - 1);
+          boundaryCheck(from, edit.getBeginB(), edit.getEndB() - 1);
+          target.replace(
+              edit.getBeginA(), edit.getEndA(), from.substring(edit.getBeginB(), edit.getEndB()));
+        } else if (edit.getType() == Edit.Type.DELETE) {
+          boundaryCheck(target, edit.getBeginA(), edit.getEndA() - 1);
+          target.delete(edit.getBeginA(), edit.getEndA());
+        } else if (edit.getType() == Edit.Type.INSERT) {
+          boundaryCheck(target, edit.getBeginB(), edit.getEndB() - 1);
+          target.delete(edit.getBeginB(), edit.getEndB());
+        }
+      }
+      return Optional.of(target.toString());
+    } catch (StringIndexOutOfBoundsException unused) {
+      return Optional.empty();
+    }
+  }
+
+  private static void boundaryCheck(StringBuilder s, int i1, int i2) {
+    if (i1 >= 0 && i2 >= 0 && i1 < s.length() && i2 < s.length()) {
+      return;
+    }
+    throw new StringIndexOutOfBoundsException();
+  }
+
+  private static void boundaryCheck(String s, int i1, int i2) {
+    if (i1 >= 0 && i2 >= 0 && i1 < s.length() && i2 < s.length()) {
+      return;
+    }
+    throw new StringIndexOutOfBoundsException();
+  }
+
+  private static StringBuilder toStringBuilder(CharText text) {
+    StringBuilder result = new StringBuilder();
+    for (int i = 0; i < text.size(); i++) {
+      result.append(text.charAt(i));
+    }
+    return result;
   }
 
   private static void combineLineEdits(

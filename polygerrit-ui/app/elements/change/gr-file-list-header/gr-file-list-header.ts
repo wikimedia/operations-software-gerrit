@@ -24,7 +24,6 @@ import '../../shared/gr-icons/gr-icons';
 import '../gr-commit-info/gr-commit-info';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-file-list-header_html';
-import {KeyboardShortcutMixin} from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
 import {FilesExpandedState} from '../gr-file-list-constants';
 import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {computeLatestPatchNum, PatchSet} from '../../../utils/patch-set-util';
@@ -42,11 +41,14 @@ import {
 import {DiffPreferencesInfo} from '../../../types/diff';
 import {ChangeComments} from '../../diff/gr-comment-api/gr-comment-api';
 import {GrDiffModeSelector} from '../../diff/gr-diff-mode-selector/gr-diff-mode-selector';
-import {ChangeStatus, DiffViewMode} from '../../../constants/constants';
+import {DiffViewMode} from '../../../constants/constants';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {fireEvent} from '../../../utils/event-util';
-
-const MERGED_STATUS = 'MERGED';
+import {
+  Shortcut,
+  ShortcutSection,
+} from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
+import {appContext} from '../../../services/app-context';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -63,7 +65,7 @@ export interface GrFileListHeader {
 }
 
 @customElement('gr-file-list-header')
-export class GrFileListHeader extends KeyboardShortcutMixin(PolymerElement) {
+export class GrFileListHeader extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
@@ -78,10 +80,6 @@ export class GrFileListHeader extends KeyboardShortcutMixin(PolymerElement) {
 
   /**
    * @event open-diff-prefs
-   */
-
-  /**
-   * @event open-included-in-dialog
    */
 
   /**
@@ -124,9 +122,6 @@ export class GrFileListHeader extends KeyboardShortcutMixin(PolymerElement) {
   @property({type: Object})
   diffPrefs?: DiffPreferencesInfo;
 
-  @property({type: Boolean})
-  diffPrefsDisabled?: boolean;
-
   @property({type: String, notify: true})
   diffViewMode?: DiffViewMode;
 
@@ -146,6 +141,8 @@ export class GrFileListHeader extends KeyboardShortcutMixin(PolymerElement) {
 
   @property({type: Object})
   revisionInfo?: RevisionInfo;
+
+  private readonly shortcuts = appContext.shortcutsService;
 
   setDiffViewMode(mode: DiffViewMode) {
     this.$.modeSelect.setMode(mode);
@@ -171,11 +168,8 @@ export class GrFileListHeader extends KeyboardShortcutMixin(PolymerElement) {
     return classes.join(' ');
   }
 
-  _computePrefsButtonHidden(
-    prefs: DiffPreferencesInfo,
-    diffPrefsDisabled: boolean
-  ) {
-    return diffPrefsDisabled || !prefs;
+  _computePrefsButtonHidden(prefs: DiffPreferencesInfo, loggedIn: boolean) {
+    return !loggedIn || !prefs;
   }
 
   _fileListActionsVisible(
@@ -183,13 +177,6 @@ export class GrFileListHeader extends KeyboardShortcutMixin(PolymerElement) {
     maxFilesForBulkActions: number
   ) {
     return shownFileCount <= maxFilesForBulkActions;
-  }
-
-  _showAddPatchsetDescription(
-    patchsetDescription: string,
-    change?: ChangeInfo
-  ) {
-    return !patchsetDescription && change?.status === ChangeStatus.NEW;
   }
 
   _handlePatchChange(e: CustomEvent) {
@@ -206,11 +193,6 @@ export class GrFileListHeader extends KeyboardShortcutMixin(PolymerElement) {
   _handlePrefsTap(e: Event) {
     e.preventDefault();
     fireEvent(this, 'open-diff-prefs');
-  }
-
-  _handleIncludedInTap(e: Event) {
-    e.preventDefault();
-    fireEvent(this, 'open-included-in-dialog');
   }
 
   _handleDownloadTap(e: Event) {
@@ -233,7 +215,7 @@ export class GrFileListHeader extends KeyboardShortcutMixin(PolymerElement) {
     return 'patchInfoOldPatchSet';
   }
 
-  _hideIncludedIn(change?: ChangeInfo) {
-    return change?.status === MERGED_STATUS ? '' : 'hide';
+  createTitle(shortcutName: Shortcut, section: ShortcutSection) {
+    return this.shortcuts.createTitle(shortcutName, section);
   }
 }

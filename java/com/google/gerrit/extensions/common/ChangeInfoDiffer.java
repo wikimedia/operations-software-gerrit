@@ -63,20 +63,23 @@ public final class ChangeInfoDiffer {
    */
   public static ChangeInfoDifference getDifference(
       ChangeInfo oldChangeInfo, ChangeInfo newChangeInfo) {
-    return ChangeInfoDifference.create(
-        /* added= */ getAdded(oldChangeInfo, newChangeInfo),
-        /* removed= */ getAdded(newChangeInfo, oldChangeInfo));
+    return ChangeInfoDifference.builder()
+        .setOldChangeInfo(oldChangeInfo)
+        .setNewChangeInfo(newChangeInfo)
+        .setAdded(getAdded(oldChangeInfo, newChangeInfo))
+        .setRemoved(getAdded(newChangeInfo, oldChangeInfo))
+        .build();
   }
 
   @SuppressWarnings("unchecked") // reflection is used to construct instances of T
   private static <T> T getAdded(T oldValue, T newValue) {
     if (newValue instanceof Collection) {
-      List result = getAddedForCollection((Collection<?>) oldValue, (Collection<?>) newValue);
+      List<?> result = getAddedForCollection((Collection<?>) oldValue, (Collection<?>) newValue);
       return (T) result;
     }
 
     if (newValue instanceof Map) {
-      Map result = getAddedForMap((Map<?, ?>) oldValue, (Map<?, ?>) newValue);
+      Map<?, ?> result = getAddedForMap((Map<?, ?>) oldValue, (Map<?, ?>) newValue);
       return (T) result;
     }
 
@@ -143,7 +146,7 @@ public final class ChangeInfoDiffer {
     }
   }
 
-  /** @return {@code null} if nothing has been added to {@code oldCollection} */
+  /** Returns {@code null} if nothing has been added to {@code oldCollection} */
   private static ImmutableList<?> getAddedForCollection(
       Collection<?> oldCollection, Collection<?> newCollection) {
     ImmutableList<?> notInOldCollection = getAdditions(oldCollection, newCollection);
@@ -165,7 +168,7 @@ public final class ChangeInfoDiffer {
     return duplicatesMap.values().stream().flatMap(Collection::stream).collect(toImmutableList());
   }
 
-  /** @return {@code null} if nothing has been added to {@code oldMap} */
+  /** Returns {@code null} if nothing has been added to {@code oldMap} */
   private static ImmutableMap<Object, Object> getAddedForMap(Map<?, ?> oldMap, Map<?, ?> newMap) {
     ImmutableMap.Builder<Object, Object> additionsBuilder = ImmutableMap.builder();
     for (Map.Entry<?, ?> entry : newMap.entrySet()) {

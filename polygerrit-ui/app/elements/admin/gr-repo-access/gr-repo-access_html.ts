@@ -17,6 +17,9 @@
 import {html} from '@polymer/polymer/lib/utils/html-tag';
 
 export const htmlTemplate = html`
+  <style include="gr-font-styles">
+    /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+  </style>
   <style include="shared-styles">
     /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
   </style>
@@ -82,6 +85,7 @@ export const htmlTemplate = html`
           text="{{_inheritFromFilter}}"
           query="[[_query]]"
           on-commit="_handleUpdateInheritFrom"
+          on-bind-value-changed="_handleUpdateInheritFrom"
         ></gr-autocomplete>
       </h3>
       <div class$="weblinks [[_computeWebLinkClass(_weblinks)]]">

@@ -16,7 +16,6 @@ package com.google.gerrit.server.restapi.change;
 
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.common.Input;
 import com.google.gerrit.extensions.restapi.Response;
@@ -34,8 +33,9 @@ import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.Context;
+import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.gerrit.server.update.UpdateException;
+import com.google.gerrit.server.util.AccountTemplateUtil;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
@@ -94,7 +94,7 @@ public class DeleteAssignee implements RestModifyView<ChangeResource, Input> {
       IdentifiedUser deletedAssigneeUser = userFactory.create(currentAssigneeId);
       deletedAssignee = deletedAssigneeUser.state();
       update.removeAssignee();
-      addMessage(ctx, update, deletedAssigneeUser);
+      addMessage(ctx, deletedAssigneeUser);
       return true;
     }
 
@@ -102,19 +102,18 @@ public class DeleteAssignee implements RestModifyView<ChangeResource, Input> {
       return deletedAssignee != null ? deletedAssignee.account().id() : null;
     }
 
-    private void addMessage(
-        ChangeContext ctx, ChangeUpdate update, IdentifiedUser deletedAssignee) {
-      ChangeMessage cmsg =
-          ChangeMessagesUtil.newMessage(
-              ctx,
-              "Assignee deleted: " + deletedAssignee.getNameEmail(),
-              ChangeMessagesUtil.TAG_DELETE_ASSIGNEE);
-      cmUtil.addChangeMessage(update, cmsg);
+    private void addMessage(ChangeContext ctx, IdentifiedUser deletedAssignee) {
+      cmUtil.setChangeMessage(
+          ctx,
+          "Assignee deleted: "
+              + AccountTemplateUtil.getAccountTemplate(deletedAssignee.getAccountId()),
+          ChangeMessagesUtil.TAG_DELETE_ASSIGNEE);
     }
 
     @Override
-    public void postUpdate(Context ctx) {
-      assigneeChanged.fire(change, ctx.getAccount(), deletedAssignee, ctx.getWhen());
+    public void postUpdate(PostUpdateContext ctx) {
+      assigneeChanged.fire(
+          ctx.getChangeData(change), ctx.getAccount(), deletedAssignee, ctx.getWhen());
     }
   }
 }

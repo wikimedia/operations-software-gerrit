@@ -23,6 +23,7 @@ import com.google.gerrit.metrics.Description.Units;
 import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.metrics.Timer0;
 import com.google.gerrit.server.config.AllUsersName;
+import com.google.gerrit.server.config.AuthConfig;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
@@ -69,10 +70,16 @@ public class ExternalIdReader {
   private boolean failOnLoad = false;
   private final Timer0 readAllLatency;
   private final Timer0 readSingleLatency;
+  private final ExternalIdFactory externalIdFactory;
+  private final AuthConfig authConfig;
 
   @Inject
   ExternalIdReader(
-      GitRepositoryManager repoManager, AllUsersName allUsersName, MetricMaker metricMaker) {
+      GitRepositoryManager repoManager,
+      AllUsersName allUsersName,
+      MetricMaker metricMaker,
+      ExternalIdFactory externalIdFactory,
+      AuthConfig authConfig) {
     this.repoManager = repoManager;
     this.allUsersName = allUsersName;
     this.readAllLatency =
@@ -87,6 +94,8 @@ public class ExternalIdReader {
             new Description("Latency for reading a single external ID from NoteDb.")
                 .setCumulative()
                 .setUnit(Units.MILLISECONDS));
+    this.externalIdFactory = externalIdFactory;
+    this.authConfig = authConfig;
   }
 
   @VisibleForTesting
@@ -106,7 +115,13 @@ public class ExternalIdReader {
 
     try (Timer0.Context ctx = readAllLatency.start();
         Repository repo = repoManager.openRepository(allUsersName)) {
-      return ExternalIdNotes.loadReadOnly(allUsersName, repo).all();
+      return ExternalIdNotes.loadReadOnly(
+              allUsersName,
+              repo,
+              null,
+              externalIdFactory,
+              authConfig.isUserNameCaseInsensitiveMigrationMode())
+          .all();
     }
   }
 
@@ -125,7 +140,13 @@ public class ExternalIdReader {
 
     try (Timer0.Context ctx = readAllLatency.start();
         Repository repo = repoManager.openRepository(allUsersName)) {
-      return ExternalIdNotes.loadReadOnly(allUsersName, repo, rev).all();
+      return ExternalIdNotes.loadReadOnly(
+              allUsersName,
+              repo,
+              rev,
+              externalIdFactory,
+              authConfig.isUserNameCaseInsensitiveMigrationMode())
+          .all();
     }
   }
 
@@ -135,7 +156,13 @@ public class ExternalIdReader {
 
     try (Timer0.Context ctx = readSingleLatency.start();
         Repository repo = repoManager.openRepository(allUsersName)) {
-      return ExternalIdNotes.loadReadOnly(allUsersName, repo).get(key);
+      return ExternalIdNotes.loadReadOnly(
+              allUsersName,
+              repo,
+              null,
+              externalIdFactory,
+              authConfig.isUserNameCaseInsensitiveMigrationMode())
+          .get(key);
     }
   }
 
@@ -146,7 +173,13 @@ public class ExternalIdReader {
 
     try (Timer0.Context ctx = readSingleLatency.start();
         Repository repo = repoManager.openRepository(allUsersName)) {
-      return ExternalIdNotes.loadReadOnly(allUsersName, repo, rev).get(key);
+      return ExternalIdNotes.loadReadOnly(
+              allUsersName,
+              repo,
+              rev,
+              externalIdFactory,
+              authConfig.isUserNameCaseInsensitiveMigrationMode())
+          .get(key);
     }
   }
 

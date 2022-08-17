@@ -30,12 +30,12 @@ import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.restapi.RestResource;
 import com.google.gerrit.extensions.restapi.RestResource.HasETag;
 import com.google.gerrit.extensions.restapi.RestView;
-import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.StarredChangesUtil;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountState;
+import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
@@ -140,7 +140,7 @@ public class ChangeResource implements RestResource, HasETag {
     return changeData.getId();
   }
 
-  /** @return true if {@link #getUser()} is the change's owner. */
+  /** Returns true if {@link #getUser()} is the change's owner. */
   public boolean isUserOwner() {
     Account.Id owner = getChange().getOwner();
     return user.isIdentifiedUser() && user.asIdentifiedUser().getAccountId().equals(owner);
@@ -167,7 +167,6 @@ public class ChangeResource implements RestResource, HasETag {
   public void prepareETag(Hasher h, CurrentUser user) {
     h.putInt(JSON_FORMAT_VERSION)
         .putLong(getChange().getLastUpdatedOn().getTime())
-        .putInt(getChange().getRowVersion())
         .putInt(user.isIdentifiedUser() ? user.getAccountId().get() : 0);
 
     if (user.isIdentifiedUser()) {

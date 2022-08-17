@@ -14,13 +14,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import '../../shared/gr-button/gr-button';
+
 import '../../shared/gr-dropdown/gr-dropdown';
-import '../../../styles/shared-styles';
-import {PolymerElement} from '@polymer/polymer/polymer-element';
-import {htmlTemplate} from './gr-edit-file-controls_html';
 import {GrEditConstants} from '../gr-edit-constants';
-import {customElement, property} from '@polymer/decorators';
+import {sharedStyles} from '../../../styles/shared-styles';
+import {LitElement, css, html} from 'lit';
+import {customElement, property} from 'lit/decorators';
 
 interface EditAction {
   label: string;
@@ -28,11 +27,7 @@ interface EditAction {
 }
 
 @customElement('gr-edit-file-controls')
-class GrEditFileControls extends PolymerElement {
-  static get template() {
-    return htmlTemplate;
-  }
-
+export class GrEditFileControls extends LitElement {
   /**
    * Fired when an action in the overflow menu is tapped.
    *
@@ -45,8 +40,53 @@ class GrEditFileControls extends PolymerElement {
   @property({type: Array})
   _allFileActions = Object.values(GrEditConstants.Actions);
 
-  @property({type: Array, computed: '_computeFileActions(_allFileActions)'})
-  _fileActions?: EditAction[];
+  static override get styles() {
+    return [
+      sharedStyles,
+      css`
+        :host {
+          align-items: center;
+          display: flex;
+          justify-content: flex-end;
+        }
+        gr-dropdown {
+          --gr-dropdown-item-color: var(--link-color);
+          --gr-button-padding: var(--spacing-xs) var(--spacing-s);
+        }
+        #actions {
+          margin-right: var(--spacing-l);
+        }
+      `,
+    ];
+  }
+
+  override render() {
+    // To pass CSS mixins for @apply to Polymer components, they need to appear
+    // in <style> inside the template.
+    /* eslint-disable lit/prefer-static-styles */
+    const customStyle = html`
+      <style>
+        gr-dropdown {
+          --gr-dropdown-item: {
+            background-color: transparent;
+            border: none;
+            text-transform: uppercase;
+          }
+        }
+      </style>
+    `;
+    const fileActions = this._computeFileActions(this._allFileActions);
+    return html`${customStyle}
+      <gr-dropdown
+        id="actions"
+        .items=${fileActions}
+        down-arrow=""
+        vertical-offset="20"
+        @tap-item="${this._handleActionTap}"
+        link=""
+        >Actions</gr-dropdown
+      >`;
+  }
 
   _handleActionTap(e: CustomEvent) {
     e.preventDefault();

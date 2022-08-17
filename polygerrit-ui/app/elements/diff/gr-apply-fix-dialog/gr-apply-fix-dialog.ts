@@ -38,8 +38,9 @@ import {isRobot} from '../../../utils/comment-util';
 import {OpenFixPreviewEvent} from '../../../types/events';
 import {appContext} from '../../../services/app-context';
 import {fireCloseFixPreview, fireEvent} from '../../../utils/event-util';
-import {ParsedChangeInfo} from '../../../types/types';
+import {DiffLayer, ParsedChangeInfo} from '../../../types/types';
 import {GrButton} from '../../shared/gr-button/gr-button';
+import {TokenHighlightLayer} from '../gr-diff-builder/token-highlight-layer';
 
 export interface GrApplyFixDialog {
   $: {
@@ -95,11 +96,23 @@ export class GrApplyFixDialog extends PolymerElement {
       '_computeDisableApplyFixButton(_isApplyFixLoading, change, ' +
       '_patchNum)',
   })
-  _disableApplyFixButton?: boolean;
+  _disableApplyFixButton = false;
+
+  @property({type: Array})
+  layers: DiffLayer[] = [];
 
   private refitOverlay?: () => void;
 
   private readonly restApiService = appContext.restApiService;
+
+  constructor() {
+    super();
+    this.restApiService.getPreferences().then(prefs => {
+      if (!prefs?.disable_token_highlighting) {
+        this.layers = [new TokenHighlightLayer(this)];
+      }
+    });
+  }
 
   /**
    * Given robot comment CustomEvent object, fetch diffs associated
@@ -133,7 +146,7 @@ export class GrApplyFixDialog extends PolymerElement {
     });
   }
 
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     this.refitOverlay = () => {
       // re-center the dialog as content changed
@@ -142,7 +155,7 @@ export class GrApplyFixDialog extends PolymerElement {
     this.addEventListener('diff-context-expanded', this.refitOverlay);
   }
 
-  disconnectedCallback() {
+  override disconnectedCallback() {
     if (this.refitOverlay) {
       this.removeEventListener('diff-context-expanded', this.refitOverlay);
     }
@@ -179,12 +192,13 @@ export class GrApplyFixDialog extends PolymerElement {
     return (_fixSuggestions || []).length === 1;
   }
 
-  overridePartialPrefs(prefs: DiffPreferencesInfo): DiffPreferencesInfo {
+  overridePartialPrefs(prefs?: DiffPreferencesInfo) {
+    if (!prefs) return undefined;
     // generate a smaller gr-diff than fullscreen for dialog
     return {...prefs, line_length: 50};
   }
 
-  onCancel(e: CustomEvent) {
+  onCancel(e: Event) {
     if (e) {
       e.stopPropagation();
     }
@@ -195,7 +209,7 @@ export class GrApplyFixDialog extends PolymerElement {
     return _selectedFixIdx + 1;
   }
 
-  _onPrevFixClick(e: CustomEvent) {
+  _onPrevFixClick(e: Event) {
     if (e) e.stopPropagation();
     if (this._selectedFixIdx >= 1 && this._fixSuggestions) {
       this._selectedFixIdx -= 1;
@@ -205,7 +219,7 @@ export class GrApplyFixDialog extends PolymerElement {
     }
   }
 
-  _onNextFixClick(e: CustomEvent) {
+  _onNextFixClick(e: Event) {
     if (e) e.stopPropagation();
     if (
       this._fixSuggestions &&
@@ -249,7 +263,7 @@ export class GrApplyFixDialog extends PolymerElement {
   }
 
   _computeDisableApplyFixButton(
-    isApplyFixLoading?: boolean,
+    isApplyFixLoading: boolean,
     change?: ParsedChangeInfo,
     patchNum?: PatchSetNum
   ) {
@@ -263,7 +277,7 @@ export class GrApplyFixDialog extends PolymerElement {
     return isApplyFixLoading;
   }
 
-  _handleApplyFix(e: CustomEvent) {
+  _handleApplyFix(e: Event) {
     if (e) {
       e.stopPropagation();
     }

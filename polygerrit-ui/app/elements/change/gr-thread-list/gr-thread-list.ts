@@ -14,21 +14,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import '@polymer/paper-toggle-button/paper-toggle-button';
 import '../../../styles/shared-styles';
 import '../../shared/gr-comment-thread/gr-comment-thread';
-import {flush} from '@polymer/polymer/lib/legacy/polymer.dom';
+import '../../shared/gr-dropdown-list/gr-dropdown-list';
+
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-thread-list_html';
 import {parseDate} from '../../../utils/date-util';
 
 import {CommentSide, SpecialFilePath} from '../../../constants/constants';
-import {customElement, observe, property} from '@polymer/decorators';
+import {computed, customElement, observe, property} from '@polymer/decorators';
 import {
   PolymerSpliceChange,
   PolymerDeepPropertyChange,
 } from '@polymer/polymer/interfaces';
-import {ChangeInfo} from '../../../types/common';
+import {
+  AccountDetailInfo,
+  AccountInfo,
+  ChangeInfo,
+  NumericChangeId,
+  UrlEncodedCommentId,
+} from '../../../types/common';
 import {
   CommentThread,
   isDraft,
@@ -36,11 +42,15 @@ import {
   isDraftThread,
   isRobotThread,
   hasHumanReply,
+  getCommentAuthors,
+  computeId,
+  UIComment,
 } from '../../../utils/comment-util';
 import {pluralize} from '../../../utils/string-util';
-import {fireThreadListModifiedEvent} from '../../../utils/event-util';
-import {assertNever} from '../../../utils/common-util';
+import {assertIsDefined, assertNever} from '../../../utils/common-util';
 import {CommentTabState} from '../../../types/events';
+import {DropdownItem} from '../../shared/gr-dropdown-list/gr-dropdown-list';
+import {GrAccountChip} from '../../shared/gr-account-chip/gr-account-chip';
 
 interface CommentThreadWithInfo {
   thread: CommentThread;
@@ -51,6 +61,13 @@ interface CommentThreadWithInfo {
   hasDraft: boolean;
   updated?: Date;
 }
+
+enum SortDropdownState {
+  TIMESTAMP = 'Latest timestamp',
+  FILES = 'Files',
+}
+
+export const __testOnly_SortDropdownState = SortDropdownState;
 
 @customElement('gr-thread-list')
 export class GrThreadList extends PolymerElement {
@@ -65,7 +82,7 @@ export class GrThreadList extends PolymerElement {
   threads: CommentThread[] = [];
 
   @property({type: String})
-  changeNum?: string;
+  changeNum?: NumericChangeId;
 
   @property({type: Boolean})
   loggedIn?: boolean;
@@ -79,7 +96,7 @@ export class GrThreadList extends PolymerElement {
   @property({
     computed:
       '_computeDisplayedThreads(_sortedThreads.*, unresolvedOnly, ' +
-      '_draftsOnly, onlyShowRobotCommentsWithHumanReply)',
+      '_draftsOnly, onlyShowRobotCommentsWithHumanReply, selectedAuthors)',
     type: Array,
   })
   _displayedThreads: CommentThread[] = [];
@@ -97,10 +114,31 @@ export class GrThreadList extends PolymerElement {
   onlyShowRobotCommentsWithHumanReply = false;
 
   @property({type: Boolean})
-  hideToggleButtons = false;
+  hideDropdown = false;
 
   @property({type: Object, observer: '_commentTabStateChange'})
   commentTabState?: CommentTabState;
+
+  @property({type: Object})
+  sortDropdownValue: SortDropdownState = SortDropdownState.TIMESTAMP;
+
+  @property({type: Array, notify: true})
+  selectedAuthors: AccountInfo[] = [];
+
+  @property({type: Object})
+  account?: AccountDetailInfo;
+
+  @computed('unresolvedOnly', '_draftsOnly')
+  get commentsDropdownValue() {
+    // set initial value and triggered when comment summary chips are clicked
+    if (this._draftsOnly) return CommentTabState.DRAFTS;
+    return this.unresolvedOnly
+      ? CommentTabState.UNRESOLVED
+      : CommentTabState.SHOW_ALL;
+  }
+
+  @property({type: String})
+  scrollCommentId?: UrlEncodedCommentId;
 
   _showEmptyThreadsMessage(
     threads: CommentThread[],
@@ -112,7 +150,7 @@ export class GrThreadList extends PolymerElement {
   }
 
   _computeEmptyThreadsMessage(threads: CommentThread[]) {
-    return !threads.length ? 'No comments.' : 'No unresolved comments';
+    return !threads.length ? 'No comments' : 'No unresolved comments';
   }
 
   _showPartyPopper(threads: CommentThread[]) {
@@ -146,7 +184,86 @@ export class GrThreadList extends PolymerElement {
     this.unresolvedOnly = !this.unresolvedOnly;
   }
 
+  getSortDropdownEntires() {
+    return [
+      {text: SortDropdownState.FILES, value: SortDropdownState.FILES},
+      {text: SortDropdownState.TIMESTAMP, value: SortDropdownState.TIMESTAMP},
+    ];
+  }
+
+  getCommentsDropdownEntires(threads: CommentThread[], loggedIn?: boolean) {
+    const items: DropdownItem[] = [
+      {
+        text: `Unresolved (${this._countUnresolved(threads)})`,
+        value: CommentTabState.UNRESOLVED,
+      },
+      {
+        text: `All (${this._countAllThreads(threads)})`,
+        value: CommentTabState.SHOW_ALL,
+      },
+    ];
+    if (loggedIn)
+      items.splice(1, 0, {
+        text: `Drafts (${this._countDrafts(threads)})`,
+        value: CommentTabState.DRAFTS,
+      });
+    return items;
+  }
+
+  getCommentAuthors(threads?: CommentThread[], account?: AccountDetailInfo) {
+    return getCommentAuthors(threads, account);
+  }
+
+  handleAccountClicked(e: MouseEvent) {
+    const account = (e.target as GrAccountChip).account;
+    assertIsDefined(account, 'account');
+    const index = this.selectedAuthors.findIndex(
+      author => author._account_id === account._account_id
+    );
+    if (index === -1) this.push('selectedAuthors', account);
+    else this.splice('selectedAuthors', index, 1);
+    // re-assign so that isSelected template method is called
+    this.selectedAuthors = [...this.selectedAuthors];
+  }
+
+  isSelected(author: AccountInfo, selectedAuthors: AccountInfo[]) {
+    return selectedAuthors.some(a => a._account_id === author._account_id);
+  }
+
+  computeShouldScrollIntoView(
+    comments: UIComment[],
+    scrollCommentId?: UrlEncodedCommentId
+  ) {
+    const comment = comments?.[0];
+    if (!comment) return false;
+    return computeId(comment) === scrollCommentId;
+  }
+
+  handleSortDropdownValueChange(e: CustomEvent) {
+    this.sortDropdownValue = e.detail.value;
+    /*
+     * Ideally we would have updateSortedThreads observe on sortDropdownValue
+     * but the method triggered re-render only when the length of threads
+     * changes, hence keep the explicit resortThreads method
+     */
+    this.resortThreads(this.threads);
+  }
+
+  handleCommentsDropdownValueChange(e: CustomEvent) {
+    const value = e.detail.value;
+    if (value === CommentTabState.UNRESOLVED) this._handleOnlyUnresolved();
+    else if (value === CommentTabState.DRAFTS) this._handleOnlyDrafts();
+    else this._handleAllComments();
+  }
+
   _compareThreads(c1: CommentThreadWithInfo, c2: CommentThreadWithInfo) {
+    if (
+      this.sortDropdownValue === SortDropdownState.TIMESTAMP &&
+      !this.hideDropdown
+    ) {
+      if (c1.updated && c2.updated) return c1.updated > c2.updated ? -1 : 1;
+    }
+
     if (c1.thread.path !== c2.thread.path) {
       // '/PATCHSET' will not come before '/COMMIT' when sorting
       // alphabetically so move it to the front explicitly
@@ -202,6 +319,15 @@ export class GrThreadList extends PolymerElement {
     return 0;
   }
 
+  resortThreads(threads: CommentThread[]) {
+    const threadsWithInfo = threads.map(thread =>
+      this._getThreadWithStatusInfo(thread)
+    );
+    this._sortedThreads = threadsWithInfo
+      .sort((t1, t2) => this._compareThreads(t1, t2))
+      .map(threadInfo => threadInfo.thread);
+  }
+
   /**
    * Observer on threads and update _sortedThreads when needed.
    * Order as follows:
@@ -241,10 +367,14 @@ export class GrThreadList extends PolymerElement {
     // with addedCount > 0 or removed.length > 0 should also cause re-sorting
     // and re-rendering, but apparently spliceRecord is always undefined for
     // whatever reason.
-    if (this._sortedThreads.length === threads.length) {
+    // If there is an unsaved draftThread which is supposed to be replaced with
+    // a saved draftThread then resort all threads
+    const unsavedThread = this._sortedThreads.some(thread =>
+      thread.rootId?.includes('draft__')
+    );
+    if (this._sortedThreads.length === threads.length && !unsavedThread) {
       // Instead of replacing the _sortedThreads which will trigger a re-render,
       // we override all threads inside of it.
-
       for (const thread of threads) {
         const idxInSortedThreads = this._sortedThreads.findIndex(
           t => t.rootId === thread.rootId
@@ -254,12 +384,7 @@ export class GrThreadList extends PolymerElement {
       return;
     }
 
-    const threadsWithInfo = threads.map(thread =>
-      this._getThreadWithStatusInfo(thread)
-    );
-    this._sortedThreads = threadsWithInfo
-      .sort((t1, t2) => this._compareThreads(t1, t2))
-      .map(threadInfo => threadInfo.thread);
+    this.resortThreads(threads);
   }
 
   _computeDisplayedThreads(
@@ -269,7 +394,8 @@ export class GrThreadList extends PolymerElement {
     >,
     unresolvedOnly?: boolean,
     draftsOnly?: boolean,
-    onlyShowRobotCommentsWithHumanReply?: boolean
+    onlyShowRobotCommentsWithHumanReply?: boolean,
+    selectedAuthors?: AccountInfo[]
   ) {
     if (!sortedThreadsRecord || !sortedThreadsRecord.base) return [];
     return sortedThreadsRecord.base.filter(t =>
@@ -277,7 +403,8 @@ export class GrThreadList extends PolymerElement {
         t,
         unresolvedOnly,
         draftsOnly,
-        onlyShowRobotCommentsWithHumanReply
+        onlyShowRobotCommentsWithHumanReply,
+        selectedAuthors
       )
     );
   }
@@ -287,14 +414,16 @@ export class GrThreadList extends PolymerElement {
     thread: CommentThread,
     unresolvedOnly?: boolean,
     draftsOnly?: boolean,
-    onlyShowRobotCommentsWithHumanReply?: boolean
+    onlyShowRobotCommentsWithHumanReply?: boolean,
+    selectedAuthors?: AccountInfo[]
   ) {
     const threads = displayedThreads.filter(t =>
       this._shouldShowThread(
         t,
         unresolvedOnly,
         draftsOnly,
-        onlyShowRobotCommentsWithHumanReply
+        onlyShowRobotCommentsWithHumanReply,
+        selectedAuthors
       )
     );
     const index = threads.findIndex(t => t.rootId === thread.rootId);
@@ -309,14 +438,16 @@ export class GrThreadList extends PolymerElement {
     thread: CommentThread,
     unresolvedOnly?: boolean,
     draftsOnly?: boolean,
-    onlyShowRobotCommentsWithHumanReply?: boolean
+    onlyShowRobotCommentsWithHumanReply?: boolean,
+    selectedAuthors?: AccountInfo[]
   ) {
     const threads = displayedThreads.filter(t =>
       this._shouldShowThread(
         t,
         unresolvedOnly,
         draftsOnly,
-        onlyShowRobotCommentsWithHumanReply
+        onlyShowRobotCommentsWithHumanReply,
+        selectedAuthors
       )
     );
     const index = threads.findIndex(t => t.rootId === thread.rootId);
@@ -330,7 +461,8 @@ export class GrThreadList extends PolymerElement {
         thread,
         unresolvedOnly,
         draftsOnly,
-        onlyShowRobotCommentsWithHumanReply
+        onlyShowRobotCommentsWithHumanReply,
+        selectedAuthors
       )
     );
   }
@@ -339,7 +471,8 @@ export class GrThreadList extends PolymerElement {
     thread: CommentThread,
     unresolvedOnly?: boolean,
     draftsOnly?: boolean,
-    onlyShowRobotCommentsWithHumanReply?: boolean
+    onlyShowRobotCommentsWithHumanReply?: boolean,
+    selectedAuthors?: AccountInfo[]
   ) {
     if (
       [
@@ -347,9 +480,24 @@ export class GrThreadList extends PolymerElement {
         unresolvedOnly,
         draftsOnly,
         onlyShowRobotCommentsWithHumanReply,
+        selectedAuthors,
       ].includes(undefined)
     ) {
       return false;
+    }
+
+    if (selectedAuthors!.length) {
+      if (
+        !thread.comments.some(
+          c =>
+            c.author &&
+            selectedAuthors!.some(
+              author => c.author!._account_id === author._account_id
+            )
+        )
+      ) {
+        return false;
+      }
     }
 
     if (
@@ -409,25 +557,6 @@ export class GrThreadList extends PolymerElement {
       hasDraft: !!lastComment && isDraft(lastComment),
       updated,
     };
-  }
-
-  removeThread(rootId: string) {
-    for (let i = 0; i < this.threads.length; i++) {
-      if (this.threads[i].rootId === rootId) {
-        this.splice('threads', i, 1);
-        // Needed to ensure threads get re-rendered in the correct order.
-        flush();
-        return;
-      }
-    }
-  }
-
-  _handleThreadDiscard(e: CustomEvent) {
-    this.removeThread(e.detail.rootId);
-  }
-
-  _handleCommentsChanged(e: CustomEvent) {
-    fireThreadListModifiedEvent(this, e.detail.rootId, e.detail.path);
   }
 
   _isOnParent(side?: CommentSide) {

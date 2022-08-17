@@ -28,7 +28,7 @@ export class GrDiffBuilderSideBySide extends GrDiffBuilder {
     diff: DiffInfo,
     prefs: DiffPreferencesInfo,
     outputEl: HTMLElement,
-    readonly layers: DiffLayer[] = [],
+    layers: DiffLayer[] = [],
     renderPrefs?: RenderPreferences
   ) {
     super(diff, prefs, outputEl, layers, renderPrefs);
@@ -39,6 +39,7 @@ export class GrDiffBuilderSideBySide extends GrDiffBuilder {
       numberOfCells: 4,
       movedOutIndex: 1,
       movedInIndex: 3,
+      lineNumberCols: [0, 2],
     };
   }
 
@@ -74,8 +75,7 @@ export class GrDiffBuilderSideBySide extends GrDiffBuilder {
     return sectionEl;
   }
 
-  addColumns(outputEl: HTMLElement, fontSize: number): void {
-    const width = fontSize * 4;
+  addColumns(outputEl: HTMLElement, lineNumberWidth: number): void {
     const colgroup = document.createElement('colgroup');
 
     // Add the blame column.
@@ -84,7 +84,7 @@ export class GrDiffBuilderSideBySide extends GrDiffBuilder {
 
     // Add left-side line number.
     col = this._createElement('col', 'left');
-    col.setAttribute('width', width.toString());
+    col.setAttribute('width', lineNumberWidth.toString());
     colgroup.appendChild(col);
 
     // Add left-side content.
@@ -92,7 +92,7 @@ export class GrDiffBuilderSideBySide extends GrDiffBuilder {
 
     // Add right-side line number.
     col = document.createElement('col');
-    col.setAttribute('width', width.toString());
+    col.setAttribute('width', lineNumberWidth.toString());
     colgroup.appendChild(col);
 
     // Add right-side content.
@@ -137,4 +137,6 @@ export class GrDiffBuilderSideBySide extends GrDiffBuilder {
     }
     return null;
   }
+
+  override updateRenderPrefs(_renderPrefs: RenderPreferences) {}
 }

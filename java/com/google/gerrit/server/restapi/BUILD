@@ -35,6 +35,7 @@ java_library(
         "//lib/auto:auto-value-annotations",
         "//lib/commons:compress",
         "//lib/commons:lang",
+        "//lib/errorprone:annotations",
         "//lib/flogger:api",
         "//lib/guice",
         "//lib/guice:guice-assistedinject",

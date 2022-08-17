@@ -23,7 +23,7 @@ import {getComputedStyleValue} from '../../../utils/dom-util.js';
 import {_setHiddenScroll} from '../../../scripts/hiddenscroll.js';
 import {runA11yAudit} from '../../../test/a11y-test-utils.js';
 import '@polymer/paper-button/paper-button.js';
-import {stubRestApi} from '../../../test/test-utils.js';
+import {mockPromise, stubRestApi} from '../../../test/test-utils.js';
 
 const basicFixture = fixtureFromElement('gr-diff');
 
@@ -36,7 +36,7 @@ suite('gr-diff a11y test', () => {
 suite('gr-diff tests', () => {
   let element;
 
-  const MINIMAL_PREFS = {tab_size: 2, line_length: 80};
+  const MINIMAL_PREFS = {tab_size: 2, line_length: 80, font_size: 12};
 
   setup(() => {
 
@@ -78,14 +78,68 @@ suite('gr-diff tests', () => {
     element = basicFixture.instantiate();
     element.prefs = {...MINIMAL_PREFS, line_wrapping: true};
     flush();
-    assert.equal(getComputedStyleValue('--line-limit', element), '80ch');
+    assert.equal(getComputedStyleValue('--line-limit-marker', element), '80ch');
   });
 
   test('line limit without line_wrapping', () => {
     element = basicFixture.instantiate();
     element.prefs = {...MINIMAL_PREFS, line_wrapping: false};
     flush();
-    assert.isNotOk(getComputedStyleValue('--line-limit', element));
+    assert.equal(getComputedStyleValue('--line-limit-marker', element), '-1px');
+  });
+  suite('FULL_RESPONSIVE mode', () => {
+    setup(() => {
+      element = basicFixture.instantiate();
+      element.prefs = {...MINIMAL_PREFS};
+      element.renderPrefs = {responsive_mode: 'FULL_RESPONSIVE'};
+    });
+
+    test('line limit is based on line_length', () => {
+      element.prefs = {...element.prefs, line_length: 100};
+      flush();
+      assert.equal(getComputedStyleValue('--line-limit-marker', element),
+          '100ch');
+    });
+
+    test('content-width should not be defined', () => {
+      flush();
+      assert.equal(getComputedStyleValue('--content-width', element), 'none');
+    });
+  });
+
+  suite('SHRINK_ONLY mode', () => {
+    setup(() => {
+      element = basicFixture.instantiate();
+      element.prefs = {...MINIMAL_PREFS};
+      element.renderPrefs = {responsive_mode: 'SHRINK_ONLY'};
+    });
+
+    test('content-width should not be defined', () => {
+      flush();
+      assert.equal(getComputedStyleValue('--content-width', element), 'none');
+    });
+
+    test('max-width considers two content columns in side-by-side', () => {
+      element.viewMode = 'SIDE_BY_SIDE';
+      flush();
+      assert.equal(getComputedStyleValue('--diff-max-width', element),
+          'calc(2 * 80ch + 2 * 48px + 1px + 2px)');
+    });
+
+    test('max-width considers one content column in unified', () => {
+      element.viewMode = 'UNIFIED_DIFF';
+      flush();
+      assert.equal(getComputedStyleValue('--diff-max-width', element),
+          'calc(1 * 80ch + 2 * 48px + 1px + 2px)');
+    });
+
+    test('max-width considers font-size', () => {
+      element.prefs = {...element.prefs, font_size: 13};
+      flush();
+      // Each line number column: 4 * 13 = 52px
+      assert.equal(getComputedStyleValue('--diff-max-width', element),
+          'calc(2 * 80ch + 2 * 52px + 1px + 2px)');
+    });
   });
 
   suite('not logged in', () => {
@@ -178,7 +232,9 @@ suite('gr-diff tests', () => {
         };
       });
 
-      test('renders image diffs with same file name', done => {
+      test('renders image diffs with same file name', async () => {
+        const leftRendered = mockPromise();
+        const rightRendered = mockPromise();
         const rendered = () => {
           // Recognizes that it should be an image diff.
           assert.isTrue(element.isImageDiff);
@@ -202,19 +258,12 @@ suite('gr-diff tests', () => {
           assert.isNotOk(rightLabelName);
           assert.isNotOk(leftLabelName);
 
-          let leftLoaded = false;
-          let rightLoaded = false;
-
           leftImage.addEventListener('load', () => {
             assert.isOk(leftImage);
             assert.equal(leftImage.getAttribute('src'),
                 'data:image/bmp;base64,' + mockFile1.body);
             assert.equal(leftLabelContent.textContent, '1\u00d71 image/bmp');// \u00d7 - '×'
-            leftLoaded = true;
-            if (rightLoaded) {
-              element.removeEventListener('render', rendered);
-              done();
-            }
+            leftRendered.resolve();
           });
 
           rightImage.addEventListener('load', () => {
@@ -223,11 +272,7 @@ suite('gr-diff tests', () => {
                 'data:image/bmp;base64,' + mockFile2.body);
             assert.equal(rightLabelContent.textContent, '1\u00d71 image/bmp');// \u00d7 - '×'
 
-            rightLoaded = true;
-            if (leftLoaded) {
-              element.removeEventListener('render', rendered);
-              done();
-            }
+            rightRendered.resolve();
           });
         };
 
@@ -251,9 +296,11 @@ suite('gr-diff tests', () => {
           content: [{skip: 66}],
           binary: true,
         };
+        await Promise.all([leftRendered, rightRendered]);
+        element.removeEventListener('render', rendered);
       });
 
-      test('renders image diffs with a different file name', done => {
+      test('renders image diffs with a different file name', async () => {
         const mockDiff = {
           meta_a: {name: 'carrot.jpg', content_type: 'image/jpeg', lines: 66},
           meta_b: {name: 'carrot2.jpg', content_type: 'image/jpeg',
@@ -270,7 +317,8 @@ suite('gr-diff tests', () => {
           content: [{skip: 66}],
           binary: true,
         };
-
+        const leftRendered = mockPromise();
+        const rightRendered = mockPromise();
         const rendered = () => {
           // Recognizes that it should be an image diff.
           assert.isTrue(element.isImageDiff);
@@ -296,19 +344,12 @@ suite('gr-diff tests', () => {
           assert.equal(leftLabelName.textContent, mockDiff.meta_a.name);
           assert.equal(rightLabelName.textContent, mockDiff.meta_b.name);
 
-          let leftLoaded = false;
-          let rightLoaded = false;
-
           leftImage.addEventListener('load', () => {
             assert.isOk(leftImage);
             assert.equal(leftImage.getAttribute('src'),
                 'data:image/bmp;base64,' + mockFile1.body);
             assert.equal(leftLabelContent.textContent, '1\u00d71 image/bmp');// \u00d7 - '×'
-            leftLoaded = true;
-            if (rightLoaded) {
-              element.removeEventListener('render', rendered);
-              done();
-            }
+            leftRendered.resolve();
           });
 
           rightImage.addEventListener('load', () => {
@@ -317,11 +358,7 @@ suite('gr-diff tests', () => {
                 'data:image/bmp;base64,' + mockFile2.body);
             assert.equal(rightLabelContent.textContent, '1\u00d71 image/bmp');// \u00d7 - '×'
 
-            rightLoaded = true;
-            if (leftLoaded) {
-              element.removeEventListener('render', rendered);
-              done();
-            }
+            rightRendered.resolve();
           });
         };
 
@@ -332,9 +369,11 @@ suite('gr-diff tests', () => {
         element.revisionImage = mockFile2;
         element.revisionImage._name = mockDiff.meta_b.name;
         element.diff = mockDiff;
+        await Promise.all([leftRendered, rightRendered]);
+        element.removeEventListener('render', rendered);
       });
 
-      test('renders added image', done => {
+      test('renders added image', async () => {
         const mockDiff = {
           meta_b: {name: 'carrot.jpg', content_type: 'image/jpeg',
             lines: 560},
@@ -351,27 +390,27 @@ suite('gr-diff tests', () => {
           binary: true,
         };
 
-        function rendered() {
-          // Recognizes that it should be an image diff.
-          assert.isTrue(element.isImageDiff);
-          assert.instanceOf(
-              element.$.diffBuilder._builder, GrDiffBuilderImage);
-
-          const leftImage = element.$.diffTable.querySelector('td.left img');
-          const rightImage = element.$.diffTable.querySelector('td.right img');
-
-          assert.isNotOk(leftImage);
-          assert.isOk(rightImage);
-          done();
-          element.removeEventListener('render', rendered);
-        }
+        const promise = mockPromise();
+        function rendered() { promise.resolve(); }
         element.addEventListener('render', rendered);
 
         element.revisionImage = mockFile2;
         element.diff = mockDiff;
+        await promise;
+        element.removeEventListener('render', rendered);
+        // Recognizes that it should be an image diff.
+        assert.isTrue(element.isImageDiff);
+        assert.instanceOf(
+            element.$.diffBuilder._builder, GrDiffBuilderImage);
+
+        const leftImage = element.$.diffTable.querySelector('td.left img');
+        const rightImage = element.$.diffTable.querySelector('td.right img');
+
+        assert.isNotOk(leftImage);
+        assert.isOk(rightImage);
       });
 
-      test('renders removed image', done => {
+      test('renders removed image', async () => {
         const mockDiff = {
           meta_a: {name: 'carrot.jpg', content_type: 'image/jpeg',
             lines: 560},
@@ -387,28 +426,27 @@ suite('gr-diff tests', () => {
           content: [{skip: 66}],
           binary: true,
         };
-
-        function rendered() {
-          // Recognizes that it should be an image diff.
-          assert.isTrue(element.isImageDiff);
-          assert.instanceOf(
-              element.$.diffBuilder._builder, GrDiffBuilderImage);
-
-          const leftImage = element.$.diffTable.querySelector('td.left img');
-          const rightImage = element.$.diffTable.querySelector('td.right img');
-
-          assert.isOk(leftImage);
-          assert.isNotOk(rightImage);
-          done();
-          element.removeEventListener('render', rendered);
-        }
+        const promise = mockPromise();
+        function rendered() { promise.resolve(); }
         element.addEventListener('render', rendered);
 
         element.baseImage = mockFile1;
         element.diff = mockDiff;
+        await promise;
+        element.removeEventListener('render', rendered);
+        // Recognizes that it should be an image diff.
+        assert.isTrue(element.isImageDiff);
+        assert.instanceOf(
+            element.$.diffBuilder._builder, GrDiffBuilderImage);
+
+        const leftImage = element.$.diffTable.querySelector('td.left img');
+        const rightImage = element.$.diffTable.querySelector('td.right img');
+
+        assert.isOk(leftImage);
+        assert.isNotOk(rightImage);
       });
 
-      test('does not render disallowed image type', done => {
+      test('does not render disallowed image type', async () => {
         const mockDiff = {
           meta_a: {name: 'carrot.jpg', content_type: 'image/jpeg-evil',
             lines: 560},
@@ -426,65 +464,73 @@ suite('gr-diff tests', () => {
         };
         mockFile1.type = 'image/jpeg-evil';
 
-        function rendered() {
-          // Recognizes that it should be an image diff.
-          assert.isTrue(element.isImageDiff);
-          assert.instanceOf(
-              element.$.diffBuilder._builder, GrDiffBuilderImage);
-          const leftImage = element.$.diffTable.querySelector('td.left img');
-          assert.isNotOk(leftImage);
-          done();
-          element.removeEventListener('render', rendered);
-        }
+        const promise = mockPromise();
+        function rendered() { promise.resolve(); }
         element.addEventListener('render', rendered);
 
         element.baseImage = mockFile1;
         element.diff = mockDiff;
+        await promise;
+        element.removeEventListener('render', rendered);
+        // Recognizes that it should be an image diff.
+        assert.isTrue(element.isImageDiff);
+        assert.instanceOf(
+            element.$.diffBuilder._builder, GrDiffBuilderImage);
+        const leftImage = element.$.diffTable.querySelector('td.left img');
+        assert.isNotOk(leftImage);
       });
     });
 
-    test('_handleTap lineNum', done => {
+    test('_handleTap lineNum', async () => {
       const addDraftStub = sinon.stub(element, 'addDraftAtLine');
       const el = document.createElement('div');
       el.className = 'lineNum';
+      const promise = mockPromise();
       el.addEventListener('click', e => {
         element._handleTap(e);
         assert.isTrue(addDraftStub.called);
         assert.equal(addDraftStub.lastCall.args[0], el);
-        done();
+        promise.resolve();
       });
       el.click();
+      await promise;
     });
 
-    test('_handleTap context', done => {
+    test('_handleTap context', async () => {
       const showContextStub =
           sinon.stub(element.$.diffBuilder, 'showContext');
       const el = document.createElement('div');
       el.className = 'showContext';
+      const promise = mockPromise();
       el.addEventListener('click', e => {
         element._handleDiffContextExpanded(e);
         assert.isTrue(showContextStub.called);
-        done();
+        promise.resolve();
       });
       el.click();
+      await promise;
     });
 
-    test('_handleTap content', done => {
+    test('_handleTap content', async () => {
       const content = document.createElement('div');
       const lineEl = document.createElement('div');
+      lineEl.className = 'lineNum';
+      const row = document.createElement('div');
+      row.appendChild(lineEl);
+      row.appendChild(content);
 
       const selectStub = sinon.stub(element, '_selectLine');
-      sinon.stub(element.$.diffBuilder, 'getLineElByChild')
-          .callsFake(() => lineEl);
 
       content.className = 'content';
+      const promise = mockPromise();
       content.addEventListener('click', e => {
         element._handleTap(e);
         assert.isTrue(selectStub.called);
         assert.equal(selectStub.lastCall.args[0], lineEl);
-        done();
+        promise.resolve();
       });
       content.click();
+      await promise;
     });
 
     suite('getCursorStops', () => {
@@ -760,41 +806,47 @@ suite('gr-diff tests', () => {
       element.noRenderOnPrefsChange = true;
     });
 
-    test('large render w/ context = 10', done => {
+    test('large render w/ context = 10', async () => {
       element.prefs = {...MINIMAL_PREFS, context: 10};
+      const promise = mockPromise();
       function rendered() {
         assert.isTrue(renderStub.called);
         assert.isFalse(element._showWarning);
-        done();
+        promise.resolve();
         element.removeEventListener('render', rendered);
       }
       element.addEventListener('render', rendered);
       element._renderDiffTable();
+      await promise;
     });
 
-    test('large render w/ whole file and bypass', done => {
+    test('large render w/ whole file and bypass', async () => {
       element.prefs = {...MINIMAL_PREFS, context: -1};
       element._safetyBypass = 10;
+      const promise = mockPromise();
       function rendered() {
         assert.isTrue(renderStub.called);
         assert.isFalse(element._showWarning);
-        done();
+        promise.resolve();
         element.removeEventListener('render', rendered);
       }
       element.addEventListener('render', rendered);
       element._renderDiffTable();
+      await promise;
     });
 
-    test('large render w/ whole file and no bypass', done => {
+    test('large render w/ whole file and no bypass', async () => {
       element.prefs = {...MINIMAL_PREFS, context: -1};
+      const promise = mockPromise();
       function rendered() {
         assert.isFalse(renderStub.called);
         assert.isTrue(element._showWarning);
-        done();
+        promise.resolve();
         element.removeEventListener('render', rendered);
       }
       element.addEventListener('render', rendered);
       element._renderDiffTable();
+      await promise;
     });
 
     test('toggles expand context using bypass', async () => {
@@ -1163,16 +1215,18 @@ suite('gr-diff tests', () => {
     assert.equal(element.getDiffLength(diff), 52);
   });
 
-  test('`render` event has contentRendered field in detail', done => {
+  test('`render` event has contentRendered field in detail', async () => {
     element = basicFixture.instantiate();
     element.prefs = {};
     sinon.stub(element.$.diffBuilder, 'render')
         .returns(Promise.resolve());
+    const promise = mockPromise();
     element.addEventListener('render', event => {
       assert.isTrue(event.detail.contentRendered);
-      done();
+      promise.resolve();
     });
     element._renderDiffTable();
+    await promise;
   });
 
   test('_prefsEqual', () => {

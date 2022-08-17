@@ -26,7 +26,6 @@ import '../gr-confirm-cherrypick-conflict-dialog/gr-confirm-cherrypick-conflict-
 import '../gr-confirm-move-dialog/gr-confirm-move-dialog';
 import '../gr-confirm-rebase-dialog/gr-confirm-rebase-dialog';
 import '../gr-confirm-revert-dialog/gr-confirm-revert-dialog';
-import '../gr-confirm-revert-submission-dialog/gr-confirm-revert-submission-dialog';
 import '../gr-confirm-submit-dialog/gr-confirm-submit-dialog';
 import '../../../styles/shared-styles';
 import {dom, EventApi} from '@polymer/polymer/lib/legacy/polymer.dom';
@@ -35,7 +34,7 @@ import {htmlTemplate} from './gr-change-actions_html';
 import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {appContext} from '../../../services/app-context';
-import {fetchChangeUpdates, CURRENT} from '../../../utils/patch-set-util';
+import {CURRENT} from '../../../utils/patch-set-util';
 import {
   changeIsOpen,
   isOwner,
@@ -76,7 +75,6 @@ import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
 import {GrDialog} from '../../shared/gr-dialog/gr-dialog';
 import {GrCreateChangeDialog} from '../../admin/gr-create-change-dialog/gr-create-change-dialog';
 import {GrConfirmSubmitDialog} from '../gr-confirm-submit-dialog/gr-confirm-submit-dialog';
-import {GrConfirmRevertSubmissionDialog} from '../gr-confirm-revert-submission-dialog/gr-confirm-revert-submission-dialog';
 import {
   ConfirmRevertEventDetail,
   GrConfirmRevertDialog,
@@ -95,11 +93,11 @@ import {
   GrChangeActionsElement,
   UIActionInfo,
 } from '../../shared/gr-js-api-interface/gr-change-actions-js-api';
-import {fireAlert} from '../../../utils/event-util';
+import {fireAlert, fireEvent, fireReload} from '../../../utils/event-util';
 import {
-  CODE_REVIEW,
   getApprovalInfo,
   getVotingRange,
+  StandardLabels,
 } from '../../../utils/label-util';
 import {CommentThread} from '../../../utils/comment-util';
 import {ShowAlertEventDetail} from '../../../types/events';
@@ -111,6 +109,7 @@ import {
   RevisionActions,
 } from '../../../api/change-actions';
 import {ErrorCallback} from '../../../api/rest';
+import {GrDropdown} from '../../shared/gr-dropdown/gr-dropdown';
 
 const ERR_BRANCH_EMPTY = 'The destination branch can’t be empty.';
 const ERR_COMMIT_EMPTY = 'The commit message can’t be empty.';
@@ -151,7 +150,6 @@ const ActionLoadingLabels: {[actionKey: string]: string} = {
   rebase: 'Rebasing...',
   restore: 'Restoring...',
   revert: 'Reverting...',
-  revert_submission: 'Reverting Submission...',
   submit: 'Submitting...',
 };
 
@@ -184,6 +182,15 @@ const DOWNLOAD_ACTION: UIActionInfo = {
   __key: 'download',
   __primary: false,
   __type: ActionType.REVISION,
+};
+
+const INCLUDED_IN_ACTION: UIActionInfo = {
+  enabled: true,
+  label: 'Included In',
+  title: 'Open Included In dialog',
+  __key: 'includedIn',
+  __primary: false,
+  __type: ActionType.CHANGE,
 };
 
 const REBASE_EDIT: UIActionInfo = {
@@ -245,7 +252,6 @@ const ACTIONS_WITH_ICONS = new Set([
   ChangeActions.REBASE_EDIT,
   ChangeActions.RESTORE,
   ChangeActions.REVERT,
-  ChangeActions.REVERT_SUBMISSION,
   ChangeActions.STOP_EDIT,
   QUICK_APPROVE_ACTION.key,
   RevisionActions.REBASE,
@@ -263,18 +269,16 @@ const EDIT_ACTIONS: Set<string> = new Set([
 const AWAIT_CHANGE_ATTEMPTS = 5;
 const AWAIT_CHANGE_TIMEOUT_MS = 1000;
 
-/* Revert submission is skipped as the normal revert dialog will now show
-the user a choice between reverting single change or an entire submission.
-Hence, a second button is not needed.
-*/
-const SKIP_ACTION_KEYS = [ChangeActions.REVERT_SUBMISSION];
-
-const SKIP_ACTION_KEYS_ATTENTION_SET = [
+const SKIP_ACTION_KEYS: string[] = [
+  // REVIEWED/UNREVIEWED is made obsolete by AttentionSet. Once the
+  // backend stops supporting (UN)REVIEWED, we can remove these.
   ChangeActions.REVIEWED,
   ChangeActions.UNREVIEWED,
+  // REVERT_SUBMISSION is folded into the dialog for REVERT.
+  ChangeActions.REVERT_SUBMISSION,
 ];
 
-function assertUIActionInfo(action?: ActionInfo): UIActionInfo {
+export function assertUIActionInfo(action?: ActionInfo): UIActionInfo {
   // TODO(TS): Remove this function. The gr-change-actions adds properties
   // to existing ActionInfo objects instead of creating a new objects. This
   // function checks, that 'action' has all property required by UIActionInfo.
@@ -325,20 +329,22 @@ export interface GrChangeActions {
     confirmCherrypickConflict: GrConfirmCherrypickConflictDialog;
     confirmMove: GrConfirmMoveDialog;
     confirmRevertDialog: GrConfirmRevertDialog;
-    confirmRevertSubmissionDialog: GrConfirmRevertSubmissionDialog;
     confirmAbandonDialog: GrConfirmAbandonDialog;
     confirmSubmitDialog: GrConfirmSubmitDialog;
     createFollowUpDialog: GrDialog;
     createFollowUpChange: GrCreateChangeDialog;
     confirmDeleteDialog: GrDialog;
     confirmDeleteEditDialog: GrDialog;
+    moreActions: GrDropdown;
+    secondaryActions: HTMLElement;
   };
 }
 
 @customElement('gr-change-actions')
 export class GrChangeActions
   extends PolymerElement
-  implements GrChangeActionsElement {
+  implements GrChangeActionsElement
+{
   static get template() {
     return htmlTemplate;
   }
@@ -376,9 +382,11 @@ export class GrChangeActions
 
   RevisionActions = RevisionActions;
 
-  reporting = appContext.reportingService;
+  private readonly reporting = appContext.reportingService;
 
   private readonly jsAPI = appContext.jsApiService;
+
+  private readonly changeService = appContext.changeService;
 
   @property({type: Object})
   change?: ChangeViewChangeInfo;
@@ -448,7 +456,7 @@ export class GrChangeActions
     computed:
       '_computeAllActions(actions.*, revisionActions.*,' +
       'primaryActionKeys.*, _additionalActions.*, change, ' +
-      '_config, _actionPriorityOverrides.*)',
+      '_actionPriorityOverrides.*)',
   })
   _allActionValues: UIActionInfo[] = []; // _computeAllActions always returns an array
 
@@ -525,6 +533,10 @@ export class GrChangeActions
       type: ActionType.CHANGE,
       key: ChangeActions.FOLLOW_UP,
     },
+    {
+      type: ActionType.CHANGE,
+      key: ChangeActions.INCLUDED_IN,
+    },
   ];
 
   @property({type: Array})
@@ -551,6 +563,9 @@ export class GrChangeActions
   @property({type: Object})
   _config?: ServerInfo;
 
+  @property({type: Boolean})
+  loggedIn = false;
+
   private readonly restApiService = appContext.restApiService;
 
   constructor() {
@@ -563,8 +578,7 @@ export class GrChangeActions
     );
   }
 
-  /** @override */
-  ready() {
+  override ready() {
     super.ready();
     this.jsAPI.addElement(TargetElement.CHANGE_ACTIONS, this);
     this.restApiService.getConfig().then(config => {
@@ -809,6 +823,10 @@ export class GrChangeActions
         this.set('revisionActions.download', DOWNLOAD_ACTION);
       }
     }
+    const actions = actionsChangeRecord.base || {};
+    if (!actions.includedIn && this.change?.status === ChangeStatus.MERGED) {
+      this.set('actions.includedIn', INCLUDED_IN_ACTION);
+    }
   }
 
   _deleteAndNotify(actionName: string) {
@@ -825,6 +843,7 @@ export class GrChangeActions
     'editPatchsetLoaded',
     'editBasedOnCurrentPatchSet',
     'disableEdit',
+    'loggedIn',
     'actions.*',
     'change.*'
   )
@@ -833,13 +852,19 @@ export class GrChangeActions
     editPatchsetLoaded: boolean,
     editBasedOnCurrentPatchSet: boolean,
     disableEdit: boolean,
+    loggedIn: boolean,
     actionsChangeRecord?: PolymerDeepPropertyChange<
       ActionNameToActionInfoMap,
       ActionNameToActionInfoMap
     >,
     changeChangeRecord?: PolymerDeepPropertyChange<ChangeInfo, ChangeInfo>
   ) {
-    if (actionsChangeRecord === undefined || changeChangeRecord === undefined) {
+    // Hide change edits if not logged in
+    if (
+      actionsChangeRecord === undefined ||
+      changeChangeRecord === undefined ||
+      !loggedIn
+    ) {
       return;
     }
     if (disableEdit) {
@@ -960,8 +985,9 @@ export class GrChangeActions
     // Allow the user to use quick approve to vote the max score on code review
     // even if it is already granted by someone else. Does not apply if the
     // user owns the change or has already granted the max score themselves.
-    const codeReviewLabel = this.change.labels[CODE_REVIEW];
-    const codeReviewPermittedValues = this.change.permitted_labels[CODE_REVIEW];
+    const codeReviewLabel = this.change.labels[StandardLabels.CODE_REVIEW];
+    const codeReviewPermittedValues =
+      this.change.permitted_labels[StandardLabels.CODE_REVIEW];
     if (
       !result &&
       codeReviewLabel &&
@@ -973,7 +999,7 @@ export class GrChangeActions
       getApprovalInfo(codeReviewLabel, this.account)?.value !==
         getVotingRange(codeReviewLabel)?.max
     ) {
-      result = CODE_REVIEW;
+      result = StandardLabels.CODE_REVIEW;
     }
 
     if (result) {
@@ -1175,21 +1201,11 @@ export class GrChangeActions
     });
   }
 
-  showRevertSubmissionDialog() {
-    const change = this.change;
-    if (!change) return;
-    const query = `submissionid:${change.submission_id}`;
-    this.restApiService.getChanges(0, query).then(changes => {
-      if (!changes) {
-        this.reporting.error(new Error('changes is undefined'));
-        return;
-      }
-      this.$.confirmRevertSubmissionDialog._populateRevertSubmissionMessage(
-        change,
-        changes
-      );
-      this._showActionDialog(this.$.confirmRevertSubmissionDialog);
-    });
+  showSubmitDialog() {
+    if (!this._canSubmitChange()) {
+      return;
+    }
+    this._showActionDialog(this.$.confirmSubmitDialog);
   }
 
   _handleActionTap(e: MouseEvent) {
@@ -1266,9 +1282,6 @@ export class GrChangeActions
       case ChangeActions.REVERT:
         this.showRevertDialog();
         break;
-      case ChangeActions.REVERT_SUBMISSION:
-        this.showRevertSubmissionDialog();
-        break;
       case ChangeActions.ABANDON:
         this._showActionDialog(this.$.confirmAbandonDialog);
         break;
@@ -1306,6 +1319,9 @@ export class GrChangeActions
         break;
       case ChangeActions.REBASE_EDIT:
         this._handleRebaseEditTap();
+        break;
+      case ChangeActions.INCLUDED_IN:
+        this._handleIncludedInTap();
         break;
       default:
         this._fireAction(
@@ -1451,9 +1467,11 @@ export class GrChangeActions
         );
         break;
       case RevertType.REVERT_SUBMISSION:
+        // TODO(dhruvsri): replace with this.actions.revert_submission once
+        // BE starts sending it again
         this._fireAction(
           '/revert_submission',
-          assertUIActionInfo(this.actions.revert_submission),
+          {__key: 'revert_submission', method: HttpMethod.POST} as UIActionInfo,
           false,
           {message}
         );
@@ -1461,18 +1479,6 @@ export class GrChangeActions
       default:
         this.reporting.error(new Error('invalid revert type'));
     }
-  }
-
-  _handleRevertSubmissionDialogConfirm() {
-    const el = this.$.confirmRevertSubmissionDialog;
-    this.$.overlay.close();
-    el.hidden = true;
-    this._fireAction(
-      '/revert_submission',
-      assertUIActionInfo(this.actions.revert_submission),
-      false,
-      {message: el.message}
-    );
   }
 
   _handleAbandonDialogConfirm() {
@@ -1499,6 +1505,7 @@ export class GrChangeActions
   }
 
   _handleDeleteConfirm() {
+    this._hideAllDialogs();
     this._fireAction(
       '/',
       assertUIActionInfo(this.actions[ChangeActions.DELETE]),
@@ -1621,7 +1628,7 @@ export class GrChangeActions
     return this.restApiService.getResponseObject(response).then(obj => {
       switch (action.__key) {
         case ChangeActions.REVERT: {
-          const revertChangeInfo: ChangeInfo = (obj as unknown) as ChangeInfo;
+          const revertChangeInfo: ChangeInfo = obj as unknown as ChangeInfo;
           this._waitForChangeReachable(revertChangeInfo._number)
             .then(() => this._setReviewOnRevert(revertChangeInfo._number))
             .then(() => {
@@ -1630,7 +1637,7 @@ export class GrChangeActions
           break;
         }
         case RevisionActions.CHERRYPICK: {
-          const cherrypickChangeInfo: ChangeInfo = (obj as unknown) as ChangeInfo;
+          const cherrypickChangeInfo: ChangeInfo = obj as unknown as ChangeInfo;
           this._waitForChangeReachable(cherrypickChangeInfo._number).then(
             () => {
               GerritNav.navigateToChange(cherrypickChangeInfo);
@@ -1649,16 +1656,10 @@ export class GrChangeActions
         case ChangeActions.REBASE_EDIT:
         case ChangeActions.REBASE:
         case ChangeActions.SUBMIT:
-          this.dispatchEvent(
-            new CustomEvent('reload', {
-              detail: {clearPatchset: true},
-              bubbles: false,
-              composed: true,
-            })
-          );
+          fireReload(this, true);
           break;
         case ChangeActions.REVERT_SUBMISSION: {
-          const revertSubmistionInfo = (obj as unknown) as RevertSubmissionInfo;
+          const revertSubmistionInfo = obj as unknown as RevertSubmissionInfo;
           if (
             !revertSubmistionInfo.revert_changes ||
             !revertSubmistionInfo.revert_changes.length
@@ -1672,20 +1673,10 @@ export class GrChangeActions
           break;
         }
         default:
-          this.dispatchEvent(
-            new CustomEvent('reload', {
-              detail: {action: action.__key, clearPatchset: true},
-              bubbles: false,
-              composed: true,
-            })
-          );
+          fireReload(this, true);
           break;
       }
     });
-  }
-
-  _handleShowRevertSubmissionChangesConfirm() {
-    this._hideAllDialogs();
   }
 
   _handleResponseError(
@@ -1746,7 +1737,7 @@ export class GrChangeActions
         new Error('Properties change and changeNum must be set.')
       );
     }
-    return fetchChangeUpdates(change, this.restApiService).then(result => {
+    return this.changeService.fetchChangeUpdates(change).then(result => {
       if (!result.isLatest) {
         this.dispatchEvent(
           new CustomEvent<ShowAlertEventDetail>('show-alert', {
@@ -1755,15 +1746,7 @@ export class GrChangeActions
                 'Cannot set label: a newer patch has been ' +
                 'uploaded to this change.',
               action: 'Reload',
-              callback: () => {
-                this.dispatchEvent(
-                  new CustomEvent('reload', {
-                    detail: {clearPatchset: true},
-                    bubbles: false,
-                    composed: true,
-                  })
-                );
-              },
+              callback: () => fireReload(this, true),
             },
             composed: true,
             bubbles: true,
@@ -1791,10 +1774,6 @@ export class GrChangeActions
           return response;
         });
     });
-  }
-
-  _handleAbandonTap() {
-    this._showActionDialog(this.$.confirmAbandonDialog);
   }
 
   _handleCherrypickTap() {
@@ -1826,12 +1805,11 @@ export class GrChangeActions
   }
 
   _handleDownloadTap() {
-    this.dispatchEvent(
-      new CustomEvent('download-tap', {
-        composed: true,
-        bubbles: false,
-      })
-    );
+    fireEvent(this, 'download-tap');
+  }
+
+  _handleIncludedInTap() {
+    fireEvent(this, 'included-tap');
   }
 
   _handleDeleteTap() {
@@ -1905,8 +1883,7 @@ export class GrChangeActions
       UIActionInfo[],
       UIActionInfo[]
     >,
-    change?: ChangeInfo,
-    config?: ServerInfo
+    change?: ChangeInfo
   ): UIActionInfo[] {
     // Polymer 2: check for undefined
     if (
@@ -1945,15 +1922,9 @@ export class GrChangeActions
         if (ACTIONS_WITH_ICONS.has(action.__key)) {
           action.icon = action.__key;
         }
-        // TODO(brohlfs): Temporary hack until change 269573 is live in all
-        // backends.
-        if (action.__key === ChangeActions.READY) {
-          action.label = 'Mark as Active';
-        }
-        // End of hack
         return action;
       })
-      .filter(action => !this._shouldSkipAction(action, config));
+      .filter(action => !this._shouldSkipAction(action));
   }
 
   _getActionPriority(action: UIActionInfo) {
@@ -1992,14 +1963,8 @@ export class GrChangeActions
     }
   }
 
-  _shouldSkipAction(action: UIActionInfo, config?: ServerInfo) {
-    const skipActionKeys: string[] = [...SKIP_ACTION_KEYS];
-    const isAttentionSetEnabled =
-      !!config && !!config.change && config.change.enable_attention_set;
-    if (isAttentionSetEnabled) {
-      skipActionKeys.push(...SKIP_ACTION_KEYS_ATTENTION_SET);
-    }
-    return skipActionKeys.includes(action.__key);
+  _shouldSkipAction(action: UIActionInfo) {
+    return SKIP_ACTION_KEYS.includes(action.__key);
   }
 
   _computeTopLevelActions(

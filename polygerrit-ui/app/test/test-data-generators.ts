@@ -16,11 +16,13 @@
  */
 
 import {
+  AccountDetailInfo,
   AccountId,
   AccountInfo,
   AccountsConfigInfo,
   ApprovalInfo,
   AuthInfo,
+  BasePatchSetNum,
   BranchName,
   ChangeConfigInfo,
   ChangeId,
@@ -36,10 +38,16 @@ import {
   ConfigInfo,
   DownloadInfo,
   EditPatchSetNum,
-  GerritInfo,
   EmailAddress,
+  FixId,
+  FixSuggestionInfo,
+  GerritInfo,
   GitPersonInfo,
   GitRef,
+  GroupAuditEventInfo,
+  GroupAuditEventType,
+  GroupId,
+  GroupInfo,
   InheritedBooleanInfo,
   MaxObjectSizeLimitInfo,
   MergeableInfo,
@@ -47,32 +55,29 @@ import {
   PatchSetNum,
   PluginConfigInfo,
   PreferencesInfo,
+  RelatedChangeAndCommitInfo,
+  RelatedChangesInfo,
   RepoName,
+  Requirement,
+  RequirementType,
   Reviewers,
   RevisionInfo,
   SchemesInfoMap,
   ServerInfo,
+  SubmittedTogetherInfo,
   SubmitTypeInfo,
   SuggestInfo,
   Timestamp,
   TimezoneOffset,
-  UserConfigInfo,
-  AccountDetailInfo,
-  Requirement,
-  RequirementType,
   UrlEncodedCommentId,
-  BasePatchSetNum,
-  RelatedChangeAndCommitInfo,
-  SubmittedTogetherInfo,
-  RelatedChangesInfo,
-  FixSuggestionInfo,
-  FixId,
+  UserConfigInfo,
 } from '../types/common';
 import {
   AccountsVisibility,
   AppTheme,
   AuthType,
   ChangeStatus,
+  CommentSide,
   DateFormat,
   DefaultBase,
   DefaultDisplayNameConfig,
@@ -80,22 +85,30 @@ import {
   EmailStrategy,
   InheritedBooleanInfoConfiguredValue,
   MergeabilityComputationBehavior,
+  RequirementStatus,
   RevisionKind,
   SubmitType,
   TimeFormat,
-  RequirementStatus,
-  CommentSide,
 } from '../constants/constants';
 import {formatDate} from '../utils/date-util';
 import {GetDiffCommentsOutput} from '../services/gr-rest-api/gr-rest-api';
 import {AppElementChangeViewParams} from '../elements/gr-app-types';
 import {CommitInfoWithRequiredCommit} from '../elements/change/gr-change-metadata/gr-change-metadata';
 import {WebLinkInfo} from '../types/diff';
-import {UIComment, UIDraft, createCommentThreads} from '../utils/comment-util';
+import {createCommentThreads, UIComment, UIDraft} from '../utils/comment-util';
 import {GerritView} from '../services/router/router-model';
 import {ChangeComments} from '../elements/diff/gr-comment-api/gr-comment-api';
 import {EditRevisionInfo, ParsedChangeInfo} from '../types/types';
 import {ChangeMessage} from '../elements/change/gr-message/gr-message';
+import {GenerateUrlEditViewParameters} from '../elements/core/gr-navigation/gr-navigation';
+import {
+  DetailedLabelInfo,
+  SubmitRequirementExpressionInfo,
+  SubmitRequirementResultInfo,
+  SubmitRequirementStatus,
+} from '../api/rest-api';
+import {RunResult} from '../services/checks/checks-model';
+import {Category, RunStatus} from '../api/checks';
 
 export function dateToTimestamp(date: Date): Timestamp {
   const nanosecondSuffix = '.000000000';
@@ -181,7 +194,8 @@ export function createReviewers(): Reviewers {
 export const TEST_PROJECT_NAME: RepoName = 'test-project' as RepoName;
 export const TEST_BRANCH_ID: BranchName = 'test-branch' as BranchName;
 export const TEST_CHANGE_ID: ChangeId = 'TestChangeId' as ChangeId;
-export const TEST_CHANGE_INFO_ID: ChangeInfoId = `${TEST_PROJECT_NAME}~${TEST_BRANCH_ID}~${TEST_CHANGE_ID}` as ChangeInfoId;
+export const TEST_CHANGE_INFO_ID: ChangeInfoId =
+  `${TEST_PROJECT_NAME}~${TEST_BRANCH_ID}~${TEST_CHANGE_ID}` as ChangeInfoId;
 export const TEST_SUBJECT = 'Test subject';
 export const TEST_NUMERIC_CHANGE_ID = 42 as NumericChangeId;
 
@@ -191,7 +205,7 @@ export const TEST_CHANGE_UPDATED = new Date(2020, 10, 6, 5, 12, 34);
 export function createGitPerson(name = 'Test name'): GitPersonInfo {
   return {
     name,
-    email: `${name}@`,
+    email: `${name}@` as EmailAddress,
     date: dateToTimestamp(new Date(2019, 11, 6, 14, 5, 8)),
     tz: 0 as TimezoneOffset,
   };
@@ -252,9 +266,9 @@ export function createChangeMessage(id = 'cm_id_1'): ChangeMessage {
   };
 }
 
-export function createRevisions(
-  count: number
-): {[revisionId: string]: RevisionInfo} {
+export function createRevisions(count: number): {
+  [revisionId: string]: RevisionInfo;
+} {
   const revisions: {[revisionId: string]: RevisionInfo} = {};
   const revisionDate = TEST_CHANGE_CREATED;
   const revisionIdStart = 1; // The same as getCurrentRevision
@@ -341,14 +355,11 @@ export function createAuth(): AuthInfo {
 export function createChangeConfig(): ChangeConfigInfo {
   return {
     large_change: 500,
-    reply_label: 'Reply',
-    reply_tooltip: 'Reply and score',
     // The default update_delay is 5 minutes, but we don't want to accidentally
     // start polling in tests
     update_delay: 0,
     mergeability_computation_behavior:
       MergeabilityComputationBehavior.REF_UPDATED_AND_CHANGE_REINDEX,
-    enable_attention_set: false,
     enable_assignee: false,
   };
 }
@@ -441,6 +452,16 @@ export function createAppElementChangeViewParams(): AppElementChangeViewParams {
   return {
     view: GerritView.CHANGE,
     changeNum: TEST_NUMERIC_CHANGE_ID,
+    project: TEST_PROJECT_NAME,
+  };
+}
+
+export function createGenerateUrlEditViewParameters(): GenerateUrlEditViewParameters {
+  return {
+    view: GerritView.EDIT,
+    changeNum: TEST_NUMERIC_CHANGE_ID,
+    patchNum: EditPatchSetNum as PatchSetNum,
+    path: 'foo/bar.baz',
     project: TEST_PROJECT_NAME,
   };
 }
@@ -622,5 +643,77 @@ export function createFixSuggestionInfo(fixId = 'fix_1'): FixSuggestionInfo {
     fix_id: fixId as FixId,
     description: `Fix ${fixId}`,
     replacements: [],
+  };
+}
+
+export function createGroupInfo(id = 'id'): GroupInfo {
+  return {
+    id: id as GroupId,
+  };
+}
+
+export function createGroupAuditEventInfo(
+  type: GroupAuditEventType
+): GroupAuditEventInfo {
+  if (
+    type === GroupAuditEventType.ADD_USER ||
+    type === GroupAuditEventType.REMOVE_USER
+  ) {
+    return {
+      type,
+      member: createAccountWithId(10),
+      user: createAccountWithId(),
+      date: dateToTimestamp(new Date(2019, 11, 6, 14, 5, 8)),
+    };
+  } else {
+    return {
+      type,
+      member: createGroupInfo(),
+      user: createAccountWithId(),
+      date: dateToTimestamp(new Date(2019, 11, 6, 14, 5, 8)),
+    };
+  }
+}
+
+export function createSubmitRequirementExpressionInfo(): SubmitRequirementExpressionInfo {
+  return {
+    expression: 'label:Verified=MAX -label:Verified=MIN',
+    fulfilled: true,
+    passing_atoms: ['label2:verified=MAX'],
+    failing_atoms: ['label2:verified=MIN'],
+  };
+}
+
+export function createSubmitRequirementResultInfo(): SubmitRequirementResultInfo {
+  return {
+    name: 'Verified',
+    status: SubmitRequirementStatus.SATISFIED,
+    submittability_expression_result: createSubmitRequirementExpressionInfo(),
+  };
+}
+
+export function createRunResult(): RunResult {
+  return {
+    attemptDetails: [],
+    category: Category.INFO,
+    checkName: 'test-name',
+    internalResultId: 'test-internal-result-id',
+    internalRunId: 'test-internal-run-id',
+    isLatestAttempt: true,
+    isSingleAttempt: true,
+    pluginName: 'test-plugin-name',
+    status: RunStatus.COMPLETED,
+    summary: 'This is the test summary.',
+    message: 'This is the test message.',
+  };
+}
+
+export function createDetailedLabelInfo(): DetailedLabelInfo {
+  return {
+    values: {
+      ' 0': 'No score',
+      '+1': 'Style Verified',
+      '-1': 'Wrong Style or Formatting',
+    },
   };
 }

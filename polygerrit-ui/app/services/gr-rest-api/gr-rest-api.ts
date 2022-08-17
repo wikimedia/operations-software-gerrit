@@ -207,10 +207,12 @@ export interface RestApiService {
 
   getChange(
     changeNum: ChangeId | NumericChangeId,
-    errFn: ErrorCallback
+    errFn?: ErrorCallback
   ): Promise<ChangeInfo | null>;
 
-  savePreferences(prefs: PreferencesInput): Promise<Response>;
+  savePreferences(
+    prefs: PreferencesInput
+  ): Promise<PreferencesInfo | undefined>;
 
   getDiffPreferences(): Promise<DiffPreferencesInfo | undefined>;
 
@@ -711,11 +713,6 @@ export interface RestApiService {
   getDefaultPreferences(): Promise<PreferencesInfo | undefined>;
 
   addAccountEmail(email: string): Promise<Response>;
-
-  saveChangeReviewed(
-    changeNum: NumericChangeId,
-    reviewed: boolean
-  ): Promise<Response | undefined>;
 
   saveChangeStarred(
     changeNum: NumericChangeId,

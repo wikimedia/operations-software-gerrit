@@ -36,7 +36,7 @@ import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.api.changes.RecipientType;
-import com.google.gerrit.server.ApprovalsUtil;
+import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.events.ChangeMergedEvent;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.query.change.ChangeData;
@@ -396,7 +396,7 @@ public abstract class AbstractSubmitOnPush extends AbstractDaemonTest {
         .add(allow(Permission.SUBMIT).ref("refs/for/refs/heads/master").group(adminGroupUuid()))
         .update();
 
-    TestAccount user = accountCreator.user();
+    TestAccount user = accountCreator.user1();
     String pushSpec = "refs/for/master%reviewer=" + user.email();
     sender.clear();
 
@@ -433,7 +433,7 @@ public abstract class AbstractSubmitOnPush extends AbstractDaemonTest {
         .add(allow(Permission.SUBMIT).ref("refs/for/refs/heads/master").group(adminGroupUuid()))
         .update();
 
-    TestAccount user = accountCreator.user();
+    TestAccount user = accountCreator.user1();
     String pushSpec = "refs/for/master%reviewer=" + user.email() + ",cc=" + user.email();
 
     TestAccount user2 = accountCreator.user2();

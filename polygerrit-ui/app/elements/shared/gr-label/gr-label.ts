@@ -21,10 +21,8 @@
  * used in gr-label-info.
  */
 
-import {PolymerElement} from '@polymer/polymer/polymer-element';
-import {customElement} from '@polymer/decorators';
-import {htmlTemplate} from './gr-label_html';
-import {TooltipMixin} from '../../../mixins/gr-tooltip-mixin/gr-tooltip-mixin';
+import {html, LitElement} from 'lit';
+import {customElement} from 'lit/decorators';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -33,8 +31,12 @@ declare global {
 }
 
 @customElement('gr-label')
-export class GrLabel extends TooltipMixin(PolymerElement) {
-  static get template() {
-    return htmlTemplate;
+export class GrLabel extends LitElement {
+  static override get styles() {
+    return [];
+  }
+
+  override render() {
+    return html` <slot></slot> `;
   }
 }

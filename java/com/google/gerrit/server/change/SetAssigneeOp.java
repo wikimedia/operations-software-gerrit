@@ -18,7 +18,6 @@ import static java.util.Objects.requireNonNull;
 
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.server.ChangeMessagesUtil;
@@ -30,7 +29,8 @@ import com.google.gerrit.server.notedb.ChangeUpdate;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.Context;
+import com.google.gerrit.server.update.PostUpdateContext;
+import com.google.gerrit.server.util.AccountTemplateUtil;
 import com.google.gerrit.server.validators.AssigneeValidationListener;
 import com.google.gerrit.server.validators.ValidationException;
 import com.google.inject.Inject;
@@ -98,29 +98,27 @@ public class SetAssigneeOp implements BatchUpdateOp {
     update.setAssignee(newAssignee.getAccountId());
     // reviewdb
     change.setAssignee(newAssignee.getAccountId());
-    addMessage(ctx, update);
+    addMessage(ctx);
     return true;
   }
 
-  private void addMessage(ChangeContext ctx, ChangeUpdate update) {
+  private void addMessage(ChangeContext ctx) {
     StringBuilder msg = new StringBuilder();
     msg.append("Assignee ");
     if (oldAssignee == null) {
       msg.append("added: ");
-      msg.append(newAssignee.getNameEmail());
+      msg.append(AccountTemplateUtil.getAccountTemplate(newAssignee.getAccountId()));
     } else {
       msg.append("changed from: ");
-      msg.append(oldAssignee.getNameEmail());
+      msg.append(AccountTemplateUtil.getAccountTemplate(oldAssignee.getAccountId()));
       msg.append(" to: ");
-      msg.append(newAssignee.getNameEmail());
+      msg.append(AccountTemplateUtil.getAccountTemplate(newAssignee.getAccountId()));
     }
-    ChangeMessage cmsg =
-        ChangeMessagesUtil.newMessage(ctx, msg.toString(), ChangeMessagesUtil.TAG_SET_ASSIGNEE);
-    cmUtil.addChangeMessage(update, cmsg);
+    cmUtil.setChangeMessage(ctx, msg.toString(), ChangeMessagesUtil.TAG_SET_ASSIGNEE);
   }
 
   @Override
-  public void postUpdate(Context ctx) {
+  public void postUpdate(PostUpdateContext ctx) {
     try {
       SetAssigneeSender emailSender =
           setAssigneeSenderFactory.create(
@@ -134,6 +132,9 @@ public class SetAssigneeOp implements BatchUpdateOp {
           "Cannot send email to new assignee of change %s", change.getId());
     }
     assigneeChanged.fire(
-        change, ctx.getAccount(), oldAssignee != null ? oldAssignee.state() : null, ctx.getWhen());
+        ctx.getChangeData(change),
+        ctx.getAccount(),
+        oldAssignee != null ? oldAssignee.state() : null,
+        ctx.getWhen());
   }
 }

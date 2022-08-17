@@ -17,6 +17,9 @@
 import {html} from '@polymer/polymer/lib/utils/html-tag';
 
 export const htmlTemplate = html`
+  <style include="gr-a11y-styles">
+    /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+  </style>
   <style include="shared-styles">
     .container:not(.loading) {
       background-color: var(--background-color-tertiary);
@@ -40,7 +43,6 @@ export const htmlTemplate = html`
       margin-right: var(--spacing-l);
     }
     gr-change-status {
-      display: initial;
       margin-left: var(--spacing-s);
     }
     gr-change-status:first-child {
@@ -100,7 +102,7 @@ export const htmlTemplate = html`
       font-size: var(--font-size-mono);
       line-height: var(--line-height-mono);
       margin-right: var(--spacing-l);
-      margin-bottom: var(--spacing-m);
+      margin-bottom: var(--spacing-l);
       /* Account for border and padding and rounding errors. */
       max-width: calc(72ch + 2px + 2 * var(--spacing-m) + 0.4px);
     }
@@ -113,8 +115,7 @@ export const htmlTemplate = html`
       --collapsed-max-height: 300px;
     }
     .changeStatuses,
-    .commitActions,
-    .statusText {
+    .commitActions {
       align-items: center;
       display: flex;
     }
@@ -199,8 +200,7 @@ export const htmlTemplate = html`
       width: 100%;
     }
     gr-change-summary {
-      /* temporary for old checks status */
-      margin-bottom: var(--spacing-m);
+      margin-left: var(--spacing-m);
     }
     @media screen and (max-width: 75em) {
       .relatedChanges {
@@ -302,6 +302,9 @@ export const htmlTemplate = html`
     .show-robot-comments {
       margin: var(--spacing-m);
     }
+    .patchInfo gr-thread-list::part(threads) {
+      padding: var(--spacing-l);
+    }
   </style>
   <div class="container loading" hidden$="[[!_loading]]">Loading...</div>
   <!-- TODO(taoalpha): remove on-show-checks-table,
@@ -323,8 +326,10 @@ export const htmlTemplate = html`
           <div class="changeStatuses">
             <template is="dom-repeat" items="[[_changeStatuses]]" as="status">
               <gr-change-status
-                max-width="100"
+                change="[[_change]]"
+                reverted-change="[[revertedChange]]"
                 status="[[status]]"
+                resolve-weblinks="[[resolveWeblinks]]"
               ></gr-change-status>
             </template>
           </div>
@@ -345,13 +350,14 @@ export const htmlTemplate = html`
           <span class="headerSubject">[[_change.subject]]</span>
           <gr-copy-clipboard
             class="changeCopyClipboard"
-            hide-input=""
+            hideInput=""
             text="[[_computeCopyTextForTitle(_change)]]"
           >
           </gr-copy-clipboard>
         </div>
         <!-- end headerTitle -->
-        <div class="commitActions" hidden$="[[!_loggedIn]]">
+        <!-- always show gr-change-actions regardless if logged in or not -->
+        <div class="commitActions">
           <gr-change-actions
             id="actions"
             change="[[_change]]"
@@ -369,9 +375,11 @@ export const htmlTemplate = html`
             edit-mode="[[_editMode]]"
             edit-based-on-current-patch-set="[[_hasEditBasedOnCurrentPatchSet(_allPatchSets)]]"
             private-by-default="[[_projectConfig.private_by_default]]"
+            logged-in="[[_loggedIn]]"
             on-edit-tap="_handleEditTap"
             on-stop-edit-tap="_handleStopEditTap"
             on-download-tap="_handleOpenDownloadDialog"
+            on-included-tap="_handleOpenIncludedInDialog"
             comment-threads="[[_commentThreads]]"
           ></gr-change-actions>
         </div>
@@ -384,6 +392,7 @@ export const htmlTemplate = html`
           <gr-change-metadata
             id="metadata"
             change="{{_change}}"
+            reverted-change="[[revertedChange]]"
             account="[[_account]]"
             revision="[[_selectedRevision]]"
             commit-info="[[_commitInfo]]"
@@ -428,6 +437,7 @@ export const htmlTemplate = html`
                   ></gr-linked-text>
                 </gr-editable-content>
               </div>
+              <h3 class="assistive-tech-only">Comments and Checks Summary</h3>
               <gr-change-summary
                 change-comments="[[_changeComments]]"
                 comment-threads="[[_commentThreads]]"
@@ -460,21 +470,28 @@ export const htmlTemplate = html`
 
     <h2 class="assistive-tech-only">Files and Comments tabs</h2>
     <paper-tabs id="primaryTabs" on-selected-changed="_setActivePrimaryTab">
-      <paper-tab data-name$="[[_constants.PrimaryTab.FILES]]">Files</paper-tab>
       <paper-tab
+        on-click="_onPaperTabClick"
+        data-name$="[[_constants.PrimaryTab.FILES]]"
+        ><span>Files</span></paper-tab
+      >
+      <paper-tab
+        on-click="_onPaperTabClick"
         data-name$="[[_constants.PrimaryTab.COMMENT_THREADS]]"
         class="commentThreads"
       >
         <gr-tooltip-content
-          has-tooltip=""
+          has-tooltip
           title$="[[_computeTotalCommentCounts(_change.unresolved_comment_count, _changeComments)]]"
         >
           <span>Comments</span></gr-tooltip-content
         >
       </paper-tab>
       <template is="dom-if" if="[[_showChecksTab]]">
-        <paper-tab data-name$="[[_constants.PrimaryTab.CHECKS]]"
-          >Checks</paper-tab
+        <paper-tab
+          data-name$="[[_constants.PrimaryTab.CHECKS]]"
+          on-click="_onPaperTabClick"
+          ><span>Checks</span></paper-tab
         >
       </template>
       <template
@@ -491,8 +508,11 @@ export const htmlTemplate = html`
           </gr-endpoint-decorator>
         </paper-tab>
       </template>
-      <paper-tab data-name$="[[_constants.PrimaryTab.FINDINGS]]">
-        Findings
+      <paper-tab
+        data-name$="[[_constants.PrimaryTab.FINDINGS]]"
+        on-click="_onPaperTabClick"
+      >
+        <span>Findings</span>
       </paper-tab>
     </paper-tabs>
 
@@ -519,10 +539,9 @@ export const htmlTemplate = html`
           patch-num="{{_patchRange.patchNum}}"
           base-patch-num="{{_patchRange.basePatchNum}}"
           files-expanded="[[_filesExpanded]]"
-          diff-prefs-disabled="[[_diffPrefsDisabled]]"
+          diff-prefs-disabled="[[!_loggedIn]]"
           on-open-diff-prefs="_handleOpenDiffPrefs"
           on-open-download-dialog="_handleOpenDownloadDialog"
-          on-open-included-in-dialog="_handleOpenIncludedInDialog"
           on-expand-diffs="_expandAllDiffs"
           on-collapse-diffs="_collapseAllDiffs"
         >
@@ -535,7 +554,6 @@ export const htmlTemplate = html`
           change-num="[[_changeNum]]"
           patch-range="{{_patchRange}}"
           change-comments="[[_changeComments]]"
-          revisions="[[_change.revisions]]"
           selected-index="{{viewState.selectedFileIndex}}"
           diff-view-mode="[[viewState.diffMode]]"
           edit-mode="[[_editMode]]"
@@ -544,7 +562,7 @@ export const htmlTemplate = html`
           file-list-increment="{{_numFilesShown}}"
           on-files-shown-changed="_setShownFiles"
           on-file-action-tap="_handleFileActionTap"
-          on-reload-drafts="_reloadDraftsWithCallback"
+          observer-target="[[_computeObserverTarget()]]"
         >
         </gr-file-list>
       </div>
@@ -552,14 +570,17 @@ export const htmlTemplate = html`
         is="dom-if"
         if="[[_isTabActive(_constants.PrimaryTab.COMMENT_THREADS, _activeTabs)]]"
       >
+        <h3 class="assistive-tech-only">Comments</h3>
         <gr-thread-list
           threads="[[_commentThreads]]"
           change="[[_change]]"
           change-num="[[_changeNum]]"
           logged-in="[[_loggedIn]]"
+          account="[[_account]]"
           comment-tab-state="[[_tabState.commentTab]]"
           only-show-robot-comments-with-human-reply=""
-          unresolved-only
+          unresolved-only="[[unresolvedOnly]]"
+          scroll-comment-id="[[scrollCommentId]]"
           show-comment-context
         ></gr-thread-list>
       </template>
@@ -567,6 +588,7 @@ export const htmlTemplate = html`
         is="dom-if"
         if="[[_isTabActive(_constants.PrimaryTab.CHECKS, _activeTabs)]]"
       >
+        <h3 class="assistive-tech-only">Checks</h3>
         <gr-checks-tab
           id="checksTab"
           tab-state="[[_tabState.checksTab]]"
@@ -588,7 +610,7 @@ export const htmlTemplate = html`
           change="[[_change]]"
           change-num="[[_changeNum]]"
           logged-in="[[_loggedIn]]"
-          hide-toggle-buttons
+          hide-dropdown
           empty-thread-msg="[[_messages.NO_ROBOT_COMMENTS_THREADS_MSG]]"
         >
         </gr-thread-list>
@@ -621,7 +643,7 @@ export const htmlTemplate = html`
       </gr-endpoint-param>
     </gr-endpoint-decorator>
 
-    <paper-tabs id="secondaryTabs" on-selected-changed="_setActiveSecondaryTab">
+    <paper-tabs id="secondaryTabs">
       <paper-tab
         data-name$="[[_constants.SecondaryTab.CHANGE_LOG]]"
         class="changeLog"
@@ -631,24 +653,19 @@ export const htmlTemplate = html`
     </paper-tabs>
     <section class="changeLog">
       <h2 class="assistive-tech-only">Change Log</h2>
-      <template
-        is="dom-if"
-        if="[[_isTabActive(_constants.SecondaryTab.CHANGE_LOG, _activeTabs)]]"
-      >
-        <gr-messages-list
-          class="hideOnMobileOverlay"
-          change="[[_change]]"
-          change-num="[[_changeNum]]"
-          labels="[[_change.labels]]"
-          messages="[[_change.messages]]"
-          reviewer-updates="[[_change.reviewer_updates]]"
-          change-comments="[[_changeComments]]"
-          project-name="[[_change.project]]"
-          show-reply-buttons="[[_loggedIn]]"
-          on-message-anchor-tap="_handleMessageAnchorTap"
-          on-reply="_handleMessageReply"
-        ></gr-messages-list>
-      </template>
+      <gr-messages-list
+        class="hideOnMobileOverlay"
+        change="[[_change]]"
+        change-num="[[_changeNum]]"
+        labels="[[_change.labels]]"
+        messages="[[_change.messages]]"
+        reviewer-updates="[[_change.reviewer_updates]]"
+        change-comments="[[_changeComments]]"
+        project-name="[[_change.project]]"
+        show-reply-buttons="[[_loggedIn]]"
+        on-message-anchor-tap="_handleMessageAnchorTap"
+        on-reply="_handleMessageReply"
+      ></gr-messages-list>
     </section>
   </div>
 

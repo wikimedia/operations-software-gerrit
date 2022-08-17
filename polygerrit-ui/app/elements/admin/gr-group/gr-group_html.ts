@@ -17,6 +17,9 @@
 import {html} from '@polymer/polymer/lib/utils/html-tag';
 
 export const htmlTemplate = html`
+  <style include="gr-font-styles">
+    /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+  </style>
   <style include="shared-styles">
     /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
   </style>
@@ -24,9 +27,6 @@ export const htmlTemplate = html`
     h3.edited:after {
       color: var(--deemphasized-text-color);
       content: ' *';
-    }
-    .inputUpdateBtn {
-      margin-top: var(--spacing-s);
     }
   </style>
   <style include="gr-form-styles">
@@ -110,12 +110,14 @@ export const htmlTemplate = html`
           </h3>
           <fieldset>
             <div>
-              <iron-autogrow-textarea
+              <gr-textarea
                 class="description"
                 autocomplete="on"
-                bind-value="{{_groupConfig.description}}"
+                rows="4"
+                monospace=""
+                text="{{_groupConfig.description}}"
                 disabled="[[_computeGroupDisabled(_groupOwner, _isAdmin, _groupIsInternal)]]"
-              ></iron-autogrow-textarea>
+              ></gr-textarea>
             </div>
             <span
               class="value"

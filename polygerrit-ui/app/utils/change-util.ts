@@ -24,6 +24,7 @@ import {
   RelatedChangeAndCommitInfo,
 } from '../types/common';
 import {ParsedChangeInfo} from '../types/types';
+import {ChangeStates} from '../elements/shared/gr-change-status/gr-change-status';
 
 // This can be wrong! See WARNING above
 interface ChangeStatusesOptions {
@@ -104,6 +105,9 @@ export const ListChangesOption = {
    * deletions field (number of lines deleted)
    */
   SKIP_DIFFSTAT: 23,
+
+  /** Include the evaluated submit requirements for the caller. */
+  SUBMIT_REQUIREMENTS: 24,
 };
 
 export function listChangesOptionsToHex(...args: number[]) {
@@ -147,24 +151,24 @@ export function changeIsAbandoned(
 export function changeStatuses(
   change: ChangeInfo,
   opt_options?: ChangeStatusesOptions
-) {
+): ChangeStates[] {
   const states = [];
   if (change.status === ChangeStatus.MERGED) {
-    states.push('Merged');
+    states.push(ChangeStates.MERGED);
   } else if (change.status === ChangeStatus.ABANDONED) {
-    states.push('Abandoned');
+    states.push(ChangeStates.ABANDONED);
   } else if (
     change.mergeable === false ||
     (opt_options && opt_options.mergeable === false)
   ) {
     // 'mergeable' prop may not always exist (@see Issue 6819)
-    states.push('Merge Conflict');
+    states.push(ChangeStates.MERGE_CONFLICT);
   }
   if (change.work_in_progress) {
-    states.push('WIP');
+    states.push(ChangeStates.WIP);
   }
   if (change.is_private) {
-    states.push('Private');
+    states.push(ChangeStates.PRIVATE);
   }
 
   // If there are any pre-defined statuses, only return those. Otherwise,
@@ -175,36 +179,43 @@ export function changeStatuses(
 
   // If no missing requirements, either active or ready to submit.
   if (change.submittable && opt_options.submitEnabled) {
-    states.push('Ready to submit');
+    states.push(ChangeStates.READY_TO_SUBMIT);
   } else {
     // Otherwise it is active.
-    states.push('Active');
+    states.push(ChangeStates.ACTIVE);
   }
   return states;
 }
 
-export function isOwner(change?: ChangeInfo, account?: AccountInfo): boolean {
+export function isOwner(
+  change?: ChangeInfo | ParsedChangeInfo,
+  account?: AccountInfo
+): boolean {
   if (!change || !account) return false;
   return change.owner?._account_id === account._account_id;
 }
 
 export function isReviewer(
-  change?: ChangeInfo,
+  change?: ChangeInfo | ParsedChangeInfo,
   account?: AccountInfo
 ): boolean {
   if (!change || !account) return false;
+  if (isOwner(change, account)) return false;
   const reviewers = change.reviewers.REVIEWER ?? [];
   return reviewers.some(r => r._account_id === account._account_id);
 }
 
-export function isCc(change?: ChangeInfo, account?: AccountInfo): boolean {
+export function isCc(
+  change?: ChangeInfo | ParsedChangeInfo,
+  account?: AccountInfo
+): boolean {
   if (!change || !account) return false;
   const ccs = change.reviewers.CC ?? [];
   return ccs.some(r => r._account_id === account._account_id);
 }
 
 export function isUploader(
-  change?: ChangeInfo,
+  change?: ChangeInfo | ParsedChangeInfo,
   account?: AccountInfo
 ): boolean {
   if (!change || !account) return false;
@@ -213,7 +224,7 @@ export function isUploader(
 }
 
 export function isInvolved(
-  change?: ChangeInfo,
+  change?: ChangeInfo | ParsedChangeInfo,
   account?: AccountInfo
 ): boolean {
   const owner = isOwner(change, account);

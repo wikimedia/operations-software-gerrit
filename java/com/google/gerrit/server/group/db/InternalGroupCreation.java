@@ -20,19 +20,19 @@ import com.google.gerrit.entities.AccountGroup;
 /**
  * Definition of all properties necessary for a group creation.
  *
- * <p>An instance of {@code InternalGroupCreation} is a blueprint for a group which should be
+ * <p>An instance of {@link InternalGroupCreation} is a blueprint for a group which should be
  * created.
  */
 @AutoValue
 public abstract class InternalGroupCreation {
 
-  /** Defines the numeric ID the group should have. */
+  /** Defines the numeric ID the group should have */
   public abstract AccountGroup.Id getId();
 
-  /** Defines the name the group should have. */
+  /** Defines the name the group should have */
   public abstract AccountGroup.NameKey getNameKey();
 
-  /** Defines the UUID the group should have. */
+  /** Defines the UUID the group should have */
   public abstract AccountGroup.UUID getGroupUUID();
 
   public static Builder builder() {
@@ -41,13 +41,13 @@ public abstract class InternalGroupCreation {
 
   @AutoValue.Builder
   public abstract static class Builder {
-    /** @see #getId() */
+    /** Defines the name the group should have */
     public abstract InternalGroupCreation.Builder setId(AccountGroup.Id id);
 
-    /** @see #getNameKey() */
+    /** Defines the name the group should have */
     public abstract InternalGroupCreation.Builder setNameKey(AccountGroup.NameKey name);
 
-    /** @see #getGroupUUID() */
+    /** Defines the UUID the group should have */
     public abstract InternalGroupCreation.Builder setGroupUUID(AccountGroup.UUID groupUuid);
 
     public abstract InternalGroupCreation build();

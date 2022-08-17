@@ -15,13 +15,14 @@
  * limitations under the License.
  */
 
-import '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
+import '../../../styles/gr-font-styles';
 import '../../../styles/gr-form-styles';
 import '../../../styles/gr-subpage-styles';
 import '../../../styles/shared-styles';
 import '../../shared/gr-autocomplete/gr-autocomplete';
 import '../../shared/gr-copy-clipboard/gr-copy-clipboard';
 import '../../shared/gr-select/gr-select';
+import '../../shared/gr-textarea/gr-textarea';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-group_html';
 import {customElement, property, observe} from '@polymer/decorators';
@@ -129,8 +130,7 @@ export class GrGroup extends PolymerElement {
     this._query = (input: string) => this._getGroupSuggestions(input);
   }
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     this._loadGroup();
   }

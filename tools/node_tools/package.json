@@ -17,9 +17,15 @@
     "rollup": "^2.3.4",
     "rollup-plugin-node-resolve": "^5.2.0",
     "rollup-plugin-terser": "^5.1.3",
-    "typescript": "4.0.5"
+    "typescript": "4.3.2"
   },
   "devDependencies": {},
+  "scripts": {
+    "postinstall": "(git apply --reverse --ignore-whitespace launchpad.patch || true) && git apply --ignore-whitespace launchpad.patch"
+  },
   "license": "Apache-2.0",
-  "private": true
+  "private": true,
+  "resolutions": {
+    "lodash": "4.17.21"
+  }
 }

@@ -18,6 +18,7 @@
 import '../../../test/common-test-setup-karma.js';
 import '../gr-diff/gr-diff-group.js';
 import './gr-diff-builder.js';
+import '../gr-context-controls/gr-context-controls.js';
 import {getMockDiffResponse} from '../../../test/mocks/diff-response.js';
 import './gr-diff-builder-element.js';
 import {stubBaseUrl} from '../../../test/test-utils.js';
@@ -52,7 +53,8 @@ suite('gr-diff-builder tests', () => {
   let element;
   let builder;
 
-  const LINE_FEED_HTML = '<span class="style-scope gr-diff br"></span>';
+  const LINE_BREAK_HTML = '<span class="style-scope gr-diff br"></span>';
+  const WBR_HTML = '<wbr class="style-scope gr-diff">';
 
   setup(() => {
     element = basicFixture.instantiate();
@@ -74,139 +76,63 @@ suite('gr-diff-builder tests', () => {
     assert.isTrue(node.classList.contains('classes'));
   });
 
-  suite('context control', () => {
-    function createContextGroups(options) {
-      const offset = options.offset || 0;
-      const numLines = options.count || 10;
-      const lines = [];
-      for (let i = 0; i < numLines; i++) {
-        const line = new GrDiffLine(GrDiffLineType.BOTH);
-        line.beforeNumber = offset + i + 1;
-        line.afterNumber = offset + i + 1;
-        line.text = 'lorem upsum';
-        lines.push(line);
-      }
-
-      return [new GrDiffGroup(GrDiffGroupType.BOTH, lines)];
-    }
-
-    function createContextSectionForGroups(options) {
-      const section = document.createElement('div');
-      builder._createContextControls(
-          section, createContextGroups(options), DiffViewMode.UNIFIED);
-      return section;
-    }
-
-    setup(() => {
-      builder = new GrDiffBuilder({content: []}, prefs, null, []);
-    });
-
-    test('no +10 buttons for 10 or less lines', () => {
-      const section = createContextSectionForGroups({count: 10});
-      const buttons = section.querySelectorAll('gr-button.showContext');
-
-      assert.equal(buttons.length, 1);
-      assert.equal(buttons[0].textContent, '+10 common lines');
-    });
-
-    test('context control at the top', () => {
-      builder._numLinesLeft = 50;
-      const section = createContextSectionForGroups({offset: 0, count: 20});
-      const buttons = section.querySelectorAll('gr-button.showContext');
-
-      assert.equal(buttons.length, 2);
-      assert.equal(buttons[0].textContent, '+20 common lines');
-      assert.equal(buttons[1].textContent, '+10');
-
-      assert.include([...buttons[0].classList.values()], 'belowButton');
-      assert.include([...buttons[1].classList.values()], 'belowButton');
-    });
-
-    test('context control in the middle', () => {
-      builder._numLinesLeft = 50;
-      const section = createContextSectionForGroups({offset: 10, count: 20});
-      const buttons = section.querySelectorAll('gr-button.showContext');
-
-      assert.equal(buttons.length, 3);
-      assert.equal(buttons[0].textContent, '+20 common lines');
-      assert.equal(buttons[1].textContent, '+10');
-      assert.equal(buttons[2].textContent, '+10');
-
-      assert.include([...buttons[0].classList.values()], 'centeredButton');
-      assert.include([...buttons[1].classList.values()], 'aboveButton');
-      assert.include([...buttons[2].classList.values()], 'belowButton');
-    });
-
-    test('context control at the bottom', () => {
-      builder._numLinesLeft = 50;
-      const section = createContextSectionForGroups({offset: 30, count: 20});
-      const buttons = section.querySelectorAll('gr-button.showContext');
-
-      assert.equal(buttons.length, 2);
-      assert.equal(buttons[0].textContent, '+20 common lines');
-      assert.equal(buttons[1].textContent, '+10');
-
-      assert.include([...buttons[0].classList.values()], 'aboveButton');
-      assert.include([...buttons[1].classList.values()], 'aboveButton');
-    });
-  });
-
   test('newlines 1', () => {
     let text = 'abcdef';
 
-    assert.equal(builder._formatText(text, 4, 10).innerHTML, text);
+    assert.equal(builder._formatText(text, 'NONE', 4, 10).innerHTML, text);
     text = 'a'.repeat(20);
-    assert.equal(builder._formatText(text, 4, 10).innerHTML,
+    assert.equal(builder._formatText(text, 'NONE', 4, 10).innerHTML,
         'a'.repeat(10) +
-        LINE_FEED_HTML +
+        LINE_BREAK_HTML +
         'a'.repeat(10));
   });
 
   test('newlines 2', () => {
     const text = '<span class="thumbsup">👍</span>';
-    assert.equal(builder._formatText(text, 4, 10).innerHTML,
+    assert.equal(builder._formatText(text, 'NONE', 4, 10).innerHTML,
         '&lt;span clas' +
-        LINE_FEED_HTML +
+        LINE_BREAK_HTML +
         's="thumbsu' +
-        LINE_FEED_HTML +
+        LINE_BREAK_HTML +
         'p"&gt;👍&lt;/span' +
-        LINE_FEED_HTML +
+        LINE_BREAK_HTML +
         '&gt;');
   });
 
   test('newlines 3', () => {
     const text = '01234\t56789';
-    assert.equal(builder._formatText(text, 4, 10).innerHTML,
+    assert.equal(builder._formatText(text, 'NONE', 4, 10).innerHTML,
         '01234' + builder._getTabWrapper(3).outerHTML + '56' +
-        LINE_FEED_HTML +
+        LINE_BREAK_HTML +
         '789');
   });
 
   test('newlines 4', () => {
     const text = '👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍';
-    assert.equal(builder._formatText(text, 4, 20).innerHTML,
+    assert.equal(builder._formatText(text, 'NONE', 4, 20).innerHTML,
         '👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍' +
-        LINE_FEED_HTML +
+        LINE_BREAK_HTML +
         '👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍' +
-        LINE_FEED_HTML +
+        LINE_BREAK_HTML +
         '👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍');
   });
 
-  test('line_length ignored if line_wrapping is true', () => {
+  test('line_length applied with <wbr> if line_wrapping is true', () => {
     builder._prefs = {line_wrapping: true, tab_size: 4, line_length: 50};
     const text = 'a'.repeat(51);
 
     const line = {text, highlights: []};
+    const expected = 'a'.repeat(50) + WBR_HTML + 'a';
     const result = builder._createTextEl(undefined, line).firstChild.innerHTML;
-    assert.equal(result, text);
+    assert.equal(result, expected);
   });
 
-  test('line_length applied if line_wrapping is false', () => {
+  test('line_length applied with line break if line_wrapping is false', () => {
     builder._prefs = {line_wrapping: false, tab_size: 4, line_length: 50};
     const text = 'a'.repeat(51);
 
     const line = {text, highlights: []};
-    const expected = 'a'.repeat(50) + LINE_FEED_HTML + 'a';
+    const expected = 'a'.repeat(50) + LINE_BREAK_HTML + 'a';
     const result = builder._createTextEl(undefined, line).firstChild.innerHTML;
     assert.equal(result, expected);
   });
@@ -249,22 +175,25 @@ suite('gr-diff-builder tests', () => {
   test('text length with tabs and unicode', () => {
     function expectTextLength(text, tabSize, expected) {
       // Formatting to |expected| columns should not introduce line breaks.
-      const result = builder._formatText(text, tabSize, expected);
+      const result = builder._formatText(text, 'NONE', tabSize, expected);
       assert.isNotOk(result.querySelector('.contentText > .br'),
           `  Expected the result of: \n` +
-          `      _formatText(${text}', ${tabSize}, ${expected})\n` +
+          `      _formatText(${text}', 'NONE',  ${tabSize}, ${expected})\n` +
           `  to not contain a br. But the actual result HTML was:\n` +
           `      '${result.innerHTML}'\nwhereupon`);
 
       // Increasing the line limit should produce the same markup.
-      assert.equal(builder._formatText(text, tabSize, Infinity).innerHTML,
+      assert.equal(
+          builder._formatText(text, 'NONE', tabSize, Infinity).innerHTML,
           result.innerHTML);
-      assert.equal(builder._formatText(text, tabSize, expected + 1).innerHTML,
+      assert.equal(
+          builder._formatText(text, 'NONE', tabSize, expected + 1).innerHTML,
           result.innerHTML);
 
       // Decreasing the line limit should introduce line breaks.
       if (expected > 0) {
-        const tooSmall = builder._formatText(text, tabSize, expected - 1);
+        const tooSmall = builder._formatText(text,
+            'NONE', tabSize, expected - 1);
         assert.isOk(tooSmall.querySelector('.contentText > .br'),
             `  Expected the result of: \n` +
             `      _formatText(${text}', ${tabSize}, ${expected - 1})\n` +
@@ -292,7 +221,7 @@ suite('gr-diff-builder tests', () => {
     assert.ok(wrapper);
     assert.equal(wrapper.innerText, '\t');
     assert.equal(
-        builder._formatText(html, tabSize, Infinity).innerHTML,
+        builder._formatText(html, 'NONE', tabSize, Infinity).innerHTML,
         'abc' + wrapper.outerHTML + 'def');
   });
 
@@ -822,7 +751,7 @@ suite('gr-diff-builder tests', () => {
     let outputEl;
     let keyLocations;
 
-    setup(done => {
+    setup(async () => {
       const prefs = {
         line_length: 10,
         show_tabs: true,
@@ -857,11 +786,11 @@ suite('gr-diff-builder tests', () => {
         return builder;
       });
       element.diff = {content};
-      element.render(keyLocations, prefs).then(done);
+      await element.render(keyLocations, prefs);
     });
 
-    test('addColumns is called', done => {
-      element.render(keyLocations, {}).then(done);
+    test('addColumns is called', async () => {
+      await element.render(keyLocations, {});
       assert.isTrue(element._builder.addColumns.called);
     });
 
@@ -883,15 +812,13 @@ suite('gr-diff-builder tests', () => {
       assert.strictEqual(sections[1], section[1]);
     });
 
-    test('render-start and render-content are fired', done => {
+    test('render-start and render-content are fired', async () => {
       const dispatchEventStub = sinon.stub(element, 'dispatchEvent');
-      element.render(keyLocations, {}).then(() => {
-        const firedEventTypes = dispatchEventStub.getCalls()
-            .map(c => c.args[0].type);
-        assert.include(firedEventTypes, 'render-start');
-        assert.include(firedEventTypes, 'render-content');
-        done();
-      });
+      await element.render(keyLocations, {});
+      const firedEventTypes = dispatchEventStub.getCalls()
+          .map(c => c.args[0].type);
+      assert.include(firedEventTypes, 'render-start');
+      assert.include(firedEventTypes, 'render-content');
     });
 
     test('cancel', () => {
@@ -908,7 +835,7 @@ suite('gr-diff-builder tests', () => {
     let prefs;
     let keyLocations;
 
-    setup(done => {
+    setup(async () => {
       element = mockDiffFixture.instantiate();
       diff = getMockDiffResponse();
       element.diff = diff;
@@ -920,10 +847,8 @@ suite('gr-diff-builder tests', () => {
       };
       keyLocations = {left: {}, right: {}};
 
-      element.render(keyLocations, prefs).then(() => {
-        builder = element._builder;
-        done();
-      });
+      await element.render(keyLocations, prefs);
+      builder = element._builder;
     });
 
     test('aria-labels on added line numbers', () => {
@@ -1057,34 +982,30 @@ suite('gr-diff-builder tests', () => {
       assert.isTrue(lineNumberEl.classList.contains('right'));
     });
 
-    test('_getLineNumberEl unified left', done => {
+    test('_getLineNumberEl unified left', async () => {
       // Re-render as unified:
       element.viewMode = 'UNIFIED_DIFF';
-      element.render(keyLocations, prefs).then(() => {
-        builder = element._builder;
+      await element.render(keyLocations, prefs);
+      builder = element._builder;
 
-        const contentEl = builder.getContentByLine(5, 'left',
-            element.$.diffTable);
-        const lineNumberEl = builder._getLineNumberEl(contentEl, 'left');
-        assert.isTrue(lineNumberEl.classList.contains('lineNum'));
-        assert.isTrue(lineNumberEl.classList.contains('left'));
-        done();
-      });
+      const contentEl = builder.getContentByLine(5, 'left',
+          element.$.diffTable);
+      const lineNumberEl = builder._getLineNumberEl(contentEl, 'left');
+      assert.isTrue(lineNumberEl.classList.contains('lineNum'));
+      assert.isTrue(lineNumberEl.classList.contains('left'));
     });
 
-    test('_getLineNumberEl unified right', done => {
+    test('_getLineNumberEl unified right', async () => {
       // Re-render as unified:
       element.viewMode = 'UNIFIED_DIFF';
-      element.render(keyLocations, prefs).then(() => {
-        builder = element._builder;
+      await element.render(keyLocations, prefs);
+      builder = element._builder;
 
-        const contentEl = builder.getContentByLine(5, 'right',
-            element.$.diffTable);
-        const lineNumberEl = builder._getLineNumberEl(contentEl, 'right');
-        assert.isTrue(lineNumberEl.classList.contains('lineNum'));
-        assert.isTrue(lineNumberEl.classList.contains('right'));
-        done();
-      });
+      const contentEl = builder.getContentByLine(5, 'right',
+          element.$.diffTable);
+      const lineNumberEl = builder._getLineNumberEl(contentEl, 'right');
+      assert.isTrue(lineNumberEl.classList.contains('lineNum'));
+      assert.isTrue(lineNumberEl.classList.contains('right'));
     });
 
     test('_getNextContentOnSide side-by-side left', () => {
@@ -1111,44 +1032,38 @@ suite('gr-diff-builder tests', () => {
       assert.equal(nextElem.textContent, expectedNextString);
     });
 
-    test('_getNextContentOnSide unified left', done => {
+    test('_getNextContentOnSide unified left', async () => {
       // Re-render as unified:
       element.viewMode = 'UNIFIED_DIFF';
-      element.render(keyLocations, prefs).then(() => {
-        builder = element._builder;
+      await element.render(keyLocations, prefs);
+      builder = element._builder;
 
-        const startElem = builder.getContentByLine(5, 'left',
-            element.$.diffTable);
-        const expectedStartString = diff.content[2].ab[0];
-        const expectedNextString = diff.content[2].ab[1];
-        assert.equal(startElem.textContent, expectedStartString);
+      const startElem = builder.getContentByLine(5, 'left',
+          element.$.diffTable);
+      const expectedStartString = diff.content[2].ab[0];
+      const expectedNextString = diff.content[2].ab[1];
+      assert.equal(startElem.textContent, expectedStartString);
 
-        const nextElem = builder._getNextContentOnSide(startElem,
-            'left');
-        assert.equal(nextElem.textContent, expectedNextString);
-
-        done();
-      });
+      const nextElem = builder._getNextContentOnSide(startElem,
+          'left');
+      assert.equal(nextElem.textContent, expectedNextString);
     });
 
-    test('_getNextContentOnSide unified right', done => {
+    test('_getNextContentOnSide unified right', async () => {
       // Re-render as unified:
       element.viewMode = 'UNIFIED_DIFF';
-      element.render(keyLocations, prefs).then(() => {
-        builder = element._builder;
+      await element.render(keyLocations, prefs);
+      builder = element._builder;
 
-        const startElem = builder.getContentByLine(5, 'right',
-            element.$.diffTable);
-        const expectedStartString = diff.content[1].b[0];
-        const expectedNextString = diff.content[1].b[1];
-        assert.equal(startElem.textContent, expectedStartString);
+      const startElem = builder.getContentByLine(5, 'right',
+          element.$.diffTable);
+      const expectedStartString = diff.content[1].b[0];
+      const expectedNextString = diff.content[1].b[1];
+      assert.equal(startElem.textContent, expectedStartString);
 
-        const nextElem = builder._getNextContentOnSide(startElem,
-            'right');
-        assert.equal(nextElem.textContent, expectedNextString);
-
-        done();
-      });
+      const nextElem = builder._getNextContentOnSide(startElem,
+          'right');
+      assert.equal(nextElem.textContent, expectedNextString);
     });
 
     test('escaping HTML', () => {

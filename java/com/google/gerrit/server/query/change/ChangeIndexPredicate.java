@@ -16,12 +16,10 @@ package com.google.gerrit.server.query.change;
 
 import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.query.IndexPredicate;
-import com.google.gerrit.index.query.Matchable;
 import com.google.gerrit.index.query.Predicate;
 
 /** Predicate that is mapped to a field in the change index. */
-public abstract class ChangeIndexPredicate extends IndexPredicate<ChangeData>
-    implements Matchable<ChangeData> {
+public class ChangeIndexPredicate extends IndexPredicate<ChangeData> {
   /**
    * Returns an index predicate that matches no changes in the index.
    *

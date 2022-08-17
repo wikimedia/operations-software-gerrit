@@ -33,7 +33,6 @@ export const htmlTemplate = html`
     }
     gr-button {
       vertical-align: top;
-      @apply --gr-button;
     }
     gr-avatar {
       height: 2em;
@@ -59,6 +58,7 @@ export const htmlTemplate = html`
       padding: var(--spacing-m) var(--spacing-l);
     }
     li .itemAction {
+      color: var(--gr-dropdown-item-color);
       @apply --gr-dropdown-item;
     }
     li .itemAction.disabled {
@@ -84,6 +84,7 @@ export const htmlTemplate = html`
     .topContent {
       display: block;
       padding: var(--spacing-m) var(--spacing-l);
+      color: var(--gr-dropdown-item-color);
       @apply --gr-dropdown-item;
     }
     .bold-text {
@@ -139,7 +140,7 @@ export const htmlTemplate = html`
               title$="[[link.tooltip]]"
             >
               <span
-                class$="itemAction [[_computeDisabledClass(link.id, disabledIds.*)]]"
+                class$="itemAction [[_computeDisabledClass(disabledIds.*, link.id)]]"
                 data-id$="[[link.id]]"
                 on-click="_handleItemTap"
                 hidden$="[[link.url]]"

@@ -18,17 +18,22 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.gerrit.server.project.ProjectCache.noSuchProject;
 
 import com.google.common.collect.Streams;
+import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.SubmitRecord;
 import com.google.gerrit.entities.SubmitTypeRecord;
 import com.google.gerrit.exceptions.StorageException;
+import com.google.gerrit.extensions.api.changes.ChangeApi;
 import com.google.gerrit.metrics.Description;
 import com.google.gerrit.metrics.Description.Units;
 import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.metrics.Timer0;
+import com.google.gerrit.server.change.ChangeJson;
 import com.google.gerrit.server.index.OnlineReindexMode;
+import com.google.gerrit.server.logging.CallerFinder;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.query.change.ChangeData;
+import com.google.gerrit.server.rules.DefaultSubmitRule;
 import com.google.gerrit.server.rules.PrologRule;
 import com.google.gerrit.server.rules.SubmitRule;
 import com.google.inject.Inject;
@@ -41,12 +46,15 @@ import java.util.Optional;
  * the results through rules found in the parent projects, all the way up to All-Projects.
  */
 public class SubmitRuleEvaluator {
+  private static final FluentLogger logger = FluentLogger.forEnclosingClass();
+
   private final ProjectCache projectCache;
   private final PrologRule prologRule;
   private final PluginSetContext<SubmitRule> submitRules;
   private final Timer0 submitRuleEvaluationLatency;
   private final Timer0 submitTypeEvaluationLatency;
   private final SubmitRuleOptions opts;
+  private final CallerFinder callerFinder;
 
   public interface Factory {
     /** Returns a new {@link SubmitRuleEvaluator} with the specified options */
@@ -77,6 +85,14 @@ public class SubmitRuleEvaluator {
                 .setUnit(Units.MILLISECONDS));
 
     this.opts = options;
+
+    this.callerFinder =
+        CallerFinder.builder()
+            .addTarget(ChangeApi.class)
+            .addTarget(ChangeJson.class)
+            .addTarget(ChangeData.class)
+            .addTarget(SubmitRequirementsEvaluatorImpl.class)
+            .build();
   }
 
   /**
@@ -87,15 +103,19 @@ public class SubmitRuleEvaluator {
    * @param cd ChangeData to evaluate
    */
   public List<SubmitRecord> evaluate(ChangeData cd) {
+    logger.atFine().log(
+        "Evaluate submit rules for change %d (caller: %s)",
+        cd.change().getId().get(), callerFinder.findCallerLazy());
     try (Timer0.Context ignored = submitRuleEvaluationLatency.start()) {
       Change change;
+      ProjectState projectState;
       try {
         change = cd.change();
         if (change == null) {
           throw new StorageException("Change not found");
         }
 
-        projectCache.get(cd.project()).orElseThrow(noSuchProject(cd.project()));
+        projectState = projectCache.get(cd.project()).orElseThrow(noSuchProject(cd.project()));
       } catch (NoSuchProjectException e) {
         throw new IllegalStateException("Unable to find project while evaluating submit rule", e);
       }
@@ -117,7 +137,23 @@ public class SubmitRuleEvaluator {
       // We evaluate all the plugin-defined evaluators,
       // and then we collect the results in one list.
       return Streams.stream(submitRules)
-          .map(c -> c.call(s -> s.evaluate(cd)))
+          // Skip evaluating the default submit rule if the project has prolog rules.
+          // Note that in this case, the prolog submit rule will handle labels for us
+          .filter(
+              projectState.hasPrologRules()
+                  ? rule -> !(rule.get() instanceof DefaultSubmitRule)
+                  : rule -> true)
+          .map(
+              c ->
+                  c.call(
+                      s -> {
+                        Optional<SubmitRecord> evaluate = s.evaluate(cd);
+                        if (evaluate.isPresent()) {
+                          evaluate.get().ruleName =
+                              c.getPluginName() + "~" + s.getClass().getSimpleName();
+                        }
+                        return evaluate;
+                      }))
           .filter(Optional::isPresent)
           .map(Optional::get)
           .collect(toImmutableList());
@@ -128,7 +164,6 @@ public class SubmitRuleEvaluator {
    * Evaluate the submit type rules to get the submit type.
    *
    * @return record from the evaluated rules.
-   * @param cd
    */
   public SubmitTypeRecord getSubmitType(ChangeData cd) {
     try (Timer0.Context ignored = submitTypeEvaluationLatency.start()) {

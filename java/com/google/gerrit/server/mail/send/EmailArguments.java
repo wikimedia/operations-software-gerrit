@@ -18,13 +18,14 @@ import com.google.gerrit.common.UsedAt;
 import com.google.gerrit.extensions.registration.DynamicItem;
 import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.server.AnonymousUser;
-import com.google.gerrit.server.ApprovalsUtil;
+import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.GerritPersonIdentProvider;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.IdentifiedUser.GenericFactory;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.GroupBackend;
+import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.server.config.AnonymousCowardName;
 import com.google.gerrit.server.config.GerritInstanceName;
@@ -34,7 +35,7 @@ import com.google.gerrit.server.config.UrlFormatter;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.mail.EmailSettings;
 import com.google.gerrit.server.notedb.ChangeNotes;
-import com.google.gerrit.server.patch.PatchListCache;
+import com.google.gerrit.server.patch.DiffOperations;
 import com.google.gerrit.server.patch.PatchSetInfoFactory;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.project.ProjectCache;
@@ -42,6 +43,7 @@ import com.google.gerrit.server.query.account.InternalAccountQuery;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.ChangeQueryBuilder;
 import com.google.gerrit.server.ssh.SshAdvertisedAddresses;
+import com.google.gerrit.server.update.RetryHelper;
 import com.google.gerrit.server.validators.OutgoingEmailValidationListener;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
@@ -70,7 +72,7 @@ public class EmailArguments {
   final PermissionBackend permissionBackend;
   final GroupBackend groupBackend;
   final AccountCache accountCache;
-  final PatchListCache patchListCache;
+  final DiffOperations diffOperations;
   final PatchSetUtil patchSetUtil;
   final ApprovalsUtil approvalsUtil;
   final Provider<FromAddressGenerator> fromAddressGenerator;
@@ -85,7 +87,6 @@ public class EmailArguments {
   final AllProjectsName allProjectsName;
   final List<String> sshAddresses;
   final SitePaths site;
-
   final Provider<ChangeQueryBuilder> queryBuilder;
   final ChangeData.Factory changeDataFactory;
   final Provider<SoySauce> soySauce;
@@ -95,6 +96,8 @@ public class EmailArguments {
   final OutgoingEmailValidator validator;
   final boolean addInstanceNameInSubject;
   final Provider<String> instanceNameProvider;
+  final Provider<CurrentUser> currentUserProvider;
+  final RetryHelper retryHelper;
 
   @Inject
   EmailArguments(
@@ -103,7 +106,7 @@ public class EmailArguments {
       PermissionBackend permissionBackend,
       GroupBackend groupBackend,
       AccountCache accountCache,
-      PatchListCache patchListCache,
+      DiffOperations diffOperations,
       PatchSetUtil patchSetUtil,
       ApprovalsUtil approvalsUtil,
       Provider<FromAddressGenerator> fromAddressGenerator,
@@ -126,13 +129,15 @@ public class EmailArguments {
       Provider<InternalAccountQuery> accountQueryProvider,
       OutgoingEmailValidator validator,
       @GerritInstanceName Provider<String> instanceNameProvider,
-      @GerritServerConfig Config cfg) {
+      @GerritServerConfig Config cfg,
+      Provider<CurrentUser> currentUserProvider,
+      RetryHelper retryHelper) {
     this.server = server;
     this.projectCache = projectCache;
     this.permissionBackend = permissionBackend;
     this.groupBackend = groupBackend;
     this.accountCache = accountCache;
-    this.patchListCache = patchListCache;
+    this.diffOperations = diffOperations;
     this.patchSetUtil = patchSetUtil;
     this.approvalsUtil = approvalsUtil;
     this.fromAddressGenerator = fromAddressGenerator;
@@ -155,7 +160,8 @@ public class EmailArguments {
     this.accountQueryProvider = accountQueryProvider;
     this.validator = validator;
     this.instanceNameProvider = instanceNameProvider;
-
     this.addInstanceNameInSubject = cfg.getBoolean("sendemail", "addInstanceNameInSubject", false);
+    this.currentUserProvider = currentUserProvider;
+    this.retryHelper = retryHelper;
   }
 }

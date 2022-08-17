@@ -19,7 +19,10 @@ import '../gr-autocomplete/gr-autocomplete';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-account-entry_html';
 import {customElement, property} from '@polymer/decorators';
-import {GrAutocomplete} from '../gr-autocomplete/gr-autocomplete';
+import {
+  AutocompleteQuery,
+  GrAutocomplete,
+} from '../gr-autocomplete/gr-autocomplete';
 
 export interface GrAccountEntry {
   $: {
@@ -51,28 +54,25 @@ export class GrAccountEntry extends PolymerElement {
    */
 
   @property({type: Boolean})
-  allowAnyInput?: boolean;
+  allowAnyInput = false;
 
   @property({type: Boolean})
-  borderless?: boolean;
+  borderless = false;
 
   @property({type: String})
-  placeholder?: string;
-
-  @property({type: Number})
-  suggestFrom = 0;
+  placeholder = '';
 
   @property({type: Object, notify: true})
-  querySuggestions = () => Promise.resolve([]);
+  querySuggestions: AutocompleteQuery = () => Promise.resolve([]);
 
   @property({type: String, observer: '_inputTextChanged'})
-  _inputText?: string;
+  _inputText = '';
 
   get focusStart() {
     return this.$.input.focusStart;
   }
 
-  focus() {
+  override focus() {
     this.$.input.focus();
   }
 

@@ -17,6 +17,9 @@
 import {html} from '@polymer/polymer/lib/utils/html-tag';
 
 export const htmlTemplate = html`
+  <style include="gr-a11y-styles">
+    /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+  </style>
   <style include="shared-styles">
     :host {
       display: block;
@@ -206,6 +209,12 @@ export const htmlTemplate = html`
       cursor: pointer;
       opacity: 100;
     }
+    .showParentButton {
+      line-height: var(--line-height-normal);
+      margin-bottom: calc(var(--spacing-s) * -1);
+      margin-left: var(--spacing-m);
+      margin-top: calc(var(--spacing-s) * -1);
+    }
     .row:focus {
       outline: none;
     }
@@ -247,9 +256,7 @@ export const htmlTemplate = html`
       display: inline-block;
       visibility: hidden;
       vertical-align: bottom;
-      --gr-button: {
-        padding: 0px;
-      }
+      --gr-button-padding: 0px;
     }
     .row:focus-within gr-copy-clipboard,
     .row:hover gr-copy-clipboard {
@@ -309,11 +316,11 @@ export const htmlTemplate = html`
           as="headerEndpoint"
         >
           <gr-endpoint-decorator name$="[[headerEndpoint]]" role="columnheader">
-            <gr-endpoint-param
-              name="change"
-              value="[[change]]"
-            ></gr-endpoint-param>
+            <gr-endpoint-param name="change" value="[[change]]">
+            </gr-endpoint-param>
             <gr-endpoint-param name="patchRange" value="[[patchRange]]">
+            </gr-endpoint-param>
+            <gr-endpoint-param name="files" value="[[_files]]">
             </gr-endpoint-param>
           </gr-endpoint-decorator>
         </template>
@@ -404,7 +411,7 @@ export const htmlTemplate = html`
               </span>
               <gr-file-status-chip file="[[file]]"></gr-file-status-chip>
               <gr-copy-clipboard
-                hide-input=""
+                hideInput=""
                 text="[[file.__path]]"
               ></gr-copy-clipboard>
             </a>
@@ -412,7 +419,7 @@ export const htmlTemplate = html`
               <div class="oldPath" title$="[[file.old_path]]">
                 [[file.old_path]]
                 <gr-copy-clipboard
-                  hide-input=""
+                  hideInput=""
                   text="[[file.old_path]]"
                 ></gr-copy-clipboard>
               </div>
@@ -423,8 +430,7 @@ export const htmlTemplate = html`
               <span class="drafts"
                 ><!-- This comments ensure that span is empty when the function
                 returns empty string.
-              -->[[_computeDraftsString(changeComments, patchRange,
-                file.__path)]]<!-- This comments ensure that span is empty when
+              -->[[_computeDraftsString(changeComments, patchRange, file)]]<!-- This comments ensure that span is empty when
                 the function returns empty string.
            --></span
               >
@@ -450,14 +456,14 @@ export const htmlTemplate = html`
                 ><!-- This comments ensure that span is empty when the function
                 returns empty string.
               -->[[_computeDraftsStringMobile(changeComments, patchRange,
-                file.__path)]]<!-- This comments ensure that span is empty when
+                file)]]<!-- This comments ensure that span is empty when
                 the function returns empty string.
            --></span
               >
               <span
                 ><!--
              -->[[_computeCommentsStringMobile(changeComments, patchRange,
-                file.__path)]]<!--
+                file)]]<!--
            --></span
               >
               <span class="noCommentsScreenReaderText">
@@ -642,6 +648,54 @@ export const htmlTemplate = html`
         </template>
       </div>
     </template>
+    <template
+      is="dom-if"
+      if="[[_computeShowNumCleanlyMerged(_cleanlyMergedPaths)]]"
+    >
+      <div class="row">
+        <!-- endpoint: change-view-file-list-content-prepend -->
+        <template is="dom-if" if="[[_showPrependedDynamicColumns]]">
+          <template
+            is="dom-repeat"
+            items="[[_dynamicPrependedContentEndpoints]]"
+            as="contentEndpoint"
+          >
+            <gr-endpoint-decorator name="[[contentEndpoint]]" role="gridcell">
+              <gr-endpoint-param name="change" value="[[change]]">
+              </gr-endpoint-param>
+              <gr-endpoint-param name="changeNum" value="[[changeNum]]">
+              </gr-endpoint-param>
+              <gr-endpoint-param name="patchRange" value="[[patchRange]]">
+              </gr-endpoint-param>
+              <gr-endpoint-param
+                name="cleanlyMergedPaths"
+                value="[[_cleanlyMergedPaths]]"
+              >
+              </gr-endpoint-param>
+              <gr-endpoint-param
+                name="cleanlyMergedOldPaths"
+                value="[[_cleanlyMergedOldPaths]]"
+              >
+              </gr-endpoint-param>
+            </gr-endpoint-decorator>
+          </template>
+        </template>
+        <div role="gridcell">
+          <div>
+            <span class="cleanlyMergedText">
+              [[_computeCleanlyMergedText(_cleanlyMergedPaths)]]
+            </span>
+            <gr-button
+              link
+              class="showParentButton"
+              on-click="_handleShowParent1"
+            >
+              Show Parent 1
+            </gr-button>
+          </div>
+        </div>
+      </div>
+    </template>
   </div>
   <div class="row totalChanges" hidden$="[[_hideChangeTotals]]">
     <div class="total-stats">
@@ -736,5 +790,4 @@ export const htmlTemplate = html`
     on-reload-diff-preference="_handleReloadingDiffPreference"
   >
   </gr-diff-preferences-dialog>
-  <gr-diff-cursor id="diffCursor"></gr-diff-cursor>
 `;

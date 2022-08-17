@@ -46,6 +46,16 @@ suite('gr-confirm-cherrypick-dialog tests', () => {
     element.project = 'test-project';
   });
 
+  test('with message missing newline', () => {
+    element.changeStatus = 'MERGED';
+    element.commitMessage = 'message';
+    element.commitNum = '123';
+    element.branch = 'master';
+    flush();
+    const expectedMessage = 'message\n(cherry picked from commit 123)';
+    assert.equal(element.message, expectedMessage);
+  });
+
   test('with merged change', () => {
     element.changeStatus = 'MERGED';
     element.commitMessage = 'message\n';
@@ -105,47 +115,52 @@ suite('gr-confirm-cherrypick-dialog tests', () => {
         current_revision: 'a',
       },
     ];
-    setup(() => {
+    setup(async () => {
       element.updateChanges(changes);
       element._cherryPickType = CHERRY_PICK_TYPES.TOPIC;
-      flush();
+      await flush();
     });
 
-    test('cherry pick topic submit', done => {
+    test('cherry pick topic submit', async () => {
       element.branch = 'master';
+      await flush();
       const executeChangeActionStub = stubRestApi(
           'executeChangeAction').returns(Promise.resolve([]));
       MockInteractions.tap(element.shadowRoot.
-          querySelector('gr-dialog').$.confirm);
-      flush(() => {
-        const args = executeChangeActionStub.args[0];
-        assert.equal(args[0], 1);
-        assert.equal(args[1], 'POST');
-        assert.equal(args[2], '/cherrypick');
-        assert.equal(args[4].destination, 'master');
-        assert.isTrue(args[4].allow_conflicts);
-        assert.isTrue(args[4].allow_empty);
-        done();
-      });
+          querySelector('gr-dialog').confirmButton);
+      await flush();
+      const args = executeChangeActionStub.args[0];
+      assert.equal(args[0], 1);
+      assert.equal(args[1], 'POST');
+      assert.equal(args[2], '/cherrypick');
+      assert.equal(args[4].destination, 'master');
+      assert.isTrue(args[4].allow_conflicts);
+      assert.isTrue(args[4].allow_empty);
     });
 
-    test('deselecting a change removes it from being cherry picked', () => {
-      element.branch = 'master';
-      const executeChangeActionStub = stubRestApi(
-          'executeChangeAction').returns(Promise.resolve([]));
-      const checkboxes = element.shadowRoot.querySelectorAll(
-          'input[type="checkbox"]');
-      assert.equal(checkboxes.length, 2);
-      assert.isTrue(checkboxes[0].checked);
-      MockInteractions.tap(checkboxes[0]);
-      MockInteractions.tap(element.shadowRoot.
-          querySelector('gr-dialog').$.confirm);
-      flush();
-      assert.equal(executeChangeActionStub.callCount, 1);
-    });
+    test('deselecting a change removes it from being cherry picked',
+        async () => {
+          const duplicateChangesStub = sinon.stub(element,
+              'containsDuplicateProject');
+          element.branch = 'master';
+          await flush();
+          const executeChangeActionStub = stubRestApi(
+              'executeChangeAction').returns(Promise.resolve([]));
+          const checkboxes = element.shadowRoot.querySelectorAll(
+              'input[type="checkbox"]');
+          assert.equal(checkboxes.length, 2);
+          assert.isTrue(checkboxes[0].checked);
+          MockInteractions.tap(checkboxes[0]);
+          MockInteractions.tap(element.shadowRoot.
+              querySelector('gr-dialog').confirmButton);
+          await flush();
+          assert.equal(executeChangeActionStub.callCount, 1);
+          assert.isTrue(duplicateChangesStub.called);
+        });
 
-    test('deselecting all change shows error message', () => {
+    test('deselecting all change shows error message', async () => {
       element.branch = 'master';
+      await flush();
       const executeChangeActionStub = stubRestApi(
           'executeChangeAction').returns(Promise.resolve([]));
       const checkboxes = element.shadowRoot.querySelectorAll(
@@ -154,8 +169,8 @@ suite('gr-confirm-cherrypick-dialog tests', () => {
       MockInteractions.tap(checkboxes[0]);
       MockInteractions.tap(checkboxes[1]);
       MockInteractions.tap(element.shadowRoot.
-          querySelector('gr-dialog').$.confirm);
-      flush();
+          querySelector('gr-dialog').confirmButton);
+      await flush();
       assert.equal(executeChangeActionStub.callCount, 0);
       assert.equal(element.shadowRoot.querySelector('.error-message').innerText
           , 'No change selected');
@@ -168,18 +183,16 @@ suite('gr-confirm-cherrypick-dialog tests', () => {
       ), 'error');
     });
 
-    test('submit button is blocked while cherry picks is running', done => {
-      const confirmButton = element.shadowRoot.querySelector('gr-dialog').$
-          .confirm;
+    test('submit button is blocked while cherry picks is running', async () => {
+      const confirmButton = element.shadowRoot.querySelector('gr-dialog')
+          .confirmButton;
       assert.isTrue(confirmButton.hasAttribute('disabled'));
       element.branch = 'b';
-      flush();
+      await flush();
       assert.isFalse(confirmButton.hasAttribute('disabled'));
       element.updateStatus(changes[0], {status: 'RUNNING'});
-      flush(() => {
-        assert.isTrue(confirmButton.hasAttribute('disabled'));
-        done();
-      });
+      await flush();
+      assert.isTrue(confirmButton.hasAttribute('disabled'));
     });
   });
 
@@ -189,12 +202,11 @@ suite('gr-confirm-cherrypick-dialog tests', () => {
     assert.isTrue(focusStub.called);
   });
 
-  test('_getProjectBranchesSuggestions non-empty', done => {
-    element._getProjectBranchesSuggestions('test-branch').then(branches => {
-      assert.equal(branches.length, 1);
-      assert.equal(branches[0].name, 'test-branch');
-      done();
-    });
+  test('_getProjectBranchesSuggestions non-empty', async () => {
+    const branches = await element._getProjectBranchesSuggestions(
+        'test-branch');
+    assert.equal(branches.length, 1);
+    assert.equal(branches[0].name, 'test-branch');
   });
 });
 

@@ -22,7 +22,7 @@ import {customElement} from '@polymer/decorators';
 import {IronOverlayBehavior} from '@polymer/iron-overlay-behavior/iron-overlay-behavior';
 import {findActiveElement} from '../../../utils/dom-util';
 import {fireEvent} from '../../../utils/event-util';
-import {getHovercardContainer} from '../gr-hovercard/gr-hovercard-behavior';
+import {getHovercardContainer} from '../../../mixins/hovercard-mixin/hovercard-mixin';
 
 const AWAIT_MAX_ITERS = 10;
 const AWAIT_STEP = 5;
@@ -34,11 +34,17 @@ declare global {
   }
 }
 
-@customElement('gr-overlay')
-export class GrOverlay extends IronOverlayMixin(
+// This avoids JSC_DYNAMIC_EXTENDS_WITHOUT_JSDOC closure compiler error.
+const base = IronOverlayMixin(
   PolymerElement,
   IronOverlayBehavior as IronOverlayBehavior
-) {
+);
+
+/**
+ * @attr {Boolean} with-backdrop - inherited from IronOverlay
+ */
+@customElement('gr-overlay')
+export class GrOverlay extends base {
   static get template() {
     return htmlTemplate;
   }
@@ -63,7 +69,7 @@ export class GrOverlay extends IronOverlayMixin(
 
   private returnFocusTo?: HTMLElement;
 
-  get _focusableNodes() {
+  override get _focusableNodes() {
     if (this.focusableNodes) {
       return this.focusableNodes;
     }
@@ -89,7 +95,7 @@ export class GrOverlay extends IronOverlayMixin(
     );
   }
 
-  open() {
+  override open() {
     this.returnFocusTo = findActiveElement(document, true) ?? undefined;
     window.addEventListener('popstate', this._boundHandleClose);
     return new Promise<void>((resolve, reject) => {
@@ -119,7 +125,7 @@ export class GrOverlay extends IronOverlayMixin(
     }
   }
 
-  _onCaptureFocus(e: Event) {
+  override _onCaptureFocus(e: Event) {
     const hovercardContainer = getHovercardContainer();
     if (hovercardContainer) {
       // Hovercard container is not a child of an overlay.

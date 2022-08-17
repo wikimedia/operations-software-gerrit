@@ -69,7 +69,7 @@ interface AdminSubsectionLink {
   text: string;
   value: string;
   view: GerritView;
-  url: string;
+  url?: string;
   detailType?: GroupDetailView | RepoDetailView;
   parent?: GroupId | RepoName;
 }
@@ -173,8 +173,7 @@ export class GrAdminView extends PolymerElement {
 
   private readonly jsAPI = appContext.jsApiService;
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     this.reload();
   }
@@ -262,6 +261,7 @@ export class GrAdminView extends PolymerElement {
 
     // This is when it gets set initially.
     if (this._selectedIsCurrentPage(selected)) return;
+    if (selected.url === undefined) return;
     GerritNav.navigateToRelativeUrl(selected.url);
   }
 
@@ -306,9 +306,9 @@ export class GrAdminView extends PolymerElement {
     );
     this.set(
       '_showRepoMain',
-      params.view === GerritView.REPO && !params.detail
+      params.view === GerritView.REPO &&
+        (!params.detail || params.detail === RepoDetailView.GENERAL)
     );
-
     this.set(
       '_showRepoList',
       params.view === GerritView.ADMIN && params.adminView === 'gr-repo-list'
@@ -399,8 +399,8 @@ export class GrAdminView extends PolymerElement {
     // TODO(TS): The following condition seems always false, because params
     // never has detailType property. Remove it.
     if (
-      ((params as unknown) as AdminSubsectionLink).detailType &&
-      ((params as unknown) as AdminSubsectionLink).detailType !== detailType
+      (params as unknown as AdminSubsectionLink).detailType &&
+      (params as unknown as AdminSubsectionLink).detailType !== detailType
     ) {
       return '';
     }

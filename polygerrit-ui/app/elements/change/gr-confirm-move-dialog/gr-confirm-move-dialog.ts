@@ -19,16 +19,24 @@ import '../../shared/gr-autocomplete/gr-autocomplete';
 import '../../shared/gr-dialog/gr-dialog';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-confirm-move-dialog_html';
-import {KeyboardShortcutMixin} from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
 import {customElement, property} from '@polymer/decorators';
-import {RepoName, BranchName} from '../../../types/common';
-import {AutocompleteSuggestion} from '../../shared/gr-autocomplete/gr-autocomplete';
+import {BranchName, RepoName} from '../../../types/common';
 import {appContext} from '../../../services/app-context';
+import {GrTypedAutocomplete} from '../../shared/gr-autocomplete/gr-autocomplete';
+import {addShortcut, Key, Modifier} from '../../../utils/dom-util';
 
 const SUGGESTIONS_LIMIT = 15;
 
+// This is used to make sure 'branch'
+// can be typed as BranchName.
+export interface GrConfirmMoveDialog {
+  $: {
+    branchInput: GrTypedAutocomplete<BranchName>;
+  };
+}
+
 @customElement('gr-confirm-move-dialog')
-export class GrConfirmMoveDialog extends KeyboardShortcutMixin(PolymerElement) {
+export class GrConfirmMoveDialog extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
@@ -46,21 +54,38 @@ export class GrConfirmMoveDialog extends KeyboardShortcutMixin(PolymerElement) {
    */
 
   @property({type: String})
-  branch?: BranchName;
+  branch = '' as BranchName;
 
   @property({type: String})
-  message?: string;
+  message = '';
 
   @property({type: String})
   project?: RepoName;
 
   @property({type: Object})
-  _query: (input: string) => Promise<AutocompleteSuggestion[]>;
+  _query?: (input: string) => Promise<{name: BranchName}[]>;
 
-  get keyBindings() {
-    return {
-      'ctrl+enter meta+enter': '_handleConfirmTap',
-    };
+  /** Called in disconnectedCallback. */
+  private cleanups: (() => void)[] = [];
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    for (const cleanup of this.cleanups) cleanup();
+    this.cleanups = [];
+  }
+
+  override connectedCallback() {
+    super.connectedCallback();
+    this.cleanups.push(
+      addShortcut(this, {key: Key.ENTER, modifiers: [Modifier.CTRL_KEY]}, e =>
+        this._handleConfirmTap(e)
+      )
+    );
+    this.cleanups.push(
+      addShortcut(this, {key: Key.ENTER, modifiers: [Modifier.META_KEY]}, e =>
+        this._handleConfirmTap(e)
+      )
+    );
   }
 
   private readonly restApiService = appContext.restApiService;
@@ -92,9 +117,7 @@ export class GrConfirmMoveDialog extends KeyboardShortcutMixin(PolymerElement) {
     );
   }
 
-  _getProjectBranchesSuggestions(
-    input: string
-  ): Promise<AutocompleteSuggestion[]> {
+  _getProjectBranchesSuggestions(input: string) {
     if (!this.project) return Promise.reject(new Error('Missing project'));
     if (input.startsWith('refs/heads/')) {
       input = input.substring('refs/heads/'.length);
@@ -102,21 +125,15 @@ export class GrConfirmMoveDialog extends KeyboardShortcutMixin(PolymerElement) {
     return this.restApiService
       .getRepoBranches(input, this.project, SUGGESTIONS_LIMIT)
       .then(response => {
-        const branches: AutocompleteSuggestion[] = [];
-        let branch;
-        if (response) {
-          response.forEach(value => {
-            if (value.ref.startsWith('refs/heads/')) {
-              branch = value.ref.substring('refs/heads/'.length);
-            } else {
-              branch = value.ref;
-            }
-            branches.push({
-              name: branch,
-            });
-          });
+        if (!response) return [];
+        const branches: Array<{name: BranchName}> = [];
+        for (const branchInfo of response) {
+          let name: string = branchInfo.ref;
+          if (name.startsWith('refs/heads/')) {
+            name = name.substring('refs/heads/'.length);
+          }
+          branches.push({name: name as BranchName});
         }
-
         return branches;
       });
   }

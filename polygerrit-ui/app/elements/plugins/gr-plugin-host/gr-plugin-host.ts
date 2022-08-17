@@ -14,22 +14,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {PolymerElement} from '@polymer/polymer/polymer-element';
+import {LitElement, PropertyValues} from 'lit';
+import {customElement, property} from 'lit/decorators';
 import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
-import {customElement, property} from '@polymer/decorators';
 import {ServerInfo} from '../../../types/common';
 
 @customElement('gr-plugin-host')
-class GrPluginHost extends PolymerElement {
-  @property({type: Object, observer: '_configChanged'})
+export class GrPluginHost extends LitElement {
+  @property({type: Object})
   config?: ServerInfo;
 
   _configChanged(config: ServerInfo) {
     const plugins = config.plugin;
     const jsPlugins = (plugins && plugins.js_resource_paths) || [];
-    const shouldLoadTheme =
-      !!config.default_theme &&
-      !getPluginLoader().isPluginPreloaded('preloaded:gerrit-theme');
+    const shouldLoadTheme = !!config.default_theme;
     // config.default_theme is defined when shouldLoadTheme is true
     const themeToLoad: string[] = shouldLoadTheme
       ? [config.default_theme!]
@@ -37,6 +35,12 @@ class GrPluginHost extends PolymerElement {
     // Theme should be loaded first for better UX.
     const pluginsPending = themeToLoad.concat(jsPlugins);
     getPluginLoader().loadPlugins(pluginsPending);
+  }
+
+  override updated(changedProperties: PropertyValues<GrPluginHost>) {
+    if (changedProperties.has('config') && this.config) {
+      this._configChanged(this.config);
+    }
   }
 }
 

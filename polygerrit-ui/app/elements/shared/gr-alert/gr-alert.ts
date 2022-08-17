@@ -16,11 +16,11 @@
  */
 import '../gr-button/gr-button';
 import '../../../styles/shared-styles';
-import {PolymerElement} from '@polymer/polymer/polymer-element';
-import {htmlTemplate} from './gr-alert_html';
 import {getRootElement} from '../../../scripts/rootElement';
-import {customElement, property} from '@polymer/decorators';
 import {ErrorType} from '../../../types/types';
+import {LitElement, css, html} from 'lit';
+import {customElement, property} from 'lit/decorators';
+import {sharedStyles} from '../../../styles/shared-styles';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -29,9 +29,83 @@ declare global {
 }
 
 @customElement('gr-alert')
-export class GrAlert extends PolymerElement {
-  static get template() {
-    return htmlTemplate;
+export class GrAlert extends LitElement {
+  static override get styles() {
+    return [
+      sharedStyles,
+      css`
+        /**
+         * ALERT: DO NOT ADD TRANSITION PROPERTIES WITHOUT PROPERLY UNDERSTANDING
+         * HOW THEY ARE USED IN THE CODE.
+         */
+        :host([toast]) {
+          background-color: var(--tooltip-background-color);
+          bottom: 1.25rem;
+          border-radius: var(--border-radius);
+          box-shadow: var(--elevation-level-2);
+          left: 1.25rem;
+          position: fixed;
+          transform: translateY(5rem);
+          transition: transform var(--gr-alert-transition-duration, 80ms)
+            ease-out;
+          z-index: 1000;
+        }
+        :host([shown]) {
+          transform: translateY(0);
+        }
+        /**
+         * NOTE: To avoid style being overwritten by outside of the shadow DOM
+         * (as outside styles always win), .content-wrapper is introduced as a
+         * wrapper around main content to have better encapsulation, styles that
+         * may be affected by outside should be defined on it.
+         * In this case, \`padding:0px\` is defined in main.css for all elements
+         * with the universal selector: *.
+         */
+        .content-wrapper {
+          padding: var(--spacing-l) var(--spacing-xl);
+        }
+        .text {
+          color: var(--tooltip-text-color);
+          display: inline-block;
+          max-height: 10rem;
+          max-width: 80vw;
+          vertical-align: bottom;
+          word-break: break-all;
+        }
+        gr-button.action {
+          --text-color: var(--tooltip-button-text-color);
+          --gr-button-padding: 0 var(--spacing-s);
+          margin-left: var(--spacing-l);
+        }
+      `,
+    ];
+  }
+
+  renderDismissButton() {
+    if (!this.showDismiss) return '';
+    return html`<gr-button
+      link=""
+      class="action"
+      @click=${this._handleDismissTap}
+      >Dismiss</gr-button
+    >`;
+  }
+
+  override render() {
+    const {text, actionText} = this;
+    return html`
+      <div class="content-wrapper">
+        <span class="text">${text}</span>
+        <gr-button
+          link=""
+          class="action"
+          ?hidden="${this._hideActionButton}"
+          @click=${this._handleActionTap}
+          >${actionText}
+        </gr-button>
+        ${this.renderDismissButton()}
+      </div>
+    `;
   }
 
   /**
@@ -49,10 +123,10 @@ export class GrAlert extends PolymerElement {
   @property({type: String})
   type?: ErrorType;
 
-  @property({type: Boolean, reflectToAttribute: true})
+  @property({type: Boolean, reflect: true})
   shown = true;
 
-  @property({type: Boolean, reflectToAttribute: true})
+  @property({type: Boolean, reflect: true})
   toast = true;
 
   @property({type: Boolean})
@@ -70,15 +144,13 @@ export class GrAlert extends PolymerElement {
   @property()
   _actionCallback?: () => void;
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     this._boundTransitionEndHandler = () => this._handleTransitionEnd();
     this.addEventListener('transitionend', this._boundTransitionEndHandler);
   }
 
-  /** @override */
-  disconnectedCallback() {
+  override disconnectedCallback() {
     if (this._boundTransitionEndHandler) {
       this.removeEventListener(
         'transitionend',
@@ -128,5 +200,6 @@ export class GrAlert extends PolymerElement {
     if (this._actionCallback) {
       this._actionCallback();
     }
+    this.hide();
   }
 }

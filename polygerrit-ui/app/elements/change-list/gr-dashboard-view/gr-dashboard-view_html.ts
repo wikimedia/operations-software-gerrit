@@ -17,6 +17,9 @@
 import {html} from '@polymer/polymer/lib/utils/html-tag';
 
 export const htmlTemplate = html`
+  <style include="gr-a11y-styles">
+    /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+  </style>
   <style include="shared-styles">
     :host {
       display: block;
@@ -38,11 +41,6 @@ export const htmlTemplate = html`
       display: flex;
       justify-content: space-between;
       padding: var(--spacing-xs) var(--spacing-l);
-    }
-    .banner gr-button {
-      --gr-button: {
-        color: var(--primary-text-color);
-      }
     }
     .hide {
       display: none;
@@ -78,13 +76,12 @@ export const htmlTemplate = html`
     <h1 class="assistive-tech-only">Dashboard</h1>
     <gr-change-list
       show-star=""
-      show-reviewed-state=""
       account="[[account]]"
       preferences="[[preferences]]"
       selected-index="{{_selectedChangeIndex}}"
       sections="[[_results]]"
       on-toggle-star="_handleToggleStar"
-      on-toggle-reviewed="_handleToggleReviewed"
+      observer-target="[[_computeObserverTarget()]]"
     >
       <div id="emptyOutgoing" slot="empty-outgoing">
         <template is="dom-if" if="[[_showNewUserHelp]]">

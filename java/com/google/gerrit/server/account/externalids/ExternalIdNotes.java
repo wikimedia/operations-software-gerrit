@@ -17,7 +17,6 @@ package com.google.gerrit.server.account.externalids;
 import static com.google.common.base.Preconditions.checkState;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
-import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toSet;
 import static org.eclipse.jgit.lib.Constants.OBJ_BLOB;
 
@@ -30,14 +29,15 @@ import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.git.ObjectIds;
 import com.google.gerrit.metrics.Counter0;
 import com.google.gerrit.metrics.Description;
 import com.google.gerrit.metrics.DisabledMetricMaker;
 import com.google.gerrit.metrics.MetricMaker;
-import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountsUpdate;
 import com.google.gerrit.server.config.AllUsersName;
+import com.google.gerrit.server.config.AuthConfig;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.git.meta.VersionedMetaData;
 import com.google.gerrit.server.index.account.AccountIndexer;
@@ -54,6 +54,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.BlobBasedConfig;
 import org.eclipse.jgit.lib.CommitBuilder;
@@ -86,21 +87,46 @@ import org.eclipse.jgit.revwalk.RevWalk;
  * <p>On save the staged external ID updates are performed (see {@link #onSave(CommitBuilder)}).
  *
  * <p>After committing the external IDs a cache update can be requested which also reindexes the
- * accounts for which external IDs have been updated (see {@link #updateCaches()}).
+ * accounts for which external IDs have been updated (see {@link
+ * ExternalIdNotesLoader#updateExternalIdCacheAndMaybeReindexAccounts(ExternalIdNotes,
+ * Collection)}).
  */
 public class ExternalIdNotes extends VersionedMetaData {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
   private static final int MAX_NOTE_SZ = 1 << 19;
 
-  public interface ExternalIdNotesLoader {
+  public abstract static class ExternalIdNotesLoader {
+    protected final ExternalIdCache externalIdCache;
+    protected final MetricMaker metricMaker;
+    protected final AllUsersName allUsersName;
+    protected final DynamicMap<ExternalIdUpsertPreprocessor> upsertPreprocessors;
+    protected final ExternalIdFactory externalIdFactory;
+    protected final AuthConfig authConfig;
+
+    protected ExternalIdNotesLoader(
+        ExternalIdCache externalIdCache,
+        MetricMaker metricMaker,
+        AllUsersName allUsersName,
+        DynamicMap<ExternalIdUpsertPreprocessor> upsertPreprocessors,
+        ExternalIdFactory externalIdFactory,
+        AuthConfig authConfig) {
+      this.externalIdCache = externalIdCache;
+      this.metricMaker = metricMaker;
+      this.allUsersName = allUsersName;
+      this.upsertPreprocessors = upsertPreprocessors;
+      this.externalIdFactory = externalIdFactory;
+      this.authConfig = authConfig;
+    }
+
     /**
      * Loads the external ID notes from the current tip of the {@code refs/meta/external-ids}
      * branch.
      *
      * @param allUsersRepo the All-Users repository
      */
-    ExternalIdNotes load(Repository allUsersRepo) throws IOException, ConfigInvalidException;
+    public abstract ExternalIdNotes load(Repository allUsersRepo)
+        throws IOException, ConfigInvalidException;
 
     /**
      * Loads the external ID notes from the specified revision of the {@code refs/meta/external-ids}
@@ -112,42 +138,98 @@ public class ExternalIdNotes extends VersionedMetaData {
      *     assumed that the {@code refs/meta/external-ids} branch doesn't exist and the loaded
      *     external IDs will be empty
      */
-    ExternalIdNotes load(Repository allUsersRepo, @Nullable ObjectId rev)
+    public abstract ExternalIdNotes load(Repository allUsersRepo, @Nullable ObjectId rev)
         throws IOException, ConfigInvalidException;
+
+    /**
+     * Updates the external ID cache. Subclasses of type {@link Factory} will also reindex the
+     * accounts for which external IDs were modified, while subclasses of type {@link
+     * FactoryNoReindex} will skip this.
+     *
+     * <p>Must only be called after committing changes.
+     *
+     * @param externalIdNotes the committed updates that should be applied to the cache. This first
+     *     and last element must be the updates commited first and last, respectively.
+     * @param accountsToSkipForReindex accounts that should not be reindexed. This is to avoid
+     *     double reindexing when updated accounts will already be reindexed by
+     *     ReindexAfterRefUpdate.
+     */
+    public void updateExternalIdCacheAndMaybeReindexAccounts(
+        ExternalIdNotes externalIdNotes, Collection<Account.Id> accountsToSkipForReindex)
+        throws IOException {
+      checkState(externalIdNotes.oldRev != null, "no changes committed yet");
+
+      // readOnly is ignored here (legacy behavior).
+
+      // Aggregate all updates.
+      ExternalIdCacheUpdates updates = new ExternalIdCacheUpdates();
+      for (CacheUpdate cacheUpdate : externalIdNotes.cacheUpdates) {
+        cacheUpdate.execute(updates);
+      }
+
+      // Perform the cache update.
+      if (!externalIdNotes.noCacheUpdate) {
+        // Regardless of noCacheUpdate it's still possible that the ExternalIdCache instance is of
+        // type DisabledExternalIdCache, making this call a no-op.
+        externalIdCache.onReplace(
+            externalIdNotes.oldRev,
+            externalIdNotes.getRevision(),
+            updates.getRemoved(),
+            updates.getAdded());
+      }
+
+      // Reindex accounts (if the subclass implements reindexAccount()).
+      if (!externalIdNotes.noReindex) {
+        Streams.concat(updates.getAdded().stream(), updates.getRemoved().stream())
+            .map(ExternalId::accountId)
+            .filter(i -> !accountsToSkipForReindex.contains(i))
+            .distinct()
+            .forEach(this::reindexAccount);
+      }
+
+      // Reset instance state.
+      externalIdNotes.cacheUpdates.clear();
+      externalIdNotes.keysToAdd.clear();
+      externalIdNotes.oldRev = null;
+    }
+
+    protected abstract void reindexAccount(Account.Id id);
   }
 
   @Singleton
-  public static class Factory implements ExternalIdNotesLoader {
-    private final ExternalIdCache externalIdCache;
-    private final AccountCache accountCache;
+  public static class Factory extends ExternalIdNotesLoader {
+
     private final Provider<AccountIndexer> accountIndexer;
-    private final MetricMaker metricMaker;
-    private final AllUsersName allUsersName;
 
     @Inject
     Factory(
         ExternalIdCache externalIdCache,
-        AccountCache accountCache,
         Provider<AccountIndexer> accountIndexer,
         MetricMaker metricMaker,
-        AllUsersName allUsersName) {
-      this.externalIdCache = externalIdCache;
-      this.accountCache = accountCache;
+        AllUsersName allUsersName,
+        DynamicMap<ExternalIdUpsertPreprocessor> upsertPreprocessors,
+        ExternalIdFactory externalIdFactory,
+        AuthConfig authConfig) {
+      super(
+          externalIdCache,
+          metricMaker,
+          allUsersName,
+          upsertPreprocessors,
+          externalIdFactory,
+          authConfig);
       this.accountIndexer = accountIndexer;
-      this.metricMaker = metricMaker;
-      this.allUsersName = allUsersName;
     }
 
     @Override
     public ExternalIdNotes load(Repository allUsersRepo)
         throws IOException, ConfigInvalidException {
       return new ExternalIdNotes(
-              externalIdCache,
-              accountCache,
-              accountIndexer,
               metricMaker,
               allUsersName,
-              allUsersRepo)
+              allUsersRepo,
+              upsertPreprocessors,
+              externalIdFactory,
+              authConfig.isUserNameCaseInsensitiveMigrationMode())
           .load();
     }
 
@@ -155,35 +237,52 @@ public class ExternalIdNotes extends VersionedMetaData {
     public ExternalIdNotes load(Repository allUsersRepo, @Nullable ObjectId rev)
         throws IOException, ConfigInvalidException {
       return new ExternalIdNotes(
-              externalIdCache,
-              accountCache,
-              accountIndexer,
               metricMaker,
               allUsersName,
-              allUsersRepo)
+              allUsersRepo,
+              upsertPreprocessors,
+              externalIdFactory,
+              authConfig.isUserNameCaseInsensitiveMigrationMode())
           .load(rev);
+    }
+
+    @Override
+    protected void reindexAccount(Account.Id id) {
+      accountIndexer.get().index(id);
     }
   }
 
   @Singleton
-  public static class FactoryNoReindex implements ExternalIdNotesLoader {
-    private final ExternalIdCache externalIdCache;
-    private final MetricMaker metricMaker;
-    private final AllUsersName allUsersName;
+  public static class FactoryNoReindex extends ExternalIdNotesLoader {
 
     @Inject
     FactoryNoReindex(
-        ExternalIdCache externalIdCache, MetricMaker metricMaker, AllUsersName allUsersName) {
-      this.externalIdCache = externalIdCache;
-      this.metricMaker = metricMaker;
-      this.allUsersName = allUsersName;
+        ExternalIdCache externalIdCache,
+        MetricMaker metricMaker,
+        AllUsersName allUsersName,
+        DynamicMap<ExternalIdUpsertPreprocessor> upsertPreprocessors,
+        ExternalIdFactory externalIdFactory,
+        AuthConfig authConfig) {
+      super(
+          externalIdCache,
+          metricMaker,
+          allUsersName,
+          upsertPreprocessors,
+          externalIdFactory,
+          authConfig);
     }
 
     @Override
     public ExternalIdNotes load(Repository allUsersRepo)
         throws IOException, ConfigInvalidException {
       return new ExternalIdNotes(
-              externalIdCache, null, null, metricMaker, allUsersName, allUsersRepo)
+              metricMaker,
+              allUsersName,
+              allUsersRepo,
+              upsertPreprocessors,
+              externalIdFactory,
+              authConfig.isUserNameCaseInsensitiveMigrationMode())
+          .setNoReindex()
           .load();
     }
 
@@ -191,28 +290,20 @@ public class ExternalIdNotes extends VersionedMetaData {
     public ExternalIdNotes load(Repository allUsersRepo, @Nullable ObjectId rev)
         throws IOException, ConfigInvalidException {
       return new ExternalIdNotes(
-              externalIdCache, null, null, metricMaker, allUsersName, allUsersRepo)
+              metricMaker,
+              allUsersName,
+              allUsersRepo,
+              upsertPreprocessors,
+              externalIdFactory,
+              authConfig.isUserNameCaseInsensitiveMigrationMode())
+          .setNoReindex()
           .load(rev);
     }
-  }
 
-  /**
-   * Loads the external ID notes for reading only. The external ID notes are loaded from the current
-   * tip of the {@code refs/meta/external-ids} branch.
-   *
-   * @return read-only {@link ExternalIdNotes} instance
-   */
-  public static ExternalIdNotes loadReadOnly(AllUsersName allUsersName, Repository allUsersRepo)
-      throws IOException, ConfigInvalidException {
-    return new ExternalIdNotes(
-            new DisabledExternalIdCache(),
-            null,
-            null,
-            new DisabledMetricMaker(),
-            allUsersName,
-            allUsersRepo)
-        .setReadOnly()
-        .load();
+    @Override
+    protected void reindexAccount(Account.Id id) {
+      // Do not reindex.
+    }
   }
 
   /**
@@ -226,16 +317,22 @@ public class ExternalIdNotes extends VersionedMetaData {
    * @return read-only {@link ExternalIdNotes} instance
    */
   public static ExternalIdNotes loadReadOnly(
-      AllUsersName allUsersName, Repository allUsersRepo, @Nullable ObjectId rev)
+      AllUsersName allUsersName,
+      Repository allUsersRepo,
+      @Nullable ObjectId rev,
+      ExternalIdFactory externalIdFactory,
+      boolean isUserNameCaseInsensitiveMigrationMode)
       throws IOException, ConfigInvalidException {
     return new ExternalIdNotes(
-            new DisabledExternalIdCache(),
-            null,
-            null,
             new DisabledMetricMaker(),
             allUsersName,
-            allUsersRepo)
+            allUsersRepo,
+            DynamicMap.emptyMap(),
+            externalIdFactory,
+            isUserNameCaseInsensitiveMigrationMode)
         .setReadOnly()
+        .setNoCacheUpdate()
+        .setNoReindex()
         .load(rev);
   }
 
@@ -250,54 +347,82 @@ public class ExternalIdNotes extends VersionedMetaData {
    * @return {@link ExternalIdNotes} instance that doesn't updates caches on save
    */
   public static ExternalIdNotes loadNoCacheUpdate(
-      AllUsersName allUsersName, Repository allUsersRepo)
+      AllUsersName allUsersName,
+      Repository allUsersRepo,
+      ExternalIdFactory externalIdFactory,
+      boolean isUserNameCaseInsensitiveMigrationMode)
       throws IOException, ConfigInvalidException {
     return new ExternalIdNotes(
-            new DisabledExternalIdCache(),
-            null,
-            null,
             new DisabledMetricMaker(),
             allUsersName,
-            allUsersRepo)
+            allUsersRepo,
+            DynamicMap.emptyMap(),
+            externalIdFactory,
+            isUserNameCaseInsensitiveMigrationMode)
+        .setNoCacheUpdate()
+        .setNoReindex()
         .load();
   }
 
-  private final ExternalIdCache externalIdCache;
-  @Nullable private final AccountCache accountCache;
-  @Nullable private final Provider<AccountIndexer> accountIndexer;
   private final AllUsersName allUsersName;
   private final Counter0 updateCount;
   private final Repository repo;
+  private final DynamicMap<ExternalIdUpsertPreprocessor> upsertPreprocessors;
   private final CallerFinder callerFinder;
+  private final ExternalIdFactory externalIdFactory;
 
   private NoteMap noteMap;
   private ObjectId oldRev;
 
-  // Staged note map updates that should be executed on save.
-  private List<NoteMapUpdate> noteMapUpdates = new ArrayList<>();
+  /** Staged note map updates that should be executed on save. */
+  private final List<NoteMapUpdate> noteMapUpdates = new ArrayList<>();
 
-  // Staged cache updates that should be executed after external ID changes have been committed.
-  private List<CacheUpdate> cacheUpdates = new ArrayList<>();
+  /** Staged cache updates that should be executed after external ID changes have been committed. */
+  private final List<CacheUpdate> cacheUpdates = new ArrayList<>();
+
+  /**
+   * When performing batch updates (cf. {@link AccountsUpdate#updateBatch(List)} we need to ensure
+   * the batch does not introduce duplicates. In addition to checking against the status quo in
+   * {@link #noteMap} (cf. {@link #checkExternalIdKeysDontExist(Collection)}), which is sufficient
+   * for single updates, we also need to check for duplicates among the batch updates. As the actual
+   * updates are computed lazily just before applying them, we unfortunately need to track keys
+   * explicitly here even though they are already implicit in the lambdas that constitute the
+   * updates.
+   */
+  private final Set<ExternalId.Key> keysToAdd = new HashSet<>();
 
   private Runnable afterReadRevision;
   private boolean readOnly = false;
+  private boolean noCacheUpdate = false;
+  private boolean noReindex = false;
+  private boolean isUserNameCaseInsensitiveMigrationMode = false;
+  protected final Function<ExternalId, ObjectId> defaultNoteIdResolver =
+      (extId) -> {
+        ObjectId noteId = extId.key().sha1();
+        try {
+          if (isUserNameCaseInsensitiveMigrationMode && !noteMap.contains(noteId)) {
+            noteId = extId.key().caseSensitiveSha1();
+          }
+        } catch (IOException e) {
+          return noteId;
+        }
+        return noteId;
+      };
 
   private ExternalIdNotes(
-      ExternalIdCache externalIdCache,
-      @Nullable AccountCache accountCache,
-      @Nullable Provider<AccountIndexer> accountIndexer,
       MetricMaker metricMaker,
       AllUsersName allUsersName,
-      Repository allUsersRepo) {
-    this.externalIdCache = requireNonNull(externalIdCache, "externalIdCache");
-    this.accountCache = accountCache;
-    this.accountIndexer = accountIndexer;
+      Repository allUsersRepo,
+      DynamicMap<ExternalIdUpsertPreprocessor> upsertPreprocessors,
+      ExternalIdFactory externalIdFactory,
+      boolean isUserNameCaseInsensitiveMigrationMode) {
     this.updateCount =
         metricMaker.newCounter(
             "notedb/external_id_update_count",
             new Description("Total number of external ID updates.").setRate().setUnit("updates"));
     this.allUsersName = requireNonNull(allUsersName, "allUsersRepo");
     this.repo = requireNonNull(allUsersRepo, "allUsersRepo");
+    this.upsertPreprocessors = upsertPreprocessors;
     this.callerFinder =
         CallerFinder.builder()
             // 1. callers that come through ExternalIds
@@ -311,6 +436,8 @@ public class ExternalIdNotes extends VersionedMetaData {
             // 3. direct callers
             .addTarget(ExternalIdNotes.class)
             .build();
+    this.externalIdFactory = externalIdFactory;
+    this.isUserNameCaseInsensitiveMigrationMode = isUserNameCaseInsensitiveMigrationMode;
   }
 
   public ExternalIdNotes setAfterReadRevision(Runnable afterReadRevision) {
@@ -319,7 +446,17 @@ public class ExternalIdNotes extends VersionedMetaData {
   }
 
   private ExternalIdNotes setReadOnly() {
-    this.readOnly = true;
+    readOnly = true;
+    return this;
+  }
+
+  private ExternalIdNotes setNoCacheUpdate() {
+    noCacheUpdate = true;
+    return this;
+  }
+
+  private ExternalIdNotes setNoReindex() {
+    noReindex = true;
     return this;
   }
 
@@ -372,16 +509,26 @@ public class ExternalIdNotes extends VersionedMetaData {
    */
   public Optional<ExternalId> get(ExternalId.Key key) throws IOException, ConfigInvalidException {
     checkLoaded();
+    ObjectId noteId = getNoteId(key);
+    if (noteMap.contains(noteId)) {
+
+      try (RevWalk rw = new RevWalk(repo)) {
+        ObjectId noteDataId = noteMap.get(noteId);
+        byte[] raw = readNoteData(rw, noteDataId);
+        return Optional.of(externalIdFactory.parse(noteId.name(), raw, noteDataId));
+      }
+    }
+    return Optional.empty();
+  }
+
+  protected ObjectId getNoteId(ExternalId.Key key) throws IOException {
     ObjectId noteId = key.sha1();
-    if (!noteMap.contains(noteId)) {
-      return Optional.empty();
+
+    if (!noteMap.contains(noteId) && isUserNameCaseInsensitiveMigrationMode) {
+      noteId = key.caseSensitiveSha1();
     }
 
-    try (RevWalk rw = new RevWalk(repo)) {
-      ObjectId noteDataId = noteMap.get(noteId);
-      byte[] raw = readNoteData(rw, noteDataId);
-      return Optional.of(ExternalId.parse(noteId.name(), raw, noteDataId));
-    }
+    return noteId;
   }
 
   /**
@@ -414,7 +561,7 @@ public class ExternalIdNotes extends VersionedMetaData {
       for (Note note : noteMap) {
         byte[] raw = readNoteData(rw, note.getData());
         try {
-          b.add(ExternalId.parse(note.getName(), raw, note.getData()));
+          b.add(externalIdFactory.parse(note.getName(), raw, note.getData()));
         } catch (ConfigInvalidException | RuntimeException e) {
           logger.atSevere().withCause(e).log(
               "Ignoring invalid external ID note %s", note.getName());
@@ -456,13 +603,15 @@ public class ExternalIdNotes extends VersionedMetaData {
 
     Set<ExternalId> newExtIds = new HashSet<>();
     noteMapUpdates.add(
-        (rw, n, f) -> {
+        (rw, n) -> {
           for (ExternalId extId : extIds) {
-            ExternalId insertedExtId = upsert(rw, inserter, noteMap, f, extId);
+            ExternalId insertedExtId = upsert(rw, inserter, noteMap, extId);
+            preprocessUpsert(insertedExtId);
             newExtIds.add(insertedExtId);
           }
         });
     cacheUpdates.add(cu -> cu.add(newExtIds));
+    incrementalDuplicateDetection(extIds);
   }
 
   /**
@@ -484,13 +633,15 @@ public class ExternalIdNotes extends VersionedMetaData {
     Set<ExternalId> removedExtIds = get(ExternalId.Key.from(extIds));
     Set<ExternalId> updatedExtIds = new HashSet<>();
     noteMapUpdates.add(
-        (rw, n, f) -> {
+        (rw, n) -> {
           for (ExternalId extId : extIds) {
-            ExternalId updatedExtId = upsert(rw, inserter, noteMap, f, extId);
+            ExternalId updatedExtId = upsert(rw, inserter, noteMap, extId);
+            preprocessUpsert(updatedExtId);
             updatedExtIds.add(updatedExtId);
           }
         });
     cacheUpdates.add(cu -> cu.remove(removedExtIds).add(updatedExtIds));
+    incrementalDuplicateDetection(extIds);
   }
 
   /**
@@ -514,9 +665,9 @@ public class ExternalIdNotes extends VersionedMetaData {
     checkLoaded();
     Set<ExternalId> removedExtIds = new HashSet<>();
     noteMapUpdates.add(
-        (rw, n, f) -> {
+        (rw, n) -> {
           for (ExternalId extId : extIds) {
-            remove(rw, noteMap, f, extId);
+            remove(rw, noteMap, extId);
             removedExtIds.add(extId);
           }
         });
@@ -543,9 +694,9 @@ public class ExternalIdNotes extends VersionedMetaData {
     checkLoaded();
     Set<ExternalId> removedExtIds = new HashSet<>();
     noteMapUpdates.add(
-        (rw, n, f) -> {
+        (rw, n) -> {
           for (ExternalId.Key extIdKey : extIdKeys) {
-            ExternalId removedExtId = remove(rw, noteMap, f, extIdKey, accountId);
+            ExternalId removedExtId = remove(rw, noteMap, extIdKey, accountId);
             removedExtIds.add(removedExtId);
           }
         });
@@ -561,13 +712,19 @@ public class ExternalIdNotes extends VersionedMetaData {
     checkLoaded();
     Set<ExternalId> removedExtIds = new HashSet<>();
     noteMapUpdates.add(
-        (rw, n, f) -> {
+        (rw, n) -> {
           for (ExternalId.Key extIdKey : extIdKeys) {
-            ExternalId extId = remove(rw, noteMap, f, extIdKey, null);
+            ExternalId extId = remove(rw, noteMap, extIdKey, null);
             removedExtIds.add(extId);
           }
         });
     cacheUpdates.add(cu -> cu.remove(removedExtIds));
+  }
+
+  public void replace(
+      Account.Id accountId, Collection<ExternalId.Key> toDelete, Collection<ExternalId> toAdd)
+      throws IOException, DuplicateExternalIdKeyException {
+    replace(accountId, toDelete, toAdd, defaultNoteIdResolver);
   }
 
   /**
@@ -582,7 +739,10 @@ public class ExternalIdNotes extends VersionedMetaData {
    *     the specified account.
    */
   public void replace(
-      Account.Id accountId, Collection<ExternalId.Key> toDelete, Collection<ExternalId> toAdd)
+      Account.Id accountId,
+      Collection<ExternalId.Key> toDelete,
+      Collection<ExternalId> toAdd,
+      Function<ExternalId, ObjectId> noteIdResolver)
       throws IOException, DuplicateExternalIdKeyException {
     checkLoaded();
     checkSameAccount(toAdd, accountId);
@@ -591,20 +751,22 @@ public class ExternalIdNotes extends VersionedMetaData {
     Set<ExternalId> removedExtIds = new HashSet<>();
     Set<ExternalId> updatedExtIds = new HashSet<>();
     noteMapUpdates.add(
-        (rw, n, f) -> {
+        (rw, n) -> {
           for (ExternalId.Key extIdKey : toDelete) {
-            ExternalId removedExtId = remove(rw, noteMap, f, extIdKey, accountId);
+            ExternalId removedExtId = remove(rw, noteMap, extIdKey, accountId);
             if (removedExtId != null) {
               removedExtIds.add(removedExtId);
             }
           }
 
           for (ExternalId extId : toAdd) {
-            ExternalId insertedExtId = upsert(rw, inserter, noteMap, f, extId);
+            ExternalId insertedExtId = upsert(rw, inserter, noteMap, extId, noteIdResolver);
+            preprocessUpsert(insertedExtId);
             updatedExtIds.add(insertedExtId);
           }
         });
     cacheUpdates.add(cu -> cu.add(updatedExtIds).remove(removedExtIds));
+    incrementalDuplicateDetection(toAdd);
   }
 
   /**
@@ -625,18 +787,20 @@ public class ExternalIdNotes extends VersionedMetaData {
     Set<ExternalId> removedExtIds = new HashSet<>();
     Set<ExternalId> updatedExtIds = new HashSet<>();
     noteMapUpdates.add(
-        (rw, n, f) -> {
+        (rw, n) -> {
           for (ExternalId.Key extIdKey : toDelete) {
-            ExternalId removedExtId = remove(rw, noteMap, f, extIdKey, null);
+            ExternalId removedExtId = remove(rw, noteMap, extIdKey, null);
             removedExtIds.add(removedExtId);
           }
 
           for (ExternalId extId : toAdd) {
-            ExternalId insertedExtId = upsert(rw, inserter, noteMap, f, extId);
+            ExternalId insertedExtId = upsert(rw, inserter, noteMap, extId);
+            preprocessUpsert(insertedExtId);
             updatedExtIds.add(insertedExtId);
           }
         });
     cacheUpdates.add(cu -> cu.add(updatedExtIds).remove(removedExtIds));
+    incrementalDuplicateDetection(toAdd);
   }
 
   /**
@@ -672,6 +836,32 @@ public class ExternalIdNotes extends VersionedMetaData {
     replace(accountId, toDelete.stream().map(ExternalId::key).collect(toSet()), toAdd);
   }
 
+  /**
+   * Replaces external IDs.
+   *
+   * <p>Deletion of external IDs is done before adding the new external IDs. This means if an
+   * external ID is specified for deletion and an external ID with the same key is specified to be
+   * added, the old external ID with that key is deleted first and then the new external ID is added
+   * (so the external ID for that key is replaced).
+   *
+   * @throws IllegalStateException is thrown if the specified external IDs belong to different
+   *     accounts.
+   */
+  public void replace(
+      Collection<ExternalId> toDelete,
+      Collection<ExternalId> toAdd,
+      Function<ExternalId, ObjectId> noteIdResolver)
+      throws IOException, DuplicateExternalIdKeyException {
+    Account.Id accountId = checkSameAccount(Iterables.concat(toDelete, toAdd));
+    if (accountId == null) {
+      // toDelete and toAdd are empty -> nothing to do
+      return;
+    }
+
+    replace(
+        accountId, toDelete.stream().map(ExternalId::key).collect(toSet()), toAdd, noteIdResolver);
+  }
+
   @Override
   protected void onLoad() throws IOException, ConfigInvalidException {
     if (revision != null) {
@@ -695,66 +885,6 @@ public class ExternalIdNotes extends VersionedMetaData {
     return commit;
   }
 
-  /**
-   * Updates the caches (external ID cache, account cache) and reindexes the accounts for which
-   * external IDs were modified.
-   *
-   * <p>Must only be called after committing changes.
-   *
-   * <p>No-op if this instance was created by {@link #loadNoCacheUpdate(AllUsersName, Repository)}.
-   *
-   * <p>No eviction from account cache and no reindex if this instance was created by {@link
-   * FactoryNoReindex}.
-   */
-  public void updateCaches() throws IOException {
-    updateCaches(ImmutableSet.of());
-  }
-
-  /**
-   * Updates the caches (external ID cache, account cache) and reindexes the accounts for which
-   * external IDs were modified.
-   *
-   * <p>Must only be called after committing changes.
-   *
-   * <p>No-op if this instance was created by {@link #loadNoCacheUpdate(AllUsersName, Repository)}.
-   *
-   * <p>No eviction from account cache if this instance was created by {@link FactoryNoReindex}.
-   *
-   * @param accountsToSkip set of accounts that should not be evicted from the account cache, in
-   *     this case the caller must take care to evict them otherwise
-   */
-  public void updateCaches(Collection<Account.Id> accountsToSkip) throws IOException {
-    checkState(oldRev != null, "no changes committed yet");
-
-    ExternalIdCacheUpdates externalIdCacheUpdates = new ExternalIdCacheUpdates();
-    for (CacheUpdate cacheUpdate : cacheUpdates) {
-      cacheUpdate.execute(externalIdCacheUpdates);
-    }
-
-    externalIdCache.onReplace(
-        oldRev,
-        getRevision(),
-        externalIdCacheUpdates.getRemoved(),
-        externalIdCacheUpdates.getAdded());
-
-    if (accountCache != null || accountIndexer != null) {
-      for (Account.Id id :
-          Streams.concat(
-                  externalIdCacheUpdates.getAdded().stream(),
-                  externalIdCacheUpdates.getRemoved().stream())
-              .map(ExternalId::accountId)
-              .filter(i -> !accountsToSkip.contains(i))
-              .collect(toSet())) {
-        if (accountIndexer != null) {
-          accountIndexer.get().index(id);
-        }
-      }
-    }
-
-    cacheUpdates.clear();
-    oldRev = null;
-  }
-
   @Override
   protected boolean onSave(CommitBuilder commit) throws IOException, ConfigInvalidException {
     checkState(!readOnly, "Updating external IDs is disabled");
@@ -770,21 +900,14 @@ public class ExternalIdNotes extends VersionedMetaData {
     }
 
     try (RevWalk rw = new RevWalk(reader)) {
-      Set<String> footers = new HashSet<>();
       for (NoteMapUpdate noteMapUpdate : noteMapUpdates) {
         try {
-          noteMapUpdate.execute(rw, noteMap, footers);
+          noteMapUpdate.execute(rw, noteMap);
         } catch (DuplicateExternalIdKeyException e) {
           throw new IOException(e);
         }
       }
       noteMapUpdates.clear();
-      if (!footers.isEmpty()) {
-        commit.setMessage(
-            footers.stream()
-                .sorted()
-                .collect(joining("\n", commit.getMessage().trim() + "\n\n", "")));
-      }
 
       RevTree oldTree = revision != null ? rw.parseTree(revision) : null;
       ObjectId newTreeId = noteMap.writeTree(inserter);
@@ -829,23 +952,48 @@ public class ExternalIdNotes extends VersionedMetaData {
     return accountId;
   }
 
+  private void incrementalDuplicateDetection(Collection<ExternalId> externalIds) {
+    externalIds.stream()
+        .map(ExternalId::key)
+        .forEach(
+            key -> {
+              if (!keysToAdd.add(key)) {
+                throw new DuplicateExternalIdKeyException(key);
+              }
+            });
+  }
+
   /**
-   * Insert or updates an new external ID and sets it in the note map.
+   * Inserts or updates a new external ID and sets it in the note map.
    *
-   * <p>If the external ID already exists it is overwritten.
+   * <p>If the external ID already exists, it is overwritten.
    */
-  private static ExternalId upsert(
-      RevWalk rw, ObjectInserter ins, NoteMap noteMap, Set<String> footers, ExternalId extId)
+  private ExternalId upsert(RevWalk rw, ObjectInserter ins, NoteMap noteMap, ExternalId extId)
+      throws IOException, ConfigInvalidException {
+    return upsert(rw, ins, noteMap, extId, defaultNoteIdResolver);
+  }
+
+  /**
+   * Inserts or updates a new external ID and sets it in the note map.
+   *
+   * <p>If the external ID already exists, it is overwritten.
+   */
+  private ExternalId upsert(
+      RevWalk rw,
+      ObjectInserter ins,
+      NoteMap noteMap,
+      ExternalId extId,
+      Function<ExternalId, ObjectId> noteIdResolver)
       throws IOException, ConfigInvalidException {
     ObjectId noteId = extId.key().sha1();
     Config c = new Config();
-    if (noteMap.contains(extId.key().sha1())) {
+    ObjectId resolvedNoteId = noteIdResolver.apply(extId);
+    if (noteMap.contains(resolvedNoteId)) {
+      noteId = resolvedNoteId;
       ObjectId noteDataId = noteMap.get(noteId);
       byte[] raw = readNoteData(rw, noteDataId);
       try {
         c = new BlobBasedConfig(null, raw);
-        ExternalId oldExtId = ExternalId.parse(noteId.name(), c, noteDataId);
-        addFooters(footers, oldExtId);
       } catch (ConfigInvalidException e) {
         throw new ConfigInvalidException(
             String.format("Invalid external id config for note %s: %s", noteId, e.getMessage()));
@@ -855,9 +1003,7 @@ public class ExternalIdNotes extends VersionedMetaData {
     byte[] raw = c.toText().getBytes(UTF_8);
     ObjectId noteData = ins.insert(OBJ_BLOB, raw);
     noteMap.set(noteId, noteData);
-    ExternalId newExtId = ExternalId.create(extId, noteData);
-    addFooters(footers, newExtId);
-    return newExtId;
+    return externalIdFactory.create(extId, noteData);
   }
 
   /**
@@ -866,25 +1012,23 @@ public class ExternalIdNotes extends VersionedMetaData {
    * @throws IllegalStateException is thrown if there is an existing external ID that has the same
    *     key, but otherwise doesn't match the specified external ID.
    */
-  private static ExternalId remove(
-      RevWalk rw, NoteMap noteMap, Set<String> footers, ExternalId extId)
+  private void remove(RevWalk rw, NoteMap noteMap, ExternalId extId)
       throws IOException, ConfigInvalidException {
-    ObjectId noteId = extId.key().sha1();
+    ObjectId noteId = getNoteId(extId.key());
+
     if (!noteMap.contains(noteId)) {
-      return null;
+      return;
     }
 
     ObjectId noteDataId = noteMap.get(noteId);
     byte[] raw = readNoteData(rw, noteDataId);
-    ExternalId actualExtId = ExternalId.parse(noteId.name(), raw, noteDataId);
+    ExternalId actualExtId = externalIdFactory.parse(noteId.name(), raw, noteDataId);
     checkState(
         extId.equals(actualExtId),
         "external id %s should be removed, but it doesn't match the actual external id %s",
         extId.toString(),
         actualExtId.toString());
     noteMap.remove(noteId);
-    addFooters(footers, actualExtId);
-    return actualExtId;
   }
 
   /**
@@ -895,21 +1039,18 @@ public class ExternalIdNotes extends VersionedMetaData {
    * @return the external ID that was removed, {@code null} if no external ID with the specified key
    *     exists
    */
-  private static ExternalId remove(
-      RevWalk rw,
-      NoteMap noteMap,
-      Set<String> footers,
-      ExternalId.Key extIdKey,
-      Account.Id expectedAccountId)
+  private ExternalId remove(
+      RevWalk rw, NoteMap noteMap, ExternalId.Key extIdKey, Account.Id expectedAccountId)
       throws IOException, ConfigInvalidException {
-    ObjectId noteId = extIdKey.sha1();
+    ObjectId noteId = getNoteId(extIdKey);
+
     if (!noteMap.contains(noteId)) {
       return null;
     }
 
     ObjectId noteDataId = noteMap.get(noteId);
     byte[] raw = readNoteData(rw, noteDataId);
-    ExternalId extId = ExternalId.parse(noteId.name(), raw, noteDataId);
+    ExternalId extId = externalIdFactory.parse(noteId.name(), raw, noteDataId);
     if (expectedAccountId != null) {
       checkState(
           expectedAccountId.equals(extId.accountId()),
@@ -920,15 +1061,7 @@ public class ExternalIdNotes extends VersionedMetaData {
           extId.accountId().get());
     }
     noteMap.remove(noteId);
-    addFooters(footers, extId);
     return extId;
-  }
-
-  private static void addFooters(Set<String> footers, ExternalId extId) {
-    footers.add("Account: " + extId.accountId().get());
-    if (extId.email() != null) {
-      footers.add("Email: " + extId.email());
-    }
   }
 
   private void checkExternalIdsDontExist(Collection<ExternalId> extIds)
@@ -957,9 +1090,13 @@ public class ExternalIdNotes extends VersionedMetaData {
     checkState(noteMap != null, "External IDs not loaded yet");
   }
 
+  private void preprocessUpsert(ExternalId extId) {
+    upsertPreprocessors.forEach(p -> p.get().upsert(extId));
+  }
+
   @FunctionalInterface
   private interface NoteMapUpdate {
-    void execute(RevWalk rw, NoteMap noteMap, Set<String> footers)
+    void execute(RevWalk rw, NoteMap noteMap)
         throws IOException, ConfigInvalidException, DuplicateExternalIdKeyException;
   }
 
@@ -969,15 +1106,15 @@ public class ExternalIdNotes extends VersionedMetaData {
   }
 
   private static class ExternalIdCacheUpdates {
-    private final Set<ExternalId> added = new HashSet<>();
-    private final Set<ExternalId> removed = new HashSet<>();
+    final Set<ExternalId> added = new HashSet<>();
+    final Set<ExternalId> removed = new HashSet<>();
 
     ExternalIdCacheUpdates add(Collection<ExternalId> extIds) {
       this.added.addAll(extIds);
       return this;
     }
 
-    public Set<ExternalId> getAdded() {
+    Set<ExternalId> getAdded() {
       return ImmutableSet.copyOf(added);
     }
 
@@ -986,7 +1123,7 @@ public class ExternalIdNotes extends VersionedMetaData {
       return this;
     }
 
-    public Set<ExternalId> getRemoved() {
+    Set<ExternalId> getRemoved() {
       return ImmutableSet.copyOf(removed);
     }
   }

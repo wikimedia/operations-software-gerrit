@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 import {CoverageRange, Side} from './diff';
+import {ChangeInfo} from './rest-api';
 
 /**
  * This is the callback object that Gerrit calls once for each diff. Gerrit
@@ -26,17 +27,10 @@ export type CoverageProvider = (
   path: string,
   basePatchNum?: number,
   patchNum?: number,
-  /**
-   * This is a ChangeInfo object as defined here:
-   * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#change-info
-   * At the moment we neither want to repeat it nor add a dependency on it here.
-   * TODO: Create a dedicated smaller object for exposing a change in the plugin
-   * API. Or allow the plugin API to depend on the entire rest API.
-   */
-  change?: unknown
-) => Promise<Array<CoverageRange>>;
+  change?: ChangeInfo
+) => Promise<Array<CoverageRange> | undefined>;
 
-export interface AnnotationPluginApi {
+export declare interface AnnotationPluginApi {
   /**
    * The specified function will be called when a gr-diff component is built,
    * and feeds the returned coverage data into the diff. Optional.

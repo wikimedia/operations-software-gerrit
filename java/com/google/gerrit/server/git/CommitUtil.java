@@ -20,9 +20,7 @@ import com.google.common.base.Strings;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
-import com.google.gerrit.entities.Account.Id;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.api.changes.RevertInput;
@@ -30,12 +28,12 @@ import com.google.gerrit.extensions.common.CommitInfo;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.CommonConverters;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.ReviewerSet;
+import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.change.ChangeInserter;
 import com.google.gerrit.server.change.ChangeMessages;
 import com.google.gerrit.server.change.NotifyResolver;
@@ -48,7 +46,7 @@ import com.google.gerrit.server.notedb.Sequences;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.Context;
+import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.CommitMessageUtil;
 import com.google.inject.Inject;
@@ -266,7 +264,7 @@ public class CommitUtil {
     Change changeToRevert = notes.getChange();
     Change.Id changeId = Change.id(seq.nextChangeId());
     if (input.workInProgress) {
-      input.notify = NotifyHandling.OWNER;
+      input.notify = firstNonNull(input.notify, NotifyHandling.OWNER);
     }
     NotifyResolver.Result notify =
         notifyResolver.resolve(firstNonNull(input.notify, NotifyHandling.ALL), input.notifyDetails);
@@ -279,7 +277,7 @@ public class CommitUtil {
 
     ReviewerSet reviewerSet = approvalsUtil.getReviewers(notes);
 
-    Set<Id> reviewers = new HashSet<>();
+    Set<Account.Id> reviewers = new HashSet<>();
     reviewers.add(changeToRevert.getOwner());
     reviewers.addAll(reviewerSet.byState(ReviewerStateInternal.REVIEWER));
     reviewers.remove(user.getAccountId());
@@ -310,8 +308,9 @@ public class CommitUtil {
     }
 
     @Override
-    public void postUpdate(Context ctx) throws Exception {
-      changeReverted.fire(change, ins.getChange(), ctx.getWhen());
+    public void postUpdate(PostUpdateContext ctx) throws Exception {
+      changeReverted.fire(
+          ctx.getChangeData(change), ctx.getChangeData(ins.getChange()), ctx.getWhen());
       try {
         RevertedSender emailSender = revertedSenderFactory.create(ctx.getProject(), change.getId());
         emailSender.setFrom(ctx.getAccountId());
@@ -335,14 +334,10 @@ public class CommitUtil {
 
     @Override
     public boolean updateChange(ChangeContext ctx) {
-      Change change = ctx.getChange();
-      PatchSet.Id patchSetId = change.currentPatchSetId();
-      ChangeMessage changeMessage =
-          ChangeMessagesUtil.newMessage(
-              ctx,
-              "Created a revert of this change as I" + computedChangeId.name(),
-              ChangeMessagesUtil.TAG_REVERT);
-      cmUtil.addChangeMessage(ctx.getUpdate(patchSetId), changeMessage);
+      cmUtil.setChangeMessage(
+          ctx,
+          "Created a revert of this change as I" + computedChangeId.name(),
+          ChangeMessagesUtil.TAG_REVERT);
       return true;
     }
   }

@@ -83,6 +83,7 @@ import {
 import {
   createDefaultDiffPrefs,
   createDefaultEditPrefs,
+  createDefaultPreferences,
 } from '../../constants/constants';
 import {ParsedChangeInfo} from '../../types/types';
 
@@ -266,7 +267,7 @@ export const grRestApiMock: RestApiService = {
     return Promise.resolve(createServerInfo());
   },
   getDashboard(): Promise<DashboardInfo | undefined> {
-    throw new Error('getDashboard() not implemented by RestApiMock.');
+    return Promise.resolve(undefined);
   },
   getDefaultPreferences(): Promise<PreferencesInfo | undefined> {
     throw new Error('getDefaultPreferences() not implemented by RestApiMock.');
@@ -356,7 +357,7 @@ export const grRestApiMock: RestApiService = {
   },
   getRepo(repo: RepoName): Promise<ProjectInfo | undefined> {
     return Promise.resolve({
-      id: (repo as string) as UrlEncodedRepoName,
+      id: repo as string as UrlEncodedRepoName,
       name: repo,
     });
   },
@@ -445,9 +446,6 @@ export const grRestApiMock: RestApiService = {
   saveChangeReview() {
     return Promise.resolve(new Response());
   },
-  saveChangeReviewed(): Promise<Response | undefined> {
-    return Promise.resolve(new Response());
-  },
   saveChangeStarred(): Promise<Response> {
     return Promise.resolve(new Response());
   },
@@ -484,8 +482,8 @@ export const grRestApiMock: RestApiService = {
   saveIncludedGroup(): Promise<GroupInfo | undefined> {
     throw new Error('saveIncludedGroup() not implemented by RestApiMock.');
   },
-  savePreferences(): Promise<Response> {
-    return Promise.resolve(new Response());
+  savePreferences(): Promise<PreferencesInfo> {
+    return Promise.resolve(createDefaultPreferences());
   },
   saveRepoConfig(): Promise<Response> {
     return Promise.resolve(new Response());

@@ -23,7 +23,6 @@ import {PLUGIN_LOADING_TIMEOUT_MS} from './gr-api-utils.js';
 import {getPluginLoader} from './gr-plugin-loader.js';
 import {_testOnly_initGerritPluginApi} from './gr-gerrit.js';
 import {stubBaseUrl} from '../../../test/test-utils.js';
-import sinon from 'sinon/pkg/sinon-esm';
 import {stubRestApi} from '../../../test/test-utils.js';
 import {appContext} from '../../../services/app-context.js';
 
@@ -63,28 +62,6 @@ suite('GrJsApiInterface tests', () => {
     assert.equal(plugin.url(), 'http://test.com/plugins/testplugin/');
     assert.equal(plugin.url('/static/test.js'),
         'http://test.com/plugins/testplugin/static/test.js');
-  });
-
-  test('url for preloaded plugin without ASSETS_PATH', () => {
-    let plugin;
-    pluginApi.install(p => { plugin = p; }, '0.1',
-        'preloaded:testpluginB');
-    assert.equal(plugin.url(),
-        `${window.location.origin}/plugins/testpluginB/`);
-    assert.equal(plugin.url('/static/test.js'),
-        `${window.location.origin}/plugins/testpluginB/static/test.js`);
-  });
-
-  test('url for preloaded plugin without ASSETS_PATH', () => {
-    const oldAssetsPath = window.ASSETS_PATH;
-    window.ASSETS_PATH = 'http://test.com';
-    let plugin;
-    pluginApi.install(p => { plugin = p; }, '0.1',
-        'preloaded:testpluginC');
-    assert.equal(plugin.url(), `${window.ASSETS_PATH}/plugins/testpluginC/`);
-    assert.equal(plugin.url('/static/test.js'),
-        `${window.ASSETS_PATH}/plugins/testpluginC/static/test.js`);
-    window.ASSETS_PATH = oldAssetsPath;
   });
 
   test('_send on failure rejects with response text', () => {

@@ -86,9 +86,7 @@ export const htmlTemplate = html`
       padding: var(--spacing-m);
     }
     gr-dropdown {
-      --gr-dropdown-item: {
-        color: var(--primary-text-color);
-      }
+      --gr-dropdown-item-color: var(--primary-text-color);
     }
     .settingsButton {
       margin-left: var(--spacing-m);
@@ -210,16 +208,19 @@ export const htmlTemplate = html`
         class="hideOnMobile"
         name="header-browse-source"
       ></gr-endpoint-decorator>
-      <template is="dom-if" if="[[_feedbackURL]]">
-        <a class="feedbackButton"
-          href$="[[_feedbackURL]]"
-          title="File a bug"
-          aria-label="File a bug"
-          role="button"
-        >
-          <iron-icon icon="gr-icons:bug"></iron-icon>
-        </a>
-      </template>
+      <gr-endpoint-decorator class="feedbackButton" name="header-feedback">
+        <template is="dom-if" if="[[_feedbackURL]]">
+          <a
+            href$="[[_feedbackURL]]"
+            title="File a bug"
+            aria-label="File a bug"
+            target="_blank"
+            role="button"
+          >
+            <iron-icon icon="gr-icons:bug"></iron-icon>
+          </a>
+        </template>
+      </gr-endpoint-decorator>
       </div>
       <div class="accountContainer" id="accountContainer">
         <iron-icon

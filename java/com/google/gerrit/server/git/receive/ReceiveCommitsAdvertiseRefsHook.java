@@ -27,10 +27,9 @@ import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.server.git.HookUtil;
 import com.google.gerrit.server.index.change.ChangeField;
 import com.google.gerrit.server.query.change.ChangeData;
+import com.google.gerrit.server.query.change.ChangePredicates;
 import com.google.gerrit.server.query.change.ChangeStatusPredicate;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
-import com.google.gerrit.server.query.change.OwnerPredicate;
-import com.google.gerrit.server.query.change.ProjectPredicate;
 import com.google.gerrit.server.util.MagicBranch;
 import com.google.inject.Provider;
 import java.io.IOException;
@@ -116,9 +115,9 @@ public class ReceiveCommitsAdvertiseRefsHook implements AdvertiseRefsHook {
               .setLimit(limit)
               .query(
                   Predicate.and(
-                      new ProjectPredicate(projectName.get()),
+                      ChangePredicates.project(projectName),
                       ChangeStatusPredicate.open(),
-                      new OwnerPredicate(user)))) {
+                      ChangePredicates.owner(user)))) {
         PatchSet ps = cd.currentPatchSet();
         if (ps != null) {
           // Ensure we actually observed a patch set ref pointing to this

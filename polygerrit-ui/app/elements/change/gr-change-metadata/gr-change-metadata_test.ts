@@ -57,14 +57,16 @@ import {
   LabelValueToDescriptionMap,
   Hashtag,
 } from '../../../types/common';
-import {SinonStubbedMember} from 'sinon/pkg/sinon-esm';
+import {SinonStubbedMember} from 'sinon';
 import {RestApiService} from '../../../services/gr-rest-api/gr-rest-api';
 import {tap} from '@polymer/iron-test-helpers/mock-interactions';
 import {GrEditableLabel} from '../../shared/gr-editable-label/gr-editable-label';
 import {PluginApi} from '../../../api/plugin';
 import {GrEndpointDecorator} from '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
-import {stubRestApi} from '../../../test/test-utils';
+import {queryAndAssert, stubRestApi} from '../../../test/test-utils';
 import {ParsedChangeInfo} from '../../../types/types';
+import {GrLinkedChip} from '../../shared/gr-linked-chip/gr-linked-chip';
+import {GrButton} from '../../shared/gr-button/gr-button';
 
 const basicFixture = fixtureFromElement('gr-change-metadata');
 
@@ -347,8 +349,11 @@ suite('gr-change-metadata tests', () => {
             },
             commit: {
               ...createCommit(),
-              author: {...createGitPerson(), email: 'jkl@def'},
-              committer: {...createGitPerson(), email: 'ghi@def'},
+              author: {...createGitPerson(), email: 'jkl@def' as EmailAddress},
+              committer: {
+                ...createGitPerson(),
+                email: 'ghi@def' as EmailAddress,
+              },
             },
           },
         },
@@ -398,7 +403,7 @@ suite('gr-change-metadata tests', () => {
         change!.revisions.rev1.uploader!.email = 'ghh@def' as EmailAddress;
         assert.deepEqual(
           element._getNonOwnerRole(change, element._CHANGE_ROLE.COMMITTER),
-          {...createGitPerson(), email: 'ghi@def'}
+          {...createGitPerson(), email: 'ghi@def' as EmailAddress}
         );
       });
 
@@ -410,7 +415,8 @@ suite('gr-change-metadata tests', () => {
 
       test('_getNonOwnerRole that it does not return committer', () => {
         // Set the committer email to be the same as the owner.
-        change!.revisions.rev1.commit!.committer.email = 'abc@def';
+        change!.revisions.rev1.commit!.committer.email =
+          'abc@def' as EmailAddress;
         assert.isNotOk(
           element._getNonOwnerRole(change, element._CHANGE_ROLE.COMMITTER)
         );
@@ -428,13 +434,13 @@ suite('gr-change-metadata tests', () => {
       test('_getNonOwnerRole for author', () => {
         assert.deepEqual(
           element._getNonOwnerRole(change, element._CHANGE_ROLE.AUTHOR),
-          {...createGitPerson(), email: 'jkl@def'}
+          {...createGitPerson(), email: 'jkl@def' as EmailAddress}
         );
       });
 
       test('_getNonOwnerRole that it does not return author', () => {
         // Set the author email to be the same as the owner.
-        change!.revisions.rev1.commit!.author.email = 'abc@def';
+        change!.revisions.rev1.commit!.author.email = 'abc@def' as EmailAddress;
         assert.isNotOk(
           element._getNonOwnerRole(change, element._CHANGE_ROLE.AUTHOR)
         );
@@ -628,14 +634,12 @@ suite('gr-change-metadata tests', () => {
   });
 
   test('_showAddTopic', () => {
-    const changeRecord: ElementPropertyDeepChange<
-      GrChangeMetadata,
-      'change'
-    > = {
-      base: {...createParsedChange()},
-      path: '',
-      value: undefined,
-    };
+    const changeRecord: ElementPropertyDeepChange<GrChangeMetadata, 'change'> =
+      {
+        base: {...createParsedChange()},
+        path: '',
+        value: undefined,
+      };
     assert.isTrue(element._showAddTopic(undefined, false));
     assert.isTrue(element._showAddTopic(changeRecord, false));
     assert.isFalse(element._showAddTopic(changeRecord, true));
@@ -645,14 +649,12 @@ suite('gr-change-metadata tests', () => {
   });
 
   test('_showTopicChip', () => {
-    const changeRecord: ElementPropertyDeepChange<
-      GrChangeMetadata,
-      'change'
-    > = {
-      base: {...createParsedChange()},
-      path: '',
-      value: undefined,
-    };
+    const changeRecord: ElementPropertyDeepChange<GrChangeMetadata, 'change'> =
+      {
+        base: {...createParsedChange()},
+        path: '',
+        value: undefined,
+      };
     assert.isFalse(element._showTopicChip(undefined, false));
     assert.isFalse(element._showTopicChip(changeRecord, false));
     assert.isFalse(element._showTopicChip(changeRecord, true));
@@ -662,14 +664,12 @@ suite('gr-change-metadata tests', () => {
   });
 
   test('_showCherryPickOf', () => {
-    const changeRecord: ElementPropertyDeepChange<
-      GrChangeMetadata,
-      'change'
-    > = {
-      base: {...createParsedChange()},
-      path: '',
-      value: undefined,
-    };
+    const changeRecord: ElementPropertyDeepChange<GrChangeMetadata, 'change'> =
+      {
+        base: {...createParsedChange()},
+        path: '',
+        value: undefined,
+      };
     assert.isFalse(element._showCherryPickOf(undefined));
     assert.isFalse(element._showCherryPickOf(changeRecord));
     changeRecord.base!.cherry_pick_of_change = 123 as NumericChangeId;
@@ -692,7 +692,7 @@ suite('gr-change-metadata tests', () => {
           test: {
             all: [{_account_id: 1 as AccountId, name: 'bojack', value: 1}],
             default_value: 0,
-            values: ([] as unknown) as LabelValueToDescriptionMap,
+            values: [] as unknown as LabelValueToDescriptionMap,
           },
         },
         removable_reviewers: [],
@@ -710,25 +710,25 @@ suite('gr-change-metadata tests', () => {
       assert.isTrue(element._computeTopicReadOnly(mutable, change));
     });
 
-    test('topic read only hides delete button', () => {
+    test('topic read only hides delete button', async () => {
       element.account = createAccountDetailWithId();
       element.change = change;
-      flush();
-      const button = element!
-        .shadowRoot!.querySelector('gr-linked-chip')!
-        .shadowRoot!.querySelector('gr-button');
-      assert.isTrue(button?.hasAttribute('hidden'));
+      sinon.stub(GerritNav, 'getUrlForTopic').returns('/q/topic:test');
+      await flush();
+      const chip = queryAndAssert<GrLinkedChip>(element, 'gr-linked-chip');
+      const button = queryAndAssert<GrButton>(chip, 'gr-button');
+      assert.isTrue(button.hasAttribute('hidden'));
     });
 
-    test('topic not read only does not hide delete button', () => {
+    test('topic not read only does not hide delete button', async () => {
       element.account = createAccountDetailWithId();
       change.actions!.topic!.enabled = true;
       element.change = change;
-      flush();
-      const button = element!
-        .shadowRoot!.querySelector('gr-linked-chip')!
-        .shadowRoot!.querySelector('gr-button');
-      assert.isFalse(button?.hasAttribute('hidden'));
+      sinon.stub(GerritNav, 'getUrlForTopic').returns('/q/topic:test');
+      await flush();
+      const chip = queryAndAssert<GrLinkedChip>(element, 'gr-linked-chip');
+      const button = queryAndAssert<GrButton>(chip, 'gr-button');
+      assert.isFalse(button.hasAttribute('hidden'));
     });
   });
 
@@ -745,15 +745,15 @@ suite('gr-change-metadata tests', () => {
           test: {
             all: [{_account_id: 1 as AccountId, name: 'bojack', value: 1}],
             default_value: 0,
-            values: ([] as unknown) as LabelValueToDescriptionMap,
+            values: [] as unknown as LabelValueToDescriptionMap,
           },
         },
         removable_reviewers: [],
       };
     });
 
-    test('_computeHashtagReadOnly', () => {
-      flush();
+    test('_computeHashtagReadOnly', async () => {
+      await flush();
       let mutable = false;
       assert.isTrue(element._computeHashtagReadOnly(mutable, change));
       mutable = true;
@@ -764,27 +764,31 @@ suite('gr-change-metadata tests', () => {
       assert.isTrue(element._computeHashtagReadOnly(mutable, change));
     });
 
-    test('hashtag read only hides delete button', () => {
-      flush();
+    test('hashtag read only hides delete button', async () => {
+      await flush();
       element.account = createAccountDetailWithId();
       element.change = change;
-      flush();
-      const button = element!
-        .shadowRoot!.querySelector('gr-linked-chip')!
-        .shadowRoot!.querySelector('gr-button');
-      assert.isTrue(button?.hasAttribute('hidden'));
+      sinon
+        .stub(GerritNav, 'getUrlForHashtag')
+        .returns('/q/hashtag:test+(status:open%20OR%20status:merged)');
+      await flush();
+      const chip = queryAndAssert<GrLinkedChip>(element, 'gr-linked-chip');
+      const button = queryAndAssert<GrButton>(chip, 'gr-button');
+      assert.isTrue(button.hasAttribute('hidden'));
     });
 
-    test('hashtag not read only does not hide delete button', () => {
-      flush();
+    test('hashtag not read only does not hide delete button', async () => {
+      await flush();
       element.account = createAccountDetailWithId();
       change!.actions!.hashtags!.enabled = true;
       element.change = change;
-      flush();
-      const button = element!
-        .shadowRoot!.querySelector('gr-linked-chip')!
-        .shadowRoot!.querySelector('gr-button');
-      assert.isFalse(button?.hasAttribute('hidden'));
+      sinon
+        .stub(GerritNav, 'getUrlForHashtag')
+        .returns('/q/hashtag:test+(status:open%20OR%20status:merged)');
+      await flush();
+      const chip = queryAndAssert<GrLinkedChip>(element, 'gr-linked-chip');
+      const button = queryAndAssert<GrButton>(chip, 'gr-button');
+      assert.isFalse(button.hasAttribute('hidden'));
     });
   });
 
@@ -798,7 +802,7 @@ suite('gr-change-metadata tests', () => {
           test: {
             all: [{_account_id: 1 as AccountId, name: 'bojack', value: 1}],
             default_value: 0,
-            values: ([] as unknown) as LabelValueToDescriptionMap,
+            values: [] as unknown as LabelValueToDescriptionMap,
           },
         },
         removable_reviewers: [],
@@ -881,13 +885,15 @@ suite('gr-change-metadata tests', () => {
       });
     });
 
-    test('topic removal', () => {
+    test('topic removal', async () => {
       const newTopic = 'the new topic' as TopicName;
       const setChangeTopicStub = stubRestApi('setChangeTopic').returns(
         Promise.resolve(newTopic)
       );
-      const chip = element.shadowRoot!.querySelector('gr-linked-chip');
-      const remove = chip!.$.remove;
+      sinon.stub(GerritNav, 'getUrlForTopic').returns('/q/topic:the+new+topic');
+      await flush();
+      const chip = queryAndAssert<GrLinkedChip>(element, 'gr-linked-chip');
+      const remove = queryAndAssert(chip, '#remove');
       const topicChangedSpy = sinon.spy();
       element.addEventListener('topic-changed', topicChangedSpy);
       tap(remove);
@@ -900,8 +906,8 @@ suite('gr-change-metadata tests', () => {
       });
     });
 
-    test('changing hashtag', () => {
-      flush();
+    test('changing hashtag', async () => {
+      await flush();
       element._newHashtag = 'new hashtag' as Hashtag;
       const newHashtag: Hashtag[] = ['new hashtag' as Hashtag];
       const setChangeHashtagStub = stubRestApi('setChangeHashtag').returns(
@@ -919,13 +925,13 @@ suite('gr-change-metadata tests', () => {
     });
   });
 
-  test('editTopic', () => {
+  test('editTopic', async () => {
     element.account = createAccountDetailWithId();
     element.change = {
       ...createParsedChange(),
       actions: {topic: {enabled: true}},
     };
-    flush();
+    await flush();
 
     const label = element.shadowRoot!.querySelector(
       '.topicEditableLabel'
@@ -933,13 +939,13 @@ suite('gr-change-metadata tests', () => {
     assert.ok(label);
     const openStub = sinon.stub(label, 'open');
     element.editTopic();
-    flush();
+    await flush();
 
     assert.isTrue(openStub.called);
   });
 
   suite('plugin endpoints', () => {
-    test('endpoint params', done => {
+    test('endpoint params', async () => {
       element.change = createParsedChange();
       element.revision = createRevision();
       interface MetadataGrEndpointDecorator extends GrEndpointDecorator {
@@ -961,12 +967,10 @@ suite('gr-change-metadata tests', () => {
         'http://some/plugins/url.js'
       );
       getPluginLoader().loadPlugins([]);
-      flush(() => {
-        assert.strictEqual(hookEl!.plugin, plugin);
-        assert.strictEqual(hookEl!.change, element.change);
-        assert.strictEqual(hookEl!.revision, element.revision);
-        done();
-      });
+      await flush();
+      assert.strictEqual(hookEl!.plugin, plugin!);
+      assert.strictEqual(hookEl!.change, element.change);
+      assert.strictEqual(hookEl!.revision, element.revision);
     });
   });
 });

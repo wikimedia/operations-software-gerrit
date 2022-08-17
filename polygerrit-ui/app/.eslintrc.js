@@ -277,6 +277,18 @@ module.exports = {
       },
     },
     {
+      files: ['**/api/*.ts'],
+      rules: {
+        'regex/invalid': [
+          'error', [{
+            regex: 'export interface',
+            message: 'All interfaces in the api/ dir must have "declare"',
+            replacement: 'export declare interface',
+          }],
+        ],
+      },
+    },
+    {
       files: ['**/*.ts'],
       extends: [require.resolve('gts/.eslintrc.json')],
       rules: {
@@ -400,12 +412,32 @@ module.exports = {
         }],
       },
     },
+    {
+      files: ['*.ts'],
+      excludedFiles: '*_html.ts',
+      rules: {
+        'lit/attribute-value-entities': 'error',
+        'lit/binding-positions': 'error',
+        'lit/no-duplicate-template-bindings': 'error',
+        'lit/no-invalid-html': 'error',
+        'lit/no-legacy-template-syntax': 'error',
+        'lit/no-property-change-update': 'error',
+        'lit/no-invalid-escape-sequences': 'error',
+        'lit/no-legacy-imports': 'error',
+        'lit/no-private-properties': 'error',
+        'lit/no-useless-template-literals': 'error',
+        'lit/no-value-attribute': 'error',
+        'lit/prefer-static-styles': 'error',
+      },
+    },
   ],
   plugins: [
     'html',
     'jsdoc',
     'import',
+    'lit',
     'prettier',
+    'regex',
   ],
   settings: {
     'html/report-bad-indent': 'error',

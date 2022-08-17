@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 import '@polymer/iron-input/iron-input';
+import '../../../styles/gr-font-styles';
 import '../../../styles/gr-form-styles';
 import '../../../styles/shared-styles';
 import '../../shared/gr-button/gr-button';
@@ -118,7 +119,7 @@ export class GrAccessSection extends PolymerElement {
 
   _updateSection(section: PermissionAccessSection) {
     this._permissions = toSortedPermissionsArray(section.value.permissions);
-    this._originalId = section.id as GitRef;
+    this._originalId = section.id;
   }
 
   _handleAccessSaved() {
@@ -173,7 +174,9 @@ export class GrAccessSection extends PolymerElement {
   _computePermissions(
     name: string,
     capabilities?: CapabilityInfoMap,
-    labels?: LabelNameToLabelTypeInfoMap
+    labels?: LabelNameToLabelTypeInfoMap,
+    // This is just for triggering re-computation. We don't use the value.
+    _?: unknown
   ) {
     let allPermissions;
     const section = this.section;
@@ -191,10 +194,6 @@ export class GrAccessSection extends PolymerElement {
     return allPermissions.filter(
       permission => !section.value.permissions[permission.id]
     );
-  }
-
-  _computeHideEditClass(section: PermissionAccessSection) {
-    return section.id === 'GLOBAL_CAPABILITIES' ? 'hide' : '';
   }
 
   _handleAddedPermissionRemoved(e: PolymerDomRepeatEvent) {
@@ -234,12 +233,12 @@ export class GrAccessSection extends PolymerElement {
   _computePermissionName(
     name: string,
     permission: PermissionArrayItem<EditablePermissionInfo>,
-    capabilities: CapabilityInfoMap
-  ) {
+    capabilities?: CapabilityInfoMap
+  ): string | undefined {
     if (name === GLOBAL_NAME) {
-      return capabilities[permission.id].name;
+      return capabilities?.[permission.id]?.name;
     } else if (AccessPermissions[permission.id]) {
-      return AccessPermissions[permission.id].name;
+      return AccessPermissions[permission.id]?.name;
     } else if (permission.value.label) {
       let behalfOf = '';
       if (permission.id.startsWith('labelAs-')) {
@@ -320,7 +319,7 @@ export class GrAccessSection extends PolymerElement {
     if (
       editing &&
       this.section &&
-      this._isEditEnabled(canUpload, ownerOf, this.section.id as GitRef)
+      this._isEditEnabled(canUpload, ownerOf, this.section.id)
     ) {
       classList.push('editing');
     }
@@ -338,7 +337,7 @@ export class GrAccessSection extends PolymerElement {
   }
 
   _handleAddPermission() {
-    const value = this.$.permissionSelect.value;
+    const value = this.$.permissionSelect.value as GitRef;
     const permission: PermissionArrayItem<EditablePermissionInfo> = {
       id: value,
       value: {rules: {}, added: true},

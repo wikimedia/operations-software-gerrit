@@ -31,6 +31,7 @@ import {
 import {hasOwnProperty} from '../../../utils/common-util';
 import {ProjectWatchInfo} from '../../../types/common';
 import {appContext} from '../../../services/app-context';
+import {IronInputElement} from '@polymer/iron-input';
 
 const NOTIFICATION_TYPES = [
   {name: 'Changes', key: 'notify_new_changes'},
@@ -43,9 +44,11 @@ const NOTIFICATION_TYPES = [
 export interface GrWatchedProjectsEditor {
   $: {
     newFilter: HTMLInputElement;
+    newFilterInput: IronInputElement;
     newProject: GrAutocomplete;
   };
 }
+
 @customElement('gr-watched-projects-editor')
 export class GrWatchedProjectsEditor extends PolymerElement {
   static get template() {
@@ -62,7 +65,7 @@ export class GrWatchedProjectsEditor extends PolymerElement {
   _projectsToRemove: ProjectWatchInfo[] = [];
 
   @property({type: Object})
-  _query?: AutocompleteQuery;
+  _query: AutocompleteQuery;
 
   private readonly restApiService = appContext.restApiService;
 

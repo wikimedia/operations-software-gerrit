@@ -57,15 +57,17 @@ import com.google.gerrit.entities.PermissionRule.Action;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.entities.StoredCommentLinkInfo;
+import com.google.gerrit.entities.SubmitRequirement;
+import com.google.gerrit.entities.SubmitRequirementExpression;
 import com.google.gerrit.entities.SubscribeSection;
 import com.google.gerrit.exceptions.InvalidNameException;
 import com.google.gerrit.extensions.client.InheritableBoolean;
 import com.google.gerrit.extensions.client.ProjectState;
 import com.google.gerrit.server.account.GroupBackend;
+import com.google.gerrit.server.config.AllProjectsConfigProvider;
 import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.server.config.ConfigUtil;
 import com.google.gerrit.server.config.PluginConfig;
-import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.git.ValidationError;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.git.meta.VersionedMetaData;
@@ -96,8 +98,6 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.revwalk.RevWalk;
-import org.eclipse.jgit.storage.file.FileBasedConfig;
-import org.eclipse.jgit.util.FS;
 
 public class ProjectConfig extends VersionedMetaData implements ValidationError.Sink {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -110,6 +110,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
   public static final String KEY_ALLOW_POST_SUBMIT = "allowPostSubmit";
   public static final String KEY_IGNORE_SELF_APPROVAL = "ignoreSelfApproval";
   public static final String KEY_COPY_ANY_SCORE = "copyAnyScore";
+  public static final String KEY_COPY_CONDITION = "copyCondition";
   public static final String KEY_COPY_MAX_SCORE = "copyMaxScore";
   public static final String KEY_COPY_ALL_SCORES_IF_LIST_OF_FILES_DID_NOT_CHANGE =
       "copyAllScoresIfListOfFilesDidNotChange";
@@ -122,6 +123,13 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
   public static final String KEY_VALUE = "value";
   public static final String KEY_CAN_OVERRIDE = "canOverride";
   public static final String KEY_BRANCH = "branch";
+
+  public static final String SUBMIT_REQUIREMENT = "submit-requirement";
+  public static final String KEY_SR_DESCRIPTION = "description";
+  public static final String KEY_SR_APPLICABILITY_EXPRESSION = "applicableIf";
+  public static final String KEY_SR_SUBMITTABILITY_EXPRESSION = "submittableIf";
+  public static final String KEY_SR_OVERRIDE_EXPRESSION = "overrideIf";
+  public static final String KEY_SR_OVERRIDE_IN_CHILD_PROJECTS = "canOverrideInChildProjects";
 
   public static final String KEY_MATCH = "match";
   private static final String KEY_HTML = "html";
@@ -192,28 +200,22 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
   // ProjectCache, so this would retain lots more memory.
   @Singleton
   public static class Factory {
-    @Nullable
-    public static StoredConfig getBaseConfig(
-        SitePaths sitePaths, AllProjectsName allProjects, Project.NameKey projectName) {
-      return projectName.equals(allProjects)
-          // Delay loading till onLoad method.
-          ? new FileBasedConfig(
-              sitePaths.etc_dir.resolve(allProjects.get()).resolve(PROJECT_CONFIG).toFile(),
-              FS.DETECTED)
-          : null;
-    }
-
-    private final SitePaths sitePaths;
-    private final AllProjectsName allProjects;
+    private final AllProjectsName allProjectsName;
+    private final AllProjectsConfigProvider allProjectsConfigProvider;
 
     @Inject
-    Factory(SitePaths sitePaths, AllProjectsName allProjects) {
-      this.sitePaths = sitePaths;
-      this.allProjects = allProjects;
+    Factory(AllProjectsName allProjectsName, AllProjectsConfigProvider allProjectsConfigProvider) {
+      this.allProjectsName = allProjectsName;
+      this.allProjectsConfigProvider = allProjectsConfigProvider;
     }
 
     public ProjectConfig create(Project.NameKey projectName) {
-      return new ProjectConfig(projectName, getBaseConfig(sitePaths, allProjects, projectName));
+      return new ProjectConfig(
+          projectName,
+          projectName.equals(allProjectsName)
+              ? allProjectsConfigProvider.get(allProjectsName)
+              : Optional.empty(),
+          allProjectsName);
     }
 
     public ProjectConfig read(MetaDataUpdate update) throws IOException, ConfigInvalidException {
@@ -238,7 +240,8 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     }
   }
 
-  private final StoredConfig baseConfig;
+  private final Optional<StoredConfig> baseConfig;
+  private final AllProjectsName allProjectsName;
 
   private Project project;
   private AccountsSection accountsSection;
@@ -248,6 +251,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
   private Map<String, ContributorAgreement> contributorAgreements;
   private Map<String, NotifyConfig> notifySections;
   private Map<String, LabelType> labelSections;
+  private Map<String, SubmitRequirement> submitRequirementSections;
   private ConfiguredMimeTypes mimeTypes;
   private Map<Project.NameKey, SubscribeSection> subscribeSections;
   private Map<String, StoredCommentLinkInfo> commentLinkSections;
@@ -275,18 +279,40 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
             .setCheckReceivedObjects(checkReceivedObjects)
             .setExtensionPanelSections(extensionPanelSections);
     groupList.byUUID().values().forEach(g -> builder.addGroup(g));
-    accessSections.values().forEach(a -> builder.addAccessSection(a));
     contributorAgreements.values().forEach(c -> builder.addContributorAgreement(c));
     notifySections.values().forEach(n -> builder.addNotifySection(n));
     subscribeSections.values().forEach(s -> builder.addSubscribeSection(s));
     commentLinkSections.values().forEach(c -> builder.addCommentLinkSection(c));
     labelSections.values().forEach(l -> builder.addLabelSection(l));
+    submitRequirementSections.values().forEach(sr -> builder.addSubmitRequirementSection(sr));
     pluginConfigs
         .entrySet()
         .forEach(c -> builder.addPluginConfig(c.getKey(), c.getValue().toText()));
     projectLevelConfigs
         .entrySet()
         .forEach(c -> builder.addProjectLevelConfig(c.getKey(), c.getValue().toText()));
+
+    if (projectName.equals(allProjectsName)) {
+      // Filter out permissions that aren't allowed to be set on All-Projects
+      accessSections
+          .values()
+          .forEach(
+              a -> {
+                List<Permission.Builder> copy = new ArrayList<>();
+                for (Permission p : a.getPermissions()) {
+                  if (Permission.canBeOnAllProjects(a.getName(), p.getName())) {
+                    copy.add(p.toBuilder());
+                  }
+                }
+                AccessSection section =
+                    AccessSection.builder(a.getName())
+                        .modifyPermissions(permissions -> permissions.addAll(copy))
+                        .build();
+                builder.addAccessSection(section);
+              });
+    } else {
+      accessSections.values().forEach(a -> builder.addAccessSection(a));
+    }
     return builder.build();
   }
 
@@ -342,9 +368,13 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     requireNonNull(commentLinkSections.remove(name));
   }
 
-  private ProjectConfig(Project.NameKey projectName, @Nullable StoredConfig baseConfig) {
+  private ProjectConfig(
+      Project.NameKey projectName,
+      Optional<StoredConfig> baseConfig,
+      AllProjectsName allProjectsName) {
     this.projectName = projectName;
     this.baseConfig = baseConfig;
+    this.allProjectsName = allProjectsName;
   }
 
   public void load(Repository repo) throws IOException, ConfigInvalidException {
@@ -512,6 +542,14 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     return labelSections;
   }
 
+  public Map<String, SubmitRequirement> getSubmitRequirementSections() {
+    return submitRequirementSections;
+  }
+
+  public void upsertSubmitRequirement(SubmitRequirement requirement) {
+    submitRequirementSections.put(requirement.name(), requirement);
+  }
+
   /** Adds or replaces the given {@link LabelType} in this config. */
   public void upsertLabelType(LabelType labelType) {
     labelSections.put(labelType.getName(), labelType);
@@ -548,32 +586,32 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     groupList.renameGroup(uuid, newName);
   }
 
-  /** @return the group reference, if the group is used by at least one rule. */
+  /** Returns the group reference, if the group is used by at least one rule. */
   public GroupReference getGroup(AccountGroup.UUID uuid) {
     return groupList.byUUID(uuid);
   }
 
   /**
-   * @return the group reference corresponding to the specified group name if the group is used by
-   *     at least one rule or plugin value.
+   * Returns the group reference corresponding to the specified group name if the group is used by
+   * at least one rule or plugin value.
    */
   public GroupReference getGroup(String groupName) {
     return groupList.byName(groupName);
   }
 
   /**
-   * @return the project's rules.pl ObjectId, if present in the branch. Null if it doesn't exist.
+   * Returns the project's rules.pl ObjectId, if present in the branch. Null if it doesn't exist.
    */
   public ObjectId getRulesId() {
     return rulesId;
   }
 
-  /** @return the maxObjectSizeLimit configured on this project, or zero if not configured. */
+  /** Returns the maxObjectSizeLimit configured on this project, or zero if not configured. */
   public long getMaxObjectSizeLimit() {
     return maxObjectSizeLimit;
   }
 
-  /** @return the checkReceivedObjects for this project, default is true. */
+  /** Returns the checkReceivedObjects for this project, default is true. */
   public boolean getCheckReceivedObjects() {
     return checkReceivedObjects;
   }
@@ -615,8 +653,8 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
 
   @Override
   protected void onLoad() throws IOException, ConfigInvalidException {
-    if (baseConfig != null) {
-      baseConfig.load();
+    if (baseConfig.isPresent()) {
+      baseConfig.get().load();
     }
     readGroupList();
 
@@ -631,7 +669,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     if (rc.getStringList(ACCESS, null, KEY_INHERIT_FROM).length > 1) {
       // The config must not contain more than one parent to inherit from
       // as there is no guarantee which of the parents would be used then.
-      error(ValidationError.create(PROJECT_CONFIG, "Cannot inherit from multiple projects"));
+      error("Cannot inherit from multiple projects");
     }
     p.setParent(rc.getString(ACCESS, null, KEY_INHERIT_FROM));
 
@@ -661,6 +699,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     loadBranchOrderSection(rc);
     loadNotifySections(rc);
     loadLabelSections(rc);
+    loadSubmitRequirementSections(rc);
     loadCommentLinkSections(rc);
     loadSubscribeSections(rc);
     mimeTypes = ConfiguredMimeTypes.create(projectName.get(), rc);
@@ -683,10 +722,8 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
       String lower = name.toLowerCase();
       if (lowerNames.containsKey(lower)) {
         error(
-            ValidationError.create(
-                PROJECT_CONFIG,
-                String.format(
-                    "Extension Panels \"%s\" conflicts with \"%s\"", name, lowerNames.get(lower))));
+            String.format(
+                "Extension Panels \"%s\" conflicts with \"%s\"", name, lowerNames.get(lower)));
       }
       lowerNames.put(lower, name);
       extensionPanelSections.put(
@@ -712,26 +749,14 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
         ca.setAutoVerify(null);
       } else if (rules.size() > 1) {
         error(
-            ValidationError.create(
-                PROJECT_CONFIG,
-                "Invalid rule in "
-                    + CONTRIBUTOR_AGREEMENT
-                    + "."
-                    + name
-                    + "."
-                    + KEY_AUTO_VERIFY
-                    + ": at most one group may be set"));
+            String.format(
+                "Invalid rule in %s.%s.%s: at most one group may be set",
+                CONTRIBUTOR_AGREEMENT, name, KEY_AUTO_VERIFY));
       } else if (rules.get(0).getAction() != Action.ALLOW) {
         error(
-            ValidationError.create(
-                PROJECT_CONFIG,
-                "Invalid rule in "
-                    + CONTRIBUTOR_AGREEMENT
-                    + "."
-                    + name
-                    + "."
-                    + KEY_AUTO_VERIFY
-                    + ": the group must be allowed"));
+            String.format(
+                "Invalid rule in %s.%s.%s: the group must be allowed",
+                CONTRIBUTOR_AGREEMENT, name, KEY_AUTO_VERIFY));
       } else {
         ca.setAutoVerify(rules.get(0).getGroup());
       }
@@ -779,21 +804,16 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
           if (ref.getUUID() != null) {
             n.addGroup(ref);
           } else {
-            error(
-                ValidationError.create(
-                    PROJECT_CONFIG,
-                    "group \"" + ref.getName() + "\" not in " + GroupList.FILE_NAME));
+            error(String.format("group \"%s\" not in %s", ref.getName(), GroupList.FILE_NAME));
           }
         } else if (dst.startsWith("user ")) {
-          error(ValidationError.create(PROJECT_CONFIG, dst + " not supported"));
+          error(String.format("%s not supported", dst));
         } else {
           try {
             n.addAddress(Address.parse(dst));
           } catch (IllegalArgumentException err) {
             error(
-                ValidationError.create(
-                    PROJECT_CONFIG,
-                    "notify section \"" + sectionName + "\" has invalid email \"" + dst + "\""));
+                String.format("notify section \"%s\" has invalid email \"%s\"", sectionName, dst));
           }
         }
       }
@@ -854,7 +874,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     try {
       RefPattern.validateRegExp(refPattern);
     } catch (InvalidNameException e) {
-      error(ValidationError.create(PROJECT_CONFIG, "Invalid ref name: " + e.getMessage()));
+      error(String.format("Invalid ref name: %s", e.getMessage()));
       return false;
     }
     return true;
@@ -882,9 +902,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
         // to fail fast if any of the patterns are invalid.
         patterns.add(Pattern.compile(patternString).pattern());
       } catch (PatternSyntaxException e) {
-        error(
-            ValidationError.create(
-                PROJECT_CONFIG, "Invalid regular expression: " + e.getMessage()));
+        error(String.format("Invalid regular expression: %s", e.getMessage()));
         continue;
       }
     }
@@ -911,15 +929,11 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
         rule = PermissionRule.fromString(ruleString, useRange);
       } catch (IllegalArgumentException notRule) {
         error(
-            ValidationError.create(
-                PROJECT_CONFIG,
-                "Invalid rule in "
-                    + section
-                    + (subsection != null ? "." + subsection : "")
-                    + "."
-                    + varName
-                    + ": "
-                    + notRule.getMessage()));
+            String.format(
+                "Invalid rule in %s.%s: %s",
+                section + (subsection != null ? "." + subsection : ""),
+                varName,
+                notRule.getMessage()));
         continue;
       }
 
@@ -930,9 +944,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
         // all rules in the same file share the same GroupReference.
         //
         ref = groupList.resolve(rule.getGroup());
-        error(
-            ValidationError.create(
-                PROJECT_CONFIG, "group \"" + ref.getName() + "\" not in " + GroupList.FILE_NAME));
+        error(String.format("group \"%s\" not in %s", ref.getName(), GroupList.FILE_NAME));
       }
 
       perm.add(rule.toBuilder().setGroup(ref));
@@ -950,16 +962,56 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     return LabelValue.create(Shorts.checkedCast(PermissionRule.parseInt(parts.get(0))), valueText);
   }
 
+  private void loadSubmitRequirementSections(Config rc) {
+    Map<String, String> lowerNames = new HashMap<>();
+    submitRequirementSections = new LinkedHashMap<>();
+    for (String name : rc.getSubsections(SUBMIT_REQUIREMENT)) {
+      String lower = name.toLowerCase();
+      if (lowerNames.containsKey(lower)) {
+        error(
+            String.format(
+                "Submit requirement '%s' conflicts with '%s'.", name, lowerNames.get(lower)));
+        continue;
+      }
+      lowerNames.put(lower, name);
+      String description = rc.getString(SUBMIT_REQUIREMENT, name, KEY_SR_DESCRIPTION);
+      String appExpr = rc.getString(SUBMIT_REQUIREMENT, name, KEY_SR_APPLICABILITY_EXPRESSION);
+      String blockExpr = rc.getString(SUBMIT_REQUIREMENT, name, KEY_SR_SUBMITTABILITY_EXPRESSION);
+      String overrideExpr = rc.getString(SUBMIT_REQUIREMENT, name, KEY_SR_OVERRIDE_EXPRESSION);
+      boolean canInherit =
+          rc.getBoolean(SUBMIT_REQUIREMENT, name, KEY_SR_OVERRIDE_IN_CHILD_PROJECTS, false);
+
+      if (blockExpr == null) {
+        error(
+            String.format(
+                "Submit requirement '%s' does not define a submittability expression.", name));
+        continue;
+      }
+
+      // TODO(SR): add expressions validation. Expressions are stored as strings so we need to
+      // validate their syntax.
+
+      SubmitRequirement submitRequirement =
+          SubmitRequirement.builder()
+              .setName(name)
+              .setDescription(Optional.ofNullable(description))
+              .setApplicabilityExpression(SubmitRequirementExpression.of(appExpr))
+              .setSubmittabilityExpression(SubmitRequirementExpression.create(blockExpr))
+              .setOverrideExpression(SubmitRequirementExpression.of(overrideExpr))
+              .setAllowOverrideInChildProjects(canInherit)
+              .build();
+
+      submitRequirementSections.put(name, submitRequirement);
+    }
+  }
+
   private void loadLabelSections(Config rc) {
     Map<String, String> lowerNames = Maps.newHashMapWithExpectedSize(2);
     labelSections = new LinkedHashMap<>();
     for (String name : rc.getSubsections(LABEL)) {
       String lower = name.toLowerCase();
       if (lowerNames.containsKey(lower)) {
-        error(
-            ValidationError.create(
-                PROJECT_CONFIG,
-                String.format("Label \"%s\" conflicts with \"%s\"", name, lowerNames.get(lower))));
+        error(String.format("Label \"%s\" conflicts with \"%s\"", name, lowerNames.get(lower)));
       }
       lowerNames.put(lower, name);
 
@@ -971,18 +1023,13 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
           if (allValues.add(labelValue.getValue())) {
             values.add(labelValue);
           } else {
-            error(
-                ValidationError.create(
-                    PROJECT_CONFIG,
-                    String.format("Duplicate %s \"%s\" for label \"%s\"", KEY_VALUE, value, name)));
+            error(String.format("Duplicate %s \"%s\" for label \"%s\"", KEY_VALUE, value, name));
           }
         } catch (IllegalArgumentException notValue) {
           error(
-              ValidationError.create(
-                  PROJECT_CONFIG,
-                  String.format(
-                      "Invalid %s \"%s\" for label \"%s\": %s",
-                      KEY_VALUE, value, name, notValue.getMessage())));
+              String.format(
+                  "Invalid %s \"%s\" for label \"%s\": %s",
+                  KEY_VALUE, value, name, notValue.getMessage()));
         }
       }
 
@@ -990,7 +1037,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
       try {
         label = LabelType.builder(name, values);
       } catch (IllegalArgumentException badName) {
-        error(ValidationError.create(PROJECT_CONFIG, String.format("Invalid label \"%s\"", name)));
+        error(String.format("Invalid label \"%s\"", name));
         continue;
       }
 
@@ -1001,24 +1048,19 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
               : Optional.of(LabelFunction.MAX_WITH_BLOCK);
       if (!function.isPresent()) {
         error(
-            ValidationError.create(
-                PROJECT_CONFIG,
-                String.format(
-                    "Invalid %s for label \"%s\". Valid names are: %s",
-                    KEY_FUNCTION, name, Joiner.on(", ").join(LabelFunction.ALL.keySet()))));
+            String.format(
+                "Invalid %s for label \"%s\". Valid names are: %s",
+                KEY_FUNCTION, name, Joiner.on(", ").join(LabelFunction.ALL.keySet())));
       }
       label.setFunction(function.orElse(null));
+      label.setCopyCondition(rc.getString(LABEL, name, KEY_COPY_CONDITION));
 
       if (!values.isEmpty()) {
         short dv = (short) rc.getInt(LABEL, name, KEY_DEFAULT_VALUE, 0);
         if (isInRange(dv, values)) {
           label.setDefaultValue(dv);
         } else {
-          error(
-              ValidationError.create(
-                  PROJECT_CONFIG,
-                  String.format(
-                      "Invalid %s \"%s\" for label \"%s\"", KEY_DEFAULT_VALUE, dv, name)));
+          error(String.format("Invalid %s \"%s\" for label \"%s\"", KEY_DEFAULT_VALUE, dv, name));
         }
       }
       label.setAllowPostSubmit(
@@ -1067,18 +1109,13 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
           short copyValue = Shorts.checkedCast(PermissionRule.parseInt(value));
           if (!copyValues.add(copyValue)) {
             error(
-                ValidationError.create(
-                    PROJECT_CONFIG,
-                    String.format(
-                        "Duplicate %s \"%s\" for label \"%s\"", KEY_COPY_VALUE, value, name)));
+                String.format("Duplicate %s \"%s\" for label \"%s\"", KEY_COPY_VALUE, value, name));
           }
         } catch (IllegalArgumentException notValue) {
           error(
-              ValidationError.create(
-                  PROJECT_CONFIG,
-                  String.format(
-                      "Invalid %s \"%s\" for label \"%s\": %s",
-                      KEY_COPY_VALUE, value, name, notValue.getMessage())));
+              String.format(
+                  "Invalid %s \"%s\" for label \"%s\": %s",
+                  KEY_COPY_VALUE, value, name, notValue.getMessage()));
         }
       }
       label.setCopyValues(copyValues);
@@ -1113,18 +1150,14 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
         commentLinkSections.put(name, buildCommentLink(rc, name, false));
       } catch (PatternSyntaxException e) {
         error(
-            ValidationError.create(
-                PROJECT_CONFIG,
-                String.format(
-                    "Invalid pattern \"%s\" in commentlink.%s.match: %s",
-                    rc.getString(COMMENTLINK, name, KEY_MATCH), name, e.getMessage())));
+            String.format(
+                "Invalid pattern \"%s\" in commentlink.%s.match: %s",
+                rc.getString(COMMENTLINK, name, KEY_MATCH), name, e.getMessage()));
       } catch (IllegalArgumentException e) {
         error(
-            ValidationError.create(
-                PROJECT_CONFIG,
-                String.format(
-                    "Error in pattern \"%s\" in commentlink.%s.match: %s",
-                    rc.getString(COMMENTLINK, name, KEY_MATCH), name, e.getMessage())));
+            String.format(
+                "Error in pattern \"%s\" in commentlink.%s.match: %s",
+                rc.getString(COMMENTLINK, name, KEY_MATCH), name, e.getMessage()));
       }
     }
   }
@@ -1166,9 +1199,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
         if (groupName != null) {
           GroupReference ref = groupList.byName(groupName);
           if (ref == null) {
-            error(
-                ValidationError.create(
-                    PROJECT_CONFIG, "group \"" + groupName + "\" not in " + GroupList.FILE_NAME));
+            error(String.format("group \"%s\" not in %s", groupName, GroupList.FILE_NAME));
           }
           rc.setString(PLUGIN, plugin, name, value);
         }
@@ -1264,6 +1295,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     savePluginSections(rc, keepGroups);
     groupList.retainUUIDs(keepGroups);
     saveLabelSections(rc);
+    saveSubmitRequirementSections(rc);
     saveCommentLinkSections(rc);
     saveSubscribeSections(rc);
     saveBranchOrderSection(rc);
@@ -1596,6 +1628,11 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
         values.add(value.format().trim());
       }
       rc.setStringList(LABEL, name, KEY_VALUE, values);
+      if (label.getCopyCondition().isPresent()) {
+        rc.setString(LABEL, name, KEY_COPY_CONDITION, label.getCopyCondition().get());
+      } else {
+        rc.unset(LABEL, name, KEY_COPY_CONDITION);
+      }
 
       List<String> refPatterns = label.getRefPatterns();
       if (refPatterns != null && !refPatterns.isEmpty()) {
@@ -1607,6 +1644,45 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
 
     for (String name : toUnset) {
       rc.unsetSection(LABEL, name);
+    }
+  }
+
+  private void saveSubmitRequirementSections(Config rc) {
+    unsetSection(rc, SUBMIT_REQUIREMENT);
+
+    if (submitRequirementSections != null) {
+      for (Map.Entry<String, SubmitRequirement> entry : submitRequirementSections.entrySet()) {
+        String name = entry.getKey();
+        SubmitRequirement sr = entry.getValue();
+
+        if (sr.description().isPresent()) {
+          rc.setString(SUBMIT_REQUIREMENT, name, KEY_SR_DESCRIPTION, sr.description().get());
+        }
+        if (sr.applicabilityExpression().isPresent()) {
+          rc.setString(
+              SUBMIT_REQUIREMENT,
+              name,
+              KEY_SR_APPLICABILITY_EXPRESSION,
+              sr.applicabilityExpression().get().expressionString());
+        }
+        rc.setString(
+            SUBMIT_REQUIREMENT,
+            name,
+            KEY_SR_SUBMITTABILITY_EXPRESSION,
+            sr.submittabilityExpression().expressionString());
+        if (sr.overrideExpression().isPresent()) {
+          rc.setString(
+              SUBMIT_REQUIREMENT,
+              name,
+              KEY_SR_OVERRIDE_EXPRESSION,
+              sr.overrideExpression().get().expressionString());
+        }
+        rc.setBoolean(
+            SUBMIT_REQUIREMENT,
+            name,
+            KEY_SR_OVERRIDE_IN_CHILD_PROJECTS,
+            sr.allowOverrideInChildProjects());
+      }
     }
   }
 
@@ -1673,9 +1749,13 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     try {
       return rc.getEnum(section, subsection, name, defaultValue);
     } catch (IllegalArgumentException err) {
-      error(ValidationError.create(PROJECT_CONFIG, err.getMessage()));
+      error(err.getMessage());
       return defaultValue;
     }
+  }
+
+  private void error(String errorMessage) {
+    error(ValidationError.create(PROJECT_CONFIG, errorMessage));
   }
 
   @Override

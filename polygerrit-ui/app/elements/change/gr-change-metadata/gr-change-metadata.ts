@@ -15,9 +15,9 @@
  * limitations under the License.
  */
 import '../../../styles/shared-styles';
+import '../../../styles/gr-font-styles';
 import '../../../styles/gr-change-metadata-shared-styles';
 import '../../../styles/gr-change-view-integration-shared-styles';
-import '../../../styles/gr-voting-styles';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../plugins/gr-endpoint-param/gr-endpoint-param';
 import '../../plugins/gr-external-style/gr-external-style';
@@ -28,6 +28,7 @@ import '../../shared/gr-icons/gr-icons';
 import '../../shared/gr-limited-text/gr-limited-text';
 import '../../shared/gr-linked-chip/gr-linked-chip';
 import '../../shared/gr-tooltip-content/gr-tooltip-content';
+import '../gr-submit-requirements/gr-submit-requirements';
 import '../gr-change-requirements/gr-change-requirements';
 import '../gr-commit-info/gr-commit-info';
 import '../gr-reviewer-list/gr-reviewer-list';
@@ -51,6 +52,7 @@ import {
   AccountDetailInfo,
   AccountInfo,
   BranchName,
+  ChangeInfo,
   CommitId,
   CommitInfo,
   ElementPropertyDeepChange,
@@ -84,6 +86,9 @@ import {
   AutocompleteQuery,
   AutocompleteSuggestion,
 } from '../../shared/gr-autocomplete/gr-autocomplete';
+import {getRevertCreatedChangeIds} from '../../../utils/message-util';
+import {Interaction} from '../../../constants/reporting';
+import {KnownExperimentId} from '../../../services/flags/flags';
 
 const HASHTAG_ADD_MESSAGE = 'Add Hashtag';
 
@@ -136,6 +141,9 @@ export class GrChangeMetadata extends PolymerElement {
 
   @property({type: Object})
   change?: ParsedChangeInfo;
+
+  @property({type: Object})
+  revertedChange?: ChangeInfo;
 
   @property({type: Object, notify: true})
   labels?: LabelNameToInfoMap;
@@ -209,14 +217,21 @@ export class GrChangeMetadata extends PolymerElement {
   @property({type: Object})
   queryTopic?: AutocompleteQuery;
 
+  @property({type: Boolean})
+  _isSubmitRequirementsUiEnabled = false;
+
   restApiService = appContext.restApiService;
 
   private readonly reporting = appContext.reportingService;
 
-  /** @override */
-  ready() {
+  private readonly flagsService = appContext.flagsService;
+
+  override ready() {
     super.ready();
     this.queryTopic = (input: string) => this._getTopicSuggestions(input);
+    this._isSubmitRequirementsUiEnabled = this.flagsService.isEnabled(
+      KnownExperimentId.SUBMIT_REQUIREMENTS_UI
+    );
   }
 
   @observe('change.labels')
@@ -505,7 +520,7 @@ export class GrChangeMetadata extends PolymerElement {
     if (!this.change) {
       throw new Error('change must be set');
     }
-    const target = (dom(e) as EventApi).rootTarget as GrLinkedChip;
+    const target = e.composedPath()[0] as GrLinkedChip;
     target.disabled = true;
     this.restApiService
       .setChangeTopic(this.change._number)
@@ -577,6 +592,33 @@ export class GrChangeMetadata extends PolymerElement {
     return rev.commit;
   }
 
+  _getRevertSectionTitle(
+    _change?: ParsedChangeInfo,
+    revertedChange?: ChangeInfo
+  ) {
+    return revertedChange?.status === ChangeStatus.MERGED
+      ? 'Revert Submitted As'
+      : 'Revert Created As';
+  }
+
+  _showRevertCreatedAs(change?: ParsedChangeInfo) {
+    if (!change?.messages) return false;
+    return getRevertCreatedChangeIds(change.messages).length > 0;
+  }
+
+  _computeRevertCommit(change?: ParsedChangeInfo, revertedChange?: ChangeInfo) {
+    if (revertedChange?.current_revision && revertedChange?.revisions) {
+      return {
+        commit: this._computeMergedCommitInfo(
+          revertedChange.current_revision,
+          revertedChange.revisions
+        ),
+      };
+    }
+    if (!change?.messages) return undefined;
+    return {commit: getRevertCreatedChangeIds(change.messages)?.[0]};
+  }
+
   _computeShowAllLabelText(showAllSections: boolean) {
     if (showAllSections) {
       return 'Show less';
@@ -587,7 +629,7 @@ export class GrChangeMetadata extends PolymerElement {
 
   _onShowAllClick() {
     this._showAllSections = !this._showAllSections;
-    this.reporting.reportInteraction('toggle show all button', {
+    this.reporting.reportInteraction(Interaction.TOGGLE_SHOW_ALL_BUTTON, {
       sectionName: 'metadata',
       toState: this._showAllSections ? 'Show all' : 'Show less',
     });
@@ -679,9 +721,9 @@ export class GrChangeMetadata extends PolymerElement {
     }
     // Cannot use `this.$.ID` syntax because the element exists inside of a
     // dom-if.
-    (this.shadowRoot!.querySelector(
-      '.topicEditableLabel'
-    ) as GrEditableLabel).open();
+    (
+      this.shadowRoot!.querySelector('.topicEditableLabel') as GrEditableLabel
+    ).open();
   }
 
   _getReviewerSuggestionsProvider(change?: ParsedChangeInfo) {
@@ -709,6 +751,16 @@ export class GrChangeMetadata extends PolymerElement {
             return {name: topic, value: topic};
           })
       );
+  }
+
+  _showNewSubmitRequirements(change?: ParsedChangeInfo) {
+    if (!this._isSubmitRequirementsUiEnabled) return false;
+    return (change?.submit_requirements ?? []).length > 0;
+  }
+
+  _showNewSubmitRequirementWarning(change?: ParsedChangeInfo) {
+    if (!this._isSubmitRequirementsUiEnabled) return false;
+    return (change?.submit_requirements ?? []).length === 0;
   }
 }
 

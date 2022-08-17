@@ -6,8 +6,6 @@ GUAVA_BIN_SHA1 = "00d0c3ce2311c9e36e73228da25a6e99b2ab826f"
 
 GUAVA_DOC_URL = "https://google.github.io/guava/releases/" + GUAVA_VERSION + "/api/docs/"
 
-TESTCONTAINERS_VERSION = "1.15.1"
-
 def declare_nongoogle_deps():
     """loads dependencies that are not used at Google.
 
@@ -99,20 +97,6 @@ def declare_nongoogle_deps():
         sha1 = "22799941ec7bd5170ea890363cb968e400a69c41",
     )
 
-    # elasticsearch-rest-client explicitly depends on this version
-    maven_jar(
-        name = "httpasyncclient",
-        artifact = "org.apache.httpcomponents:httpasyncclient:4.1.4",
-        sha1 = "f3a3240681faae3fa46b573a4c7e50cec9db0d86",
-    )
-
-    # elasticsearch-rest-client explicitly depends on this version
-    maven_jar(
-        name = "httpcore-nio",
-        artifact = "org.apache.httpcomponents:httpcore-nio:4.4.12",
-        sha1 = "84cd29eca842f31db02987cfedea245af020198b",
-    )
-
     maven_jar(
         name = "openid-consumer",
         artifact = "org.openid4java:openid4java:1.0.0",
@@ -139,12 +123,6 @@ def declare_nongoogle_deps():
     )
 
     maven_jar(
-        name = "jackson-core",
-        artifact = "com.fasterxml.jackson.core:jackson-core:2.12.0",
-        sha1 = "afe52c6947d9939170da7989612cef544115511a",
-    )
-
-    maven_jar(
         name = "commons-io",
         artifact = "commons-io:commons-io:2.4",
         sha1 = "b1b6ea3b7e4aa4f492509a4952029cd8e48019ad",
@@ -153,24 +131,24 @@ def declare_nongoogle_deps():
     # Google internal dependencies: these are developed at Google, so there is
     # no concern about version skew.
 
-    FLOGGER_VERS = "0.5.1"
+    FLOGGER_VERS = "0.6"
 
     maven_jar(
         name = "flogger",
         artifact = "com.google.flogger:flogger:" + FLOGGER_VERS,
-        sha1 = "71d1e2cef9cc604800825583df56b8ef5c053f14",
+        sha1 = "155dc6e303a58f7bbff5d2cd1a259de86827f4fe",
     )
 
     maven_jar(
         name = "flogger-log4j-backend",
         artifact = "com.google.flogger:flogger-log4j-backend:" + FLOGGER_VERS,
-        sha1 = "5e2794b75c88223f263f1c1a9d7ea51e2dc45732",
+        sha1 = "9743841bf10309163effd8ddf882b5d5190cc9d9",
     )
 
     maven_jar(
         name = "flogger-system-backend",
         artifact = "com.google.flogger:flogger-system-backend:" + FLOGGER_VERS,
-        sha1 = "b66d3bedb14da604828a8693bb24fd78e36b0e9e",
+        sha1 = "0f0ccf8923c6c315f2f57b108bcc6e46ccd88777",
     )
 
     maven_jar(
@@ -219,52 +197,6 @@ def declare_nongoogle_deps():
         sha1 = "dc13ae4faca6df981fc7aeb5a522d9db446d5d50",
     )
 
-    DOCKER_JAVA_VERS = "3.2.7"
-
-    maven_jar(
-        name = "docker-java-api",
-        artifact = "com.github.docker-java:docker-java-api:" + DOCKER_JAVA_VERS,
-        sha1 = "81408fc988c229ea11354fee9902c47842343f04",
-    )
-
-    maven_jar(
-        name = "docker-java-transport",
-        artifact = "com.github.docker-java:docker-java-transport:" + DOCKER_JAVA_VERS,
-        sha1 = "315903a129f530422747efc163dd255f0fa2555e",
-    )
-
-    # https://github.com/docker-java/docker-java/blob/3.2.7/pom.xml#L61
-    # <=> DOCKER_JAVA_VERS
-    maven_jar(
-        name = "jackson-annotations",
-        artifact = "com.fasterxml.jackson.core:jackson-annotations:2.10.3",
-        sha1 = "0f63b3b1da563767d04d2e4d3fc1ae0cdeffebe7",
-    )
-
-    maven_jar(
-        name = "testcontainers",
-        artifact = "org.testcontainers:testcontainers:" + TESTCONTAINERS_VERSION,
-        sha1 = "91e6dfab8f141f77c6a0dd147a94bd186993a22c",
-    )
-
-    maven_jar(
-        name = "duct-tape",
-        artifact = "org.rnorth.duct-tape:duct-tape:1.0.8",
-        sha1 = "92edc22a9ab2f3e17c9bf700aaee377d50e8b530",
-    )
-
-    maven_jar(
-        name = "visible-assertions",
-        artifact = "org.rnorth.visible-assertions:visible-assertions:2.1.2",
-        sha1 = "20d31a578030ec8e941888537267d3123c2ad1c1",
-    )
-
-    maven_jar(
-        name = "jna",
-        artifact = "net.java.dev.jna:jna:5.5.0",
-        sha1 = "0e0845217c4907822403912ad6828d8e0b256208",
-    )
-
     maven_jar(
         name = "jimfs",
         artifact = "com.google.jimfs:jimfs:1.2",
@@ -295,6 +227,38 @@ def declare_nongoogle_deps():
         name = "truth-proto-extension",
         artifact = "com.google.truth.extensions:truth-proto-extension:" + TRUTH_VERS,
         sha1 = "64cba89cf87c1d84cb8c81d06f0b9c482f10b4dc",
+    )
+
+    LUCENE_VERS = "6.6.5"
+
+    maven_jar(
+        name = "lucene-core",
+        artifact = "org.apache.lucene:lucene-core:" + LUCENE_VERS,
+        sha1 = "2983f80b1037e098209657b0ca9176827892d0c0",
+    )
+
+    maven_jar(
+        name = "lucene-analyzers-common",
+        artifact = "org.apache.lucene:lucene-analyzers-common:" + LUCENE_VERS,
+        sha1 = "6094f91071d90570b7f5f8ce481d5de7d2d2e9d5",
+    )
+
+    maven_jar(
+        name = "backward-codecs",
+        artifact = "org.apache.lucene:lucene-backward-codecs:" + LUCENE_VERS,
+        sha1 = "460a19e8d1aa7d31e9614cf528a6cb508c9e823d",
+    )
+
+    maven_jar(
+        name = "lucene-misc",
+        artifact = "org.apache.lucene:lucene-misc:" + LUCENE_VERS,
+        sha1 = "ce3a1b7b6a92b9af30791356a4bd46d1cea6cc1e",
+    )
+
+    maven_jar(
+        name = "lucene-queryparser",
+        artifact = "org.apache.lucene:lucene-queryparser:" + LUCENE_VERS,
+        sha1 = "2db9ca0086a4b8e0b9bc9f08a9b420303168e37c",
     )
 
     # JGit's transitive dependencies

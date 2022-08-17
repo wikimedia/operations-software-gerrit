@@ -218,7 +218,7 @@ or if they are an administrator.
 ** [[plugin-actions]]Further actions may be available if plugins are installed.
 
 +
-image::images/user-review-ui-change-screen-change-info-actions.png[width=600, link="images/user-review-ui-change-screen-change-info-actions.png"]
+image::images/user-review-ui-change-screen-change-info-actions.png[width=400, link="images/user-review-ui-change-screen-change-info-actions.png"]
 
 - [[labels]]Labels & Votes:
 +
@@ -251,6 +251,7 @@ information and the committer information.
 The list of commits that are being integrated into the destination
 branch by submitting the merge commit.
 
+
 [[patch-sets]]
 === Patch Sets
 
@@ -258,7 +259,7 @@ The change screen only presents one patch set at a time. Which patch
 set is currently viewed can be seen from the `Patch Sets` drop-down
 panel in the change header.
 
-image::images/user-review-ui-change-screen-patch-sets.png[width=487, link="images/user-review-ui-change-screen-patch-sets.png"]
+image::images/user-review-ui-change-screen-patch-sets.png[width=300, link="images/user-review-ui-change-screen-patch-sets.png"]
 
 
 [[download]]
@@ -417,7 +418,7 @@ The `Reply...` button in the change header allows to reply to the
 currently viewed patch set; one can add a summary comment, publish
 inline draft comments, and vote on the labels.
 
-image::images/gwt-user-review-ui-change-screen-reply.png[width=800, link="images/gwt-user-review-ui-change-screen-reply.png"]
+image::images/user-review-ui-change-screen-reply.png[width=800, link="images/user-review-ui-change-screen-reply.png"]
 
 Clicking on the `Reply...` button opens a popup panel.
 
@@ -428,11 +429,8 @@ indented lines preformatted, lines starting with "- " or "* " as list
 items, and lines starting with "> " as block quotes (also see replying to
 link:#reply-to-message[messages] and link:#reply-inline-comment[inline comments]).
 
-Note that you can set the text and tooltip of the button in
-link:config-gerrit.html#change.replyLabel[gerrit.config].
-
 [[vote]]
-If the current patch set is viewed, radio buttons are displayed for
+If the current patch set is viewed, buttons are displayed for
 each label on which the user is allowed to vote. Voting on non-current
 patch sets is not possible.
 
@@ -442,8 +440,6 @@ are links to navigate to the inline comments which can be used if a
 comment needs to be edited.
 
 The `Post` button publishes the comments and the votes.
-
-image::images/gwt-user-review-ui-change-screen-replying.png[width=800, link="images/gwt-user-review-ui-change-screen-replying.png"]
 
 [[quick-approve]]
 If a user can approve a label that is still required, a quick approve
@@ -462,7 +458,7 @@ Using the quick approve button also publishes all inline draft
 comments; a summary comment is only added if the reply popup panel is
 open when the quick approve button is clicked.
 
-image::images/user-review-ui-change-screen-quick-approve.png[width=800, link="images/gwt-user-review-ui-change-screen-quick-approve.png"]
+image::images/user-review-ui-change-screen-quick-approve.png[width=800, link="images/user-review-ui-change-screen-quick-approve.png"]
 
 [[history]]
 === History
@@ -472,32 +468,6 @@ The history of the change can be seen in the lower part of the screen.
 The history contains messages for all kinds of change updates, e.g. a
 message is added when a new patch set is uploaded or when a review was
 done.
-
-Messages with new comments from other users, that were published after
-the current user last reviewed this change, are automatically expanded.
-
-image::images/gwt-user-review-ui-change-screen-history.png[width=800, link="images/gwt-user-review-ui-change-screen-history.png"]
-
-[[reply-to-message]]
-It is possible to directly reply to a change message by clicking on the
-reply icon in the right upper corner of a change message. This opens
-the reply popup panel and prefills the text box with the quoted comment.
-Then the reply can be written below the quoted comment or inserted
-inline. Lines starting with "> " will be rendered as a block quote.
-Please note that for a correct rendering it is important to leave a blank
-line between a quoted block and the reply to it.
-
-image::images/gwt-user-review-ui-change-screen-reply-to-comment.png[width=800, link="images/gwt-user-review-ui-change-screen-reply-to-comment.png"]
-
-[[inline-comments-in-history]]
-Inline comments are directly displayed in the change history and there
-are links to navigate to the inline comments.
-
-image::images/gwt-user-review-ui-change-screen-inline-comments.png[width=800, link="images/gwt-user-review-ui-change-screen-inline-comments.png"]
-
-[[expand-all]]
-The `Expand All` button expands all messages; the `Collapse All` button
-collapses all messages.
 
 [[update-notification]]
 === Update Notification
@@ -510,16 +480,16 @@ The polling frequency depends on the server configuration; by default
 it is 30 seconds. Polling may also be completely disabled by the
 administrator.
 
-image::images/gwt-user-review-ui-change-screen-change-update.png[width=800, link="images/gwt-user-review-ui-change-screen-change-update.png"]
+image::images/user-review-ui-change-screen-change-update.png[width=400, link="images/user-review-ui-change-screen-change-update.png"]
 
 [[plugin-extensions]]
 === Plugin Extensions
 
-Gerrit plugins may extend the change screen; they can add buttons for
-additional actions to the change info block and display arbitrary UI
-controls below the change info block.
+Gerrit plugins may extend the change screen. Java plugins in the
+backend can add additional actions to the triple-dot menu block.
+Frontend plugins can change the UI controls in arbitrary ways.
 
-image::images/gwt-user-review-ui-change-screen-plugin-extensions.png[width=800, link="images/gwt-user-review-ui-change-screen-plugin-extensions.png"]
+image::images/user-review-ui-change-screen-plugin-extensions.png[width=300, link="images/user-review-ui-change-screen-plugin-extensions.png"]
 
 [[side-by-side]]
 == Side-by-Side Diff Screen
@@ -530,17 +500,8 @@ displayed on the right side of the screen.
 
 This screen allows to review a patch and to comment on it.
 
-image::images/gwt-user-review-ui-side-by-side-diff-screen.png[width=800, link="images/gwt-user-review-ui-side-by-side-diff-screen.png"]
+image::images/user-review-ui-side-by-side-diff-screen.png[width=800, link="images/user-review-ui-side-by-side-diff-screen.png"]
 
-[[side-by-side-header]]
-In the screen header the project name and the name of the viewed patch
-file are shown.
-
-If a Git web browser is configured on the server, the project name and
-the file path are displayed as links to the project and the folder in
-the Git web browser.
-
-image::images/gwt-user-review-ui-side-by-side-diff-screen-project-and-file.png[width=800, link="images/gwt-user-review-ui-side-by-side-diff-screen-project-and-file.png"]
 
 [[side-by-side-mark-reviewed]]
 The checkbox in front of the file name allows the
@@ -548,7 +509,7 @@ patch to be marked as reviewed. The link:#mark-reviewed[Mark Reviewed]
 diff preference allows to control whether the files should be
 automatically marked as reviewed when they are viewed.
 
-image::images/user-review-ui-side-by-side-diff-screen-reviewed.png[width=800, link="images/gwt-user-review-ui-side-by-side-diff-screen-reviewed.png"]
+image::images/user-review-ui-side-by-side-diff-screen-reviewed.png[width=800, link="images/user-review-ui-side-by-side-diff-screen-reviewed.png"]
 
 [[patch-set-selection]]
 In the header, on each side, the list of patch sets is shown. Clicking
@@ -568,34 +529,20 @@ diff against its base; reviewers that have reviewed an old patch
 version before, may see what has changed since that version by
 comparing the old patch against the current patch.
 
-image::images/gwt-user-review-ui-side-by-side-diff-screen-patch-sets.png[width=800, link="images/gwt-user-review-ui-side-by-side-diff-screen-patch-sets.png"]
+image::images/user-review-ui-side-by-side-diff-screen-patch-sets.png[width=400, link="images/user-review-ui-side-by-side-diff-screen-patch-sets.png"]
 
 [[download-file]]
 The download icon next to the patch set list allows to download the
 patch. Unless the mime type of the file is configured as safe, the
 download file is a zip archive that contains the patch file.
 
-[[no-differences]]
-If the compared patches are identical, this is highlighted by a red
-`No Differences` label in the screen header.
-
-image::images/gwt-user-review-ui-side-by-side-diff-screen-no-differences.png[width=800, link="images/gwt-user-review-ui-side-by-side-diff-screen-no-differences.png"]
 
 [[side-by-side-rename]]
 If a file was renamed, the old and new file paths are shown in the
 header together with a similarity index that shows how much of the file
 content is unmodified.
 
-image::images/gwt-user-review-ui-side-by-side-diff-screen-rename.png[width=800, link="images/gwt-user-review-ui-side-by-side-diff-screen-rename.png"]
-
-[[navigation]]
-For navigating between the patches in a patch set there are navigation
-buttons on the right side of the screen header. The left arrow button
-navigates to the previous patch; the right arrow button navigates to
-the next patch. The arrow up button leads back to the change screen. In
-all cases the selection for the patch set comparison is kept.
-
-image::images/gwt-user-review-ui-side-by-side-diff-screen-navigation.png[width=800, link="images/gwt-user-review-ui-side-by-side-diff-screen-navigation.png"]
+image::images/user-review-ui-side-by-side-diff-screen-rename.png[width=400, link="images/user-review-ui-side-by-side-diff-screen-rename.png"]
 
 [[inline-comments]]
 === Inline Comments
@@ -611,26 +558,9 @@ Code blocks with comments may overlap. This means it is possible to
 attach several comments to the same code.
 
 [[line-links]]
-The lines of the patch file are linkable. To link to a certain line in
-the patch file, '@<line-number>' must be appended to the patch link,
-e.g. `http://host:8080/#/c/56857/2/Documentation/user-review-ui.txt@665`.
-To link to a line in the old file version, '@a<line-number>' must be
-appended to the patch link. These links can be used to directly link to
-certain inline comments.
-
-If the diff preference link:#expand-all-comments[Expand All Comments]
-is set to `Expand`, all inline comments will be automatically expanded.
-
-image::images/gwt-user-review-ui-side-by-side-diff-screen-inline-comments.png[width=800, link="images/gwt-user-review-ui-side-by-side-diff-screen-inline-comments.png"]
-
-[[comment]]
-In the header of the comment box, the name of the comment author and
-the timestamp of the comment are shown. If avatars are configured on
-the server, the avatar image of the comment author is displayed in the
-top left corner. Below the actual comment there are buttons to reply to
-the comment.
-
-image::images/gwt-user-review-ui-side-by-side-diff-screen-comment-box.png[width=800, link="images/gwt-user-review-ui-side-by-side-diff-screen-comment-box.png"]
+The lines of the patch file are linkable: simply append
+'#<linenumber>' to the URL, or click on the line-number. This not only
+opens a draft comment box, but also sets the URL fragment.
 
 [[reply-inline-comment]]
 Clicking on the `Reply` button opens an editor to type the reply.
@@ -640,38 +570,25 @@ comment that should be quoted and prefixing every line by "> ". Please
 note that for a correct rendering it is important to leave a blank line
 between a quoted block and the reply to it.
 
-Clicking on the `Save` button saves the comment as a draft. To make it
-visible to other users it must be published from the change screen by
-link:#reply[replying] to the change.
+image::images/user-review-ui-side-by-side-diff-screen-inline-comments.png[width=800, link="images/user-review-ui-side-by-side-diff-screen-inline-comments.png"]
 
-The `Cancel` button cancels the editing and discards any changes to the
-draft comment.
-
-Clicking on the `Discard` button deletes the inline draft comment.
-
-image::images/gwt-user-review-ui-side-by-side-diff-screen-comment-reply.png[width=800, link="images/gwt-user-review-ui-side-by-side-diff-screen-comment-reply.png"]
-
-[[draft-inline-comment]]
-Draft comments are marked by the text "Draft" in the header in the
-place of the comment author.
-
-A draft comment can be edited by clicking on the `Edit` button, or
-deleted by clicking on the `Discard` button.
-
-image::images/gwt-user-review-ui-side-by-side-diff-screen-comment-edit.png[width=800, link="images/gwt-user-review-ui-side-by-side-diff-screen-comment-edit.png"]
+Comments are first saved as drafts, and you can revisit the drafts as
+you read through code review. Finally, they should be published by
+clicking the "Reply".
 
 [[done]]
-Clicking on the `Done` button is a quick way to reply with "Done" to a
-comment. This is used to mark a comment as addressed by a follow-up
-patch set.
+Comments can be unresolved (something should be changed) or resolved
+(informational). If you have addressed an unresolved comment in a next
+patchset, you can quickly resolve the comment by clicking "Done" (if it was
+resolved in a next patchset) or "Ack" (if you acknowledge the comment,
+but don't want to make changes).
 
-image::images/gwt-user-review-ui-side-by-side-diff-screen-replied-done.png[width=800, link="images/gwt-user-review-ui-side-by-side-diff-screen-replied-done.png"]
+image::images/user-review-ui-side-by-side-diff-screen-replied-done.png[width=400, link="images/user-review-ui-side-by-side-diff-screen-replied-done.png"]
 
 [[add-inline-comment]]
 To add a new inline comment there are several possibilities:
 
 - select a code block and press 'c'
-- select a code block and click on the popup comment icon
 - go to a line, by clicking on it or by link:#key-navigation[key
   navigation], and press 'c'
 - click on a line number
@@ -686,23 +603,12 @@ frequently used methods are:
 ** triple-click on a line to select it
 ** triple-click and drag with the mouse to select a code block line-wise
 
-- by keys (the same keys that are used for visual selection in Vim):
-** press 'v' + arrow keys (or 'h', 'j', 'k', 'l') to select a block
-** press 'V' + arrow keys (or 'j', 'k') to select a code block line-wise
-** type 'bvw' to select a word
-
-image::images/gwt-user-review-ui-side-by-side-diff-screen-comment.png[width=800, link="images/gwt-user-review-ui-side-by-side-diff-screen-comment.png"]
-
 For typing the new comment, a new comment box is shown under the code
 that is commented.
 
-Clicking on the `Save` button saves the new comment as a draft. To make
-it visible to other users it must be published from the change screen
-by link:#reply[replying] to the change.
-
-Clicking on the `Discard` button deletes the new comment.
-
-image::images/gwt-user-review-ui-side-by-side-diff-screen-commented.png[width=800, link="images/gwt-user-review-ui-side-by-side-diff-screen-commented.png"]
+Clicking on the `Save` button saves the new comment as a draft. To
+make it visible to other users it must be published from the change
+screen by link:#reply[replying] to the change.
 
 [[file-level-comments]]
 === File Level Comments
@@ -710,7 +616,7 @@ image::images/gwt-user-review-ui-side-by-side-diff-screen-commented.png[width=80
 File level comments are added by clicking the 'File' header at the top
 of the file.
 
-image::images/user-review-ui-side-by-side-diff-screen-file-level-comment.png[width=800, link="images/gwt-user-review-ui-side-by-side-diff-screen-file-level-comment.png"]
+image::images/user-review-ui-side-by-side-diff-screen-file-level-comment.png[width=400, link="images/user-review-ui-side-by-side-diff-screen-file-level-comment.png"]
 
 [[diff-preferences]]
 === Diff Preferences
@@ -720,7 +626,7 @@ rendered. Users can configure their preferences in the diff
 preferences. The diff preferences can be accessed by clicking on the
 settings icon in the screen header.
 
-image::images/user-review-ui-side-by-side-diff-screen-preferences.png[width=800, link="images/gwt-user-review-ui-side-by-side-diff-screen-preferences.png"]
+image::images/user-review-ui-side-by-side-diff-screen-preferences.png[width=800, link="images/user-review-ui-side-by-side-diff-screen-preferences.png"]
 
 The following diff preferences can be configured:
 
@@ -767,7 +673,7 @@ block of skipped lines.
 If many lines are skipped there are additional links to expand the
 context by ten lines before and after the skipped block.
 +
-image::images/user-review-ui-side-by-side-diff-screen-expand-skipped-lines.png[width=800, link="images/gwt-user-review-ui-side-by-side-diff-screen-expand-skipped-lines.png"]
+image::images/user-review-ui-side-by-side-diff-screen-expand-skipped-lines.png[width=800, link="images/user-review-ui-side-by-side-diff-screen-expand-skipped-lines.png"]
 
 - [[syntax-highlighting]]`Syntax Highlighting`:
 +
@@ -797,7 +703,7 @@ most actions can be controlled by keyboard shortcuts. Typing `?` opens
 a popup that shows a list of available keyboard shortcuts.
 
 
-image::images/user-review-ui-change-screen-keyboard-shortcuts.png[width=800, link="images/gwt-user-review-ui-change-screen-keyboard-shortcuts.png"]
+image::images/user-review-ui-change-screen-keyboard-shortcuts.png[width=800, link="images/user-review-ui-change-screen-keyboard-shortcuts.png"]
 
 
 In addition, Vim-like commands can be used to link:#key-navigation[

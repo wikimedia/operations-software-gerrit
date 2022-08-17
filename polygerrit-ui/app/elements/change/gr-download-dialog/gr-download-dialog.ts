@@ -14,18 +14,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import '../../../styles/gr-font-styles';
 import '../../../styles/shared-styles';
 import '../../shared/gr-download-commands/gr-download-commands';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-download-dialog_html';
 import {changeBaseURL, getRevisionKey} from '../../../utils/change-util';
 import {customElement, property, computed, observe} from '@polymer/decorators';
-import {ChangeInfo, ServerInfo, PatchSetNum} from '../../../types/common';
-import {RevisionInfo} from '../../shared/revision-info/revision-info';
+import {
+  ChangeInfo,
+  DownloadInfo,
+  PatchSetNum,
+  RevisionInfo,
+} from '../../../types/common';
 import {GrDownloadCommands} from '../../shared/gr-download-commands/gr-download-commands';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {hasOwnProperty} from '../../../utils/common-util';
 import {GrOverlayStops} from '../../shared/gr-overlay/gr-overlay';
+import {fireAlert, fireEvent} from '../../../utils/event-util';
+import {addShortcut} from '../../../utils/dom-util';
 
 export interface GrDownloadDialog {
   $: {
@@ -51,13 +58,31 @@ export class GrDownloadDialog extends PolymerElement {
   change: ChangeInfo | undefined;
 
   @property({type: Object})
-  config?: ServerInfo;
+  config?: DownloadInfo;
 
   @property({type: String})
   patchNum: PatchSetNum | undefined;
 
   @property({type: String})
   _selectedScheme?: string;
+
+  /** Called in disconnectedCallback. */
+  private cleanups: (() => void)[] = [];
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    for (const cleanup of this.cleanups) cleanup();
+    this.cleanups = [];
+  }
+
+  override connectedCallback() {
+    super.connectedCallback();
+    for (const key of ['1', '2', '3', '4', '5']) {
+      this.cleanups.push(
+        addShortcut(this, {key}, e => this._handleNumberKey(e))
+      );
+    }
+  }
 
   @computed('change', 'patchNum')
   get _schemes() {
@@ -78,13 +103,26 @@ export class GrDownloadDialog extends PolymerElement {
     return [];
   }
 
-  /** @override */
-  ready() {
+  _handleNumberKey(e: KeyboardEvent) {
+    const index = Number(e.key) - 1;
+    const commands = this._computeDownloadCommands(
+      this.change,
+      this.patchNum,
+      this._selectedScheme
+    );
+    if (index > commands.length) return;
+    navigator.clipboard.writeText(commands[index].command).then(() => {
+      fireAlert(this, `${commands[index].title} command copied to clipboard`);
+      fireEvent(this, 'close');
+    });
+  }
+
+  override ready() {
     super.ready();
     this._ensureAttribute('role', 'dialog');
   }
 
-  focus() {
+  override focus() {
     if (this._schemes.length) {
       this.$.downloadCommands.focusOnCopy();
     } else {
@@ -209,12 +247,7 @@ export class GrDownloadDialog extends PolymerElement {
   _handleCloseTap(e: Event) {
     e.preventDefault();
     e.stopPropagation();
-    this.dispatchEvent(
-      new CustomEvent('close', {
-        composed: true,
-        bubbles: false,
-      })
-    );
+    fireEvent(this, 'close');
   }
 
   @observe('_schemes')

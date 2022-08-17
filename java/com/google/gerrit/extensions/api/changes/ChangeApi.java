@@ -29,6 +29,8 @@ import com.google.gerrit.extensions.common.MergePatchSetInput;
 import com.google.gerrit.extensions.common.PureRevertInfo;
 import com.google.gerrit.extensions.common.RevertSubmissionInfo;
 import com.google.gerrit.extensions.common.RobotCommentInfo;
+import com.google.gerrit.extensions.common.SubmitRequirementInput;
+import com.google.gerrit.extensions.common.SubmitRequirementResultInfo;
 import com.google.gerrit.extensions.common.SuggestedReviewerInfo;
 import com.google.gerrit.extensions.restapi.NotImplementedException;
 import com.google.gerrit.extensions.restapi.RestApiException;
@@ -140,14 +142,6 @@ public interface ChangeApi {
   boolean ignored() throws RestApiException;
 
   /**
-   * Mark this change as reviewed/unreviewed.
-   *
-   * @param reviewed flag to decide if this change should be marked as reviewed ({@code true}) or
-   *     unreviewed ({@code false})
-   */
-  void markAsReviewed(boolean reviewed) throws RestApiException;
-
-  /**
    * Create a new change that reverts this change.
    *
    * @see Changes#id(int)
@@ -205,13 +199,13 @@ public interface ChangeApi {
 
   IncludedInInfo includedIn() throws RestApiException;
 
-  default AddReviewerResult addReviewer(String reviewer) throws RestApiException {
-    AddReviewerInput in = new AddReviewerInput();
+  default ReviewerResult addReviewer(String reviewer) throws RestApiException {
+    ReviewerInput in = new ReviewerInput();
     in.reviewer = reviewer;
     return addReviewer(in);
   }
 
-  AddReviewerResult addReviewer(AddReviewerInput in) throws RestApiException;
+  ReviewerResult addReviewer(ReviewerInput in) throws RestApiException;
 
   SuggestedReviewersRequest suggestReviewers() throws RestApiException;
 
@@ -332,7 +326,6 @@ public interface ChangeApi {
    * Get hashtags on a change.
    *
    * @return hashtags
-   * @throws RestApiException
    */
   Set<String> getHashtags() throws RestApiException;
 
@@ -367,7 +360,6 @@ public interface ChangeApi {
    *
    * @return comments in a map keyed by path; comments have the {@code revision} field set to
    *     indicate their patch set.
-   * @throws RestApiException
    * @deprecated Callers should use {@link #commentsRequest()} instead
    */
   @Deprecated
@@ -380,7 +372,6 @@ public interface ChangeApi {
    *
    * @return comments as a list; comments have the {@code revision} field set to indicate their
    *     patch set.
-   * @throws RestApiException
    * @deprecated Callers should use {@link #commentsRequest()} instead
    */
   @Deprecated
@@ -401,7 +392,6 @@ public interface ChangeApi {
    *
    * @return robot comments in a map keyed by path; robot comments have the {@code revision} field
    *     set to indicate their patch set.
-   * @throws RestApiException
    */
   Map<String, List<RobotCommentInfo>> robotComments() throws RestApiException;
 
@@ -410,7 +400,6 @@ public interface ChangeApi {
    *
    * @return drafts in a map keyed by path; comments have the {@code revision} field set to indicate
    *     their patch set.
-   * @throws RestApiException
    */
   default Map<String, List<CommentInfo>> drafts() throws RestApiException {
     return draftsRequest().get();
@@ -421,7 +410,6 @@ public interface ChangeApi {
    *
    * @return drafts as a list; comments have the {@code revision} field set to indicate their patch
    *     set.
-   * @throws RestApiException
    */
   default List<CommentInfo> draftsAsList() throws RestApiException {
     return draftsRequest().getAsList();
@@ -439,6 +427,10 @@ public interface ChangeApi {
 
   ChangeInfo check(FixInput fix) throws RestApiException;
 
+  /** Returns the result of evaluating the {@link SubmitRequirementInput} input on the change. */
+  SubmitRequirementResultInfo checkSubmitRequirement(SubmitRequirementInput input)
+      throws RestApiException;
+
   void index() throws RestApiException;
 
   /** Check if this change is a pure revert of the change stored in revertOf. */
@@ -451,7 +443,6 @@ public interface ChangeApi {
    * Get all messages of a change with detailed account info.
    *
    * @return a list of messages sorted by their creation time.
-   * @throws RestApiException
    */
   List<ChangeMessageInfo> messages() throws RestApiException;
 
@@ -474,7 +465,6 @@ public interface ChangeApi {
      *
      * @return comments in a map keyed by path; comments have the {@code revision} field set to
      *     indicate their patch set.
-     * @throws RestApiException
      */
     public abstract Map<String, List<CommentInfo>> get() throws RestApiException;
 
@@ -643,7 +633,7 @@ public interface ChangeApi {
     }
 
     @Override
-    public AddReviewerResult addReviewer(AddReviewerInput in) throws RestApiException {
+    public ReviewerResult addReviewer(ReviewerInput in) throws RestApiException {
       throw new NotImplementedException();
     }
 
@@ -777,6 +767,12 @@ public interface ChangeApi {
     }
 
     @Override
+    public SubmitRequirementResultInfo checkSubmitRequirement(SubmitRequirementInput input)
+        throws RestApiException {
+      throw new NotImplementedException();
+    }
+
+    @Override
     public void index() throws RestApiException {
       throw new NotImplementedException();
     }
@@ -810,11 +806,6 @@ public interface ChangeApi {
 
     @Override
     public boolean ignored() throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
-    public void markAsReviewed(boolean reviewed) throws RestApiException {
       throw new NotImplementedException();
     }
 

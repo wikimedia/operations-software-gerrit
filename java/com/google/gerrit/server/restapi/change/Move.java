@@ -21,17 +21,14 @@ import static com.google.gerrit.server.project.ProjectCache.illegalState;
 import static com.google.gerrit.server.query.change.ChangeData.asChanges;
 
 import com.google.common.base.Strings;
-import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.entities.LabelType;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.RefNames;
-import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.MoveInput;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
@@ -42,11 +39,11 @@ import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.webui.UiAction;
-import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.PatchSetUtil;
+import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.change.ChangeJson;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.config.GerritServerConfig;
@@ -67,6 +64,7 @@ import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
+import java.util.Optional;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
@@ -75,8 +73,6 @@ import org.eclipse.jgit.revwalk.RevWalk;
 
 @Singleton
 public class Move implements RestModifyView<ChangeResource, MoveInput>, UiAction<ChangeResource> {
-  private static final FluentLogger logger = FluentLogger.forEnclosingClass();
-
   private final PermissionBackend permissionBackend;
   private final BatchUpdate.Factory updateFactory;
   private final ChangeJson.Factory json;
@@ -249,9 +245,7 @@ public class Move implements RestModifyView<ChangeResource, MoveInput>, UiAction
         msgBuf.append("\n\n");
         msgBuf.append(input.message);
       }
-      ChangeMessage cmsg =
-          ChangeMessagesUtil.newMessage(ctx, msgBuf.toString(), ChangeMessagesUtil.TAG_MOVE);
-      cmUtil.addChangeMessage(update, cmsg);
+      cmUtil.setChangeMessage(ctx, msgBuf.toString(), ChangeMessagesUtil.TAG_MOVE);
 
       return true;
     }
@@ -269,11 +263,13 @@ public class Move implements RestModifyView<ChangeResource, MoveInput>, UiAction
           approvalsUtil.byPatchSet(
               ctx.getNotes(), psId, ctx.getRevWalk(), ctx.getRepoView().getConfig())) {
         ProjectState projectState = projectCache.get(project).orElseThrow(illegalState(project));
-        LabelType type = projectState.getLabelTypes(ctx.getNotes()).byLabel(psa.labelId());
+        Optional<LabelType> type =
+            projectState.getLabelTypes(ctx.getNotes()).byLabel(psa.labelId());
         // Only keep veto votes, defined as votes where:
         // 1- the label function allows minimum values to block submission.
         // 2- the vote holds the minimum value.
-        if (type == null || (type.isMaxNegative(psa) && type.getFunction().isBlock())) {
+        if (!type.isPresent()
+            || (type.get().isMaxNegative(psa) && type.get().getFunction().isBlock())) {
           continue;
         }
 
@@ -284,7 +280,7 @@ public class Move implements RestModifyView<ChangeResource, MoveInput>, UiAction
   }
 
   @Override
-  public UiAction.Description getDescription(ChangeResource rsrc) {
+  public UiAction.Description getDescription(ChangeResource rsrc) throws IOException {
     UiAction.Description description =
         new UiAction.Description()
             .setLabel("Move Change")
@@ -295,30 +291,15 @@ public class Move implements RestModifyView<ChangeResource, MoveInput>, UiAction
     if (!change.isNew()) {
       return description;
     }
-
-    try {
-      if (!projectCache
-          .get(rsrc.getProject())
-          .orElseThrow(illegalState(rsrc.getProject()))
-          .statePermitsWrite()) {
-        return description;
-      }
-    } catch (StorageException e) {
-      logger.atSevere().withCause(e).log(
-          "Failed to check if project state permits write: %s", rsrc.getProject());
+    if (!projectCache
+        .get(rsrc.getProject())
+        .orElseThrow(illegalState(rsrc.getProject()))
+        .statePermitsWrite()) {
       return description;
     }
-
-    try {
-      if (psUtil.isPatchSetLocked(rsrc.getNotes())) {
-        return description;
-      }
-    } catch (StorageException e) {
-      logger.atSevere().withCause(e).log(
-          "Failed to check if the current patch set of change %s is locked", change.getId());
+    if (psUtil.isPatchSetLocked(rsrc.getNotes())) {
       return description;
     }
-
     return description.setVisible(
         and(
             permissionBackend.user(rsrc.getUser()).ref(change.getDest()).testCond(CREATE_CHANGE),

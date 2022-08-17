@@ -516,6 +516,83 @@ public class SetLabelIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void setCopyCondition() throws Exception {
+    configLabel("foo", LabelFunction.NO_OP);
+    assertThat(gApi.projects().name(project.get()).label("foo").get().copyCondition).isNull();
+
+    LabelDefinitionInput input = new LabelDefinitionInput();
+    input.copyCondition = "is:MAX";
+
+    LabelDefinitionInfo updatedLabel =
+        gApi.projects().name(project.get()).label("foo").update(input);
+    assertThat(updatedLabel.copyCondition).isEqualTo("is:MAX");
+  }
+
+  @Test
+  public void setCopyConditionPerformsGroupVisibilityCheckWhenUserInPredicateIsUsed()
+      throws Exception {
+    String administratorsUUID = gApi.groups().query("name:Administrators").get().get(0).id;
+    configLabel("foo", LabelFunction.NO_OP);
+    assertThat(gApi.projects().name(project.get()).label("foo").get().copyCondition).isNull();
+
+    LabelDefinitionInput input = new LabelDefinitionInput();
+    input.copyCondition = "uploaderin:" + administratorsUUID;
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.OWNER).ref("refs/*").group(REGISTERED_USERS))
+        .update();
+    // User can't see admin group
+    requestScopeOperations.setApiUser(user.id());
+    BadRequestException thrown =
+        assertThrows(
+            BadRequestException.class,
+            () -> gApi.projects().name(project.get()).label("foo").update(input));
+    assertThat(thrown).hasMessageThat().contains("Group " + administratorsUUID + " not found");
+
+    // Admin can see admin group
+    requestScopeOperations.setApiUser(admin.id());
+    LabelDefinitionInfo updatedLabel =
+        gApi.projects().name(project.get()).label("foo").update(input);
+    assertThat(updatedLabel.copyCondition).isEqualTo(input.copyCondition);
+  }
+
+  @Test
+  public void setInvalidCopyCondition() throws Exception {
+    configLabel("foo", LabelFunction.NO_OP);
+    assertThat(gApi.projects().name(project.get()).label("foo").get().copyCondition).isNull();
+
+    LabelDefinitionInput input = new LabelDefinitionInput();
+    input.copyCondition = "foo:::bar";
+
+    BadRequestException thrown =
+        assertThrows(
+            BadRequestException.class,
+            () -> gApi.projects().name(project.get()).label("foo").update(input));
+    assertThat(thrown).hasMessageThat().contains("unable to parse copy condition");
+  }
+
+  @Test
+  public void unsetCopyCondition() throws Exception {
+    configLabel("foo", LabelFunction.NO_OP);
+    try (ProjectConfigUpdate u = updateProject(project)) {
+      u.getConfig().updateLabelType("foo", lt -> lt.setCopyCondition("is:MAX"));
+      u.save();
+    }
+    assertThat(gApi.projects().name(project.get()).label("foo").get().copyCondition)
+        .isEqualTo("is:MAX");
+
+    LabelDefinitionInput input = new LabelDefinitionInput();
+    input.unsetCopyCondition = true;
+
+    LabelDefinitionInfo updatedLabel =
+        gApi.projects().name(project.get()).label("foo").update(input);
+    assertThat(updatedLabel.copyCondition).isNull();
+
+    assertThat(gApi.projects().name(project.get()).label("foo").get().copyCondition).isNull();
+  }
+
+  @Test
   public void setCopyMinScore() throws Exception {
     configLabel("foo", LabelFunction.NO_OP);
     assertThat(gApi.projects().name(project.get()).label("foo").get().copyMinScore).isNull();

@@ -16,6 +16,7 @@ package com.google.gerrit.acceptance.api.revision;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.TruthJUnit.assume;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.entities.Patch.COMMIT_MSG;
 import static com.google.gerrit.entities.Patch.MERGE_LIST;
 import static com.google.gerrit.entities.Patch.PATCHSET_LEVEL;
@@ -35,7 +36,10 @@ import com.google.gerrit.acceptance.ExtensionRegistry.Registration;
 import com.google.gerrit.acceptance.GitUtil;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.PushOneCommit.Result;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.common.RawInputUtil;
+import com.google.gerrit.entities.Patch;
+import com.google.gerrit.entities.Permission;
 import com.google.gerrit.extensions.api.changes.FileApi;
 import com.google.gerrit.extensions.api.changes.RebaseInput;
 import com.google.gerrit.extensions.client.DiffPreferencesInfo;
@@ -45,7 +49,10 @@ import com.google.gerrit.extensions.common.FileInfo;
 import com.google.gerrit.extensions.common.WebLinkInfo;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.BinaryResult;
+import com.google.gerrit.extensions.webui.EditWebLink;
 import com.google.gerrit.extensions.webui.FileWebLink;
+import com.google.gerrit.server.patch.DiffOperations;
+import com.google.gerrit.server.patch.filediff.FileDiffOutput;
 import com.google.inject.Inject;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
@@ -57,6 +64,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import javax.imageio.ImageIO;
 import org.eclipse.jgit.lib.ObjectId;
@@ -81,11 +89,12 @@ public class RevisionDiffIT extends AbstractDaemonTest {
   private static final String FILE_CONTENT2 = "1st line\n2nd line\n3rd line\n";
 
   @Inject private ExtensionRegistry extensionRegistry;
+  @Inject private DiffOperations diffOperations;
+  @Inject private ProjectOperations projectOperations;
 
   private boolean intraline;
-  private boolean useNewDiffCacheListFiles;
-  private boolean useNewDiffCacheGetDiff;
 
+  private ObjectId initialCommit;
   private ObjectId commit1;
   private String changeId;
   private String initialPatchSetId;
@@ -94,16 +103,14 @@ public class RevisionDiffIT extends AbstractDaemonTest {
   public void setUp() throws Exception {
     // Reduce flakiness of tests. (If tests aren't fast enough, we would use a fall-back
     // computation, which might yield different results.)
-    baseConfig.setString("cache", "diff", "timeout", "1 minute");
+    baseConfig.setString("cache", "git_file_diff", "timeout", "1 minute");
     baseConfig.setString("cache", "diff_intraline", "timeout", "1 minute");
 
     intraline = baseConfig.getBoolean(TEST_PARAMETER_MARKER, "intraline", false);
-    useNewDiffCacheListFiles =
-        baseConfig.getBoolean("cache", "diff_cache", "runNewDiffCache_ListFiles", false);
-    useNewDiffCacheGetDiff =
-        baseConfig.getBoolean("cache", "diff_cache", "runNewDiffCache_GetDiff", false);
 
     ObjectId headCommit = testRepo.getRepository().resolve("HEAD");
+    initialCommit = headCommit;
+
     commit1 =
         addCommit(headCommit, ImmutableMap.of(FILE_NAME, FILE_CONTENT, FILE_NAME2, FILE_CONTENT2));
 
@@ -124,10 +131,34 @@ public class RevisionDiffIT extends AbstractDaemonTest {
     assertDiffForNewFile(result, COMMIT_MSG, result.getCommit().getFullMessage());
   }
 
-  @Ignore
   @Test
   public void diffWithRootCommit() throws Exception {
-    // TODO(ghareeb): Implement this test
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.PUSH).ref("refs/*").group(adminGroupUuid()).force(true))
+        .update();
+
+    testRepo.reset(initialCommit);
+    PushOneCommit push =
+        pushFactory
+            .create(admin.newIdent(), testRepo, "subject", ImmutableMap.of("f.txt", "content"))
+            .noParent();
+    push.setForce(true);
+    PushOneCommit.Result result = push.to("refs/heads/master");
+
+    Map<String, FileDiffOutput> modifiedFiles =
+        diffOperations.listModifiedFilesAgainstParent(
+            project, result.getCommit(), /* parentNum= */ 0);
+
+    assertThat(modifiedFiles.keySet()).containsExactly("/COMMIT_MSG", "f.txt");
+    assertThat(
+            modifiedFiles.values().stream()
+                .map(FileDiffOutput::oldCommitId)
+                .collect(Collectors.toSet()))
+        .containsExactly(ObjectId.zeroId());
+    assertThat(modifiedFiles.get("/COMMIT_MSG").changeType()).isEqualTo(Patch.ChangeType.ADDED);
+    assertThat(modifiedFiles.get("f.txt").changeType()).isEqualTo(Patch.ChangeType.ADDED);
   }
 
   @Test
@@ -146,6 +177,23 @@ public class RevisionDiffIT extends AbstractDaemonTest {
     assertThat(diffForPatchsetLevelFile).metaA().isNull();
     assertThat(diffForPatchsetLevelFile).metaB().isNull();
     assertThat(diffForPatchsetLevelFile).webLinks().isNull();
+  }
+
+  @Test
+  public void editWebLinkIncludedInDiff() throws Exception {
+    try (Registration registration = newEditWebLink()) {
+      String fileName = "a_new_file.txt";
+      String fileContent = "First line\nSecond line\n";
+      PushOneCommit.Result result = createChange("Add a file", fileName, fileContent);
+      DiffInfo info =
+          gApi.changes()
+              .id(result.getChangeId())
+              .revision(result.getCommit().name())
+              .file(fileName)
+              .diff();
+      assertThat(info.editWebLinks).hasSize(1);
+      assertThat(info.editWebLinks.get(0).url).isEqualTo("http://edit/" + project + "/" + fileName);
+    }
   }
 
   @Test
@@ -984,9 +1032,9 @@ public class RevisionDiffIT extends AbstractDaemonTest {
 
   @Test
   public void intralineEditsAreIdentified() throws Exception {
-    // TODO(ghareeb): This test asserts the wrong behavior due to the following issue
-    // bugs.chromium.org/p/gerrit/issues/detail?id=13563
-    // Please remove this comment and assert the correct behavior when the bug is fixed.
+    // In some corner cases, intra-line diffs produce wrong results. In this case, the algorithm
+    // falls back to a single edit covering the whole range.
+    // See: bugs.chromium.org/p/gerrit/issues/detail?id=13563
 
     assume().that(intraline).isTrue();
 
@@ -997,10 +1045,10 @@ public class RevisionDiffIT extends AbstractDaemonTest {
     String previousPatchSetId = gApi.changes().id(changeId).get().currentRevision;
     addModifiedPatchSet(changeId, FILE_NAME, fileContent -> fileContent.replace(orig, replace));
 
-    // TODO(ghareeb): remove this comment when the issue is fixed.
-    // The returned diff incorrectly contains:
+    // Intra-line logic wrongly produces
     // replace [-9999{,99}99] with [-999{,}999].
-    // If this replace edit is done, the resulting string incorrectly becomes [-9999,99].
+    // which if done, results in an incorrect [-9999,99].
+    // the intra-line algorithm detects this case and falls back to a single region edit.
 
     DiffInfo diffInfo =
         getDiffRequest(changeId, CURRENT, FILE_NAME).withBase(previousPatchSetId).get();
@@ -1009,8 +1057,7 @@ public class RevisionDiffIT extends AbstractDaemonTest {
     List<List<Integer>> editsB = diffInfo.content.get(1).editB;
     String reconstructed = transformStringUsingEditList(orig, replace, editsA, editsB);
 
-    // TODO(ghareeb): assert equals when the issue is fixed.
-    assertThat(reconstructed).isNotEqualTo(replace);
+    assertThat(reconstructed).isEqualTo(replace);
   }
 
   @Test
@@ -1291,7 +1338,7 @@ public class RevisionDiffIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void addedUnrelatedFileIsIgnored_ForPatchSetDiffWithRebase() throws Exception {
+  public void addedUnrelatedFileIsIgnored_forPatchSetDiffWithRebase() throws Exception {
     ObjectId commit2 = addCommit(commit1, "file_added_in_another_commit.txt", "Some file content");
 
     rebaseChangeOn(changeId, commit2);
@@ -1303,7 +1350,7 @@ public class RevisionDiffIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void removedUnrelatedFileIsIgnored_ForPatchSetDiffWithRebase() throws Exception {
+  public void removedUnrelatedFileIsIgnored_forPatchSetDiffWithRebase() throws Exception {
     ObjectId commit2 = addCommitRemovingFiles(commit1, FILE_NAME2);
 
     rebaseChangeOn(changeId, commit2);
@@ -1315,7 +1362,7 @@ public class RevisionDiffIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void renamedUnrelatedFileIsIgnored_ForPatchSetDiffWithRebase() throws Exception {
+  public void renamedUnrelatedFileIsIgnored_forPatchSetDiffWithRebase() throws Exception {
     ObjectId commit2 = addCommitRenamingFile(commit1, FILE_NAME2, "a_new_file_name.txt");
 
     rebaseChangeOn(changeId, commit2);
@@ -1327,10 +1374,10 @@ public class RevisionDiffIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void renamedUnrelatedFileIsIgnored_ForPatchSetDiffWithRebase_WhenEquallyModifiedInBoth()
+  @Ignore
+  public void renamedUnrelatedFileIsIgnored_forPatchSetDiffWithRebase_whenEquallyModifiedInBoth()
       throws Exception {
     // TODO(ghareeb): fix this test for the new diff cache implementation
-    assume().that(useNewDiffCacheListFiles).isFalse();
 
     Function<String, String> contentModification =
         fileContent -> fileContent.replace("1st line\n", "First line\n");
@@ -1353,7 +1400,7 @@ public class RevisionDiffIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void renamedUnrelatedFileIsIgnored_ForPatchSetDiffWithRebase_WhenModifiedDuringRebase()
+  public void renamedUnrelatedFileIsIgnored_forPatchSetDiffWithRebase_whenModifiedDuringRebase()
       throws Exception {
     String renamedFilePath = "renamed_some_file.txt";
     ObjectId commit2 =
@@ -1421,9 +1468,9 @@ public class RevisionDiffIT extends AbstractDaemonTest {
   }
 
   @Test
+  @Ignore
   public void filesTouchedByPatchSetsAndContainingOnlyRebaseHunksAreIgnored() throws Exception {
     // TODO(ghareeb): fix this test for the new diff cache implementation
-    assume().that(useNewDiffCacheListFiles).isFalse();
 
     addModifiedPatchSet(
         changeId, FILE_NAME, fileContent -> fileContent.replace("Line 50\n", "Line fifty\n"));
@@ -2145,7 +2192,7 @@ public class RevisionDiffIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void rebaseHunkInRenamedFileIsIdentified_WhenFileIsRenamedDuringRebase() throws Exception {
+  public void rebaseHunkInRenamedFileIsIdentified_whenFileIsRenamedDuringRebase() throws Exception {
     String renamedFilePath = "renamed_some_file.txt";
     ObjectId commit2 =
         addCommit(commit1, FILE_NAME, FILE_CONTENT.replace("Line 1\n", "Line one\n"));
@@ -2174,7 +2221,7 @@ public class RevisionDiffIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void rebaseHunkInRenamedFileIsIdentified_WhenFileIsRenamedInPatchSets() throws Exception {
+  public void rebaseHunkInRenamedFileIsIdentified_whenFileIsRenamedInPatchSets() throws Exception {
     String renamedFilePath = "renamed_some_file.txt";
     gApi.changes().id(changeId).edit().renameFile(FILE_NAME, renamedFilePath);
     gApi.changes().id(changeId).edit().publish();
@@ -2213,7 +2260,7 @@ public class RevisionDiffIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void renamedFileWithOnlyRebaseHunksIsIdentified_WhenRenamedBetweenPatchSets()
+  public void renamedFileWithOnlyRebaseHunksIsIdentified_whenRenamedBetweenPatchSets()
       throws Exception {
     String newFilePath1 = "renamed_some_file.txt";
     gApi.changes().id(changeId).edit().renameFile(FILE_NAME, newFilePath1);
@@ -2248,7 +2295,7 @@ public class RevisionDiffIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void renamedFileWithOnlyRebaseHunksIsIdentified_WhenRenamedForRebaseAndForPatchSets()
+  public void renamedFileWithOnlyRebaseHunksIsIdentified_whenRenamedForRebaseAndForPatchSets()
       throws Exception {
     String newFilePath1 = "renamed_some_file.txt";
     gApi.changes().id(changeId).edit().renameFile(FILE_NAME, newFilePath1);
@@ -2803,11 +2850,7 @@ public class RevisionDiffIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void symlinkConvertedToRegularFileIsIdentifiedAsAdded() throws Exception {
-    // TODO(ghareeb): fix this test for the new diff cache implementation
-    assume().that(useNewDiffCacheListFiles).isFalse();
-    assume().that(useNewDiffCacheGetDiff).isFalse();
-
+  public void addDeleteByJgit_isIdentifiedAsRewritten() throws Exception {
     String target = "file.txt";
     String symlink = "link.lnk";
 
@@ -2816,42 +2859,70 @@ public class RevisionDiffIT extends AbstractDaemonTest {
         pushFactory
             .create(admin.newIdent(), testRepo, "Commit Subject", target, "content")
             .addSymlink(symlink, target);
-
     PushOneCommit.Result result = push.to("refs/for/master");
     String initialRev = gApi.changes().id(result.getChangeId()).get().currentRevision;
+    String cId = result.getChangeId();
 
-    // Delete the symlink with patchset 2
-    gApi.changes().id(result.getChangeId()).edit().deleteFile(symlink);
-    gApi.changes().id(result.getChangeId()).edit().publish();
+    // Delete the symlink with PS2
+    gApi.changes().id(cId).edit().deleteFile(symlink);
+    gApi.changes().id(cId).edit().publish();
 
-    // Re-add the symlink as a regular file with patchset 3
-    gApi.changes()
-        .id(result.getChangeId())
-        .edit()
-        .modifyFile(symlink, RawInputUtil.create("Content of the new file named 'symlink'"));
-    gApi.changes().id(result.getChangeId()).edit().publish();
+    // Re-add the symlink as a regular file with PS3
+    gApi.changes().id(cId).edit().modifyFile(symlink, RawInputUtil.create("new content"));
+    gApi.changes().id(cId).edit().publish();
 
-    Map<String, FileInfo> changedFiles =
-        gApi.changes().id(result.getChangeId()).current().files(initialRev);
-
+    // Changed files: JGit returns two {DELETED/ADDED} entries for the file.
+    // The diff logic combines both into a single REWRITTEN entry.
+    Map<String, FileInfo> changedFiles = gApi.changes().id(cId).current().files(initialRev);
     assertThat(changedFiles.keySet()).containsExactly("/COMMIT_MSG", symlink);
-    assertThat(changedFiles.get(symlink).status).isEqualTo('W'); // Rewrite
+    assertThat(changedFiles.get(symlink).status).isEqualTo('W'); // Rewritten
 
-    DiffInfo diffInfo =
-        gApi.changes().id(result.getChangeId()).current().file(symlink).diff(initialRev);
-
-    // The diff logic identifies two entries for the file:
-    // 1. One entry as 'DELETED' for the symlink.
-    // 2. Another entry as 'ADDED' for the new regular file.
-    // Since the diff logic returns a single entry, we prioritize returning the 'ADDED' entry in
-    // this case so that the client is able to see the new content that was added to the file.
-    assertThat(diffInfo.changeType).isEqualTo(ChangeType.ADDED);
+    // Detailed diff: Old diff cache returns ADDED entry. New Diff Cache returns REWRITE.
+    DiffInfo diffInfo = gApi.changes().id(cId).current().file(symlink).diff(initialRev);
     assertThat(diffInfo.content).hasSize(1);
+    assertThat(diffInfo).content().element(0).linesOfB().containsExactly("new content");
+    assertThat(diffInfo.changeType).isEqualTo(ChangeType.REWRITE);
+  }
+
+  @Test
+  public void renameDeleteByJgit_isIdentifiedAsRewritten() throws Exception {
+    String target = "file.txt";
+    String symlink = "link.lnk";
+    PushOneCommit push =
+        pushFactory
+            .create(admin.newIdent(), testRepo, "Commit Subject", target, "content")
+            .addSymlink(symlink, target);
+    PushOneCommit.Result result = push.to("refs/for/master");
+    String cId = result.getChangeId();
+    String initialRev = gApi.changes().id(cId).get().currentRevision;
+
+    // Delete both symlink and target with PS2
+    gApi.changes().id(cId).edit().deleteFile(symlink);
+    gApi.changes().id(cId).edit().deleteFile(target);
+    gApi.changes().id(cId).edit().publish();
+
+    // Re-create the symlink as a regular file with PS3
+    gApi.changes().id(cId).edit().modifyFile(symlink, RawInputUtil.create("content"));
+    gApi.changes().id(cId).edit().publish();
+
+    // Changed files: JGit returns two {DELETED/RENAMED} entries for the file.
+    // The diff logic combines both into a single REWRITTEN entry.
+    Map<String, FileInfo> changedFiles = gApi.changes().id(cId).current().files(initialRev);
+    assertThat(changedFiles.keySet()).containsExactly("/COMMIT_MSG", symlink);
+    assertThat(changedFiles.get(symlink).status).isEqualTo('W'); // Rewritten
+
+    // Detailed diff: Old diff cache returns RENAMED entry. New Diff Cache returns REWRITE.
+    DiffInfo diffInfo = gApi.changes().id(cId).current().file(symlink).diff(initialRev);
     assertThat(diffInfo)
-        .content()
-        .element(0)
-        .linesOfB()
-        .containsExactly("Content of the new file named 'symlink'");
+        .diffHeader()
+        .containsExactly(
+            "diff --git a/file.txt b/link.lnk",
+            "similarity index 100%",
+            "rename from file.txt",
+            "rename to link.lnk");
+    assertThat(diffInfo.content).hasSize(1);
+    assertThat(diffInfo).content().element(0).commonLines().containsExactly("content");
+    assertThat(diffInfo.changeType).isEqualTo(ChangeType.REWRITE);
   }
 
   @Test
@@ -2900,6 +2971,18 @@ public class RevisionDiffIT extends AbstractDaemonTest {
             BadRequestException.class,
             () -> getDiffRequest(changeId, CURRENT, FILE_NAME).withBase("0").get());
     assertThat(e).hasMessageThat().isEqualTo("edit not allowed as base");
+  }
+
+  private Registration newEditWebLink() {
+    EditWebLink webLink =
+        new EditWebLink() {
+          @Override
+          public WebLinkInfo getEditWebLink(String projectName, String revision, String fileName) {
+            return new WebLinkInfo(
+                "name", "imageURL", "http://edit/" + projectName + "/" + fileName);
+          }
+        };
+    return extensionRegistry.newRegistration().add(webLink);
   }
 
   private Registration newGitwebFileWebLink() {

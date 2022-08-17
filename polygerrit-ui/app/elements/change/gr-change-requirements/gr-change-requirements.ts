@@ -15,9 +15,9 @@
  * limitations under the License.
  */
 import '../../../styles/shared-styles';
+import '../../../styles/gr-font-styles';
 import '../../shared/gr-button/gr-button';
 import '../../shared/gr-icons/gr-icons';
-import '../../shared/gr-label/gr-label';
 import '../../shared/gr-label-info/gr-label-info';
 import '../../shared/gr-limited-text/gr-limited-text';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
@@ -35,6 +35,7 @@ import {
 import {PolymerDeepPropertyChange} from '@polymer/polymer/interfaces';
 import {appContext} from '../../../services/app-context';
 import {labelCompare} from '../../../utils/label-util';
+import {Interaction} from '../../../constants/reporting';
 
 interface ChangeRequirement extends Requirement {
   satisfied: boolean;
@@ -47,7 +48,7 @@ interface ChangeWIP {
   tooltip: string;
 }
 
-interface Label {
+export interface Label {
   labelName: string;
   labelInfo: LabelInfo;
   icon: string;
@@ -55,7 +56,7 @@ interface Label {
 }
 
 @customElement('gr-change-requirements')
-class GrChangeRequirements extends PolymerElement {
+export class GrChangeRequirements extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
@@ -181,7 +182,7 @@ class GrChangeRequirements extends PolymerElement {
 
   _handleShowHide() {
     this._showOptionalLabels = !this._showOptionalLabels;
-    this.reporting.reportInteraction('toggle show all button', {
+    this.reporting.reportInteraction(Interaction.TOGGLE_SHOW_ALL_BUTTON, {
       sectionName: 'optional labels',
       toState: this._showOptionalLabels ? 'Show all' : 'Show less',
     });

@@ -22,6 +22,7 @@ function getModulesDir() {
   if(runUnderBazel) {
     // Run under bazel
     return [
+      `external/plugins_npm/node_modules`,
       `external/ui_npm/node_modules`,
       `external/ui_dev_npm/node_modules`
     ];
@@ -58,20 +59,34 @@ function runInIde() {
 }
 
 module.exports = function(config) {
-  const localDirName = path.resolve(__dirname, '../.ts-out/polygerrit-ui/app');
-  const rootDir = runUnderBazel ?
-      'polygerrit-ui/app/_pg_with_tests_out/' : localDirName + '/';
-  const testFilesLocationPattern =
-      `${rootDir}**/!(template_test_srcs)/`;
+  let root = config.root;
+  if (!root) {
+    console.warn(`--root argument not set. Falling back to __dirname.`)
+    root = path.resolve(__dirname) + '/';
+  }
   // Use --test-files to specify pattern for a test files.
   // It can be just a file name, without a path:
   // --test-files async-foreach-behavior_test.js
   // If you specify --test-files without pattern, it gets true value
-  // In this case we ill run all tests (usefull for package.json "debugtest"
+  // In this case we will run all tests (usefull for package.json "debugtest"
   // script)
-  const testFilesPattern = (typeof config.testFiles == 'string') ?
-      testFilesLocationPattern + config.testFiles :
-      testFilesLocationPattern + '*_test.js';
+  // We will convert a .ts argument to .js and fill in .js if no extension is
+  // given.
+  let filePattern;
+  if (typeof config.testFiles === "string") {
+    if (config.testFiles.endsWith('.ts')) {
+      filePattern = config.testFiles.substr(0, config.testFiles.lastIndexOf(".")) + ".js";
+    } else if (config.testFiles.endsWith('.js')) {
+      filePattern = config.testFiles;
+    } else {
+      filePattern = config.testFiles + '.js';
+    }
+  } else {
+    filePattern = '*_test.js';
+  }
+  const testFilesPattern = root + '**/' + filePattern;
+
+  console.info(`Karma test file pattern: ${testFilesPattern}`)
   // Special patch for grep parameters (see details in the grep-patch-karam.js)
   const additionalFiles = runUnderBazel ? [] : ['polygerrit-ui/grep-patch-karma.js'];
   config.set({

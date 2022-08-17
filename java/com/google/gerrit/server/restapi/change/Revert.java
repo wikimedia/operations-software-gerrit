@@ -19,10 +19,8 @@ import static com.google.gerrit.server.permissions.ChangePermission.REVERT;
 import static com.google.gerrit.server.permissions.RefPermission.CREATE_CHANGE;
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
 
-import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.PatchSet;
-import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.RevertInput;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
@@ -55,8 +53,6 @@ import org.eclipse.jgit.errors.ConfigInvalidException;
 @Singleton
 public class Revert
     implements RestModifyView<ChangeResource, RevertInput>, UiAction<ChangeResource> {
-  private static final FluentLogger logger = FluentLogger.forEnclosingClass();
-
   private final PermissionBackend permissionBackend;
   private final PatchSetUtil psUtil;
   private final ChangeJson.Factory json;
@@ -114,14 +110,8 @@ public class Revert
   @Override
   public UiAction.Description getDescription(ChangeResource rsrc) {
     Change change = rsrc.getChange();
-    boolean projectStatePermitsWrite = false;
-    try {
-      projectStatePermitsWrite =
-          projectCache.get(rsrc.getProject()).map(ProjectState::statePermitsWrite).orElse(false);
-    } catch (StorageException e) {
-      logger.atSevere().withCause(e).log(
-          "Failed to check if project state permits write: %s", rsrc.getProject());
-    }
+    boolean projectStatePermitsWrite =
+        projectCache.get(rsrc.getProject()).map(ProjectState::statePermitsWrite).orElse(false);
     return new UiAction.Description()
         .setLabel("Revert")
         .setTitle("Revert the change")

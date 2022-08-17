@@ -16,8 +16,10 @@ package com.google.gerrit.server.patch;
 
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
 
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.data.PatchScript;
 import com.google.gerrit.entities.LabelId;
+import com.google.gerrit.entities.LabelType;
 import com.google.gerrit.entities.Patch;
 import com.google.gerrit.entities.Patch.ChangeType;
 import com.google.gerrit.entities.PatchSet;
@@ -27,23 +29,32 @@ import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.client.DiffPreferencesInfo;
 import com.google.gerrit.extensions.client.DiffPreferencesInfo.Whitespace;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.prettify.common.SparseFileContent;
-import com.google.gerrit.prettify.common.SparseFileContent.Accessor;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.config.GerritServerConfig;
+import com.google.gerrit.server.diff.DiffInfoCreator;
+import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.LargeObjectException;
 import com.google.gerrit.server.git.validators.CommentCumulativeSizeValidator;
 import com.google.gerrit.server.notedb.ChangeNotes;
+import com.google.gerrit.server.patch.filediff.FileDiffOutput;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.InvalidChangeOperationException;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.inject.Inject;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
-import org.eclipse.jgit.diff.Edit;
+import org.eclipse.jgit.diff.DiffFormatter;
+import org.eclipse.jgit.internal.JGitText;
 import org.eclipse.jgit.lib.Config;
+import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.util.RawParseUtils;
+import org.eclipse.jgit.util.TemporaryBuffer;
 
 /**
  * This class is used on submit to compute the diff between the latest approved patch-set, and the
@@ -58,20 +69,25 @@ import org.eclipse.jgit.lib.Config;
  * <p>We exclude the magic files from the returned diff to make it shorter and more concise.
  */
 public class SubmitWithStickyApprovalDiff {
+  private static final int HEAP_EST_SIZE = 32 * 1024;
+
+  private final DiffOperations diffOperations;
   private final ProjectCache projectCache;
   private final PatchScriptFactory.Factory patchScriptFactoryFactory;
-  private final PatchListCache patchListCache;
+  private final GitRepositoryManager repositoryManager;
   private final int maxCumulativeSize;
 
   @Inject
   SubmitWithStickyApprovalDiff(
+      DiffOperations diffOperations,
       ProjectCache projectCache,
       PatchScriptFactory.Factory patchScriptFactoryFactory,
-      PatchListCache patchListCache,
+      GitRepositoryManager repositoryManager,
       @GerritServerConfig Config serverConfig) {
+    this.diffOperations = diffOperations;
     this.projectCache = projectCache;
     this.patchScriptFactoryFactory = patchScriptFactoryFactory;
-    this.patchListCache = patchListCache;
+    this.repositoryManager = repositoryManager;
     maxCumulativeSize =
         serverConfig.getInt(
             "change",
@@ -82,16 +98,7 @@ public class SubmitWithStickyApprovalDiff {
   public String apply(ChangeNotes notes, CurrentUser currentUser)
       throws AuthException, IOException, PermissionBackendException,
           InvalidChangeOperationException {
-    // In some submit strategies, the current patch-set doesn't exist yet as it's being created
-    // during the submit. Hence, we assign the current patch-set to be the last existing patch-set.
-    PatchSet currentPatchset =
-        notes.getPatchSets().values().stream()
-            .max((p1, p2) -> p1.id().get() - p2.id().get())
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        String.format(
-                            "change %s can't load any patchset", notes.getChangeId().toString())));
+    PatchSet currentPatchset = notes.getCurrentPatchSet();
 
     PatchSet.Id latestApprovedPatchsetId = getLatestApprovedPatchsetId(notes);
     if (latestApprovedPatchsetId.get() == currentPatchset.id().get()) {
@@ -102,40 +109,58 @@ public class SubmitWithStickyApprovalDiff {
         new StringBuilder(
             String.format(
                 "\n\n%d is the latest approved patch-set.\n", latestApprovedPatchsetId.get()));
-    PatchList patchList =
-        getPatchList(
+    Map<String, FileDiffOutput> modifiedFiles =
+        listModifiedFiles(
             notes.getProjectName(),
             currentPatchset,
             notes.getPatchSets().get(latestApprovedPatchsetId));
 
     // To make the message a bit more concise, we skip the magic files.
-    List<PatchListEntry> patchListEntryList =
-        patchList.getPatches().stream()
-            .filter(p -> !Patch.isMagic(p.getNewName()))
+    List<FileDiffOutput> modifiedFilesList =
+        modifiedFiles.values().stream()
+            .filter(p -> !Patch.isMagic(p.newPath().orElse("")))
             .collect(Collectors.toList());
 
-    if (patchListEntryList.isEmpty()) {
+    if (modifiedFilesList.isEmpty()) {
       diff.append(
           "No files were changed between the latest approved patch-set and the submitted one.\n");
       return diff.toString();
     }
 
     diff.append("The change was submitted with unreviewed changes in the following files:\n\n");
-
-    for (PatchListEntry patchListEntry : patchListEntryList) {
-      diff.append(
-          getDiffForFile(
-              notes, currentPatchset.id(), latestApprovedPatchsetId, patchListEntry, currentUser));
-    }
-    if (diff.length() > maxCumulativeSize) {
-      // The diff length is not counted as part of the limit (for technical reasons, since we'd
-      // have to call CommentCumulativeSizeValidator), but it's best not to post an extra large
-      // change message here.
-      return String.format(
-          "\n\n%d is the latest approved patch-set.\nThe change was submitted "
-              + "with many unreviewed changes (the diff is too large to show). Please review the "
-              + "diff.",
-          latestApprovedPatchsetId.get());
+    TemporaryBuffer.Heap buffer =
+        new TemporaryBuffer.Heap(Math.min(HEAP_EST_SIZE, maxCumulativeSize), maxCumulativeSize);
+    try (Repository repository = repositoryManager.openRepository(notes.getProjectName());
+        DiffFormatter formatter = new DiffFormatter(buffer)) {
+      formatter.setRepository(repository);
+      formatter.setDetectRenames(true);
+      boolean isDiffTooLarge = false;
+      List<String> formatterResult = null;
+      try {
+        formatter.format(
+            modifiedFilesList.get(0).oldCommitId(), modifiedFilesList.get(0).newCommitId());
+        // This returns the diff for all the files.
+        formatterResult =
+            Arrays.stream(RawParseUtils.decode(buffer.toByteArray()).split("\n"))
+                .collect(Collectors.toList());
+      } catch (IOException e) {
+        if (JGitText.get().inMemoryBufferLimitExceeded.equals(e.getMessage())) {
+          isDiffTooLarge = true;
+        } else {
+          throw e;
+        }
+      }
+      for (FileDiffOutput fileDiff : modifiedFilesList) {
+        diff.append(
+            getDiffForFile(
+                notes,
+                currentPatchset.id(),
+                latestApprovedPatchsetId,
+                fileDiff,
+                currentUser,
+                formatterResult,
+                isDiffTooLarge));
+      }
     }
     return diff.toString();
   }
@@ -144,28 +169,35 @@ public class SubmitWithStickyApprovalDiff {
       ChangeNotes notes,
       PatchSet.Id currentPatchsetId,
       PatchSet.Id latestApprovedPatchsetId,
-      PatchListEntry patchListEntry,
-      CurrentUser currentUser)
+      FileDiffOutput fileDiffOutput,
+      CurrentUser currentUser,
+      @Nullable List<String> formatterResult,
+      boolean isDiffTooLarge)
       throws AuthException, InvalidChangeOperationException, IOException,
           PermissionBackendException {
     StringBuilder diff =
         new StringBuilder(
             String.format(
-                "The name of the file: %s\nInsertions: %d, Deletions: %d.\n\n",
-                patchListEntry.getNewName(),
-                patchListEntry.getInsertions(),
-                patchListEntry.getDeletions()));
+                "```\nThe name of the file: %s\nInsertions: %d, Deletions: %d.\n\n",
+                fileDiffOutput.newPath().isPresent()
+                    ? fileDiffOutput.newPath().get()
+                    : fileDiffOutput.oldPath().get(),
+                fileDiffOutput.insertions(),
+                fileDiffOutput.deletions()));
     DiffPreferencesInfo diffPreferencesInfo = createDefaultDiffPreferencesInfo();
     PatchScriptFactory patchScriptFactory =
         patchScriptFactoryFactory.create(
             notes,
-            patchListEntry.getNewName(),
+            fileDiffOutput.newPath().isPresent()
+                ? fileDiffOutput.newPath().get()
+                : fileDiffOutput.oldPath().get(),
             latestApprovedPatchsetId,
             currentPatchsetId,
             diffPreferencesInfo,
             currentUser);
     PatchScript patchScript = null;
     try {
+      // TODO(paiking): we can get rid of this call to optimize by checking the diff for renames.
       patchScript = patchScriptFactory.call();
     } catch (LargeObjectException exception) {
       diff.append("The file content is too large for showing the full diff. \n\n");
@@ -175,59 +207,62 @@ public class SubmitWithStickyApprovalDiff {
       diff.append(
           String.format(
               "The file %s was renamed to %s\n",
-              patchListEntry.getOldName(), patchListEntry.getNewName()));
+              fileDiffOutput.oldPath().get(), fileDiffOutput.newPath().get()));
     }
-    SparseFileContent.Accessor fileA = patchScript.getA().createAccessor();
-    SparseFileContent.Accessor fileB = patchScript.getB().createAccessor();
-    boolean editsExist = false;
-    if (patchScript.getEdits().stream().anyMatch(e -> e.getType() != Edit.Type.EMPTY)) {
-      diff.append("```\n");
-      editsExist = true;
+    if (isDiffTooLarge) {
+      diff.append("The diff is too large to show. Please review the diff.");
+      diff.append("\n```\n");
+      return diff.toString();
     }
-    for (Edit edit : patchScript.getEdits()) {
-      diff.append(getDiffForEdit(fileA, fileB, edit));
-    }
-    if (editsExist) {
-      diff.append("```\n");
-    }
+    // This filters only the file we need.
+    // TODO(paiking): we can make this more efficient by mapping the files to their respective
+    //  diffs prior to this method, such that we need to go over the diff only once.
+    diff.append(getDiffForFile(patchScript, formatterResult));
+    // This line (and the ``` above) are useful for formatting in the web UI.
+    diff.append("\n```\n");
     return diff.toString();
   }
 
-  private String getDiffForEdit(Accessor fileA, Accessor fileB, Edit edit) {
-    StringBuilder diff = new StringBuilder();
-    Edit.Type type = edit.getType();
-    switch (type) {
-      case INSERT:
-        diff.append(String.format("@@ +%d:%d @@\n", edit.getBeginB(), edit.getEndB()));
-        diff.append(getModifiedLines(fileB, edit.getBeginB(), edit.getEndB(), '+'));
-        diff.append("\n");
-        break;
-      case DELETE:
-        diff.append(String.format("@@ -%d:%d @@\n", edit.getBeginA(), edit.getEndA()));
-        diff.append(getModifiedLines(fileA, edit.getBeginA(), edit.getEndA(), '-'));
-        diff.append("\n");
-        break;
-      case REPLACE:
-        diff.append(
-            String.format(
-                "@@ -%d:%d, +%d:%d @@\n",
-                edit.getBeginA(), edit.getEndA(), edit.getBeginB(), edit.getEndB()));
-        diff.append(getModifiedLines(fileA, edit.getBeginA(), edit.getEndA(), '-'));
-        diff.append(getModifiedLines(fileB, edit.getBeginB(), edit.getEndB(), '+'));
-        diff.append("\n");
-        break;
-      case EMPTY:
-        // do nothing since there is no change here.
+  /**
+   * Show patch set as unified difference for a specific file. We on purpose are not using {@link
+   * DiffInfoCreator} since we'd like to get the original git/JGit style diff.
+   */
+  public String getDiffForFile(PatchScript patchScript, List<String> formatterResult) {
+    // only return information about the current file, and not about files that are not
+    // relevant. DiffFormatter returns other potential files because of rebases, which we can
+    // ignore.
+    List<String> modifiedFormatterResult = new ArrayList<>();
+    int indexOfFormatterResult = 0;
+    while (formatterResult.size() > indexOfFormatterResult
+        && !formatterResult
+            .get(indexOfFormatterResult)
+            .equals(
+                String.format(
+                    "diff --git a/%s b/%s",
+                    patchScript.getOldName() != null
+                        ? patchScript.getOldName()
+                        : patchScript.getNewName(),
+                    patchScript.getNewName()))) {
+      indexOfFormatterResult++;
     }
-    return diff.toString();
-  }
-
-  private String getModifiedLines(Accessor file, int begin, int end, char modificationType) {
-    StringBuilder diff = new StringBuilder();
-    for (int i = begin; i < end; i++) {
-      diff.append(String.format("%c  %s\n", modificationType, file.get(i)));
+    // remove non user friendly information.
+    while (formatterResult.size() > indexOfFormatterResult
+        && !formatterResult.get(indexOfFormatterResult).startsWith("@@")) {
+      indexOfFormatterResult++;
     }
-    return diff.toString();
+    for (; indexOfFormatterResult < formatterResult.size(); indexOfFormatterResult++) {
+      if (formatterResult.get(indexOfFormatterResult).startsWith("diff --git")) {
+        break;
+      }
+      modifiedFormatterResult.add(formatterResult.get(indexOfFormatterResult));
+    }
+    if (modifiedFormatterResult.size() == 0) {
+      // This happens for diffs that are just renames, but we already account for renames.
+      return "";
+    }
+    return modifiedFormatterResult.stream()
+        .filter(s -> !s.equals("\\ No newline at end of file"))
+        .collect(Collectors.joining("\n"));
   }
 
   private DiffPreferencesInfo createDefaultDiffPreferencesInfo() {
@@ -245,10 +280,9 @@ public class SubmitWithStickyApprovalDiff {
       if (!patchSetApproval.label().equals(LabelId.CODE_REVIEW)) {
         continue;
       }
-      if (!projectState
-          .getLabelTypes(notes)
-          .byLabel(patchSetApproval.labelId())
-          .isMaxPositive(patchSetApproval)) {
+      Optional<LabelType> lt =
+          projectState.getLabelTypes(notes).byLabel(patchSetApproval.labelId());
+      if (!lt.isPresent() || !lt.get().isMaxPositive(patchSetApproval)) {
         continue;
       }
       if (patchSetApproval.patchSetId().get() > maxPatchSetId.get()) {
@@ -259,16 +293,14 @@ public class SubmitWithStickyApprovalDiff {
   }
 
   /**
-   * Gets the {@link PatchList} between the two latest patch-sets. Can be used to compute difference
-   * in files between those two patch-sets .
+   * Gets the list of modified files between the two latest patch-sets. Can be used to compute
+   * difference in files between those two patch-sets.
    */
-  private PatchList getPatchList(Project.NameKey project, PatchSet ps, PatchSet priorPatchSet) {
-    PatchListKey key =
-        PatchListKey.againstCommit(
-            priorPatchSet.commitId(), ps.commitId(), DiffPreferencesInfo.Whitespace.IGNORE_NONE);
+  private Map<String, FileDiffOutput> listModifiedFiles(
+      Project.NameKey project, PatchSet ps, PatchSet priorPatchSet) {
     try {
-      return patchListCache.get(key, project);
-    } catch (PatchListNotAvailableException ex) {
+      return diffOperations.listModifiedFiles(project, priorPatchSet.commitId(), ps.commitId());
+    } catch (DiffNotAvailableException ex) {
       throw new StorageException(
           "failed to compute difference in files, so won't post diff messsage on submit although "
               + "the latest approved patch-set was not the same as the submitted patch-set.",

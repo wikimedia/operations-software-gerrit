@@ -29,6 +29,7 @@ import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
+import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ChangeUpdate;
@@ -149,10 +150,11 @@ public class PatchSetUtil {
         projectCache.get(notes.getProjectName()).orElseThrow(illegalState(notes.getProjectName()));
 
     ApprovalsUtil approvalsUtil = approvalsUtilProvider.get();
-    for (PatchSetApproval ap :
-        approvalsUtil.byPatchSet(notes, change.currentPatchSetId(), null, null)) {
-      LabelType type = projectState.getLabelTypes(notes).byLabel(ap.label());
-      if (type != null && ap.value() == 1 && type.getFunction() == LabelFunction.PATCH_SET_LOCK) {
+    for (PatchSetApproval ap : approvalsUtil.byPatchSet(notes, change.currentPatchSetId())) {
+      Optional<LabelType> type = projectState.getLabelTypes(notes).byLabel(ap.label());
+      if (type.isPresent()
+          && ap.value() == 1
+          && type.get().getFunction() == LabelFunction.PATCH_SET_LOCK) {
         return true;
       }
     }

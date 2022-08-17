@@ -22,7 +22,6 @@ import '../../shared/gr-button/gr-button';
 import '../../shared/gr-date-formatter/gr-date-formatter';
 import '../../shared/gr-formatted-text/gr-formatted-text';
 import '../../../styles/shared-styles';
-import '../../../styles/gr-voting-styles';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-message_html';
 import {MessageTag, SpecialFilePath} from '../../../constants/constants';
@@ -51,12 +50,13 @@ import {
   computeLatestPatchNum,
   computePredecessor,
 } from '../../../utils/patch-set-util';
-import {isServiceUser} from '../../../utils/account-util';
+import {isServiceUser, replaceTemplates} from '../../../utils/account-util';
 
 const PATCH_SET_PREFIX_PATTERN = /^(?:Uploaded\s*)?[Pp]atch [Ss]et \d+:\s*(.*)/;
 const LABEL_TITLE_SCORE_PATTERN = /^(-?)([A-Za-z0-9-]+?)([+-]\d+)?[.]?$/;
 const UPLOADED_NEW_PATCHSET_PATTERN = /Uploaded patch set (\d+)./;
 const MERGED_PATCHSET_PATTERN = /(\d+) is the latest approved patch-set/;
+const VOTE_RESET_TEXT = '0 (vote reset)';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -115,6 +115,9 @@ export class GrMessage extends PolymerElement {
   @property({type: Object})
   message: ChangeMessage | undefined;
 
+  @property({type: Array})
+  commentThreads: CommentThread[] = [];
+
   @computed('message')
   get author() {
     return this.message?.author || this.message?.updated_by;
@@ -131,7 +134,7 @@ export class GrMessage extends PolymerElement {
     reflectToAttribute: true,
     computed: '_computeIsHidden(hideAutomated, isAutomated)',
   })
-  hidden = false;
+  override hidden = false;
 
   @computed('message')
   get isAutomated() {
@@ -176,21 +179,26 @@ export class GrMessage extends PolymerElement {
 
   @property({
     type: String,
-    computed: '_computeMessageContentExpanded(message.message, message.tag)',
+    computed:
+      '_computeMessageContentExpanded(_expanded, message.message,' +
+      ' message.accounts_in_message,' +
+      ' message.tag)',
   })
   _messageContentExpanded = '';
 
   @property({
     type: String,
     computed:
-      '_computeMessageContentCollapsed(message.message, message.tag,' +
-      ' message.commentThreads)',
+      '_computeMessageContentCollapsed(message.message,' +
+      ' message.accounts_in_message,' +
+      ' message.tag,' +
+      ' commentThreads)',
   })
   _messageContentCollapsed = '';
 
   @property({
     type: String,
-    computed: '_computeCommentCountText(message.commentThreads.length)',
+    computed: '_computeCommentCountText(commentThreads)',
   })
   _commentCountText = '';
 
@@ -201,7 +209,7 @@ export class GrMessage extends PolymerElement {
     this.addEventListener('click', e => this._handleClick(e));
   }
 
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     this.restApiService.getConfig().then(config => {
       this.config = config;
@@ -223,16 +231,22 @@ export class GrMessage extends PolymerElement {
     }
   }
 
-  _computeCommentCountText(threadsLength?: number) {
-    if (!threadsLength) {
+  _computeCommentCountText(commentThreads?: CommentThread[]) {
+    if (!commentThreads?.length) {
       return undefined;
     }
 
-    return pluralize(threadsLength, 'comment');
+    return pluralize(commentThreads.length, 'comment');
   }
 
-  _computeMessageContentExpanded(content?: string, tag?: ReviewInputTag) {
-    return this._computeMessageContent(true, content, tag);
+  _computeMessageContentExpanded(
+    expanded: boolean,
+    content?: string,
+    accountsInMessage?: AccountInfo[],
+    tag?: ReviewInputTag
+  ) {
+    if (!expanded) return '';
+    return this._computeMessageContent(true, content, accountsInMessage, tag);
   }
 
   _patchsetCommentSummary(commentThreads: CommentThread[] = []) {
@@ -261,10 +275,18 @@ export class GrMessage extends PolymerElement {
 
   _computeMessageContentCollapsed(
     content?: string,
+    accountsInMessage?: AccountInfo[],
     tag?: ReviewInputTag,
     commentThreads?: CommentThread[]
   ) {
-    const summary = this._computeMessageContent(false, content, tag);
+    // Content is under text-overflow, so it's always shorten
+    const shortenedContent = content?.substring(0, 1000);
+    const summary = this._computeMessageContent(
+      false,
+      shortenedContent,
+      accountsInMessage,
+      tag
+    );
     if (summary || !commentThreads) return summary;
     return this._patchsetCommentSummary(commentThreads);
   }
@@ -319,10 +341,15 @@ export class GrMessage extends PolymerElement {
   _computeMessageContent(
     isExpanded: boolean,
     content?: string,
+    accountsInMessage?: AccountInfo[],
     tag?: ReviewInputTag
   ) {
     if (!content) return '';
     const isNewPatchSet = this._isNewPatchsetTag(tag);
+
+    if (accountsInMessage) {
+      content = replaceTemplates(content, accountsInMessage, this.config);
+    }
 
     const lines = content.split('\n');
     const filteredLines = lines.filter(line => {
@@ -348,7 +375,10 @@ export class GrMessage extends PolymerElement {
       //   Rebase messages (which have a ':newPatchSet' tag) should be kept on
       //   lines like this:
       //     Patch Set 27: Patch Set 26 was rebased
-      if (isNewPatchSet) {
+      // Only make this replacement if the line starts with Patch Set, since if
+      // it starts with "Uploaded patch set" (e.g for votes) we want to keep the
+      // "Uploaded patch set".
+      if (isNewPatchSet && line.startsWith('Patch Set')) {
         line = line.replace(PATCH_SET_PREFIX_PATTERN, '$1');
       }
       return line;
@@ -435,7 +465,7 @@ export class GrMessage extends PolymerElement {
       )
       .map(ms => {
         const label = ms?.[2];
-        const value = ms?.[1] === '-' ? 'removed' : ms?.[3];
+        const value = ms?.[1] === '-' ? VOTE_RESET_TEXT : ms?.[3];
         return {label, value};
       });
   }
@@ -448,7 +478,7 @@ export class GrMessage extends PolymerElement {
     if (!score.value) {
       return '';
     }
-    if (score.value === 'removed') {
+    if (score.value.includes(VOTE_RESET_TEXT)) {
       return 'removed';
     }
     const classes = [];

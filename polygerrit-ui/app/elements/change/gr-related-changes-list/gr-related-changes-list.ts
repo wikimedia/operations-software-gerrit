@@ -14,20 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {html, nothing} from 'lit-html';
 import './gr-related-change';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../plugins/gr-endpoint-param/gr-endpoint-param';
 import '../../plugins/gr-endpoint-slot/gr-endpoint-slot';
-import {classMap} from 'lit-html/directives/class-map';
-import {GrLitElement} from '../../lit/gr-lit-element';
-import {
-  customElement,
-  property,
-  css,
-  internalProperty,
-  TemplateResult,
-} from 'lit-element';
+import {classMap} from 'lit/directives/class-map';
+import {LitElement, css, html, nothing, TemplateResult} from 'lit';
+import {customElement, property, state} from 'lit/decorators';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {
   SubmittedTogetherInfo,
@@ -46,6 +39,8 @@ import {
   getRevisionKey,
   isChangeInfo,
 } from '../../../utils/change-util';
+import {Interaction} from '../../../constants/reporting';
+import {fontStyles} from '../../../styles/gr-font-styles';
 
 /** What is the maximum number of shown changes in collapsed list? */
 const DEFALT_NUM_CHANGES_WHEN_COLLAPSED = 3;
@@ -66,7 +61,7 @@ export enum Section {
 }
 
 @customElement('gr-related-changes-list')
-export class GrRelatedChangesList extends GrLitElement {
+export class GrRelatedChangesList extends LitElement {
   @property()
   change?: ParsedChangeInfo;
 
@@ -76,27 +71,27 @@ export class GrRelatedChangesList extends GrLitElement {
   @property()
   mergeable?: boolean;
 
-  @internalProperty()
+  @state()
   submittedTogether?: SubmittedTogetherInfo = {
     changes: [],
     non_visible_changes: 0,
   };
 
-  @internalProperty()
+  @state()
   relatedChanges: RelatedChangeAndCommitInfo[] = [];
 
-  @internalProperty()
+  @state()
   conflictingChanges: ChangeInfo[] = [];
 
-  @internalProperty()
+  @state()
   cherryPickChanges: ChangeInfo[] = [];
 
-  @internalProperty()
+  @state()
   sameTopicChanges: ChangeInfo[] = [];
 
   private readonly restApiService = appContext.restApiService;
 
-  static get styles() {
+  static override get styles() {
     return [
       sharedStyles,
       css`
@@ -107,21 +102,43 @@ export class GrRelatedChangesList extends GrLitElement {
         section {
           margin-bottom: var(--spacing-l);
         }
-        gr-related-change {
+        .relatedChangeLine {
           display: flex;
+          visibility: visible;
+          height: auto;
         }
-        .marker {
-          position: absolute;
-          margin-left: calc(-1 * var(--spacing-s));
+        .marker.arrow {
+          visibility: hidden;
+          min-width: 20px;
         }
-        .arrowToCurrentChange {
-          position: absolute;
+        .marker.arrowToCurrentChange {
+          min-width: 20px;
+          text-align: center;
+        }
+        .marker.space {
+          height: 1px;
+          min-width: 20px;
+        }
+        gr-related-collapse[collapsed] .marker.arrow {
+          visibility: visible;
+          min-width: auto;
+        }
+        gr-related-collapse[collapsed] .relatedChangeLine.show-when-collapsed {
+          visibility: visible;
+          height: auto;
+        }
+        /* keep width, so width of section and position of show all button
+         * are set according to width of all (even hidden) elements
+         */
+        gr-related-collapse[collapsed] .relatedChangeLine {
+          visibility: hidden;
+          height: 0px;
         }
       `,
     ];
   }
 
-  render() {
+  override render() {
     const sectionSize = this.sectionSizeFactory(
       this.relatedChanges.length,
       this.submittedTogether?.changes.length || 0,
@@ -157,13 +174,16 @@ export class GrRelatedChangesList extends GrLitElement {
       >
         ${this.relatedChanges.map(
           (change, index) =>
-            html`${this.renderMarkers(
+            html`<div
+              class="${classMap({
+                ['relatedChangeLine']: true,
+                ['show-when-collapsed']:
+                  relatedChangesMarkersPredicate(index).showWhenCollapsed,
+              })}"
+            >
+              ${this.renderMarkers(
                 relatedChangesMarkersPredicate(index)
               )}<gr-related-change
-                class="${classMap({
-                  ['show-when-collapsed']: relatedChangesMarkersPredicate(index)
-                    .showWhenCollapsed,
-                })}"
                 .change="${change}"
                 .connectedRevisions="${connectedRevisions}"
                 .href="${change?._change_number
@@ -175,7 +195,8 @@ export class GrRelatedChangesList extends GrLitElement {
                   : ''}"
                 .showChangeStatus=${true}
                 >${change.commit.subject}</gr-related-change
-              >`
+              >
+            </div>`
         )}
       </gr-related-collapse>
     </section>`;
@@ -208,14 +229,16 @@ export class GrRelatedChangesList extends GrLitElement {
       >
         ${submittedTogetherChanges.map(
           (change, index) =>
-            html`${this.renderMarkers(
+            html`<div
+              class="${classMap({
+                ['relatedChangeLine']: true,
+                ['show-when-collapsed']:
+                  submittedTogetherMarkersPredicate(index).showWhenCollapsed,
+              })}"
+            >
+              ${this.renderMarkers(
                 submittedTogetherMarkersPredicate(index)
               )}<gr-related-change
-                class="${classMap({
-                  ['show-when-collapsed']: submittedTogetherMarkersPredicate(
-                    index
-                  ).showWhenCollapsed,
-                })}"
                 .change="${change}"
                 .href="${GerritNav.getUrlForChangeById(
                   change._number,
@@ -224,7 +247,8 @@ export class GrRelatedChangesList extends GrLitElement {
                 .showSubmittableCheck=${true}
                 >${change.project}: ${change.branch}:
                 ${change.subject}</gr-related-change
-              >`
+              >
+            </div>`
         )}
       </gr-related-collapse>
       <div class="note" ?hidden=${!countNonVisibleChanges}>
@@ -252,13 +276,16 @@ export class GrRelatedChangesList extends GrLitElement {
       >
         ${this.sameTopicChanges.map(
           (change, index) =>
-            html`${this.renderMarkers(
+            html`<div
+              class="${classMap({
+                ['relatedChangeLine']: true,
+                ['show-when-collapsed']:
+                  sameTopicMarkersPredicate(index).showWhenCollapsed,
+              })}"
+            >
+              ${this.renderMarkers(
                 sameTopicMarkersPredicate(index)
               )}<gr-related-change
-                class="${classMap({
-                  ['show-when-collapsed']: sameTopicMarkersPredicate(index)
-                    .showWhenCollapsed,
-                })}"
                 .change="${change}"
                 .href="${GerritNav.getUrlForChangeById(
                   change._number,
@@ -266,7 +293,8 @@ export class GrRelatedChangesList extends GrLitElement {
                 )}"
                 >${change.project}: ${change.branch}:
                 ${change.subject}</gr-related-change
-              >`
+              >
+            </div>`
         )}
       </gr-related-collapse>
     </section>`;
@@ -291,20 +319,24 @@ export class GrRelatedChangesList extends GrLitElement {
       >
         ${this.conflictingChanges.map(
           (change, index) =>
-            html`${this.renderMarkers(
+            html`<div
+              class="${classMap({
+                ['relatedChangeLine']: true,
+                ['show-when-collapsed']:
+                  mergeConflictsMarkersPredicate(index).showWhenCollapsed,
+              })}"
+            >
+              ${this.renderMarkers(
                 mergeConflictsMarkersPredicate(index)
               )}<gr-related-change
-                class="${classMap({
-                  ['show-when-collapsed']: mergeConflictsMarkersPredicate(index)
-                    .showWhenCollapsed,
-                })}"
                 .change="${change}"
                 .href="${GerritNav.getUrlForChangeById(
                   change._number,
                   change.project
                 )}"
                 >${change.subject}</gr-related-change
-              >`
+              >
+            </div>`
         )}
       </gr-related-collapse>
     </section>`;
@@ -329,20 +361,24 @@ export class GrRelatedChangesList extends GrLitElement {
       >
         ${this.cherryPickChanges.map(
           (change, index) =>
-            html`${this.renderMarkers(
+            html`<div
+              class="${classMap({
+                ['relatedChangeLine']: true,
+                ['show-when-collapsed']:
+                  cherryPicksMarkersPredicate(index).showWhenCollapsed,
+              })}"
+            >
+              ${this.renderMarkers(
                 cherryPicksMarkersPredicate(index)
               )}<gr-related-change
-                class="${classMap({
-                  ['show-when-collapsed']: cherryPicksMarkersPredicate(index)
-                    .showWhenCollapsed,
-                })}"
                 .change="${change}"
                 .href="${GerritNav.getUrlForChangeById(
                   change._number,
                   change.project
                 )}"
                 >${change.branch}: ${change.subject}</gr-related-change
-              >`
+              >
+            </div>`
         )}
       </gr-related-collapse>
     </section>`;
@@ -471,7 +507,7 @@ export class GrRelatedChangesList extends GrLitElement {
     if (changeMarkers.showCurrentChangeArrow) {
       return html`<span
         role="img"
-        class="arrowToCurrentChange"
+        class="marker arrowToCurrentChange"
         aria-label="Arrow marking current change"
         >➔</span
       >`;
@@ -479,7 +515,7 @@ export class GrRelatedChangesList extends GrLitElement {
     if (changeMarkers.showTopArrow) {
       return html`<span
         role="img"
-        class="marker"
+        class="marker arrow"
         aria-label="Arrow marking change has collapsed ancestors"
         ><iron-icon icon="gr-icons:arrowDropUp"></iron-icon
       ></span> `;
@@ -487,12 +523,12 @@ export class GrRelatedChangesList extends GrLitElement {
     if (changeMarkers.showBottomArrow) {
       return html`<span
         role="img"
-        class="marker"
+        class="marker arrow"
         aria-label="Arrow marking change has collapsed descendants"
         ><iron-icon icon="gr-icons:arrowDropDown"></iron-icon
       ></span> `;
     }
-    return nothing;
+    return html`<span class="marker space"></span>`;
   }
 
   reload(getRelatedChanges?: Promise<RelatedChangesInfo | undefined>) {
@@ -630,12 +666,15 @@ export class GrRelatedChangesList extends GrLitElement {
 }
 
 @customElement('gr-related-collapse')
-export class GrRelatedCollapse extends GrLitElement {
+export class GrRelatedCollapse extends LitElement {
   @property()
-  title = '';
+  override title = '';
 
-  @property()
+  @property({type: Boolean})
   showAll = false;
+
+  @property({type: Boolean, reflect: true})
+  collapsed = true;
 
   @property()
   length = 0;
@@ -645,52 +684,19 @@ export class GrRelatedCollapse extends GrLitElement {
 
   private readonly reporting = appContext.reportingService;
 
-  static get styles() {
+  static override get styles() {
     return [
       sharedStyles,
+      fontStyles,
       css`
         .title {
-          font-weight: var(--font-weight-bold);
           color: var(--deemphasized-text-color);
-          padding-left: var(--metadata-horizontal-padding);
-        }
-        h4 {
           display: flex;
           align-self: flex-end;
+          margin-left: 20px;
         }
         gr-button {
           display: flex;
-        }
-        /* This is a hacky solution from old gr-related-change-list
-         * TODO(milutin): find layout without needing it
-         */
-        h4:before,
-        gr-button:before,
-        ::slotted(gr-related-change):before {
-          content: ' ';
-          flex-shrink: 0;
-          width: 1.2em;
-        }
-        .collapsed ::slotted(gr-related-change.show-when-collapsed) {
-          visibility: visible;
-          height: auto;
-        }
-        .collapsed ::slotted(.marker) {
-          display: block;
-        }
-        .show-all ::slotted(.marker) {
-          display: none;
-        }
-        /* keep width, so width of section and position of show all button
-         * are set according to width of all (even hidden) elements
-         */
-        .collapsed ::slotted(gr-related-change) {
-          visibility: hidden;
-          height: 0px;
-        }
-        ::slotted(gr-related-change) {
-          visibility: visible;
-          height: auto;
         }
         gr-button iron-icon {
           color: inherit;
@@ -709,15 +715,11 @@ export class GrRelatedCollapse extends GrLitElement {
     ];
   }
 
-  render() {
-    const title = html`<h4 class="title">${this.title}</h4>`;
+  override render() {
+    const title = html`<h3 class="title heading-3">${this.title}</h3>`;
 
     const collapsible = this.length > this.numChangesWhenCollapsed;
-    const items = html` <div
-      class="${!this.showAll && collapsible ? 'collapsed' : 'show-all'}"
-    >
-      <slot></slot>
-    </div>`;
+    this.collapsed = !this.showAll && collapsible;
 
     let button: TemplateResult | typeof nothing = nothing;
     if (collapsible) {
@@ -733,13 +735,13 @@ export class GrRelatedCollapse extends GrLitElement {
     }
 
     return html`<div class="container">${title}${button}</div>
-      ${items}`;
+      <div><slot></slot></div>`;
   }
 
   private toggle(e: MouseEvent) {
     e.stopPropagation();
     this.showAll = !this.showAll;
-    this.reporting.reportInteraction('toggle show all button', {
+    this.reporting.reportInteraction(Interaction.TOGGLE_SHOW_ALL_BUTTON, {
       sectionName: this.title,
       toState: this.showAll ? 'Show all' : 'Show less',
     });

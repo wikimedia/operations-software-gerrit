@@ -52,20 +52,21 @@ export interface AppElementGroupParams {
   groupId: GroupId;
 }
 
-export interface AppElementAdminParams {
+export interface ListViewParams {
+  filter?: string | null;
+  offset?: number | string;
+}
+
+export interface AppElementAdminParams extends ListViewParams {
   view: GerritView.ADMIN;
   adminView: string;
-  offset?: string | number;
-  filter?: string | null;
   openCreateModal?: boolean;
 }
 
-export interface AppElementRepoParams {
+export interface AppElementRepoParams extends ListViewParams {
   view: GerritView.REPO;
   detail?: RepoDetailView;
   repo: RepoName;
-  offset?: string | number;
-  filter?: string | null;
 }
 
 export interface AppElementDocSearchParams {
@@ -106,6 +107,16 @@ export interface AppElementDiffViewParam {
   leftSide?: boolean;
   commentLink?: boolean;
 }
+
+export interface AppElementDiffEditViewParam {
+  view: GerritView.EDIT;
+  changeNum: NumericChangeId;
+  project: RepoName;
+  path: string;
+  patchNum: RevisionPatchSetNum;
+  lineNum?: number;
+}
+
 export interface AppElementChangeViewParams {
   view: GerritView.CHANGE;
   changeNum: NumericChangeId;
@@ -114,6 +125,7 @@ export interface AppElementChangeViewParams {
   patchNum?: RevisionPatchSetNum;
   basePatchNum?: BasePatchSetNum;
   queryMap?: Map<string, string> | URLSearchParams;
+  commentId?: UrlEncodedCommentId;
 }
 
 export interface AppElementJustRegisteredParams {
@@ -138,6 +150,7 @@ export type AppElementParams =
   | AppElementSettingsParam
   | AppElementAgreementParam
   | AppElementDiffViewParam
+  | AppElementDiffEditViewParam
   | AppElementJustRegisteredParams;
 
 export function isAppElementJustRegisteredParams(

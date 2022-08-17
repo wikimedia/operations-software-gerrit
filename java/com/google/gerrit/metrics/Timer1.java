@@ -18,6 +18,7 @@ import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.extensions.registration.RegistrationHandle;
+import com.google.gerrit.server.cancellation.RequestStateContext;
 import com.google.gerrit.server.logging.LoggingContext;
 import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.PerformanceLogRecord;
@@ -53,6 +54,8 @@ public abstract class Timer1<F1> implements RegistrationHandle {
     }
   }
 
+  private boolean suppressLogging;
+
   protected final String name;
   protected final Field<F1> field;
 
@@ -68,6 +71,7 @@ public abstract class Timer1<F1> implements RegistrationHandle {
    * @return timer context
    */
   public Context<F1> start(F1 fieldValue) {
+    RequestStateContext.abortIfCancelled();
     return new Context<>(this, fieldValue);
   }
 
@@ -85,11 +89,20 @@ public abstract class Timer1<F1> implements RegistrationHandle {
     field.metadataMapper().accept(metadataBuilder, fieldValue);
     Metadata metadata = metadataBuilder.build();
 
-    LoggingContext.getInstance()
-        .addPerformanceLogRecord(() -> PerformanceLogRecord.create(name, durationMs, metadata));
+    if (!suppressLogging) {
+      LoggingContext.getInstance()
+          .addPerformanceLogRecord(() -> PerformanceLogRecord.create(name, durationMs, metadata));
+      logger.atFinest().log("%s (%s = %s) took %dms", name, field.name(), fieldValue, durationMs);
+    }
 
-    logger.atFinest().log("%s (%s = %s) took %dms", name, field.name(), fieldValue, durationMs);
     doRecord(fieldValue, value, unit);
+    RequestStateContext.abortIfCancelled();
+  }
+
+  /** Suppress logging (debug log and performance log) when values are recorded. */
+  public final Timer1<F1> suppressLogging() {
+    this.suppressLogging = true;
+    return this;
   }
 
   /**

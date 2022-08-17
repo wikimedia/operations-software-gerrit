@@ -66,7 +66,7 @@ export const htmlTemplate = html`
     ></gr-repo-header>
     <gr-user-header
       user-id="[[_userId]]"
-      show-dashboard-link=""
+      showDashboardLink=""
       logged-in="[[_loggedIn]]"
       class$="[[_computeHeaderClass(_userId)]]"
     ></gr-user-header>
@@ -77,7 +77,7 @@ export const htmlTemplate = html`
       selected-index="{{viewState.selectedChangeIndex}}"
       show-star="[[_loggedIn]]"
       on-toggle-star="_handleToggleStar"
-      on-toggle-reviewed="_handleToggleReviewed"
+      observer-target="[[_computeObserverTarget()]]"
     ></gr-change-list>
     <nav class$="[[_computeNavClass(_loading)]]">
       Page [[_computePage(_offset, _changesPerPage)]]

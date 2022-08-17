@@ -16,6 +16,7 @@
  */
 import '@polymer/iron-dropdown/iron-dropdown';
 import '../gr-button/gr-button';
+import {GrButton} from '../gr-button/gr-button';
 import '../gr-cursor-manager/gr-cursor-manager';
 import '../gr-tooltip-content/gr-tooltip-content';
 import '../../../styles/shared-styles';
@@ -23,15 +24,18 @@ import {flush} from '@polymer/polymer/lib/legacy/polymer.dom';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-dropdown_html';
 import {getBaseUrl} from '../../../utils/url-util';
-import {KeyboardShortcutMixin} from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
 import {IronDropdownElement} from '@polymer/iron-dropdown/iron-dropdown';
 import {GrCursorManager} from '../gr-cursor-manager/gr-cursor-manager';
 import {property, customElement, observe} from '@polymer/decorators';
+import {addShortcut, Key} from '../../../utils/dom-util';
 
 const REL_NOOPENER = 'noopener';
 const REL_EXTERNAL = 'external';
 
 declare global {
+  interface HTMLElementEventMap {
+    'opened-changed': CustomEvent;
+  }
   interface HTMLElementTagNameMap {
     'gr-dropdown': GrDropdown;
   }
@@ -40,6 +44,7 @@ declare global {
 export interface GrDropdown {
   $: {
     dropdown: IronDropdownElement;
+    trigger: GrButton;
   };
 }
 
@@ -57,13 +62,13 @@ interface DisableIdsRecord {
   base: string[];
 }
 
-interface Content {
+export interface DropdownContent {
   text: string;
   bold?: boolean;
 }
 
 @customElement('gr-dropdown')
-export class GrDropdown extends KeyboardShortcutMixin(PolymerElement) {
+export class GrDropdown extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
@@ -84,10 +89,10 @@ export class GrDropdown extends KeyboardShortcutMixin(PolymerElement) {
   items?: DropdownLink[];
 
   @property({type: Boolean})
-  downArrow?: boolean;
+  downArrow = false;
 
   @property({type: Array})
-  topContent?: Content[];
+  topContent?: DropdownContent[];
 
   @property({type: String})
   horizontalAlign = 'left';
@@ -113,16 +118,11 @@ export class GrDropdown extends KeyboardShortcutMixin(PolymerElement) {
   @property({type: Array})
   disabledIds: string[] = [];
 
-  get keyBindings() {
-    return {
-      down: '_handleDown',
-      'enter space': '_handleEnter',
-      tab: '_handleTab',
-      up: '_handleUp',
-    };
-  }
+  /** Called in disconnectedCallback. */
+  private cleanups: (() => void)[] = [];
 
-  private cursor = new GrCursorManager();
+  // Used within the tests so needs to be non-private.
+  cursor = new GrCursorManager();
 
   constructor() {
     super();
@@ -130,16 +130,36 @@ export class GrDropdown extends KeyboardShortcutMixin(PolymerElement) {
     this.cursor.focusOnMove = true;
   }
 
-  /** @override */
-  disconnectedCallback() {
+  override connectedCallback() {
+    super.connectedCallback();
+    this.cleanups.push(
+      addShortcut(this, {key: Key.UP}, e => this._handleUp(e))
+    );
+    this.cleanups.push(
+      addShortcut(this, {key: Key.DOWN}, e => this._handleDown(e))
+    );
+    this.cleanups.push(
+      addShortcut(this, {key: Key.TAB}, e => this._handleTab(e))
+    );
+    this.cleanups.push(
+      addShortcut(this, {key: Key.ENTER}, e => this._handleEnter(e))
+    );
+    this.cleanups.push(
+      addShortcut(this, {key: Key.SPACE}, e => this._handleEnter(e))
+    );
+  }
+
+  override disconnectedCallback() {
     this.cursor.unsetCursor();
+    for (const cleanup of this.cleanups) cleanup();
+    this.cleanups = [];
     super.disconnectedCallback();
   }
 
   /**
    * Handle the up key.
    */
-  _handleUp(e: MouseEvent) {
+  _handleUp(e: Event) {
     if (this.$.dropdown.opened) {
       e.preventDefault();
       e.stopPropagation();
@@ -152,7 +172,7 @@ export class GrDropdown extends KeyboardShortcutMixin(PolymerElement) {
   /**
    * Handle the down key.
    */
-  _handleDown(e: MouseEvent) {
+  _handleDown(e: Event) {
     if (this.$.dropdown.opened) {
       e.preventDefault();
       e.stopPropagation();
@@ -165,7 +185,7 @@ export class GrDropdown extends KeyboardShortcutMixin(PolymerElement) {
   /**
    * Handle the tab key.
    */
-  _handleTab(e: MouseEvent) {
+  _handleTab(e: Event) {
     if (this.$.dropdown.opened) {
       // Tab in a native select is a no-op. Emulate this.
       e.preventDefault();
@@ -176,7 +196,7 @@ export class GrDropdown extends KeyboardShortcutMixin(PolymerElement) {
   /**
    * Handle the enter key.
    */
-  _handleEnter(e: MouseEvent) {
+  _handleEnter(e: Event) {
     e.preventDefault();
     e.stopPropagation();
     if (this.$.dropdown.opened) {
@@ -242,7 +262,7 @@ export class GrDropdown extends KeyboardShortcutMixin(PolymerElement) {
    * @param bold Whether the item is bold.
    * @return The class for the top-content item.
    */
-  _getClassIfBold(bold: boolean) {
+  _getClassIfBold(bold?: boolean) {
     return bold ? 'bold-text' : '';
   }
 
@@ -329,8 +349,8 @@ export class GrDropdown extends KeyboardShortcutMixin(PolymerElement) {
    *     list.
    * @return The class for the item button.
    */
-  _computeDisabledClass(id: string, disabledIdsRecord: DisableIdsRecord) {
-    return disabledIdsRecord.base.includes(id) ? 'disabled' : '';
+  _computeDisabledClass(disabledIdsRecord: DisableIdsRecord, id?: string) {
+    return id && disabledIdsRecord.base.includes(id) ? 'disabled' : '';
   }
 
   /**

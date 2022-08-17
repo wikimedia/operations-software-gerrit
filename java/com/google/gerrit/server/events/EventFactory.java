@@ -35,11 +35,11 @@ import com.google.gerrit.entities.UserIdentity;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.registration.DynamicItem;
 import com.google.gerrit.index.IndexConfig;
-import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.account.Emails;
+import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.change.ChangeKindCache;
 import com.google.gerrit.server.config.UrlFormatter;
 import com.google.gerrit.server.data.AccountAttribute;
@@ -56,13 +56,13 @@ import com.google.gerrit.server.data.SubmitRecordAttribute;
 import com.google.gerrit.server.data.SubmitRequirementAttribute;
 import com.google.gerrit.server.data.TrackingIdAttribute;
 import com.google.gerrit.server.notedb.ChangeNotes;
-import com.google.gerrit.server.patch.PatchList;
-import com.google.gerrit.server.patch.PatchListCache;
-import com.google.gerrit.server.patch.PatchListEntry;
-import com.google.gerrit.server.patch.PatchListNotAvailableException;
-import com.google.gerrit.server.patch.PatchListObjectTooLargeException;
+import com.google.gerrit.server.patch.DiffNotAvailableException;
+import com.google.gerrit.server.patch.DiffOperations;
+import com.google.gerrit.server.patch.FilePathAdapter;
+import com.google.gerrit.server.patch.filediff.FileDiffOutput;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
+import com.google.gerrit.server.util.AccountTemplateUtil;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -71,6 +71,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -83,37 +84,40 @@ public class EventFactory {
 
   private final AccountCache accountCache;
   private final DynamicItem<UrlFormatter> urlFormatter;
+  private final DiffOperations diffOperations;
   private final Emails emails;
-  private final PatchListCache patchListCache;
   private final Provider<PersonIdent> myIdent;
   private final ChangeData.Factory changeDataFactory;
   private final ApprovalsUtil approvalsUtil;
   private final ChangeKindCache changeKindCache;
   private final Provider<InternalChangeQuery> queryProvider;
   private final IndexConfig indexConfig;
+  private final AccountTemplateUtil accountTemplateUtil;
 
   @Inject
   EventFactory(
       AccountCache accountCache,
       Emails emails,
       DynamicItem<UrlFormatter> urlFormatter,
-      PatchListCache patchListCache,
+      DiffOperations diffOperations,
       @GerritPersonIdent Provider<PersonIdent> myIdent,
       ChangeData.Factory changeDataFactory,
       ApprovalsUtil approvalsUtil,
       ChangeKindCache changeKindCache,
       Provider<InternalChangeQuery> queryProvider,
-      IndexConfig indexConfig) {
+      IndexConfig indexConfig,
+      AccountTemplateUtil accountTemplateUtil) {
     this.accountCache = accountCache;
     this.urlFormatter = urlFormatter;
     this.emails = emails;
-    this.patchListCache = patchListCache;
+    this.diffOperations = diffOperations;
     this.myIdent = myIdent;
     this.changeDataFactory = changeDataFactory;
     this.approvalsUtil = approvalsUtil;
     this.changeKindCache = changeKindCache;
     this.queryProvider = queryProvider;
     this.indexConfig = indexConfig;
+    this.accountTemplateUtil = accountTemplateUtil;
   }
 
   public ChangeAttribute asChangeAttribute(Change change) {
@@ -394,23 +398,24 @@ public class EventFactory {
   public void addPatchSetFileNames(
       PatchSetAttribute patchSetAttribute, Change change, PatchSet patchSet) {
     try {
-      PatchList patchList = patchListCache.get(change, patchSet);
-      for (PatchListEntry patch : patchList.getPatches()) {
+      Map<String, FileDiffOutput> modifiedFiles =
+          diffOperations.listModifiedFilesAgainstParent(
+              change.getProject(), patchSet.commitId(), /* parentNum= */ 0);
+
+      for (FileDiffOutput diff : modifiedFiles.values()) {
         if (patchSetAttribute.files == null) {
           patchSetAttribute.files = new ArrayList<>();
         }
 
         PatchAttribute p = new PatchAttribute();
-        p.file = patch.getNewName();
-        p.fileOld = patch.getOldName();
-        p.type = patch.getChangeType();
-        p.deletions -= patch.getDeletions();
-        p.insertions = patch.getInsertions();
+        p.file = FilePathAdapter.getNewPath(diff.oldPath(), diff.newPath(), diff.changeType());
+        p.fileOld = FilePathAdapter.getOldPath(diff.oldPath(), diff.changeType());
+        p.type = diff.changeType();
+        p.deletions -= diff.deletions();
+        p.insertions = diff.insertions();
         patchSetAttribute.files.add(p);
       }
-    } catch (PatchListObjectTooLargeException e) {
-      logger.atWarning().log("Cannot get patch list: %s", e.getMessage());
-    } catch (PatchListNotAvailableException e) {
+    } catch (DiffNotAvailableException e) {
       logger.atSevere().withCause(e).log("Cannot get patch list");
     }
   }
@@ -450,15 +455,17 @@ public class EventFactory {
         p.author = asAccountAttribute(author.getAccount());
       }
 
-      PatchList patchList = patchListCache.get(change, patchSet);
-      p.sizeDeletions = patchList.getDeletions();
-      p.sizeInsertions = patchList.getInsertions();
+      Map<String, FileDiffOutput> modifiedFiles =
+          diffOperations.listModifiedFilesAgainstParent(
+              change.getProject(), patchSet.commitId(), /* parentNum= */ 0);
+      for (FileDiffOutput fileDiff : modifiedFiles.values()) {
+        p.sizeDeletions += fileDiff.deletions();
+        p.sizeInsertions += fileDiff.insertions();
+      }
       p.kind = changeKindCache.getChangeKind(change, patchSet);
     } catch (IOException | StorageException e) {
       logger.atSevere().withCause(e).log("Cannot load patch set data for %s", patchSet.id());
-    } catch (PatchListObjectTooLargeException e) {
-      logger.atWarning().log("Cannot get size information for %s: %s", pId, e.getMessage());
-    } catch (PatchListNotAvailableException e) {
+    } catch (DiffNotAvailableException e) {
       logger.atSevere().withCause(e).log("Cannot get size information for %s.", pId);
     }
     return p;
@@ -529,10 +536,8 @@ public class EventFactory {
     a.grantedOn = approval.granted().getTime() / 1000L;
     a.oldValue = null;
 
-    LabelType lt = labelTypes.byLabel(approval.labelId());
-    if (lt != null) {
-      a.description = lt.getName();
-    }
+    Optional<LabelType> lt = labelTypes.byLabel(approval.labelId());
+    lt.ifPresent(l -> a.description = l.getName());
     return a;
   }
 
@@ -543,7 +548,7 @@ public class EventFactory {
         message.getAuthor() != null
             ? asAccountAttribute(message.getAuthor())
             : asAccountAttribute(myIdent.get());
-    a.message = message.getMessage();
+    a.message = accountTemplateUtil.replaceTemplates(message.getMessage());
     return a;
   }
 

@@ -18,7 +18,6 @@ import com.google.common.base.Strings;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.server.ChangeMessagesUtil;
@@ -32,7 +31,7 @@ import com.google.gerrit.server.mail.send.ReplyToChangeSender;
 import com.google.gerrit.server.notedb.ChangeUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.Context;
+import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 
@@ -50,7 +49,7 @@ public class AbandonOp implements BatchUpdateOp {
 
   private Change change;
   private PatchSet patchSet;
-  private ChangeMessage message;
+  private String mailMessage;
 
   public interface Factory {
     AbandonOp create(
@@ -94,24 +93,22 @@ public class AbandonOp implements BatchUpdateOp {
     change.setLastUpdatedOn(ctx.getWhen());
 
     update.setStatus(change.getStatus());
-    message = newMessage(ctx);
-    cmUtil.addChangeMessage(update, message);
+    mailMessage = cmUtil.setChangeMessage(ctx, commentMessage(), ChangeMessagesUtil.TAG_ABANDON);
     return true;
   }
 
-  private ChangeMessage newMessage(ChangeContext ctx) {
+  private String commentMessage() {
     StringBuilder msg = new StringBuilder();
     msg.append("Abandoned");
     if (!Strings.nullToEmpty(msgTxt).trim().isEmpty()) {
       msg.append("\n\n");
       msg.append(msgTxt.trim());
     }
-
-    return ChangeMessagesUtil.newMessage(ctx, msg.toString(), ChangeMessagesUtil.TAG_ABANDON);
+    return msg.toString();
   }
 
   @Override
-  public void postUpdate(Context ctx) {
+  public void postUpdate(PostUpdateContext ctx) {
     NotifyResolver.Result notify = ctx.getNotify(change.getId());
     try {
       ReplyToChangeSender emailSender =
@@ -119,7 +116,7 @@ public class AbandonOp implements BatchUpdateOp {
       if (accountState != null) {
         emailSender.setFrom(accountState.account().id());
       }
-      emailSender.setChangeMessage(message.getMessage(), ctx.getWhen());
+      emailSender.setChangeMessage(mailMessage, ctx.getWhen());
       emailSender.setNotify(notify);
       emailSender.setMessageId(
           messageIdGenerator.fromChangeUpdate(ctx.getRepoView(), patchSet.id()));
@@ -127,6 +124,12 @@ public class AbandonOp implements BatchUpdateOp {
     } catch (Exception e) {
       logger.atSevere().withCause(e).log("Cannot email update for change %s", change.getId());
     }
-    changeAbandoned.fire(change, patchSet, accountState, msgTxt, ctx.getWhen(), notify.handling());
+    changeAbandoned.fire(
+        ctx.getChangeData(change),
+        patchSet,
+        accountState,
+        msgTxt,
+        ctx.getWhen(),
+        notify.handling());
   }
 }

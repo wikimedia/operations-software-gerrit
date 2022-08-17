@@ -21,7 +21,6 @@ import static java.util.Objects.requireNonNull;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.entities.LabelTypes;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.PatchSetApproval;
@@ -34,11 +33,13 @@ import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
-import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.ChangeMessagesUtil;
+import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.account.AccountState;
+import com.google.gerrit.server.approval.ApprovalsUtil;
+import com.google.gerrit.server.change.AddToAttentionSetOp;
 import com.google.gerrit.server.change.NotifyResolver;
 import com.google.gerrit.server.change.ReviewerResource;
 import com.google.gerrit.server.change.VoteResource;
@@ -53,11 +54,13 @@ import com.google.gerrit.server.project.RemoveReviewerControl;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.Context;
+import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.gerrit.server.update.UpdateException;
+import com.google.gerrit.server.util.AccountTemplateUtil;
 import com.google.gerrit.server.util.LabelVote;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.inject.Inject;
+import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.HashMap;
@@ -72,13 +75,14 @@ public class DeleteVote implements RestModifyView<VoteResource, DeleteVoteInput>
   private final ApprovalsUtil approvalsUtil;
   private final PatchSetUtil psUtil;
   private final ChangeMessagesUtil cmUtil;
-  private final IdentifiedUser.GenericFactory userFactory;
   private final VoteDeleted voteDeleted;
   private final DeleteVoteSender.Factory deleteVoteSenderFactory;
   private final NotifyResolver notifyResolver;
   private final RemoveReviewerControl removeReviewerControl;
   private final ProjectCache projectCache;
   private final MessageIdGenerator messageIdGenerator;
+  private final AddToAttentionSetOp.Factory attentionSetOpfactory;
+  private final Provider<CurrentUser> currentUserProvider;
 
   @Inject
   DeleteVote(
@@ -86,24 +90,26 @@ public class DeleteVote implements RestModifyView<VoteResource, DeleteVoteInput>
       ApprovalsUtil approvalsUtil,
       PatchSetUtil psUtil,
       ChangeMessagesUtil cmUtil,
-      IdentifiedUser.GenericFactory userFactory,
       VoteDeleted voteDeleted,
       DeleteVoteSender.Factory deleteVoteSenderFactory,
       NotifyResolver notifyResolver,
       RemoveReviewerControl removeReviewerControl,
       ProjectCache projectCache,
-      MessageIdGenerator messageIdGenerator) {
+      MessageIdGenerator messageIdGenerator,
+      AddToAttentionSetOp.Factory attentionSetOpFactory,
+      Provider<CurrentUser> currentUserProvider) {
     this.updateFactory = updateFactory;
     this.approvalsUtil = approvalsUtil;
     this.psUtil = psUtil;
     this.cmUtil = cmUtil;
-    this.userFactory = userFactory;
     this.voteDeleted = voteDeleted;
     this.deleteVoteSenderFactory = deleteVoteSenderFactory;
     this.notifyResolver = notifyResolver;
     this.removeReviewerControl = removeReviewerControl;
     this.projectCache = projectCache;
     this.messageIdGenerator = messageIdGenerator;
+    this.attentionSetOpfactory = attentionSetOpFactory;
+    this.currentUserProvider = currentUserProvider;
   }
 
   @Override
@@ -140,6 +146,14 @@ public class DeleteVote implements RestModifyView<VoteResource, DeleteVoteInput>
               r.getReviewerUser().state(),
               rsrc.getLabel(),
               input));
+      if (!r.getReviewerUser().getAccountId().equals(currentUserProvider.get().getAccountId())) {
+        bu.addOp(
+            change.getId(),
+            attentionSetOpfactory.create(
+                r.getReviewerUser().getAccountId(),
+                /* reason= */ "Their vote was deleted",
+                /* notify= */ false));
+      }
       bu.execute();
     }
 
@@ -152,7 +166,7 @@ public class DeleteVote implements RestModifyView<VoteResource, DeleteVoteInput>
     private final String label;
     private final DeleteVoteInput input;
 
-    private ChangeMessage changeMessage;
+    private String mailMessage;
     private Change change;
     private PatchSet ps;
     private Map<String, Short> newApprovals = new HashMap<>();
@@ -181,7 +195,7 @@ public class DeleteVote implements RestModifyView<VoteResource, DeleteVoteInput>
       for (PatchSetApproval a :
           approvalsUtil.byPatchSetUser(
               ctx.getNotes(), psId, accountId, ctx.getRevWalk(), ctx.getRepoView().getConfig())) {
-        if (labelTypes.byLabel(a.labelId()) == null) {
+        if (!labelTypes.byLabel(a.labelId()).isPresent()) {
           continue; // Ignore undefined labels.
         } else if (!a.label().equals(label)) {
           // Populate map for non-matching labels, needed by VoteDeleted.
@@ -211,17 +225,15 @@ public class DeleteVote implements RestModifyView<VoteResource, DeleteVoteInput>
       StringBuilder msg = new StringBuilder();
       msg.append("Removed ");
       LabelVote.appendTo(msg, label, requireNonNull(oldApprovals.get(label)));
-      msg.append(" by ").append(userFactory.create(accountId).getNameEmail()).append("\n");
-      changeMessage =
-          ChangeMessagesUtil.newMessage(ctx, msg.toString(), ChangeMessagesUtil.TAG_DELETE_VOTE);
-      cmUtil.addChangeMessage(ctx.getUpdate(psId), changeMessage);
-
+      msg.append(" by ").append(AccountTemplateUtil.getAccountTemplate(accountId)).append("\n");
+      mailMessage =
+          cmUtil.setChangeMessage(ctx, msg.toString(), ChangeMessagesUtil.TAG_DELETE_VOTE);
       return true;
     }
 
     @Override
-    public void postUpdate(Context ctx) {
-      if (changeMessage == null) {
+    public void postUpdate(PostUpdateContext ctx) {
+      if (mailMessage == null) {
         return;
       }
 
@@ -232,7 +244,7 @@ public class DeleteVote implements RestModifyView<VoteResource, DeleteVoteInput>
           ReplyToChangeSender emailSender =
               deleteVoteSenderFactory.create(ctx.getProject(), change.getId());
           emailSender.setFrom(user.getAccountId());
-          emailSender.setChangeMessage(changeMessage.getMessage(), ctx.getWhen());
+          emailSender.setChangeMessage(mailMessage, ctx.getWhen());
           emailSender.setNotify(notify);
           emailSender.setMessageId(
               messageIdGenerator.fromChangeUpdate(ctx.getRepoView(), change.currentPatchSetId()));
@@ -243,13 +255,13 @@ public class DeleteVote implements RestModifyView<VoteResource, DeleteVoteInput>
       }
 
       voteDeleted.fire(
-          change,
+          ctx.getChangeData(change),
           ps,
           accountState,
           newApprovals,
           oldApprovals,
           input.notify,
-          changeMessage.getMessage(),
+          mailMessage,
           user.state(),
           ctx.getWhen());
     }

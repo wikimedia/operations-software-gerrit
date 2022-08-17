@@ -22,7 +22,7 @@ import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader
 import {customElement, property} from '@polymer/decorators';
 
 @customElement('gr-external-style')
-class GrExternalStyle extends PolymerElement {
+export class GrExternalStyle extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
@@ -58,14 +58,12 @@ class GrExternalStyle extends PolymerElement {
     }
   }
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     this._importAndApply();
   }
 
-  /** @override */
-  ready() {
+  override ready() {
     super.ready();
     getPluginLoader()
       .awaitPluginsLoaded()

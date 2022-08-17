@@ -41,6 +41,7 @@ import com.google.gerrit.server.config.ConfigUtil;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.ReceiveCommitsExecutor;
 import com.google.gerrit.server.git.MultiProgressMonitor;
+import com.google.gerrit.server.git.MultiProgressMonitor.TaskKind;
 import com.google.gerrit.server.git.PermissionAwareRepositoryManager;
 import com.google.gerrit.server.git.ProjectRunnable;
 import com.google.gerrit.server.git.TransferConfig;
@@ -92,7 +93,9 @@ import org.eclipse.jgit.transport.ReceivePack;
 public class AsyncReceiveCommits {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
-  private static final String TIMEOUT_NAME = "ReceiveCommitsOverallTimeout";
+  private static final String RECEIVE_OVERALL_TIMEOUT_NAME = "ReceiveCommitsOverallTimeout";
+  private static final String RECEIVE_CANCELLATION_TIMEOUT_NAME =
+      "ReceiveCommitsCancellationTimeout";
 
   public interface Factory {
     AsyncReceiveCommits create(
@@ -102,7 +105,7 @@ public class AsyncReceiveCommits {
         @Nullable MessageSender messageSender);
   }
 
-  public static class Module extends PrivateModule {
+  public static class AsyncReceiveCommitsModule extends PrivateModule {
     @Override
     public void configure() {
       install(new FactoryModuleBuilder().build(LazyPostReceiveHookChain.Factory.class));
@@ -117,15 +120,29 @@ public class AsyncReceiveCommits {
 
     @Provides
     @Singleton
-    @Named(TIMEOUT_NAME)
-    long getTimeoutMillis(@GerritServerConfig Config cfg) {
+    @Named(RECEIVE_OVERALL_TIMEOUT_NAME)
+    long getReceiveTimeoutMillis(@GerritServerConfig Config cfg) {
       return ConfigUtil.getTimeUnit(
           cfg, "receive", null, "timeout", TimeUnit.MINUTES.toMillis(4), TimeUnit.MILLISECONDS);
     }
+
+    @Provides
+    @Singleton
+    @Named(RECEIVE_CANCELLATION_TIMEOUT_NAME)
+    long getCancellationTimeoutMillis(@GerritServerConfig Config cfg) {
+      return ConfigUtil.getTimeUnit(
+          cfg,
+          "receive",
+          null,
+          "cancellationTimeout",
+          TimeUnit.SECONDS.toMillis(5),
+          TimeUnit.MILLISECONDS);
+    }
   }
 
-  private static MultiProgressMonitor newMultiProgressMonitor(MessageSender messageSender) {
-    return new MultiProgressMonitor(
+  private static MultiProgressMonitor newMultiProgressMonitor(
+      MultiProgressMonitor.Factory multiProgressMonitorFactory, MessageSender messageSender) {
+    return multiProgressMonitorFactory.create(
         new OutputStream() {
           @Override
           public void write(int b) {
@@ -147,6 +164,7 @@ public class AsyncReceiveCommits {
             messageSender.flush();
           }
         },
+        TaskKind.RECEIVE_COMMITS,
         "Processing changes");
   }
 
@@ -204,6 +222,7 @@ public class AsyncReceiveCommits {
     }
   }
 
+  private final MultiProgressMonitor.Factory multiProgressMonitorFactory;
   private final Metrics metrics;
   private final ReceiveCommits receiveCommits;
   private final PermissionBackend.ForProject perm;
@@ -212,7 +231,8 @@ public class AsyncReceiveCommits {
   private final RequestScopePropagator scopePropagator;
   private final ReceiveConfig receiveConfig;
   private final ContributorAgreementsChecker contributorAgreements;
-  private final long timeoutMillis;
+  private final long receiveTimeoutMillis;
+  private final long cancellationTimeoutMillis;
   private final ProjectState projectState;
   private final IdentifiedUser user;
   private final Repository repo;
@@ -220,6 +240,7 @@ public class AsyncReceiveCommits {
 
   @Inject
   AsyncReceiveCommits(
+      MultiProgressMonitor.Factory multiProgressMonitorFactory,
       ReceiveCommits.Factory factory,
       PermissionBackend permissionBackend,
       Provider<InternalChangeQuery> queryProvider,
@@ -233,17 +254,20 @@ public class AsyncReceiveCommits {
       QuotaBackend quotaBackend,
       UsersSelfAdvertiseRefsHook usersSelfAdvertiseRefsHook,
       AllUsersName allUsersName,
-      @Named(TIMEOUT_NAME) long timeoutMillis,
+      @Named(RECEIVE_OVERALL_TIMEOUT_NAME) long receiveTimeoutMillis,
+      @Named(RECEIVE_CANCELLATION_TIMEOUT_NAME) long cancellationTimeoutMillis,
       @Assisted ProjectState projectState,
       @Assisted IdentifiedUser user,
       @Assisted Repository repo,
       @Assisted @Nullable MessageSender messageSender)
       throws PermissionBackendException {
+    this.multiProgressMonitorFactory = multiProgressMonitorFactory;
     this.executor = executor;
     this.scopePropagator = scopePropagator;
     this.receiveConfig = receiveConfig;
     this.contributorAgreements = contributorAgreements;
-    this.timeoutMillis = timeoutMillis;
+    this.receiveTimeoutMillis = receiveTimeoutMillis;
+    this.cancellationTimeoutMillis = cancellationTimeoutMillis;
     this.projectState = projectState;
     this.user = user;
     this.repo = repo;
@@ -331,10 +355,6 @@ public class AsyncReceiveCommits {
       try {
         result = preReceive(commands);
       } catch (TimeoutException e) {
-        metrics.timeouts.increment();
-        logger.atWarning().withCause(e).log(
-            "Timeout in ReceiveCommits while processing changes for project %s",
-            projectState.getName());
         receivePack.sendError("timeout while processing changes");
         rejectCommandsNotAttempted(commands);
         return;
@@ -361,7 +381,8 @@ public class AsyncReceiveCommits {
       return ReceiveCommitsResult.empty();
     }
     String currentThreadName = Thread.currentThread().getName();
-    MultiProgressMonitor monitor = newMultiProgressMonitor(receiveCommits.getMessageSender());
+    MultiProgressMonitor monitor =
+        newMultiProgressMonitor(multiProgressMonitorFactory, receiveCommits.getMessageSender());
     Callable<ReceiveCommitsResult> callable =
         () -> {
           String oldName = Thread.currentThread().getName();
@@ -379,12 +400,22 @@ public class AsyncReceiveCommits {
           ProjectRunnable.fromCallable(
               callable, receiveCommits.getProject().getNameKey(), "receive-commits", null, false);
       monitor.waitFor(
-          executor.submit(scopePropagator.wrap(runnable)), timeoutMillis, TimeUnit.MILLISECONDS);
+          executor.submit(scopePropagator.wrap(runnable)),
+          receiveTimeoutMillis,
+          TimeUnit.MILLISECONDS,
+          cancellationTimeoutMillis,
+          TimeUnit.MILLISECONDS);
       if (!runnable.isDone()) {
         // At this point we are either done or have thrown a TimeoutException and bailed out.
         throw new IllegalStateException("unable to get receive commits result");
       }
       return runnable.get();
+    } catch (TimeoutException e) {
+      metrics.timeouts.increment();
+      logger.atWarning().withCause(e).log(
+          "Timeout in ReceiveCommits while processing changes for project %s",
+          projectState.getName());
+      throw e;
     } catch (InterruptedException | ExecutionException e) {
       throw new UncheckedExecutionException(e);
     }

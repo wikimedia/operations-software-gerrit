@@ -16,14 +16,19 @@ package com.google.gerrit.server.util;
 
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.AttentionSetUpdate;
 import com.google.gerrit.entities.AttentionSetUpdate.Operation;
 import com.google.gerrit.extensions.api.changes.AttentionSetInput;
+import com.google.gerrit.extensions.common.AccountInfo;
+import com.google.gerrit.extensions.common.AttentionSetInfo;
 import com.google.gerrit.extensions.restapi.BadRequestException;
+import com.google.gerrit.server.account.AccountLoader;
 import com.google.gerrit.server.account.AccountResolver;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import java.io.IOException;
+import java.sql.Timestamp;
 import java.util.Collection;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
@@ -92,6 +97,27 @@ public class AttentionSetUtil {
     return changeNotes.getChange().getOwner().equals(attentionUserId)
         || changeNotes.getCurrentPatchSet().uploader().equals(attentionUserId)
         || changeNotes.getReviewers().all().stream().anyMatch(id -> id.equals(attentionUserId));
+  }
+
+  /**
+   * Returns {@link AttentionSetInfo} from {@link AttentionSetUpdate} with {@link AccountInfo}
+   * fields filled by {@code accountLoader}.
+   */
+  public static AttentionSetInfo createAttentionSetInfo(
+      AttentionSetUpdate attentionSetUpdate, AccountLoader accountLoader) {
+    // Only one account is expected in attention set reason. If there are multiple, do not return
+    // anything instead of failing the request.
+    ImmutableSet<Account.Id> accountsInTemplate =
+        AccountTemplateUtil.parseTemplates(attentionSetUpdate.reason());
+    AccountInfo reasonAccount =
+        accountsInTemplate.size() == 1
+            ? accountLoader.get(Iterables.getOnlyElement(accountsInTemplate))
+            : null;
+    return new AttentionSetInfo(
+        accountLoader.get(attentionSetUpdate.account()),
+        Timestamp.from(attentionSetUpdate.timestamp()),
+        attentionSetUpdate.reason(),
+        reasonAccount);
   }
 
   private AttentionSetUtil() {}

@@ -35,7 +35,7 @@ export const htmlTemplate = html`
     <section>
       <span class="title"></span>
       <span class="value">
-        <gr-avatar account="[[_account]]" image-size="120"></gr-avatar>
+        <gr-avatar account="[[_account]]" imageSize="120"></gr-avatar>
       </span>
     </section>
     <section class$="[[_hideAvatarChangeUrl(_avatarChangeUrl)]]">
@@ -56,7 +56,7 @@ export const htmlTemplate = html`
       <span class="title">Registered</span>
       <span class="value">
         <gr-date-formatter
-          has-tooltip=""
+          withTooltip
           date-str="[[_account.registered_on]]"
         ></gr-date-formatter>
       </span>
@@ -71,7 +71,6 @@ export const htmlTemplate = html`
           id="usernameIronInput"
         >
           <input
-            is="iron-input"
             id="usernameInput"
             disabled="[[_saving]]"
             on-keydown="_handleKeydown"
@@ -89,7 +88,6 @@ export const htmlTemplate = html`
           id="nameIronInput"
         >
           <input
-            is="iron-input"
             id="nameInput"
             disabled="[[_saving]]"
             on-keydown="_handleKeydown"
@@ -105,7 +103,6 @@ export const htmlTemplate = html`
           bind-value="{{_account.display_name}}"
         >
           <input
-            is="iron-input"
             id="displayNameInput"
             disabled="[[_saving]]"
             on-keydown="_handleKeydown"
@@ -121,7 +118,6 @@ export const htmlTemplate = html`
           bind-value="{{_account.status}}"
         >
           <input
-            is="iron-input"
             id="statusInput"
             disabled="[[_saving]]"
             on-keydown="_handleKeydown"

@@ -14,15 +14,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import '../../../styles/gr-a11y-styles';
 import '../../../styles/shared-styles';
 import '../gr-comment/gr-comment';
 import '../../diff/gr-diff/gr-diff';
-import {dom, EventApi} from '@polymer/polymer/lib/legacy/polymer.dom';
+import '../gr-copy-clipboard/gr-copy-clipboard';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-comment-thread_html';
-import {KeyboardShortcutMixin} from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
 import {
   computeDiffFromContext,
+  computeId,
+  DraftInfo,
   isDraft,
   isRobot,
   sortComments,
@@ -41,6 +43,7 @@ import {
 import {computeDisplayPath} from '../../../utils/path-list-util';
 import {computed, customElement, observe, property} from '@polymer/decorators';
 import {
+  AccountDetailInfo,
   CommentRange,
   ConfigInfo,
   NumericChangeId,
@@ -50,15 +53,23 @@ import {
 } from '../../../types/common';
 import {GrComment} from '../gr-comment/gr-comment';
 import {PolymerDeepPropertyChange} from '@polymer/polymer/interfaces';
-import {CustomKeyboardEvent} from '../../../types/events';
-import {LineNumber, FILE} from '../../diff/gr-diff/gr-diff-line';
+import {FILE, LineNumber} from '../../diff/gr-diff/gr-diff-line';
 import {GrButton} from '../gr-button/gr-button';
 import {DiffInfo, DiffPreferencesInfo} from '../../../types/diff';
-import {RenderPreferences} from '../../../api/diff';
-import {check, assertIsDefined} from '../../../utils/common-util';
-import {waitForEventOnce} from '../../../utils/event-util';
+import {DiffLayer, RenderPreferences} from '../../../api/diff';
+import {
+  assertIsDefined,
+  check,
+  queryAndAssert,
+} from '../../../utils/common-util';
+import {fireAlert, waitForEventOnce} from '../../../utils/event-util';
 import {GrSyntaxLayer} from '../../diff/gr-syntax-layer/gr-syntax-layer';
 import {StorageLocation} from '../../../services/storage/gr-storage';
+import {TokenHighlightLayer} from '../../diff/gr-diff-builder/token-highlight-layer';
+import {anyLineTooLong} from '../../diff/gr-diff/gr-diff-utils';
+import {getUserName} from '../../../utils/display-name-util';
+import {generateAbsoluteUrl} from '../../../utils/url-util';
+import {addGlobalShortcut} from '../../../utils/dom-util';
 
 const UNRESOLVED_EXPAND_COUNT = 5;
 const NEWLINE_PATTERN = /\n/g;
@@ -71,24 +82,10 @@ export interface GrCommentThread {
 }
 
 @customElement('gr-comment-thread')
-export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
-  // KeyboardShortcutMixin Not used in this element rather other elements tests
-
+export class GrCommentThread extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
-
-  /**
-   * Fired when the thread should be discarded.
-   *
-   * @event thread-discard
-   */
-
-  /**
-   * Fired when a comment in the thread is permanently modified.
-   *
-   * @event thread-changed
-   */
 
   /**
    * gr-comment-thread exposes the following attributes that allow a
@@ -119,9 +116,6 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
   @property({type: Object, reflectToAttribute: true})
   range?: CommentRange;
 
-  @property({type: Object})
-  keyEventTarget: HTMLElement = document.body;
-
   @property({type: String, reflectToAttribute: true})
   diffSide?: Side;
 
@@ -149,6 +143,9 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
     computed: '_computeRootId(comments.*)',
   })
   rootId?: UrlEncodedCommentId;
+
+  @property({type: Boolean, observer: 'handleShouldScrollIntoViewChanged'})
+  shouldScrollIntoView = false;
 
   @property({type: Boolean})
   showFilePath = false;
@@ -197,15 +194,18 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
   @property({type: Boolean})
   showCommentContext = false;
 
-  get keyBindings() {
-    return {
-      'e shift+e': '_handleEKey',
-    };
-  }
+  @property({type: Object})
+  _selfAccount?: AccountDetailInfo;
 
-  reporting = appContext.reportingService;
+  @property({type: Array})
+  layers: DiffLayer[] = [];
 
-  flagsService = appContext.flagsService;
+  /** Called in disconnectedCallback. */
+  private cleanups: (() => void)[] = [];
+
+  private readonly reporting = appContext.reportingService;
+
+  private readonly commentsService = appContext.commentsService;
 
   readonly storage = appContext.storageService;
 
@@ -213,16 +213,32 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
 
   readonly restApiService = appContext.restApiService;
 
+  private readonly shortcuts = appContext.shortcutsService;
+
   constructor() {
     super();
     this.addEventListener('comment-update', e =>
       this._handleCommentUpdate(e as CustomEvent)
     );
+    appContext.restApiService.getPreferences().then(prefs => {
+      this._initLayers(!!prefs?.disable_token_highlighting);
+    });
   }
 
-  /** @override */
-  connectedCallback() {
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    for (const cleanup of this.cleanups) cleanup();
+    this.cleanups = [];
+  }
+
+  override connectedCallback() {
     super.connectedCallback();
+    this.cleanups.push(
+      addGlobalShortcut({key: 'e'}, e => this.handleExpandShortcut(e))
+    );
+    this.cleanups.push(
+      addGlobalShortcut({key: 'E'}, e => this.handleCollapseShortcut(e))
+    );
     this._getLoggedIn().then(loggedIn => {
       this._showActions = loggedIn;
     });
@@ -236,6 +252,9 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
       };
       this.syntaxLayer.setEnabled(!!prefs.syntax_highlighting);
     });
+    this.restApiService.getAccount().then(account => {
+      this._selfAccount = account;
+    });
     this._setInitialExpandedState();
   }
 
@@ -243,20 +262,42 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
   get _diff() {
     if (this.comments === undefined || this.path === undefined) return;
     if (!this.comments[0]?.context_lines?.length) return;
-    waitForEventOnce(this, 'render').then(() => {
-      this.syntaxLayer.process();
-    });
     const diff = computeDiffFromContext(
       this.comments[0].context_lines,
       this.path,
       this.comments[0].source_content_type
     );
-    this.syntaxLayer.init(diff);
+    if (!anyLineTooLong(diff)) {
+      this.syntaxLayer.init(diff);
+      waitForEventOnce(this, 'render').then(() => {
+        this.syntaxLayer.process();
+      });
+    }
     return diff;
   }
 
-  _shouldShowCommentContext(diff?: DiffInfo) {
-    return this.showCommentContext && !!diff;
+  handleShouldScrollIntoViewChanged(shouldScrollIntoView?: boolean) {
+    // Wait for comment to be rendered before scrolling to it
+    if (shouldScrollIntoView) {
+      const resizeObserver = new ResizeObserver(
+        (_entries: ResizeObserverEntry[], observer: ResizeObserver) => {
+          if (this.offsetHeight > 0) {
+            queryAndAssert<HTMLDivElement>(this, '.comment-box').focus();
+            this.scrollIntoView();
+          }
+          observer.unobserve(this);
+        }
+      );
+      resizeObserver.observe(this);
+    }
+  }
+
+  _shouldShowCommentContext(
+    changeNum?: NumericChangeId,
+    showCommentContext?: boolean,
+    diff?: DiffInfo
+  ) {
+    return changeNum && showCommentContext && !!diff;
   }
 
   addOrEditDraft(lineNum?: LineNumber, rangeParam?: CommentRange) {
@@ -286,16 +327,7 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
     const draft = this._newDraft(lineNum, range);
     draft.__editing = true;
     draft.unresolved = unresolved === false ? unresolved : true;
-    this.push('comments', draft);
-  }
-
-  fireRemoveSelf() {
-    this.dispatchEvent(
-      new CustomEvent('thread-discard', {
-        detail: {rootId: this.rootId},
-        bubbles: false,
-      })
-    );
+    this.commentsService.addDraft(draft);
   }
 
   _getDiffUrlForPath(
@@ -318,7 +350,8 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
     return GerritNav.getUrlForComment(changeNum, projectName, id);
   }
 
-  getHighlightRange() {
+  /** The parameter is for triggering re-computation only. */
+  getHighlightRange(_: unknown) {
     const comment = this.comments?.[0];
     if (!comment) return undefined;
     if (comment.range) return comment.range;
@@ -333,20 +366,22 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
     return undefined;
   }
 
-  _getLayers(diff?: DiffInfo) {
-    if (!diff) return [];
-    return [this.syntaxLayer];
+  _initLayers(disableTokenHighlighting: boolean) {
+    if (!disableTokenHighlighting) {
+      this.layers.push(new TokenHighlightLayer(this));
+    }
+    this.layers.push(this.syntaxLayer);
   }
 
-  _getUrlForViewDiff(comments: UIComment[]) {
-    assertIsDefined(this.changeNum, 'changeNum');
-    assertIsDefined(this.projectName, 'projectName');
+  _getUrlForViewDiff(
+    comments: UIComment[],
+    changeNum?: NumericChangeId,
+    projectName?: RepoName
+  ): string {
+    if (!changeNum) return '';
+    if (!projectName) return '';
     check(comments.length > 0, 'comment not found');
-    return GerritNav.getUrlForComment(
-      this.changeNum,
-      this.projectName,
-      comments[0].id!
-    );
+    return GerritNav.getUrlForComment(changeNum, projectName, comments[0].id!);
   }
 
   _getDiffUrlForComment(
@@ -375,7 +410,22 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
     return GerritNav.getUrlForComment(changeNum, projectName, id);
   }
 
-  _isPatchsetLevelComment(path: string) {
+  handleCopyLink() {
+    assertIsDefined(this.changeNum, 'changeNum');
+    assertIsDefined(this.projectName, 'projectName');
+    const url = generateAbsoluteUrl(
+      GerritNav.getUrlForCommentsTab(
+        this.changeNum,
+        this.projectName,
+        this.comments[0].id!
+      )
+    );
+    navigator.clipboard.writeText(url).then(() => {
+      fireAlert(this, 'Link copied to clipboard');
+    });
+  }
+
+  _isPatchsetLevelComment(path?: string) {
     return path === SpecialFilePath.PATCHSET_LEVEL_COMMENTS;
   }
 
@@ -384,7 +434,7 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
     return this.showPortedComment && comment.id === this._orderedComments[0].id;
   }
 
-  _computeDisplayPath(path: string) {
+  _computeDisplayPath(path?: string) {
     const displayPath = computeDisplayPath(path);
     if (displayPath === SpecialFilePath.PATCHSET_LEVEL_COMMENTS) {
       return 'Patchset';
@@ -392,16 +442,16 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
     return displayPath;
   }
 
-  _computeDisplayLine() {
-    if (this.lineNum === FILE) {
+  _computeDisplayLine(lineNum?: LineNumber, range?: CommentRange) {
+    if (lineNum === FILE) {
       if (this.path === SpecialFilePath.PATCHSET_LEVEL_COMMENTS) {
         return '';
       }
       return FILE;
     }
-    if (this.lineNum) return `#${this.lineNum}`;
+    if (lineNum) return `#${lineNum}`;
     // If range is set, then lineNum equals the end line of the range.
-    if (this.range) return `#${this.range.end_line}`;
+    if (range) return `#${range.end_line}`;
     return '';
   }
 
@@ -443,21 +493,14 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
     return this._orderedComments[this._orderedComments.length - 1] || {};
   }
 
-  _handleEKey(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) {
-      return;
-    }
+  private handleExpandShortcut(e: KeyboardEvent) {
+    if (this.shortcuts.shouldSuppress(e)) return;
+    this._expandCollapseComments(false);
+  }
 
-    // Don’t preventDefault in this case because it will render the event
-    // useless for other handlers (other gr-comment-thread elements).
-    if (e.detail.keyboardEvent?.shiftKey) {
-      this._expandCollapseComments(true);
-    } else {
-      if (this.modifierPressed(e)) {
-        return;
-      }
-      this._expandCollapseComments(false);
-    }
+  private handleCollapseShortcut(e: KeyboardEvent) {
+    if (this.shortcuts.shouldSuppress(e)) return;
+    this._expandCollapseComments(true);
   }
 
   _expandCollapseComments(actionIsCollapse: boolean) {
@@ -474,11 +517,16 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
    * - last {UNRESOLVED_EXPAND_COUNT} comments expanded by default if the
    * thread is unresolved,
    * - it's a robot comment.
+   * - it's a draft
    */
   _setInitialExpandedState() {
     if (this._orderedComments) {
       for (let i = 0; i < this._orderedComments.length; i++) {
         const comment = this._orderedComments[i];
+        if (isDraft(comment)) {
+          comment.collapsed = false;
+          continue;
+        }
         const isRobotComment = !!(comment as UIRobot).robot_id;
         // False if it's an unresolved comment under UNRESOLVED_EXPAND_COUNT.
         const resolvedThread =
@@ -503,16 +551,23 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
 
     if (isEditing) {
       reply.__editing = true;
-    }
-
-    this.push('comments', reply);
-
-    if (!isEditing) {
-      // Allow the reply to render in the dom-repeat.
-      setTimeout(() => {
-        const commentEl = this._commentElWithDraftID(reply.__draftID);
-        if (commentEl) commentEl.save();
-      }, 1);
+      this.commentsService.addDraft(reply);
+    } else {
+      assertIsDefined(this.changeNum, 'changeNum');
+      assertIsDefined(this.patchNum, 'patchNum');
+      this.restApiService
+        .saveDiffDraft(this.changeNum, this.patchNum, reply)
+        .then(result => {
+          if (!result.ok) {
+            fireAlert(document, 'Unable to restore draft');
+            return;
+          }
+          this.restApiService.getResponseObject(result).then(obj => {
+            const resComment = obj as unknown as DraftInfo;
+            resComment.patch_set = reply.patch_set;
+            this.commentsService.addDraft(resComment);
+          });
+        });
     }
   }
 
@@ -588,7 +643,7 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
   _newDraft(lineNum?: LineNumber, range?: CommentRange) {
     const d: UIDraft = {
       __draft: true,
-      __draftID: Math.random().toString(36),
+      __draftID: 'draft__' + Math.random().toString(36),
       __date: new Date(),
     };
     if (lineNum === 'LOST') throw new Error('invalid lineNum lost');
@@ -631,29 +686,12 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
     if (!comments.base.length) {
       return this.rootId;
     }
-    const rootComment = comments.base[0];
-    if (rootComment.id) return rootComment.id;
-    if (isDraft(rootComment)) return rootComment.__draftID;
-    throw new Error('Missing id in root comment.');
+    return computeId(comments.base[0]);
   }
 
-  _handleCommentDiscard(e: Event) {
+  _handleCommentDiscard() {
     assertIsDefined(this.changeNum, 'changeNum');
     assertIsDefined(this.patchNum, 'patchNum');
-    const diffCommentEl = (dom(e) as EventApi).rootTarget as GrComment;
-    const comment = diffCommentEl.comment;
-    const idx = this._indexOf(comment, this.comments);
-    if (idx === -1) {
-      throw new Error(
-        'Cannot find comment ' + JSON.stringify(diffCommentEl.comment)
-      );
-    }
-    this.splice('comments', idx, 1);
-    if (this.comments.length === 0) {
-      this.fireRemoveSelf();
-    }
-    this._handleCommentSavedOrDiscarded();
-
     // Check to see if there are any other open comments getting edited and
     // set the local storage value to its message value.
     for (const changeComment of this.comments) {
@@ -672,21 +710,14 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
     }
   }
 
-  _handleCommentSavedOrDiscarded() {
-    this.dispatchEvent(
-      new CustomEvent('thread-changed', {
-        detail: {rootId: this.rootId, path: this.path},
-        bubbles: false,
-      })
-    );
-  }
-
   _handleCommentUpdate(e: CustomEvent) {
     const comment = e.detail.comment;
     const index = this._indexOf(comment, this.comments);
     if (index === -1) {
       // This should never happen: comment belongs to another thread.
-      console.warn('Comment update for another comment thread.');
+      this.reporting.error(
+        new Error(`Comment update for another comment thread: ${comment}`)
+      );
       return;
     }
     this.set(['comments', index], comment);
@@ -711,7 +742,8 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
     return -1;
   }
 
-  _computeHostClass(unresolved?: boolean) {
+  /** 2nd parameter is for triggering re-computation only. */
+  _computeHostClass(unresolved?: boolean, _?: unknown) {
     if (this.isRobotComment) {
       return 'robotComment';
     }
@@ -730,6 +762,17 @@ export class GrCommentThread extends KeyboardShortcutMixin(PolymerElement) {
     this.restApiService.getProjectConfig(name).then(config => {
       this._projectConfig = config;
     });
+  }
+
+  _computeAriaHeading(_orderedComments: UIComment[]) {
+    const firstComment = _orderedComments[0];
+    const author = firstComment?.author ?? this._selfAccount;
+    const lastComment = _orderedComments[_orderedComments.length - 1] || {};
+    const status = [
+      lastComment.unresolved ? 'Unresolved' : '',
+      isDraft(lastComment) ? 'Draft' : '',
+    ].join(' ');
+    return `${status} Comment thread by ${getUserName(undefined, author)}`;
   }
 }
 

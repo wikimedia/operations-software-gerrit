@@ -14,19 +14,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {
-  css,
-  customElement,
-  html,
-  internalProperty,
-  LitElement,
-  property,
-  PropertyValues,
-  query,
-} from 'lit-element';
-import {StyleInfo, styleMap} from 'lit-html/directives/style-map';
+import {css, html, LitElement, PropertyValues} from 'lit';
+import {customElement, property, query, state} from 'lit/decorators';
+import {StyleInfo, styleMap} from 'lit/directives/style-map';
+import {ImageDiffAction} from '../../../api/diff';
 
-import {Dimensions, fitToFrame, Point, Rect} from './util';
+import {createEvent, Dimensions, fitToFrame, Point, Rect} from './util';
 
 /**
  * Displays a scaled-down version of an image with a draggable frame for
@@ -44,15 +37,13 @@ export class GrOverviewImage extends LitElement {
   @property({type: Object})
   frameRect: Rect = {origin: {x: 0, y: 0}, dimensions: {width: 0, height: 0}};
 
-  @internalProperty() protected contentStyle: StyleInfo = {};
+  @state() protected contentStyle: StyleInfo = {};
 
-  @internalProperty() protected contentTransformStyle: StyleInfo = {};
+  @state() protected contentTransformStyle: StyleInfo = {};
 
-  @internalProperty() protected frameStyle: StyleInfo = {};
+  @state() protected frameStyle: StyleInfo = {};
 
-  @internalProperty() protected overlayStyle: StyleInfo = {};
-
-  @internalProperty() protected dragging = false;
+  @state() protected dragging = false;
 
   @query('.content-box') protected contentBox!: HTMLDivElement;
 
@@ -61,6 +52,8 @@ export class GrOverviewImage extends LitElement {
   @query('.content-transform') protected contentTransform!: HTMLDivElement;
 
   @query('.frame') protected frame!: HTMLDivElement;
+
+  protected overlay?: HTMLDivElement;
 
   private contentBounds: Dimensions = {width: 0, height: 0};
 
@@ -92,7 +85,7 @@ export class GrOverviewImage extends LitElement {
     }
   );
 
-  static styles = css`
+  static override styles = css`
     :host {
       --background-color: var(--overview-image-background-color, #000);
       --frame-color: var(--overview-image-frame-color, #f00);
@@ -124,14 +117,9 @@ export class GrOverviewImage extends LitElement {
       position: absolute;
       will-change: transform;
     }
-    .overlay {
-      position: absolute;
-      z-index: 10000;
-      cursor: grabbing;
-    }
   `;
 
-  render() {
+  override render() {
     return html`
       <div class="content-box">
         <div
@@ -158,26 +146,60 @@ export class GrOverviewImage extends LitElement {
             @mousedown="${this.grabFrame}"
           ></div>
         </div>
-        <div
-          class="overlay"
-          style="${styleMap({
-            ...this.overlayStyle,
-            display: this.dragging ? 'block' : 'none',
-          })}"
-          @mousemove="${this.overlayMouseMove}"
-          @mouseleave="${this.releaseFrame}"
-          @mouseup="${this.releaseFrame}"
-        ></div>
       </div>
     `;
   }
 
-  firstUpdated() {
+  override connectedCallback() {
+    super.connectedCallback();
+    if (this.isConnected) {
+      this.overlay = document.createElement('div');
+      // The overlay is added directly to document body to ensure it fills the
+      // entire screen to capture events, without being clipped by any parent
+      // overflow properties. This means it has to be styled manually, since
+      // component styles will not affect it.
+      this.overlay.style.position = 'fixed';
+      this.overlay.style.top = '0';
+      this.overlay.style.left = '0';
+      // We subtract 20 pixels in each dimension to prevent the overlay from
+      // extending offscreen under any existing scrollbar and causing the
+      // scrollbar for the other dimension to show up unnecessarily.
+      this.overlay.style.width = 'calc(100vw - 20px)';
+      this.overlay.style.height = 'calc(100vh - 20px)';
+      this.overlay.style.zIndex = '10000';
+      this.overlay.style.display = 'none';
+
+      this.overlay.addEventListener('mousemove', (event: MouseEvent) =>
+        this.maybeDragFrame(event)
+      );
+      this.overlay.addEventListener('mouseleave', (event: MouseEvent) => {
+        // Ignore mouseleave events that are due to closeOverlay() calls.
+        if (this.overlay?.style.display !== 'none') {
+          this.releaseFrame(event);
+        }
+      });
+      this.overlay.addEventListener('mouseup', (event: MouseEvent) =>
+        this.releaseFrame(event)
+      );
+
+      document.body.appendChild(this.overlay);
+    }
+  }
+
+  override disconnectedCallback() {
+    if (this.overlay) {
+      document.body.removeChild(this.overlay);
+      this.overlay = undefined;
+    }
+    super.disconnectedCallback();
+  }
+
+  override firstUpdated() {
     this.resizeObserver.observe(this.contentBox);
     this.resizeObserver.observe(this.contentTransform);
   }
 
-  updated(changedProperties: PropertyValues) {
+  override updated(changedProperties: PropertyValues) {
     if (changedProperties.has('frameRect')) {
       this.updateFrameStyle();
     }
@@ -187,9 +209,9 @@ export class GrOverviewImage extends LitElement {
     if (event.buttons !== 1) return;
     event.preventDefault();
 
-    this.updateOverlaySize();
-
     this.dragging = true;
+    this.openOverlay();
+
     const rect = this.content.getBoundingClientRect();
     this.notifyNewCenter({
       x: (event.clientX - rect.left) / this.scale,
@@ -203,9 +225,9 @@ export class GrOverviewImage extends LitElement {
     // Do not bubble up into clickOverview().
     event.stopPropagation();
 
-    this.updateOverlaySize();
-
     this.dragging = true;
+    this.openOverlay();
+
     const rect = this.frame.getBoundingClientRect();
     const frameCenterX = rect.x + rect.width / 2;
     const frameCenterY = rect.y + rect.height / 2;
@@ -228,13 +250,29 @@ export class GrOverviewImage extends LitElement {
 
   releaseFrame(event: MouseEvent) {
     event.preventDefault();
+
+    const detail: ImageDiffAction = {
+      type: this.dragging ? 'overview-frame-dragged' : 'overview-image-clicked',
+    };
+    this.dispatchEvent(createEvent(detail));
+
     this.dragging = false;
+    this.closeOverlay();
     this.grabOffset = {x: 0, y: 0};
   }
 
-  overlayMouseMove(event: MouseEvent) {
-    event.preventDefault();
-    this.maybeDragFrame(event);
+  private openOverlay() {
+    if (this.overlay) {
+      this.overlay.style.display = 'block';
+      this.overlay.style.cursor = 'grabbing';
+    }
+  }
+
+  private closeOverlay() {
+    if (this.overlay) {
+      this.overlay.style.display = 'none';
+      this.overlay.style.cursor = '';
+    }
   }
 
   private updateScale() {
@@ -264,25 +302,6 @@ export class GrOverviewImage extends LitElement {
     this.frameStyle = {
       ...this.frameStyle,
       transform: `translate(${x}px, ${y}px)`,
-      width: `${width}px`,
-      height: `${height}px`,
-    };
-  }
-
-  private updateOverlaySize() {
-    const rect = this.contentBox.getBoundingClientRect();
-    // Create a whole-page overlay to capture mouse events, so that the drag
-    // interaction continues until the user releases the mouse button. Since
-    // innerWidth and innerHeight include scrollbars, we subtract 20 pixels each
-    // to prevent the overlay from extending offscreen under any existing
-    // scrollbar and causing the scrollbar for the other dimension to show up
-    // unnecessarily.
-    const width = window.innerWidth - 20;
-    const height = window.innerHeight - 20;
-    this.overlayStyle = {
-      ...this.overlayStyle,
-      top: `-${rect.top + 1}px`,
-      left: `-${rect.left + 1}px`,
       width: `${width}px`,
       height: `${height}px`,
     };

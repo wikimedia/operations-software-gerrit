@@ -23,6 +23,9 @@ import {htmlTemplate} from './gr-editable-content_html';
 import {fireAlert, fireEvent} from '../../../utils/event-util';
 import {appContext} from '../../../services/app-context';
 import {debounce, DelayedTask} from '../../../utils/async-util';
+import {queryAndAssert} from '../../../utils/common-util';
+import {IronAutogrowTextareaElement} from '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
+import {Interaction} from '../../../constants/reporting';
 
 const RESTORED_MESSAGE = 'Content restored from a previous edit.';
 const STORAGE_DEBOUNCE_INTERVAL_MS = 400;
@@ -103,21 +106,16 @@ export class GrEditableContent extends PolymerElement {
   _saveDisabled!: boolean;
 
   @property({type: String, observer: '_newContentChanged'})
-  _newContent?: string;
+  _newContent = '';
 
   private readonly storage = appContext.storageService;
 
   private readonly reporting = appContext.reportingService;
 
-  private storeTask?: DelayedTask;
+  // Tests use this so needs to be non private
+  storeTask?: DelayedTask;
 
-  /** @override */
-  ready() {
-    super.ready();
-  }
-
-  /** @override */
-  disconnectedCallback() {
+  override disconnectedCallback() {
     this.storeTask?.cancel();
     super.disconnectedCallback();
   }
@@ -131,7 +129,10 @@ export class GrEditableContent extends PolymerElement {
   }
 
   focusTextarea() {
-    this.shadowRoot!.querySelector('iron-autogrow-textarea')!.textarea.focus();
+    queryAndAssert<IronAutogrowTextareaElement>(
+      this,
+      'iron-autogrow-textarea'
+    ).textarea.focus();
   }
 
   _newContentChanged(newContent: string) {
@@ -227,7 +228,7 @@ export class GrEditableContent extends PolymerElement {
 
   _toggleCommitCollapsed() {
     this._commitCollapsed = !this._commitCollapsed;
-    this.reporting.reportInteraction('toggle show all button', {
+    this.reporting.reportInteraction(Interaction.TOGGLE_SHOW_ALL_BUTTON, {
       sectionName: 'Commit message',
       toState: !this._commitCollapsed ? 'Show all' : 'Show less',
     });

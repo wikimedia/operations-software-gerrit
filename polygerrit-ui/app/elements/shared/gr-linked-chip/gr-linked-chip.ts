@@ -18,11 +18,10 @@
 import '../gr-button/gr-button';
 import '../gr-icons/gr-icons';
 import '../gr-limited-text/gr-limited-text';
-import '../../../styles/shared-styles';
-import {PolymerElement} from '@polymer/polymer/polymer-element';
-import {customElement, property} from '@polymer/decorators';
-import {htmlTemplate} from './gr-linked-chip_html';
 import {fireEvent} from '../../../utils/event-util';
+import {sharedStyles} from '../../../styles/shared-styles';
+import {LitElement, css, html} from 'lit';
+import {customElement, property} from 'lit/decorators';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -31,22 +30,18 @@ declare global {
 }
 
 @customElement('gr-linked-chip')
-export class GrLinkedChip extends PolymerElement {
-  static get template() {
-    return htmlTemplate;
-  }
-
+export class GrLinkedChip extends LitElement {
   @property({type: String})
-  href?: string;
+  href = '';
 
-  @property({type: Boolean, reflectToAttribute: true})
+  @property({type: Boolean, reflect: true})
   disabled = false;
 
   @property({type: Boolean})
   removable = false;
 
   @property({type: String})
-  text?: string;
+  text = '';
 
   @property({type: Boolean})
   transparentBackground = false;
@@ -54,6 +49,87 @@ export class GrLinkedChip extends PolymerElement {
   /**  If provided, sets the maximum length of the content. */
   @property({type: Number})
   limit?: number;
+
+  static override get styles() {
+    return [
+      sharedStyles,
+      css`
+        :host {
+          display: block;
+          overflow: hidden;
+        }
+        .container {
+          align-items: center;
+          background: var(--chip-background-color);
+          border-radius: 0.75em;
+          display: inline-flex;
+          padding: 0 var(--spacing-m);
+        }
+        .transparentBackground,
+        gr-button.transparentBackground {
+          background-color: transparent;
+        }
+        :host([disabled]) {
+          opacity: 0.6;
+          pointer-events: none;
+        }
+        a {
+          color: var(--linked-chip-text-color);
+        }
+        iron-icon {
+          height: 1.2rem;
+          width: 1.2rem;
+        }
+      `,
+    ];
+  }
+
+  override render() {
+    // To pass CSS mixins for @apply to Polymer components, they need to appear
+    // in <style> inside the template.
+    /* eslint-disable lit/prefer-static-styles */
+    const customStyle = html`
+      <style>
+        gr-button::part(paper-button),
+        gr-button.remove:hover::part(paper-button),
+        gr-button.remove:focus::part(paper-button) {
+          border-top-width: 0;
+          border-right-width: 0;
+          border-bottom-width: 0;
+          border-left-width: 0;
+          color: var(--deemphasized-text-color);
+          font-weight: var(--font-weight-normal);
+          height: 0.6em;
+          line-height: 10px;
+          margin-left: var(--spacing-xs);
+          padding: 0;
+          text-decoration: none;
+        }
+      </style>
+    `;
+    return html`${customStyle}
+      <div
+        class="container ${this._getBackgroundClass(
+          this.transparentBackground
+        )}"
+      >
+        <a href="${this.href}">
+          <gr-limited-text
+            .limit="${this.limit}"
+            .text="${this.text}"
+          ></gr-limited-text>
+        </a>
+        <gr-button
+          id="remove"
+          link=""
+          ?hidden=${!this.removable}
+          class="remove ${this._getBackgroundClass(this.transparentBackground)}"
+          @click=${this._handleRemoveTap}
+        >
+          <iron-icon icon="gr-icons:close"></iron-icon>
+        </gr-button>
+      </div>`;
+  }
 
   _getBackgroundClass(transparent: boolean) {
     return transparent ? 'transparentBackground' : '';

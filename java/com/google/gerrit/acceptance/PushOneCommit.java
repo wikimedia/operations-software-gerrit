@@ -30,7 +30,7 @@ import com.google.gerrit.common.UsedAt.Project;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.PatchSet;
-import com.google.gerrit.server.ApprovalsUtil;
+import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
 import com.google.gerrit.server.query.change.ChangeData;
@@ -279,6 +279,11 @@ public class PushOneCommit {
   public PushOneCommit setParent(RevCommit parent) throws Exception {
     commitBuilder.noParents();
     commitBuilder.parent(parent);
+    return this;
+  }
+
+  public PushOneCommit noParent() throws Exception {
+    commitBuilder.noParents();
     return this;
   }
 

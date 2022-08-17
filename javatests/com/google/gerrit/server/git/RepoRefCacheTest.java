@@ -23,7 +23,6 @@ import java.util.Map;
 import org.eclipse.jgit.attributes.AttributesNodeProvider;
 import org.eclipse.jgit.internal.storage.dfs.DfsRepositoryDescription;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
-import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository.Builder;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.BatchRefUpdate;
 import org.eclipse.jgit.lib.Constants;
@@ -62,7 +61,7 @@ public class RepoRefCacheTest {
     private int refCounter;
 
     static TestRepositoryWithRefCounting createWithBranch(String branchName) throws Exception {
-      Builder builder =
+      InMemoryRepository.Builder builder =
           new InMemoryRepository.Builder()
               .setRepositoryDescription(new DfsRepositoryDescription(""))
               .setFS(FS.detect().setUserHome(null));

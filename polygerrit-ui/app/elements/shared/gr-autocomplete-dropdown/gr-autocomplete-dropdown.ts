@@ -20,12 +20,12 @@ import '../../../styles/shared-styles';
 import {flush} from '@polymer/polymer/lib/legacy/polymer.dom';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-autocomplete-dropdown_html';
-import {KeyboardShortcutMixin} from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
 import {IronFitMixin} from '../../../mixins/iron-fit-mixin/iron-fit-mixin';
 import {customElement, property, observe} from '@polymer/decorators';
 import {IronFitBehavior} from '@polymer/iron-fit-behavior/iron-fit-behavior';
 import {GrCursorManager} from '../gr-cursor-manager/gr-cursor-manager';
 import {fireEvent} from '../../../utils/event-util';
+import {addShortcut, Key} from '../../../utils/dom-util';
 
 export interface GrAutocompleteDropdown {
   $: {
@@ -39,7 +39,7 @@ declare global {
   }
 }
 
-interface Item {
+export interface Item {
   dataValue?: string;
   name?: string;
   text?: string;
@@ -47,11 +47,16 @@ interface Item {
   value?: string;
 }
 
+export interface ItemSelectedEvent {
+  trigger: string;
+  selected: HTMLElement | null;
+}
+
+// This avoids JSC_DYNAMIC_EXTENDS_WITHOUT_JSDOC closure compiler error.
+const base = IronFitMixin(PolymerElement, IronFitBehavior as IronFitBehavior);
+
 @customElement('gr-autocomplete-dropdown')
-export class GrAutocompleteDropdown extends IronFitMixin(
-  KeyboardShortcutMixin(PolymerElement),
-  IronFitBehavior as IronFitBehavior
-) {
+export class GrAutocompleteDropdown extends base {
   static get template() {
     return htmlTemplate;
   }
@@ -75,25 +80,19 @@ export class GrAutocompleteDropdown extends IronFitMixin(
   isHidden = true;
 
   @property({type: Number})
-  verticalOffset: number | null = null;
+  override verticalOffset: number | null = null;
 
   @property({type: Number})
-  horizontalOffset: number | null = null;
+  override horizontalOffset: number | null = null;
 
   @property({type: Array})
   suggestions: Item[] = [];
 
-  get keyBindings() {
-    return {
-      up: '_handleUp',
-      down: '_handleDown',
-      enter: '_handleEnter',
-      esc: '_handleEscape',
-      tab: '_handleTab',
-    };
-  }
+  /** Called in disconnectedCallback. */
+  private cleanups: (() => void)[] = [];
 
-  private cursor = new GrCursorManager();
+  // visible for testing
+  cursor = new GrCursorManager();
 
   constructor() {
     super();
@@ -101,9 +100,29 @@ export class GrAutocompleteDropdown extends IronFitMixin(
     this.cursor.focusOnMove = true;
   }
 
-  /** @override */
-  disconnectedCallback() {
+  override connectedCallback() {
+    super.connectedCallback();
+    this.cleanups.push(
+      addShortcut(this, {key: Key.UP}, e => this._handleUp(e))
+    );
+    this.cleanups.push(
+      addShortcut(this, {key: Key.DOWN}, e => this._handleDown(e))
+    );
+    this.cleanups.push(
+      addShortcut(this, {key: Key.ENTER}, e => this._handleEnter(e))
+    );
+    this.cleanups.push(
+      addShortcut(this, {key: Key.ESC}, _ => this._handleEscape())
+    );
+    this.cleanups.push(
+      addShortcut(this, {key: Key.TAB}, e => this._handleTab(e))
+    );
+  }
+
+  override disconnectedCallback() {
     this.cursor.unsetCursor();
+    for (const cleanup of this.cleanups) cleanup();
+    this.cleanups = [];
     super.disconnectedCallback();
   }
 
@@ -154,7 +173,7 @@ export class GrAutocompleteDropdown extends IronFitMixin(
     e.preventDefault();
     e.stopPropagation();
     this.dispatchEvent(
-      new CustomEvent('item-selected', {
+      new CustomEvent<ItemSelectedEvent>('item-selected', {
         detail: {
           trigger: 'tab',
           selected: this.cursor.target,
@@ -169,7 +188,7 @@ export class GrAutocompleteDropdown extends IronFitMixin(
     e.preventDefault();
     e.stopPropagation();
     this.dispatchEvent(
-      new CustomEvent('item-selected', {
+      new CustomEvent<ItemSelectedEvent>('item-selected', {
         detail: {
           trigger: 'enter',
           selected: this.cursor.target,
@@ -188,7 +207,7 @@ export class GrAutocompleteDropdown extends IronFitMixin(
   _handleClickItem(e: Event) {
     e.preventDefault();
     e.stopPropagation();
-    let selected = e.target! as Element;
+    let selected = e.target! as HTMLElement;
     while (!selected.classList.contains('autocompleteOption')) {
       if (!selected || selected === this) {
         return;
@@ -196,7 +215,7 @@ export class GrAutocompleteDropdown extends IronFitMixin(
       selected = selected.parentElement!;
     }
     this.dispatchEvent(
-      new CustomEvent('item-selected', {
+      new CustomEvent<ItemSelectedEvent>('item-selected', {
         detail: {
           trigger: 'click',
           selected,

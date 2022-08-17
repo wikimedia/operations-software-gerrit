@@ -32,8 +32,11 @@ import com.google.gerrit.entities.PermissionRule;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.entities.StoredCommentLinkInfo;
+import com.google.gerrit.entities.SubmitRequirement;
+import com.google.gerrit.entities.SubmitRequirementExpression;
 import com.google.gerrit.extensions.client.InheritableBoolean;
 import com.google.gerrit.server.config.AllProjectsName;
+import com.google.gerrit.server.config.FileBasedAllProjectsConfigProvider;
 import com.google.gerrit.server.config.PluginConfig;
 import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
@@ -46,6 +49,7 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Map;
+import java.util.Optional;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.errors.IncorrectObjectTypeException;
 import org.eclipse.jgit.errors.MissingObjectException;
@@ -65,7 +69,10 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
+@RunWith(JUnit4.class)
 public class ProjectConfigTest {
   private static final String LABEL_SCORES_CONFIG =
       "  copyAnyScore = "
@@ -110,7 +117,8 @@ public class ProjectConfigTest {
   public void setUp() throws Exception {
     sitePaths = new SitePaths(temporaryFolder.newFolder().toPath());
     Files.createDirectories(sitePaths.etc_dir);
-    factory = new ProjectConfig.Factory(sitePaths, ALL_PROJECTS);
+    factory =
+        new ProjectConfig.Factory(ALL_PROJECTS, new FileBasedAllProjectsConfigProvider(sitePaths));
     db = new InMemoryRepository(new DfsRepositoryDescription("repo"));
     tr = new TestRepository<>(db);
   }
@@ -197,6 +205,133 @@ public class ProjectConfigTest {
     Map<String, LabelType> labels = cfg.getLabelSections();
     Short dv = labels.entrySet().iterator().next().getValue().getDefaultValue();
     assertThat((int) dv).isEqualTo(0);
+  }
+
+  @Test
+  public void readSubmitRequirements() throws Exception {
+    RevCommit rev =
+        tr.commit()
+            .add("groups", group(developers))
+            .add(
+                "project.config",
+                "[submit-requirement \"Code-review\"]\n"
+                    + "  description =  At least one Code Review +2\n"
+                    + "  applicableIf =branch(refs/heads/master)\n"
+                    + "  submittableIf =  label(code-review, +2)\n"
+                    + "[submit-requirement \"api-review\"]\n"
+                    + "  description =  Additional review required for API modifications\n"
+                    + "  applicableIf =commit_filepath_contains(\\\"/api/.*\\\")\n"
+                    + "  submittableIf =  label(api-review, +2)\n"
+                    + "  overrideIf =  label(build-cop-override, +1)\n"
+                    + "  canOverrideInChildProjects = true\n")
+            .create();
+
+    ProjectConfig cfg = read(rev);
+    Map<String, SubmitRequirement> submitRequirements = cfg.getSubmitRequirementSections();
+    assertThat(submitRequirements)
+        .containsExactly(
+            "Code-review", // Capitalization preserved
+            SubmitRequirement.builder()
+                .setName("Code-review") // Capitalization preserved
+                .setDescription(Optional.of("At least one Code Review +2"))
+                .setApplicabilityExpression(
+                    SubmitRequirementExpression.of("branch(refs/heads/master)"))
+                .setSubmittabilityExpression(
+                    SubmitRequirementExpression.create("label(code-review, +2)"))
+                .setOverrideExpression(Optional.empty())
+                .setAllowOverrideInChildProjects(false)
+                .build(),
+            "api-review",
+            SubmitRequirement.builder()
+                .setName("api-review")
+                .setDescription(Optional.of("Additional review required for API modifications"))
+                .setApplicabilityExpression(
+                    SubmitRequirementExpression.of("commit_filepath_contains(\"/api/.*\")"))
+                .setSubmittabilityExpression(
+                    SubmitRequirementExpression.create("label(api-review, +2)"))
+                .setOverrideExpression(
+                    SubmitRequirementExpression.of("label(build-cop-override, +1)"))
+                .setAllowOverrideInChildProjects(true)
+                .build());
+  }
+
+  @Test
+  public void readSubmitRequirementEmpty() throws Exception {
+    RevCommit rev =
+        tr.commit()
+            .add("groups", group(developers))
+            .add(
+                "project.config",
+                "[submit-requirement \"code-review\"]\n"
+                    + "  submittableIf =  label(code-review, +2)\n")
+            .create();
+
+    ProjectConfig cfg = read(rev);
+    Map<String, SubmitRequirement> submitRequirements = cfg.getSubmitRequirementSections();
+    assertThat(submitRequirements)
+        .containsExactly(
+            "code-review",
+            SubmitRequirement.builder()
+                .setName("code-review")
+                .setSubmittabilityExpression(
+                    SubmitRequirementExpression.create("label(code-review, +2)"))
+                .setAllowOverrideInChildProjects(false)
+                .build());
+  }
+
+  @Test
+  public void readSubmitRequirementsIdentical_WithCapitalizationDifference() throws Exception {
+    RevCommit rev =
+        tr.commit()
+            .add("groups", group(developers))
+            .add(
+                "project.config",
+                "[submit-requirement \"code-review\"]\n"
+                    + "  description = At least one Code Review +2\n"
+                    + "  submittableIf =  label(code-review, +2)\n"
+                    + "[submit-requirement \"Code-Review\"]\n"
+                    + "  description = Another code review label\n"
+                    + "  submittableIf =  label(code-review, +2)\n"
+                    + "  canOverrideInChildProjects = true\n")
+            .create();
+
+    ProjectConfig cfg = read(rev);
+    Map<String, SubmitRequirement> submitRequirements = cfg.getSubmitRequirementSections();
+    assertThat(submitRequirements)
+        .containsExactly(
+            "code-review",
+            SubmitRequirement.builder()
+                .setName("code-review")
+                .setDescription(Optional.of("At least one Code Review +2"))
+                .setSubmittabilityExpression(
+                    SubmitRequirementExpression.create("label(code-review, +2)"))
+                .setAllowOverrideInChildProjects(false)
+                .build());
+    assertThat(cfg.getValidationErrors()).hasSize(1);
+    assertThat(Iterables.getOnlyElement(cfg.getValidationErrors()).getMessage())
+        .isEqualTo(
+            "project.config: Submit requirement 'Code-Review' conflicts with 'code-review'.");
+  }
+
+  @Test
+  public void readSubmitRequirementNoSubmittabilityExpression() throws Exception {
+    RevCommit rev =
+        tr.commit()
+            .add("groups", group(developers))
+            .add(
+                "project.config",
+                "[submit-requirement \"code-review\"]\n"
+                    + "  applicableIf =label(code-review, +2)\n")
+            .create();
+
+    ProjectConfig cfg = read(rev);
+    Map<String, SubmitRequirement> submitRequirements = cfg.getSubmitRequirementSections();
+    assertThat(submitRequirements).isEmpty();
+    assertThat(cfg.getValidationErrors()).hasSize(1);
+    assertThat(Iterables.getOnlyElement(cfg.getValidationErrors()).getMessage())
+        .isEqualTo(
+            "project.config: Submit requirement 'code-review' does not define a submittability"
+                + " expression.");
   }
 
   @Test
@@ -734,7 +869,9 @@ public class ProjectConfigTest {
     rev = commit(cfg);
     assertThat(text(rev, "project.config"))
         .isEqualTo(
-            "[commentlink \"bugzilla\"]\n\tmatch = \"(bug\\\\s+#?)(\\\\d+)\"\n\tlink = http://bugs.example.com/show_bug.cgi?id=$2\n");
+            "[commentlink \"bugzilla\"]\n"
+                + "\tmatch = \"(bug\\\\s+#?)(\\\\d+)\"\n"
+                + "\tlink = http://bugs.example.com/show_bug.cgi?id=$2\n");
   }
 
   @Test
@@ -759,7 +896,9 @@ public class ProjectConfigTest {
     rev = commit(cfg);
     assertThat(text(rev, "project.config"))
         .isEqualTo(
-            "[commentlink \"bugzilla\"]\n\tmatch = \"(bug\\\\s+#?)(\\\\d+)\"\n\tlink = http://bugs.example.com/show_bug.cgi?id=$2\n");
+            "[commentlink \"bugzilla\"]\n"
+                + "\tmatch = \"(bug\\\\s+#?)(\\\\d+)\"\n"
+                + "\tlink = http://bugs.example.com/show_bug.cgi?id=$2\n");
   }
 
   @Test
@@ -781,7 +920,9 @@ public class ProjectConfigTest {
     rev = commit(cfg);
     assertThat(text(rev, "project.config"))
         .isEqualTo(
-            "[commentlink \"bugzilla\"]\n\tmatch = \"(bug\\\\s+#?)(\\\\d+)\"\n\tlink = http://bugs.example.com/show_bug.cgi?id=$2\n");
+            "[commentlink \"bugzilla\"]\n"
+                + "\tmatch = \"(bug\\\\s+#?)(\\\\d+)\"\n"
+                + "\tlink = http://bugs.example.com/show_bug.cgi?id=$2\n");
   }
 
   @Test
@@ -806,6 +947,28 @@ public class ProjectConfigTest {
   }
 
   @Test
+  public void submitRequirementSectionIsUnsetIfNoSubmitRequirementsAreSet() throws Exception {
+    RevCommit rev =
+        tr.commit()
+            .add(
+                "project.config",
+                "[submit-requirement \"code-review\"]\n"
+                    + "  description =  At least one Code Review +2\n"
+                    + "  applicableIf =branch(refs/heads/master)\n"
+                    + "  submittableIf =  label(code-review, +2)\n"
+                    + "[notify \"name\"]\n"
+                    + "  email = example@example.com\n")
+            .create();
+    update(rev);
+
+    ProjectConfig cfg = read(rev);
+    cfg.getSubmitRequirementSections().clear();
+    rev = commit(cfg);
+    assertThat(text(rev, "project.config"))
+        .isEqualTo("[notify \"name\"]\n\temail = example@example.com\n");
+  }
+
+  @Test
   public void pluginSectionIsUnsetIfAllPluginConfigsAreEmpty() throws Exception {
     RevCommit rev =
         tr.commit()
@@ -824,7 +987,9 @@ public class ProjectConfigTest {
     rev = commit(cfg);
     assertThat(text(rev, "project.config"))
         .isEqualTo(
-            "[commentlink \"bugzilla\"]\n\tmatch = \"(bug\\\\s+#?)(\\\\d+)\"\n\tlink = http://bugs.example.com/show_bug.cgi?id=$2\n");
+            "[commentlink \"bugzilla\"]\n"
+                + "\tmatch = \"(bug\\\\s+#?)(\\\\d+)\"\n"
+                + "\tlink = http://bugs.example.com/show_bug.cgi?id=$2\n");
   }
 
   @Test
@@ -833,8 +998,11 @@ public class ProjectConfigTest {
     Path tmp = Files.createTempFile("gerrit_test_", "_site");
     Files.deleteIfExists(tmp);
     SitePaths sitePaths = new SitePaths(tmp);
+    FileBasedAllProjectsConfigProvider allProjectsConfigProvider =
+        new FileBasedAllProjectsConfigProvider(sitePaths);
     byte[] hashedContents =
-        ProjectCacheImpl.allProjectsFileProjectConfigHash(ALL_PROJECTS, sitePaths);
+        ProjectCacheImpl.allProjectsFileProjectConfigHash(
+            allProjectsConfigProvider.get(ALL_PROJECTS));
     assertThat(hashedContents).isEqualTo(new byte[16]); // Empty/absent config
     FileBasedConfig fileBasedConfig =
         new FileBasedConfig(
@@ -846,7 +1014,9 @@ public class ProjectConfigTest {
             FS.DETECTED);
     fileBasedConfig.setString("plugin", "my-plugin", "key", "value");
     fileBasedConfig.save();
-    hashedContents = ProjectCacheImpl.allProjectsFileProjectConfigHash(ALL_PROJECTS, sitePaths);
+    hashedContents =
+        ProjectCacheImpl.allProjectsFileProjectConfigHash(
+            allProjectsConfigProvider.get(ALL_PROJECTS));
     assertThat(hashedContents)
         .isEqualTo(
             new byte[] {

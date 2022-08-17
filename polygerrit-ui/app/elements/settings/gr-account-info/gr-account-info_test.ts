@@ -21,12 +21,13 @@ import {SinonSpyMember, stubRestApi} from '../../../test/test-utils';
 import {GrAccountInfo} from './gr-account-info';
 import {AccountDetailInfo, ServerInfo} from '../../../types/common';
 import {
+  createAccountDetailWithId,
   createAccountWithIdNameAndEmail,
   createPreferences,
   createServerInfo,
 } from '../../../test/test-data-generators';
 import {IronInputElement} from '@polymer/iron-input';
-import {SinonStubbedMember} from 'sinon/pkg/sinon-esm';
+import {SinonStubbedMember} from 'sinon';
 import {RestApiService} from '../../../services/gr-rest-api/gr-rest-api';
 
 const basicFixture = fixtureFromElement('gr-account-info');
@@ -156,7 +157,7 @@ suite('gr-account-info tests', () => {
       statusStub = stubRestApi('setAccountStatus').returns(Promise.resolve());
     });
 
-    test('name', done => {
+    test('name', async () => {
       assert.isTrue(element.nameMutable);
       assert.isFalse(element.hasUnsavedChanges);
 
@@ -166,18 +167,15 @@ suite('gr-account-info tests', () => {
       assert.isFalse(statusChangedSpy.called);
       assert.isTrue(element.hasUnsavedChanges);
 
-      element.save().then(() => {
-        assert.isFalse(usernameStub.called);
-        assert.isTrue(nameStub.called);
-        assert.isFalse(statusStub.called);
-        nameStub.lastCall.returnValue.then(() => {
-          assert.equal(nameStub.lastCall.args[0], 'new name');
-          done();
-        });
-      });
+      await element.save();
+      assert.isFalse(usernameStub.called);
+      assert.isTrue(nameStub.called);
+      assert.isFalse(statusStub.called);
+      await nameStub.lastCall.returnValue;
+      assert.equal(nameStub.lastCall.args[0], 'new name');
     });
 
-    test('username', done => {
+    test('username', async () => {
       element.set('_account.username', '');
       element._hasUsernameChange = false;
       assert.isTrue(element.usernameMutable);
@@ -188,18 +186,15 @@ suite('gr-account-info tests', () => {
       assert.isFalse(statusChangedSpy.called);
       assert.isTrue(element.hasUnsavedChanges);
 
-      element.save().then(() => {
-        assert.isTrue(usernameStub.called);
-        assert.isFalse(nameStub.called);
-        assert.isFalse(statusStub.called);
-        usernameStub.lastCall.returnValue.then(() => {
-          assert.equal(usernameStub.lastCall.args[0], 'new username');
-          done();
-        });
-      });
+      await element.save();
+      assert.isTrue(usernameStub.called);
+      assert.isFalse(nameStub.called);
+      assert.isFalse(statusStub.called);
+      await usernameStub.lastCall.returnValue;
+      assert.equal(usernameStub.lastCall.args[0], 'new username');
     });
 
-    test('status', done => {
+    test('status', async () => {
       assert.isFalse(element.hasUnsavedChanges);
 
       element.set('_account.status', 'new status');
@@ -208,15 +203,12 @@ suite('gr-account-info tests', () => {
       assert.isTrue(statusChangedSpy.called);
       assert.isTrue(element.hasUnsavedChanges);
 
-      element.save().then(() => {
-        assert.isFalse(usernameStub.called);
-        assert.isTrue(statusStub.called);
-        assert.isFalse(nameStub.called);
-        statusStub.lastCall.returnValue.then(() => {
-          assert.equal(statusStub.lastCall.args[0], 'new status');
-          done();
-        });
-      });
+      await element.save();
+      assert.isFalse(usernameStub.called);
+      assert.isTrue(statusStub.called);
+      assert.isFalse(nameStub.called);
+      await statusStub.lastCall.returnValue;
+      assert.equal(statusStub.lastCall.args[0], 'new status');
     });
   });
 
@@ -238,7 +230,7 @@ suite('gr-account-info tests', () => {
       stubRestApi('setAccountUsername').returns(Promise.resolve());
     });
 
-    test('set name and status', done => {
+    test('set name and status', async () => {
       assert.isTrue(element.nameMutable);
       assert.isFalse(element.hasUnsavedChanges);
 
@@ -252,16 +244,13 @@ suite('gr-account-info tests', () => {
 
       assert.isTrue(element.hasUnsavedChanges);
 
-      element.save().then(() => {
-        assert.isTrue(statusStub.called);
-        assert.isTrue(nameStub.called);
+      await element.save();
+      assert.isTrue(statusStub.called);
+      assert.isTrue(nameStub.called);
 
-        assert.equal(nameStub.lastCall.args[0], 'new name');
+      assert.equal(nameStub.lastCall.args[0], 'new name');
 
-        assert.equal(statusStub.lastCall.args[0], 'new status');
-
-        done();
-      });
+      assert.equal(statusStub.lastCall.args[0], 'new status');
     });
   });
 
@@ -276,7 +265,7 @@ suite('gr-account-info tests', () => {
       statusStub = stubRestApi('setAccountStatus').returns(Promise.resolve());
     });
 
-    test('read full name but set status', done => {
+    test('read full name but set status', async () => {
       const section = element.$.nameSection;
       const displaySpan = section.querySelectorAll('.value')[0];
       const inputSpan = section.querySelectorAll('.value')[1];
@@ -295,18 +284,15 @@ suite('gr-account-info tests', () => {
 
       assert.isTrue(element.hasUnsavedChanges);
 
-      element.save().then(() => {
-        assert.isTrue(statusStub.called);
-        statusStub.lastCall.returnValue.then(() => {
-          assert.equal(statusStub.lastCall.args[0], 'new status');
-          done();
-        });
-      });
+      await element.save();
+      assert.isTrue(statusStub.called);
+      await statusStub.lastCall.returnValue;
+      assert.equal(statusStub.lastCall.args[0], 'new status');
     });
   });
 
   test('_usernameChanged compares usernames with loose equality', () => {
-    element._account = {};
+    element._account = createAccountDetailWithId();
     element._username = '';
     element._hasUsernameChange = false;
     element._loading = false;

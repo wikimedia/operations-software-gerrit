@@ -19,30 +19,13 @@ import '../../../test/common-test-setup-karma.js';
 import './gr-change-list.js';
 import {afterNextRender} from '@polymer/polymer/lib/utils/render-status.js';
 import {GerritNav} from '../../core/gr-navigation/gr-navigation.js';
-import {TestKeyboardShortcutBinder} from '../../../test/test-utils.js';
-import {Shortcut} from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin.js';
+import {mockPromise} from '../../../test/test-utils.js';
 import {YOUR_TURN} from '../../core/gr-navigation/gr-navigation.js';
 
 const basicFixture = fixtureFromElement('gr-change-list');
 
 suite('gr-change-list basic tests', () => {
   let element;
-
-  suiteSetup(() => {
-    const kb = TestKeyboardShortcutBinder.push();
-    kb.bindShortcut(Shortcut.CURSOR_NEXT_CHANGE, 'j');
-    kb.bindShortcut(Shortcut.CURSOR_PREV_CHANGE, 'k');
-    kb.bindShortcut(Shortcut.OPEN_CHANGE, 'o');
-    kb.bindShortcut(Shortcut.REFRESH_CHANGE_LIST, 'shift+r');
-    kb.bindShortcut(Shortcut.TOGGLE_CHANGE_REVIEWED, 'r');
-    kb.bindShortcut(Shortcut.TOGGLE_CHANGE_STAR, 's');
-    kb.bindShortcut(Shortcut.NEXT_PAGE, 'n');
-    kb.bindShortcut(Shortcut.NEXT_PAGE, 'p');
-  });
-
-  suiteTeardown(() => {
-    TestKeyboardShortcutBinder.pop();
-  });
 
   setup(() => {
     element = basicFixture.instantiate();
@@ -149,7 +132,7 @@ suite('gr-change-list basic tests', () => {
         {}, changeTableColumns, labelNames));
   });
 
-  test('keyboard shortcuts', done => {
+  test('keyboard shortcuts', async () => {
     sinon.stub(element, '_computeLabelNames');
     element.sections = [
       {results: new Array(1)},
@@ -161,111 +144,40 @@ suite('gr-change-list basic tests', () => {
       {_number: 1},
       {_number: 2},
     ];
-    flush();
+    await flush();
+    const promise = mockPromise();
     afterNextRender(element, () => {
-      const elementItems = element.root.querySelectorAll(
-          'gr-change-list-item');
-      assert.equal(elementItems.length, 3);
-
-      assert.isTrue(elementItems[0].hasAttribute('selected'));
-      MockInteractions.pressAndReleaseKeyOn(element, 74, null, 'j');
-      assert.equal(element.selectedIndex, 1);
-      assert.isTrue(elementItems[1].hasAttribute('selected'));
-      MockInteractions.pressAndReleaseKeyOn(element, 74, null, 'j');
-      assert.equal(element.selectedIndex, 2);
-      assert.isTrue(elementItems[2].hasAttribute('selected'));
-
-      const navStub = sinon.stub(GerritNav, 'navigateToChange');
-      assert.equal(element.selectedIndex, 2);
-      MockInteractions.pressAndReleaseKeyOn(element, 13, null, 'enter');
-      assert.deepEqual(navStub.lastCall.args[0], {_number: 2},
-          'Should navigate to /c/2/');
-
-      MockInteractions.pressAndReleaseKeyOn(element, 75, null, 'k');
-      assert.equal(element.selectedIndex, 1);
-      MockInteractions.pressAndReleaseKeyOn(element, 13, null, 'enter');
-      assert.deepEqual(navStub.lastCall.args[0], {_number: 1},
-          'Should navigate to /c/1/');
-
-      MockInteractions.pressAndReleaseKeyOn(element, 75, null, 'k');
-      MockInteractions.pressAndReleaseKeyOn(element, 75, null, 'k');
-      MockInteractions.pressAndReleaseKeyOn(element, 75, null, 'k');
-      assert.equal(element.selectedIndex, 0);
-
-      const reloadStub = sinon.stub(element, '_reloadWindow');
-      MockInteractions.pressAndReleaseKeyOn(element, 82, 'shift', 'r');
-      assert.isTrue(reloadStub.called);
-
-      done();
+      promise.resolve();
     });
-  });
-
-  test('changes needing review', () => {
-    element.changes = [
-      {
-        _number: 0,
-        status: 'NEW',
-        reviewed: true,
-        owner: {_account_id: 0},
-      },
-      {
-        _number: 1,
-        status: 'NEW',
-        owner: {_account_id: 0},
-      },
-      {
-        _number: 2,
-        status: 'MERGED',
-        owner: {_account_id: 0},
-      },
-      {
-        _number: 3,
-        status: 'ABANDONED',
-        owner: {_account_id: 0},
-      },
-      {
-        _number: 4,
-        status: 'NEW',
-        work_in_progress: true,
-        owner: {_account_id: 0},
-      },
-    ];
-    flush();
-    let elementItems = element.root.querySelectorAll(
+    await promise;
+    const elementItems = element.root.querySelectorAll(
         'gr-change-list-item');
-    assert.equal(elementItems.length, 5);
-    for (let i = 0; i < elementItems.length; i++) {
-      assert.isFalse(elementItems[i].hasAttribute('needs-review'));
-    }
+    assert.equal(elementItems.length, 3);
 
-    element.showReviewedState = true;
-    elementItems = element.root.querySelectorAll(
-        'gr-change-list-item');
-    assert.equal(elementItems.length, 5);
-    assert.isFalse(elementItems[0].hasAttribute('needs-review'));
-    assert.isTrue(elementItems[1].hasAttribute('needs-review'));
-    assert.isFalse(elementItems[2].hasAttribute('needs-review'));
-    assert.isFalse(elementItems[3].hasAttribute('needs-review'));
-    assert.isFalse(elementItems[4].hasAttribute('needs-review'));
+    assert.isTrue(elementItems[0].hasAttribute('selected'));
+    MockInteractions.pressAndReleaseKeyOn(element, 74, null, 'j');
+    assert.equal(element.selectedIndex, 1);
+    assert.isTrue(elementItems[1].hasAttribute('selected'));
+    MockInteractions.pressAndReleaseKeyOn(element, 74, null, 'j');
+    assert.equal(element.selectedIndex, 2);
+    assert.isTrue(elementItems[2].hasAttribute('selected'));
 
-    element.account = {_account_id: 42};
-    elementItems = element.root.querySelectorAll(
-        'gr-change-list-item');
-    assert.equal(elementItems.length, 5);
-    assert.isFalse(elementItems[0].hasAttribute('needs-review'));
-    assert.isTrue(elementItems[1].hasAttribute('needs-review'));
-    assert.isFalse(elementItems[2].hasAttribute('needs-review'));
-    assert.isFalse(elementItems[3].hasAttribute('needs-review'));
-    assert.isFalse(elementItems[4].hasAttribute('needs-review'));
+    const navStub = sinon.stub(GerritNav, 'navigateToChange');
+    assert.equal(element.selectedIndex, 2);
+    MockInteractions.pressAndReleaseKeyOn(element, 13, null, 'enter');
+    assert.deepEqual(navStub.lastCall.args[0], {_number: 2},
+        'Should navigate to /c/2/');
 
-    element._config = {
-      change: {enable_attention_set: true},
-    };
-    elementItems = element.root.querySelectorAll(
-        'gr-change-list-item');
-    for (let i = 0; i < elementItems.length; i++) {
-      assert.isFalse(elementItems[i].hasAttribute('needs-review'));
-    }
+    MockInteractions.pressAndReleaseKeyOn(element, 75, null, 'k');
+    assert.equal(element.selectedIndex, 1);
+    MockInteractions.pressAndReleaseKeyOn(element, 13, null, 'enter');
+    assert.deepEqual(navStub.lastCall.args[0], {_number: 1},
+        'Should navigate to /c/1/');
+
+    MockInteractions.pressAndReleaseKeyOn(element, 75, null, 'k');
+    MockInteractions.pressAndReleaseKeyOn(element, 75, null, 'k');
+    MockInteractions.pressAndReleaseKeyOn(element, 75, null, 'k');
+    assert.equal(element.selectedIndex, 0);
   });
 
   test('no changes', () => {
@@ -339,7 +251,7 @@ suite('gr-change-list basic tests', () => {
     });
 
     test('all columns visible', () => {
-      for (const column of element.columnNames) {
+      for (const column of element.changeTableColumns) {
         const elementClass = '.' + element._lowerCase(column);
         assert.isFalse(element.shadowRoot
             .querySelector(elementClass).hidden);
@@ -508,7 +420,7 @@ suite('gr-change-list basic tests', () => {
       element = basicFixture.instantiate();
     });
 
-    test('keyboard shortcuts', done => {
+    test('keyboard shortcuts', async () => {
       element.selectedIndex = 0;
       element.sections = [
         {
@@ -533,77 +445,48 @@ suite('gr-change-list basic tests', () => {
           ],
         },
       ];
-      flush();
+      await flush();
+      const promise = mockPromise();
       afterNextRender(element, () => {
-        const elementItems = element.root.querySelectorAll(
-            'gr-change-list-item');
-        assert.equal(elementItems.length, 9);
-
-        MockInteractions.pressAndReleaseKeyOn(element, 74); // 'j'
-        assert.equal(element.selectedIndex, 1);
-        MockInteractions.pressAndReleaseKeyOn(element, 74); // 'j'
-
-        const navStub = sinon.stub(GerritNav, 'navigateToChange');
-        assert.equal(element.selectedIndex, 2);
-
-        MockInteractions.pressAndReleaseKeyOn(element, 13); // 'enter'
-        assert.deepEqual(navStub.lastCall.args[0], {_number: 2},
-            'Should navigate to /c/2/');
-
-        MockInteractions.pressAndReleaseKeyOn(element, 75); // 'k'
-        assert.equal(element.selectedIndex, 1);
-        MockInteractions.pressAndReleaseKeyOn(element, 13); // 'enter'
-        assert.deepEqual(navStub.lastCall.args[0], {_number: 1},
-            'Should navigate to /c/1/');
-
-        MockInteractions.pressAndReleaseKeyOn(element, 74); // 'j'
-        MockInteractions.pressAndReleaseKeyOn(element, 74); // 'j'
-        MockInteractions.pressAndReleaseKeyOn(element, 74); // 'j'
-        assert.equal(element.selectedIndex, 4);
-        MockInteractions.pressAndReleaseKeyOn(element, 13); // 'enter'
-        assert.deepEqual(navStub.lastCall.args[0], {_number: 4},
-            'Should navigate to /c/4/');
-
-        MockInteractions.pressAndReleaseKeyOn(element, 82); // 'r'
-        const change = element._changeForIndex(element.selectedIndex);
-        assert.equal(change.reviewed, true,
-            'Should mark change as reviewed');
-        MockInteractions.pressAndReleaseKeyOn(element, 82); // 'r'
-        assert.equal(change.reviewed, false,
-            'Should mark change as unreviewed');
-        done();
+        promise.resolve();
       });
-    });
+      await promise;
+      const elementItems = element.root.querySelectorAll(
+          'gr-change-list-item');
+      assert.equal(elementItems.length, 9);
 
-    test('highlight attribute is updated correctly', () => {
-      element.changes = [
-        {
-          _number: 0,
-          status: 'NEW',
-          owner: {_account_id: 0},
-        },
-        {
-          _number: 1,
-          status: 'ABANDONED',
-          owner: {_account_id: 0},
-        },
-      ];
-      element.account = {_account_id: 42};
-      flush();
-      let items = element._getListItems();
-      assert.equal(items.length, 2);
-      assert.isFalse(items[0].hasAttribute('highlight'));
-      assert.isFalse(items[1].hasAttribute('highlight'));
+      MockInteractions.pressAndReleaseKeyOn(element, 74, null, 'j');
+      assert.equal(element.selectedIndex, 1);
+      MockInteractions.pressAndReleaseKeyOn(element, 74, null, 'j');
 
-      // Assign all issues to the user, but only the first one is highlighted
-      // because the second one is abandoned.
-      element.set(['changes', 0, 'assignee'], {_account_id: 12});
-      element.set(['changes', 1, 'assignee'], {_account_id: 12});
-      element.account = {_account_id: 12};
-      flush();
-      items = element._getListItems();
-      assert.isTrue(items[0].hasAttribute('highlight'));
-      assert.isFalse(items[1].hasAttribute('highlight'));
+      const navStub = sinon.stub(GerritNav, 'navigateToChange');
+      assert.equal(element.selectedIndex, 2);
+
+      MockInteractions.pressAndReleaseKeyOn(element, 13, null, 'Enter');
+      assert.deepEqual(navStub.lastCall.args[0], {_number: 2},
+          'Should navigate to /c/2/');
+
+      MockInteractions.pressAndReleaseKeyOn(element, 75, null, 'k');
+      assert.equal(element.selectedIndex, 1);
+      MockInteractions.pressAndReleaseKeyOn(element, 13, null, 'Enter');
+      assert.deepEqual(navStub.lastCall.args[0], {_number: 1},
+          'Should navigate to /c/1/');
+
+      MockInteractions.pressAndReleaseKeyOn(element, 74, null, 'j');
+      MockInteractions.pressAndReleaseKeyOn(element, 74, null, 'j');
+      MockInteractions.pressAndReleaseKeyOn(element, 74, null, 'j');
+      assert.equal(element.selectedIndex, 4);
+      MockInteractions.pressAndReleaseKeyOn(element, 13, null, 'Enter');
+      assert.deepEqual(navStub.lastCall.args[0], {_number: 4},
+          'Should navigate to /c/4/');
+
+      MockInteractions.pressAndReleaseKeyOn(element, 82, null, 'r');
+      const change = element._changeForIndex(element.selectedIndex);
+      assert.equal(change.reviewed, true,
+          'Should mark change as reviewed');
+      MockInteractions.pressAndReleaseKeyOn(element, 82, null, 'r');
+      assert.equal(change.reviewed, false,
+          'Should mark change as unreviewed');
     });
 
     test('_computeItemHighlight gives false for null account', () => {

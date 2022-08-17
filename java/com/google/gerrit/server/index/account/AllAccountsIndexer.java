@@ -96,7 +96,7 @@ public class AllAccountsIndexer extends SiteIndexer<Account.Id, AccountState, Ac
                 try {
                   Optional<AccountState> a = accountCache.get(id);
                   if (a.isPresent()) {
-                    if (isFirstInsertForEntry.equals(isFirstInsertForEntry.YES)) {
+                    if (isFirstInsertForEntry.equals(IsFirstInsertForEntry.YES)) {
                       index.insert(a.get());
                     } else {
                       index.replace(a.get());

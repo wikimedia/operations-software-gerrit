@@ -47,9 +47,9 @@ import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.MergeConflictException;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
-import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.IdentifiedUser;
+import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.UrlFormatter;
 import com.google.gerrit.server.git.CodeReviewCommit.CodeReviewRevWalk;
@@ -223,9 +223,8 @@ public class MergeUtil {
       int parentIndex,
       boolean ignoreIdenticalTree,
       boolean allowConflicts)
-      throws MissingObjectException, IncorrectObjectTypeException, IOException,
-          MergeIdenticalTreeException, MergeConflictException, MethodNotAllowedException,
-          InvalidMergeStrategyException {
+      throws IOException, MergeIdenticalTreeException, MergeConflictException,
+          MethodNotAllowedException, InvalidMergeStrategyException {
 
     ThreeWayMerger m = newThreeWayMerger(inserter, repoConfig);
     m.setBase(originalCommit.getParent(parentIndex));
@@ -247,7 +246,10 @@ public class MergeUtil {
       }
     } else {
       if (!allowConflicts) {
-        throw new MergeConflictException("merge conflict");
+        throw new MergeConflictException(
+            String.format(
+                "merge conflict while merging commits %s and %s",
+                mergeTip.toObjectId(), originalCommit.toObjectId()));
       }
 
       if (!useContentMerge) {
@@ -510,9 +512,6 @@ public class MergeUtil {
    *   <li>Change-Id
    * </ul>
    *
-   * @param n
-   * @param notes
-   * @param psId
    * @return new message
    */
   private String createDetailedCommitMessage(RevCommit n, ChangeNotes notes, PatchSet.Id psId) {
@@ -600,11 +599,11 @@ public class MergeUtil {
       } else if (isVerified(a.labelId())) {
         tag = "Tested-by";
       } else {
-        final LabelType lt = project.getLabelTypes().byLabel(a.labelId());
-        if (lt == null) {
+        final Optional<LabelType> lt = project.getLabelTypes().byLabel(a.labelId());
+        if (!lt.isPresent()) {
           continue;
         }
-        tag = lt.getName();
+        tag = lt.get().getName();
       }
 
       if (!contains(footers, new FooterKey(tag), identbuf.toString())) {
@@ -628,10 +627,6 @@ public class MergeUtil {
    * Plugins implementing {@link ChangeMessageModifier} can modify the resulting commit message
    * arbitrarily.
    *
-   * @param n
-   * @param mergeTip
-   * @param notes
-   * @param id
    * @return new message
    */
   public String createCommitMessageOnSubmit(
@@ -650,7 +645,7 @@ public class MergeUtil {
 
   private Iterable<PatchSetApproval> safeGetApprovals(ChangeNotes notes, PatchSet.Id psId) {
     try {
-      return approvalsUtil.byPatchSet(notes, psId, null, null);
+      return approvalsUtil.byPatchSet(notes, psId);
     } catch (StorageException e) {
       logger.atSevere().withCause(e).log("Can't read approval records for %s", psId);
       return Collections.emptyList();

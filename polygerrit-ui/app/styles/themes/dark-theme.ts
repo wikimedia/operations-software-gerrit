@@ -94,7 +94,8 @@ function getStyleEl() {
       --reviewed-text-color: var(--gray-300);
       --vote-text-color: black;
       --status-text-color: black;
-      --tooltip-text-color: var(--gray-200);
+      --tooltip-text-color: var(--gray-900);
+      --tooltip-button-text-color: var(--gerrit-blue-light);
       --negative-red-text-color: var(--red-200);
       --positive-green-text-color: var(--green-200);
       --indirect-ancestor-text-color: var(--green-200);
@@ -115,7 +116,7 @@ function getStyleEl() {
       --hover-background-color: rgba(161, 194, 250, 0.2);
       --disabled-button-background-color: #484a4d;
       --selection-background-color: rgba(161, 194, 250, 0.1);
-      --tooltip-background-color: var(--gray-800);
+      --tooltip-background-color: var(--gray-200);
 
       /* comment background colors */
       --comment-background-color: #3c3f43;
@@ -151,6 +152,7 @@ function getStyleEl() {
       --status-wip: #bcaaa4;
       --status-private: var(--purple-200);
       --status-conflict: var(--red-300);
+      --status-revert-created: #ff8a65;
       --status-active: var(--blue-400);
       --status-ready: var(--pink-500);
       --status-custom: var(--purple-400);
@@ -174,7 +176,7 @@ function getStyleEl() {
       --header-text-color: var(--primary-text-color);
 
       /* diff colors */
-      --dark-add-highlight-color: #133820;
+      --dark-add-highlight-color: var(--green-tonal); 
       --dark-rebased-add-highlight-color: rgba(11, 255, 155, 0.15);
       --dark-rebased-remove-highlight-color: rgba(255, 139, 6, 0.15);
       --dark-remove-highlight-color: #62110f;
@@ -187,7 +189,7 @@ function getStyleEl() {
       --diff-selection-background-color: #3a71d8;
       --diff-tab-indicator-color: var(--deemphasized-text-color);
       --diff-trailing-whitespace-indicator: #ff9ad2;
-      --light-add-highlight-color: #0f401f;
+      --light-add-highlight-color: #182b1f;
       --light-rebased-add-highlight-color: #487165;
       --diff-moved-in-background: #1d4042;
       --diff-moved-out-background: #230e34;
@@ -198,6 +200,7 @@ function getStyleEl() {
       --coverage-covered: #112826;
       --coverage-not-covered: #6b3600;
       --ranged-comment-hint-text-color: var(--blue-50);
+      --token-highlighting-color: var(--yellow-tonal);
 
       /* syntax colors */
       --syntax-attr-color: #80cbbf;
@@ -229,8 +232,7 @@ function getStyleEl() {
       --syntax-variable-color: #f77669;
 
       /* misc */
-      /* Base 64 encoded 1x1px of #d7aefb; */
-      --line-length-indicator: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQYV2O4vu73fwAIYAOAtqAXCQAAAABJRU5ErkJggg==');
+      --line-length-indicator-color: #d7aefb;
 
       /* paper and iron component overrides */
       --iron-overlay-backdrop-background-color: white;
@@ -246,11 +248,4 @@ function getStyleEl() {
 
 export function applyTheme() {
   document.head.appendChild(getStyleEl());
-}
-
-export function removeTheme() {
-  const darkThemeEls = document.head.querySelectorAll('#dark-theme');
-  if (darkThemeEls.length) {
-    darkThemeEls.forEach(darkThemeEl => darkThemeEl.remove());
-  }
 }

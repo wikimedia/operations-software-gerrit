@@ -16,6 +16,7 @@
  */
 import '@polymer/iron-dropdown/iron-dropdown';
 import '@polymer/iron-input/iron-input';
+import '../../../styles/gr-a11y-styles';
 import '../../../styles/shared-styles';
 import '../../shared/gr-button/gr-button';
 import '../../shared/gr-dropdown/gr-dropdown';
@@ -36,8 +37,13 @@ import {htmlTemplate} from './gr-diff-view_html';
 import {
   KeyboardShortcutMixin,
   Shortcut,
+  ShortcutListener,
+  ShortcutSection,
 } from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
+import {
+  GeneratedWebLink,
+  GerritNav,
+} from '../../core/gr-navigation/gr-navigation';
 import {appContext} from '../../../services/app-context';
 import {
   computeAllPatchSets,
@@ -68,7 +74,6 @@ import {
   ConfigInfo,
   EditInfo,
   EditPatchSetNum,
-  ElementPropertyDeepChange,
   FileInfo,
   NumericChangeId,
   ParentPatchSetNum,
@@ -90,18 +95,29 @@ import {LineOfInterest} from '../gr-diff/gr-diff';
 import {RevisionInfo as RevisionInfoObj} from '../../shared/revision-info/revision-info';
 import {
   CommentMap,
-  isInBaseOfPatchRange,
   getPatchRangeForCommentUrl,
+  isInBaseOfPatchRange,
 } from '../../../utils/comment-util';
 import {AppElementParams} from '../../gr-app-types';
-import {CustomKeyboardEvent, OpenFixPreviewEvent} from '../../../types/events';
+import {EventType, OpenFixPreviewEvent} from '../../../types/events';
 import {fireAlert, fireEvent, fireTitleChange} from '../../../utils/event-util';
 import {GerritView} from '../../../services/router/router-model';
 import {assertIsDefined} from '../../../utils/common-util';
-import {toggleClass} from '../../../utils/dom-util';
+import {addGlobalShortcut, Key, toggleClass} from '../../../utils/dom-util';
+import {CursorMoveResult} from '../../../api/core';
+import {throttleWrap} from '../../../utils/async-util';
+import {changeComments$} from '../../../services/comments/comments-model';
+import {takeUntil} from 'rxjs/operators';
+import {Subject} from 'rxjs';
+import {preferences$} from '../../../services/user/user-model';
+import {listen} from '../../../services/shortcuts/shortcuts-service';
+
 const ERR_REVIEW_STATUS = 'Couldn’t change file review status.';
-const MSG_LOADING_BLAME = 'Loading blame...';
-const MSG_LOADED_BLAME = 'Blame loaded';
+const LOADING_BLAME = 'Loading blame...';
+const LOADED_BLAME = 'Blame loaded';
+
+// Time in which pressing n key again after the toast navigates to next file
+const NAVIGATE_TO_NEXT_FILE_TIMEOUT_MS = 5000;
 
 interface Files {
   sortedFileList: string[];
@@ -116,7 +132,6 @@ interface CommentSkips {
 export interface GrDiffView {
   $: {
     commentAPI: GrCommentApi;
-    cursor: GrDiffCursor;
     diffHost: GrDiffHost;
     reviewed: HTMLInputElement;
     dropdown: GrDropdownList;
@@ -126,8 +141,11 @@ export interface GrDiffView {
   };
 }
 
+// This avoids JSC_DYNAMIC_EXTENDS_WITHOUT_JSDOC closure compiler error.
+const base = KeyboardShortcutMixin(PolymerElement);
+
 @customElement('gr-diff-view')
-export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
+export class GrDiffView extends base {
   static get template() {
     return htmlTemplate;
   }
@@ -147,20 +165,8 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
   @property({type: Object, observer: '_paramsChanged'})
   params?: AppElementParams;
 
-  @property({type: Object})
-  keyEventTarget: HTMLElement = document.body;
-
   @property({type: Object, notify: true, observer: '_changeViewStateChanged'})
   changeViewState: Partial<ChangeViewState> = {};
-
-  @property({type: Boolean})
-  disableDiffPrefs = false;
-
-  @property({
-    type: Boolean,
-    computed: '_computeDiffPrefsDisabled(disableDiffPrefs, _loggedIn)',
-  })
-  _diffPrefsDisabled?: boolean;
 
   @property({type: Object})
   _patchRange?: PatchRange;
@@ -226,6 +232,9 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
   _isImageDiff?: boolean;
 
   @property({type: Object})
+  _editWeblinks?: GeneratedWebLink[];
+
+  @property({type: Object})
   _filesWeblinks?: FilesWebLinks;
 
   @property({type: Object})
@@ -261,91 +270,165 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
   @property({type: Number})
   _focusLineNum?: number;
 
-  get keyBindings() {
-    return {
-      esc: '_handleEscKey',
-    };
+  private getReviewedParams: {
+    changeNum?: NumericChangeId;
+    patchNum?: PatchSetNum;
+  } = {};
+
+  /** Called in disconnectedCallback. */
+  private cleanups: (() => void)[] = [];
+
+  override keyboardShortcuts(): ShortcutListener[] {
+    return [
+      listen(Shortcut.LEFT_PANE, _ => this.cursor.moveLeft()),
+      listen(Shortcut.RIGHT_PANE, _ => this.cursor.moveRight()),
+      listen(Shortcut.NEXT_LINE, _ => this._handleNextLine()),
+      listen(Shortcut.PREV_LINE, _ => this._handlePrevLine()),
+      listen(Shortcut.VISIBLE_LINE, _ => this.cursor.moveToVisibleArea()),
+      listen(Shortcut.NEXT_FILE_WITH_COMMENTS, _ =>
+        this._moveToNextFileWithComment()
+      ),
+      listen(Shortcut.PREV_FILE_WITH_COMMENTS, _ =>
+        this._moveToPreviousFileWithComment()
+      ),
+      listen(Shortcut.NEW_COMMENT, _ => this._handleNewComment()),
+      listen(Shortcut.SAVE_COMMENT, _ => {}),
+      listen(Shortcut.NEXT_FILE, _ => this._handleNextFile()),
+      listen(Shortcut.PREV_FILE, _ => this._handlePrevFile()),
+      listen(Shortcut.NEXT_CHUNK, _ => this._handleNextChunk()),
+      listen(Shortcut.PREV_CHUNK, _ => this._handlePrevChunk()),
+      listen(Shortcut.NEXT_COMMENT_THREAD, _ =>
+        this._handleNextCommentThread()
+      ),
+      listen(Shortcut.PREV_COMMENT_THREAD, _ =>
+        this._handlePrevCommentThread()
+      ),
+      listen(Shortcut.OPEN_REPLY_DIALOG, _ => this._handleOpenReplyDialog()),
+      listen(Shortcut.TOGGLE_LEFT_PANE, _ => this._handleToggleLeftPane()),
+      listen(Shortcut.OPEN_DOWNLOAD_DIALOG, _ =>
+        this._handleOpenDownloadDialog()
+      ),
+      listen(Shortcut.UP_TO_CHANGE, _ => this._handleUpToChange()),
+      listen(Shortcut.OPEN_DIFF_PREFS, _ => this._handleCommaKey()),
+      listen(Shortcut.TOGGLE_DIFF_MODE, _ => this._handleToggleDiffMode()),
+      listen(Shortcut.TOGGLE_FILE_REVIEWED, e => {
+        if (this._throttledToggleFileReviewed) {
+          this._throttledToggleFileReviewed(e);
+        }
+      }),
+      listen(Shortcut.TOGGLE_ALL_DIFF_CONTEXT, _ =>
+        this._handleToggleAllDiffContext()
+      ),
+      listen(Shortcut.NEXT_UNREVIEWED_FILE, _ =>
+        this._handleNextUnreviewedFile()
+      ),
+      listen(Shortcut.TOGGLE_BLAME, _ => this._handleToggleBlame()),
+      listen(Shortcut.TOGGLE_HIDE_ALL_COMMENT_THREADS, _ =>
+        this._handleToggleHideAllCommentThreads()
+      ),
+      listen(Shortcut.OPEN_FILE_LIST, _ => this._handleOpenFileList()),
+      listen(Shortcut.DIFF_AGAINST_BASE, _ => this._handleDiffAgainstBase()),
+      listen(Shortcut.DIFF_AGAINST_LATEST, _ =>
+        this._handleDiffAgainstLatest()
+      ),
+      listen(Shortcut.DIFF_BASE_AGAINST_LEFT, _ =>
+        this._handleDiffBaseAgainstLeft()
+      ),
+      listen(Shortcut.DIFF_RIGHT_AGAINST_LATEST, _ =>
+        this._handleDiffRightAgainstLatest()
+      ),
+      listen(Shortcut.DIFF_BASE_AGAINST_LATEST, _ =>
+        this._handleDiffBaseAgainstLatest()
+      ),
+      listen(Shortcut.EXPAND_ALL_COMMENT_THREADS, _ => {}), // docOnly
+      listen(Shortcut.COLLAPSE_ALL_COMMENT_THREADS, _ => {}), // docOnly
+    ];
   }
 
-  keyboardShortcuts() {
-    return {
-      [Shortcut.LEFT_PANE]: '_handleLeftPane',
-      [Shortcut.RIGHT_PANE]: '_handleRightPane',
-      [Shortcut.NEXT_LINE]: '_handleNextLineOrFileWithComments',
-      [Shortcut.PREV_LINE]: '_handlePrevLineOrFileWithComments',
-      [Shortcut.VISIBLE_LINE]: '_handleVisibleLine',
-      [Shortcut.NEXT_FILE_WITH_COMMENTS]: '_handleNextLineOrFileWithComments',
-      [Shortcut.PREV_FILE_WITH_COMMENTS]: '_handlePrevLineOrFileWithComments',
-      [Shortcut.NEW_COMMENT]: '_handleNewComment',
-      [Shortcut.SAVE_COMMENT]: null, // DOC_ONLY binding
-      [Shortcut.NEXT_FILE]: '_handleNextFile',
-      [Shortcut.PREV_FILE]: '_handlePrevFile',
-      [Shortcut.NEXT_CHUNK]: '_handleNextChunkOrCommentThread',
-      [Shortcut.NEXT_COMMENT_THREAD]: '_handleNextChunkOrCommentThread',
-      [Shortcut.PREV_CHUNK]: '_handlePrevChunkOrCommentThread',
-      [Shortcut.PREV_COMMENT_THREAD]: '_handlePrevChunkOrCommentThread',
-      [Shortcut.OPEN_REPLY_DIALOG]: '_handleOpenReplyDialog',
-      [Shortcut.TOGGLE_LEFT_PANE]: '_handleToggleLeftPane',
-      [Shortcut.OPEN_DOWNLOAD_DIALOG]: '_handleOpenDownloadDialog',
-      [Shortcut.UP_TO_CHANGE]: '_handleUpToChange',
-      [Shortcut.OPEN_DIFF_PREFS]: '_handleCommaKey',
-      [Shortcut.TOGGLE_DIFF_MODE]: '_handleToggleDiffMode',
-      [Shortcut.TOGGLE_FILE_REVIEWED]: '_throttledToggleFileReviewed',
-      [Shortcut.TOGGLE_ALL_DIFF_CONTEXT]: '_handleToggleAllDiffContext',
-      [Shortcut.NEXT_UNREVIEWED_FILE]: '_handleNextUnreviewedFile',
-      [Shortcut.TOGGLE_BLAME]: '_handleToggleBlame',
-      [Shortcut.TOGGLE_HIDE_ALL_COMMENT_THREADS]:
-        '_handleToggleHideAllCommentThreads',
-      [Shortcut.OPEN_FILE_LIST]: '_handleOpenFileList',
-      [Shortcut.DIFF_AGAINST_BASE]: '_handleDiffAgainstBase',
-      [Shortcut.DIFF_AGAINST_LATEST]: '_handleDiffAgainstLatest',
-      [Shortcut.DIFF_BASE_AGAINST_LEFT]: '_handleDiffBaseAgainstLeft',
-      [Shortcut.DIFF_RIGHT_AGAINST_LATEST]: '_handleDiffRightAgainstLatest',
-      [Shortcut.DIFF_BASE_AGAINST_LATEST]: '_handleDiffBaseAgainstLatest',
-
-      // Final two are actually handled by gr-comment-thread.
-      [Shortcut.EXPAND_ALL_COMMENT_THREADS]: null,
-      [Shortcut.COLLAPSE_ALL_COMMENT_THREADS]: null,
-    };
-  }
-
-  reporting = appContext.reportingService;
-
-  flagsService = appContext.flagsService;
+  private readonly reporting = appContext.reportingService;
 
   private readonly restApiService = appContext.restApiService;
 
-  _throttledToggleFileReviewed?: EventListener;
+  private readonly commentsService = appContext.commentsService;
+
+  private readonly shortcuts = appContext.shortcutsService;
+
+  _throttledToggleFileReviewed?: (e: KeyboardEvent) => void;
 
   _onRenderHandler?: EventListener;
 
-  /** @override */
-  connectedCallback() {
+  private cursor = new GrDiffCursor();
+
+  disconnected$ = new Subject();
+
+  override connectedCallback() {
     super.connectedCallback();
-    this._throttledToggleFileReviewed = this._throttleWrap(e =>
-      this._handleToggleFileReviewed(e as CustomKeyboardEvent)
+    this._throttledToggleFileReviewed = throttleWrap(_ =>
+      this._handleToggleFileReviewed()
     );
     this._getLoggedIn().then(loggedIn => {
       this._loggedIn = loggedIn;
     });
+    // TODO(brohlfs): This just ensures that the userService is instantiated at
+    // all. We need the service to manage the model, but we are not making any
+    // direct calls. Will need to find a better solution to this problem ...
+    assertIsDefined(appContext.userService);
 
+    changeComments$
+      .pipe(takeUntil(this.disconnected$))
+      .subscribe(changeComments => {
+        this._changeComments = changeComments;
+      });
+
+    preferences$.pipe(takeUntil(this.disconnected$)).subscribe(preferences => {
+      this._userPrefs = preferences;
+    });
     this.addEventListener('open-fix-preview', e => this._onOpenFixPreview(e));
-    this.$.cursor.push('diffs', this.$.diffHost);
+    this.cursor.replaceDiffs([this.$.diffHost]);
     this._onRenderHandler = (_: Event) => {
-      this.$.cursor.reInitCursor();
+      this.cursor.reInitCursor();
     };
     this.$.diffHost.addEventListener('render', this._onRenderHandler);
+    this.cleanups.push(
+      addGlobalShortcut(
+        {key: Key.ESC},
+        _ => (this.$.diffHost.displayLine = false)
+      )
+    );
   }
 
-  /** @override */
-  disconnectedCallback() {
+  override disconnectedCallback() {
+    this.disconnected$.next();
+    this.cursor.dispose();
     if (this._onRenderHandler) {
       this.$.diffHost.removeEventListener('render', this._onRenderHandler);
     }
+    for (const cleanup of this.cleanups) cleanup();
+    this.cleanups = [];
     super.disconnectedCallback();
   }
 
-  _getLoggedIn() {
+  @observe('_changeComments', '_path', '_patchRange')
+  computeThreads(
+    changeComments?: ChangeComments,
+    path?: string,
+    patchRange?: PatchRange
+  ) {
+    if (
+      changeComments === undefined ||
+      path === undefined ||
+      patchRange === undefined
+    ) {
+      return;
+    }
+    // TODO(dhruvsri): check if basePath should be set here
+    this.$.diffHost.threads = changeComments.getThreadsBySideForFile(
+      {path},
+      patchRange
+    );
+  }
+
+  _getLoggedIn(): Promise<boolean> {
     return this.restApiService.getLoggedIn();
   }
 
@@ -429,10 +512,6 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
     return this.restApiService.getPreferences();
   }
 
-  _getWindowWidth() {
-    return window.innerWidth;
-  }
-
   _handleReviewedChange(e: Event) {
     this._setReviewed(
       ((dom(e) as EventApi).rootTarget as HTMLInputElement).checked
@@ -442,8 +521,15 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
   _setReviewed(reviewed: boolean) {
     if (this._editMode) return;
     this.$.reviewed.checked = reviewed;
-    if (!this._patchRange?.patchNum) return;
+    if (!this._patchRange?.patchNum || !this._path) return;
+    const path = this._path;
+    // if file is already reviewed then do not make a saveReview request
+    if (this._reviewedFiles.has(path) && reviewed) return;
+    if (reviewed) this._reviewedFiles.add(path);
+    else this._reviewedFiles.delete(path);
     this._saveReviewedState(reviewed).catch(err => {
+      if (this._reviewedFiles.has(path)) this._reviewedFiles.delete(path);
+      else this._reviewedFiles.add(path);
       fireAlert(this, ERR_REVIEW_STATUS);
       throw err;
     });
@@ -461,85 +547,22 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
     );
   }
 
-  _handleToggleFileReviewed(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-    if (this.modifierPressed(e)) return;
-
-    e.preventDefault();
+  _handleToggleFileReviewed() {
     this._setReviewed(!this.$.reviewed.checked);
   }
 
-  _handleEscKey(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-    if (this.modifierPressed(e)) return;
-
-    e.preventDefault();
-    this.$.diffHost.displayLine = false;
-  }
-
-  _handleLeftPane(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-
-    e.preventDefault();
-    this.$.cursor.moveLeft();
-  }
-
-  _handleRightPane(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-
-    e.preventDefault();
-    this.$.cursor.moveRight();
-  }
-
-  _handlePrevLineOrFileWithComments(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-
-    if (
-      e.detail.keyboardEvent?.shiftKey &&
-      e.detail.keyboardEvent?.keyCode === 75
-    ) {
-      // 'K'
-      this._moveToPreviousFileWithComment();
-      return;
-    }
-    if (this.modifierPressed(e)) {
-      return;
-    }
-
-    e.preventDefault();
+  _handlePrevLine() {
     this.$.diffHost.displayLine = true;
-    this.$.cursor.moveUp();
-  }
-
-  _handleVisibleLine(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-
-    e.preventDefault();
-    this.$.cursor.moveToVisibleArea();
+    this.cursor.moveUp();
   }
 
   _onOpenFixPreview(e: OpenFixPreviewEvent) {
     this.$.applyFixDialog.open(e);
   }
 
-  _handleNextLineOrFileWithComments(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-
-    if (
-      e.detail.keyboardEvent?.shiftKey &&
-      e.detail.keyboardEvent?.keyCode === 74
-    ) {
-      // 'J'
-      this._moveToNextFileWithComment();
-      return;
-    }
-    if (this.modifierPressed(e)) {
-      return;
-    }
-
-    e.preventDefault();
+  _handleNextLine() {
     this.$.diffHost.displayLine = true;
-    this.$.cursor.moveDown();
+    this.cursor.moveDown();
   }
 
   _moveToPreviousFileWithComment() {
@@ -581,69 +604,88 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
     );
   }
 
-  _handleNewComment(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-    if (this.modifierPressed(e)) return;
-
-    e.preventDefault();
+  _handleNewComment() {
     this.classList.remove('hideComments');
-    this.$.cursor.createCommentInPlace();
+    this.cursor.createCommentInPlace();
   }
 
-  _handlePrevFile(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-    // Check for meta key to avoid overriding native chrome shortcut.
-    if (this.getKeyboardEvent(e).metaKey) return;
+  _handlePrevFile() {
     if (!this._path) return;
     if (!this._fileList) return;
-
-    e.preventDefault();
     this._navToFile(this._path, this._fileList, -1);
   }
 
-  _handleNextFile(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-    // Check for meta key to avoid overriding native chrome shortcut.
-    if (this.getKeyboardEvent(e).metaKey) return;
+  _handleNextFile() {
     if (!this._path) return;
     if (!this._fileList) return;
-
-    e.preventDefault();
     this._navToFile(this._path, this._fileList, 1);
   }
 
-  _handleNextChunkOrCommentThread(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
+  _handleNextChunk() {
+    const result = this.cursor.moveToNextChunk();
+    if (result === CursorMoveResult.CLIPPED && this.cursor.isAtEnd()) {
+      this.showToastAndNavigateFile('next', 'n');
+    }
+  }
 
-    e.preventDefault();
-    if (e.detail.keyboardEvent?.shiftKey) {
-      this.$.cursor.moveToNextCommentThread();
+  _handleNextCommentThread() {
+    const result = this.cursor.moveToNextCommentThread();
+    if (result === CursorMoveResult.CLIPPED) {
+      this._navigateToNextFileWithCommentThread();
+    }
+  }
+
+  private lastDisplayedNavigateToFileToast: Map<string, number> = new Map();
+
+  private showToastAndNavigateFile(direction: string, shortcut: string) {
+    /*
+     * If user presses p/n on the first/last diff chunk, show a toast informing
+     * user that pressing it again will navigate them to previous/next
+     * unreviewedfile if click happens within the time limit
+     */
+    if (
+      this.lastDisplayedNavigateToFileToast.get(direction) &&
+      Date.now() - this.lastDisplayedNavigateToFileToast.get(direction)! <=
+        NAVIGATE_TO_NEXT_FILE_TIMEOUT_MS
+    ) {
+      // reset for next file
+      this.lastDisplayedNavigateToFileToast.delete(direction);
+      this.navigateToUnreviewedFile(direction);
     } else {
-      if (this.modifierPressed(e)) return;
-      // navigate to next file if key is not being held down
-      this.$.cursor.moveToNextChunk(
-        /* opt_clipToTop = */ false,
-        /* opt_navigateToNextFile = */ !e.detail.keyboardEvent?.repeat
+      this.lastDisplayedNavigateToFileToast.set(direction, Date.now());
+      fireAlert(
+        this,
+        `Press ${shortcut} again to navigate to ${direction} unreviewed file`
       );
     }
   }
 
-  _handlePrevChunkOrCommentThread(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
+  private navigateToUnreviewedFile(direction: string) {
+    if (!this._path) return;
+    if (!this._fileList) return;
+    if (!this._reviewedFiles) return;
+    // Ensure that the currently viewed file always appears in unreviewedFiles
+    // so we resolve the right "next" file.
+    const unreviewedFiles = this._fileList.filter(
+      file => file === this._path || !this._reviewedFiles.has(file)
+    );
 
-    e.preventDefault();
-    if (e.detail.keyboardEvent?.shiftKey) {
-      this.$.cursor.moveToPreviousCommentThread();
-    } else {
-      if (this.modifierPressed(e)) return;
-      this.$.cursor.moveToPreviousChunk(!e.detail.keyboardEvent?.repeat);
+    this._navToFile(this._path, unreviewedFiles, direction === 'next' ? 1 : -1);
+  }
+
+  _handlePrevChunk() {
+    this.cursor.moveToPreviousChunk();
+    if (this.cursor.isAtStart()) {
+      this.showToastAndNavigateFile('previous', 'p');
     }
   }
 
+  _handlePrevCommentThread() {
+    this.cursor.moveToPreviousCommentThread();
+  }
+
   // Similar to gr-change-view._handleOpenReplyDialog
-  _handleOpenReplyDialog(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-    if (this.modifierPressed(e)) return;
+  _handleOpenReplyDialog() {
     this._getLoggedIn().then(isLoggedIn => {
       if (!isLoggedIn) {
         fireEvent(this, 'show-auth-required');
@@ -651,50 +693,29 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
       }
 
       this.set('changeViewState.showReplyDialog', true);
-      e.preventDefault();
       this._navToChangeView();
     });
   }
 
-  _handleToggleLeftPane(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-    if (!e.detail.keyboardEvent?.shiftKey) return;
-
-    e.preventDefault();
+  _handleToggleLeftPane() {
     this.$.diffHost.toggleLeftDiff();
   }
 
-  _handleOpenDownloadDialog(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-    if (this.modifierPressed(e)) return;
-
+  _handleOpenDownloadDialog() {
     this.set('changeViewState.showDownloadDialog', true);
-    e.preventDefault();
     this._navToChangeView();
   }
 
-  _handleUpToChange(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-    if (this.modifierPressed(e)) return;
-
-    e.preventDefault();
+  _handleUpToChange() {
     this._navToChangeView();
   }
 
-  _handleCommaKey(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-    if (this.modifierPressed(e)) return;
-    if (this._diffPrefsDisabled) return;
-
-    e.preventDefault();
+  _handleCommaKey() {
+    if (!this._loggedIn) return;
     this.$.diffPreferencesDialog.open();
   }
 
-  _handleToggleDiffMode(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-    if (this.modifierPressed(e)) return;
-
-    e.preventDefault();
+  _handleToggleDiffMode() {
     if (this._getDiffViewMode() === DiffViewMode.SIDE_BY_SIDE) {
       this.$.modeSelect.setMode(DiffViewMode.UNIFIED);
     } else {
@@ -789,7 +810,7 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
     if (!this._patchRange) return;
 
     // TODO(taoalpha): add a shortcut for editing
-    const cursorAddress = this.$.cursor.getAddress();
+    const cursorAddress = this.cursor.getAddress();
     const editUrl = GerritNav.getEditUrlForDiff(
       this._change,
       this._path,
@@ -835,31 +856,26 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
     return {path: fileList[idx]};
   }
 
-  _getReviewedFiles(
-    changeNum?: NumericChangeId,
-    patchNum?: PatchSetNum
-  ): Promise<Set<string>> {
-    if (!changeNum || !patchNum) return Promise.resolve(new Set<string>());
-    return this.restApiService
-      .getReviewedFiles(changeNum, patchNum)
-      .then(files => {
-        this._reviewedFiles = new Set(files);
-        return this._reviewedFiles;
-      });
+  _getReviewedFiles(changeNum?: NumericChangeId, patchNum?: PatchSetNum) {
+    if (!changeNum || !patchNum) return;
+    if (
+      this.getReviewedParams.changeNum === changeNum &&
+      this.getReviewedParams.patchNum === patchNum
+    ) {
+      return;
+    }
+    this.getReviewedParams = {
+      changeNum,
+      patchNum,
+    };
+    this.restApiService.getReviewedFiles(changeNum, patchNum).then(files => {
+      this._reviewedFiles = new Set(files);
+    });
   }
 
-  _getReviewedStatus(
-    editMode?: boolean,
-    changeNum?: NumericChangeId,
-    patchNum?: PatchSetNum,
-    path?: string
-  ) {
-    if (editMode || !path) {
-      return Promise.resolve(false);
-    }
-    return this._getReviewedFiles(changeNum, patchNum).then(files =>
-      files.has(path)
-    );
+  _getReviewedStatus(path: string) {
+    if (this._editMode) return false;
+    return this._reviewedFiles.has(path);
   }
 
   _initLineOfInterestAndCursor(leftSide: boolean) {
@@ -993,7 +1009,7 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
     this._commentMap = this._getPaths(this._patchRange);
   }
 
-  _isFileUnchanged(diff: DiffInfo) {
+  _isFileUnchanged(diff?: DiffInfo) {
     if (!diff || !diff.content) return false;
     return !diff.content.some(
       content =>
@@ -1006,12 +1022,18 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
       return;
     }
 
-    this._change = undefined;
+    // Everything in the diff view is tied to the change. It seems better to
+    // force the re-creation of the diff view when the change number changes.
+    const changeChanged = this._changeNum !== value.changeNum;
+    if (this._changeNum !== undefined && changeChanged) {
+      fireEvent(this, EventType.RECREATE_DIFF_VIEW);
+      return;
+    }
+
     this._files = {sortedFileList: [], changeFilesByPath: {}};
     this._path = undefined;
     this._patchRange = undefined;
     this._commitRange = undefined;
-    this._changeComments = undefined;
     this._focusLineNum = undefined;
 
     if (value.changeNum && value.project) {
@@ -1026,7 +1048,9 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
     // the top-level change info view) and therefore undefined in `params`.
     // If route is of type /comment/<commentId>/ then no patchNum is present
     if (!value.patchNum && !value.commentLink) {
-      console.warn('invalid url, no patchNum found');
+      this.reporting.error(
+        new Error(`Invalid diff view URL, no patchNum found: ${value}`)
+      );
       return;
     }
 
@@ -1034,14 +1058,9 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
 
     promises.push(this._getDiffPreferences());
 
-    promises.push(
-      this._getPreferences().then(prefs => {
-        this._userPrefs = prefs;
-      })
-    );
+    if (!this._change) promises.push(this._getChangeDetail(this._changeNum));
 
-    promises.push(this._getChangeDetail(this._changeNum));
-    promises.push(this._loadComments(value.patchNum));
+    if (!this._changeComments) this._loadComments(value.patchNum);
 
     promises.push(this._getChangeEdit());
 
@@ -1053,17 +1072,6 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
         this._loading = false;
         this._initPatchRange();
         this._initCommitRange();
-
-        assertIsDefined(this._path, '_path');
-        if (!this._changeComments)
-          throw new Error('change comments must be defined');
-        assertIsDefined(this._patchRange, '_patchRange');
-
-        // TODO(dhruvsri): check if basePath should be set here
-        this.$.diffHost.threads = this._changeComments.getThreadsBySideForFile(
-          {path: this._path},
-          this._patchRange
-        );
 
         const edit = r[4] as EditInfo | undefined;
         if (edit) {
@@ -1081,7 +1089,6 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
         this.reporting.diffViewDisplayed();
       })
       .then(() => {
-        if (!this._diff) throw new Error('Missing this._diff');
         const fileUnchanged = this._isFileUnchanged(this._diff);
         if (fileUnchanged && value.commentLink) {
           assertIsDefined(this._change, '_change');
@@ -1130,44 +1137,41 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
     }
   }
 
-  @observe('_loggedIn', 'params.*', '_prefs', '_patchRange.*')
+  @observe('_path', '_prefs', '_reviewedFiles', '_patchRange')
   _setReviewedObserver(
+    path?: string,
+    prefs?: DiffPreferencesInfo,
+    reviewedFiles?: Set<string>,
+    patchRange?: PatchRange
+  ) {
+    if (prefs === undefined) return;
+    if (path === undefined) return;
+    if (reviewedFiles === undefined) return;
+    if (patchRange === undefined) return;
+    if (prefs.manual_review) {
+      // Checkbox state needs to be set explicitly only when manual_review
+      // is specified.
+      this.$.reviewed.checked = this._getReviewedStatus(path);
+    } else {
+      this._setReviewed(true);
+    }
+  }
+
+  @observe('_loggedIn', '_changeNum', '_patchRange')
+  getReviewedFiles(
     _loggedIn?: boolean,
-    paramsRecord?: ElementPropertyDeepChange<GrDiffView, 'params'>,
-    _prefs?: DiffPreferencesInfo,
-    patchRangeRecord?: ElementPropertyDeepChange<GrDiffView, '_patchRange'>
+    _changeNum?: NumericChangeId,
+    patchRange?: PatchRange
   ) {
     if (_loggedIn === undefined) return;
-    if (paramsRecord === undefined) return;
-    if (_prefs === undefined) return;
-    if (patchRangeRecord === undefined) return;
-    if (patchRangeRecord.base === undefined) return;
+    if (_changeNum === undefined) return;
+    if (patchRange === undefined) return;
 
-    const patchRange = patchRangeRecord.base;
     if (!_loggedIn) {
       return;
     }
 
-    if (_prefs.manual_review) {
-      // Checkbox state needs to be set explicitly only when manual_review
-      // is specified.
-
-      if (patchRange.patchNum) {
-        this._getReviewedStatus(
-          this._editMode,
-          this._changeNum,
-          patchRange.patchNum,
-          this._path
-        ).then((status: boolean) => {
-          this.$.reviewed.checked = status;
-        });
-      }
-      return;
-    }
-
-    if (paramsRecord.base?.view === GerritNav.View.DIFF) {
-      this._setReviewed(true);
-    }
+    this._getReviewedFiles(this._changeNum, patchRange.patchNum);
   }
 
   /**
@@ -1178,11 +1182,11 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
       return;
     }
     if (leftSide) {
-      this.$.cursor.side = Side.LEFT;
+      this.cursor.side = Side.LEFT;
     } else {
-      this.$.cursor.side = Side.RIGHT;
+      this.cursor.side = Side.RIGHT;
     }
-    this.$.cursor.initialLineNumber = this._focusLineNum;
+    this.cursor.initialLineNumber = this._focusLineNum;
   }
 
   _getLineOfInterest(leftSide: boolean): LineOfInterest | undefined {
@@ -1213,17 +1217,6 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
       patchRange.patchNum,
       patchRange.basePatchNum
     );
-  }
-
-  _patchRangeStr(patchRange: PatchRange) {
-    let patchStr = `${patchRange.patchNum}`;
-    if (
-      patchRange.basePatchNum &&
-      patchRange.basePatchNum !== ParentPatchSetNum
-    ) {
-      patchStr = `${patchRange.basePatchNum}..${patchRange.patchNum}`;
-    }
-    return patchStr;
   }
 
   /**
@@ -1316,11 +1309,8 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
     return dropdownContent;
   }
 
-  _computePrefsButtonHidden(
-    prefs?: DiffPreferencesInfo,
-    prefsDisabled?: boolean
-  ) {
-    return prefsDisabled || !prefs;
+  _computePrefsButtonHidden(prefs?: DiffPreferencesInfo, loggedIn?: boolean) {
+    return !loggedIn || !prefs;
   }
 
   _handleFileChange(e: CustomEvent) {
@@ -1496,15 +1486,18 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
 
   _loadComments(patchSet?: PatchSetNum) {
     assertIsDefined(this._changeNum, '_changeNum');
-    return this.$.commentAPI
-      .loadAll(this._changeNum, patchSet)
-      .then(comments => {
-        this._changeComments = comments;
-      });
+    return this.commentsService.loadAll(this._changeNum, patchSet);
   }
 
-  @observe('_files.changeFilesByPath', '_path', '_patchRange', '_projectConfig')
+  @observe(
+    '_changeComments',
+    '_files.changeFilesByPath',
+    '_path',
+    '_patchRange',
+    '_projectConfig'
+  )
   _recomputeComments(
+    changeComments?: ChangeComments,
     files?: {[path: string]: FileInfo},
     path?: string,
     patchRange?: PatchRange,
@@ -1514,11 +1507,11 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
     if (!path) return;
     if (!patchRange) return;
     if (!projectConfig) return;
-    if (!this._changeComments) return;
+    if (!changeComments) return;
 
     const file = files[path];
     if (file && file.old_path) {
-      this.$.diffHost.threads = this._changeComments.getThreadsBySideForFile(
+      this.$.diffHost.threads = changeComments.getThreadsBySideForFile(
         {path, basePath: file.old_path},
         patchRange
       );
@@ -1528,12 +1521,6 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
   _getPaths(patchRange: PatchRange) {
     if (!this._changeComments) return {};
     return this._changeComments.getPaths(patchRange);
-  }
-
-  _getDiffDrafts() {
-    assertIsDefined(this._changeNum, '_changeNum');
-
-    return this.restApiService.getDiffDrafts(this._changeNum);
   }
 
   _computeCommentSkips(
@@ -1587,12 +1574,12 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
 
   _loadBlame() {
     this._isBlameLoading = true;
-    fireAlert(this, MSG_LOADING_BLAME);
+    fireAlert(this, LOADING_BLAME);
     this.$.diffHost
       .loadBlame()
       .then(() => {
         this._isBlameLoading = false;
-        fireAlert(this, MSG_LOADED_BLAME);
+        fireAlert(this, LOADED_BLAME);
       })
       .catch(() => {
         this._isBlameLoading = false;
@@ -1611,28 +1598,19 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
     this._loadBlame();
   }
 
-  _handleToggleBlame(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-    if (this.modifierPressed(e)) return;
-
+  _handleToggleBlame() {
     this._toggleBlame();
   }
 
-  _handleToggleHideAllCommentThreads(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-    if (this.modifierPressed(e)) return;
-
+  _handleToggleHideAllCommentThreads() {
     toggleClass(this, 'hideComments');
   }
 
-  _handleOpenFileList(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-    if (this.modifierPressed(e)) return;
+  _handleOpenFileList() {
     this.$.dropdown.open();
   }
 
-  _handleDiffAgainstBase(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
+  _handleDiffAgainstBase() {
     if (!this._change) return;
     if (!this._path) return;
     if (!this._patchRange) return;
@@ -1648,8 +1626,7 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
     );
   }
 
-  _handleDiffBaseAgainstLeft(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
+  _handleDiffBaseAgainstLeft() {
     if (!this._change) return;
     if (!this._path) return;
     if (!this._patchRange) return;
@@ -1669,8 +1646,7 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
     );
   }
 
-  _handleDiffAgainstLatest(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
+  _handleDiffAgainstLatest() {
     if (!this._change) return;
     if (!this._path) return;
     if (!this._patchRange) return;
@@ -1689,8 +1665,7 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
     );
   }
 
-  _handleDiffRightAgainstLatest(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
+  _handleDiffRightAgainstLatest() {
     if (!this._change) return;
     if (!this._path) return;
     if (!this._patchRange) return;
@@ -1708,8 +1683,7 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
     );
   }
 
-  _handleDiffBaseAgainstLatest(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
+  _handleDiffBaseAgainstLatest() {
     if (!this._change) return;
     if (!this._path) return;
     if (!this._patchRange) return;
@@ -1746,44 +1720,13 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
     return '';
   }
 
-  _handleToggleAllDiffContext(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
-
+  _handleToggleAllDiffContext() {
     this.$.diffHost.toggleAllContext();
   }
 
-  _computeDiffPrefsDisabled(disableDiffPrefs?: boolean, loggedIn?: boolean) {
-    return disableDiffPrefs || !loggedIn;
-  }
-
-  _navigateToNextUnreviewedFile() {
-    if (!this._path) return;
-    if (!this._fileList) return;
-    if (!this._reviewedFiles) return;
-    // Ensure that the currently viewed file always appears in unreviewedFiles
-    // so we resolve the right "next" file.
-    const unreviewedFiles = this._fileList.filter(
-      file => file === this._path || !this._reviewedFiles.has(file)
-    );
-    this._navToFile(this._path, unreviewedFiles, 1);
-  }
-
-  _navigateToPreviousUnreviewedFile() {
-    if (!this._path) return;
-    if (!this._fileList) return;
-    if (!this._reviewedFiles) return;
-    // Ensure that the currently viewed file always appears in unreviewedFiles
-    // so we resolve the right "next" file.
-    const unreviewedFiles = this._fileList.filter(
-      file => file === this._path || !this._reviewedFiles.has(file)
-    );
-    this._navToFile(this._path, unreviewedFiles, -1);
-  }
-
-  _handleNextUnreviewedFile(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) return;
+  _handleNextUnreviewedFile() {
     this._setReviewed(true);
-    this._navigateToNextUnreviewedFile();
+    this.navigateToUnreviewedFile('next');
   }
 
   _navigateToNextFileWithCommentThread() {
@@ -1806,14 +1749,19 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
 
   _computeCanEdit(
     loggedIn?: boolean,
+    editWeblinks?: GeneratedWebLink[],
     changeChangeRecord?: PolymerDeepPropertyChange<ChangeInfo, ChangeInfo>
   ) {
     if (!changeChangeRecord?.base) return false;
-    return loggedIn && changeIsOpen(changeChangeRecord.base);
+    return (
+      loggedIn &&
+      changeIsOpen(changeChangeRecord.base) &&
+      (!editWeblinks || editWeblinks.length === 0)
+    );
   }
 
-  _computeIsLoggedIn(loggedIn: boolean) {
-    return loggedIn ? true : false;
+  _computeShowEditLinks(editWeblinks?: GeneratedWebLink[]) {
+    return !!editWeblinks && editWeblinks.length > 0;
   }
 
   /**
@@ -1835,6 +1783,10 @@ export class GrDiffView extends KeyboardShortcutMixin(PolymerElement) {
    */
   _computeTruncatedPath(path?: string) {
     return path ? computeTruncatedPath(path) : '';
+  }
+
+  createTitle(shortcutName: Shortcut, section: ShortcutSection) {
+    return this.shortcuts.createTitle(shortcutName, section);
   }
 }
 

@@ -53,6 +53,9 @@ export const htmlTemplate = html`
       /* @see Issue 8602 */
       z-index: 1;
     }
+    .stickyBottom.newReplyDialog {
+      margin-top: unset;
+    }
     .actions {
       display: flex;
       justify-content: space-between;
@@ -99,17 +102,36 @@ export const htmlTemplate = html`
       min-height: 12em;
       position: relative;
     }
-    .textareaContainer,
+    .newReplyDialog.textareaContainer {
+      min-height: unset;
+    }
+    textareaContainer,
     #textarea,
     gr-endpoint-decorator[name='reply-text'] {
       display: flex;
       width: 100%;
+    }
+    .newReplyDialog .textareaContainer,
+    #textarea,
+    gr-endpoint-decorator[name='reply-text'] {
+      display: block;
+      width: unset;
+      font-family: var(--monospace-font-family);
+      font-size: var(--font-size-code);
+      line-height: calc(var(--font-size-code) + var(--spacing-s));
+      font-weight: var(--font-weight-normal);
+    }
+    .newReplyDialog#textarea {
+      padding: var(--spacing-m);
     }
     gr-endpoint-decorator[name='reply-text'] {
       flex-direction: column;
     }
     #textarea {
       flex: 1;
+    }
+    .previewContainer {
+      border-top: none;
     }
     .previewContainer gr-formatted-text {
       background: var(--table-header-background-color);
@@ -155,7 +177,7 @@ export const htmlTemplate = html`
     }
     .attention .edit-attention-button {
       vertical-align: top;
-      --padding: 0px 4px;
+      --gr-button-padding: 0px 4px;
     }
     .attention .edit-attention-button iron-icon {
       color: inherit;
@@ -222,8 +244,24 @@ export const htmlTemplate = html`
     .attentionTip div iron-icon {
       margin-right: var(--spacing-s);
     }
+    .patchsetLevelContainer {
+      width: 80ch;
+      border-radius: var(--border-radius);
+      box-shadow: var(--elevation-level-2);
+    }
+    .patchsetLevelContainer.resolved{
+      background-color: var(--comment-background-color);
+    }
+    .patchsetLevelContainer.unresolved{
+      background-color: var(--unresolved-comment-background-color);
+    }
+    .labelContainer {
+      padding-left: var(--spacing-m);
+      padding-bottom: var(--spacing-m);
+    }
+
   </style>
-  <div class="container" tabindex="-1">
+  <div class$="container" tabindex="-1">
     <section class="peopleContainer">
       <gr-endpoint-decorator name="reply-reviewers">
         <gr-endpoint-param name="change" value="[[change]]"></gr-endpoint-param>
@@ -281,43 +319,7 @@ export const htmlTemplate = html`
         </div>
       </gr-overlay>
     </section>
-    <section class="textareaContainer">
-      <gr-endpoint-decorator name="reply-text">
-        <gr-textarea
-          id="textarea"
-          class="message"
-          autocomplete="on"
-          placeholder="[[_messagePlaceholder]]"
-          fixed-position-dropdown=""
-          hide-border="true"
-          monospace="true"
-          disabled="{{disabled}}"
-          rows="4"
-          text="{{draft}}"
-          on-bind-value-changed="_handleHeightChanged"
-        >
-        </gr-textarea>
-      </gr-endpoint-decorator>
-    </section>
-    <section class="previewContainer">
-      <label>
-        <input
-          id="resolvedPatchsetLevelCommentCheckbox"
-          type="checkbox"
-          checked="{{_isResolvedPatchsetLevelComment::change}}"
-        />
-        Resolved
-      </label>
-      <label class="preview-formatting">
-        <input type="checkbox" checked="{{_previewFormatting::change}}" />
-        Preview formatting
-      </label>
-      <gr-formatted-text
-        content="[[draft]]"
-        hidden$="[[!_previewFormatting]]"
-        config="[[projectConfig.commentlinks]]"
-      ></gr-formatted-text>
-    </section>
+
     <section class="labelsContainer">
       <gr-endpoint-decorator name="reply-label-scores">
         <gr-label-scores
@@ -327,9 +329,54 @@ export const htmlTemplate = html`
           on-labels-changed="_handleLabelsChanged"
           permitted-labels="[[permittedLabels]]"
         ></gr-label-scores>
+        <gr-endpoint-param name="change" value="[[change]]"></gr-endpoint-param>
       </gr-endpoint-decorator>
       <div id="pluginMessage">[[_pluginMessage]]</div>
     </section>
+    <section class="newReplyDialog textareaContainer">
+      <div class$="patchsetLevelContainer [[getUnresolvedPatchsetLevelClass(_isResolvedPatchsetLevelComment)]]">
+        <gr-endpoint-decorator name="reply-text">
+          <gr-textarea
+            id="textarea"
+            class="message newReplyDialog"
+            autocomplete="on"
+            placeholder="[[_messagePlaceholder]]"
+            fixed-position-dropdown=""
+            monospace="true"
+            disabled="{{disabled}}"
+            rows="4"
+            text="{{draft}}"
+            on-bind-value-changed="_handleHeightChanged"
+          >
+          </gr-textarea>
+          <gr-endpoint-param name="change" value="[[change]]">
+          </gr-endpoint-param>
+        </gr-endpoint-decorator>
+        <div class="labelContainer">
+          <label>
+            <input
+              id="resolvedPatchsetLevelCommentCheckbox"
+              type="checkbox"
+              checked="{{_isResolvedPatchsetLevelComment::change}}"
+            />
+            Resolved
+          </label>
+          <label class="preview-formatting">
+            <input type="checkbox" checked="{{_previewFormatting::change}}" />
+            Preview formatting
+          </label>
+        </div>
+      </div>
+    </section>
+    <template is="dom-if" if="[[_previewFormatting]]">
+      <section class="previewContainer">
+        <gr-formatted-text
+          content="[[draft]]"
+          config="[[projectConfig.commentlinks]]"
+        ></gr-formatted-text>
+    </template>
+    </section>
+
     <section
       class="draftsContainer"
       hidden$="[[_computeHideDraftList(draftCommentThreads)]]"
@@ -351,7 +398,7 @@ export const htmlTemplate = html`
         change="[[change]]"
         change-num="[[change._number]]"
         logged-in="true"
-        hide-toggle-buttons=""
+        hide-dropdown=""
       >
       </gr-thread-list>
       <span
@@ -361,9 +408,9 @@ export const htmlTemplate = html`
         Saving comments...
       </span>
     </section>
-    <div class="stickyBottom">
+    <div class$="stickyBottom newReplyDialog">
       <section
-        hidden$="[[!_showAttentionSummary(serverConfig, _attentionExpanded)]]"
+        hidden$="[[!_showAttentionSummary(_attentionExpanded)]]"
         class="attention"
       >
         <div class="attentionSummary">
@@ -391,29 +438,32 @@ export const htmlTemplate = html`
                   account="[[account]]"
                   force-attention="[[_computeHasNewAttention(account, _newAttentionSet)]]"
                   selected="[[_computeHasNewAttention(account, _newAttentionSet)]]"
-                  deselected="[[!_computeHasNewAttention(account, _newAttentionSet)]]"
-                  hide-hovercard=""
+                  hideHovercard
+                  selectionChipStyle
                   on-click="_handleAttentionClick"
                 ></gr-account-label>
               </template>
             </template>
-            <gr-button
-              class="edit-attention-button"
-              on-click="_handleAttentionModify"
-              disabled="[[_sendDisabled]]"
-              link=""
-              position-below=""
-              data-label="Edit"
-              data-action-type="change"
-              data-action-key="edit"
-              has-tooltip=""
+            <gr-tooltip-content
+              has-tooltip
               title="[[_computeAttentionButtonTitle(_sendDisabled)]]"
-              role="button"
-              tabindex="0"
             >
-              <iron-icon icon="gr-icons:edit"></iron-icon>
-              Modify
-            </gr-button>
+              <gr-button
+                class="edit-attention-button"
+                on-click="_handleAttentionModify"
+                disabled="[[_sendDisabled]]"
+                link=""
+                position-below=""
+                data-label="Edit"
+                data-action-type="change"
+                data-action-key="edit"
+                role="button"
+                tabindex="0"
+              >
+                <iron-icon icon="gr-icons:edit"></iron-icon>
+                Modify
+              </gr-button>
+            </gr-tooltip-content>
           </div>
           <div>
             <a
@@ -429,7 +479,7 @@ export const htmlTemplate = html`
         </div>
       </section>
       <section
-        hidden$="[[!_showAttentionDetails(serverConfig, _attentionExpanded)]]"
+        hidden$="[[!_showAttentionDetails(_attentionExpanded)]]"
         class="attention-detail"
       >
         <div class="attentionDetailsTitle">
@@ -462,8 +512,8 @@ export const htmlTemplate = html`
               account="[[_owner]]"
               force-attention="[[_computeHasNewAttention(_owner, _newAttentionSet)]]"
               selected="[[_computeHasNewAttention(_owner, _newAttentionSet)]]"
-              deselected="[[!_computeHasNewAttention(_owner, _newAttentionSet)]]"
-              hide-hovercard=""
+              hideHovercard
+              selectionChipStyle
               on-click="_handleAttentionClick"
             >
             </gr-account-label>
@@ -477,8 +527,8 @@ export const htmlTemplate = html`
                 account="[[_uploader]]"
                 force-attention="[[_computeHasNewAttention(_uploader, _newAttentionSet)]]"
                 selected="[[_computeHasNewAttention(_uploader, _newAttentionSet)]]"
-                deselected="[[!_computeHasNewAttention(_uploader, _newAttentionSet)]]"
-                hide-hovercard=""
+                hideHovercard
+                selectionChipStyle
                 on-click="_handleAttentionClick"
               >
               </gr-account-label>
@@ -497,8 +547,8 @@ export const htmlTemplate = html`
                 account="[[account]]"
                 force-attention="[[_computeHasNewAttention(account, _newAttentionSet)]]"
                 selected="[[_computeHasNewAttention(account, _newAttentionSet)]]"
-                deselected="[[!_computeHasNewAttention(account, _newAttentionSet)]]"
-                hide-hovercard=""
+                hideHovercard
+                selectionChipStyle
                 on-click="_handleAttentionClick"
               >
               </gr-account-label>
@@ -518,8 +568,8 @@ export const htmlTemplate = html`
                   account="[[account]]"
                   force-attention="[[_computeHasNewAttention(account, _newAttentionSet)]]"
                   selected="[[_computeHasNewAttention(account, _newAttentionSet)]]"
-                  deselected="[[!_computeHasNewAttention(account, _newAttentionSet)]]"
-                  hide-hovercard=""
+                  hideHovercard
+                  selectionChipStyle
                   on-click="_handleAttentionClick"
                 >
                 </gr-account-label>
@@ -568,26 +618,32 @@ export const htmlTemplate = html`
             <!-- Use 'Send' here as the change may only about reviewers / ccs
                 and when this button is visible, the next button will always
                 be 'Start review' -->
-            <gr-button
-              link=""
-              disabled="[[_isState(knownLatestState, 'not-latest')]]"
-              class="action save"
+            <gr-tooltip-content
               has-tooltip=""
-              title="[[_saveTooltip]]"
-              on-click="_saveClickHandler"
-              >Send As WIP</gr-button
+              title$="[[_saveTooltip]]"
             >
+              <gr-button
+                link=""
+                disabled="[[_isState(knownLatestState, 'not-latest')]]"
+                class="action save"
+                on-click="_saveClickHandler"
+                >Send As WIP</gr-button
+              >
+            </gr-tooltip-content>
           </template>
-          <gr-button
-            id="sendButton"
-            primary=""
-            disabled="[[_sendDisabled]]"
-            class="action send"
+          <gr-tooltip-content
             has-tooltip=""
             title$="[[_computeSendButtonTooltip(canBeStarted, _commentEditing)]]"
-            on-click="_sendTapHandler"
-            >[[_sendButtonLabel]]</gr-button
           >
+            <gr-button
+              id="sendButton"
+              primary=""
+              disabled="[[_sendDisabled]]"
+              class="action send"
+              on-click="_sendTapHandler"
+              >[[_sendButtonLabel]]
+            </gr-button>
+          </gr-tooltip-content>
         </div>
       </section>
     </div>

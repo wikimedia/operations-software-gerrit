@@ -22,7 +22,6 @@ import '../../../styles/shared-styles';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-messages-list_html';
 import {
-  KeyboardShortcutMixin,
   Shortcut,
   ShortcutSection,
 } from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
@@ -90,27 +89,19 @@ function getMessageId(x: CombinedMessage): ChangeMessageId | undefined {
  */
 function computeThreads(
   message: CombinedMessage,
-  changeComments: ChangeComments
+  allThreadsForChange: CommentThread[]
 ): CommentThread[] {
   if (message._index === undefined) {
     return [];
   }
   const messageId = getMessageId(message);
-  return changeComments.getAllThreadsForChange().filter(thread =>
-    thread.comments
-      .map(comment => {
-        // collapse all by default
-        comment.collapsed = true;
-        return comment;
-      })
-      .some(comment => {
-        const condition = comment.change_message_id === messageId;
-        // Since getAllThreadsForChange() always returns a new copy of
-        // all comments we can modify them here without worrying about
-        // polluting other threads.
-        comment.collapsed = !condition;
-        return condition;
-      })
+  return allThreadsForChange.filter(thread =>
+    thread.comments.some(comment => {
+      const matchesMessage = comment.change_message_id === messageId;
+      if (!matchesMessage) return false;
+      comment.collapsed = !matchesMessage;
+      return matchesMessage;
+    })
   );
 }
 
@@ -198,7 +189,6 @@ function computeIsImportant(
 }
 
 export const TEST_ONLY = {
-  computeThreads,
   computeTag,
   computeRevision,
   computeIsImportant,
@@ -211,7 +201,7 @@ export interface GrMessagesList {
 }
 
 @customElement('gr-messages-list')
-export class GrMessagesList extends KeyboardShortcutMixin(PolymerElement) {
+export class GrMessagesList extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
@@ -263,6 +253,8 @@ export class GrMessagesList extends KeyboardShortcutMixin(PolymerElement) {
 
   private readonly reporting = appContext.reportingService;
 
+  private readonly shortcuts = appContext.shortcutsService;
+
   scrollToMessage(messageID: string) {
     const selector = `[data-message-id="${messageID}"]`;
     const el = this.shadowRoot!.querySelector(selector) as
@@ -270,7 +262,9 @@ export class GrMessagesList extends KeyboardShortcutMixin(PolymerElement) {
       | undefined;
 
     if (!el && this._showAllActivity) {
-      console.warn(`Failed to scroll to message: ${messageID}`);
+      this.reporting.error(
+        new Error(`Failed to scroll to message: ${messageID}`)
+      );
       return;
     }
     if (!el) {
@@ -350,14 +344,24 @@ export class GrMessagesList extends KeyboardShortcutMixin(PolymerElement) {
         mDate = null;
       }
     }
-    combinedMessages.forEach(m => {
-      if (m.expanded === undefined) {
-        m.expanded = false;
+
+    const allThreadsForChange = changeComments.getAllThreadsForChange();
+    // collapse all by default
+    for (const thread of allThreadsForChange) {
+      for (const comment of thread.comments) {
+        comment.collapsed = true;
       }
-      m.commentThreads = computeThreads(m, changeComments);
-      m._revision_number = computeRevision(m, combinedMessages);
-      m.tag = computeTag(m);
-    });
+    }
+
+    for (let i = 0; i < combinedMessages.length; i++) {
+      const message = combinedMessages[i];
+      if (message.expanded === undefined) {
+        message.expanded = false;
+      }
+      message.commentThreads = computeThreads(message, allThreadsForChange);
+      message._revision_number = computeRevision(message, combinedMessages);
+      message.tag = computeTag(message);
+    }
     // computeIsImportant() depends on tags and revision numbers already being
     // updated for all messages, so we have to compute this in its own forEach
     // loop.
@@ -378,13 +382,13 @@ export class GrMessagesList extends KeyboardShortcutMixin(PolymerElement) {
 
   _computeExpandAllTitle(_expandAllState?: string) {
     if (_expandAllState === ExpandAllState.COLLAPSE_ALL) {
-      return this.createTitle(
+      return this.shortcuts.createTitle(
         Shortcut.COLLAPSE_ALL_MESSAGES,
         ShortcutSection.ACTIONS
       );
     }
     if (_expandAllState === ExpandAllState.EXPAND_ALL) {
-      return this.createTitle(
+      return this.shortcuts.createTitle(
         Shortcut.EXPAND_ALL_MESSAGES,
         ShortcutSection.ACTIONS
       );
@@ -432,24 +436,26 @@ export class GrMessagesList extends KeyboardShortcutMixin(PolymerElement) {
   }
 
   /**
-   * This method is for reporting stats only.
+   * Called when this._combinedMessages has changed.
    */
   _combinedMessagesChanged(combinedMessages?: CombinedMessage[]) {
-    if (combinedMessages) {
-      if (combinedMessages.length === 0) return;
-      const tags = combinedMessages.map(
-        message =>
-          message.tag || (message as FormattedReviewerUpdateInfo).type || 'none'
-      );
-      const tagsCounted = tags.reduce(
-        (acc, val) => {
-          acc[val] = (acc[val] || 0) + 1;
-          return acc;
-        },
-        {all: combinedMessages.length} as TagsCountReportInfo
-      );
-      this.reporting.reportInteraction('messages-count', tagsCounted);
+    if (!combinedMessages) return;
+    if (combinedMessages.length === 0) return;
+    for (let i = 0; i < combinedMessages.length; i++) {
+      this.notifyPath(`_combinedMessages.${i}.commentThreads`);
     }
+    const tags = combinedMessages.map(
+      message =>
+        message.tag || (message as FormattedReviewerUpdateInfo).type || 'none'
+    );
+    const tagsCounted = tags.reduce(
+      (acc, val) => {
+        acc[val] = (acc[val] || 0) + 1;
+        return acc;
+      },
+      {all: combinedMessages.length} as TagsCountReportInfo
+    );
+    this.reporting.reportInteraction('messages-count', tagsCounted);
   }
 
   /**

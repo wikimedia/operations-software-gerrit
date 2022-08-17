@@ -14,61 +14,55 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {html} from 'lit-html';
-import {
-  css,
-  customElement,
-  internalProperty,
-  property,
-  PropertyValues,
-} from 'lit-element';
-import {GrLitElement} from '../lit/gr-lit-element';
+import {LitElement, css, html, PropertyValues} from 'lit';
+import {customElement, property, state} from 'lit/decorators';
 import {Action} from '../../api/checks';
 import {
   CheckResult,
   CheckRun,
-  allResults$,
-  allRuns$,
-  checksPatchsetNumber$,
+  allResultsSelected$,
+  checksSelectedPatchsetNumber$,
+  allRunsSelectedPatchset$,
 } from '../../services/checks/checks-model';
 import './gr-checks-runs';
 import './gr-checks-results';
-import {changeNum$} from '../../services/change/change-model';
+import {changeNum$, latestPatchNum$} from '../../services/change/change-model';
 import {NumericChangeId, PatchSetNumber} from '../../types/common';
 import {ActionTriggeredEvent} from '../../services/checks/checks-util';
 import {AttemptSelectedEvent, RunSelectedEvent} from './gr-checks-util';
 import {ChecksTabState} from '../../types/events';
-import {fireAlert, fireEvent} from '../../utils/event-util';
 import {appContext} from '../../services/app-context';
-import {from, timer} from 'rxjs';
-import {takeUntil} from 'rxjs/operators';
+import {subscribe} from '../lit/subscription-controller';
 
 /**
  * The "Checks" tab on the Gerrit change page. Gets its data from plugins that
  * have registered with the Checks Plugin API.
  */
 @customElement('gr-checks-tab')
-export class GrChecksTab extends GrLitElement {
-  @property()
+export class GrChecksTab extends LitElement {
+  @state()
   runs: CheckRun[] = [];
 
-  @property()
+  @state()
   results: CheckResult[] = [];
 
-  @property()
+  @property({type: Object})
   tabState?: ChecksTabState;
 
-  @property()
+  @state()
   checksPatchsetNumber: PatchSetNumber | undefined = undefined;
 
-  @property()
+  @state()
+  latestPatchsetNumber: PatchSetNumber | undefined = undefined;
+
+  @state()
   changeNum: NumericChangeId | undefined = undefined;
 
-  @internalProperty()
+  @state()
   selectedRuns: string[] = [];
 
   /** Maps checkName to selected attempt number. `undefined` means `latest`. */
-  @internalProperty()
+  @state()
   selectedAttempts: Map<string, number | undefined> = new Map<
     string,
     number | undefined
@@ -78,17 +72,22 @@ export class GrChecksTab extends GrLitElement {
 
   constructor() {
     super();
-    this.subscribe('runs', allRuns$);
-    this.subscribe('results', allResults$);
-    this.subscribe('checksPatchsetNumber', checksPatchsetNumber$);
-    this.subscribe('changeNum', changeNum$);
+    subscribe(this, allRunsSelectedPatchset$, x => (this.runs = x));
+    subscribe(this, allResultsSelected$, x => (this.results = x));
+    subscribe(
+      this,
+      checksSelectedPatchsetNumber$,
+      x => (this.checksPatchsetNumber = x)
+    );
+    subscribe(this, latestPatchNum$, x => (this.latestPatchsetNumber = x));
+    subscribe(this, changeNum$, x => (this.changeNum = x));
 
     this.addEventListener('action-triggered', (e: ActionTriggeredEvent) =>
       this.handleActionTriggered(e.detail.action, e.detail.run)
     );
   }
 
-  static get styles() {
+  static override get styles() {
     return css`
       :host {
         display: block;
@@ -97,7 +96,6 @@ export class GrChecksTab extends GrLitElement {
         display: flex;
       }
       .runs {
-        min-width: 300px;
         min-height: 400px;
         border-right: 1px solid var(--border-color);
       }
@@ -107,11 +105,12 @@ export class GrChecksTab extends GrLitElement {
     `;
   }
 
-  render() {
+  override render() {
     return html`
       <div class="container">
         <gr-checks-runs
           class="runs"
+          ?collapsed="${this.offsetWidth < 1000}"
           .runs="${this.runs}"
           .selectedRuns="${this.selectedRuns}"
           .selectedAttempts="${this.selectedAttempts}"
@@ -131,7 +130,7 @@ export class GrChecksTab extends GrLitElement {
     `;
   }
 
-  protected updated(changedProperties: PropertyValues) {
+  protected override updated(changedProperties: PropertyValues) {
     super.updated(changedProperties);
     if (changedProperties.has('tabState')) {
       if (this.tabState) {
@@ -141,34 +140,7 @@ export class GrChecksTab extends GrLitElement {
   }
 
   handleActionTriggered(action: Action, run?: CheckRun) {
-    if (!this.changeNum) return;
-    if (!this.checksPatchsetNumber) return;
-    const promise = action.callback(
-      this.changeNum,
-      this.checksPatchsetNumber,
-      run?.attempt,
-      run?.externalId,
-      run?.checkName,
-      action.name
-    );
-    // If plugins return undefined or not a promise, then show no toast.
-    if (!promise?.then) return;
-
-    fireAlert(this, `Triggering action '${action.name}' ...`);
-    from(promise)
-      // If the action takes longer than 5 seconds, then most likely the
-      // user is either not interested or the result not relevant anymore.
-      .pipe(takeUntil(timer(5000)))
-      .subscribe(result => {
-        if (result.errorMessage || result.message) {
-          fireAlert(this, `${result.message ?? result.errorMessage}`);
-        } else {
-          fireEvent(this, 'hide-alert');
-        }
-        if (result.shouldReload) {
-          this.checksService.reloadForCheck(run?.checkName);
-        }
-      });
+    this.checksService.triggerAction(action, run);
   }
 
   handleRunSelected(e: RunSelectedEvent) {

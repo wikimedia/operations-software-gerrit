@@ -27,8 +27,8 @@ import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.SubmitRecord;
 import com.google.gerrit.extensions.api.changes.ReviewerInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.account.AccountLoader;
+import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.permissions.LabelPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
@@ -38,6 +38,7 @@ import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.TreeMap;
 
 @Singleton
@@ -94,7 +95,7 @@ public class ReviewerJson {
         out,
         reviewerAccountId,
         cd,
-        approvalsUtil.byPatchSetUser(cd.notes(), psId, reviewerAccountId, null, null));
+        approvalsUtil.byPatchSetUser(cd.notes(), psId, reviewerAccountId));
   }
 
   public ReviewerInfo format(
@@ -107,10 +108,8 @@ public class ReviewerJson {
 
     out.approvals = new TreeMap<>(labelTypes.nameComparator());
     for (PatchSetApproval ca : approvals) {
-      LabelType at = labelTypes.byLabel(ca.labelId());
-      if (at != null) {
-        out.approvals.put(at.getName(), formatValue(ca.value()));
-      }
+      Optional<LabelType> at = labelTypes.byLabel(ca.labelId());
+      at.ifPresent(lt -> out.approvals.put(lt.getName(), formatValue(ca.value())));
     }
 
     // Add dummy approvals for all permitted labels for the user even if they
@@ -125,13 +124,13 @@ public class ReviewerJson {
         }
         for (SubmitRecord.Label label : rec.labels) {
           String name = label.label;
-          LabelType type = labelTypes.byLabel(name);
-          if (out.approvals.containsKey(name) || type == null) {
+          Optional<LabelType> type = labelTypes.byLabel(name);
+          if (out.approvals.containsKey(name) || !type.isPresent()) {
             continue;
           }
 
           try {
-            perm.check(new LabelPermission(type));
+            perm.check(new LabelPermission(type.get()));
             out.approvals.put(name, formatValue((short) 0));
           } catch (AuthException e) {
             // Do nothing.

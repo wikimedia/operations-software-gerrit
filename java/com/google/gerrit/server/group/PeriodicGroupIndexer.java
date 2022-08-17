@@ -59,7 +59,7 @@ import org.eclipse.jgit.lib.Repository;
 public class PeriodicGroupIndexer implements Runnable {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
-  public static class Module extends LifecycleModule {
+  public static class PeriodicGroupIndexerModule extends LifecycleModule {
     @Override
     protected void configure() {
       listener().to(Lifecycle.class);
@@ -145,7 +145,7 @@ public class PeriodicGroupIndexer implements Runnable {
       }
       groupUuids = newGroupUuids;
       logger.atInfo().log("Run group indexer, %s groups reindexed", reindexCounter);
-    } catch (Throwable t) {
+    } catch (Exception t) {
       logger.atSevere().withCause(t).log("Failed to reindex groups");
     }
   }

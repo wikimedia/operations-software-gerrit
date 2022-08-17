@@ -34,7 +34,6 @@ nodejs_binary(
     name = "tsc_wrapped-bin",
     # Point bazel to your node_modules to find the entry point
     data = [
-        "@tools_npm//:node_modules",
         "@tools_npm//@bazel/concatjs",
         "@tools_npm//typescript",
     ],
@@ -48,6 +47,19 @@ nodejs_binary(
 nodejs_binary(
     name = "tsc-bin",
     # Point bazel to your node_modules to find the entry point
-    data = ["@tools_npm//:node_modules"],
+    data = ["@tools_npm//typescript"],
     entry_point = "@tools_npm//:node_modules/typescript/lib/tsc.js",
+)
+
+# Wrap twinkie into a twinkie-bin binary.
+nodejs_binary(
+    name = "twinkie-bin",
+    # Point bazel to your node_modules to find the entry point
+    data = ["@npm//:node_modules"],
+    entry_point = "@npm//:node_modules/twinkie/src/app/index.js",
+    # Should not run sandboxed.
+    tags = [
+        "local",
+        "manual",
+    ],
 )

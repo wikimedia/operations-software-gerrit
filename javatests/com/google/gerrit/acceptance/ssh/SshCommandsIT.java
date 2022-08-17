@@ -63,6 +63,7 @@ public class SshCommandsIT extends AbstractDaemonTest {
   private static final ImmutableList<String> MASTER_ONLY_ROOT_COMMANDS =
       ImmutableList.of(
           "ban-commit",
+          "copy-approvals",
           "create-account",
           "create-branch",
           "create-group",
@@ -81,7 +82,8 @@ public class SshCommandsIT extends AbstractDaemonTest {
           "set-reviewers",
           "set-topic",
           "stream-events",
-          "test-submit");
+          "test-submit",
+          "migrate-externalids-to-insensitive");
 
   private static final ImmutableList<String> EMPTY = ImmutableList.of();
   private static final ImmutableMap<String, List<String>> MASTER_COMMANDS =

@@ -66,6 +66,7 @@ import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.data.GlobalCapability;
 import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.entities.Address;
+import com.google.gerrit.entities.AttentionSetUpdate;
 import com.google.gerrit.entities.BooleanProjectConfig;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.ChangeMessage;
@@ -97,6 +98,7 @@ import com.google.gerrit.extensions.common.EditInfo;
 import com.google.gerrit.extensions.common.LabelInfo;
 import com.google.gerrit.extensions.common.RevisionInfo;
 import com.google.gerrit.extensions.events.TopicEditedListener;
+import com.google.gerrit.extensions.restapi.testing.AttentionSetUpdateSubject;
 import com.google.gerrit.git.ObjectIds;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.events.CommitReceivedEvent;
@@ -674,7 +676,7 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
     GroupInput gin = new GroupInput();
     gin.name = group;
     gin.members = ImmutableList.of(user.username(), user2.username());
-    gin.visibleToAll = true; // TODO(dborowitz): Shouldn't be necessary; see ReviewerAdder.
+    gin.visibleToAll = true; // TODO(dborowitz): Shouldn't be necessary; see ReviewerModifier.
     gApi.groups().create(gin);
 
     PushOneCommit.Result r = pushTo("refs/for/master%cc=" + group);
@@ -752,7 +754,7 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
     GroupInput gin = new GroupInput();
     gin.name = group;
     gin.members = ImmutableList.of(user.username(), user2.username());
-    gin.visibleToAll = true; // TODO(dborowitz): Shouldn't be necessary; see ReviewerAdder.
+    gin.visibleToAll = true; // TODO(dborowitz): Shouldn't be necessary; see ReviewerModifier.
     gApi.groups().create(gin);
 
     PushOneCommit.Result r = pushTo("refs/for/master%r=" + group);
@@ -1264,13 +1266,13 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
   }
 
   @Test
-  public void pushForMasterWithApprovals_MissingLabel() throws Exception {
+  public void pushForMasterWithApprovals_missingLabel() throws Exception {
     PushOneCommit.Result r = pushTo("refs/for/master%l=Verify");
     r.assertErrorStatus("label \"Verify\" is not a configured label");
   }
 
   @Test
-  public void pushForMasterWithApprovals_ValueOutOfRange() throws Exception {
+  public void pushForMasterWithApprovals_valueOutOfRange() throws Exception {
     PushOneCommit.Result r = pushTo("refs/for/master%l=Code-Review-3");
     r.assertErrorStatus("label \"Code-Review\": -3 is not a valid value");
   }
@@ -2821,6 +2823,45 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
     push.setPushOptions(ImmutableList.of("unknown=foo"));
     PushOneCommit.Result r = push.to("refs/for/master");
     r.assertErrorStatus("\"--unknown\" is not a valid option");
+  }
+
+  @Test
+  public void pushForMagicBranchWithSkipValidationOptionIsNotAllowed() throws Exception {
+    PushOneCommit push = pushFactory.create(admin.newIdent(), testRepo);
+    push.setPushOptions(ImmutableList.of(PUSH_OPTION_SKIP_VALIDATION));
+    PushOneCommit.Result r = push.to("refs/for/master");
+    r.assertErrorStatus("\"--skip-validation\" option is only supported for direct push");
+  }
+
+  @Test
+  public void pushWithReviewerAddsToAttentionSet() throws Exception {
+    String pushSpec = "refs/for/master%r=" + user.email();
+    PushOneCommit.Result r = pushTo(pushSpec);
+    r.assertOkStatus();
+
+    AttentionSetUpdate attentionSet = Iterables.getOnlyElement(r.getChange().attentionSet());
+    AttentionSetUpdateSubject.assertThat(attentionSet).hasAccountIdThat().isEqualTo(user.id());
+    AttentionSetUpdateSubject.assertThat(attentionSet)
+        .hasOperationThat()
+        .isEqualTo(AttentionSetUpdate.Operation.ADD);
+    AttentionSetUpdateSubject.assertThat(attentionSet)
+        .hasReasonThat()
+        .isEqualTo("Reviewer was added");
+  }
+
+  @Test
+  public void pushWithReviewerAndIgnoreAttentionSetDoesNotAddToAttentionSet() throws Exception {
+    // Create a change
+    String pushSpec = "refs/for/master%r=" + user.email() + ",-ignore-attention-set";
+    PushOneCommit.Result r = pushTo(pushSpec);
+    r.assertOkStatus();
+    assertThat(r.getChange().attentionSet()).isEmpty();
+
+    // push a new patch-set with another reviewer
+    pushSpec = "refs/for/master%r=" + accountCreator.user2().email() + ",-ignore-attention-set";
+    r = pushTo(pushSpec);
+    r.assertOkStatus();
+    assertThat(r.getChange().attentionSet()).isEmpty();
   }
 
   private DraftInput newDraft(String path, int line, String message) {

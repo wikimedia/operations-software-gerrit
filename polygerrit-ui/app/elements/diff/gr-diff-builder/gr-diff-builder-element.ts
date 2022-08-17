@@ -46,7 +46,7 @@ import {Side} from '../../../constants/constants';
 import {GrDiffLine, LineNumber} from '../gr-diff/gr-diff-line';
 import {GrDiffGroup} from '../gr-diff/gr-diff-group';
 import {PolymerSpliceChange} from '@polymer/polymer/interfaces';
-import {getLineNumber} from '../gr-diff/gr-diff-utils';
+import {getLineNumber, getSideByLineEl} from '../gr-diff/gr-diff-utils';
 import {fireAlert, fireEvent} from '../../../utils/event-util';
 
 const TRAILING_WHITESPACE_PATTERN = /\s+$/;
@@ -191,8 +191,7 @@ export class GrDiffBuilderElement extends PolymerElement {
   @property({type: Object})
   _cancelableRenderPromise: CancelablePromise<unknown> | null = null;
 
-  /** @override */
-  disconnectedCallback() {
+  override disconnectedCallback() {
     if (this._builder) {
       this._builder.clear();
     }
@@ -241,7 +240,7 @@ export class GrDiffBuilderElement extends PolymerElement {
     this.$.processor.keyLocations = keyLocations;
 
     this._clearDiffContent();
-    this._builder.addColumns(this.diffElement, prefs.font_size);
+    this._builder.addColumns(this.diffElement, getLineNumberCellWidth(prefs));
 
     const isBinary = !!(this.isImageDiff || this.diff.binary);
 
@@ -286,26 +285,6 @@ export class GrDiffBuilderElement extends PolymerElement {
     this._layers = layers;
   }
 
-  getLineElByChild(node?: Node): HTMLElement | null {
-    while (node) {
-      if (node instanceof Element) {
-        if (node.classList.contains('lineNum')) {
-          return node as HTMLElement;
-        }
-        if (node.classList.contains('section')) {
-          return null;
-        }
-      }
-      node = node.previousSibling ?? node.parentElement ?? undefined;
-    }
-    return null;
-  }
-
-  getLineNumberByChild(node: Node) {
-    const lineEl = this.getLineElByChild(node);
-    return getLineNumber(lineEl);
-  }
-
   getContentTdByLine(lineNumber: LineNumber, side?: Side, root?: Element) {
     if (!this._builder) return null;
     return this._builder.getContentTdByLine(lineNumber, side, root);
@@ -322,7 +301,7 @@ export class GrDiffBuilderElement extends PolymerElement {
     if (!lineEl) return null;
     const line = getLineNumber(lineEl);
     if (!line) return null;
-    const side = this.getSideByLineEl(lineEl);
+    const side = getSideByLineEl(lineEl);
     // Performance optimization because we already have an element in the
     // correct row
     const row = this._getDiffRowByChild(lineEl);
@@ -334,10 +313,6 @@ export class GrDiffBuilderElement extends PolymerElement {
     return this.diffElement.querySelector(
       `.lineNum[data-value="${lineNumber}"]${sideSelector}`
     );
-  }
-
-  getSideByLineEl(lineEl: Element) {
-    return lineEl.classList.contains(Side.RIGHT) ? Side.RIGHT : Side.LEFT;
   }
 
   emitGroup(group: GrDiffGroup, sectionEl: HTMLElement) {
@@ -548,6 +523,11 @@ export class GrDiffBuilderElement extends PolymerElement {
   setBlame(blame: BlameInfo[] | null) {
     if (!this._builder) return;
     this._builder.setBlame(blame);
+  }
+
+  updateRenderPrefs(renderPrefs: RenderPreferences) {
+    this._builder?.updateRenderPrefs(renderPrefs);
+    this.$.processor.updateRenderPrefs(renderPrefs);
   }
 }
 

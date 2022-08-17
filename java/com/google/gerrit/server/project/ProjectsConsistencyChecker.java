@@ -48,10 +48,7 @@ import com.google.gerrit.server.config.UrlFormatter;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.index.change.ChangeField;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gerrit.server.query.change.ChangeIdPredicate;
-import com.google.gerrit.server.query.change.CommitPredicate;
-import com.google.gerrit.server.query.change.ProjectPredicate;
-import com.google.gerrit.server.query.change.RefPredicate;
+import com.google.gerrit.server.query.change.ChangePredicates;
 import com.google.gerrit.server.update.RetryHelper;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
@@ -151,7 +148,7 @@ public class ProjectsConsistencyChecker {
 
       // Base predicate which is fixed for every change query.
       Predicate<ChangeData> basePredicate =
-          and(new ProjectPredicate(projectName.get()), new RefPredicate(branch), open());
+          and(ChangePredicates.project(projectName), ChangePredicates.ref(branch), open());
 
       int maxLeafPredicates = indexConfig.maxTerms() - basePredicate.getLeafCount();
 
@@ -231,11 +228,11 @@ public class ProjectsConsistencyChecker {
               }
 
               // Find changes that have a matching Change-Id.
-              predicates.add(new ChangeIdPredicate(changeId));
+              predicates.add(ChangePredicates.idPrefix(changeId));
             });
 
         // Find changes that have a matching commit.
-        predicates.add(new CommitPredicate(commit.name()));
+        predicates.add(ChangePredicates.commitPrefix(commit.name()));
       }
 
       if (!predicates.isEmpty()) {

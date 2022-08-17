@@ -24,6 +24,7 @@ import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_BRANCH;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_CHANGE_ID;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_CHERRY_PICK_OF;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_COMMIT;
+import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_COPIED_LABEL;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_CURRENT;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_GROUPS;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_HASHTAGS;
@@ -52,18 +53,22 @@ import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Table;
+import com.google.common.collect.Table.Cell;
 import com.google.common.collect.TreeBasedTable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Address;
 import com.google.gerrit.entities.AttentionSetUpdate;
+import com.google.gerrit.entities.AttentionSetUpdate.Operation;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Comment;
 import com.google.gerrit.entities.HumanComment;
 import com.google.gerrit.entities.LabelId;
+import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.RobotComment;
 import com.google.gerrit.entities.SubmissionId;
 import com.google.gerrit.entities.SubmitRecord;
+import com.google.gerrit.entities.SubmitRequirementResult;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.server.CurrentUser;
@@ -77,6 +82,7 @@ import com.google.inject.assistedinject.Assisted;
 import com.google.inject.assistedinject.AssistedInject;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
@@ -114,7 +120,6 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   public interface Factory {
     ChangeUpdate create(ChangeNotes notes, CurrentUser user, Date when);
 
-    @VisibleForTesting
     ChangeUpdate create(
         ChangeNotes notes, CurrentUser user, Date when, Comparator<String> labelNameComparator);
   }
@@ -126,9 +131,11 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   private final ServiceUserClassifier serviceUserClassifier;
 
   private final Table<String, Account.Id, Optional<Short>> approvals;
+  private final List<PatchSetApproval> copiedApprovals = new ArrayList<>();
   private final Map<Account.Id, ReviewerStateInternal> reviewers = new LinkedHashMap<>();
   private final Map<Address, ReviewerStateInternal> reviewersByEmail = new LinkedHashMap<>();
   private final List<HumanComment> comments = new ArrayList<>();
+  private final List<SubmitRequirementResult> submitRequirementResults = new ArrayList<>();
 
   private String commitSubject;
   private String subject;
@@ -270,6 +277,19 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     approvals.put(label, reviewer, Optional.empty());
   }
 
+  /**
+   * We expect the {@code copied} flag of {@code copiedPatchSetApproval} to be set, since this
+   * method is only meant for copied approvals.
+   */
+  public void putCopiedApproval(PatchSetApproval copiedPatchSetApproval) {
+    checkArgument(copiedPatchSetApproval.copied(), "Approval that should be copied is not copied.");
+    copiedApprovals.add(copiedPatchSetApproval);
+  }
+
+  public boolean hasCopiedApprovals() {
+    return !copiedApprovals.isEmpty();
+  }
+
   public void merge(SubmissionId submissionId, Iterable<SubmitRecord> submitRecords) {
     this.status = Change.Status.MERGED;
     this.submissionId = submissionId.toString();
@@ -300,6 +320,10 @@ public class ChangeUpdate extends AbstractChangeUpdate {
 
   public void setPsDescription(String psDescription) {
     this.psDescription = psDescription;
+  }
+
+  public void putSubmitRequirementResults(Collection<SubmitRequirementResult> rs) {
+    submitRequirementResults.addAll(rs);
   }
 
   public void putComment(HumanComment.Status status, HumanComment c) {
@@ -485,10 +509,10 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     this.cherryPickOf = Optional.empty();
   }
 
-  /** @return the tree id for the updated tree */
+  /** Returns the tree id for the updated tree */
   private ObjectId storeRevisionNotes(RevWalk rw, ObjectInserter inserter, ObjectId curr)
       throws ConfigInvalidException, IOException {
-    if (comments.isEmpty() && pushCert == null) {
+    if (submitRequirementResults.isEmpty() && comments.isEmpty() && pushCert == null) {
       return null;
     }
     RevisionNoteMap<ChangeRevisionNote> rnm = getRevisionNoteMap(rw, curr);
@@ -497,6 +521,9 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     for (HumanComment c : comments) {
       c.tag = tag;
       cache.get(c.getCommitId()).putComment(c);
+    }
+    for (SubmitRequirementResult sr : submitRequirementResults) {
+      cache.get(sr.patchSetCommitId()).putSubmitRequirementResult(sr);
     }
     if (pushCert != null) {
       checkState(commit != null);
@@ -695,18 +722,10 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     }
 
     for (Table.Cell<String, Account.Id, Optional<Short>> c : approvals.cellSet()) {
-      addFooter(msg, FOOTER_LABEL);
-      // Label names/values are safe to append without sanitizing.
-      if (!c.getValue().isPresent()) {
-        msg.append('-').append(c.getRowKey());
-      } else {
-        msg.append(LabelVote.create(c.getRowKey(), c.getValue().get()).formatWithEquals());
-      }
-      Account.Id id = c.getColumnKey();
-      if (!id.equals(getAccountId())) {
-        noteUtil.appendAccountIdIdentString(msg.append(' '), id);
-      }
-      msg.append('\n');
+      addLabelFooter(msg, c);
+    }
+    for (PatchSetApproval patchSetApproval : copiedApprovals) {
+      addCopiedLabelFooter(msg, patchSetApproval);
     }
 
     if (submissionId != null) {
@@ -720,7 +739,10 @@ public class ChangeUpdate extends AbstractChangeUpdate {
           msg.append(' ').append(sanitizeFooter(rec.errorMessage));
         }
         msg.append('\n');
-
+        if (rec.ruleName != null) {
+          addFooter(msg, FOOTER_SUBMITTED_WITH).append("Rule-Name: ").append(rec.ruleName);
+          msg.append('\n');
+        }
         if (rec.labels != null) {
           for (SubmitRecord.Label label : rec.labels) {
             // Label names/values are safe to append without sanitizing.
@@ -735,7 +757,6 @@ public class ChangeUpdate extends AbstractChangeUpdate {
             msg.append('\n');
           }
         }
-        // TODO(maximeg) We might want to list plugins that validated this submission.
       }
     }
 
@@ -770,9 +791,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       }
     }
 
-    if (plannedAttentionSetUpdates != null) {
-      updateAttentionSet(msg);
-    }
+    updateAttentionSet(msg);
 
     CommitBuilder cb = new CommitBuilder();
     cb.setMessage(msg.toString());
@@ -785,6 +804,47 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       throw new StorageException(e);
     }
     return cb;
+  }
+
+  private void addLabelFooter(StringBuilder msg, Cell<String, Account.Id, Optional<Short>> c) {
+    addFooter(msg, FOOTER_LABEL);
+    // Label names/values are safe to append without sanitizing.
+    if (!c.getValue().isPresent()) {
+      msg.append('-').append(c.getRowKey());
+    } else {
+      msg.append(LabelVote.create(c.getRowKey(), c.getValue().get()).formatWithEquals());
+    }
+    Account.Id id = c.getColumnKey();
+    if (!id.equals(getAccountId())) {
+      noteUtil.appendAccountIdIdentString(msg.append(' '), id);
+    }
+    msg.append('\n');
+  }
+
+  private void addCopiedLabelFooter(StringBuilder msg, PatchSetApproval patchSetApproval) {
+    if (patchSetApproval.value() == 0) {
+      // Can only happen if we removed a vote. There is no need to persist removed votes.
+      return;
+    }
+    addFooter(msg, FOOTER_COPIED_LABEL);
+    // Label names/values are safe to append without sanitizing.
+    msg.append(
+        LabelVote.create(patchSetApproval.label(), patchSetApproval.value()).formatWithEquals());
+    Account.Id id = patchSetApproval.accountId();
+    noteUtil.appendAccountIdIdentString(msg.append(' '), id);
+
+    // In the non-copied labels, we don't need to pass the real account id since it's already
+    // in FOOTER_REAL_USER. Here, we want to retain the original real account id.
+    if (patchSetApproval.realAccountId() != null) {
+      noteUtil.appendAccountIdIdentString(msg.append(","), patchSetApproval.realAccountId());
+    }
+
+    // In the non-copied labels, we don't need to pass the tag since it's already in
+    // FOOTER_TAG, but in this chase we want to retain the original tag, and not the current tag.
+    if (patchSetApproval.tag().isPresent()) {
+      msg.append(":\"" + sanitizeFooter(patchSetApproval.tag().get()) + "\"");
+    }
+    msg.append('\n');
   }
 
   private void clearAttentionSet(String reason) {
@@ -854,7 +914,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
    */
   private void updateAttentionSet(StringBuilder msg) {
     if (plannedAttentionSetUpdates == null) {
-      return;
+      plannedAttentionSetUpdates = new HashMap<>();
     }
     Set<Account.Id> currentUsersInAttentionSet =
         AttentionSetUtil.additionsOnly(getNotes().getAttentionSet()).stream()
@@ -875,6 +935,8 @@ public class ChangeUpdate extends AbstractChangeUpdate {
             .filter(r -> r.getValue().asReviewerState() == ReviewerState.REMOVED)
             .map(r -> r.getKey())
             .collect(ImmutableSet.toImmutableSet()));
+
+    removeInactiveUsersFromAttentionSet(currentReviewers);
 
     for (AttentionSetUpdate attentionSetUpdate : plannedAttentionSetUpdates.values()) {
       if (attentionSetUpdate.operation() == AttentionSetUpdate.Operation.ADD
@@ -913,6 +975,38 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     }
   }
 
+  private void removeInactiveUsersFromAttentionSet(Set<Account.Id> currentReviewers) {
+    Set<Account.Id> inActiveUsersInTheAttentionSet =
+        // get the current attention set.
+        getNotes().getAttentionSet().stream()
+            .filter(a -> a.operation().equals(Operation.ADD))
+            .map(a -> a.account())
+            // remove users that are currently being removed from the attention set.
+            .filter(
+                a ->
+                    plannedAttentionSetUpdates.getOrDefault(a, /*defaultValue= */ null) == null
+                        || plannedAttentionSetUpdates.get(a).operation().equals(Operation.REMOVE))
+            // remove users that are still active on the change.
+            .filter(a -> !isActiveOnChange(currentReviewers, a))
+            .collect(ImmutableSet.toImmutableSet());
+
+    // We override the flag, as we never want such users in the attention set.
+    ignoreFurtherAttentionSetUpdates = false;
+
+    addToPlannedAttentionSetUpdates(
+        inActiveUsersInTheAttentionSet.stream()
+            .map(
+                a ->
+                    AttentionSetUpdate.createForWrite(
+                        a,
+                        Operation.REMOVE,
+                        /* reason= */ "Only change owner, uploader, reviewers, and cc can "
+                            + "be in the attention set"))
+            .collect(ImmutableSet.toImmutableSet()));
+
+    ignoreFurtherAttentionSetUpdates = true;
+  }
+
   /**
    * Returns whether {@code accountId} is active on a change based on the {@code currentReviewers}.
    * Activity is defined as being a part of the reviewers, an uploader, or an owner of a change.
@@ -948,6 +1042,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   public boolean isEmpty() {
     return commitSubject == null
         && approvals.isEmpty()
+        && copiedApprovals.isEmpty()
         && changeMessage == null
         && comments.isEmpty()
         && reviewers.isEmpty()

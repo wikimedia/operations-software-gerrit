@@ -24,11 +24,10 @@ import {afterNextRender} from '@polymer/polymer/lib/utils/render-status';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-change-list_html';
 import {appContext} from '../../../services/app-context';
-import {ChangeTableMixin} from '../../../mixins/gr-change-table-mixin/gr-change-table-mixin';
 import {
   KeyboardShortcutMixin,
   Shortcut,
-  Modifier,
+  ShortcutListener,
 } from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
 import {
   GerritNav,
@@ -38,7 +37,7 @@ import {
 } from '../../core/gr-navigation/gr-navigation';
 import {getPluginEndpoints} from '../../shared/gr-js-api-interface/gr-plugin-endpoints';
 import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
-import {changeIsOpen, isOwner} from '../../../utils/change-util';
+import {isOwner} from '../../../utils/change-util';
 import {customElement, property, observe} from '@polymer/decorators';
 import {GrCursorManager} from '../../shared/gr-cursor-manager/gr-cursor-manager';
 import {
@@ -47,32 +46,44 @@ import {
   ServerInfo,
   PreferencesInput,
 } from '../../../types/common';
-import {
-  hasAttention,
-  isAttentionSetEnabled,
-} from '../../../utils/attention-set-util';
-import {CustomKeyboardEvent} from '../../../types/events';
-import {fireEvent} from '../../../utils/event-util';
-import {windowLocationReload} from '../../../utils/dom-util';
+import {hasAttention} from '../../../utils/attention-set-util';
+import {fireEvent, fireReload} from '../../../utils/event-util';
 import {ScrollMode} from '../../../constants/constants';
+import {listen} from '../../../services/shortcuts/shortcuts-service';
 
 const NUMBER_FIXED_COLUMNS = 3;
 const CLOSED_STATUS = ['MERGED', 'ABANDONED'];
 const LABEL_PREFIX_INVALID_PROLOG = 'Invalid-Prolog-Rules-Label-Name--';
 const MAX_SHORTCUT_CHARS = 5;
 
+export const columnNames = [
+  'Subject',
+  'Status',
+  'Owner',
+  'Assignee',
+  'Reviewers',
+  'Comments',
+  'Repo',
+  'Branch',
+  'Updated',
+  'Size',
+];
+
 export interface ChangeListSection {
   name?: string;
   query?: string;
   results: ChangeInfo[];
 }
+
 export interface GrChangeList {
   $: {};
 }
+
+// This avoids JSC_DYNAMIC_EXTENDS_WITHOUT_JSDOC closure compiler error.
+const base = KeyboardShortcutMixin(PolymerElement);
+
 @customElement('gr-change-list')
-export class GrChangeList extends ChangeTableMixin(
-  KeyboardShortcutMixin(PolymerElement)
-) {
+export class GrChangeList extends base {
   static get template() {
     return htmlTemplate;
   }
@@ -124,9 +135,6 @@ export class GrChangeList extends ChangeTableMixin(
   @property({type: Boolean})
   showReviewedState = false;
 
-  @property({type: Object})
-  keyEventTarget: HTMLElement = document.body;
-
   @property({type: Array})
   changeTableColumns?: string[];
 
@@ -142,21 +150,23 @@ export class GrChangeList extends ChangeTableMixin(
   @property({type: Object})
   _config?: ServerInfo;
 
-  flagsService = appContext.flagsService;
+  private readonly flagsService = appContext.flagsService;
 
   private readonly restApiService = appContext.restApiService;
 
-  keyboardShortcuts() {
-    return {
-      [Shortcut.CURSOR_NEXT_CHANGE]: '_nextChange',
-      [Shortcut.CURSOR_PREV_CHANGE]: '_prevChange',
-      [Shortcut.NEXT_PAGE]: '_nextPage',
-      [Shortcut.PREV_PAGE]: '_prevPage',
-      [Shortcut.OPEN_CHANGE]: '_openChange',
-      [Shortcut.TOGGLE_CHANGE_REVIEWED]: '_toggleChangeReviewed',
-      [Shortcut.TOGGLE_CHANGE_STAR]: '_toggleChangeStar',
-      [Shortcut.REFRESH_CHANGE_LIST]: '_refreshChangeList',
-    };
+  override keyboardShortcuts(): ShortcutListener[] {
+    return [
+      listen(Shortcut.CURSOR_NEXT_CHANGE, _ => this._nextChange()),
+      listen(Shortcut.CURSOR_PREV_CHANGE, _ => this._prevChange()),
+      listen(Shortcut.NEXT_PAGE, _ => this._nextPage()),
+      listen(Shortcut.PREV_PAGE, _ => this._prevPage()),
+      listen(Shortcut.OPEN_CHANGE, _ => this.openChange()),
+      listen(Shortcut.TOGGLE_CHANGE_REVIEWED, _ =>
+        this._toggleChangeReviewed()
+      ),
+      listen(Shortcut.TOGGLE_CHANGE_STAR, _ => this._toggleChangeStar()),
+      listen(Shortcut.REFRESH_CHANGE_LIST, _ => this._refreshChangeList()),
+    ];
   }
 
   private cursor = new GrCursorManager();
@@ -168,34 +178,30 @@ export class GrChangeList extends ChangeTableMixin(
     this.addEventListener('keydown', e => this._scopedKeydownHandler(e));
   }
 
-  /** @override */
-  ready() {
+  override ready() {
     super.ready();
     this.restApiService.getConfig().then(config => {
       this._config = config;
     });
   }
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     getPluginLoader()
       .awaitPluginsLoaded()
       .then(() => {
-        this._dynamicHeaderEndpoints = getPluginEndpoints().getDynamicEndpoints(
-          'change-list-header'
-        );
+        this._dynamicHeaderEndpoints =
+          getPluginEndpoints().getDynamicEndpoints('change-list-header');
       });
   }
 
-  /** @override */
-  disconnectedCallback() {
+  override disconnectedCallback() {
     this.cursor.unsetCursor();
     super.disconnectedCallback();
   }
 
   /**
-   * Iron-a11y-keys-behavior catches keyboard events globally. Some keyboard
+   * shortcut-service catches keyboard events globally. Some keyboard
    * events must be scoped to a component level (e.g. `enter`) in order to not
    * override native browser functionality.
    *
@@ -204,7 +210,7 @@ export class GrChangeList extends ChangeTableMixin(
   _scopedKeydownHandler(e: KeyboardEvent) {
     if (e.keyCode === 13) {
       // Enter.
-      this._openChange((e as unknown) as CustomKeyboardEvent);
+      this.openChange();
     }
   }
 
@@ -222,29 +228,41 @@ export class GrChangeList extends ChangeTableMixin(
       return;
     }
 
-    this.changeTableColumns = this.columnNames;
+    this.changeTableColumns = columnNames;
     this.showNumber = false;
-    this.visibleChangeTableColumns = this.getEnabledColumns(
-      this.columnNames,
-      config,
-      this.flagsService.enabledExperiments
+    this.visibleChangeTableColumns = this.changeTableColumns.filter(col =>
+      this._isColumnEnabled(col, config, this.flagsService.enabledExperiments)
     );
-
     if (account && preferences) {
       this.showNumber = !!(
         preferences && preferences.legacycid_in_change_table
       );
       if (preferences.change_table && preferences.change_table.length > 0) {
-        const prefColumns = this.renameProjectToRepoColumn(
-          preferences.change_table
+        const prefColumns = preferences.change_table.map(column =>
+          column === 'Project' ? 'Repo' : column
         );
-        this.visibleChangeTableColumns = this.getEnabledColumns(
-          prefColumns,
-          config,
-          this.flagsService.enabledExperiments
+        this.visibleChangeTableColumns = prefColumns.filter(col =>
+          this._isColumnEnabled(
+            col,
+            config,
+            this.flagsService.enabledExperiments
+          )
         );
       }
     }
+  }
+
+  /**
+   * Is the column disabled by a server config or experiment? For example the
+   * assignee feature might be disabled and thus the corresponding column is
+   * also disabled.
+   *
+   */
+  _isColumnEnabled(column: string, config: ServerInfo, experiments: string[]) {
+    if (!config || !config.change) return true;
+    if (column === 'Assignee') return !!config.change.enable_assignee;
+    if (column === 'Comments') return experiments.includes('comments-column');
+    return true;
   }
 
   /**
@@ -371,94 +389,44 @@ export class GrChangeList extends ChangeTableMixin(
       : undefined;
   }
 
-  _computeItemNeedsReview(
-    account: AccountInfo | undefined,
-    change: ChangeInfo,
-    showReviewedState: boolean,
-    config?: ServerInfo
-  ) {
-    return (
-      !isAttentionSetEnabled(config) &&
-      showReviewedState &&
-      !change.reviewed &&
-      !change.work_in_progress &&
-      changeIsOpen(change) &&
-      (!account || account._account_id !== change.owner._account_id)
-    );
-  }
-
   _computeItemHighlight(
     account?: AccountInfo,
     change?: ChangeInfo,
-    config?: ServerInfo,
     sectionName?: string
   ) {
     if (!change || !account) return false;
     if (CLOSED_STATUS.indexOf(change.status) !== -1) return false;
-    return isAttentionSetEnabled(config)
-      ? hasAttention(config, account, change) &&
-          !isOwner(change, account) &&
-          sectionName === YOUR_TURN.name
-      : account._account_id === change.assignee?._account_id;
+    return (
+      hasAttention(account, change) &&
+      !isOwner(change, account) &&
+      sectionName === YOUR_TURN.name
+    );
   }
 
-  _nextChange(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e) || this.modifierPressed(e)) {
-      return;
-    }
-
-    e.preventDefault();
+  _nextChange() {
     this.isCursorMoving = true;
     this.cursor.next();
     this.isCursorMoving = false;
     this.selectedIndex = this.cursor.index;
   }
 
-  _prevChange(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e) || this.modifierPressed(e)) {
-      return;
-    }
-
-    e.preventDefault();
+  _prevChange() {
     this.isCursorMoving = true;
     this.cursor.previous();
     this.isCursorMoving = false;
     this.selectedIndex = this.cursor.index;
   }
 
-  _openChange(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e) || this.modifierPressed(e)) {
-      return;
-    }
-
-    e.preventDefault();
+  openChange() {
     const change = this._changeForIndex(this.selectedIndex);
     if (change) GerritNav.navigateToChange(change);
   }
 
-  _nextPage(e: CustomKeyboardEvent) {
-    if (
-      this.shouldSuppressKeyboardShortcut(e) ||
-      (this.modifierPressed(e) &&
-        !this.isModifierPressed(e, Modifier.SHIFT_KEY))
-    ) {
-      return;
-    }
-
-    e.preventDefault();
+  _nextPage() {
     fireEvent(this, 'next-page');
   }
 
-  _prevPage(e: CustomKeyboardEvent) {
-    if (
-      this.shouldSuppressKeyboardShortcut(e) ||
-      (this.modifierPressed(e) &&
-        !this.isModifierPressed(e, Modifier.SHIFT_KEY))
-    ) {
-      return;
-    }
-
-    e.preventDefault();
+  _prevPage() {
     this.dispatchEvent(
       new CustomEvent('previous-page', {
         composed: true,
@@ -467,12 +435,7 @@ export class GrChangeList extends ChangeTableMixin(
     );
   }
 
-  _toggleChangeReviewed(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e) || this.modifierPressed(e)) {
-      return;
-    }
-
-    e.preventDefault();
+  _toggleChangeReviewed() {
     this._toggleReviewedForIndex(this.selectedIndex);
   }
 
@@ -486,25 +449,11 @@ export class GrChangeList extends ChangeTableMixin(
     changeEl.toggleReviewed();
   }
 
-  _refreshChangeList(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e)) {
-      return;
-    }
-
-    e.preventDefault();
-    this._reloadWindow();
+  _refreshChangeList() {
+    fireReload(this);
   }
 
-  _reloadWindow() {
-    windowLocationReload();
-  }
-
-  _toggleChangeStar(e: CustomKeyboardEvent) {
-    if (this.shouldSuppressKeyboardShortcut(e) || this.modifierPressed(e)) {
-      return;
-    }
-
-    e.preventDefault();
+  _toggleChangeStar() {
     this._toggleStarForIndex(this.selectedIndex);
   }
 

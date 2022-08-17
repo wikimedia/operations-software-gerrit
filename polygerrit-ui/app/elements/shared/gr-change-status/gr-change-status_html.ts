@@ -52,6 +52,17 @@ export const htmlTemplate = html`
       background-color: var(--status-ready);
       color: var(--status-ready);
     }
+    :host(.revert-created) .chip {
+      background-color: var(--status-revert-created);
+      color: var(--status-revert-created);
+    }
+    :host(.revert-submitted) .chip {
+      background-color: var(--status-revert-created);
+      color: var(--status-revert-created);
+    }
+    .status-link {
+      text-decoration: none;
+    }
     :host(.custom) .chip {
       background-color: var(--status-custom);
       color: var(--status-custom);
@@ -60,18 +71,39 @@ export const htmlTemplate = html`
       background-color: transparent;
       padding: 0;
     }
-    :host(:not([flat])) .chip {
+    :host(:not([flat])) .chip, .icon {
       color: var(--status-text-color);
+    }
+    .icon {
+      --iron-icon-height: 18px;
+      --iron-icon-width: 18px;
     }
   </style>
   <gr-tooltip-content
-    has-tooltip=""
-    position-below=""
+    has-tooltip
+    position-below
     title="[[tooltipText]]"
     max-width="40em"
   >
-    <div class="chip" aria-label$="Label: [[status]]">
-      [[_computeStatusString(status)]]
-    </div>
+    <template
+      is="dom-if"
+      if="[[hasStatusLink(revertedChange, resolveWeblinks, status)]]">
+      <a class="status-link"
+         href="[[getStatusLink(revertedChange, resolveWeblinks, status)]]">
+        <div class="chip" aria-label$="Label: [[status]]">
+          [[_computeStatusString(status)]]
+          <iron-icon
+            class="icon"
+            icon="gr-icons:edit"
+            hidden$="[[!showResolveIcon(resolveWeblinks, status)]]">
+          </iron-icon>
+        </div>
+      </a>
+    </template>
+    <template is="dom-if" if="[[!hasStatusLink(revertedChange, resolveWeblinks, status)]]">
+      <div class="chip" aria-label$="Label: [[status]]"
+      >[[_computeStatusString(status)]]</div>
+    </template>
   </gr-tooltip-content>
+</span>
 `;

@@ -14,6 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import {AccountDetailInfo, ProjectInfoWithName, ServerInfo} from './rest-api';
+
 export type RequestPayload = string | object;
 
 export enum HttpMethod {
@@ -26,19 +28,22 @@ export enum HttpMethod {
 
 export type ErrorCallback = (response?: Response | null, err?: Error) => void;
 
-export interface RestPluginApi {
+export declare interface RestPluginApi {
   getLoggedIn(): Promise<boolean>;
 
   getVersion(): Promise<string | undefined>;
 
-  /**
-   * Returns a ServerInfo object as defined here:
-   * https://gerrit-review.googlesource.com/Documentation/rest-api-config.html#server-info
-   * We neither want to repeat it nor add a dependency on it here.
-   */
-  getConfig(): Promise<unknown>;
+  getConfig(): Promise<ServerInfo | undefined>;
 
   invalidateReposCache(): void;
+
+  getAccount(): Promise<AccountDetailInfo | undefined>;
+
+  getRepos(
+    filter: string,
+    reposPerPage: number,
+    offset?: number
+  ): Promise<ProjectInfoWithName[] | undefined>;
 
   fetch(
     method: HttpMethod,
@@ -78,29 +83,29 @@ export interface RestPluginApi {
   /**
    * Fetch and parse REST API response, if request succeeds.
    */
-  send(
+  send<T>(
     method: HttpMethod,
     url: string,
     payload?: RequestPayload,
     errFn?: ErrorCallback,
     contentType?: string
-  ): Promise<unknown>;
+  ): Promise<T>;
 
-  get(url: string): Promise<unknown>;
+  get<T>(url: string): Promise<T>;
 
-  post(
+  post<T>(
     url: string,
     payload?: RequestPayload,
     errFn?: ErrorCallback,
     contentType?: string
-  ): Promise<unknown>;
+  ): Promise<T>;
 
-  put(
+  put<T>(
     url: string,
     payload?: RequestPayload,
     errFn?: ErrorCallback,
     contentType?: string
-  ): Promise<unknown>;
+  ): Promise<T>;
 
   delete(url: string): Promise<Response>;
 }

@@ -18,12 +18,14 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.util.Objects.requireNonNull;
 
 import com.google.auto.value.AutoValue;
+import com.google.auto.value.extension.memoized.Memoized;
 import com.google.common.collect.ImmutableList;
 import com.google.gerrit.common.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
 /** Portion of a {@link Project} describing access rules. */
 @AutoValue
@@ -42,6 +44,20 @@ public abstract class AccessSection implements Comparable<AccessSection> {
   /** Name of the access section. It could be a ref pattern or something else. */
   public abstract String getName();
 
+  /**
+   * A compiled regular expression in case {@link #getName()} is a regular expression. This is
+   * memoized to save callers from compiling patterns for every use.
+   */
+  @Memoized
+  public Optional<Pattern> getNamePattern() {
+    if (isValidRefSectionName(getName())
+        && getName().startsWith(REGEX_PREFIX)
+        && !getName().contains("${")) {
+      return Optional.of(Pattern.compile(getName()));
+    }
+    return Optional.empty();
+  }
+
   public abstract ImmutableList<Permission> getPermissions();
 
   public static AccessSection create(String name) {
@@ -52,7 +68,7 @@ public abstract class AccessSection implements Comparable<AccessSection> {
     return new AutoValue_AccessSection.Builder().setName(name).setPermissions(ImmutableList.of());
   }
 
-  /** @return true if the name is likely to be a valid reference section name. */
+  /** Returns true if the name is likely to be a valid reference section name. */
   public static boolean isValidRefSectionName(String name) {
     return name.startsWith("refs/") || name.startsWith("^refs/");
   }

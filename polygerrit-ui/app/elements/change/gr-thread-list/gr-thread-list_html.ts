@@ -20,7 +20,6 @@ export const htmlTemplate = html`
   <style include="shared-styles">
     #threads {
       display: block;
-      padding: var(--spacing-l);
     }
     gr-comment-thread {
       display: block;
@@ -33,7 +32,7 @@ export const htmlTemplate = html`
       border-top: 1px solid var(--border-color);
       display: flex;
       justify-content: left;
-      padding: var(--spacing-m) var(--spacing-l);
+      padding: var(--spacing-s) var(--spacing-l);
     }
     .draftsOnly:not(.unresolvedOnly) gr-comment-thread[has-draft],
     .unresolvedOnly:not(.draftsOnly) gr-comment-thread[unresolved],
@@ -44,64 +43,76 @@ export const htmlTemplate = html`
       border-top: 1px solid var(--border-color);
       margin-top: var(--spacing-xl);
     }
-    .resolved-comments-message {
-      color: var(--link-color);
-      cursor: pointer;
-    }
     .show-resolved-comments {
       box-shadow: none;
       padding-left: var(--spacing-m);
     }
-    .header .categoryRadio {
-      height: 18px;
-      width: 18px;
-    }
-    .header label {
-      padding-left: 8px;
-      margin-right: 16px;
-    }
     .partypopper{
       margin-right: var(--spacing-s);
     }
+    gr-dropdown-list {
+      --trigger-style-text-color: var(--primary-text-color);
+      --trigger-style-font-family: var(--font-family);
+    }
+    .filter-text, .sort-text, .author-text {
+      margin-right: var(--spacing-s);
+      color: var(--deemphasized-text-color);
+    }
+    .author-text {
+      margin-left: var(--spacing-m);
+    }
+    gr-account-label {
+      --account-max-length: 120px;
+      display: inline-block;
+      user-select: none;
+      --label-border-radius: 8px;
+      margin: 0 var(--spacing-xs);
+      padding: var(--spacing-xs) var(--spacing-m);
+      line-height: var(--line-height-normal);
+      cursor: pointer;
+    }
+    gr-account-label:focus {
+      outline: none;
+    }
+    gr-account-label:hover,
+    gr-account-label:hover {
+      box-shadow: var(--elevation-level-1);
+      cursor: pointer;
+    }
   </style>
-  <template is="dom-if" if="[[!hideToggleButtons]]">
+  <template is="dom-if" if="[[!hideDropdown]]">
     <div class="header">
-        <input
-          class="categoryRadio"
-          id="unresolvedRadio"
-          name="filterComments"
-          type="radio"
-          on-click="_handleOnlyUnresolved"
-          checked="[[unresolvedOnly]]"
-        />
-        <label for="unresolvedRadio">
-          Unresolved ([[_countUnresolved(threads)]])
-        </label>
-        <input
-          class="categoryRadio"
-          id="draftsRadio"
-          name="filterComments"
-          type="radio"
-          on-click="_handleOnlyDrafts"
-          checked="[[_draftsOnly]]"
-        />
-        <label for="draftsRadio">
-          Drafts ([[_countDrafts(threads)]])
-        </label>
-        <input
-          class="categoryRadio"
-          id="allRadio"
-          name="filterComments"
-          type="radio"
-          on-click="_handleAllComments"
-          checked="[[_showAllComments(_draftsOnly, unresolvedOnly)]]"
-        />
-        <label for="allRadio">
-          All ([[_countAllThreads(threads)]])
-        </label>
+      <span class="sort-text">Sort By:</span>
+      <gr-dropdown-list
+        id="sortDropdown"
+        value="[[sortDropdownValue]]"
+        on-value-change="handleSortDropdownValueChange"
+        items="[[getSortDropdownEntires()]]"
+      >
+      </gr-dropdown-list>
+      <span class="separator"></span>
+      <span class="filter-text">Filter By:</span>
+      <gr-dropdown-list
+        id="filterDropdown"
+        value="[[commentsDropdownValue]]"
+        on-value-change="handleCommentsDropdownValueChange"
+        items="[[getCommentsDropdownEntires(threads, loggedIn)]]"
+      >
+      </gr-dropdown-list>
+      <template is="dom-if" if="[[_displayedThreads.length]]">
+        <span class="author-text">From:</span>
+        <template is="dom-repeat" items="[[getCommentAuthors(_displayedThreads, account)]]">
+          <gr-account-label
+            account="[[item]]"
+            on-click="handleAccountClicked"
+            selectionChipStyle
+            selected="[[isSelected(item, selectedAuthors)]]"
+          > </gr-account-label>
+        </template>
+      </template>
     </div>
   </template>
-  <div id="threads">
+  <div id="threads" part="threads">
     <template
       is="dom-if"
       if="[[_showEmptyThreadsMessage(threads, _displayedThreads, unresolvedOnly)]]"
@@ -134,7 +145,7 @@ export const htmlTemplate = html`
     >
       <template
         is="dom-if"
-        if="[[_shouldRenderSeparator(_displayedThreads, thread, unresolvedOnly, _draftsOnly, onlyShowRobotCommentsWithHumanReply)]]"
+        if="[[_shouldRenderSeparator(_displayedThreads, thread, unresolvedOnly, _draftsOnly, onlyShowRobotCommentsWithHumanReply, selectedAuthors)]]"
       >
         <div class="thread-separator"></div>
       </template>
@@ -145,15 +156,14 @@ export const htmlTemplate = html`
         change-num="[[changeNum]]"
         comments="[[thread.comments]]"
         diff-side="[[thread.diffSide]]"
-        show-file-name="[[_isFirstThreadWithFileName(_displayedThreads, thread, unresolvedOnly, _draftsOnly, onlyShowRobotCommentsWithHumanReply)]]"
+        show-file-name="[[_isFirstThreadWithFileName(_displayedThreads, thread, unresolvedOnly, _draftsOnly, onlyShowRobotCommentsWithHumanReply, selectedAuthors)]]"
         project-name="[[change.project]]"
         is-on-parent="[[_isOnParent(thread.commentSide)]]"
         line-num="[[thread.line]]"
         patch-num="[[thread.patchNum]]"
         path="[[thread.path]]"
         root-id="{{thread.rootId}}"
-        on-thread-changed="_handleCommentsChanged"
-        on-thread-discard="_handleThreadDiscard"
+        should-scroll-into-view="[[computeShouldScrollIntoView(thread.comments, scrollCommentId)]]"
       ></gr-comment-thread>
     </template>
   </div>

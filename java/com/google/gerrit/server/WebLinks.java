@@ -27,11 +27,13 @@ import com.google.gerrit.extensions.common.WebLinkInfo;
 import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.extensions.webui.BranchWebLink;
 import com.google.gerrit.extensions.webui.DiffWebLink;
+import com.google.gerrit.extensions.webui.EditWebLink;
 import com.google.gerrit.extensions.webui.FileHistoryWebLink;
 import com.google.gerrit.extensions.webui.FileWebLink;
 import com.google.gerrit.extensions.webui.ParentWebLink;
 import com.google.gerrit.extensions.webui.PatchSetWebLink;
 import com.google.gerrit.extensions.webui.ProjectWebLink;
+import com.google.gerrit.extensions.webui.ResolveConflictsWebLink;
 import com.google.gerrit.extensions.webui.TagWebLink;
 import com.google.gerrit.extensions.webui.WebLink;
 import com.google.inject.Inject;
@@ -55,7 +57,9 @@ public class WebLinks {
       };
 
   private final DynamicSet<PatchSetWebLink> patchSetLinks;
+  private final DynamicSet<ResolveConflictsWebLink> resolveConflictsLinks;
   private final DynamicSet<ParentWebLink> parentLinks;
+  private final DynamicSet<EditWebLink> editLinks;
   private final DynamicSet<FileWebLink> fileLinks;
   private final DynamicSet<FileHistoryWebLink> fileHistoryLinks;
   private final DynamicSet<DiffWebLink> diffLinks;
@@ -66,7 +70,9 @@ public class WebLinks {
   @Inject
   public WebLinks(
       DynamicSet<PatchSetWebLink> patchSetLinks,
+      DynamicSet<ResolveConflictsWebLink> resolveConflictsLinks,
       DynamicSet<ParentWebLink> parentLinks,
+      DynamicSet<EditWebLink> editLinks,
       DynamicSet<FileWebLink> fileLinks,
       DynamicSet<FileHistoryWebLink> fileLogLinks,
       DynamicSet<DiffWebLink> diffLinks,
@@ -74,7 +80,9 @@ public class WebLinks {
       DynamicSet<BranchWebLink> branchLinks,
       DynamicSet<TagWebLink> tagLinks) {
     this.patchSetLinks = patchSetLinks;
+    this.resolveConflictsLinks = resolveConflictsLinks;
     this.parentLinks = parentLinks;
+    this.editLinks = editLinks;
     this.fileLinks = fileLinks;
     this.fileHistoryLinks = fileLogLinks;
     this.diffLinks = diffLinks;
@@ -84,11 +92,12 @@ public class WebLinks {
   }
 
   /**
+   * Returns links for patch sets
+   *
    * @param project Project name.
    * @param commit SHA1 of commit.
    * @param commitMessage the commit message of the commit.
    * @param branchName branch of the commit.
-   * @return Links for patch sets.
    */
   public ImmutableList<WebLinkInfo> getPatchSetLinks(
       Project.NameKey project, String commit, String commitMessage, String branchName) {
@@ -98,11 +107,28 @@ public class WebLinks {
   }
 
   /**
+   * Returns links for resolving conflicts
+   *
+   * @param project Project name.
+   * @param commit SHA1 of commit.
+   * @param commitMessage the commit message of the commit.
+   * @param branchName branch of the commit.
+   */
+  public ImmutableList<WebLinkInfo> getResolveConflictsLinks(
+      Project.NameKey project, String commit, String commitMessage, String branchName) {
+    return filterLinks(
+        resolveConflictsLinks,
+        webLink ->
+            webLink.getResolveConflictsWebLink(project.get(), commit, commitMessage, branchName));
+  }
+
+  /**
+   * Returns links for patch sets
+   *
    * @param project Project name.
    * @param revision SHA1 of the parent revision.
    * @param commitMessage the commit message of the parent revision.
    * @param branchName branch of the revision (and parent revision).
-   * @return Links for patch sets.
    */
   public ImmutableList<WebLinkInfo> getParentLinks(
       Project.NameKey project, String revision, String commitMessage, String branchName) {
@@ -112,11 +138,25 @@ public class WebLinks {
   }
 
   /**
+   * Returns links for editing
+   *
+   * @param project Project name.
+   * @param revision SHA1 of revision.
+   * @param file File name.
+   */
+  public ImmutableList<WebLinkInfo> getEditLinks(String project, String revision, String file) {
+    return Patch.isMagic(file)
+        ? ImmutableList.of()
+        : filterLinks(editLinks, webLink -> webLink.getEditWebLink(project, revision, file));
+  }
+
+  /**
+   * Returns links for files
+   *
    * @param project Project name.
    * @param revision Name of the revision (e.g. branch or commit ID)
    * @param hash SHA1 of revision.
    * @param file File name.
-   * @return Links for files.
    */
   public ImmutableList<WebLinkInfo> getFileLinks(
       String project, String revision, String hash, String file) {
@@ -126,10 +166,11 @@ public class WebLinks {
   }
 
   /**
+   * Returns links for file history
+   *
    * @param project Project name.
    * @param revision SHA1 of revision.
    * @param file File name.
-   * @return Links for file history
    */
   public ImmutableList<WebLinkInfo> getFileHistoryLinks(
       String project, String revision, String file) {
@@ -143,6 +184,8 @@ public class WebLinks {
   }
 
   /**
+   * Returns links for file diffs
+   *
    * @param project Project name.
    * @param patchSetIdA Patch set ID of side A, <code>null</code> if no base patch set was selected.
    * @param revisionA SHA1 of revision of side A.
@@ -150,7 +193,6 @@ public class WebLinks {
    * @param patchSetIdB Patch set ID of side B.
    * @param revisionB SHA1 of revision of side B.
    * @param fileB File name of side B.
-   * @return Links for file diffs.
    */
   public ImmutableList<DiffWebLinkInfo> getDiffLinks(
       String project,
@@ -181,26 +223,29 @@ public class WebLinks {
   }
 
   /**
+   * Returns links for projects
+   *
    * @param project Project name.
-   * @return Links for projects.
    */
   public ImmutableList<WebLinkInfo> getProjectLinks(String project) {
     return filterLinks(projectLinks, webLink -> webLink.getProjectWeblink(project));
   }
 
   /**
+   * Returns links for branches
+   *
    * @param project Project name
    * @param branch Branch name
-   * @return Links for branches.
    */
   public ImmutableList<WebLinkInfo> getBranchLinks(String project, String branch) {
     return filterLinks(branchLinks, webLink -> webLink.getBranchWebLink(project, branch));
   }
 
   /**
+   * Returns links for the tag
+   *
    * @param project Project name
    * @param tag Tag name
-   * @return Links for tags.
    */
   public ImmutableList<WebLinkInfo> getTagLinks(String project, String tag) {
     return filterLinks(tagLinks, webLink -> webLink.getTagWebLink(project, tag));

@@ -14,16 +14,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import '@polymer/paper-tabs/paper-tab';
 import '@polymer/paper-tabs/paper-tabs';
 import '../gr-shell-command/gr-shell-command';
 import '../../../styles/shared-styles';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-download-commands_html';
-import {customElement, property, observe} from '@polymer/decorators';
+import {customElement, property} from '@polymer/decorators';
 import {PaperTabsElement} from '@polymer/paper-tabs/paper-tabs';
 import {appContext} from '../../../services/app-context';
+import {queryAndAssert} from '../../../utils/common-util';
+import {GrShellCommand} from '../gr-shell-command/gr-shell-command';
+import {preferences$} from '../../../services/user/user-model';
+import {takeUntil} from 'rxjs/operators';
+import {Subject} from 'rxjs';
 
 declare global {
+  interface HTMLElementEventMap {
+    'selected-changed': CustomEvent<{value: number}>;
+  }
   interface HTMLElementTagNameMap {
     'gr-download-commands': GrDownloadCommands;
   }
@@ -59,31 +68,21 @@ export class GrDownloadCommands extends PolymerElement {
   @property({type: String, notify: true})
   selectedScheme?: string;
 
+  @property({type: Boolean})
+  showKeyboardShortcutTooltips = false;
+
   private readonly restApiService = appContext.restApiService;
 
-  /** @override */
-  connectedCallback() {
+  private readonly userService = appContext.userService;
+
+  disconnected$ = new Subject();
+
+  override connectedCallback() {
     super.connectedCallback();
     this._getLoggedIn().then(loggedIn => {
       this._loggedIn = loggedIn;
     });
-  }
-
-  focusOnCopy() {
-    // TODO(TS): remove ! assertion later
-    this.shadowRoot!.querySelector('gr-shell-command')!.focusOnCopy();
-  }
-
-  _getLoggedIn() {
-    return this.restApiService.getLoggedIn();
-  }
-
-  @observe('_loggedIn')
-  _loggedInChanged(loggedIn: boolean) {
-    if (!loggedIn) {
-      return;
-    }
-    return this.restApiService.getPreferences().then(prefs => {
+    preferences$.pipe(takeUntil(this.disconnected$)).subscribe(prefs => {
       if (prefs?.download_scheme) {
         // Note (issue 5180): normalize the download scheme with lower-case.
         this.selectedScheme = prefs.download_scheme.toLowerCase();
@@ -91,12 +90,25 @@ export class GrDownloadCommands extends PolymerElement {
     });
   }
 
+  override disconnectedCallback() {
+    this.disconnected$.next();
+    super.disconnectedCallback();
+  }
+
+  focusOnCopy() {
+    queryAndAssert<GrShellCommand>(this, 'gr-shell-command').focusOnCopy();
+  }
+
+  _getLoggedIn() {
+    return this.restApiService.getLoggedIn();
+  }
+
   _handleTabChange(e: CustomEvent<{value: number}>) {
     const scheme = this.schemes[e.detail.value];
     if (scheme && scheme !== this.selectedScheme) {
       this.set('selectedScheme', scheme);
       if (this._loggedIn) {
-        this.restApiService.savePreferences({
+        this.userService.updatePreferences({
           download_scheme: this.selectedScheme,
         });
       }
@@ -109,6 +121,12 @@ export class GrDownloadCommands extends PolymerElement {
 
   _computeShowTabs(schemes: string[]) {
     return schemes.length > 1 ? '' : 'hidden';
+  }
+
+  _computeTooltip(showKeyboardShortcutTooltips: boolean, index: number) {
+    return index <= 4 && showKeyboardShortcutTooltips
+      ? `Keyboard shortcut: ${index + 1}`
+      : '';
   }
 
   // TODO: maybe unify with strToClassName from dom-util

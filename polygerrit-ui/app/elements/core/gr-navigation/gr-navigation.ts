@@ -130,7 +130,6 @@ export interface DashboardSection {
   name: string;
   query: string;
   suffixForDashboard?: string;
-  attentionSetOnly?: boolean;
   selfOnly?: boolean;
   hideIfEmpty?: boolean;
   assigneeOnly?: boolean;
@@ -165,7 +164,6 @@ export const YOUR_TURN: DashboardSection = {
   query: 'attention:${user}',
   hideIfEmpty: false,
   suffixForDashboard: 'limit:25',
-  attentionSetOnly: true,
 };
 const ASSIGNED: DashboardSection = {
   // Changes that are assigned to the viewed user.
@@ -208,7 +206,7 @@ const CCED: DashboardSection = {
   // Open changes the viewed user is CCed on. Changes ignored by the viewing
   // user are filtered out.
   name: 'CCed on',
-  query: 'is:open -is:ignored cc:${user}',
+  query: 'is:open -is:ignored -is:wip cc:${user}',
   suffixForDashboard: 'limit:10',
 };
 export const CLOSED: DashboardSection = {
@@ -259,6 +257,7 @@ export interface GenerateUrlChangeViewParameters {
   host?: string;
   messageHash?: string;
   queryMap?: Map<string, string> | URLSearchParams;
+  commentId?: UrlEncodedCommentId;
 
   // TODO(TS): querystring isn't set anywhere, try to remove
   querystring?: string;
@@ -310,8 +309,8 @@ export interface GenerateUrlDiffViewParameters {
   changeNum: NumericChangeId;
   project: RepoName;
   path?: string;
-  patchNum?: PatchSetNum | null;
-  basePatchNum?: BasePatchSetNum | null;
+  patchNum?: PatchSetNum;
+  basePatchNum?: BasePatchSetNum;
   lineNum?: number | string;
   leftSide?: boolean;
   commentId?: UrlEncodedCommentId;
@@ -359,6 +358,19 @@ export interface GenerateWebLinksPatchsetParameters {
   commit?: CommitId;
   options?: GenerateWebLinksOptions;
 }
+export interface GenerateWebLinksResolveConflictsParameters {
+  type: WeblinkType.RESOLVE_CONFLICTS;
+  repo: RepoName;
+  commit?: CommitId;
+  options?: GenerateWebLinksOptions;
+}
+export interface GenerateWebLinksEditParameters {
+  type: WeblinkType.EDIT;
+  repo: RepoName;
+  commit: CommitId;
+  file: string;
+  options?: GenerateWebLinksOptions;
+}
 export interface GenerateWebLinksFileParameters {
   type: WeblinkType.FILE;
   repo: RepoName;
@@ -375,11 +387,14 @@ export interface GenerateWebLinksChangeParameters {
 
 export type GenerateWebLinksParameters =
   | GenerateWebLinksPatchsetParameters
+  | GenerateWebLinksResolveConflictsParameters
+  | GenerateWebLinksEditParameters
   | GenerateWebLinksFileParameters
   | GenerateWebLinksChangeParameters;
 
 export type NavigateCallback = (target: string, redirect?: boolean) => void;
 export type GenerateUrlCallback = (params: GenerateUrlParameters) => string;
+// TODO: Refactor to return only GeneratedWebLink[]
 export type GenerateWebLinksCallback = (
   params: GenerateWebLinksParameters
 ) => GeneratedWebLink[] | GeneratedWebLink;
@@ -404,6 +419,7 @@ export enum GroupDetailView {
 }
 
 export enum RepoDetailView {
+  GENERAL = 'general',
   ACCESS = 'access',
   BRANCHES = 'branches',
   COMMANDS = 'commands',
@@ -413,8 +429,10 @@ export enum RepoDetailView {
 
 export enum WeblinkType {
   CHANGE = 'change',
+  EDIT = 'edit',
   FILE = 'file',
   PATCHSET = 'patchset',
+  RESOLVE_CONFLICTS = 'resolve-conflicts',
 }
 
 // TODO(dmfilippov) Convert to class, extract consts, give better name and
@@ -679,6 +697,19 @@ export const GerritNav = {
     });
   },
 
+  getUrlForCommentsTab(
+    changeNum: NumericChangeId,
+    project: RepoName,
+    commentId: UrlEncodedCommentId
+  ) {
+    return this._getUrlFor({
+      view: GerritView.CHANGE,
+      changeNum,
+      project,
+      commentId,
+    });
+  },
+
   /**
    * @param basePatchNum The string 'PARENT' can be used for none.
    */
@@ -811,6 +842,7 @@ export const GerritNav = {
   getUrlForRepo(repoName: RepoName) {
     return this._getUrlFor({
       view: GerritView.REPO,
+      detail: RepoDetailView.GENERAL,
       repoName,
     });
   },
@@ -889,6 +921,24 @@ export const GerritNav = {
     return this._getUrlFor({view: GerritView.SETTINGS});
   },
 
+  getEditWebLinks(
+    repo: RepoName,
+    commit: CommitId,
+    file: string,
+    options?: GenerateWebLinksOptions
+  ): GeneratedWebLink[] {
+    const params: GenerateWebLinksEditParameters = {
+      type: WeblinkType.EDIT,
+      repo,
+      commit,
+      file,
+    };
+    if (options) {
+      params.options = options;
+    }
+    return ([] as GeneratedWebLink[]).concat(this._generateWeblinks(params));
+  },
+
   getFileWebLinks(
     repo: RepoName,
     commit: CommitId,
@@ -931,6 +981,22 @@ export const GerritNav = {
     }
   },
 
+  getResolveConflictsWeblinks(
+    repo: RepoName,
+    commit?: CommitId,
+    options?: GenerateWebLinksOptions
+  ): GeneratedWebLink[] {
+    const params: GenerateWebLinksResolveConflictsParameters = {
+      type: WeblinkType.RESOLVE_CONFLICTS,
+      repo,
+      commit,
+    };
+    if (options) {
+      params.options = options;
+    }
+    return ([] as GeneratedWebLink[]).concat(this._generateWeblinks(params));
+  },
+
   getChangeWeblinks(
     repo: RepoName,
     commit: CommitId,
@@ -953,11 +1019,8 @@ export const GerritNav = {
     title = '',
     config: UserDashboardConfig = {}
   ): UserDashboard {
-    const attentionEnabled =
-      config.change && !!config.change.enable_attention_set;
     const assigneeEnabled = config.change && !!config.change.enable_assignee;
     sections = sections
-      .filter(section => attentionEnabled || !section.attentionSetOnly)
       .filter(section => assigneeEnabled || !section.assigneeOnly)
       .filter(section => user === 'self' || !section.selfOnly)
       .map(section => {

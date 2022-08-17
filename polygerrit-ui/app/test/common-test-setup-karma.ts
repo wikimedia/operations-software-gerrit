@@ -50,7 +50,7 @@ suiteSetup(() => {
   originalOnBeforeUnload = window.onbeforeunload;
   window.onbeforeunload = function (e: BeforeUnloadEvent) {
     // If a test reloads a page, we can't prevent it.
-    // However we can print earror and the stack trace with assert.fail
+    // However we can print an error and the stack trace with assert.fail
     try {
       throw new Error();
     } catch (e) {
@@ -58,7 +58,7 @@ suiteSetup(() => {
       console.error(e.stack.toString());
     }
     if (originalOnBeforeUnload) {
-      originalOnBeforeUnload.call(this, e);
+      originalOnBeforeUnload.call(window, e);
     }
   };
 });
@@ -102,7 +102,8 @@ function flushImpl(callback?: () => void): Promise<void> | void {
 self.flush = flushImpl;
 
 class TestFixtureIdProvider {
-  public static readonly instance: TestFixtureIdProvider = new TestFixtureIdProvider();
+  public static readonly instance: TestFixtureIdProvider =
+    new TestFixtureIdProvider();
 
   private fixturesCount = 1;
 
@@ -117,7 +118,7 @@ interface TagTestFixture<T extends Element> {
 }
 
 class TestFixture {
-  constructor(private readonly fixtureId: string) {}
+  constructor(readonly fixtureId: string) {}
 
   /**
    * Create an instance of a fixture's template.
@@ -198,7 +199,7 @@ function fixtureFromElementImpl<T extends keyof HTMLElementTagNameMap>(
 ): TagTestFixture<HTMLElementTagNameMap[T]> {
   const template = document.createElement('template');
   template.innerHTML = `<${tagName}></${tagName}>`;
-  return (fixtureFromTemplate(template) as unknown) as TagTestFixture<
+  return fixtureFromTemplate(template) as unknown as TagTestFixture<
     HTMLElementTagNameMap[T]
   >;
 }

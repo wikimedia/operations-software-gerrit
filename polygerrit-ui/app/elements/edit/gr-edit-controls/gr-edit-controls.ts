@@ -35,9 +35,12 @@ import {
   AutocompleteSuggestion,
 } from '../../shared/gr-autocomplete/gr-autocomplete';
 import {appContext} from '../../../services/app-context';
+import {IronInputElement} from '@polymer/iron-input';
+import {fireAlert, fireReload} from '../../../utils/event-util';
 
 export interface GrEditControls {
   $: {
+    newPathIronInput: IronInputElement;
     overlay: GrOverlay;
     openDialog: GrDialog;
     deleteDialog: GrDialog;
@@ -174,11 +177,15 @@ export class GrEditControls extends PolymerElement {
       '.dialog'
     ) as NodeListOf<GrDialog>;
     for (const dialog of dialogs) {
-      this._closeDialog(dialog);
+      // We set the second param to false, because this function
+      // is called by _showDialog which when you open either restore,
+      // delete or rename dialogs, it reseted the automatically
+      // set input.
+      this._closeDialog(dialog, false);
     }
   }
 
-  _closeDialog(dialog?: GrDialog, clearInputs = false) {
+  _closeDialog(dialog?: GrDialog, clearInputs = true) {
     if (!dialog) return;
 
     if (clearInputs) {
@@ -203,19 +210,25 @@ export class GrEditControls extends PolymerElement {
   }
 
   _handleOpenConfirm(e: Event) {
+    if (!this.change || !this._path) {
+      fireAlert(this, 'You must enter a path.');
+      this._closeDialog(this.$.openDialog);
+      return;
+    }
     const url = GerritNav.getEditUrlForDiff(
       this.change,
       this._path,
       this.patchNum
     );
     GerritNav.navigateToRelativeUrl(url);
-    this._closeDialog(this._getDialogFromEvent(e), true);
+    this._closeDialog(this._getDialogFromEvent(e));
   }
 
   _handleUploadConfirm(path: string, fileData: string) {
     if (!this.change || !path || !fileData) {
-      this._closeDialog(this.$.openDialog, true);
-      return;
+      fireAlert(this, 'You must enter a path and data.');
+      this._closeDialog(this.$.openDialog);
+      return Promise.resolve();
     }
     return this.restApiService
       .saveFileUploadChangeEdit(this.change._number, path, fileData)
@@ -223,8 +236,8 @@ export class GrEditControls extends PolymerElement {
         if (!res || !res.ok) {
           return;
         }
-        this._closeDialog(this.$.openDialog, true);
-        GerritNav.navigateToChange(this.change);
+        this._closeDialog(this.$.openDialog);
+        fireReload(this, true);
       });
   }
 
@@ -232,40 +245,55 @@ export class GrEditControls extends PolymerElement {
     // Get the dialog before the api call as the event will change during bubbling
     // which will make Polymer.dom(e).path an empty array in polymer 2
     const dialog = this._getDialogFromEvent(e);
+    if (!this.change || !this._path) {
+      fireAlert(this, 'You must enter a path.');
+      this._closeDialog(dialog);
+      return;
+    }
     this.restApiService
       .deleteFileInChangeEdit(this.change._number, this._path)
       .then(res => {
         if (!res || !res.ok) {
           return;
         }
-        this._closeDialog(dialog, true);
-        GerritNav.navigateToChange(this.change);
+        this._closeDialog(dialog);
+        fireReload(this);
       });
   }
 
   _handleRestoreConfirm(e: Event) {
     const dialog = this._getDialogFromEvent(e);
+    if (!this.change || !this._path) {
+      fireAlert(this, 'You must enter a path.');
+      this._closeDialog(dialog);
+      return;
+    }
     this.restApiService
       .restoreFileInChangeEdit(this.change._number, this._path)
       .then(res => {
         if (!res || !res.ok) {
           return;
         }
-        this._closeDialog(dialog, true);
-        GerritNav.navigateToChange(this.change);
+        this._closeDialog(dialog);
+        fireReload(this);
       });
   }
 
   _handleRenameConfirm(e: Event) {
     const dialog = this._getDialogFromEvent(e);
+    if (!this.change || !this._path || !this._newPath) {
+      fireAlert(this, 'You must enter a old path and a new path.');
+      this._closeDialog(dialog);
+      return;
+    }
     return this.restApiService
       .renameFileInChangeEdit(this.change._number, this._path, this._newPath)
       .then(res => {
         if (!res || !res.ok) {
           return;
         }
-        this._closeDialog(dialog, true);
-        GerritNav.navigateToChange(this.change);
+        this._closeDialog(dialog);
+        fireReload(this, true);
       });
   }
 
@@ -323,7 +351,7 @@ export class GrEditControls extends PolymerElement {
     }
   }
 
-  _handleKeyPress(event: InputEvent) {
+  _handleKeyPress(event: KeyboardEvent) {
     event.preventDefault();
     event.stopImmediatePropagation();
   }

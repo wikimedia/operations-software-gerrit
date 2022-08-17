@@ -16,24 +16,23 @@
  */
 import '../../shared/gr-account-chip/gr-account-chip';
 import '../../shared/gr-button/gr-button';
+import '../../shared/gr-vote-chip/gr-vote-chip';
 import '../../../styles/shared-styles';
 import {dom, EventApi} from '@polymer/polymer/lib/legacy/polymer.dom';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-reviewer-list_html';
-import {isSelf, isServiceUser} from '../../../utils/account-util';
-import {hasAttention} from '../../../utils/attention-set-util';
 import {customElement, property, computed, observe} from '@polymer/decorators';
 import {
   ChangeInfo,
-  ServerInfo,
   LabelNameToValueMap,
   AccountInfo,
   ApprovalInfo,
   Reviewers,
   AccountId,
-  DetailedLabelInfo,
   EmailAddress,
   AccountDetailInfo,
+  isDetailedLabelInfo,
+  LabelInfo,
 } from '../../../types/common';
 import {PolymerDeepPropertyChange} from '@polymer/polymer/interfaces';
 import {GrAccountChip} from '../../shared/gr-account-chip/gr-account-chip';
@@ -41,6 +40,9 @@ import {hasOwnProperty} from '../../../utils/common-util';
 import {isRemovableReviewer} from '../../../utils/change-util';
 import {ReviewerState} from '../../../constants/constants';
 import {appContext} from '../../../services/app-context';
+import {fireAlert} from '../../../utils/event-util';
+import {getApprovalInfo, getCodeReviewLabel} from '../../../utils/label-util';
+import {sortReviewers} from '../../../utils/attention-set-util';
 
 @customElement('gr-reviewer-list')
 export class GrReviewerList extends PolymerElement {
@@ -59,9 +61,6 @@ export class GrReviewerList extends PolymerElement {
 
   @property({type: Object})
   account?: AccountDetailInfo;
-
-  @property({type: Object})
-  serverConfig?: ServerInfo;
 
   @property({type: Boolean, reflectToAttribute: true})
   disabled = false;
@@ -157,24 +156,19 @@ export class GrReviewerList extends PolymerElement {
     if (!change.labels) {
       return NaN;
     }
-    const detailedLabel = change.labels[label] as DetailedLabelInfo;
-    if (!detailedLabel.all) {
+    const detailedLabel = change.labels[label];
+    if (!isDetailedLabelInfo(detailedLabel) || !detailedLabel.all) {
       return NaN;
     }
-    const detailed = detailedLabel.all
-      .filter(
-        (approval: ApprovalInfo) =>
-          reviewer._account_id === approval._account_id
-      )
-      .pop();
-    if (!detailed) {
+    const approvalInfo = getApprovalInfo(detailedLabel, reviewer);
+    if (!approvalInfo) {
       return NaN;
     }
-    if (hasOwnProperty(detailed, 'permitted_voting_range')) {
-      if (!detailed.permitted_voting_range) return NaN;
-      return detailed.permitted_voting_range.max;
-    } else if (hasOwnProperty(detailed, 'value')) {
-      // If preset, user can vote on the label.
+    if (hasOwnProperty(approvalInfo, 'permitted_voting_range')) {
+      if (!approvalInfo.permitted_voting_range) return NaN;
+      return approvalInfo.permitted_voting_range.max;
+    } else if (hasOwnProperty(approvalInfo, 'value')) {
+      // If present, user can vote on the label.
       return 0;
     }
     return NaN;
@@ -200,17 +194,29 @@ export class GrReviewerList extends PolymerElement {
     return maxScores.join(', ');
   }
 
-  @observe('change.reviewers.*', 'change.owner', 'serverConfig')
+  _computeVote(
+    reviewer: AccountInfo,
+    change?: ChangeInfo
+  ): ApprovalInfo | undefined {
+    const codeReviewLabel = this._computeCodeReviewLabel(change);
+    if (!codeReviewLabel || !isDetailedLabelInfo(codeReviewLabel)) return;
+    return getApprovalInfo(codeReviewLabel, reviewer);
+  }
+
+  _computeCodeReviewLabel(change?: ChangeInfo): LabelInfo | undefined {
+    if (!change || !change.labels) return;
+    return getCodeReviewLabel(change.labels);
+  }
+
+  @observe('change.reviewers.*', 'change.owner')
   _reviewersChanged(
     changeRecord: PolymerDeepPropertyChange<Reviewers, Reviewers>,
-    owner: AccountInfo,
-    serverConfig: ServerInfo
+    owner: AccountInfo
   ) {
     // Polymer 2: check for undefined
     if (
       changeRecord === undefined ||
       owner === undefined ||
-      serverConfig === undefined ||
       this.change === undefined
     ) {
       return;
@@ -230,22 +236,7 @@ export class GrReviewerList extends PolymerElement {
     }
     this._reviewers = result
       .filter(reviewer => reviewer._account_id !== owner._account_id)
-      // Sort order:
-      // 1. The user themselves
-      // 2. Human users in the attention set.
-      // 3. Other human users.
-      // 4. Service users.
-      .sort((r1, r2) => {
-        if (this.account) {
-          if (isSelf(r1, this.account)) return -1;
-          if (isSelf(r2, this.account)) return 1;
-        }
-        const a1 = hasAttention(serverConfig, r1, this.change!) ? 1 : 0;
-        const a2 = hasAttention(serverConfig, r2, this.change!) ? 1 : 0;
-        const s1 = isServiceUser(r1) ? -2 : 0;
-        const s2 = isServiceUser(r2) ? -2 : 0;
-        return a2 - a1 + s2 - s1;
-      });
+      .sort((r1, r2) => sortReviewers(r1, r2, this.change, this.account));
 
     if (this._reviewers.length > 8) {
       this._displayedReviewers = this._reviewers.slice(0, 6);
@@ -261,32 +252,37 @@ export class GrReviewerList extends PolymerElement {
   _handleRemove(e: Event) {
     e.preventDefault();
     const target = (dom(e) as EventApi).rootTarget as GrAccountChip;
-    if (!target.account || !this.change) {
-      return;
-    }
+    if (!target.account || !this.change?.reviewers) return;
     const accountID = target.account._account_id || target.account.email;
-    this.disabled = true;
     if (!accountID) return;
-    this._xhrPromise = this._removeReviewer(accountID)
-      .then((response: Response | undefined) => {
-        this.disabled = false;
-        if (!response || !response.ok) {
-          return response;
+    const reviewers = this.change.reviewers;
+    let removedAccount: AccountInfo | undefined;
+    let removedType: ReviewerState | undefined;
+    for (const type of [ReviewerState.REVIEWER, ReviewerState.CC]) {
+      const reviewerStateByType = reviewers[type] || [];
+      reviewers[type] = reviewerStateByType;
+      for (let i = 0; i < reviewerStateByType.length; i++) {
+        if (
+          reviewerStateByType[i]._account_id === accountID ||
+          reviewerStateByType[i].email === accountID
+        ) {
+          removedAccount = reviewerStateByType[i];
+          removedType = type;
+          this.splice(`change.reviewers.${type}`, i, 1);
+          break;
         }
-        if (!this.change || !this.change.reviewers) return;
-        const reviewers = this.change.reviewers;
-        for (const type of [ReviewerState.REVIEWER, ReviewerState.CC]) {
-          const reviewerStateByType = reviewers[type] || [];
-          reviewers[type] = reviewerStateByType;
-          for (let i = 0; i < reviewerStateByType.length; i++) {
-            if (
-              reviewerStateByType[i]._account_id === accountID ||
-              reviewerStateByType[i].email === accountID
-            ) {
-              this.splice('change.reviewers.' + type, i, 1);
-              break;
-            }
-          }
+      }
+    }
+    const curChange = this.change;
+    this.disabled = true;
+    this._xhrPromise = this._removeReviewer(accountID)
+      .then(response => {
+        this.disabled = false;
+        if (!this.change?.reviewers || this.change !== curChange) return;
+        if (!response?.ok) {
+          this.push(`change.reviewers.${removedType}`, removedAccount);
+          fireAlert(this, `Cannot remove a ${removedType}`);
+          return response;
         }
         return;
       })
@@ -324,5 +320,11 @@ export class GrReviewerList extends PolymerElement {
   _removeReviewer(id: AccountId | EmailAddress): Promise<Response | undefined> {
     if (!this.change) return Promise.resolve(undefined);
     return this.restApiService.removeChangeReviewer(this.change._number, id);
+  }
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'gr-reviewer-list': GrReviewerList;
   }
 }

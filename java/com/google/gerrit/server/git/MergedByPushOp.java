@@ -18,7 +18,6 @@ import static java.util.Objects.requireNonNull;
 
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.entities.LabelId;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.PatchSetInfo;
@@ -33,7 +32,7 @@ import com.google.gerrit.server.notedb.ChangeUpdate;
 import com.google.gerrit.server.patch.PatchSetInfoFactory;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.Context;
+import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.gerrit.server.util.RequestScopePropagator;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
@@ -169,16 +168,13 @@ public class MergedByPushOp implements BatchUpdateOp {
       }
     }
     msgBuf.append(".");
-    ChangeMessage msg =
-        ChangeMessagesUtil.newMessage(
-            psId, ctx.getUser(), ctx.getWhen(), msgBuf.toString(), ChangeMessagesUtil.TAG_MERGED);
-    cmUtil.addChangeMessage(update, msg);
+    cmUtil.setChangeMessage(update, msgBuf.toString(), ChangeMessagesUtil.TAG_MERGED);
     update.putApproval(LabelId.legacySubmit().get(), (short) 1);
     return true;
   }
 
   @Override
-  public void postUpdate(Context ctx) {
+  public void postUpdate(PostUpdateContext ctx) {
     if (!correctBranch) {
       return;
     }
@@ -214,7 +210,8 @@ public class MergedByPushOp implements BatchUpdateOp {
                   }
                 }));
 
-    changeMerged.fire(change, patchSet, ctx.getAccount(), mergeResultRevId, ctx.getWhen());
+    changeMerged.fire(
+        ctx.getChangeData(change), patchSet, ctx.getAccount(), mergeResultRevId, ctx.getWhen());
   }
 
   private PatchSetInfo getPatchSetInfo(ChangeContext ctx) throws IOException {

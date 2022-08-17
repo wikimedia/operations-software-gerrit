@@ -50,9 +50,9 @@ export const htmlTemplate = html`
       background-color: var(--diff-blank-background-color);
     }
     .diffContainer {
+      max-width: var(--diff-max-width, none);
       display: flex;
       font-family: var(--monospace-font-family);
-      @apply --diff-container-styles;
     }
     .diffContainer.hiddenscroll {
       margin-bottom: var(--spacing-m);
@@ -61,10 +61,25 @@ export const htmlTemplate = html`
       border-collapse: collapse;
       table-layout: fixed;
     }
+    td.lineNum {
+      /* Enforces background whenever lines wrap */
+      background-color: var(--diff-blank-background-color);
+    }
+
+    /* Provides the option to add side borders (left and right) to the line number column. */
+    td.left,
+    td.right,
+    td.moveControlsLineNumCol,
+    td.contextLineNum {
+      box-shadow: var(--line-number-box-shadow, unset);
+    }
 
     /*
       Context controls break up the table visually, so we set the right border
       on individual sections to leave a gap for the divider.
+
+      Also taken into account for max-width calculations in SHRINK_ONLY
+      mode (check GrDiff._updatePreferenceStyles).
       */
     .section {
       border-right: 1px solid var(--border-color);
@@ -96,6 +111,7 @@ export const htmlTemplate = html`
       width: 100%;
       height: 100%;
       background-color: var(--diff-blank-background-color);
+      box-shadow: var(--line-number-box-shadow, unset);
     }
     td.lineNum {
       vertical-align: top;
@@ -113,6 +129,14 @@ export const htmlTemplate = html`
       height: 100%;
       max-width: var(--image-viewer-max-width, 95vw);
       max-height: var(--image-viewer-max-height, 90vh);
+      /*
+        Defined by paper-styles default-theme and used in various components.
+        background-color-secondary is a compromise between fairly light in
+        light theme (where we ideally would want background-color-primary) yet
+        slightly offset against the app background in dark mode, where drop
+        shadows e.g. around paper-card are almost invisible.
+        */
+      --primary-background-color: var(--background-color-secondary);
     }
     .image-diff .gr-diff {
       text-align: center;
@@ -161,12 +185,12 @@ export const htmlTemplate = html`
     .image-diff .content {
       background-color: var(--diff-blank-background-color);
     }
-    .full-width {
+    .responsive {
       width: 100%;
     }
-    .full-width .contentText {
+    .responsive .contentText {
       white-space: break-spaces;
-      word-wrap: break-word;
+      word-break: break-all;
     }
     .lineNumButton,
     .content {
@@ -231,44 +255,25 @@ export const htmlTemplate = html`
 
     /* dueToMove */
     .dueToMove .content.add .contentText,
-    .dueToMove .moveControls.movedIn .moveLabel,
+    .dueToMove .moveControls.movedIn .moveHeader,
     .delta.total.dueToMove .content.add .contentText {
       background-color: var(--diff-moved-in-background);
     }
 
     .dueToMove .content.remove .contentText,
-    .dueToMove .moveControls.movedOut .moveLabel,
+    .dueToMove .moveControls.movedOut .moveHeader,
     .delta.total.dueToMove .content.remove .contentText {
       background-color: var(--diff-moved-out-background);
     }
 
-    .delta.dueToMove .movedIn .moveDescription {
-      color: var(--diff-moved-in-label-color);
+    .delta.dueToMove .movedIn .moveHeader {
+      --gr-range-header-color: var(--diff-moved-in-label-color);
     }
-    .delta.dueToMove .movedOut .moveDescription {
-      color: var(--diff-moved-out-label-color);
-    }
-    .moveLabel {
-      font-family: var(--font-family, ''), 'Roboto Mono';
-      font-size: var(--font-size-small, 12px);
-      font-weight: var(--code-hint-font-weight, 500);
-      line-height: var(--line-height-small, 16px);
-      padding: var(--spacing-s) var(--spacing-m);
-      margin: var(--spacing-s);
-    }
-    .delta.dueToMove .moveDescription {
-      display: flex;
-      justify-content: flex-end;
+    .delta.dueToMove .movedOut .moveHeader {
+      --gr-range-header-color: var(--diff-moved-out-label-color);
     }
 
-    .moveDescription iron-icon {
-      color: inherit;
-      margin-right: var(--spacing-s);
-      height: var(--line-height-small, 16px);
-      width: var(--line-height-small, 16px);
-    }
-
-    .moveDescription a {
+    .moveHeader a {
       color: inherit;
     }
 
@@ -325,123 +330,12 @@ export const htmlTemplate = html`
     .dividerCell {
       vertical-align: top;
     }
-    .dividerRow.showBoth .dividerCell {
+    .dividerRow.show-both .dividerCell {
       height: var(--divider-height);
     }
-    .dividerRow.showAboveOnly .dividerCell,
-    .dividerRow.showBelowOnly .dividerCell {
+    .dividerRow.show-above .dividerCell,
+    .dividerRow.show-above .dividerCell {
       height: 0;
-    }
-
-    .verticalFlex {
-      display: flex;
-      flex-direction: column;
-      position: relative;
-    }
-    .dividerRow.showBoth .verticalFlex {
-      justify-content: center;
-      margin-top: calc(0px - var(--line-height-normal) - var(--spacing-s));
-      margin-bottom: calc(0px - var(--line-height-normal) - var(--spacing-s));
-      height: calc(
-        2 * var(--line-height-normal) + 2 * var(--spacing-s) +
-          var(--divider-height) - 1px
-      );
-    }
-    .dividerRow.showAboveOnly .verticalFlex {
-      justify-content: flex-end;
-      /* margin-top has to make room for height+1px. */
-      margin-top: calc(-1px - var(--line-height-normal) - var(--spacing-s));
-      height: calc(var(--line-height-normal) + var(--spacing-s));
-    }
-    .dividerRow.showBelowOnly .verticalFlex {
-      justify-content: flex-start;
-      /* This just pushes the container down 1 pixel as to render below the
-         1px border-top of the padding row below. The same could be achieved
-         by position:relative; top:1px.*/
-      margin-top: 1px;
-      margin-bottom: calc(0px - var(--line-height-normal) - var(--spacing-s));
-    }
-
-    .horizontalFlex {
-      display: flex;
-      justify-content: center;
-    }
-    .dividerRow.showBoth .horizontalFlex {
-      align-items: center;
-    }
-    .dividerRow.showAboveOnly .horizontalFlex {
-      align-items: end;
-    }
-    .dividerRow.showBelowOnly .horizontalFlex {
-      align-items: start;
-    }
-    .contextControlButton {
-      background-color: var(--default-button-background-color);
-      font: var(--context-control-button-font, inherit);
-    }
-    .centeredButton {
-      --gr-button: {
-        color: var(--diff-context-control-color);
-        border-style: solid;
-        border-color: var(--border-color);
-        border-top-width: 1px;
-        border-right-width: 1px;
-        border-bottom-width: 1px;
-        border-left-width: 1px;
-        border-top-left-radius: var(--border-radius);
-        border-top-right-radius: var(--border-radius);
-        border-bottom-right-radius: var(--border-radius);
-        border-bottom-left-radius: var(--border-radius);
-        padding: var(--spacing-s) var(--spacing-l);
-      }
-    }
-    .aboveBelowButtons {
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      margin-left: var(--spacing-m);
-    }
-    .aboveBelowButtons:first-child {
-      margin-left: 0;
-    }
-    .dividerRow.showBoth .aboveButton {
-      /* The size of the gap between the above and below button. */
-      margin-bottom: calc(var(--divider-height) + 1px);
-    }
-    .aboveButton {
-      --gr-button: {
-        color: var(--diff-context-control-color);
-        border-style: solid;
-        border-color: var(--border-color);
-        border-top-width: 1px;
-        border-right-width: 1px;
-        border-bottom-width: 0;
-        border-left-width: 1px;
-        border-top-left-radius: var(--border-radius);
-        border-top-right-radius: var(--border-radius);
-        border-bottom-right-radius: 0;
-        border-bottom-left-radius: 0;
-        padding: var(--spacing-xxs) var(--spacing-l);
-      }
-    }
-    .belowButton {
-      --gr-button: {
-        color: var(--diff-context-control-color);
-        border-style: solid;
-        border-color: var(--border-color);
-        border-top-width: 0;
-        border-right-width: 1px;
-        border-bottom-width: 1px;
-        border-left-width: 1px;
-        border-top-left-radius: 0;
-        border-top-right-radius: 0;
-        border-bottom-right-radius: var(--border-radius);
-        border-bottom-left-radius: var(--border-radius);
-        padding: var(--spacing-xxs) var(--spacing-l);
-      }
-    }
-    #diffTable:focus {
-      outline: none;
     }
 
     .displayLine .diff-row.target-row td {
@@ -492,6 +386,9 @@ export const htmlTemplate = html`
       border-bottom: 1px solid var(--border-color);
       color: var(--link-color);
       padding: var(--spacing-m) 0 var(--spacing-m) 48px;
+    }
+    #diffTable:focus {
+      outline: none;
     }
     #loadingError,
     #sizeWarning {
@@ -551,15 +448,22 @@ export const htmlTemplate = html`
       color: var(--link-color);
       text-decoration: none;
     }
-    .full-width td.blame {
+    .responsive td.blame {
       overflow: hidden;
       width: 200px;
     }
     /** Support the line length indicator **/
-    .full-width td.content .contentText {
-      background-image: var(--line-length-indicator);
-      background-position: var(--line-limit) 0;
-      background-repeat: repeat-y;
+    .responsive td.content .contentText {
+      /*
+      Same strategy as in https://stackoverflow.com/questions/1179928/how-can-i-put-a-vertical-line-down-the-center-of-a-div
+      */
+      background-image: linear-gradient(
+        var(--line-length-indicator-color),
+        var(--line-length-indicator-color)
+      );
+      background-size: 1px 100%;
+      background-position: var(--line-limit-marker) 0;
+      background-repeat: no-repeat;
     }
     .newlineWarning {
       color: var(--deemphasized-text-color);
@@ -646,6 +550,10 @@ export const htmlTemplate = html`
       background-color: var(--diff-context-control-background-color);
       border: 1px solid var(--diff-context-control-border-color);
       text-align: center;
+    }
+
+    .token-highlight {
+      background-color: var(--token-highlighting-color, #fffd54);
     }
   </style>
   <style include="gr-syntax-theme">

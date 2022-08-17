@@ -25,12 +25,34 @@ import com.google.gerrit.entities.Account;
 import com.google.gerrit.server.account.externalids.AllExternalIds.Serializer;
 import com.google.gerrit.server.cache.proto.Cache.AllExternalIdsProto;
 import com.google.gerrit.server.cache.proto.Cache.AllExternalIdsProto.ExternalIdProto;
+import com.google.gerrit.server.config.AuthConfig;
 import com.google.inject.TypeLiteral;
+import java.lang.reflect.Type;
 import java.util.Arrays;
 import org.eclipse.jgit.lib.ObjectId;
+import org.junit.Before;
 import org.junit.Test;
+import org.mockito.Mock;
 
 public class AllExternalIdsTest {
+  private ExternalIdFactory externalIdFactory;
+
+  @Mock AuthConfig authConfig;
+
+  @Before
+  public void setUp() throws Exception {
+    externalIdFactory =
+        new ExternalIdFactory(
+            new ExternalIdKeyFactory(
+                new ExternalIdKeyFactory.Config() {
+                  @Override
+                  public boolean isUserNameCaseInsensitive() {
+                    return false;
+                  }
+                }),
+            authConfig);
+  }
+
   @Test
   public void serializeEmptyExternalIds() throws Exception {
     assertRoundTrip(allExternalIds(), AllExternalIdsProto.getDefaultInstance());
@@ -42,10 +64,10 @@ public class AllExternalIdsTest {
     Account.Id accountId2 = Account.id(1002);
     assertRoundTrip(
         allExternalIds(
-            ExternalId.create("scheme1", "id1", accountId1),
-            ExternalId.create("scheme2", "id2", accountId1),
-            ExternalId.create("scheme2", "id3", accountId2),
-            ExternalId.create("scheme3", "id4", accountId2)),
+            externalIdFactory.create("scheme1", "id1", accountId1),
+            externalIdFactory.create("scheme2", "id2", accountId1),
+            externalIdFactory.create("scheme2", "id3", accountId2),
+            externalIdFactory.create("scheme3", "id4", accountId2)),
         AllExternalIdsProto.newBuilder()
             .addExternalId(
                 ExternalIdProto.newBuilder().setKey("scheme1:id1").setAccountId(1001).build())
@@ -61,7 +83,7 @@ public class AllExternalIdsTest {
   @Test
   public void serializeExternalIdWithEmail() throws Exception {
     assertRoundTrip(
-        allExternalIds(ExternalId.createEmail(Account.id(1001), "foo@example.com")),
+        allExternalIds(externalIdFactory.createEmail(Account.id(1001), "foo@example.com")),
         AllExternalIdsProto.newBuilder()
             .addExternalId(
                 ExternalIdProto.newBuilder()
@@ -75,7 +97,7 @@ public class AllExternalIdsTest {
   public void serializeExternalIdWithPassword() throws Exception {
     assertRoundTrip(
         allExternalIds(
-            ExternalId.create("scheme", "id", Account.id(1001), null, "hashed password")),
+            externalIdFactory.create("scheme", "id", Account.id(1001), null, "hashed password")),
         AllExternalIdsProto.newBuilder()
             .addExternalId(
                 ExternalIdProto.newBuilder()
@@ -89,8 +111,8 @@ public class AllExternalIdsTest {
   public void serializeExternalIdWithBlobId() throws Exception {
     assertRoundTrip(
         allExternalIds(
-            ExternalId.create(
-                ExternalId.create("scheme", "id", Account.id(1001)),
+            externalIdFactory.create(
+                externalIdFactory.create("scheme", "id", Account.id(1001)),
                 ObjectId.fromString("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"))),
         AllExternalIdsProto.newBuilder()
             .addExternalId(
@@ -109,26 +131,30 @@ public class AllExternalIdsTest {
     assertThatSerializedClass(AllExternalIds.class)
         .hasAutoValueMethods(
             ImmutableMap.of(
+                "byKey",
+                new TypeLiteral<ImmutableMap<ExternalId.Key, ExternalId>>() {}.getType(),
                 "byAccount",
-                    new TypeLiteral<ImmutableSetMultimap<Account.Id, ExternalId>>() {}.getType(),
+                new TypeLiteral<ImmutableSetMultimap<Account.Id, ExternalId>>() {}.getType(),
                 "byEmail",
-                    new TypeLiteral<ImmutableSetMultimap<String, ExternalId>>() {}.getType()));
+                new TypeLiteral<ImmutableSetMultimap<String, ExternalId>>() {}.getType()));
   }
 
   @Test
   public void externalIdMethods() {
     assertThatSerializedClass(ExternalId.class)
         .hasAutoValueMethods(
-            ImmutableMap.of(
-                "key", ExternalId.Key.class,
-                "accountId", Account.Id.class,
-                "email", String.class,
-                "password", String.class,
-                "blobId", ObjectId.class));
+            ImmutableMap.<String, Type>builder()
+                .put("key", ExternalId.Key.class)
+                .put("accountId", Account.Id.class)
+                .put("isCaseInsensitive", boolean.class)
+                .put("email", String.class)
+                .put("password", String.class)
+                .put("blobId", ObjectId.class)
+                .build());
   }
 
   private static AllExternalIds allExternalIds(ExternalId... externalIds) {
-    return AllExternalIds.create(Arrays.asList(externalIds));
+    return AllExternalIds.create(Arrays.stream(externalIds));
   }
 
   private static void assertRoundTrip(

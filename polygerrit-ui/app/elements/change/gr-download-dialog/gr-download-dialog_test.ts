@@ -20,9 +20,9 @@ import {tap} from '@polymer/iron-test-helpers/mock-interactions';
 import {
   createChange,
   createCommit,
+  createDownloadInfo,
   createRevision,
   createRevisions,
-  createServerInfo,
 } from '../../../test/test-data-generators';
 import {
   CommitId,
@@ -31,6 +31,7 @@ import {
   RepoName,
 } from '../../../types/common';
 import {GrDownloadDialog} from './gr-download-dialog';
+import {mockPromise} from '../../../test/test-utils';
 
 const basicFixture = fixtureFromElement('gr-download-dialog');
 
@@ -116,7 +117,7 @@ suite('gr-download-dialog', () => {
   setup(() => {
     element = basicFixture.instantiate();
     element.patchNum = 1 as PatchSetNum;
-    element.config = createServerInfo();
+    element.config = createDownloadInfo();
     flush();
   });
 
@@ -168,14 +169,16 @@ suite('gr-download-dialog', () => {
       );
     });
 
-    test('close event', done => {
+    test('close event', async () => {
+      const closeCalled = mockPromise();
       element.addEventListener('close', () => {
-        done();
+        closeCalled.resolve();
       });
       const closeButton = element.shadowRoot!.querySelector(
         '.closeButtonContainer gr-button'
       );
       tap(closeButton!);
+      await closeCalled;
     });
   });
 

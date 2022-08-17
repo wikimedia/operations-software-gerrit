@@ -63,7 +63,7 @@ export const htmlTemplate = html`
               class="cell"
               colspan$="[[_computeColspan(changeSection, visibleChangeTableColumns, labelNames)]]"
             >
-              <h2>
+              <h2 class="heading-3">
                 <a
                   href$="[[_sectionHref(changeSection.query)]]"
                   class="section-title"
@@ -144,8 +144,7 @@ export const htmlTemplate = html`
           <gr-change-list-item
             account="[[account]]"
             selected$="[[_computeItemSelected(sectionIndex, index, selectedIndex)]]"
-            highlight$="[[_computeItemHighlight(account, change, _config, changeSection.name)]]"
-            needs-review$="[[_computeItemNeedsReview(account, change, showReviewedState, _config)]]"
+            highlight$="[[_computeItemHighlight(account, change, changeSection.name)]]"
             change="[[change]]"
             config="[[_config]]"
             section-name="[[changeSection.name]]"

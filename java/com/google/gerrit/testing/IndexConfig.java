@@ -38,16 +38,12 @@ public class IndexConfig {
   }
 
   public static Config createForLucene() {
-    return create();
+    Config cfg = create();
+    cfg.setString("index", null, "type", "lucene");
+    return cfg;
   }
 
-  public static Config createForElasticsearch() {
-    Config cfg = create();
-
-    // For some reason enabling the staleness checker increases the flakiness of the Elasticsearch
-    // tests. Hence disable the staleness checker.
-    cfg.setBoolean("index", null, "autoReindexIfStale", false);
-
-    return cfg;
+  public static Config createForFake() {
+    return create();
   }
 }

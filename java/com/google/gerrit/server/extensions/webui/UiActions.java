@@ -72,7 +72,9 @@ public class UiActions {
             new com.google.gerrit.metrics.Description("Latency for RestView#getDescription calls")
                 .setCumulative()
                 .setUnit(Units.MILLISECONDS),
-            Field.ofString("view", Metadata.Builder::restViewName).build());
+            Field.ofString("view", Metadata.Builder::restViewName)
+                .description("view implementation class")
+                .build());
   }
 
   public <R extends RestResource> Iterable<UiAction.Description> from(
@@ -143,11 +145,12 @@ public class UiActions {
     }
 
     String name = e.getExportName().substring(d + 1);
-    UiAction.Description dsc;
+    UiAction.Description dsc = null;
     try (Timer1.Context<String> ignored = uiActionLatency.start(name)) {
       dsc = ((UiAction<R>) view).getDescription(resource);
+    } catch (Exception ex) {
+      logger.atSevere().withCause(ex).log("Unable to render UIAction. Will omit from actions");
     }
-
     if (dsc == null) {
       return null;
     }

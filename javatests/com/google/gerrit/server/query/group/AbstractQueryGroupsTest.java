@@ -48,8 +48,8 @@ import com.google.gerrit.server.account.AccountsUpdate;
 import com.google.gerrit.server.account.AuthRequest;
 import com.google.gerrit.server.account.GroupCache;
 import com.google.gerrit.server.config.AllProjectsName;
+import com.google.gerrit.server.group.db.GroupDelta;
 import com.google.gerrit.server.group.db.GroupsUpdate;
-import com.google.gerrit.server.group.db.InternalGroupUpdate;
 import com.google.gerrit.server.index.group.GroupField;
 import com.google.gerrit.server.index.group.GroupIndex;
 import com.google.gerrit.server.index.group.GroupIndexCollection;
@@ -106,6 +106,8 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
 
   @Inject protected GroupIndexCollection indexes;
 
+  @Inject protected AuthRequest.Factory authRequestFactory;
+
   @Inject private GroupIndexCollection groupIndexes;
 
   protected LifecycleManager lifecycle;
@@ -114,6 +116,8 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
   protected CurrentUser user;
 
   protected abstract Injector createInjector();
+
+  protected void validateAssumptions() {}
 
   @Before
   public void setUpInjector() throws Exception {
@@ -124,6 +128,7 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
     lifecycle.start();
     initAfterLifecycleStart();
     setUpDatabase();
+    validateAssumptions();
   }
 
   @After
@@ -347,9 +352,8 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
     // update group in the database so that group index is stale
     String newDescription = "barY";
     AccountGroup.UUID groupUuid = AccountGroup.uuid(group1.id);
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setDescription(newDescription).build();
-    groupsUpdateProvider.get().updateGroupInNoteDb(groupUuid, groupUpdate);
+    GroupDelta groupDelta = GroupDelta.builder().setDescription(newDescription).build();
+    groupsUpdateProvider.get().updateGroupInNoteDb(groupUuid, groupDelta);
 
     assertQuery("description:" + group1.description, group1);
     assertQuery("description:" + newDescription);
@@ -395,9 +399,10 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
   private Account.Id createAccountOutsideRequestContext(
       String username, String fullName, String email, boolean active) throws Exception {
     try (ManualRequestContext ctx = oneOffRequestContext.open()) {
-      Account.Id id = accountManager.authenticate(AuthRequest.forUser(username)).getAccountId();
+      Account.Id id =
+          accountManager.authenticate(authRequestFactory.createForUser(username)).getAccountId();
       if (email != null) {
-        accountManager.link(id, AuthRequest.forEmail(email));
+        accountManager.link(id, authRequestFactory.createForEmail(email));
       }
       accountsUpdate
           .get()

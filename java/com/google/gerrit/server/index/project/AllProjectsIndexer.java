@@ -86,7 +86,7 @@ public class AllProjectsIndexer extends SiteIndexer<Project.NameKey, ProjectData
                   projectCache.evict(name);
                   ProjectData projectData =
                       projectCache.get(name).orElseThrow(illegalState(name)).toProjectData();
-                  if (isFirstInsertForEntry.equals(isFirstInsertForEntry.YES)) {
+                  if (isFirstInsertForEntry.equals(IsFirstInsertForEntry.YES)) {
                     index.insert(projectData);
                   } else {
                     index.replace(projectData);

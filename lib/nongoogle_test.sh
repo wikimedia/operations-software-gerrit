@@ -11,12 +11,10 @@ TMP=$(mktemp -d || mktemp -d -t /tmp/tmp.XXXXXX)
 grep 'name = "[^"]*"' ${bzl} | sed 's|^[^"]*"||g;s|".*$||g' | sort > $TMP/names
 
 cat << EOF > $TMP/want
+backward-codecs
 cglib-3_2
 commons-io
-docker-java-api
-docker-java-transport
 dropwizard-core
-duct-tape
 eddsa
 flogger
 flogger-log4j-backend
@@ -26,19 +24,18 @@ guice-assistedinject
 guice-library
 guice-servlet
 hamcrest
-httpasyncclient
-httpcore-nio
 impl-log4j
 j2objc
-jackson-annotations
-jackson-core
 jcl-over-slf4j
 jimfs
-jna
 jruby
 log-api
 log-ext
 log4j
+lucene-analyzers-common
+lucene-core
+lucene-misc
+lucene-queryparser
 mina-core
 nekohtml
 objenesis
@@ -47,13 +44,11 @@ soy
 sshd-mina
 sshd-osgi
 sshd-sftp
-testcontainers
 truth
 truth-java8-extension
 truth-liteproto-extension
 truth-proto-extension
 tukaani-xz
-visible-assertions
 xerces
 EOF
 

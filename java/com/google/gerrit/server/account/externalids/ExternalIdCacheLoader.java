@@ -17,6 +17,7 @@ package com.google.gerrit.server.account.externalids;
 import com.google.common.base.CharMatcher;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheLoader;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSetMultimap;
 import com.google.common.flogger.FluentLogger;
@@ -72,6 +73,7 @@ public class ExternalIdCacheLoader extends CacheLoader<ObjectId, AllExternalIds>
   private final Timer0 reloadDifferential;
   private final boolean enablePartialReloads;
   private final boolean isPersistentCache;
+  private final ExternalIdFactory externalIdFactory;
 
   @Inject
   ExternalIdCacheLoader(
@@ -81,7 +83,8 @@ public class ExternalIdCacheLoader extends CacheLoader<ObjectId, AllExternalIds>
       @Named(ExternalIdCacheImpl.CACHE_NAME)
           Provider<Cache<ObjectId, AllExternalIds>> externalIdCache,
       MetricMaker metricMaker,
-      @GerritServerConfig Config config) {
+      @GerritServerConfig Config config,
+      ExternalIdFactory externalIdFactory) {
     this.externalIdReader = externalIdReader;
     this.externalIdCache = externalIdCache;
     this.gitRepositoryManager = gitRepositoryManager;
@@ -92,7 +95,9 @@ public class ExternalIdCacheLoader extends CacheLoader<ObjectId, AllExternalIds>
             new Description("Total number of external ID cache reloads from Git.")
                 .setRate()
                 .setUnit("updates"),
-            Field.ofBoolean("partial", Metadata.Builder::partial).build());
+            Field.ofBoolean("partial", Metadata.Builder::partial)
+                .description("Whether the reload was partial.")
+                .build());
     this.reloadDifferential =
         metricMaker.newTimer(
             "notedb/external_id_partial_read_latency",
@@ -104,6 +109,7 @@ public class ExternalIdCacheLoader extends CacheLoader<ObjectId, AllExternalIds>
         config.getBoolean("cache", ExternalIdCacheImpl.CACHE_NAME, "enablePartialReloads", true);
     this.isPersistentCache =
         config.getInt("cache", ExternalIdCacheImpl.CACHE_NAME, "diskLimit", 0) > 0;
+    this.externalIdFactory = externalIdFactory;
   }
 
   @Override
@@ -215,12 +221,13 @@ public class ExternalIdCacheLoader extends CacheLoader<ObjectId, AllExternalIds>
    * @param additions map of name to blob ID for each external ID that should be added
    * @param removals set of name {@link ObjectId}s that should be removed
    */
-  private static AllExternalIds buildAllExternalIds(
+  private AllExternalIds buildAllExternalIds(
       Repository repo,
       AllExternalIds oldExternalIds,
       Map<ObjectId, ObjectId> additions,
       Set<ObjectId> removals)
       throws IOException {
+    ImmutableMap.Builder<ExternalId.Key, ExternalId> byKey = ImmutableMap.builder();
     ImmutableSetMultimap.Builder<Account.Id, ExternalId> byAccount = ImmutableSetMultimap.builder();
     ImmutableSetMultimap.Builder<String, ExternalId> byEmail = ImmutableSetMultimap.builder();
 
@@ -230,6 +237,7 @@ public class ExternalIdCacheLoader extends CacheLoader<ObjectId, AllExternalIds>
         continue;
       }
 
+      byKey.put(externalId.key(), externalId);
       byAccount.put(externalId.accountId(), externalId);
       if (externalId.email() != null) {
         byEmail.put(externalId.email(), externalId);
@@ -242,7 +250,7 @@ public class ExternalIdCacheLoader extends CacheLoader<ObjectId, AllExternalIds>
         ExternalId parsedExternalId;
         try {
           parsedExternalId =
-              ExternalId.parse(
+              externalIdFactory.parse(
                   nameToBlob.getKey().name(),
                   reader.open(nameToBlob.getValue()).getCachedBytes(),
                   nameToBlob.getValue());
@@ -252,13 +260,14 @@ public class ExternalIdCacheLoader extends CacheLoader<ObjectId, AllExternalIds>
           continue;
         }
 
+        byKey.put(parsedExternalId.key(), parsedExternalId);
         byAccount.put(parsedExternalId.accountId(), parsedExternalId);
         if (parsedExternalId.email() != null) {
           byEmail.put(parsedExternalId.email(), parsedExternalId);
         }
       }
     }
-    return new AutoValue_AllExternalIds(byAccount.build(), byEmail.build());
+    return new AutoValue_AllExternalIds(byKey.build(), byAccount.build(), byEmail.build());
   }
 
   private AllExternalIds reloadAllExternalIds(ObjectId notesRev)
@@ -269,7 +278,7 @@ public class ExternalIdCacheLoader extends CacheLoader<ObjectId, AllExternalIds>
             Metadata.builder().revision(notesRev.name()).build())) {
       ImmutableSet<ExternalId> externalIds = externalIdReader.all(notesRev);
       externalIds.forEach(ExternalId::checkThatBlobIdIsSet);
-      AllExternalIds allExternalIds = AllExternalIds.create(externalIds);
+      AllExternalIds allExternalIds = AllExternalIds.create(externalIds.stream());
       reloadCounter.increment(false);
       return allExternalIds;
     }

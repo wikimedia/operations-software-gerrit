@@ -22,6 +22,7 @@ import static java.util.stream.Collectors.toMap;
 import com.google.auto.value.AutoValue;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
+import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableMap;
@@ -33,10 +34,10 @@ import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.SetMultimap;
+import com.google.common.collect.Table;
 import com.google.common.flogger.FluentLogger;
 import com.google.common.primitives.Ints;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.common.UsedAt;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.AttentionSetUpdate;
 import com.google.gerrit.entities.Change;
@@ -51,12 +52,13 @@ import com.google.gerrit.entities.Project.NameKey;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.entities.RobotComment;
 import com.google.gerrit.entities.SubmitRecord;
+import com.google.gerrit.entities.SubmitRequirement;
+import com.google.gerrit.entities.SubmitRequirementResult;
 import com.google.gerrit.entities.SubmitTypeRecord;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.index.RefState;
-import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.CommentsUtil;
 import com.google.gerrit.server.CurrentUser;
@@ -66,12 +68,15 @@ import com.google.gerrit.server.ReviewerSet;
 import com.google.gerrit.server.ReviewerStatusUpdate;
 import com.google.gerrit.server.StarredChangesUtil;
 import com.google.gerrit.server.StarredChangesUtil.StarRef;
+import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.change.CommentThread;
 import com.google.gerrit.server.change.CommentThreads;
 import com.google.gerrit.server.change.MergeabilityCache;
 import com.google.gerrit.server.change.PureRevert;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.config.TrackingFooters;
+import com.google.gerrit.server.experiments.ExperimentFeatures;
+import com.google.gerrit.server.experiments.ExperimentFeaturesConstants;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.MergeUtil;
 import com.google.gerrit.server.notedb.ChangeNotes;
@@ -84,6 +89,9 @@ import com.google.gerrit.server.patch.PatchListNotAvailableException;
 import com.google.gerrit.server.project.NoSuchChangeException;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectState;
+import com.google.gerrit.server.project.SubmitRequirementsAdapter;
+import com.google.gerrit.server.project.SubmitRequirementsEvaluator;
+import com.google.gerrit.server.project.SubmitRequirementsUtil;
 import com.google.gerrit.server.project.SubmitRuleEvaluator;
 import com.google.gerrit.server.project.SubmitRuleOptions;
 import com.google.gerrit.server.util.time.TimeUtil;
@@ -101,6 +109,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -263,7 +272,7 @@ public class ChangeData {
     ChangeData cd =
         new ChangeData(
             null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-            null, project, id, null, null);
+            null, null, null, project, id, null, null);
     cd.currentPatchSet =
         PatchSet.builder()
             .id(PatchSet.id(id, currentPatchSetId))
@@ -281,6 +290,7 @@ public class ChangeData {
   private final ChangeMessagesUtil cmUtil;
   private final ChangeNotes.Factory notesFactory;
   private final CommentsUtil commentsUtil;
+  private final ExperimentFeatures experimentFeatures;
   private final GitRepositoryManager repoManager;
   private final MergeUtil.Factory mergeUtilFactory;
   private final MergeabilityCache mergeabilityCache;
@@ -289,6 +299,7 @@ public class ChangeData {
   private final ProjectCache projectCache;
   private final TrackingFooters trackingFooters;
   private final PureRevert pureRevert;
+  private final SubmitRequirementsEvaluator submitRequirementsEvaluator;
   private final SubmitRuleEvaluator.Factory submitRuleEvaluatorFactory;
 
   // Required assisted injected fields.
@@ -299,6 +310,8 @@ public class ChangeData {
 
   private final Map<SubmitRuleOptions, List<SubmitRecord>> submitRecords =
       Maps.newLinkedHashMapWithExpectedSize(1);
+
+  private Map<SubmitRequirement, SubmitRequirementResult> submitRequirements;
 
   private StorageConstraint storageConstraint = StorageConstraint.NOTEDB_ONLY;
   private Change change;
@@ -318,11 +331,20 @@ public class ChangeData {
   private Optional<ChangedLines> changedLines;
   private SubmitTypeRecord submitTypeRecord;
   private Boolean mergeable;
-  private Boolean merge;
   private Set<String> hashtags;
-  private Map<Account.Id, Ref> editsByUser;
+  /**
+   * Map from {@link com.google.gerrit.entities.Account.Id} to the tip of the edit ref for this
+   * change and a given user.
+   */
+  private Table<Account.Id, PatchSet.Id, ObjectId> editsByUser;
+
   private Set<Account.Id> reviewedBy;
-  private Map<Account.Id, Ref> draftsByUser;
+  /**
+   * Map from {@link com.google.gerrit.entities.Account.Id} to the tip of the draft comments ref for
+   * this change and the user.
+   */
+  private Map<Account.Id, ObjectId> draftsByUser;
+
   private ImmutableListMultimap<Account.Id, String> stars;
   private StarsOf starsOf;
   private ImmutableMap<Account.Id, StarRef> starRefs;
@@ -334,7 +356,7 @@ public class ChangeData {
   private PersonIdent author;
   private PersonIdent committer;
   private ImmutableSet<AttentionSetUpdate> attentionSet;
-  private int parentCount;
+  private Integer parentCount;
   private Integer unresolvedCommentCount;
   private Integer totalCommentCount;
   private LabelTypes labelTypes;
@@ -350,6 +372,7 @@ public class ChangeData {
       ChangeMessagesUtil cmUtil,
       ChangeNotes.Factory notesFactory,
       CommentsUtil commentsUtil,
+      ExperimentFeatures experimentFeatures,
       GitRepositoryManager repoManager,
       MergeUtil.Factory mergeUtilFactory,
       MergeabilityCache mergeabilityCache,
@@ -358,6 +381,7 @@ public class ChangeData {
       ProjectCache projectCache,
       TrackingFooters trackingFooters,
       PureRevert pureRevert,
+      SubmitRequirementsEvaluator submitRequirementsEvaluator,
       SubmitRuleEvaluator.Factory submitRuleEvaluatorFactory,
       @Assisted Project.NameKey project,
       @Assisted Change.Id id,
@@ -368,6 +392,7 @@ public class ChangeData {
     this.cmUtil = cmUtil;
     this.notesFactory = notesFactory;
     this.commentsUtil = commentsUtil;
+    this.experimentFeatures = experimentFeatures;
     this.repoManager = repoManager;
     this.mergeUtilFactory = mergeUtilFactory;
     this.mergeabilityCache = mergeabilityCache;
@@ -377,6 +402,7 @@ public class ChangeData {
     this.starredChangesUtil = starredChangesUtil;
     this.trackingFooters = trackingFooters;
     this.pureRevert = pureRevert;
+    this.submitRequirementsEvaluator = submitRequirementsEvaluator;
     this.submitRuleEvaluatorFactory = submitRuleEvaluatorFactory;
 
     this.project = project;
@@ -472,6 +498,26 @@ public class ChangeData {
     changedLines = Optional.of(new ChangedLines(insertions, deletions));
   }
 
+  public void setLinesInserted(int insertions) {
+    changedLines =
+        Optional.of(
+            new ChangedLines(
+                insertions,
+                changedLines != null && changedLines.isPresent()
+                    ? changedLines.get().deletions
+                    : -1));
+  }
+
+  public void setLinesDeleted(int deletions) {
+    changedLines =
+        Optional.of(
+            new ChangedLines(
+                changedLines != null && changedLines.isPresent()
+                    ? changedLines.get().insertions
+                    : -1,
+                deletions));
+  }
+
   public void setNoChangedLines() {
     changedLines = Optional.empty();
   }
@@ -559,8 +605,7 @@ public class ChangeData {
       } else {
         try {
           currentApprovals =
-              ImmutableList.copyOf(
-                  approvalsUtil.byPatchSet(notes(), c.currentPatchSetId(), null, null));
+              ImmutableList.copyOf(approvalsUtil.byPatchSet(notes(), c.currentPatchSetId()));
         } catch (StorageException e) {
           if (e.getCause() instanceof NoSuchChangeException) {
             currentApprovals = Collections.emptyList();
@@ -631,7 +676,6 @@ public class ChangeData {
       author = c.getAuthorIdent();
       committer = c.getCommitterIdent();
       parentCount = c.getParentCount();
-      merge = parentCount > 1;
     } catch (IOException e) {
       throw new StorageException(
           String.format(
@@ -691,7 +735,7 @@ public class ChangeData {
     this.attentionSet = attentionSet;
   }
 
-  /** @return patches for the change, in patch set ID order. */
+  /** Returns patches for the change, in patch set ID order. */
   public Collection<PatchSet> patchSets() {
     if (patchSets == null) {
       patchSets = psUtil.byChange(notes());
@@ -704,7 +748,7 @@ public class ChangeData {
     this.patchSets = patchSets;
   }
 
-  /** @return patch with the given ID, or null if it does not exist. */
+  /** Returns patch with the given ID, or null if it does not exist. */
   public PatchSet patchSet(PatchSet.Id psId) {
     if (currentPatchSet != null && currentPatchSet.id().equals(psId)) {
       return currentPatchSet;
@@ -718,8 +762,8 @@ public class ChangeData {
   }
 
   /**
-   * @return all patch set approvals for the change, keyed by ID, ordered by timestamp within each
-   *     patch set.
+   * Returns all patch set approvals for the change, keyed by ID, ordered by timestamp within each
+   * patch set.
    */
   public ListMultimap<PatchSet.Id, PatchSetApproval> approvals() {
     if (allApprovals == null) {
@@ -895,6 +939,57 @@ public class ChangeData {
     return messages;
   }
 
+  /**
+   * Get all evaluated submit requirements for this change, including those from parent projects.
+   * For closed changes, submit requirements are read from the change notes. For active changes,
+   * submit requirements are evaluated online.
+   *
+   * <p>For changes loaded from the index, the value will be set from index field {@link
+   * com.google.gerrit.server.index.change.ChangeField#STORED_SUBMIT_REQUIREMENTS}.
+   */
+  public Map<SubmitRequirement, SubmitRequirementResult> submitRequirements() {
+    if (!experimentFeatures.isFeatureEnabled(
+        ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS)) {
+      return Collections.emptyMap();
+    }
+    if (submitRequirements == null) {
+      if (!lazyload()) {
+        return Collections.emptyMap();
+      }
+      Change c = change();
+      if (c == null || !c.isClosed()) {
+        // Open changes: Evaluate submit requirements online.
+        submitRequirements =
+            submitRequirementsEvaluator.evaluateAllRequirements(this, /* includeLegacy= */ true);
+        return submitRequirements;
+      }
+      // Closed changes: Load submit requirement results from NoteDb.
+      Map<SubmitRequirement, SubmitRequirementResult> projectConfigRequirements =
+          notes().getSubmitRequirementsResult().stream()
+              .filter(r -> !r.isLegacy())
+              .collect(Collectors.toMap(r -> r.submitRequirement(), Function.identity()));
+      Map<SubmitRequirement, SubmitRequirementResult> legacyRequirements =
+          SubmitRequirementsAdapter.getLegacyRequirements(submitRuleEvaluatorFactory, this);
+      submitRequirements =
+          SubmitRequirementsUtil.mergeLegacyAndNonLegacyRequirements(
+              projectConfigRequirements, legacyRequirements);
+    }
+    return submitRequirements;
+  }
+
+  public void setSubmitRequirements(
+      Map<SubmitRequirement, SubmitRequirementResult> submitRequirements) {
+    if (!experimentFeatures.isFeatureEnabled(
+        ExperimentFeaturesConstants
+            .GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS_BACKFILLING_ON_DASHBOARD)) {
+      // Only set back values from the index if the experiment is not active. While the experiment
+      // is active, we want
+      // to compute SRs from scratch to ensure fresh results.
+      // TODO(ghareeb, hiesel): Remove this.
+      this.submitRequirements = submitRequirements;
+    }
+  }
+
   public List<SubmitRecord> submitRecords(SubmitRuleOptions options) {
     // If the change is not submitted yet, 'strict' and 'lenient' both have the same result. If the
     // change is submitted, SubmitRecord requested with 'strict' will contain just a single entry
@@ -987,36 +1082,39 @@ public class ChangeData {
 
   @Nullable
   public Boolean isMerge() {
-    if (merge == null) {
+    if (parentCount == null) {
       if (!loadCommitData()) {
         return null;
       }
     }
-    return merge;
+    return parentCount > 1;
   }
 
   public Set<Account.Id> editsByUser() {
-    return editRefs().keySet();
+    return editRefs().rowKeySet();
   }
 
-  public Map<Account.Id, Ref> editRefs() {
+  public Table<Account.Id, PatchSet.Id, ObjectId> editRefs() {
     if (editsByUser == null) {
       if (!lazyload()) {
-        return Collections.emptyMap();
+        return HashBasedTable.create();
       }
       Change c = change();
       if (c == null) {
-        return Collections.emptyMap();
+        return HashBasedTable.create();
       }
-      editsByUser = new HashMap<>();
+      editsByUser = HashBasedTable.create();
       Change.Id id = requireNonNull(change.getId());
       try (Repository repo = repoManager.openRepository(project())) {
         for (Ref ref : repo.getRefDatabase().getRefsByPrefix(RefNames.REFS_USERS)) {
-          String name = ref.getName().substring(RefNames.REFS_USERS.length());
-          if (id.equals(Change.Id.fromEditRefPart(name))) {
-            Account.Id accountId = Account.Id.fromRefPart(name);
+          if (!RefNames.isRefsEdit(ref.getName())) {
+            continue;
+          }
+          PatchSet.Id ps = PatchSet.Id.fromEditRef(ref.getName());
+          if (id.equals(ps.changeId())) {
+            Account.Id accountId = Account.Id.fromRef(ref.getName());
             if (accountId != null) {
-              editsByUser.put(accountId, ref);
+              editsByUser.put(accountId, ps, ref.getObjectId());
             }
           }
         }
@@ -1031,48 +1129,7 @@ public class ChangeData {
     return draftRefs().keySet();
   }
 
-  public Map<Account.Id, Ref> draftRefs() {
-    if (draftsByUser == null) {
-      if (!lazyload()) {
-        return Collections.emptyMap();
-      }
-      Change c = change();
-      if (c == null) {
-        return Collections.emptyMap();
-      }
-
-      draftsByUser = new HashMap<>();
-      for (Ref ref : commentsUtil.getDraftRefs(notes().getChangeId())) {
-        Account.Id account = Account.Id.fromRefSuffix(ref.getName());
-        if (account != null
-            // Double-check that any drafts exist for this user after
-            // filtering out zombies. If some but not all drafts in the ref
-            // were zombies, the returned Ref still includes those zombies;
-            // this is suboptimal, but is ok for the purposes of
-            // draftsByUser(), and easier than trying to rebuild the change at
-            // this point.
-            && !notes().getDraftComments(account, ref).isEmpty()) {
-          draftsByUser.put(account, ref);
-        }
-      }
-    }
-    return draftsByUser;
-  }
-
   public boolean isReviewedBy(Account.Id accountId) {
-    Collection<String> stars = stars(accountId);
-
-    PatchSet ps = currentPatchSet();
-    if (ps != null) {
-      if (stars.contains(StarredChangesUtil.REVIEWED_LABEL + "/" + ps.number())) {
-        return true;
-      }
-
-      if (stars.contains(StarredChangesUtil.UNREVIEWED_LABEL + "/" + ps.number())) {
-        return false;
-      }
-    }
-
     return reviewedBy().contains(accountId);
   }
 
@@ -1170,8 +1227,8 @@ public class ChangeData {
   }
 
   /**
-   * @return {@code null} if {@code revertOf} is {@code null}; true if the change is a pure revert;
-   *     false otherwise.
+   * Returns {@code null} if {@code revertOf} is {@code null}; true if the change is a pure revert;
+   * false otherwise.
    */
   @Nullable
   public Boolean isPureRevert() {
@@ -1213,7 +1270,14 @@ public class ChangeData {
       }
 
       ImmutableSetMultimap.Builder<NameKey, RefState> result = ImmutableSetMultimap.builder();
-      editRefs().values().forEach(r -> result.put(project, RefState.of(r)));
+      for (Table.Cell<Account.Id, PatchSet.Id, ObjectId> edit : editRefs().cellSet()) {
+        result.put(
+            project,
+            RefState.create(
+                RefNames.refsEdit(
+                    edit.getRowKey(), edit.getColumnKey().changeId(), edit.getColumnKey()),
+                edit.getValue()));
+      }
       starRefs().values().forEach(r -> result.put(allUsersName, RefState.of(r.ref())));
 
       // TODO: instantiating the notes is too much. We don't want to parse NoteDb, we just want the
@@ -1222,7 +1286,14 @@ public class ChangeData {
       notes().getRobotComments(); // Force loading robot comments.
       RobotCommentNotes robotNotes = notes().getRobotCommentNotes();
       result.put(project, RefState.create(robotNotes.getRefName(), robotNotes.getMetaId()));
-      draftRefs().values().forEach(r -> result.put(allUsersName, RefState.of(r)));
+      draftRefs()
+          .entrySet()
+          .forEach(
+              r ->
+                  result.put(
+                      allUsersName,
+                      RefState.create(
+                          RefNames.refsDraftComments(getId(), r.getKey()), r.getValue())));
 
       refStates = result.build();
     }
@@ -1230,14 +1301,35 @@ public class ChangeData {
     return refStates;
   }
 
-  @UsedAt(UsedAt.Project.GOOGLE)
-  public void setRefStates(Iterable<byte[]> refStates) {
-    // TODO(hanwen): remove Google use, and drop this method.
-    setRefStates(RefState.parseStates(refStates));
-  }
-
   public void setRefStates(ImmutableSetMultimap<Project.NameKey, RefState> refStates) {
     this.refStates = refStates;
+    if (draftsByUser == null) {
+      // Recover draft refs as well. Draft comments are represented as refs in the repository.
+      // ChangeData exposes #draftsByUser which just provides a Set of Account.Ids of users who
+      // have drafts comments on this change. Recovering this list from RefStates makes it
+      // available even on ChangeData instances retrieved from the index.
+      draftsByUser = new HashMap<>();
+      if (refStates.containsKey(allUsersName)) {
+        refStates.get(allUsersName).stream()
+            .filter(r -> RefNames.isRefsDraftsComments(r.ref()))
+            .forEach(r -> draftsByUser.put(Account.Id.fromRef(r.ref()), r.id()));
+      }
+    }
+    if (editsByUser == null) {
+      // Recover edit refs as well. Edits are represented as refs in the repository.
+      // ChangeData exposes #editsByUser which just provides a Set of Account.Ids of users who
+      // have edits on this change. Recovering this list from RefStates makes it available even
+      // on ChangeData instances retrieved from the index.
+      editsByUser = HashBasedTable.create();
+      if (refStates.containsKey(project())) {
+        refStates.get(project()).stream()
+            .filter(r -> RefNames.isRefsEdit(r.ref()))
+            .forEach(
+                r ->
+                    editsByUser.put(
+                        Account.Id.fromRef(r.ref()), PatchSet.Id.fromEditRef(r.ref()), r.id()));
+      }
+    }
   }
 
   public ImmutableList<byte[]> getRefStatePatterns() {
@@ -1268,5 +1360,33 @@ public class ChangeData {
     public abstract Account.Id accountId();
 
     public abstract ImmutableSortedSet<String> stars();
+  }
+
+  private Map<Account.Id, ObjectId> draftRefs() {
+    if (draftsByUser == null) {
+      if (!lazyload()) {
+        return Collections.emptyMap();
+      }
+      Change c = change();
+      if (c == null) {
+        return Collections.emptyMap();
+      }
+
+      draftsByUser = new HashMap<>();
+      for (Ref ref : commentsUtil.getDraftRefs(notes().getChangeId())) {
+        Account.Id account = Account.Id.fromRefSuffix(ref.getName());
+        if (account != null
+            // Double-check that any drafts exist for this user after
+            // filtering out zombies. If some but not all drafts in the ref
+            // were zombies, the returned Ref still includes those zombies;
+            // this is suboptimal, but is ok for the purposes of
+            // draftsByUser(), and easier than trying to rebuild the change at
+            // this point.
+            && !notes().getDraftComments(account, ref).isEmpty()) {
+          draftsByUser.put(account, ref.getObjectId());
+        }
+      }
+    }
+    return draftsByUser;
   }
 }

@@ -1,4 +1,4 @@
-// Copyright (C) 2017 The Android Open Source Project
+// Copyright (C) 2021 The Android Open Source Project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,34 +14,13 @@
 
 package com.google.gerrit.server.account.externalids;
 
-import com.google.gerrit.server.cache.CacheModule;
-import com.google.gerrit.server.cache.serialize.ObjectIdCacheSerializer;
-import com.google.inject.TypeLiteral;
-import java.time.Duration;
-import org.eclipse.jgit.lib.ObjectId;
+import com.google.inject.AbstractModule;
 
-public class ExternalIdModule extends CacheModule {
+public class ExternalIdModule extends AbstractModule {
   @Override
   protected void configure() {
-    persist(ExternalIdCacheImpl.CACHE_NAME, ObjectId.class, new TypeLiteral<AllExternalIds>() {})
-        // The cached data is potentially pretty large and we are always only interested
-        // in the latest value. However, due to a race condition, it is possible for different
-        // threads to observe different values of the meta ref, and hence request different keys
-        // from the cache. Extend the cache size by 1 to cover this case, but expire the extra
-        // object after a short period of time, since it may be a potentially large amount of
-        // memory.
-        // When loading a new value because the primary data advanced, we want to leverage the old
-        // cache state to recompute only what changed. This doesn't affect cache size though as
-        // Guava calls the loader first and evicts later on.
-        .maximumWeight(2)
-        .expireFromMemoryAfterAccess(Duration.ofMinutes(1))
-        .loader(ExternalIdCacheLoader.class)
-        .diskLimit(-1)
-        .version(1)
-        .keySerializer(ObjectIdCacheSerializer.INSTANCE)
-        .valueSerializer(AllExternalIds.Serializer.INSTANCE);
-
-    bind(ExternalIdCacheImpl.class);
-    bind(ExternalIdCache.class).to(ExternalIdCacheImpl.class);
+    bind(ExternalIdFactory.class);
+    bind(ExternalIdKeyFactory.class);
+    bind(PasswordVerifier.class);
   }
 }

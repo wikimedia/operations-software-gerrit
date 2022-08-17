@@ -31,6 +31,8 @@ import com.google.gerrit.server.git.MergeUtil;
 import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.update.RepoView;
 import com.google.inject.Inject;
+import com.google.inject.Provider;
+import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.Optional;
 import org.eclipse.jgit.dircache.DirCache;
@@ -70,6 +72,7 @@ import org.eclipse.jgit.transport.ReceiveCommand;
  * <p>The second point means that these commits are referenced from NoteDb. The consequence of this
  * is that these refs should never be deleted.
  */
+@Singleton
 public class AutoMerger {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
@@ -88,7 +91,7 @@ public class AutoMerger {
 
   private final Counter1<OperationType> counter;
   private final Timer1<OperationType> latency;
-  private final PersonIdent gerritIdent;
+  private final Provider<PersonIdent> gerritIdentProvider;
   private final boolean save;
   private final ThreeWayMergeStrategy configuredMergeStrategy;
 
@@ -96,21 +99,25 @@ public class AutoMerger {
   AutoMerger(
       MetricMaker metricMaker,
       @GerritServerConfig Config cfg,
-      @GerritPersonIdent PersonIdent gerritIdent) {
+      @GerritPersonIdent Provider<PersonIdent> gerritIdentProvider) {
+    Field<OperationType> operationTypeField =
+        Field.ofEnum(OperationType.class, "type", Metadata.Builder::operationName)
+            .description("The type of the operation (CACHE_LOAD, IN_MEMORY_WRITE, ON_DISK_WRITE).")
+            .build();
     this.counter =
         metricMaker.newCounter(
             "git/auto-merge/num_operations",
             new Description("AutoMerge computations").setRate().setUnit("auto merge computations"),
-            Field.ofEnum(OperationType.class, "type", Metadata.Builder::operationName).build());
+            operationTypeField);
     this.latency =
         metricMaker.newTimer(
             "git/auto-merge/latency",
             new Description("AutoMerge computation latency")
                 .setCumulative()
                 .setUnit("milliseconds"),
-            Field.ofEnum(OperationType.class, "type", Metadata.Builder::operationName).build());
+            operationTypeField);
     this.save = cacheAutomerge(cfg);
-    this.gerritIdent = gerritIdent;
+    this.gerritIdentProvider = gerritIdentProvider;
     this.configuredMergeStrategy = MergeUtil.getMergeStrategy(cfg);
   }
 
@@ -139,7 +146,7 @@ public class AutoMerger {
     }
     counter.increment(OperationType.IN_MEMORY_WRITE);
     logger.atInfo().log("Computing in-memory AutoMerge for " + merge.name());
-    try (Timer1.Context ignored = latency.start(OperationType.IN_MEMORY_WRITE)) {
+    try (Timer1.Context<OperationType> ignored = latency.start(OperationType.IN_MEMORY_WRITE)) {
       return rw.parseCommit(createAutoMergeCommit(repo.getConfig(), rw, ins, merge, mergeStrategy));
     }
   }
@@ -162,17 +169,47 @@ public class AutoMerger {
       return Optional.empty();
     }
 
+    if (repoView.getRef(RefNames.refsCacheAutomerge(maybeMergeCommit.name())).isPresent()) {
+      logger.atFine().log("AutoMerge alredy exists");
+      return Optional.empty();
+    }
+
+    return Optional.of(
+        new ReceiveCommand(
+            ObjectId.zeroId(),
+            createAutoMergeCommit(repoView, rw, ins, maybeMergeCommit),
+            RefNames.refsCacheAutomerge(maybeMergeCommit.name())));
+  }
+
+  /**
+   * Creates an auto merge commit for the provided merge commit.
+   *
+   * <p>Callers are expected to ensure that the provided commit indeed has 2 parents.
+   *
+   * @return An auto-merge commit. Headers of the returned RevCommit are parsed.
+   */
+  ObjectId createAutoMergeCommit(
+      RepoView repoView, RevWalk rw, ObjectInserter ins, RevCommit mergeCommit) throws IOException {
     ObjectId autoMerge;
-    try (Timer1.Context ignored = latency.start(OperationType.ON_DISK_WRITE)) {
+    try (Timer1.Context<OperationType> ignored = latency.start(OperationType.ON_DISK_WRITE)) {
       autoMerge =
           createAutoMergeCommit(
-              repoView.getConfig(), rw, ins, maybeMergeCommit, configuredMergeStrategy);
+              repoView.getConfig(), rw, ins, mergeCommit, configuredMergeStrategy);
     }
     counter.increment(OperationType.ON_DISK_WRITE);
     logger.atFine().log("Added %s AutoMerge ref update for commit", autoMerge.name());
-    return Optional.of(
-        new ReceiveCommand(
-            ObjectId.zeroId(), autoMerge, RefNames.refsCacheAutomerge(maybeMergeCommit.name())));
+    return autoMerge;
+  }
+
+  Optional<RevCommit> lookupCommit(Repository repo, RevWalk rw, String refName) throws IOException {
+    Ref ref = repo.getRefDatabase().exactRef(refName);
+    if (ref != null && ref.getObjectId() != null) {
+      RevObject obj = rw.parseAny(ref.getObjectId());
+      if (obj instanceof RevCommit) {
+        return Optional.of((RevCommit) obj);
+      }
+    }
+    return Optional.empty();
   }
 
   /**
@@ -219,7 +256,9 @@ public class AutoMerger {
     // the input commit, using the server name and timezone.
     PersonIdent ident =
         new PersonIdent(
-            gerritIdent, merge.getCommitterIdent().getWhen(), gerritIdent.getTimeZone());
+            gerritIdentProvider.get(),
+            merge.getCommitterIdent().getWhen(),
+            gerritIdentProvider.get().getTimeZone());
     CommitBuilder cb = new CommitBuilder();
     cb.setAuthor(ident);
     cb.setCommitter(ident);
@@ -239,18 +278,6 @@ public class AutoMerger {
     }
 
     return rw.parseCommit(ins.insert(cb));
-  }
-
-  private Optional<RevCommit> lookupCommit(Repository repo, RevWalk rw, String refName)
-      throws IOException {
-    Ref ref = repo.getRefDatabase().exactRef(refName);
-    if (ref != null && ref.getObjectId() != null) {
-      RevObject obj = rw.parseAny(ref.getObjectId());
-      if (obj instanceof RevCommit) {
-        return Optional.of((RevCommit) obj);
-      }
-    }
-    return Optional.empty();
   }
 
   private static class NonFlushingWrapper extends ObjectInserter.Filter {

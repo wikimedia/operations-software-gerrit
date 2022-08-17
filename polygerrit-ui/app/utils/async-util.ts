@@ -110,3 +110,23 @@ export function debounce(
   existingTask?.cancel();
   return new DelayedTask(callback, waitMs);
 }
+
+const THROTTLE_INTERVAL_MS = 500;
+
+/**
+ * Ensure only one call is made within THROTTLE_INTERVAL_MS and any call within
+ * this interval is ignored
+ */
+export function throttleWrap<T>(fn: (e: T) => void) {
+  let lastCall: number | undefined;
+  return (e: T) => {
+    if (
+      lastCall !== undefined &&
+      Date.now() - lastCall < THROTTLE_INTERVAL_MS
+    ) {
+      return;
+    }
+    lastCall = Date.now();
+    fn(e);
+  };
+}

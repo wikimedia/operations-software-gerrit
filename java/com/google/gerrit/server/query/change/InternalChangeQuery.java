@@ -61,15 +61,15 @@ public class InternalChangeQuery extends InternalQuery<ChangeData, InternalChang
   }
 
   private static Predicate<ChangeData> ref(BranchNameKey branch) {
-    return new RefPredicate(branch.branch());
+    return ChangePredicates.ref(branch.branch());
   }
 
   private static Predicate<ChangeData> change(Change.Key key) {
-    return new ChangeIdPredicate(key.get());
+    return ChangePredicates.idPrefix(key.get());
   }
 
   private static Predicate<ChangeData> project(Project.NameKey project) {
-    return new ProjectPredicate(project.get());
+    return ChangePredicates.project(project);
   }
 
   private static Predicate<ChangeData> status(Change.Status status) {
@@ -77,7 +77,7 @@ public class InternalChangeQuery extends InternalQuery<ChangeData, InternalChang
   }
 
   private static Predicate<ChangeData> commit(String id) {
-    return new CommitPredicate(id);
+    return ChangePredicates.commitPrefix(id);
   }
 
   private final ChangeData.Factory changeDataFactory;
@@ -99,8 +99,8 @@ public class InternalChangeQuery extends InternalQuery<ChangeData, InternalChang
     predicateFactory =
         (id) ->
             schema().useLegacyNumericFields()
-                ? new LegacyChangeIdPredicate(id)
-                : new LegacyChangeIdStrPredicate(id);
+                ? ChangePredicates.id(id)
+                : ChangePredicates.idStr(id);
   }
 
   public List<ChangeData> byKey(Change.Key key) {
@@ -108,7 +108,7 @@ public class InternalChangeQuery extends InternalQuery<ChangeData, InternalChang
   }
 
   public List<ChangeData> byKeyPrefix(String prefix) {
-    return query(new ChangeIdPredicate(prefix));
+    return query(ChangePredicates.idPrefix(prefix));
   }
 
   public List<ChangeData> byLegacyChangeId(Change.Id id) {
@@ -166,7 +166,7 @@ public class InternalChangeQuery extends InternalQuery<ChangeData, InternalChang
   Iterable<ChangeData> byCommitsOnBranchNotMerged(
       Repository repo, BranchNameKey branch, Collection<String> hashes, int indexLimit)
       throws IOException {
-    if (hashes.size() > indexLimit) {
+    if (hashes.size() > indexLimit || !indexes.getSearchIndex().isEnabled()) {
       return byCommitsOnBranchNotMergedFromDatabase(repo, branch, hashes);
     }
     return byCommitsOnBranchNotMergedFromIndex(branch, hashes);
@@ -226,7 +226,7 @@ public class InternalChangeQuery extends InternalQuery<ChangeData, InternalChang
   }
 
   public List<ChangeData> byTopicOpen(String topic) {
-    return query(and(new ExactTopicPredicate(topic), open()));
+    return query(and(ChangePredicates.exactTopic(topic), open()));
   }
 
   public List<ChangeData> byCommit(ObjectId id) {
@@ -270,14 +270,17 @@ public class InternalChangeQuery extends InternalQuery<ChangeData, InternalChang
 
   private static Predicate<ChangeData> byBranchCommitPred(
       String project, String branch, String hash) {
-    return and(new ProjectPredicate(project), new RefPredicate(branch), commit(hash));
+    return and(
+        ChangePredicates.project(Project.nameKey(project)),
+        ChangePredicates.ref(branch),
+        commit(hash));
   }
 
   public List<ChangeData> bySubmissionId(String cs) {
     if (Strings.isNullOrEmpty(cs)) {
       return Collections.emptyList();
     }
-    return query(new SubmissionIdPredicate(cs));
+    return query(ChangePredicates.submissionId(cs));
   }
 
   private static Predicate<ChangeData> byProjectGroupsPredicate(

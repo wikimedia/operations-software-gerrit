@@ -43,12 +43,16 @@ export class GrDiffModeSelector extends PolymerElement {
   @property({type: Boolean})
   saveOnChange = false;
 
-  private readonly restApiService = appContext.restApiService;
+  @property({type: Boolean})
+  showTooltipBelow = false;
 
-  /** @override */
-  connectedCallback() {
+  private readonly userService = appContext.userService;
+
+  override connectedCallback() {
     super.connectedCallback();
-    ((IronA11yAnnouncer as unknown) as FixIronA11yAnnouncer).requestAvailability();
+    (
+      IronA11yAnnouncer as unknown as FixIronA11yAnnouncer
+    ).requestAvailability();
   }
 
   /**
@@ -56,7 +60,7 @@ export class GrDiffModeSelector extends PolymerElement {
    */
   setMode(newMode: DiffViewMode) {
     if (this.saveOnChange && this.mode && this.mode !== newMode) {
-      this.restApiService.savePreferences({diff_view: newMode});
+      this.userService.updatePreferences({diff_view: newMode});
     }
     this.mode = newMode;
     let announcement;
@@ -70,19 +74,19 @@ export class GrDiffModeSelector extends PolymerElement {
     }
   }
 
-  _computeSideBySideSelected(mode: DiffViewMode) {
+  _computeSideBySideSelected(mode?: DiffViewMode) {
     return mode === DiffViewMode.SIDE_BY_SIDE ? 'selected' : '';
   }
 
-  _computeUnifiedSelected(mode: DiffViewMode) {
+  _computeUnifiedSelected(mode?: DiffViewMode) {
     return mode === DiffViewMode.UNIFIED ? 'selected' : '';
   }
 
-  isSideBySideSelected(mode: DiffViewMode) {
+  isSideBySideSelected(mode?: DiffViewMode) {
     return mode === DiffViewMode.SIDE_BY_SIDE;
   }
 
-  isUnifiedSelected(mode: DiffViewMode) {
+  isUnifiedSelected(mode?: DiffViewMode) {
     return mode === DiffViewMode.UNIFIED;
   }
 

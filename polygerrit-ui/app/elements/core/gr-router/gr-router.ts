@@ -33,9 +33,11 @@ import {
   GenerateUrlRepoViewParameters,
   GenerateUrlSearchViewParameters,
   GenerateWebLinksChangeParameters,
+  GenerateWebLinksEditParameters,
   GenerateWebLinksFileParameters,
   GenerateWebLinksParameters,
   GenerateWebLinksPatchsetParameters,
+  GenerateWebLinksResolveConflictsParameters,
   GerritNav,
   GroupDetailView,
   isGenerateUrlDiffViewParameters,
@@ -55,6 +57,7 @@ import {
   RepoName,
   ServerInfo,
   UrlEncodedCommentId,
+  ParentPatchSetNum,
 } from '../../../types/common';
 import {
   AppElement,
@@ -129,6 +132,8 @@ const RoutePattern = {
   // Matches /admin/repos/<repo>,commands.
   REPO_COMMANDS: /^\/admin\/repos\/(.+),commands$/,
 
+  REPO_GENERAL: /^\/admin\/repos\/(.+),general$/,
+
   // Matches /admin/repos/<repos>,access.
   REPO_ACCESS: /^\/admin\/repos\/(.+),access$/,
 
@@ -172,8 +177,8 @@ const RoutePattern = {
 
   CHANGE_ID_QUERY: /^\/id\/(I[0-9a-f]{40})$/,
 
-  // Matches /c/<changeNum>/[<basePatchNum>..][<patchNum>][/].
-  CHANGE_LEGACY: /^\/c\/(\d+)\/?(((-?\d+|edit)(\.\.(\d+|edit))?))?\/?$/,
+  // Matches /c/<changeNum>/[*][/].
+  CHANGE_LEGACY: /^\/c\/(\d+)\/?(.*)$/,
   CHANGE_NUMBER_LEGACY: /^\/(\d+)\/?/,
 
   // Matches
@@ -191,6 +196,10 @@ const RoutePattern = {
   // links generated in the emails.
   COMMENT: /^\/c\/(.+)\/\+\/(\d+)\/comment\/(\w+)\/?$/,
 
+  // Matches /c/<project>/+/<changeNum>/comments/<commentId>/
+  // Navigates to the commentId inside the Comments Tab
+  COMMENTS_TAB: /^\/c\/(.+)\/\+\/(\d+)\/comments(?:\/)?(\w+)?\/?$/,
+
   // Matches
   // /c/<project>/+/<changeNum>/[<basePatchNum|edit>..]<patchNum|edit>/<path>.
   // TODO(kaspern): Migrate completely to project based URLs, with backwards
@@ -201,14 +210,11 @@ const RoutePattern = {
   // Matches /c/<project>/+/<changeNum>/[<patchNum|edit>]/<path>,edit[#lineNum]
   DIFF_EDIT: /^\/c\/(.+)\/\+\/(\d+)\/(\d+|edit)\/(.+),edit(#\d+)?$/,
 
-  // Matches non-project-relative
-  // /c/<changeNum>/[<basePatchNum>..]<patchNum>/<path>.
-  DIFF_LEGACY: /^\/c\/(\d+)\/((-?\d+|edit)(\.\.(\d+|edit))?)\/(.+)/,
-
   // Matches diff routes using @\d+ to specify a file name (whether or not
   // the project name is included).
   // eslint-disable-next-line max-len
-  DIFF_LEGACY_LINENUM: /^\/c\/((.+)\/\+\/)?(\d+)(\/?((-?\d+|edit)(\.\.(\d+|edit))?\/(.+))?)@[ab]?\d+$/,
+  DIFF_LEGACY_LINENUM:
+    /^\/c\/((.+)\/\+\/)?(\d+)(\/?((-?\d+|edit)(\.\.(\d+|edit))?\/(.+))?)@[ab]?\d+$/,
 
   SETTINGS: /^\/settings\/?/,
   SETTINGS_LEGACY: /^\/settings\/VE\/(\S+)/,
@@ -256,10 +262,10 @@ const LEGACY_QUERY_SUFFIX_PATTERN = /,n,z$/;
 const REPO_TOKEN_PATTERN = /\${(project|repo)}/g;
 
 // Polymer makes `app` intrinsically defined on the window by virtue of the
-// custom element having the id "app", but it is made explicit here.
+// custom element having the id "pg-app", but it is made explicit here.
 // If you move this code to other place, please update comment about
 // gr-router and gr-app in the PolyGerritIndexHtml.soy file if needed
-const app = document.querySelector('#app');
+const app = document.querySelector('gr-app');
 if (!app) {
   console.info('No gr-app found (running tests)');
 }
@@ -277,18 +283,9 @@ export interface PageContextWithQueryMap extends PageContext {
 
 type QueryStringItem = [string, string]; // [key, value]
 
-type GenerateUrlLegacyChangeViewParameters = Omit<
-  GenerateUrlChangeViewParameters,
-  'project'
->;
-type GenerateUrlLegacyDiffViewParameters = Omit<
-  GenerateUrlDiffViewParameters,
-  'project'
->;
-
 interface PatchRangeParams {
-  patchNum?: PatchSetNum | null;
-  basePatchNum?: BasePatchSetNum | null;
+  patchNum?: PatchSetNum;
+  basePatchNum?: BasePatchSetNum;
 }
 
 @customElement('gr-router')
@@ -335,11 +332,11 @@ export class GrRouter extends PolymerElement {
     // explicitly in app, or by delegating to it.
 
     // It is expected that application has a GrAppElement(id=='app-element')
-    // at the document level or inside the shadow root of the GrApp (id='app')
+    // at the document level or inside the shadow root of the GrApp ('gr-app')
     // element.
     return (document.getElementById('app-element') ||
       document
-        .getElementById('app')!
+        .querySelector('gr-app')!
         .shadowRoot!.getElementById('app-element')!) as AppElement;
   }
 
@@ -382,12 +379,16 @@ export class GrRouter extends PolymerElement {
     params: GenerateWebLinksParameters
   ): GeneratedWebLink[] | GeneratedWebLink {
     switch (params.type) {
+      case WeblinkType.EDIT:
+        return this._getEditWebLinks(params);
       case WeblinkType.FILE:
         return this._getFileWebLinks(params);
       case WeblinkType.CHANGE:
         return this._getChangeWeblinks(params);
       case WeblinkType.PATCHSET:
         return this._getPatchSetWeblink(params);
+      case WeblinkType.RESOLVE_CONFLICTS:
+        return this._getResolveConflictsWeblinks(params);
       default:
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         assertNever(params, `Unsupported weblink ${(params as any).type}!`);
@@ -406,6 +407,12 @@ export class GrRouter extends PolymerElement {
     } else {
       return {name, url: weblink.url};
     }
+  }
+
+  _getResolveConflictsWeblinks(
+    params: GenerateWebLinksResolveConflictsParameters
+  ): GeneratedWebLink[] {
+    return params.options?.weblinks ?? [];
   }
 
   _firstCodeBrowserWeblink(weblinks: GeneratedWebLink[]) {
@@ -457,8 +464,12 @@ export class GrRouter extends PolymerElement {
     );
   }
 
+  _getEditWebLinks(params: GenerateWebLinksEditParameters): GeneratedWebLink[] {
+    return params.options?.weblinks ?? [];
+  }
+
   _getFileWebLinks(params: GenerateWebLinksFileParameters): GeneratedWebLink[] {
-    return params.options?.weblinks || [];
+    return params.options?.weblinks ?? [];
   }
 
   _generateSearchUrl(params: GenerateUrlSearchViewParameters) {
@@ -526,6 +537,9 @@ export class GrRouter extends PolymerElement {
     }
     if (params.messageHash) {
       suffix += params.messageHash;
+    }
+    if (params.commentId) {
+      suffix = suffix + `/comments/${params.commentId}`;
     }
     if (params.project) {
       const encodedProject = encodeURL(params.project, true);
@@ -615,7 +629,9 @@ export class GrRouter extends PolymerElement {
 
   _generateRepoUrl(params: GenerateUrlRepoViewParameters) {
     let url = `/admin/repos/${encodeURL(`${params.repoName}`, true)}`;
-    if (params.detail === RepoDetailView.ACCESS) {
+    if (params.detail === RepoDetailView.GENERAL) {
+      url += ',general';
+    } else if (params.detail === RepoDetailView.ACCESS) {
       url += ',access';
     } else if (params.detail === RepoDetailView.BRANCHES) {
       url += ',branches';
@@ -643,41 +659,10 @@ export class GrRouter extends PolymerElement {
     if (params.patchNum) {
       range = `${params.patchNum}`;
     }
-    if (params.basePatchNum) {
+    if (params.basePatchNum && params.basePatchNum !== ParentPatchSetNum) {
       range = `${params.basePatchNum}..${range}`;
     }
     return range;
-  }
-
-  /**
-   * Given a set of params without a project, gets the project from the rest
-   * API project lookup and then sets the app params.
-   */
-  _normalizeLegacyRouteParams(
-    params: Readonly<
-      | GenerateUrlLegacyChangeViewParameters
-      | GenerateUrlLegacyDiffViewParameters
-    >
-  ) {
-    if (!params.changeNum) {
-      return Promise.resolve();
-    }
-
-    return this.restApiService
-      .getFromProjectLookup(params.changeNum)
-      .then(project => {
-        // Show a 404 and terminate if the lookup request failed. Attempting
-        // to redirect after failing to get the project loops infinitely.
-        if (!project) {
-          this._show404();
-          return;
-        }
-        const updatedParams:
-          | GenerateUrlChangeViewParameters
-          | GenerateUrlDiffViewParameters = {...params, project};
-        this._normalizePatchRangeParams(updatedParams);
-        this._redirect(this._generateUrl(updatedParams));
-      });
   }
 
   /**
@@ -686,23 +671,22 @@ export class GrRouter extends PolymerElement {
    *
    */
   _normalizePatchRangeParams(params: PatchRangeParams) {
-    if (params.basePatchNum === null || params.basePatchNum === undefined) {
+    if (params.basePatchNum === undefined) {
       return false;
     }
-    const hasPatchNum =
-      params.patchNum !== null && params.patchNum !== undefined;
+    const hasPatchNum = params.patchNum !== undefined;
     let needsRedirect = false;
 
     // Diffing a patch against itself is invalid, so if the base and revision
     // patches are equal clear the base.
     if (params.patchNum && params.basePatchNum === params.patchNum) {
       needsRedirect = true;
-      params.basePatchNum = null;
+      params.basePatchNum = ParentPatchSetNum;
     } else if (!hasPatchNum) {
       // Regexes set basePatchNum instead of patchNum when only one is
       // specified. Redirect is not needed in this case.
       params.patchNum = params.basePatchNum;
-      params.basePatchNum = null;
+      params.basePatchNum = ParentPatchSetNum;
     }
     return needsRedirect;
   }
@@ -967,6 +951,8 @@ export class GrRouter extends PolymerElement {
       true
     );
 
+    this._mapRoute(RoutePattern.REPO_GENERAL, '_handleRepoGeneralRoute');
+
     this._mapRoute(RoutePattern.REPO_ACCESS, '_handleRepoAccessRoute');
 
     this._mapRoute(RoutePattern.REPO_DASHBOARDS, '_handleRepoDashboardsRoute');
@@ -1062,13 +1048,13 @@ export class GrRouter extends PolymerElement {
 
     this._mapRoute(RoutePattern.COMMENT, '_handleCommentRoute');
 
+    this._mapRoute(RoutePattern.COMMENTS_TAB, '_handleCommentsRoute');
+
     this._mapRoute(RoutePattern.DIFF, '_handleDiffRoute');
 
     this._mapRoute(RoutePattern.CHANGE, '_handleChangeRoute');
 
     this._mapRoute(RoutePattern.CHANGE_LEGACY, '_handleChangeLegacyRoute');
-
-    this._mapRoute(RoutePattern.DIFF_LEGACY, '_handleDiffLegacyRoute');
 
     this._mapRoute(RoutePattern.AGREEMENTS, '_handleAgreementsRoute', true);
 
@@ -1378,6 +1364,16 @@ export class GrRouter extends PolymerElement {
     this.reporting.setRepoName(repo);
   }
 
+  _handleRepoGeneralRoute(data: PageContextWithQueryMap) {
+    const repo = data.params[0] as RepoName;
+    this._setParams({
+      view: GerritView.REPO,
+      detail: RepoDetailView.GENERAL,
+      repo,
+    });
+    this.reporting.setRepoName(repo);
+  }
+
   _handleRepoAccessRoute(data: PageContextWithQueryMap) {
     const repo = data.params[0] as RepoName;
     this._setParams({
@@ -1496,12 +1492,7 @@ export class GrRouter extends PolymerElement {
   }
 
   _handleRepoRoute(data: PageContextWithQueryMap) {
-    const repo = data.params[0] as RepoName;
-    this._setParams({
-      view: GerritView.REPO,
-      repo,
-    });
-    this.reporting.setRepoName(repo);
+    this._redirect(data.path + ',general');
   }
 
   _handlePluginListOffsetRoute(data: PageContextWithQueryMap) {
@@ -1594,6 +1585,19 @@ export class GrRouter extends PolymerElement {
     this._redirectOrNavigate(params);
   }
 
+  _handleCommentsRoute(ctx: PageContextWithQueryMap) {
+    const changeNum = Number(ctx.params[1]) as NumericChangeId;
+    const params: GenerateUrlChangeViewParameters = {
+      project: ctx.params[0] as RepoName,
+      changeNum,
+      commentId: ctx.params[2] as UrlEncodedCommentId,
+      view: GerritView.CHANGE,
+    };
+    this.reporting.setRepoName(params.project);
+    this.reporting.setChangeId(changeNum);
+    this._redirectOrNavigate(params);
+  }
+
   _handleDiffRoute(ctx: PageContextWithQueryMap) {
     const changeNum = Number(ctx.params[1]) as NumericChangeId;
     // Parameter order is based on the regex group number matched.
@@ -1616,39 +1620,24 @@ export class GrRouter extends PolymerElement {
   }
 
   _handleChangeLegacyRoute(ctx: PageContextWithQueryMap) {
-    // Parameter order is based on the regex group number matched.
-    const params: GenerateUrlLegacyChangeViewParameters = {
-      changeNum: Number(ctx.params[0]) as NumericChangeId,
-      basePatchNum: convertToPatchSetNum(ctx.params[3]) as BasePatchSetNum,
-      patchNum: convertToPatchSetNum(ctx.params[5]),
-      view: GerritView.CHANGE,
-      querystring: ctx.querystring,
-    };
-
-    this._normalizeLegacyRouteParams(params);
+    const changeNum = Number(ctx.params[0]) as NumericChangeId;
+    if (!changeNum) {
+      this._show404();
+      return;
+    }
+    this.restApiService.getFromProjectLookup(changeNum).then(project => {
+      // Show a 404 and terminate if the lookup request failed. Attempting
+      // to redirect after failing to get the project loops infinitely.
+      if (!project) {
+        this._show404();
+        return;
+      }
+      this._redirect(`/c/${project}/+/${changeNum}/${ctx.params[1]}`);
+    });
   }
 
   _handleLegacyLinenum(ctx: PageContextWithQueryMap) {
     this._redirect(ctx.path.replace(LEGACY_LINENUM_PATTERN, '#$1'));
-  }
-
-  _handleDiffLegacyRoute(ctx: PageContextWithQueryMap) {
-    // Parameter order is based on the regex group number matched.
-    const params: GenerateUrlLegacyDiffViewParameters = {
-      changeNum: Number(ctx.params[0]) as NumericChangeId,
-      basePatchNum: convertToPatchSetNum(ctx.params[2]) as BasePatchSetNum,
-      patchNum: convertToPatchSetNum(ctx.params[4]),
-      path: ctx.params[5],
-      view: GerritView.DIFF,
-    };
-
-    const address = this._parseLineAddress(ctx.hash);
-    if (address) {
-      params.leftSide = address.leftSide;
-      params.lineNum = address.lineNum;
-    }
-
-    this._normalizeLegacyRouteParams(params);
   }
 
   _handleDiffEditRoute(ctx: PageContextWithQueryMap) {
@@ -1703,7 +1692,7 @@ export class GrRouter extends PolymerElement {
   _handleNewAgreementsRoute(data: PageContextWithQueryMap) {
     data.params['view'] = GerritView.AGREEMENTS;
     // TODO(TS): create valid object
-    this._setParams((data.params as unknown) as AppElementAgreementParam);
+    this._setParams(data.params as unknown as AppElementAgreementParam);
   }
 
   _handleSettingsLegacyRoute(data: PageContextWithQueryMap) {

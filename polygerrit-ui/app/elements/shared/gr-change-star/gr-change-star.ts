@@ -20,8 +20,12 @@ import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-change-star_html';
 import {customElement, property} from '@polymer/decorators';
 import {ChangeInfo} from '../../../types/common';
-import {KeyboardShortcutMixin} from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
 import {fireAlert} from '../../../utils/event-util';
+import {
+  Shortcut,
+  ShortcutSection,
+} from '../../../services/shortcuts/shortcuts-config';
+import {appContext} from '../../../services/app-context';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -35,7 +39,7 @@ export interface ChangeStarToggleStarDetail {
 }
 
 @customElement('gr-change-star')
-export class GrChangeStar extends KeyboardShortcutMixin(PolymerElement) {
+export class GrChangeStar extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
@@ -49,16 +53,18 @@ export class GrChangeStar extends KeyboardShortcutMixin(PolymerElement) {
   @property({type: Object, notify: true})
   change?: ChangeInfo;
 
-  _computeStarClass(starred: boolean) {
+  private readonly shortcuts = appContext.shortcutsService;
+
+  _computeStarClass(starred?: boolean) {
     return starred ? 'active' : '';
   }
 
-  _computeStarIcon(starred: boolean) {
+  _computeStarIcon(starred?: boolean) {
     // Hollow star is used to indicate inactive state.
     return `gr-icons:star${starred ? '' : '-border'}`;
   }
 
-  _computeAriaLabel(starred: boolean) {
+  _computeAriaLabel(starred?: boolean) {
     return starred ? 'Unstar this change' : 'Star this change';
   }
 
@@ -83,5 +89,9 @@ export class GrChangeStar extends KeyboardShortcutMixin(PolymerElement) {
         detail,
       })
     );
+  }
+
+  createTitle(shortcutName: Shortcut, section: ShortcutSection) {
+    return this.shortcuts.createTitle(shortcutName, section);
   }
 }

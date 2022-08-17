@@ -3,8 +3,7 @@
 
 == Overview
 
-Starting from 2.15 Gerrit accounts are fully stored in
-link:note-db.html[NoteDb].
+Gerrit accounts are stored in link:note-db.html[NoteDb].
 
 The account data consists of a sequence number (account ID), account
 properties (full name, display name, preferred email, registration
@@ -112,8 +111,8 @@ e.g.:
 Accessing the account data in Git is not fast enough for account
 queries, since it requires accessing all user branches and parsing
 all files in each of them. To overcome this Gerrit has a secondary
-index for accounts. The account index is either based on
-link:config-gerrit.html#index.type[Lucene or Elasticsearch].
+index for accounts. The account index is based on
+link:config-gerrit.html#index.type[Lucene].
 
 Via the link:rest-api-accounts.html#query-account[Query Account] REST
 endpoint link:user-search-accounts.html[generic account queries] are
@@ -297,6 +296,13 @@ As note key the SHA-1 of the external ID key is used, for example the key
 for the external ID `username:jdoe` is `e0b751ae90ef039f320e097d7d212f490e933706`.
 This ensures that an external ID is used only once (e.g. an external ID can
 never be assigned to multiple accounts at a point in time).
+
+By default, the SHA-1 sum is computed preserving the case of the external ID. If
+auth.userNameCaseInsensitive` is set to `true`, the SHA-1 sum of external IDs
+in the `gerrit:` and `username:` schemes are computed from the all lowercase
+external ID. This enables case insensitive username handling. The case of the
+external ID is however preserved by using the original capitalization in the
+note content.
 
 The following commands show how to find the SHA-1 of an external ID:
 

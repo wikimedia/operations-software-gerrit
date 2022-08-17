@@ -30,10 +30,8 @@ import {
   registerTestCleanup,
   addIronOverlayBackdropStyleEl,
   removeIronOverlayBackdropStyleEl,
-  TestKeyboardShortcutBinder,
+  removeThemeStyles,
 } from './test-utils';
-import {_testOnly_getShortcutManagerInstance} from '../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
-import sinon from 'sinon/pkg/sinon-esm';
 import {safeTypesBridge} from '../utils/safe-types-util';
 import {_testOnly_initGerritPluginApi} from '../elements/shared/gr-js-api-interface/gr-gerrit';
 import {initGlobalVariables} from '../elements/gr-app-global-var-init';
@@ -44,6 +42,9 @@ import {
 } from '../scripts/polymer-resin-install';
 import {_testOnly_allTasks} from '../utils/async-util';
 import {cleanUpStorage} from '../services/storage/gr-storage_mock';
+import {updatePreferences} from '../services/user/user-model';
+import {createDefaultPreferences} from '../constants/constants';
+import {appContext} from '../services/app-context';
 
 declare global {
   interface Window {
@@ -95,20 +96,18 @@ let testSetupTimestampMs = 0;
 
 setup(() => {
   testSetupTimestampMs = new Date().getTime();
-  window.Gerrit = {};
-  initGlobalVariables();
   addIronOverlayBackdropStyleEl();
 
   // If the following asserts fails - then window.stub is
   // overwritten by some other code.
   assert.equal(getCleanupsCount(), 0);
+  _testOnlyInitAppContext();
   // The following calls is nessecary to avoid influence of previously executed
   // tests.
-  TestKeyboardShortcutBinder.push();
-  _testOnlyInitAppContext();
+  initGlobalVariables();
   _testOnly_initGerritPluginApi();
-  const mgr = _testOnly_getShortcutManagerInstance();
-  assert.isTrue(mgr._testOnly_isEmpty());
+  const shortcuts = appContext.shortcutsService;
+  assert.isTrue(shortcuts._testOnly_isEmpty());
   const selection = document.getSelection();
   if (selection) {
     selection.removeAllRanges();
@@ -197,11 +196,13 @@ function cancelAllTasks() {
 teardown(() => {
   sinon.restore();
   cleanupTestUtils();
-  TestKeyboardShortcutBinder.pop();
   checkGlobalSpace();
   removeIronOverlayBackdropStyleEl();
+  removeThemeStyles();
   cancelAllTasks();
   cleanUpStorage();
+  // Reset state
+  updatePreferences(createDefaultPreferences());
   const testTeardownTimestampMs = new Date().getTime();
   const elapsedMs = testTeardownTimestampMs - testSetupTimestampMs;
   if (elapsedMs > 1000) {

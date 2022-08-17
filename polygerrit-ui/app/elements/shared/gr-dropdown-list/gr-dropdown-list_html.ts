@@ -78,9 +78,8 @@ export const htmlTemplate = html`
       width: 100%;
     }
     gr-button {
-      --gr-button: {
-        @apply --trigger-style;
-      }
+      font-family: var(--trigger-style-font-family);
+      --gr-button-text-color: var(--trigger-style-text-color);
     }
     gr-date-formatter {
       color: var(--deemphasized-text-color);
@@ -123,11 +122,12 @@ export const htmlTemplate = html`
     class="dropdown-trigger"
     on-click="_showDropdownTapHandler"
     slot="dropdown-trigger"
+    no-uppercase
   >
     <span id="triggerText">[[text]]</span>
     <gr-copy-clipboard
       hidden="[[!showCopyForTriggerText]]"
-      hide-input=""
+      hideInput=""
       text="[[text]]"
     ></gr-copy-clipboard>
   </gr-button>
@@ -173,7 +173,10 @@ export const htmlTemplate = html`
   <gr-select bind-value="{{value}}">
     <select>
       <template is="dom-repeat" items="[[items]]">
-        <option disabled$="[[item.disabled]]" value="[[item.value]]">
+        <option
+          disabled$="[[item.disabled]]"
+          value="[[computeStringValue(item.value)]]"
+        >
           [[_computeMobileText(item)]]
         </option>
       </template>

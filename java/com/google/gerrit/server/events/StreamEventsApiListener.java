@@ -23,7 +23,6 @@ import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.entities.LabelType;
 import com.google.gerrit.entities.LabelTypes;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.Project;
@@ -90,7 +89,7 @@ public class StreamEventsApiListener
         VoteDeletedListener {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
-  public static class Module extends AbstractModule {
+  public static class StreamEventsApiListenerModule extends AbstractModule {
     @Override
     protected void configure() {
       DynamicSet.bind(binder(), AssigneeChangedListener.class).to(StreamEventsApiListener.class);
@@ -202,10 +201,7 @@ public class StreamEventsApiListener
         a.oldValue = Short.toString(oldApprovals.get(approval.getKey()));
       }
     }
-    LabelType lt = labelTypes.byLabel(approval.getKey());
-    if (lt != null) {
-      a.description = lt.getName();
-    }
+    labelTypes.byLabel(approval.getKey()).ifPresent(lt -> a.description = lt.getName());
     if (approval.getValue() != null) {
       a.value = Short.toString(approval.getValue());
     }

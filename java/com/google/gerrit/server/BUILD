@@ -55,6 +55,7 @@ java_library(
         "//java/com/google/gerrit/proto",
         "//java/com/google/gerrit/server/cache/serialize",
         "//java/com/google/gerrit/server/cache/serialize/entities",
+        "//java/com/google/gerrit/server/cancellation",
         "//java/com/google/gerrit/server/data",
         "//java/com/google/gerrit/server/git/receive:ref_cache",
         "//java/com/google/gerrit/server/ioutil",
@@ -131,6 +132,7 @@ java_library(
         "//lib/ow2:ow2-asm-util",
         "//lib/prolog:runtime",
         "//proto:cache_java_proto",
+        "//proto:entities_java_proto",
     ],
 )
 

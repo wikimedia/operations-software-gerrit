@@ -17,7 +17,7 @@ package com.google.gerrit.server.account.externalids;
 import static com.google.common.truth.Truth.assertThat;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyZeroInteractions;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
@@ -28,6 +28,7 @@ import com.google.gerrit.metrics.DisabledMetricMaker;
 import com.google.gerrit.server.account.externalids.testing.ExternalIdTestUtil;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.config.AllUsersNameProvider;
+import com.google.gerrit.server.config.AuthConfig;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
@@ -44,6 +45,7 @@ import org.eclipse.jgit.treewalk.TreeWalk;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.MockitoJUnitRunner;
 
@@ -57,11 +59,26 @@ public class ExternalIDCacheLoaderTest {
   private ExternalIdReader externalIdReader;
   private ExternalIdReader externalIdReaderSpy;
 
+  private ExternalIdFactory externalIdFactory;
+  @Mock private AuthConfig authConfig;
+
   @Before
   public void setUp() throws Exception {
+    externalIdFactory =
+        new ExternalIdFactory(
+            new ExternalIdKeyFactory(
+                new ExternalIdKeyFactory.Config() {
+                  @Override
+                  public boolean isUserNameCaseInsensitive() {
+                    return false;
+                  }
+                }),
+            authConfig);
     externalIdCache = CacheBuilder.newBuilder().build();
     repoManager.createRepository(ALL_USERS).close();
-    externalIdReader = new ExternalIdReader(repoManager, ALL_USERS, new DisabledMetricMaker());
+    externalIdReader =
+        new ExternalIdReader(
+            repoManager, ALL_USERS, new DisabledMetricMaker(), externalIdFactory, authConfig);
     externalIdReaderSpy = Mockito.spy(externalIdReader);
     loader = createLoader(true);
   }
@@ -80,7 +97,7 @@ public class ExternalIDCacheLoaderTest {
     externalIdCache.put(firstState, allFromGit(firstState));
 
     assertThat(loader.load(head)).isEqualTo(allFromGit(head));
-    verifyZeroInteractions(externalIdReaderSpy);
+    verifyNoInteractions(externalIdReaderSpy);
   }
 
   @Test
@@ -92,7 +109,7 @@ public class ExternalIDCacheLoaderTest {
     externalIdCache.put(firstState, allFromGit(firstState));
 
     assertThat(loader.load(head)).isEqualTo(allFromGit(head));
-    verifyZeroInteractions(externalIdReaderSpy);
+    verifyNoInteractions(externalIdReaderSpy);
   }
 
   @Test
@@ -142,7 +159,7 @@ public class ExternalIDCacheLoaderTest {
     externalIdCache.put(firstState, allFromGit(firstState));
 
     assertThat(loader.load(head)).isEqualTo(allFromGit(head));
-    verifyZeroInteractions(externalIdReaderSpy);
+    verifyNoInteractions(externalIdReaderSpy);
   }
 
   @Test
@@ -151,12 +168,13 @@ public class ExternalIDCacheLoaderTest {
     ObjectId head =
         modifyExternalId(
             externalId(1, 1),
-            ExternalId.create("fooschema", "bar1", Account.id(1), "foo@bar.com", "password"));
+            externalIdFactory.create(
+                "fooschema", "bar1", Account.id(1), "foo@bar.com", "password"));
     assertThat(allFromGit(head).byAccount().size()).isEqualTo(1);
     externalIdCache.put(firstState, allFromGit(firstState));
 
     assertThat(loader.load(head)).isEqualTo(allFromGit(head));
-    verifyZeroInteractions(externalIdReaderSpy);
+    verifyNoInteractions(externalIdReaderSpy);
   }
 
   @Test
@@ -173,7 +191,7 @@ public class ExternalIDCacheLoaderTest {
     externalIdCache.put(firstState, allFromGit(firstState));
 
     assertThat(loader.load(head)).isEqualTo(allFromGit(head));
-    verifyZeroInteractions(externalIdReaderSpy);
+    verifyNoInteractions(externalIdReaderSpy);
   }
 
   @Test
@@ -186,7 +204,7 @@ public class ExternalIDCacheLoaderTest {
     externalIdCache.put(oldState, allFromGit(oldState));
 
     assertThat(loader.load(head)).isEqualTo(allFromGit(head));
-    verifyZeroInteractions(externalIdReaderSpy);
+    verifyNoInteractions(externalIdReaderSpy);
   }
 
   @Test
@@ -200,7 +218,7 @@ public class ExternalIDCacheLoaderTest {
     externalIdCache.put(oldState, allFromGit(oldState));
 
     assertThat(loader.load(head)).isEqualTo(allFromGit(head));
-    verifyZeroInteractions(externalIdReaderSpy);
+    verifyNoInteractions(externalIdReaderSpy);
   }
 
   private ExternalIdCacheLoader createLoader(boolean allowPartial) {
@@ -212,11 +230,12 @@ public class ExternalIDCacheLoaderTest {
         externalIdReaderSpy,
         Providers.of(externalIdCache),
         new DisabledMetricMaker(),
-        cfg);
+        cfg,
+        externalIdFactory);
   }
 
   private AllExternalIds allFromGit(ObjectId revision) throws Exception {
-    return AllExternalIds.create(externalIdReader.all(revision));
+    return AllExternalIds.create(externalIdReader.all(revision).stream());
   }
 
   private ObjectId inserExternalIds(int numberOfIdsToInsert) throws Exception {
@@ -256,13 +275,14 @@ public class ExternalIDCacheLoaderTest {
   }
 
   private ExternalId externalId(int key, int accountId) {
-    return ExternalId.create("fooschema", "bar" + key, Account.id(accountId));
+    return externalIdFactory.create("fooschema", "bar" + key, Account.id(accountId));
   }
 
   private ObjectId performExternalIdUpdate(Consumer<ExternalIdNotes> update) throws Exception {
     try (Repository repo = repoManager.openRepository(ALL_USERS)) {
       PersonIdent updater = new PersonIdent("Foo bar", "foo@bar.com");
-      ExternalIdNotes extIdNotes = ExternalIdNotes.loadNoCacheUpdate(ALL_USERS, repo);
+      ExternalIdNotes extIdNotes =
+          ExternalIdNotes.loadNoCacheUpdate(ALL_USERS, repo, externalIdFactory, false);
       update.accept(extIdNotes);
       try (MetaDataUpdate metaDataUpdate =
           new MetaDataUpdate(GitReferenceUpdated.DISABLED, null, repo)) {

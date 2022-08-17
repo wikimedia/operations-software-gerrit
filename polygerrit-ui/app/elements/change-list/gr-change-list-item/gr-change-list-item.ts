@@ -28,7 +28,6 @@ import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../plugins/gr-endpoint-param/gr-endpoint-param';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-change-list-item_html';
-import {ChangeTableMixin} from '../../../mixins/gr-change-table-mixin/gr-change-table-mixin';
 import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {getDisplayName} from '../../../utils/display-name-util';
 import {getPluginEndpoints} from '../../shared/gr-js-api-interface/gr-plugin-endpoints';
@@ -48,6 +47,7 @@ import {
 } from '../../../types/common';
 import {hasOwnProperty} from '../../../utils/common-util';
 import {pluralize} from '../../../utils/string-util';
+import {ChangeStates} from '../../shared/gr-change-status/gr-change-status';
 
 enum ChangeSize {
   XS = 10,
@@ -76,7 +76,7 @@ export interface ChangeListToggleReviewedDetail {
 const PRIMARY_REVIEWERS_COUNT = 2;
 
 @customElement('gr-change-list-item')
-export class GrChangeListItem extends ChangeTableMixin(PolymerElement) {
+export class GrChangeListItem extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
@@ -105,7 +105,7 @@ export class GrChangeListItem extends ChangeTableMixin(PolymerElement) {
   changeURL?: string;
 
   @property({type: Array, computed: '_changeStatuses(change)'})
-  statuses?: string[];
+  statuses?: ChangeStates[];
 
   @property({type: Boolean})
   showStar = false;
@@ -121,8 +121,7 @@ export class GrChangeListItem extends ChangeTableMixin(PolymerElement) {
 
   reporting: ReportingService = appContext.reportingService;
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     getPluginLoader()
       .awaitPluginsLoaded()
@@ -285,7 +284,7 @@ export class GrChangeListItem extends ChangeTableMixin(PolymerElement) {
    * @param truncate whether or not the project name should be
    * truncated. If this value is truthy, the name will be truncated.
    */
-  _computeRepoDisplay(change: ChangeInfo | undefined, truncate: boolean) {
+  _computeRepoDisplay(change?: ChangeInfo) {
     if (!change?.project) {
       return '';
     }
@@ -293,7 +292,19 @@ export class GrChangeListItem extends ChangeTableMixin(PolymerElement) {
     if (change.internalHost) {
       str += change.internalHost + '/';
     }
-    str += truncate ? truncatePath(change.project, 2) : change.project;
+    str += change.project;
+    return str;
+  }
+
+  _computeTruncatedRepoDisplay(change?: ChangeInfo) {
+    if (!change?.project) {
+      return '';
+    }
+    let str = '';
+    if (change.internalHost) {
+      str += change.internalHost + '/';
+    }
+    str += truncatePath(change.project, 2);
     return str;
   }
 
@@ -351,10 +362,7 @@ export class GrChangeListItem extends ChangeTableMixin(PolymerElement) {
     return this._computeAdditionalReviewers(change).length;
   }
 
-  _computeAdditionalReviewersTitle(
-    change: ChangeInfo | undefined,
-    config: ServerInfo
-  ) {
+  _computeAdditionalReviewersTitle(change?: ChangeInfo, config?: ServerInfo) {
     if (!change || !config) return '';
     return this._computeAdditionalReviewers(change)
       .map(user => getDisplayName(config, user, true))
@@ -390,11 +398,18 @@ export class GrChangeListItem extends ChangeTableMixin(PolymerElement) {
   }
 
   _computeWaiting(
-    account?: AccountInfo,
-    change?: ChangeInfo
+    account?: AccountInfo | null,
+    change?: ChangeInfo | null
   ): Timestamp | undefined {
     if (!account?._account_id || !change?.attention_set) return undefined;
     return change?.attention_set[account._account_id]?.last_update;
+  }
+
+  _computeIsColumnHidden(columnToCheck?: string, columnsToDisplay?: string[]) {
+    if (!columnsToDisplay || !columnToCheck) {
+      return false;
+    }
+    return !columnsToDisplay.includes(columnToCheck);
   }
 
   toggleReviewed() {
@@ -412,6 +427,11 @@ export class GrChangeListItem extends ChangeTableMixin(PolymerElement) {
         detail,
       })
     );
+  }
+
+  _formatDate(date: Timestamp | undefined): string | undefined {
+    if (!date) return undefined;
+    return date.toString();
   }
 
   _handleChangeClick() {

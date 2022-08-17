@@ -28,8 +28,6 @@ import com.google.common.collect.Multimap;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.entities.ChangeMessage;
-import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.exceptions.StorageException;
@@ -75,7 +73,7 @@ import com.google.gerrit.server.restapi.change.CherryPickChange.Result;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.Context;
+import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.CommitMessageUtil;
 import com.google.gerrit.server.util.time.TimeUtil;
@@ -260,7 +258,7 @@ public class RevertSubmission
       Project.NameKey project = projectAndBranch.project();
       cherryPickInput.destination = projectAndBranch.branch();
       if (revertInput.workInProgress) {
-        cherryPickInput.notify = NotifyHandling.OWNER;
+        cherryPickInput.notify = firstNonNull(cherryPickInput.notify, NotifyHandling.OWNER);
       }
       Collection<ChangeData> changesInProjectAndBranch =
           changesPerProjectAndBranch.get(projectAndBranch);
@@ -614,10 +612,10 @@ public class RevertSubmission
     }
 
     @Override
-    public void postUpdate(Context ctx) throws Exception {
+    public void postUpdate(PostUpdateContext ctx) throws Exception {
       changeReverted.fire(
-          change,
-          changeNotesFactory.createChecked(ctx.getProject(), revertChangeId).getChange(),
+          ctx.getChangeData(change),
+          ctx.getChangeData(changeNotesFactory.createChecked(ctx.getProject(), revertChangeId)),
           ctx.getWhen());
       try {
         RevertedSender emailSender = revertedSenderFactory.create(ctx.getProject(), change.getId());
@@ -647,14 +645,10 @@ public class RevertSubmission
 
     @Override
     public boolean updateChange(ChangeContext ctx) throws Exception {
-      Change change = ctx.getChange();
-      PatchSet.Id patchSetId = change.currentPatchSetId();
-      ChangeMessage changeMessage =
-          ChangeMessagesUtil.newMessage(
-              ctx,
-              "Created a revert of this change as I" + computedChangeId.getName(),
-              ChangeMessagesUtil.TAG_REVERT);
-      cmUtil.addChangeMessage(ctx.getUpdate(patchSetId), changeMessage);
+      cmUtil.setChangeMessage(
+          ctx,
+          "Created a revert of this change as I" + computedChangeId.getName(),
+          ChangeMessagesUtil.TAG_REVERT);
       return true;
     }
   }

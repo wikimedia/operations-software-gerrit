@@ -17,8 +17,9 @@
 import {
   Action,
   Category,
-  CheckRun as CheckRunApi,
   CheckResult as CheckResultApi,
+  CheckRun as CheckRunApi,
+  Link,
   LinkIcon,
   RunStatus,
 } from '../../api/checks';
@@ -42,6 +43,10 @@ export function iconForLink(linkIcon?: LinkIcon) {
       return 'help-outline';
     case LinkIcon.REPORT_BUG:
       return 'bug';
+    case LinkIcon.CODE:
+      return 'code';
+    case LinkIcon.FILE_PRESENT:
+      return 'file-present';
     default:
       // We don't throw an assertion error here, because plugins don't have to
       // be written in TypeScript, so we may encounter arbitrary strings for
@@ -67,6 +72,10 @@ export function tooltipForLink(linkIcon?: LinkIcon) {
       return 'Link to help page';
     case LinkIcon.REPORT_BUG:
       return 'Link for reporting a problem';
+    case LinkIcon.CODE:
+      return 'Link to code';
+    case LinkIcon.FILE_PRESENT:
+      return 'Link to file';
     default:
       // We don't throw an assertion error here, because plugins don't have to
       // be written in TypeScript, so we may encounter arbitrary strings for
@@ -79,28 +88,75 @@ export function worstCategory(run: CheckRun) {
   if (hasResultsOf(run, Category.ERROR)) return Category.ERROR;
   if (hasResultsOf(run, Category.WARNING)) return Category.WARNING;
   if (hasResultsOf(run, Category.INFO)) return Category.INFO;
+  if (hasResultsOf(run, Category.SUCCESS)) return Category.SUCCESS;
   return undefined;
 }
 
-export function iconForCategory(category: Category | 'SUCCESS') {
-  switch (category) {
+export function isCategory(
+  catStat?: Category | RunStatus
+): catStat is Category {
+  return (
+    catStat === Category.ERROR ||
+    catStat === Category.WARNING ||
+    catStat === Category.INFO ||
+    catStat === Category.SUCCESS
+  );
+}
+
+export function isStatus(catStat?: Category | RunStatus): catStat is RunStatus {
+  return (
+    catStat === RunStatus.COMPLETED ||
+    catStat === RunStatus.RUNNABLE ||
+    catStat === RunStatus.RUNNING
+  );
+}
+
+export function labelFor(catStat: Category | RunStatus) {
+  switch (catStat) {
+    case Category.ERROR:
+      return 'error';
+    case Category.INFO:
+      return 'info';
+    case Category.WARNING:
+      return 'warning';
+    case Category.SUCCESS:
+      return 'success';
+    case RunStatus.COMPLETED:
+      return 'completed';
+    case RunStatus.RUNNABLE:
+      return 'runnable';
+    case RunStatus.RUNNING:
+      return 'running';
+    default:
+      assertNever(catStat, `Unsupported category/status: ${catStat}`);
+  }
+}
+
+export function iconFor(catStat: Category | RunStatus) {
+  switch (catStat) {
     case Category.ERROR:
       return 'error';
     case Category.INFO:
       return 'info-outline';
     case Category.WARNING:
       return 'warning';
-    case 'SUCCESS':
+    case Category.SUCCESS:
       return 'check-circle-outline';
+    // Note that this is only for COMPLETED without results!
+    case RunStatus.COMPLETED:
+      return 'check-circle-outline';
+    case RunStatus.RUNNABLE:
+      return 'placeholder';
+    case RunStatus.RUNNING:
+      return 'timelapse';
     default:
-      assertNever(category, `Unsupported category: ${category}`);
+      assertNever(catStat, `Unsupported category/status: ${catStat}`);
   }
 }
 
-enum PRIMARY_STATUS_ACTIONS {
+export enum PRIMARY_STATUS_ACTIONS {
   RERUN = 'rerun',
   RUN = 'run',
-  CANCEL = 'cancel',
 }
 
 export function toCanonicalAction(action: Action, status: RunStatus) {
@@ -108,28 +164,39 @@ export function toCanonicalAction(action: Action, status: RunStatus) {
   if (status === RunStatus.COMPLETED && (name === 'run' || name === 're-run')) {
     name = PRIMARY_STATUS_ACTIONS.RERUN;
   }
-  if (status === RunStatus.RUNNING && name === 'stop') {
-    name = PRIMARY_STATUS_ACTIONS.CANCEL;
-  }
   return {...action, name};
 }
 
-export function primaryActionName(status: RunStatus) {
+export function headerForStatus(status: RunStatus) {
+  switch (status) {
+    case RunStatus.COMPLETED:
+      return 'Completed';
+    case RunStatus.RUNNABLE:
+      return 'Not run';
+    case RunStatus.RUNNING:
+      return 'Running';
+    default:
+      assertNever(status, `Unsupported status: ${status}`);
+  }
+}
+
+function primaryActionName(status: RunStatus) {
   switch (status) {
     case RunStatus.COMPLETED:
       return PRIMARY_STATUS_ACTIONS.RERUN;
     case RunStatus.RUNNABLE:
       return PRIMARY_STATUS_ACTIONS.RUN;
     case RunStatus.RUNNING:
-      return PRIMARY_STATUS_ACTIONS.CANCEL;
+      return undefined;
     default:
       assertNever(status, `Unsupported status: ${status}`);
   }
 }
 
-export function primaryRunAction(run: CheckRun): Action | undefined {
+export function primaryRunAction(run?: CheckRun): Action | undefined {
+  if (!run) return undefined;
   return runActions(run).filter(
-    action => action.name === primaryActionName(run.status)
+    action => !action.disabled && action.name === primaryActionName(run.status)
   )[0];
 }
 
@@ -140,24 +207,10 @@ export function runActions(run?: CheckRun): Action[] {
 
 export function iconForRun(run: CheckRun) {
   if (run.status !== RunStatus.COMPLETED) {
-    return iconForStatus(run.status);
+    return iconFor(run.status);
   } else {
     const category = worstCategory(run);
-    return category ? iconForCategory(category) : iconForStatus(run.status);
-  }
-}
-
-export function iconForStatus(status: RunStatus) {
-  switch (status) {
-    // Note that this is only for COMPLETED without results!
-    case RunStatus.COMPLETED:
-      return 'check-circle-outline';
-    case RunStatus.RUNNABLE:
-      return 'placeholder';
-    case RunStatus.RUNNING:
-      return 'timelapse';
-    default:
-      assertNever(status, `Unsupported status: ${status}`);
+    return category ? iconFor(category) : iconFor(run.status);
   }
 }
 
@@ -210,12 +263,14 @@ export function compareByWorstCategory(a: CheckRun, b: CheckRun) {
 export function level(cat?: Category) {
   if (!cat) return -1;
   switch (cat) {
-    case Category.INFO:
+    case Category.SUCCESS:
       return 0;
-    case Category.WARNING:
+    case Category.INFO:
       return 1;
-    case Category.ERROR:
+    case Category.WARNING:
       return 2;
+    case Category.ERROR:
+      return 3;
   }
 }
 
@@ -230,20 +285,6 @@ declare global {
   interface HTMLElementEventMap {
     'action-triggered': ActionTriggeredEvent;
   }
-}
-
-export function fireActionTriggered(
-  target: EventTarget,
-  action: Action,
-  run?: CheckRun
-) {
-  target.dispatchEvent(
-    new CustomEvent('action-triggered', {
-      detail: {action, run},
-      composed: true,
-      bubbles: true,
-    })
-  );
 }
 
 export interface AttemptDetail {
@@ -291,6 +332,7 @@ export function createAttemptMap(runs: CheckRunApi[]) {
 export function fromApiToInternalRun(run: CheckRunApi): CheckRun {
   return {
     ...run,
+    pluginName: 'fake',
     internalRunId: 'fake',
     isSingleAttempt: false,
     isLatestAttempt: false,
@@ -304,4 +346,21 @@ export function fromApiToInternalResult(result: CheckResultApi): CheckResult {
     ...result,
     internalResultId: 'fake',
   };
+}
+
+function allPrimaryLinks(result?: CheckResultApi): Link[] {
+  return (result?.links ?? []).filter(link => link.primary);
+}
+
+export function firstPrimaryLink(result?: CheckResultApi): Link | undefined {
+  return allPrimaryLinks(result).find(link => link.icon === LinkIcon.EXTERNAL);
+}
+
+export function otherPrimaryLinks(result?: CheckResultApi): Link[] {
+  const first = firstPrimaryLink(result);
+  return allPrimaryLinks(result).filter(link => link !== first);
+}
+
+export function secondaryLinks(result?: CheckResultApi): Link[] {
+  return (result?.links ?? []).filter(link => !link.primary);
 }

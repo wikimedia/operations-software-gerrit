@@ -78,16 +78,15 @@ public class MergedSender extends ReplyToChangeSender {
     try {
       Table<Account.Id, String, PatchSetApproval> pos = HashBasedTable.create();
       Table<Account.Id, String, PatchSetApproval> neg = HashBasedTable.create();
-      for (PatchSetApproval ca :
-          args.approvalsUtil.byPatchSet(changeData.notes(), patchSet.id(), null, null)) {
-        LabelType lt = labelTypes.byLabel(ca.labelId());
-        if (lt == null) {
+      for (PatchSetApproval ca : args.approvalsUtil.byPatchSet(changeData.notes(), patchSet.id())) {
+        Optional<LabelType> lt = labelTypes.byLabel(ca.labelId());
+        if (!lt.isPresent()) {
           continue;
         }
         if (ca.value() > 0) {
-          pos.put(ca.accountId(), lt.getName(), ca);
+          pos.put(ca.accountId(), lt.get().getName(), ca);
         } else if (ca.value() < 0) {
-          neg.put(ca.accountId(), lt.getName(), ca);
+          neg.put(ca.accountId(), lt.get().getName(), ca);
         }
       }
 
@@ -142,6 +141,8 @@ public class MergedSender extends ReplyToChangeSender {
     soyContextEmailData.put("approvals", getApprovals());
     if (stickyApprovalDiff.isPresent()) {
       soyContextEmailData.put("stickyApprovalDiff", stickyApprovalDiff.get());
+      soyContextEmailData.put(
+          "stickyApprovalDiffHtml", getDiffTemplateData(stickyApprovalDiff.get()));
     }
   }
 }

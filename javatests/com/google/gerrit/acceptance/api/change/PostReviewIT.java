@@ -14,6 +14,7 @@
 
 package com.google.gerrit.acceptance.api.change;
 
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.util.stream.Collectors.toList;
@@ -26,6 +27,7 @@ import static org.mockito.MockitoAnnotations.initMocks;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.truth.Correspondence;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
@@ -40,12 +42,14 @@ import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.LabelId;
 import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.SubmitRecord;
 import com.google.gerrit.extensions.annotations.Exports;
 import com.google.gerrit.extensions.api.changes.DraftInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput.CommentInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput.DraftHandling;
 import com.google.gerrit.extensions.api.changes.ReviewInput.RobotCommentInput;
+import com.google.gerrit.extensions.api.changes.ReviewResult;
 import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.client.Side;
 import com.google.gerrit.extensions.common.AccountInfo;
@@ -53,24 +57,32 @@ import com.google.gerrit.extensions.common.ChangeMessageInfo;
 import com.google.gerrit.extensions.common.RobotCommentInfo;
 import com.google.gerrit.extensions.config.FactoryModule;
 import com.google.gerrit.extensions.events.CommentAddedListener;
+import com.google.gerrit.extensions.events.ReviewerAddedListener;
+import com.google.gerrit.extensions.events.ReviewerDeletedListener;
 import com.google.gerrit.extensions.restapi.BadRequestException;
+import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.validators.CommentForValidation;
 import com.google.gerrit.extensions.validators.CommentValidationContext;
 import com.google.gerrit.extensions.validators.CommentValidator;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.notedb.ChangeNotes;
+import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.restapi.change.OnPostReview;
 import com.google.gerrit.server.restapi.change.PostReview;
+import com.google.gerrit.server.rules.SubmitRule;
 import com.google.gerrit.server.update.CommentsRejectedException;
+import com.google.gerrit.testing.FakeEmailSender;
 import com.google.gerrit.testing.TestCommentHelper;
 import com.google.inject.Inject;
 import com.google.inject.Module;
 import java.sql.Timestamp;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Pattern;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
@@ -677,6 +689,281 @@ public class PostReviewIT extends AbstractDaemonTest {
     }
   }
 
+  @Test
+  public void submitRulesAreInvokedOnlyOnce() throws Exception {
+    PushOneCommit.Result r = createChange();
+
+    TestSubmitRule testSubmitRule = new TestSubmitRule();
+    try (Registration registration = extensionRegistry.newRegistration().add(testSubmitRule)) {
+      ReviewInput input = new ReviewInput().label(LabelId.CODE_REVIEW, 1);
+      gApi.changes().id(r.getChangeId()).current().review(input);
+    }
+
+    assertThat(testSubmitRule.count).isEqualTo(1);
+  }
+
+  @Test
+  public void addingReviewers() throws Exception {
+    PushOneCommit.Result r = createChange();
+
+    TestAccount user2 = accountCreator.user2();
+
+    TestReviewerAddedListener testReviewerAddedListener = new TestReviewerAddedListener();
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(testReviewerAddedListener)) {
+      // add user and user2
+      ReviewResult reviewResult =
+          gApi.changes()
+              .id(r.getChangeId())
+              .current()
+              .review(ReviewInput.create().reviewer(user.email()).reviewer(user2.email()));
+
+      assertThat(
+              reviewResult.reviewers.values().stream()
+                  .filter(a -> a.reviewers != null)
+                  .map(a -> Iterables.getOnlyElement(a.reviewers).name)
+                  .collect(toImmutableSet()))
+          .containsExactly(user.fullName(), user2.fullName());
+    }
+
+    assertThat(
+            gApi.changes().id(r.getChangeId()).reviewers().stream()
+                .map(a -> a.name)
+                .collect(toImmutableSet()))
+        .containsExactly(user.fullName(), user2.fullName());
+
+    // Ensure only one batch email was sent for this operation
+    FakeEmailSender.Message message = Iterables.getOnlyElement(sender.getMessages());
+    assertThat(message.body())
+        .containsMatch(
+            Pattern.quote("Hello ")
+                + "("
+                + Pattern.quote(String.format("%s, %s", user.fullName(), user2.fullName()))
+                + "|"
+                + Pattern.quote(String.format("%s, %s", user2.fullName(), user.fullName()))
+                + ")");
+    assertThat(message.htmlBody())
+        .containsMatch(
+            "("
+                + Pattern.quote(String.format("%s and %s", user.fullName(), user2.fullName()))
+                + "|"
+                + Pattern.quote(String.format("%s and %s", user2.fullName(), user.fullName()))
+                + ")"
+                + Pattern.quote(" to <strong>review</strong> this change"));
+
+    // Ensure that a batch event has been sent:
+    // * 1 batch event for adding user and user2 as reviewers
+    assertThat(testReviewerAddedListener.receivedEvents).hasSize(1);
+    assertThat(testReviewerAddedListener.getReviewerIds()).containsExactly(user.id(), user2.id());
+  }
+
+  @Test
+  public void deletingReviewers() throws Exception {
+    PushOneCommit.Result r = createChange();
+
+    TestAccount user2 = accountCreator.user2();
+
+    // add user and user2
+    gApi.changes()
+        .id(r.getChangeId())
+        .current()
+        .review(ReviewInput.create().reviewer(user.email()).reviewer(user2.email()));
+
+    sender.clear();
+
+    TestReviewerDeletedListener testReviewerDeletedListener = new TestReviewerDeletedListener();
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(testReviewerDeletedListener)) {
+      // remove user and user2
+      ReviewResult reviewResult =
+          gApi.changes()
+              .id(r.getChangeId())
+              .current()
+              .review(
+                  ReviewInput.create()
+                      .reviewer(user.email(), ReviewerState.REMOVED, /* confirmed= */ true)
+                      .reviewer(user2.email(), ReviewerState.REMOVED, /* confirmed= */ true));
+
+      assertThat(
+              reviewResult.reviewers.values().stream()
+                  .map(a -> a.removed.name)
+                  .collect(toImmutableSet()))
+          .containsExactly(user.fullName(), user2.fullName());
+    }
+
+    assertThat(gApi.changes().id(r.getChangeId()).reviewers()).isEmpty();
+
+    // Ensure only one batch email was sent for this operation
+    FakeEmailSender.Message message = Iterables.getOnlyElement(sender.getMessages());
+    assertThat(message.body())
+        .containsMatch(
+            Pattern.quote("removed ")
+                + "("
+                + Pattern.quote(String.format("%s, %s", user.fullName(), user2.fullName()))
+                + "|"
+                + Pattern.quote(String.format("%s, %s", user2.fullName(), user.fullName()))
+                + ")");
+    assertThat(message.htmlBody())
+        .containsMatch(
+            Pattern.quote("removed ")
+                + "("
+                + Pattern.quote(String.format("%s and %s", user.fullName(), user2.fullName()))
+                + "|"
+                + Pattern.quote(String.format("%s and %s", user2.fullName(), user.fullName()))
+                + ")");
+
+    // Ensure that events have been sent:
+    // * 2 events for removing user and user2 as reviewers (one event per removed reviewer, batch
+    //   event not available for reviewer removal)
+    assertThat(testReviewerDeletedListener.receivedEvents).hasSize(2);
+    assertThat(testReviewerDeletedListener.getReviewerIds()).containsExactly(user.id(), user2.id());
+  }
+
+  @Test
+  public void addingAndDeletingReviewers() throws Exception {
+    PushOneCommit.Result r = createChange();
+
+    TestAccount user2 = accountCreator.user2();
+    TestAccount user3 = accountCreator.create("user3", "user3@email.com", "user3", "user3");
+    TestAccount user4 = accountCreator.create("user4", "user4@email.com", "user4", "user4");
+
+    // add user and user2
+    gApi.changes()
+        .id(r.getChangeId())
+        .current()
+        .review(ReviewInput.create().reviewer(user.email()).reviewer(user2.email()));
+
+    sender.clear();
+
+    TestReviewerAddedListener testReviewerAddedListener = new TestReviewerAddedListener();
+    TestReviewerDeletedListener testReviewerDeletedListener = new TestReviewerDeletedListener();
+    try (Registration registration =
+        extensionRegistry
+            .newRegistration()
+            .add(testReviewerAddedListener)
+            .add(testReviewerDeletedListener)) {
+      // remove user and user2 while adding user3 and user4
+      ReviewResult reviewResult =
+          gApi.changes()
+              .id(r.getChangeId())
+              .current()
+              .review(
+                  ReviewInput.create()
+                      .reviewer(user.email(), ReviewerState.REMOVED, /* confirmed= */ true)
+                      .reviewer(user2.email(), ReviewerState.REMOVED, /* confirmed= */ true)
+                      .reviewer(user3.email())
+                      .reviewer(user4.email()));
+
+      assertThat(
+              reviewResult.reviewers.values().stream()
+                  .filter(a -> a.removed != null)
+                  .map(a -> a.removed.name)
+                  .collect(toImmutableSet()))
+          .containsExactly(user.fullName(), user2.fullName());
+      assertThat(
+              reviewResult.reviewers.values().stream()
+                  .filter(a -> a.reviewers != null)
+                  .map(a -> Iterables.getOnlyElement(a.reviewers).name)
+                  .collect(toImmutableSet()))
+          .containsExactly(user3.fullName(), user4.fullName());
+    }
+
+    assertThat(
+            gApi.changes().id(r.getChangeId()).reviewers().stream()
+                .map(a -> a.name)
+                .collect(toImmutableSet()))
+        .containsExactly(user3.fullName(), user4.fullName());
+
+    // Ensure only one batch email was sent for this operation
+    FakeEmailSender.Message message = Iterables.getOnlyElement(sender.getMessages());
+    assertThat(message.body())
+        .containsMatch(
+            Pattern.quote("Hello ")
+                + "("
+                + Pattern.quote(String.format("%s, %s", user3.fullName(), user4.fullName()))
+                + "|"
+                + Pattern.quote(String.format("%s, %s", user4.fullName(), user3.fullName()))
+                + ")");
+    assertThat(message.htmlBody())
+        .containsMatch(
+            "("
+                + Pattern.quote(String.format("%s and %s", user3.fullName(), user4.fullName()))
+                + "|"
+                + Pattern.quote(String.format("%s and %s", user4.fullName(), user3.fullName()))
+                + ")"
+                + Pattern.quote(" to <strong>review</strong> this change"));
+
+    assertThat(message.body())
+        .containsMatch(
+            Pattern.quote("removed ")
+                + "("
+                + Pattern.quote(String.format("%s, %s", user.fullName(), user2.fullName()))
+                + "|"
+                + Pattern.quote(String.format("%s, %s", user2.fullName(), user.fullName()))
+                + ")");
+    assertThat(message.htmlBody())
+        .containsMatch(
+            Pattern.quote("removed ")
+                + "("
+                + Pattern.quote(String.format("%s and %s", user.fullName(), user2.fullName()))
+                + "|"
+                + Pattern.quote(String.format("%s and %s", user2.fullName(), user.fullName()))
+                + ")");
+
+    // Ensure that events have been sent:
+    // * 1 batch event for adding user3 and user4 as reviewers
+    // * 2 events for removing user and user2 as reviewers (one event per removed reviewer, batch
+    //   event not available for reviewer removal)
+    assertThat(testReviewerAddedListener.receivedEvents).hasSize(1);
+    assertThat(testReviewerAddedListener.getReviewerIds()).containsExactly(user3.id(), user4.id());
+    assertThat(testReviewerDeletedListener.receivedEvents).hasSize(2);
+    assertThat(testReviewerDeletedListener.getReviewerIds()).containsExactly(user.id(), user2.id());
+  }
+
+  @Test
+  public void deletingNonExistingReviewerFails() throws Exception {
+    PushOneCommit.Result r = createChange();
+
+    ResourceNotFoundException resourceNotFoundException =
+        assertThrows(
+            ResourceNotFoundException.class,
+            () ->
+                gApi.changes()
+                    .id(r.getChangeId())
+                    .current()
+                    .review(
+                        ReviewInput.create()
+                            .reviewer(user.email(), ReviewerState.REMOVED, /* confirmed= */ true)));
+    assertThat(resourceNotFoundException)
+        .hasMessageThat()
+        .isEqualTo(
+            String.format(
+                "Reviewer %s doesn't exist in the change, hence can't delete it", user.fullName()));
+  }
+
+  @Test
+  public void addingAndDeletingSameReviewerFails() throws Exception {
+    PushOneCommit.Result r = createChange();
+
+    ResourceNotFoundException resourceNotFoundException =
+        assertThrows(
+            ResourceNotFoundException.class,
+            () ->
+                gApi.changes()
+                    .id(r.getChangeId())
+                    .current()
+                    .review(
+                        ReviewInput.create()
+                            .reviewer(user.email())
+                            .reviewer(user.email(), ReviewerState.REMOVED, true)));
+    assertThat(resourceNotFoundException)
+        .hasMessageThat()
+        .isEqualTo(
+            String.format(
+                "Reviewer %s doesn't exist in the change," + " hence can't delete it",
+                user.fullName()));
+  }
+
   private static class TestListener implements CommentAddedListener {
     public CommentAddedListener.Event lastCommentAddedEvent;
 
@@ -751,6 +1038,48 @@ public class PostReviewIT extends AbstractDaemonTest {
           .containsExactly(
               labelName, expectedOldValue != null ? expectedOldValue.shortValue() : null);
       assertThat(approvals).containsExactly(labelName, (short) expectedNewValue);
+    }
+  }
+
+  private static class TestSubmitRule implements SubmitRule {
+    int count;
+
+    @Override
+    public Optional<SubmitRecord> evaluate(ChangeData changeData) {
+      count++;
+      return Optional.empty();
+    }
+  }
+
+  private static class TestReviewerAddedListener implements ReviewerAddedListener {
+    List<ReviewerAddedListener.Event> receivedEvents = new ArrayList<>();
+
+    @Override
+    public void onReviewersAdded(ReviewerAddedListener.Event event) {
+      receivedEvents.add(event);
+    }
+
+    public ImmutableSet<Account.Id> getReviewerIds() {
+      return receivedEvents.stream()
+          .flatMap(e -> e.getReviewers().stream())
+          .map(accountInfo -> Account.id(accountInfo._accountId))
+          .collect(toImmutableSet());
+    }
+  }
+
+  private static class TestReviewerDeletedListener implements ReviewerDeletedListener {
+    List<ReviewerDeletedListener.Event> receivedEvents = new ArrayList<>();
+
+    @Override
+    public void onReviewerDeleted(ReviewerDeletedListener.Event event) {
+      receivedEvents.add(event);
+    }
+
+    public ImmutableSet<Account.Id> getReviewerIds() {
+      return receivedEvents.stream()
+          .map(ReviewerDeletedListener.Event::getReviewer)
+          .map(accountInfo -> Account.id(accountInfo._accountId))
+          .collect(toImmutableSet());
     }
   }
 }

@@ -24,7 +24,6 @@ import static java.util.Objects.requireNonNull;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.entities.LabelId;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.PatchSetApproval;
@@ -33,9 +32,9 @@ import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.entities.SubmitRecord;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.IdentifiedUser;
+import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.change.LabelNormalizer;
 import com.google.gerrit.server.git.CodeReviewCommit;
 import com.google.gerrit.server.git.CodeReviewCommit.CodeReviewRevWalk;
@@ -48,7 +47,7 @@ import com.google.gerrit.server.project.ProjectConfig;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.Context;
+import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.gerrit.server.update.RepoContext;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -284,7 +283,7 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
             // ChangeMergedEvent in the fixup case, but we'll just live with that.
             : alreadyMergedCommit;
     try {
-      setMerged(ctx, message(ctx, commit, s));
+      setMerged(ctx, commit, message(ctx, commit, s));
     } catch (StorageException err) {
       String msg = "Error updating change status for " + id;
       logger.atSevere().withCause(err).log(msg);
@@ -395,17 +394,17 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
     }
   }
 
-  private ChangeMessage message(ChangeContext ctx, CodeReviewCommit commit, CommitMergeStatus s)
+  private String message(ChangeContext ctx, CodeReviewCommit commit, CommitMergeStatus s)
       throws AuthException, IOException, PermissionBackendException,
           InvalidChangeOperationException {
     requireNonNull(s, "CommitMergeStatus may not be null");
     String txt = s.getDescription();
     if (s == CommitMergeStatus.CLEAN_MERGE) {
-      return message(ctx, commit.getPatchsetId(), txt);
+      return message(ctx, txt);
     } else if (s == CommitMergeStatus.CLEAN_REBASE || s == CommitMergeStatus.CLEAN_PICK) {
-      return message(ctx, commit.getPatchsetId(), txt + " as " + commit.name());
+      return message(ctx, txt + " as " + commit.name());
     } else if (s == CommitMergeStatus.SKIPPED_IDENTICAL_TREE) {
-      return message(ctx, commit.getPatchsetId(), txt);
+      return message(ctx, txt);
     } else if (s == CommitMergeStatus.ALREADY_MERGED) {
       // Best effort to mimic the message that would have happened had this
       // succeeded the first time around.
@@ -437,19 +436,14 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
     }
   }
 
-  private ChangeMessage message(ChangeContext ctx, PatchSet.Id psId, String body)
+  private String message(ChangeContext ctx, String body)
       throws AuthException, IOException, PermissionBackendException,
           InvalidChangeOperationException {
     stickyApprovalDiff = args.submitWithStickyApprovalDiff.apply(ctx.getNotes(), ctx.getUser());
-    return ChangeMessagesUtil.newMessage(
-        psId,
-        ctx.getUser(),
-        ctx.getWhen(),
-        body + stickyApprovalDiff,
-        ChangeMessagesUtil.TAG_MERGED);
+    return body + stickyApprovalDiff;
   }
 
-  private void setMerged(ChangeContext ctx, ChangeMessage msg) {
+  private void setMerged(ChangeContext ctx, CodeReviewCommit commit, String msg) {
     Change c = ctx.getChange();
     logger.atFine().log("Setting change %s merged", c.getId());
     c.setStatus(Change.Status.MERGED);
@@ -458,12 +452,13 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
     // which is not the user from the update context. addMergedMessage was able
     // to do this in the past.
     if (msg != null) {
-      args.cmUtil.addChangeMessage(ctx.getUpdate(msg.getPatchSetId()), msg);
+      args.cmUtil.setChangeMessage(
+          ctx.getUpdate(commit.getPatchsetId()), msg, ChangeMessagesUtil.TAG_MERGED);
     }
   }
 
   @Override
-  public final void postUpdate(Context ctx) throws Exception {
+  public final void postUpdate(PostUpdateContext ctx) throws Exception {
     if (changeAlreadyMerged) {
       // TODO(dborowitz): This is suboptimal behavior in the presence of retries: postUpdate steps
       // will never get run for changes that submitted successfully on any but the final attempt.
@@ -508,7 +503,7 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
           .create(
               ctx.getProject(),
               toMerge.change(),
-              submitter.accountId(),
+              args.caller,
               ctx.getNotify(getId()),
               ctx.getRepoView(),
               stickyApprovalDiff)
@@ -518,7 +513,7 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
     }
     if (mergeResultRev != null && !args.dryrun) {
       args.changeMerged.fire(
-          updatedChange,
+          ctx.getChangeData(updatedChange),
           mergedPatchSet,
           args.accountCache.get(submitter.accountId()).orElse(null),
           args.mergeTip.getCurrentTip().name(),
@@ -526,32 +521,22 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
     }
   }
 
-  /**
-   * @see #updateRepo(RepoContext)
-   * @param ctx
-   */
+  /** See {@link #updateRepo(RepoContext)} */
   protected void updateRepoImpl(RepoContext ctx) throws Exception {}
 
   /**
-   * @see #updateChange(ChangeContext)
-   * @param ctx
-   * @return a new patch set if one was created by the submit strategy, or null if not.
+   * Returns a new patch set if one was created by the submit strategy, or null if not
+   *
+   * <p>See {@link #updateChange(ChangeContext)}
    */
   protected PatchSet updateChangeImpl(ChangeContext ctx) throws Exception {
     return null;
   }
 
-  /**
-   * @see #postUpdate(Context)
-   * @param ctx
-   */
-  protected void postUpdateImpl(Context ctx) throws Exception {}
+  /** See {@link #postUpdate(PostUpdateContext)} */
+  protected void postUpdateImpl(PostUpdateContext ctx) throws Exception {}
 
-  /**
-   * Amend the commit with gitlink update
-   *
-   * @param commit
-   */
+  /** Amend the commit with gitlink update */
   protected CodeReviewCommit amendGitlink(CodeReviewCommit commit)
       throws IntegrationConflictException {
     if (!args.subscriptionGraph.hasSubscription(args.destBranch)) {

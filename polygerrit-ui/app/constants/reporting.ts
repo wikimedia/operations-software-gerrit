@@ -23,6 +23,7 @@ export enum LifeCycle {
   VISIBILILITY_VISIBLE = 'Visibility changed to visible',
   EXTENSION_DETECTED = 'Extension detected',
   PLUGINS_INSTALLED = 'Plugins installed',
+  PLUGINS_FAILED = 'Some plugins failed to load',
   USER_REFERRED_FROM = 'User referred from',
 }
 
@@ -30,6 +31,8 @@ export enum Execution {
   PLUGIN_API = 'plugin-api',
   REACHABLE_CODE = 'reachable code',
   METHOD_USED = 'method used',
+  CHECKS_API_NOT_LOGGED_IN = 'checks-api not-logged-in',
+  CHECKS_API_ERROR = 'checks-api error',
 }
 
 export enum Timing {
@@ -89,4 +92,10 @@ export enum Timing {
   FILE_EXPAND_ALL = 'ExpandAllDiffs',
   // This measures the same interval as ExpandAllDiffs, but the result is divided by the number of diffs expanded.
   FILE_EXPAND_ALL_AVG = 'ExpandAllPerDiff',
+}
+
+export enum Interaction {
+  TOGGLE_SHOW_ALL_BUTTON = 'toggle show all button',
+  SHOW_TAB = 'show-tab',
+  ATTENTION_SET_CHIP = 'attention-set-chip',
 }

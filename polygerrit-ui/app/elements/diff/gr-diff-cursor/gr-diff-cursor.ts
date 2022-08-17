@@ -15,60 +15,89 @@
  * limitations under the License.
  */
 
-import '../../shared/gr-cursor-manager/gr-cursor-manager';
+import {dom} from '@polymer/polymer/lib/legacy/polymer.dom';
+import {Subscription} from 'rxjs';
+import {AbortStop, CursorMoveResult, Stop} from '../../../api/core';
 import {
-  AbortStop,
-  CursorMoveResult,
+  DiffViewMode,
+  GrDiffCursor as GrDiffCursorApi,
+  LineNumberEventDetail,
+} from '../../../api/diff';
+import {ScrollMode, Side} from '../../../constants/constants';
+import {PolymerDomWrapper} from '../../../types/types';
+import {toggleClass} from '../../../utils/dom-util';
+import {
   GrCursorManager,
-  Stop,
   isTargetable,
 } from '../../shared/gr-cursor-manager/gr-cursor-manager';
-import {afterNextRender} from '@polymer/polymer/lib/utils/render-status';
-import {dom} from '@polymer/polymer/lib/legacy/polymer.dom';
-import {PolymerElement} from '@polymer/polymer/polymer-element';
-import {htmlTemplate} from './gr-diff-cursor_html';
-import {DiffViewMode} from '../../../api/diff';
-import {ScrollMode, Side} from '../../../constants/constants';
-import {customElement, property, observe} from '@polymer/decorators';
 import {GrDiffLineType} from '../gr-diff/gr-diff-line';
-import {PolymerSpliceChange} from '@polymer/polymer/interfaces';
-import {PolymerDomWrapper} from '../../../types/types';
 import {GrDiffGroupType} from '../gr-diff/gr-diff-group';
 import {GrDiff} from '../gr-diff/gr-diff';
-import {fireAlert, fireEvent} from '../../../utils/event-util';
-import {Subscription} from 'rxjs';
-import {toggleClass} from '../../../utils/dom-util';
 
 type GrDiffRowType = GrDiffLineType | GrDiffGroupType;
 
 const LEFT_SIDE_CLASS = 'target-side-left';
 const RIGHT_SIDE_CLASS = 'target-side-right';
 
-// Time in which pressing n key again after the toast navigates to next file
-const NAVIGATE_TO_NEXT_FILE_TIMEOUT_MS = 5000;
-
-export interface GrDiffCursor {
-  $: {};
+/** A subset of the GrDiff API that the cursor is using. */
+export interface GrDiffCursorable extends HTMLElement {
+  isRangeSelected(): boolean;
+  createRangeComment(): void;
+  getCursorStops(): Stop[];
+  path?: string;
 }
 
-@customElement('gr-diff-cursor')
-export class GrDiffCursor extends PolymerElement {
-  static get template() {
-    return htmlTemplate;
-  }
-
+export class GrDiffCursor implements GrDiffCursorApi {
   private preventAutoScrollOnManualScroll = false;
 
-  private lastDisplayedNavigateToFileToast: Map<string, number> = new Map();
+  set side(side: Side) {
+    if (this.sideInternal === side) {
+      return;
+    }
+    if (this.sideInternal && this.diffRow) {
+      this.fireCursorMoved(
+        'line-cursor-moved-out',
+        this.diffRow,
+        this.sideInternal
+      );
+    }
+    this.sideInternal = side;
+    this.updateSideClass();
+    if (this.diffRow) {
+      this.fireCursorMoved('line-cursor-moved-in', this.diffRow, this.side);
+    }
+  }
 
-  @property({type: String})
-  side = Side.RIGHT;
+  get side(): Side {
+    return this.sideInternal;
+  }
 
-  @property({type: Object, notify: true, observer: '_rowChanged'})
-  diffRow?: HTMLElement;
+  private sideInternal = Side.RIGHT;
 
-  @property({type: Object})
-  diffs: GrDiff[] = [];
+  set diffRow(diffRow: HTMLElement | undefined) {
+    if (this.diffRowInternal) {
+      this.diffRowInternal.classList.remove(LEFT_SIDE_CLASS, RIGHT_SIDE_CLASS);
+      this.fireCursorMoved(
+        'line-cursor-moved-out',
+        this.diffRowInternal,
+        this.side
+      );
+    }
+    this.diffRowInternal = diffRow;
+
+    this.updateSideClass();
+    if (this.diffRow) {
+      this.fireCursorMoved('line-cursor-moved-in', this.diffRow, this.side);
+    }
+  }
+
+  get diffRow(): HTMLElement | undefined {
+    return this.diffRowInternal;
+  }
+
+  private diffRowInternal?: HTMLElement;
+
+  private diffs: GrDiffCursorable[] = [];
 
   /**
    * If set, the cursor will attempt to move to the line number (instead of
@@ -78,62 +107,27 @@ export class GrDiffCursor extends PolymerElement {
    * to that position. This parameter should be set at most for one gr-diff
    * element in the page.
    */
-  @property({type: Number})
   initialLineNumber: number | null = null;
-
-  @property({type: Boolean})
-  _listeningForScroll = false;
 
   private cursorManager = new GrCursorManager();
 
+  private targetSubscription?: Subscription;
+
   constructor() {
-    super();
     this.cursorManager.cursorTargetClass = 'target-row';
     this.cursorManager.scrollMode = ScrollMode.KEEP_VISIBLE;
     this.cursorManager.focusOnMove = true;
-  }
 
-  /** @override */
-  ready() {
-    super.ready();
-    afterNextRender(this, () => {
-      /*
-      This represents the diff cursor is ready for interaction coming from
-      client components. It is more then Polymer "ready" lifecycle, as no
-      "ready" events are automatically fired by Polymer, it means
-      the cursor is completely interactable - in this case attached and
-      painted on the page. We name it "ready" instead of "rendered" as the
-      long-term goal is to make gr-diff-cursor a javascript class - not a DOM
-      element with an actual lifecycle. This will be triggered only once
-      per element.
-      */
-      this.dispatchEvent(
-        new CustomEvent('ready', {
-          composed: true,
-          bubbles: false,
-        })
-      );
-    });
-  }
-
-  private targetSubscription?: Subscription;
-
-  /** @override */
-  connectedCallback() {
-    super.connectedCallback();
-    // Catch when users are scrolling as the view loads.
     window.addEventListener('scroll', this._boundHandleWindowScroll);
     this.targetSubscription = this.cursorManager.target$.subscribe(target => {
       this.diffRow = target || undefined;
     });
   }
 
-  /** @override */
-  disconnectedCallback() {
+  dispose() {
     if (this.targetSubscription) this.targetSubscription.unsubscribe();
     window.removeEventListener('scroll', this._boundHandleWindowScroll);
     this.cursorManager.unsetCursor();
-    super.disconnectedCallback();
   }
 
   // Don't remove - used by clients embedding gr-diff outside of Gerrit.
@@ -190,66 +184,28 @@ export class GrDiffCursor extends PolymerElement {
     }
   }
 
-  private showToastAndFireEvent(direction: string, shortcut: string) {
-    /*
-     * If user presses p/n on the first/last diff chunk, show a toast informing
-     * user that pressing it again will navigate them to previous/next
-     * unreviewedfile if click happens within the time limit
-     */
-    if (
-      this.lastDisplayedNavigateToFileToast.get(direction) &&
-      Date.now() - this.lastDisplayedNavigateToFileToast.get(direction)! <=
-        NAVIGATE_TO_NEXT_FILE_TIMEOUT_MS
-    ) {
-      // reset for next file
-      this.lastDisplayedNavigateToFileToast.delete(direction);
-      fireEvent(this, `navigate-to-${direction}-unreviewed-file`);
-    } else {
-      this.lastDisplayedNavigateToFileToast.set(direction, Date.now());
-      fireAlert(
-        this,
-        `Press ${shortcut} again to navigate to ${direction} unreviewed file`
-      );
-    }
-  }
-
-  moveToNextChunk(
-    clipToTop?: boolean,
-    navigateToNextFile?: boolean
-  ): CursorMoveResult {
+  moveToNextChunk(clipToTop?: boolean): CursorMoveResult {
     const result = this.cursorManager.next({
       filter: (row: HTMLElement) => this._isFirstRowOfChunk(row),
       getTargetHeight: target =>
         (target?.parentNode as HTMLElement)?.scrollHeight || 0,
       clipToTop,
     });
-    if (
-      navigateToNextFile &&
-      result === CursorMoveResult.CLIPPED &&
-      this.isAtEnd()
-    ) {
-      this.showToastAndFireEvent('next', 'n');
-    }
-
     this._fixSide();
     return result;
   }
 
-  moveToPreviousChunk(navigateToPreviousFile?: boolean): CursorMoveResult {
+  moveToPreviousChunk(): CursorMoveResult {
     const result = this.cursorManager.previous({
       filter: (row: HTMLElement) => this._isFirstRowOfChunk(row),
     });
-    if (navigateToPreviousFile && this.isAtStart()) {
-      this.showToastAndFireEvent('previous', 'p');
-    }
     this._fixSide();
     return result;
   }
 
-  moveToNextCommentThread(): CursorMoveResult | undefined {
+  moveToNextCommentThread(): CursorMoveResult {
     if (this.isAtEnd()) {
-      fireEvent(this, 'navigate-to-next-file-with-comments');
-      return;
+      return CursorMoveResult.CLIPPED;
     }
     const result = this.cursorManager.next({
       filter: (row: HTMLElement) => this._rowHasThread(row),
@@ -341,10 +297,10 @@ export class GrDiffCursor extends PolymerElement {
         this.moveToFirstChunk();
       }
     }
-    this.reInit();
+    this.resetScrollMode();
   }
 
-  reInit() {
+  resetScrollMode() {
     this.cursorManager.scrollMode = ScrollMode.KEEP_VISIBLE;
   }
 
@@ -357,7 +313,7 @@ export class GrDiffCursor extends PolymerElement {
   };
 
   reInitAndUpdateStops() {
-    this.reInit();
+    this.resetScrollMode();
     this._updateStops();
   }
 
@@ -410,23 +366,25 @@ export class GrDiffCursor extends PolymerElement {
    * {leftSide: false, number: 123} for line 123 of the revision, or
    * {leftSide: true, number: 321} for line 321 of the base patch.
    * Returns null if an address is not available.
-   *
    */
   getAddress() {
     if (!this.diffRow) {
       return null;
     }
-
     // Get the line-number cell targeted by the cursor. If the mode is unified
     // then prefer the revision cell if available.
+    return this.getAddressFor(this.diffRow, this.side);
+  }
+
+  private getAddressFor(diffRow: HTMLElement, side: Side) {
     let cell;
     if (this._getViewMode() === DiffViewMode.UNIFIED) {
-      cell = this.diffRow.querySelector('.lineNum.right');
+      cell = diffRow.querySelector('.lineNum.right');
       if (!cell) {
-        cell = this.diffRow.querySelector('.lineNum.left');
+        cell = diffRow.querySelector('.lineNum.left');
       }
     } else {
-      cell = this.diffRow.querySelector('.lineNum.' + this.side);
+      cell = diffRow.querySelector('.lineNum.' + side);
     }
     if (!cell) {
       return null;
@@ -500,15 +458,28 @@ export class GrDiffCursor extends PolymerElement {
     );
   }
 
-  _rowChanged(_: HTMLElement, oldRow: HTMLElement) {
-    if (oldRow) {
-      oldRow.classList.remove(LEFT_SIDE_CLASS, RIGHT_SIDE_CLASS);
+  private fireCursorMoved(
+    event: 'line-cursor-moved-out' | 'line-cursor-moved-in',
+    row: HTMLElement,
+    side: Side
+  ) {
+    const address = this.getAddressFor(row, side);
+    if (address) {
+      const {leftSide, number} = address;
+      row.dispatchEvent(
+        new CustomEvent<LineNumberEventDetail>(event, {
+          detail: {
+            lineNum: number,
+            side: leftSide ? Side.LEFT : Side.RIGHT,
+          },
+          composed: true,
+          bubbles: true,
+        })
+      );
     }
-    this._updateSideClass();
   }
 
-  @observe('side')
-  _updateSideClass() {
+  private updateSideClass() {
     if (!this.diffRow) {
       return;
     }
@@ -542,67 +513,51 @@ export class GrDiffCursor extends PolymerElement {
     );
   }
 
-  /**
-   * Setup and tear down on-render listeners for any diffs that are added or
-   * removed from the cursor.
-   */
-  @observe('diffs.splices')
-  _diffsChanged(changeRecord: PolymerSpliceChange<GrDiff[]>) {
-    if (!changeRecord) {
-      return;
+  replaceDiffs(diffs: GrDiffCursorable[]) {
+    for (const diff of this.diffs) {
+      this.removeEventListeners(diff);
     }
-
+    this.diffs = [];
+    for (const diff of diffs) {
+      this.addEventListeners(diff);
+    }
+    this.diffs.push(...diffs);
     this._updateStops();
+  }
 
-    let splice;
-    let i;
-    for (
-      let spliceIdx = 0;
-      changeRecord.indexSplices && spliceIdx < changeRecord.indexSplices.length;
-      spliceIdx++
-    ) {
-      splice = changeRecord.indexSplices[spliceIdx];
-
-      // Removals must come before additions, because the gr-diff instances
-      // might be the same.
-      for (i = 0; i < splice?.removed.length; i++) {
-        splice.removed[i].removeEventListener(
-          'loading-changed',
-          this.boundHandleDiffLoadingChanged
-        );
-        splice.removed[i].removeEventListener(
-          'render-start',
-          this._boundHandleDiffRenderStart
-        );
-        splice.removed[i].removeEventListener(
-          'render-content',
-          this._boundHandleDiffRenderContent
-        );
-        splice.removed[i].removeEventListener(
-          'line-selected',
-          this._boundHandleDiffLineSelected
-        );
-      }
-
-      for (i = splice.index; i < splice.index + splice.addedCount; i++) {
-        this.diffs[i].addEventListener(
-          'loading-changed',
-          this.boundHandleDiffLoadingChanged
-        );
-        this.diffs[i].addEventListener(
-          'render-start',
-          this._boundHandleDiffRenderStart
-        );
-        this.diffs[i].addEventListener(
-          'render-content',
-          this._boundHandleDiffRenderContent
-        );
-        this.diffs[i].addEventListener(
-          'line-selected',
-          this._boundHandleDiffLineSelected
-        );
-      }
+  unregisterDiff(diff: GrDiffCursorable) {
+    // This can happen during destruction - just don't unregister then.
+    if (!this.diffs) return;
+    const i = this.diffs.indexOf(diff);
+    if (i !== -1) {
+      this.diffs.splice(i, 1);
     }
+  }
+
+  private removeEventListeners(diff: GrDiffCursorable) {
+    diff.removeEventListener(
+      'loading-changed',
+      this.boundHandleDiffLoadingChanged
+    );
+    diff.removeEventListener('render-start', this._boundHandleDiffRenderStart);
+    diff.removeEventListener(
+      'render-content',
+      this._boundHandleDiffRenderContent
+    );
+    diff.removeEventListener(
+      'line-selected',
+      this._boundHandleDiffLineSelected
+    );
+  }
+
+  private addEventListeners(diff: GrDiffCursorable) {
+    diff.addEventListener(
+      'loading-changed',
+      this.boundHandleDiffLoadingChanged
+    );
+    diff.addEventListener('render-start', this._boundHandleDiffRenderStart);
+    diff.addEventListener('render-content', this._boundHandleDiffRenderContent);
+    diff.addEventListener('line-selected', this._boundHandleDiffLineSelected);
   }
 
   _findRowByNumberAndFile(
@@ -622,11 +577,5 @@ export class GrDiffCursor extends PolymerElement {
     const targetableStops: HTMLElement[] = stops.filter(isTargetable);
     const selector = `.lineNum.${side}[data-value="${targetNumber}"]`;
     return targetableStops.find(stop => stop.querySelector(selector));
-  }
-}
-
-declare global {
-  interface HTMLElementTagNameMap {
-    'gr-diff-cursor': GrDiffCursor;
   }
 }

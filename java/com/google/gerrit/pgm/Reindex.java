@@ -20,7 +20,6 @@ import static java.util.stream.Collectors.toSet;
 import com.google.common.cache.Cache;
 import com.google.common.collect.Sets;
 import com.google.gerrit.common.Die;
-import com.google.gerrit.elasticsearch.ElasticIndexModule;
 import com.google.gerrit.extensions.config.FactoryModule;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.index.Index;
@@ -31,6 +30,8 @@ import com.google.gerrit.lifecycle.LifecycleManager;
 import com.google.gerrit.lucene.LuceneIndexModule;
 import com.google.gerrit.pgm.util.BatchProgramModule;
 import com.google.gerrit.pgm.util.SiteProgram;
+import com.google.gerrit.server.LibModuleLoader;
+import com.google.gerrit.server.ModuleOverloader;
 import com.google.gerrit.server.cache.CacheDisplay;
 import com.google.gerrit.server.cache.CacheInfo;
 import com.google.gerrit.server.change.ChangeResource;
@@ -49,6 +50,8 @@ import com.google.inject.Module;
 import com.google.inject.multibindings.OptionalBinder;
 import java.io.StringWriter;
 import java.io.Writer;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -178,9 +181,21 @@ public class Reindex extends SiteProgram {
       indexModule =
           LuceneIndexModule.singleVersionWithExplicitVersions(
               versions, threads, replica, AutoFlush.DISABLED);
-    } else if (indexType.isElasticsearch()) {
-      indexModule =
-          ElasticIndexModule.singleVersionWithExplicitVersions(versions, threads, replica);
+    } else if (indexType.isFake()) {
+      // Use Reflection so that we can omit the fake index binary in production code. Test code does
+      // compile the component in.
+      try {
+        Class<?> clazz = Class.forName("com.google.gerrit.index.testing.FakeIndexModule");
+        Method m =
+            clazz.getMethod(
+                "singleVersionWithExplicitVersions", Map.class, int.class, boolean.class);
+        indexModule = (Module) m.invoke(null, versions, threads, replica);
+      } catch (NoSuchMethodException
+          | ClassNotFoundException
+          | IllegalAccessException
+          | InvocationTargetException e) {
+        throw new IllegalStateException("can't create index", e);
+      }
     } else {
       throw new IllegalStateException("unsupported index.type = " + indexType);
     }
@@ -204,7 +219,9 @@ public class Reindex extends SiteProgram {
           }
         });
 
-    return dbInjector.createChildInjector(modules);
+    return dbInjector.createChildInjector(
+        ModuleOverloader.override(
+            modules, LibModuleLoader.loadReindexModules(cfgInjector, versions, threads, replica)));
   }
 
   private void overrideConfig() {

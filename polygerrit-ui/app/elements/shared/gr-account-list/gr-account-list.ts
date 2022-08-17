@@ -26,9 +26,10 @@ import {
   Suggestion,
   AccountInfo,
   GroupInfo,
+  EmailAddress,
 } from '../../../types/common';
 import {
-  GrReviewerSuggestionsProvider,
+  ReviewerSuggestionsProvider,
   SuggestionItem,
 } from '../../../scripts/gr-reviewer-suggestions-provider/gr-reviewer-suggestions-provider';
 import {ReportingService} from '../../../services/gr-reporting/gr-reporting';
@@ -37,6 +38,7 @@ import {GrAccountChip} from '../gr-account-chip/gr-account-chip';
 import {PolymerDeepPropertyChange} from '@polymer/polymer/interfaces';
 import {PaperInputElementExt} from '../../../types/types';
 import {fireAlert} from '../../../utils/event-util';
+import {accountOrGroupKey} from '../../../utils/account-util';
 
 const VALID_EMAIL_ALERT = 'Please input a valid email.';
 
@@ -143,7 +145,7 @@ export class GrAccountList extends PolymerElement {
    * Returns suggestions and convert them to list item
    */
   @property({type: Object})
-  suggestionsProvider?: GrReviewerSuggestionsProvider;
+  suggestionsProvider?: ReviewerSuggestionsProvider;
 
   /**
    * Needed for template checking since value is initially set to null.
@@ -176,13 +178,9 @@ export class GrAccountList extends PolymerElement {
   @property({type: Object})
   _querySuggestions: (input: string) => Promise<SuggestionItem[]>;
 
-  /**
-   * Set to true to disable suggestions on empty input.
-   */
-  @property({type: Boolean})
-  skipSuggestOnEmpty = false;
-
   reporting: ReportingService;
+
+  private pendingRemoval: Set<AccountInput> = new Set();
 
   constructor() {
     super();
@@ -202,17 +200,10 @@ export class GrAccountList extends PolymerElement {
   }
 
   _getSuggestions(input: string) {
-    if (this.skipSuggestOnEmpty && !input) {
-      return Promise.resolve([]);
-    }
     const provider = this.suggestionsProvider;
-    if (!provider) {
-      return Promise.resolve([]);
-    }
+    if (!provider) return Promise.resolve([]);
     return provider.getSuggestions(input).then(suggestions => {
-      if (!suggestions) {
-        return [];
-      }
+      if (!suggestions) return [];
       if (this.filter) {
         suggestions = suggestions.filter(this.filter);
       }
@@ -233,6 +224,7 @@ export class GrAccountList extends PolymerElement {
     let itemTypeAdded = 'unknown';
     if (isAccountObject(item)) {
       const account = {...item.account, _pendingAdd: true};
+      this.removeFromPendingRemoval(account);
       this.push('accounts', account);
       itemTypeAdded = 'account';
     } else if (isGroupObjectInput(item)) {
@@ -242,6 +234,7 @@ export class GrAccountList extends PolymerElement {
       }
       const group = {...item.group, _pendingAdd: true, _group: true};
       this.push('accounts', group);
+      this.removeFromPendingRemoval(group);
       itemTypeAdded = 'group';
     } else if (this.allowAnyInput) {
       if (!item.includes('@')) {
@@ -251,8 +244,9 @@ export class GrAccountList extends PolymerElement {
         fireAlert(this, VALID_EMAIL_ALERT);
         return false;
       } else {
-        const account = {email: item, _pendingAdd: true};
+        const account = {email: item as EmailAddress, _pendingAdd: true};
         this.push('accounts', account);
+        this.removeFromPendingRemoval(account);
         itemTypeAdded = 'email';
       }
     }
@@ -283,32 +277,16 @@ export class GrAccountList extends PolymerElement {
     return classes.join(' ');
   }
 
-  _accountMatches(a: AccountInput, b: AccountInput) {
-    // TODO(TS): seems a & b always exists ?
-    if (a && b) {
-      // both conditions are checking against AccountInfo
-      // and only check a not b.. typeguard won't work very good without
-      // changing logic, so keep it as inline casting
-      if ((a as AccountInfoInput)._account_id) {
-        return (
-          (a as AccountInfoInput)._account_id ===
-          (b as AccountInfoInput)._account_id
-        );
-      }
-      if ((a as AccountInfoInput).email) {
-        return (a as AccountInfoInput).email === (b as AccountInfoInput).email;
-      }
-    }
-    return a === b;
-  }
-
   _computeRemovable(account: AccountInput, readonly: boolean) {
     if (readonly) {
       return false;
     }
     if (this.removableValues) {
       for (let i = 0; i < this.removableValues.length; i++) {
-        if (this._accountMatches(this.removableValues[i], account)) {
+        if (
+          accountOrGroupKey(this.removableValues[i]) ===
+          accountOrGroupKey(account)
+        ) {
           return true;
         }
       }
@@ -328,21 +306,16 @@ export class GrAccountList extends PolymerElement {
       return;
     }
     for (let i = 0; i < this.accounts.length; i++) {
-      let matches;
-      const account = this.accounts[i];
-      if (toRemove._group) {
-        matches =
-          (toRemove as GroupInfoInput).id === (account as GroupInfoInput).id;
-      } else {
-        matches = this._accountMatches(toRemove, account);
-      }
-      if (matches) {
+      if (accountOrGroupKey(toRemove) === accountOrGroupKey(this.accounts[i])) {
         this.splice('accounts', i, 1);
+        this.pendingRemoval.add(toRemove);
         this.reporting.reportInteraction(`Remove from ${this.id}`);
         return;
       }
     }
-    console.warn('received remove event for missing account', toRemove);
+    this.reporting.error(
+      new Error(`Received "remove" event for missing account: ${toRemove}`)
+    );
   }
 
   _getNativeInput(paperInput: PaperInputElementExt) {
@@ -443,6 +416,26 @@ export class GrAccountList extends PolymerElement {
           throw new Error('AccountInput must be either Account or Group.');
         }
       });
+  }
+
+  removals(): AccountAddition[] {
+    return Array.from(this.pendingRemoval).map(account => {
+      if (isGroupInfoInput(account)) {
+        return {group: account};
+      } else if (isAccountInfoInput(account)) {
+        return {account};
+      } else {
+        throw new Error('AccountInput must be either Account or Group.');
+      }
+    });
+  }
+
+  removeFromPendingRemoval(account: AccountInput) {
+    this.pendingRemoval.delete(account);
+  }
+
+  clearPendingRemovals() {
+    this.pendingRemoval.clear();
   }
 
   _computeEntryHidden(

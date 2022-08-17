@@ -25,6 +25,9 @@ import {ChecksService} from './checks/checks-service';
 import {GrJsApiInterface} from '../elements/shared/gr-js-api-interface/gr-js-api-interface-element';
 import {GrStorageService} from './storage/gr-storage_impl';
 import {ConfigService} from './config/config-service';
+import {UserService} from './user/user-service';
+import {CommentsService} from './comments/comments-service';
+import {ShortcutsService} from './shortcuts/shortcuts-service';
 
 type ServiceName = keyof AppContext;
 type ServiceCreator<T> = () => T;
@@ -71,11 +74,15 @@ export function initAppContext() {
     reportingService: () => new GrReporting(appContext.flagsService),
     eventEmitter: () => new EventEmitter(),
     authService: () => new Auth(appContext.eventEmitter),
-    restApiService: () => new GrRestApiInterface(appContext.authService),
+    restApiService: () =>
+      new GrRestApiInterface(appContext.authService, appContext.flagsService),
     changeService: () => new ChangeService(),
-    checksService: () => new ChecksService(),
+    commentsService: () => new CommentsService(appContext.restApiService),
+    checksService: () => new ChecksService(appContext.reportingService),
     jsApiService: () => new GrJsApiInterface(),
     storageService: () => new GrStorageService(),
     configService: () => new ConfigService(),
+    userService: () => new UserService(appContext.restApiService),
+    shortcutsService: () => new ShortcutsService(appContext.reportingService),
   });
 }

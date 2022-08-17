@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     /* Basic Options */
-    "target": "es2018", /* Specify ECMAScript target version: 'ES3' (default), 'ES5', 'ES2015', 'ES2016', 'ES2017', 'ES2018', 'ES2019' or 'ESNEXT'. */
+    "target": "es2019", /* Specify ECMAScript target version: 'ES3' (default), 'ES5', 'ES2015', 'ES2016', 'ES2017', 'ES2018', 'ES2019' or 'ESNEXT'. */
     "module": "es2015", /* Specify module code generation: 'none', 'commonjs', 'amd', 'system', 'umd', 'es2015', or 'ESNext'. */
     "allowJs": true, /* Allow javascript files to be compiled. */
     "checkJs": false, /* Report errors in .js files. */
@@ -25,6 +25,7 @@
     "noUnusedLocals": true, /* Report errors on unused locals. */
     "noUnusedParameters": true, /* Report errors on unused parameters. */
     "noImplicitReturns": true, /* Report error when not all code paths in function return a value. */
+    "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,/* Report errors for fallthrough cases in switch statement. */
 
     "skipLibCheck": true, /* Do not check node_modules */
@@ -39,7 +40,38 @@
     "incremental": true,
     "experimentalDecorators": true,
 
-    "allowUmdGlobalAccess": true
+    "allowUmdGlobalAccess": true,
+
+    /* typeRoots for IDE (see tsconfig_bazel.json for Bazel) */
+    "typeRoots": [
+      "node_modules/@types",
+      "../node_modules/@types"
+    ],
+
+    "plugins": [
+      {
+        "name": "ts-lit-plugin",
+        "strict": true,
+        "rules": {
+          "no-unknown-tag-name": "error",
+          "no-unclosed-tag": "error",
+          "no-unknown-property": "error",
+          "no-unintended-mixed-binding": "error",
+          "no-invalid-boolean-binding": "error",
+          "no-expressionless-property-binding": "error",
+          "no-noncallable-event-binding": "error",
+          "no-boolean-in-attribute-binding": "error",
+          "no-complex-attribute-binding": "error",
+          "no-nullable-attribute-binding": "error",
+          "no-incompatible-type-binding": "error",
+          "no-invalid-directive-binding": "error",
+          "no-incompatible-property-type": "error",
+          "no-unknown-property-converter": "error",
+          "no-invalid-attribute-name": "error",
+          "no-invalid-tag-name": "error"
+        }
+      }
+    ]
   },
   // With the * pattern (without an extension), only supported files
   // are included. The supported files are .ts, .tsx, .d.ts.
@@ -61,6 +93,7 @@
     "styles/**/*",
     "types/**/*",
     "utils/**/*",
-    "test/**/*"
+    "test/**/*",
+    "tmpl_out/**/*" //Created by template checker in dev-mode
   ]
 }

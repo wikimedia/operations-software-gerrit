@@ -31,10 +31,6 @@ export const htmlTemplate = html`
       background-color: var(--background-color-secondary);
       border-bottom: 1px solid var(--border-color);
     }
-    .fixActions {
-      display: flex;
-      justify-content: flex-end;
-    }
     gr-button {
       margin-left: var(--spacing-m);
     }
@@ -65,6 +61,7 @@ export const htmlTemplate = html`
               change-num="[[changeNum]]"
               path="[[item.filepath]]"
               diff="[[item.preview]]"
+              layers="[[layers]]"
             ></gr-diff>
           </div>
         </template>

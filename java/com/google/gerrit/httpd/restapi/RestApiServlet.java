@@ -30,6 +30,7 @@ import static com.google.common.net.HttpHeaders.AUTHORIZATION;
 import static com.google.common.net.HttpHeaders.CONTENT_TYPE;
 import static com.google.common.net.HttpHeaders.ORIGIN;
 import static com.google.common.net.HttpHeaders.VARY;
+import static com.google.gerrit.server.experiments.ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_REMOVE_REVISION_ETAG;
 import static java.math.RoundingMode.CEILING;
 import static java.nio.charset.StandardCharsets.ISO_8859_1;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -45,6 +46,7 @@ import static javax.servlet.http.HttpServletResponse.SC_NOT_IMPLEMENTED;
 import static javax.servlet.http.HttpServletResponse.SC_NOT_MODIFIED;
 import static javax.servlet.http.HttpServletResponse.SC_OK;
 import static javax.servlet.http.HttpServletResponse.SC_PRECONDITION_FAILED;
+import static javax.servlet.http.HttpServletResponse.SC_REQUEST_TIMEOUT;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
@@ -65,6 +67,7 @@ import com.google.common.net.HttpHeaders;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.RawInputUtil;
 import com.google.gerrit.entities.Project;
+import com.google.gerrit.extensions.events.GitReferenceUpdatedListener;
 import com.google.gerrit.extensions.registration.DynamicItem;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.registration.DynamicSet;
@@ -96,21 +99,30 @@ import com.google.gerrit.extensions.restapi.RestResource;
 import com.google.gerrit.extensions.restapi.RestView;
 import com.google.gerrit.extensions.restapi.TopLevelResource;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
+import com.google.gerrit.extensions.restapi.Url;
 import com.google.gerrit.httpd.WebSession;
 import com.google.gerrit.httpd.restapi.ParameterParser.QueryParams;
 import com.google.gerrit.json.OutputFormat;
 import com.google.gerrit.server.AccessPath;
 import com.google.gerrit.server.AnonymousUser;
+import com.google.gerrit.server.CancellationMetrics;
 import com.google.gerrit.server.CurrentUser;
+import com.google.gerrit.server.DeadlineChecker;
 import com.google.gerrit.server.DynamicOptions;
 import com.google.gerrit.server.ExceptionHook;
+import com.google.gerrit.server.InvalidDeadlineException;
 import com.google.gerrit.server.OptionUtil;
 import com.google.gerrit.server.RequestInfo;
 import com.google.gerrit.server.RequestListener;
 import com.google.gerrit.server.audit.ExtendedHttpAuditEvent;
 import com.google.gerrit.server.cache.PerThreadCache;
+import com.google.gerrit.server.cancellation.RequestCancelledException;
+import com.google.gerrit.server.cancellation.RequestStateContext;
+import com.google.gerrit.server.cancellation.RequestStateProvider;
 import com.google.gerrit.server.change.ChangeFinder;
+import com.google.gerrit.server.change.RevisionResource;
 import com.google.gerrit.server.config.GerritServerConfig;
+import com.google.gerrit.server.experiments.ExperimentFeatures;
 import com.google.gerrit.server.group.GroupAuditService;
 import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.PerformanceLogContext;
@@ -200,7 +212,12 @@ public class RestApiServlet extends HttpServlet {
 
   private static final String FORM_TYPE = "application/x-www-form-urlencoded";
 
+  @VisibleForTesting public static final String X_GERRIT_DEADLINE = "X-Gerrit-Deadline";
   @VisibleForTesting public static final String X_GERRIT_TRACE = "X-Gerrit-Trace";
+  @VisibleForTesting public static final String X_GERRIT_UPDATED_REF = "X-Gerrit-UpdatedRef";
+
+  @VisibleForTesting
+  public static final String X_GERRIT_UPDATED_REF_ENABLED = "X-Gerrit-UpdatedRef-Enabled";
 
   private static final String X_REQUESTED_WITH = "X-Requested-With";
   private static final String X_GERRIT_AUTH = "X-Gerrit-Auth";
@@ -216,6 +233,7 @@ public class RestApiServlet extends HttpServlet {
   public static final String XD_METHOD = "$m";
   public static final int SC_UNPROCESSABLE_ENTITY = 422;
   public static final int SC_TOO_MANY_REQUESTS = 429;
+  public static final int SC_CLIENT_CLOSED_REQUEST = 499;
 
   private static final int HEAP_EST_SIZE = 10 * 8 * 1024; // Presize 10 blocks.
   private static final String PLAIN_TEXT = "text/plain";
@@ -252,6 +270,9 @@ public class RestApiServlet extends HttpServlet {
     final PluginSetContext<ExceptionHook> exceptionHooks;
     final Injector injector;
     final DynamicMap<DynamicOptions.DynamicBean> dynamicBeans;
+    final ExperimentFeatures experimentFeatures;
+    final DeadlineChecker.Factory deadlineCheckerFactory;
+    final CancellationMetrics cancellationMetrics;
 
     @Inject
     Globals(
@@ -269,7 +290,10 @@ public class RestApiServlet extends HttpServlet {
         RetryHelper retryHelper,
         PluginSetContext<ExceptionHook> exceptionHooks,
         Injector injector,
-        DynamicMap<DynamicOptions.DynamicBean> dynamicBeans) {
+        DynamicMap<DynamicOptions.DynamicBean> dynamicBeans,
+        ExperimentFeatures experimentFeatures,
+        DeadlineChecker.Factory deadlineCheckerFactory,
+        CancellationMetrics cancellationMetrics) {
       this.currentUser = currentUser;
       this.webSession = webSession;
       this.paramParser = paramParser;
@@ -286,6 +310,9 @@ public class RestApiServlet extends HttpServlet {
       allowOrigin = makeAllowOrigin(config);
       this.injector = injector;
       this.dynamicBeans = dynamicBeans;
+      this.experimentFeatures = experimentFeatures;
+      this.deadlineCheckerFactory = deadlineCheckerFactory;
+      this.cancellationMetrics = cancellationMetrics;
     }
 
     private static Pattern makeAllowOrigin(Config cfg) {
@@ -332,9 +359,10 @@ public class RestApiServlet extends HttpServlet {
     ViewData viewData = null;
 
     try (TraceContext traceContext = enableTracing(req, res)) {
-      List<IdString> path = splitPath(req);
+      String requestUri = requestUri(req);
 
       try (PerThreadCache ignored = PerThreadCache.create()) {
+        List<IdString> path = splitPath(req);
         RequestInfo requestInfo = createRequestInfo(traceContext, requestUri(req), path);
         globals.requestListeners.runEach(l -> l.onRequest(requestInfo));
 
@@ -343,8 +371,13 @@ public class RestApiServlet extends HttpServlet {
         // plugins happens before the client sees the response. This is needed for being able to
         // test performance logging from an acceptance test (see
         // TraceIT#performanceLoggingForRestCall()).
-        try (PerformanceLogContext performanceLogContext =
-            new PerformanceLogContext(globals.config, globals.performanceLoggers)) {
+        try (RequestStateContext requestStateContext =
+                RequestStateContext.open()
+                    .addRequestStateProvider(
+                        globals.deadlineCheckerFactory.create(
+                            requestInfo, req.getHeader(X_GERRIT_DEADLINE)));
+            PerformanceLogContext performanceLogContext =
+                new PerformanceLogContext(globals.config, globals.performanceLoggers)) {
           traceRequestData(req);
 
           if (isCorsPreflight(req)) {
@@ -586,6 +619,11 @@ public class RestApiServlet extends HttpServlet {
             } else {
               throw new ResourceNotFoundException();
             }
+            String isUpdatedRefEnabled = req.getHeader(X_GERRIT_UPDATED_REF_ENABLED);
+            if (!Strings.isNullOrEmpty(isUpdatedRefEnabled)
+                && Boolean.valueOf(isUpdatedRefEnabled)) {
+              setXGerritUpdatedRefResponseHeaders(req, res);
+            }
 
             if (response instanceof Response.Redirect) {
               CacheHeaders.setNotCacheable(res);
@@ -692,31 +730,51 @@ public class RestApiServlet extends HttpServlet {
                 messageOr(e, "Quota limit reached"),
                 e.caching(),
                 e);
+      } catch (InvalidDeadlineException e) {
+        cause = Optional.of(e);
+        responseBytes =
+            replyError(req, res, statusCode = SC_BAD_REQUEST, messageOr(e, "Bad Request"), e);
       } catch (Exception e) {
         cause = Optional.of(e);
-        statusCode = SC_INTERNAL_SERVER_ERROR;
 
-        Optional<ExceptionHook.Status> status = getStatus(e);
-        statusCode = status.map(ExceptionHook.Status::statusCode).orElse(SC_INTERNAL_SERVER_ERROR);
-
-        if (res.isCommitted()) {
-          responseBytes = 0;
-          if (statusCode == SC_INTERNAL_SERVER_ERROR) {
-            logger.atSevere().withCause(e).log(
-                "Error in %s %s, response already committed", req.getMethod(), uriForLogging(req));
-          } else {
-            logger.atWarning().log(
-                "Response for %s %s already committed, wanted to set status %d",
-                req.getMethod(), uriForLogging(req), statusCode);
-          }
+        Optional<RequestCancelledException> requestCancelledException =
+            RequestCancelledException.getFromCausalChain(e);
+        if (requestCancelledException.isPresent()) {
+          RequestStateProvider.Reason cancellationReason =
+              requestCancelledException.get().getCancellationReason();
+          globals.cancellationMetrics.countCancelledRequest(
+              RequestInfo.RequestType.REST, requestUri, cancellationReason);
+          statusCode = getCancellationStatusCode(cancellationReason);
+          responseBytes =
+              replyError(
+                  req, res, statusCode, getCancellationMessage(requestCancelledException.get()), e);
         } else {
-          res.reset();
-          traceContext.getTraceId().ifPresent(traceId -> res.addHeader(X_GERRIT_TRACE, traceId));
+          statusCode = SC_INTERNAL_SERVER_ERROR;
 
-          if (status.isPresent()) {
-            responseBytes = reply(req, res, e, status.get(), getUserMessages(traceContext, e));
+          Optional<ExceptionHook.Status> status = getStatus(e);
+          statusCode =
+              status.map(ExceptionHook.Status::statusCode).orElse(SC_INTERNAL_SERVER_ERROR);
+
+          if (res.isCommitted()) {
+            responseBytes = 0;
+            if (statusCode == SC_INTERNAL_SERVER_ERROR) {
+              logger.atSevere().withCause(e).log(
+                  "Error in %s %s, response already committed",
+                  req.getMethod(), uriForLogging(req));
+            } else {
+              logger.atWarning().log(
+                  "Response for %s %s already committed, wanted to set status %d",
+                  req.getMethod(), uriForLogging(req), statusCode);
+            }
           } else {
-            responseBytes = replyInternalServerError(req, res, e, getUserMessages(traceContext, e));
+            res.reset();
+            TraceContext.getTraceId().ifPresent(traceId -> res.addHeader(X_GERRIT_TRACE, traceId));
+
+            if (status.isPresent()) {
+              responseBytes = reply(req, res, e, status.get(), getUserMessages(e));
+            } else {
+              responseBytes = replyInternalServerError(req, res, e, getUserMessages(e));
+            }
           }
         }
       } finally {
@@ -747,6 +805,33 @@ public class RestApiServlet extends HttpServlet {
     }
   }
 
+  /**
+   * Fill in the refs that were updated during this request in the response header. The updated refs
+   * will be in the form of "project~ref~updated_SHA-1".
+   */
+  private void setXGerritUpdatedRefResponseHeaders(
+      HttpServletRequest request, HttpServletResponse response) {
+    for (GitReferenceUpdatedListener.Event refUpdate :
+        globals.webSession.get().getRefUpdatedEvents()) {
+      String refUpdateFormat =
+          String.format(
+              "%s~%s~%s~%s",
+              // encode the project and ref names since they may contain `~`
+              Url.encode(refUpdate.getProjectName()),
+              Url.encode(refUpdate.getRefName()),
+              refUpdate.getOldObjectId(),
+              refUpdate.getNewObjectId());
+
+      if (isRead(request)) {
+        logger.atWarning().log(
+            "request %s performed a ref update %s although the request is a READ request",
+            request.getRequestURL().toString(), refUpdateFormat);
+      }
+      response.addHeader(X_GERRIT_UPDATED_REF, refUpdateFormat);
+    }
+    globals.webSession.get().resetRefUpdatedEvents();
+  }
+
   private String getEtagWithRetry(
       HttpServletRequest req,
       TraceContext traceContext,
@@ -775,6 +860,11 @@ public class RestApiServlet extends HttpServlet {
         TraceContext.newTimer(
             "RestApiServlet#getEtagWithRetry:resource",
             Metadata.builder().restViewName(rsrc.getClass().getSimpleName()).build())) {
+      if (rsrc instanceof RevisionResource
+          && globals.experimentFeatures.isFeatureEnabled(
+              GERRIT_BACKEND_REQUEST_FEATURE_REMOVE_REVISION_ETAG)) {
+        return null;
+      }
       return invokeRestEndpointWithRetry(
           req,
           traceContext,
@@ -893,7 +983,7 @@ public class RestApiServlet extends HttpServlet {
       throws Exception {
     RetryableAction<T> retryableAction = globals.retryHelper.action(actionType, caller, action);
     AtomicReference<Optional<String>> traceId = new AtomicReference<>(Optional.empty());
-    if (!traceContext.isTracing()) {
+    if (!TraceContext.isTracing()) {
       // enable automatic retry with tracing in case of non-recoverable failure
       retryableAction
           .retryWithTrace(t -> !(t instanceof RestApiException))
@@ -1056,7 +1146,7 @@ public class RestApiServlet extends HttpServlet {
 
     if (rsrc instanceof RestResource.HasETag) {
       String have = req.getHeader(HttpHeaders.IF_NONE_MATCH);
-      if (have != null) {
+      if (!Strings.isNullOrEmpty(have)) {
         String eTag = getEtagWithRetry(req, traceContext, (RestResource.HasETag) rsrc);
         return have.equals(eTag);
       }
@@ -1134,7 +1224,9 @@ public class RestApiServlet extends HttpServlet {
       res.setHeader(HttpHeaders.ETAG, eTag);
     } else if (rsrc instanceof RestResource.HasETag) {
       String eTag = getEtagWithRetry(req, traceContext, (RestResource.HasETag) rsrc);
-      res.setHeader(HttpHeaders.ETAG, eTag);
+      if (!Strings.isNullOrEmpty(eTag)) {
+        res.setHeader(HttpHeaders.ETAG, eTag);
+      }
     }
     if (rsrc instanceof RestResource.HasLastModified) {
       res.setDateHeader(
@@ -1334,7 +1426,6 @@ public class RestApiServlet extends HttpServlet {
    * @param config config parameters for the JSON formatting
    * @param result the object that should be formatted as JSON
    * @return the length of the response
-   * @throws IOException
    */
   public static long replyJson(
       @Nullable HttpServletRequest req,
@@ -1724,6 +1815,10 @@ public class RestApiServlet extends HttpServlet {
     logger.atFinest().log(
         "Received REST request: %s %s (parameters: %s)",
         req.getMethod(), req.getRequestURI(), getParameterNames(req));
+    Optional.ofNullable(req.getHeader(X_GERRIT_DEADLINE))
+        .ifPresent(
+            clientProvidedDeadline ->
+                logger.atFine().log("%s = %s", X_GERRIT_DEADLINE, clientProvidedDeadline));
     logger.atFinest().log("Calling user: %s", globals.currentUser.get().getLoggableName());
     logger.atFinest().log(
         "Groups: %s", lazy(() -> globals.currentUser.get().getEffectiveGroups().getKnownGroups()));
@@ -1779,9 +1874,9 @@ public class RestApiServlet extends HttpServlet {
         .findFirst();
   }
 
-  private ImmutableList<String> getUserMessages(TraceContext traceContext, Throwable err) {
+  private ImmutableList<String> getUserMessages(Throwable err) {
     return globals.exceptionHooks.stream()
-        .flatMap(h -> h.getUserMessages(err, traceContext.getTraceId().orElse(null)).stream())
+        .flatMap(h -> h.getUserMessages(err, TraceContext.getTraceId().orElse(null)).stream())
         .collect(toImmutableList());
   }
 
@@ -1874,7 +1969,6 @@ public class RestApiServlet extends HttpServlet {
    *     set to {@code true} if the reply may contain sensitive data
    * @param text the text reply
    * @return the length of the response
-   * @throws IOException
    */
   static long replyText(
       @Nullable HttpServletRequest req, HttpServletResponse res, boolean allowTracing, String text)
@@ -1886,6 +1980,28 @@ public class RestApiServlet extends HttpServlet {
       logger.atFinest().log("Text response body:\n%s", text);
     }
     return replyBinaryResult(req, res, BinaryResult.create(text).setContentType(PLAIN_TEXT));
+  }
+
+  private static int getCancellationStatusCode(RequestStateProvider.Reason cancellationReason) {
+    switch (cancellationReason) {
+      case CLIENT_CLOSED_REQUEST:
+        return SC_CLIENT_CLOSED_REQUEST;
+      case CLIENT_PROVIDED_DEADLINE_EXCEEDED:
+      case SERVER_DEADLINE_EXCEEDED:
+        return SC_REQUEST_TIMEOUT;
+    }
+    logger.atSevere().log("Unexpected cancellation reason: %s", cancellationReason);
+    return SC_INTERNAL_SERVER_ERROR;
+  }
+
+  private static String getCancellationMessage(
+      RequestCancelledException requestCancelledException) {
+    StringBuilder msg = new StringBuilder(requestCancelledException.formatCancellationReason());
+    if (requestCancelledException.getCancellationMessage().isPresent()) {
+      msg.append("\n\n");
+      msg.append(requestCancelledException.getCancellationMessage().get());
+    }
+    return msg.toString();
   }
 
   private static boolean acceptsGzip(HttpServletRequest req) {

@@ -44,6 +44,7 @@ import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.SubmitRecord;
+import com.google.gerrit.entities.SubmitRequirementResult;
 import com.google.gerrit.entities.converter.ChangeMessageProtoConverter;
 import com.google.gerrit.entities.converter.PatchSetApprovalProtoConverter;
 import com.google.gerrit.entities.converter.PatchSetProtoConverter;
@@ -128,6 +129,7 @@ public abstract class ChangeNotesState {
       List<SubmitRecord> submitRecords,
       List<ChangeMessage> changeMessages,
       ListMultimap<ObjectId, HumanComment> publishedComments,
+      List<SubmitRequirementResult> submitRequirementResults,
       boolean isPrivate,
       boolean workInProgress,
       boolean reviewStarted,
@@ -181,6 +183,7 @@ public abstract class ChangeNotesState {
         .submitRecords(submitRecords)
         .changeMessages(changeMessages)
         .publishedComments(publishedComments)
+        .submitRequirementsResult(submitRequirementResults)
         .updateCount(updateCount)
         .mergedOn(mergedOn)
         .build();
@@ -326,6 +329,8 @@ public abstract class ChangeNotesState {
 
   abstract ImmutableListMultimap<ObjectId, HumanComment> publishedComments();
 
+  abstract ImmutableList<SubmitRequirementResult> submitRequirementsResult();
+
   abstract int updateCount();
 
   @Nullable
@@ -404,6 +409,7 @@ public abstract class ChangeNotesState {
           .submitRecords(ImmutableList.of())
           .changeMessages(ImmutableList.of())
           .publishedComments(ImmutableListMultimap.of())
+          .submitRequirementsResult(ImmutableList.of())
           .updateCount(0);
     }
 
@@ -444,6 +450,9 @@ public abstract class ChangeNotesState {
     abstract Builder changeMessages(List<ChangeMessage> changeMessages);
 
     abstract Builder publishedComments(ListMultimap<ObjectId, HumanComment> publishedComments);
+
+    abstract Builder submitRequirementsResult(
+        List<SubmitRequirementResult> submitRequirementsResult);
 
     abstract Builder updateCount(int updateCount);
 
@@ -519,6 +528,12 @@ public abstract class ChangeNotesState {
           .changeMessages()
           .forEach(m -> b.addChangeMessage(ChangeMessageProtoConverter.INSTANCE.toProto(m)));
       object.publishedComments().values().forEach(c -> b.addPublishedComment(GSON.toJson(c)));
+      object
+          .submitRequirementsResult()
+          .forEach(
+              sr ->
+                  b.addSubmitRequirementResult(
+                      SubmitRequirementProtoConverter.INSTANCE.toProto(sr)));
       b.setUpdateCount(object.updateCount());
       if (object.mergedOn() != null) {
         b.setMergedOnMillis(object.mergedOn().getTime());
@@ -658,6 +673,10 @@ public abstract class ChangeNotesState {
                   proto.getPublishedCommentList().stream()
                       .map(r -> GSON.fromJson(r, HumanComment.class))
                       .collect(toImmutableListMultimap(HumanComment::getCommitId, c -> c)))
+              .submitRequirementsResult(
+                  proto.getSubmitRequirementResultList().stream()
+                      .map(sr -> SubmitRequirementProtoConverter.INSTANCE.fromProto(sr))
+                      .collect(toImmutableList()))
               .updateCount(proto.getUpdateCount())
               .mergedOn(proto.getHasMergedOn() ? new Timestamp(proto.getMergedOnMillis()) : null);
       return b.build();

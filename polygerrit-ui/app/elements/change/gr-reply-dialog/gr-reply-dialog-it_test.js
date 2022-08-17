@@ -16,10 +16,11 @@
  */
 
 import '../../../test/common-test-setup-karma.js';
-import {resetPlugins, stubRestApi} from '../../../test/test-utils.js';
 import './gr-reply-dialog.js';
-import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader.js';
+
+import {queryAndAssert, resetPlugins, stubRestApi} from '../../../test/test-utils.js';
 import {_testOnly_initGerritPluginApi} from '../../shared/gr-js-api-interface/gr-gerrit.js';
+import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader.js';
 
 const basicFixture = fixtureFromElement('gr-reply-dialog');
 const pluginApi = _testOnly_initGerritPluginApi();
@@ -87,19 +88,14 @@ suite('gr-reply-dialog-it tests', () => {
 
   test('_submit blocked when invalid email is supplied to ccs', () => {
     const sendStub = sinon.stub(element, 'send').returns(Promise.resolve());
-    // Stub the below function to avoid side effects from the send promise
-    // resolving.
-    sinon.stub(element, '_purgeReviewersPendingRemove');
 
     element.$.ccs.$.entry.setText('test');
-    MockInteractions.tap(element.shadowRoot
-        .querySelector('gr-button.send'));
+    MockInteractions.tap(element.shadowRoot.querySelector('gr-button.send'));
     assert.isFalse(sendStub.called);
     flush();
 
     element.$.ccs.$.entry.setText('test@test.test');
-    MockInteractions.tap(element.shadowRoot
-        .querySelector('gr-button.send'));
+    MockInteractions.tap(element.shadowRoot.querySelector('gr-button.send'));
     assert.isTrue(sendStub.called);
   });
 
@@ -110,9 +106,7 @@ suite('gr-reply-dialog-it tests', () => {
       replyApi.addReplyTextChangedCallback(text => {
         const label = 'Code-Review';
         const labelValue = replyApi.getLabelValue(label);
-        if (labelValue &&
-            labelValue === ' 0' &&
-            text.indexOf('LGTM') === 0) {
+        if (labelValue && labelValue === ' 0' && text.indexOf('LGTM') === 0) {
           replyApi.setLabelValue(label, '+1');
         }
       });
@@ -122,15 +116,15 @@ suite('gr-reply-dialog-it tests', () => {
     getPluginLoader().loadPlugins([]);
     await getPluginLoader().awaitPluginsLoaded();
     await flush();
-    const textarea = element.$.textarea.getNativeTextarea();
+    const textarea = queryAndAssert(element, 'gr-textarea').getNativeTextarea();
     textarea.value = 'LGTM';
-    textarea.dispatchEvent(new CustomEvent(
-        'input', {bubbles: true, composed: true}));
+    textarea.dispatchEvent(
+        new CustomEvent('input', {bubbles: true, composed: true}));
     await flush();
-    const labelScoreRows = element.$.labelScores.shadowRoot
-        .querySelector('gr-label-score-row[name="Code-Review"]');
-    const selectedBtn = labelScoreRows.shadowRoot
-        .querySelector('gr-button[data-value="+1"].iron-selected');
+    const labelScoreRows = element.getLabelScores().shadowRoot.querySelector(
+        'gr-label-score-row[name="Code-Review"]');
+    const selectedBtn =
+        labelScoreRows.shadowRoot.querySelector('gr-button[data-value="+1"]');
     assert.isOk(selectedBtn);
   });
 });

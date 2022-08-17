@@ -187,35 +187,31 @@ suite('gr-permission tests', () => {
           groupsWithRules);
     });
 
-    test('_getGroupSuggestions without existing rules', done => {
+    test('_getGroupSuggestions without existing rules', async () => {
       element._groupsWithRules = {};
 
-      element._getGroupSuggestions().then(groups => {
-        assert.deepEqual(groups, [
-          {
-            name: 'Administrators',
-            value: '4c97682e6ce61b7247f3381b6f1789356666de7f',
-          }, {
-            name: 'Anonymous Users',
-            value: 'global%3AAnonymous-Users',
-          },
-        ]);
-        done();
-      });
+      const groups = await element._getGroupSuggestions();
+      assert.deepEqual(groups, [
+        {
+          name: 'Administrators',
+          value: '4c97682e6ce61b7247f3381b6f1789356666de7f',
+        }, {
+          name: 'Anonymous Users',
+          value: 'global%3AAnonymous-Users',
+        },
+      ]);
     });
 
-    test('_getGroupSuggestions with existing rules filters them', done => {
+    test('_getGroupSuggestions with existing rules filters them', async () => {
       element._groupsWithRules = {
         '4c97682e6ce61b7247f3381b6f1789356666de7f': true,
       };
 
-      element._getGroupSuggestions().then(groups => {
-        assert.deepEqual(groups, [{
-          name: 'Anonymous Users',
-          value: 'global%3AAnonymous-Users',
-        }]);
-        done();
-      });
+      const groups = await element._getGroupSuggestions();
+      assert.deepEqual(groups, [{
+        name: 'Anonymous Users',
+        value: 'global%3AAnonymous-Users',
+      }]);
     });
 
     test('_handleRemovePermission', () => {
@@ -308,6 +304,7 @@ suite('gr-permission tests', () => {
       assert.equal(Object.keys(element._groupsWithRules).length, 3);
       assert.deepEqual(element.permission.value.rules['ldap:CN=test te.st'],
           {action: 'ALLOW', min: -2, max: 2, added: true});
+      assert.equal(element.$.groupAutocomplete.text, '');
       // New rule should be removed if cancel from editing.
       element.editing = false;
       assert.equal(element._rules.length, 2);

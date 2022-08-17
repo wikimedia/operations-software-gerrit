@@ -17,6 +17,9 @@
 import {html} from '@polymer/polymer/lib/utils/html-tag';
 
 export const htmlTemplate = html`
+  <style include="gr-a11y-styles">
+    /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+  </style>
   <style include="shared-styles">
     :host {
       display: block;
@@ -30,9 +33,6 @@ export const htmlTemplate = html`
     }
     gr-diff {
       border: none;
-      --diff-container-styles: {
-        border-bottom: 1px solid var(--border-color);
-      }
     }
     .stickyHeader {
       background-color: var(--view-background-color);
@@ -86,6 +86,7 @@ export const htmlTemplate = html`
     }
     .jumpToFileContainer {
       display: inline-block;
+      word-break: break-all;
     }
     .mobile {
       display: none;
@@ -111,10 +112,6 @@ export const htmlTemplate = html`
     }
     .prefsButton {
       text-align: right;
-    }
-    .noOverflow {
-      display: block;
-      overflow: auto;
     }
     .editMode .hideOnEdit {
       display: none;
@@ -143,11 +140,6 @@ export const htmlTemplate = html`
     .diffModeSelector.hide,
     .separator.hide {
       display: none;
-    }
-    gr-dropdown-list {
-      --trigger-style: {
-        text-transform: none;
-      }
     }
     .editButtona a {
       text-decoration: none;
@@ -193,6 +185,7 @@ export const htmlTemplate = html`
       .jumpToFileContainer {
         display: block;
         width: 100%;
+        word-break: break-all;
       }
       gr-dropdown-list {
         width: 100%;
@@ -320,7 +313,10 @@ export const htmlTemplate = html`
             _isBlameLoading)]]</gr-button
           >
         </span>
-        <template is="dom-if" if="[[_computeCanEdit(_loggedIn, _change.*)]]">
+        <template
+          is="dom-if"
+          if="[[_computeCanEdit(_loggedIn, _editWeblinks, _change.*)]]"
+        >
           <span class="separator"></span>
           <span class="editButton">
             <gr-button
@@ -331,29 +327,37 @@ export const htmlTemplate = html`
             >
           </span>
         </template>
+        <template is="dom-if" if="[[_computeShowEditLinks(_editWeblinks)]]">
+          <span class="separator"></span>
+          <template is="dom-repeat" items="[[_editWeblinks]]" as="weblink">
+            <a target="_blank" href$="[[weblink.url]]">[[weblink.name]]</a>
+          </template>
+        </template>
         <span class="separator"></span>
         <div class$="diffModeSelector [[_computeModeSelectHideClass(_diff)]]">
           <span>Diff view:</span>
           <gr-diff-mode-selector
             id="modeSelect"
-            save-on-change="[[!_diffPrefsDisabled]]"
+            save-on-change="[[_loggedIn]]"
             mode="{{changeViewState.diffMode}}"
+            show-tooltip-below=""
           ></gr-diff-mode-selector>
         </div>
         <span
           id="diffPrefsContainer"
-          hidden$="[[_computePrefsButtonHidden(_prefs, _diffPrefsDisabled)]]"
+          hidden$="[[_computePrefsButtonHidden(_prefs, _loggedIn)]]"
           hidden=""
         >
           <span class="preferences desktop">
-            <gr-button
-              link=""
-              class="prefsButton"
+            <gr-tooltip-content
               has-tooltip=""
+              position-below=""
               title="Diff preferences"
-              on-click="_handlePrefsTap"
-              ><iron-icon icon="gr-icons:settings"></iron-icon
-            ></gr-button>
+            >
+              <gr-button link="" class="prefsButton" on-click="_handlePrefsTap"
+                ><iron-icon icon="gr-icons:settings"></iron-icon
+              ></gr-button>
+            </gr-tooltip-content>
           </span>
         </span>
         <gr-endpoint-decorator name="annotation-toggler">
@@ -394,6 +398,7 @@ export const htmlTemplate = html`
     hidden=""
     hidden$="[[_loading]]"
     is-image-diff="{{_isImageDiff}}"
+    edit-weblinks="{{_editWeblinks}}"
     files-weblinks="{{_filesWeblinks}}"
     diff="{{_diff}}"
     change-num="[[_changeNum]]"
@@ -423,11 +428,5 @@ export const htmlTemplate = html`
     on-reload-diff-preference="_handleReloadingDiffPreference"
   >
   </gr-diff-preferences-dialog>
-  <gr-diff-cursor
-    id="cursor"
-    on-navigate-to-next-unreviewed-file="_navigateToNextUnreviewedFile"
-    on-navigate-to-previous-unreviewed-file="_navigateToPreviousUnreviewedFile"
-    on-navigate-to-next-file-with-comments="_navigateToNextFileWithCommentThread"
-  ></gr-diff-cursor>
   <gr-comment-api id="commentAPI"></gr-comment-api>
 `;

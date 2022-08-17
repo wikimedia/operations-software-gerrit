@@ -14,53 +14,57 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {html, nothing} from 'lit-html';
-import {classMap} from 'lit-html/directives/class-map';
+import '@polymer/iron-icon/iron-icon';
+import {classMap} from 'lit/directives/class-map';
 import './gr-hovercard-run';
-import {
-  css,
-  customElement,
-  internalProperty,
-  property,
-  PropertyValues,
-  query,
-} from 'lit-element';
-import {GrLitElement} from '../lit/gr-lit-element';
+import {css, html, LitElement, nothing, PropertyValues} from 'lit';
+import {customElement, property, query, state} from 'lit/decorators';
+import './gr-checks-attempt';
 import {Action, Link, RunStatus} from '../../api/checks';
 import {sharedStyles} from '../../styles/shared-styles';
 import {
   AttemptDetail,
   compareByWorstCategory,
-  fireActionTriggered,
-  iconForCategory,
+  headerForStatus,
+  iconFor,
   iconForRun,
+  PRIMARY_STATUS_ACTIONS,
   primaryRunAction,
   worstCategory,
 } from '../../services/checks/checks-util';
 import {
+  allRunsSelectedPatchset$,
   CheckRun,
-  allRuns$,
+  ChecksPatchset,
+  ErrorMessages,
+  errorMessagesLatest$,
   fakeActions,
+  fakeLinks,
   fakeRun0,
   fakeRun1,
   fakeRun2,
   fakeRun3,
-  fakeRun4_1,
-  fakeRun4_2,
-  fakeRun4_3,
-  fakeRun4_4,
+  fakeRun4Att,
+  loginCallbackLatest$,
   updateStateSetResults,
-  fakeLinks,
 } from '../../services/checks/checks-model';
 import {assertIsDefined} from '../../utils/common-util';
-import {whenVisible} from '../../utils/dom-util';
-import {fireAttemptSelected, fireRunSelected} from './gr-checks-util';
+import {modifierPressed, whenVisible} from '../../utils/dom-util';
+import {
+  fireAttemptSelected,
+  fireRunSelected,
+  fireRunSelectionReset,
+} from './gr-checks-util';
 import {ChecksTabState} from '../../types/events';
 import {charsOnly} from '../../utils/string-util';
+import {appContext} from '../../services/app-context';
+import {KnownExperimentId} from '../../services/flags/flags';
+import {subscribe} from '../lit/subscription-controller';
+import {fontStyles} from '../../styles/gr-font-styles';
 
 @customElement('gr-checks-run')
-export class GrChecksRun extends GrLitElement {
-  static get styles() {
+export class GrChecksRun extends LitElement {
+  static override get styles() {
     return [
       sharedStyles,
       css`
@@ -81,19 +85,18 @@ export class GrChecksRun extends GrLitElement {
           overflow: hidden;
           white-space: nowrap;
           text-overflow: ellipsis;
+          flex-shrink: 1;
+        }
+        .middle {
+          /* extra space must go between middle and right */
+          flex-grow: 1;
+          white-space: nowrap;
+        }
+        .middle gr-checks-attempt {
+          margin-left: var(--spacing-s);
         }
         .name {
           font-weight: var(--font-weight-bold);
-        }
-        .attempt {
-          display: inline-block;
-          background-color: var(--tag-gray);
-          border-radius: var(--line-height-normal);
-          height: var(--line-height-normal);
-          width: var(--line-height-normal);
-          text-align: center;
-          vertical-align: top;
-          font-size: var(--font-size-small);
         }
         .chip.error {
           border-left: var(--thick-border) solid var(--error-foreground);
@@ -128,6 +131,12 @@ export class GrChecksRun extends GrLitElement {
         iron-icon.check-circle-outline {
           color: var(--success-foreground);
         }
+        div.chip:hover {
+          background-color: var(--hover-background-color);
+        }
+        div.chip:focus-within {
+          background-color: var(--selection-background-color);
+        }
         /* Additional 'div' for increased specificity. */
         div.chip.selected {
           border: 1px solid var(--selected-background);
@@ -138,17 +147,13 @@ export class GrChecksRun extends GrLitElement {
         div.chip.selected iron-icon.filter {
           color: var(--selected-foreground);
         }
-        .chip.selected gr-button.action,
-        .chip.deselected gr-button.action {
-          display: none;
-        }
-        gr-button.action {
-          --padding: var(--spacing-xs) var(--spacing-m);
+        gr-checks-action {
           /* The button should fit into the 20px line-height. The negative
              margin provides the extra space needed for the vertical padding.
              Alternatively we could have set the vertical padding to 0, but
              that would not have been a nice click target. */
-          margin: calc(0px - var(--spacing-xs));
+          margin: calc(0px - var(--spacing-s));
+          margin-left: var(--spacing-s);
         }
         .attemptDetails {
           padding-bottom: var(--spacing-s);
@@ -167,6 +172,10 @@ export class GrChecksRun extends GrLitElement {
           top: 3px;
           margin-right: var(--spacing-s);
         }
+        .statusLinkIcon {
+          color: var(--link-color);
+          margin-left: var(--spacing-s);
+        }
       `,
     ];
   }
@@ -174,31 +183,27 @@ export class GrChecksRun extends GrLitElement {
   @query('.chip')
   chipElement?: HTMLElement;
 
-  @property()
+  @property({attribute: false})
   run!: CheckRun;
 
-  @property()
+  @property({attribute: false})
   selected = false;
 
-  @property()
+  @property({attribute: false})
   selectedAttempt?: number;
 
-  @property()
+  @property({attribute: false})
   deselected = false;
 
-  @property()
+  @state()
   shouldRender = false;
 
-  firstUpdated() {
+  override firstUpdated() {
     assertIsDefined(this.chipElement, 'chip element');
-    whenVisible(
-      this.chipElement,
-      () => this.setAttribute('shouldRender', 'true'),
-      200
-    );
+    whenVisible(this.chipElement, () => (this.shouldRender = true), 200);
   }
 
-  protected updated(changedProperties: PropertyValues) {
+  protected override updated(changedProperties: PropertyValues) {
     super.updated(changedProperties);
 
     // For some reason the browser does not pick up the correct `checked` state
@@ -213,7 +218,7 @@ export class GrChecksRun extends GrLitElement {
     }
   }
 
-  render() {
+  override render() {
     if (!this.shouldRender) return html`<div class="chip">Loading ...</div>`;
 
     const icon = iconForRun(this.run);
@@ -226,25 +231,26 @@ export class GrChecksRun extends GrLitElement {
     const action = primaryRunAction(this.run);
 
     return html`
-      <div @click="${this.handleChipClick}" class="${classMap(classes)}">
-        <gr-hovercard-run .run="${this.run}"></gr-hovercard-run>
+      <div
+        @click="${this.handleChipClick}"
+        @keydown="${this.handleChipKey}"
+        class="${classMap(classes)}"
+        tabindex="0"
+      >
         <div class="left">
+          <gr-hovercard-run .run="${this.run}"></gr-hovercard-run>
           ${this.renderFilterIcon()}
           <iron-icon class="${icon}" icon="gr-icons:${icon}"></iron-icon>
           ${this.renderAdditionalIcon()}
           <span class="name">${this.run.checkName}</span>
-          <span class="attempt" ?hidden="${this.run.isSingleAttempt}"
-            >${this.run.attempt}</span
-          >
+        </div>
+        <div class="middle">
+          <gr-checks-attempt .run="${this.run}"></gr-checks-attempt>
+          ${this.renderStatusLink()}
         </div>
         <div class="right">
           ${action
-            ? html`<gr-button
-                class="action"
-                link
-                @click="${(e: MouseEvent) => this.handleAction(e, action)}"
-                >${action.name}</gr-button
-              >`
+            ? html`<gr-checks-action .action="${action}"></gr-checks-action>`
             : ''}
         </div>
       </div>
@@ -268,16 +274,20 @@ export class GrChecksRun extends GrLitElement {
     const checkNameId = charsOnly(this.run.checkName).toLowerCase();
     const id = `attempt-${detail.attempt}`;
     const icon = detail.icon;
+    const wasNotRun = icon === iconFor(RunStatus.RUNNABLE);
     return html`<div class="attemptDetail">
       <input
         type="radio"
         id="${id}"
         name="${`${checkNameId}-attempt-choice`}"
         ?checked="${this.isSelected(detail)}"
+        ?disabled="${!this.isSelected(detail) && wasNotRun}"
         @change="${() => this.handleAttemptChange(detail)}"
       />
       <iron-icon class="${icon}" icon="gr-icons:${icon}"></iron-icon>
-      <label for="${id}">Attempt ${detail.attempt}</label>
+      <label for="${id}">
+        Attempt ${detail.attempt}${wasNotRun ? ' (not run)' : ''}
+      </label>
     </div>`;
   }
 
@@ -285,6 +295,26 @@ export class GrChecksRun extends GrLitElement {
     if (!this.isSelected(detail)) {
       fireAttemptSelected(this, this.run.checkName, detail.attempt);
     }
+  }
+
+  renderStatusLink() {
+    const link = this.run.statusLink;
+    if (!link) return;
+    return html`
+      <a href="${link}" target="_blank" @click="${this.onLinkClick}"
+        ><iron-icon
+          class="statusLinkIcon"
+          icon="gr-icons:launch"
+          aria-label="external link to run status details"
+        ></iron-icon>
+        <paper-tooltip offset="5">Link to run status details</paper-tooltip>
+      </a>
+    `;
+  }
+
+  private onLinkClick(e: MouseEvent) {
+    // Prevents handleChipClick() from reacting to <a> link clicks.
+    e.stopPropagation();
   }
 
   renderFilterIcon() {
@@ -302,7 +332,7 @@ export class GrChecksRun extends GrLitElement {
     if (this.run.status !== RunStatus.RUNNING) return nothing;
     const category = worstCategory(this.run);
     if (!category) return nothing;
-    const icon = iconForCategory(category);
+    const icon = iconFor(category);
     return html`
       <iron-icon class="${icon}" icon="gr-icons:${icon}"></iron-icon>
     `;
@@ -314,52 +344,93 @@ export class GrChecksRun extends GrLitElement {
     fireRunSelected(this, this.run.checkName);
   }
 
-  private handleAction(e: MouseEvent, action: Action) {
-    e.stopPropagation();
+  private handleChipKey(e: KeyboardEvent) {
+    if (modifierPressed(e)) return;
+    // Only react to `return` and `space`.
+    if (e.keyCode !== 13 && e.keyCode !== 32) return;
     e.preventDefault();
-    fireActionTriggered(this, action, this.run);
+    e.stopPropagation();
+    fireRunSelected(this, this.run.checkName);
   }
 }
 
 @customElement('gr-checks-runs')
-export class GrChecksRuns extends GrLitElement {
+export class GrChecksRuns extends LitElement {
   @query('#filterInput')
   filterInput?: HTMLInputElement;
 
-  @internalProperty()
+  @state()
   filterRegExp = new RegExp('');
 
-  @property()
+  @property({attribute: false})
   runs: CheckRun[] = [];
 
-  @property()
+  @property({type: Boolean, reflect: true})
+  collapsed = false;
+
+  @property({attribute: false})
   selectedRuns: string[] = [];
 
   /** Maps checkName to selected attempt number. `undefined` means `latest`. */
-  @property()
+  @property({attribute: false})
   selectedAttempts: Map<string, number | undefined> = new Map<
     string,
     number | undefined
   >();
 
-  @property()
+  @property({attribute: false})
   tabState?: ChecksTabState;
+
+  @state()
+  errorMessages: ErrorMessages = {};
+
+  @state()
+  loginCallback?: () => void;
 
   private isSectionExpanded = new Map<RunStatus, boolean>();
 
+  private flagService = appContext.flagsService;
+
+  private checksService = appContext.checksService;
+
   constructor() {
     super();
-    this.subscribe('runs', allRuns$);
+    subscribe(this, allRunsSelectedPatchset$, x => (this.runs = x));
+    subscribe(this, errorMessagesLatest$, x => (this.errorMessages = x));
+    subscribe(this, loginCallbackLatest$, x => (this.loginCallback = x));
   }
 
-  static get styles() {
+  static override get styles() {
     return [
       sharedStyles,
+      fontStyles,
       css`
         :host {
           display: block;
+        }
+        :host(:not([collapsed])) {
+          min-width: 320px;
           padding: var(--spacing-l) var(--spacing-xl) var(--spacing-xl)
             var(--spacing-xl);
+        }
+        :host([collapsed]) {
+          padding: var(--spacing-l) 0;
+        }
+        .title {
+          display: flex;
+        }
+        .title .flex-space {
+          flex-grow: 1;
+        }
+        .title gr-button {
+          --gr-button-padding: var(--spacing-s) var(--spacing-m);
+          white-space: nowrap;
+        }
+        .title gr-button.expandButton {
+          --gr-button-padding: var(--spacing-xs) var(--spacing-s);
+        }
+        :host(:not([collapsed])) .expandButton {
+          margin-right: calc(0px - var(--spacing-m));
         }
         .expandIcon {
           width: var(--line-height-h3);
@@ -398,11 +469,44 @@ export class GrChecksRuns extends GrLitElement {
         .testing:hover * {
           visibility: visible;
         }
+        .zero {
+          padding: var(--spacing-m) 0;
+          color: var(--primary-text-color);
+          margin-top: var(--spacing-m);
+        }
+        .login,
+        .error {
+          padding: var(--spacing-m);
+          color: var(--primary-text-color);
+          margin-top: var(--spacing-m);
+          max-width: 400px;
+        }
+        .error {
+          display: flex;
+          background-color: var(--error-background);
+        }
+        .error iron-icon {
+          color: var(--error-foreground);
+          margin-right: var(--spacing-m);
+        }
+        .login {
+          background: var(--info-background);
+        }
+        .login iron-icon {
+          color: var(--info-foreground);
+        }
+        .login .buttonRow {
+          text-align: right;
+          margin-top: var(--spacing-xl);
+        }
+        .login gr-button {
+          margin: 0 var(--spacing-s);
+        }
       `,
     ];
   }
 
-  protected updated(changedProperties: PropertyValues) {
+  protected override updated(changedProperties: PropertyValues) {
     super.updated(changedProperties);
     if (changedProperties.has('tabState') && this.tabState) {
       const {statusOrCategory} = this.tabState;
@@ -419,9 +523,17 @@ export class GrChecksRuns extends GrLitElement {
     }
   }
 
-  render() {
+  override render() {
+    if (this.collapsed) {
+      return html`${this.renderCollapseButton()}`;
+    }
     return html`
-      <h2 class="heading-2">Runs</h2>
+      <h2 class="title">
+        <div class="heading-2">Runs</div>
+        <div class="flex-space"></div>
+        ${this.renderTitleButtons()} ${this.renderCollapseButton()}
+      </h2>
+      ${this.renderErrors()} ${this.renderSignIn()} ${this.renderZeroState()}
       <input
         id="filterInput"
         type="text"
@@ -429,36 +541,115 @@ export class GrChecksRuns extends GrLitElement {
         ?hidden="${!this.showFilter()}"
         @input="${this.onInput}"
       />
-      ${this.renderSection(RunStatus.COMPLETED)}
       ${this.renderSection(RunStatus.RUNNING)}
-      ${this.renderSection(RunStatus.RUNNABLE)}
-      <div class="testing">
-        <div>Toggle fake runs by clicking buttons:</div>
-        <gr-button link @click="${this.none}">none</gr-button>
-        <gr-button
-          link
-          @click="${() =>
-            this.toggle('f0', [fakeRun0], fakeActions, fakeLinks)}"
-          >0</gr-button
-        >
-        <gr-button link @click="${() => this.toggle('f1', [fakeRun1])}"
-          >1</gr-button
-        >
-        <gr-button link @click="${() => this.toggle('f2', [fakeRun2])}"
-          >2</gr-button
-        >
-        <gr-button link @click="${() => this.toggle('f3', [fakeRun3])}"
-          >3</gr-button
-        >
-        <gr-button
-          link
-          @click="${() => {
-            this.toggle('f4', [fakeRun4_1, fakeRun4_2, fakeRun4_3, fakeRun4_4]);
-          }}"
-          >4</gr-button
-        >
-        <gr-button link @click="${this.all}">all</gr-button>
+      ${this.renderSection(RunStatus.COMPLETED)}
+      ${this.renderSection(RunStatus.RUNNABLE)} ${this.renderFakeControls()}
+    `;
+  }
+
+  private renderZeroState() {
+    if (this.runs.length > 0) return;
+    return html`<div class="zero">No Check Run to show</div>`;
+  }
+
+  private renderErrors() {
+    return Object.entries(this.errorMessages).map(
+      ([plugin, message]) =>
+        html`
+          <div class="error">
+            <div class="left">
+              <iron-icon icon="gr-icons:error"></iron-icon>
+            </div>
+            <div class="right">
+              <div class="message">
+                Error while fetching results for ${plugin}:<br />${message}
+              </div>
+            </div>
+          </div>
+        `
+    );
+  }
+
+  private renderSignIn() {
+    if (!this.loginCallback) return;
+    return html`
+      <div class="login">
+        <div>
+          <iron-icon
+            class="info-outline"
+            icon="gr-icons:info-outline"
+          ></iron-icon>
+          Sign in to Checks Plugin to see runs and results
+        </div>
+        <div class="buttonRow">
+          <gr-button @click="${this.loginCallback}" link>Sign in</gr-button>
+        </div>
       </div>
+    `;
+  }
+
+  private renderTitleButtons() {
+    if (this.selectedRuns.length < 2) return;
+    const actions = this.selectedRuns.map(selected => {
+      const run = this.runs.find(
+        run => run.isLatestAttempt && run.checkName === selected
+      );
+      return primaryRunAction(run);
+    });
+    const runButtonDisabled = !actions.every(
+      action =>
+        action?.name === PRIMARY_STATUS_ACTIONS.RUN ||
+        action?.name === PRIMARY_STATUS_ACTIONS.RERUN
+    );
+    return html`
+      <gr-button
+        class="font-normal"
+        link
+        @click="${() => fireRunSelectionReset(this)}"
+        >Unselect All</gr-button
+      >
+      <gr-tooltip-content
+        title="${runButtonDisabled
+          ? 'Disabled. Unselect checks without a "Run" action to enable the button.'
+          : ''}"
+        ?has-tooltip=${runButtonDisabled}
+      >
+        <gr-button
+          class="font-normal"
+          link
+          ?disabled=${runButtonDisabled}
+          @click="${() => {
+            actions.forEach(action => this.checksService.triggerAction(action));
+          }}"
+          >Run Selected</gr-button
+        >
+      </gr-tooltip-content>
+    `;
+  }
+
+  private renderCollapseButton() {
+    return html`
+      <gr-tooltip-content
+        has-tooltip
+        title="${this.collapsed ? 'Expand runs panel' : 'Collapse runs panel'}"
+      >
+        <gr-button
+          link
+          class="expandButton"
+          role="switch"
+          aria-checked="${this.collapsed ? 'true' : 'false'}"
+          aria-label="${this.collapsed
+            ? 'Expand runs panel'
+            : 'Collapse runs panel'}"
+          @click="${() => (this.collapsed = !this.collapsed)}"
+          ><iron-icon
+            class="expandIcon"
+            icon="${this.collapsed
+              ? 'gr-icons:chevron-right'
+              : 'gr-icons:chevron-left'}"
+          ></iron-icon>
+        </gr-button>
+      </gr-tooltip-content>
     `;
   }
 
@@ -468,24 +659,25 @@ export class GrChecksRuns extends GrLitElement {
   }
 
   none() {
-    updateStateSetResults('f0', [], []);
-    updateStateSetResults('f1', []);
-    updateStateSetResults('f2', []);
-    updateStateSetResults('f3', []);
-    updateStateSetResults('f4', []);
+    updateStateSetResults('f0', [], [], [], ChecksPatchset.LATEST);
+    updateStateSetResults('f1', [], [], [], ChecksPatchset.LATEST);
+    updateStateSetResults('f2', [], [], [], ChecksPatchset.LATEST);
+    updateStateSetResults('f3', [], [], [], ChecksPatchset.LATEST);
+    updateStateSetResults('f4', [], [], [], ChecksPatchset.LATEST);
   }
 
   all() {
-    updateStateSetResults('f0', [fakeRun0], fakeActions, fakeLinks);
-    updateStateSetResults('f1', [fakeRun1]);
-    updateStateSetResults('f2', [fakeRun2]);
-    updateStateSetResults('f3', [fakeRun3]);
-    updateStateSetResults('f4', [
-      fakeRun4_1,
-      fakeRun4_2,
-      fakeRun4_3,
-      fakeRun4_4,
-    ]);
+    updateStateSetResults(
+      'f0',
+      [fakeRun0],
+      fakeActions,
+      fakeLinks,
+      ChecksPatchset.LATEST
+    );
+    updateStateSetResults('f1', [fakeRun1], [], [], ChecksPatchset.LATEST);
+    updateStateSetResults('f2', [fakeRun2], [], [], ChecksPatchset.LATEST);
+    updateStateSetResults('f3', [fakeRun3], [], [], ChecksPatchset.LATEST);
+    updateStateSetResults('f4', fakeRun4Att, [], [], ChecksPatchset.LATEST);
   }
 
   toggle(
@@ -495,7 +687,13 @@ export class GrChecksRuns extends GrLitElement {
     links: Link[] = []
   ) {
     const newRuns = this.runs.includes(runs[0]) ? [] : runs;
-    updateStateSetResults(plugin, newRuns, actions, links);
+    updateStateSetResults(
+      plugin,
+      newRuns,
+      actions,
+      links,
+      ChecksPatchset.LATEST
+    );
   }
 
   renderSection(status: RunStatus) {
@@ -515,7 +713,7 @@ export class GrChecksRuns extends GrLitElement {
           @click="${() => this.toggleExpanded(status)}"
         >
           <iron-icon class="expandIcon" icon="${icon}"></iron-icon>
-          <h3 class="heading-3">${status.toLowerCase()}</h3>
+          <h3 class="heading-3">${headerForStatus(status)}</h3>
         </div>
         <div class="sectionRuns">${runs.map(run => this.renderRun(run))}</div>
       </div>
@@ -546,6 +744,35 @@ export class GrChecksRuns extends GrLitElement {
       this.filterRegExp = new RegExp('');
     }
     return show;
+  }
+
+  renderFakeControls() {
+    if (!this.flagService.isEnabled(KnownExperimentId.CHECKS_DEVELOPER)) return;
+    return html`
+      <div class="testing">
+        <div>Toggle fake runs by clicking buttons:</div>
+        <gr-button link @click="${this.none}">none</gr-button>
+        <gr-button
+          link
+          @click="${() =>
+            this.toggle('f0', [fakeRun0], fakeActions, fakeLinks)}"
+          >0</gr-button
+        >
+        <gr-button link @click="${() => this.toggle('f1', [fakeRun1])}"
+          >1</gr-button
+        >
+        <gr-button link @click="${() => this.toggle('f2', [fakeRun2])}"
+          >2</gr-button
+        >
+        <gr-button link @click="${() => this.toggle('f3', [fakeRun3])}"
+          >3</gr-button
+        >
+        <gr-button link @click="${() => this.toggle('f4', fakeRun4Att)}}"
+          >4</gr-button
+        >
+        <gr-button link @click="${this.all}">all</gr-button>
+      </div>
+    `;
   }
 }
 

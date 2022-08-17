@@ -27,8 +27,9 @@ import {
   AutocompleteSuggestion,
 } from '../../shared/gr-autocomplete/gr-autocomplete';
 import {appContext} from '../../../services/app-context';
+import {GrDialog} from '../../shared/gr-dialog/gr-dialog';
 
-interface RebaseChange {
+export interface RebaseChange {
   name: string;
   value: NumericChangeId;
 }
@@ -39,10 +40,15 @@ export interface ConfirmRebaseEventDetail {
 
 export interface GrConfirmRebaseDialog {
   $: {
+    confirmDialog: GrDialog;
     parentInput: GrAutocomplete;
+    parentUpToDateMsg: HTMLDivElement;
+    rebaseOnParent: HTMLDivElement;
     rebaseOnParentInput: HTMLInputElement;
     rebaseOnOtherInput: HTMLInputElement;
+    rebaseOnTip: HTMLDivElement;
     rebaseOnTipInput: HTMLInputElement;
+    tipUpToDateMsg: HTMLDivElement;
   };
 }
 
@@ -77,10 +83,10 @@ export class GrConfirmRebaseDialog extends PolymerElement {
   rebaseOnCurrent?: boolean;
 
   @property({type: String})
-  _text?: string;
+  _text = '';
 
   @property({type: Object})
-  _query?: AutocompleteQuery;
+  _query: AutocompleteQuery = () => Promise.resolve([]);
 
   @property({type: Array})
   _recentChanges?: RebaseChange[];
@@ -146,15 +152,15 @@ export class GrConfirmRebaseDialog extends PolymerElement {
       );
   }
 
-  _displayParentOption(rebaseOnCurrent: boolean, hasParent: boolean) {
+  _displayParentOption(rebaseOnCurrent?: boolean, hasParent?: boolean) {
     return hasParent && rebaseOnCurrent;
   }
 
-  _displayParentUpToDateMsg(rebaseOnCurrent: boolean, hasParent: boolean) {
+  _displayParentUpToDateMsg(rebaseOnCurrent?: boolean, hasParent?: boolean) {
     return hasParent && !rebaseOnCurrent;
   }
 
-  _displayTipOption(rebaseOnCurrent: boolean, hasParent: boolean) {
+  _displayTipOption(rebaseOnCurrent?: boolean, hasParent?: boolean) {
     return !(!rebaseOnCurrent && !hasParent);
   }
 

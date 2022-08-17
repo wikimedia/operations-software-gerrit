@@ -24,6 +24,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Table;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.server.cancellation.RequestStateContext;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -208,6 +209,7 @@ public class TraceContext implements AutoCloseable {
     }
 
     private TraceTimer(Runnable startLogFn, Consumer<Long> doneLogFn) {
+      RequestStateContext.abortIfCancelled();
       startLogFn.run();
       this.doneLogFn = doneLogFn;
       this.stopwatch = Stopwatch.createStarted();
@@ -217,6 +219,7 @@ public class TraceContext implements AutoCloseable {
     public void close() {
       stopwatch.stop();
       doneLogFn.accept(stopwatch.elapsed(TimeUnit.MILLISECONDS));
+      RequestStateContext.abortIfCancelled();
     }
   }
 
@@ -265,13 +268,21 @@ public class TraceContext implements AutoCloseable {
     return this;
   }
 
-  public boolean isTracing() {
+  public static boolean isTracing() {
     return LoggingContext.getInstance().isLoggingForced();
   }
 
-  public Optional<String> getTraceId() {
+  public static Optional<String> getTraceId() {
     return LoggingContext.getInstance().getTagsAsMap().get(RequestId.Type.TRACE_ID.name()).stream()
         .findFirst();
+  }
+
+  public static Optional<String> getPluginTag() {
+    return getTag(PLUGIN_TAG);
+  }
+
+  public static Optional<String> getTag(String tagName) {
+    return LoggingContext.getInstance().getTagsAsMap().get(tagName).stream().findFirst();
   }
 
   public TraceContext enableAclLogging() {
@@ -283,11 +294,7 @@ public class TraceContext implements AutoCloseable {
     return this;
   }
 
-  public boolean isAclLoggingEnabled() {
-    return LoggingContext.getInstance().isAclLogging();
-  }
-
-  public ImmutableList<String> getAclLogRecords() {
+  public static ImmutableList<String> getAclLogRecords() {
     return LoggingContext.getInstance().getAclLogRecords();
   }
 

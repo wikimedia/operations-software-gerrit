@@ -28,9 +28,12 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.eclipse.jgit.lib.Constants.SIGNED_OFF_BY_TAG;
 
 import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
+import com.google.gerrit.acceptance.ExtensionRegistry;
+import com.google.gerrit.acceptance.ExtensionRegistry.Registration;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.PushOneCommit.Result;
 import com.google.gerrit.acceptance.RestResponse;
@@ -51,6 +54,7 @@ import com.google.gerrit.extensions.api.changes.RevisionApi;
 import com.google.gerrit.extensions.api.projects.BranchInput;
 import com.google.gerrit.extensions.client.ChangeStatus;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo;
+import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.ChangeInput;
 import com.google.gerrit.extensions.common.ChangeMessageInfo;
@@ -63,6 +67,10 @@ import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
+import com.google.gerrit.server.events.CommitReceivedEvent;
+import com.google.gerrit.server.git.validators.CommitValidationException;
+import com.google.gerrit.server.git.validators.CommitValidationListener;
+import com.google.gerrit.server.git.validators.CommitValidationMessage;
 import com.google.gerrit.server.submit.ChangeAlreadyMergedException;
 import com.google.gerrit.testing.FakeEmailSender.Message;
 import com.google.inject.Inject;
@@ -76,18 +84,37 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.PersonIdent;
+import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.transport.RefSpec;
+import org.junit.Before;
 import org.junit.Test;
 
 @UseClockStep
 public class CreateChangeIT extends AbstractDaemonTest {
   @Inject private ProjectOperations projectOperations;
   @Inject private RequestScopeOperations requestScopeOperations;
+  @Inject private ExtensionRegistry extensionRegistry;
+
+  @Before
+  public void addNonCommitHead() throws Exception {
+    try (Repository repo = repoManager.openRepository(project);
+        ObjectInserter ins = repo.newObjectInserter()) {
+      ObjectId answer = ins.insert(Constants.OBJ_BLOB, new byte[] {42});
+      ins.flush();
+      ins.close();
+
+      RefUpdate update = repo.getRefDatabase().newUpdate("refs/heads/answer", false);
+      update.setNewObjectId(answer);
+      assertThat(update.forceUpdate()).isEqualTo(RefUpdate.Result.NEW);
+    }
+  }
 
   @Test
   public void createEmptyChange_MissingBranch() throws Exception {
@@ -391,6 +418,69 @@ public class CreateChangeIT extends AbstractDaemonTest {
         .add(block(Permission.FORGE_AUTHOR).ref("refs/*").group(REGISTERED_USERS))
         .update();
     assertCreateFails(input, AuthException.class, "forge author");
+  }
+
+  @Test
+  public void createAuthorAddedAsCcAndNotified() throws Exception {
+    ChangeInput input = newChangeInput(ChangeStatus.NEW);
+    input.author = new AccountInput();
+    input.author.email = user.email();
+    input.author.name = user.fullName();
+
+    ChangeInfo info = assertCreateSucceeds(input);
+    assertThat(info.reviewers.get(ReviewerState.CC)).hasSize(1);
+    assertThat(Iterables.getOnlyElement(info.reviewers.get(ReviewerState.CC)).email)
+        .isEqualTo(user.email());
+    assertThat(
+            Iterables.getOnlyElement(Iterables.getOnlyElement(sender.getMessages()).rcpt()).email())
+        .isEqualTo(user.email());
+  }
+
+  @Test
+  public void createAuthorAddedAsCcNotNotifiedWithNotifyNone() throws Exception {
+    ChangeInput input = newChangeInput(ChangeStatus.NEW);
+    input.author = new AccountInput();
+    input.author.email = user.email();
+    input.author.name = user.fullName();
+    input.notify = NotifyHandling.NONE;
+
+    ChangeInfo info = assertCreateSucceeds(input);
+    assertThat(info.reviewers.get(ReviewerState.CC)).hasSize(1);
+    assertThat(Iterables.getOnlyElement(info.reviewers.get(ReviewerState.CC)).email)
+        .isEqualTo(user.email());
+    assertThat(sender.getMessages()).isEmpty();
+  }
+
+  @Test
+  public void createWithMergeConflictAuthorAddedAsCcNotNotifiedWithNotifyNone() throws Exception {
+    String fileName = "shared.txt";
+    String sourceBranch = "sourceBranch";
+    String sourceSubject = "source change";
+    String sourceContent = "source content";
+    String targetBranch = "targetBranch";
+    String targetSubject = "target change";
+    String targetContent = "target content";
+    changeInTwoBranches(
+        sourceBranch,
+        sourceSubject,
+        fileName,
+        sourceContent,
+        targetBranch,
+        targetSubject,
+        fileName,
+        targetContent);
+    ChangeInput input = newMergeChangeInput(targetBranch, sourceBranch, "", true);
+    input.workInProgress = true;
+    input.author = new AccountInput();
+    input.author.email = user.email();
+    input.author.name = user.fullName();
+    input.notify = NotifyHandling.NONE;
+    ChangeInfo info = assertCreateSucceeds(input);
+
+    assertThat(info.reviewers.get(ReviewerState.CC)).hasSize(1);
+    assertThat(Iterables.getOnlyElement(info.reviewers.get(ReviewerState.CC)).email)
+        .isEqualTo(user.email());
+    assertThat(sender.getMessages()).isEmpty();
   }
 
   @Test
@@ -963,6 +1053,24 @@ public class CreateChangeIT extends AbstractDaemonTest {
     assertThrows(BadRequestException.class, () -> gApi.changes().create(in));
   }
 
+  @Test
+  public void createChangeWithValidationOptions() throws Exception {
+    ChangeInput changeInput = new ChangeInput();
+    changeInput.project = project.get();
+    changeInput.branch = "master";
+    changeInput.subject = "A change";
+    changeInput.status = ChangeStatus.NEW;
+    changeInput.validationOptions = ImmutableMap.of("key", "value");
+
+    TestCommitValidationListener testCommitValidationListener = new TestCommitValidationListener();
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(testCommitValidationListener)) {
+      assertCreateSucceeds(changeInput);
+      assertThat(testCommitValidationListener.receiveEvent.pushOptions)
+          .containsExactly("key", "value");
+    }
+  }
+
   private ChangeInput newChangeInput(ChangeStatus status) {
     ChangeInput in = new ChangeInput();
     in.project = project.get();
@@ -1073,7 +1181,6 @@ public class CreateChangeIT extends AbstractDaemonTest {
    * @param branchB name of second branch to create
    * @param fileB name of file to commit to branchB
    * @return A {@code Map} of branchName => commit result.
-   * @throws Exception
    */
   private Map<String, Result> changeInTwoBranches(
       String branchA, String fileA, String branchB, String fileB) throws Exception {
@@ -1093,7 +1200,6 @@ public class CreateChangeIT extends AbstractDaemonTest {
    * @param fileB name of file to commit to branchB
    * @param contentB file content to commit to branchB
    * @return A {@code Map} of branchName => commit result.
-   * @throws Exception
    */
   private Map<String, Result> changeInTwoBranches(
       String branchA,
@@ -1131,5 +1237,16 @@ public class CreateChangeIT extends AbstractDaemonTest {
     changeB.assertOkStatus();
 
     return ImmutableMap.of("master", initialCommit, branchA, changeA, branchB, changeB);
+  }
+
+  private static class TestCommitValidationListener implements CommitValidationListener {
+    public CommitReceivedEvent receiveEvent;
+
+    @Override
+    public List<CommitValidationMessage> onCommitReceived(CommitReceivedEvent receiveEvent)
+        throws CommitValidationException {
+      this.receiveEvent = receiveEvent;
+      return ImmutableList.of();
+    }
   }
 }

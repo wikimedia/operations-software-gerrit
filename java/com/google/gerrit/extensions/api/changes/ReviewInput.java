@@ -46,6 +46,9 @@ public class ReviewInput {
    */
   public DraftHandling drafts;
 
+  /** A list of draft IDs that should be published. */
+  public List<String> draftIdsToPublish;
+
   /** Who to send email notifications to after review is stored. */
   public NotifyHandling notify;
 
@@ -62,8 +65,8 @@ public class ReviewInput {
    */
   public String onBehalfOf;
 
-  /** Reviewers that should be added to this change. */
-  public List<AddReviewerInput> reviewers;
+  /** Reviewers that should be added to this change or removed from it. */
+  public List<ReviewerInput> reviewers;
 
   /**
    * If true mark the change as work in progress. It is an error for both {@link #workInProgress}
@@ -155,7 +158,7 @@ public class ReviewInput {
   }
 
   public ReviewInput reviewer(String reviewer, ReviewerState state, boolean confirmed) {
-    AddReviewerInput input = new AddReviewerInput();
+    ReviewerInput input = new ReviewerInput();
     input.reviewer = reviewer;
     input.state = state;
     input.confirmed = confirmed;

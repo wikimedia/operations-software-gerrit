@@ -27,7 +27,7 @@ export class GrDiffBuilderUnified extends GrDiffBuilder {
     diff: DiffInfo,
     prefs: DiffPreferencesInfo,
     outputEl: HTMLElement,
-    readonly layers: DiffLayer[] = [],
+    layers: DiffLayer[] = [],
     renderPrefs?: RenderPreferences
   ) {
     super(diff, prefs, outputEl, layers, renderPrefs);
@@ -38,6 +38,7 @@ export class GrDiffBuilderUnified extends GrDiffBuilder {
       numberOfCells: 3,
       movedOutIndex: 2,
       movedInIndex: 2,
+      lineNumberCols: [0, 1],
     };
   }
 
@@ -78,8 +79,7 @@ export class GrDiffBuilderUnified extends GrDiffBuilder {
     return sectionEl;
   }
 
-  addColumns(outputEl: HTMLElement, fontSize: number): void {
-    const width = fontSize * 4;
+  addColumns(outputEl: HTMLElement, lineNumberWidth: number): void {
     const colgroup = document.createElement('colgroup');
 
     // Add the blame column.
@@ -88,12 +88,12 @@ export class GrDiffBuilderUnified extends GrDiffBuilder {
 
     // Add left-side line number.
     col = document.createElement('col');
-    col.setAttribute('width', width.toString());
+    col.setAttribute('width', lineNumberWidth.toString());
     colgroup.appendChild(col);
 
     // Add right-side line number.
     col = document.createElement('col');
-    col.setAttribute('width', width.toString());
+    col.setAttribute('width', lineNumberWidth.toString());
     colgroup.appendChild(col);
 
     // Add the content.
@@ -122,7 +122,14 @@ export class GrDiffBuilderUnified extends GrDiffBuilder {
       Side.RIGHT
     );
     row.appendChild(lineNumberEl);
-    row.appendChild(this._createTextEl(lineNumberEl, line));
+    let side = undefined;
+    if (line.type === GrDiffLineType.ADD || line.type === GrDiffLineType.BOTH) {
+      side = Side.RIGHT;
+    }
+    if (line.type === GrDiffLineType.REMOVE) {
+      side = Side.LEFT;
+    }
+    row.appendChild(this._createTextEl(lineNumberEl, line, side));
     return row;
   }
 
@@ -139,4 +146,6 @@ export class GrDiffBuilderUnified extends GrDiffBuilder {
     }
     return null;
   }
+
+  override updateRenderPrefs(_renderPrefs: RenderPreferences) {}
 }

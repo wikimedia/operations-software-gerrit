@@ -43,7 +43,7 @@ import {getBaseUrl} from '../utils/url-util';
 import {
   KeyboardShortcutMixin,
   Shortcut,
-  SPECIAL_SHORTCUT,
+  ShortcutListener,
 } from '../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
 import {GerritNav} from './core/gr-navigation/gr-navigation';
 import {appContext} from '../services/app-context';
@@ -55,7 +55,10 @@ import {
   ElementPropertyDeepChange,
   ServerInfo,
 } from '../types/common';
-import {GrErrorManager} from './core/gr-error-manager/gr-error-manager';
+import {
+  constructServerErrorMsg,
+  GrErrorManager,
+} from './core/gr-error-manager/gr-error-manager';
 import {GrOverlay} from './shared/gr-overlay/gr-overlay';
 import {GrRegistrationDialog} from './settings/gr-registration-dialog/gr-registration-dialog';
 import {
@@ -66,20 +69,19 @@ import {
 import {GrMainHeader} from './core/gr-main-header/gr-main-header';
 import {GrSettingsView} from './settings/gr-settings-view/gr-settings-view';
 import {
-  CustomKeyboardEvent,
+  DialogChangeEventDetail,
+  EventType,
   LocationChangeEvent,
   PageErrorEventDetail,
   RpcLogEvent,
-  ShortcutTriggeredEvent,
   TitleChangeEventDetail,
-  DialogChangeEventDetail,
-  EventType,
 } from '../types/events';
 import {ViewState} from '../types/types';
 import {GerritView} from '../services/router/router-model';
-import {windowLocationReload} from '../utils/dom-util';
 import {LifeCycle} from '../constants/reporting';
 import {fireIronAnnounce} from '../utils/event-util';
+import {assertIsDefined} from '../utils/common-util';
+import {listen} from '../services/shortcuts/shortcuts-service';
 
 interface ErrorInfo {
   text: string;
@@ -96,9 +98,16 @@ export interface GrAppElement {
   };
 }
 
+type DomIf = PolymerElement & {
+  restamp: boolean;
+};
+
+// This avoids JSC_DYNAMIC_EXTENDS_WITHOUT_JSDOC closure compiler error.
+const base = KeyboardShortcutMixin(PolymerElement);
+
 // TODO(TS): implement AppElement interface from gr-app-types.ts
 @customElement('gr-app-element')
-export class GrAppElement extends KeyboardShortcutMixin(PolymerElement) {
+export class GrAppElement extends base {
   static get template() {
     return htmlTemplate;
   }
@@ -111,9 +120,6 @@ export class GrAppElement extends KeyboardShortcutMixin(PolymerElement) {
 
   @property({type: Object})
   params?: AppElementParams;
-
-  @property({type: Object})
-  keyEventTarget = document.body;
 
   @property({type: Object, observer: '_accountChanged'})
   _account?: AccountDetailInfo;
@@ -206,15 +212,19 @@ export class GrAppElement extends KeyboardShortcutMixin(PolymerElement) {
 
   private readonly restApiService = appContext.restApiService;
 
-  keyboardShortcuts() {
-    return {
-      [Shortcut.OPEN_SHORTCUT_HELP_DIALOG]: '_showKeyboardShortcuts',
-      [Shortcut.GO_TO_USER_DASHBOARD]: '_goToUserDashboard',
-      [Shortcut.GO_TO_OPENED_CHANGES]: '_goToOpenedChanges',
-      [Shortcut.GO_TO_MERGED_CHANGES]: '_goToMergedChanges',
-      [Shortcut.GO_TO_ABANDONED_CHANGES]: '_goToAbandonedChanges',
-      [Shortcut.GO_TO_WATCHED_CHANGES]: '_goToWatchedChanges',
-    };
+  override keyboardShortcuts(): ShortcutListener[] {
+    return [
+      listen(Shortcut.OPEN_SHORTCUT_HELP_DIALOG, _ =>
+        this._showKeyboardShortcuts()
+      ),
+      listen(Shortcut.GO_TO_USER_DASHBOARD, _ => this._goToUserDashboard()),
+      listen(Shortcut.GO_TO_OPENED_CHANGES, _ => this._goToOpenedChanges()),
+      listen(Shortcut.GO_TO_MERGED_CHANGES, _ => this._goToMergedChanges()),
+      listen(Shortcut.GO_TO_ABANDONED_CHANGES, _ =>
+        this._goToAbandonedChanges()
+      ),
+      listen(Shortcut.GO_TO_WATCHED_CHANGES, _ => this._goToWatchedChanges()),
+    ];
   }
 
   constructor() {
@@ -223,7 +233,6 @@ export class GrAppElement extends KeyboardShortcutMixin(PolymerElement) {
     // model changes and updates the config model, but at the moment the service
     // is not called from anywhere.
     appContext.configService;
-    this._bindKeyboardShortcuts();
     document.addEventListener(EventType.PAGE_ERROR, e => {
       this._handlePageError(e);
     });
@@ -233,21 +242,19 @@ export class GrAppElement extends KeyboardShortcutMixin(PolymerElement) {
     this.addEventListener(EventType.DIALOG_CHANGE, e => {
       this._handleDialogChange(e as CustomEvent<DialogChangeEventDetail>);
     });
-    this.addEventListener('location-change', e =>
+    this.addEventListener(EventType.LOCATION_CHANGE, e =>
       this._handleLocationChange(e)
     );
-    document.addEventListener('gr-rpc-log', e => this._handleRpcLog(e));
-    this.addEventListener('shortcut-triggered', e =>
-      this._handleShortcutTriggered(e)
+    this.addEventListener(EventType.RECREATE_CHANGE_VIEW, () =>
+      this.handleRecreateView(GerritView.CHANGE)
     );
-    // Ideally individual views should handle this event and respond with a soft
-    // reload. This is a catch-all for all views that cannot or have not
-    // implemented that.
-    this.addEventListener('reload', () => windowLocationReload());
+    this.addEventListener(EventType.RECREATE_DIFF_VIEW, () =>
+      this.handleRecreateView(GerritView.DIFF)
+    );
+    document.addEventListener(EventType.GR_RPC_LOG, e => this._handleRpcLog(e));
   }
 
-  /** @override */
-  ready() {
+  override ready() {
     super.ready();
     this._updateLoginUrl();
     this.reporting.appStarted();
@@ -290,7 +297,6 @@ export class GrAppElement extends KeyboardShortcutMixin(PolymerElement) {
         showDownloadDialog: false,
         diffMode: null,
         numFilesShown: null,
-        scrollTop: 0,
       },
       changeListView: {
         query: null,
@@ -299,157 +305,6 @@ export class GrAppElement extends KeyboardShortcutMixin(PolymerElement) {
       },
       dashboardView: {},
     };
-  }
-
-  _bindKeyboardShortcuts() {
-    this.bindShortcut(
-      Shortcut.SEND_REPLY,
-      SPECIAL_SHORTCUT.DOC_ONLY,
-      'ctrl+enter',
-      'meta+enter'
-    );
-    this.bindShortcut(Shortcut.EMOJI_DROPDOWN, SPECIAL_SHORTCUT.DOC_ONLY, ':');
-
-    this.bindShortcut(Shortcut.OPEN_SHORTCUT_HELP_DIALOG, '?');
-    this.bindShortcut(
-      Shortcut.GO_TO_USER_DASHBOARD,
-      SPECIAL_SHORTCUT.GO_KEY,
-      'i'
-    );
-    this.bindShortcut(
-      Shortcut.GO_TO_OPENED_CHANGES,
-      SPECIAL_SHORTCUT.GO_KEY,
-      'o'
-    );
-    this.bindShortcut(
-      Shortcut.GO_TO_MERGED_CHANGES,
-      SPECIAL_SHORTCUT.GO_KEY,
-      'm'
-    );
-    this.bindShortcut(
-      Shortcut.GO_TO_ABANDONED_CHANGES,
-      SPECIAL_SHORTCUT.GO_KEY,
-      'a'
-    );
-    this.bindShortcut(
-      Shortcut.GO_TO_WATCHED_CHANGES,
-      SPECIAL_SHORTCUT.GO_KEY,
-      'w'
-    );
-
-    this.bindShortcut(Shortcut.CURSOR_NEXT_CHANGE, 'j');
-    this.bindShortcut(Shortcut.CURSOR_PREV_CHANGE, 'k');
-    this.bindShortcut(Shortcut.OPEN_CHANGE, 'o');
-    this.bindShortcut(Shortcut.NEXT_PAGE, 'n', ']');
-    this.bindShortcut(Shortcut.PREV_PAGE, 'p', '[');
-    this.bindShortcut(Shortcut.TOGGLE_CHANGE_REVIEWED, 'r:keyup');
-    this.bindShortcut(Shortcut.TOGGLE_CHANGE_STAR, 's:keydown');
-    this.bindShortcut(Shortcut.REFRESH_CHANGE_LIST, 'shift+r:keyup');
-    this.bindShortcut(Shortcut.EDIT_TOPIC, 't');
-
-    this.bindShortcut(Shortcut.OPEN_REPLY_DIALOG, 'a:keyup');
-    this.bindShortcut(Shortcut.OPEN_DOWNLOAD_DIALOG, 'd:keyup');
-    this.bindShortcut(Shortcut.EXPAND_ALL_MESSAGES, 'x');
-    this.bindShortcut(Shortcut.COLLAPSE_ALL_MESSAGES, 'z');
-    this.bindShortcut(Shortcut.REFRESH_CHANGE, 'shift+r:keyup');
-    this.bindShortcut(Shortcut.UP_TO_DASHBOARD, 'u');
-    this.bindShortcut(Shortcut.UP_TO_CHANGE, 'u');
-    this.bindShortcut(Shortcut.TOGGLE_DIFF_MODE, 'm:keyup');
-    this.bindShortcut(
-      Shortcut.DIFF_AGAINST_BASE,
-      SPECIAL_SHORTCUT.V_KEY,
-      'down',
-      's'
-    );
-    // this keyboard shortcut is used in toast _displayDiffAgainstLatestToast
-    // in gr-diff-view. Any updates here should be reflected there
-    this.bindShortcut(
-      Shortcut.DIFF_AGAINST_LATEST,
-      SPECIAL_SHORTCUT.V_KEY,
-      'up',
-      'w'
-    );
-    // this keyboard shortcut is used in toast _displayDiffBaseAgainstLeftToast
-    // in gr-diff-view. Any updates here should be reflected there
-    this.bindShortcut(
-      Shortcut.DIFF_BASE_AGAINST_LEFT,
-      SPECIAL_SHORTCUT.V_KEY,
-      'left',
-      'a'
-    );
-    this.bindShortcut(
-      Shortcut.DIFF_RIGHT_AGAINST_LATEST,
-      SPECIAL_SHORTCUT.V_KEY,
-      'right',
-      'd'
-    );
-    this.bindShortcut(
-      Shortcut.DIFF_BASE_AGAINST_LATEST,
-      SPECIAL_SHORTCUT.V_KEY,
-      'b'
-    );
-
-    this.bindShortcut(Shortcut.NEXT_LINE, 'j', 'down');
-    this.bindShortcut(Shortcut.PREV_LINE, 'k', 'up');
-    if (this._isCursorManagerSupportMoveToVisibleLine()) {
-      this.bindShortcut(Shortcut.VISIBLE_LINE, '.');
-    }
-    this.bindShortcut(Shortcut.NEXT_CHUNK, 'n');
-    this.bindShortcut(Shortcut.PREV_CHUNK, 'p');
-    this.bindShortcut(Shortcut.TOGGLE_ALL_DIFF_CONTEXT, 'shift+x');
-    this.bindShortcut(Shortcut.NEXT_COMMENT_THREAD, 'shift+n');
-    this.bindShortcut(Shortcut.PREV_COMMENT_THREAD, 'shift+p');
-    this.bindShortcut(
-      Shortcut.EXPAND_ALL_COMMENT_THREADS,
-      SPECIAL_SHORTCUT.DOC_ONLY,
-      'e'
-    );
-    this.bindShortcut(
-      Shortcut.COLLAPSE_ALL_COMMENT_THREADS,
-      SPECIAL_SHORTCUT.DOC_ONLY,
-      'shift+e'
-    );
-    this.bindShortcut(Shortcut.LEFT_PANE, 'shift+left');
-    this.bindShortcut(Shortcut.RIGHT_PANE, 'shift+right');
-    this.bindShortcut(Shortcut.TOGGLE_LEFT_PANE, 'shift+a');
-    this.bindShortcut(Shortcut.NEW_COMMENT, 'c');
-    this.bindShortcut(
-      Shortcut.SAVE_COMMENT,
-      'ctrl+enter',
-      'meta+enter',
-      'ctrl+s',
-      'meta+s'
-    );
-    this.bindShortcut(Shortcut.OPEN_DIFF_PREFS, ',');
-    this.bindShortcut(Shortcut.TOGGLE_DIFF_REVIEWED, 'r:keyup');
-
-    this.bindShortcut(Shortcut.NEXT_FILE, ']');
-    this.bindShortcut(Shortcut.PREV_FILE, '[');
-    this.bindShortcut(Shortcut.NEXT_FILE_WITH_COMMENTS, 'shift+j');
-    this.bindShortcut(Shortcut.PREV_FILE_WITH_COMMENTS, 'shift+k');
-    this.bindShortcut(Shortcut.CURSOR_NEXT_FILE, 'j', 'down');
-    this.bindShortcut(Shortcut.CURSOR_PREV_FILE, 'k', 'up');
-    this.bindShortcut(Shortcut.OPEN_FILE, 'o', 'enter');
-    this.bindShortcut(Shortcut.TOGGLE_FILE_REVIEWED, 'r:keyup');
-    this.bindShortcut(Shortcut.NEXT_UNREVIEWED_FILE, 'shift+m');
-    this.bindShortcut(Shortcut.TOGGLE_ALL_INLINE_DIFFS, 'shift+i:keyup');
-    this.bindShortcut(Shortcut.TOGGLE_INLINE_DIFF, 'i:keyup');
-    this.bindShortcut(Shortcut.TOGGLE_BLAME, 'b:keyup');
-    this.bindShortcut(Shortcut.TOGGLE_HIDE_ALL_COMMENT_THREADS, 'h');
-    this.bindShortcut(Shortcut.OPEN_FILE_LIST, 'f');
-
-    this.bindShortcut(Shortcut.OPEN_FIRST_FILE, ']');
-    this.bindShortcut(Shortcut.OPEN_LAST_FILE, '[');
-
-    this.bindShortcut(Shortcut.SEARCH, '/');
-  }
-
-  _isCursorManagerSupportMoveToVisibleLine() {
-    // This method is a copy-paste from the
-    // method _isIntersectionObserverSupported of gr-cursor-manager.js
-    // It is better share this method with gr-cursor-manager,
-    // but doing it require a lot if changes instead of 1-line copied code
-    return 'IntersectionObserver' in window;
   }
 
   _accountChanged(account?: AccountDetailInfo) {
@@ -463,35 +318,58 @@ export class GrAppElement extends KeyboardShortcutMixin(PolymerElement) {
       (this._account && this._account._account_id) || null;
   }
 
-  @observe('params.view')
-  _viewChanged(view?: GerritView) {
+  /**
+   * Throws away the view and re-creates it. The view itself fires an event, if
+   * it wants to be re-created.
+   */
+  private handleRecreateView(view: GerritView.DIFF | GerritView.CHANGE) {
+    const isDiff = view === GerritView.DIFF;
+    const domId = isDiff ? '#dom-if-diff-view' : '#dom-if-change-view';
+    const domIf = this.root!.querySelector(domId) as DomIf;
+    assertIsDefined(domIf, '<dom-if> for the view');
+    // The rendering of DomIf is debounced, so just changing _show...View and
+    // restamp properties back and forth won't work. That is why we are using
+    // timeouts.
+    // The first timeout is needed, because the _viewChanged() observer also
+    // affects _show...View and would change _show...View=false directly back to
+    // _show...View=true.
+    setTimeout(() => {
+      this._showChangeView = false;
+      this._showDiffView = false;
+      domIf.restamp = true;
+      setTimeout(() => {
+        this._showChangeView = this.params?.view === GerritView.CHANGE;
+        this._showDiffView = this.params?.view === GerritView.DIFF;
+        domIf.restamp = false;
+      }, 1);
+    }, 1);
+  }
+
+  @observe('params.*')
+  _viewChanged() {
+    const view = this.params?.view;
     this.$.errorView.classList.remove('show');
-    this.set('_showChangeListView', view === GerritView.SEARCH);
-    this.set('_showDashboardView', view === GerritView.DASHBOARD);
-    this.set('_showChangeView', view === GerritView.CHANGE);
-    this.set('_showDiffView', view === GerritView.DIFF);
-    this.set('_showSettingsView', view === GerritView.SETTINGS);
+    this._showChangeListView = view === GerritView.SEARCH;
+    this._showDashboardView = view === GerritView.DASHBOARD;
+    this._showChangeView = view === GerritView.CHANGE;
+    this._showDiffView = view === GerritView.DIFF;
+    this._showSettingsView = view === GerritView.SETTINGS;
     // _showAdminView must be in sync with the gr-admin-view AdminViewParams type
-    this.set(
-      '_showAdminView',
+    this._showAdminView =
       view === GerritView.ADMIN ||
-        view === GerritView.GROUP ||
-        view === GerritView.REPO
-    );
-    this.set('_showCLAView', view === GerritView.AGREEMENTS);
-    this.set('_showEditorView', view === GerritView.EDIT);
+      view === GerritView.GROUP ||
+      view === GerritView.REPO;
+    this._showCLAView = view === GerritView.AGREEMENTS;
+    this._showEditorView = view === GerritView.EDIT;
     const isPluginScreen = view === GerritView.PLUGIN_SCREEN;
-    this.set('_showPluginScreen', false);
+    this._showPluginScreen = false;
     // Navigation within plugin screens does not restamp gr-endpoint-decorator
     // because _showPluginScreen value does not change. To force restamp,
     // change _showPluginScreen value between true and false.
     if (isPluginScreen) {
-      setTimeout(() => this.set('_showPluginScreen', true), 1);
+      setTimeout(() => (this._showPluginScreen = true), 1);
     }
-    this.set(
-      '_showDocumentationSearch',
-      view === GerritView.DOCUMENTATION_SEARCH
-    );
+    this._showDocumentationSearch = view === GerritView.DOCUMENTATION_SEARCH;
     if (
       this.params &&
       isAppElementJustRegisteredParams(this.params) &&
@@ -513,23 +391,6 @@ export class GrAppElement extends KeyboardShortcutMixin(PolymerElement) {
     // To fix bug announce read after each new view, we reset announce with
     // empty space
     fireIronAnnounce(this, ' ');
-  }
-
-  _handleShortcutTriggered(event: ShortcutTriggeredEvent) {
-    const {event: e, goKey, vKey} = event.detail;
-    // eg: {key: "k:keydown", ..., from: "gr-diff-view"}
-    let key = `${((e as unknown) as KeyboardEvent).key}:${e.type}`;
-    if (goKey) key = 'g+' + key;
-    if (vKey) key = 'v+' + key;
-    if (e.shiftKey) key = 'shift+' + key;
-    if (e.ctrlKey) key = 'ctrl+' + key;
-    if (e.metaKey) key = 'meta+' + key;
-    if (e.altKey) key = 'alt+' + key;
-    const path = event.composedPath();
-    this.reporting.reportInteraction('shortcut-triggered', {
-      key,
-      from: (path && path[0] && (path[0] as Element).nodeName) ?? 'unknown',
-    });
   }
 
   _handlePageError(e: CustomEvent<PageErrorEventDetail>) {
@@ -557,7 +418,15 @@ export class GrAppElement extends KeyboardShortcutMixin(PolymerElement) {
       err.emoji = 'o_O';
       if (response) {
         response.text().then(text => {
-          err.moreInfo = text;
+          const trace =
+            response.headers && response.headers.get('X-Gerrit-Trace');
+          const {status, statusText} = response;
+          err.moreInfo = constructServerErrorMsg({
+            status,
+            statusText,
+            errorText: text,
+            trace,
+          });
           this._lastError = err;
         });
       }
@@ -572,7 +441,7 @@ export class GrAppElement extends KeyboardShortcutMixin(PolymerElement) {
     if (pathname.startsWith('/c/') && Number(hash) > 0) {
       pathname += '@' + hash;
     }
-    this.set('_path', pathname);
+    this._path = pathname;
   }
 
   _updateLoginUrl() {
@@ -607,7 +476,7 @@ export class GrAppElement extends KeyboardShortcutMixin(PolymerElement) {
     const params = paramsRecord.base;
     const viewsToCheck = [GerritView.SEARCH, GerritView.DASHBOARD];
     if (params?.view && viewsToCheck.includes(params.view)) {
-      this.set('_lastSearchPage', location.pathname);
+      this._lastSearchPage = location.pathname;
     }
   }
 
@@ -633,7 +502,7 @@ export class GrAppElement extends KeyboardShortcutMixin(PolymerElement) {
     (this.shadowRoot!.querySelector('#keyboardShortcuts') as GrOverlay).open();
   }
 
-  _showKeyboardShortcuts(e: CustomKeyboardEvent) {
+  _showKeyboardShortcuts() {
     // same shortcut should close the dialog if pressed again
     // when dialog is open
     this.loadKeyboardShortcutsDialog = true;
@@ -646,18 +515,15 @@ export class GrAppElement extends KeyboardShortcutMixin(PolymerElement) {
       keyboardShortcuts.cancel();
       return;
     }
-    if (this.shouldSuppressKeyboardShortcut(e)) {
-      return;
-    }
     keyboardShortcuts.open();
     this._footerHeaderAriaHidden = true;
     this._mainAriaHidden = true;
   }
 
   _handleKeyboardShortcutDialogClose() {
-    (this.shadowRoot!.querySelector(
-      '#keyboardShortcuts'
-    ) as GrOverlay).cancel();
+    (
+      this.shadowRoot!.querySelector('#keyboardShortcuts') as GrOverlay
+    ).cancel();
   }
 
   onOverlayCanceled() {
@@ -668,9 +534,9 @@ export class GrAppElement extends KeyboardShortcutMixin(PolymerElement) {
   _handleAccountDetailUpdate() {
     this.$.mainHeader.reload();
     if (this.params?.view === GerritView.SETTINGS) {
-      (this.shadowRoot!.querySelector(
-        'gr-settings-view'
-      ) as GrSettingsView).reloadAccountDetail();
+      (
+        this.shadowRoot!.querySelector('gr-settings-view') as GrSettingsView
+      ).reloadAccountDetail();
     }
   }
 
@@ -678,9 +544,9 @@ export class GrAppElement extends KeyboardShortcutMixin(PolymerElement) {
     // The registration dialog is visible only if this.params is
     // instanceof AppElementJustRegisteredParams
     (this.params as AppElementJustRegisteredParams).justRegistered = false;
-    (this.shadowRoot!.querySelector(
-      '#registrationOverlay'
-    ) as GrOverlay).close();
+    (
+      this.shadowRoot!.querySelector('#registrationOverlay') as GrOverlay
+    ).close();
   }
 
   _goToOpenedChanges() {

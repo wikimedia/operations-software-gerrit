@@ -18,7 +18,7 @@ import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.gerrit.entities.Change.INITIAL_PATCH_SET_ID;
-import static com.google.gerrit.server.change.ReviewerAdder.newAddReviewerInputFromCommitIdentity;
+import static com.google.gerrit.server.change.ReviewerModifier.newReviewerInputFromCommitIdentity;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.REVIEWER;
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
 import static java.util.Objects.requireNonNull;
@@ -32,7 +32,6 @@ import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.entities.LabelType;
 import com.google.gerrit.entities.LabelTypes;
 import com.google.gerrit.entities.PatchSet;
@@ -46,13 +45,13 @@ import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
-import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.PatchSetUtil;
-import com.google.gerrit.server.change.ReviewerAdder.InternalAddReviewerInput;
-import com.google.gerrit.server.change.ReviewerAdder.ReviewerAddition;
-import com.google.gerrit.server.change.ReviewerAdder.ReviewerAdditionList;
+import com.google.gerrit.server.approval.ApprovalsUtil;
+import com.google.gerrit.server.change.ReviewerModifier.InternalReviewerInput;
+import com.google.gerrit.server.change.ReviewerModifier.ReviewerModification;
+import com.google.gerrit.server.change.ReviewerModifier.ReviewerModificationList;
 import com.google.gerrit.server.config.SendEmailExecutor;
 import com.google.gerrit.server.config.UrlFormatter;
 import com.google.gerrit.server.events.CommitReceivedEvent;
@@ -74,6 +73,7 @@ import com.google.gerrit.server.ssh.NoSshInfo;
 import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.update.Context;
 import com.google.gerrit.server.update.InsertChangeOp;
+import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.gerrit.server.update.RepoContext;
 import com.google.gerrit.server.util.CommitMessageUtil;
 import com.google.gerrit.server.util.RequestScopePropagator;
@@ -112,7 +112,7 @@ public class ChangeInserter implements InsertChangeOp {
   private final CommitValidators.Factory commitValidatorsFactory;
   private final RevisionCreated revisionCreated;
   private final CommentAdded commentAdded;
-  private final ReviewerAdder reviewerAdder;
+  private final ReviewerModifier reviewerModifier;
   private final MessageIdGenerator messageIdGenerator;
   private final DynamicItem<UrlFormatter> urlFormatter;
   private final AutoMerger autoMerger;
@@ -131,6 +131,7 @@ public class ChangeInserter implements InsertChangeOp {
   private boolean isPrivate;
   private boolean workInProgress;
   private List<String> groups = Collections.emptyList();
+  private ImmutableListMultimap<String, String> validationOptions = ImmutableListMultimap.of();
   private boolean validate = true;
   private Map<String, Short> approvals;
   private RequestScopePropagator requestScopePropagator;
@@ -138,17 +139,17 @@ public class ChangeInserter implements InsertChangeOp {
   private boolean sendMail;
   private boolean updateRef;
   private Change.Id revertOf;
-  private ImmutableList<InternalAddReviewerInput> reviewerInputs;
+  private ImmutableList<InternalReviewerInput> reviewerInputs;
 
   // Fields set during the insertion process.
   private ReceiveCommand cmd;
   private Change change;
-  private ChangeMessage changeMessage;
+  private String changeMessage;
   private PatchSetInfo patchSetInfo;
   private PatchSet patchSet;
   private String pushCert;
   private ProjectState projectState;
-  private ReviewerAdditionList reviewerAdditions;
+  private ReviewerModificationList reviewerAdditions;
 
   @Inject
   ChangeInserter(
@@ -163,7 +164,7 @@ public class ChangeInserter implements InsertChangeOp {
       CommitValidators.Factory commitValidatorsFactory,
       CommentAdded commentAdded,
       RevisionCreated revisionCreated,
-      ReviewerAdder reviewerAdder,
+      ReviewerModifier reviewerModifier,
       MessageIdGenerator messageIdGenerator,
       DynamicItem<UrlFormatter> urlFormatter,
       AutoMerger autoMerger,
@@ -181,7 +182,7 @@ public class ChangeInserter implements InsertChangeOp {
     this.commitValidatorsFactory = commitValidatorsFactory;
     this.revisionCreated = revisionCreated;
     this.commentAdded = commentAdded;
-    this.reviewerAdder = reviewerAdder;
+    this.reviewerModifier = reviewerModifier;
     this.messageIdGenerator = messageIdGenerator;
     this.urlFormatter = urlFormatter;
     this.autoMerger = autoMerger;
@@ -280,8 +281,8 @@ public class ChangeInserter implements InsertChangeOp {
         Streams.concat(
                 Streams.stream(reviewers)
                     .distinct()
-                    .map(id -> newAddReviewerInput(id, ReviewerState.REVIEWER)),
-                Streams.stream(ccs).distinct().map(id -> newAddReviewerInput(id, ReviewerState.CC)))
+                    .map(id -> newReviewerInput(id, ReviewerState.REVIEWER)),
+                Streams.stream(ccs).distinct().map(id -> newReviewerInput(id, ReviewerState.CC)))
             .collect(toImmutableList());
     return this;
   }
@@ -305,8 +306,18 @@ public class ChangeInserter implements InsertChangeOp {
 
   public ChangeInserter setGroups(List<String> groups) {
     requireNonNull(groups, "groups may not be empty");
-    checkState(patchSet == null, "setGroups(Iterable<String>) only valid before creating change");
+    checkState(patchSet == null, "setGroups(List<String>) only valid before creating change");
     this.groups = groups;
+    return this;
+  }
+
+  public ChangeInserter setValidationOptions(
+      ImmutableListMultimap<String, String> validationOptions) {
+    checkState(
+        patchSet == null,
+        "setValidationOptions(ImmutableListMultimap<String, String>) only valid before creating a"
+            + " change");
+    this.validationOptions = validationOptions;
     return this;
   }
 
@@ -361,7 +372,7 @@ public class ChangeInserter implements InsertChangeOp {
     return this;
   }
 
-  public ChangeMessage getChangeMessage() {
+  public String getChangeMessage() {
     if (message == null) {
       return null;
     }
@@ -443,8 +454,9 @@ public class ChangeInserter implements InsertChangeOp {
     }
 
     reviewerAdditions =
-        reviewerAdder.prepare(ctx.getNotes(), ctx.getUser(), getReviewerInputs(), true);
-    Optional<ReviewerAddition> reviewerError = reviewerAdditions.getFailures().stream().findFirst();
+        reviewerModifier.prepare(ctx.getNotes(), ctx.getUser(), getReviewerInputs(), true);
+    Optional<ReviewerModification> reviewerError =
+        reviewerAdditions.getFailures().stream().findFirst();
     if (reviewerError.isPresent()) {
       throw new UnprocessableEntityException(reviewerError.get().result.error);
     }
@@ -463,19 +475,14 @@ public class ChangeInserter implements InsertChangeOp {
     }
     if (message != null) {
       changeMessage =
-          ChangeMessagesUtil.newMessage(
-              patchSet.id(),
-              ctx.getUser(),
-              patchSet.createdOn(),
-              message,
-              ChangeMessagesUtil.uploadedPatchSetTag(workInProgress));
-      cmUtil.addChangeMessage(update, changeMessage);
+          cmUtil.setChangeMessage(
+              update, message, ChangeMessagesUtil.uploadedPatchSetTag(workInProgress));
     }
     return true;
   }
 
   @Override
-  public void postUpdate(Context ctx) throws Exception {
+  public void postUpdate(PostUpdateContext ctx) throws Exception {
     reviewerAdditions.postUpdate(ctx);
     NotifyResolver.Result notify = ctx.getNotify(change.getId());
     if (sendMail && notify.shouldNotify()) {
@@ -528,7 +535,8 @@ public class ChangeInserter implements InsertChangeOp {
      * show a transition from an oldValue of 0 to the new value.
      */
     if (fireRevisionCreated) {
-      revisionCreated.fire(change, patchSet, ctx.getAccount(), ctx.getWhen(), notify);
+      revisionCreated.fire(
+          ctx.getChangeData(change), patchSet, ctx.getAccount(), ctx.getWhen(), notify);
       if (approvals != null && !approvals.isEmpty()) {
         List<LabelType> labels = projectState.getLabelTypes(change.getDest()).getLabelTypes();
         Map<String, Short> allApprovals = new HashMap<>();
@@ -544,7 +552,13 @@ public class ChangeInserter implements InsertChangeOp {
           }
         }
         commentAdded.fire(
-            change, patchSet, ctx.getAccount(), null, allApprovals, oldApprovals, ctx.getWhen());
+            ctx.getChangeData(change),
+            patchSet,
+            ctx.getAccount(),
+            null,
+            allApprovals,
+            oldApprovals,
+            ctx.getWhen());
       }
     }
   }
@@ -560,7 +574,7 @@ public class ChangeInserter implements InsertChangeOp {
               cmd,
               projectState.getProject(),
               change.getDest().branch(),
-              ImmutableListMultimap.of(),
+              validationOptions,
               ctx.getRepoView().getConfig(),
               ctx.getRevWalk().getObjectReader(),
               commitId,
@@ -580,35 +594,34 @@ public class ChangeInserter implements InsertChangeOp {
     }
   }
 
-  private static InternalAddReviewerInput newAddReviewerInput(
-      String reviewer, ReviewerState state) {
+  private static InternalReviewerInput newReviewerInput(String reviewer, ReviewerState state) {
     // Disable individual emails when adding reviewers, as all reviewers will receive the single
     // bulk new change email.
-    InternalAddReviewerInput input =
-        ReviewerAdder.newAddReviewerInput(reviewer, state, NotifyHandling.NONE);
+    InternalReviewerInput input =
+        ReviewerModifier.newReviewerInput(reviewer, state, NotifyHandling.NONE);
 
     // Ignore failures for reasons like the reviewer being inactive or being unable to see the
     // change. This is required for the push path, where it automatically sets reviewers from
     // certain commit footers: putting a nonexistent user in a footer should not cause an error. In
     // theory we could provide finer control to do this for some reviewers and not others, but it's
     // not worth complicating the ChangeInserter interface further at this time.
-    input.otherFailureBehavior = ReviewerAdder.FailureBehavior.IGNORE;
+    input.otherFailureBehavior = ReviewerModifier.FailureBehavior.IGNORE;
 
     return input;
   }
 
-  private ImmutableList<InternalAddReviewerInput> getReviewerInputs() {
+  private ImmutableList<InternalReviewerInput> getReviewerInputs() {
     return Streams.concat(
             reviewerInputs.stream(),
             Streams.stream(
-                newAddReviewerInputFromCommitIdentity(
+                newReviewerInputFromCommitIdentity(
                     change,
                     patchSetInfo.getCommitId(),
                     patchSetInfo.getAuthor().getAccount(),
                     NotifyHandling.NONE,
                     change.getOwner())),
             Streams.stream(
-                newAddReviewerInputFromCommitIdentity(
+                newReviewerInputFromCommitIdentity(
                     change,
                     patchSetInfo.getCommitId(),
                     patchSetInfo.getCommitter().getAccount(),

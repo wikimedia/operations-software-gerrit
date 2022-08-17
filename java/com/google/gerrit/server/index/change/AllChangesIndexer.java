@@ -32,6 +32,7 @@ import com.google.gerrit.index.SiteIndexer;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.MultiProgressMonitor;
 import com.google.gerrit.server.git.MultiProgressMonitor.Task;
+import com.google.gerrit.server.git.MultiProgressMonitor.TaskKind;
 import com.google.gerrit.server.git.MultiProgressMonitor.VolatileTask;
 import com.google.gerrit.server.index.IndexExecutor;
 import com.google.gerrit.server.index.OnlineReindexMode;
@@ -63,6 +64,8 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
   private Task failedTask;
   private static final int PROJECT_SLICE_MAX_REFS = 1000;
 
+  private final MultiProgressMonitor.Factory multiProgressMonitorFactory;
+
   private static class ProjectsCollectionFailure extends Exception {
     private static final long serialVersionUID = 1L;
 
@@ -80,12 +83,14 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
 
   @Inject
   AllChangesIndexer(
+      MultiProgressMonitor.Factory multiProgressMonitorFactory,
       ChangeData.Factory changeDataFactory,
       GitRepositoryManager repoManager,
       @IndexExecutor(BATCH) ListeningExecutorService executor,
       ChangeIndexer.Factory indexerFactory,
       ChangeNotes.Factory notesFactory,
       ProjectCache projectCache) {
+    this.multiProgressMonitorFactory = multiProgressMonitorFactory;
     this.changeDataFactory = changeDataFactory;
     this.repoManager = repoManager;
     this.executor = executor;
@@ -128,7 +133,7 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
 
     Stopwatch sw = Stopwatch.createStarted();
     AtomicBoolean ok = new AtomicBoolean(true);
-    mpm = new MultiProgressMonitor(progressOut, "Reindexing changes");
+    mpm = multiProgressMonitorFactory.create(progressOut, TaskKind.INDEXING, "Reindexing changes");
     doneTask = mpm.beginVolatileSubTask("changes");
     failedTask = mpm.beginSubTask("failed", MultiProgressMonitor.UNKNOWN);
     List<ListenableFuture<?>> futures;

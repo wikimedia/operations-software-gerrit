@@ -1342,6 +1342,8 @@ link:#preferences-input[PreferencesInput] entity.
     "date_format": "STD",
     "time_format": "HHMM_12",
     "size_bar_in_change_table": true,
+    "disable_keyboard_shortcuts": true,
+    "disable_token_highlighting": true,
     "diff_view": "SIDE_BY_SIDE",
     "mute_common_path_prefixes": true,
     "my": [
@@ -1392,6 +1394,8 @@ link:#preferences-info[PreferencesInfo] entity.
     "size_bar_in_change_table": true,
     "diff_view": "SIDE_BY_SIDE",
     "publish_comments_on_push": true,
+    "disable_keyboard_shortcuts": true,
+    "disable_token_highlighting": true,
     "work_in_progress_by_default": true,
     "mute_common_path_prefixes": true,
     "my": [
@@ -1760,7 +1764,7 @@ link:#account-external-id-info[AccountExternalIdInfo] entities.
   [
     {
       "identity": "username:john",
-      "email": "john.doe@example.com",
+      "email_address": "john.doe@example.com",
       "trusted": true
     }
   ]
@@ -1777,7 +1781,16 @@ be provided as a list in the request body.
 
 Only external ids belonging to the caller may be deleted. Users that have
 link:access-control.html#capability_modifyAccount[Modify Account] can delete
-external ids that belong to other accounts.
+external ids that belong to other accounts. External ids in the 'username:'
+scheme can only be deleted by users that have
+link:access-control.html#capability_administrateServer[Administrate Server]
+or both
+link:access-control.html#capability_maintainServer[Maintain Server] and
+link:access-control.html#capability__modifyAccount[Modify Account]
+since the user may not be able to login anymore, after the removal of the
+external id with scheme 'username:'. Users cannot delete their own external id
+with scheme 'username:' in order to prevent they can lock themselves out
+since they may not be able to login anymore.
 
 .Request
 ----
@@ -1999,7 +2012,7 @@ of link:rest-api-changes.html#change-info[ChangeInfo] entities.
 --
 
 Star a change with the default label. Changes starred with the default
-label are returned for the search query `is:starred` or `starredby:USER`
+label are returned for the search query `is:starred` or `has:star`
 and automatically notify the user whenever updates are made to the
 change.
 
@@ -2029,131 +2042,6 @@ Remove the default star label from a change. This stops notifications.
 .Response
 ----
   HTTP/1.1 204 No Content
-----
-
-[[star-endpoints]]
-== Star Endpoints
-
-[[get-starred-changes]]
-=== Get Starred Changes
---
-'GET /accounts/link:#account-id[\{account-id\}]/stars.changes'
---
-
-Gets the changes that were starred with any label by the identified
-user account. This URL endpoint is functionally identical to the
-changes query `GET /changes/?q=has:stars`. The result is a list of
-link:rest-api-changes.html#change-info[ChangeInfo] entities.
-
-.Request
-----
-  GET /a/accounts/self/stars.changes
-----
-
-.Response
-----
-  HTTP/1.1 200 OK
-  Content-Disposition: attachment
-  Content-Type: application/json; charset=UTF-8
-
-  )]}'
-  [
-    {
-      "id": "myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940",
-      "project": "myProject",
-      "branch": "master",
-      "change_id": "I8473b95934b5732ac55d26311a706c9c2bde9940",
-      "subject": "Implementing Feature X",
-      "status": "NEW",
-      "created": "2013-02-01 09:59:32.126000000",
-      "updated": "2013-02-21 11:16:36.775000000",
-      "stars": [
-        "ignore",
-        "risky"
-      ],
-      "mergeable": true,
-      "submittable": false,
-      "insertions": 145,
-      "deletions": 12,
-      "_number": 3965,
-      "owner": {
-        "name": "John Doe"
-      }
-    }
-  ]
-----
-
-[[get-stars]]
-=== Get Star Labels From Change
---
-'GET /accounts/link:#account-id[\{account-id\}]/stars.changes/link:rest-api-changes.html#change-id[\{change-id\}]'
---
-
-Get star labels from a change.
-
-.Request
-----
-  GET /a/accounts/self/stars.changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940 HTTP/1.0
-----
-
-As response the star labels that the user applied on the change are
-returned. The labels are lexicographically sorted.
-
-.Response
-----
-  HTTP/1.1 200 OK
-  Content-Disposition: attachment
-  Content-Type: application/json; charset=UTF-8
-
-  )]}'
-  [
-    "blue",
-    "green",
-    "red"
-  ]
-----
-
-[[set-stars]]
-=== Update Star Labels On Change
---
-'POST /accounts/link:#account-id[\{account-id\}]/stars.changes/link:rest-api-changes.html#change-id[\{change-id\}]'
---
-
-Update star labels on a change. The star labels to be added/removed
-must be specified in the request body as link:#stars-input[StarsInput]
-entity. Starred changes are returned for the search query `has:stars`.
-
-.Request
-----
-  POST /a/accounts/self/stars.changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940 HTTP/1.0
-  Content-Type: application/json; charset=UTF-8
-
-  {
-    "add": [
-      "blue",
-      "red"
-    ],
-    "remove": [
-      "yellow"
-    ]
-  }
-----
-
-As response the star labels that the user applied on the change are
-returned. The labels are lexicographically sorted.
-
-.Response
-----
-  HTTP/1.1 200 OK
-  Content-Disposition: attachment
-  Content-Type: application/json; charset=UTF-8
-
-  )]}'
-  [
-    "blue",
-    "green",
-    "red"
-  ]
 ----
 
 [[ids]]
@@ -2250,7 +2138,7 @@ an account.
 |============================
 |Field Name        ||Description
 |`identity`        ||The account external id.
-|`email`           |optional|The email address for the external id.
+|`email_address`   |optional|The email address for the external id.
 |`trusted`         |not set if `false`|
 Whether the external id is trusted.
 |`can_delete`      |not set if `false`|
@@ -2818,6 +2706,8 @@ list when the change screen is opened for a merge commit.
 Allowed values are `AUTO_MERGE` and `FIRST_PARENT`.
 |`disable_keyboard_shortcuts`     |not set if `false`|
 Whether to disable all keyboard shortcuts.
+|`disable_token_highlighting`     [not set if `false`]
+Whether to disable token highlighting on hover.
 |`publish_comments_on_push`     |not set if `false`|
 Whether to link:user-upload.html#publish-comments[publish draft comments] on
 push by default.
@@ -2883,6 +2773,8 @@ Allowed values are `ENABLED`, `CC_ON_OWN_COMMENTS`, `ATTENTION_SET_ONLY`,
 The base which should be pre-selected in the 'Diff Against' drop-down
 list when the change screen is opened for a merge commit.
 Allowed values are `AUTO_MERGE` and `FIRST_PARENT`.
+|`disable_keyboard_shortcuts`     |not set if `false`|
+Whether to disable all keyboard shortcuts.
 |============================================
 
 [[query-limit-info]]
@@ -2912,18 +2804,6 @@ user.
 |`comment`       |optional|The comment of the SSH key.
 |`valid`         ||Whether the SSH key is valid.
 |=============================
-
-[[stars-input]]
-=== StarsInput
-The `StarsInput` entity contains star labels that should be added to
-or removed from a change.
-
-[options="header",cols="1,^1,5"]
-|========================
-|Field Name ||Description
-|`add`      |optional|List of labels to add to the change.
-|`remove`   |optional|List of labels to remove from the change.
-|========================
 
 [[username-input]]
 === UsernameInput

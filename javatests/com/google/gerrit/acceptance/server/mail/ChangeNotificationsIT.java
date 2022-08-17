@@ -41,12 +41,12 @@ import com.google.gerrit.entities.LabelId;
 import com.google.gerrit.entities.Permission;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.changes.AbandonInput;
-import com.google.gerrit.extensions.api.changes.AddReviewerInput;
 import com.google.gerrit.extensions.api.changes.AssigneeInput;
 import com.google.gerrit.extensions.api.changes.DeleteReviewerInput;
 import com.google.gerrit.extensions.api.changes.DeleteVoteInput;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
+import com.google.gerrit.extensions.api.changes.ReviewerInput;
 import com.google.gerrit.extensions.api.changes.SubmitInput;
 import com.google.gerrit.extensions.api.projects.ConfigInput;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo;
@@ -89,6 +89,7 @@ public class ChangeNotificationsIT extends AbstractNotificationTest {
         .forUpdate()
         .add(allow(Permission.FORGE_COMMITTER).ref("refs/*").group(REGISTERED_USERS))
         .add(allow(Permission.SUBMIT).ref("refs/*").group(REGISTERED_USERS))
+        .add(allow(Permission.SUBMIT_AS).ref("refs/*").group(REGISTERED_USERS))
         .add(allow(Permission.ABANDON).ref("refs/*").group(REGISTERED_USERS))
         .add(allowLabel(LabelId.CODE_REVIEW).ref("refs/*").group(REGISTERED_USERS).range(-2, +2))
         .update();
@@ -273,7 +274,7 @@ public class ChangeNotificationsIT extends AbstractNotificationTest {
   }
 
   /*
-   * AddReviewerSender tests.
+   * ModifyReviewerSender tests (only for additions).
    */
 
   private void addReviewerToReviewableChange(Adder adder) throws Exception {
@@ -298,6 +299,32 @@ public class ChangeNotificationsIT extends AbstractNotificationTest {
   @Test
   public void addReviewerToReviewableChangeBatch() throws Exception {
     addReviewerToReviewableChange(batch());
+  }
+
+  private void addReviewerToIgnoredChange(Adder adder) throws Exception {
+    StagedChange sc = stageReviewableChange();
+    requestScopeOperations.setApiUser(sc.reviewer.id());
+    gApi.changes().id(sc.changeId).ignore(true);
+    TestAccount addedReviewer = accountCreator.create("added", "added@example.com", "added", null);
+    addReviewer(adder, sc.changeId, sc.owner, addedReviewer.email(), CC_ON_OWN_COMMENTS, null);
+
+    assertThat(sender)
+        .sent("newchange", sc)
+        .to(addedReviewer)
+        .cc(sc.owner)
+        .cc(StagedUsers.REVIEWER_BY_EMAIL, StagedUsers.CC_BY_EMAIL)
+        .noOneElse();
+    assertThat(sender).didNotSend();
+  }
+
+  @Test
+  public void addReviewerToIgnoredChangeSingly() throws Exception {
+    addReviewerToIgnoredChange(singly());
+  }
+
+  @Test
+  public void addReviewerToIgnoredChangeBatch() throws Exception {
+    addReviewerToIgnoredChange(batch());
   }
 
   private void addReviewerToReviewableChangeByOwnerCcingSelf(Adder adder) throws Exception {
@@ -421,7 +448,7 @@ public class ChangeNotificationsIT extends AbstractNotificationTest {
     TestAccount reviewer = accountCreator.create("added", "added@example.com", "added", null);
     addReviewer(singly(), sc.changeId, sc.owner, reviewer.email());
     // TODO(dborowitz): In theory this should match the batch case, but we don't currently pass
-    // enough info into AddReviewersEmail#emailReviewers to distinguish the reviewStarted case.
+    // enough info into ModifyReviewersEmail#emailReviewers to distinguish the reviewStarted case.
     // Complicating the emailReviewers arguments is not the answer; this needs to be rewritten.
     // Tolerate the difference for now.
     assertThat(sender).didNotSend();
@@ -582,7 +609,7 @@ public class ChangeNotificationsIT extends AbstractNotificationTest {
 
   private Adder singly(ReviewerState reviewerState) {
     return (String changeId, String reviewer, @Nullable NotifyHandling notify) -> {
-      AddReviewerInput in = new AddReviewerInput();
+      ReviewerInput in = new ReviewerInput();
       in.reviewer = reviewer;
       in.state = reviewerState;
       if (notify != null) {
@@ -1623,6 +1650,75 @@ public class ChangeNotificationsIT extends AbstractNotificationTest {
     assertThat(sender).didNotSend();
   }
 
+  @Test
+  public void mergeOnBehalfOfEmailEnabled_impersonatedOwnerNotified() throws Exception {
+    StagedChange sc = stageChangeReadyForMerge();
+    // If notification is enabled, onBehalfOfUser is always notified.
+    setEmailStrategy(sc.owner, ENABLED);
+    merge(sc.changeId, other, sc.owner, ALL);
+    assertThat(sender)
+        .sent("merged", sc)
+        .to(sc.owner)
+        .cc(sc.reviewer, sc.ccer)
+        .cc(StagedUsers.REVIEWER_BY_EMAIL, StagedUsers.CC_BY_EMAIL)
+        .bcc(sc.starrer)
+        .bcc(ALL_COMMENTS, SUBMITTED_CHANGES)
+        .noOneElse();
+    assertThat(sender).didNotSend();
+  }
+
+  @Test
+  public void mergeOnBehalfOfEmailEnabled_impersonatedReviewerNotified() throws Exception {
+    StagedChange sc = stageChangeReadyForMerge();
+    // If notification is enabled, onBehalfOfUser is always notified.
+    setEmailStrategy(sc.reviewer, ENABLED);
+    merge(sc.changeId, other, sc.reviewer, ALL);
+    assertThat(sender)
+        .sent("merged", sc)
+        .to(sc.owner)
+        .cc(sc.reviewer, sc.ccer)
+        .cc(StagedUsers.REVIEWER_BY_EMAIL, StagedUsers.CC_BY_EMAIL)
+        .bcc(sc.starrer)
+        .bcc(ALL_COMMENTS, SUBMITTED_CHANGES)
+        .noOneElse();
+    assertThat(sender).didNotSend();
+  }
+
+  @Test
+  public void mergeOnBehalfOfReviewerNotifyOwner_impersonatedReviewerInCC() throws Exception {
+    StagedChange sc = stageChangeReadyForMerge();
+    setEmailStrategy(sc.reviewer, ENABLED);
+    // Even though Submit strategy is OWNER, impersonated reviewer is added to CC.
+    merge(sc.changeId, other, sc.reviewer, OWNER);
+    assertThat(sender).sent("merged", sc).to(sc.owner).cc(sc.reviewer).noOneElse();
+    assertThat(sender).didNotSend();
+  }
+
+  @Test
+  public void mergeOnBehalfOfOtherNotifyOwner_impersonatedOtherInCC() throws Exception {
+    StagedChange sc = stageChangeReadyForMerge();
+    // Unrelated impersonated user is added to CC.
+    merge(sc.changeId, sc.reviewer, other, OWNER);
+    assertThat(sender).sent("merged", sc).to(sc.owner).cc(other).noOneElse();
+    assertThat(sender).didNotSend();
+  }
+
+  @Test
+  public void mergeOnBehalfOfEmailDisabled_doesNotNotify() throws Exception {
+    StagedChange sc = stageChangeReadyForMerge();
+    setEmailStrategy(other, EmailStrategy.DISABLED);
+    merge(sc.changeId, sc.reviewer, other, OWNER);
+    assertThat(sender).sent("merged", sc).to(sc.owner).noOneElse();
+    assertThat(sender).didNotSend();
+  }
+
+  @Test
+  public void mergeOnBehalfOfNotifyNone() throws Exception {
+    StagedChange sc = stageChangeReadyForMerge();
+    merge(sc.changeId, other, sc.owner, NONE);
+    assertThat(sender).didNotSend();
+  }
+
   private void merge(String changeId, TestAccount by) throws Exception {
     merge(changeId, by, ENABLED);
   }
@@ -1645,6 +1741,16 @@ public class ChangeNotificationsIT extends AbstractNotificationTest {
     requestScopeOperations.setApiUser(by.id());
     SubmitInput in = new SubmitInput();
     in.notify = notify;
+    gApi.changes().id(changeId).current().submit(in);
+  }
+
+  private void merge(
+      String changeId, TestAccount by, TestAccount onBehalfOf, @Nullable NotifyHandling notify)
+      throws Exception {
+    requestScopeOperations.setApiUser(by.id());
+    SubmitInput in = new SubmitInput();
+    in.notify = notify;
+    in.onBehalfOf = onBehalfOf.id().toString();
     gApi.changes().id(changeId).current().submit(in);
   }
 

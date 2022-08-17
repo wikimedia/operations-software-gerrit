@@ -14,9 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {html} from 'lit-html';
-import {GrLitElement} from '../../lit/gr-lit-element';
-import {customElement, property, css} from 'lit-element';
+import {LitElement, css, html} from 'lit';
+import {customElement, property} from 'lit/decorators';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {
   ChangeInfo,
@@ -25,9 +24,10 @@ import {
 } from '../../../types/common';
 import {ChangeStatus} from '../../../constants/constants';
 import {isChangeInfo} from '../../../utils/change-util';
+import {ifDefined} from 'lit/directives/if-defined';
 
 @customElement('gr-related-change')
-export class GrRelatedChange extends GrLitElement {
+export class GrRelatedChange extends LitElement {
   @property()
   change?: ChangeInfo | RelatedChangeAndCommitInfo;
 
@@ -47,13 +47,14 @@ export class GrRelatedChange extends GrLitElement {
   @property()
   connectedRevisions?: CommitId[];
 
-  static get styles() {
+  static override get styles() {
     return [
       sharedStyles,
       css`
         a {
           display: block;
         }
+        :host,
         .changeContainer,
         a {
           max-width: 100%;
@@ -103,13 +104,13 @@ export class GrRelatedChange extends GrLitElement {
     ];
   }
 
-  render() {
+  override render() {
     const change = this.change;
     if (!change) throw new Error('Missing change');
     const linkClass = this._computeLinkClass(change);
     return html`
       <div class="changeContainer">
-        <a href="${this.href}" class="${linkClass}"><slot></slot></a>
+        <a href="${ifDefined(this.href)}" class="${linkClass}"><slot></slot></a>
         ${this.showSubmittableCheck
           ? html`<span
               tabindex="-1"

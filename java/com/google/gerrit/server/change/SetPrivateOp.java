@@ -17,7 +17,6 @@ package com.google.gerrit.server.change;
 import com.google.common.base.Strings;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.extensions.common.InputWithMessage;
 import com.google.gerrit.extensions.restapi.BadRequestException;
@@ -30,7 +29,7 @@ import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ChangeUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.Context;
+import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 
@@ -83,18 +82,18 @@ public class SetPrivateOp implements BatchUpdateOp {
     change.setPrivate(isPrivate);
     change.setLastUpdatedOn(ctx.getWhen());
     update.setPrivate(isPrivate);
-    addMessage(ctx, update);
+    addMessage(ctx);
     return true;
   }
 
   @Override
-  public void postUpdate(Context ctx) {
+  public void postUpdate(PostUpdateContext ctx) {
     if (!isNoOp) {
-      privateStateChanged.fire(change, ps, ctx.getAccount(), ctx.getWhen());
+      privateStateChanged.fire(ctx.getChangeData(change), ps, ctx.getAccount(), ctx.getWhen());
     }
   }
 
-  private void addMessage(ChangeContext ctx, ChangeUpdate update) {
+  private void addMessage(ChangeContext ctx) {
     Change c = ctx.getChange();
     StringBuilder buf = new StringBuilder(c.isPrivate() ? "Set private" : "Unset private");
 
@@ -104,13 +103,9 @@ public class SetPrivateOp implements BatchUpdateOp {
       buf.append(m);
     }
 
-    ChangeMessage cmsg =
-        ChangeMessagesUtil.newMessage(
-            ctx,
-            buf.toString(),
-            c.isPrivate()
-                ? ChangeMessagesUtil.TAG_SET_PRIVATE
-                : ChangeMessagesUtil.TAG_UNSET_PRIVATE);
-    cmUtil.addChangeMessage(update, cmsg);
+    cmUtil.setChangeMessage(
+        ctx,
+        buf.toString(),
+        c.isPrivate() ? ChangeMessagesUtil.TAG_SET_PRIVATE : ChangeMessagesUtil.TAG_UNSET_PRIVATE);
   }
 }

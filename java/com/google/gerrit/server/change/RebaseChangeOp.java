@@ -41,7 +41,7 @@ import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.Context;
+import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.gerrit.server.update.RepoContext;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
@@ -92,6 +92,7 @@ public class RebaseChangeOp implements BatchUpdateOp {
   private boolean detailedCommitMessage;
   private boolean postMessage = true;
   private boolean sendEmail = true;
+  private boolean storeCopiedVotes = true;
   private boolean matchAuthorToCommitterDate = false;
 
   private CodeReviewCommit rebasedCommit;
@@ -169,6 +170,17 @@ public class RebaseChangeOp implements BatchUpdateOp {
     return this;
   }
 
+  /**
+   * We always want to store copied votes except when the change is getting submitted and a new
+   * patch-set is created on submit (using submit strategies such as "REBASE_ALWAYS"). In such
+   * cases, we already store the votes of the new patch-sets in SubmitStrategyOp#saveApprovals. We
+   * should not also store the copied votes.
+   */
+  public RebaseChangeOp setStoreCopiedVotes(boolean storeCopiedVotes) {
+    this.storeCopiedVotes = storeCopiedVotes;
+    return this;
+  }
+
   public RebaseChangeOp setSendEmail(boolean sendEmail) {
     this.sendEmail = sendEmail;
     return this;
@@ -219,7 +231,10 @@ public class RebaseChangeOp implements BatchUpdateOp {
             .setFireRevisionCreated(fireRevisionCreated)
             .setCheckAddPatchSetPermission(checkAddPatchSetPermission)
             .setValidate(validate)
-            .setSendEmail(sendEmail);
+            .setSendEmail(sendEmail)
+            // The votes are automatically copied and they don't count as copied votes. See
+            // method's javadoc.
+            .setStoreCopiedVotes(storeCopiedVotes);
 
     if (!rebasedCommit.getFilesWithGitConflicts().isEmpty()
         && !notes.getChange().isWorkInProgress()) {
@@ -240,6 +255,8 @@ public class RebaseChangeOp implements BatchUpdateOp {
         patchSetInserter.setGroups(GroupCollector.getDefaultGroups(rebasedCommit));
       }
     }
+
+    ctx.getRevWalk().getObjectReader().getCreatedFromInserter().flush();
     patchSetInserter.updateRepo(ctx);
   }
 
@@ -270,7 +287,7 @@ public class RebaseChangeOp implements BatchUpdateOp {
   }
 
   @Override
-  public void postUpdate(Context ctx) {
+  public void postUpdate(PostUpdateContext ctx) {
     patchSetInserter.postUpdate(ctx);
   }
 

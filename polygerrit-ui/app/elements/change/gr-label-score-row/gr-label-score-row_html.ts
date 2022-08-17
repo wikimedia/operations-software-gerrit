@@ -17,9 +17,6 @@
 import {html} from '@polymer/polymer/lib/utils/html-tag';
 
 export const htmlTemplate = html`
-  <style include="gr-voting-styles">
-    /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
-  </style>
   <style include="shared-styles">
     .labelNameCell,
     .buttonsCell,
@@ -48,57 +45,38 @@ export const htmlTemplate = html`
     gr-button {
       min-width: 42px;
       box-sizing: border-box;
-      --gr-button: {
-        background-color: var(
-          --button-background-color,
-          var(--table-header-background-color)
-        );
-        padding: 0 var(--spacing-m);
-        @apply --vote-chip-styles;
-      }
     }
-    gr-button.iron-selected[vote='max'] {
+    gr-button::part(paper-button) {
+      background-color: var(
+        --button-background-color,
+        var(--table-header-background-color)
+      );
+      padding: 0 var(--spacing-m);
+    }
+    gr-button[vote='max'].iron-selected {
       --button-background-color: var(--vote-color-approved);
     }
-    gr-button.iron-selected[vote='positive'] {
+    gr-button[vote='positive'].iron-selected {
       --button-background-color: var(--vote-color-recommended);
-      --gr-button: {
-        padding: 0 var(--spacing-m);
-        border-style: solid;
-        border-color: var(--vote-outline-recommended);
-        border-top-left-radius: 1em;
-        border-top-right-radius: 1em;
-        border-bottom-right-radius: 1em;
-        border-bottom-left-radius: 1em;
-        border-top-width: 1px;
-        border-right-width: 1px;
-        border-bottom-width: 1px;
-        border-left-width: 1px;
-        color: var(--chip-color);
-      }
     }
-    gr-button.iron-selected[vote='min'] {
+    gr-button[vote='min'].iron-selected {
       --button-background-color: var(--vote-color-rejected);
     }
-    gr-button.iron-selected[vote='negative'] {
+    gr-button[vote='negative'].iron-selected {
       --button-background-color: var(--vote-color-disliked);
-      --gr-button: {
-        padding: 0 var(--spacing-m);
-        border-style: solid;
-        border-color: var(--vote-outline-disliked);
-        border-top-left-radius: 1em;
-        border-top-right-radius: 1em;
-        border-bottom-right-radius: 1em;
-        border-bottom-left-radius: 1em;
-        border-top-width: 1px;
-        border-right-width: 1px;
-        border-bottom-width: 1px;
-        border-left-width: 1px;
-        color: var(--chip-color);
-      }
     }
-    gr-button.iron-selected[vote='neutral'] {
+    gr-button[vote='neutral'].iron-selected {
       --button-background-color: var(--vote-color-neutral);
+    }
+    gr-button[vote='positive'].iron-selected::part(paper-button) {
+      border-color: var(--vote-outline-recommended);
+    }
+    gr-button[vote='negative'].iron-selected::part(paper-button) {
+      border-color: var(--vote-outline-disliked);
+    }
+    gr-button > gr-tooltip-content {
+      margin: 0px -10px;
+      padding: 0px 10px;
     }
     .placeholder {
       display: inline-block;
@@ -145,13 +123,19 @@ export const htmlTemplate = html`
         <gr-button
           role="radio"
           vote$="[[_computeVoteAttribute(value, index, _items.length)]]"
-          has-tooltip=""
+          title$="[[_computeLabelValueTitle(labels, label.name, value)]]"
           data-name$="[[label.name]]"
           data-value$="[[value]]"
-          title$="[[_computeLabelValueTitle(labels, label.name, value)]]"
+          aria-label$="[[value]]"
+          voteChip
         >
-          [[value]]</gr-button
-        >
+          <gr-tooltip-content
+            has-tooltip
+            title$="[[_computeLabelValueTitle(labels, label.name, value)]]"
+          >
+            [[value]]
+          </gr-tooltip-content>
+        </gr-button>
       </template>
     </iron-selector>
     <template

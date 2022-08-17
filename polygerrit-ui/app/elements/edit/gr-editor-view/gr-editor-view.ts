@@ -22,13 +22,12 @@ import '../gr-default-editor/gr-default-editor';
 import '../../../styles/shared-styles';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-editor-view_html';
-import {KeyboardShortcutMixin} from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
 import {
   GerritNav,
   GenerateUrlEditViewParameters,
 } from '../../core/gr-navigation/gr-navigation';
 import {computeTruncatedPath} from '../../../utils/path-list-util';
-import {customElement, property} from '@polymer/decorators';
+import {customElement, observe, property} from '@polymer/decorators';
 import {
   ChangeInfo,
   PatchSetNum,
@@ -44,6 +43,10 @@ import {ErrorCallback} from '../../../api/rest';
 import {assertIsDefined} from '../../../utils/common-util';
 import {debounce, DelayedTask} from '../../../utils/async-util';
 import {changeIsMerged, changeIsAbandoned} from '../../../utils/change-util';
+import {GrButton} from '../../shared/gr-button/gr-button';
+import {GrDefaultEditor} from '../gr-default-editor/gr-default-editor';
+import {GrEndpointDecorator} from '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
+import {addShortcut, Modifier} from '../../../utils/dom-util';
 
 const RESTORED_MESSAGE = 'Content restored from a previous edit.';
 const SAVING_MESSAGE = 'Saving changes...';
@@ -54,8 +57,19 @@ const PUBLISH_FAILED_MSG = 'Failed to publish edit';
 
 const STORAGE_DEBOUNCE_INTERVAL_MS = 100;
 
+// Used within the tests
+export interface GrEditorView {
+  $: {
+    close: GrButton;
+    editorEndpoint: GrEndpointDecorator;
+    file: GrDefaultEditor;
+    publish: GrButton;
+    save: GrButton;
+  };
+}
+
 @customElement('gr-editor-view')
-export class GrEditorView extends KeyboardShortcutMixin(PolymerElement) {
+export class GrEditorView extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
@@ -94,7 +108,7 @@ export class GrEditorView extends KeyboardShortcutMixin(PolymerElement) {
   _content?: string;
 
   @property({type: String})
-  _newContent?: string;
+  _newContent = '';
 
   @property({type: Boolean})
   _saving = false;
@@ -118,15 +132,13 @@ export class GrEditorView extends KeyboardShortcutMixin(PolymerElement) {
 
   private readonly storage = appContext.storageService;
 
-  private storeTask?: DelayedTask;
+  private readonly reporting = appContext.reportingService;
 
-  reporting = appContext.reportingService;
+  // Tests use this so needs to be non private
+  storeTask?: DelayedTask;
 
-  get keyBindings() {
-    return {
-      'ctrl+s meta+s': '_handleSaveShortcut',
-    };
-  }
+  /** Called in disconnectedCallback. */
+  private cleanups: (() => void)[] = [];
 
   constructor() {
     super();
@@ -135,17 +147,27 @@ export class GrEditorView extends KeyboardShortcutMixin(PolymerElement) {
     });
   }
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     this._getEditPrefs().then(prefs => {
       this._prefs = prefs;
     });
+    this.cleanups.push(
+      addShortcut(this, {key: 's', modifiers: [Modifier.CTRL_KEY]}, e =>
+        this._handleSaveShortcut(e)
+      )
+    );
+    this.cleanups.push(
+      addShortcut(this, {key: 's', modifiers: [Modifier.META_KEY]}, e =>
+        this._handleSaveShortcut(e)
+      )
+    );
   }
 
-  /** @override */
-  disconnectedCallback() {
+  override disconnectedCallback() {
     this.storeTask?.cancel();
+    for (const cleanup of this.cleanups) cleanup();
+    this.cleanups = [];
     super.disconnectedCallback();
   }
 
@@ -196,13 +218,22 @@ export class GrEditorView extends KeyboardShortcutMixin(PolymerElement) {
   }
 
   _editChange(value?: ChangeInfo | null) {
-    if (!changeIsMerged(value) && !changeIsAbandoned(value)) return;
     if (!value) return;
+    if (!changeIsMerged(value) && !changeIsAbandoned(value)) return;
     fireAlert(
       this,
       'Change edits cannot be created if change is merged or abandoned. Redirected to non edit mode.'
     );
     GerritNav.navigateToChange(value);
+  }
+
+  @observe('_change', '_type')
+  _editType(change?: ChangeInfo | null, type?: string) {
+    if (!change || !type || !type.startsWith('image/')) return;
+
+    // Prevent editing binary files
+    fireAlert(this, 'You cannot edit binary files within the inline editor.');
+    GerritNav.navigateToChange(change);
   }
 
   _handlePathChanged(e: CustomEvent<string>) {

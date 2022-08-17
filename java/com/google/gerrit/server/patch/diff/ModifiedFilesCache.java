@@ -28,16 +28,17 @@ import com.google.gerrit.server.patch.gitdiff.ModifiedFile;
  * files.
  *
  * <p>If the {@link ModifiedFilesCacheKey#aCommit()} is equal to {@link
- * org.eclipse.jgit.lib.Constants#EMPTY_TREE_ID}, the diff will be evaluated against the empty tree,
- * and the result will be exactly the same as the caller can get from {@link
+ * org.eclipse.jgit.lib.ObjectId#zeroId()}, the diff will be evaluated against the empty tree, and
+ * the result will be exactly the same as the caller can get from {@link
  * GitModifiedFilesCache#get(GitModifiedFilesCacheKey)}
  */
 public interface ModifiedFilesCache {
 
   /**
+   * Returns the list of {@link ModifiedFile}s between the 2 git commits identified by the key
+   *
    * @param key used to identify two git commits and contains other attributes to control the diff
    *     calculation.
-   * @return the list of {@link ModifiedFile}s between the 2 git commits identified by the key.
    * @throws DiffNotAvailableException the supplied commits IDs of the key do no exist, are not IDs
    *     of a commit, or an exception occurred while reading a pack file.
    */

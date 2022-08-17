@@ -38,7 +38,6 @@ import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.data.GlobalCapability;
 import com.google.gerrit.entities.AccessSection;
 import com.google.gerrit.entities.AccountGroup;
-import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Patch;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.Permission;
@@ -52,7 +51,6 @@ import com.google.gerrit.server.account.ServiceUserClassifier;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.git.receive.ReceiveCommitsAdvertiseRefsHookChain;
 import com.google.gerrit.server.git.receive.testing.TestRefAdvertiser;
-import com.google.gerrit.server.notedb.ChangeNoteUtil;
 import com.google.gerrit.server.notedb.Sequences;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackend.RefFilterOptions;
@@ -69,7 +67,6 @@ import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
-import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
@@ -82,7 +79,6 @@ import org.junit.Test;
 @NoHttpd
 public class RefAdvertisementIT extends AbstractDaemonTest {
   @Inject private AllUsersName allUsersName;
-  @Inject private ChangeNoteUtil noteUtil;
   @Inject private PermissionBackend permissionBackend;
   @Inject private ProjectOperations projectOperations;
   @Inject private RequestScopeOperations requestScopeOperations;
@@ -1106,37 +1102,10 @@ public class RefAdvertisementIT extends AbstractDaemonTest {
 
   @Test
   public void receivePackOmitsMissingObject() throws Exception {
-    String rev = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
     try (Repository repo = repoManager.openRepository(project);
         TestRepository<Repository> tr = new TestRepository<>(repo)) {
-      String subject = "Subject for missing commit";
-      Change c = new Change(cd3.change());
-      PatchSet.Id psId = PatchSet.id(cd3.getId(), 2);
-      c.setCurrentPatchSet(psId, subject, c.getOriginalSubject());
-
-      PersonIdent committer = serverIdent.get();
-      PersonIdent author =
-          noteUtil.newAccountIdIdent(getAccount(admin.id()).id(), committer.getWhen(), committer);
-      tr.branch(RefNames.changeMetaRef(cd3.getId()))
-          .commit()
-          .author(author)
-          .committer(committer)
-          .message(
-              "Update patch set "
-                  + psId.get()
-                  + "\n"
-                  + "\n"
-                  + "Patch-set: "
-                  + psId.get()
-                  + "\n"
-                  + "Commit: "
-                  + rev
-                  + "\n"
-                  + "Subject: "
-                  + subject
-                  + "\n")
-          .create();
-      indexer.index(c.getProject(), c.getId());
+      PatchSet.Id psId = PatchSet.id(cd3.getId(), 1);
+      tr.delete(psId.toRefName());
     }
 
     assertThat(getReceivePackRefs().additionalHaves()).containsExactly(obj(cd4, 1));
@@ -1465,7 +1434,6 @@ public class RefAdvertisementIT extends AbstractDaemonTest {
    * Assert that refs seen by a non-admin user match the expected refs.
    *
    * @param expectedRefs expected refs.
-   * @throws Exception
    */
   private void assertUploadPackRefs(String... expectedRefs) throws Exception {
     assertRefs(project, user, true, expectedRefs);

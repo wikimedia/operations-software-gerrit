@@ -39,7 +39,8 @@ import com.google.gerrit.server.account.GroupCacheImpl;
 import com.google.gerrit.server.account.GroupIncludeCacheImpl;
 import com.google.gerrit.server.account.Realm;
 import com.google.gerrit.server.account.ServiceUserClassifierImpl;
-import com.google.gerrit.server.account.externalids.ExternalIdModule;
+import com.google.gerrit.server.account.externalids.ExternalIdCacheModule;
+import com.google.gerrit.server.approval.ApprovalCacheImpl;
 import com.google.gerrit.server.cache.CacheRemovalListener;
 import com.google.gerrit.server.cache.h2.H2CacheModule;
 import com.google.gerrit.server.cache.mem.DefaultMemoryCacheModule;
@@ -52,7 +53,7 @@ import com.google.gerrit.server.config.AdministrateServerGroups;
 import com.google.gerrit.server.config.CanonicalWebUrl;
 import com.google.gerrit.server.config.CanonicalWebUrlProvider;
 import com.google.gerrit.server.config.DefaultPreferencesCacheImpl;
-import com.google.gerrit.server.config.DefaultUrlFormatter;
+import com.google.gerrit.server.config.DefaultUrlFormatter.DefaultUrlFormatterModule;
 import com.google.gerrit.server.config.EnablePeerIPInReflogRecord;
 import com.google.gerrit.server.config.EnablePeerIPInReflogRecordProvider;
 import com.google.gerrit.server.config.GitReceivePackGroups;
@@ -69,6 +70,7 @@ import com.google.gerrit.server.git.TagCache;
 import com.google.gerrit.server.mail.send.ReplacePatchSetSender;
 import com.google.gerrit.server.notedb.NoteDbModule;
 import com.google.gerrit.server.patch.DiffExecutorModule;
+import com.google.gerrit.server.patch.DiffOperationsImpl;
 import com.google.gerrit.server.patch.PatchListCacheImpl;
 import com.google.gerrit.server.permissions.DefaultPermissionBackendModule;
 import com.google.gerrit.server.permissions.SectionSortCache;
@@ -77,12 +79,16 @@ import com.google.gerrit.server.project.CommentLinkProvider;
 import com.google.gerrit.server.project.CommitResource;
 import com.google.gerrit.server.project.ProjectCacheImpl;
 import com.google.gerrit.server.project.ProjectState;
+import com.google.gerrit.server.project.SubmitRequirementsEvaluatorImpl;
 import com.google.gerrit.server.project.SubmitRuleEvaluator;
+import com.google.gerrit.server.query.approval.ApprovalModule;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.ChangeIsVisibleToPredicate;
+import com.google.gerrit.server.query.change.ChangeQueryBuilder;
+import com.google.gerrit.server.query.change.ConflictsCacheImpl;
 import com.google.gerrit.server.restapi.group.GroupModule;
-import com.google.gerrit.server.rules.DefaultSubmitRule;
-import com.google.gerrit.server.rules.IgnoreSelfApprovalRule;
+import com.google.gerrit.server.rules.DefaultSubmitRule.DefaultSubmitRuleModule;
+import com.google.gerrit.server.rules.IgnoreSelfApprovalRule.IgnoreSelfApprovalRuleModule;
 import com.google.gerrit.server.rules.PrologModule;
 import com.google.gerrit.server.rules.SubmitRule;
 import com.google.gerrit.server.update.BatchUpdate;
@@ -112,7 +118,8 @@ public class BatchProgramModule extends FactoryModule {
     modules.add(new SysExecutorModule());
     modules.add(BatchUpdate.module());
     modules.add(PatchListCacheImpl.module());
-    modules.add(new DefaultUrlFormatter.Module());
+    modules.add(new DefaultUrlFormatterModule());
+    modules.add(DiffOperationsImpl.module());
 
     // There is the concept of LifecycleModule, in Gerrit's own extension to Guice, which has these:
     //  listener().to(SomeClassImplementingLifecycleListener.class);
@@ -165,10 +172,12 @@ public class BatchProgramModule extends FactoryModule {
     modules.add(new DefaultPermissionBackendModule());
     modules.add(new DefaultMemoryCacheModule());
     modules.add(new H2CacheModule());
-    modules.add(new ExternalIdModule());
+    modules.add(new ExternalIdCacheModule());
     modules.add(new GroupModule());
     modules.add(new NoteDbModule());
     modules.add(AccountCacheImpl.module());
+    modules.add(ApprovalCacheImpl.module());
+    modules.add(ConflictsCacheImpl.module());
     modules.add(DefaultPreferencesCacheImpl.module());
     modules.add(GroupCacheImpl.module());
     modules.add(GroupIncludeCacheImpl.module());
@@ -179,17 +188,23 @@ public class BatchProgramModule extends FactoryModule {
     modules.add(ServiceUserClassifierImpl.module());
     modules.add(TagCache.module());
     modules.add(PureRevertCache.module());
+    modules.add(new ApprovalModule());
+    modules.add(SubmitRequirementsEvaluatorImpl.module());
     factory(CapabilityCollection.Factory.class);
     factory(ChangeData.AssistedFactory.class);
     factory(ChangeIsVisibleToPredicate.Factory.class);
     factory(ProjectState.Factory.class);
 
+    DynamicMap.mapOf(binder(), ChangeQueryBuilder.ChangeOperatorFactory.class);
+    DynamicMap.mapOf(binder(), ChangeQueryBuilder.ChangeHasOperandFactory.class);
+    DynamicMap.mapOf(binder(), ChangeQueryBuilder.ChangeIsOperandFactory.class);
+
     // Submit rules
     DynamicSet.setOf(binder(), SubmitRule.class);
     factory(SubmitRuleEvaluator.Factory.class);
     modules.add(new PrologModule());
-    modules.add(new DefaultSubmitRule.Module());
-    modules.add(new IgnoreSelfApprovalRule.Module());
+    modules.add(new DefaultSubmitRuleModule());
+    modules.add(new IgnoreSelfApprovalRuleModule());
 
     bind(ChangeJson.Factory.class).toProvider(Providers.of(null));
     bind(EventUtil.class).toProvider(Providers.of(null));
@@ -199,7 +214,8 @@ public class BatchProgramModule extends FactoryModule {
     bind(AccountVisibility.class).toProvider(AccountVisibilityProvider.class).in(SINGLETON);
 
     ModuleOverloader.override(
-            modules, LibModuleLoader.loadModules(parentInjector, LibModuleType.SYS_BATCH_MODULE))
+            modules,
+            LibModuleLoader.loadModules(parentInjector, LibModuleType.SYS_BATCH_MODULE_TYPE))
         .stream()
         .forEach(this::install);
   }

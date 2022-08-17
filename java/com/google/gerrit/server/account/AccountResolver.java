@@ -27,12 +27,16 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Streams;
 import com.google.gerrit.entities.Account;
+import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
 import com.google.gerrit.index.Schema;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.config.AnonymousCowardName;
+import com.google.gerrit.server.permissions.GlobalPermission;
+import com.google.gerrit.server.permissions.PermissionBackend;
+import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.query.account.InternalAccountQuery;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
@@ -437,7 +441,15 @@ public class AccountResolver {
       // up with a reasonable result list.
       // TODO(dborowitz): This doesn't match the documentation; consider whether it's possible to be
       // more strict here.
-      return accountQueryProvider.get().enforceVisibility(true).byDefault(input).stream();
+      boolean canSeeSecondaryEmails = false;
+      try {
+        permissionBackend.user(self.get()).check(GlobalPermission.MODIFY_ACCOUNT);
+        canSeeSecondaryEmails = true;
+      } catch (AuthException | PermissionBackendException e) {
+        // remains false
+      }
+      return accountQueryProvider.get().enforceVisibility(true)
+          .byDefault(input, canSeeSecondaryEmails).stream();
     }
 
     @Override
@@ -473,6 +485,7 @@ public class AccountResolver {
   private final Provider<InternalAccountQuery> accountQueryProvider;
   private final Realm realm;
   private final String anonymousCowardName;
+  private final PermissionBackend permissionBackend;
 
   @Inject
   AccountResolver(
@@ -482,15 +495,17 @@ public class AccountResolver {
       IdentifiedUser.GenericFactory userFactory,
       Provider<CurrentUser> self,
       Provider<InternalAccountQuery> accountQueryProvider,
+      PermissionBackend permissionBackend,
       Realm realm,
       @AnonymousCowardName String anonymousCowardName) {
-    this.realm = realm;
     this.accountCache = accountCache;
+    this.emails = emails;
     this.accountControlFactory = accountControlFactory;
     this.userFactory = userFactory;
     this.self = self;
     this.accountQueryProvider = accountQueryProvider;
-    this.emails = emails;
+    this.permissionBackend = permissionBackend;
+    this.realm = realm;
     this.anonymousCowardName = anonymousCowardName;
   }
 
@@ -529,6 +544,19 @@ public class AccountResolver {
   public Result resolve(String input, Predicate<AccountState> accountActivityPredicate)
       throws ConfigInvalidException, IOException {
     return searchImpl(input, searchers, visibilitySupplierCanSee(), accountActivityPredicate);
+  }
+
+  /**
+   * As opposed to {@link #resolve}, the returned result includes all inactive accounts for the
+   * input search.
+   *
+   * <p>This can be used to resolve Gerrit Account from email to its {@link
+   * com.google.gerrit.entities.Account.Id}, to make sure that if {@link Account} with such email
+   * exists in Gerrit (even inactive), user data (email address) won't be recorded as it is, but
+   * instead will be stored as a link to the corresponding Gerrit Account.
+   */
+  public Result resolveIncludeInactive(String input) throws ConfigInvalidException, IOException {
+    return searchImpl(input, searchers, visibilitySupplierCanSee(), all());
   }
 
   public Result resolveIgnoreVisibility(String input) throws ConfigInvalidException, IOException {

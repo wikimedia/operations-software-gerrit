@@ -21,6 +21,8 @@ import static com.google.gerrit.acceptance.GitUtil.fetch;
 import static com.google.gerrit.acceptance.GitUtil.pushHead;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowCapability;
+import static com.google.gerrit.server.account.externalids.ExternalId.SCHEME_GERRIT;
+import static com.google.gerrit.server.account.externalids.ExternalId.SCHEME_GPGKEY;
 import static com.google.gerrit.server.account.externalids.ExternalId.SCHEME_MAILTO;
 import static com.google.gerrit.server.account.externalids.ExternalId.SCHEME_USERNAME;
 import static com.google.gerrit.server.account.externalids.ExternalId.SCHEME_UUID;
@@ -38,6 +40,7 @@ import com.google.common.collect.Iterables;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.RestResponse;
 import com.google.gerrit.acceptance.TestAccount;
+import com.google.gerrit.acceptance.config.GerritConfig;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.common.data.GlobalCapability;
@@ -54,7 +57,10 @@ import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
 import com.google.gerrit.server.ServerInitiated;
 import com.google.gerrit.server.account.AccountsUpdate;
+import com.google.gerrit.server.account.externalids.DuplicateExternalIdKeyException;
 import com.google.gerrit.server.account.externalids.ExternalId;
+import com.google.gerrit.server.account.externalids.ExternalIdFactory;
+import com.google.gerrit.server.account.externalids.ExternalIdKeyFactory;
 import com.google.gerrit.server.account.externalids.ExternalIdNotes;
 import com.google.gerrit.server.account.externalids.ExternalIdReader;
 import com.google.gerrit.server.account.externalids.ExternalIds;
@@ -79,8 +85,6 @@ import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.Repository;
-import org.eclipse.jgit.revwalk.FooterLine;
-import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.transport.PushResult;
 import org.eclipse.jgit.transport.RemoteRefUpdate;
@@ -89,12 +93,18 @@ import org.eclipse.jgit.util.MutableInteger;
 import org.junit.Test;
 
 public class ExternalIdIT extends AbstractDaemonTest {
+  private static final boolean IS_USER_NAME_CASE_INSENSITIVE_MIGRATION_MODE = false;
+  private static final boolean CASE_SENSITIVE_USERNAME = false;
+  private static final boolean CASE_INSENSITIVE_USERNAME = true;
+
   @Inject @ServerInitiated private Provider<AccountsUpdate> accountsUpdateProvider;
   @Inject private ExternalIds externalIds;
   @Inject private ExternalIdReader externalIdReader;
   @Inject private ExternalIdNotes.Factory externalIdNotesFactory;
   @Inject private ProjectOperations projectOperations;
   @Inject private RequestScopeOperations requestScopeOperations;
+  @Inject private ExternalIdKeyFactory externalIdKeyFactory;
+  @Inject private ExternalIdFactory externalIdFactory;
 
   @ConfigSuite.Default
   public static Config partialCacheReloadingEnabled() {
@@ -127,7 +137,7 @@ public class ExternalIdIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void getExternalIdsOfOtherUserNotAllowed() throws Exception {
+  public void getExternalIdsOfOtherUserNotAllowed() {
     requestScopeOperations.setApiUser(user.id());
     AuthException thrown =
         assertThrows(
@@ -197,7 +207,7 @@ public class ExternalIdIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void deleteExternalIdOfOtherUserUnderOwnAccount_UnprocessableEntity() throws Exception {
+  public void deleteExternalIdOfOtherUserUnderOwnAccount_unprocessableEntity() throws Exception {
     List<AccountExternalIdInfo> extIds = gApi.accounts().self().getExternalIds();
     requestScopeOperations.setApiUser(user.id());
     UnprocessableEntityException thrown =
@@ -252,19 +262,60 @@ public class ExternalIdIT extends AbstractDaemonTest {
     gApi.accounts()
         .self()
         .deleteExternalIds(
-            ImmutableList.of(ExternalId.Key.create(SCHEME_MAILTO, preferredEmail).get()));
+            ImmutableList.of(externalIdKeyFactory.create(SCHEME_MAILTO, preferredEmail).get()));
     assertThat(gApi.accounts().self().get().email).isNull();
   }
 
   @Test
-  public void deleteExternalIds_Conflict() throws Exception {
+  public void deleteExternalIdOfUsernameByNonAdminForbidden() throws Exception {
     List<String> toDelete = new ArrayList<>();
     String externalIdStr = "username:" + user.username();
     toDelete.add(externalIdStr);
-    RestResponse response = userRestSession.post("/accounts/self/external.ids:delete", toDelete);
-    response.assertConflict();
-    assertThat(response.getEntityContent())
-        .isEqualTo(String.format("External id %s cannot be deleted", externalIdStr));
+    RestResponse response =
+        userRestSession.post("/accounts/" + admin.id() + "/external.ids:delete", toDelete);
+    response.assertForbidden();
+  }
+
+  @Test
+  public void deleteExternalIdOfUsernameSelfForbidden() throws Exception {
+    List<String> toDelete = new ArrayList<>();
+    String externalIdStr = "username:" + admin.username();
+    toDelete.add(externalIdStr);
+    RestResponse response = adminRestSession.post("/accounts/self/external.ids:delete", toDelete);
+    response.assertForbidden();
+  }
+
+  @Test
+  public void deleteExternalIdOfUsernameByAdmin() throws Exception {
+    List<String> toDelete = new ArrayList<>();
+    String externalIdStr = "username:" + user.username();
+    toDelete.add(externalIdStr);
+    RestResponse response =
+        adminRestSession.post("/accounts/" + user.id() + "/external.ids:delete", toDelete);
+    response.assertNoContent();
+    List<AccountExternalIdInfo> results = gApi.accounts().id(user.id().get()).getExternalIds();
+    assertThat(results).hasSize(1);
+    assertThat(results.get(0).identity).isEqualTo("mailto:user1@example.com");
+  }
+
+  @Test
+  public void deleteExternalIdOfUsernameMaintainServer() throws Exception {
+    projectOperations
+        .allProjectsForUpdate()
+        .add(allowCapability(GlobalCapability.MAINTAIN_SERVER).group(REGISTERED_USERS))
+        .add(allowCapability(GlobalCapability.MODIFY_ACCOUNT).group(REGISTERED_USERS))
+        .update();
+
+    List<String> toDelete = new ArrayList<>();
+    TestAccount user2 = accountCreator.user2();
+    String externalIdStr = "username:" + user2.username();
+    toDelete.add(externalIdStr);
+    RestResponse response =
+        userRestSession.post("/accounts/" + user2.id() + "/external.ids:delete", toDelete);
+    response.assertNoContent();
+    List<AccountExternalIdInfo> results = gApi.accounts().id(user2.id().get()).getExternalIds();
+    assertThat(results).hasSize(1);
+    assertThat(results.get(0).identity).isEqualTo("mailto:user2@example.com");
   }
 
   @Test
@@ -510,7 +561,7 @@ public class ExternalIdIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void checkConsistencyNotAllowed() throws Exception {
+  public void checkConsistencyNotAllowed() {
     AuthException thrown =
         assertThrows(
             AuthException.class,
@@ -528,12 +579,12 @@ public class ExternalIdIT extends AbstractDaemonTest {
 
     // create valid external IDs
     insertExtId(
-        ExternalId.createWithPassword(
-            ExternalId.Key.parse(nextId(scheme, i)),
+        externalIdFactory.createWithPassword(
+            externalIdKeyFactory.parse(nextId(scheme, i)),
             admin.id(),
             "admin.other@example.com",
             "secret-password"));
-    insertExtId(ExternalId.createEmail(admin.id(), "admin.other@example.com"));
+    insertExtId(externalIdFactory.createEmail(admin.id(), "admin.other@example.com"));
     insertExtId(createExternalIdWithOtherCaseEmail(nextId(scheme, i)));
   }
 
@@ -633,29 +684,30 @@ public class ExternalIdIT extends AbstractDaemonTest {
   }
 
   private ExternalId createExternalIdWithOtherCaseEmail(String externalId) {
-    return ExternalId.createWithPassword(
-        ExternalId.Key.parse(externalId),
+    return externalIdFactory.createWithPassword(
+        externalIdKeyFactory.parse(externalId),
         admin.id(),
         admin.email().toUpperCase(Locale.US),
         "password");
   }
 
   private ExternalId createExternalIdForNonExistingAccount(String externalId) {
-    return ExternalId.create(ExternalId.Key.parse(externalId), Account.id(1));
+    return externalIdFactory.create(externalIdKeyFactory.parse(externalId), Account.id(1));
   }
 
   private ExternalId createExternalIdWithInvalidEmail(String externalId) {
-    return ExternalId.createWithEmail(
-        ExternalId.Key.parse(externalId), admin.id(), "invalid-email");
+    return externalIdFactory.createWithEmail(
+        externalIdKeyFactory.parse(externalId), admin.id(), "invalid-email");
   }
 
   private ExternalId createExternalIdWithDuplicateEmail(String externalId) {
-    return ExternalId.createWithEmail(ExternalId.Key.parse(externalId), user.id(), admin.email());
+    return externalIdFactory.createWithEmail(
+        externalIdKeyFactory.parse(externalId), user.id(), admin.email());
   }
 
   private ExternalId createExternalIdWithBadPassword(String username) {
-    return ExternalId.create(
-        ExternalId.Key.create(SCHEME_USERNAME, username),
+    return externalIdFactory.create(
+        externalIdKeyFactory.create(SCHEME_USERNAME, username),
         admin.id(),
         null,
         "non-hashed-password-is-not-allowed");
@@ -667,14 +719,14 @@ public class ExternalIdIT extends AbstractDaemonTest {
 
   @Test
   public void readExternalIdWithAccountIdThatCanBeExpressedInKiB() throws Exception {
-    ExternalId.Key extIdKey = ExternalId.Key.parse("foo:bar");
+    ExternalId.Key extIdKey = externalIdKeyFactory.parse("foo:bar");
     Account.Id accountId = Account.id(1024 * 100);
     accountsUpdateProvider
         .get()
         .insert(
             "Create Account with Bad External ID",
             accountId,
-            u -> u.addExternalId(ExternalId.create(extIdKey, accountId)));
+            u -> u.addExternalId(externalIdFactory.create(extIdKey, accountId)));
     Optional<ExternalId> extId = externalIds.get(extIdKey);
     assertThat(extId.map(ExternalId::accountId)).hasValue(accountId);
   }
@@ -684,7 +736,7 @@ public class ExternalIdIT extends AbstractDaemonTest {
     Set<ExternalId> expectedExtIds = new HashSet<>(externalIds.byAccount(admin.id()));
     try (AutoCloseable ctx = createFailOnLoadContext()) {
       // insert external ID
-      ExternalId extId = ExternalId.create("foo", "bar", admin.id());
+      ExternalId extId = externalIdFactory.create("foo", "bar", admin.id());
       insertExtId(extId);
       expectedExtIds.add(extId);
       assertThat(externalIds.byAccount(admin.id())).containsExactlyElementsIn(expectedExtIds);
@@ -692,7 +744,7 @@ public class ExternalIdIT extends AbstractDaemonTest {
       // update external ID
       expectedExtIds.remove(extId);
       ExternalId extId2 =
-          ExternalId.createWithEmail("foo", "bar", admin.id(), "foo.bar@example.com");
+          externalIdFactory.createWithEmail("foo", "bar", admin.id(), "foo.bar@example.com");
       accountsUpdateProvider
           .get()
           .update("Update External ID", admin.id(), u -> u.updateExternalId(extId2));
@@ -714,7 +766,7 @@ public class ExternalIdIT extends AbstractDaemonTest {
 
     try (AutoCloseable ctx = createFailOnLoadContext()) {
       // update external ID branch so that external IDs need to be reloaded
-      insertExtIdBehindGerritsBack(ExternalId.create("foo", "bar", admin.id()));
+      insertExtIdBehindGerritsBack(externalIdFactory.create("foo", "bar", admin.id()));
 
       assertThrows(IOException.class, () -> externalIds.byAccount(admin.id()));
     }
@@ -726,7 +778,7 @@ public class ExternalIdIT extends AbstractDaemonTest {
 
     try (AutoCloseable ctx = createFailOnLoadContext()) {
       // update external ID branch so that external IDs need to be reloaded
-      insertExtIdBehindGerritsBack(ExternalId.create("foo", "bar", admin.id()));
+      insertExtIdBehindGerritsBack(externalIdFactory.create("foo", "bar", admin.id()));
 
       assertThrows(IOException.class, () -> externalIds.byEmail(admin.email()));
     }
@@ -735,7 +787,7 @@ public class ExternalIdIT extends AbstractDaemonTest {
   @Test
   public void byAccountUpdateExternalIdsBehindGerritsBack() throws Exception {
     Set<ExternalId> expectedExternalIds = new HashSet<>(externalIds.byAccount(admin.id()));
-    ExternalId newExtId = ExternalId.create("foo", "bar", admin.id());
+    ExternalId newExtId = externalIdFactory.create("foo", "bar", admin.id());
     insertExtIdBehindGerritsBack(newExtId);
     expectedExternalIds.add(newExtId);
     assertThat(externalIds.byAccount(admin.id())).containsExactlyElementsIn(expectedExternalIds);
@@ -743,10 +795,10 @@ public class ExternalIdIT extends AbstractDaemonTest {
 
   @Test
   public void unsetEmail() throws Exception {
-    ExternalId extId = ExternalId.createWithEmail("x", "1", user.id(), "x@example.com");
+    ExternalId extId = externalIdFactory.createWithEmail("x", "1", user.id(), "x@example.com");
     insertExtId(extId);
 
-    ExternalId extIdWithoutEmail = ExternalId.create("x", "1", user.id());
+    ExternalId extIdWithoutEmail = externalIdFactory.create("x", "1", user.id());
     try (Repository allUsersRepo = repoManager.openRepository(allUsers);
         MetaDataUpdate md = metaDataUpdateFactory.create(allUsers)) {
       ExternalIdNotes extIdNotes = externalIdNotesFactory.load(allUsersRepo);
@@ -760,10 +812,11 @@ public class ExternalIdIT extends AbstractDaemonTest {
   @Test
   public void unsetHttpPassword() throws Exception {
     ExternalId extId =
-        ExternalId.createWithPassword(ExternalId.Key.create("y", "1"), user.id(), null, "secret");
+        externalIdFactory.createWithPassword(
+            externalIdKeyFactory.create("y", "1"), user.id(), null, "secret");
     insertExtId(extId);
 
-    ExternalId extIdWithoutPassword = ExternalId.create("y", "1", user.id());
+    ExternalId extIdWithoutPassword = externalIdFactory.create("y", "1", user.id());
     try (Repository allUsersRepo = repoManager.openRepository(allUsers);
         MetaDataUpdate md = metaDataUpdateFactory.create(allUsers)) {
       ExternalIdNotes extIdNotes = externalIdNotesFactory.load(allUsersRepo);
@@ -775,94 +828,209 @@ public class ExternalIdIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void footers() throws Exception {
-    // Insert external ID for different accounts
-    TestAccount user1 = accountCreator.create("user1");
-    TestAccount user2 = accountCreator.create("user2");
-    ExternalId extId1 = ExternalId.create("foo", "1", user1.id());
-    ExternalId extId2 = ExternalId.create("foo", "2", user1.id());
-    ExternalId extId3 = ExternalId.create("foo", "3", user2.id());
+  @GerritConfig(name = "auth.userNameCaseInsensitive", value = "true")
+  public void createCaseInsensitiveExternalId_DuplicateKey() throws Exception {
     try (Repository allUsersRepo = repoManager.openRepository(allUsers);
         MetaDataUpdate md = metaDataUpdateFactory.create(allUsers)) {
       ExternalIdNotes extIdNotes = externalIdNotesFactory.load(allUsersRepo);
-      extIdNotes.insert(ImmutableSet.of(extId1, extId2, extId3));
-      RevCommit c = extIdNotes.commit(md);
-      assertThat(getFooters(c))
-          .containsExactly("Account: " + user1.id(), "Account: " + user2.id())
-          .inOrder();
+      testCaseInsensitiveExternalIdKey(md, extIdNotes, SCHEME_USERNAME, "JohnDoe", Account.id(42));
+      assertThrows(
+          DuplicateExternalIdKeyException.class,
+          () ->
+              extIdNotes.insert(
+                  externalIdFactory.create(SCHEME_USERNAME, "johndoe", Account.id(23))));
     }
+  }
 
-    // Insert external ID with different emails
-    ExternalId extId4 = ExternalId.createWithEmail("foo", "4", user1.id(), "foo4@example.com");
-    ExternalId extId5 = ExternalId.createWithEmail("foo", "5", user2.id(), "foo5@example.com");
+  @Test
+  @GerritConfig(name = "auth.userNameCaseInsensitive", value = "true")
+  public void createCaseInsensitiveExternalId_SchemeWithUsername() throws Exception {
     try (Repository allUsersRepo = repoManager.openRepository(allUsers);
         MetaDataUpdate md = metaDataUpdateFactory.create(allUsers)) {
       ExternalIdNotes extIdNotes = externalIdNotesFactory.load(allUsersRepo);
-      extIdNotes.insert(ImmutableSet.of(extId4, extId5));
-      RevCommit c = extIdNotes.commit(md);
-      assertThat(getFooters(c))
-          .containsExactly(
-              "Account: " + user1.id(),
-              "Account: " + user2.id(),
-              "Email: foo4@example.com",
-              "Email: foo5@example.com")
-          .inOrder();
-    }
 
-    // Update external ID - Add Email
-    ExternalId extId1a = ExternalId.createWithEmail("foo", "1", user1.id(), "foo1@example.com");
-    try (Repository allUsersRepo = repoManager.openRepository(allUsers);
-        MetaDataUpdate md = metaDataUpdateFactory.create(allUsers)) {
-      ExternalIdNotes extIdNotes = externalIdNotesFactory.load(allUsersRepo);
-      extIdNotes.upsert(extId1a);
-      RevCommit c = extIdNotes.commit(md);
-      assertThat(getFooters(c))
-          .containsExactly("Account: " + user1.id(), "Email: foo1@example.com")
-          .inOrder();
+      testCaseInsensitiveExternalIdKey(md, extIdNotes, SCHEME_USERNAME, "janedoe", Account.id(66));
+      testCaseInsensitiveExternalIdKey(md, extIdNotes, SCHEME_GERRIT, "JaneDoe", Account.id(66));
     }
+  }
 
-    // Update external ID - Remove Email
-    try (Repository allUsersRepo = repoManager.openRepository(allUsers);
-        MetaDataUpdate md = metaDataUpdateFactory.create(allUsers)) {
-      ExternalIdNotes extIdNotes = externalIdNotesFactory.load(allUsersRepo);
-      extIdNotes.upsert(extId1);
-      RevCommit c = extIdNotes.commit(md);
-      assertThat(getFooters(c))
-          .containsExactly("Account: " + user1.id(), "Email: foo1@example.com")
-          .inOrder();
-    }
+  @Test
+  @GerritConfig(name = "auth.userNameCaseInsensitive", value = "true")
+  @GerritConfig(name = "auth.userNameCaseInsensitiveMigrationMode", value = "true")
+  public void createCaseInsensitiveMigrationModeExternalIdBeforeTheMigration() throws Exception {
+    Account.Id accountId = Account.id(66);
+    boolean isUserNameCaseInsensitive = false;
 
-    // Delete external IDs
     try (Repository allUsersRepo = repoManager.openRepository(allUsers);
         MetaDataUpdate md = metaDataUpdateFactory.create(allUsers)) {
       ExternalIdNotes extIdNotes = externalIdNotesFactory.load(allUsersRepo);
-      extIdNotes.delete(ImmutableSet.of(extId1, extId5));
-      RevCommit c = extIdNotes.commit(md);
-      assertThat(getFooters(c))
-          .containsExactly(
-              "Account: " + user1.id(), "Account: " + user2.id(), "Email: foo5@example.com")
-          .inOrder();
-    }
 
-    // Delete external ID by key without email
-    try (Repository allUsersRepo = repoManager.openRepository(allUsers);
-        MetaDataUpdate md = metaDataUpdateFactory.create(allUsers)) {
-      ExternalIdNotes extIdNotes = externalIdNotesFactory.load(allUsersRepo);
-      extIdNotes.delete(extId2.accountId(), extId2.key());
-      RevCommit c = extIdNotes.commit(md);
-      assertThat(getFooters(c)).containsExactly("Account: " + user1.id()).inOrder();
-    }
+      createExternalId(
+          md, extIdNotes, SCHEME_GERRIT, "JaneDoe", accountId, isUserNameCaseInsensitive);
+      createExternalId(
+          md, extIdNotes, SCHEME_USERNAME, "JaneDoe", accountId, isUserNameCaseInsensitive);
 
-    // Delete external ID by key with email
+      assertThat(getAccountId(extIdNotes, SCHEME_GERRIT, "JaneDoe")).isEqualTo(accountId.get());
+      assertThat(getExternalId(extIdNotes, SCHEME_GERRIT, "janedoe").isPresent()).isFalse();
+
+      assertThat(getAccountId(extIdNotes, SCHEME_USERNAME, "JaneDoe")).isEqualTo(accountId.get());
+      assertThat(getExternalId(extIdNotes, SCHEME_USERNAME, "janedoe").isPresent()).isFalse();
+    }
+  }
+
+  @Test
+  @GerritConfig(name = "auth.userNameCaseInsensitive", value = "true")
+  @GerritConfig(name = "auth.userNameCaseInsensitiveMigrationMode", value = "true")
+  public void createCaseInsensitiveMigrationModeExternalIdAccountAfterTheMigration()
+      throws Exception {
+    Account.Id accountId = Account.id(66);
+    boolean isUserNameCaseInsensitive = true;
+
     try (Repository allUsersRepo = repoManager.openRepository(allUsers);
         MetaDataUpdate md = metaDataUpdateFactory.create(allUsers)) {
       ExternalIdNotes extIdNotes = externalIdNotesFactory.load(allUsersRepo);
-      extIdNotes.delete(extId4.accountId(), extId4.key());
-      RevCommit c = extIdNotes.commit(md);
-      assertThat(getFooters(c))
-          .containsExactly("Account: " + user1.id(), "Email: foo4@example.com")
-          .inOrder();
+
+      createExternalId(
+          md, extIdNotes, SCHEME_GERRIT, "JaneDoe", accountId, isUserNameCaseInsensitive);
+      createExternalId(
+          md, extIdNotes, SCHEME_USERNAME, "JaneDoe", accountId, isUserNameCaseInsensitive);
+
+      assertThat(getAccountId(extIdNotes, SCHEME_GERRIT, "JaneDoe")).isEqualTo(accountId.get());
+      assertThat(getAccountId(extIdNotes, SCHEME_GERRIT, "janedoe")).isEqualTo(accountId.get());
+
+      assertThat(getAccountId(extIdNotes, SCHEME_USERNAME, "JaneDoe")).isEqualTo(accountId.get());
+      assertThat(getAccountId(extIdNotes, SCHEME_USERNAME, "janedoe")).isEqualTo(accountId.get());
     }
+  }
+
+  @Test
+  @GerritConfig(name = "auth.userNameCaseInsensitive", value = "true")
+  @GerritConfig(name = "auth.userNameCaseInsensitiveMigrationMode", value = "true")
+  public void shouldTolerateDuplicateExternalIdsWhenInMigrationMode() throws Exception {
+    Account.Id firstAccountId = Account.id(1);
+    Account.Id secondAccountId = Account.id(2);
+
+    try (Repository allUsersRepo = repoManager.openRepository(allUsers);
+        MetaDataUpdate md = metaDataUpdateFactory.create(allUsers)) {
+      ExternalIdNotes extIdNotes = externalIdNotesFactory.load(allUsersRepo);
+
+      createExternalId(
+          md, extIdNotes, SCHEME_GERRIT, "janedoe", firstAccountId, CASE_SENSITIVE_USERNAME);
+      createExternalId(
+          md, extIdNotes, SCHEME_GERRIT, "JaneDoe", secondAccountId, CASE_SENSITIVE_USERNAME);
+
+      ExternalId.Key firstAccountExternalId =
+          externalIdKeyFactory.create(SCHEME_GERRIT, "janedoe", CASE_INSENSITIVE_USERNAME);
+      assertThat(externalIds.get(firstAccountExternalId).get().accountId())
+          .isEqualTo(firstAccountId);
+
+      ExternalId.Key secondAccountExternalId =
+          externalIdKeyFactory.create(SCHEME_GERRIT, "JaneDoe", CASE_INSENSITIVE_USERNAME);
+      assertThat(externalIds.get(secondAccountExternalId).get().accountId())
+          .isEqualTo(secondAccountId);
+    }
+  }
+
+  @Test
+  @GerritConfig(name = "auth.userNameCaseInsensitive", value = "true")
+  @GerritConfig(name = "auth.userNameCaseInsensitiveMigrationMode", value = "true")
+  public void createCaseInsensitiveMigrationModeExternalIdAccountDuringTheMigration()
+      throws Exception {
+    Account.Id accountId = Account.id(66);
+    boolean userNameCaseInsensitive = true;
+
+    try (Repository allUsersRepo = repoManager.openRepository(allUsers);
+        MetaDataUpdate md = metaDataUpdateFactory.create(allUsers)) {
+      ExternalIdNotes extIdNotes = externalIdNotesFactory.load(allUsersRepo);
+
+      createExternalId(
+          md, extIdNotes, SCHEME_GERRIT, "JonDoe", accountId, !userNameCaseInsensitive);
+      createExternalId(
+          md, extIdNotes, SCHEME_USERNAME, "JonDoe", accountId, !userNameCaseInsensitive);
+
+      createExternalId(
+          md, extIdNotes, SCHEME_GERRIT, "JaneDoe", accountId, userNameCaseInsensitive);
+      createExternalId(
+          md, extIdNotes, SCHEME_USERNAME, "JaneDoe", accountId, userNameCaseInsensitive);
+
+      assertThat(getAccountId(extIdNotes, SCHEME_GERRIT, "JonDoe")).isEqualTo(accountId.get());
+      assertThat(getExternalId(extIdNotes, SCHEME_GERRIT, "jondoe").isPresent()).isFalse();
+
+      assertThat(getAccountId(extIdNotes, SCHEME_USERNAME, "JonDoe")).isEqualTo(accountId.get());
+
+      assertThat(getExternalId(extIdNotes, SCHEME_USERNAME, "jondoe").isPresent()).isFalse();
+
+      assertThat(getAccountId(extIdNotes, SCHEME_GERRIT, "JaneDoe")).isEqualTo(accountId.get());
+
+      assertThat(getAccountId(extIdNotes, SCHEME_GERRIT, "janedoe")).isEqualTo(accountId.get());
+
+      assertThat(getAccountId(extIdNotes, SCHEME_USERNAME, "JaneDoe")).isEqualTo(accountId.get());
+      assertThat(getAccountId(extIdNotes, SCHEME_USERNAME, "janedoe")).isEqualTo(accountId.get());
+    }
+  }
+
+  protected int getAccountId(ExternalIdNotes extIdNotes, String scheme, String id)
+      throws IOException, ConfigInvalidException {
+    return getExternalId(extIdNotes, scheme, id).get().accountId().get();
+  }
+
+  protected Optional<ExternalId> getExternalId(ExternalIdNotes extIdNotes, String scheme, String id)
+      throws IOException, ConfigInvalidException {
+    return extIdNotes.get(externalIdKeyFactory.create(scheme, id));
+  }
+
+  @Test
+  @GerritConfig(name = "auth.userNameCaseInsensitive", value = "true")
+  public void createCaseSensitiveExternalId_SchemeWithoutUsername() throws Exception {
+    try (Repository allUsersRepo = repoManager.openRepository(allUsers);
+        MetaDataUpdate md = metaDataUpdateFactory.create(allUsers)) {
+      ExternalIdNotes extIdNotes = externalIdNotesFactory.load(allUsersRepo);
+
+      testCaseSensitiveExternalIdKey(md, extIdNotes, SCHEME_MAILTO, "Jane@doe.com", Account.id(66));
+      testCaseSensitiveExternalIdKey(md, extIdNotes, SCHEME_UUID, "1234ABCD", Account.id(66));
+      testCaseSensitiveExternalIdKey(md, extIdNotes, SCHEME_GPGKEY, "1234ABCD", Account.id(66));
+    }
+  }
+
+  private void testCaseSensitiveExternalIdKey(
+      MetaDataUpdate md, ExternalIdNotes extIdNotes, String scheme, String id, Account.Id accountId)
+      throws DuplicateExternalIdKeyException, IOException, ConfigInvalidException {
+    ExternalId extId = externalIdFactory.create(scheme, id, accountId);
+    extIdNotes.insert(extId);
+    extIdNotes.commit(md);
+    assertThat(getAccountId(extIdNotes, scheme, id)).isEqualTo(accountId.get());
+    assertThat(getExternalId(extIdNotes, scheme, id.toLowerCase()).isPresent()).isFalse();
+  }
+
+  private void testCaseInsensitiveExternalIdKey(
+      MetaDataUpdate md, ExternalIdNotes extIdNotes, String scheme, String id, Account.Id accountId)
+      throws DuplicateExternalIdKeyException, IOException, ConfigInvalidException {
+    ExternalId extId = externalIdFactory.create(scheme, id, accountId);
+    extIdNotes.insert(extId);
+    extIdNotes.commit(md);
+    assertThat(getAccountId(extIdNotes, scheme, id)).isEqualTo(accountId.get());
+    assertThat(getAccountId(extIdNotes, scheme, id.toLowerCase())).isEqualTo(accountId.get());
+  }
+
+  /**
+   * Create external id object
+   *
+   * <p>This method skips gerrit.config auth.userNameCaseInsensitiveMigrationMode and allow to
+   * create case sensitive/insensitive external id
+   */
+  protected void createExternalId(
+      MetaDataUpdate md,
+      ExternalIdNotes extIdNotes,
+      String scheme,
+      String id,
+      Account.Id accountId,
+      boolean isUserNameCaseInsensitive)
+      throws IOException {
+    ExternalId extId =
+        externalIdFactory.create(
+            externalIdKeyFactory.create(scheme, id, isUserNameCaseInsensitive), accountId);
+    extIdNotes.insert(extId);
+    extIdNotes.commit(md);
   }
 
   private boolean isPartialCacheReloadingEnabled() {
@@ -882,14 +1050,17 @@ public class ExternalIdIT extends AbstractDaemonTest {
       ExternalIdNotes extIdNotes = externalIdNotesFactory.load(repo);
       extIdNotes.insert(extId);
       extIdNotes.commit(update);
-      extIdNotes.updateCaches();
+      externalIdNotesFactory.updateExternalIdCacheAndMaybeReindexAccounts(
+          extIdNotes, ImmutableList.of());
     }
   }
 
   private void insertExtIdBehindGerritsBack(ExternalId extId) throws Exception {
     try (Repository repo = repoManager.openRepository(allUsers)) {
       // Inserting an external ID "behind Gerrit's back" means that the caches are not updated.
-      ExternalIdNotes extIdNotes = ExternalIdNotes.loadNoCacheUpdate(allUsers, repo);
+      ExternalIdNotes extIdNotes =
+          ExternalIdNotes.loadNoCacheUpdate(
+              allUsers, repo, externalIdFactory, IS_USER_NAME_CASE_INSENSITIVE_MIGRATION_MODE);
       extIdNotes.insert(extId);
       try (MetaDataUpdate metaDataUpdate =
           new MetaDataUpdate(GitReferenceUpdated.DISABLED, null, repo)) {
@@ -909,12 +1080,9 @@ public class ExternalIdIT extends AbstractDaemonTest {
       metaDataUpdate.getCommitBuilder().setAuthor(admin.newIdent());
       metaDataUpdate.getCommitBuilder().setCommitter(admin.newIdent());
       extIdNotes.commit(metaDataUpdate);
-      extIdNotes.updateCaches();
+      externalIdNotesFactory.updateExternalIdCacheAndMaybeReindexAccounts(
+          extIdNotes, ImmutableList.of());
     }
-  }
-
-  private List<String> getFooters(RevCommit c) {
-    return c.getFooterLines().stream().map(FooterLine::toString).collect(toList());
   }
 
   private List<AccountExternalIdInfo> toExternalIdInfos(Collection<ExternalId> extIds) {

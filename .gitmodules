@@ -66,11 +66,12 @@
 [submodule "plugins/go-import"]
 	path = plugins/go-import
 	url = https://gerrit.googlesource.com/plugins/go-import
-	branch = stable-3.4
+	branch = stable-3.5
 [submodule "plugins/healthcheck"]
 	path = plugins/healthcheck
 	url = https://gerrit.googlesource.com/plugins/healthcheck
-	branch = stable-3.4
+  # Upstream hasn't cut a stable-3.5
+	branch = master
 [submodule "plugins/its-phabricator"]
 	path = plugins/its-phabricator
 	url = https://gerrit.googlesource.com/plugins/its-phabricator
@@ -92,7 +93,7 @@
 [submodule "plugins/reviewers"]
 	path = plugins/reviewers
 	url = https://gerrit.googlesource.com/plugins/reviewers
-	branch = stable-3.4
+	branch = stable-3.5
 [submodule "plugins/zuul"]
 	path = plugins/zuul
 	url = https://gerrit.googlesource.com/plugins/zuul

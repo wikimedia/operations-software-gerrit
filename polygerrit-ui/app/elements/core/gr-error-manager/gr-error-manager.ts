@@ -41,7 +41,7 @@ import {windowLocationReload} from '../../../utils/dom-util';
 import {debounce, DelayedTask} from '../../../utils/async-util';
 import {fireIronAnnounce} from '../../../utils/event-util';
 
-const HIDE_ALERT_TIMEOUT_MS = 5000;
+const HIDE_ALERT_TIMEOUT_MS = 10 * 1000;
 const CHECK_SIGN_IN_INTERVAL_MS = 60 * 1000;
 const STALE_CREDENTIAL_THRESHOLD_MS = 10 * 60 * 1000;
 const SIGN_IN_WIDTH_PX = 690;
@@ -77,6 +77,37 @@ export interface GrErrorManager {
     errorDialog: GrErrorDialog;
     errorOverlay: GrOverlay;
   };
+}
+
+export function constructServerErrorMsg({
+  errorText,
+  status,
+  statusText,
+  url,
+  trace,
+  tip,
+}: ErrorMsg) {
+  let err = '';
+  if (tip) {
+    err += `${tip}\n\n`;
+  }
+  err += `Error ${status}`;
+  if (statusText) {
+    err += ` (${statusText})`;
+  }
+  if (errorText || url) {
+    err += ': ';
+  }
+  if (errorText) {
+    err += errorText;
+  }
+  if (url) {
+    err += `\nEndpoint: ${url}`;
+  }
+  if (trace) {
+    err += `\nTrace Id: ${trace}`;
+  }
+  return err;
 }
 
 @customElement('gr-error-manager')
@@ -122,8 +153,7 @@ export class GrErrorManager extends PolymerElement {
 
   private checkLoggedInTask?: DelayedTask;
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     document.addEventListener(EventType.SERVER_ERROR, this.handleServerError);
     document.addEventListener(EventType.NETWORK_ERROR, this.handleNetworkError);
@@ -140,11 +170,12 @@ export class GrErrorManager extends PolymerElement {
       }
     );
 
-    ((IronA11yAnnouncer as unknown) as FixIronA11yAnnouncer).requestAvailability();
+    (
+      IronA11yAnnouncer as unknown as FixIronA11yAnnouncer
+    ).requestAvailability();
   }
 
-  /** @override */
-  disconnectedCallback() {
+  override disconnectedCallback() {
     this._clearHideAlertHandle();
     document.removeEventListener(
       EventType.SERVER_ERROR,
@@ -224,9 +255,11 @@ export class GrErrorManager extends PolymerElement {
             url,
             trace,
           });
+        } else if (response.status === 429) {
+          this._showQuotaExceeded({status, statusText});
         } else {
           this._showErrorDialog(
-            this._constructServerErrorMsg({
+            constructServerErrorMsg({
               status,
               statusText,
               errorText,
@@ -236,7 +269,7 @@ export class GrErrorManager extends PolymerElement {
           );
         }
       }
-      console.info(`server error: ${errorText}`);
+      this.reporting.error(new Error(`Server error: ${errorText}`));
     });
   };
 
@@ -252,7 +285,7 @@ export class GrErrorManager extends PolymerElement {
         ? 'You might have not enough privileges.'
         : 'You might have not enough privileges. Sign in and try again.';
       this._showErrorDialog(
-        this._constructServerErrorMsg({
+        constructServerErrorMsg({
           status,
           statusText,
           errorText,
@@ -267,35 +300,17 @@ export class GrErrorManager extends PolymerElement {
     });
   }
 
-  _constructServerErrorMsg({
-    errorText,
-    status,
-    statusText,
-    url,
-    trace,
-    tip,
-  }: ErrorMsg) {
-    let err = '';
-    if (tip) {
-      err += `${tip}\n\n`;
-    }
-    err += `Error ${status}`;
-    if (statusText) {
-      err += ` (${statusText})`;
-    }
-    if (errorText || url) {
-      err += ': ';
-    }
-    if (errorText) {
-      err += errorText;
-    }
-    if (url) {
-      err += `\nEndpoint: ${url}`;
-    }
-    if (trace) {
-      err += `\nTrace Id: ${trace}`;
-    }
-    return err;
+  _showQuotaExceeded({status, statusText}: ErrorMsg) {
+    const tip = 'Try again later';
+    const errorText = 'Too many requests from this client';
+    this._showErrorDialog(
+      constructServerErrorMsg({
+        status,
+        statusText,
+        errorText,
+        tip,
+      })
+    );
   }
 
   private readonly handleShowAlert = (e: CustomEvent<ShowAlertEventDetail>) => {
@@ -311,7 +326,7 @@ export class GrErrorManager extends PolymerElement {
 
   private readonly handleNetworkError = (e: NetworkErrorEvent) => {
     this._showAlert('Server unavailable');
-    console.error(e.detail.error.message);
+    this.reporting.error(new Error(`network error: ${e.detail.error.message}`));
   };
 
   // TODO(dhruvsr): allow less priority alerts to override high priority alerts

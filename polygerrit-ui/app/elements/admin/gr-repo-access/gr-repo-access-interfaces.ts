@@ -14,9 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 /**
- * @fileOverview This file contains interfaces shared between gr-repo-access
+ * @fileoverview This file contains interfaces shared between gr-repo-access
  * and nested elements (gr-access-section, gr-permission)
  */
 
@@ -72,7 +71,8 @@ export interface EditablePermissionRuleInfo
   extends PermissionRuleInfo,
     PropertyTreeNode {}
 
-export type PermissionAccessSection = PermissionArrayItem<EditableAccessSectionInfo>;
+export type PermissionAccessSection =
+  PermissionArrayItem<EditableAccessSectionInfo>;
 
 export interface NewlyAddedGroupInfo {
   name: string;

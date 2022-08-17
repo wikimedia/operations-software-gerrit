@@ -17,10 +17,7 @@
 import {html} from '@polymer/polymer/lib/utils/html-tag';
 
 export const htmlTemplate = html`
-  <style include="gr-voting-styles">
-    /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
-  </style>
-  <style include="shared-styles">
+  <style>
     :host {
       display: block;
       position: relative;
@@ -135,7 +132,7 @@ export const htmlTemplate = html`
     }
     .dateContainer .patchsetDiffButton {
       margin-right: var(--spacing-m);
-      --padding: 0 var(--spacing-m);
+      --gr-button-padding: 0 var(--spacing-m);
     }
     span.date {
       color: var(--deemphasized-text-color);
@@ -148,6 +145,7 @@ export const htmlTemplate = html`
       vertical-align: top;
     }
     .score {
+      box-sizing: border-box;
       border-radius: var(--border-radius);
       color: var(--vote-text-color);
       display: inline-block;
@@ -194,10 +192,12 @@ export const htmlTemplate = html`
       padding-bottom: 1px;
       color: var(--vote-text-color);
     }
-    gr-account-label {
-      --gr-account-label-text-style: {
-        font-weight: var(--font-weight-bold);
-      }
+    gr-account-label::part(gr-account-label-text) {
+      font-weight: var(--font-weight-bold);
+    }
+    iron-icon {
+      --iron-icon-height: 20px;
+      --iron-icon-width: 20px;
     }
     @media screen and (max-width: 50em) {
       .expanded .content {
@@ -245,13 +245,13 @@ export const htmlTemplate = html`
       <template is="dom-if" if="[[message.message]]">
         <div class="content messageContent">
           <div class="message hideOnOpen">[[_messageContentCollapsed]]</div>
-          <gr-formatted-text
-            no-trailing-margin=""
-            class="message hideOnCollapsed"
-            content="[[_messageContentExpanded]]"
-            config="[[_projectConfig.commentlinks]]"
-          ></gr-formatted-text>
           <template is="dom-if" if="[[_expanded]]">
+            <gr-formatted-text
+              noTrailingMargin
+              class="message hideOnCollapsed"
+              content="[[_messageContentExpanded]]"
+              config="[[_projectConfig.commentlinks]]"
+            ></gr-formatted-text>
             <template is="dom-if" if="[[_messageContentExpanded]]">
               <div
                 class="replyActionContainer"
@@ -281,11 +281,11 @@ export const htmlTemplate = html`
             </template>
             <gr-thread-list
               change="[[change]]"
-              hidden$="[[!message.commentThreads.length]]"
-              threads="[[message.commentThreads]]"
+              hidden$="[[!commentThreads.length]]"
+              threads="[[commentThreads]]"
               change-num="[[changeNum]]"
               logged-in="[[_loggedIn]]"
-              hide-toggle-buttons
+              hide-dropdown
               show-comment-context
             >
             </gr-thread-list>
@@ -325,8 +325,8 @@ export const htmlTemplate = html`
         <template is="dom-if" if="[[!message.id]]">
           <span class="date">
             <gr-date-formatter
-              has-tooltip=""
-              show-date-and-time=""
+              withTooltip
+              showDateAndTime
               date-str="[[message.date]]"
             ></gr-date-formatter>
           </span>
@@ -334,8 +334,8 @@ export const htmlTemplate = html`
         <template is="dom-if" if="[[message.id]]">
           <span class="date" on-click="_handleAnchorClick">
             <gr-date-formatter
-              has-tooltip=""
-              show-date-and-time=""
+              withTooltip
+              showDateAndTime
               date-str="[[message.date]]"
             ></gr-date-formatter>
           </span>

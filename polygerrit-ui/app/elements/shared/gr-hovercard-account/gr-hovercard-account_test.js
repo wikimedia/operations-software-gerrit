@@ -19,7 +19,7 @@ import '../../../test/common-test-setup-karma.js';
 import './gr-hovercard-account.js';
 import {html} from '@polymer/polymer/lib/utils/html-tag.js';
 import {ReviewerState} from '../../../constants/constants.js';
-import {stubRestApi} from '../../../test/test-utils.js';
+import {mockPromise, stubRestApi} from '../../../test/test-utils.js';
 
 const basicFixture = fixtureFromTemplate(html`
 <gr-hovercard-account class="hovered"></gr-hovercard-account>
@@ -37,9 +37,6 @@ suite('gr-hovercard-account tests', () => {
 
   setup(async () => {
     stubRestApi('getAccount').returns(Promise.resolve({...ACCOUNT}));
-    stubRestApi('getConfig').returns(
-        Promise.resolve({change: {enable_attention_set: true}})
-    );
     element = basicFixture.instantiate();
     element.account = {...ACCOUNT};
     element.change = {
@@ -60,33 +57,21 @@ suite('gr-hovercard-account tests', () => {
         'Kermit The Frog');
   });
 
-  test('_computeLastUpdate', () => {
-    const last_update = '2019-07-17 19:39:02.000000000';
-    const change = {
-      attention_set: {
-        31415926535: {
-          last_update,
-        },
-      },
-    };
-    assert.equal(element._computeLastUpdate(change), last_update);
-  });
-
-  test('_computeText', () => {
-    let account = {_account_id: '1'};
-    const selfAccount = {_account_id: '1'};
-    assert.equal(element._computeText(account, selfAccount), 'Your');
-    account = {_account_id: '2'};
-    assert.equal(element._computeText(account, selfAccount), 'Their');
+  test('computePronoun', () => {
+    element.account = {_account_id: '1'};
+    element._selfAccount = {_account_id: '1'};
+    assert.equal(element.computePronoun(), 'Your');
+    element.account = {_account_id: '2'};
+    assert.equal(element.computePronoun(), 'Their');
   });
 
   test('account status is not shown if the property is not set', () => {
     assert.isNull(element.shadowRoot.querySelector('.status'));
   });
 
-  test('account status is displayed', () => {
+  test('account status is displayed', async () => {
     element.account = {status: 'OOO', ...ACCOUNT};
-    flush();
+    await element.updateComplete;
     assert.equal(element.shadowRoot.querySelector('.status .value').innerText,
         'OOO');
   });
@@ -95,9 +80,9 @@ suite('gr-hovercard-account tests', () => {
     assert.isNull(element.shadowRoot.querySelector('.voteable'));
   });
 
-  test('voteable div is displayed', () => {
+  test('voteable div is displayed', async () => {
     element.voteableText = 'CodeReview: +2';
-    flush();
+    await element.updateComplete;
     assert.equal(element.shadowRoot.querySelector('.voteable .value').innerText,
         element.voteableText);
   });
@@ -109,15 +94,15 @@ suite('gr-hovercard-account tests', () => {
         [ReviewerState.REVIEWER]: [ACCOUNT],
       },
     };
+    await element.updateComplete;
     stubRestApi('removeChangeReviewer').returns(Promise.resolve({ok: true}));
     const reloadListener = sinon.spy();
     element._target.addEventListener('reload', reloadListener);
-    flush();
     const button = element.shadowRoot.querySelector('.removeReviewerOrCC');
     assert.isOk(button);
     assert.equal(button.innerText, 'Remove Reviewer');
     MockInteractions.tap(button);
-    await flush();
+    await element.updateComplete;
     assert.isTrue(reloadListener.called);
   });
 
@@ -128,6 +113,7 @@ suite('gr-hovercard-account tests', () => {
         [ReviewerState.REVIEWER]: [ACCOUNT],
       },
     };
+    await element.updateComplete;
     const saveReviewStub = stubRestApi(
         'saveChangeReview').returns(
         Promise.resolve({ok: true}));
@@ -135,14 +121,12 @@ suite('gr-hovercard-account tests', () => {
     const reloadListener = sinon.spy();
     element._target.addEventListener('reload', reloadListener);
 
-    flush();
     const button = element.shadowRoot.querySelector('.changeReviewerOrCC');
 
     assert.isOk(button);
     assert.equal(button.innerText, 'Move Reviewer to CC');
     MockInteractions.tap(button);
-    await flush();
-
+    await element.updateComplete;
     assert.isTrue(saveReviewStub.called);
     assert.isTrue(reloadListener.called);
   });
@@ -154,20 +138,19 @@ suite('gr-hovercard-account tests', () => {
         [ReviewerState.REVIEWER]: [],
       },
     };
+    await element.updateComplete;
     const saveReviewStub = stubRestApi(
         'saveChangeReview').returns(Promise.resolve({ok: true}));
     stubRestApi('removeChangeReviewer').returns(Promise.resolve({ok: true}));
     const reloadListener = sinon.spy();
     element._target.addEventListener('reload', reloadListener);
-    flush();
 
     const button = element.shadowRoot.querySelector('.changeReviewerOrCC');
     assert.isOk(button);
     assert.equal(button.innerText, 'Move CC to Reviewer');
 
     MockInteractions.tap(button);
-    await flush();
-
+    await element.updateComplete;
     assert.isTrue(saveReviewStub.called);
     assert.isTrue(reloadListener.called);
   });
@@ -179,31 +162,26 @@ suite('gr-hovercard-account tests', () => {
         [ReviewerState.REVIEWER]: [],
       },
     };
+    await element.updateComplete;
     stubRestApi('removeChangeReviewer').returns(Promise.resolve({ok: true}));
     const reloadListener = sinon.spy();
     element._target.addEventListener('reload', reloadListener);
 
-    flush();
     const button = element.shadowRoot.querySelector('.removeReviewerOrCC');
 
     assert.equal(button.innerText, 'Remove CC');
     assert.isOk(button);
     MockInteractions.tap(button);
-
-    await flush();
-
+    await element.updateComplete;
     assert.isTrue(reloadListener.called);
   });
 
   test('add to attention set', async () => {
-    let apiResolve;
-    const apiPromise = new Promise(r => {
-      apiResolve = r;
-    });
-    stubRestApi('addToAttentionSet').returns(apiPromise);
+    const apiPromise = mockPromise();
+    const apiSpy = stubRestApi('addToAttentionSet').returns(apiPromise);
     element.highlightAttention = true;
     element._target = document.createElement('div');
-    flush();
+    await element.updateComplete;
     const showAlertListener = sinon.spy();
     const hideAlertListener = sinon.spy();
     const updatedListener = sinon.spy();
@@ -217,22 +195,28 @@ suite('gr-hovercard-account tests', () => {
     MockInteractions.tap(button);
 
     assert.equal(Object.keys(element.change.attention_set).length, 1);
+    const attention_set_info = Object.values(element.change.attention_set)[0];
+    assert.equal(attention_set_info.reason,
+        `Added by <GERRIT_ACCOUNT_${ACCOUNT._account_id}>`
+        + ` using the hovercard menu`);
+    assert.equal(attention_set_info.reason_account._account_id,
+        ACCOUNT._account_id);
     assert.isTrue(showAlertListener.called, 'showAlertListener was called');
     assert.isTrue(updatedListener.called, 'updatedListener was called');
     assert.isFalse(element._isShowing, 'hovercard is hidden');
 
-    apiResolve({});
-    await flush();
-
+    apiPromise.resolve({});
+    await element.updateComplete;
+    assert.isTrue(apiSpy.calledOnce);
+    assert.equal(apiSpy.lastCall.args[2],
+        `Added by <GERRIT_ACCOUNT_${ACCOUNT._account_id}>`
+        + ` using the hovercard menu`);
     assert.isTrue(hideAlertListener.called, 'hideAlertListener was called');
   });
 
   test('remove from attention set', async () => {
-    let apiResolve;
-    const apiPromise = new Promise(r => {
-      apiResolve = r;
-    });
-    stubRestApi('removeFromAttentionSet').returns(apiPromise);
+    const apiPromise = mockPromise();
+    const apiSpy = stubRestApi('removeFromAttentionSet').returns(apiPromise);
     element.highlightAttention = true;
     element.change = {
       attention_set: {31415926535: {}},
@@ -240,7 +224,7 @@ suite('gr-hovercard-account tests', () => {
       owner: {...ACCOUNT},
     };
     element._target = document.createElement('div');
-    flush();
+    await element.updateComplete;
     const showAlertListener = sinon.spy();
     const hideAlertListener = sinon.spy();
     const updatedListener = sinon.spy();
@@ -258,9 +242,13 @@ suite('gr-hovercard-account tests', () => {
     assert.isTrue(updatedListener.called, 'updatedListener was called');
     assert.isFalse(element._isShowing, 'hovercard is hidden');
 
-    apiResolve({});
-    await flush();
+    apiPromise.resolve({});
+    await element.updateComplete;
 
+    assert.isTrue(apiSpy.calledOnce);
+    assert.equal(apiSpy.lastCall.args[2],
+        `Removed by <GERRIT_ACCOUNT_${ACCOUNT._account_id}>`
+        + ` using the hovercard menu`);
     assert.isTrue(hideAlertListener.called, 'hideAlertListener was called');
   });
 });

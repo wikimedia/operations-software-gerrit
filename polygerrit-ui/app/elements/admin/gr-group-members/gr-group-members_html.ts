@@ -17,6 +17,9 @@
 import {html} from '@polymer/polymer/lib/utils/html-tag';
 
 export const htmlTemplate = html`
+  <style include="gr-font-styles">
+    /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+  </style>
   <style include="gr-form-styles">
     /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
   </style>
@@ -175,7 +178,7 @@ export const htmlTemplate = html`
       on-confirm="_handleDeleteConfirm"
       on-cancel="_handleConfirmDialogCancel"
       item="[[_itemName]]"
-      item-type="[[_itemType]]"
+      item-type-name="[[_computeItemTypeName(_itemType)]]"
     ></gr-confirm-delete-item-dialog>
   </gr-overlay>
 `;

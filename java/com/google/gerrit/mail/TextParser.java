@@ -30,7 +30,7 @@ public class TextParser {
   /**
    * Parses comments from plaintext email.
    *
-   * @param email @param email the message as received from the email service
+   * @param email the message as received from the email service
    * @param comments list of {@link HumanComment}s previously persisted on the change that caused
    *     the original notification email to be sent out. Ordering must be the same as in the
    *     outbound email
@@ -77,7 +77,7 @@ public class TextParser {
         // This is not a comment, try to advance the file/comment pointers and
         // add previous comment to list if applicable
         if (currentComment != null) {
-          if (currentComment.type == MailComment.CommentType.CHANGE_MESSAGE) {
+          if (currentComment.type == MailComment.CommentType.PATCHSET_LEVEL) {
             currentComment.message = ParserUtil.trimQuotation(currentComment.message);
           }
           if (!Strings.isNullOrEmpty(currentComment.message)) {
@@ -115,7 +115,7 @@ public class TextParser {
           if (lastEncounteredComment == null) {
             if (lastEncounteredFileName == null) {
               // Change message
-              currentComment.type = MailComment.CommentType.CHANGE_MESSAGE;
+              currentComment.type = MailComment.CommentType.PATCHSET_LEVEL;
             } else {
               // File comment not sent in reply to another comment
               currentComment.type = MailComment.CommentType.FILE_COMMENT;

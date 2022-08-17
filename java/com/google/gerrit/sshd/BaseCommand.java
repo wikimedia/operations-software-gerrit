@@ -73,6 +73,7 @@ public abstract class BaseCommand implements Command {
   static final int STATUS_NOT_FOUND = PRIVATE_STATUS | 2;
   public static final int STATUS_NOT_ADMIN = PRIVATE_STATUS | 3;
 
+  @SuppressWarnings("unused") // unused here, but triggers logic in EndOfOptionsHandler
   @Option(name = "--", usage = "end of options", handler = EndOfOptionsHandler.class)
   private boolean endOfOptions;
 
@@ -370,7 +371,7 @@ public abstract class BaseCommand implements Command {
         err.flush();
       } catch (IOException e2) {
         // Ignored
-      } catch (Throwable e2) {
+      } catch (RuntimeException e2) {
         logger.atWarning().withCause(e2).log("Cannot send failure message to client");
       }
       return f.exitCode;
@@ -381,7 +382,7 @@ public abstract class BaseCommand implements Command {
       err.flush();
     } catch (IOException e2) {
       // Ignored
-    } catch (Throwable e2) {
+    } catch (RuntimeException e2) {
       logger.atWarning().withCause(e2).log("Cannot send internal server error message to client");
     }
     return 128;
@@ -500,15 +501,15 @@ public abstract class BaseCommand implements Command {
 
           out.flush();
           err.flush();
-        } catch (Throwable e) {
+        } catch (Exception e) {
           try {
             out.flush();
-          } catch (Throwable e2) {
+          } catch (Exception e2) {
             // Ignored
           }
           try {
             err.flush();
-          } catch (Throwable e2) {
+          } catch (Exception e2) {
             // Ignored
           }
           rc = handleError(e);

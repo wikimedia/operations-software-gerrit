@@ -98,8 +98,8 @@ public class GroupConfigTest {
 
     InternalGroupCreation groupCreation =
         getPrefilledGroupCreationBuilder().setNameKey(groupName).build();
-    InternalGroupUpdate groupUpdate = InternalGroupUpdate.builder().setName(anotherName).build();
-    createGroup(groupCreation, groupUpdate);
+    GroupDelta groupDelta = GroupDelta.builder().setName(anotherName).build();
+    createGroup(groupCreation, groupDelta);
 
     Optional<InternalGroup> group = loadGroup(groupCreation.getGroupUUID());
     assertThatGroup(group).value().nameKey().isEqualTo(anotherName);
@@ -161,9 +161,8 @@ public class GroupConfigTest {
     String description = "This is a test group.";
 
     InternalGroupCreation groupCreation = getPrefilledGroupCreationBuilder().build();
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setDescription(description).build();
-    createGroup(groupCreation, groupUpdate);
+    GroupDelta groupDelta = GroupDelta.builder().setDescription(description).build();
+    createGroup(groupCreation, groupDelta);
 
     Optional<InternalGroup> group = loadGroup(groupCreation.getGroupUUID());
     assertThatGroup(group).value().description().isEqualTo(description);
@@ -172,8 +171,8 @@ public class GroupConfigTest {
   @Test
   public void emptyDescriptionForNewGroupIsIgnored() throws Exception {
     InternalGroupCreation groupCreation = getPrefilledGroupCreationBuilder().build();
-    InternalGroupUpdate groupUpdate = InternalGroupUpdate.builder().setDescription("").build();
-    createGroup(groupCreation, groupUpdate);
+    GroupDelta groupDelta = GroupDelta.builder().setDescription("").build();
+    createGroup(groupCreation, groupDelta);
 
     Optional<InternalGroup> group = loadGroup(groupCreation.getGroupUUID());
     assertThatGroup(group).value().description().isNull();
@@ -198,9 +197,8 @@ public class GroupConfigTest {
     AccountGroup.UUID ownerGroupUuid = AccountGroup.uuid("anotherOwnerUuid");
 
     InternalGroupCreation groupCreation = getPrefilledGroupCreationBuilder().build();
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setOwnerGroupUUID(ownerGroupUuid).build();
-    createGroup(groupCreation, groupUpdate);
+    GroupDelta groupDelta = GroupDelta.builder().setOwnerGroupUUID(ownerGroupUuid).build();
+    createGroup(groupCreation, groupDelta);
 
     Optional<InternalGroup> group = loadGroup(groupCreation.getGroupUUID());
     assertThatGroup(group).value().ownerGroupUuid().isEqualTo(ownerGroupUuid);
@@ -209,10 +207,9 @@ public class GroupConfigTest {
   @Test
   public void ownerGroupUuidOfNewGroupMustNotBeEmpty() throws Exception {
     InternalGroupCreation groupCreation = getPrefilledGroupCreationBuilder().build();
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setOwnerGroupUUID(AccountGroup.uuid("")).build();
+    GroupDelta groupDelta = GroupDelta.builder().setOwnerGroupUUID(AccountGroup.uuid("")).build();
     GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
-    groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
+    groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
 
     try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
       IOException thrown =
@@ -239,8 +236,8 @@ public class GroupConfigTest {
   @Test
   public void specifiedVisibleToAllIsRespectedForNewGroup() throws Exception {
     InternalGroupCreation groupCreation = getPrefilledGroupCreationBuilder().build();
-    InternalGroupUpdate groupUpdate = InternalGroupUpdate.builder().setVisibleToAll(true).build();
-    createGroup(groupCreation, groupUpdate);
+    GroupDelta groupDelta = GroupDelta.builder().setVisibleToAll(true).build();
+    createGroup(groupCreation, groupDelta);
 
     Optional<InternalGroup> group = loadGroup(groupCreation.getGroupUUID());
     assertThatGroup(group).value().visibleToAll().isTrue();
@@ -268,8 +265,8 @@ public class GroupConfigTest {
     Timestamp createdOn = toTimestamp(LocalDate.of(2017, Month.DECEMBER, 11).atTime(13, 44, 10));
 
     InternalGroupCreation groupCreation = getPrefilledGroupCreationBuilder().build();
-    InternalGroupUpdate groupUpdate = InternalGroupUpdate.builder().setUpdatedOn(createdOn).build();
-    createGroup(groupCreation, groupUpdate);
+    GroupDelta groupDelta = GroupDelta.builder().setUpdatedOn(createdOn).build();
+    createGroup(groupCreation, groupDelta);
 
     Optional<InternalGroup> group = loadGroup(groupCreation.getGroupUUID());
     assertThatGroup(group).value().createdOn().isEqualTo(createdOn);
@@ -281,11 +278,11 @@ public class GroupConfigTest {
     Account.Id member2 = Account.id(2);
 
     InternalGroupCreation groupCreation = getPrefilledGroupCreationBuilder().build();
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta =
+        GroupDelta.builder()
             .setMemberModification(members -> ImmutableSet.of(member1, member2))
             .build();
-    createGroup(groupCreation, groupUpdate);
+    createGroup(groupCreation, groupDelta);
 
     Optional<InternalGroup> group = loadGroup(groupCreation.getGroupUUID());
     assertThatGroup(group).value().members().containsExactly(member1, member2);
@@ -297,11 +294,11 @@ public class GroupConfigTest {
     AccountGroup.UUID subgroup2 = AccountGroup.uuid("subgroup2");
 
     InternalGroupCreation groupCreation = getPrefilledGroupCreationBuilder().build();
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta =
+        GroupDelta.builder()
             .setSubgroupModification(subgroups -> ImmutableSet.of(subgroup1, subgroup2))
             .build();
-    createGroup(groupCreation, groupUpdate);
+    createGroup(groupCreation, groupDelta);
 
     Optional<InternalGroup> group = loadGroup(groupCreation.getGroupUUID());
     assertThatGroup(group).value().subgroups().containsExactly(subgroup1, subgroup2);
@@ -508,8 +505,8 @@ public class GroupConfigTest {
     createArbitraryGroup(groupUuid);
     AccountGroup.NameKey newName = AccountGroup.nameKey("New name");
 
-    InternalGroupUpdate groupUpdate = InternalGroupUpdate.builder().setName(newName).build();
-    updateGroup(groupUuid, groupUpdate);
+    GroupDelta groupDelta = GroupDelta.builder().setName(newName).build();
+    updateGroup(groupUuid, groupDelta);
 
     Optional<InternalGroup> group = loadGroup(groupUuid);
     assertThatGroup(group).value().nameKey().isEqualTo(newName);
@@ -520,9 +517,8 @@ public class GroupConfigTest {
     createArbitraryGroup(groupUuid);
 
     GroupConfig groupConfig = GroupConfig.loadForGroup(projectName, repository, groupUuid);
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setName(AccountGroup.nameKey("")).build();
-    groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
+    GroupDelta groupDelta = GroupDelta.builder().setName(AccountGroup.nameKey("")).build();
+    groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
 
     try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
       IOException thrown =
@@ -539,8 +535,8 @@ public class GroupConfigTest {
 
     GroupConfig groupConfig = GroupConfig.loadForGroup(projectName, repository, groupUuid);
     groupConfig.setAllowSaveEmptyName();
-    InternalGroupUpdate groupUpdate = InternalGroupUpdate.builder().setName(emptyName).build();
-    groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
+    GroupDelta groupDelta = GroupDelta.builder().setName(emptyName).build();
+    groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
     commit(groupConfig);
 
     Optional<InternalGroup> group = loadGroup(groupUuid);
@@ -552,9 +548,8 @@ public class GroupConfigTest {
     createArbitraryGroup(groupUuid);
     String newDescription = "New description";
 
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setDescription(newDescription).build();
-    updateGroup(groupUuid, groupUpdate);
+    GroupDelta groupDelta = GroupDelta.builder().setDescription(newDescription).build();
+    updateGroup(groupUuid, groupDelta);
 
     Optional<InternalGroup> group = loadGroup(groupUuid);
     assertThatGroup(group).value().description().isEqualTo(newDescription);
@@ -564,8 +559,8 @@ public class GroupConfigTest {
   public void descriptionCanBeRemoved() throws Exception {
     createArbitraryGroup(groupUuid);
 
-    InternalGroupUpdate groupUpdate = InternalGroupUpdate.builder().setDescription("").build();
-    Optional<InternalGroup> group = updateGroup(groupUuid, groupUpdate);
+    GroupDelta groupDelta = GroupDelta.builder().setDescription("").build();
+    Optional<InternalGroup> group = updateGroup(groupUuid, groupDelta);
 
     assertThatGroup(group).value().description().isNull();
   }
@@ -575,9 +570,8 @@ public class GroupConfigTest {
     createArbitraryGroup(groupUuid);
     AccountGroup.UUID newOwnerGroupUuid = AccountGroup.uuid("New owner");
 
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setOwnerGroupUUID(newOwnerGroupUuid).build();
-    updateGroup(groupUuid, groupUpdate);
+    GroupDelta groupDelta = GroupDelta.builder().setOwnerGroupUUID(newOwnerGroupUuid).build();
+    updateGroup(groupUuid, groupDelta);
 
     Optional<InternalGroup> group = loadGroup(groupUuid);
     assertThatGroup(group).value().ownerGroupUuid().isEqualTo(newOwnerGroupUuid);
@@ -588,9 +582,8 @@ public class GroupConfigTest {
     createArbitraryGroup(groupUuid);
 
     GroupConfig groupConfig = GroupConfig.loadForGroup(projectName, repository, groupUuid);
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setOwnerGroupUUID(AccountGroup.uuid("")).build();
-    groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
+    GroupDelta groupDelta = GroupDelta.builder().setOwnerGroupUUID(AccountGroup.uuid("")).build();
+    groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
 
     try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
       IOException thrown =
@@ -605,9 +598,8 @@ public class GroupConfigTest {
     createArbitraryGroup(groupUuid);
     boolean oldVisibleAll = loadGroup(groupUuid).map(InternalGroup::isVisibleToAll).orElse(false);
 
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setVisibleToAll(!oldVisibleAll).build();
-    updateGroup(groupUuid, groupUpdate);
+    GroupDelta groupDelta = GroupDelta.builder().setVisibleToAll(!oldVisibleAll).build();
+    updateGroup(groupUuid, groupDelta);
 
     Optional<InternalGroup> group = loadGroup(groupUuid);
     assertThatGroup(group).value().visibleToAll().isEqualTo(!oldVisibleAll);
@@ -619,16 +611,15 @@ public class GroupConfigTest {
     Timestamp updatedOn = toTimestamp(LocalDate.of(2017, Month.DECEMBER, 12).atTime(10, 21, 49));
 
     InternalGroupCreation groupCreation = getPrefilledGroupCreationBuilder().build();
-    InternalGroupUpdate initialGroupUpdate =
-        InternalGroupUpdate.builder().setUpdatedOn(createdOn).build();
-    createGroup(groupCreation, initialGroupUpdate);
+    GroupDelta initialGroupDelta = GroupDelta.builder().setUpdatedOn(createdOn).build();
+    createGroup(groupCreation, initialGroupDelta);
 
-    InternalGroupUpdate laterGroupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta laterGroupDelta =
+        GroupDelta.builder()
             .setName(AccountGroup.nameKey("Another name"))
             .setUpdatedOn(updatedOn)
             .build();
-    Optional<InternalGroup> group = updateGroup(groupCreation.getGroupUUID(), laterGroupUpdate);
+    Optional<InternalGroup> group = updateGroup(groupCreation.getGroupUUID(), laterGroupDelta);
 
     assertThatGroup(group).value().createdOn().isEqualTo(createdOn);
     Optional<InternalGroup> reloadedGroup = loadGroup(groupUuid);
@@ -641,17 +632,15 @@ public class GroupConfigTest {
     Account.Id member1 = Account.id(1);
     Account.Id member2 = Account.id(2);
 
-    InternalGroupUpdate groupUpdate1 =
-        InternalGroupUpdate.builder()
-            .setMemberModification(members -> ImmutableSet.of(member1))
-            .build();
-    updateGroup(groupUuid, groupUpdate1);
+    GroupDelta groupDelta1 =
+        GroupDelta.builder().setMemberModification(members -> ImmutableSet.of(member1)).build();
+    updateGroup(groupUuid, groupDelta1);
 
-    InternalGroupUpdate groupUpdate2 =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta2 =
+        GroupDelta.builder()
             .setMemberModification(members -> Sets.union(members, ImmutableSet.of(member2)))
             .build();
-    updateGroup(groupUuid, groupUpdate2);
+    updateGroup(groupUuid, groupDelta2);
 
     Optional<InternalGroup> group = loadGroup(groupUuid);
     assertThatGroup(group).value().members().containsExactly(member1, member2);
@@ -663,17 +652,17 @@ public class GroupConfigTest {
     Account.Id member1 = Account.id(1);
     Account.Id member2 = Account.id(2);
 
-    InternalGroupUpdate groupUpdate1 =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta1 =
+        GroupDelta.builder()
             .setMemberModification(members -> ImmutableSet.of(member1, member2))
             .build();
-    updateGroup(groupUuid, groupUpdate1);
+    updateGroup(groupUuid, groupDelta1);
 
-    InternalGroupUpdate groupUpdate2 =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta2 =
+        GroupDelta.builder()
             .setMemberModification(members -> Sets.difference(members, ImmutableSet.of(member1)))
             .build();
-    updateGroup(groupUuid, groupUpdate2);
+    updateGroup(groupUuid, groupDelta2);
 
     Optional<InternalGroup> group = loadGroup(groupUuid);
     assertThatGroup(group).value().members().containsExactly(member2);
@@ -685,17 +674,17 @@ public class GroupConfigTest {
     AccountGroup.UUID subgroup1 = AccountGroup.uuid("subgroups1");
     AccountGroup.UUID subgroup2 = AccountGroup.uuid("subgroups2");
 
-    InternalGroupUpdate groupUpdate1 =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta1 =
+        GroupDelta.builder()
             .setSubgroupModification(subgroups -> ImmutableSet.of(subgroup1))
             .build();
-    updateGroup(groupUuid, groupUpdate1);
+    updateGroup(groupUuid, groupDelta1);
 
-    InternalGroupUpdate groupUpdate2 =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta2 =
+        GroupDelta.builder()
             .setSubgroupModification(subgroups -> Sets.union(subgroups, ImmutableSet.of(subgroup2)))
             .build();
-    updateGroup(groupUuid, groupUpdate2);
+    updateGroup(groupUuid, groupDelta2);
 
     Optional<InternalGroup> group = loadGroup(groupUuid);
     assertThatGroup(group).value().subgroups().containsExactly(subgroup1, subgroup2);
@@ -707,18 +696,18 @@ public class GroupConfigTest {
     AccountGroup.UUID subgroup1 = AccountGroup.uuid("subgroups1");
     AccountGroup.UUID subgroup2 = AccountGroup.uuid("subgroups2");
 
-    InternalGroupUpdate groupUpdate1 =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta1 =
+        GroupDelta.builder()
             .setSubgroupModification(members -> ImmutableSet.of(subgroup1, subgroup2))
             .build();
-    updateGroup(groupUuid, groupUpdate1);
+    updateGroup(groupUuid, groupDelta1);
 
-    InternalGroupUpdate groupUpdate2 =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta2 =
+        GroupDelta.builder()
             .setSubgroupModification(
                 members -> Sets.difference(members, ImmutableSet.of(subgroup1)))
             .build();
-    updateGroup(groupUuid, groupUpdate2);
+    updateGroup(groupUuid, groupDelta2);
 
     Optional<InternalGroup> group = loadGroup(groupUuid);
     assertThatGroup(group).value().subgroups().containsExactly(subgroup2);
@@ -745,8 +734,8 @@ public class GroupConfigTest {
   @Test
   public void loadedNewGroupWithAllPropertiesDoesNotChangeOnReload() throws Exception {
     InternalGroupCreation groupCreation = getPrefilledGroupCreationBuilder().build();
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta =
+        GroupDelta.builder()
             .setDescription("A test group")
             .setOwnerGroupUUID(AccountGroup.uuid("another owner"))
             .setVisibleToAll(true)
@@ -756,7 +745,7 @@ public class GroupConfigTest {
             .setSubgroupModification(subgroups -> ImmutableSet.of(AccountGroup.uuid("subgroup")))
             .build();
 
-    Optional<InternalGroup> createdGroup = createGroup(groupCreation, groupUpdate);
+    Optional<InternalGroup> createdGroup = createGroup(groupCreation, groupDelta);
     Optional<InternalGroup> reloadedGroup = loadGroup(groupCreation.getGroupUUID());
 
     assertThat(createdGroup).isEqualTo(reloadedGroup);
@@ -766,8 +755,8 @@ public class GroupConfigTest {
   public void loadedGroupAfterUpdatesForAllPropertiesDoesNotChangeOnReload() throws Exception {
     createArbitraryGroup(groupUuid);
 
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta =
+        GroupDelta.builder()
             .setDescription("A test group")
             .setOwnerGroupUUID(AccountGroup.uuid("another owner"))
             .setVisibleToAll(true)
@@ -777,7 +766,7 @@ public class GroupConfigTest {
             .setSubgroupModification(subgroups -> ImmutableSet.of(AccountGroup.uuid("subgroup")))
             .build();
 
-    Optional<InternalGroup> updatedGroup = updateGroup(groupUuid, groupUpdate);
+    Optional<InternalGroup> updatedGroup = updateGroup(groupUuid, groupDelta);
     Optional<InternalGroup> reloadedGroup = loadGroup(groupUuid);
 
     assertThat(updatedGroup).isEqualTo(reloadedGroup);
@@ -788,8 +777,8 @@ public class GroupConfigTest {
       throws Exception {
     // Create a group with all properties set.
     InternalGroupCreation groupCreation = getPrefilledGroupCreationBuilder().build();
-    InternalGroupUpdate initialGroupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta initialGroupDelta =
+        GroupDelta.builder()
             .setDescription("A test group")
             .setOwnerGroupUUID(AccountGroup.uuid("another owner"))
             .setVisibleToAll(true)
@@ -798,13 +787,13 @@ public class GroupConfigTest {
             .setMemberModification(members -> ImmutableSet.of(Account.id(1), Account.id(2)))
             .setSubgroupModification(subgroups -> ImmutableSet.of(AccountGroup.uuid("subgroup")))
             .build();
-    createGroup(groupCreation, initialGroupUpdate);
+    createGroup(groupCreation, initialGroupDelta);
 
     // Only update one of the properties.
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setName(AccountGroup.nameKey("Another name")).build();
+    GroupDelta groupDelta =
+        GroupDelta.builder().setName(AccountGroup.nameKey("Another name")).build();
 
-    Optional<InternalGroup> updatedGroup = updateGroup(groupCreation.getGroupUUID(), groupUpdate);
+    Optional<InternalGroup> updatedGroup = updateGroup(groupCreation.getGroupUUID(), groupDelta);
     Optional<InternalGroup> reloadedGroup = loadGroup(groupCreation.getGroupUUID());
 
     assertThat(updatedGroup).isEqualTo(reloadedGroup);
@@ -818,14 +807,13 @@ public class GroupConfigTest {
     commit(groupConfig);
 
     AccountGroup.NameKey name = AccountGroup.nameKey("Robots");
-    InternalGroupUpdate groupUpdate1 = InternalGroupUpdate.builder().setName(name).build();
-    groupConfig.setGroupUpdate(groupUpdate1, auditLogFormatter);
+    GroupDelta groupDelta1 = GroupDelta.builder().setName(name).build();
+    groupConfig.setGroupDelta(groupDelta1, auditLogFormatter);
     commit(groupConfig);
 
     String description = "Test group for robots";
-    InternalGroupUpdate groupUpdate2 =
-        InternalGroupUpdate.builder().setDescription(description).build();
-    groupConfig.setGroupUpdate(groupUpdate2, auditLogFormatter);
+    GroupDelta groupDelta2 = GroupDelta.builder().setDescription(description).build();
+    groupConfig.setGroupDelta(groupDelta2, auditLogFormatter);
     commit(groupConfig);
 
     Optional<InternalGroup> group = loadGroup(groupUuid);
@@ -853,9 +841,9 @@ public class GroupConfigTest {
 
     RevCommit commitAfterCreation = getLatestCommitForGroup(groupUuid);
 
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setName(AccountGroup.nameKey("Another name")).build();
-    updateGroup(groupUuid, groupUpdate);
+    GroupDelta groupDelta =
+        GroupDelta.builder().setName(AccountGroup.nameKey("Another name")).build();
+    updateGroup(groupUuid, groupDelta);
 
     RevCommit commitAfterUpdate = getLatestCommitForGroup(groupUuid);
     assertThat(commitAfterUpdate).isNotEqualTo(commitAfterCreation);
@@ -866,10 +854,10 @@ public class GroupConfigTest {
   public void newCommitIsNotCreatedForEmptyUpdate() throws Exception {
     createArbitraryGroup(groupUuid);
 
-    InternalGroupUpdate groupUpdate = InternalGroupUpdate.builder().build();
+    GroupDelta groupDelta = GroupDelta.builder().build();
 
     RevCommit commitBeforeUpdate = getLatestCommitForGroup(groupUuid);
-    updateGroup(groupUuid, groupUpdate);
+    updateGroup(groupUuid, groupDelta);
     RevCommit commitAfterUpdate = getLatestCommitForGroup(groupUuid);
 
     assertThat(commitAfterUpdate).isEqualTo(commitBeforeUpdate);
@@ -880,10 +868,10 @@ public class GroupConfigTest {
     createArbitraryGroup(groupUuid);
 
     Timestamp updatedOn = toTimestamp(LocalDate.of(3017, Month.DECEMBER, 12).atTime(10, 21, 49));
-    InternalGroupUpdate groupUpdate = InternalGroupUpdate.builder().setUpdatedOn(updatedOn).build();
+    GroupDelta groupDelta = GroupDelta.builder().setUpdatedOn(updatedOn).build();
 
     RevCommit commitBeforeUpdate = getLatestCommitForGroup(groupUuid);
-    updateGroup(groupUuid, groupUpdate);
+    updateGroup(groupUuid, groupDelta);
     RevCommit commitAfterUpdate = getLatestCommitForGroup(groupUuid);
 
     assertThat(commitAfterUpdate).isEqualTo(commitBeforeUpdate);
@@ -893,11 +881,11 @@ public class GroupConfigTest {
   public void newCommitIsNotCreatedForRedundantNameUpdate() throws Exception {
     createArbitraryGroup(groupUuid);
 
-    InternalGroupUpdate groupUpdate = InternalGroupUpdate.builder().setName(groupName).build();
-    updateGroup(groupUuid, groupUpdate);
+    GroupDelta groupDelta = GroupDelta.builder().setName(groupName).build();
+    updateGroup(groupUuid, groupDelta);
 
     RevCommit commitBeforeUpdate = getLatestCommitForGroup(groupUuid);
-    updateGroup(groupUuid, groupUpdate);
+    updateGroup(groupUuid, groupDelta);
     RevCommit commitAfterUpdate = getLatestCommitForGroup(groupUuid);
 
     assertThat(commitAfterUpdate).isEqualTo(commitBeforeUpdate);
@@ -907,12 +895,11 @@ public class GroupConfigTest {
   public void newCommitIsNotCreatedForRedundantDescriptionUpdate() throws Exception {
     createArbitraryGroup(groupUuid);
 
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setDescription("A test group").build();
-    updateGroup(groupUuid, groupUpdate);
+    GroupDelta groupDelta = GroupDelta.builder().setDescription("A test group").build();
+    updateGroup(groupUuid, groupDelta);
 
     RevCommit commitBeforeUpdate = getLatestCommitForGroup(groupUuid);
-    updateGroup(groupUuid, groupUpdate);
+    updateGroup(groupUuid, groupDelta);
     RevCommit commitAfterUpdate = getLatestCommitForGroup(groupUuid);
 
     assertThat(commitAfterUpdate).isEqualTo(commitBeforeUpdate);
@@ -922,11 +909,11 @@ public class GroupConfigTest {
   public void newCommitIsNotCreatedForRedundantVisibleToAllUpdate() throws Exception {
     createArbitraryGroup(groupUuid);
 
-    InternalGroupUpdate groupUpdate = InternalGroupUpdate.builder().setVisibleToAll(true).build();
-    updateGroup(groupUuid, groupUpdate);
+    GroupDelta groupDelta = GroupDelta.builder().setVisibleToAll(true).build();
+    updateGroup(groupUuid, groupDelta);
 
     RevCommit commitBeforeUpdate = getLatestCommitForGroup(groupUuid);
-    updateGroup(groupUuid, groupUpdate);
+    updateGroup(groupUuid, groupDelta);
     RevCommit commitAfterUpdate = getLatestCommitForGroup(groupUuid);
 
     assertThat(commitAfterUpdate).isEqualTo(commitBeforeUpdate);
@@ -936,12 +923,12 @@ public class GroupConfigTest {
   public void newCommitIsNotCreatedForRedundantOwnerGroupUuidUpdate() throws Exception {
     createArbitraryGroup(groupUuid);
 
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setOwnerGroupUUID(AccountGroup.uuid("Another owner")).build();
-    updateGroup(groupUuid, groupUpdate);
+    GroupDelta groupDelta =
+        GroupDelta.builder().setOwnerGroupUUID(AccountGroup.uuid("Another owner")).build();
+    updateGroup(groupUuid, groupDelta);
 
     RevCommit commitBeforeUpdate = getLatestCommitForGroup(groupUuid);
-    updateGroup(groupUuid, groupUpdate);
+    updateGroup(groupUuid, groupDelta);
     RevCommit commitAfterUpdate = getLatestCommitForGroup(groupUuid);
 
     assertThat(commitAfterUpdate).isEqualTo(commitBeforeUpdate);
@@ -951,14 +938,14 @@ public class GroupConfigTest {
   public void newCommitIsNotCreatedForRedundantMemberUpdate() throws Exception {
     createArbitraryGroup(groupUuid);
 
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta =
+        GroupDelta.builder()
             .setMemberModification(members -> Sets.union(members, ImmutableSet.of(Account.id(10))))
             .build();
-    updateGroup(groupUuid, groupUpdate);
+    updateGroup(groupUuid, groupDelta);
 
     RevCommit commitBeforeUpdate = getLatestCommitForGroup(groupUuid);
-    updateGroup(groupUuid, groupUpdate);
+    updateGroup(groupUuid, groupDelta);
     RevCommit commitAfterUpdate = getLatestCommitForGroup(groupUuid);
 
     assertThat(commitAfterUpdate).isEqualTo(commitBeforeUpdate);
@@ -968,15 +955,15 @@ public class GroupConfigTest {
   public void newCommitIsNotCreatedForRedundantSubgroupsUpdate() throws Exception {
     createArbitraryGroup(groupUuid);
 
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta =
+        GroupDelta.builder()
             .setSubgroupModification(
                 subgroups -> Sets.union(subgroups, ImmutableSet.of(AccountGroup.uuid("subgroup"))))
             .build();
-    updateGroup(groupUuid, groupUpdate);
+    updateGroup(groupUuid, groupDelta);
 
     RevCommit commitBeforeUpdate = getLatestCommitForGroup(groupUuid);
-    updateGroup(groupUuid, groupUpdate);
+    updateGroup(groupUuid, groupDelta);
     RevCommit commitAfterUpdate = getLatestCommitForGroup(groupUuid);
 
     assertThat(commitAfterUpdate).isEqualTo(commitBeforeUpdate);
@@ -987,11 +974,11 @@ public class GroupConfigTest {
     InternalGroupCreation groupCreation =
         getPrefilledGroupCreationBuilder().setGroupUUID(groupUuid).build();
 
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setName(AccountGroup.nameKey("Another name")).build();
+    GroupDelta groupDelta =
+        GroupDelta.builder().setName(AccountGroup.nameKey("Another name")).build();
 
     GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
-    groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
+    groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
     commit(groupConfig);
 
     RevCommit commitBeforeSecondCommit = getLatestCommitForGroup(groupUuid);
@@ -1005,11 +992,10 @@ public class GroupConfigTest {
   public void newCommitIsNotCreatedWhenCommittingGroupUpdateTwice() throws Exception {
     createArbitraryGroup(groupUuid);
 
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setDescription("A test group").build();
+    GroupDelta groupDelta = GroupDelta.builder().setDescription("A test group").build();
 
     GroupConfig groupConfig = GroupConfig.loadForGroup(projectName, repository, groupUuid);
-    groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
+    groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
     commit(groupConfig);
 
     RevCommit commitBeforeSecondCommit = getLatestCommitForGroup(groupUuid);
@@ -1047,11 +1033,11 @@ public class GroupConfigTest {
             .setNameKey(groupName)
             .setId(groupId)
             .build();
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta =
+        GroupDelta.builder()
             .setUpdatedOn(new Timestamp(createdOnAsSecondsSinceEpoch * 1000))
             .build();
-    createGroup(groupCreation, groupUpdate);
+    createGroup(groupCreation, groupDelta);
 
     RevCommit revCommit = getLatestCommitForGroup(groupUuid);
     assertThat(revCommit.getCommitTime()).isEqualTo(createdOnAsSecondsSinceEpoch);
@@ -1069,13 +1055,13 @@ public class GroupConfigTest {
             .setNameKey(groupName)
             .setId(groupId)
             .build();
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta =
+        GroupDelta.builder()
             .setName(AccountGroup.nameKey("Another name"))
             .setUpdatedOn(createdOn)
             .build();
     GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
-    groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
+    groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
 
     PersonIdent committerIdent =
         new PersonIdent("Jane", "Jane@gerritcodereview.com", committerTimestamp, timeZone);
@@ -1102,13 +1088,13 @@ public class GroupConfigTest {
             .setNameKey(groupName)
             .setId(groupId)
             .build();
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta =
+        GroupDelta.builder()
             .setName(AccountGroup.nameKey("Another name"))
             .setUpdatedOn(createdOn)
             .build();
     GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
-    groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
+    groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
 
     PersonIdent authorIdent =
         new PersonIdent("Jane", "Jane@gerritcodereview.com", authorTimestamp, timeZone);
@@ -1129,9 +1115,9 @@ public class GroupConfigTest {
     long testStartAsSecondsSinceEpoch = TimeUtil.nowTs().getTime() / 1000;
 
     createArbitraryGroup(groupUuid);
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setName(AccountGroup.nameKey("Another name")).build();
-    updateGroup(groupUuid, groupUpdate);
+    GroupDelta groupDelta =
+        GroupDelta.builder().setName(AccountGroup.nameKey("Another name")).build();
+    updateGroup(groupUuid, groupDelta);
 
     RevCommit revCommit = getLatestCommitForGroup(groupUuid);
     assertThat(revCommit.getCommitTime()).isAtLeast((int) testStartAsSecondsSinceEpoch);
@@ -1143,12 +1129,12 @@ public class GroupConfigTest {
     long updatedOnAsSecondsSinceEpoch = 9082093;
 
     createArbitraryGroup(groupUuid);
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta =
+        GroupDelta.builder()
             .setName(AccountGroup.nameKey("Another name"))
             .setUpdatedOn(new Timestamp(updatedOnAsSecondsSinceEpoch * 1000))
             .build();
-    updateGroup(groupUuid, groupUpdate);
+    updateGroup(groupUuid, groupDelta);
 
     RevCommit revCommit = getLatestCommitForGroup(groupUuid);
     assertThat(revCommit.getCommitTime()).isEqualTo(updatedOnAsSecondsSinceEpoch);
@@ -1161,13 +1147,13 @@ public class GroupConfigTest {
     Timestamp updatedOn = toTimestamp(LocalDate.of(2016, Month.MARCH, 11).atTime(23, 49, 11));
 
     createArbitraryGroup(groupUuid);
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta =
+        GroupDelta.builder()
             .setName(AccountGroup.nameKey("Another name"))
             .setUpdatedOn(updatedOn)
             .build();
     GroupConfig groupConfig = GroupConfig.loadForGroup(projectName, repository, groupUuid);
-    groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
+    groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
 
     PersonIdent committerIdent =
         new PersonIdent("Jane", "Jane@gerritcodereview.com", committerTimestamp, timeZone);
@@ -1189,13 +1175,13 @@ public class GroupConfigTest {
     Timestamp updatedOn = toTimestamp(LocalDate.of(2016, Month.MARCH, 11).atTime(23, 49, 11));
 
     createArbitraryGroup(groupUuid);
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta =
+        GroupDelta.builder()
             .setName(AccountGroup.nameKey("Another name"))
             .setUpdatedOn(updatedOn)
             .build();
     GroupConfig groupConfig = GroupConfig.loadForGroup(projectName, repository, groupUuid);
-    groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
+    groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
 
     PersonIdent authorIdent =
         new PersonIdent("Jane", "Jane@gerritcodereview.com", authorTimestamp, timeZone);
@@ -1225,14 +1211,13 @@ public class GroupConfigTest {
     createArbitraryGroup(groupUuid);
 
     AccountGroup.NameKey firstName = AccountGroup.nameKey("Bots");
-    InternalGroupUpdate groupUpdate1 = InternalGroupUpdate.builder().setName(firstName).build();
-    updateGroup(groupUuid, groupUpdate1);
+    GroupDelta groupDelta1 = GroupDelta.builder().setName(firstName).build();
+    updateGroup(groupUuid, groupDelta1);
 
     RevCommit commitAfterUpdate1 = getLatestCommitForGroup(groupUuid);
 
-    InternalGroupUpdate groupUpdate2 =
-        InternalGroupUpdate.builder().setName(AccountGroup.nameKey("Robots")).build();
-    updateGroup(groupUuid, groupUpdate2);
+    GroupDelta groupDelta2 = GroupDelta.builder().setName(AccountGroup.nameKey("Robots")).build();
+    updateGroup(groupUuid, groupDelta2);
 
     GroupConfig groupConfig =
         GroupConfig.loadForGroupSnapshot(
@@ -1257,9 +1242,9 @@ public class GroupConfigTest {
       throws Exception {
     InternalGroupCreation groupCreation =
         getPrefilledGroupCreationBuilder().setGroupUUID(groupUuid).build();
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setName(AccountGroup.nameKey("Another name")).build();
-    createGroup(groupCreation, groupUpdate);
+    GroupDelta groupDelta =
+        GroupDelta.builder().setName(AccountGroup.nameKey("Another name")).build();
+    createGroup(groupCreation, groupDelta);
 
     RevCommit revCommit = getLatestCommitForGroup(groupUuid);
     assertThat(revCommit.getFullMessage()).isEqualTo("Create group");
@@ -1276,13 +1261,13 @@ public class GroupConfigTest {
 
     InternalGroupCreation groupCreation =
         getPrefilledGroupCreationBuilder().setGroupUUID(groupUuid).build();
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta =
+        GroupDelta.builder()
             .setMemberModification(members -> ImmutableSet.of(account13.id(), account7.id()))
             .build();
 
     GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
-    groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
+    groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
     commit(groupConfig);
 
     RevCommit revCommit = getLatestCommitForGroup(groupUuid);
@@ -1301,13 +1286,13 @@ public class GroupConfigTest {
 
     InternalGroupCreation groupCreation =
         getPrefilledGroupCreationBuilder().setGroupUUID(groupUuid).build();
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta =
+        GroupDelta.builder()
             .setSubgroupModification(
                 subgroups -> ImmutableSet.of(group1.getGroupUUID(), group2.getGroupUUID()))
             .build();
     GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
-    groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
+    groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
     commit(groupConfig);
 
     RevCommit revCommit = getLatestCommitForGroup(groupUuid);
@@ -1326,11 +1311,11 @@ public class GroupConfigTest {
     AuditLogFormatter auditLogFormatter =
         AuditLogFormatter.createBackedBy(accounts, ImmutableSet.of(), "GerritServer1");
 
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta =
+        GroupDelta.builder()
             .setMemberModification(members -> ImmutableSet.of(account13.id(), account7.id()))
             .build();
-    updateGroup(groupUuid, groupUpdate, auditLogFormatter);
+    updateGroup(groupUuid, groupDelta, auditLogFormatter);
 
     RevCommit revCommit = getLatestCommitForGroup(groupUuid);
     assertThat(revCommit.getFullMessage())
@@ -1348,17 +1333,17 @@ public class GroupConfigTest {
     AuditLogFormatter auditLogFormatter =
         AuditLogFormatter.createBackedBy(accounts, ImmutableSet.of(), "server-id");
 
-    InternalGroupUpdate groupUpdate1 =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta1 =
+        GroupDelta.builder()
             .setMemberModification(members -> ImmutableSet.of(account13.id(), account7.id()))
             .build();
-    updateGroup(groupUuid, groupUpdate1, auditLogFormatter);
+    updateGroup(groupUuid, groupDelta1, auditLogFormatter);
 
-    InternalGroupUpdate groupUpdate2 =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta2 =
+        GroupDelta.builder()
             .setMemberModification(members -> ImmutableSet.of(account7.id()))
             .build();
-    updateGroup(groupUuid, groupUpdate2, auditLogFormatter);
+    updateGroup(groupUuid, groupDelta2, auditLogFormatter);
 
     RevCommit revCommit = getLatestCommitForGroup(groupUuid);
     assertThat(revCommit.getFullMessage()).isEqualTo("Update group\n\nRemove: John <13@server-id>");
@@ -1375,12 +1360,12 @@ public class GroupConfigTest {
     AuditLogFormatter auditLogFormatter =
         AuditLogFormatter.createBackedBy(ImmutableSet.of(), groups, "serverId");
 
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta =
+        GroupDelta.builder()
             .setSubgroupModification(
                 subgroups -> ImmutableSet.of(group1.getGroupUUID(), group2.getGroupUUID()))
             .build();
-    updateGroup(groupUuid, groupUpdate, auditLogFormatter);
+    updateGroup(groupUuid, groupDelta, auditLogFormatter);
 
     RevCommit revCommit = getLatestCommitForGroup(groupUuid);
     assertThat(revCommit.getFullMessage())
@@ -1398,18 +1383,18 @@ public class GroupConfigTest {
     AuditLogFormatter auditLogFormatter =
         AuditLogFormatter.createBackedBy(ImmutableSet.of(), groups, "serverId");
 
-    InternalGroupUpdate groupUpdate1 =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta1 =
+        GroupDelta.builder()
             .setSubgroupModification(
                 subgroups -> ImmutableSet.of(group1.getGroupUUID(), group2.getGroupUUID()))
             .build();
-    updateGroup(groupUuid, groupUpdate1, auditLogFormatter);
+    updateGroup(groupUuid, groupDelta1, auditLogFormatter);
 
-    InternalGroupUpdate groupUpdate2 =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta2 =
+        GroupDelta.builder()
             .setSubgroupModification(subgroups -> ImmutableSet.of(group1.getGroupUUID()))
             .build();
-    updateGroup(groupUuid, groupUpdate2, auditLogFormatter);
+    updateGroup(groupUuid, groupDelta2, auditLogFormatter);
 
     RevCommit revCommit = getLatestCommitForGroup(groupUuid);
     assertThat(revCommit.getFullMessage())
@@ -1420,13 +1405,11 @@ public class GroupConfigTest {
   public void commitMessageOfGroupRenameContainsFooters() throws Exception {
     createArbitraryGroup(groupUuid);
 
-    InternalGroupUpdate groupUpdate1 =
-        InternalGroupUpdate.builder().setName(AccountGroup.nameKey("Old name")).build();
-    updateGroup(groupUuid, groupUpdate1);
+    GroupDelta groupDelta1 = GroupDelta.builder().setName(AccountGroup.nameKey("Old name")).build();
+    updateGroup(groupUuid, groupDelta1);
 
-    InternalGroupUpdate groupUpdate2 =
-        InternalGroupUpdate.builder().setName(AccountGroup.nameKey("New name")).build();
-    updateGroup(groupUuid, groupUpdate2);
+    GroupDelta groupDelta2 = GroupDelta.builder().setName(AccountGroup.nameKey("New name")).build();
+    updateGroup(groupUuid, groupDelta2);
 
     RevCommit revCommit = getLatestCommitForGroup(groupUuid);
     assertThat(revCommit.getFullMessage())
@@ -1447,21 +1430,21 @@ public class GroupConfigTest {
     AuditLogFormatter auditLogFormatter =
         AuditLogFormatter.createBackedBy(accounts, groups, "serverId");
 
-    InternalGroupUpdate groupUpdate1 =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta1 =
+        GroupDelta.builder()
             .setName(AccountGroup.nameKey("Old name"))
             .setMemberModification(members -> ImmutableSet.of(account7.id()))
             .setSubgroupModification(subgroups -> ImmutableSet.of(group2.getGroupUUID()))
             .build();
-    updateGroup(groupUuid, groupUpdate1, auditLogFormatter);
+    updateGroup(groupUuid, groupDelta1, auditLogFormatter);
 
-    InternalGroupUpdate groupUpdate2 =
-        InternalGroupUpdate.builder()
+    GroupDelta groupDelta2 =
+        GroupDelta.builder()
             .setName(AccountGroup.nameKey("New name"))
             .setMemberModification(members -> ImmutableSet.of(account13.id()))
             .setSubgroupModification(subgroups -> ImmutableSet.of(group1.getGroupUUID()))
             .build();
-    updateGroup(groupUuid, groupUpdate2, auditLogFormatter);
+    updateGroup(groupUuid, groupDelta2, auditLogFormatter);
 
     RevCommit revCommit = getLatestCommitForGroup(groupUuid);
     assertThat(revCommit.getFullMessage())
@@ -1527,23 +1510,23 @@ public class GroupConfigTest {
   }
 
   private Optional<InternalGroup> createGroup(
-      InternalGroupCreation groupCreation, InternalGroupUpdate groupUpdate) throws Exception {
+      InternalGroupCreation groupCreation, GroupDelta groupDelta) throws Exception {
     GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
-    groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
+    groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
     commit(groupConfig);
     return groupConfig.getLoadedGroup();
   }
 
-  private Optional<InternalGroup> updateGroup(
-      AccountGroup.UUID uuid, InternalGroupUpdate groupUpdate) throws Exception {
-    return updateGroup(uuid, groupUpdate, auditLogFormatter);
+  private Optional<InternalGroup> updateGroup(AccountGroup.UUID uuid, GroupDelta groupDelta)
+      throws Exception {
+    return updateGroup(uuid, groupDelta, auditLogFormatter);
   }
 
   private Optional<InternalGroup> updateGroup(
-      AccountGroup.UUID uuid, InternalGroupUpdate groupUpdate, AuditLogFormatter auditLogFormatter)
+      AccountGroup.UUID uuid, GroupDelta groupDelta, AuditLogFormatter auditLogFormatter)
       throws Exception {
     GroupConfig groupConfig = GroupConfig.loadForGroup(projectName, repository, uuid);
-    groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
+    groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
     commit(groupConfig);
     return groupConfig.getLoadedGroup();
   }

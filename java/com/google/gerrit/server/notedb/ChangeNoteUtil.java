@@ -40,6 +40,7 @@ public class ChangeNoteUtil {
   static final FooterKey FOOTER_GROUPS = new FooterKey("Groups");
   static final FooterKey FOOTER_HASHTAGS = new FooterKey("Hashtags");
   static final FooterKey FOOTER_LABEL = new FooterKey("Label");
+  static final FooterKey FOOTER_COPIED_LABEL = new FooterKey("Copied-Label");
   static final FooterKey FOOTER_PATCH_SET = new FooterKey("Patch-set");
   static final FooterKey FOOTER_PATCH_SET_DESCRIPTION = new FooterKey("Patch-set-description");
   static final FooterKey FOOTER_PRIVATE = new FooterKey("Private");
@@ -53,6 +54,8 @@ public class ChangeNoteUtil {
   static final FooterKey FOOTER_WORK_IN_PROGRESS = new FooterKey("Work-in-progress");
   static final FooterKey FOOTER_REVERT_OF = new FooterKey("Revert-of");
   static final FooterKey FOOTER_CHERRY_PICK_OF = new FooterKey("Cherry-pick-of");
+
+  static final String GERRIT_USER_TEMPLATE = "Gerrit User %d";
 
   private static final Gson gson = OutputFormat.JSON_COMPACT.newGson();
 
@@ -83,6 +86,11 @@ public class ChangeNoteUtil {
         .append('>');
   }
 
+  public static String formatAccountIdentString(Account.Id account, String accountIdAsEmail) {
+    return String.format(
+        "%s <%s>", ChangeNoteUtil.getAccountIdAsUsername(account), accountIdAsEmail);
+  }
+
   /**
    * Returns a {@link PersonIdent} that contains the account ID, but not the user's name or email
    * address.
@@ -97,10 +105,10 @@ public class ChangeNoteUtil {
 
   /** Returns the string {@code "Gerrit User " + accountId}, to pseudonymize user names. */
   public static String getAccountIdAsUsername(Account.Id accountId) {
-    return "Gerrit User " + accountId.toString();
+    return String.format(GERRIT_USER_TEMPLATE, accountId.get());
   }
 
-  private String getAccountIdAsEmailAddress(Account.Id accountId) {
+  public String getAccountIdAsEmailAddress(Account.Id accountId) {
     return accountId.get() + "@" + serverId;
   }
 
@@ -145,7 +153,14 @@ public class ChangeNoteUtil {
     }
 
     if (ptr <= changeMessageStart) {
-      return Optional.empty();
+      // Return with subject, ChangeMessage is empty
+      return Optional.of(
+          CommitMessageRange.builder()
+              .subjectStart(subjectStart)
+              .subjectEnd(subjectEnd)
+              .changeMessageStart(changeMessageStart)
+              .changeMessageEnd(changeMessageStart)
+              .build());
     }
 
     CommitMessageRange range =
@@ -170,6 +185,10 @@ public class ChangeNoteUtil {
 
     public abstract int changeMessageEnd();
 
+    public boolean hasChangeMessage() {
+      return changeMessageStart() < changeMessageEnd();
+    }
+
     public static Builder builder() {
       return new AutoValue_ChangeNoteUtil_CommitMessageRange.Builder();
     }
@@ -190,7 +209,7 @@ public class ChangeNoteUtil {
   }
 
   /** Helper class for JSON serialization. Timestamp is taken from the commit. */
-  private static class AttentionStatusInNoteDb {
+  public static class AttentionStatusInNoteDb {
 
     final String personIdent;
     final AttentionSetUpdate.Operation operation;

@@ -18,6 +18,7 @@ import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.extensions.registration.RegistrationHandle;
+import com.google.gerrit.server.cancellation.RequestStateContext;
 import com.google.gerrit.server.logging.LoggingContext;
 import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.PerformanceLogRecord;
@@ -56,6 +57,8 @@ public abstract class Timer2<F1, F2> implements RegistrationHandle {
     }
   }
 
+  private boolean suppressLogging;
+
   protected final String name;
   protected final Field<F1> field1;
   protected final Field<F2> field2;
@@ -74,6 +77,7 @@ public abstract class Timer2<F1, F2> implements RegistrationHandle {
    * @return timer context
    */
   public Context<F1, F2> start(F1 fieldValue1, F2 fieldValue2) {
+    RequestStateContext.abortIfCancelled();
     return new Context<>(this, fieldValue1, fieldValue2);
   }
 
@@ -93,13 +97,22 @@ public abstract class Timer2<F1, F2> implements RegistrationHandle {
     field2.metadataMapper().accept(metadataBuilder, fieldValue2);
     Metadata metadata = metadataBuilder.build();
 
-    LoggingContext.getInstance()
-        .addPerformanceLogRecord(() -> PerformanceLogRecord.create(name, durationMs, metadata));
+    if (!suppressLogging) {
+      LoggingContext.getInstance()
+          .addPerformanceLogRecord(() -> PerformanceLogRecord.create(name, durationMs, metadata));
+      logger.atFinest().log(
+          "%s (%s = %s, %s = %s) took %dms",
+          name, field1.name(), fieldValue1, field2.name(), fieldValue2, durationMs);
+    }
 
-    logger.atFinest().log(
-        "%s (%s = %s, %s = %s) took %dms",
-        name, field1.name(), fieldValue1, field2.name(), fieldValue2, durationMs);
     doRecord(fieldValue1, fieldValue2, value, unit);
+    RequestStateContext.abortIfCancelled();
+  }
+
+  /** Suppress logging (debug log and performance log) when values are recorded. */
+  public final Timer2<F1, F2> suppressLogging() {
+    this.suppressLogging = true;
+    return this;
   }
 
   /**

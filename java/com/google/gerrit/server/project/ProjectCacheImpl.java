@@ -51,9 +51,9 @@ import com.google.gerrit.server.cache.serialize.CacheSerializer;
 import com.google.gerrit.server.cache.serialize.ObjectIdConverter;
 import com.google.gerrit.server.cache.serialize.ProtobufSerializer;
 import com.google.gerrit.server.cache.serialize.entities.CachedProjectConfigSerializer;
+import com.google.gerrit.server.config.AllProjectsConfigProvider;
 import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.server.config.AllUsersName;
-import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
@@ -78,10 +78,15 @@ import org.eclipse.jgit.errors.RepositoryNotFoundException;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
-import org.eclipse.jgit.storage.file.FileBasedConfig;
-import org.eclipse.jgit.util.FS;
+import org.eclipse.jgit.lib.StoredConfig;
 
-/** Cache of project information, including access rights. */
+/**
+ * Cache of project information, including access rights.
+ *
+ * <p>The data of a project is the project's project.config in refs/meta/config parsed out as an
+ * immutable value. It's keyed purely by the refs/meta/config SHA-1. We also cache the same value
+ * keyed by name. The latter mapping can become outdated, so data must be evicted explicitly.
+ */
 @Singleton
 public class ProjectCacheImpl implements ProjectCache {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -303,27 +308,22 @@ public class ProjectCacheImpl implements ProjectCache {
   /**
    * Returns a {@code MurMur128} hash of the contents of {@code etc/All-Projects-project.config}.
    */
-  public static byte[] allProjectsFileProjectConfigHash(
-      AllProjectsName allProjectsName, SitePaths sitePaths) {
+  public static byte[] allProjectsFileProjectConfigHash(Optional<StoredConfig> allProjectsConfig) {
     // Hash the contents of All-Projects-project.config
     // This is a way for administrators to orchestrate project.config changes across many Gerrit
     // instances.
     // When this file changes, we need to make sure we disregard persistently cached project
     // state.
-    FileBasedConfig fileBasedConfig =
-        new FileBasedConfig(
-            sitePaths
-                .etc_dir
-                .resolve(allProjectsName.get())
-                .resolve(ProjectConfig.PROJECT_CONFIG)
-                .toFile(),
-            FS.DETECTED);
+    if (!allProjectsConfig.isPresent()) {
+      // If the project.config file is not present, this is equal to an empty config file:
+      return Hashing.murmur3_128().hashString("", UTF_8).asBytes();
+    }
     try {
-      fileBasedConfig.load();
+      allProjectsConfig.get().load();
     } catch (IOException | ConfigInvalidException e) {
       throw new IllegalStateException(e);
     }
-    return Hashing.murmur3_128().hashString(fileBasedConfig.toText(), UTF_8).asBytes();
+    return Hashing.murmur3_128().hashString(allProjectsConfig.get().toText(), UTF_8).asBytes();
   }
 
   @Singleton
@@ -333,7 +333,7 @@ public class ProjectCacheImpl implements ProjectCache {
     private final ListeningExecutorService cacheRefreshExecutor;
     private final Counter2<String, Boolean> refreshCounter;
     private final AllProjectsName allProjectsName;
-    private final SitePaths sitePaths;
+    private final AllProjectsConfigProvider allProjectsConfigProvider;
 
     @Inject
     InMemoryLoader(
@@ -343,18 +343,25 @@ public class ProjectCacheImpl implements ProjectCache {
         @CacheRefreshExecutor ListeningExecutorService cacheRefreshExecutor,
         MetricMaker metricMaker,
         AllProjectsName allProjectsName,
-        SitePaths sitePaths) {
+        AllProjectsConfigProvider allProjectsConfigProvider) {
       this.persistedCache = persistedCache;
       this.repoManager = repoManager;
       this.cacheRefreshExecutor = cacheRefreshExecutor;
       refreshCounter =
           metricMaker.newCounter(
               "caches/refresh_count",
-              new Description("count").setRate(),
-              Field.ofString("cache", Metadata.Builder::className).build(),
-              Field.ofBoolean("outdated", Metadata.Builder::outdated).build());
+              new Description(
+                      "The number of refreshes per cache with an indicator if a reload was"
+                          + " necessary.")
+                  .setRate(),
+              Field.ofString("cache", Metadata.Builder::className)
+                  .description("The name of the cache.")
+                  .build(),
+              Field.ofBoolean("outdated", Metadata.Builder::outdated)
+                  .description("Whether the cache entry was outdated on reload.")
+                  .build());
       this.allProjectsName = allProjectsName;
-      this.sitePaths = sitePaths;
+      this.allProjectsConfigProvider = allProjectsConfigProvider;
     }
 
     @Override
@@ -368,7 +375,8 @@ public class ProjectCacheImpl implements ProjectCache {
             Cache.ProjectCacheKeyProto.newBuilder().setProject(key.get());
         Ref configRef = git.exactRef(RefNames.REFS_CONFIG);
         if (key.get().equals(allProjectsName.get())) {
-          byte[] fileHash = allProjectsFileProjectConfigHash(allProjectsName, sitePaths);
+          Optional<StoredConfig> allProjectsConfig = allProjectsConfigProvider.get(allProjectsName);
+          byte[] fileHash = allProjectsFileProjectConfigHash(allProjectsConfig);
           keyProto.setGlobalConfigRevision(ByteString.copyFrom(fileHash));
         }
         if (configRef != null) {

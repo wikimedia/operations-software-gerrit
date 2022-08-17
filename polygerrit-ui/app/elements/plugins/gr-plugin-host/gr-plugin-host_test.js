@@ -30,20 +30,21 @@ suite('gr-plugin-host tests', () => {
     sinon.stub(document.body, 'appendChild');
   });
 
-  test('load plugins should be called', () => {
+  test('load plugins should be called', async () => {
     sinon.stub(getPluginLoader(), 'loadPlugins');
     element.config = {
       plugin: {
         js_resource_paths: ['plugins/42', 'plugins/foo/bar', 'plugins/baz'],
       },
     };
+    await flush();
     assert.isTrue(getPluginLoader().loadPlugins.calledOnce);
     assert.isTrue(getPluginLoader().loadPlugins.calledWith([
       'plugins/42', 'plugins/foo/bar', 'plugins/baz',
     ]));
   });
 
-  test('theme plugins should be loaded if enabled', () => {
+  test('theme plugins should be loaded if enabled', async () => {
     sinon.stub(getPluginLoader(), 'loadPlugins');
     element.config = {
       default_theme: 'gerrit-theme.js',
@@ -51,23 +52,11 @@ suite('gr-plugin-host tests', () => {
         js_resource_paths: ['plugins/42', 'plugins/foo/bar', 'plugins/baz'],
       },
     };
+    await flush();
     assert.isTrue(getPluginLoader().loadPlugins.calledOnce);
     assert.isTrue(getPluginLoader().loadPlugins.calledWith([
       'gerrit-theme.js', 'plugins/42', 'plugins/foo/bar', 'plugins/baz',
     ]));
-  });
-
-  test('skip theme if preloaded', () => {
-    sinon.stub(getPluginLoader(), 'isPluginPreloaded')
-        .withArgs('preloaded:gerrit-theme')
-        .returns(true);
-    sinon.stub(getPluginLoader(), 'loadPlugins');
-    element.config = {
-      default_theme: '/oof',
-      plugin: {},
-    };
-    assert.isTrue(getPluginLoader().loadPlugins.calledOnce);
-    assert.isTrue(getPluginLoader().loadPlugins.calledWith([]));
   });
 });
 

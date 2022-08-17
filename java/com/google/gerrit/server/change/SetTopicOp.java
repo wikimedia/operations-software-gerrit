@@ -17,14 +17,13 @@ package com.google.gerrit.server.change;
 import com.google.common.base.Strings;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.extensions.events.TopicEdited;
 import com.google.gerrit.server.notedb.ChangeUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.Context;
+import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.gerrit.server.validators.ValidationException;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
@@ -74,16 +73,14 @@ public class SetTopicOp implements BatchUpdateOp {
     } catch (ValidationException ex) {
       throw new BadRequestException(ex.getMessage());
     }
-    ChangeMessage cmsg =
-        ChangeMessagesUtil.newMessage(ctx, summary, ChangeMessagesUtil.TAG_SET_TOPIC);
-    cmUtil.addChangeMessage(update, cmsg);
+    cmUtil.setChangeMessage(ctx, summary, ChangeMessagesUtil.TAG_SET_TOPIC);
     return true;
   }
 
   @Override
-  public void postUpdate(Context ctx) {
+  public void postUpdate(PostUpdateContext ctx) {
     if (change != null) {
-      topicEdited.fire(change, ctx.getAccount(), oldTopicName, ctx.getWhen());
+      topicEdited.fire(ctx.getChangeData(change), ctx.getAccount(), oldTopicName, ctx.getWhen());
     }
   }
 }

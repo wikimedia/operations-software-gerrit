@@ -28,6 +28,7 @@ import com.github.rholder.retry.WaitStrategies;
 import com.github.rholder.retry.WaitStrategy;
 import com.google.auto.value.AutoValue;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Throwables;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.UsedAt;
@@ -120,7 +121,9 @@ public class RetryHelper {
     @Inject
     Metrics(MetricMaker metricMaker) {
       Field<String> actionTypeField =
-          Field.ofString("action_type", Metadata.Builder::actionType).build();
+          Field.ofString("action_type", Metadata.Builder::actionType)
+              .description("The type of the action that was retried.")
+              .build();
       Field<String> operationNameField =
           Field.ofString("operation_name", Metadata.Builder::operationName)
               .description("The name of the operation that was retried.")
@@ -438,12 +441,12 @@ public class RetryHelper {
    * @param opts options for retrying the action on failure
    * @param exceptionPredicate predicate to control on which exception the action should be retried
    * @return the result of executing the action
-   * @throws Throwable any error or exception that made the action fail, callers are expected to
+   * @throws Exception any error or exception that made the action fail, callers are expected to
    *     catch and inspect this Throwable to decide carefully whether it should be re-thrown
    */
   <T> T execute(
       String actionType, Action<T> action, Options opts, Predicate<Throwable> exceptionPredicate)
-      throws Throwable {
+      throws Exception {
     MetricListener listener = new MetricListener();
     try (TraceContext traceContext = TraceContext.open()) {
       RetryerBuilder<T> retryerBuilder =
@@ -478,7 +481,7 @@ public class RetryHelper {
                   }
 
                   String cause = formatCause(t);
-                  if (!traceContext.isTracing()) {
+                  if (!TraceContext.isTracing()) {
                     String traceId = "retry-on-failure-" + new RequestId();
                     traceContext.addTag(RequestId.Type.TRACE_ID, traceId).forceLogging();
                     logger.atWarning().withCause(t).log(
@@ -547,8 +550,8 @@ public class RetryHelper {
    * @param retryer the retryer
    * @param listener metric listener
    * @return the result of executing the action
-   * @throws Throwable any error or exception that made the action fail, callers are expected to
-   *     catch and inspect this Throwable to decide carefully whether it should be re-thrown
+   * @throws Exception any exception that made the action fail, callers are expected to catch and
+   *     inspect this exception to decide carefully whether it should be re-thrown
    */
   private <T> T executeWithTimeoutCount(
       String actionType,
@@ -556,7 +559,7 @@ public class RetryHelper {
       Options opts,
       Retryer<T> retryer,
       MetricListener listener)
-      throws Throwable {
+      throws Exception {
     try {
       return retryer.call(action::call);
     } catch (ExecutionException | RetryException e) {
@@ -567,7 +570,8 @@ public class RetryHelper {
             listener.getOriginalCause().map(this::formatCause).orElse("_unknown"));
       }
       if (e.getCause() != null) {
-        throw e.getCause();
+        Throwables.throwIfUnchecked(e.getCause());
+        Throwables.throwIfInstanceOf(e.getCause(), Exception.class);
       }
       throw e;
     }

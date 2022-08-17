@@ -14,10 +14,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import '../../../styles/gr-page-nav-styles';
-import {PolymerElement} from '@polymer/polymer/polymer-element';
-import {htmlTemplate} from './gr-settings-menu-item_html';
-import {property, customElement} from '@polymer/decorators';
+import {pageNavStyles} from '../../../styles/gr-page-nav-styles';
+import {sharedStyles} from '../../../styles/shared-styles';
+import {LitElement, html} from 'lit';
+import {customElement, property} from 'lit/decorators';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -26,14 +26,21 @@ declare global {
 }
 
 @customElement('gr-settings-menu-item')
-class GrSettingsMenuItem extends PolymerElement {
-  static get template() {
-    return htmlTemplate;
-  }
-
+export class GrSettingsMenuItem extends LitElement {
   @property({type: String})
   href?: string;
 
   @property({type: String})
-  title = '';
+  override title = '';
+
+  static override get styles() {
+    return [sharedStyles, pageNavStyles];
+  }
+
+  override render() {
+    const href = this.href ?? '';
+    return html` <div class="navStyles">
+      <li><a href="${href}">${this.title}</a></li>
+    </div>`;
+  }
 }

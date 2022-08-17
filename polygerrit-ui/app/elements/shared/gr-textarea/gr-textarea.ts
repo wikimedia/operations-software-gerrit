@@ -17,18 +17,21 @@
 import '../gr-autocomplete-dropdown/gr-autocomplete-dropdown';
 import '../gr-cursor-manager/gr-cursor-manager';
 import '../gr-overlay/gr-overlay';
-import '@polymer/iron-a11y-keys-behavior/iron-a11y-keys-behavior';
 import '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
 import '../../../styles/shared-styles';
 import {flush} from '@polymer/polymer/lib/legacy/polymer.dom';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-textarea_html';
-import {KeyboardShortcutMixin} from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
 import {appContext} from '../../../services/app-context';
 import {customElement, property} from '@polymer/decorators';
 import {ReportingService} from '../../../services/gr-reporting/gr-reporting';
 import {IronAutogrowTextareaElement} from '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
-import {GrAutocompleteDropdown} from '../gr-autocomplete-dropdown/gr-autocomplete-dropdown';
+import {
+  GrAutocompleteDropdown,
+  Item,
+  ItemSelectedEvent,
+} from '../gr-autocomplete-dropdown/gr-autocomplete-dropdown';
+import {addShortcut, Key} from '../../../utils/dom-util';
 
 const MAX_ITEMS_DROPDOWN = 10;
 
@@ -56,11 +59,8 @@ const ALL_SUGGESTIONS: EmojiSuggestion[] = [
   {value: '😜', match: 'winking tongue ;)'},
 ];
 
-interface EmojiSuggestion {
-  value: string;
+interface EmojiSuggestion extends Item {
   match: string;
-  dataValue?: string;
-  text?: string;
 }
 
 interface ValueChangeEvent {
@@ -76,8 +76,15 @@ export interface GrTextarea {
   };
 }
 
+declare global {
+  interface HTMLElementEventMap {
+    'item-selected': CustomEvent<ItemSelectedEvent>;
+    'bind-value-changed': CustomEvent<ValueChangeEvent>;
+  }
+}
+
 @customElement('gr-textarea')
-export class GrTextarea extends KeyboardShortcutMixin(PolymerElement) {
+export class GrTextarea extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
@@ -85,8 +92,8 @@ export class GrTextarea extends KeyboardShortcutMixin(PolymerElement) {
   /**
    * @event bind-value-changed
    */
-  @property({type: Boolean})
-  autocomplete?: boolean;
+  @property({type: String})
+  autocomplete?: string;
 
   @property({type: Boolean})
   disabled?: boolean;
@@ -101,7 +108,7 @@ export class GrTextarea extends KeyboardShortcutMixin(PolymerElement) {
   placeholder?: string;
 
   @property({type: String, notify: true, observer: '_handleTextChanged'})
-  text?: string;
+  text = '';
 
   @property({type: Boolean})
   hideBorder = false;
@@ -122,13 +129,13 @@ export class GrTextarea extends KeyboardShortcutMixin(PolymerElement) {
   _currentSearchString?: string;
 
   @property({type: Boolean})
-  _hideAutocomplete = true;
+  _hideEmojiAutocomplete = true;
 
   @property({type: Number})
-  _index?: number;
+  _index: number | null = null;
 
   @property({type: Array})
-  _suggestions?: EmojiSuggestion[];
+  _suggestions: EmojiSuggestion[] = [];
 
   @property({type: Number})
   readonly _verticalOffset = 20;
@@ -138,23 +145,40 @@ export class GrTextarea extends KeyboardShortcutMixin(PolymerElement) {
 
   disableEnterKeyForSelectingEmoji = false;
 
-  get keyBindings() {
-    return {
-      esc: '_handleEscKey',
-      tab: '_handleEnterByKey',
-      enter: '_handleEnterByKey',
-      up: '_handleUpKey',
-      down: '_handleDownKey',
-    };
-  }
+  /** Called in disconnectedCallback. */
+  private cleanups: (() => void)[] = [];
 
   constructor() {
     super();
     this.reporting = appContext.reportingService;
   }
 
-  /** @override */
-  ready() {
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    for (const cleanup of this.cleanups) cleanup();
+    this.cleanups = [];
+  }
+
+  override connectedCallback() {
+    super.connectedCallback();
+    this.cleanups.push(
+      addShortcut(this, {key: Key.UP}, e => this._handleUpKey(e))
+    );
+    this.cleanups.push(
+      addShortcut(this, {key: Key.DOWN}, e => this._handleDownKey(e))
+    );
+    this.cleanups.push(
+      addShortcut(this, {key: Key.TAB}, e => this._handleTabKey(e))
+    );
+    this.cleanups.push(
+      addShortcut(this, {key: Key.ENTER}, e => this._handleEnterByKey(e))
+    );
+    this.cleanups.push(
+      addShortcut(this, {key: Key.ESC}, e => this._handleEscKey(e))
+    );
+  }
+
+  override ready() {
     super.ready();
     if (this.monospace) {
       this.classList.add('monospace');
@@ -186,7 +210,7 @@ export class GrTextarea extends KeyboardShortcutMixin(PolymerElement) {
   }
 
   _handleEscKey(e: KeyboardEvent) {
-    if (this._hideAutocomplete) {
+    if (this._hideEmojiAutocomplete) {
       return;
     }
     e.preventDefault();
@@ -195,7 +219,7 @@ export class GrTextarea extends KeyboardShortcutMixin(PolymerElement) {
   }
 
   _handleUpKey(e: KeyboardEvent) {
-    if (this._hideAutocomplete) {
+    if (this._hideEmojiAutocomplete) {
       return;
     }
     e.preventDefault();
@@ -206,7 +230,7 @@ export class GrTextarea extends KeyboardShortcutMixin(PolymerElement) {
   }
 
   _handleDownKey(e: KeyboardEvent) {
-    if (this._hideAutocomplete) {
+    if (this._hideEmojiAutocomplete) {
       return;
     }
     e.preventDefault();
@@ -216,8 +240,10 @@ export class GrTextarea extends KeyboardShortcutMixin(PolymerElement) {
     this.disableEnterKeyForSelectingEmoji = false;
   }
 
-  _handleEnterByKey(e: KeyboardEvent) {
-    if (this._hideAutocomplete || this.disableEnterKeyForSelectingEmoji) {
+  _handleTabKey(e: KeyboardEvent) {
+    // Tab should have normal behavior if the picker is closed or if the user
+    // has only typed ':'.
+    if (this._hideEmojiAutocomplete || this.disableEnterKeyForSelectingEmoji) {
       return;
     }
     e.preventDefault();
@@ -225,8 +251,23 @@ export class GrTextarea extends KeyboardShortcutMixin(PolymerElement) {
     this._setEmoji(this.$.emojiSuggestions.getCurrentText());
   }
 
-  _handleEmojiSelect(e: CustomEvent) {
-    this._setEmoji(e.detail.selected.dataset['value']);
+  _handleEnterByKey(e: KeyboardEvent) {
+    // Enter should have newline behavior if the picker is closed or if the user
+    // has only typed ':'. Also make sure that shortcuts aren't clobbered.
+    if (this._hideEmojiAutocomplete || this.disableEnterKeyForSelectingEmoji) {
+      this.indent(e);
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+    this._setEmoji(this.$.emojiSuggestions.getCurrentText());
+  }
+
+  _handleEmojiSelect(e: CustomEvent<ItemSelectedEvent>) {
+    if (e.detail.selected?.dataset['value']) {
+      this._setEmoji(e.detail.selected?.dataset['value']);
+    }
   }
 
   _setEmoji(text: string) {
@@ -257,7 +298,7 @@ export class GrTextarea extends KeyboardShortcutMixin(PolymerElement) {
    * this allows the dropdown to appear near where the user is typing.
    */
   _updateCaratPosition() {
-    this._hideAutocomplete = false;
+    this._hideEmojiAutocomplete = false;
     if (typeof this.$.textarea.value === 'string') {
       this.$.hiddenText.textContent = this.$.textarea.value.substr(
         0,
@@ -269,15 +310,6 @@ export class GrTextarea extends KeyboardShortcutMixin(PolymerElement) {
     this.$.hiddenText.appendChild(caratSpan);
     this.$.emojiSuggestions.positionTarget = caratSpan;
     this._openEmojiDropdown();
-  }
-
-  _getFontSize() {
-    const fontSizePx = getComputedStyle(this).fontSize || '12px';
-    return Number(fontSizePx.substr(0, fontSizePx.length - 2));
-  }
-
-  _getScrollTop() {
-    return document.body.scrollTop;
   }
 
   /**
@@ -361,7 +393,7 @@ export class GrTextarea extends KeyboardShortcutMixin(PolymerElement) {
     const suggestions = [];
     for (const suggestion of matchedSuggestions) {
       suggestion.dataValue = suggestion.value;
-      suggestion.text = suggestion.value + ' ' + suggestion.match;
+      suggestion.text = `${suggestion.value} ${suggestion.match}`;
       suggestions.push(suggestion);
     }
     this.set('_suggestions', suggestions);
@@ -384,7 +416,7 @@ export class GrTextarea extends KeyboardShortcutMixin(PolymerElement) {
     // hide and reset the autocomplete dropdown.
     flush();
     this._currentSearchString = '';
-    this._hideAutocomplete = true;
+    this._hideEmojiAutocomplete = true;
     this.closeDropdown();
     this._colonIndex = null;
     this.$.textarea.textarea.focus();
@@ -394,6 +426,34 @@ export class GrTextarea extends KeyboardShortcutMixin(PolymerElement) {
     this.dispatchEvent(
       new CustomEvent('value-changed', {detail: {value: text}})
     );
+  }
+
+  private indent(e: KeyboardEvent): void {
+    if (!document.queryCommandSupported('insertText')) {
+      return;
+    }
+    // When nothing is selected, selectionStart is the caret position. We want
+    // the indentation level of the current line, not the end of the text which
+    // may be different.
+    const currentLine = this.$.textarea.textarea.value
+      .substr(0, this.$.textarea.selectionStart)
+      .split('\n')
+      .pop();
+    const currentLineIndentation = currentLine?.match(/^\s*/)?.[0];
+    if (!currentLineIndentation) {
+      return;
+    }
+
+    // Stops the normal newline being added afterwards since we are adding it
+    // ourselves.
+    e.preventDefault();
+
+    // MDN says that execCommand is deprecated, but the replacements are still
+    // WIP (Input Events Level 2). The queryCommandSupported check should ensure
+    // that entering newlines will work even if this indent feature breaks.
+    // Directly replacing the text is possible, but would destroy the undo/redo
+    // queue.
+    document.execCommand('insertText', false, '\n' + currentLineIndentation);
   }
 }
 

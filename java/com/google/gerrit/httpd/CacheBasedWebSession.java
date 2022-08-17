@@ -22,8 +22,6 @@ import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.UsedAt;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.restapi.BadRequestException;
-import com.google.gerrit.httpd.WebSessionManager.Key;
-import com.google.gerrit.httpd.WebSessionManager.Val;
 import com.google.gerrit.httpd.restapi.ParameterParser;
 import com.google.gerrit.server.AccessPath;
 import com.google.gerrit.server.AnonymousUser;
@@ -35,15 +33,13 @@ import com.google.gerrit.server.account.AuthResult;
 import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.config.AuthConfig;
 import com.google.inject.Provider;
-import com.google.inject.servlet.RequestScoped;
 import java.util.EnumSet;
 import javax.servlet.http.Cookie;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import org.eclipse.jgit.http.server.GitSmartHttpTools;
 
-@RequestScoped
-public abstract class CacheBasedWebSession implements WebSession {
+public abstract class CacheBasedWebSession extends WebSession {
   @VisibleForTesting public static final String ACCOUNT_COOKIE = "GerritAccount";
 
   @UsedAt(UsedAt.Project.PLUGIN_WEBSESSION_FLATFILE)
@@ -59,8 +55,8 @@ public abstract class CacheBasedWebSession implements WebSession {
   private final AccountCache byIdCache;
   private Cookie outCookie;
 
-  private Key key;
-  private Val val;
+  private WebSessionManager.Key key;
+  private WebSessionManager.Val val;
   private CurrentUser user;
 
   protected CacheBasedWebSession(
@@ -104,7 +100,7 @@ public abstract class CacheBasedWebSession implements WebSession {
   }
 
   private void authFromCookie(String cookie) {
-    key = new Key(cookie);
+    key = new WebSessionManager.Key(cookie);
     val = manager.get(key);
     String token = request.getHeader(XsrfConstants.XSRF_HEADER_NAME);
     if (val != null && token != null && token.equals(val.getAuth())) {
@@ -113,7 +109,7 @@ public abstract class CacheBasedWebSession implements WebSession {
   }
 
   private void authFromQueryParameter(String accessToken) {
-    key = new Key(accessToken);
+    key = new WebSessionManager.Key(accessToken);
     val = manager.get(key);
     if (val != null) {
       okPaths.add(AccessPath.REST_API);
@@ -207,8 +203,8 @@ public abstract class CacheBasedWebSession implements WebSession {
   /** Set the user account for this current request only. */
   @Override
   public void setUserAccountId(Account.Id id) {
-    key = new Key("id:" + id);
-    val = new Val(id, 0, false, null, 0, null, null);
+    key = new WebSessionManager.Key("id:" + id);
+    val = new WebSessionManager.Val(id, 0, false, null, 0, null, null);
     user = identified.runAs(id, user, PropertyMap.EMPTY);
   }
 

@@ -1,0 +1,279 @@
+/**
+ * @license
+ * Copyright (C) 2015 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import '../../../test/common-test-setup-karma';
+import './gr-search-bar';
+import '../../../scripts/util';
+import {GrSearchBar} from './gr-search-bar';
+import {stubRestApi, mockPromise} from '../../../test/test-utils';
+import {_testOnly_clearDocsBaseUrlCache} from '../../../utils/url-util';
+import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
+import {
+  createChangeConfig,
+  createGerritInfo,
+  createServerInfo,
+} from '../../../test/test-data-generators';
+import {MergeabilityComputationBehavior} from '../../../constants/constants';
+
+const basicFixture = fixtureFromElement('gr-search-bar');
+
+suite('gr-search-bar tests', () => {
+  let element: GrSearchBar;
+
+  setup(async () => {
+    element = basicFixture.instantiate();
+    await flush();
+  });
+
+  test('value is propagated to _inputVal', () => {
+    element.value = 'foo';
+    assert.equal(element._inputVal, 'foo');
+  });
+
+  const getActiveElement = () =>
+    document.activeElement!.shadowRoot
+      ? document.activeElement!.shadowRoot.activeElement
+      : document.activeElement;
+
+  test('enter in search input fires event', async () => {
+    const promise = mockPromise();
+    element.addEventListener('handle-search', () => {
+      assert.notEqual(getActiveElement(), element.$.searchInput);
+      promise.resolve();
+    });
+    element.value = 'test';
+    MockInteractions.pressAndReleaseKeyOn(
+      element.$.searchInput.$.input,
+      13,
+      null,
+      'enter'
+    );
+    await promise;
+  });
+
+  test('input blurred after commit', () => {
+    const blurSpy = sinon.spy(element.$.searchInput.$.input, 'blur');
+    element.$.searchInput.text = 'fate/stay';
+    MockInteractions.pressAndReleaseKeyOn(
+      element.$.searchInput.$.input,
+      13,
+      null,
+      'enter'
+    );
+    assert.isTrue(blurSpy.called);
+  });
+
+  test('empty search query does not trigger nav', () => {
+    const searchSpy = sinon.spy();
+    element.addEventListener('handle-search', searchSpy);
+    element.value = '';
+    MockInteractions.pressAndReleaseKeyOn(
+      element.$.searchInput.$.input,
+      13,
+      null,
+      'enter'
+    );
+    assert.isFalse(searchSpy.called);
+  });
+
+  test('Predefined query op with no predication doesnt trigger nav', () => {
+    const searchSpy = sinon.spy();
+    element.addEventListener('handle-search', searchSpy);
+    element.value = 'added:';
+    MockInteractions.pressAndReleaseKeyOn(
+      element.$.searchInput.$.input,
+      13,
+      null,
+      'enter'
+    );
+    assert.isFalse(searchSpy.called);
+  });
+
+  test('predefined predicate query triggers nav', () => {
+    const searchSpy = sinon.spy();
+    element.addEventListener('handle-search', searchSpy);
+    element.value = 'age:1week';
+    MockInteractions.pressAndReleaseKeyOn(
+      element.$.searchInput.$.input,
+      13,
+      null,
+      'enter'
+    );
+    assert.isTrue(searchSpy.called);
+  });
+
+  test('undefined predicate query triggers nav', () => {
+    const searchSpy = sinon.spy();
+    element.addEventListener('handle-search', searchSpy);
+    element.value = 'random:1week';
+    MockInteractions.pressAndReleaseKeyOn(
+      element.$.searchInput.$.input,
+      13,
+      null,
+      'enter'
+    );
+    assert.isTrue(searchSpy.called);
+  });
+
+  test('empty undefined predicate query triggers nav', () => {
+    const searchSpy = sinon.spy();
+    element.addEventListener('handle-search', searchSpy);
+    element.value = 'random:';
+    MockInteractions.pressAndReleaseKeyOn(
+      element.$.searchInput.$.input,
+      13,
+      null,
+      'enter'
+    );
+    assert.isTrue(searchSpy.called);
+  });
+
+  test('keyboard shortcuts', () => {
+    const focusSpy = sinon.spy(element.$.searchInput, 'focus');
+    const selectAllSpy = sinon.spy(element.$.searchInput, 'selectAll');
+    MockInteractions.pressAndReleaseKeyOn(document.body, 191, null, '/');
+    assert.isTrue(focusSpy.called);
+    assert.isTrue(selectAllSpy.called);
+  });
+
+  suite('_getSearchSuggestions', () => {
+    setup(() => {
+      // Ensure that config.change.mergeability_computation_behavior is not set.
+      element = basicFixture.instantiate();
+    });
+
+    test('Autocompletes accounts', () => {
+      sinon
+        .stub(element, 'accountSuggestions')
+        .callsFake(() => Promise.resolve([{text: 'owner:fred@goog.co'}]));
+      return element._getSearchSuggestions('owner:fr').then(s => {
+        assert.equal(s[0].value, 'owner:fred@goog.co');
+      });
+    });
+
+    test('Autocompletes groups', async () => {
+      sinon
+        .stub(element, 'groupSuggestions')
+        .callsFake(() =>
+          Promise.resolve([
+            {text: 'ownerin:Polygerrit'},
+            {text: 'ownerin:gerrit'},
+          ])
+        );
+      const s = await element._getSearchSuggestions('ownerin:pol');
+      assert.equal(s[0].value, 'ownerin:Polygerrit');
+    });
+
+    test('Autocompletes projects', async () => {
+      sinon
+        .stub(element, 'projectSuggestions')
+        .callsFake(() =>
+          Promise.resolve([
+            {text: 'project:Polygerrit'},
+            {text: 'project:gerrit'},
+            {text: 'project:gerrittest'},
+          ])
+        );
+      const s = await element._getSearchSuggestions('project:pol');
+      assert.equal(s[0].value, 'project:Polygerrit');
+    });
+
+    test('Autocompletes simple searches', async () => {
+      const s = await element._getSearchSuggestions('is:o');
+      assert.equal(s[0].name, 'is:open');
+      assert.equal(s[0].value, 'is:open');
+      assert.equal(s[1].name, 'is:owner');
+      assert.equal(s[1].value, 'is:owner');
+    });
+
+    test('Does not autocomplete with no match', async () => {
+      const s = await element._getSearchSuggestions('asdasdasdasd');
+      assert.equal(s.length, 0);
+    });
+
+    test('Autocompletes without is:mergable when disabled', async () => {
+      const s = await element._getSearchSuggestions('is:mergeab');
+      assert.isEmpty(s);
+    });
+  });
+
+  [
+    'API_REF_UPDATED_AND_CHANGE_REINDEX',
+    'REF_UPDATED_AND_CHANGE_REINDEX',
+  ].forEach(mergeability => {
+    suite(`mergeability as ${mergeability}`, () => {
+      setup(async () => {
+        stubRestApi('getConfig').returns(
+          Promise.resolve({
+            ...createServerInfo(),
+            change: {
+              ...createChangeConfig(),
+              mergeability_computation_behavior:
+                mergeability as MergeabilityComputationBehavior,
+            },
+          })
+        );
+
+        element = basicFixture.instantiate();
+        await flush();
+      });
+
+      test('Autocompltes with is:mergable when enabled', async () => {
+        const s = await element._getSearchSuggestions('is:mergeab');
+        assert.equal(s.length, 2);
+        assert.equal(s[0].name, 'is:mergeable');
+        assert.equal(s[0].value, 'is:mergeable');
+        assert.equal(s[1].name, '-is:mergeable');
+        assert.equal(s[1].value, '-is:mergeable');
+      });
+    });
+  });
+
+  suite('doc url', () => {
+    setup(async () => {
+      stubRestApi('getConfig').returns(
+        Promise.resolve({
+          ...createServerInfo(),
+          gerrit: {
+            ...createGerritInfo(),
+            doc_url: 'https://doc.com/',
+          },
+        })
+      );
+
+      _testOnly_clearDocsBaseUrlCache();
+      element = basicFixture.instantiate();
+      await flush();
+    });
+
+    test('compute help doc url with correct path', () => {
+      assert.equal(element.docBaseUrl, 'https://doc.com/');
+      assert.equal(
+        element._computeHelpDocLink(element.docBaseUrl),
+        'https://doc.com/user-search.html'
+      );
+    });
+
+    test('compute help doc url fallback to gerrit url', () => {
+      assert.equal(
+        element._computeHelpDocLink(null),
+        'https://gerrit-review.googlesource.com/documentation/' +
+          'user-search.html'
+      );
+    });
+  });
+});

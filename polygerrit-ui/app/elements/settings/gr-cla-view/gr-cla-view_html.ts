@@ -17,6 +17,9 @@
 import {html} from '@polymer/polymer/lib/utils/html-tag';
 
 export const htmlTemplate = html`
+  <style include="gr-font-styles">
+    /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+  </style>
   <style include="shared-styles">
     h1 {
       margin-bottom: var(--spacing-m);
@@ -104,12 +107,7 @@ export const htmlTemplate = html`
           bind-value="{{_agreementsText}}"
           placeholder="Enter 'I agree' here"
         >
-          <input
-            id="input-agreements"
-            is="iron-input"
-            bind-value="{{_agreementsText}}"
-            placeholder="Enter 'I agree' here"
-          />
+          <input id="input-agreements" placeholder="Enter 'I agree' here" />
         </iron-input>
         <gr-button
           on-click="_handleSaveAgreements"

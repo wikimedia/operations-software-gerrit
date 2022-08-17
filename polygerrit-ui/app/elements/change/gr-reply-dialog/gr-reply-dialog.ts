@@ -38,10 +38,12 @@ import {
   ReviewerState,
   SpecialFilePath,
 } from '../../../constants/constants';
-import {fetchChangeUpdates} from '../../../utils/patch-set-util';
-import {KeyboardShortcutMixin} from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
-import {accountKey, removeServiceUsers} from '../../../utils/account-util';
-import {getDisplayName} from '../../../utils/display-name-util';
+import {
+  accountOrGroupKey,
+  isReviewerOrCC,
+  mapReviewer,
+  removeServiceUsers,
+} from '../../../utils/account-util';
 import {IronA11yAnnouncer} from '@polymer/iron-a11y-announcer/iron-a11y-announcer';
 import {TargetElement} from '../../../api/plugin';
 import {customElement, observe, property} from '@polymer/decorators';
@@ -65,7 +67,6 @@ import {
   GroupInfo,
   isAccount,
   isDetailedLabelInfo,
-  isGroup,
   isReviewerAccountSuggestion,
   isReviewerGroupSuggestion,
   LabelNameToValueMap,
@@ -84,36 +85,37 @@ import {GrLabelScores} from '../gr-label-scores/gr-label-scores';
 import {GrLabelScoreRow} from '../gr-label-score-row/gr-label-score-row';
 import {
   PolymerDeepPropertyChange,
-  PolymerSplice,
   PolymerSpliceChange,
 } from '@polymer/polymer/interfaces';
 import {
   areSetsEqual,
   assertIsDefined,
-  assertNever,
   containsAll,
+  queryAndAssert,
 } from '../../../utils/common-util';
 import {CommentThread, isUnresolved} from '../../../utils/comment-util';
 import {GrTextarea} from '../../shared/gr-textarea/gr-textarea';
 import {GrAccountChip} from '../../shared/gr-account-chip/gr-account-chip';
 import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
-import {isAttentionSetEnabled} from '../../../utils/attention-set-util';
 import {
-  CODE_REVIEW,
   getApprovalInfo,
   getMaxAccounts,
+  StandardLabels,
 } from '../../../utils/label-util';
 import {pluralize} from '../../../utils/string-util';
 import {
   fireAlert,
   fireEvent,
   fireIronAnnounce,
+  fireReload,
   fireServerError,
 } from '../../../utils/event-util';
 import {ErrorCallback} from '../../../api/rest';
 import {debounce, DelayedTask} from '../../../utils/async-util';
 import {StorageLocation} from '../../../services/storage/gr-storage';
-import {Timing} from '../../../constants/reporting';
+import {Interaction, Timing} from '../../../constants/reporting';
+import {getReplyByReason} from '../../../utils/attention-set-util';
+import {addShortcut, Key, Modifier} from '../../../utils/dom-util';
 
 const STORAGE_DEBOUNCE_INTERVAL_MS = 400;
 
@@ -149,15 +151,6 @@ const ButtonTooltips = {
 
 const EMPTY_REPLY_MESSAGE = 'Cannot send an empty reply.';
 
-interface PendingRemovals {
-  CC: (AccountInfoInput | GroupInfoInput)[];
-  REVIEWER: (AccountInfoInput | GroupInfoInput)[];
-}
-const PENDING_REMOVAL_KEYS: (keyof PendingRemovals)[] = [
-  ReviewerType.CC,
-  ReviewerType.REVIEWER,
-];
-
 export interface GrReplyDialog {
   $: {
     reviewers: GrAccountList;
@@ -171,7 +164,7 @@ export interface GrReplyDialog {
 }
 
 @customElement('gr-reply-dialog')
-export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
+export class GrReplyDialog extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
@@ -222,9 +215,9 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
 
   FocusTarget = FocusTarget;
 
-  reporting = appContext.reportingService;
+  private readonly reporting = appContext.reportingService;
 
-  flagsService = appContext.flagsService;
+  private readonly changeService = appContext.changeService;
 
   @property({type: Object})
   change?: ChangeInfo;
@@ -310,12 +303,6 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
   @property({type: Boolean, observer: '_handleHeightChanged'})
   _previewFormatting = false;
 
-  @property({type: Object})
-  _reviewersPendingRemove: PendingRemovals = {
-    CC: [],
-    REVIEWER: [],
-  };
-
   @property({type: String, computed: '_computeSendButtonLabel(canBeStarted)'})
   _sendButtonLabel?: string;
 
@@ -378,29 +365,36 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
 
   private storeTask?: DelayedTask;
 
-  get keyBindings() {
-    return {
-      esc: '_handleEscKey',
-      'ctrl+enter meta+enter': '_handleEnterKey',
-    };
-  }
+  /** Called in disconnectedCallback. */
+  private cleanups: (() => void)[] = [];
 
   constructor() {
     super();
-    this.filterReviewerSuggestion = this._filterReviewerSuggestionGenerator(
-      false
-    );
+    this.filterReviewerSuggestion =
+      this._filterReviewerSuggestionGenerator(false);
     this.filterCCSuggestion = this._filterReviewerSuggestionGenerator(true);
   }
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
-    ((IronA11yAnnouncer as unknown) as FixIronA11yAnnouncer).requestAvailability();
+    (
+      IronA11yAnnouncer as unknown as FixIronA11yAnnouncer
+    ).requestAvailability();
     this._getAccount().then(account => {
       if (account) this._account = account;
     });
 
+    this.cleanups.push(
+      addShortcut(this, {key: Key.ENTER, modifiers: [Modifier.CTRL_KEY]}, _ =>
+        this._submit()
+      )
+    );
+    this.cleanups.push(
+      addShortcut(this, {key: Key.ENTER, modifiers: [Modifier.META_KEY]}, _ =>
+        this._submit()
+      )
+    );
+    this.cleanups.push(addShortcut(this, {key: Key.ESC}, _ => this.cancel()));
     this.addEventListener('comment-editing-changed', e => {
       this._commentEditing = (e as CustomEvent).detail;
     });
@@ -421,22 +415,22 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
     });
   }
 
-  /** @override */
-  ready() {
+  override ready() {
     super.ready();
     this.jsAPI.addElement(TargetElement.REPLY_DIALOG, this);
   }
 
-  /** @override */
-  disconnectedCallback() {
+  override disconnectedCallback() {
     this.storeTask?.cancel();
+    for (const cleanup of this.cleanups) cleanup();
+    this.cleanups = [];
     super.disconnectedCallback();
   }
 
   open(focusTarget?: FocusTarget) {
     assertIsDefined(this.change, 'change');
     this.knownLatestState = LatestPatchState.CHECKING;
-    fetchChangeUpdates(this.change, this.restApiService).then(result => {
+    this.changeService.fetchChangeUpdates(this.change).then(result => {
       this.knownLatestState = result.isLatest
         ? LatestPatchState.LATEST
         : LatestPatchState.NOT_LATEST;
@@ -471,7 +465,7 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
     return draft.length > 0 || draftCommentThreads.base.length > 0;
   }
 
-  focus() {
+  override focus() {
     this._focusOn(FocusTarget.ANY);
   }
 
@@ -484,7 +478,7 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
   }
 
   setLabelValue(label: string, value: string) {
-    const selectorEl = this.$.labelScores.shadowRoot?.querySelector(
+    const selectorEl = this.getLabelScores().shadowRoot?.querySelector(
       `gr-label-score-row[name="${label}"]`
     );
     if (!selectorEl) {
@@ -494,7 +488,7 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
   }
 
   getLabelValue(label: string) {
-    const selectorEl = this.$.labelScores.shadowRoot?.querySelector(
+    const selectorEl = this.getLabelScores().shadowRoot?.querySelector(
       `gr-label-score-row[name="${label}"]`
     );
     if (!selectorEl) {
@@ -504,31 +498,22 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
     return (selectorEl as GrLabelScoreRow).selectedValue;
   }
 
-  _handleEscKey() {
-    this.cancel();
-  }
-
-  _handleEnterKey() {
-    this._submit();
-  }
-
   @observe('_ccs.splices')
-  _ccsChanged(splices: PolymerSpliceChange<AccountInfo[]>) {
+  _ccsChanged(splices: PolymerSpliceChange<AccountInfo[] | GroupInfo[]>) {
     this._reviewerTypeChanged(splices, ReviewerType.CC);
   }
 
   @observe('_reviewers.splices')
-  _reviewersChanged(splices: PolymerSpliceChange<AccountInfo[]>) {
+  _reviewersChanged(splices: PolymerSpliceChange<AccountInfo[] | GroupInfo[]>) {
     this._reviewerTypeChanged(splices, ReviewerType.REVIEWER);
   }
 
   _reviewerTypeChanged(
-    splices: PolymerSpliceChange<AccountInfo[]>,
+    splices: PolymerSpliceChange<AccountInfo[] | GroupInfo[]>,
     reviewerType: ReviewerType
   ) {
     if (splices && splices.indexSplices) {
       this._reviewersMutated = true;
-      this._processReviewerChange(splices.indexSplices, reviewerType);
       let key: AccountId | EmailAddress | GroupId | undefined;
       let index;
       let account;
@@ -538,16 +523,16 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
       for (const splice of splices.indexSplices) {
         for (let i = 0; i < splice.addedCount; i++) {
           account = splice.object[splice.index + i];
-          key = this._accountOrGroupKey(account);
+          key = accountOrGroupKey(account);
           const array = isReviewer ? this._ccs : this._reviewers;
           index = array.findIndex(
-            account => this._accountOrGroupKey(account) === key
+            account => accountOrGroupKey(account) === key
           );
           if (index >= 0) {
             this.splice(isReviewer ? '_ccs' : '_reviewers', index, 1);
             const moveFrom = isReviewer ? 'CC' : 'reviewer';
             const moveTo = isReviewer ? 'reviewer' : 'CC';
-            const id = account.name || account.email || key;
+            const id = account.name || key;
             const message = `${id} moved from ${moveFrom} to ${moveTo}.`;
             fireAlert(this, message);
           }
@@ -556,94 +541,58 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
     }
   }
 
-  _processReviewerChange(
-    indexSplices: Array<PolymerSplice<AccountInfo[]>>,
-    type: ReviewerType
-  ) {
-    for (const splice of indexSplices) {
-      for (const account of splice.removed) {
-        if (!this._reviewersPendingRemove[type]) {
-          this.reporting.error(new Error(`Invalid type ${type} for reviewer.`));
-          return;
-        }
-        this._reviewersPendingRemove[type].push(account);
-      }
-    }
+  getUnresolvedPatchsetLevelClass(isResolvedPatchsetLevelComment: boolean) {
+    return isResolvedPatchsetLevelComment ? 'resolved' : 'unresolved';
   }
 
-  /**
-   * Resets the state of the _reviewersPendingRemove object, and removes
-   * accounts if necessary.
-   *
-   * @param isCancel true if the action is a cancel.
-   * @param keep map of account IDs that must
-   * not be removed, because they have been readded in another state.
-   */
-  _purgeReviewersPendingRemove(
-    isCancel: boolean,
-    keep = new Map<AccountId | EmailAddress, boolean>()
-  ) {
-    let reviewerArr: (AccountInfoInput | GroupInfoInput)[];
-    for (const type of PENDING_REMOVAL_KEYS) {
-      if (!isCancel) {
-        reviewerArr = this._reviewersPendingRemove[type];
-        for (let i = 0; i < reviewerArr.length; i++) {
-          const reviewer = reviewerArr[i];
-          if (!isAccount(reviewer) || !keep.get(accountKey(reviewer))) {
-            this._removeAccount(reviewer, type as ReviewerType);
-          }
-        }
-      }
-      this._reviewersPendingRemove[type] = [];
-    }
-  }
-
-  /**
-   * Removes an account from the change, both on the backend and the client.
-   * Does nothing if the account is a pending addition.
-   */
-  _removeAccount(
-    account: AccountInfoInput | GroupInfoInput,
-    type: ReviewerType
-  ) {
-    assertIsDefined(this.change, 'change');
-    if (account._pendingAdd || !isAccount(account)) {
-      return;
-    }
-
-    return this.restApiService
-      .removeChangeReviewer(this.change._number, accountKey(account))
-      .then((response?: Response) => {
-        if (!response?.ok || !this.change) return;
-
-        const reviewers = this.change.reviewers[type] || [];
-        for (let i = 0; i < reviewers.length; i++) {
-          if (reviewers[i]._account_id === account._account_id) {
-            this.splice(`change.reviewers.${type}`, i, 1);
-            break;
-          }
-        }
+  computeReviewers(change: ChangeInfo) {
+    const reviewers: ReviewerInput[] = [];
+    const addToReviewInput = (
+      additions: AccountAddition[],
+      state?: ReviewerState
+    ) => {
+      additions.forEach(addition => {
+        const reviewer = mapReviewer(addition);
+        if (state) reviewer.state = state;
+        reviewers.push(reviewer);
       });
+    };
+    addToReviewInput(this.$.reviewers.additions(), ReviewerState.REVIEWER);
+    addToReviewInput(this.$.ccs.additions(), ReviewerState.CC);
+    addToReviewInput(
+      this.$.reviewers.removals().filter(
+        r =>
+          isReviewerOrCC(change, r) &&
+          // ignore removal from reviewer request if being added to CC
+          !this.$.ccs
+            .additions()
+            .some(
+              account =>
+                mapReviewer(account).reviewer === mapReviewer(r).reviewer
+            )
+      ),
+      ReviewerState.REMOVED
+    );
+    addToReviewInput(
+      this.$.ccs.removals().filter(
+        r =>
+          isReviewerOrCC(change, r) &&
+          // ignore removal from CC request if being added as reviewer
+          !this.$.reviewers
+            .additions()
+            .some(
+              account =>
+                mapReviewer(account).reviewer === mapReviewer(r).reviewer
+            )
+      ),
+      ReviewerState.REMOVED
+    );
+    return reviewers;
   }
 
-  _mapReviewer(addition: AccountAddition): ReviewerInput {
-    if (addition.account) {
-      return {reviewer: accountKey(addition.account)};
-    }
-    if (addition.group) {
-      const reviewer = decodeURIComponent(addition.group.id) as GroupId;
-      const confirmed = addition.group.confirmed;
-      return {reviewer, confirmed};
-    }
-    throw new Error('Reviewer must be either an account or a group.');
-  }
-
-  send(
-    includeComments: boolean,
-    startReview: boolean
-  ): Promise<Map<AccountId | EmailAddress, boolean>> {
+  send(includeComments: boolean, startReview: boolean) {
     this.reporting.time(Timing.SEND_REPLY);
-    const labels = this.$.labelScores.getLabelValues();
+    const labels = this.getLabelScores().getLabelValues();
 
     const reviewInput: ReviewInput = {
       drafts: includeComments
@@ -656,29 +605,26 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
       reviewInput.ready = true;
     }
 
-    if (isAttentionSetEnabled(this.serverConfig)) {
-      const selfName = getDisplayName(this.serverConfig, this._account);
-      const reason = `${selfName} replied on the change`;
+    const reason = getReplyByReason(this._account, this.serverConfig);
 
-      reviewInput.ignore_automatic_attention_set_rules = true;
-      reviewInput.add_to_attention_set = [];
-      for (const user of this._newAttentionSet) {
-        if (!this._currentAttentionSet.has(user)) {
-          reviewInput.add_to_attention_set.push({user, reason});
-        }
+    reviewInput.ignore_automatic_attention_set_rules = true;
+    reviewInput.add_to_attention_set = [];
+    for (const user of this._newAttentionSet) {
+      if (!this._currentAttentionSet.has(user)) {
+        reviewInput.add_to_attention_set.push({user, reason});
       }
-      reviewInput.remove_from_attention_set = [];
-      for (const user of this._currentAttentionSet) {
-        if (!this._newAttentionSet.has(user)) {
-          reviewInput.remove_from_attention_set.push({user, reason});
-        }
-      }
-      this.reportAttentionSetChanges(
-        this._attentionExpanded,
-        reviewInput.add_to_attention_set,
-        reviewInput.remove_from_attention_set
-      );
     }
+    reviewInput.remove_from_attention_set = [];
+    for (const user of this._currentAttentionSet) {
+      if (!this._newAttentionSet.has(user)) {
+        reviewInput.remove_from_attention_set.push({user, reason});
+      }
+    }
+    this.reportAttentionSetChanges(
+      this._attentionExpanded,
+      reviewInput.add_to_attention_set,
+      reviewInput.remove_from_attention_set
+    );
 
     if (this.draft) {
       const comment: CommentInput = {
@@ -690,25 +636,8 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
       };
     }
 
-    const accountAdditions = new Map<AccountId | EmailAddress, boolean>();
-    reviewInput.reviewers = this.$.reviewers.additions().map(reviewer => {
-      if (reviewer.account) {
-        accountAdditions.set(accountKey(reviewer.account), true);
-      }
-      return this._mapReviewer(reviewer);
-    });
-    const ccsEl = this.$.ccs;
-    if (ccsEl) {
-      for (const addition of ccsEl.additions()) {
-        if (addition.account) {
-          accountAdditions.set(accountKey(addition.account), true);
-        }
-        const reviewer = this._mapReviewer(addition);
-        reviewer.state = ReviewerState.CC;
-        reviewInput.reviewers.push(reviewer);
-      }
-    }
-
+    assertIsDefined(this.change, 'change');
+    reviewInput.reviewers = this.computeReviewers(this.change);
     this.disabled = true;
 
     const errFn = (r?: Response | null) => this._handle400Error(r);
@@ -717,11 +646,11 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
         if (!response) {
           // Null or undefined response indicates that an error handler
           // took responsibility, so just return.
-          return new Map<AccountId | EmailAddress, boolean>();
+          return;
         }
         if (!response.ok) {
           fireServerError(response);
-          return new Map<AccountId | EmailAddress, boolean>();
+          return;
         }
 
         this.draft = '';
@@ -733,7 +662,7 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
           })
         );
         fireIronAnnounce(this, 'Reply sent');
-        return accountAdditions;
+        return;
       })
       .then(result => {
         this.disabled = false;
@@ -751,7 +680,7 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
       section = this._chooseFocusTarget();
     }
     if (section === FocusTarget.BODY) {
-      const textarea = this.$.textarea;
+      const textarea = queryAndAssert<GrTextarea>(this, 'gr-textarea');
       setTimeout(() => textarea.getNativeTextarea().focus());
     } else if (section === FocusTarget.REVIEWERS) {
       const reviewerEntry = this.$.reviewers.focusStart;
@@ -854,7 +783,7 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
     if (changeReviewers) {
       for (const key of Object.keys(changeReviewers)) {
         if (key !== 'REVIEWER' && key !== 'CC') {
-          console.warn('unexpected reviewer state:', key);
+          this.reporting.error(new Error(`Unexpected reviewer state: ${key}`));
           continue;
         }
         if (!changeReviewers[key]) continue;
@@ -889,12 +818,12 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
     fireEvent(this, 'iron-resize');
   }
 
-  _showAttentionSummary(config?: ServerInfo, attentionExpanded?: boolean) {
-    return isAttentionSetEnabled(config) && !attentionExpanded;
+  _showAttentionSummary(attentionExpanded?: boolean) {
+    return !attentionExpanded;
   }
 
-  _showAttentionDetails(config?: ServerInfo, attentionExpanded?: boolean) {
-    return isAttentionSetEnabled(config) && attentionExpanded;
+  _showAttentionDetails(attentionExpanded?: boolean) {
+    return attentionExpanded;
   }
 
   _computeAttentionButtonTitle(sendDisabled?: boolean) {
@@ -916,12 +845,12 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
 
     if (this._newAttentionSet.has(id)) {
       this._newAttentionSet.delete(id);
-      this.reporting.reportInteraction('attention-set-chip', {
+      this.reporting.reportInteraction(Interaction.ATTENTION_SET_CHIP, {
         action: `REMOVE${self}${role}`,
       });
     } else {
       this._newAttentionSet.add(id);
-      this.reporting.reportInteraction('attention-set-chip', {
+      this.reporting.reportInteraction(Interaction.ATTENTION_SET_CHIP, {
         action: `ADD${self}${role}`,
       });
     }
@@ -1055,7 +984,7 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
   }
 
   _computeCommentAccounts(threads: CommentThread[]) {
-    const crLabel = this.change?.labels?.[CODE_REVIEW];
+    const crLabel = this.change?.labels?.[StandardLabels.CODE_REVIEW];
     const maxCrVoteAccountIds = getMaxAccounts(crLabel).map(a => a._account_id);
     const accountIds = new Set<AccountId>();
     threads.forEach(thread => {
@@ -1163,12 +1092,6 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
     return rev.uploader;
   }
 
-  _accountOrGroupKey(entry: AccountInfo | GroupInfo) {
-    if (isAccount(entry)) return accountKey(entry);
-    if (isGroup(entry)) return entry.id;
-    assertNever(entry, 'entry must be account or group');
-  }
-
   /**
    * Generates a function to filter out reviewer/CC entries. When isCCs is
    * truthy, the function filters out entries that already exist in this._ccs.
@@ -1187,16 +1110,15 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
       } else if (isReviewerGroupSuggestion(suggestion)) {
         entry = suggestion.group;
       } else {
-        console.warn(
-          'received suggestion that was neither account nor group:',
-          suggestion
+        this.reporting.error(
+          new Error(`Suggestion is neither account nor group: ${suggestion}`)
         );
         return false;
       }
 
-      const key = this._accountOrGroupKey(entry);
+      const key = accountOrGroupKey(entry);
       const finder = (entry: AccountInfo | GroupInfo) =>
-        this._accountOrGroupKey(entry) === key;
+        accountOrGroupKey(entry) === key;
       if (isCCs) {
         return this._ccs.find(finder) === undefined;
       }
@@ -1222,8 +1144,8 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
         bubbles: false,
       })
     );
-    this.$.textarea.closeDropdown();
-    this._purgeReviewersPendingRemove(true);
+    queryAndAssert<GrTextarea>(this, 'gr-textarea').closeDropdown();
+    this.$.reviewers.clearPendingRemovals();
     this._rebuildReviewerArrays(this.change.reviewers, this._owner);
   }
 
@@ -1234,9 +1156,7 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
       // the text field of the CC entry.
       return;
     }
-    this.send(this._includeComments, false).then(keepReviewers => {
-      this._purgeReviewersPendingRemove(false, keepReviewers);
-    });
+    this.send(this._includeComments, false);
   }
 
   _sendTapHandler(e: Event) {
@@ -1254,19 +1174,15 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
       fireAlert(this, EMPTY_REPLY_MESSAGE);
       return;
     }
-    return this.send(this._includeComments, this.canBeStarted)
-      .then(keepReviewers => {
-        this._purgeReviewersPendingRemove(false, keepReviewers);
-      })
-      .catch(err => {
-        this.dispatchEvent(
-          new CustomEvent('show-error', {
-            bubbles: true,
-            composed: true,
-            detail: {message: `Error submitting review ${err}`},
-          })
-        );
-      });
+    return this.send(this._includeComments, this.canBeStarted).catch(err => {
+      this.dispatchEvent(
+        new CustomEvent('show-error', {
+          bubbles: true,
+          composed: true,
+          detail: {message: `Error submitting review ${err}`},
+        })
+      );
+    });
   }
 
   _saveReview(review: ReviewInput, errFn?: ErrorCallback) {
@@ -1358,9 +1274,13 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
     fireEvent(this, 'autogrow');
   }
 
+  getLabelScores() {
+    return this.$.labelScores || queryAndAssert(this, 'gr-label-scores');
+  }
+
   _handleLabelsChanged() {
     this._labelsChanged =
-      Object.keys(this.$.labelScores.getLabelValues(false)).length !== 0;
+      Object.keys(this.getLabelScores().getLabelValues(false)).length !== 0;
   }
 
   _isState(knownLatestState?: LatestPatchState, value?: LatestPatchState) {
@@ -1368,13 +1288,7 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
   }
 
   _reload() {
-    this.dispatchEvent(
-      new CustomEvent('reload', {
-        detail: {clearPatchset: true},
-        bubbles: false,
-        composed: true,
-      })
-    );
+    fireReload(this, true);
     this.cancel();
   }
 
@@ -1440,7 +1354,7 @@ export class GrReplyDialog extends KeyboardShortcutMixin(PolymerElement) {
   _computePatchSetWarning(patchNum?: PatchSetNum, labelsChanged?: boolean) {
     let str = `Patch ${patchNum} is not latest.`;
     if (labelsChanged) {
-      str += ' Voting will have no effect.';
+      str += ' Voting may have no effect.';
     }
     return str;
   }

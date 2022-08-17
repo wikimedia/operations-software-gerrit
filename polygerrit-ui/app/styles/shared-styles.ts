@@ -14,15 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-import {css} from 'lit-element';
-
-// Mark the file as a module. Otherwise typescript assumes this is a script
-// and $_documentContainer is a global variable.
-// See: https://www.typescriptlang.org/docs/handbook/modules.html
-export {};
-
-const $_documentContainer = document.createElement('template');
+import {css} from 'lit';
 
 export const sharedStyles = css`
   /* CSS reset */
@@ -176,36 +168,6 @@ export const sharedStyles = css`
     border-spacing: 0;
   }
 
-  /* Fonts */
-
-  .font-normal {
-    font-size: var(--font-size-normal);
-    font-weight: var(--font-weight-normal);
-    line-height: var(--line-height-normal);
-  }
-  .font-small {
-    font-size: var(--font-size-small);
-    font-weight: var(--font-weight-normal);
-    line-height: var(--line-height-small);
-  }
-  .heading-1 {
-    font-family: var(--header-font-family);
-    font-size: var(--font-size-h1);
-    font-weight: var(--font-weight-h1);
-    line-height: var(--line-height-h1);
-  }
-  .heading-2 {
-    font-family: var(--header-font-family);
-    font-size: var(--font-size-h2);
-    font-weight: var(--font-weight-h2);
-    line-height: var(--line-height-h2);
-  }
-  .heading-3 {
-    font-family: var(--header-font-family);
-    font-size: var(--font-size-h3);
-    font-weight: var(--font-weight-h3);
-    line-height: var(--line-height-h3);
-  }
   iron-icon {
     color: var(--deemphasized-text-color);
     vertical-align: top;
@@ -239,9 +201,13 @@ export const sharedStyles = css`
       font-family: var(--header-font-family);
       -webkit-font-smoothing: initial;
     }
+    --paper-tab-content: {
+      margin-bottom: var(--spacing-s);
+    }
     --paper-tab-content-focused: {
       /* paper-tabs uses 700 here, which can look awkward */
       font-weight: var(--font-weight-h3);
+      background: var(--gray-background-focus);
     }
     --paper-tab-content-unselected: {
       /* paper-tabs uses 0.8 here, but we want to control the color directly */
@@ -249,27 +215,19 @@ export const sharedStyles = css`
       color: var(--deemphasized-text-color);
     }
   }
+  paper-tab:focus {
+    padding-left: 0px;
+    padding-right: 0px;
+  }
   iron-autogrow-textarea {
     /** This is needed for firefox */
     --iron-autogrow-textarea_-_white-space: pre-wrap;
   }
-  strong {
-    font-weight: var(--font-weight-bold);
-  }
 
-  .assistive-tech-only {
-    user-select: none;
-    clip: rect(1px, 1px, 1px, 1px);
-    height: 1px;
-    margin: 0;
-    overflow: hidden;
-    padding: 0;
-    position: absolute;
-    white-space: nowrap;
-    width: 1px;
-    z-index: -1000;
-  }
-
+  /**
+   * TODO: Remove these rules and change (plugin) users to rely on
+   * gr-spinner-styles directly.
+   */
   /** BEGIN: loading spiner */
   .loadingSpin {
     border: 2px solid var(--disabled-button-background-color);
@@ -291,6 +249,7 @@ export const sharedStyles = css`
   /** END: loading spiner */
 `;
 
+const $_documentContainer = document.createElement('template');
 $_documentContainer.innerHTML = `<dom-module id="shared-styles">
   <template>
     <style>
@@ -298,11 +257,4 @@ $_documentContainer.innerHTML = `<dom-module id="shared-styles">
     </style>
   </template>
 </dom-module>`;
-
 document.head.appendChild($_documentContainer.content);
-
-/*
-  FIXME(polymer-modulizer): the above comments were extracted
-  from HTML and may be out of place here. Review them and
-  then delete this comment!
-*/

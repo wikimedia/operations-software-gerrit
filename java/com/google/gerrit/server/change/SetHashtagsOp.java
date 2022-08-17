@@ -22,7 +22,6 @@ import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Ordering;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.extensions.api.changes.HashtagsInput;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
@@ -35,7 +34,7 @@ import com.google.gerrit.server.notedb.ChangeUpdate;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.Context;
+import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.gerrit.server.validators.HashtagValidationListener;
 import com.google.gerrit.server.validators.ValidationException;
 import com.google.inject.Inject;
@@ -106,7 +105,7 @@ public class SetHashtagsOp implements BatchUpdateOp {
         updated.addAll(toAdd);
         updated.removeAll(toRemove);
         update.setHashtags(updated);
-        addMessage(ctx, update);
+        addMessage(ctx);
       }
 
       updatedHashtags = ImmutableSortedSet.copyOf(updated);
@@ -116,13 +115,11 @@ public class SetHashtagsOp implements BatchUpdateOp {
     }
   }
 
-  private void addMessage(ChangeContext ctx, ChangeUpdate update) {
+  private void addMessage(ChangeContext ctx) {
     StringBuilder msg = new StringBuilder();
     appendHashtagMessage(msg, "added", toAdd);
     appendHashtagMessage(msg, "removed", toRemove);
-    ChangeMessage cmsg =
-        ChangeMessagesUtil.newMessage(ctx, msg.toString(), ChangeMessagesUtil.TAG_SET_HASHTAGS);
-    cmUtil.addChangeMessage(update, cmsg);
+    cmUtil.setChangeMessage(ctx, msg.toString(), ChangeMessagesUtil.TAG_SET_HASHTAGS);
   }
 
   private void appendHashtagMessage(StringBuilder b, String action, Set<String> hashtags) {
@@ -144,10 +141,15 @@ public class SetHashtagsOp implements BatchUpdateOp {
   }
 
   @Override
-  public void postUpdate(Context ctx) {
+  public void postUpdate(PostUpdateContext ctx) {
     if (updated() && fireEvent) {
       hashtagsEdited.fire(
-          change, ctx.getAccount(), updatedHashtags, toAdd, toRemove, ctx.getWhen());
+          ctx.getChangeData(change),
+          ctx.getAccount(),
+          updatedHashtags,
+          toAdd,
+          toRemove,
+          ctx.getWhen());
     }
   }
 

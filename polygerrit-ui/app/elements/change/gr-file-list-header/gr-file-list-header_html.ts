@@ -21,9 +21,6 @@ export const htmlTemplate = html`
     .prefsButton {
       float: right;
     }
-    .collapseToggleButton {
-      text-decoration: none;
-    }
     .patchInfoOldPatchSet.patchInfo-header {
       background-color: var(--emphasis-color);
     }
@@ -61,11 +58,9 @@ export const htmlTemplate = html`
       display: flex;
     }
     .downloadContainer,
-    .uploadContainer,
-    .includedInContainer {
+    .uploadContainer {
       margin-right: 16px;
     }
-    .includedInContainer.hide,
     .uploadContainer.hide {
       display: none;
     }
@@ -98,9 +93,7 @@ export const htmlTemplate = html`
     }
     .fileViewActions gr-button {
       margin: 0;
-      --gr-button: {
-        padding: 2px 4px;
-      }
+      --gr-button-padding: 2px 4px;
     }
     .editMode .hideOnEdit {
       display: none;
@@ -172,41 +165,63 @@ export const htmlTemplate = html`
           <span class="separator"></span>
         </span>
       </template>
+      <div class="fileViewActions">
+        <span class="fileViewActionsLabel">Diff view:</span>
+        <gr-diff-mode-selector
+          id="modeSelect"
+          mode="{{diffViewMode}}"
+          save-on-change="[[loggedIn]]"
+        ></gr-diff-mode-selector>
+        <span
+          id="diffPrefsContainer"
+          class="hideOnEdit"
+          hidden$="[[_computePrefsButtonHidden(diffPrefs, loggedIn)]]"
+          hidden=""
+        >
+          <gr-tooltip-content has-tooltip title="Diff preferences">
+            <gr-button
+              link=""
+              class="prefsButton desktop"
+              on-click="_handlePrefsTap"
+              ><iron-icon icon="gr-icons:settings"></iron-icon
+            ></gr-button>
+          </gr-tooltip-content>
+        </span>
+        <span class="separator"></span>
+      </div>
       <span class="downloadContainer desktop">
-        <gr-button
-          link=""
-          class="download"
+        <gr-tooltip-content
+          has-tooltip
           title="[[createTitle(Shortcut.OPEN_DOWNLOAD_DIALOG,
-                ShortcutSection.ACTIONS)]]"
-          on-click="_handleDownloadTap"
-          >Download</gr-button
+                   ShortcutSection.ACTIONS)]]"
         >
-      </span>
-      <span class$="includedInContainer [[_hideIncludedIn(change)]] desktop">
-        <gr-button link="" class="includedIn" on-click="_handleIncludedInTap"
-          >Included In</gr-button
-        >
+          <gr-button link="" class="download" on-click="_handleDownloadTap"
+            >Download</gr-button
+          >
+        </gr-tooltip-content>
       </span>
       <template
         is="dom-if"
         if="[[_fileListActionsVisible(shownFileCount, _maxFilesForBulkActions)]]"
       >
-        <gr-button
-          id="expandBtn"
-          link=""
+        <gr-tooltip-content
+          has-tooltip
           title="[[createTitle(Shortcut.TOGGLE_ALL_INLINE_DIFFS,
-                ShortcutSection.FILE_LIST)]]"
-          on-click="_expandAllDiffs"
-          >Expand All</gr-button
+                  ShortcutSection.FILE_LIST)]]"
         >
-        <gr-button
-          id="collapseBtn"
-          link=""
-          on-click="_collapseAllDiffs"
+          <gr-button id="expandBtn" link="" on-click="_expandAllDiffs"
+            >Expand All</gr-button
+          >
+        </gr-tooltip-content>
+        <gr-tooltip-content
+          has-tooltip
           title="[[createTitle(Shortcut.TOGGLE_ALL_INLINE_DIFFS,
-          ShortcutSection.FILE_LIST)]]"
-          >Collapse All</gr-button
+                  ShortcutSection.FILE_LIST)]]"
         >
+          <gr-button id="collapseBtn" link="" on-click="_collapseAllDiffs"
+            >Collapse All</gr-button
+          >
+        </gr-tooltip-content>
       </template>
       <template
         is="dom-if"
@@ -216,30 +231,6 @@ export const htmlTemplate = html`
           Bulk actions disabled because there are too many files.
         </div>
       </template>
-      <div class="fileViewActions">
-        <span class="separator"></span>
-        <span class="fileViewActionsLabel">Diff view:</span>
-        <gr-diff-mode-selector
-          id="modeSelect"
-          mode="{{diffViewMode}}"
-          save-on-change="[[!diffPrefsDisabled]]"
-        ></gr-diff-mode-selector>
-        <span
-          id="diffPrefsContainer"
-          class="hideOnEdit"
-          hidden$="[[_computePrefsButtonHidden(diffPrefs, diffPrefsDisabled)]]"
-          hidden=""
-        >
-          <gr-button
-            link=""
-            has-tooltip=""
-            title="Diff preferences"
-            class="prefsButton desktop"
-            on-click="_handlePrefsTap"
-            ><iron-icon icon="gr-icons:settings"></iron-icon
-          ></gr-button>
-        </span>
-      </div>
     </div>
   </div>
 `;

@@ -54,13 +54,13 @@ export class GrRepoBranchPicker extends PolymerElement {
   branch?: BranchName;
 
   @property({type: Boolean})
-  _branchDisabled?: boolean;
+  _branchDisabled = false;
 
   @property({type: Object})
-  _query?: AutocompleteQuery;
+  _query: AutocompleteQuery = () => Promise.resolve([]);
 
   @property({type: Object})
-  _repoQuery?: AutocompleteQuery;
+  _repoQuery: AutocompleteQuery = () => Promise.resolve([]);
 
   private readonly restApiService = appContext.restApiService;
 
@@ -70,16 +70,14 @@ export class GrRepoBranchPicker extends PolymerElement {
     this._repoQuery = input => this._getRepoSuggestions(input);
   }
 
-  /** @override */
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     if (this.repo) {
       this.$.repoInput.setText(this.repo);
     }
   }
 
-  /** @override */
-  ready() {
+  override ready() {
     super.ready();
     this._branchDisabled = !this.repo;
   }

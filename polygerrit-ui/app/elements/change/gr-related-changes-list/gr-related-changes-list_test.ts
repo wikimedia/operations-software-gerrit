@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import {SinonStubbedMember} from 'sinon/pkg/sinon-esm';
+import {SinonStubbedMember} from 'sinon';
 import {PluginApi} from '../../../api/plugin';
 import {ChangeStatus} from '../../../constants/constants';
 import {RestApiService} from '../../../services/gr-rest-api/gr-rest-api';
@@ -74,9 +74,9 @@ suite('gr-related-changes-list', () => {
         v: boolean;
       }>
     ) {
-      return instructions
-        .map(inst => Array.from({length: inst.len}, () => inst.v))
-        .reduce((acc, val) => acc.concat(val), []);
+      return instructions.flatMap(inst =>
+        Array.from({length: inst.len}, () => inst.v)
+      );
     }
 
     function checkShowWhenCollapsed(
@@ -599,7 +599,7 @@ suite('gr-related-changes-list', () => {
       resetPlugins();
     });
 
-    test('endpoint params', done => {
+    test('endpoint params', async () => {
       element.change = {...createParsedChange(), labels: {}};
       interface RelatedChangesListGrEndpointDecorator
         extends GrEndpointDecorator {
@@ -620,11 +620,9 @@ suite('gr-related-changes-list', () => {
         'http://some/plugins/url1.js'
       );
       getPluginLoader().loadPlugins([]);
-      flush(() => {
-        assert.strictEqual(hookEl.plugin, plugin);
-        assert.strictEqual(hookEl.change, element.change);
-        done();
-      });
+      await flush();
+      assert.strictEqual(hookEl!.plugin, plugin!);
+      assert.strictEqual(hookEl!.change, element.change);
     });
   });
 });

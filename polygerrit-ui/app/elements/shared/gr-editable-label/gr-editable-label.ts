@@ -20,17 +20,16 @@ import '../../../styles/shared-styles';
 import '../gr-button/gr-button';
 import '../../shared/gr-autocomplete/gr-autocomplete';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
-import {KeyboardShortcutMixin} from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
 import {customElement, property} from '@polymer/decorators';
 import {htmlTemplate} from './gr-editable-label_html';
 import {IronDropdownElement} from '@polymer/iron-dropdown/iron-dropdown';
-import {dom, EventApi} from '@polymer/polymer/lib/legacy/polymer.dom';
 import {PaperInputElementExt} from '../../../types/types';
-import {CustomKeyboardEvent} from '../../../types/events';
 import {
   AutocompleteQuery,
   GrAutocomplete,
 } from '../gr-autocomplete/gr-autocomplete';
+import {addShortcut, Key} from '../../../utils/dom-util';
+import {queryAndAssert} from '../../../utils/common-util';
 
 const AWAIT_MAX_ITERS = 10;
 const AWAIT_STEP = 5;
@@ -48,7 +47,7 @@ export interface GrEditableLabel {
 }
 
 @customElement('gr-editable-label')
-export class GrEditableLabel extends KeyboardShortcutMixin(PolymerElement) {
+export class GrEditableLabel extends PolymerElement {
   static get template() {
     return htmlTemplate;
   }
@@ -60,13 +59,13 @@ export class GrEditableLabel extends KeyboardShortcutMixin(PolymerElement) {
    */
 
   @property({type: String})
-  labelText?: string;
+  labelText = '';
 
   @property({type: Boolean})
   editing = false;
 
   @property({type: String, notify: true, observer: '_updateTitle'})
-  value = '';
+  value?: string;
 
   @property({type: String})
   placeholder = '';
@@ -81,7 +80,7 @@ export class GrEditableLabel extends KeyboardShortcutMixin(PolymerElement) {
   maxLength?: number;
 
   @property({type: String})
-  _inputText?: string;
+  _inputText = '';
 
   // This is used to push the iron-input element up on the page, so
   // the input is placed in approximately the same position as the
@@ -96,19 +95,30 @@ export class GrEditableLabel extends KeyboardShortcutMixin(PolymerElement) {
   autocomplete = false;
 
   @property({type: Object})
-  query?: AutocompleteQuery;
+  query: AutocompleteQuery = () => Promise.resolve([]);
 
-  /** @override */
-  ready() {
+  override ready() {
     super.ready();
     this._ensureAttribute('tabindex', '0');
   }
 
-  get keyBindings() {
-    return {
-      enter: '_handleEnter',
-      esc: '_handleEsc',
-    };
+  /** Called in disconnectedCallback. */
+  private cleanups: (() => void)[] = [];
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    for (const cleanup of this.cleanups) cleanup();
+    this.cleanups = [];
+  }
+
+  override connectedCallback() {
+    super.connectedCallback();
+    this.cleanups.push(
+      addShortcut(this, {key: Key.ENTER}, e => this._handleEnter(e))
+    );
+    this.cleanups.push(
+      addShortcut(this, {key: Key.ESC}, e => this._handleEsc(e))
+    );
   }
 
   _usePlaceholder(value?: string, placeholder?: string) {
@@ -192,7 +202,7 @@ export class GrEditableLabel extends KeyboardShortcutMixin(PolymerElement) {
     }
     this.$.dropdown.close();
     this.editing = false;
-    this._inputText = this.value;
+    this._inputText = this.value || '';
   }
 
   get _nativeInput(): HTMLInputElement {
@@ -202,20 +212,24 @@ export class GrEditableLabel extends KeyboardShortcutMixin(PolymerElement) {
       this.getGrAutocomplete()) as HTMLInputElement;
   }
 
-  _handleEnter(e: CustomKeyboardEvent) {
-    e = this.getKeyboardEvent(e);
-    const target = (dom(e) as EventApi).rootTarget;
-    if (target === this._nativeInput) {
-      e.preventDefault();
+  _handleEnter(event: KeyboardEvent) {
+    const inputContainer = queryAndAssert(this, '.inputContainer');
+    const isEventFromInput = event
+      .composedPath()
+      .some(element => element === inputContainer);
+    if (isEventFromInput) {
+      event.preventDefault();
       this._save();
     }
   }
 
-  _handleEsc(e: CustomKeyboardEvent) {
-    e = this.getKeyboardEvent(e);
-    const target = (dom(e) as EventApi).rootTarget;
-    if (target === this._nativeInput) {
-      e.preventDefault();
+  _handleEsc(event: KeyboardEvent) {
+    const inputContainer = queryAndAssert(this, '.inputContainer');
+    const isEventFromInput = event
+      .composedPath()
+      .some(element => element === inputContainer);
+    if (isEventFromInput) {
+      event.preventDefault();
       this._cancel();
     }
   }

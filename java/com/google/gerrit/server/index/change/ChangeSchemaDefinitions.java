@@ -135,8 +135,56 @@ public class ChangeSchemaDefinitions extends SchemaDefinitions<ChangeData> {
       new Schema.Builder<ChangeData>().add(V59).add(ChangeField.MERGE).build();
 
   /** Added new field {@link ChangeField#MERGED_ON} */
+  @Deprecated
   static final Schema<ChangeData> V61 =
       new Schema.Builder<ChangeData>().add(V60).add(ChangeField.MERGED_ON).build();
+
+  /** Added new field {@link ChangeField#FUZZY_HASHTAG} */
+  @Deprecated
+  static final Schema<ChangeData> V62 =
+      new Schema.Builder<ChangeData>().add(V61).add(ChangeField.FUZZY_HASHTAG).build();
+
+  /**
+   * The computation of the {@link ChangeField#DIRECTORY} field is changed, hence reindexing is
+   * required.
+   */
+  @Deprecated static final Schema<ChangeData> V63 = schema(V62, false);
+
+  /** Added support for MIN/MAX/ANY for {@link ChangeField#LABEL} */
+  @Deprecated static final Schema<ChangeData> V64 = schema(V63, false);
+
+  /** Added new field for submit requirements. */
+  @Deprecated
+  static final Schema<ChangeData> V65 =
+      new Schema.Builder<ChangeData>().add(V64).add(ChangeField.STORED_SUBMIT_REQUIREMENTS).build();
+
+  /**
+   * The computation of {@link ChangeField#LABEL} has changed: We added the non_uploader arg to the
+   * label field.
+   */
+  @Deprecated static final Schema<ChangeData> V66 = schema(V65, false);
+
+  /** Updated submit records: store the rule name that created the submit record. */
+  @Deprecated static final Schema<ChangeData> V67 = schema(V66, false);
+
+  /** Added new field {@link ChangeField#SUBMIT_RULE_RESULT}. */
+  @Deprecated
+  static final Schema<ChangeData> V68 =
+      new Schema.Builder<ChangeData>().add(V67).add(ChangeField.SUBMIT_RULE_RESULT).build();
+
+  /** Added new field {@link ChangeField#CHERRY_PICK}. */
+  @Deprecated
+  static final Schema<ChangeData> V69 =
+      new Schema.Builder<ChangeData>().add(V68).add(ChangeField.CHERRY_PICK).build();
+
+  /** Added new field {@link ChangeField#ATTENTION_SET_USERS_COUNT}. */
+  @Deprecated
+  static final Schema<ChangeData> V70 =
+      new Schema.Builder<ChangeData>().add(V69).add(ChangeField.ATTENTION_SET_USERS_COUNT).build();
+
+  /** Added new field {@link ChangeField#UPLOADER}. */
+  static final Schema<ChangeData> V71 =
+      new Schema.Builder<ChangeData>().add(V70).add(ChangeField.UPLOADER).build();
 
   /**
    * Name of the change index to be used when contacting index backends or loading configurations.
