@@ -99,3 +99,4 @@
 [submodule "plugins/its-base"]
 	path = plugins/its-base
 	url = https://gerrit.googlesource.com/plugins/its-base
+	branch = stable-3.4

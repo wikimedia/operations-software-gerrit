@@ -30,14 +30,18 @@ public class ElasticV7QueryGroupsTest extends AbstractQueryGroupsTest {
     return IndexConfig.createForElasticsearch();
   }
 
+  @ConfigSuite.Config
+  public static Config searchAfterPaginationType() {
+    Config config = defaultConfig();
+    config.setString("index", null, "paginationType", "SEARCH_AFTER");
+    return config;
+  }
+
   private static ElasticContainer container;
 
   @BeforeClass
   public static void startIndexService() {
-    if (container == null) {
-      // Only start Elasticsearch once
-      container = ElasticContainer.createAndStart(ElasticVersion.V7_16);
-    }
+    container = ElasticContainer.createAndStart(ElasticVersion.V7_16);
   }
 
   @AfterClass

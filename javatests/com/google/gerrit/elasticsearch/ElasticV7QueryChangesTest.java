@@ -39,17 +39,21 @@ public class ElasticV7QueryChangesTest extends AbstractQueryChangesTest {
     return IndexConfig.createForElasticsearch();
   }
 
+  @ConfigSuite.Config
+  public static Config searchAfterPaginationType() {
+    Config config = defaultConfig();
+    config.setString("index", null, "paginationType", "SEARCH_AFTER");
+    return config;
+  }
+
   private static ElasticContainer container;
   private static CloseableHttpAsyncClient client;
 
   @BeforeClass
   public static void startIndexService() {
-    if (container == null) {
-      // Only start Elasticsearch once
-      container = ElasticContainer.createAndStart(ElasticVersion.V7_16);
-      client = HttpAsyncClients.createDefault();
-      client.start();
-    }
+    container = ElasticContainer.createAndStart(ElasticVersion.V7_16);
+    client = HttpAsyncClients.createDefault();
+    client.start();
   }
 
   @AfterClass

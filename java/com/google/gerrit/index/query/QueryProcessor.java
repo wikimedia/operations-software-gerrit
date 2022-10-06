@@ -79,7 +79,7 @@ public abstract class QueryProcessor<T> {
   private final IndexCollection<?, T, ? extends Index<?, T>> indexes;
   private final IndexRewriter<T> rewriter;
   private final String limitField;
-  private final IntSupplier permittedLimit;
+  private final IntSupplier userQueryLimit;
   private final CallerFinder callerFinder;
 
   // This class is not generally thread-safe, but programmer error may result in it being shared
@@ -100,14 +100,14 @@ public abstract class QueryProcessor<T> {
       IndexCollection<?, T, ? extends Index<?, T>> indexes,
       IndexRewriter<T> rewriter,
       String limitField,
-      IntSupplier permittedLimit) {
+      IntSupplier userQueryLimit) {
     this.metrics = new Metrics(metricMaker);
     this.schemaDef = schemaDef;
     this.indexConfig = indexConfig;
     this.indexes = indexes;
     this.rewriter = rewriter;
     this.limitField = limitField;
-    this.permittedLimit = permittedLimit;
+    this.userQueryLimit = userQueryLimit;
     this.used = new AtomicBoolean(false);
     this.callerFinder =
         CallerFinder.builder()
@@ -229,9 +229,10 @@ public abstract class QueryProcessor<T> {
       for (Predicate<T> q : queries) {
         int limit = getEffectiveLimit(q);
         limits.add(limit);
+        int initialPageSize = getInitialPageSize(limit);
 
-        if (limit == getBackendSupportedLimit()) {
-          limit--;
+        if (initialPageSize == getBackendSupportedLimit()) {
+          initialPageSize--;
         }
 
         int page = (start / limit) + 1;
@@ -240,10 +241,31 @@ public abstract class QueryProcessor<T> {
               "Cannot go beyond page " + indexConfig.maxPages() + " of results");
         }
 
-        // Always bump limit by 1, even if this results in exceeding the permitted
-        // max for this user. The only way to see if there are more entities is to
-        // ask for one more result from the query.
-        QueryOptions opts = createOptions(indexConfig, start, limit + 1, getRequestedFields());
+        // Always bump initial page size by 1, even if this results in exceeding the
+        // permitted max for this user. The only way to see if there are more entities
+        // is to ask for one more result from the query.
+        try {
+          initialPageSize = Math.addExact(initialPageSize, 1);
+        } catch (ArithmeticException e) {
+          initialPageSize = Integer.MAX_VALUE;
+        }
+
+        // If pageSizeMultiplier is set to 1 (default), update it to 10 for no-limit queries as
+        // it helps improve performance and also prevents no-limit queries from severely degrading
+        // when pagination type is OFFSET.
+        int pageSizeMultiplier = indexConfig.pageSizeMultiplier();
+        if (isNoLimit && pageSizeMultiplier == 1) {
+          pageSizeMultiplier = 10;
+        }
+
+        QueryOptions opts =
+            createOptions(
+                indexConfig,
+                start,
+                initialPageSize,
+                pageSizeMultiplier,
+                limit,
+                getRequestedFields());
         logger.atFine().log("Query options: " + opts);
         Predicate<T> pred = rewriter.rewrite(q, opts);
         if (enforceVisibility) {
@@ -258,6 +280,9 @@ public abstract class QueryProcessor<T> {
 
         @SuppressWarnings("unchecked")
         DataSource<T> s = (DataSource<T>) pred;
+        if (initialPageSize < limit && !(pred instanceof AndSource)) {
+          s = new PaginatingSource<T>(s, start, indexConfig);
+        }
         sources.add(s);
       }
 
@@ -308,8 +333,14 @@ public abstract class QueryProcessor<T> {
   }
 
   protected QueryOptions createOptions(
-      IndexConfig indexConfig, int start, int limit, Set<String> requestedFields) {
-    return QueryOptions.create(indexConfig, start, limit, requestedFields);
+      IndexConfig indexConfig,
+      int start,
+      int pageSize,
+      int pageSizeMultiplier,
+      int limit,
+      Set<String> requestedFields) {
+    return QueryOptions.create(
+        indexConfig, start, pageSize, pageSizeMultiplier, limit, requestedFields);
   }
 
   /**
@@ -347,14 +378,14 @@ public abstract class QueryProcessor<T> {
   }
 
   private int getPermittedLimit() {
-    return enforceVisibility ? permittedLimit.getAsInt() : Integer.MAX_VALUE;
+    return enforceVisibility ? userQueryLimit.getAsInt() : Integer.MAX_VALUE;
   }
 
   private int getBackendSupportedLimit() {
     return indexConfig.maxLimit();
   }
 
-  private int getEffectiveLimit(Predicate<T> p) {
+  public int getEffectiveLimit(Predicate<T> p) {
     if (isNoLimit == true) {
       return Integer.MAX_VALUE;
     }
@@ -373,6 +404,7 @@ public abstract class QueryProcessor<T> {
     int result = Ordering.natural().min(possibleLimits);
     // Should have short-circuited from #query or thrown some other exception before getting here.
     checkState(result > 0, "effective limit should be positive");
+
     return result;
   }
 
@@ -383,5 +415,17 @@ public abstract class QueryProcessor<T> {
         .findFirst();
   }
 
+  protected IntSupplier getUserQueryLimit() {
+    return userQueryLimit;
+  }
+
+  protected int getInitialPageSize(int queryLimit) {
+    return queryLimit;
+  }
+
   protected abstract String formatForLogging(T t);
+
+  protected abstract int getIndexSize();
+
+  protected abstract int getBatchSize();
 }

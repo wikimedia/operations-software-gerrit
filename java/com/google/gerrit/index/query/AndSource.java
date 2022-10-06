@@ -15,56 +15,58 @@
 package com.google.gerrit.index.query;
 
 import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.collect.ImmutableList.toImmutableList;
 
-import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterables;
-import com.google.gerrit.exceptions.StorageException;
-import java.util.ArrayList;
+import com.google.gerrit.index.IndexConfig;
 import java.util.Collection;
-import java.util.Comparator;
 import java.util.List;
 
-public class AndSource<T> extends AndPredicate<T>
-    implements DataSource<T>, Comparator<Predicate<T>> {
+public class AndSource<T> extends AndPredicate<T> implements DataSource<T> {
   protected final DataSource<T> source;
 
   private final IsVisibleToPredicate<T> isVisibleToPredicate;
   private final int start;
   private final int cardinality;
+  private final IndexConfig indexConfig;
 
-  public AndSource(Collection<? extends Predicate<T>> that) {
-    this(that, null, 0);
+  public AndSource(Collection<? extends Predicate<T>> that, IndexConfig indexConfig) {
+    this(that, null, 0, indexConfig);
   }
 
-  public AndSource(Predicate<T> that, IsVisibleToPredicate<T> isVisibleToPredicate) {
-    this(that, isVisibleToPredicate, 0);
+  public AndSource(
+      Predicate<T> that, IsVisibleToPredicate<T> isVisibleToPredicate, IndexConfig indexConfig) {
+    this(that, isVisibleToPredicate, 0, indexConfig);
   }
 
-  public AndSource(Predicate<T> that, IsVisibleToPredicate<T> isVisibleToPredicate, int start) {
-    this(ImmutableList.of(that), isVisibleToPredicate, start);
+  public AndSource(
+      Predicate<T> that,
+      IsVisibleToPredicate<T> isVisibleToPredicate,
+      int start,
+      IndexConfig indexConfig) {
+    this(ImmutableList.of(that), isVisibleToPredicate, start, indexConfig);
   }
 
   public AndSource(
       Collection<? extends Predicate<T>> that,
       IsVisibleToPredicate<T> isVisibleToPredicate,
-      int start) {
+      int start,
+      IndexConfig indexConfig) {
     super(that);
     checkArgument(start >= 0, "negative start: %s", start);
     this.isVisibleToPredicate = isVisibleToPredicate;
     this.start = start;
+    this.indexConfig = indexConfig;
 
     int c = Integer.MAX_VALUE;
     DataSource<T> s = null;
     int minCost = Integer.MAX_VALUE;
-    for (Predicate<T> p : sort(getChildren())) {
+    for (Predicate<T> p : getChildren()) {
       if (p instanceof DataSource) {
         c = Math.min(c, ((DataSource<?>) p).getCardinality());
 
         int cost = p.estimateCost();
         if (cost < minCost) {
-          s = toDataSource(p);
+          s = toPaginatingSource(p);
           minCost = cost;
         }
       }
@@ -75,64 +77,12 @@ public class AndSource<T> extends AndPredicate<T>
 
   @Override
   public ResultSet<T> read() {
-    if (source == null) {
-      throw new StorageException("No DataSource: " + this);
-    }
-
-    // ResultSets are lazy. Calling #read here first and then dealing with ResultSets only when
-    // requested allows the index to run asynchronous queries.
-    ResultSet<T> resultSet = source.read();
-    return new LazyResultSet<>(
-        () -> {
-          List<T> r = new ArrayList<>();
-          T last = null;
-          int nextStart = 0;
-          boolean skipped = false;
-          for (T data : buffer(resultSet)) {
-            if (!isMatchable() || match(data)) {
-              r.add(data);
-            } else {
-              skipped = true;
-            }
-            last = data;
-            nextStart++;
-          }
-
-          if (skipped && last != null && source instanceof Paginated) {
-            // If our source is a paginated source and we skipped at
-            // least one of its results, we may not have filled the full
-            // limit the caller wants.  Restart the source and continue.
-            //
-            @SuppressWarnings("unchecked")
-            Paginated<T> p = (Paginated<T>) source;
-            while (skipped && r.size() < p.getOptions().limit() + start) {
-              skipped = false;
-              ResultSet<T> next = p.restart(nextStart);
-
-              for (T data : buffer(next)) {
-                if (match(data)) {
-                  r.add(data);
-                } else {
-                  skipped = true;
-                }
-                nextStart++;
-              }
-            }
-          }
-
-          if (start >= r.size()) {
-            return ImmutableList.of();
-          } else if (start > 0) {
-            return ImmutableList.copyOf(r.subList(start, r.size()));
-          }
-          return ImmutableList.copyOf(r);
-        });
+    return source.read();
   }
 
   @Override
   public ResultSet<FieldBundle> readRaw() {
-    // TOOD(hiesel): Implement
-    throw new UnsupportedOperationException("not implemented");
+    return source.readRaw();
   }
 
   @Override
@@ -153,11 +103,6 @@ public class AndSource<T> extends AndPredicate<T>
     return true;
   }
 
-  private Iterable<T> buffer(ResultSet<T> scanner) {
-    return FluentIterable.from(Iterables.partition(scanner, 50))
-        .transformAndConcat(this::transformBuffer);
-  }
-
   protected List<T> transformBuffer(List<T> buffer) {
     return buffer;
   }
@@ -167,30 +112,18 @@ public class AndSource<T> extends AndPredicate<T>
     return cardinality;
   }
 
-  private ImmutableList<Predicate<T>> sort(Collection<? extends Predicate<T>> that) {
-    return that.stream().sorted(this).collect(toImmutableList());
-  }
-
-  @Override
-  public int compare(Predicate<T> a, Predicate<T> b) {
-    int ai = a instanceof DataSource ? 0 : 1;
-    int bi = b instanceof DataSource ? 0 : 1;
-    int cmp = ai - bi;
-
-    if (cmp == 0) {
-      cmp = a.estimateCost() - b.estimateCost();
-    }
-
-    if (cmp == 0 && a instanceof DataSource && b instanceof DataSource) {
-      DataSource<?> as = (DataSource<?>) a;
-      DataSource<?> bs = (DataSource<?>) b;
-      cmp = as.getCardinality() - bs.getCardinality();
-    }
-    return cmp;
-  }
-
   @SuppressWarnings("unchecked")
-  private DataSource<T> toDataSource(Predicate<T> pred) {
-    return (DataSource<T>) pred;
+  private PaginatingSource<T> toPaginatingSource(Predicate<T> pred) {
+    return new PaginatingSource<T>((DataSource<T>) pred, start, indexConfig) {
+      @Override
+      protected boolean match(T object) {
+        return AndSource.this.match(object);
+      }
+
+      @Override
+      protected boolean isMatchable() {
+        return AndSource.this.isMatchable();
+      }
+    };
   }
 }
