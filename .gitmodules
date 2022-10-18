@@ -86,9 +86,6 @@
 [submodule "plugins/metrics-reporter-prometheus"]
 	path = plugins/metrics-reporter-prometheus
 	url = https://gerrit.googlesource.com/plugins/metrics-reporter-prometheus
-[submodule "plugins/motd"]
-	path = plugins/motd
-	url = https://gerrit.googlesource.com/plugins/motd
 [submodule "plugins/reviewers"]
 	path = plugins/reviewers
 	url = https://gerrit.googlesource.com/plugins/reviewers
