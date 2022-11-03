@@ -14,49 +14,6 @@
 
 Gerrit.install(plugin => {
 
-  const lightStyle = document.createElement('dom-module');
-  lightStyle.innerHTML = `
-<template>
-  <style>
-    html {
-      --header-background: white;
-      --header-text-color: #001133;
-    }
-  </style>
-</template>`;
-  lightStyle.register('wm-light-style');
-
-  const darkStyle = document.createElement('dom-module');
-  darkStyle.innerHTML = `
-<template>
-  <style>
-    html {
-      --header-background: #3b3d3f;
-      --header-text-color: #e8eaed;
-    }
-  </style>
-</template>`;
-  darkStyle.register('wm-dark-style');
-
-  const commonStyle = document.createElement('dom-module');
-  commonStyle.innerHTML = `
-<template>
-  <style>
-    html {
-      --header-title-content: "Wikimedia Code Review";
-      --header-icon: url("/r/static/wikimedia-codereview-logo.cache.svg");
-      --header-icon-size: 1.2em;
-
-      --border-width: 0 0 3px 0;
-      --border-style: solid;
-      --box-shadow: 0 3px 3px 2px rgba(0,0,0,0.075), 0 0 2px rgba(0,0,0,0.2);
-      --header-border-bottom: 4px solid;
-      --header-border-image: linear-gradient(to right, #990000 15%, #006699 15%, #006699 85%, #339966 85%) 1;
-    }
-  </style>
-</template>`;
-  commonStyle.register('wm-common-style');
-
   const customLinks = document.createElement('dom-module');
   customLinks.innerHTML = `
 <template>
@@ -72,12 +29,6 @@ Gerrit.install(plugin => {
 </template>`;
   customLinks.register('wm-custom-links');
 
-  if (window.localStorage.getItem('dark-theme')) {
-    plugin.registerStyleModule('app-theme', 'wm-dark-style');
-  } else {
-    plugin.registerStyleModule('app-theme', 'wm-light-style');
-  }
-  plugin.registerStyleModule('app-theme', 'wm-common-style');
   plugin.registerCustomComponent(
       'footer-left', 'wm-custom-links');
   plugin.admin()
