@@ -124,17 +124,21 @@ class GrTestResultTableModule extends Polymer.Element {
 
   _showTable() {
     this.hasChecks = false;
-    if (!this.change || !this.change.messages) { return; }
+    if (!this.change || !this.change.messages) {
+      return;
+    }
 
     // Get current patchset num
-    var current_patchset = this._getPatchSetNum();
+    var currentPatchset = this._getPatchSetNum();
     // Get all messages to current patchset
     var verifiedMessages = this.change.messages.filter(it =>
-        it._revision_number == current_patchset);
+      it._revision_number == currentPatchset);
 
     var _checkers = {};
     verifiedMessages.forEach(it => {
-      if (!it) return;
+      if (!it) {
+        return;
+      }
 
       const _checks = this.parseChecksFromMessage(it.message);
 
@@ -151,7 +155,7 @@ class GrTestResultTableModule extends Polymer.Element {
           checker.date = it.date;
           Object.assign(checker.checks, _checks);
         }
-      };
+      }
     });
     this.checkers = Object.values(_checkers).map(checker => {
       checker.checks = Object.values(checker.checks);
@@ -161,20 +165,24 @@ class GrTestResultTableModule extends Polymer.Element {
   }
 
   _getPatchSetNum() {
-    if (!this.change || !this.change.revisions) return '';
+    if (!this.change || !this.change.revisions) {
+      return '';
+    }
 
     const current = this.change.current_revision;
     return this.change.revisions[current]._number;
   }
 
   parseChecksFromMessage(message) {
-    if (!message) return {};
+    if (!message) {
+      return {};
+    }
 
     let check;
     let checks = {};
 
-    message = message.replace(/✔/g,'SUCCESS'); // check mark
-    message = message.replace(/❌/g,'FAILURE'); // red cross
+    message = message.replace(/✔/g, 'SUCCESS'); // check mark
+    message = message.replace(/❌/g, 'FAILURE'); // red cross
 
     // Reports from Zuul
     var re = /(?:Build (Started) )?(http[^ ]+\/job\/([^\/ ]+)\/[^ ]+)(?: : ([A-Z_]+)( .*)?$)?/gm;
@@ -185,7 +193,7 @@ class GrTestResultTableModule extends Polymer.Element {
           url: check[2],
           result: check[1] || check[4],
           spent: check[5],
-        }
+        };
       }
     }
 
@@ -218,7 +226,6 @@ customElements.define(GrTestResultTableModule.is, GrTestResultTableModule);
 
 Gerrit.install(plugin => {
   plugin.registerCustomComponent(
-      'commit-container',
-      'gr-test-result-table-module');
+    'commit-container',
+    'gr-test-result-table-module');
 });
-

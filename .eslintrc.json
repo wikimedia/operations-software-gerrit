@@ -1,0 +1,26 @@
+{
+  "root": true,
+  "extends": [
+    "wikimedia/client-es6"
+  ],
+  "globals": {
+    "Gerrit": true,
+    "Polymer": true
+  },
+  "rules": {
+    "arrow-parens": [ "error", "as-needed" ],
+    "comma-dangle": "off",
+    "computed-property-spacing": "off",
+    "eqeqeq": "off",
+    "es-x/no-array-prototype-includes": "off",
+    "es-x/no-object-values": "off",
+    "indent": [ "error", 2 ],
+    "no-cond-assign": "off",
+    "no-underscore-dangle": "off",
+    "no-unused-vars": "off",
+    "no-useless-escape": "off",
+    "no-var": "off",
+    "prefer-const": "off",
+    "space-in-parens": "off"
+  }
+}

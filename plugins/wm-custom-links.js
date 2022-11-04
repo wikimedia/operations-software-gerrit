@@ -15,7 +15,7 @@ Gerrit.install(plugin => {
   customLinks.register('wm-custom-links');
 
   plugin.registerCustomComponent(
-      'footer-left', 'wm-custom-links');
+    'footer-left', 'wm-custom-links');
 
   plugin.admin()
     .addMenuLink('Code Search', 'https://codesearch.wmcloud.org/search/');
