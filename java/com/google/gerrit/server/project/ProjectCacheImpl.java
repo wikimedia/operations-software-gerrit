@@ -90,7 +90,7 @@ public class ProjectCacheImpl implements ProjectCache {
 
   public static final String PERSISTED_CACHE_NAME = "persisted_projects";
 
-  private static final String CACHE_LIST = "project_list";
+  public static final String CACHE_LIST = "project_list";
 
   public static Module module() {
     return new CacheModule() {
@@ -140,6 +140,13 @@ public class ProjectCacheImpl implements ProjectCache {
               @Override
               protected void configure() {
                 listener().to(ProjectCacheWarmer.class);
+              }
+            });
+        install(
+            new LifecycleModule() {
+              @Override
+              protected void configure() {
+                listener().to(PeriodicProjectListCacheWarmer.LifeCycle.class);
               }
             });
       }
@@ -271,6 +278,11 @@ public class ProjectCacheImpl implements ProjectCache {
       logger.atWarning().withCause(e).log("Cannot list available projects");
       return ImmutableSortedSet.of();
     }
+  }
+
+  @Override
+  public void refreshProjectList() {
+    list.refresh(ListKey.ALL);
   }
 
   @Override
