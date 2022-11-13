@@ -1,0 +1,15 @@
+{
+  "include": [
+    "plugins/wm-checks-api.js"
+  ],
+  "compilerOptions": {
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "allowUmdGlobalAccess": true,
+    "skipLibCheck": true,
+    "target": "es2018",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true
+  }
+}

@@ -14,14 +14,15 @@
     "arrow-parens": [ "error", "as-needed" ],
     "comma-dangle": "off",
     "computed-property-spacing": "off",
-    "eqeqeq": "off",
     "indent": [ "error", 2 ],
     "no-cond-assign": "off",
+    "no-console": [
+      "error", {
+        "allow": [ "warn", "error" ]
+      }
+    ],
     "no-underscore-dangle": "off",
-    "no-unused-vars": "off",
     "no-useless-escape": "off",
-    "no-var": "off",
-    "prefer-const": "off",
     "space-in-parens": "off",
     "valid-jsdoc": "off"
   },
