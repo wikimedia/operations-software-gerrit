@@ -65,7 +65,8 @@ public class DelegateRepository extends Repository {
     this.delegate = delegate;
   }
 
-  Repository delegate() {
+  /** Returns the wrapped {@link Repository} instance. */
+  public Repository delegate() {
     return delegate;
   }
 
@@ -214,12 +215,12 @@ public class DelegateRepository extends Repository {
   }
 
   @Override
-  public Set<ObjectId> getAdditionalHaves() {
+  public Set<ObjectId> getAdditionalHaves() throws IOException {
     return delegate.getAdditionalHaves();
   }
 
   @Override
-  public Map<AnyObjectId, Set<Ref>> getAllRefsByPeeledObjectId() {
+  public Map<AnyObjectId, Set<Ref>> getAllRefsByPeeledObjectId() throws IOException {
     return delegate.getAllRefsByPeeledObjectId();
   }
 

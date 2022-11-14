@@ -14,10 +14,7 @@
 
 package com.google.gerrit.index.query;
 
-public interface DataSource<T> {
-  /** Returns an estimate of the number of results from {@link #read()}. */
-  int getCardinality();
-
+public interface DataSource<T> extends HasCardinality {
   /** Returns read from the database and return the results. */
   ResultSet<T> read();
 

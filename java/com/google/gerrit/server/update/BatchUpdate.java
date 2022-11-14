@@ -311,9 +311,14 @@ public class BatchUpdate implements AutoCloseable {
 
     @Override
     public ChangeUpdate getUpdate(PatchSet.Id psId) {
+      return getUpdate(psId, when);
+    }
+
+    @Override
+    public ChangeUpdate getUpdate(PatchSet.Id psId, Timestamp whenOverride) {
       ChangeUpdate u = defaultUpdates.get(psId);
       if (u == null) {
-        u = getNewChangeUpdate(psId);
+        u = getNewChangeUpdate(psId, whenOverride);
         defaultUpdates.put(psId, u);
       }
       return u;
@@ -321,13 +326,18 @@ public class BatchUpdate implements AutoCloseable {
 
     @Override
     public ChangeUpdate getDistinctUpdate(PatchSet.Id psId) {
-      ChangeUpdate u = getNewChangeUpdate(psId);
+      return getDistinctUpdate(psId, when);
+    }
+
+    @Override
+    public ChangeUpdate getDistinctUpdate(PatchSet.Id psId, Timestamp whenOverride) {
+      ChangeUpdate u = getNewChangeUpdate(psId, whenOverride);
       distinctUpdates.put(psId, u);
       return u;
     }
 
-    private ChangeUpdate getNewChangeUpdate(PatchSet.Id psId) {
-      ChangeUpdate u = changeUpdateFactory.create(notes, user, when);
+    private ChangeUpdate getNewChangeUpdate(PatchSet.Id psId, Timestamp whenOverride) {
+      ChangeUpdate u = changeUpdateFactory.create(notes, user, whenOverride);
       if (newChanges.containsKey(notes.getChangeId())) {
         u.setAllowWriteToNewRef(true);
       }
@@ -432,6 +442,11 @@ public class BatchUpdate implements AutoCloseable {
 
   public void execute() throws UpdateException, RestApiException {
     execute(ImmutableList.of(this), ImmutableList.of(), false);
+  }
+
+  public BatchRefUpdate prepareRefUpdates() throws Exception {
+    ChangesHandle handle = executeChangeOps(ImmutableList.of(), false);
+    return handle.prepare();
   }
 
   public boolean isExecuted() {
@@ -608,6 +623,10 @@ public class BatchUpdate implements AutoCloseable {
     void setResult(Change.Id id, ChangeResult result) {
       ChangeResult old = results.putIfAbsent(id, result);
       checkArgument(old == null, "result for change %s already set: %s", id, old);
+    }
+
+    public BatchRefUpdate prepare() throws IOException {
+      return manager.prepare();
     }
 
     void execute() throws IOException {

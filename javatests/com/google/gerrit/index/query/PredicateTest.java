@@ -18,13 +18,72 @@ import org.junit.Ignore;
 
 @Ignore
 public abstract class PredicateTest {
-  protected static final class TestPredicate extends OperatorPredicate<String> {
+  protected static class TestDataSourcePredicate extends TestMatchablePredicate<String>
+      implements DataSource<String> {
+    protected final int cardinality;
+
+    protected TestDataSourcePredicate(String name, String value, int cost, int cardinality) {
+      super(name, value, cost);
+      this.cardinality = cardinality;
+    }
+
+    @Override
+    public int getCardinality() {
+      return cardinality;
+    }
+
+    @Override
+    public ResultSet<String> read() {
+      return null;
+    }
+
+    @Override
+    public ResultSet<FieldBundle> readRaw() {
+      return null;
+    }
+  }
+
+  protected static class TestCardinalPredicate<T> extends TestMatchablePredicate<T>
+      implements HasCardinality {
+    protected TestCardinalPredicate(String name, String value, int cost) {
+      super(name, value, cost);
+    }
+
+    @Override
+    public int getCardinality() {
+      return 1;
+    }
+  }
+
+  protected static class TestMatchablePredicate<T> extends TestPredicate<T>
+      implements Matchable<T> {
+    protected int cost;
+    protected boolean ranMatch = false;
+
+    protected TestMatchablePredicate(String name, String value, int cost) {
+      super(name, value);
+      this.cost = cost;
+    }
+
+    @Override
+    public boolean match(T object) {
+      ranMatch = true;
+      return false;
+    }
+
+    @Override
+    public int getCost() {
+      return cost;
+    }
+  }
+
+  protected static class TestPredicate<T> extends OperatorPredicate<T> {
     protected TestPredicate(String name, String value) {
       super(name, value);
     }
   }
 
-  protected static TestPredicate f(String name, String value) {
-    return new TestPredicate(name, value);
+  protected static TestPredicate<String> f(String name, String value) {
+    return new TestPredicate<>(name, value);
   }
 }

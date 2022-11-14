@@ -39,6 +39,7 @@ import com.google.gerrit.server.index.change.ChangeIndexCollection;
 import com.google.gerrit.server.index.change.ChangeIndexRewriter;
 import com.google.gerrit.server.index.change.ChangeSchemaDefinitions;
 import com.google.gerrit.server.index.change.IndexedChangeQuery;
+import com.google.gerrit.server.notedb.Sequences;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import java.util.ArrayList;
@@ -61,6 +62,8 @@ public class ChangeQueryProcessor extends QueryProcessor<ChangeData>
   private final Map<String, DynamicBean> dynamicBeans = new HashMap<>();
   private final List<Extension<ChangePluginDefinedInfoFactory>>
       changePluginDefinedInfoFactoriesByPlugin = new ArrayList<>();
+  private final Sequences sequences;
+  private final IndexConfig indexConfig;
 
   static {
     // It is assumed that basic rewrites do not touch visibleto predicates.
@@ -77,6 +80,7 @@ public class ChangeQueryProcessor extends QueryProcessor<ChangeData>
       IndexConfig indexConfig,
       ChangeIndexCollection indexes,
       ChangeIndexRewriter rewriter,
+      Sequences sequences,
       ChangeIsVisibleToPredicate.Factory changeIsVisibleToPredicateFactory,
       DynamicSet<ChangePluginDefinedInfoFactory> changePluginDefinedInfoFactories) {
     super(
@@ -89,6 +93,8 @@ public class ChangeQueryProcessor extends QueryProcessor<ChangeData>
         () -> limitsFactory.create(userProvider.get()).getQueryLimit());
     this.userProvider = userProvider;
     this.changeIsVisibleToPredicateFactory = changeIsVisibleToPredicateFactory;
+    this.sequences = sequences;
+    this.indexConfig = indexConfig;
 
     changePluginDefinedInfoFactories
         .entries()
@@ -103,8 +109,14 @@ public class ChangeQueryProcessor extends QueryProcessor<ChangeData>
 
   @Override
   protected QueryOptions createOptions(
-      IndexConfig indexConfig, int start, int limit, Set<String> requestedFields) {
-    return IndexedChangeQuery.createOptions(indexConfig, start, limit, requestedFields);
+      IndexConfig indexConfig,
+      int start,
+      int pageSize,
+      int pageSizeMultiplier,
+      int limit,
+      Set<String> requestedFields) {
+    return IndexedChangeQuery.createOptions(
+        indexConfig, start, pageSize, pageSizeMultiplier, limit, requestedFields);
   }
 
   @Override
@@ -131,11 +143,26 @@ public class ChangeQueryProcessor extends QueryProcessor<ChangeData>
   @Override
   protected Predicate<ChangeData> enforceVisibility(Predicate<ChangeData> pred) {
     return new AndChangeSource(
-        pred, changeIsVisibleToPredicateFactory.forUser(userProvider.get()), start);
+        pred, changeIsVisibleToPredicateFactory.forUser(userProvider.get()), start, indexConfig);
   }
 
   @Override
   protected String formatForLogging(ChangeData changeData) {
     return changeData.getId().toString();
+  }
+
+  @Override
+  protected int getIndexSize() {
+    return sequences.lastChangeId();
+  }
+
+  @Override
+  protected int getBatchSize() {
+    return sequences.changeBatchSize();
+  }
+
+  @Override
+  protected int getInitialPageSize(int limit) {
+    return Math.min(getUserQueryLimit().getAsInt(), limit);
   }
 }

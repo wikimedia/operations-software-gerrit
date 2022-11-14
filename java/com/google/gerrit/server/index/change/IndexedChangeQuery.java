@@ -34,6 +34,7 @@ import com.google.gerrit.index.query.QueryParseException;
 import com.google.gerrit.index.query.ResultSet;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.ChangeDataSource;
+import com.google.gerrit.server.query.change.ChangeIndexPostFilterPredicate;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -51,24 +52,40 @@ import java.util.Set;
 public class IndexedChangeQuery extends IndexedQuery<Change.Id, ChangeData>
     implements ChangeDataSource, Matchable<ChangeData> {
   public static QueryOptions oneResult() {
-    return createOptions(IndexConfig.createDefault(), 0, 1, ImmutableSet.of());
+    IndexConfig config = IndexConfig.createDefault();
+    return createOptions(config, 0, 1, config.pageSizeMultiplier(), 1, ImmutableSet.of());
   }
 
   public static QueryOptions createOptions(
       IndexConfig config, int start, int limit, Set<String> fields) {
+    return createOptions(config, start, limit, config.pageSizeMultiplier(), limit, fields);
+  }
+
+  public static QueryOptions createOptions(
+      IndexConfig config,
+      int start,
+      int pageSize,
+      int pageSizeMultiplier,
+      int limit,
+      Set<String> fields) {
     // Always include project since it is needed to load the change from NoteDb.
     if (!fields.contains(CHANGE.getName()) && !fields.contains(PROJECT.getName())) {
       fields = new HashSet<>(fields);
       fields.add(PROJECT.getName());
     }
-    return QueryOptions.create(config, start, limit, fields);
+    return QueryOptions.create(config, start, pageSize, pageSizeMultiplier, limit, fields);
   }
 
   @VisibleForTesting
   static QueryOptions convertOptions(QueryOptions opts) {
     opts = opts.convertForBackend();
     return IndexedChangeQuery.createOptions(
-        opts.config(), opts.start(), opts.limit(), opts.fields());
+        opts.config(),
+        opts.start(),
+        opts.pageSize(),
+        opts.pageSizeMultiplier(),
+        opts.limit(),
+        opts.fields());
   }
 
   private final Map<ChangeData, DataSource<ChangeData>> fromSource;
@@ -109,16 +126,38 @@ public class IndexedChangeQuery extends IndexedQuery<Change.Id, ChangeData>
       public void close() {
         rs.close();
       }
+
+      @Override
+      public Object searchAfter() {
+        return rs.searchAfter();
+      }
     };
+  }
+
+  public boolean postIndexMatch(Predicate<ChangeData> pred, ChangeData cd) {
+    if (pred instanceof ChangeIndexPostFilterPredicate) {
+      checkState(
+          pred.isMatchable(),
+          "match invoked, but child predicate %s doesn't implement %s",
+          pred,
+          Matchable.class.getName());
+      return pred.asMatchable().match(cd);
+    }
+    for (int i = 0; i < pred.getChildCount(); i++) {
+      if (!postIndexMatch(pred.getChild(i), cd)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   @Override
   public boolean match(ChangeData cd) {
-    if (source != null && fromSource.get(cd) == source) {
+    Predicate<ChangeData> pred = getChild(0);
+    if (source != null && fromSource.get(cd) == source && postIndexMatch(pred, cd)) {
       return true;
     }
 
-    Predicate<ChangeData> pred = getChild(0);
     checkState(
         pred.isMatchable(),
         "match invoked, but child predicate %s doesn't implement %s",
