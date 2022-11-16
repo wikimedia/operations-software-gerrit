@@ -40,7 +40,6 @@ class GrTestResultTableModule extends Polymer.Element {
     padding-left: var(--spacing-m);
     padding-right: var(--spacing-m);
     background: #c1c124;
-    @apply --vote-chip-styles;
   }
   .check_result_chip_FAILURE {
     background: var(--vote-color-rejected);
