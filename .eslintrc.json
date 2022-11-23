@@ -1,7 +1,8 @@
 {
   "root": true,
   "extends": [
-    "wikimedia/client-es6"
+    "wikimedia/client-common",
+    "wikimedia/language/es2018"
   ],
   "globals": {
     "Gerrit": true,
@@ -12,8 +13,6 @@
     "comma-dangle": "off",
     "computed-property-spacing": "off",
     "eqeqeq": "off",
-    "es-x/no-array-prototype-includes": "off",
-    "es-x/no-object-values": "off",
     "indent": [ "error", 2 ],
     "no-cond-assign": "off",
     "no-underscore-dangle": "off",
