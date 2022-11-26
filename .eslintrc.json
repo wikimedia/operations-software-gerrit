@@ -1,6 +1,7 @@
 {
   "root": true,
   "extends": [
+    "plugin:jsdoc/recommended",
     "wikimedia/client-common",
     "wikimedia/language/es2018"
   ],
@@ -8,6 +9,7 @@
     "Gerrit": true,
     "Polymer": true
   },
+  "plugins": [ "jsdoc" ],
   "rules": {
     "arrow-parens": [ "error", "as-needed" ],
     "comma-dangle": "off",
@@ -20,6 +22,12 @@
     "no-useless-escape": "off",
     "no-var": "off",
     "prefer-const": "off",
-    "space-in-parens": "off"
+    "space-in-parens": "off",
+    "valid-jsdoc": "off"
+  },
+  "settings": {
+    "jsdoc": {
+      "mode": "typescript"
+    }
   }
 }
