@@ -580,3 +580,15 @@ window.Gerrit.install(plugin => {
   /** @type {ChecksPluginApi} */
   plugin.checks().register(provider, config);
 });
+
+if ( typeof module !== 'undefined' ) {
+  // eslint-disable-next-line no-undef
+  module.exports = {
+    BotProcessor: BotProcessor,
+    CindyTheBrowserBot: CindyTheBrowserBot,
+    PipelineBotProcessor: PipelineBotProcessor,
+    SonarQubeProcessor: SonarQubeProcessor,
+    ZuulProcessor: ZuulProcessor,
+    WikimediaChecksAnalyzer: WikimediaChecksAnalyzer,
+  };
+}

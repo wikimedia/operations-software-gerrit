@@ -1,34 +1,13 @@
 {
   "root": true,
-  "extends": [
-    "plugin:jsdoc/recommended",
-    "wikimedia/client-common",
-    "wikimedia/language/es2018"
-  ],
-  "globals": {
-    "Gerrit": true,
-    "Polymer": true
-  },
-  "plugins": [ "jsdoc" ],
   "rules": {
     "arrow-parens": [ "error", "as-needed" ],
     "comma-dangle": "off",
     "computed-property-spacing": "off",
     "indent": [ "error", 2 ],
     "no-cond-assign": "off",
-    "no-console": [
-      "error", {
-        "allow": [ "warn", "error" ]
-      }
-    ],
     "no-underscore-dangle": "off",
     "no-useless-escape": "off",
-    "space-in-parens": "off",
-    "valid-jsdoc": "off"
-  },
-  "settings": {
-    "jsdoc": {
-      "mode": "typescript"
-    }
+    "space-in-parens": "off"
   }
 }

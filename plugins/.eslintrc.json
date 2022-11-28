@@ -1,0 +1,27 @@
+{
+  "root": true,
+  "extends": [
+    "plugin:jsdoc/recommended",
+    "wikimedia/client-common",
+    "wikimedia/language/es2018",
+    "../.eslintrc.json"
+  ],
+  "globals": {
+    "Gerrit": true,
+    "Polymer": true
+  },
+  "plugins": [ "jsdoc" ],
+  "rules": {
+    "no-console": [
+      "error", {
+        "allow": [ "warn", "error" ]
+      }
+    ],
+    "valid-jsdoc": "off"
+  },
+  "settings": {
+    "jsdoc": {
+      "mode": "typescript"
+    }
+  }
+}

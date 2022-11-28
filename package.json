@@ -1,11 +1,24 @@
 {
   "private": true,
   "scripts": {
-    "test": "eslint . && tsc"
+    "test": "nyc qunit && eslint . && tsc"
   },
   "devDependencies": {
-    "eslint-config-wikimedia": "^0.23.0",
     "@gerritcodereview/typescript-api": "3.4.5",
+    "eslint-config-wikimedia": "^0.23.0",
+    "nyc": "^15.1.0",
+    "qunit": "^2.19.3",
     "typescript": "^4.9.0"
+  },
+  "nyc": {
+    "include": [
+      "plugins/*.js"
+    ],
+    "report-dir": "coverage",
+    "reporter": [
+      "text",
+      "html",
+      "clover"
+    ]
   }
 }
