@@ -77,7 +77,7 @@ class BotProcessor {
    * @return {boolean} Whether the message can be parsed
    */
   accept(changeMessage) { // eslint-disable-line no-unused-vars
-    throw new Error(`accept() not implemented in ${this}`);
+    throw new Error(`${this.constructor.name}.accept() not implemented`);
   }
 
   // eslint-disable-next-line jsdoc/require-returns-check
@@ -88,7 +88,7 @@ class BotProcessor {
    * @return {CheckResult[]} A list of results found in the received message
    */
   parse(rawMessage) { // eslint-disable-line no-unused-vars
-    throw new Error(`parse() not implemented in ${this}`);
+    throw new Error(`${this.constructor.name}.parse() not implemented`);
   }
 
   /**

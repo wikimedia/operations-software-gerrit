@@ -35,6 +35,24 @@ QUnit.module( '[wm-checks-api]', () => {
       } );
     } );
 
+    QUnit.test( 'unimplemented methods report class name', assert => {
+      class DummyBotProcessor extends wmChecksApi.BotProcessor {}
+      const dummy = new DummyBotProcessor();
+      assert.throws(
+        () => {
+          dummy.accept();
+        },
+        new Error('DummyBotProcessor.accept() not implemented')
+      );
+      assert.throws(
+        () => {
+          dummy.parse();
+        },
+        new Error('DummyBotProcessor.parse() not implemented')
+      );
+
+    } );
+
     const resultCategoryMap = [
       // result, voting, expected
       [ 'SUCCESS', undefined, 'SUCCESS' ],
