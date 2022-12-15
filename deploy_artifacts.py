@@ -20,7 +20,7 @@ def parse_args():
     parser.add_argument('files', nargs='+', help='File(s) we want to deploy')
     parser.add_argument('-n', '--dry-run', action='store_true',
                         help='Print command instead of executing it')
-    parser.add_argument('--version', help='Version number')
+    parser.add_argument('--version', required=True, help='Version number')
 
     return parser.parse_args()
 
