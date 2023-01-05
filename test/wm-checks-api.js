@@ -206,6 +206,13 @@ QUnit.module( '[wm-checks-api]', () => {
         })
       );
     });
+    QUnit.test('accept() handles non PCC messages', assert => {
+      assert.false(
+        pcc.accept({
+          message: 'hello',
+        })
+      );
+    });
 
     QUnit.test( 'parse() PCC success is INFO', assert => {
       assert.deepEqual(

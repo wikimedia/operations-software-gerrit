@@ -202,6 +202,9 @@ class PuppetCatalogCompilerProcessor extends BotProcessor {
 
   static isLegacyMessage(changeMessage) {
     const message = changeMessage.message.split('\n')[2];
+    if (typeof message === 'undefined') {
+      return false;
+    }
     return (
       message.startsWith('PCC SUCCESS (') ||
       message.startsWith('PCC FAIL (') ||
