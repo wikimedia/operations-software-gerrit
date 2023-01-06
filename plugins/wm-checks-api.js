@@ -117,10 +117,18 @@ class BotProcessor {
 
 class CindyTheBrowserBot extends BotProcessor {
 
+  /**
+   * @param {ChangeMessageInfo} changeMessage
+   * @return {boolean} Whether the message can be parsed
+   */
   accept(changeMessage) {
     return changeMessage.real_author.username === 'cindythebrowsertestbot';
   }
 
+  /**
+   * @param {string} message The text message posted by the bot.
+   * @return {CheckResult[]} A list of results found in the received message
+   */
   parse(message) {
     const lines = message.split('\n');
 
@@ -146,6 +154,11 @@ class CindyTheBrowserBot extends BotProcessor {
  * Code: https://gerrit.wikimedia.org/r/integration/pipelinelib.git
  */
 class PipelineBotProcessor extends BotProcessor {
+
+  /**
+   * @param {ChangeMessageInfo} changeMessage
+   * @return {boolean} Whether the message can be parsed
+   */
   accept(changeMessage) {
     return (
       typeof changeMessage.real_author.username !== 'undefined' &&
@@ -153,6 +166,10 @@ class PipelineBotProcessor extends BotProcessor {
     );
   }
 
+  /**
+   * @param {string} message The text message posted by the bot.
+   * @return {CheckResult[]} A list of results found in the received message
+   */
   parse(message) {
     // This used to be commentlink sections in Gerrit config
 
@@ -200,6 +217,11 @@ class PipelineBotProcessor extends BotProcessor {
  */
 class PuppetCatalogCompilerProcessor extends BotProcessor {
 
+  /**
+   *
+   * @param {ChangeMessageInfo} changeMessage
+   * @return {boolean} Whether the message is an untagged PCC comment
+   */
   static isLegacyMessage(changeMessage) {
     const message = changeMessage.message.split('\n')[2];
     if (typeof message === 'undefined') {
@@ -212,6 +234,10 @@ class PuppetCatalogCompilerProcessor extends BotProcessor {
     );
   }
 
+  /**
+   * @param {ChangeMessageInfo} changeMessage
+   * @return {boolean} Whether the message can be parsed
+   */
   accept(changeMessage) {
     return (
       typeof changeMessage.tag !== 'undefined' && // for tests not defining tag
@@ -221,6 +247,10 @@ class PuppetCatalogCompilerProcessor extends BotProcessor {
     );
   }
 
+  /**
+   * @param {string} message The text message posted by the bot.
+   * @return {CheckResult[]} A list of results found in the received message
+   */
   parse(message) {
     /** @type {CheckResult} */
     let checkResult;
@@ -279,10 +309,18 @@ class PuppetCatalogCompilerProcessor extends BotProcessor {
  */
 class SonarQubeProcessor extends BotProcessor {
 
+  /**
+   * @param {ChangeMessageInfo} changeMessage
+   * @return {boolean} Whether the message can be parsed
+   */
   accept(changeMessage) {
     return changeMessage.real_author.username === 'sonarqubebot';
   }
 
+  /**
+   * @param {string} message The text message posted by the bot.
+   * @return {CheckResult[]} A list of results found in the received message
+   */
   parse(message) {
     /** @type {CheckResult[]} */
     const checkResults = [];
@@ -330,6 +368,10 @@ class SonarQubeProcessor extends BotProcessor {
  */
 class ZuulProcessor extends BotProcessor {
 
+  /**
+   * @param {ChangeMessageInfo} changeMessage
+   * @return {boolean} Whether the message can be parsed
+   */
   accept(changeMessage) {
     return (
       typeof changeMessage.real_author.tags !== 'undefined' &&
@@ -339,6 +381,10 @@ class ZuulProcessor extends BotProcessor {
     );
   }
 
+  /**
+   * @param {string} message The text message posted by the bot.
+   * @return {CheckResult[]} A list of results found in the received message
+   */
   parse(message) {
     /** @type {CheckResult[]} */
     const checkResults = [];
@@ -404,6 +450,7 @@ class WikimediaChecksAnalyzer {
   constructor() {
     /** @type {BotProcessor[]} */
     this.processors = [];
+    /** @type {Object.<string, number>} */
     this.attempt = {};
     this.resetAttempt();
   }
