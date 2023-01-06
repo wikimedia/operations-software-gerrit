@@ -4,5 +4,17 @@
     "wikimedia/server",
     "wikimedia/qunit",
     "../.eslintrc.json"
+  ],
+  "overrides": [
+    {
+      "files": [
+        "zuul*.json"
+      ],
+      "rules": {
+        "indent": [
+          "error", "tab"
+        ]
+      }
+    }
   ]
 }

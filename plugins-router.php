@@ -23,4 +23,16 @@ header( 'Access-Control-Allow-Origin: *' );
 # Extra headers injected by PHP and the Chrome extension
 header( 'Access-Control-Allow-Headers: cache-control, x-test-origin' );
 
+# Browser requires MIME type to be explicitly set when using `import`
+$ext = pathinfo( $_SERVER['SCRIPT_FILENAME'], PATHINFO_EXTENSION );
+if ( $ext === 'js' ) {
+	header( 'Content-Type: text/javascript' );
+}
+
+// php8: replace with str_starts_with()
+if ( 0 === strpos( $_SERVER['SCRIPT_NAME'], '/zuul/status/change/' ) ) {
+	readfile( $_SERVER['DOCUMENT_ROOT'] . '/../test/zuul-status-change.json' );
+	return true;
+}
+
 readfile($_SERVER["SCRIPT_FILENAME"]);

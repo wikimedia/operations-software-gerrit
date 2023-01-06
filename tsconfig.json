@@ -1,6 +1,7 @@
 {
   "include": [
-    "plugins/wm-checks-api.js"
+    "plugins/wm-checks-api.js",
+    "plugins/wm-zuul-status.js"
   ],
   "compilerOptions": {
     "moduleResolution": "node",
