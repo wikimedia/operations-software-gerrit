@@ -1,0 +1,10 @@
+# scap checks configuration for Gerrit
+#
+# For reference see:
+# https://doc.wikimedia.org/scap/scap3/checks.html
+#
+checks:
+  remove_plugins_eslint_config:
+    type: script
+    before: promote
+    command: rm-eslintrc_json

@@ -1,0 +1,5 @@
+#!/bin/bash
+
+set -eu -o pipefail
+
+rm -fv "$SCAP_FINAL_PATH"/plugins/.eslintrc.json
