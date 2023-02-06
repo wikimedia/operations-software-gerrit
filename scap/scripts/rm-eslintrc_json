@@ -2,4 +2,4 @@
 
 set -eu -o pipefail
 
-rm -fv "$SCAP_FINAL_PATH"/plugins/.eslintrc.json
+rm -fv "$SCAP_REV_PATH"/plugins/.eslintrc.json
