@@ -38,13 +38,18 @@ ts_project(
 # Use this rule for publishing the js plugin api as a package to the npm repo.
 pkg_npm(
     name = "js_plugin_api_npm_package",
+    package_name = "@gerritcodereview/typescript-api",
     srcs = glob(
         ["**/*"],
         exclude = [
             "BUILD",
+            "BUILD_for_publishing_api_only",
             "tsconfig.json",
             "publish.sh",
         ],
     ),
-    deps = [":js_plugin_api_compiled"],
+    deps = [
+        ":js_plugin_api_compiled",
+        "//plugins:tsconfig-plugins-base.json",
+    ],
 )
