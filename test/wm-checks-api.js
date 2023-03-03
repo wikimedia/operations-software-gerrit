@@ -127,6 +127,45 @@ QUnit.module( '[wm-checks-api]', () => {
     } );
   } );
 
+  QUnit.module('EarlyWarningBot', hooks => {
+    let early;
+    hooks.before( () => {
+      early = new wmChecksApi.EarlyWarningBot();
+    });
+
+    QUnit.test( 'accept() from user earlywarningbot', assert => {
+      assert.true(
+        early.accept( { // ChangeMessage
+          real_author: { // eslint-disable-line camelcase
+            username: 'earlywarningbot',
+          }
+        })
+      );
+    } );
+
+    QUnit.test( 'accept() rejects an other author', assert => {
+      assert.false(
+        early.accept( { // ChangeMessage
+          real_author: { // eslint-disable-line camelcase
+            username: 'jenkins-bot',
+          }
+        })
+      );
+    } );
+
+    QUnit.test( 'Reports as ERROR', assert => {
+      assert.deepEqual(
+        early.parse( 'Patchset 1:\n\nwhatever content' ),
+        [ {
+          category: 'ERROR',
+          summary: 'A Zuul job already failed',
+          message: 'Patchset 1:\n\nwhatever content',
+        } ]
+      );
+    } );
+
+  } );
+
   QUnit.module('PipelineBot', hooks => {
     let pipelineBot;
     hooks.before( () => {
