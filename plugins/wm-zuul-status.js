@@ -58,7 +58,8 @@
  *
  * A `job` has:
  *
- * job.pipeline (STRING): name of the Zuul pipeline (ex: 'test')
+ * job.pipeline (STRING): name of the Zuul pipeline (ex: 'test'). This is only
+ * set after the build has started running.
  * job.url (STRING): full URL to the Jenkins job
  *
  * Dates:
@@ -270,12 +271,18 @@ class ZuulStatusChecksProvider {
     statusJson = statusJson.filter(status => status.live !== false);
 
     return statusJson.map(status => {
+      // TODO the statusJson should be a TypeDef. Meanwhile explicitly cast the type
+      const statusJobs = /** @type {ZuulJob[]} */ (status.jobs);
 
-      /** @type {ZuulJob[]} */
-      const jobs = status.jobs;
+      // Jobs that are not running yet have no pipeline attached
+
+      // Set the check name from the first started build, if none use a
+      // placeholder until a job has started.
+      const runningJob = statusJobs.find(job => job.pipeline !== null);
+      const checkName = (runningJob === undefined) ? 'Waiting for jobs' : runningJob.pipeline;
 
       /** @type {CheckResult[]} */
-      const checkResults = jobs.map( job => {
+      const checkResults = statusJobs.map( job => {
         /** @type {CheckResult} */
         const checkResult = {
           category: this.resultToCategory(job.result, job.voting),
@@ -301,7 +308,7 @@ class ZuulStatusChecksProvider {
       /** @type {CheckRun} */
       const checkRun = {
         attempt: 1, // FIXME conflicts with previous runs found by wm-checks-api
-        checkName: status.jobs[0].pipeline,
+        checkName: checkName,
         // RUNNABLE / RUNNING / COMPLETED  check active?
         status: /** @type {RunStatus} */ ('RUNNING'),
         statusLink: `https://integration.wikimedia.org/zuul/#q=${status.id}`,

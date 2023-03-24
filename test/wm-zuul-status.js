@@ -138,6 +138,68 @@ QUnit.module( '[wm-zuul-status]', () => {
       assert.deepEqual(checkRun, []);
     } );
 
+    QUnit.test( 'parse() skips non building items', assert => {
+      const checkRun = zuul.parse(
+        [
+          // We can't determinate the pipeline for a job that has no builds yet
+          {
+            live: true,
+            jobs: [
+              {
+                name: 'mwext-codehealth-master-non-voting',
+                pipeline: null,
+              }
+            ]
+          },
+          // Another pipeline did process the change
+          {
+            live: true,
+            jobs: [
+              { result: 'SUCCESS',
+                pipeline: 'test' },
+            ]
+          },
+        ]
+      );
+      assert.strictEqual(checkRun.length, 2);
+
+      assert.propContains(checkRun[0], {
+        checkName: 'Waiting for jobs',
+      });
+
+      assert.propContains(checkRun[1], {
+        checkName: 'test',
+      });
+      assert.deepEqual(checkRun[1].results.length, 1);
+    } );
+
+    QUnit.test( 'parse() finds CheckName from running build', assert => {
+      const checkRun = zuul.parse(
+        [
+          {
+            live: true,
+            jobs: [
+              // First job hasn't started yet
+              {
+                name: 'mwext-codehealth-master-non-voting',
+                pipeline: null,
+              },
+              {
+                name: 'mwext-phpunit-coverage-docker-publish',
+                pipeline: 'postmerge',
+              }
+            ]
+          }
+        ]
+      );
+      assert.strictEqual(checkRun.length, 1);
+      assert.propContains(checkRun[0], {
+        checkName: 'postmerge',
+        status: 'RUNNING',
+        statusDescription: 'PENDING: 2',
+      });
+    } );
+
     const resultTagsTestCases = [
       // jobResult, expected
       [ null, { name: 'Pending', color: 'gray' } ],
