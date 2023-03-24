@@ -126,6 +126,18 @@ QUnit.module( '[wm-zuul-status]', () => {
       assert.deepEqual(checkRun[1].results.length, 3);
     } );
 
+    QUnit.test( 'parse() skips non-live items', assert => {
+      const checkRun = zuul.parse(
+        [
+          {
+            jobs: [],
+            live: false
+          }
+        ]
+      );
+      assert.deepEqual(checkRun, []);
+    } );
+
     const resultTagsTestCases = [
       // jobResult, expected
       [ null, { name: 'Pending', color: 'gray' } ],

@@ -264,6 +264,11 @@ class ZuulStatusChecksProvider {
    * @return {CheckRun[]}
    */
   parse(statusJson) {
+
+    // Our given change might be a dependency of another change in which case
+    // it is represented but is not being processed by Zuul.
+    statusJson = statusJson.filter(status => status.live !== false);
+
     return statusJson.map(status => {
 
       /** @type {ZuulJob[]} */
