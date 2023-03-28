@@ -289,9 +289,8 @@ class PuppetCatalogCompilerProcessor extends BotProcessor {
   parse(message) {
     /** @type {CheckResult} */
     let checkResult;
-    const pccMessage = message.split('\n')[2];
 
-    const manual = /PCC Check manually: (?<buildUrl>.+)/.exec(pccMessage);
+    const manual = /PCC Check manually: (?<buildUrl>.+)/.exec(message);
     if (manual) {
       checkResult = {
         category: /** @type {Category} */ ('WARNING'),
@@ -312,7 +311,7 @@ class PuppetCatalogCompilerProcessor extends BotProcessor {
     }
 
     const compiled = /PCC (?<result>SUCCESS|FAIL) \((?<nodeStatus>.*?)\): (?<consoleUrl>.+)/
-      .exec(pccMessage);
+      .exec(message);
     const result = compiled.groups.result;
     checkResult = {
       category: /** @type {Category} */ (

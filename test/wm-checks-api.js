@@ -278,6 +278,18 @@ QUnit.module( '[wm-checks-api]', () => {
       assert.propContains(results[0], { category: 'WARNING' } );
     });
 
+    QUnit.test( 'parse() PCC Check with user comment', assert => {
+      // Seen on https://gerrit.wikimedia.org/r/c/operations/puppet/+/901612
+      // which had a draft comment submitted by the pcc.py script.
+      assert.propContains(
+        pcc.parse( 'Patch Set 3: Verified+1\n\n(1 comment)\n\nPCC SUCCESS (): https://xxx')[0],
+        {
+          category: 'INFO',
+          summary: 'Puppet compiler SUCCESS | ',
+        }
+      );
+    });
+
   } );
 
   QUnit.module('SonarQube', hooks => {
