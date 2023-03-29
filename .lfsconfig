@@ -1,0 +1,5 @@
+# This force scap target to fetch from the canonical Gerrit server since the
+# scap deployment server does not provide a LFS endpoint (T324664).
+[lfs]
+  url = https://gerrit.wikimedia.org/r/operations/software/gerrit.git/info/lfs
+  pushurl = ssh://gerrit.wikimedia.org:29418/operations/software/gerrit.git

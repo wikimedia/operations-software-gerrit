@@ -71,19 +71,6 @@
       </snapshots>
     </repository>
 
-    <repository>
-      <id>wikimedia.releases</id>
-      <name>Wikimedia Release Repository</name>
-      <url>https://archiva.wikimedia.org/repository/releases</url>
-      <releases>
-        <enabled>true</enabled>
-        <checksumPolicy>fail</checksumPolicy>
-      </releases>
-      <snapshots>
-        <enabled>false</enabled>
-      </snapshots>
-    </repository>
-
   </repositories>
 
   <pluginRepositories>
