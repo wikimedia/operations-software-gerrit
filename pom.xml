@@ -15,31 +15,57 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-dependency-plugin</artifactId>
+        <!-- We need File Mappers MDEP-628 -->
+        <version>3.1.2</version>
         <executions>
           <execution>
-            <id>copy</id>
+            <id>import upstream gerrit war</id>
             <phase>package</phase>
             <goals>
               <goal>copy</goal>
             </goals>
+              <configuration>
+                <!-- Ensure `gerrit.war` is always written -->
+                <overWriteReleases>true</overWriteReleases>
+                <artifactItems>
+                  <artifactItem>
+                    <groupId>com.google.gerrit</groupId>
+                    <artifactId>gerrit-war</artifactId>
+                    <version>${gerrit.version}</version>
+                    <type>war</type>
+                    <outputDirectory>${project.basedir}</outputDirectory>
+                    <destFileName>gerrit.war</destFileName>
+                  </artifactItem>
+                </artifactItems>
+              </configuration>
+          </execution>
+          <execution>
+            <id>extract upstream plugins</id>
+            <phase>package</phase>
+            <goals>
+              <goal>unpack</goal>
+            </goals>
+              <configuration>
+                <ignorePermissions>true</ignorePermissions>
+                <artifactItems>
+                  <artifactItem>
+                    <groupId>com.google.gerrit</groupId>
+                    <artifactId>gerrit-war</artifactId>
+                    <version>${gerrit.version}</version>
+                    <type>war</type>
+                    <overWrite>true</overWrite>
+                    <outputDirectory>${project.basedir}/plugins</outputDirectory>
+                    <fileMappers>
+                      <org.codehaus.plexus.components.io.filemappers.FlattenFileMapper />
+                    </fileMappers>
+                  </artifactItem>
+                </artifactItems>
+                <includes>WEB-INF/plugins/*.jar</includes>
+                <outputDirectory>${project.build.directory}/plugins</outputDirectory>
+              </configuration>
           </execution>
         </executions>
 
-        <configuration>
-          <!-- Ensure `gerrit.war` is always written -->
-          <overWriteReleases>true</overWriteReleases>
-
-          <artifactItems>
-            <artifactItem>
-              <groupId>com.google.gerrit</groupId>
-              <artifactId>gerrit-war</artifactId>
-              <version>${gerrit.version}</version>
-              <type>war</type>
-              <outputDirectory>${project.basedir}</outputDirectory>
-              <destFileName>gerrit.war</destFileName>
-            </artifactItem>
-          </artifactItems>
-        </configuration>
 
       </plugin>
     </plugins>
