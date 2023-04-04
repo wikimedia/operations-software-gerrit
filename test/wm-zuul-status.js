@@ -219,9 +219,9 @@ QUnit.module( '[wm-zuul-status]', () => {
 
     const resultToCategoryTestCases = [
       // result, voting, expected
-      [ null, undefined, 'SUCCESS' ],
-      [ null, true, 'SUCCESS' ],
-      [ null, false, 'SUCCESS' ],
+      [ null, undefined, 'INFO' ],
+      [ null, true, 'INFO' ],
+      [ null, false, 'INFO' ],
       [ 'SUCCESS', undefined, 'SUCCESS' ],
       [ 'SUCCESS', true, 'SUCCESS' ],
       [ 'SUCCESS', false, 'INFO' ],

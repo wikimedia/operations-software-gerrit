@@ -177,8 +177,11 @@ class ZuulStatusChecksProvider {
     let category;
     switch (result) {
     case null:
-      // Gerrit doesn't provide a pending category but we can add a tag
-      category = 'SUCCESS';
+      // Gerrit doesn't provide a pending category for a CheckResult, it is
+      // considered immutable by design but we abuse them to represent a
+      // Jenkins job which can be in progress.
+      // categoriesSummary() adds a `Pending` tag to disambiguate.
+      category = 'INFO';
       break;
     case 'SUCCESS':
       category = voting ? 'SUCCESS' : 'INFO';
