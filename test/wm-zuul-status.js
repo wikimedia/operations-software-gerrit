@@ -200,6 +200,24 @@ QUnit.module( '[wm-zuul-status]', () => {
       });
     } );
 
+    const hasCompletedCheckTestCases = {
+      // previous, current, expected
+      nothing: [ new Set(), new Set(), false ],
+      'just started': [ new Set(), new Set([ 'test', 'Code Health' ]), false ],
+      'nothing changed': [ new Set([ 'test' ]), new Set([ 'test' ]), false ],
+      'one completed': [ new Set([ 'coverage' ]), new Set(), true ],
+      'two completed': [ new Set([ 'coverage', 'test' ]), new Set(), true ],
+      'one completed and a new': [ new Set([ 'coverage' ]), new Set([ 'postmerge' ]), true ],
+    };
+
+    QUnit.test.each( 'hasCompletedCheck()', hasCompletedCheckTestCases,
+      ( assert, [ previous, current, expected ] ) => {
+        zuul.prevChecks = previous;
+        zuul.curChecks = current;
+        assert.equal(zuul.hasCompletedCheck(), expected);
+      }
+    );
+
     const resultTagsTestCases = [
       // jobResult, expected
       [ null, { name: 'Pending', color: 'gray' } ],

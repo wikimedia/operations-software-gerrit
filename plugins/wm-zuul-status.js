@@ -82,6 +82,10 @@
 class ZuulStatusChecksProvider {
 
   constructor() {
+    // Used by hasCompletedCheck() to track a check that has completed and thus
+    // vanished from the Zuul status.
+    this.prevChecks = new Set();
+    this.curChecks = new Set();
   }
 
   /**
@@ -144,6 +148,51 @@ class ZuulStatusChecksProvider {
       .then(rawStatus => {
         return JSON.parse(rawStatus);
       });
+  }
+
+  /**
+   * Whether some previous check vanished from CI
+   *
+   * Note: this reset the internal state and must be called only once.
+   *
+   * @return {boolean}
+   */
+  hasCompletedCheck() {
+    let completed = false;
+    for (const prev of this.prevChecks) {
+      if ( !this.curChecks.has(prev) ) {
+        // A check name is no more being processed
+        completed = true;
+        break;
+      }
+    }
+
+    // Keep a copy and reset current state
+    this.prevChecks = new Set(this.curChecks);
+    this.curChecks = new Set();
+
+    return completed;
+  }
+
+  /**
+   * Display a popup to offer reloading the change
+   *
+   * This is used when a check is no more in the Zuul status. Zuul would have
+   * posted a message which is then processed by the wm-checks-api plugin.
+   */
+  showAlertToReloadChange() {
+    document.dispatchEvent( new CustomEvent('show-alert', {
+      detail: {
+        message: 'CI has completed checks. Reload the change view?',
+        dismissOnNavigation: true,
+        showDismiss: true,
+        action: 'Reload',
+        callback: () => document.querySelector('gr-app')
+          .shadowRoot.querySelector('gr-app-element')
+          .shadowRoot.querySelector('gr-change-view')
+          .dispatchEvent(new Event('reload')),
+      },
+    }));
   }
 
   /**
@@ -282,7 +331,13 @@ class ZuulStatusChecksProvider {
       // Set the check name from the first started build, if none use a
       // placeholder until a job has started.
       const runningJob = statusJobs.find(job => job.pipeline !== null);
-      const checkName = (runningJob === undefined) ? 'Waiting for jobs' : runningJob.pipeline;
+      let checkName;
+      if (runningJob === undefined) {
+        checkName = 'Waiting for jobs';
+      } else {
+        checkName = runningJob.pipeline;
+        this.curChecks.add(checkName);
+      }
 
       /** @type {CheckResult[]} */
       const checkResults = statusJobs.map( job => {
@@ -333,6 +388,10 @@ class ZuulStatusChecksProvider {
   async fetch(change) {
     return this.getZuulStatus(change.changeNumber, change.patchsetNumber)
       .then( statusJson => {
+        if ( this.hasCompletedCheck() ) {
+          this.showAlertToReloadChange();
+        }
+
         return {
           responseCode: /** @type {ResponseCode} */ ('OK'),
           runs: this.parse(statusJson),
