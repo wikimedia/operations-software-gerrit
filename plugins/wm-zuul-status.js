@@ -388,13 +388,15 @@ class ZuulStatusChecksProvider {
   async fetch(change) {
     return this.getZuulStatus(change.changeNumber, change.patchsetNumber)
       .then( statusJson => {
+        const checkRuns = this.parse(statusJson);
+
         if ( this.hasCompletedCheck() ) {
           this.showAlertToReloadChange();
         }
 
         return {
           responseCode: /** @type {ResponseCode} */ ('OK'),
-          runs: this.parse(statusJson),
+          runs: checkRuns,
         };
       } )
       .catch( fetchError => {
