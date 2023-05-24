@@ -68,11 +68,16 @@ QUnit.module( '[wm-patch-demo]', () => {
         const results = actual.runs[0].results;
         assert.strictEqual(results.length, 4);
 
-        const re = /^\* 822099,\d+/m;
-        results.forEach(result => assert.true(
-          re.test(result.message),
-          'Wiki instance has the change applied',
-        ));
+        results.forEach(result => {
+          assert.true(
+            result.message.includes('This change 822099'),
+            'Wiki instance has the change applied',
+          );
+          assert.true(
+            result.message.includes('* https://gerrit.wikimedia.org/r/c/820233/'),
+            'Lists other patch applied to the wiki',
+          );
+        });
 
       });
     });

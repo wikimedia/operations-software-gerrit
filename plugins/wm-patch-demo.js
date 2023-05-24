@@ -51,7 +51,15 @@ class PatchDemoProvider {
         }
       }
       const deleteUrl = `https://patchdemo.wmflabs.org/delete.php?wiki=${instance.wiki}`;
-      const patchesList = '* ' + instance.patches.join('\n* ') + '\n';
+      const patchesList = '* ' + instance.patches.map( patch => {
+        const [ changeNumber, patchNumber ] = patch.split(',');
+        if ( changeNumber === change.changeNumber.toString() ) {
+          return `This change ${changeNumber}`;
+        } else {
+          return `https://gerrit.wikimedia.org/r/c/${changeNumber}/${patchNumber}`;
+        }
+      } ).join('\n* ') + '\n';
+
       /** @type {CheckResult} */
       const checkResult = {
         category: /** @type {CheckResult["category"]} */ ('INFO'),
