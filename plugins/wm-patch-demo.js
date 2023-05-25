@@ -62,7 +62,7 @@ class PatchDemoProvider {
 
       /** @type {CheckResult} */
       const checkResult = {
-        category: /** @type {CheckResult["category"]} */ ('INFO'),
+        category: /** @type {CheckResult["category"]} */ ('WARNING'),
         summary: `${instance.wiki} | PS${patchset} | ${instance.created}`,
         message: `Wiki \`${instance.wiki}\` created on ${instance.created} by ${instance.creator}
 Patches applied:
