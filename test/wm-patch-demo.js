@@ -80,6 +80,16 @@ QUnit.module( '[wm-patch-demo]', () => {
         });
 
       });
+
+      QUnit.test( 'process empty findiwikis API response', assert => {
+        const change = { changeNumber: 12345 };
+        const response = JSON.stringify( [] );
+        const actual = patchdemo.parse(response, change);
+
+        assert.propContains(actual, { responseCode: 'OK' });
+        assert.propContains(actual, { runs: [] }, 'No wikis for change results in no runs');
+      });
+
     });
 
   } );

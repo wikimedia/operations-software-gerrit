@@ -87,9 +87,8 @@ ${patchesList}
       return checkResult;
     });
 
-    return {
-      responseCode: /** @type {ResponseCode} */ ('OK'),
-      runs: [ {
+    const checkRuns = (instances.length === 0) ? [] : [
+      {
         attempt: 1,
         checkName: 'Patch demo',
         checkDescription: 'MediaWiki instances spinned up with this change applied',
@@ -97,7 +96,11 @@ ${patchesList}
         statusLink: 'https://patchdemo.wmflabs.org/',
         statusDescription: `Found ${instances.length} wikis for change ${change.changeNumber}`,
         results: checkResults,
-      } ],
+      } ];
+
+    return {
+      responseCode: /** @type {ResponseCode} */ ('OK'),
+      runs: checkRuns,
     };
   }
 
