@@ -1,23 +1,20 @@
 Gerrit.install(plugin => {
-  const customLinks = document.createElement('dom-module');
-  customLinks.innerHTML = `
-<template>
-  <style>
-    a {
-      color: #2a66d9;
-    }
-  </style>
-  |
-  <a href="https://www.mediawiki.org/wiki/Special:MyLanguage/Code_of_Conduct">Code of Conduct</a>
-  |
-  <a href="https://wikimediafoundation.org/wiki/Special:MyLanguage/Privacy_policy">Privacy policy</a>
-</template>`;
-  customLinks.register('wm-custom-links');
+  plugin.hook('footer-left').onAttached(element => {
 
-  plugin.registerCustomComponent(
-    'footer-left', 'wm-custom-links');
+    element.appendChild(document.createTextNode(' | '));
+    const codeOfConduct = element.appendChild(document.createElement('a'));
+    codeOfConduct.style.color = 'var(--link-color)';
+    codeOfConduct.href = 'https://www.mediawiki.org/wiki/Special:MyLanguage/Code_of_Conduct';
+    codeOfConduct.textContent = 'Code of Conduct';
+
+    element.appendChild(document.createTextNode(' | '));
+    const privacyPolicy = element.appendChild(document.createElement('a'));
+    privacyPolicy.style.color = 'var(--link-color)';
+    privacyPolicy.href = 'https://wikimediafoundation.org/wiki/Special:MyLanguage/Privacy_policy';
+    privacyPolicy.textContent = 'Privacy policy';
+
+  });
 
   plugin.admin()
     .addMenuLink('Code Search', 'https://codesearch.wmcloud.org/search/');
-
 });
