@@ -1,4 +1,4 @@
-// Copyright (C) 2019 Thomas "Paladox" Mulhall
+// Copyright (C) 2019 Patrick "Paladox" Mulhall
 // Copyright (C) 2020 Christian "Qchris" Aistleitner
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
