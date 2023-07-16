@@ -460,6 +460,7 @@ class ZuulProcessor extends BotProcessor {
    */
   accept(changeMessage) {
     return (
+      typeof changeMessage.real_author !== 'undefined' &&
       typeof changeMessage.real_author.tags !== 'undefined' &&
       changeMessage.real_author.tags.includes('SERVICE_USER') &&
       typeof changeMessage.tag !== 'undefined' &&

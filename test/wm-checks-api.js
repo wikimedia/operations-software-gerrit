@@ -501,6 +501,12 @@ QUnit.module( '[wm-checks-api]', () => {
       );
     } );
 
+    QUnit.test( 'accept() pass through legacy message without real author', assert => {
+      assert.false(
+        zuul.accept( { /* ChangeMessage */ } )
+      );
+    } );
+
     QUnit.module( 'parse', parseHooks => {
       let zuulResults;
       parseHooks.before( () => {
