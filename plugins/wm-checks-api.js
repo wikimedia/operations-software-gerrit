@@ -122,7 +122,10 @@ class AWGitLabBot extends BotProcessor {
    * @return {boolean} Whether the message can be parsed
    */
   accept(changeMessage) {
-    return changeMessage.real_author.username === 'aw-gitlab-bot';
+    return (
+      typeof changeMessage.real_author !== 'undefined' &&
+      changeMessage.real_author.username === 'aw-gitlab-bot'
+    );
   }
 
   /**
@@ -174,7 +177,10 @@ class CindyTheBrowserBot extends BotProcessor {
    * @return {boolean} Whether the message can be parsed
    */
   accept(changeMessage) {
-    return changeMessage.real_author.username === 'cindythebrowsertestbot';
+    return (
+      typeof changeMessage.real_author !== 'undefined' &&
+      changeMessage.real_author.username === 'cindythebrowsertestbot'
+    );
   }
 
   /**
@@ -212,6 +218,7 @@ class EarlyWarningBot extends BotProcessor {
    */
   accept(changeMessage) {
     return (
+      typeof changeMessage.real_author !== 'undefined' &&
       typeof changeMessage.real_author.username !== 'undefined' &&
       changeMessage.real_author.username === 'earlywarningbot'
     );
@@ -248,6 +255,7 @@ class PipelineBotProcessor extends BotProcessor {
    */
   accept(changeMessage) {
     return (
+      typeof changeMessage.real_author !== 'undefined' &&
       typeof changeMessage.real_author.username !== 'undefined' &&
       changeMessage.real_author.username === 'pipelinebot'
     );
@@ -400,7 +408,10 @@ class SonarQubeProcessor extends BotProcessor {
    * @return {boolean} Whether the message can be parsed
    */
   accept(changeMessage) {
-    return changeMessage.real_author.username === 'sonarqubebot';
+    return (
+      typeof changeMessage.real_author !== 'undefined' &&
+      changeMessage.real_author.username === 'sonarqubebot'
+    );
   }
 
   /**

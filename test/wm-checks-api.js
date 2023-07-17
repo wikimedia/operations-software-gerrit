@@ -93,6 +93,12 @@ QUnit.module( '[wm-checks-api]', () => {
       );
     } );
 
+    QUnit.test( 'accept() pass through legacy message without real author', assert => {
+      assert.false(
+        awgitlabbot.accept( { /* ChangeMessage */ } )
+      );
+    } );
+
     QUnit.test( 'Good job is a success', assert => {
       assert.deepEqual(
         awgitlabbot.parse( 'Patch Set 14: Verified+1\n\nEnd-to-end tests passed.\nResults: https://gitlab.wikimedia.org/repos/abstract-wiki/aw-e2e/-/pipelines/18789\nEnvironment: aw-922173.wmcloud.org' ),
@@ -178,6 +184,12 @@ QUnit.module( '[wm-checks-api]', () => {
       );
     } );
 
+    QUnit.test( 'accept() pass through legacy message without real author', assert => {
+      assert.false(
+        cindy.accept( { /* ChangeMessage */ } )
+      );
+    } );
+
     QUnit.test( 'Good job is a success', assert => {
       assert.deepEqual(
         cindy.parse( 'Patchset 1:\n\nCindy says good job, \\o/' ),
@@ -225,6 +237,12 @@ QUnit.module( '[wm-checks-api]', () => {
       );
     } );
 
+    QUnit.test( 'accept() pass through legacy message without real author', assert => {
+      assert.false(
+        early.accept( { /* ChangeMessage */ } )
+      );
+    } );
+
     QUnit.test( 'Reports as ERROR', assert => {
       assert.deepEqual(
         early.parse( 'Patchset 1:\n\nwhatever content' ),
@@ -261,6 +279,12 @@ QUnit.module( '[wm-checks-api]', () => {
             username: 'jenkins-bot',
           }
         })
+      );
+    } );
+
+    QUnit.test( 'accept() pass through legacy message without real author', assert => {
+      assert.false(
+        pipelineBot.accept( { /* ChangeMessage */ } )
       );
     } );
 
@@ -400,6 +424,12 @@ QUnit.module( '[wm-checks-api]', () => {
             username: 'jenkins-bot',
           }
         })
+      );
+    } );
+
+    QUnit.test( 'accept() pass through legacy message without real author', assert => {
+      assert.false(
+        sonarQube.accept( { /* ChangeMessage */ } )
       );
     } );
 
