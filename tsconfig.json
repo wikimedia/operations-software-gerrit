@@ -1,7 +1,9 @@
 {
   "include": [
+    "typing/polymer.js",
     "plugins/wm-checks-api.js",
     "plugins/wm-patch-demo.js",
+    "plugins/wm-pcc.js",
     "plugins/wm-zuul-status.js"
   ],
   "compilerOptions": {

@@ -394,6 +394,8 @@ class ZuulStatusChecksProvider {
           this.showAlertToReloadChange();
         }
 
+        // TODO when there is no run ongoing, we should return to prevent
+        // run/result from being updated. checkRuns should be an empty array
         return {
           responseCode: /** @type {ResponseCode} */ ('OK'),
           runs: checkRuns,
