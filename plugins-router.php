@@ -35,4 +35,12 @@ if ( 0 === strpos( $_SERVER['SCRIPT_NAME'], '/zuul/status/change/' ) ) {
 	return true;
 }
 
-readfile($_SERVER["SCRIPT_FILENAME"]);
+$realFile = realpath( $_SERVER['DOCUMENT_ROOT'] . $_SERVER['SCRIPT_NAME'] );
+if ( is_readable( $realFile ) && is_file( $realFile ) ) {
+	readfile( $_SERVER["SCRIPT_FILENAME"] );
+	return true;
+}
+
+http_response_code(404);
+print("File not found\n");
+return true;
