@@ -36,6 +36,6 @@ browsing our Gerrit web page:
   * Add an entry with:
 
 	  * Operator: `injectJSPlugin`
-	  * Destination: `http://127.0.0.1:8081/plugin-to-test.js`
+	  * Destination: `http://127.0.0.1:8081/r/plugins/plugin-to-test.js`
 
   * Click SAVE, the page reloads and your plugin should have been injected.
