@@ -8,6 +8,7 @@
     "no-cond-assign": "off",
     "no-underscore-dangle": "off",
     "no-useless-escape": "off",
-    "space-in-parens": "off"
+    "space-in-parens": "off",
+    "yoda": "off"
   }
 }
