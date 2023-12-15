@@ -1,5 +1,10 @@
 'use strict';
 
+const ENABLED_PROJECTS = [
+  'operations/puppet',
+  'labs/private',
+];
+
 /* eslint-disable max-len */
 /**
  * @typedef { import("@gerritcodereview/typescript-api/checks").Category } Category
@@ -280,6 +285,12 @@ class PCCProvider {
 
     // Since we reprocess all messages
     this.resetAttempt();
+
+    if ( !ENABLED_PROJECTS.includes(change.changeInfo.project) ) {
+      return {
+        responseCode: /** @type {ResponseCode} */ ('OK'),
+      };
+    }
 
     /** @type {CheckRun[]} */
     const checkRuns = change.changeInfo.messages.filter(

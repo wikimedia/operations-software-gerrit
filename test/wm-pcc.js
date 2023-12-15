@@ -208,7 +208,10 @@ QUnit.module( '[wm-pcc]', () => {
       QUnit.test( 'emptyResponse when there are no messages', async assert => {
         const response = await provider.fetch(
           { // ChangeData
-            changeInfo: { messages: [] }
+            changeInfo: {
+              project: 'operations/puppet',
+              messages: [],
+            }
           }
         );
 
@@ -224,6 +227,7 @@ QUnit.module( '[wm-pcc]', () => {
           { // ChangeData
             changeNumber: 999,
             changeInfo: {
+              project: 'operations/puppet',
               messages: [
                 {
                   author: {
