@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -u
 #
 # Build script for Wikimedia Gerrit installation.
 #
@@ -47,7 +47,7 @@ GERRIT_TARGETS = ['release']
 
 def phase(name):
     '''Helper to output some progress report'''
-    print(f'========= [ {name.upper()} ] =========')
+    print(f'\n========= [ {name.upper()} ] =========')
 
 
 @lru_cache(maxsize=1)
@@ -177,7 +177,7 @@ artifacts.extend([
 def build_plugin(path):
     '''bazel build a plugin after injecting the dependencies files'''
     name = os.path.basename(path)
-    print(f'Building {name}')
+    print(f'\nBuilding {name}')
     for dep_file in PLUGIN_DEP_FILES:
         f_path = os.path.join(path, dep_file)
         if os.path.exists(f_path):
