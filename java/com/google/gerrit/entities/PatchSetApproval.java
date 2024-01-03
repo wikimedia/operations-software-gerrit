@@ -16,8 +16,7 @@ package com.google.gerrit.entities;
 
 import com.google.auto.value.AutoValue;
 import com.google.common.primitives.Shorts;
-import java.sql.Timestamp;
-import java.util.Date;
+import java.time.Instant;
 import java.util.Optional;
 
 /** An approval (or negative approval) on a patch set. */
@@ -40,6 +39,36 @@ public abstract class PatchSetApproval {
     }
   }
 
+  /**
+   * Globally unique identifier.
+   *
+   * <p>The identifier is unique to each granted approval, i.e. approvals, re-added within same
+   * {@link Change} or even {@link PatchSet} have different {@link UUID}.
+   */
+  @AutoValue
+  public abstract static class UUID implements Comparable<UUID> {
+
+    abstract String uuid();
+
+    public String get() {
+      return uuid();
+    }
+
+    @Override
+    public final int compareTo(UUID o) {
+      return uuid().compareTo(o.uuid());
+    }
+
+    @Override
+    public final String toString() {
+      return get();
+    }
+  }
+
+  public static UUID uuid(String n) {
+    return new AutoValue_PatchSetApproval_UUID(n);
+  }
+
   public static Builder builder() {
     return new AutoValue_PatchSetApproval.Builder().postSubmit(false).copied(false);
   }
@@ -50,17 +79,24 @@ public abstract class PatchSetApproval {
 
     public abstract Key key();
 
+    /**
+     * {@link UUID} of {@link PatchSetApproval}.
+     *
+     * <p>Optional, since it might be missing for approvals, granted (persisted in NoteDB), before
+     * {@link UUID} was introduced and does not apply to removals ( represented as approval with
+     * {@link #value}, set to '0').
+     */
+    public abstract Builder uuid(Optional<UUID> uuid);
+
+    public abstract Builder uuid(UUID uuid);
+
     public abstract Builder value(short value);
 
     public Builder value(int value) {
       return value(Shorts.checkedCast(value));
     }
 
-    public abstract Builder granted(Timestamp granted);
-
-    public Builder granted(Date granted) {
-      return granted(new Timestamp(granted.getTime()));
-    }
+    public abstract Builder granted(Instant granted);
 
     public abstract Builder tag(String tag);
 
@@ -86,6 +122,8 @@ public abstract class PatchSetApproval {
 
   public abstract Key key();
 
+  public abstract Optional<UUID> uuid();
+
   /**
    * Value assigned by the user.
    *
@@ -104,7 +142,7 @@ public abstract class PatchSetApproval {
    */
   public abstract short value();
 
-  public abstract Timestamp granted();
+  public abstract Instant granted();
 
   public abstract Optional<String> tag();
 
@@ -117,8 +155,24 @@ public abstract class PatchSetApproval {
 
   public abstract Builder toBuilder();
 
+  /**
+   * Makes a copy of {@link PatchSetApproval} that applies to {@code psId}.
+   *
+   * <p>The returned {@link PatchSetApproval} has the same {@link UUID} as the original {@link
+   * PatchSetApproval}, which is generated when it is originally granted.
+   *
+   * <p>This is needed since we want to keep the link between the original {@link PatchSetApproval}
+   * and the {@link #copied} one.
+   *
+   * @param psId {@link PatchSet.Id} of {@link PatchSet} that the copy should be applied to.
+   * @return {@link #copied} {@link PatchSetApproval} that applies to {@code psId}.
+   */
   public PatchSetApproval copyWithPatchSet(PatchSet.Id psId) {
-    return toBuilder().key(key(psId, key().accountId(), key().labelId())).copied(true).build();
+    return toBuilder()
+        .key(key(psId, key().accountId(), key().labelId()))
+        .uuid(uuid())
+        .copied(true)
+        .build();
   }
 
   public PatchSet.Id patchSetId() {

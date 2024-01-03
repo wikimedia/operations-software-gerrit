@@ -35,11 +35,13 @@ import static com.google.gerrit.extensions.client.ListChangesOption.SUBMIT_REQUI
 import static com.google.gerrit.extensions.client.ListChangesOption.TRACKING_IDS;
 import static com.google.gerrit.server.ChangeMessagesUtil.createChangeMessageInfo;
 import static com.google.gerrit.server.util.AttentionSetUtil.additionsOnly;
+import static com.google.gerrit.server.util.AttentionSetUtil.removalsOnly;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.base.Joiner;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Throwables;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -60,7 +62,6 @@ import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.entities.SubmitRecord;
 import com.google.gerrit.entities.SubmitRecord.Status;
-import com.google.gerrit.entities.SubmitRequirement;
 import com.google.gerrit.entities.SubmitRequirementResult;
 import com.google.gerrit.entities.SubmitTypeRecord;
 import com.google.gerrit.exceptions.StorageException;
@@ -99,8 +100,6 @@ import com.google.gerrit.server.account.AccountLoader;
 import com.google.gerrit.server.cancellation.RequestCancelledException;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.TrackingFooters;
-import com.google.gerrit.server.experiments.ExperimentFeatures;
-import com.google.gerrit.server.experiments.ExperimentFeaturesConstants;
 import com.google.gerrit.server.index.change.ChangeField;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
@@ -255,7 +254,6 @@ public class ChangeJson {
       TrackingFooters trackingFooters,
       Metrics metrics,
       RevisionJson.Factory revisionJsonFactory,
-      ExperimentFeatures experimentFeatures,
       @GerritServerConfig Config cfg,
       @Assisted Iterable<ListChangesOption> options,
       @Assisted Optional<PluginDefinedInfosFactory> pluginDefinedInfosFactory) {
@@ -274,9 +272,7 @@ public class ChangeJson {
     this.revisionJson = revisionJsonFactory.create(options);
     this.options = Sets.immutableEnumSet(options);
     this.includeMergeable = MergeabilityComputationBehavior.fromConfig(cfg).includeInApi();
-    this.lazyLoad =
-        containsAnyOf(this.options, REQUIRE_LAZY_LOAD)
-            || lazyloadSubmitRequirements(this.options, experimentFeatures);
+    this.lazyLoad = containsAnyOf(this.options, REQUIRE_LAZY_LOAD);
     this.pluginDefinedInfosFactory = pluginDefinedInfosFactory;
 
     logger.atFine().log("options = %s", options);
@@ -382,10 +378,10 @@ public class ChangeJson {
 
   private Collection<SubmitRequirementResultInfo> submitRequirementsFor(ChangeData cd) {
     Collection<SubmitRequirementResultInfo> reqInfos = new ArrayList<>();
-    Map<SubmitRequirement, SubmitRequirementResult> requirements = cd.submitRequirements();
-    for (Map.Entry<SubmitRequirement, SubmitRequirementResult> entry : requirements.entrySet()) {
-      reqInfos.add(SubmitRequirementsJson.toInfo(entry.getKey(), entry.getValue()));
-    }
+    cd.submitRequirementsIncludingLegacy().entrySet().stream()
+        .filter(entry -> !entry.getValue().isHidden())
+        .forEach(
+            entry -> reqInfos.add(SubmitRequirementsJson.toInfo(entry.getKey(), entry.getValue())));
     return reqInfos;
   }
 
@@ -556,8 +552,8 @@ public class ChangeJson {
       info.subject = c.getSubject();
       info.status = c.getStatus().asChangeStatus();
       info.owner = new AccountInfo(c.getOwner().get());
-      info.created = c.getCreatedOn();
-      info.updated = c.getLastUpdatedOn();
+      info.setCreated(c.getCreatedOn());
+      info.setUpdated(c.getLastUpdatedOn());
       info._number = c.getId().get();
       info.problems = result.problems();
       info.isPrivate = c.isPrivate() ? true : null;
@@ -603,6 +599,12 @@ public class ChangeJson {
     out.branch = in.getDest().shortName();
     out.topic = in.getTopic();
     if (!cd.attentionSet().isEmpty()) {
+      out.removedFromAttentionSet =
+          removalsOnly(cd.attentionSet()).stream()
+              .collect(
+                  toImmutableMap(
+                      a -> a.account().get(),
+                      a -> AttentionSetUtil.createAttentionSetInfo(a, accountLoader)));
       out.attentionSet =
           // This filtering should match GetAttentionSet.
           additionsOnly(cd.attentionSet()).stream()
@@ -639,8 +641,8 @@ public class ChangeJson {
     out.subject = in.getSubject();
     out.status = in.getStatus().asChangeStatus();
     out.owner = accountLoader.get(in.getOwner());
-    out.created = in.getCreatedOn();
-    out.updated = in.getLastUpdatedOn();
+    out.setCreated(in.getCreatedOn());
+    out.setUpdated(in.getLastUpdatedOn());
     out._number = in.getId().get();
     out.totalCommentCount = cd.totalCommentCount();
     out.unresolvedCommentCount = cd.unresolvedCommentCount();
@@ -772,18 +774,20 @@ public class ChangeJson {
     List<ReviewerStatusUpdate> reviewerUpdates = cd.reviewerUpdates();
     List<ReviewerUpdateInfo> result = new ArrayList<>(reviewerUpdates.size());
     for (ReviewerStatusUpdate c : reviewerUpdates) {
-      ReviewerUpdateInfo change = new ReviewerUpdateInfo();
-      change.updated = c.date();
-      change.state = c.state().asReviewerState();
-      change.updatedBy = accountLoader.get(c.updatedBy());
-      change.reviewer = accountLoader.get(c.reviewer());
+      ReviewerUpdateInfo change =
+          new ReviewerUpdateInfo(
+              c.date(),
+              accountLoader.get(c.updatedBy()),
+              accountLoader.get(c.reviewer()),
+              c.state().asReviewerState());
       result.add(change);
     }
     return result;
   }
 
   private boolean submittable(ChangeData cd) {
-    return SubmitRecord.allRecordsOK(cd.submitRecords(SUBMIT_RULE_OPTIONS_STRICT));
+    return cd.submitRequirementsIncludingLegacy().values().stream()
+        .allMatch(SubmitRequirementResult::fulfilled);
   }
 
   private void setSubmitter(ChangeData cd, ChangeInfo out) {
@@ -791,21 +795,20 @@ public class ChangeJson {
     if (!s.isPresent()) {
       return;
     }
-    out.submitted = s.get().granted();
-    out.submitter = accountLoader.get(s.get().accountId());
+    out.setSubmitted(s.get().granted(), accountLoader.get(s.get().accountId()));
   }
 
-  private Collection<ChangeMessageInfo> messages(ChangeData cd) {
+  private ImmutableList<ChangeMessageInfo> messages(ChangeData cd) {
     List<ChangeMessage> messages = cmUtil.byChange(cd.notes());
     if (messages.isEmpty()) {
-      return Collections.emptyList();
+      return ImmutableList.of();
     }
 
     List<ChangeMessageInfo> result = Lists.newArrayListWithCapacity(messages.size());
     for (ChangeMessage message : messages) {
       result.add(createChangeMessageInfo(message, accountLoader));
     }
-    return result;
+    return ImmutableList.copyOf(result);
   }
 
   private Collection<AccountInfo> removableReviewers(ChangeData cd, ChangeInfo out)
@@ -942,21 +945,5 @@ public class ChangeJson {
       return pluginDefinedInfosFactory.get().createPluginDefinedInfos(cds);
     }
     return ImmutableListMultimap.of();
-  }
-
-  private static boolean lazyloadSubmitRequirements(
-      Set<ListChangesOption> changeOptions, ExperimentFeatures experimentFeatures) {
-    // TODO(ghareeb,hiesel): Remove this method.
-    // We are testing the new submit requirements with users in lieu of upgrading the change index
-    // to a version that supports the new requirements.
-    // Upgrading now, before the feature is finalized would be counter productive, because the index
-    // format might change while we iterate over the feature.
-    // Allowing changes to lazyload parameters will slow down dashboards for users who have this
-    // feature enabled, but will backfill submit requirements that weren't loaded from the index by
-    // simply computing them.
-    return changeOptions.contains(SUBMIT_REQUIREMENTS)
-        && experimentFeatures.isFeatureEnabled(
-            ExperimentFeaturesConstants
-                .GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS_BACKFILLING_ON_DASHBOARD);
   }
 }

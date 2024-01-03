@@ -23,11 +23,13 @@ import static com.google.gerrit.server.permissions.PluginPermissionsUtil.isValid
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toList;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.CharMatcher;
 import com.google.common.base.Joiner;
 import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
@@ -104,6 +106,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
 
   public static final String COMMENTLINK = "commentlink";
   public static final String LABEL = "label";
+  public static final String KEY_LABEL_DESCRIPTION = "description";
   public static final String KEY_FUNCTION = "function";
   public static final String KEY_DEFAULT_VALUE = "defaultValue";
   public static final String KEY_COPY_MIN_SCORE = "copyMinScore";
@@ -130,6 +133,13 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
   public static final String KEY_SR_SUBMITTABILITY_EXPRESSION = "submittableIf";
   public static final String KEY_SR_OVERRIDE_EXPRESSION = "overrideIf";
   public static final String KEY_SR_OVERRIDE_IN_CHILD_PROJECTS = "canOverrideInChildProjects";
+  public static final ImmutableSet<String> SR_KEYS =
+      ImmutableSet.of(
+          KEY_SR_DESCRIPTION,
+          KEY_SR_APPLICABILITY_EXPRESSION,
+          KEY_SR_SUBMITTABILITY_EXPRESSION,
+          KEY_SR_OVERRIDE_EXPRESSION,
+          KEY_SR_OVERRIDE_IN_CHILD_PROJECTS);
 
   public static final String KEY_MATCH = "match";
   private static final String KEY_HTML = "html";
@@ -512,12 +522,6 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     return sort(contributorAgreements.values());
   }
 
-  public void remove(ContributorAgreement section) {
-    if (section != null) {
-      accessSections.remove(section.getName());
-    }
-  }
-
   public void replace(ContributorAgreement section) {
     ContributorAgreement.Builder ca = section.toBuilder();
     ca.setAutoVerify(resolve(section.getAutoVerify()));
@@ -548,6 +552,11 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
 
   public void upsertSubmitRequirement(SubmitRequirement requirement) {
     submitRequirementSections.put(requirement.name(), requirement);
+  }
+
+  @VisibleForTesting
+  public void clearSubmitRequirements() {
+    submitRequirementSections = new LinkedHashMap<>();
   }
 
   /** Adds or replaces the given {@link LabelType} in this config. */
@@ -913,7 +922,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
       Config rc, String section, String subsection, String varName, boolean useRange) {
     Permission.Builder perm = Permission.builder(varName);
     loadPermissionRules(rc, section, subsection, varName, perm, useRange);
-    return ImmutableList.copyOf(perm.build().getRules());
+    return perm.build().getRules();
   }
 
   private void loadPermissionRules(
@@ -963,6 +972,8 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
   }
 
   private void loadSubmitRequirementSections(Config rc) {
+    checkForUnsupportedSubmitRequirementParams(rc);
+
     Map<String, String> lowerNames = new HashMap<>();
     submitRequirementSections = new LinkedHashMap<>();
     for (String name : rc.getSubsections(SUBMIT_REQUIREMENT)) {
@@ -975,33 +986,88 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
       }
       lowerNames.put(lower, name);
       String description = rc.getString(SUBMIT_REQUIREMENT, name, KEY_SR_DESCRIPTION);
-      String appExpr = rc.getString(SUBMIT_REQUIREMENT, name, KEY_SR_APPLICABILITY_EXPRESSION);
-      String blockExpr = rc.getString(SUBMIT_REQUIREMENT, name, KEY_SR_SUBMITTABILITY_EXPRESSION);
+      String applicabilityExpr =
+          rc.getString(SUBMIT_REQUIREMENT, name, KEY_SR_APPLICABILITY_EXPRESSION);
+      String submittabilityExpr =
+          rc.getString(SUBMIT_REQUIREMENT, name, KEY_SR_SUBMITTABILITY_EXPRESSION);
       String overrideExpr = rc.getString(SUBMIT_REQUIREMENT, name, KEY_SR_OVERRIDE_EXPRESSION);
-      boolean canInherit =
-          rc.getBoolean(SUBMIT_REQUIREMENT, name, KEY_SR_OVERRIDE_IN_CHILD_PROJECTS, false);
-
-      if (blockExpr == null) {
+      boolean canInherit;
+      try {
+        canInherit =
+            rc.getBoolean(SUBMIT_REQUIREMENT, name, KEY_SR_OVERRIDE_IN_CHILD_PROJECTS, false);
+      } catch (IllegalArgumentException e) {
+        String canInheritValue =
+            rc.getString(SUBMIT_REQUIREMENT, name, KEY_SR_OVERRIDE_IN_CHILD_PROJECTS);
         error(
             String.format(
-                "Submit requirement '%s' does not define a submittability expression.", name));
+                "Invalid value %s.%s.%s for submit requirement '%s': %s",
+                SUBMIT_REQUIREMENT,
+                name,
+                KEY_SR_OVERRIDE_IN_CHILD_PROJECTS,
+                name,
+                canInheritValue));
         continue;
       }
 
-      // TODO(SR): add expressions validation. Expressions are stored as strings so we need to
-      // validate their syntax.
+      if (submittabilityExpr == null) {
+        error(
+            String.format(
+                "Setting a submittability expression for submit requirement '%s' is required:"
+                    + " Missing %s.%s.%s",
+                name, SUBMIT_REQUIREMENT, name, KEY_SR_SUBMITTABILITY_EXPRESSION));
+        continue;
+      }
+
+      // The expressions are validated in SubmitRequirementExpressionsValidator.
 
       SubmitRequirement submitRequirement =
           SubmitRequirement.builder()
               .setName(name)
               .setDescription(Optional.ofNullable(description))
-              .setApplicabilityExpression(SubmitRequirementExpression.of(appExpr))
-              .setSubmittabilityExpression(SubmitRequirementExpression.create(blockExpr))
+              .setApplicabilityExpression(SubmitRequirementExpression.of(applicabilityExpr))
+              .setSubmittabilityExpression(SubmitRequirementExpression.create(submittabilityExpr))
               .setOverrideExpression(SubmitRequirementExpression.of(overrideExpr))
               .setAllowOverrideInChildProjects(canInherit)
               .build();
 
       submitRequirementSections.put(name, submitRequirement);
+    }
+  }
+
+  /**
+   * Report unsupported submit requirement parameters as errors.
+   *
+   * <p>Unsupported are submit requirements parameters that
+   *
+   * <ul>
+   *   <li>are directly set in the {@code submit-requirement} section (as submit requirements are
+   *       solely defined in subsections)
+   *   <li>are unknown (maybe they were accidentally misspelled?)
+   * </ul>
+   */
+  private void checkForUnsupportedSubmitRequirementParams(Config rc) {
+    Set<String> directSubmitRequirementParams = rc.getNames(SUBMIT_REQUIREMENT);
+    if (!directSubmitRequirementParams.isEmpty()) {
+      error(
+          String.format(
+              "Submit requirements must be defined in %s.<name> subsections."
+                  + " Setting parameters directly in the %s section is not allowed: %s",
+              SUBMIT_REQUIREMENT,
+              SUBMIT_REQUIREMENT,
+              directSubmitRequirementParams.stream().sorted().collect(toImmutableList())));
+    }
+
+    for (String subsection : rc.getSubsections(SUBMIT_REQUIREMENT)) {
+      ImmutableList<String> unknownSubmitRequirementParams =
+          rc.getNames(SUBMIT_REQUIREMENT, subsection).stream()
+              .filter(p -> !SR_KEYS.contains(p))
+              .collect(toImmutableList());
+      if (!unknownSubmitRequirementParams.isEmpty()) {
+        error(
+            String.format(
+                "Unsupported parameters for submit requirement '%s': %s",
+                subsection, unknownSubmitRequirementParams));
+      }
     }
   }
 
@@ -1040,6 +1106,8 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
         error(String.format("Invalid label \"%s\"", name));
         continue;
       }
+
+      label.setDescription(Optional.ofNullable(rc.getString(LABEL, name, KEY_LABEL_DESCRIPTION)));
 
       String functionName = rc.getString(LABEL, name, KEY_FUNCTION);
       Optional<LabelFunction> function =
@@ -1105,6 +1173,10 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
               LabelType.DEF_COPY_ALL_SCORES_IF_NO_CHANGE));
       Set<Short> copyValues = new HashSet<>();
       for (String value : rc.getStringList(LABEL, name, KEY_COPY_VALUE)) {
+        if (value == null) {
+          // value is null if copyValue in project.config is set to an empty string
+          continue;
+        }
         try {
           short copyValue = Shorts.checkedCast(PermissionRule.parseInt(value));
           if (!copyValues.add(copyValue)) {
@@ -1122,7 +1194,23 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
       label.setCanOverride(
           rc.getBoolean(LABEL, name, KEY_CAN_OVERRIDE, LabelType.DEF_CAN_OVERRIDE));
       List<String> refPatterns = getStringListOrNull(rc, LABEL, name, KEY_BRANCH);
-      label.setRefPatterns(refPatterns == null ? null : ImmutableList.copyOf(refPatterns));
+      if (refPatterns == null) {
+        label.setRefPatterns(null);
+      } else {
+        for (String pattern : refPatterns) {
+          if (pattern.startsWith("^")) {
+            try {
+              Pattern.compile(pattern);
+            } catch (PatternSyntaxException e) {
+              error(
+                  String.format(
+                      "Invalid ref pattern \"%s\" in %s.%s.%s: %s",
+                      pattern, LABEL, name, KEY_BRANCH, e.getMessage()));
+            }
+          }
+        }
+        label.setRefPatterns(ImmutableList.copyOf(refPatterns));
+      }
       labelSections.put(name, label.build());
     }
   }
@@ -1543,6 +1631,11 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
       String name = e.getKey();
       LabelType label = e.getValue();
       toUnset.remove(name);
+      if (label.getDescription().isPresent() && !label.getDescription().get().isEmpty()) {
+        rc.setString(LABEL, name, KEY_LABEL_DESCRIPTION, label.getDescription().get());
+      } else {
+        rc.unset(LABEL, name, KEY_LABEL_DESCRIPTION);
+      }
       rc.setString(LABEL, name, KEY_FUNCTION, label.getFunction().getFunctionName());
       rc.setInt(LABEL, name, KEY_DEFAULT_VALUE, label.getDefaultValue());
 

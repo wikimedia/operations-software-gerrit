@@ -161,8 +161,8 @@ class RefControl {
   }
 
   /** Returns true if this user can force edit topic names. */
-  boolean canForceEditTopicName() {
-    return canPerform(Permission.EDIT_TOPIC_NAME, false, true);
+  boolean canForceEditTopicName(boolean isChangeOwner) {
+    return canPerform(Permission.EDIT_TOPIC_NAME, isChangeOwner, true);
   }
 
   /** Returns true if this user can delete changes. */
@@ -271,13 +271,7 @@ class RefControl {
       case UNKNOWN:
       case WEB_BROWSER:
       default:
-        return
-        // We allow owner to delete refs even if they have no force-push rights. We forbid
-        // it if force push is blocked, though. See commit 40bd5741026863c99bea13eb5384bd27855c5e1b
-        (isOwner() && !isBlocked(Permission.PUSH, false, true))
-            || canPushWithForce()
-            || canPerform(Permission.DELETE)
-            || projectControl.isAdmin();
+        return canPushWithForce() || canPerform(Permission.DELETE) || projectControl.isAdmin();
     }
   }
 

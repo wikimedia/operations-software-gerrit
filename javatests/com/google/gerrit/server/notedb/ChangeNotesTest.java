@@ -15,6 +15,7 @@
 package com.google.gerrit.server.notedb;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.common.truth.Truth8.assertThat;
@@ -61,7 +62,6 @@ import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.gerrit.server.validators.ValidationException;
 import com.google.gerrit.testing.TestChanges;
 import com.google.inject.Inject;
-import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -131,7 +131,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
             1,
             changeOwner,
             null,
-            TimeUtil.nowTs(),
+            TimeUtil.now(),
             "Comment",
             (short) 1,
             commit,
@@ -193,7 +193,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
             1,
             changeOwner,
             null,
-            TimeUtil.nowTs(),
+            TimeUtil.now(),
             "Comment",
             (short) 1,
             commit,
@@ -244,12 +244,14 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     assertThat(psas.get(0).label()).isEqualTo(LabelId.CODE_REVIEW);
     assertThat(psas.get(0).value()).isEqualTo((short) -1);
     assertThat(psas.get(0).granted()).isEqualTo(truncate(after(c, 2000)));
+    assertParsedUuid(psas.get(0));
 
     assertThat(psas.get(1).patchSetId()).isEqualTo(c.currentPatchSetId());
     assertThat(psas.get(1).accountId().get()).isEqualTo(1);
     assertThat(psas.get(1).label()).isEqualTo(LabelId.VERIFIED);
     assertThat(psas.get(1).value()).isEqualTo((short) 1);
     assertThat(psas.get(1).granted()).isEqualTo(psas.get(0).granted());
+    assertParsedUuid(psas.get(1));
   }
 
   @Test
@@ -276,6 +278,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     assertThat(psa1.label()).isEqualTo(LabelId.CODE_REVIEW);
     assertThat(psa1.value()).isEqualTo((short) -1);
     assertThat(psa1.granted()).isEqualTo(truncate(after(c, 2000)));
+    assertParsedUuid(psa1);
 
     PatchSetApproval psa2 = Iterables.getOnlyElement(psas.get(ps2));
     assertThat(psa2.patchSetId()).isEqualTo(ps2);
@@ -283,6 +286,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     assertThat(psa2.label()).isEqualTo(LabelId.CODE_REVIEW);
     assertThat(psa2.value()).isEqualTo((short) +1);
     assertThat(psa2.granted()).isEqualTo(truncate(after(c, 4000)));
+    assertParsedUuid(psa2);
   }
 
   @Test
@@ -297,6 +301,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
         Iterables.getOnlyElement(notes.getApprovals().get(c.currentPatchSetId()));
     assertThat(psa.label()).isEqualTo(LabelId.CODE_REVIEW);
     assertThat(psa.value()).isEqualTo((short) -1);
+    assertParsedUuid(psa);
 
     update = newUpdate(c, changeOwner);
     update.putApproval(LabelId.CODE_REVIEW, (short) 1);
@@ -306,6 +311,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     psa = Iterables.getOnlyElement(notes.getApprovals().get(c.currentPatchSetId()));
     assertThat(psa.label()).isEqualTo(LabelId.CODE_REVIEW);
     assertThat(psa.value()).isEqualTo((short) 1);
+    assertParsedUuid(psa);
   }
 
   @Test
@@ -329,12 +335,14 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     assertThat(psas.get(0).label()).isEqualTo(LabelId.CODE_REVIEW);
     assertThat(psas.get(0).value()).isEqualTo((short) -1);
     assertThat(psas.get(0).granted()).isEqualTo(truncate(after(c, 2000)));
+    assertParsedUuid(psas.get(0));
 
     assertThat(psas.get(1).patchSetId()).isEqualTo(c.currentPatchSetId());
     assertThat(psas.get(1).accountId().get()).isEqualTo(2);
     assertThat(psas.get(1).label()).isEqualTo(LabelId.CODE_REVIEW);
     assertThat(psas.get(1).value()).isEqualTo((short) 1);
     assertThat(psas.get(1).granted()).isEqualTo(truncate(after(c, 3000)));
+    assertParsedUuid(psas.get(1));
   }
 
   @Test
@@ -350,6 +358,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     assertThat(psa.accountId().get()).isEqualTo(1);
     assertThat(psa.label()).isEqualTo("Not-For-Long");
     assertThat(psa.value()).isEqualTo((short) 1);
+    assertParsedUuid(psa);
 
     update = newUpdate(c, changeOwner);
     update.removeApproval("Not-For-Long");
@@ -368,6 +377,248 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
   }
 
   @Test
+  public void approval_UUIDGenerated_forAllValues() throws Exception {
+    for (int value = -2; value <= 2; value++) {
+      Change c = newChange();
+      ChangeUpdate update = newUpdate(c, changeOwner);
+      update.putApproval(LabelId.CODE_REVIEW, (short) value);
+      update.commit();
+
+      ChangeNotes notes = newNotes(c);
+      PatchSetApproval psa =
+          Iterables.getOnlyElement(notes.getApprovals().get(c.currentPatchSetId()));
+      assertThat(psa.accountId()).isEqualTo(changeOwner.getAccountId());
+      assertThat(psa.label()).isEqualTo(LabelId.CODE_REVIEW);
+      assertThat(psa.value()).isEqualTo((short) value);
+      assertParsedUuid(psa);
+    }
+  }
+
+  @Test
+  public void emptyApproval_uuidGenerated() throws Exception {
+    Change c = newChange();
+    ChangeUpdate update = newUpdate(c, changeOwner);
+    update.putApproval(LabelId.CODE_REVIEW, (short) -1);
+    update.commit();
+
+    ChangeNotes notes = newNotes(c);
+    PatchSetApproval psa =
+        Iterables.getOnlyElement(notes.getApprovals().get(c.currentPatchSetId()));
+    assertThat(psa.accountId()).isEqualTo(changeOwner.getAccountId());
+    assertThat(psa.label()).isEqualTo(LabelId.CODE_REVIEW);
+    assertThat(psa.value()).isEqualTo((short) -1);
+    assertParsedUuid(psa);
+
+    update = newUpdate(c, changeOwner);
+    update.putApproval(LabelId.CODE_REVIEW, (short) 0);
+    update.commit();
+
+    notes = newNotes(c);
+    PatchSetApproval emptyPsa =
+        Iterables.getOnlyElement(notes.getApprovals().get(psa.patchSetId()));
+    assertThat(emptyPsa.key()).isEqualTo(psa.key());
+    assertThat(emptyPsa.value()).isEqualTo((short) 0);
+    assertThat(emptyPsa.label()).isEqualTo(psa.label());
+    assertParsedUuid(emptyPsa);
+  }
+
+  @Test
+  public void removedApproval_noUuid() throws Exception {
+    Change c = newChange();
+    ChangeUpdate update = newUpdate(c, changeOwner);
+    update.putApproval(LabelId.CODE_REVIEW, (short) -1);
+    update.commit();
+
+    ChangeNotes notes = newNotes(c);
+    PatchSetApproval psa =
+        Iterables.getOnlyElement(notes.getApprovals().get(c.currentPatchSetId()));
+    assertThat(psa.accountId()).isEqualTo(changeOwner.getAccountId());
+    assertThat(psa.label()).isEqualTo(LabelId.CODE_REVIEW);
+    assertThat(psa.value()).isEqualTo((short) -1);
+    assertParsedUuid(psa);
+
+    update = newUpdate(c, changeOwner);
+    update.removeApproval(LabelId.CODE_REVIEW);
+    update.commit();
+
+    notes = newNotes(c);
+    PatchSetApproval removedPsa =
+        Iterables.getOnlyElement(notes.getApprovals().get(psa.patchSetId()));
+    assertThat(removedPsa.key()).isEqualTo(psa.key());
+    assertThat(removedPsa.value()).isEqualTo((short) 0);
+    assertThat(removedPsa.label()).isEqualTo(psa.label());
+    assertThat(removedPsa.uuid()).isEmpty();
+  }
+
+  @Test
+  public void reissuedApproval_samePatchSet_differentUUID() throws Exception {
+    Change c = newChange();
+    ChangeUpdate update = newUpdate(c, changeOwner);
+    update.putApproval(LabelId.CODE_REVIEW, (short) -1);
+    update.commit();
+
+    ChangeNotes notes = newNotes(c);
+    assertThat(notes.getApprovals().keySet()).containsExactly(c.currentPatchSetId());
+    PatchSetApproval originalPsa =
+        Iterables.getOnlyElement(notes.getApprovals().get(c.currentPatchSetId()));
+
+    assertThat(originalPsa.patchSetId()).isEqualTo(c.currentPatchSetId());
+    assertThat(originalPsa.accountId()).isEqualTo(changeOwner.getAccountId());
+    assertThat(originalPsa.label()).isEqualTo(LabelId.CODE_REVIEW);
+    assertThat(originalPsa.value()).isEqualTo((short) -1);
+    assertParsedUuid(originalPsa);
+
+    // Remove approval from current patch set
+    update = newUpdate(c, changeOwner);
+    update.removeApproval(LabelId.CODE_REVIEW);
+    update.commit();
+
+    notes = newNotes(c);
+    assertThat(notes.getApprovals().keySet()).hasSize(1);
+    PatchSetApproval removedPsa =
+        Iterables.getOnlyElement(notes.getApprovals().get(c.currentPatchSetId()));
+    assertThat(removedPsa.key()).isEqualTo(originalPsa.key());
+    assertThat(removedPsa.value()).isEqualTo(0);
+    // Add approval with the same author, label, value to the current patch set
+    update = newUpdate(c, changeOwner);
+    update.putApproval(LabelId.CODE_REVIEW, (short) -1);
+    update.commit();
+
+    notes = newNotes(c);
+    assertThat(notes.getApprovals().keySet()).hasSize(1);
+    PatchSetApproval reAddedPsa =
+        Iterables.getOnlyElement(notes.getApprovals().get(c.currentPatchSetId()));
+
+    assertThat(reAddedPsa.key()).isEqualTo(originalPsa.key());
+    assertThat(reAddedPsa.value()).isEqualTo(originalPsa.value());
+    // The re-added approval has a different UUID
+    assertParsedUuid(reAddedPsa);
+    assertThat(reAddedPsa.uuid().get()).isNotEqualTo(originalPsa.uuid().get());
+  }
+
+  @Test
+  public void reissuedApproval_otherPatchSet_differentUUID() throws Exception {
+    Change c = newChange();
+    ChangeUpdate update = newUpdate(c, changeOwner);
+    update.putApproval(LabelId.CODE_REVIEW, (short) -1);
+    update.commit();
+
+    ChangeNotes notes = newNotes(c);
+    assertThat(notes.getApprovals().keySet()).containsExactly(c.currentPatchSetId());
+    PatchSetApproval originalPsa =
+        Iterables.getOnlyElement(notes.getApprovals().get(c.currentPatchSetId()));
+
+    assertThat(originalPsa.patchSetId()).isEqualTo(c.currentPatchSetId());
+    assertThat(originalPsa.accountId().get()).isEqualTo(1);
+    assertThat(originalPsa.label()).isEqualTo(LabelId.CODE_REVIEW);
+    assertThat(originalPsa.value()).isEqualTo((short) -1);
+    assertParsedUuid(originalPsa);
+
+    // Create new PatchSet and re-issue vote
+    incrementPatchSet(c);
+    update = newUpdate(c, changeOwner);
+    update.putApproval(LabelId.CODE_REVIEW, (short) -1);
+    update.commit();
+
+    notes = newNotes(c);
+    assertThat(notes.getApprovals().keySet()).hasSize(2);
+    PatchSetApproval postUpdateOriginalPsa =
+        Iterables.getOnlyElement(notes.getApprovals().get(originalPsa.patchSetId()));
+    PatchSetApproval reAddedPsa =
+        Iterables.getOnlyElement(notes.getApprovals().get(c.currentPatchSetId()));
+
+    // Same patch set approval for the original patch set is returned after the vote was re-issued
+    // on the next patch set
+    assertThat(postUpdateOriginalPsa).isEqualTo(originalPsa);
+
+    assertThat(reAddedPsa.accountId()).isEqualTo(originalPsa.accountId());
+    assertThat(reAddedPsa.label()).isEqualTo(originalPsa.label());
+    assertThat(reAddedPsa.value()).isEqualTo(originalPsa.value());
+
+    // The re-added approval has a different UUID
+    assertParsedUuid(reAddedPsa);
+    assertThat(reAddedPsa.uuid().get()).isNotEqualTo(originalPsa.uuid().get());
+  }
+
+  @Test
+  public void approvalUUID_samePatchSet_differentUsers() throws Exception {
+    Change c = newChange();
+    ChangeUpdate update = newUpdate(c, changeOwner);
+    update.putApproval(LabelId.CODE_REVIEW, (short) -1);
+    update.putApprovalFor(otherUserId, LabelId.CODE_REVIEW, (short) -1);
+    update.commit();
+
+    ChangeNotes notes = newNotes(c);
+    assertThat(notes.getApprovals().keySet()).containsExactly(c.currentPatchSetId());
+    List<PatchSetApproval> patchSetApprovals = notes.getApprovals().get(c.currentPatchSetId());
+    assertThat(patchSetApprovals).hasSize(2);
+    assertThat(
+            patchSetApprovals.stream()
+                .filter(psa -> psa.value() == (short) -1 && psa.label().equals(LabelId.CODE_REVIEW))
+                .count())
+        .isEqualTo(2);
+    // Count UUIDs to make sure they are unique
+    assertThat(patchSetApprovals.stream().map(psa -> psa.uuid().get()).distinct().count())
+        .isEqualTo(2);
+    assertThat(patchSetApprovals.stream().map(psa -> psa.accountId()).collect(toImmutableSet()))
+        .containsExactly(changeOwner.getAccountId(), otherUserId);
+  }
+
+  @Test
+  public void approvalUUID_samePatchSet_differentLabels() throws Exception {
+    Change c = newChange();
+    ChangeUpdate update = newUpdate(c, changeOwner);
+    update.putApproval(LabelId.VERIFIED, (short) -1);
+    update.putApproval(LabelId.CODE_REVIEW, (short) -1);
+    update.commit();
+
+    ChangeNotes notes = newNotes(c);
+    assertThat(notes.getApprovals().keySet()).containsExactly(c.currentPatchSetId());
+    List<PatchSetApproval> patchSetApprovals = notes.getApprovals().get(c.currentPatchSetId());
+    assertThat(patchSetApprovals).hasSize(2);
+    assertThat(
+            patchSetApprovals.stream()
+                .filter(
+                    psa ->
+                        psa.value() == (short) -1
+                            && psa.accountId().equals(changeOwner.getAccountId()))
+                .count())
+        .isEqualTo(2);
+
+    // Count UUIDs to make sure they are unique
+    assertThat(patchSetApprovals.stream().map(psa -> psa.uuid().get()).distinct().count())
+        .isEqualTo(2);
+    assertThat(patchSetApprovals.stream().map(psa -> psa.label()).collect(toImmutableSet()))
+        .containsExactly(LabelId.VERIFIED, LabelId.CODE_REVIEW);
+  }
+
+  @Test
+  public void approvalUUID_differentChanges() throws Exception {
+    Change c1 = newChange();
+    ChangeUpdate update1 = newUpdate(c1, changeOwner);
+    update1.putApproval(LabelId.CODE_REVIEW, (short) +2);
+    update1.commit();
+
+    Change c2 = newChange();
+    ChangeUpdate update = newUpdate(c2, changeOwner);
+    update.putApproval(LabelId.CODE_REVIEW, (short) +2);
+    update.commit();
+
+    ChangeNotes notes1 = newNotes(c1);
+    PatchSetApproval psa1 =
+        Iterables.getOnlyElement(notes1.getApprovals().get(c1.currentPatchSetId()));
+    ChangeNotes notes2 = newNotes(c2);
+    PatchSetApproval psa2 =
+        Iterables.getOnlyElement(notes2.getApprovals().get(c2.currentPatchSetId()));
+    assertThat(psa1.label()).isEqualTo(psa2.label());
+    assertThat(psa1.accountId()).isEqualTo(psa2.accountId());
+    assertThat(psa1.value()).isEqualTo(psa2.value());
+
+    // UUID is global: different across changes.
+    assertThat(psa1.uuid()).isNotEqualTo(psa2.uuid());
+  }
+
+  @Test
   public void removeOtherUsersApprovals() throws Exception {
     Change c = newChange();
     ChangeUpdate update = newUpdate(c, otherUser);
@@ -380,21 +631,19 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     assertThat(psa.accountId()).isEqualTo(otherUserId);
     assertThat(psa.label()).isEqualTo("Not-For-Long");
     assertThat(psa.value()).isEqualTo((short) 1);
+    assertParsedUuid(psa);
 
     update = newUpdate(c, changeOwner);
     update.removeApprovalFor(otherUserId, "Not-For-Long");
     update.commit();
 
     notes = newNotes(c);
-    assertThat(notes.getApprovals())
-        .containsExactlyEntriesIn(
-            ImmutableListMultimap.of(
-                psa.patchSetId(),
-                PatchSetApproval.builder()
-                    .key(psa.key())
-                    .value(0)
-                    .granted(update.getWhen())
-                    .build()));
+    PatchSetApproval removedPsa =
+        Iterables.getOnlyElement(notes.getApprovals().get(psa.patchSetId()));
+    assertThat(removedPsa.key()).isEqualTo(psa.key());
+    assertThat(removedPsa.value()).isEqualTo((short) 0);
+    assertThat(removedPsa.label()).isEqualTo(psa.label());
+    assertThat(removedPsa.uuid()).isEmpty();
 
     // Add back approval on same label.
     update = newUpdate(c, otherUser);
@@ -406,6 +655,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     assertThat(psa.accountId()).isEqualTo(otherUserId);
     assertThat(psa.label()).isEqualTo("Not-For-Long");
     assertThat(psa.value()).isEqualTo((short) 2);
+    assertParsedUuid(psa);
   }
 
   @Test
@@ -426,10 +676,13 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     assertThat(approvals.get(0).accountId()).isEqualTo(changeOwner.getAccountId());
     assertThat(approvals.get(0).label()).isEqualTo(LabelId.CODE_REVIEW);
     assertThat(approvals.get(0).value()).isEqualTo((short) 1);
+    assertParsedUuid(approvals.get(0));
 
     assertThat(approvals.get(1).accountId()).isEqualTo(otherUser.getAccountId());
     assertThat(approvals.get(1).label()).isEqualTo(LabelId.CODE_REVIEW);
     assertThat(approvals.get(1).value()).isEqualTo((short) -1);
+    assertThat(approvals.get(1).uuid()).isPresent();
+    assertParsedUuid(approvals.get(1));
   }
 
   @Test
@@ -462,9 +715,12 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     assertThat(approvals.get(0).label()).isEqualTo(LabelId.VERIFIED);
     assertThat(approvals.get(0).value()).isEqualTo((short) 1);
     assertThat(approvals.get(0).postSubmit()).isFalse();
+    assertParsedUuid(approvals.get(1));
+
     assertThat(approvals.get(1).label()).isEqualTo(LabelId.CODE_REVIEW);
     assertThat(approvals.get(1).value()).isEqualTo((short) 2);
     assertThat(approvals.get(1).postSubmit()).isTrue();
+    assertParsedUuid(approvals.get(1));
   }
 
   @Test
@@ -503,14 +759,154 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     assertThat(approvals.get(0).label()).isEqualTo(LabelId.VERIFIED);
     assertThat(approvals.get(0).value()).isEqualTo(1);
     assertThat(approvals.get(0).postSubmit()).isFalse();
+    assertParsedUuid(approvals.get(0));
+
     assertThat(approvals.get(1).accountId()).isEqualTo(ownerId);
     assertThat(approvals.get(1).label()).isEqualTo(LabelId.CODE_REVIEW);
     assertThat(approvals.get(1).value()).isEqualTo(2);
     assertThat(approvals.get(1).postSubmit()).isFalse(); // During submit.
+    assertParsedUuid(approvals.get(1));
+
     assertThat(approvals.get(2).accountId()).isEqualTo(otherId);
     assertThat(approvals.get(2).label()).isEqualTo("Other-Label");
     assertThat(approvals.get(2).value()).isEqualTo(2);
     assertThat(approvals.get(2).postSubmit()).isTrue();
+    assertParsedUuid(approvals.get(2));
+  }
+
+  @Test
+  public void copiedApprovals_keepsUUID() throws Exception {
+    Change c = newChange();
+    ChangeUpdate update = newUpdate(c, changeOwner);
+    update.putApproval(LabelId.CODE_REVIEW, (short) 2);
+    update.commit();
+
+    ChangeNotes notes = newNotes(c);
+    PatchSetApproval originalPsa =
+        Iterables.getOnlyElement(notes.getApprovals().get(c.currentPatchSetId()));
+    assertThat(originalPsa.accountId()).isEqualTo(changeOwner.getAccountId());
+    assertThat(originalPsa.label()).isEqualTo(LabelId.CODE_REVIEW);
+    assertThat(originalPsa.value()).isEqualTo(2);
+    assertThat(originalPsa.tag()).isEmpty();
+    assertThat(originalPsa.realAccountId()).isEqualTo(changeOwner.getAccountId());
+    assertParsedUuid(originalPsa);
+
+    // Copied approvals are persisted at the patch set upload, add new patch set
+    incrementPatchSet(c);
+
+    addCopiedApproval(c, changeOwner, originalPsa);
+
+    notes = newNotes(c);
+    assertThat(notes.getApprovalsWithCopied().keySet()).hasSize(2);
+    PatchSetApproval copiedApproval =
+        Iterables.getOnlyElement(
+            notes.getApprovalsWithCopied().get(c.currentPatchSetId()).stream()
+                .filter(a -> a.copied())
+                .collect(toImmutableList()));
+    PatchSetApproval nonCopiedApproval =
+        Iterables.getOnlyElement(
+            notes.getApprovalsWithCopied().get(originalPsa.patchSetId()).stream()
+                .filter(a -> !a.copied())
+                .collect(toImmutableList()));
+
+    // Still same original PSA is returned
+    assertThat(nonCopiedApproval).isEqualTo(originalPsa);
+
+    // The copied approval matches the original approval, including UUID
+    assertCopiedApproval(originalPsa, copiedApproval);
+  }
+
+  @Test
+  public void copiedApprovals_withRealUserAndTag_keepsUUID() throws Exception {
+    ImmutableList<String> strangeTags =
+        ImmutableList.of(", ", ":\"", ",", "!@#$%^\0&*):\" \n: \r\"#$@,. :");
+    for (String strangeTag : strangeTags) {
+      Change c = newChange();
+      CurrentUser otherUserAsOwner = userFactory.runAs(null, changeOwner.getAccountId(), otherUser);
+      ChangeUpdate update = newUpdate(c, otherUserAsOwner);
+      update.putApproval(LabelId.CODE_REVIEW, (short) 2);
+      update.setTag(strangeTag);
+      update.commit();
+      ChangeNotes notes = newNotes(c);
+      PatchSetApproval originalPsa =
+          Iterables.getOnlyElement(notes.getApprovals().get(c.currentPatchSetId()));
+      assertThat(originalPsa.accountId()).isEqualTo(changeOwner.getAccountId());
+      assertThat(originalPsa.label()).isEqualTo(LabelId.CODE_REVIEW);
+      assertThat(originalPsa.value()).isEqualTo(2);
+      assertThat(originalPsa.tag()).hasValue(NoteDbUtil.sanitizeFooter(strangeTag));
+      assertThat(originalPsa.realAccountId()).isEqualTo(otherUserId);
+      assertParsedUuid(originalPsa);
+
+      // Copied approvals are persisted at the patch set upload, add new patch set
+      incrementPatchSet(c);
+
+      addCopiedApproval(c, changeOwner, originalPsa);
+
+      notes = newNotes(c);
+      assertThat(notes.getApprovalsWithCopied().keySet()).hasSize(2);
+      PatchSetApproval copiedApproval =
+          Iterables.getOnlyElement(
+              notes.getApprovalsWithCopied().get(c.currentPatchSetId()).stream()
+                  .filter(a -> a.copied())
+                  .collect(toImmutableList()));
+      PatchSetApproval nonCopiedApproval =
+          Iterables.getOnlyElement(
+              notes.getApprovalsWithCopied().get(originalPsa.patchSetId()).stream()
+                  .filter(a -> !a.copied())
+                  .collect(toImmutableList()));
+
+      // Still same original PSA is returned
+      assertThat(nonCopiedApproval).isEqualTo(originalPsa);
+
+      // The copied approval matches the original approval, including UUID
+      assertCopiedApproval(originalPsa, copiedApproval);
+    }
+  }
+
+  @Test
+  public void copiedApprovals_withTag_keepsUUID() throws Exception {
+    ImmutableList<String> strangeTags =
+        ImmutableList.of(", ", ":\"", ",", "!@#$%^\0&*):\" \n: \r\"#$@,. :");
+    for (String strangeTag : strangeTags) {
+      Change c = newChange();
+      ChangeUpdate update = newUpdate(c, changeOwner);
+      update.putApproval(LabelId.CODE_REVIEW, (short) 2);
+      update.setTag(strangeTag);
+      update.commit();
+
+      ChangeNotes notes = newNotes(c);
+      PatchSetApproval originalPsa =
+          Iterables.getOnlyElement(notes.getApprovals().get(c.currentPatchSetId()));
+      assertThat(originalPsa.accountId()).isEqualTo(changeOwner.getAccountId());
+      assertThat(originalPsa.label()).isEqualTo(LabelId.CODE_REVIEW);
+      assertThat(originalPsa.value()).isEqualTo(2);
+      assertThat(originalPsa.tag()).hasValue(NoteDbUtil.sanitizeFooter(strangeTag));
+      assertThat(originalPsa.realAccountId()).isEqualTo(changeOwner.getAccountId());
+      assertParsedUuid(originalPsa);
+      // Copied approvals are persisted at the patch set upload, add new patch set
+      incrementPatchSet(c);
+
+      addCopiedApproval(c, changeOwner, originalPsa);
+
+      notes = newNotes(c);
+      assertThat(notes.getApprovalsWithCopied().keySet()).hasSize(2);
+      PatchSetApproval copiedApproval =
+          Iterables.getOnlyElement(
+              notes.getApprovalsWithCopied().get(c.currentPatchSetId()).stream()
+                  .filter(a -> a.copied())
+                  .collect(toImmutableList()));
+      PatchSetApproval nonCopiedApproval =
+          Iterables.getOnlyElement(
+              notes.getApprovalsWithCopied().get(originalPsa.patchSetId()).stream()
+                  .filter(a -> !a.copied())
+                  .collect(toImmutableList()));
+
+      // Still same original PSA is returned
+      assertThat(nonCopiedApproval).isEqualTo(originalPsa);
+
+      // The copied approval matches the original approval, including UUID
+      assertCopiedApproval(originalPsa, copiedApproval);
+    }
   }
 
   @Test
@@ -526,7 +922,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
                     LabelId.create(LabelId.CODE_REVIEW)))
             .value(1)
             .copied(true)
-            .granted(TimeUtil.nowTs())
+            .granted(TimeUtil.now())
             .tag("tag")
             .realAccountId(otherUserId)
             .build());
@@ -578,7 +974,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
                     LabelId.create(LabelId.CODE_REVIEW)))
             .value(1)
             .copied(true)
-            .granted(TimeUtil.nowTs())
+            .granted(TimeUtil.now())
             .build());
     update.commit();
 
@@ -611,7 +1007,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
                     LabelId.create(LabelId.CODE_REVIEW)))
             .value(1)
             .copied(true)
-            .granted(TimeUtil.nowTs())
+            .granted(TimeUtil.now())
             .tag(strangeTag)
             .build());
     update.commit();
@@ -640,7 +1036,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
                     LabelId.create(LabelId.CODE_REVIEW)))
             .value(1)
             .copied(true)
-            .granted(TimeUtil.nowTs())
+            .granted(TimeUtil.now())
             .build());
     update.putCopiedApproval(
         PatchSetApproval.builder()
@@ -651,7 +1047,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
                     LabelId.create(LabelId.VERIFIED)))
             .value(1)
             .copied(true)
-            .granted(TimeUtil.nowTs())
+            .granted(TimeUtil.now())
             .build());
     update.commit();
 
@@ -676,7 +1072,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
                     LabelId.create(LabelId.CODE_REVIEW)))
             .value(2)
             .copied(true)
-            .granted(TimeUtil.nowTs())
+            .granted(TimeUtil.now())
             .build());
     update.commit();
 
@@ -700,11 +1096,11 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     update.commit();
 
     ChangeNotes notes = newNotes(c);
-    Timestamp ts = new Timestamp(update.getWhen().getTime());
+    Instant ts = update.getWhen();
     assertThat(notes.getReviewers())
         .isEqualTo(
             ReviewerSet.fromTable(
-                ImmutableTable.<ReviewerStateInternal, Account.Id, Timestamp>builder()
+                ImmutableTable.<ReviewerStateInternal, Account.Id, Instant>builder()
                     .put(REVIEWER, Account.id(1), ts)
                     .put(REVIEWER, Account.id(2), ts)
                     .build()));
@@ -719,11 +1115,11 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     update.commit();
 
     ChangeNotes notes = newNotes(c);
-    Timestamp ts = new Timestamp(update.getWhen().getTime());
+    Instant ts = update.getWhen();
     assertThat(notes.getReviewers())
         .isEqualTo(
             ReviewerSet.fromTable(
-                ImmutableTable.<ReviewerStateInternal, Account.Id, Timestamp>builder()
+                ImmutableTable.<ReviewerStateInternal, Account.Id, Instant>builder()
                     .put(REVIEWER, Account.id(1), ts)
                     .put(CC, Account.id(2), ts)
                     .build()));
@@ -737,7 +1133,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     update.commit();
 
     ChangeNotes notes = newNotes(c);
-    Timestamp ts = new Timestamp(update.getWhen().getTime());
+    Instant ts = update.getWhen();
     assertThat(notes.getReviewers())
         .isEqualTo(ReviewerSet.fromTable(ImmutableTable.of(REVIEWER, Account.id(2), ts)));
 
@@ -746,7 +1142,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     update.commit();
 
     notes = newNotes(c);
-    ts = new Timestamp(update.getWhen().getTime());
+    ts = update.getWhen();
     assertThat(notes.getReviewers())
         .isEqualTo(ReviewerSet.fromTable(ImmutableTable.of(CC, Account.id(2), ts)));
   }
@@ -881,7 +1277,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     update.commit();
     ChangeNotes notes = newNotes(c);
     assertThat(notes.getMergedOn()).isPresent();
-    Timestamp mergedOn = notes.getMergedOn().get();
+    Instant mergedOn = notes.getMergedOn().get();
     assertThat(mergedOn).isEqualTo(notes.getChange().getLastUpdatedOn());
 
     // Next update does not change mergedOn date.
@@ -907,7 +1303,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     update.commit();
     ChangeNotes notes = newNotes(c);
     assertThat(notes.getMergedOn()).isPresent();
-    Timestamp mergedOn = notes.getMergedOn().get();
+    Instant mergedOn = notes.getMergedOn().get();
     assertThat(mergedOn).isEqualTo(notes.getChange().getLastUpdatedOn());
 
     incrementPatchSet(c);
@@ -1301,7 +1697,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
   public void createdOnChangeNotes() throws Exception {
     Change c = newChange();
 
-    Timestamp createdOn = newNotes(c).getChange().getCreatedOn();
+    Instant createdOn = newNotes(c).getChange().getCreatedOn();
     assertThat(createdOn).isNotNull();
 
     // An update doesn't affect the createdOn timestamp.
@@ -1316,54 +1712,54 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     Change c = newChange();
 
     ChangeNotes notes = newNotes(c);
-    Timestamp ts1 = notes.getChange().getLastUpdatedOn();
+    Instant ts1 = notes.getChange().getLastUpdatedOn();
     assertThat(ts1).isEqualTo(notes.getChange().getCreatedOn());
 
     // Various kinds of updates that update the timestamp.
     ChangeUpdate update = newUpdate(c, changeOwner);
     update.setTopic("topic"); // Change something to get a new commit.
     update.commit();
-    Timestamp ts2 = newNotes(c).getChange().getLastUpdatedOn();
+    Instant ts2 = newNotes(c).getChange().getLastUpdatedOn();
     assertThat(ts2).isGreaterThan(ts1);
 
     update = newUpdate(c, changeOwner);
     update.setChangeMessage("Some message");
     update.commit();
-    Timestamp ts3 = newNotes(c).getChange().getLastUpdatedOn();
+    Instant ts3 = newNotes(c).getChange().getLastUpdatedOn();
     assertThat(ts3).isGreaterThan(ts2);
 
     update = newUpdate(c, changeOwner);
     update.setHashtags(ImmutableSet.of("foo"));
     update.commit();
-    Timestamp ts4 = newNotes(c).getChange().getLastUpdatedOn();
+    Instant ts4 = newNotes(c).getChange().getLastUpdatedOn();
     assertThat(ts4).isGreaterThan(ts3);
 
     incrementPatchSet(c);
-    Timestamp ts5 = newNotes(c).getChange().getLastUpdatedOn();
+    Instant ts5 = newNotes(c).getChange().getLastUpdatedOn();
     assertThat(ts5).isGreaterThan(ts4);
 
     update = newUpdate(c, changeOwner);
     update.putApproval(LabelId.CODE_REVIEW, (short) 1);
     update.commit();
-    Timestamp ts6 = newNotes(c).getChange().getLastUpdatedOn();
+    Instant ts6 = newNotes(c).getChange().getLastUpdatedOn();
     assertThat(ts6).isGreaterThan(ts5);
 
     update = newUpdate(c, changeOwner);
     update.setStatus(Change.Status.ABANDONED);
     update.commit();
-    Timestamp ts7 = newNotes(c).getChange().getLastUpdatedOn();
+    Instant ts7 = newNotes(c).getChange().getLastUpdatedOn();
     assertThat(ts7).isGreaterThan(ts6);
 
     update = newUpdate(c, changeOwner);
     update.putReviewer(otherUser.getAccountId(), ReviewerStateInternal.REVIEWER);
     update.commit();
-    Timestamp ts8 = newNotes(c).getChange().getLastUpdatedOn();
+    Instant ts8 = newNotes(c).getChange().getLastUpdatedOn();
     assertThat(ts8).isGreaterThan(ts7);
 
     update = newUpdate(c, changeOwner);
     update.setGroups(ImmutableList.of("a", "b"));
     update.commit();
-    Timestamp ts9 = newNotes(c).getChange().getLastUpdatedOn();
+    Instant ts9 = newNotes(c).getChange().getLastUpdatedOn();
     assertThat(ts9).isGreaterThan(ts8);
 
     // Finish off by merging the change.
@@ -1377,7 +1773,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
                 submitLabel(LabelId.VERIFIED, "OK", changeOwner.getAccountId()),
                 submitLabel("Alternative-Code-Review", "NEED", null))));
     update.commit();
-    Timestamp ts10 = newNotes(c).getChange().getLastUpdatedOn();
+    Instant ts10 = newNotes(c).getChange().getLastUpdatedOn();
     assertThat(ts10).isGreaterThan(ts9);
   }
 
@@ -1490,7 +1886,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
             1,
             changeOwner,
             null,
-            TimeUtil.nowTs(),
+            TimeUtil.now(),
             "Comment",
             (short) 1,
             commit,
@@ -1579,7 +1975,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     // comment on ps2
     update = newUpdate(c, changeOwner);
     update.setPatchSetId(psId2);
-    Timestamp ts = TimeUtil.nowTs();
+    Instant ts = TimeUtil.now();
     update.putComment(
         HumanComment.Status.PUBLISHED,
         newComment(
@@ -1647,7 +2043,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     String uuid1 = "uuid1";
     String message1 = "comment 1";
     CommentRange range1 = new CommentRange(1, 1, 2, 1);
-    Timestamp time1 = TimeUtil.nowTs();
+    Instant time1 = TimeUtil.now();
     PatchSet.Id psId = c.currentPatchSetId();
     RevCommit tipCommit;
     try (NoteDbUpdateManager updateManager = updateManagerFactory.create(project)) {
@@ -1896,7 +2292,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
             0,
             otherUser,
             null,
-            TimeUtil.nowTs(),
+            TimeUtil.now(),
             "message",
             (short) 1,
             commitId,
@@ -1926,7 +2322,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
             range.getEndLine(),
             otherUser,
             null,
-            TimeUtil.nowTs(),
+            TimeUtil.now(),
             "message",
             (short) 1,
             commitId,
@@ -1956,7 +2352,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
             range.getEndLine(),
             otherUser,
             null,
-            TimeUtil.nowTs(),
+            TimeUtil.now(),
             "message",
             (short) 1,
             commitId,
@@ -1986,7 +2382,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
             range.getEndLine(),
             otherUser,
             null,
-            TimeUtil.nowTs(),
+            TimeUtil.now(),
             "message",
             (short) 1,
             commitId,
@@ -2013,7 +2409,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     String message3 = "comment 3";
     CommentRange range1 = new CommentRange(1, 1, 2, 1);
     CommentRange range2 = new CommentRange(2, 1, 3, 1);
-    Timestamp time = TimeUtil.nowTs();
+    Instant time = TimeUtil.now();
     ObjectId commitId = ObjectId.fromString("abcd1234abcd1234abcd1234abcd1234abcd1234");
 
     HumanComment comment1 =
@@ -2083,7 +2479,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     String uuid = "uuid";
     String message = "comment";
     CommentRange range = new CommentRange(1, 1, 2, 1);
-    Timestamp time = TimeUtil.nowTs();
+    Instant time = TimeUtil.now();
     PatchSet.Id psId = c.currentPatchSetId();
     ObjectId commitId = ObjectId.fromString("abcd1234abcd1234abcd1234abcd1234abcd1234");
 
@@ -2113,7 +2509,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
   @Test
   public void patchLineCommentNotesFormatWeirdUser() throws Exception {
-    Account.Builder account = Account.builder(Account.id(3), TimeUtil.nowTs());
+    Account.Builder account = Account.builder(Account.id(3), TimeUtil.now());
     account.setFullName("Weird\n\u0002<User>\n");
     account.setPreferredEmail(" we\r\nird@ex>ample<.com");
     accountCache.put(account.build());
@@ -2123,7 +2519,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     ChangeUpdate update = newUpdate(c, user);
     String uuid = "uuid";
     CommentRange range = new CommentRange(1, 1, 2, 1);
-    Timestamp time = TimeUtil.nowTs();
+    Instant time = TimeUtil.now();
     PatchSet.Id psId = c.currentPatchSetId();
 
     HumanComment comment =
@@ -2161,7 +2557,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     String messageForBase = "comment for base";
     String messageForPS = "comment for ps";
     CommentRange range = new CommentRange(1, 1, 2, 1);
-    Timestamp now = TimeUtil.nowTs();
+    Instant now = TimeUtil.now();
     PatchSet.Id psId = c.currentPatchSetId();
 
     HumanComment commentForBase =
@@ -2220,8 +2616,8 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     short side = (short) 1;
 
     ChangeUpdate update = newUpdate(c, otherUser);
-    Timestamp timeForComment1 = TimeUtil.nowTs();
-    Timestamp timeForComment2 = TimeUtil.nowTs();
+    Instant timeForComment1 = TimeUtil.now();
+    Instant timeForComment2 = TimeUtil.now();
     HumanComment comment1 =
         newComment(
             psId,
@@ -2279,7 +2675,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     short side = (short) 1;
 
     ChangeUpdate update = newUpdate(c, otherUser);
-    Timestamp now = TimeUtil.nowTs();
+    Instant now = TimeUtil.now();
     HumanComment comment1 =
         newComment(
             psId,
@@ -2337,7 +2733,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     short side = (short) 1;
 
     ChangeUpdate update = newUpdate(c, otherUser);
-    Timestamp now = TimeUtil.nowTs();
+    Instant now = TimeUtil.now();
     HumanComment comment1 =
         newComment(
             ps1,
@@ -2360,7 +2756,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     PatchSet.Id ps2 = c.currentPatchSetId();
 
     update = newUpdate(c, otherUser);
-    now = TimeUtil.nowTs();
+    now = TimeUtil.now();
     HumanComment comment2 =
         newComment(
             ps2,
@@ -2397,7 +2793,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     short side = (short) 1;
 
     ChangeUpdate update = newUpdate(c, otherUser);
-    Timestamp now = TimeUtil.nowTs();
+    Instant now = TimeUtil.now();
     HumanComment comment1 =
         newComment(
             ps1,
@@ -2442,7 +2838,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     CommentRange range2 = new CommentRange(2, 2, 3, 3);
     String filename = "filename1";
     short side = (short) 1;
-    Timestamp now = TimeUtil.nowTs();
+    Instant now = TimeUtil.now();
     PatchSet.Id psId = c.currentPatchSetId();
 
     // Write two drafts on the same side of one patch set.
@@ -2512,7 +2908,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     CommentRange range1 = new CommentRange(1, 1, 2, 2);
     CommentRange range2 = new CommentRange(2, 2, 3, 3);
     String filename = "filename1";
-    Timestamp now = TimeUtil.nowTs();
+    Instant now = TimeUtil.now();
     PatchSet.Id psId = c.currentPatchSetId();
 
     // Write two drafts, one on each side of the patchset.
@@ -2587,7 +2983,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     short side = (short) 1;
 
     ChangeUpdate update = newUpdate(c, otherUser);
-    Timestamp now = TimeUtil.nowTs();
+    Instant now = TimeUtil.now();
     HumanComment comment =
         newComment(
             psId,
@@ -2632,7 +3028,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     short side = (short) 1;
 
     ChangeUpdate update = newUpdate(c, otherUser);
-    Timestamp now = TimeUtil.nowTs();
+    Instant now = TimeUtil.now();
     HumanComment comment1 =
         newComment(
             ps1,
@@ -2655,7 +3051,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     PatchSet.Id ps2 = c.currentPatchSetId();
 
     update = newUpdate(c, otherUser);
-    now = TimeUtil.nowTs();
+    now = TimeUtil.now();
     HumanComment comment2 =
         newComment(
             ps2,
@@ -2700,7 +3096,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     short side = (short) 1;
 
     ChangeUpdate update = newUpdate(c, otherUser);
-    Timestamp now = TimeUtil.nowTs();
+    Instant now = TimeUtil.now();
     HumanComment comment =
         newComment(
             ps1,
@@ -2733,7 +3129,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     short side = (short) 1;
 
     ChangeUpdate update = newUpdate(c, otherUser);
-    Timestamp now = TimeUtil.nowTs();
+    Instant now = TimeUtil.now();
     HumanComment draft =
         newComment(
             ps1,
@@ -2783,7 +3179,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     String uuid = "uuid";
     ObjectId commitId = ObjectId.fromString("abcd1234abcd1234abcd1234abcd1234abcd1234");
     String messageForBase = "comment for base";
-    Timestamp now = TimeUtil.nowTs();
+    Instant now = TimeUtil.now();
     PatchSet.Id psId = c.currentPatchSetId();
 
     HumanComment comment =
@@ -2815,7 +3211,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     String uuid = "uuid";
     ObjectId commitId = ObjectId.fromString("abcd1234abcd1234abcd1234abcd1234abcd1234");
     String messageForBase = "comment for base";
-    Timestamp now = TimeUtil.nowTs();
+    Instant now = TimeUtil.now();
     PatchSet.Id psId = c.currentPatchSetId();
 
     HumanComment comment =
@@ -2856,7 +3252,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
     ChangeUpdate update = newUpdate(c, otherUser);
     update.setPatchSetId(ps2);
-    Timestamp now = TimeUtil.nowTs();
+    Instant now = TimeUtil.now();
     HumanComment comment1 =
         newComment(
             ps1,
@@ -2914,7 +3310,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
     ChangeUpdate update = newUpdate(c, otherUser);
     update.setPatchSetId(ps1);
-    Timestamp now = TimeUtil.nowTs();
+    Instant now = TimeUtil.now();
     HumanComment comment1 =
         newComment(
             ps1,
@@ -2988,7 +3384,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     short side = (short) 1;
 
     ChangeUpdate update = newUpdate(c, otherUser);
-    Timestamp now = TimeUtil.nowTs();
+    Instant now = TimeUtil.now();
     HumanComment comment1 =
         newComment(
             ps1,
@@ -3075,7 +3471,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
             range.getEndLine(),
             otherUser,
             null,
-            new Timestamp(update1.getWhen().getTime()),
+            update1.getWhen(),
             "comment 1",
             (short) 1,
             commitId,
@@ -3092,7 +3488,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
             range.getEndLine(),
             otherUser,
             null,
-            new Timestamp(update2.getWhen().getTime()),
+            update2.getWhen(),
             "comment 2",
             (short) 1,
             commitId,
@@ -3149,7 +3545,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
             range.getEndLine(),
             changeOwner,
             null,
-            new Timestamp(update.getWhen().getTime()),
+            update.getWhen(),
             "comment",
             (short) 1,
             ObjectId.fromString("abcd1234abcd1234abcd1234abcd1234abcd1234"),
@@ -3585,11 +3981,45 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
   }
 
   private AttentionSetUpdate addTimestamp(AttentionSetUpdate attentionSetUpdate, Change c) {
-    Timestamp timestamp = newNotes(c).getChange().getLastUpdatedOn();
+    Instant timestamp = newNotes(c).getChange().getLastUpdatedOn();
     return AttentionSetUpdate.createFromRead(
-        timestamp.toInstant(),
+        timestamp,
         attentionSetUpdate.account(),
         attentionSetUpdate.operation(),
         attentionSetUpdate.reason());
+  }
+
+  /**
+   * Assert UUID was parsed as generated by {@link
+   * com.google.gerrit.server.approval.testing.TestPatchSetApprovalUuidGenerator}.
+   */
+  private void assertParsedUuid(PatchSetApproval patchSetApproval) {
+    assertThat(patchSetApproval.uuid().get().get()).matches("^[0-9a-z_]+$");
+  }
+
+  private void assertCopiedApproval(PatchSetApproval originalPsa, PatchSetApproval copiedPsa) {
+    assertThat(copiedPsa.label()).isEqualTo(originalPsa.label());
+    assertThat(copiedPsa.value()).isEqualTo(originalPsa.value());
+    assertThat(copiedPsa.tag()).isEqualTo(originalPsa.tag());
+    assertThat(copiedPsa.accountId()).isEqualTo(originalPsa.accountId());
+    assertThat(copiedPsa.realAccountId()).isEqualTo(originalPsa.realAccountId());
+    assertThat(copiedPsa.uuid()).isEqualTo(originalPsa.uuid());
+    assertThat(copiedPsa.copied()).isTrue();
+  }
+
+  private void addCopiedApproval(Change c, CurrentUser user, PatchSetApproval originalPsa)
+      throws Exception {
+    ChangeUpdate update = newUpdate(c, user);
+    update.putCopiedApproval(
+        PatchSetApproval.builder()
+            .key(originalPsa.key())
+            .value(originalPsa.value())
+            .copied(true)
+            .granted(TimeUtil.now())
+            .tag(originalPsa.tag())
+            .uuid(originalPsa.uuid())
+            .realAccountId(originalPsa.realAccountId())
+            .build());
+    update.commit();
   }
 }

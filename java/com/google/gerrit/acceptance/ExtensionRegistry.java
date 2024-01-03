@@ -14,6 +14,7 @@
 
 package com.google.gerrit.acceptance;
 
+import com.google.gerrit.entities.SubmitRequirement;
 import com.google.gerrit.extensions.api.changes.ActionVisitor;
 import com.google.gerrit.extensions.config.CapabilityDefinition;
 import com.google.gerrit.extensions.config.DownloadScheme;
@@ -22,6 +23,7 @@ import com.google.gerrit.extensions.events.AccountActivationListener;
 import com.google.gerrit.extensions.events.AccountIndexedListener;
 import com.google.gerrit.extensions.events.ChangeIndexedListener;
 import com.google.gerrit.extensions.events.CommentAddedListener;
+import com.google.gerrit.extensions.events.GitBatchRefUpdateListener;
 import com.google.gerrit.extensions.events.GitReferenceUpdatedListener;
 import com.google.gerrit.extensions.events.GroupIndexedListener;
 import com.google.gerrit.extensions.events.ProjectIndexedListener;
@@ -49,6 +51,8 @@ import com.google.gerrit.server.git.validators.CommitValidationListener;
 import com.google.gerrit.server.git.validators.OnSubmitValidationListener;
 import com.google.gerrit.server.git.validators.RefOperationValidationListener;
 import com.google.gerrit.server.logging.PerformanceLogger;
+import com.google.gerrit.server.query.change.ChangeQueryBuilder.ChangeHasOperandFactory;
+import com.google.gerrit.server.query.change.ChangeQueryBuilder.ChangeIsOperandFactory;
 import com.google.gerrit.server.restapi.change.OnPostReview;
 import com.google.gerrit.server.rules.SubmitRule;
 import com.google.gerrit.server.validators.AccountActivationValidationListener;
@@ -71,6 +75,7 @@ public class ExtensionRegistry {
   private final DynamicSet<PerformanceLogger> performanceLoggers;
   private final DynamicSet<ProjectCreationValidationListener> projectCreationValidationListeners;
   private final DynamicSet<SubmitRule> submitRules;
+  private final DynamicSet<SubmitRequirement> submitRequirements;
   private final DynamicSet<ChangeMessageModifier> changeMessageModifiers;
   private final DynamicSet<ChangeETagComputation> changeETagComputations;
   private final DynamicSet<ActionVisitor> actionVisitors;
@@ -78,6 +83,7 @@ public class ExtensionRegistry {
   private final DynamicSet<RefOperationValidationListener> refOperationValidationListeners;
   private final DynamicSet<CommentAddedListener> commentAddedListeners;
   private final DynamicSet<GitReferenceUpdatedListener> refUpdatedListeners;
+  private final DynamicSet<GitBatchRefUpdateListener> batchRefUpdateListeners;
   private final DynamicSet<FileHistoryWebLink> fileHistoryWebLinks;
   private final DynamicSet<PatchSetWebLink> patchSetWebLinks;
   private final DynamicSet<ResolveConflictsWebLink> resolveConflictsWebLinks;
@@ -98,6 +104,9 @@ public class ExtensionRegistry {
   private final DynamicSet<ReviewerAddedListener> reviewerAddedListeners;
   private final DynamicSet<ReviewerDeletedListener> reviewerDeletedListeners;
 
+  private final DynamicMap<ChangeHasOperandFactory> hasOperands;
+  private final DynamicMap<ChangeIsOperandFactory> isOperands;
+
   @Inject
   ExtensionRegistry(
       DynamicSet<AccountIndexedListener> accountIndexedListeners,
@@ -110,6 +119,7 @@ public class ExtensionRegistry {
       DynamicSet<PerformanceLogger> performanceLoggers,
       DynamicSet<ProjectCreationValidationListener> projectCreationValidationListeners,
       DynamicSet<SubmitRule> submitRules,
+      DynamicSet<SubmitRequirement> submitRequirements,
       DynamicSet<ChangeMessageModifier> changeMessageModifiers,
       DynamicSet<ChangeETagComputation> changeETagComputations,
       DynamicSet<ActionVisitor> actionVisitors,
@@ -117,6 +127,7 @@ public class ExtensionRegistry {
       DynamicSet<RefOperationValidationListener> refOperationValidationListeners,
       DynamicSet<CommentAddedListener> commentAddedListeners,
       DynamicSet<GitReferenceUpdatedListener> refUpdatedListeners,
+      DynamicSet<GitBatchRefUpdateListener> batchRefUpdateListeners,
       DynamicSet<FileHistoryWebLink> fileHistoryWebLinks,
       DynamicSet<PatchSetWebLink> patchSetWebLinks,
       DynamicSet<ResolveConflictsWebLink> resolveConflictsWebLinks,
@@ -134,7 +145,9 @@ public class ExtensionRegistry {
       DynamicSet<PluginPushOption> pluginPushOption,
       DynamicSet<OnPostReview> onPostReviews,
       DynamicSet<ReviewerAddedListener> reviewerAddedListeners,
-      DynamicSet<ReviewerDeletedListener> reviewerDeletedListeners) {
+      DynamicSet<ReviewerDeletedListener> reviewerDeletedListeners,
+      DynamicMap<ChangeHasOperandFactory> hasOperands,
+      DynamicMap<ChangeIsOperandFactory> isOperands) {
     this.accountIndexedListeners = accountIndexedListeners;
     this.changeIndexedListeners = changeIndexedListeners;
     this.groupIndexedListeners = groupIndexedListeners;
@@ -145,6 +158,7 @@ public class ExtensionRegistry {
     this.performanceLoggers = performanceLoggers;
     this.projectCreationValidationListeners = projectCreationValidationListeners;
     this.submitRules = submitRules;
+    this.submitRequirements = submitRequirements;
     this.changeMessageModifiers = changeMessageModifiers;
     this.changeETagComputations = changeETagComputations;
     this.actionVisitors = actionVisitors;
@@ -152,6 +166,7 @@ public class ExtensionRegistry {
     this.refOperationValidationListeners = refOperationValidationListeners;
     this.commentAddedListeners = commentAddedListeners;
     this.refUpdatedListeners = refUpdatedListeners;
+    this.batchRefUpdateListeners = batchRefUpdateListeners;
     this.fileHistoryWebLinks = fileHistoryWebLinks;
     this.patchSetWebLinks = patchSetWebLinks;
     this.editWebLinks = editWebLinks;
@@ -170,6 +185,8 @@ public class ExtensionRegistry {
     this.onPostReviews = onPostReviews;
     this.reviewerAddedListeners = reviewerAddedListeners;
     this.reviewerDeletedListeners = reviewerDeletedListeners;
+    this.hasOperands = hasOperands;
+    this.isOperands = isOperands;
   }
 
   public Registration newRegistration() {
@@ -220,6 +237,18 @@ public class ExtensionRegistry {
       return add(submitRules, submitRule);
     }
 
+    public Registration add(SubmitRequirement submitRequirement) {
+      return add(submitRequirements, submitRequirement);
+    }
+
+    public Registration add(ChangeHasOperandFactory hasOperand, String exportName) {
+      return add(hasOperands, hasOperand, exportName);
+    }
+
+    public Registration add(ChangeIsOperandFactory isOperand, String exportName) {
+      return add(isOperands, isOperand, exportName);
+    }
+
     public Registration add(ChangeMessageModifier changeMessageModifier) {
       return add(changeMessageModifiers, changeMessageModifier);
     }
@@ -250,6 +279,10 @@ public class ExtensionRegistry {
 
     public Registration add(GitReferenceUpdatedListener refUpdatedListener) {
       return add(refUpdatedListeners, refUpdatedListener);
+    }
+
+    public Registration add(GitBatchRefUpdateListener batchRefUpdateListener) {
+      return add(batchRefUpdateListeners, batchRefUpdateListener);
     }
 
     public Registration add(FileHistoryWebLink fileHistoryWebLink) {

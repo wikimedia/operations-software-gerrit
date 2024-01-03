@@ -98,6 +98,7 @@ public class PrologRuleEvaluator {
   private final PrologOptions opts;
   private Term submitRule;
 
+  @SuppressWarnings("UnusedMethod")
   @AssistedInject
   private PrologRuleEvaluator(
       AccountCache accountCache,
@@ -321,7 +322,7 @@ public class PrologRuleEvaluator {
 
   private SubmitRecord ruleError(String err, Exception e) {
     if (opts.logErrors()) {
-      logger.atSevere().withCause(e).log(err);
+      logger.atSevere().withCause(e).log("%s", err);
       return createRuleError(DEFAULT_MSG);
     }
     logger.atFine().log("rule error: %s", err);
@@ -400,7 +401,7 @@ public class PrologRuleEvaluator {
 
   private SubmitTypeRecord typeError(String err, Exception e) {
     if (opts.logErrors()) {
-      logger.atSevere().withCause(e).log(err);
+      logger.atSevere().withCause(e).log("%s", err);
     }
     return SubmitTypeRecord.error(err);
   }

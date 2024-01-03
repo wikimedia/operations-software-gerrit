@@ -14,8 +14,8 @@
 
 package com.google.gerrit.server.submit;
 
+import com.google.common.collect.ImmutableList;
 import com.google.gerrit.server.git.CodeReviewCommit;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
@@ -25,9 +25,10 @@ public class MergeIfNecessary extends SubmitStrategy {
   }
 
   @Override
-  public List<SubmitStrategyOp> buildOps(Collection<CodeReviewCommit> toMerge) {
+  public ImmutableList<SubmitStrategyOp> buildOps(Collection<CodeReviewCommit> toMerge) {
     List<CodeReviewCommit> sorted = args.mergeUtil.reduceToMinimalMerge(args.mergeSorter, toMerge);
-    List<SubmitStrategyOp> ops = new ArrayList<>(sorted.size());
+    ImmutableList.Builder<SubmitStrategyOp> ops =
+        ImmutableList.builderWithExpectedSize(sorted.size());
 
     if (args.mergeTip.getInitialTip() == null
         || !args.subscriptionGraph.hasSubscription(args.destBranch)) {
@@ -43,7 +44,7 @@ public class MergeIfNecessary extends SubmitStrategy {
       CodeReviewCommit n = sorted.remove(0);
       ops.add(new MergeOneOp(args, n));
     }
-    return ops;
+    return ops.build();
   }
 
   static boolean dryRun(

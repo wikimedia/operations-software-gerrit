@@ -32,10 +32,14 @@ public enum SubmitRequirementProtoConverter
 
   private static final FieldDescriptor SR_APPLICABILITY_EXPR_RESULT_FIELD =
       SubmitRequirementResultProto.getDescriptor().findFieldByNumber(2);
+  private static final FieldDescriptor SR_SUBMITTABILITY_EXPR_RESULT_FIELD =
+      SubmitRequirementResultProto.getDescriptor().findFieldByNumber(3);
   private static final FieldDescriptor SR_OVERRIDE_EXPR_RESULT_FIELD =
       SubmitRequirementResultProto.getDescriptor().findFieldByNumber(4);
   private static final FieldDescriptor SR_LEGACY_FIELD =
       SubmitRequirementResultProto.getDescriptor().findFieldByNumber(6);
+  private static final FieldDescriptor SR_FORCED_FIELD =
+      SubmitRequirementResultProto.getDescriptor().findFieldByNumber(7);
 
   @Override
   public SubmitRequirementResultProto toProto(SubmitRequirementResult r) {
@@ -46,13 +50,19 @@ public enum SubmitRequirementProtoConverter
     if (r.legacy().isPresent()) {
       builder.setLegacy(r.legacy().get());
     }
+    if (r.forced().isPresent()) {
+      builder.setForced(r.forced().get());
+    }
     if (r.applicabilityExpressionResult().isPresent()) {
       builder.setApplicabilityExpressionResult(
           SubmitRequirementExpressionResultSerializer.serialize(
               r.applicabilityExpressionResult().get()));
     }
-    builder.setSubmittabilityExpressionResult(
-        SubmitRequirementExpressionResultSerializer.serialize(r.submittabilityExpressionResult()));
+    if (r.submittabilityExpressionResult().isPresent()) {
+      builder.setSubmittabilityExpressionResult(
+          SubmitRequirementExpressionResultSerializer.serialize(
+              r.submittabilityExpressionResult().get()));
+    }
     if (r.overrideExpressionResult().isPresent()) {
       builder.setOverrideExpressionResult(
           SubmitRequirementExpressionResultSerializer.serialize(
@@ -71,15 +81,20 @@ public enum SubmitRequirementProtoConverter
     if (proto.hasField(SR_LEGACY_FIELD)) {
       builder.legacy(Optional.of(proto.getLegacy()));
     }
+    if (proto.hasField(SR_FORCED_FIELD)) {
+      builder.forced(Optional.of(proto.getForced()));
+    }
     if (proto.hasField(SR_APPLICABILITY_EXPR_RESULT_FIELD)) {
       builder.applicabilityExpressionResult(
           Optional.of(
               SubmitRequirementExpressionResultSerializer.deserialize(
                   proto.getApplicabilityExpressionResult())));
     }
-    builder.submittabilityExpressionResult(
-        SubmitRequirementExpressionResultSerializer.deserialize(
-            proto.getSubmittabilityExpressionResult()));
+    if (proto.hasField(SR_SUBMITTABILITY_EXPR_RESULT_FIELD)) {
+      builder.submittabilityExpressionResult(
+          SubmitRequirementExpressionResultSerializer.deserialize(
+              proto.getSubmittabilityExpressionResult()));
+    }
     if (proto.hasField(SR_OVERRIDE_EXPR_RESULT_FIELD)) {
       builder.overrideExpressionResult(
           Optional.of(

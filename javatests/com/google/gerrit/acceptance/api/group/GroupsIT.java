@@ -109,6 +109,7 @@ import java.io.IOException;
 import java.lang.annotation.Retention;
 import java.lang.annotation.Target;
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
@@ -557,14 +558,17 @@ public class GroupsIT extends AbstractDaemonTest {
     assertThrows(AuthException.class, () -> gApi.groups().create(name("newGroup")));
   }
 
+  // TODO(issue-15508): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
+  // Instant
+  @SuppressWarnings("JdkObsolete")
   @Test
   public void createdOnFieldIsPopulatedForNewGroup() throws Exception {
     // NoteDb allows only second precision.
-    Timestamp testStartTime = TimeUtil.truncateToSecond(TimeUtil.nowTs());
+    Instant testStartTime = TimeUtil.truncateToSecond(TimeUtil.now());
     String newGroupName = name("newGroup");
     GroupInfo group = gApi.groups().create(newGroupName).get();
 
-    assertThat(group.createdOn).isAtLeast(testStartTime);
+    assertThat(group.createdOn.toInstant()).isAtLeast(testStartTime);
   }
 
   @Test
@@ -606,7 +610,7 @@ public class GroupsIT extends AbstractDaemonTest {
     assertThat(group.name).isEqualTo(anonymousUsersGroup.getName());
 
     group = gApi.groups().id(anonymousUsersGroup.getName()).get();
-    assertThat(group.id).isEqualTo(Url.encode((anonymousUsersGroup.getUUID().get())));
+    assertThat(group.id).isEqualTo(Url.encode(anonymousUsersGroup.getUUID().get()));
   }
 
   @Test
@@ -614,7 +618,7 @@ public class GroupsIT extends AbstractDaemonTest {
     GroupReference anonymousUsersGroup = systemGroupBackend.getGroup(ANONYMOUS_USERS);
     GroupInfo group = gApi.groups().id("Anonymous Users").get();
     assertThat(group.name).isEqualTo(anonymousUsersGroup.getName());
-    assertThat(group.id).isEqualTo(Url.encode((anonymousUsersGroup.getUUID().get())));
+    assertThat(group.id).isEqualTo(Url.encode(anonymousUsersGroup.getUUID().get()));
   }
 
   @Test
@@ -1265,16 +1269,24 @@ public class GroupsIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void pushToGroupBranchForReviewForAllUsersRepoIsRejectedOnSubmit() throws Throwable {
+  public void pushToGroupBranchForReviewForAllUsersRepoIsRejectedOnSubmitForGroupFiles()
+      throws Throwable {
+    String error = "update to group files (group.config, members, subgroups) not allowed";
     pushToGroupBranchForReviewAndSubmit(
-        allUsers, RefNames.refsGroups(adminGroupUuid()), "group update not allowed");
+        allUsers, RefNames.refsGroups(adminGroupUuid()), "group.config", error);
+    pushToGroupBranchForReviewAndSubmit(
+        allUsers, RefNames.refsGroups(adminGroupUuid()), "members", error);
+    pushToGroupBranchForReviewAndSubmit(
+        allUsers, RefNames.refsGroups(adminGroupUuid()), "subgroups", error);
+    pushToGroupBranchForReviewAndSubmit(
+        allUsers, RefNames.refsGroups(adminGroupUuid()), "destinations/myreviews", null);
   }
 
   @Test
   public void pushToGroupBranchForReviewForNonAllUsersRepoAndSubmit() throws Throwable {
     String groupRef = RefNames.refsGroups(adminGroupUuid());
     createBranch(project, groupRef);
-    pushToGroupBranchForReviewAndSubmit(project, groupRef, null);
+    pushToGroupBranchForReviewAndSubmit(project, groupRef, "group.config", null);
   }
 
   @Test
@@ -1554,7 +1566,8 @@ public class GroupsIT extends AbstractDaemonTest {
   }
 
   private void pushToGroupBranchForReviewAndSubmit(
-      Project.NameKey project, String groupRef, String expectedError) throws Throwable {
+      Project.NameKey project, String groupRef, String fileName, String expectedError)
+      throws Throwable {
     projectOperations
         .project(project)
         .forUpdate()
@@ -1572,7 +1585,7 @@ public class GroupsIT extends AbstractDaemonTest {
 
     PushOneCommit.Result r =
         pushFactory
-            .create(admin.newIdent(), repo, "Update group config", "group.config", "some content")
+            .create(admin.newIdent(), repo, "Update group config", fileName, "some content")
             .to(MagicBranch.NEW_CHANGE + groupRef);
     r.assertOkStatus();
     assertThat(r.getChange().change().getDest().branch()).isEqualTo(groupRef);
@@ -1581,7 +1594,7 @@ public class GroupsIT extends AbstractDaemonTest {
     ThrowingRunnable submit = () -> gApi.changes().id(r.getChangeId()).current().submit();
     if (expectedError != null) {
       Throwable thrown = assertThrows(ResourceConflictException.class, submit);
-      assertThat(thrown).hasMessageThat().contains("group update not allowed");
+      assertThat(thrown).hasMessageThat().contains(expectedError);
     } else {
       submit.run();
     }
@@ -1610,7 +1623,7 @@ public class GroupsIT extends AbstractDaemonTest {
         treeId = oi.insert(Constants.OBJ_TREE, new byte[] {});
       }
 
-      PersonIdent ident = new PersonIdent(serverIdent.get(), TimeUtil.nowTs());
+      PersonIdent ident = new PersonIdent(serverIdent.get(), TimeUtil.now());
       CommitBuilder cb = new CommitBuilder();
       cb.setTreeId(treeId);
       cb.setCommitter(ident);

@@ -14,34 +14,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import {Subscription} from 'rxjs';
 import '@polymer/paper-tabs/paper-tab';
 import '@polymer/paper-tabs/paper-tabs';
 import '../gr-shell-command/gr-shell-command';
-import '../../../styles/shared-styles';
-import {PolymerElement} from '@polymer/polymer/polymer-element';
-import {htmlTemplate} from './gr-download-commands_html';
-import {customElement, property} from '@polymer/decorators';
-import {PaperTabsElement} from '@polymer/paper-tabs/paper-tabs';
-import {appContext} from '../../../services/app-context';
+import {getAppContext} from '../../../services/app-context';
 import {queryAndAssert} from '../../../utils/common-util';
 import {GrShellCommand} from '../gr-shell-command/gr-shell-command';
-import {preferences$} from '../../../services/user/user-model';
-import {takeUntil} from 'rxjs/operators';
-import {Subject} from 'rxjs';
+import {paperStyles} from '../../../styles/gr-paper-styles';
+import {sharedStyles} from '../../../styles/shared-styles';
+import {LitElement, html, css} from 'lit';
+import {customElement, property, state} from 'lit/decorators';
+import {fire} from '../../../utils/event-util';
+import {BindValueChangeEvent} from '../../../types/events';
 
 declare global {
   interface HTMLElementEventMap {
     'selected-changed': CustomEvent<{value: number}>;
+    'selected-scheme-changed': BindValueChangeEvent;
   }
   interface HTMLElementTagNameMap {
     'gr-download-commands': GrDownloadCommands;
   }
-}
-
-export interface GrDownloadCommands {
-  $: {
-    downloadTabs: PaperTabsElement;
-  };
 }
 
 export interface Command {
@@ -50,87 +44,174 @@ export interface Command {
 }
 
 @customElement('gr-download-commands')
-export class GrDownloadCommands extends PolymerElement {
-  static get template() {
-    return htmlTemplate;
-  }
-
+export class GrDownloadCommands extends LitElement {
   // TODO(TS): maybe default to [] as only used in dom-repeat
   @property({type: Array})
   commands?: Command[];
 
-  @property({type: Boolean})
-  _loggedIn = false;
+  // private but used in test
+  @state() loggedIn = false;
 
   @property({type: Array})
   schemes: string[] = [];
 
-  @property({type: String, notify: true})
+  @property({type: String})
   selectedScheme?: string;
 
-  @property({type: Boolean})
+  @property({type: Boolean, attribute: 'show-keyboard-shortcut-tooltips'})
   showKeyboardShortcutTooltips = false;
 
-  private readonly restApiService = appContext.restApiService;
+  private readonly restApiService = getAppContext().restApiService;
 
-  private readonly userService = appContext.userService;
+  // Private but used in tests.
+  readonly userModel = getAppContext().userModel;
 
-  disconnected$ = new Subject();
+  private subscriptions: Subscription[] = [];
 
   override connectedCallback() {
     super.connectedCallback();
-    this._getLoggedIn().then(loggedIn => {
-      this._loggedIn = loggedIn;
+    this.restApiService.getLoggedIn().then(loggedIn => {
+      this.loggedIn = loggedIn;
     });
-    preferences$.pipe(takeUntil(this.disconnected$)).subscribe(prefs => {
-      if (prefs?.download_scheme) {
-        // Note (issue 5180): normalize the download scheme with lower-case.
-        this.selectedScheme = prefs.download_scheme.toLowerCase();
-      }
-    });
+    this.subscriptions.push(
+      this.userModel.preferences$.subscribe(prefs => {
+        if (prefs?.download_scheme) {
+          // Note (issue 5180): normalize the download scheme with lower-case.
+          this.selectedScheme = prefs.download_scheme.toLowerCase();
+          fire(this, 'selected-scheme-changed', {value: this.selectedScheme});
+        }
+      })
+    );
   }
 
   override disconnectedCallback() {
-    this.disconnected$.next();
+    for (const s of this.subscriptions) {
+      s.unsubscribe();
+    }
+    this.subscriptions = [];
     super.disconnectedCallback();
   }
 
-  focusOnCopy() {
-    queryAndAssert<GrShellCommand>(this, 'gr-shell-command').focusOnCopy();
+  static override get styles() {
+    return [
+      paperStyles,
+      sharedStyles,
+      css`
+        paper-tabs {
+          height: 3rem;
+          margin-bottom: var(--spacing-m);
+          --paper-tabs-selection-bar-color: var(--link-color);
+        }
+        paper-tab {
+          max-width: 15rem;
+          text-transform: uppercase;
+          --paper-tab-ink: var(--link-color);
+        }
+        label,
+        input {
+          display: block;
+        }
+        label {
+          font-weight: var(--font-weight-bold);
+        }
+        .schemes {
+          display: flex;
+          justify-content: space-between;
+        }
+        .commands {
+          display: flex;
+          flex-direction: column;
+        }
+        gr-shell-command {
+          margin-bottom: var(--spacing-m);
+        }
+        .hidden {
+          display: none;
+        }
+      `,
+    ];
   }
 
-  _getLoggedIn() {
-    return this.restApiService.getLoggedIn();
+  override render() {
+    return html`
+      <div class="schemes">${this.renderDownloadTabs()}</div>
+      ${this.renderCommands()}
+    `;
   }
 
-  _handleTabChange(e: CustomEvent<{value: number}>) {
+  private renderDownloadTabs() {
+    const selectedIndex =
+      this.schemes.findIndex(scheme => scheme === this.selectedScheme) || 0;
+    return html`
+      <paper-tabs
+        id="downloadTabs"
+        class=${this.computeShowTabs()}
+        .selected=${selectedIndex}
+        @selected-changed=${this.handleTabChange}
+      >
+        ${this.schemes.map(scheme => this.renderPaperTab(scheme))}
+      </paper-tabs>
+    `;
+  }
+
+  private renderPaperTab(scheme: string) {
+    return html` <paper-tab data-scheme=${scheme}>${scheme}</paper-tab> `;
+  }
+
+  private renderCommands() {
+    return html`
+      <div class="commands" ?hidden=${!this.schemes.length}></div>
+        ${this.commands?.map((command, index) =>
+          this.renderShellCommand(command, index)
+        )}
+      </div>
+    `;
+  }
+
+  private renderShellCommand(command: Command, index: number) {
+    return html`
+      <gr-shell-command
+        class=${this.computeClass(command.title)}
+        .label=${command.title}
+        .command=${command.command}
+        .tooltip=${this.computeTooltip(index)}
+      ></gr-shell-command>
+    `;
+  }
+
+  async focusOnCopy() {
+    await this.updateComplete;
+    await queryAndAssert<GrShellCommand>(
+      this,
+      'gr-shell-command'
+    ).focusOnCopy();
+  }
+
+  private handleTabChange = (e: CustomEvent<{value: number}>) => {
     const scheme = this.schemes[e.detail.value];
     if (scheme && scheme !== this.selectedScheme) {
-      this.set('selectedScheme', scheme);
-      if (this._loggedIn) {
-        this.userService.updatePreferences({
+      this.selectedScheme = scheme;
+      fire(this, 'selected-scheme-changed', {value: scheme});
+      if (this.loggedIn) {
+        this.userModel.updatePreferences({
           download_scheme: this.selectedScheme,
         });
       }
     }
-  }
+  };
 
-  _computeSelected(schemes: string[], selectedScheme?: string) {
-    return `${schemes.findIndex(scheme => scheme === selectedScheme) || 0}`;
-  }
-
-  _computeShowTabs(schemes: string[]) {
-    return schemes.length > 1 ? '' : 'hidden';
-  }
-
-  _computeTooltip(showKeyboardShortcutTooltips: boolean, index: number) {
-    return index <= 4 && showKeyboardShortcutTooltips
+  private computeTooltip(index: number) {
+    return index <= 4 && this.showKeyboardShortcutTooltips
       ? `Keyboard shortcut: ${index + 1}`
       : '';
   }
 
+  private computeShowTabs() {
+    return this.schemes.length > 1 ? '' : 'hidden';
+  }
+
   // TODO: maybe unify with strToClassName from dom-util
-  _computeClass(title: string) {
+  private computeClass(title: string) {
     // Only retain [a-z] chars, so "Cherry Pick" becomes "cherrypick".
     return '_label_' + title.replace(/[^a-z]+/gi, '').toLowerCase();
   }

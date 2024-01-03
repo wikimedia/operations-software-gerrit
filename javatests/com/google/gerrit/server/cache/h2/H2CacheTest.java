@@ -45,7 +45,7 @@ import javax.annotation.Nullable;
 import org.junit.Test;
 
 public class H2CacheTest {
-  private static final TypeLiteral<String> KEY_TYPE = new TypeLiteral<String>() {};
+  private static final TypeLiteral<String> KEY_TYPE = new TypeLiteral<>() {};
   private static final int DEFAULT_VERSION = 1234;
   private static int dbCnt;
 
@@ -71,7 +71,8 @@ public class H2CacheTest {
         version,
         1 << 20,
         expireAfterWrite,
-        refreshAfterWrite);
+        refreshAfterWrite,
+        true);
   }
 
   @Test

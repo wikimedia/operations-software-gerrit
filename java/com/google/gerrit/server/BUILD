@@ -111,9 +111,9 @@ java_library(
         "//lib/commons:codec",
         "//lib/commons:compress",
         "//lib/commons:dbcp",
-        "//lib/commons:lang",
         "//lib/commons:lang3",
         "//lib/commons:net",
+        "//lib/commons:text",
         "//lib/commons:validator",
         "//lib/errorprone:annotations",
         "//lib/flogger:api",
@@ -144,6 +144,7 @@ java_library(
     visibility = ["//visibility:public"],
     deps = [
         ":server",
+        "//java/com/google/gerrit/entities",
         "//java/com/google/gerrit/extensions:api",
         "//java/com/google/gerrit/server/git/receive",
         "//java/com/google/gerrit/server/logging",

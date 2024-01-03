@@ -20,6 +20,7 @@ import com.google.gerrit.extensions.client.ChangeStatus;
 import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.client.SubmitType;
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -46,14 +47,20 @@ public class ChangeInfo {
    */
   public Map<Integer, AttentionSetInfo> attentionSet;
 
+  public Map<Integer, AttentionSetInfo> removedFromAttentionSet;
+
   public AccountInfo assignee;
   public Collection<String> hashtags;
   public String changeId;
   public String subject;
   public ChangeStatus status;
+
+  // TODO(issue-15508): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
+  // Instant
   public Timestamp created;
   public Timestamp updated;
   public Timestamp submitted;
+
   public AccountInfo submitter;
   public Boolean starred;
   public Collection<String> stars;
@@ -123,5 +130,48 @@ public class ChangeInfo {
 
   public ChangeInfo(Map<String, RevisionInfo> revisions) {
     this.revisions = ImmutableMap.copyOf(revisions);
+  }
+
+  // TODO(issue-15508): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
+  // Instant
+  @SuppressWarnings("JdkObsolete")
+  public Instant getCreated() {
+    return created.toInstant();
+  }
+
+  // TODO(issue-15508): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
+  // Instant
+  @SuppressWarnings("JdkObsolete")
+  public void setCreated(Instant when) {
+    created = Timestamp.from(when);
+  }
+
+  // TODO(issue-15508): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
+  // Instant
+  @SuppressWarnings("JdkObsolete")
+  public Instant getUpdated() {
+    return updated.toInstant();
+  }
+
+  // TODO(issue-15508): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
+  // Instant
+  @SuppressWarnings("JdkObsolete")
+  public void setUpdated(Instant when) {
+    updated = Timestamp.from(when);
+  }
+
+  // TODO(issue-15508): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
+  // Instant
+  @SuppressWarnings("JdkObsolete")
+  public Instant getSubmitted() {
+    return submitted.toInstant();
+  }
+
+  // TODO(issue-15508): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
+  // Instant
+  @SuppressWarnings("JdkObsolete")
+  public void setSubmitted(Instant when, AccountInfo who) {
+    submitted = Timestamp.from(when);
+    submitter = who;
   }
 }

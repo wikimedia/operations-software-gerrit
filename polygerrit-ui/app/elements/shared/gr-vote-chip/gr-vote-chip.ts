@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import '../gr-tooltip-content/gr-tooltip-content';
 import {LitElement, css, html} from 'lit';
 import {customElement, property} from 'lit/decorators';
 import {
@@ -22,7 +23,7 @@ import {
   isQuickLabelInfo,
   LabelInfo,
 } from '../../../api/rest-api';
-import {appContext} from '../../../services/app-context';
+import {getAppContext} from '../../../services/app-context';
 import {KnownExperimentId} from '../../../services/flags/flags';
 import {
   classForLabelStatus,
@@ -35,7 +36,9 @@ declare global {
     'gr-vote-chip': GrVoteChip;
   }
 }
-
+/**
+ * @attr {Boolean} circle-shape - element has shape as circle
+ */
 @customElement('gr-vote-chip')
 export class GrVoteChip extends LitElement {
   @property({type: Object})
@@ -48,16 +51,31 @@ export class GrVoteChip extends LitElement {
   @property({type: Boolean})
   more = false;
 
-  private readonly flagsService = appContext.flagsService;
+  /**
+   * If defined, vote-chip is shown with this value instead of the latest vote.
+   * This is useful for change log.
+   */
+  @property()
+  displayValue?: string;
+
+  @property({type: Boolean, attribute: 'tooltip-with-who-voted'})
+  tooltipWithWhoVoted = false;
+
+  private readonly flagsService = getAppContext().flagsService;
 
   static override get styles() {
     return [
       css`
+        :host([circle-shape]) .vote-chip {
+          border-radius: 50%;
+          border: none;
+          padding: 2px;
+        }
         .vote-chip.max {
           background-color: var(--vote-color-approved);
           padding: 2px;
         }
-        .vote-chip.max.more {
+        .more > .vote-chip.max {
           padding: 1px;
           border: 1px solid var(--vote-outline-recommended);
         }
@@ -65,7 +83,7 @@ export class GrVoteChip extends LitElement {
           background-color: var(--vote-color-rejected);
           padding: 2px;
         }
-        .vote-chip.min.more {
+        .more > .vote-chip.min {
           padding: 1px;
           border: 1px solid var(--vote-outline-disliked);
         }
@@ -93,12 +111,13 @@ export class GrVoteChip extends LitElement {
           padding: 1px;
           border-radius: var(--border-radius);
           line-height: var(--gr-vote-chip-width, 16px);
+          color: var(--vote-text-color);
         }
-        .vote-chip {
+        .more > .vote-chip {
           position: relative;
           z-index: 2;
         }
-        .chip-angle {
+        .more > .chip-angle {
           position: absolute;
           top: 2px;
           left: 2px;
@@ -106,6 +125,12 @@ export class GrVoteChip extends LitElement {
         }
         .container {
           position: relative;
+        }
+        /* fix for firefox only */
+        @supports (-moz-appearance: none) {
+          .container.more {
+            display: inline-block;
+          }
         }
       `,
     ];
@@ -118,19 +143,24 @@ export class GrVoteChip extends LitElement {
     const renderValue = this.renderValue();
     if (!renderValue) return;
 
-    return html`<span class="container">
-      <div class="vote-chip ${this.computeClass()} ${this.more ? 'more' : ''}">
-        ${renderValue}
-      </div>
+    return html`<gr-tooltip-content
+      class="container ${this.more ? 'more' : ''}"
+      title=${this.computeTooltip()}
+      has-tooltip
+    >
+      <div class="vote-chip ${this.computeClass()}">${renderValue}</div>
       ${this.more
         ? html`<div class="chip-angle ${this.computeClass()}">
             ${renderValue}
           </div>`
         : ''}
-    </span>`;
+    </gr-tooltip-content>`;
   }
 
   private renderValue() {
+    if (this.displayValue) {
+      return this.displayValue;
+    }
     if (!this.label) {
       return '';
     } else if (isDetailedLabelInfo(this.label)) {
@@ -139,9 +169,11 @@ export class GrVoteChip extends LitElement {
       }
     } else if (isQuickLabelInfo(this.label)) {
       if (this.label.approved) {
-        return '👍️';
+        return '👍';
       } else if (this.label.rejected) {
-        return '👎️';
+        return '👎';
+      } else if (this.label.disliked || this.label.recommended) {
+        return valueString(this.label.value);
       }
     }
     return '';
@@ -150,15 +182,26 @@ export class GrVoteChip extends LitElement {
   private computeClass() {
     if (!this.label) {
       return '';
-    } else if (isDetailedLabelInfo(this.label)) {
-      if (this.vote?.value) {
-        const status = getLabelStatus(this.label, this.vote.value);
-        return classForLabelStatus(status);
-      }
-    } else if (isQuickLabelInfo(this.label)) {
-      const status = getLabelStatus(this.label);
+    } else if (this.displayValue) {
+      const status = getLabelStatus(this.label, Number(this.displayValue));
+      return classForLabelStatus(status);
+    } else {
+      const status = getLabelStatus(this.label, this.vote?.value);
       return classForLabelStatus(status);
     }
-    return '';
+  }
+
+  private computeTooltip() {
+    if (!this.label || !isDetailedLabelInfo(this.label)) {
+      return '';
+    }
+    const voteDescription =
+      this.label.values?.[valueString(this.vote?.value)] ?? '';
+
+    if (this.tooltipWithWhoVoted && this.vote) {
+      return `${this.vote?.name}: ${voteDescription}`;
+    } else {
+      return voteDescription;
+    }
   }
 }

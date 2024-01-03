@@ -17,13 +17,13 @@
 import {fontStyles} from '../../styles/gr-font-styles';
 import {customElement, property} from 'lit/decorators';
 import './gr-checks-action';
-import {CheckRun} from '../../services/checks/checks-model';
+import {CheckRun} from '../../models/checks/checks-model';
 import {
   AttemptDetail,
   iconFor,
   runActions,
   worstCategory,
-} from '../../services/checks/checks-util';
+} from '../../models/checks/checks-util';
 import {durationString, fromNow} from '../../utils/date-util';
 import {RunStatus} from '../../api/checks';
 import {ordinal} from '../../utils/string-util';
@@ -137,7 +137,7 @@ export class GrHovercardRun extends base {
       <div id="container" role="tooltip" tabindex="-1">
         <div class="section">
           <div
-            ?hidden="${!this.run || this.run.status === RunStatus.RUNNABLE}"
+            ?hidden=${!this.run || this.run.status === RunStatus.RUNNABLE}
             class="chipRow"
           >
             <div class="chip">
@@ -147,8 +147,8 @@ export class GrHovercardRun extends base {
           </div>
         </div>
         <div class="section">
-          <div class="sectionIcon" ?hidden="${icon.length === 0}">
-            <iron-icon class="${icon}" icon="gr-icons:${icon}"></iron-icon>
+          <div class="sectionIcon" ?hidden=${icon.length === 0}>
+            <iron-icon class=${icon} icon="gr-icons:${icon}"></iron-icon>
           </div>
           <div class="sectionContent">
             <h3 class="name heading-3">
@@ -177,7 +177,7 @@ export class GrHovercardRun extends base {
             ? html` <div class="row">
                 <div class="title">Status</div>
                 <div>
-                  <a href="${this.run.statusLink}" target="_blank"
+                  <a href=${this.run.statusLink} target="_blank"
                     ><iron-icon
                       aria-label="external link to check status"
                       class="small link"
@@ -222,7 +222,7 @@ export class GrHovercardRun extends base {
       <div>
         <div class="attemptIcon">
           <iron-icon
-            class="${attempt.icon}"
+            class=${attempt.icon}
             icon="gr-icons:${attempt.icon}"
           ></iron-icon>
         </div>
@@ -240,28 +240,62 @@ export class GrHovercardRun extends base {
     )
       return;
 
+    const scheduled =
+      this.run.scheduledTimestamp && !this.run.startedTimestamp
+        ? html`<div class="row">
+            <div class="title">Scheduled</div>
+            <div>${fromNow(this.run.scheduledTimestamp)}</div>
+          </div>`
+        : '';
+
+    const started = this.run.startedTimestamp
+      ? html`<div class="row">
+          <div class="title">Started</div>
+          <div>${fromNow(this.run.startedTimestamp)}</div>
+        </div>`
+      : '';
+
+    const finished =
+      this.run.finishedTimestamp && this.run.status === RunStatus.COMPLETED
+        ? html`<div class="row">
+            <div class="title">Ended</div>
+            <div>${fromNow(this.run.finishedTimestamp)}</div>
+          </div>`
+        : '';
+
+    const completed =
+      this.run.startedTimestamp &&
+      this.run.finishedTimestamp &&
+      this.run.status === RunStatus.COMPLETED
+        ? html`<div class="row">
+            <div class="title">Completion</div>
+            <div>
+              ${durationString(
+                this.run.startedTimestamp,
+                this.run.finishedTimestamp,
+                true
+              )}
+            </div>
+          </div>`
+        : '';
+
+    const eta =
+      this.run.finishedTimestamp && this.run.status === RunStatus.RUNNING
+        ? html`<div class="row">
+            <div class="title">ETA</div>
+            <div>
+              ${durationString(new Date(), this.run.finishedTimestamp, true)}
+            </div>
+          </div>`
+        : '';
+
     return html`
       <div class="section">
         <div class="sectionIcon">
           <iron-icon class="small" icon="gr-icons:schedule"></iron-icon>
         </div>
         <div class="sectionContent">
-          <div ?hidden="${this.hideScheduled()}" class="row">
-            <div class="title">Scheduled</div>
-            <div>${this.computeDuration(this.run.scheduledTimestamp)}</div>
-          </div>
-          <div ?hidden="${!this.run.startedTimestamp}" class="row">
-            <div class="title">Started</div>
-            <div>${this.computeDuration(this.run.startedTimestamp)}</div>
-          </div>
-          <div ?hidden="${!this.run.finishedTimestamp}" class="row">
-            <div class="title">Ended</div>
-            <div>${this.computeDuration(this.run.finishedTimestamp)}</div>
-          </div>
-          <div ?hidden="${this.hideCompletion()}" class="row">
-            <div class="title">Completion</div>
-            <div>${this.computeCompletionDuration()}</div>
-          </div>
+          ${scheduled} ${started} ${finished} ${completed} ${eta}
         </div>
       </div>
     `;
@@ -286,7 +320,7 @@ export class GrHovercardRun extends base {
             ? html` <div class="row">
                 <div class="title">Documentation</div>
                 <div>
-                  <a href="${this.run.checkLink}" target="_blank"
+                  <a href=${this.run.checkLink} target="_blank"
                     ><iron-icon
                       aria-label="external link to check documentation"
                       class="small link"
@@ -309,8 +343,9 @@ export class GrHovercardRun extends base {
         html`
           <div class="action">
             <gr-checks-action
-              .eventTarget="${this._target}"
-              .action="${action}"
+              context="hovercard"
+              .eventTarget=${this._target}
+              .action=${action}
             ></gr-checks-action>
           </div>
         `
@@ -334,22 +369,16 @@ export class GrHovercardRun extends base {
   }
 
   private computeChipIcon() {
-    if (this.run?.status === RunStatus.COMPLETED) return 'check';
-    if (this.run?.status === RunStatus.RUNNING) return 'timelapse';
+    if (this.run?.status === RunStatus.COMPLETED) {
+      return 'check';
+    }
+    if (this.run?.status === RunStatus.RUNNING) {
+      return iconFor(RunStatus.RUNNING);
+    }
+    if (this.run?.status === RunStatus.SCHEDULED) {
+      return iconFor(RunStatus.SCHEDULED);
+    }
     return '';
-  }
-
-  private computeCompletionDuration() {
-    if (!this.run?.finishedTimestamp || !this.run?.startedTimestamp) return '';
-    return durationString(
-      this.run.startedTimestamp,
-      this.run.finishedTimestamp,
-      true
-    );
-  }
-
-  private computeDuration(date?: Date) {
-    return date ? fromNow(date) : '';
   }
 
   private computeHostName(link?: string) {
@@ -359,14 +388,6 @@ export class GrHovercardRun extends base {
   private hideAttempts() {
     const attemptCount = this.run?.attemptDetails?.length;
     return attemptCount === undefined || attemptCount < 2;
-  }
-
-  private hideScheduled() {
-    return !this.run?.scheduledTimestamp || !!this.run?.startedTimestamp;
-  }
-
-  private hideCompletion() {
-    return !this.run?.startedTimestamp || !this.run?.finishedTimestamp;
   }
 }
 

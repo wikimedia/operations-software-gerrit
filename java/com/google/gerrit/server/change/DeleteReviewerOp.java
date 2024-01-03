@@ -195,7 +195,12 @@ public class DeleteReviewerOp extends ReviewerOp {
       try {
         if (notify.shouldNotify()) {
           emailReviewers(
-              ctx.getProject(), currChange, mailMessage, ctx.getWhen(), notify, ctx.getRepoView());
+              ctx.getProject(),
+              currChange,
+              mailMessage,
+              Timestamp.from(ctx.getWhen()),
+              notify,
+              ctx.getRepoView());
         }
       } catch (Exception err) {
         logger.atSevere().withCause(err).log(
@@ -223,7 +228,7 @@ public class DeleteReviewerOp extends ReviewerOp {
 
   private Iterable<PatchSetApproval> approvals(ChangeContext ctx, Account.Id accountId) {
     Iterable<PatchSetApproval> approvals;
-    approvals = approvalsUtil.byChange(ctx.getNotes()).values();
+    approvals = ctx.getNotes().getApprovalsWithCopied().values();
     return Iterables.filter(approvals, psa -> accountId.equals(psa.accountId()));
   }
 
@@ -251,7 +256,7 @@ public class DeleteReviewerOp extends ReviewerOp {
         deleteReviewerSenderFactory.create(projectName, change.getId());
     emailSender.setFrom(userId);
     emailSender.addReviewers(Collections.singleton(reviewer.id()));
-    emailSender.setChangeMessage(mailMessage, timestamp);
+    emailSender.setChangeMessage(mailMessage, timestamp.toInstant());
     emailSender.setNotify(notify);
     emailSender.setMessageId(
         messageIdGenerator.fromChangeUpdate(repoView, change.currentPatchSetId()));

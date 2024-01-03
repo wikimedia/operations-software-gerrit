@@ -1,16 +1,16 @@
-//  Copyright (C) 2020 The Android Open Source Project
+// Copyright (C) 2020 The Android Open Source Project
 //
-//  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//  http://www.apache.org/licenses/LICENSE-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
-//  Unless required by applicable law or agreed to in writing, software
-//  distributed under the License is distributed on an "AS IS" BASIS,
-//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//  See the License for the specific language governing permissions and
-//  limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package com.google.gerrit.server.patch;
 
@@ -47,7 +47,16 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import org.eclipse.jgit.diff.DiffEntry;
+import org.eclipse.jgit.diff.DiffFormatter;
+import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectReader;
+import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.util.io.DisabledOutputStream;
 
 /**
  * Provides different file diff operations. Uses the underlying Git/Gerrit caches to speed up the
@@ -56,6 +65,19 @@ import org.eclipse.jgit.lib.ObjectId;
 @Singleton
 public class DiffOperationsImpl implements DiffOperations {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
+
+  private static final ImmutableMap<DiffEntry.ChangeType, Patch.ChangeType> changeTypeMap =
+      ImmutableMap.of(
+          DiffEntry.ChangeType.ADD,
+          Patch.ChangeType.ADDED,
+          DiffEntry.ChangeType.MODIFY,
+          Patch.ChangeType.MODIFIED,
+          DiffEntry.ChangeType.DELETE,
+          Patch.ChangeType.DELETED,
+          DiffEntry.ChangeType.RENAME,
+          Patch.ChangeType.RENAMED,
+          DiffEntry.ChangeType.COPY,
+          Patch.ChangeType.COPIED);
 
   private static final int RENAME_SCORE = 60;
   private static final DiffAlgorithm DEFAULT_DIFF_ALGORITHM =
@@ -91,10 +113,11 @@ public class DiffOperationsImpl implements DiffOperations {
 
   @Override
   public Map<String, FileDiffOutput> listModifiedFilesAgainstParent(
-      Project.NameKey project, ObjectId newCommit, int parent) throws DiffNotAvailableException {
+      Project.NameKey project, ObjectId newCommit, int parent, DiffOptions diffOptions)
+      throws DiffNotAvailableException {
     try {
       DiffParameters diffParams = computeDiffParameters(project, newCommit, parent);
-      return getModifiedFiles(diffParams);
+      return getModifiedFiles(diffParams, diffOptions);
     } catch (IOException e) {
       throw new DiffNotAvailableException(
           "Failed to evaluate the parent/base commit for commit " + newCommit, e);
@@ -102,8 +125,29 @@ public class DiffOperationsImpl implements DiffOperations {
   }
 
   @Override
+  public Map<String, ModifiedFile> loadModifiedFilesAgainstParent(
+      Project.NameKey project,
+      ObjectId newCommit,
+      int parentNum,
+      DiffOptions diffOptions,
+      RevWalk revWalk,
+      Config repoConfig)
+      throws DiffNotAvailableException {
+    try {
+      DiffParameters diffParams = computeDiffParameters(project, newCommit, parentNum);
+      return loadModifiedFilesWithoutCache(project, diffParams, revWalk, repoConfig);
+    } catch (IOException e) {
+      throw new DiffNotAvailableException(
+          String.format(
+              "Failed to evaluate the parent/base commit for commit '%s' with parentNum=%d",
+              newCommit, parentNum),
+          e);
+    }
+  }
+
+  @Override
   public Map<String, FileDiffOutput> listModifiedFiles(
-      Project.NameKey project, ObjectId oldCommit, ObjectId newCommit)
+      Project.NameKey project, ObjectId oldCommit, ObjectId newCommit, DiffOptions diffOptions)
       throws DiffNotAvailableException {
     DiffParameters params =
         DiffParameters.builder()
@@ -112,7 +156,26 @@ public class DiffOperationsImpl implements DiffOperations {
             .baseCommit(oldCommit)
             .comparisonType(ComparisonType.againstOtherPatchSet())
             .build();
-    return getModifiedFiles(params);
+    return getModifiedFiles(params, diffOptions);
+  }
+
+  @Override
+  public Map<String, ModifiedFile> loadModifiedFiles(
+      Project.NameKey project,
+      ObjectId oldCommit,
+      ObjectId newCommit,
+      DiffOptions diffOptions,
+      RevWalk revWalk,
+      Config repoConfig)
+      throws DiffNotAvailableException {
+    DiffParameters params =
+        DiffParameters.builder()
+            .project(project)
+            .newCommit(newCommit)
+            .baseCommit(oldCommit)
+            .comparisonType(ComparisonType.againstOtherPatchSet())
+            .build();
+    return loadModifiedFilesWithoutCache(project, params, revWalk, repoConfig);
   }
 
   @Override
@@ -161,8 +224,8 @@ public class DiffOperationsImpl implements DiffOperations {
     return getModifiedFileForKey(key);
   }
 
-  private ImmutableMap<String, FileDiffOutput> getModifiedFiles(DiffParameters diffParams)
-      throws DiffNotAvailableException {
+  private ImmutableMap<String, FileDiffOutput> getModifiedFiles(
+      DiffParameters diffParams, DiffOptions diffOptions) throws DiffNotAvailableException {
     try {
       Project.NameKey project = diffParams.project();
       ObjectId newCommit = diffParams.newCommit();
@@ -211,7 +274,7 @@ public class DiffOperationsImpl implements DiffOperations {
                         /* whitespace= */ null))
             .forEach(fileCacheKeys::add);
       }
-      return getModifiedFilesForKeys(fileCacheKeys);
+      return getModifiedFilesForKeys(fileCacheKeys, diffOptions);
     } catch (IOException e) {
       throw new DiffNotAvailableException(e);
     }
@@ -219,7 +282,8 @@ public class DiffOperationsImpl implements DiffOperations {
 
   private FileDiffOutput getModifiedFileForKey(FileDiffCacheKey key)
       throws DiffNotAvailableException {
-    Map<String, FileDiffOutput> diffList = getModifiedFilesForKeys(ImmutableList.of(key));
+    Map<String, FileDiffOutput> diffList =
+        getModifiedFilesForKeys(ImmutableList.of(key), DiffOptions.DEFAULTS);
     return diffList.containsKey(key.newFilePath())
         ? diffList.get(key.newFilePath())
         : FileDiffOutput.empty(key.newFilePath(), key.oldCommit(), key.newCommit());
@@ -230,8 +294,8 @@ public class DiffOperationsImpl implements DiffOperations {
    * results, e.g. due to timeouts in the cache loader, this method requests the diff again using
    * the fallback algorithm {@link DiffAlgorithm#HISTOGRAM_NO_FALLBACK}.
    */
-  private ImmutableMap<String, FileDiffOutput> getModifiedFilesForKeys(List<FileDiffCacheKey> keys)
-      throws DiffNotAvailableException {
+  private ImmutableMap<String, FileDiffOutput> getModifiedFilesForKeys(
+      List<FileDiffCacheKey> keys, DiffOptions diffOptions) throws DiffNotAvailableException {
     ImmutableMap<FileDiffCacheKey, FileDiffOutput> fileDiffs = fileDiffCache.getAll(keys);
     List<FileDiffCacheKey> fallbackKeys = new ArrayList<>();
 
@@ -251,7 +315,7 @@ public class DiffOperationsImpl implements DiffOperations {
                 DiffAlgorithm.HISTOGRAM_NO_FALLBACK,
                 // We don't enforce timeouts with the fallback algorithm. Timeouts were introduced
                 // because of a bug in JGit that happens only when the histogram algorithm uses
-                // Myers as fallback. See https://bugs.chromium.org/p/gerrit/issues/detail?id=487
+                // Myers as fallback. See https://issues.gerritcodereview.com/issues/40000618
                 /* useTimeout= */ false,
                 key.whitespace());
         fallbackKeys.add(fallbackKey);
@@ -260,7 +324,7 @@ public class DiffOperationsImpl implements DiffOperations {
       }
     }
     result.addAll(fileDiffCache.getAll(fallbackKeys).values());
-    return mapByFilePath(result.build());
+    return mapByFilePath(result.build(), diffOptions);
   }
 
   /**
@@ -268,11 +332,12 @@ public class DiffOperationsImpl implements DiffOperations {
    * represent the old file path for deleted files, or the new path otherwise.
    */
   private ImmutableMap<String, FileDiffOutput> mapByFilePath(
-      ImmutableCollection<FileDiffOutput> fileDiffOutputs) {
+      ImmutableCollection<FileDiffOutput> fileDiffOutputs, DiffOptions diffOptions) {
     ImmutableMap.Builder<String, FileDiffOutput> diffs = ImmutableMap.builder();
 
     for (FileDiffOutput fileDiffOutput : fileDiffOutputs) {
-      if (fileDiffOutput.isEmpty() || allDueToRebase(fileDiffOutput)) {
+      if (fileDiffOutput.isEmpty()
+          || (diffOptions.skipFilesWithAllEditsDueToRebase() && allDueToRebase(fileDiffOutput))) {
         continue;
       }
       if (fileDiffOutput.changeType() == ChangeType.DELETED) {
@@ -286,8 +351,8 @@ public class DiffOperationsImpl implements DiffOperations {
 
   private static boolean allDueToRebase(FileDiffOutput fileDiffOutput) {
     return fileDiffOutput.allEditsDueToRebase()
-        && (!(fileDiffOutput.changeType() == ChangeType.RENAMED
-            || fileDiffOutput.changeType() == ChangeType.COPIED));
+        && !(fileDiffOutput.changeType() == ChangeType.RENAMED
+            || fileDiffOutput.changeType() == ChangeType.COPIED);
   }
 
   private boolean isMergeAgainstParent(ComparisonType cmp, Project.NameKey project, ObjectId commit)
@@ -324,6 +389,53 @@ public class DiffOperationsImpl implements DiffOperations {
         .whitespace(whitespace)
         .useTimeout(useTimeout)
         .build();
+  }
+
+  /** Loads the modified file paths between two commits without inspecting the diff cache. */
+  private static Map<String, ModifiedFile> loadModifiedFilesWithoutCache(
+      Project.NameKey project, DiffParameters diffParams, RevWalk revWalk, Config repoConfig)
+      throws DiffNotAvailableException {
+    ObjectId newCommit = diffParams.newCommit();
+    ObjectId oldCommit = diffParams.baseCommit();
+    try {
+      ObjectReader reader = revWalk.getObjectReader();
+      List<DiffEntry> diffEntries;
+      try (DiffFormatter df = new DiffFormatter(DisabledOutputStream.INSTANCE)) {
+        df.setReader(reader, repoConfig);
+        df.setDetectRenames(false);
+        diffEntries = df.scan(oldCommit.equals(ObjectId.zeroId()) ? null : oldCommit, newCommit);
+      }
+      List<ModifiedFile> modifiedFiles =
+          diffEntries.stream()
+              .map(
+                  entry ->
+                      ModifiedFile.builder()
+                          .changeType(toChangeType(entry.getChangeType()))
+                          .oldPath(getGitPath(entry.getOldPath()))
+                          .newPath(getGitPath(entry.getNewPath()))
+                          .build())
+              .collect(Collectors.toList());
+      return DiffUtil.mergeRewrittenModifiedFiles(modifiedFiles).stream()
+          .collect(ImmutableMap.toImmutableMap(ModifiedFile::getDefaultPath, Function.identity()));
+    } catch (IOException e) {
+      throw new DiffNotAvailableException(
+          String.format(
+              "Failed to compute the modified files for project '%s',"
+                  + " old commit '%s', new commit '%s'.",
+              project, oldCommit.name(), newCommit.name()),
+          e);
+    }
+  }
+
+  private static Optional<String> getGitPath(String path) {
+    return path.equals(DiffEntry.DEV_NULL) ? Optional.empty() : Optional.of(path);
+  }
+
+  private static Patch.ChangeType toChangeType(DiffEntry.ChangeType changeType) {
+    if (!changeTypeMap.containsKey(changeType)) {
+      throw new IllegalArgumentException("Unsupported type " + changeType);
+    }
+    return changeTypeMap.get(changeType);
   }
 
   @AutoValue

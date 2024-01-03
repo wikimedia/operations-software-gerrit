@@ -18,29 +18,29 @@ import '../gr-label-score-row/gr-label-score-row';
 import '../../../styles/shared-styles';
 import {LitElement, css, html} from 'lit';
 import {customElement, property} from 'lit/decorators';
-import {hasOwnProperty} from '../../../utils/common-util';
 import {
-  LabelNameToValueMap,
   ChangeInfo,
   AccountInfo,
-  DetailedLabelInfo,
-  LabelNameToInfoMap,
-  LabelNameToValuesMap,
+  LabelNameToValueMap,
 } from '../../../types/common';
+import {GrLabelScoreRow} from '../gr-label-score-row/gr-label-score-row';
+import {getAppContext} from '../../../services/app-context';
 import {
-  GrLabelScoreRow,
+  getTriggerVotes,
+  showNewSubmitRequirements,
+  computeLabels,
   Label,
-  LabelValuesMap,
-} from '../gr-label-score-row/gr-label-score-row';
-import {appContext} from '../../../services/app-context';
-import {labelCompare} from '../../../utils/label-util';
-import {Execution} from '../../../constants/reporting';
+  computeOrderedLabelValues,
+  getDefaultValue,
+} from '../../../utils/label-util';
 import {ChangeStatus} from '../../../constants/constants';
+import {fontStyles} from '../../../styles/gr-font-styles';
+import {LabelNameToValuesMap} from '../../../api/rest-api';
 
 @customElement('gr-label-scores')
 export class GrLabelScores extends LitElement {
   @property({type: Object})
-  permittedLabels?: LabelNameToValueMap;
+  permittedLabels?: LabelNameToValuesMap;
 
   @property({type: Object})
   change?: ChangeInfo;
@@ -48,14 +48,18 @@ export class GrLabelScores extends LitElement {
   @property({type: Object})
   account?: AccountInfo;
 
-  private readonly reporting = appContext.reportingService;
+  private readonly flagsService = getAppContext().flagsService;
 
   static override get styles() {
     return [
+      fontStyles,
       css`
         .scoresTable {
           display: table;
           width: 100%;
+        }
+        .scoresTable.newSubmitRequirements {
+          table-layout: fixed;
         }
         .mergedMessage,
         .abandonedMessage {
@@ -63,35 +67,113 @@ export class GrLabelScores extends LitElement {
           text-align: center;
           width: 100%;
         }
+        .permissionMessage {
+          width: 100%;
+          color: var(--deemphasized-text-color);
+          padding-left: var(--spacing-xl);
+        }
         gr-label-score-row:hover {
           background-color: var(--hover-background-color);
         }
         gr-label-score-row {
           display: table-row;
         }
-        gr-label-score-row.no-access {
-          display: none;
+        .heading-3 {
+          padding-left: var(--spacing-xl);
+          margin-bottom: var(--spacing-m);
+          margin-top: var(--spacing-l);
+        }
+        .heading-3:first-of-type {
+          margin-top: 0;
         }
       `,
     ];
   }
 
   override render() {
-    const labels = this._computeLabels();
-    const labelValues = this._computeColumns();
-    return html`<div class="scoresTable">
-        ${labels.map(
+    if (showNewSubmitRequirements(this.flagsService, this.change)) {
+      return this.renderNewSubmitRequirements();
+    } else {
+      return this.renderOldSubmitRequirements();
+    }
+  }
+
+  private renderOldSubmitRequirements() {
+    const labels = computeLabels(this.account, this.change);
+    return html`${this.renderLabels(labels)}${this.renderErrorMessages()}`;
+  }
+
+  private renderNewSubmitRequirements() {
+    return html`${this.renderSubmitReqsLabels()}${this.renderTriggerVotes()}
+    ${this.renderErrorMessages()}`;
+  }
+
+  private renderSubmitReqsLabels() {
+    const triggerVotes = getTriggerVotes(this.change);
+    const labels = computeLabels(this.account, this.change).filter(
+      label => !triggerVotes.includes(label.name)
+    );
+    if (!labels.length) return;
+    if (
+      labels.filter(
+        label => !this.permittedLabels || this.permittedLabels[label.name]
+      ).length === 0
+    ) {
+      return html`<h3 class="heading-3">Submit requirements votes</h3>
+        <div class="permissionMessage">You don't have permission to vote</div>`;
+    }
+    return html`<h3 class="heading-3">Submit requirements votes</h3>
+      ${this.renderLabels(labels)}`;
+  }
+
+  private renderTriggerVotes() {
+    const triggerVotes = getTriggerVotes(this.change);
+    const labels = computeLabels(this.account, this.change).filter(label =>
+      triggerVotes.includes(label.name)
+    );
+    if (!labels.length) return;
+    if (
+      labels.filter(
+        label => !this.permittedLabels || this.permittedLabels[label.name]
+      ).length === 0
+    ) {
+      return html`<h3 class="heading-3">Trigger Votes</h3>
+        <div class="permissionMessage">You don't have permission to vote</div>`;
+    }
+    return html`<h3 class="heading-3">Trigger Votes</h3>
+      ${this.renderLabels(labels)}`;
+  }
+
+  private renderLabels(labels: Label[]) {
+    const newSubReqs = showNewSubmitRequirements(
+      this.flagsService,
+      this.change
+    );
+    return html`<div
+      class="scoresTable ${newSubReqs ? 'newSubmitRequirements' : ''}"
+    >
+      ${labels
+        .filter(
+          label =>
+            this.permittedLabels?.[label.name] &&
+            this.permittedLabels?.[label.name].length > 0
+        )
+        .map(
           label => html`<gr-label-score-row
-            class="${this.computeLabelAccessClass(label.name)}"
-            .label="${label}"
-            .name="${label.name}"
-            .labels="${this.change?.labels}"
-            .permittedLabels="${this.permittedLabels}"
-            .labelValues="${labelValues}"
+            .label=${label}
+            .name=${label.name}
+            .labels=${this.change?.labels}
+            .permittedLabels=${this.permittedLabels}
+            .orderedLabelValues=${computeOrderedLabelValues(
+              this.permittedLabels
+            )}
           ></gr-label-score-row>`
         )}
-      </div>
-      <div
+    </div>`;
+  }
+
+  private renderErrorMessages() {
+    return html`<div
         class="mergedMessage"
         ?hidden=${this.change?.status !== ChangeStatus.MERGED}
       >
@@ -105,15 +187,15 @@ export class GrLabelScores extends LitElement {
       </div>`;
   }
 
-  getLabelValues(includeDefaults = true): LabelNameToValuesMap {
-    const labels: LabelNameToValuesMap = {};
+  getLabelValues(includeDefaults = true): LabelNameToValueMap {
+    const labels: LabelNameToValueMap = {};
     if (this.shadowRoot === null || !this.change) {
       return labels;
     }
     for (const label of Object.keys(this.permittedLabels ?? {})) {
-      const selectorEl = this.shadowRoot.querySelector(
+      const selectorEl = this.shadowRoot.querySelector<GrLabelScoreRow>(
         `gr-label-score-row[name="${label}"]`
-      ) as null | GrLabelScoreRow;
+      );
       if (!selectorEl?.selectedItem) continue;
 
       const selectedVal =
@@ -123,105 +205,12 @@ export class GrLabelScores extends LitElement {
 
       if (selectedVal === undefined) continue;
 
-      const defValNum = this.getDefaultValue(label);
+      const defValNum = getDefaultValue(this.change?.labels, label);
       if (includeDefaults || selectedVal !== defValNum) {
         labels[label] = selectedVal;
       }
     }
     return labels;
-  }
-
-  private getStringLabelValue(
-    labels: LabelNameToInfoMap,
-    labelName: string,
-    numberValue?: number
-  ): string {
-    const detailedInfo = labels[labelName] as DetailedLabelInfo;
-    if (detailedInfo.values) {
-      for (const labelValue of Object.keys(detailedInfo.values)) {
-        if (Number(labelValue) === numberValue) {
-          return labelValue;
-        }
-      }
-    }
-    const stringVal = `${numberValue}`;
-    this.reporting.reportExecution(Execution.REACHABLE_CODE, {
-      value: stringVal,
-      id: 'label-value-not-found',
-    });
-    return stringVal;
-  }
-
-  private getDefaultValue(labelName?: string) {
-    const labels = this.change?.labels;
-    if (!labelName || !labels?.[labelName]) return undefined;
-    const labelInfo = labels[labelName] as DetailedLabelInfo;
-    return labelInfo.default_value;
-  }
-
-  _getVoteForAccount(labelName: string): string | null {
-    const labels = this.change?.labels;
-    if (!labels) return null;
-    const votes = labels[labelName] as DetailedLabelInfo;
-    if (votes.all && votes.all.length > 0) {
-      for (let i = 0; i < votes.all.length; i++) {
-        if (
-          this.account &&
-          // TODO(TS): Replace == with === and check code can assign string to _account_id instead of number
-          // eslint-disable-next-line eqeqeq
-          votes.all[i]._account_id == this.account._account_id
-        ) {
-          return this.getStringLabelValue(
-            labels,
-            labelName,
-            votes.all[i].value
-          );
-        }
-      }
-    }
-    return null;
-  }
-
-  _computeLabels(): Label[] {
-    if (!this.account) return [];
-    const labelsObj = this.change?.labels;
-    if (!labelsObj) return [];
-    return Object.keys(labelsObj)
-      .sort(labelCompare)
-      .map(key => {
-        return {
-          name: key,
-          value: this._getVoteForAccount(key),
-        };
-      });
-  }
-
-  _computeColumns() {
-    if (!this.permittedLabels) return;
-    const labels = Object.keys(this.permittedLabels);
-    const values: Set<number> = new Set();
-    for (const label of labels) {
-      for (const value of this.permittedLabels[label]) {
-        values.add(Number(value));
-      }
-    }
-
-    const orderedValues = Array.from(values.values()).sort((a, b) => a - b);
-
-    const labelValues: LabelValuesMap = {};
-    for (let i = 0; i < orderedValues.length; i++) {
-      labelValues[orderedValues[i]] = i;
-    }
-    return labelValues;
-  }
-
-  private computeLabelAccessClass(label?: string) {
-    if (!this.permittedLabels || !label) return '';
-
-    return hasOwnProperty(this.permittedLabels, label) &&
-      this.permittedLabels[label].length
-      ? 'access'
-      : 'no-access';
   }
 }
 

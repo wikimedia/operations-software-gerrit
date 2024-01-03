@@ -52,6 +52,7 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Table;
 import com.google.common.collect.Table.Cell;
 import com.google.common.collect.TreeBasedTable;
@@ -63,6 +64,7 @@ import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Comment;
 import com.google.gerrit.entities.HumanComment;
 import com.google.gerrit.entities.LabelId;
+import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.RobotComment;
@@ -74,6 +76,7 @@ import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.account.ServiceUserClassifier;
+import com.google.gerrit.server.approval.PatchSetApprovalUuidGenerator;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.util.AttentionSetUtil;
 import com.google.gerrit.server.util.LabelVote;
@@ -81,10 +84,10 @@ import com.google.gerrit.server.validators.ValidationException;
 import com.google.inject.assistedinject.Assisted;
 import com.google.inject.assistedinject.AssistedInject;
 import java.io.IOException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -115,13 +118,20 @@ import org.eclipse.jgit.revwalk.RevWalk;
  * there is a single author and timestamp for each update.
  *
  * <p>This class is not thread-safe.
+ *
+ * <p>NOTE: This class also serializes the change in a custom storage format, used in NoteDB. All
+ * changes to the storage format must be both forward and backward compatible, see comment on {@link
+ * ChangeNotesParser}.
+ *
+ * <p>Such changes include e.g. introducing/removing footers, modifying footer formats, mutations of
+ * the attached {@link ChangeRevisionNote}.
  */
 public class ChangeUpdate extends AbstractChangeUpdate {
   public interface Factory {
-    ChangeUpdate create(ChangeNotes notes, CurrentUser user, Date when);
+    ChangeUpdate create(ChangeNotes notes, CurrentUser user, Instant when);
 
     ChangeUpdate create(
-        ChangeNotes notes, CurrentUser user, Date when, Comparator<String> labelNameComparator);
+        ChangeNotes notes, CurrentUser user, Instant when, Comparator<String> labelNameComparator);
   }
 
   private final NoteDbUpdateManager.Factory updateManagerFactory;
@@ -129,13 +139,13 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   private final RobotCommentUpdate.Factory robotCommentUpdateFactory;
   private final DeleteCommentRewriter.Factory deleteCommentRewriterFactory;
   private final ServiceUserClassifier serviceUserClassifier;
+  private final PatchSetApprovalUuidGenerator patchSetApprovalUuidGenerator;
 
   private final Table<String, Account.Id, Optional<Short>> approvals;
   private final List<PatchSetApproval> copiedApprovals = new ArrayList<>();
   private final Map<Account.Id, ReviewerStateInternal> reviewers = new LinkedHashMap<>();
   private final Map<Address, ReviewerStateInternal> reviewersByEmail = new LinkedHashMap<>();
   private final List<HumanComment> comments = new ArrayList<>();
-  private final List<SubmitRequirementResult> submitRequirementResults = new ArrayList<>();
 
   private String commitSubject;
   private String subject;
@@ -169,7 +179,9 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   private RobotCommentUpdate robotCommentUpdate;
   private DeleteCommentRewriter deleteCommentRewriter;
   private DeleteChangeMessageRewriter deleteChangeMessageRewriter;
+  private List<SubmitRequirementResult> submitRequirementResults;
 
+  @SuppressWarnings("UnusedMethod")
   @AssistedInject
   private ChangeUpdate(
       @GerritPersonIdent PersonIdent serverIdent,
@@ -179,9 +191,10 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       DeleteCommentRewriter.Factory deleteCommentRewriterFactory,
       ProjectCache projectCache,
       ServiceUserClassifier serviceUserClassifier,
+      PatchSetApprovalUuidGenerator patchSetApprovalUuidGenerator,
       @Assisted ChangeNotes notes,
       @Assisted CurrentUser user,
-      @Assisted Date when,
+      @Assisted Instant when,
       ChangeNoteUtil noteUtil) {
     this(
         serverIdent,
@@ -190,6 +203,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
         robotCommentUpdateFactory,
         deleteCommentRewriterFactory,
         serviceUserClassifier,
+        patchSetApprovalUuidGenerator,
         notes,
         user,
         when,
@@ -214,9 +228,10 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       RobotCommentUpdate.Factory robotCommentUpdateFactory,
       DeleteCommentRewriter.Factory deleteCommentRewriterFactory,
       ServiceUserClassifier serviceUserClassifier,
+      PatchSetApprovalUuidGenerator patchSetApprovalUuidGenerator,
       @Assisted ChangeNotes notes,
       @Assisted CurrentUser user,
-      @Assisted Date when,
+      @Assisted Instant when,
       @Assisted Comparator<String> labelNameComparator,
       ChangeNoteUtil noteUtil) {
     super(notes, user, serverIdent, noteUtil, when);
@@ -225,6 +240,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     this.robotCommentUpdateFactory = robotCommentUpdateFactory;
     this.deleteCommentRewriterFactory = deleteCommentRewriterFactory;
     this.serviceUserClassifier = serviceUserClassifier;
+    this.patchSetApprovalUuidGenerator = patchSetApprovalUuidGenerator;
     this.approvals = approvals(labelNameComparator);
   }
 
@@ -286,10 +302,6 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     copiedApprovals.add(copiedPatchSetApproval);
   }
 
-  public boolean hasCopiedApprovals() {
-    return !copiedApprovals.isEmpty();
-  }
-
   public void merge(SubmissionId submissionId, Iterable<SubmitRecord> submitRecords) {
     this.status = Change.Status.MERGED;
     this.submissionId = submissionId.toString();
@@ -323,10 +335,13 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   }
 
   public void putSubmitRequirementResults(Collection<SubmitRequirementResult> rs) {
+    if (submitRequirementResults == null) {
+      submitRequirementResults = new ArrayList<>();
+    }
     submitRequirementResults.addAll(rs);
   }
 
-  public void putComment(HumanComment.Status status, HumanComment c) {
+  public void putComment(Comment.Status status, HumanComment c) {
     verifyComment(c);
     createDraftUpdateIfNull();
     if (status == HumanComment.Status.DRAFT) {
@@ -512,7 +527,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   /** Returns the tree id for the updated tree */
   private ObjectId storeRevisionNotes(RevWalk rw, ObjectInserter inserter, ObjectId curr)
       throws ConfigInvalidException, IOException {
-    if (submitRequirementResults.isEmpty() && comments.isEmpty() && pushCert == null) {
+    if (submitRequirementResults == null && comments.isEmpty() && pushCert == null) {
       return null;
     }
     RevisionNoteMap<ChangeRevisionNote> rnm = getRevisionNoteMap(rw, curr);
@@ -522,8 +537,23 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       c.tag = tag;
       cache.get(c.getCommitId()).putComment(c);
     }
-    for (SubmitRequirementResult sr : submitRequirementResults) {
-      cache.get(sr.patchSetCommitId()).putSubmitRequirementResult(sr);
+    if (submitRequirementResults != null) {
+      if (submitRequirementResults.isEmpty()) {
+        ObjectId latestPsCommitId =
+            Iterables.getLast(getNotes().getPatchSets().values()).commitId();
+        cache.get(latestPsCommitId).createEmptySubmitRequirementResults();
+      } else {
+        // Clear any previously stored SRs first. The SRs in this update will overwrite any
+        // previously stored SRs (e.g. if the change is abandoned (SRs stored) -> un-abandoned ->
+        // merged).
+        submitRequirementResults.stream()
+            .map(SubmitRequirementResult::patchSetCommitId)
+            .distinct()
+            .forEach(commit -> cache.get(commit).clearSubmitRequirementResults());
+        for (SubmitRequirementResult sr : submitRequirementResults) {
+          cache.get(sr.patchSetCommitId()).putSubmitRequirementResult(sr);
+        }
+      }
     }
     if (pushCert != null) {
       checkState(commit != null);
@@ -634,12 +664,12 @@ public class ChangeUpdate extends AbstractChangeUpdate {
         deleteCommentRewriter == null && deleteChangeMessageRewriter == null,
         "cannot update and rewrite ref in one BatchUpdate");
 
-    int ps = psId != null ? psId.get() : getChange().currentPatchSetId().get();
+    PatchSet.Id patchSetId = psId != null ? psId : getChange().currentPatchSetId();
     StringBuilder msg = new StringBuilder();
     if (commitSubject != null) {
       msg.append(commitSubject);
     } else {
-      msg.append("Update patch set ").append(ps);
+      msg.append("Update patch set ").append(patchSetId.get());
     }
     msg.append("\n\n");
 
@@ -648,7 +678,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       msg.append("\n\n");
     }
 
-    addPatchSetFooter(msg, ps);
+    addPatchSetFooter(msg, patchSetId);
 
     if (currentPatchSet) {
       addFooter(msg, FOOTER_CURRENT, Boolean.TRUE);
@@ -722,7 +752,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     }
 
     for (Table.Cell<String, Account.Id, Optional<Short>> c : approvals.cellSet()) {
-      addLabelFooter(msg, c);
+      addLabelFooter(msg, c, patchSetId);
     }
     for (PatchSetApproval patchSetApproval : copiedApprovals) {
       addCopiedLabelFooter(msg, patchSetApproval);
@@ -791,7 +821,10 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       }
     }
 
-    updateAttentionSet(msg);
+    boolean hasAttentionSeUpdates = updateAttentionSet(msg);
+    if (isEmptyWithoutAttentionSet() && !hasAttentionSeUpdates) {
+      return NO_OP_UPDATE;
+    }
 
     CommitBuilder cb = new CommitBuilder();
     cb.setMessage(msg.toString());
@@ -806,17 +839,25 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     return cb;
   }
 
-  private void addLabelFooter(StringBuilder msg, Cell<String, Account.Id, Optional<Short>> c) {
+  private void addLabelFooter(
+      StringBuilder msg, Cell<String, Account.Id, Optional<Short>> c, PatchSet.Id patchSetId) {
     addFooter(msg, FOOTER_LABEL);
+    String label = c.getRowKey();
+    Account.Id reviewerId = c.getColumnKey();
     // Label names/values are safe to append without sanitizing.
-    if (!c.getValue().isPresent()) {
-      msg.append('-').append(c.getRowKey());
+    boolean isRemoval = !c.getValue().isPresent();
+    if (isRemoval) {
+      msg.append('-').append(label);
+      // Since vote removals do not need to be referenced, e.g. by the copy approvals, they do not
+      // require a UUID.
     } else {
-      msg.append(LabelVote.create(c.getRowKey(), c.getValue().get()).formatWithEquals());
+      short value = c.getValue().get();
+      msg.append(LabelVote.create(label, c.getValue().get()).formatWithEquals());
+      msg.append(", ");
+      msg.append(patchSetApprovalUuidGenerator.get(patchSetId, reviewerId, label, value, when));
     }
-    Account.Id id = c.getColumnKey();
-    if (!id.equals(getAccountId())) {
-      noteUtil.appendAccountIdIdentString(msg.append(' '), id);
+    if (!reviewerId.equals(getAccountId())) {
+      noteUtil.appendAccountIdIdentString(msg.append(' '), reviewerId);
     }
     msg.append('\n');
   }
@@ -830,6 +871,11 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     // Label names/values are safe to append without sanitizing.
     msg.append(
         LabelVote.create(patchSetApproval.label(), patchSetApproval.value()).formatWithEquals());
+    // Might be copied from the vote that was generated before UUID was introduced.
+    if (patchSetApproval.uuid().isPresent()) {
+      msg.append(", ");
+      msg.append(patchSetApproval.uuid().get());
+    }
     Account.Id id = patchSetApproval.accountId();
     noteUtil.appendAccountIdIdentString(msg.append(' '), id);
 
@@ -844,6 +890,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     if (patchSetApproval.tag().isPresent()) {
       msg.append(":\"" + sanitizeFooter(patchSetApproval.tag().get()) + "\"");
     }
+
     msg.append('\n');
   }
 
@@ -911,8 +958,11 @@ public class ChangeUpdate extends AbstractChangeUpdate {
    * <p>Changing the behaviour of this method might affect the way a ChangeUpdate is considered to
    * be an "Attention Set Change Only". Make sure the {@link #isAttentionSetChangeOnly} logic is
    * amended as well if needed.
+   *
+   * @return True if one or more attention set updates are appended to the {@code msg}, and false
+   *     otherwise.
    */
-  private void updateAttentionSet(StringBuilder msg) {
+  private boolean updateAttentionSet(StringBuilder msg) {
     if (plannedAttentionSetUpdates == null) {
       plannedAttentionSetUpdates = new HashMap<>();
     }
@@ -937,6 +987,8 @@ public class ChangeUpdate extends AbstractChangeUpdate {
             .collect(ImmutableSet.toImmutableSet()));
 
     removeInactiveUsersFromAttentionSet(currentReviewers);
+
+    boolean hasUpdates = false;
 
     for (AttentionSetUpdate attentionSetUpdate : plannedAttentionSetUpdates.values()) {
       if (attentionSetUpdate.operation() == AttentionSetUpdate.Operation.ADD
@@ -972,7 +1024,9 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       }
 
       addFooter(msg, FOOTER_ATTENTION, noteUtil.attentionSetUpdateToJson(attentionSetUpdate));
+      hasUpdates = true;
     }
+    return hasUpdates;
   }
 
   private void removeInactiveUsersFromAttentionSet(Set<Account.Id> currentReviewers) {
@@ -1025,8 +1079,8 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     ignoreFurtherAttentionSetUpdates = true;
   }
 
-  private void addPatchSetFooter(StringBuilder sb, int ps) {
-    addFooter(sb, FOOTER_PATCH_SET).append(ps);
+  private void addPatchSetFooter(StringBuilder sb, PatchSet.Id ps) {
+    addFooter(sb, FOOTER_PATCH_SET).append(ps.get());
     if (psState != null) {
       sb.append(" (").append(psState.name().toLowerCase()).append(')');
     }
@@ -1040,6 +1094,10 @@ public class ChangeUpdate extends AbstractChangeUpdate {
 
   @Override
   public boolean isEmpty() {
+    return isEmptyWithoutAttentionSet() && plannedAttentionSetUpdates == null;
+  }
+
+  private boolean isEmptyWithoutAttentionSet() {
     return commitSubject == null
         && approvals.isEmpty()
         && copiedApprovals.isEmpty()
@@ -1052,7 +1110,6 @@ public class ChangeUpdate extends AbstractChangeUpdate {
         && status == null
         && submissionId == null
         && submitRecords == null
-        && plannedAttentionSetUpdates == null
         && assignee == null
         && hashtags == null
         && topic == null

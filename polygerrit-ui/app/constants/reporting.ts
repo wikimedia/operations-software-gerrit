@@ -46,10 +46,8 @@ export enum Timing {
   DASHBOARD_DISPLAYED = 'DashboardDisplayed',
   // Time from navigation to showing full content of diff without highlighting layer
   DIFF_VIEW_CONTENT_DISPLAYED = 'DiffViewOnlyContent',
-  // Time from navigation to showing viewport (> 120 lines) of diff with highlighting layer.
-  DIFF_VIEW_DISPLAYED = 'DiffViewDisplayed',
   // Time from navigation to showing full content of diff
-  DIFF_VIEW_LOAD_FULL = 'DiffViewFullyLoaded',
+  DIFF_VIEW_DISPLAYED = 'DiffViewDisplayed',
   // Time from navigation to showing initial content of the file list.
   FILE_LIST_DISPLAYED = 'FileListDisplayed',
   // Time from startup to having loaded all plugins.
@@ -64,10 +62,8 @@ export enum Timing {
   STARTUP_DASHBOARD_DISPLAYED = 'StartupDashboardDisplayed',
   // Time from startup to showing full content of diff without highlighting layer
   STARTUP_DIFF_VIEW_CONTENT_DISPLAYED = 'StartupDiffViewOnlyContent',
-  // Time from startup to showing viewport (> 120 lines) of diff with highlighting layer.
-  STARTUP_DIFF_VIEW_DISPLAYED = 'StartupDiffViewDisplayed',
   // Time from startup to showing full content of diff view.
-  STARTUP_DIFF_VIEW_LOAD_FULL = 'StartupDiffViewFullyLoaded',
+  STARTUP_DIFF_VIEW_DISPLAYED = 'StartupDiffViewDisplayed',
   // Time from startup to showing initial content of the file list.
   STARTUP_FILE_LIST_DISPLAYED = 'StartupFileListDisplayed',
   // Time from startup to when the webcomponentsready event is fired. If the event is fired from the webcomponents-lite polyfill, this may be arbitrarily long after the app has started.
@@ -82,20 +78,48 @@ export enum Timing {
   DIFF_TOTAL = 'Diff Total Render',
   // The time to render the content off a diff (excluding loading of data or syntax highlighting).
   DIFF_CONTENT = 'Diff Content Render',
-  // Time to compute and render the syntax highlighting of a diff.
+  // Time to compute syntax highlighting of a diff  minus diff rendering time (DIFF_CONTENT).
   DIFF_SYNTAX = 'Diff Syntax Render',
+  // Time to load diff and prepare before gr-diff rendering begins.
+  DIFF_LOAD = 'Diff Load Render',
   // Time to render a batch of rows in the file list. If there are very many files, this may be the first batch of rows that are rendered by default. If there are many files and the user clicks [Show More], this may be the batch of additional files that appear as a result.
   FILE_RENDER = 'FileListRenderTime',
-  // This measures the same interval as FileListRenderTime, but the result is divided by the number of rows in the batch.
-  FILE_RENDER_AVG = 'FileListRenderTimePerFile',
   // The time to expand some number of diffs in the file list (i.e. render their diffs, including syntax highlighting).
   FILE_EXPAND_ALL = 'ExpandAllDiffs',
-  // This measures the same interval as ExpandAllDiffs, but the result is divided by the number of diffs expanded.
-  FILE_EXPAND_ALL_AVG = 'ExpandAllPerDiff',
+  // Time for making the REST API call of creating a draft comment.
+  DRAFT_CREATE = 'CreateDraftComment',
+  // Time for making the REST API call of update a draft comment.
+  DRAFT_UPDATE = 'UpdateDraftComment',
+  // Time for making the REST API call of deleting a draft comment.
+  DRAFT_DISCARD = 'DiscardDraftComment',
+  // Time to load checks from all providers for the first time.
+  CHECKS_LOAD = 'ChecksLoad',
 }
 
 export enum Interaction {
   TOGGLE_SHOW_ALL_BUTTON = 'toggle show all button',
   SHOW_TAB = 'show-tab',
   ATTENTION_SET_CHIP = 'attention-set-chip',
+  SAVE_COMMENT = 'save-comment',
+  COMMENT_SAVED = 'comment-saved',
+  DISCARD_COMMENT = 'discard-comment',
+  COMMENT_DISCARDED = 'comment-discarded',
+  ROBOT_COMMENTS_STATS = 'robot-comments-stats',
+  CHECKS_TAB_RENDERED = 'checks-tab-rendered',
+  CHECKS_CHIP_CLICKED = 'checks-chip-clicked',
+  CHECKS_CHIP_LINK_CLICKED = 'checks-chip-link-clicked',
+  CHECKS_RESULT_ROW_TOGGLE = 'checks-result-row-toggle',
+  CHECKS_ACTION_TRIGGERED = 'checks-action-triggered',
+  CHECKS_TAG_CLICKED = 'checks-tag-clicked',
+  CHECKS_RESULT_FILTER_CHANGED = 'checks-result-filter-changed',
+  CHECKS_RESULT_SECTION_TOGGLE = 'checks-result-section-toggle',
+  CHECKS_RESULT_SECTION_SHOW_ALL = 'checks-result-section-show-all',
+  CHECKS_RUN_SELECTED = 'checks-run-selected',
+  CHECKS_RUN_LINK_CLICKED = 'checks-run-link-clicked',
+  CHECKS_RUN_FILTER_CHANGED = 'checks-run-filter-changed',
+  CHECKS_RUN_SECTION_TOGGLE = 'checks-run-section-toggle',
+  CHECKS_ATTEMPT_SELECTED = 'checks-attempt-selected',
+  CHECKS_RUNS_PANEL_TOGGLE = 'checks-runs-panel-toggle',
+  CHECKS_RUNS_SELECTED_TRIGGERED = 'checks-runs-selected-triggered',
+  CHECKS_STATS = 'checks-stats',
 }

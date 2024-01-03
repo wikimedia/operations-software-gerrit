@@ -14,13 +14,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import {Subscription} from 'rxjs';
+import {map, distinctUntilChanged} from 'rxjs/operators';
 import {
   config,
   Shortcut,
   ShortcutHelpItem,
   ShortcutSection,
 } from './shortcuts-config';
-import {disableShortcuts$} from '../user/user-model';
 import {
   ComboKey,
   eventMatchesShortcut,
@@ -31,6 +32,8 @@ import {
   shouldSuppress,
 } from '../../utils/dom-util';
 import {ReportingService} from '../gr-reporting/gr-reporting';
+import {Finalizable} from '../registry';
+import {UserModel} from '../../models/user/user-model';
 
 export type SectionView = Array<{binding: string[][]; text: string}>;
 
@@ -62,13 +65,13 @@ export const COMBO_TIMEOUT_MS = 1000;
 /**
  * Shortcuts service, holds all hosts, bindings and listeners.
  */
-export class ShortcutsService {
+export class ShortcutsService implements Finalizable {
   /**
    * Keeps track of the components that are currently active such that we can
    * show a shortcut help dialog that only shows the shortcuts that are
    * currently relevant.
    */
-  private readonly activeShortcuts = new Map<HTMLElement, Shortcut[]>();
+  private readonly activeShortcuts = new Set<Shortcut>();
 
   /**
    * Keeps track of cleanup callbacks (which remove keyboard listeners) that
@@ -92,19 +95,41 @@ export class ShortcutsService {
   /** Keeps track of the corresponding user preference. */
   private shortcutsDisabled = false;
 
-  constructor(readonly reporting?: ReportingService) {
+  private readonly keydownListener: (e: KeyboardEvent) => void;
+
+  private readonly subscriptions: Subscription[] = [];
+
+  constructor(
+    readonly userModel: UserModel,
+    readonly reporting?: ReportingService
+  ) {
     for (const section of config.keys()) {
       const items = config.get(section) ?? [];
       for (const item of items) {
         this.bindings.set(item.shortcut, item.bindings);
       }
     }
-    disableShortcuts$.subscribe(x => (this.shortcutsDisabled = x));
-    document.addEventListener('keydown', (e: KeyboardEvent) => {
+    this.subscriptions.push(
+      this.userModel.preferences$
+        .pipe(
+          map(preferences => preferences?.disable_keyboard_shortcuts ?? false),
+          distinctUntilChanged()
+        )
+        .subscribe(x => (this.shortcutsDisabled = x))
+    );
+    this.keydownListener = (e: KeyboardEvent) => {
       if (!isComboKey(e.key)) return;
-      if (this.shouldSuppress(e)) return;
+      if (this.shortcutsDisabled || shouldSuppress(e)) return;
       this.comboKeyLastPressed = {key: e.key, timestampMs: Date.now()};
-    });
+    };
+    document.addEventListener('keydown', this.keydownListener);
+  }
+
+  finalize() {
+    document.removeEventListener('keydown', this.keydownListener);
+    for (const s of this.subscriptions) {
+      s.unsubscribe();
+    }
   }
 
   public _testOnly_isEmpty() {
@@ -134,29 +159,36 @@ export class ShortcutsService {
   addShortcut(
     element: HTMLElement,
     shortcut: Binding,
-    listener: (e: KeyboardEvent) => void
+    listener: (e: KeyboardEvent) => void,
+    options: {
+      shouldSuppress: boolean;
+    } = {
+      shouldSuppress: true,
+    }
   ) {
     const wrappedListener = (e: KeyboardEvent) => {
-      if (e.repeat) return;
+      if (e.repeat && !shortcut.allowRepeat) return;
       if (!eventMatchesShortcut(e, shortcut)) return;
       if (shortcut.combo) {
         if (!this.isInSpecificComboKeyMode(shortcut.combo)) return;
       } else {
         if (this.isInComboKeyMode()) return;
       }
-      if (this.shouldSuppress(e)) return;
+      if (options.shouldSuppress && shouldSuppress(e)) return;
+      // `shortcutsDisabled` refers to disabling global shortcuts like 'n'. If
+      // `shouldSuppress` is false (e.g.for Ctrl - ENTER), then don't disable
+      // the shortcut.
+      if (options.shouldSuppress && this.shortcutsDisabled) return;
       e.preventDefault();
       e.stopPropagation();
+      this.reportTriggered(e);
       listener(e);
     };
     element.addEventListener('keydown', wrappedListener);
     return () => element.removeEventListener('keydown', wrappedListener);
   }
 
-  shouldSuppress(e: KeyboardEvent) {
-    if (this.shortcutsDisabled) return true;
-    if (shouldSuppress(e)) return true;
-
+  private reportTriggered(e: KeyboardEvent) {
     // eg: {key: "k:keydown", ..., from: "gr-diff-view"}
     let key = `${e.key}:${e.type}`;
     if (this.isInSpecificComboKeyMode(ComboKey.G)) key = 'g+' + key;
@@ -170,7 +202,6 @@ export class ShortcutsService {
       from = e.currentTarget.tagName;
     }
     this.reporting?.reportInteraction('shortcut-triggered', {key, from});
-    return false;
   }
 
   createTitle(shortcutName: Shortcut, section: ShortcutSection) {
@@ -183,28 +214,47 @@ export class ShortcutsService {
     return this.bindings.get(shortcut);
   }
 
+  /**
+   * Looks up bindings for the given shortcut and calls addShortcut() for each
+   * of them. Also adds the shortcut to `activeShortcuts` and thus to the
+   * help page about active shortcuts. Returns a cleanup function for removing
+   * the bindings and the help page entry.
+   */
+  addShortcutListener(
+    shortcut: Shortcut,
+    listener: (e: KeyboardEvent) => void
+  ) {
+    const cleanups: (() => void)[] = [];
+    this.activeShortcuts.add(shortcut);
+    cleanups.push(() => {
+      this.activeShortcuts.delete(shortcut);
+      this.notifyViewListeners();
+    });
+    const bindings = this.getBindingsForShortcut(shortcut);
+    for (const binding of bindings ?? []) {
+      if (binding.docOnly) continue;
+      cleanups.push(this.addShortcut(document.body, binding, listener));
+    }
+    this.notifyViewListeners();
+    return () => {
+      for (const cleanup of cleanups ?? []) cleanup();
+    };
+  }
+
+  /**
+   * Being called by the Polymer specific KeyboardShortcutMixin.
+   */
   attachHost(host: HTMLElement, shortcuts: ShortcutListener[]) {
-    this.activeShortcuts.set(
-      host,
-      shortcuts.map(s => s.shortcut)
-    );
     const cleanups: (() => void)[] = [];
     for (const s of shortcuts) {
-      const bindings = this.getBindingsForShortcut(s.shortcut);
-      for (const binding of bindings ?? []) {
-        if (binding.docOnly) continue;
-        cleanups.push(this.addShortcut(document.body, binding, s.listener));
-      }
+      cleanups.push(this.addShortcutListener(s.shortcut, s.listener));
     }
     this.cleanupsPerHost.set(host, cleanups);
-    this.notifyViewListeners();
   }
 
   detachHost(host: HTMLElement) {
-    this.activeShortcuts.delete(host);
     const cleanups = this.cleanupsPerHost.get(host);
     for (const cleanup of cleanups ?? []) cleanup();
-    this.notifyViewListeners();
     return true;
   }
 
@@ -233,20 +283,13 @@ export class ShortcutsService {
   }
 
   activeShortcutsBySection() {
-    const activeShortcuts = new Set<Shortcut>();
-    for (const shortcuts of this.activeShortcuts.values()) {
-      for (const shortcut of shortcuts) {
-        activeShortcuts.add(shortcut);
-      }
-    }
-
     const activeShortcutsBySection = new Map<
       ShortcutSection,
       ShortcutHelpItem[]
     >();
     config.forEach((shortcutList, section) => {
       shortcutList.forEach(shortcutHelp => {
-        if (activeShortcuts.has(shortcutHelp.shortcut)) {
+        if (this.activeShortcuts.has(shortcutHelp.shortcut)) {
           if (!activeShortcutsBySection.has(section)) {
             activeShortcutsBySection.set(section, []);
           }
@@ -312,9 +355,7 @@ export class ShortcutsService {
   describeBindings(shortcut: Shortcut): string[][] | null {
     const bindings = this.bindings.get(shortcut);
     if (!bindings) return null;
-    return bindings
-      .filter(binding => !binding.docOnly)
-      .map(binding => describeBinding(binding));
+    return bindings.map(binding => describeBinding(binding));
   }
 
   notifyViewListeners() {

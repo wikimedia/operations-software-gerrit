@@ -14,11 +14,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import {Subscription} from 'rxjs';
 import '../../../styles/gr-a11y-styles';
 import '../../../styles/shared-styles';
-import '../../diff/gr-diff-cursor/gr-diff-cursor';
+import '../../../embed/diff/gr-diff-cursor/gr-diff-cursor';
 import '../../diff/gr-diff-host/gr-diff-host';
-import '../../diff/gr-comment-api/gr-comment-api';
 import '../../diff/gr-diff-preferences-dialog/gr-diff-preferences-dialog';
 import '../../edit/gr-edit-file-controls/gr-edit-file-controls';
 import '../../shared/gr-button/gr-button';
@@ -30,7 +30,6 @@ import '../../shared/gr-tooltip-content/gr-tooltip-content';
 import '../../shared/gr-copy-clipboard/gr-copy-clipboard';
 import '../../shared/gr-file-status-chip/gr-file-status-chip';
 import {flush} from '@polymer/polymer/lib/legacy/polymer.dom';
-import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-file-list_html';
 import {asyncForeach, debounce, DelayedTask} from '../../../utils/async-util';
 import {
@@ -43,7 +42,7 @@ import {pluralize} from '../../../utils/string-util';
 import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {getPluginEndpoints} from '../../shared/gr-js-api-interface/gr-plugin-endpoints';
 import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
-import {appContext} from '../../../services/app-context';
+import {getAppContext} from '../../../services/app-context';
 import {
   DiffViewMode,
   ScrollMode,
@@ -72,22 +71,24 @@ import {
   FileNameToFileInfoMap,
   NumericChangeId,
   PatchRange,
+  RevisionPatchSetNum,
 } from '../../../types/common';
 import {DiffPreferencesInfo} from '../../../types/diff';
 import {GrDiffHost} from '../../diff/gr-diff-host/gr-diff-host';
 import {GrDiffPreferencesDialog} from '../../diff/gr-diff-preferences-dialog/gr-diff-preferences-dialog';
-import {GrDiffCursor} from '../../diff/gr-diff-cursor/gr-diff-cursor';
+import {GrDiffCursor} from '../../../embed/diff/gr-diff-cursor/gr-diff-cursor';
 import {GrCursorManager} from '../../shared/gr-cursor-manager/gr-cursor-manager';
 import {PolymerSpliceChange} from '@polymer/polymer/interfaces';
 import {ChangeComments} from '../../diff/gr-comment-api/gr-comment-api';
 import {ParsedChangeInfo, PatchSetFile} from '../../../types/types';
 import {Timing} from '../../../constants/reporting';
 import {RevisionInfo} from '../../shared/revision-info/revision-info';
-import {preferences$} from '../../../services/user/user-model';
-import {changeComments$} from '../../../services/comments/comments-model';
-import {Subject} from 'rxjs';
-import {takeUntil} from 'rxjs/operators';
 import {listen} from '../../../services/shortcuts/shortcuts-service';
+import {select} from '../../../utils/observable-util';
+import {resolve, DIPolymerElement} from '../../../models/dependency';
+import {browserModelToken} from '../../../models/browser/browser-model';
+import {commentsModelToken} from '../../../models/comments/comments-model';
+import {changeModelToken} from '../../../models/change/change-model';
 
 export const DEFAULT_NUM_FILES_SHOWN = 200;
 
@@ -109,6 +110,7 @@ export interface GrFileList {
 interface ReviewedFileInfo extends FileInfo {
   isReviewed?: boolean;
 }
+
 export interface NormalizedFileInfo extends ReviewedFileInfo {
   __path: string;
 }
@@ -176,7 +178,7 @@ export type FileNameToReviewedFileInfoMap = {[name: string]: ReviewedFileInfo};
  */
 
 // This avoids JSC_DYNAMIC_EXTENDS_WITHOUT_JSDOC closure compiler error.
-const base = KeyboardShortcutMixin(PolymerElement);
+const base = KeyboardShortcutMixin(DIPolymerElement);
 
 @customElement('gr-file-list')
 export class GrFileList extends base {
@@ -221,7 +223,7 @@ export class GrFileList extends base {
   _loggedIn = false;
 
   @property({type: Array})
-  _reviewed?: string[] = [];
+  reviewed?: string[] = [];
 
   @property({type: Object, notify: true, observer: '_updateDiffPreferences'})
   diffPrefs?: DiffPreferencesInfo;
@@ -312,11 +314,19 @@ export class GrFileList extends base {
   @property({type: Array})
   _dynamicPrependedContentEndpoints?: string[];
 
-  private readonly reporting = appContext.reportingService;
+  private readonly reporting = getAppContext().reportingService;
 
-  private readonly restApiService = appContext.restApiService;
+  private readonly restApiService = getAppContext().restApiService;
 
-  disconnected$ = new Subject();
+  private readonly userModel = getAppContext().userModel;
+
+  private readonly getChangeModel = resolve(this, changeModelToken);
+
+  private readonly getCommentsModel = resolve(this, commentsModelToken);
+
+  private readonly getBrowserModel = resolve(this, browserModelToken);
+
+  private subscriptions: Subscription[] = [];
 
   /** Called in disconnectedCallback. */
   private cleanups: (() => void)[] = [];
@@ -359,9 +369,11 @@ export class GrFileList extends base {
     ];
   }
 
-  private fileCursor = new GrCursorManager();
+  // private but used in test
+  fileCursor = new GrCursorManager();
 
-  private diffCursor = new GrDiffCursor();
+  // private but used in test
+  diffCursor?: GrDiffCursor;
 
   constructor() {
     super();
@@ -372,11 +384,27 @@ export class GrFileList extends base {
 
   override connectedCallback() {
     super.connectedCallback();
-    changeComments$
-      .pipe(takeUntil(this.disconnected$))
-      .subscribe(changeComments => {
+    this.subscriptions = [
+      this.getCommentsModel().changeComments$.subscribe(changeComments => {
         this.changeComments = changeComments;
-      });
+      }),
+      this.getBrowserModel().diffViewMode$.subscribe(
+        diffView => (this.diffViewMode = diffView)
+      ),
+      this.userModel.diffPreferences$.subscribe(diffPreferences => {
+        this.diffPrefs = diffPreferences;
+      }),
+      select(
+        this.userModel.preferences$,
+        prefs => !!prefs?.size_bar_in_change_table
+      ).subscribe(sizeBarInChangeTable => {
+        this._showSizeBars = sizeBarInChangeTable;
+      }),
+      this.getChangeModel().reviewedFiles$.subscribe(reviewedFiles => {
+        this.reviewed = reviewedFiles ?? [];
+      }),
+    ];
+
     getPluginLoader()
       .awaitPluginsLoaded()
       .then(() => {
@@ -425,11 +453,16 @@ export class GrFileList extends base {
         shouldSuppress: true,
       })
     );
+    this.diffCursor = new GrDiffCursor();
+    this.diffCursor.replaceDiffs(this.diffs);
   }
 
   override disconnectedCallback() {
-    this.disconnected$.next();
-    this.diffCursor.dispose();
+    for (const s of this.subscriptions) {
+      s.unsubscribe();
+    }
+    this.subscriptions = [];
+    this.diffCursor?.dispose();
     this.fileCursor.unsetCursor();
     this._cancelDiffs();
     this.loadingTask?.cancel();
@@ -448,7 +481,7 @@ export class GrFileList extends base {
     this._loading = true;
 
     this.collapseAllDiffs();
-    const promises = [];
+    const promises: Promise<boolean | void>[] = [];
 
     promises.push(
       this.restApiService
@@ -459,30 +492,8 @@ export class GrFileList extends base {
     );
 
     promises.push(
-      this._getLoggedIn()
-        .then(loggedIn => (this._loggedIn = loggedIn))
-        .then(loggedIn => {
-          if (!loggedIn) {
-            return;
-          }
-
-          return this._getReviewedFiles(changeNum, patchRange).then(
-            reviewed => {
-              this._reviewed = reviewed;
-            }
-          );
-        })
+      this._getLoggedIn().then(loggedIn => (this._loggedIn = loggedIn))
     );
-
-    promises.push(
-      this._getDiffPreferences().then(prefs => {
-        this.diffPrefs = prefs;
-      })
-    );
-
-    preferences$.pipe(takeUntil(this.disconnected$)).subscribe(prefs => {
-      this._showSizeBars = !!prefs?.size_bar_in_change_table;
-    });
 
     return Promise.all(promises).then(() => {
       this._loading = false;
@@ -572,15 +583,8 @@ export class GrFileList extends base {
     }, createDefaultPatchChange());
   }
 
-  _getDiffPreferences() {
-    return this.restApiService.getDiffPreferences();
-  }
-
-  _getPreferences() {
-    return this.restApiService.getPreferences();
-  }
-
-  private _toggleFileExpanded(file: PatchSetFile) {
+  // private but used in test
+  _toggleFileExpanded(file: PatchSetFile) {
     // Is the path in the list of expanded diffs? If so, remove it, otherwise
     // add it to the list.
     const indexInExpanded = this._expandedFiles.findIndex(
@@ -606,7 +610,6 @@ export class GrFileList extends base {
       return;
     }
     // Re-render all expanded diffs sequentially.
-    this.reporting.time(Timing.FILE_EXPAND_ALL);
     this._renderInOrder(
       this._expandedFiles,
       this.diffs,
@@ -642,7 +645,7 @@ export class GrFileList extends base {
       this._expandedFiles.length,
       this._files.length
     );
-    this.diffCursor.handleDiffUpdate();
+    this.diffCursor?.handleDiffUpdate();
   }
 
   /**
@@ -723,7 +726,8 @@ export class GrFileList extends base {
     return commentThreadCount === 0 ? '' : `${commentThreadCount}c`;
   }
 
-  private _reviewFile(path: string, reviewed?: boolean) {
+  // private but used in test
+  _reviewFile(path: string, reviewed?: boolean) {
     if (this.editMode) {
       return Promise.resolve();
     }
@@ -743,7 +747,7 @@ export class GrFileList extends base {
       throw new Error('changeNum and patchRange must be set');
     }
 
-    return this.restApiService.saveFileReviewed(
+    return this.getChangeModel().setReviewedFilesStatus(
       this.changeNum,
       this.patchRange.patchNum,
       path,
@@ -768,8 +772,7 @@ export class GrFileList extends base {
     const paths = Object.keys(response).sort(specialFilePathCompare);
     const files: NormalizedFileInfo[] = [];
     for (let i = 0; i < paths.length; i++) {
-      // TODO(TS): make copy instead of as NormalizedFileInfo
-      const info = response[paths[i]] as NormalizedFileInfo;
+      const info = {...response[paths[i]]} as NormalizedFileInfo;
       info.__path = paths[i];
       info.lines_inserted = info.lines_inserted || 0;
       info.lines_deleted = info.lines_deleted || 0;
@@ -884,12 +887,12 @@ export class GrFileList extends base {
 
   _handleLeftPane() {
     if (this._noDiffsExpanded()) return;
-    this.diffCursor.moveLeft();
+    this.diffCursor?.moveLeft();
   }
 
   _handleRightPane() {
     if (this._noDiffsExpanded()) return;
-    this.diffCursor.moveRight();
+    this.diffCursor?.moveRight();
   }
 
   _handleToggleInlineDiff() {
@@ -899,7 +902,7 @@ export class GrFileList extends base {
 
   _handleCursorNext(e: KeyboardEvent) {
     if (this.filesExpanded === FilesExpandedState.ALL) {
-      this.diffCursor.moveDown();
+      this.diffCursor?.moveDown();
       this._displayLine = true;
     } else {
       if (e.key === Key.DOWN) return;
@@ -910,7 +913,7 @@ export class GrFileList extends base {
 
   _handleCursorPrev(e: KeyboardEvent) {
     if (this.filesExpanded === FilesExpandedState.ALL) {
-      this.diffCursor.moveUp();
+      this.diffCursor?.moveUp();
       this._displayLine = true;
     } else {
       if (e.key === Key.UP) return;
@@ -921,7 +924,7 @@ export class GrFileList extends base {
 
   _handleNewComment() {
     this.classList.remove('hideComments');
-    this.diffCursor.createCommentInPlace();
+    this.diffCursor?.createCommentInPlace();
   }
 
   handleOpenFile() {
@@ -934,22 +937,22 @@ export class GrFileList extends base {
 
   _handleNextChunk() {
     if (this._noDiffsExpanded()) return;
-    this.diffCursor.moveToNextChunk();
+    this.diffCursor?.moveToNextChunk();
   }
 
   _handleNextComment() {
     if (this._noDiffsExpanded()) return;
-    this.diffCursor.moveToNextCommentThread();
+    this.diffCursor?.moveToNextCommentThread();
   }
 
   _handlePrevChunk() {
     if (this._noDiffsExpanded()) return;
-    this.diffCursor.moveToPreviousChunk();
+    this.diffCursor?.moveToPreviousChunk();
   }
 
   _handlePrevComment() {
     if (this._noDiffsExpanded()) return;
-    this.diffCursor.moveToPreviousCommentThread();
+    this.diffCursor?.moveToPreviousCommentThread();
   }
 
   _handleToggleFileReviewed() {
@@ -974,7 +977,7 @@ export class GrFileList extends base {
   }
 
   _openCursorFile() {
-    const diff = this.diffCursor.getTargetDiffElement();
+    const diff = this.diffCursor?.getTargetDiffElement();
     if (!this.change || !diff || !this.patchRange || !diff.path) {
       throw new Error('change, diff and patchRange must be all set and valid');
     }
@@ -1017,28 +1020,23 @@ export class GrFileList extends base {
 
   _computeDiffURL(
     change?: ParsedChangeInfo,
-    patchRange?: PatchRange,
+    basePatchNum?: BasePatchSetNum,
+    patchNum?: RevisionPatchSetNum,
     path?: string,
     editMode?: boolean
   ) {
-    // Polymer 2: check for undefined
     if (
       change === undefined ||
-      !patchRange?.patchNum ||
+      patchNum === undefined ||
       path === undefined ||
       editMode === undefined
     ) {
       return;
     }
     if (editMode && path !== SpecialFilePath.MERGE_LIST) {
-      return GerritNav.getEditUrlForDiff(change, path, patchRange.patchNum);
+      return GerritNav.getEditUrlForDiff(change, path, patchNum);
     }
-    return GerritNav.getUrlForDiff(
-      change,
-      path,
-      patchRange.patchNum,
-      patchRange.basePatchNum
-    );
+    return GerritNav.getUrlForDiff(change, path, patchNum, basePatchNum);
   }
 
   _formatBytes(bytes?: number) {
@@ -1116,18 +1114,17 @@ export class GrFileList extends base {
 
   _handleShowParent1(): void {
     if (!this.change || !this.patchRange) return;
-    GerritNav.navigateToChange(
-      this.change,
-      this.patchRange.patchNum,
-      -1 as BasePatchSetNum // Parent 1
-    );
+    GerritNav.navigateToChange(this.change, {
+      patchNum: this.patchRange.patchNum,
+      basePatchNum: -1 as BasePatchSetNum, // Parent 1
+    });
   }
 
   @observe(
     '_filesByPath',
     'changeComments',
     'patchRange',
-    '_reviewed',
+    'reviewed',
     '_loading'
   )
   _computeFiles(
@@ -1197,7 +1194,7 @@ export class GrFileList extends base {
 
   _updateDiffCursor() {
     // Overwrite the cursor's list of diffs:
-    this.diffCursor.replaceDiffs(this.diffs);
+    this.diffCursor?.replaceDiffs(this.diffs);
   }
 
   _filesChanged() {
@@ -1325,17 +1322,16 @@ export class GrFileList extends base {
     // Required so that the newly created diff view is included in this.diffs.
     flush();
 
-    this.reporting.time(Timing.FILE_EXPAND_ALL);
-
     if (newFiles.length) {
       this._renderInOrder(newFiles, this.diffs, newFiles.length);
     }
 
     this._updateDiffCursor();
-    this.diffCursor.reInitAndUpdateStops();
+    this.diffCursor?.reInitAndUpdateStops();
   }
 
-  private _clearCollapsedDiffs(collapsedDiffs: GrDiffHost[]) {
+  // private but used in test
+  _clearCollapsedDiffs(collapsedDiffs: GrDiffHost[]) {
     for (const diff of collapsedDiffs) {
       diff.cancel();
       diff.clearDiffContent();
@@ -1347,15 +1343,16 @@ export class GrFileList extends base {
    * for each path in order, awaiting the previous render to complete before
    * continuing.
    *
-   * @param initialCount The total number of paths in the pass. This
-   * is used to generate log messages.
+   * private but used in test
+   *
+   * @param initialCount The total number of paths in the pass.
    */
-  private _renderInOrder(
+  async _renderInOrder(
     files: PatchSetFile[],
     diffElements: GrDiffHost[],
     initialCount: number
   ) {
-    let iter = 0;
+    this.reporting.time(Timing.FILE_EXPAND_ALL);
 
     for (const file of files) {
       const path = file.path;
@@ -1365,12 +1362,10 @@ export class GrFileList extends base {
       }
     }
 
-    asyncForeach(files, (file, cancel) => {
+    await asyncForeach(files, (file, cancel) => {
       const path = file.path;
       this._cancelForEachDiff = cancel;
 
-      iter++;
-      console.info('Expanding diff', iter, 'of', initialCount, ':', path);
       const diffElem = this._findDiffByPath(path, diffElements);
       if (!diffElem) {
         this.reporting.error(
@@ -1382,33 +1377,39 @@ export class GrFileList extends base {
         throw new Error('diffPrefs must be set');
       }
 
-      const promises: Array<Promise<unknown>> = [diffElem.reload()];
-      if (this._loggedIn && !this.diffPrefs.manual_review) {
-        promises.push(this._reviewFile(path, true));
+      // When one file is expanded individually then automatically mark as
+      // reviewed, if the user's diff prefs request it. Doing this for
+      // "Expand All" would not be what the user wants, because there is no
+      // control over which diffs were actually seen. And for lots of diffs
+      // that would even be a problem for write QPS quota.
+      if (
+        this._loggedIn &&
+        !this.diffPrefs.manual_review &&
+        initialCount === 1
+      ) {
+        this._reviewFile(path, true);
       }
-      return Promise.all(promises);
-    }).then(() => {
-      this._cancelForEachDiff = undefined;
-      console.info('Finished expanding', initialCount, 'diff(s)');
-      this.reporting.timeEndWithAverage(
-        Timing.FILE_EXPAND_ALL,
-        Timing.FILE_EXPAND_ALL_AVG,
-        initialCount
-      );
-      /* Block diff cursor from auto scrolling after files are done rendering.
-      * This prevents the bug where the screen jumps to the first diff chunk
-      * after files are done being rendered after the user has already begun
-      * scrolling.
-      * This also however results in the fact that the cursor does not auto
-      * focus on the first diff chunk on a small screen. This is however, a use
-      * case we are willing to not support for now.
-
-      * Using handleDiffUpdate resulted in diffCursor.row being set which
-      * prevented the issue of scrolling to top when we expand the second
-      * file individually.
-      */
-      this.diffCursor.reInitAndUpdateStops();
+      return diffElem.reload();
     });
+
+    this._cancelForEachDiff = undefined;
+    this.reporting.timeEnd(Timing.FILE_EXPAND_ALL, {
+      count: initialCount,
+      height: this.clientHeight,
+    });
+    /* Block diff cursor from auto scrolling after files are done rendering.
+    * This prevents the bug where the screen jumps to the first diff chunk
+    * after files are done being rendered after the user has already begun
+    * scrolling.
+    * This also however results in the fact that the cursor does not auto
+    * focus on the first diff chunk on a small screen. This is however, a use
+    * case we are willing to not support for now.
+
+    * Using handleDiffUpdate resulted in diffCursor.row being set which
+    * prevented the issue of scrolling to top when we expand the second
+    * file individually.
+    */
+    this.diffCursor?.reInitAndUpdateStops();
   }
 
   /** Cancel the rendering work of every diff in the list */
@@ -1564,7 +1565,7 @@ export class GrFileList extends base {
     } else if (!this._showBarsForPath(path)) {
       hideClass = 'invisible';
     }
-    return `sizeBars desktop ${hideClass}`;
+    return `sizeBars ${hideClass}`;
   }
 
   /**
@@ -1621,11 +1622,9 @@ export class GrFileList extends base {
   _reportRenderedRow(index: number) {
     if (index === this._shownFiles.length - 1) {
       setTimeout(() => {
-        this.reporting.timeEndWithAverage(
-          Timing.FILE_RENDER,
-          Timing.FILE_RENDER_AVG,
-          this._reportinShownFilesIncrement
-        );
+        this.reporting.timeEnd(Timing.FILE_RENDER, {
+          count: this._reportinShownFilesIncrement,
+        });
       }, 1);
     }
     return '';
@@ -1640,9 +1639,7 @@ export class GrFileList extends base {
   }
 
   _handleReloadingDiffPreference() {
-    this._getDiffPreferences().then(prefs => {
-      this.diffPrefs = prefs;
-    });
+    this.userModel.getDiffPreferences();
   }
 
   /**

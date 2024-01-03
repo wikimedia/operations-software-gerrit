@@ -21,18 +21,7 @@ import com.google.gerrit.extensions.common.AccountInfo;
 /** Notified when one or more references are modified. */
 @ExtensionPoint
 public interface GitReferenceUpdatedListener {
-  interface Event extends ProjectEvent {
-    String getRefName();
-
-    String getOldObjectId();
-
-    String getNewObjectId();
-
-    boolean isCreate();
-
-    boolean isDelete();
-
-    boolean isNonFastForward();
+  interface Event extends ProjectEvent, GitBatchRefUpdateListener.UpdatedRef {
     /** The updater, could be null if it's the server. */
     @Nullable
     AccountInfo getUpdater();

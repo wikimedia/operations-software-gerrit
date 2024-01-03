@@ -55,6 +55,10 @@ export interface ItemSelectedEvent {
 // This avoids JSC_DYNAMIC_EXTENDS_WITHOUT_JSDOC closure compiler error.
 const base = IronFitMixin(PolymerElement, IronFitBehavior as IronFitBehavior);
 
+/**
+ * @attr {String} vertical-align - inherited from IronOverlay
+ * @attr {String} horizontal-align - inherited from IronOverlay
+ */
 @customElement('gr-autocomplete-dropdown')
 export class GrAutocompleteDropdown extends base {
   static get template() {
@@ -103,19 +107,19 @@ export class GrAutocompleteDropdown extends base {
   override connectedCallback() {
     super.connectedCallback();
     this.cleanups.push(
-      addShortcut(this, {key: Key.UP}, e => this._handleUp(e))
+      addShortcut(this, {key: Key.UP}, () => this._handleUp())
     );
     this.cleanups.push(
-      addShortcut(this, {key: Key.DOWN}, e => this._handleDown(e))
+      addShortcut(this, {key: Key.DOWN}, () => this._handleDown())
     );
     this.cleanups.push(
-      addShortcut(this, {key: Key.ENTER}, e => this._handleEnter(e))
+      addShortcut(this, {key: Key.ENTER}, () => this._handleEnter())
     );
     this.cleanups.push(
-      addShortcut(this, {key: Key.ESC}, _ => this._handleEscape())
+      addShortcut(this, {key: Key.ESC}, () => this._handleEscape())
     );
     this.cleanups.push(
-      addShortcut(this, {key: Key.TAB}, e => this._handleTab(e))
+      addShortcut(this, {key: Key.TAB}, () => this._handleTab())
     );
   }
 
@@ -132,46 +136,30 @@ export class GrAutocompleteDropdown extends base {
 
   open() {
     this.isHidden = false;
-    this._resetCursorStops();
-    // Refit should run after we call Polymer.flush inside _resetCursorStops
-    this.refit();
+    this.onSuggestionsChanged();
   }
 
   getCurrentText() {
     return this.getCursorTarget()?.dataset['value'] || '';
   }
 
-  _handleUp(e: Event) {
-    if (!this.isHidden) {
-      e.preventDefault();
-      e.stopPropagation();
-      this.cursorUp();
-    }
+  _handleUp() {
+    if (!this.isHidden) this.cursorUp();
   }
 
-  _handleDown(e: Event) {
-    if (!this.isHidden) {
-      e.preventDefault();
-      e.stopPropagation();
-      this.cursorDown();
-    }
+  _handleDown() {
+    if (!this.isHidden) this.cursorDown();
   }
 
   cursorDown() {
-    if (!this.isHidden) {
-      this.cursor.next();
-    }
+    if (!this.isHidden) this.cursor.next();
   }
 
   cursorUp() {
-    if (!this.isHidden) {
-      this.cursor.previous();
-    }
+    if (!this.isHidden) this.cursor.previous();
   }
 
-  _handleTab(e: Event) {
-    e.preventDefault();
-    e.stopPropagation();
+  _handleTab() {
     this.dispatchEvent(
       new CustomEvent<ItemSelectedEvent>('item-selected', {
         detail: {
@@ -184,9 +172,7 @@ export class GrAutocompleteDropdown extends base {
     );
   }
 
-  _handleEnter(e: Event) {
-    e.preventDefault();
-    e.stopPropagation();
+  _handleEnter() {
     this.dispatchEvent(
       new CustomEvent<ItemSelectedEvent>('item-selected', {
         detail: {
@@ -235,7 +221,7 @@ export class GrAutocompleteDropdown extends base {
   }
 
   @observe('suggestions')
-  _resetCursorStops() {
+  onSuggestionsChanged() {
     if (this.suggestions.length > 0) {
       if (!this.isHidden) {
         flush();
@@ -247,6 +233,7 @@ export class GrAutocompleteDropdown extends base {
     } else {
       this.cursor.stops = [];
     }
+    this.refit();
   }
 
   @observe('index')

@@ -18,8 +18,8 @@ import {LitElement, css, html} from 'lit';
 import {customElement, property} from 'lit/decorators';
 import {Action} from '../../api/checks';
 import {checkRequiredProperty} from '../../utils/common-util';
-import {appContext} from '../../services/app-context';
-
+import {resolve} from '../../models/dependency';
+import {checksModelToken} from '../../models/checks/checks-model';
 @customElement('gr-checks-action')
 export class GrChecksAction extends LitElement {
   @property({type: Object})
@@ -28,7 +28,11 @@ export class GrChecksAction extends LitElement {
   @property({type: Object})
   eventTarget: HTMLElement | null = null;
 
-  private checksService = appContext.checksService;
+  /** In what context is <gr-checks-action> rendered? Just for reporting. */
+  @property({type: String})
+  context = 'unknown';
+
+  private getChecksModel = resolve(this, checksModelToken);
 
   override connectedCallback() {
     super.connectedCallback();
@@ -59,9 +63,9 @@ export class GrChecksAction extends LitElement {
     return html`
       <gr-button
         link
-        ?disabled="${this.action.disabled}"
+        ?disabled=${this.action.disabled}
         class="action"
-        @click="${(e: Event) => this.handleClick(e)}"
+        @click=${(e: Event) => this.handleClick(e)}
       >
         ${this.action.name}
       </gr-button>
@@ -72,7 +76,7 @@ export class GrChecksAction extends LitElement {
   private renderTooltip() {
     if (!this.action.tooltip) return;
     return html`
-      <paper-tooltip offset="5" fit-to-visible-bounds>
+      <paper-tooltip offset="5" ?fitToVisibleBounds=${true}>
         ${this.action.tooltip}
       </paper-tooltip>
     `;
@@ -80,7 +84,7 @@ export class GrChecksAction extends LitElement {
 
   handleClick(e: Event) {
     e.stopPropagation();
-    this.checksService.triggerAction(this.action);
+    this.getChecksModel().triggerAction(this.action, undefined, this.context);
   }
 }
 

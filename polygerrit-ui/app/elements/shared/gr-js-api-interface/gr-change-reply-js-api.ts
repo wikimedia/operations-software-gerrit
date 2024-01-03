@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import {GrReplyDialog} from '../../../services/gr-rest-api/gr-rest-api';
+import {GrReplyDialog} from '../../change/gr-reply-dialog/gr-reply-dialog';
 import {PluginApi, TargetElement} from '../../../api/plugin';
 import {JsApiService} from './gr-js-api-types';
 import {
@@ -25,14 +25,14 @@ import {
   ReplyChangedCallback,
   ValueChangedDetail,
 } from '../../../api/change-reply';
-import {appContext} from '../../../services/app-context';
+import {getAppContext} from '../../../services/app-context';
 import {HookApi, PluginElement} from '../../../api/hook';
 
 /**
  * GrChangeReplyInterface, provides a set of handy methods on reply dialog.
  */
 export class GrChangeReplyInterface implements ChangeReplyPluginApi {
-  private readonly reporting = appContext.reportingService;
+  private readonly reporting = getAppContext().reportingService;
 
   constructor(
     readonly plugin: PluginApi,
@@ -47,7 +47,7 @@ export class GrChangeReplyInterface implements ChangeReplyPluginApi {
     ) as unknown as GrReplyDialog;
   }
 
-  getLabelValue(label: string): string {
+  getLabelValue(label: string): string | number | undefined {
     this.reporting.trackApi(this.plugin, 'reply', 'getLabelValue');
     return this._el.getLabelValue(label);
   }

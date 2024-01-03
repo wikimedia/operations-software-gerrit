@@ -16,6 +16,8 @@
  */
 
 import {StorageLocation, StorageObject, StorageService} from './gr-storage';
+import {Finalizable} from '../registry';
+import {NumericChangeId} from '../../types/common';
 
 export const DURATION_DAY = 24 * 60 * 60 * 1000;
 
@@ -23,16 +25,17 @@ export const DURATION_DAY = 24 * 60 * 60 * 1000;
 const CLEANUP_THROTTLE_INTERVAL = DURATION_DAY;
 
 const CLEANUP_PREFIXES_MAX_AGE_MAP = new Map<string, number>();
-CLEANUP_PREFIXES_MAX_AGE_MAP.set('respectfultip', 14 * DURATION_DAY);
 CLEANUP_PREFIXES_MAX_AGE_MAP.set('draft', DURATION_DAY);
 CLEANUP_PREFIXES_MAX_AGE_MAP.set('editablecontent', DURATION_DAY);
 
-export class GrStorageService implements StorageService {
+export class GrStorageService implements StorageService, Finalizable {
   private lastCleanup = 0;
 
   private readonly storage = window.localStorage;
 
   private exceededQuota = false;
+
+  finalize() {}
 
   getDraftComment(location: StorageLocation): StorageObject | null {
     this.cleanupItems();
@@ -61,20 +64,28 @@ export class GrStorageService implements StorageService {
     });
   }
 
-  getRespectfulTipVisibility(): StorageObject | null {
-    this.cleanupItems();
-    return this.getObject('respectfultip:visibility');
-  }
-
-  setRespectfulTipVisibility(delayDays = 0) {
-    this.cleanupItems();
-    this.setObject('respectfultip:visibility', {
-      updated: Date.now() + delayDays * DURATION_DAY,
-    });
-  }
-
   eraseEditableContentItem(key: string) {
     this.storage.removeItem(this.getEditableContentKey(key));
+  }
+
+  /**
+   * Deletes all keys for cached edits.
+   *
+   * @param changeNum
+   */
+  eraseEditableContentItemsForChangeEdit(changeNum?: NumericChangeId) {
+    if (!changeNum) return;
+
+    // Fetch all keys and then match them up to the keys we want.
+    for (const key of Object.keys(this.storage)) {
+      // Only delete the value that starts with editablecontent:c${changeNum}_ps
+      // to prevent deleting unrelated keys.
+      if (key.startsWith(`editablecontent:c${changeNum}_ps`)) {
+        // We have to remove editablecontent: from the string as it is
+        // automatically added to the string within the storage.
+        this.eraseEditableContentItem(key.replace('editablecontent:', ''));
+      }
+    }
   }
 
   private getDraftKey(location: StorageLocation): string {
@@ -136,16 +147,17 @@ export class GrStorageService implements StorageService {
     }
     try {
       this.storage.setItem(key, JSON.stringify(obj));
-    } catch (exc) {
-      // Catch for QuotaExceededError and disable writes on local storage the
-      // first time that it occurs.
-      if (exc.code === 22) {
-        this.exceededQuota = true;
-        console.warn('Local storage quota exceeded: disabling');
-        return;
-      } else {
-        throw exc;
+    } catch (exc: unknown) {
+      if (exc instanceof DOMException) {
+        // Catch for QuotaExceededError and disable writes on local storage the
+        // first time that it occurs.
+        if (exc.code === 22) {
+          this.exceededQuota = true;
+          console.warn('Local storage quota exceeded: disabling');
+          return;
+        }
       }
+      throw exc;
     }
   }
 }

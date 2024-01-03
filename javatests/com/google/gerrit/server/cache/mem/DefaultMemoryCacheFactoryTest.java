@@ -23,7 +23,6 @@ import com.google.common.cache.RemovalNotification;
 import com.google.common.cache.Weigher;
 import com.google.common.collect.ImmutableMap;
 import com.google.gerrit.metrics.DisabledMetricMaker;
-import com.google.gerrit.server.cache.CacheBackend;
 import com.google.gerrit.server.cache.CacheDef;
 import com.google.gerrit.server.cache.ForwardingRemovalListener;
 import com.google.gerrit.server.git.WorkQueue;
@@ -100,7 +99,7 @@ public class DefaultMemoryCacheFactoryTest {
   @Test
   public void shouldNotBlockEvictionsWhenCacheIsDisabledByDefault() throws Exception {
     LoadingCache<Integer, Integer> disabledCache =
-        memoryCacheFactory.build(newCacheDef(0), newCacheLoader(identity()), CacheBackend.CAFFEINE);
+        memoryCacheFactory.build(newCacheDef(0), newCacheLoader(identity()));
 
     assertCacheEvictionIsNotBlocking(disabledCache);
   }
@@ -109,7 +108,7 @@ public class DefaultMemoryCacheFactoryTest {
   public void shouldNotBlockEvictionsWhenCacheIsDisabledByConfiguration() throws Exception {
     memoryCacheConfig.setInt("cache", TEST_CACHE, "memoryLimit", 0);
     LoadingCache<Integer, Integer> disabledCache =
-        memoryCacheFactory.build(newCacheDef(1), newCacheLoader(identity()), CacheBackend.CAFFEINE);
+        memoryCacheFactory.build(newCacheDef(1), newCacheLoader(identity()));
 
     assertCacheEvictionIsNotBlocking(disabledCache);
   }
@@ -117,7 +116,7 @@ public class DefaultMemoryCacheFactoryTest {
   @Test
   public void shouldBlockEvictionsWhenCacheIsEnabled() throws Exception {
     LoadingCache<Integer, Integer> cache =
-        memoryCacheFactory.build(newCacheDef(1), newCacheLoader(identity()), CacheBackend.CAFFEINE);
+        memoryCacheFactory.build(newCacheDef(1), newCacheLoader(identity()));
 
     ScheduledFuture<Integer> cacheValue =
         executor.schedule(() -> cache.getUnchecked(TEST_CACHE_KEY), 0, TimeUnit.SECONDS);
@@ -143,7 +142,7 @@ public class DefaultMemoryCacheFactoryTest {
   private void shouldRunEvictionListenerInThreadPool(
       DefaultMemoryCacheFactory cacheFactory, String threadPoolPrefix) throws Exception {
     LoadingCache<Integer, Integer> cache =
-        cacheFactory.build(newCacheDef(1), newCacheLoader(identity()), CacheBackend.CAFFEINE);
+        cacheFactory.build(newCacheDef(1), newCacheLoader(identity()));
 
     cache.put(TEST_CACHE_KEY, TEST_CACHE_VALUE);
 
@@ -159,8 +158,7 @@ public class DefaultMemoryCacheFactoryTest {
   @Test
   public void shouldRunEvictionListenerWithDirectExecutor() throws Exception {
     LoadingCache<Integer, Integer> cache =
-        memoryCacheFactoryDirectExecutor.build(
-            newCacheDef(1), newCacheLoader(identity()), CacheBackend.CAFFEINE);
+        memoryCacheFactoryDirectExecutor.build(newCacheDef(1), newCacheLoader(identity()));
 
     cache.put(TEST_CACHE_KEY, TEST_CACHE_VALUE);
     cache.invalidate(TEST_CACHE_KEY);
@@ -171,7 +169,7 @@ public class DefaultMemoryCacheFactoryTest {
   @Test
   public void shouldLoadAllKeysWithDisabledCache() throws Exception {
     LoadingCache<Integer, Integer> disabledCache =
-        memoryCacheFactory.build(newCacheDef(0), newCacheLoader(identity()), CacheBackend.CAFFEINE);
+        memoryCacheFactory.build(newCacheDef(0), newCacheLoader(identity()));
 
     List<Integer> keys = Arrays.asList(1, 2);
     ImmutableMap<Integer, Integer> entries = disabledCache.getAll(keys);
@@ -196,7 +194,7 @@ public class DefaultMemoryCacheFactoryTest {
   }
 
   private CacheLoader<Integer, Integer> newCacheLoader(Function<Integer, Integer> loadFunc) {
-    return new CacheLoader<Integer, Integer>() {
+    return new CacheLoader<>() {
 
       @Override
       public Integer load(Integer n) throws Exception {
@@ -206,6 +204,7 @@ public class DefaultMemoryCacheFactoryTest {
           v = loadFunc.apply(n);
           cacheGetCompleted.await(TEST_TIMEOUT_SEC, TimeUnit.SECONDS);
         } catch (TimeoutException | BrokenBarrierException e) {
+          // Just continue
         }
         return v;
       }
@@ -261,7 +260,7 @@ public class DefaultMemoryCacheFactoryTest {
   }
 
   private CacheDef<Integer, Integer> newCacheDef(long maximumWeight) {
-    return new CacheDef<Integer, Integer>() {
+    return new CacheDef<>() {
 
       @Override
       public String name() {

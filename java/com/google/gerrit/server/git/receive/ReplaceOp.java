@@ -48,13 +48,13 @@ import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.account.AccountResolver;
 import com.google.gerrit.server.approval.ApprovalsUtil;
-import com.google.gerrit.server.change.AddReviewersOp;
 import com.google.gerrit.server.change.ChangeKindCache;
 import com.google.gerrit.server.change.NotifyResolver;
 import com.google.gerrit.server.change.ReviewerModifier;
 import com.google.gerrit.server.change.ReviewerModifier.InternalReviewerInput;
 import com.google.gerrit.server.change.ReviewerModifier.ReviewerModification;
 import com.google.gerrit.server.change.ReviewerModifier.ReviewerModificationList;
+import com.google.gerrit.server.change.ReviewerOp;
 import com.google.gerrit.server.config.SendEmailExecutor;
 import com.google.gerrit.server.config.UrlFormatter;
 import com.google.gerrit.server.extensions.events.CommentAdded;
@@ -345,9 +345,8 @@ public class ReplaceOp implements BatchUpdateOp {
       update.putReviewer(ctx.getAccountId(), REVIEWER);
     }
 
-    // Approvals that are being set in the new patch-set during this operation are not available yet
-    // outside of the scope of this method. Only copied approvals are set here.
-    approvalsUtil.byPatchSet(ctx.getNotes(), newPatchSet).forEach(a -> update.putCopiedApproval(a));
+    approvalsUtil.persistCopiedApprovals(
+        ctx.getNotes(), newPatchSet, ctx.getRevWalk(), ctx.getRepoView().getConfig(), update);
 
     mailMessage = insertChangeMessage(update, ctx, reviewMessage);
     if (mergedByPushOp == null) {
@@ -407,8 +406,7 @@ public class ReplaceOp implements BatchUpdateOp {
     return input;
   }
 
-  private String insertChangeMessage(ChangeUpdate update, ChangeContext ctx, String reviewMessage)
-      throws IOException {
+  private String insertChangeMessage(ChangeUpdate update, ChangeContext ctx, String reviewMessage) {
     String approvalMessage =
         ApprovalsUtil.renderMessageWithApprovals(
             patchSetId.get(), approvals, scanLabels(ctx, approvals));
@@ -439,8 +437,8 @@ public class ReplaceOp implements BatchUpdateOp {
       case TRIVIAL_REBASE:
         return ": Patch Set " + priorPatchSetId.get() + " was rebased.";
       case NO_CHANGE:
-        return ": New patch set was added with same tree, parent"
-            + (commit.getParentCount() != 1 ? "s" : "")
+        return ": New patch set was added with same tree, parent "
+            + (commit.getParentCount() != 1 ? "trees" : "tree")
             + ", and commit message as Patch Set "
             + priorPatchSetId.get()
             + ".";
@@ -452,18 +450,13 @@ public class ReplaceOp implements BatchUpdateOp {
     }
   }
 
-  private Map<String, PatchSetApproval> scanLabels(ChangeContext ctx, Map<String, Short> approvals)
-      throws IOException {
+  private Map<String, PatchSetApproval> scanLabels(
+      ChangeContext ctx, Map<String, Short> approvals) {
     Map<String, PatchSetApproval> current = new HashMap<>();
     // We optimize here and only retrieve current when approvals provided
     if (!approvals.isEmpty()) {
       for (PatchSetApproval a :
-          approvalsUtil.byPatchSetUser(
-              ctx.getNotes(),
-              priorPatchSetId,
-              ctx.getAccountId(),
-              ctx.getRevWalk(),
-              ctx.getRepoView().getConfig())) {
+          approvalsUtil.byPatchSetUser(ctx.getNotes(), priorPatchSetId, ctx.getAccountId())) {
         if (a.isLegacySubmit()) {
           continue;
         }
@@ -538,13 +531,13 @@ public class ReplaceOp implements BatchUpdateOp {
         emailSender.addReviewers(
             Streams.concat(
                     oldRecipients.getReviewers().stream(),
-                    reviewerAdditions.flattenResults(AddReviewersOp.Result::addedReviewers).stream()
+                    reviewerAdditions.flattenResults(ReviewerOp.Result::addedReviewers).stream()
                         .map(PatchSetApproval::accountId))
                 .collect(toImmutableSet()));
         emailSender.addExtraCC(
             Streams.concat(
                     oldRecipients.getCcOnly().stream(),
-                    reviewerAdditions.flattenResults(AddReviewersOp.Result::addedCCs).stream())
+                    reviewerAdditions.flattenResults(ReviewerOp.Result::addedCCs).stream())
                 .collect(toImmutableSet()));
         emailSender.setMessageId(
             messageIdGenerator.fromChangeUpdate(ctx.getRepoView(), patchSetId));

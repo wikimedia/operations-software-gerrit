@@ -38,3 +38,16 @@ export function ordinal(n?: number): string {
   if (n % 10 === 3 && n % 100 !== 13) return `${n}rd`;
   return `${n}th`;
 }
+
+/**
+ * This converts any inputed value into string.
+ *
+ * This is so typescript checker doesn't fail.
+ */
+export function convertToString(key?: unknown) {
+  return key !== undefined ? String(key) : '';
+}
+
+export function capitalizeFirstLetter(str: string) {
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}

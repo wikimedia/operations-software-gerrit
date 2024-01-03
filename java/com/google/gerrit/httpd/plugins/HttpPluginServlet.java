@@ -68,7 +68,6 @@ import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -86,7 +85,7 @@ import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.util.IO;
 import org.eclipse.jgit.util.RawParseUtils;
@@ -447,8 +446,7 @@ class HttpPluginServlet extends HttpServlet implements StartPluginListener, Relo
           return false;
         };
 
-    List<PluginEntry> entries =
-        Collections.list(scanner.entries()).stream().filter(filter).collect(toList());
+    List<PluginEntry> entries = scanner.entries().filter(filter).collect(toList());
     for (PluginEntry entry : entries) {
       String name = entry.getName().substring(prefix.length());
       if (name.startsWith("cmd-")) {
@@ -520,7 +518,7 @@ class HttpPluginServlet extends HttpServlet implements StartPluginListener, Relo
     macros.put("URL", url);
 
     Matcher m = Pattern.compile("(\\\\)?@([A-Z_]+)@").matcher(md);
-    StringBuffer sb = new StringBuffer();
+    StringBuilder sb = new StringBuilder();
     while (m.find()) {
       String key = m.group(2);
       String val = macros.get(key);

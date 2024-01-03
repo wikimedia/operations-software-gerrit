@@ -16,6 +16,7 @@ package com.google.gerrit.server.query.change;
 
 import static com.google.gerrit.server.query.change.EqualsLabelPredicates.type;
 
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.LabelType;
@@ -31,21 +32,25 @@ import java.util.Optional;
 public class MagicLabelPredicates {
   public static class PostFilterMagicLabelPredicate extends PostFilterPredicate<ChangeData> {
     private static class PostFilterMatcher extends Matcher {
-      public PostFilterMatcher(LabelPredicate.Args args, MagicLabelVote magicLabelVote) {
-        super(args, magicLabelVote);
+      public PostFilterMatcher(
+          LabelPredicate.Args args, MagicLabelVote magicLabelVote, @Nullable Integer count) {
+        super(args, magicLabelVote, count);
       }
 
       @Override
       protected Predicate<ChangeData> numericPredicate(String label, short value) {
-        return new EqualsLabelPredicates.PostFilterEqualsLabelPredicate(args, label, value);
+        return new EqualsLabelPredicates.PostFilterEqualsLabelPredicate(args, label, value, count);
       }
     }
 
     private final PostFilterMatcher matcher;
 
-    public PostFilterMagicLabelPredicate(LabelPredicate.Args args, MagicLabelVote magicLabelVote) {
-      super(ChangeQueryBuilder.FIELD_LABEL, magicLabelVote.formatLabel());
-      this.matcher = new PostFilterMatcher(args, magicLabelVote);
+    public PostFilterMagicLabelPredicate(
+        LabelPredicate.Args args, MagicLabelVote magicLabelVote, @Nullable Integer count) {
+      super(
+          ChangeQueryBuilder.FIELD_LABEL,
+          ChangeField.formatLabel(magicLabelVote.label(), magicLabelVote.value().name(), count));
+      this.matcher = new PostFilterMatcher(args, magicLabelVote, count);
     }
 
     @Override
@@ -62,26 +67,37 @@ public class MagicLabelPredicates {
   public static class IndexMagicLabelPredicate extends ChangeIndexPredicate {
     private static class IndexMatcher extends Matcher {
       public IndexMatcher(
-          LabelPredicate.Args args, MagicLabelVote magicLabelVote, Account.Id account) {
-        super(args, magicLabelVote, account);
+          LabelPredicate.Args args,
+          MagicLabelVote magicLabelVote,
+          Account.Id account,
+          @Nullable Integer count) {
+        super(args, magicLabelVote, account, count);
       }
 
       @Override
       protected Predicate<ChangeData> numericPredicate(String label, short value) {
-        return new EqualsLabelPredicates.IndexEqualsLabelPredicate(args, label, value, account);
+        return new EqualsLabelPredicates.IndexEqualsLabelPredicate(
+            args, label, value, account, count);
       }
     }
 
     private final Matcher matcher;
 
-    public IndexMagicLabelPredicate(LabelPredicate.Args args, MagicLabelVote magicLabelVote) {
-      this(args, magicLabelVote, null);
+    public IndexMagicLabelPredicate(
+        LabelPredicate.Args args, MagicLabelVote magicLabelVote, @Nullable Integer count) {
+      this(args, magicLabelVote, null, count);
     }
 
     public IndexMagicLabelPredicate(
-        LabelPredicate.Args args, MagicLabelVote magicLabelVote, Account.Id account) {
-      super(ChangeField.LABEL, magicLabelVote.formatLabel());
-      this.matcher = new IndexMatcher(args, magicLabelVote, account);
+        LabelPredicate.Args args,
+        MagicLabelVote magicLabelVote,
+        Account.Id account,
+        @Nullable Integer count) {
+      super(
+          ChangeField.LABEL,
+          ChangeField.formatLabel(
+              magicLabelVote.label(), magicLabelVote.value().name(), account, count));
+      this.matcher = new IndexMatcher(args, magicLabelVote, account, count);
     }
 
     @Override
@@ -94,15 +110,22 @@ public class MagicLabelPredicates {
     protected final LabelPredicate.Args args;
     protected final MagicLabelVote magicLabelVote;
     protected final Account.Id account;
+    @Nullable protected final Integer count;
 
-    public Matcher(LabelPredicate.Args args, MagicLabelVote magicLabelVote) {
-      this(args, magicLabelVote, null);
+    public Matcher(
+        LabelPredicate.Args args, MagicLabelVote magicLabelVote, @Nullable Integer count) {
+      this(args, magicLabelVote, null, count);
     }
 
-    public Matcher(LabelPredicate.Args args, MagicLabelVote magicLabelVote, Account.Id account) {
+    public Matcher(
+        LabelPredicate.Args args,
+        MagicLabelVote magicLabelVote,
+        Account.Id account,
+        @Nullable Integer count) {
       this.account = account;
       this.args = args;
       this.magicLabelVote = magicLabelVote;
+      this.count = count;
     }
 
     public boolean match(ChangeData cd) {

@@ -25,6 +25,7 @@ import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.extensions.common.GpgKeyInfo.Status;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import org.bouncycastle.bcpg.ArmoredInputStream;
@@ -106,7 +107,7 @@ public abstract class PushCertificateChecker {
       }
     } catch (PGPException | IOException e) {
       String msg = "Internal error checking push certificate";
-      logger.atSevere().withCause(e).log(msg);
+      logger.atSevere().withCause(e).log("%s", msg);
       results.add(CheckResult.bad(msg));
     }
 
@@ -205,7 +206,7 @@ public abstract class PushCertificateChecker {
           null, CheckResult.bad("Signature by " + keyIdToString(sig.getKeyID()) + " is not valid"));
     }
     CheckResult result =
-        publicKeyChecker.setStore(store).setEffectiveTime(sig.getCreationTime()).check(signer);
+        publicKeyChecker.setStore(store).setEffectiveTime(getCreationTime(sig)).check(signer);
     if (!result.getProblems().isEmpty()) {
       StringBuilder err =
           new StringBuilder("Invalid public key ")
@@ -215,5 +216,10 @@ public abstract class PushCertificateChecker {
       return new Result(signer, CheckResult.create(result.getStatus(), err.toString()));
     }
     return new Result(signer, result);
+  }
+
+  @SuppressWarnings("JdkObsolete")
+  public static Instant getCreationTime(PGPSignature signature) {
+    return signature.getCreationTime().toInstant();
   }
 }

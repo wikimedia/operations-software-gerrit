@@ -24,7 +24,6 @@ import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashSet;
@@ -56,16 +55,17 @@ public class DownloadConfig {
           ImmutableSet.of(
               CoreDownloadSchemes.SSH, CoreDownloadSchemes.HTTP, CoreDownloadSchemes.ANON_HTTP);
     } else {
-      List<String> normalized = new ArrayList<>(allSchemes.length);
+      ImmutableSet.Builder<String> normalized =
+          ImmutableSet.builderWithExpectedSize(allSchemes.length);
       for (String s : allSchemes) {
         String core = toCoreScheme(s);
         if (core == null) {
-          logger.atWarning().log("not a core download scheme: " + s);
+          logger.atWarning().log("not a core download scheme: %s", s);
           continue;
         }
         normalized.add(core);
       }
-      downloadSchemes = ImmutableSet.copyOf(normalized);
+      downloadSchemes = normalized.build();
     }
 
     Set<String> hidden = new HashSet<>(Arrays.asList(cfg.getStringList("download", null, "hide")));

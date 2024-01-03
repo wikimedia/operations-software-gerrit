@@ -16,7 +16,7 @@
  */
 import {PluginApi, TargetElement} from '../../../api/plugin';
 import {ActionInfo, RequireProperties} from '../../../types/common';
-import {appContext} from '../../../services/app-context';
+import {getAppContext} from '../../../services/app-context';
 import {
   ActionPriority,
   ActionType,
@@ -25,6 +25,7 @@ import {
   PrimaryActionKey,
   RevisionActions,
 } from '../../../api/change-actions';
+import {PropertyDeclaration} from 'lit';
 
 export interface UIActionInfo extends RequireProperties<ActionInfo, 'label'> {
   __key: string;
@@ -40,7 +41,6 @@ export interface GrChangeActionsElement extends Element {
   ChangeActions: Record<string, string>;
   ActionType: Record<string, string>;
   primaryActionKeys: string[];
-  push(propName: 'primaryActionKeys', value: string): void;
   hideQuickApproveAction(): void;
   setActionOverflow(type: ActionType, key: string, overflow: boolean): void;
   setActionPriority(
@@ -57,6 +57,11 @@ export interface GrChangeActionsElement extends Element {
     value: UIActionInfo[T]
   ): void;
   getActionDetails(actionName: string): ActionInfo | undefined;
+  requestUpdate(
+    name?: PropertyKey,
+    oldValue?: unknown,
+    options?: PropertyDeclaration
+  ): void;
 }
 
 export class GrChangeActionsInterface implements ChangeActionsPluginApi {
@@ -68,7 +73,9 @@ export class GrChangeActionsInterface implements ChangeActionsPluginApi {
 
   ActionType = ActionType;
 
-  private readonly reporting = appContext.reportingService;
+  private readonly reporting = getAppContext().reportingService;
+
+  private readonly jsApiService = getAppContext().jsApiService;
 
   constructor(public plugin: PluginApi, el?: GrChangeActionsElement) {
     this.reporting.trackApi(this.plugin, 'actions', 'constructor');
@@ -92,7 +99,7 @@ export class GrChangeActionsInterface implements ChangeActionsPluginApi {
    */
   ensureEl(): GrChangeActionsElement {
     if (!this.el) {
-      const sharedApiElement = appContext.jsApiService;
+      const sharedApiElement = this.jsApiService;
       this.setEl(
         sharedApiElement.getElement(
           TargetElement.CHANGE_ACTIONS
@@ -109,7 +116,8 @@ export class GrChangeActionsInterface implements ChangeActionsPluginApi {
       return;
     }
 
-    el.push('primaryActionKeys', key);
+    el.primaryActionKeys.push(key);
+    el.requestUpdate();
   }
 
   removePrimaryActionKey(key: string) {
@@ -125,20 +133,17 @@ export class GrChangeActionsInterface implements ChangeActionsPluginApi {
 
   setActionOverflow(type: ActionType, key: string, overflow: boolean) {
     this.reporting.trackApi(this.plugin, 'actions', 'setActionOverflow');
-    // TODO(TS): remove return, unclear why it was written
-    return this.ensureEl().setActionOverflow(type, key, overflow);
+    this.ensureEl().setActionOverflow(type, key, overflow);
   }
 
   setActionPriority(type: ActionType, key: string, priority: ActionPriority) {
     this.reporting.trackApi(this.plugin, 'actions', 'setActionPriority');
-    // TODO(TS): remove return, unclear why it was written
-    return this.ensureEl().setActionPriority(type, key, priority);
+    this.ensureEl().setActionPriority(type, key, priority);
   }
 
   setActionHidden(type: ActionType, key: string, hidden: boolean) {
     this.reporting.trackApi(this.plugin, 'actions', 'setActionHidden');
-    // TODO(TS): remove return, unclear why it was written
-    return this.ensureEl().setActionHidden(type, key, hidden);
+    this.ensureEl().setActionHidden(type, key, hidden);
   }
 
   add(type: ActionType, label: string): string {
@@ -148,8 +153,7 @@ export class GrChangeActionsInterface implements ChangeActionsPluginApi {
 
   remove(key: string) {
     this.reporting.trackApi(this.plugin, 'actions', 'remove');
-    // TODO(TS): remove return, unclear why it was written
-    return this.ensureEl().removeActionButton(key);
+    this.ensureEl().removeActionButton(key);
   }
 
   addTapListener(key: string, handler: EventListenerOrEventListenerObject) {

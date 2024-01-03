@@ -17,20 +17,22 @@
 import '@polymer/iron-icon/iron-icon';
 import '../gr-avatar/gr-avatar';
 import '../gr-hovercard-account/gr-hovercard-account';
-import {appContext} from '../../../services/app-context';
+import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
+import '../../plugins/gr-endpoint-param/gr-endpoint-param';
+import {getAppContext} from '../../../services/app-context';
 import {getDisplayName} from '../../../utils/display-name-util';
 import {isSelf, isServiceUser} from '../../../utils/account-util';
-import {ReportingService} from '../../../services/gr-reporting/gr-reporting';
 import {ChangeInfo, AccountInfo, ServerInfo} from '../../../types/common';
 import {hasOwnProperty} from '../../../utils/common-util';
 import {fireEvent} from '../../../utils/event-util';
 import {isInvolved} from '../../../utils/change-util';
 import {ShowAlertEventDetail} from '../../../types/events';
-import {LitElement, css, html} from 'lit';
+import {LitElement, css, html, TemplateResult} from 'lit';
 import {customElement, property, state} from 'lit/decorators';
 import {classMap} from 'lit/directives/class-map';
-import {modifierPressed} from '../../../utils/dom-util';
 import {getRemovedByIconClickReason} from '../../../utils/attention-set-util';
+import {ifDefined} from 'lit/directives/if-defined';
+import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 
 @customElement('gr-account-label')
 export class GrAccountLabel extends LitElement {
@@ -78,20 +80,14 @@ export class GrAccountLabel extends LitElement {
   @property({type: Boolean})
   hideAvatar = false;
 
-  @property({
-    type: Boolean,
-    reflect: true,
-  })
-  cancelLeftPadding = false;
-
-  @property({type: Boolean})
-  hideStatus = false;
-
   @state()
   _config?: ServerInfo;
 
   @property({type: Boolean, reflect: true})
   selectionChipStyle = false;
+
+  @property({type: Boolean, reflect: true})
+  noStatusIcons = false;
 
   @property({
     type: Boolean,
@@ -102,9 +98,18 @@ export class GrAccountLabel extends LitElement {
   @property({type: Boolean, reflect: true})
   deselected = false;
 
-  reporting: ReportingService;
+  @property({type: Boolean, reflect: true})
+  clickable = false;
 
-  private readonly restApiService = appContext.restApiService;
+  @property({type: Boolean, reflect: true})
+  attentionIconShown = false;
+
+  @property({type: Boolean, reflect: true})
+  avatarShown = false;
+
+  readonly reporting = getAppContext().reportingService;
+
+  private readonly restApiService = getAppContext().restApiService;
 
   static override get styles() {
     return [
@@ -116,14 +121,23 @@ export class GrAccountLabel extends LitElement {
           border-radius: var(--label-border-radius);
           box-sizing: border-box;
           white-space: nowrap;
-          padding: 0 var(--account-label-padding-horizontal, 0);
+          padding-left: var(--account-label-padding-left, 0);
         }
-        /* If the first element is the avatar, then we cancel the left padding,
-        so we can fit nicely into the gr-account-chip rounding. The obvious
-        alternative of 'chip has padding' and 'avatar gets negative margin'
-        does not work, because we need 'overflow:hidden' on the label. */
-        :host([cancelLeftPadding]) {
-          padding-left: 0;
+        :host([avatarShown]:not([attentionIconShown])) {
+          padding-left: var(--account-label-circle-padding-left, 0);
+        }
+        :host([attentionIconShown]) {
+          padding-left: var(--account-label-padding-left, 0);
+        }
+        .rightSidePadding {
+          padding-right: var(--account-label-padding-right, 0);
+          /* The existence of this element will also add 2(!) flexbox gaps */
+          margin-left: -6px;
+        }
+        .container {
+          display: flex;
+          align-items: center;
+          gap: 3px;
         }
         :host::after {
           content: var(--account-label-suffix);
@@ -146,9 +160,10 @@ export class GrAccountLabel extends LitElement {
         gr-avatar {
           height: calc(var(--line-height-normal) - 2px);
           width: calc(var(--line-height-normal) - 2px);
-          vertical-align: top;
-          position: relative;
-          top: 1px;
+        }
+        .accountStatusDecorator,
+        .hovercardTargetWrapper {
+          display: contents;
         }
         #attentionButton {
           /* This negates the 4px horizontal padding, which we appreciate as a
@@ -160,19 +175,9 @@ export class GrAccountLabel extends LitElement {
           color: var(--deemphasized-text-color);
           width: 12px;
           height: 12px;
-          vertical-align: top;
-        }
-        iron-icon.status {
-          color: var(--deemphasized-text-color);
-          width: 14px;
-          height: 14px;
-          vertical-align: top;
-          position: relative;
-          top: 2px;
         }
         .name {
           display: inline-block;
-          text-decoration: inherit;
           vertical-align: top;
           overflow: hidden;
           text-overflow: ellipsis;
@@ -181,6 +186,16 @@ export class GrAccountLabel extends LitElement {
         .hasAttention .name {
           font-weight: var(--font-weight-bold);
         }
+        a.ownerLink {
+          text-decoration: none;
+          color: var(--primary-text-color);
+          display: flex;
+          align-items: center;
+          gap: 3px;
+        }
+        :host([clickable]) a.ownerLink:hover .name {
+          text-decoration: underline;
+        }
       `,
     ];
   }
@@ -188,14 +203,15 @@ export class GrAccountLabel extends LitElement {
   override render() {
     const {account, change, highlightAttention, forceAttention, _config} = this;
     if (!account) return;
-    const hasAttention =
+    this.attentionIconShown =
       forceAttention ||
-      this._hasUnforcedAttention(highlightAttention, account, change);
+      this.hasUnforcedAttention(highlightAttention, account, change);
     this.deselected = !this.selected;
     const hasAvatars = !!_config?.plugin?.has_avatars;
-    this.cancelLeftPadding = !this.hideAvatar && !hasAttention && hasAvatars;
+    this.avatarShown = !this.hideAvatar && hasAvatars;
 
-    return html`<span>
+    return html`
+      <div class="container">
         ${!this.hideHovercard
           ? html`<gr-hovercard-account
               for="hovercardTarget"
@@ -205,30 +221,30 @@ export class GrAccountLabel extends LitElement {
               .voteableText=${this.voteableText}
             ></gr-hovercard-account>`
           : ''}
-        ${hasAttention
+        ${this.attentionIconShown
           ? html` <gr-tooltip-content
-              ?has-tooltip=${this._computeAttentionButtonEnabled(
+              ?has-tooltip=${this.computeAttentionButtonEnabled(
                 highlightAttention,
                 account,
                 change,
                 false,
                 this._selfAccount
               )}
-              title="${this._computeAttentionIconTitle(
+              title=${this.computeAttentionIconTitle(
                 highlightAttention,
                 account,
                 change,
                 forceAttention,
                 this.selected,
                 this._selfAccount
-              )}"
+              )}
             >
               <gr-button
                 id="attentionButton"
                 link=""
                 aria-label="Remove user from attention set"
-                @click=${this._handleRemoveAttentionClick}
-                ?disabled=${!this._computeAttentionButtonEnabled(
+                @click=${this.handleRemoveAttentionClick}
+                ?disabled=${!this.computeAttentionButtonEnabled(
                   highlightAttention,
                   account,
                   change,
@@ -242,35 +258,34 @@ export class GrAccountLabel extends LitElement {
               </gr-button>
             </gr-tooltip-content>`
           : ''}
-      </span>
-      <span
-        id="hovercardTarget"
-        tabindex="0"
-        @keydown="${(e: KeyboardEvent) => this.handleKeyDown(e)}"
-        class="${classMap({
-          hasAttention: !!hasAttention,
-        })}"
-      >
-        ${!this.hideAvatar
-          ? html`<gr-avatar .account="${account}" imageSize="32"></gr-avatar>`
-          : ''}
-        <span class="text" part="gr-account-label-text">
-          <span class="name"
-            >${this._computeName(account, this.firstName, this._config)}</span
+        ${this.maybeRenderLink(html`
+          <span
+            class=${classMap({
+              hovercardTargetWrapper: true,
+              hasAttention: this.attentionIconShown,
+            })}
           >
-          ${!this.hideStatus && account.status
-            ? html`<iron-icon
-                class="status"
-                icon="gr-icons:calendar"
-              ></iron-icon>`
-            : ''}
-        </span>
-      </span>`;
+            ${this.avatarShown
+              ? html`<gr-avatar .account=${account} imageSize="32"></gr-avatar>`
+              : ''}
+            <span
+              tabindex=${this.hideHovercard ? '-1' : '0'}
+              role=${ifDefined(this.hideHovercard ? undefined : 'button')}
+              id="hovercardTarget"
+              class="name"
+              part="gr-account-label-text"
+            >
+              ${this.computeName(account, this.firstName, this._config)}
+            </span>
+            ${this.renderAccountStatusPlugins()}
+          </span>
+        `)}
+      </div>
+    `;
   }
 
   constructor() {
     super();
-    this.reporting = appContext.reportingService;
     this.restApiService.getConfig().then(config => {
       this._config = config;
     });
@@ -283,16 +298,37 @@ export class GrAccountLabel extends LitElement {
     });
   }
 
-  handleKeyDown(e: KeyboardEvent) {
-    if (modifierPressed(e)) return;
-    // Only react to `return` and `space`.
-    if (e.keyCode !== 13 && e.keyCode !== 32) return;
-    e.preventDefault();
-    e.stopPropagation();
-    this.dispatchEvent(new Event('click'));
+  private maybeRenderLink(span: TemplateResult) {
+    if (!this.clickable || !this.account) return span;
+    const url = GerritNav.getUrlForOwner(
+      this.account.email ||
+        this.account.username ||
+        this.account.name ||
+        `${this.account._account_id}`
+    );
+    if (!url) return span;
+    return html`<a class="ownerLink" href=${url} tabindex="-1">${span}</a>`;
   }
 
-  _isAttentionSetEnabled(
+  private renderAccountStatusPlugins() {
+    if (!this.account?._account_id || this.noStatusIcons) {
+      return;
+    }
+    return html`
+      <gr-endpoint-decorator
+        class="accountStatusDecorator"
+        name="account-status-icon"
+      >
+        <gr-endpoint-param
+          name="accountId"
+          .value=${this.account._account_id}
+        ></gr-endpoint-param>
+        <span class="rightSidePadding"></span>
+      </gr-endpoint-decorator>
+    `;
+  }
+
+  private isAttentionSetEnabled(
     highlight: boolean,
     account: AccountInfo,
     change?: ChangeInfo
@@ -300,13 +336,13 @@ export class GrAccountLabel extends LitElement {
     return highlight && !!change && !!account && !isServiceUser(account);
   }
 
-  _hasUnforcedAttention(
+  private hasUnforcedAttention(
     highlight: boolean,
     account: AccountInfo,
     change?: ChangeInfo
-  ) {
-    return (
-      this._isAttentionSetEnabled(highlight, account, change) &&
+  ): boolean {
+    return !!(
+      this.isAttentionSetEnabled(highlight, account, change) &&
       change &&
       change.attention_set &&
       !!account._account_id &&
@@ -314,15 +350,12 @@ export class GrAccountLabel extends LitElement {
     );
   }
 
-  _computeName(
-    account?: AccountInfo,
-    firstName?: boolean,
-    config?: ServerInfo
-  ) {
+  // Private but used in tests.
+  computeName(account?: AccountInfo, firstName?: boolean, config?: ServerInfo) {
     return getDisplayName(config, account, firstName);
   }
 
-  _handleRemoveAttentionClick(e: MouseEvent) {
+  private handleRemoveAttentionClick(e: MouseEvent) {
     if (!this.account || !this.change) return;
     if (this.selected) return;
     e.preventDefault();
@@ -350,7 +383,7 @@ export class GrAccountLabel extends LitElement {
 
     this.reporting.reportInteraction(
       'attention-icon-remove',
-      this._reportingDetails()
+      this.reportingDetails()
     );
     this.restApiService
       .removeFromAttentionSet(
@@ -363,7 +396,7 @@ export class GrAccountLabel extends LitElement {
       });
   }
 
-  _reportingDetails() {
+  private reportingDetails() {
     if (!this.account) return;
     const targetId = this.account._account_id;
     const ownerId =
@@ -385,7 +418,7 @@ export class GrAccountLabel extends LitElement {
     };
   }
 
-  _computeAttentionButtonEnabled(
+  private computeAttentionButtonEnabled(
     highlight: boolean,
     account: AccountInfo,
     change: ChangeInfo | undefined,
@@ -394,12 +427,12 @@ export class GrAccountLabel extends LitElement {
   ) {
     if (selected) return true;
     return (
-      !!this._hasUnforcedAttention(highlight, account, change) &&
+      !!this.hasUnforcedAttention(highlight, account, change) &&
       (isInvolved(change, selfAccount) || isSelf(account, selfAccount))
     );
   }
 
-  _computeAttentionIconTitle(
+  private computeAttentionIconTitle(
     highlight: boolean,
     account: AccountInfo,
     change: ChangeInfo | undefined,
@@ -407,7 +440,7 @@ export class GrAccountLabel extends LitElement {
     selected: boolean,
     selfAccount?: AccountInfo
   ) {
-    const enabled = this._computeAttentionButtonEnabled(
+    const enabled = this.computeAttentionButtonEnabled(
       highlight,
       account,
       change,

@@ -268,7 +268,20 @@ List all projects that match substring `test/`:
 Tree(t)::
 Get projects inheritance in a tree-like format. This option does
 not work together with the branch option.
-+
+
+[NOTE]
+If the calling user does not meet any of the following criteria:
+
+* The state of the parent project is either "ACTIVE" or "READ ONLY",
+and the calling user has READ permission to at least one ref.
+* The state of the parent project is "HIDDEN" and the calling user
+has READ permission for 'refs/meta/config'.
+
+Then the 'parent' field will be labeled as '?-N', where N represents the
+nesting level within the project's tree structure. In the provided example,
+'All-Projects' corresponds to level 1, 'parent-project' to level 2, and
+'child-project' to level 3.
+
 Get all the projects with tree option:
 +
 .Request
@@ -3072,8 +3085,8 @@ label name.
       "function": "MaxWithBlock",
       "values": {
         " 0": "No score",
-        "-1": "I would prefer this is not merged as is",
-        "-2": "This shall not be merged",
+        "-1": "I would prefer this is not submitted as is",
+        "-2": "This shall not be submitted",
         "+1": "Looks good to me, but someone else must approve",
         "+2": "Looks good to me, approved"
       },
@@ -3119,8 +3132,8 @@ Labels that belong to the same project are sorted by label name.
       "function": "MaxWithBlock",
       "values": {
         " 0": "No score",
-        "-1": "I would prefer this is not merged as is",
-        "-2": "This shall not be merged",
+        "-1": "I would prefer this is not submitted as is",
+        "-2": "This shall not be submitted",
         "+1": "Looks good to me, but someone else must approve",
         "+2": "Looks good to me, approved"
       },
@@ -3137,8 +3150,8 @@ Labels that belong to the same project are sorted by label name.
       "function": "MaxWithBlock",
       "values": {
         " 0": "No score",
-        "-1": "I would prefer this is not merged as is",
-        "-2": "This shall not be merged",
+        "-1": "I would prefer this is not submitted as is",
+        "-2": "This shall not be submitted",
         "+1": "Looks good to me, but someone else must approve",
         "+2": "Looks good to me, approved"
       },
@@ -3182,8 +3195,8 @@ returned that describes the label.
     "function": "MaxWithBlock",
     "values": {
       " 0": "No score",
-      "-1": "I would prefer this is not merged as is",
-      "-2": "This shall not be merged",
+      "-1": "I would prefer this is not submitted as is",
+      "-2": "This shall not be submitted",
       "+1": "Looks good to me, but someone else must approve",
       "+2": "Looks good to me, approved"
     },
@@ -3219,8 +3232,8 @@ definition is updated (see link:#set-label[Set Label]).
     "commit_message": "Create Foo Label",
     "values": {
       " 0": "No score",
-      "-1": "I would prefer this is not merged as is",
-      "-2": "This shall not be merged",
+      "-1": "I would prefer this is not submitted as is",
+      "-2": "This shall not be submitted",
       "+1": "Looks good to me, but someone else must approve",
       "+2": "Looks good to me, approved"
     }
@@ -3243,8 +3256,8 @@ returned that describes the created label.
     "function": "MaxWithBlock",
     "values": {
       " 0": "No score",
-      "-1": "I would prefer this is not merged as is",
-      "-2": "This shall not be merged",
+      "-1": "I would prefer this is not submitted as is",
+      "-2": "This shall not be submitted",
       "+1": "Looks good to me, but someone else must approve",
       "+2": "Looks good to me, approved"
     },
@@ -3295,8 +3308,8 @@ returned that describes the updated label.
     "function": "MaxWithBlock",
     "values": {
       " 0": "No score",
-      "-1": "I would prefer this is not merged as is",
-      "-2": "This shall not be merged",
+      "-1": "I would prefer this is not submitted as is",
+      "-2": "This shall not be submitted",
       "+1": "Looks good to me, but someone else must approve",
       "+2": "Looks good to me, approved"
     },
@@ -3377,8 +3390,8 @@ The updates are processed in the following order:
         "name": "Foo-Review",
         "values": {
           " 0": "No score",
-          "-1": "I would prefer this is not merged as is",
-          "-2": "This shall not be merged",
+          "-1": "I would prefer this is not submitted as is",
+          "-2": "This shall not be submitted",
           "+1": "Looks good to me, but someone else must approve",
           "+2": "Looks good to me, approved"
       }
@@ -3547,14 +3560,22 @@ a new branch.
 
 [options="header",cols="1,^2,4"]
 |=======================
-|Field Name||Description
-|`ref`     |optional|
+|Field Name          ||Description
+|`ref`               |optional|
 The name of the branch. The prefix `refs/heads/` can be
 omitted. +
 If set, must match the branch ID in the URL.
-|`revision`|optional|
+|`revision`          |optional|
 The base revision of the new branch. +
 If not set, `HEAD` will be used as base revision.
+|`validation_options`|optional|
+Map with key-value pairs that are forwarded as options to the ref operation
+validation listeners (e.g. can be used to skip certain validations). Which
+validation options are supported depends on the installed ref operation
+validation listeners. Gerrit core doesn't support any validation options, but
+ref operation validation listeners that are implemented in plugins may. Please
+refer to the documentation of the installed plugins to learn whether they
+support validation options. Unknown validation options are silently ignored.
 |=======================
 
 [[check-project-input]]
@@ -3986,6 +4007,8 @@ review label].
 |Field Name      ||Description
 |`name`          ||
 The link:config-labels.html#label_name[name] of the label.
+|`description`   |optional|
+The description of the label.
 |`project_name`  ||
 The name of the project in which this label is defined.
 |`function`      ||
@@ -4006,30 +4029,32 @@ set, the label applies for all branches.
 Whether this label can be link:config-labels.html#label_canOverride[overridden]
 by child projects.
 |`copy_any_score`|`false` if not set|
-Whether link:config-labels.html#label_copyAnyScore[copyAnyScore] is set on the
-label.
+*DEPRECATED* Whether link:config-labels.html#label_copyAnyScore[copyAnyScore]
+is set on the label.
 |`copy_condition`|optional|
 See link:config-labels.html#label_copyCondition[copyCondition].
 |`copy_min_score`|`false` if not set|
-Whether link:config-labels.html#label_copyMinScore[copyMinScore] is set on the
-label.
+*DEPRECATED* Whether link:config-labels.html#label_copyMinScore[copyMinScore]
+is set on the label.
 |`copy_max_score`|`false` if not set|
-Whether link:config-labels.html#label_copyMaxScore[copyMaxScore] is set on the
-label.
+*DEPRECATED* Whether link:config-labels.html#label_copyMaxScore[copyMaxScore]
+is set on the label.
 |`copy_all_scores_if_no_change`|`false` if not set|
-Whether link:config-labels.html#label_copyAllScoresIfNoChange[
+*DEPRECATED* Whether link:config-labels.html#label_copyAllScoresIfNoChange[
 copyAllScoresIfNoChange] is set on the label.
 |`copy_all_scores_if_no_code_change`|`false` if not set|
-Whether link:config-labels.html#label_copyAllScoresIfNoCodeChange[
+*DEPRECATED* Whether link:config-labels.html#label_copyAllScoresIfNoCodeChange[
 copyAllScoresIfNoCodeChange] is set on the label.
 |`copy_all_scores_on_trivial_rebase`|`false` if not set|
-Whether link:config-labels.html#label_copyAllScoresOnTrivialRebase[
+*DEPRECATED* Whether link:config-labels.html#label_copyAllScoresOnTrivialRebase[
 copyAllScoresOnTrivialRebase] is set on the label.
 |`copy_all_scores_if_list_of_files_did_not_change`|`false` if not set|
-Whether link:config-labels.html#label_copyAllScoresIfListOfFilesDidNotChange[
+*DEPRECATED* Whether
+link:config-labels.html#label_copyAllScoresIfListOfFilesDidNotChange[
 copyAllScoresIfListOfFilesDidNotChange] is set on the label.
 |`copy_all_scores_on_merge_first_parent_update`|`false` if not set|
-Whether link:config-labels.html#label_copyAllScoresOnMergeFirstParentUpdate[
+*DEPRECATED* Whether
+link:config-labels.html#label_copyAllScoresOnMergeFirstParentUpdate[
 copyAllScoresOnMergeFirstParentUpdate] is set on the label.
 |`copy_values`   |optional|
 List of values that should be copied forward when a new patch set is uploaded.
@@ -4059,6 +4084,8 @@ The new link:config-labels.html#label_name[name] of the label.+
 For label creation the name is required if this `LabelDefinitionInput` entity
 is contained in a link:#batch-label-input[BatchLabelInput]
 entity.
+|`description`          |optional|
+The new description for the label.
 |`function`      |optional|
 The new link:config-labels.html#label_function[function] of the label (can be
 `MaxWithBlock`, `AnyWithBlock`, `MaxNoBlock`, `NoBlock`, `NoOp` and `PatchSetLock`.

@@ -72,7 +72,7 @@ export class GrPluginEndpoints {
   _getOrCreateModuleInfo(plugin: PluginApi, opts: Options): ModuleInfo {
     const {endpoint, slot, type, moduleName, domHook} = opts;
     const existingModule = this._endpoints
-      .get(endpoint!)!
+      .get(endpoint)!
       .find(
         (info: ModuleInfo) =>
           info.plugin === plugin &&
@@ -91,7 +91,7 @@ export class GrPluginEndpoints {
         domHook,
         slot,
       };
-      this._endpoints.get(endpoint!)!.push(newModule);
+      this._endpoints.get(endpoint)!.push(newModule);
       return newModule;
     }
   }
@@ -177,7 +177,6 @@ export class GrPluginEndpoints {
   }
 }
 
-// TODO(dmfilippov): Convert to service and add to appContext
 let pluginEndpoints = new GrPluginEndpoints();
 
 // To avoid mutable-exports, we don't want to export above variable directly

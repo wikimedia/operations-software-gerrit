@@ -32,8 +32,6 @@ import com.google.gerrit.server.project.CreateProjectArgs;
 import com.google.gerrit.server.validators.ProjectCreationValidationListener;
 import com.google.gerrit.server.validators.ValidationException;
 import com.google.inject.Inject;
-import java.util.ArrayList;
-import java.util.List;
 import org.junit.Test;
 
 @UseSsh
@@ -122,7 +120,7 @@ public class SshTraceIT extends AbstractDaemonTest {
   }
 
   private static class TestPerformanceLogger implements PerformanceLogger {
-    private List<PerformanceLogEntry> logEntries = new ArrayList<>();
+    private ImmutableList.Builder<PerformanceLogEntry> logEntries = ImmutableList.builder();
 
     @Override
     public void log(String operation, long durationMs, Metadata metadata) {
@@ -130,7 +128,7 @@ public class SshTraceIT extends AbstractDaemonTest {
     }
 
     ImmutableList<PerformanceLogEntry> logEntries() {
-      return ImmutableList.copyOf(logEntries);
+      return logEntries.build();
     }
   }
 

@@ -52,9 +52,6 @@ export interface DiffInfo extends DiffInfoApi {
   /** Meta information about the file on side B as a DiffFileMetaInfo entity. */
   meta_b: DiffFileMetaInfo;
 
-  /** A list of strings representing the patch set diff header. */
-  diff_header?: string[];
-
   /**
    * Links to the file diff in external sites as a list of DiffWebLinkInfo
    * entries.
@@ -98,7 +95,7 @@ export interface DiffContent extends DiffContentApi {
 
 export interface DiffPreferencesInfo extends DiffPreferenceInfoApi {
   expand_all_comments?: boolean;
-  cursor_blink_rate: number;
+  cursor_blink_rate?: number;
   manual_review?: boolean;
   retain_header?: boolean;
   skip_deleted?: boolean;

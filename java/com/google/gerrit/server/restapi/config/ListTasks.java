@@ -129,7 +129,7 @@ public class ListTasks implements RestReadView<ConfigResource> {
     public TaskInfo(Task<?> task) {
       this.id = HexFormat.fromInt(task.getTaskId());
       this.state = task.getState();
-      this.startTime = new Timestamp(task.getStartTime().getTime());
+      this.startTime = Timestamp.from(task.getStartTime());
       this.delay = task.getDelay(TimeUnit.MILLISECONDS);
       this.command = task.toString();
       this.queueName = task.getQueueName();

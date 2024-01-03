@@ -14,10 +14,12 @@
 
 package com.google.gerrit.server.restapi.change;
 
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.gerrit.extensions.api.changes.SubmittedTogetherOption.NON_VISIBLE_CHANGES;
+import static com.google.gerrit.extensions.api.changes.SubmittedTogetherOption.TOPIC_CLOSURE;
 import static java.util.Collections.reverseOrder;
-import static java.util.stream.Collectors.toList;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.exceptions.StorageException;
@@ -41,7 +43,6 @@ import com.google.gerrit.server.submit.MergeSuperSet;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -127,7 +128,10 @@ public class SubmittedTogether implements RestReadView<ChangeResource> {
       int hidden;
 
       if (c.isNew()) {
-        ChangeSet cs = mergeSuperSet.get().completeChangeSet(c, resource.getUser());
+        ChangeSet cs =
+            mergeSuperSet
+                .get()
+                .completeChangeSet(c, resource.getUser(), options.contains(TOPIC_CLOSURE));
         cds = ensureRequiredDataIsLoaded(cs.changes().asList());
         hidden = cs.nonVisibleChanges().size();
       } else if (c.isMerged()) {
@@ -153,11 +157,11 @@ public class SubmittedTogether implements RestReadView<ChangeResource> {
     }
   }
 
-  private List<ChangeData> sort(List<ChangeData> cds, int hidden) throws IOException {
+  private ImmutableList<ChangeData> sort(List<ChangeData> cds, int hidden) throws IOException {
     if (cds.size() <= 1 && hidden == 0) {
       // Skip sorting for singleton lists, to avoid WalkSorter opening the
       // repo just to fill out the commit field in PatchSetData.
-      return Collections.emptyList();
+      return ImmutableList.of();
     }
 
     long numProjectsDistinct = cds.stream().map(ChangeData::project).distinct().count();
@@ -167,15 +171,15 @@ public class SubmittedTogether implements RestReadView<ChangeResource> {
       // We either have only a single change per project which means that WalkSorter won't make a
       // difference compared to our index-backed sort, or we are looking at more than 5 projects
       // which would make WalkSorter too expensive for this call.
-      return cds.stream().sorted(COMPARATOR).collect(toList());
+      return cds.stream().sorted(COMPARATOR).collect(toImmutableList());
     }
 
     // Perform more expensive walk-sort.
-    List<ChangeData> sorted = new ArrayList<>(cds.size());
+    ImmutableList.Builder<ChangeData> sorted = ImmutableList.builderWithExpectedSize(cds.size());
     for (PatchSetData psd : sorter.get().sort(cds)) {
       sorted.add(psd.data());
     }
-    return sorted;
+    return sorted.build();
   }
 
   private static List<ChangeData> ensureRequiredDataIsLoaded(List<ChangeData> cds) {

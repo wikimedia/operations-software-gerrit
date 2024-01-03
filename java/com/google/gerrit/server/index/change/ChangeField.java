@@ -33,6 +33,7 @@ import static java.util.stream.Collectors.toSet;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Splitter;
+import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -55,6 +56,7 @@ import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.entities.SubmitRecord;
+import com.google.gerrit.entities.SubmitRequirementResult;
 import com.google.gerrit.entities.converter.ChangeProtoConverter;
 import com.google.gerrit.entities.converter.PatchSetApprovalProtoConverter;
 import com.google.gerrit.entities.converter.PatchSetProtoConverter;
@@ -81,6 +83,7 @@ import com.google.protobuf.MessageLite;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
@@ -90,6 +93,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -110,6 +114,12 @@ public class ChangeField {
   public static final int NO_ASSIGNEE = -1;
 
   private static final Gson GSON = OutputFormat.JSON_COMPACT.newGson();
+
+  /**
+   * To avoid the non-google dependency on org.apache.lucene.index.IndexWriter.MAX_TERM_LENGTH it is
+   * redefined here.
+   */
+  public static final int MAX_TERM_LENGTH = (1 << 15) - 2;
 
   // TODO: Rename LEGACY_ID to NUMERIC_ID
   /** Legacy change ID. */
@@ -150,19 +160,29 @@ public class ChangeField {
   public static final FieldDef<ChangeData, String> FUZZY_TOPIC =
       fullText("topic5").build(ChangeField::getTopic);
 
+  /** Topic, a short annotation on the branch. */
+  public static final FieldDef<ChangeData, String> PREFIX_TOPIC =
+      prefix("topic6").build(ChangeField::getTopic);
+
   /** Submission id assigned by MergeOp. */
   public static final FieldDef<ChangeData, String> SUBMISSIONID =
       exact(ChangeQueryBuilder.FIELD_SUBMISSIONID).build(changeGetter(Change::getSubmissionId));
 
   /** Last update time since January 1, 1970. */
+  // TODO(issue-15518): Migrate type for timestamp index fields from Timestamp to Instant
   public static final FieldDef<ChangeData, Timestamp> UPDATED =
-      timestamp("updated2").stored().build(changeGetter(Change::getLastUpdatedOn));
+      timestamp("updated2")
+          .stored()
+          .build(changeGetter(change -> Timestamp.from(change.getLastUpdatedOn())));
 
   /** When this change was merged, time since January 1, 1970. */
+  // TODO(issue-15518): Migrate type for timestamp index fields from Timestamp to Instant
   public static final FieldDef<ChangeData, Timestamp> MERGED_ON =
       timestamp(ChangeQueryBuilder.FIELD_MERGED_ON)
           .stored()
-          .build(cd -> cd.getMergedOn().orElse(null), (cd, field) -> cd.setMergedOn(field));
+          .build(
+              cd -> cd.getMergedOn().map(Timestamp::from).orElse(null),
+              (cd, field) -> cd.setMergedOn(field != null ? field.toInstant() : null));
 
   /** List of full file paths modified in the current patch set. */
   public static final FieldDef<ChangeData, Iterable<String>> PATH =
@@ -191,6 +211,11 @@ public class ChangeField {
   /** Hashtags as fulltext field for in-string search. */
   public static final FieldDef<ChangeData, Iterable<String>> FUZZY_HASHTAG =
       fullText("hashtag2")
+          .buildRepeatable(cd -> cd.hashtags().stream().map(String::toLowerCase).collect(toSet()));
+
+  /** Hashtags as prefix field for in-string search. */
+  public static final FieldDef<ChangeData, Iterable<String>> PREFIX_HASHTAG =
+      prefix("hashtag3")
           .buildRepeatable(cd -> cd.hashtags().stream().map(String::toLowerCase).collect(toSet()));
 
   /** Hashtags with original case. */
@@ -252,6 +277,14 @@ public class ChangeField {
     return cd.commitFooters().stream()
         .map(f -> f.toString().toLowerCase(Locale.US))
         .collect(toSet());
+  }
+
+  /** Footers from the commit message of the current patch set. */
+  public static final FieldDef<ChangeData, Iterable<String>> FOOTER_NAME =
+      exact(ChangeQueryBuilder.FIELD_FOOTER_NAME).buildRepeatable(ChangeField::getFootersNames);
+
+  public static Set<String> getFootersNames(ChangeData cd) {
+    return cd.commitFooters().stream().map(f -> f.getKey()).collect(toSet());
   }
 
   /** Folders that are touched by the current patch set. */
@@ -412,14 +445,31 @@ public class ChangeField {
       integer(ChangeQueryBuilder.FIELD_REVERTOF)
           .build(cd -> cd.change().getRevertOf() != null ? cd.change().getRevertOf().get() : null);
 
+  public static final FieldDef<ChangeData, String> IS_PURE_REVERT =
+      fullText(ChangeQueryBuilder.FIELD_PURE_REVERT)
+          .build(cd -> Boolean.TRUE.equals(cd.isPureRevert()) ? "1" : "0");
+
+  /**
+   * Determines if a change is submittable based on {@link
+   * com.google.gerrit.entities.SubmitRequirement}s.
+   */
+  public static final FieldDef<ChangeData, String> IS_SUBMITTABLE =
+      exact(ChangeQueryBuilder.FIELD_IS_SUBMITTABLE)
+          .build(
+              cd ->
+                  // All submit requirements should be fulfilled
+                  cd.submitRequirementsIncludingLegacy().values().stream()
+                          .allMatch(SubmitRequirementResult::fulfilled)
+                      ? "1"
+                      : "0");
+
   @VisibleForTesting
   static List<String> getReviewerFieldValues(ReviewerSet reviewers) {
     List<String> r = new ArrayList<>(reviewers.asTable().size() * 2);
-    for (Table.Cell<ReviewerStateInternal, Account.Id, Timestamp> c :
-        reviewers.asTable().cellSet()) {
+    for (Table.Cell<ReviewerStateInternal, Account.Id, Instant> c : reviewers.asTable().cellSet()) {
       String v = getReviewerFieldValue(c.getRowKey(), c.getColumnKey());
       r.add(v);
-      r.add(v + ',' + c.getValue().getTime());
+      r.add(v + ',' + c.getValue().toEpochMilli());
     }
     return r;
   }
@@ -431,7 +481,7 @@ public class ChangeField {
   @VisibleForTesting
   static List<String> getReviewerByEmailFieldValues(ReviewerByEmailSet reviewersByEmail) {
     List<String> r = new ArrayList<>(reviewersByEmail.asTable().size() * 2);
-    for (Table.Cell<ReviewerStateInternal, Address, Timestamp> c :
+    for (Table.Cell<ReviewerStateInternal, Address, Instant> c :
         reviewersByEmail.asTable().cellSet()) {
       String v = getReviewerByEmailFieldValue(c.getRowKey(), c.getColumnKey());
       r.add(v);
@@ -440,7 +490,7 @@ public class ChangeField {
         Address emailOnly = Address.create(c.getColumnKey().email());
         r.add(getReviewerByEmailFieldValue(c.getRowKey(), emailOnly));
       }
-      r.add(v + ',' + c.getValue().getTime());
+      r.add(v + ',' + c.getValue().toEpochMilli());
     }
     return r;
   }
@@ -450,8 +500,7 @@ public class ChangeField {
   }
 
   public static ReviewerSet parseReviewerFieldValues(Change.Id changeId, Iterable<String> values) {
-    ImmutableTable.Builder<ReviewerStateInternal, Account.Id, Timestamp> b =
-        ImmutableTable.builder();
+    ImmutableTable.Builder<ReviewerStateInternal, Account.Id, Instant> b = ImmutableTable.builder();
     for (String v : values) {
 
       int i = v.indexOf(',');
@@ -493,7 +542,7 @@ public class ChangeField {
             "Failed to parse timestamp of reviewer field from change %s: %s", changeId.get(), v);
         continue;
       }
-      Timestamp timestamp = new Timestamp(l);
+      Instant timestamp = Instant.ofEpochMilli(l);
 
       b.put(reviewerState.get(), accountId.get(), timestamp);
     }
@@ -502,7 +551,7 @@ public class ChangeField {
 
   public static ReviewerByEmailSet parseReviewerByEmailFieldValues(
       Change.Id changeId, Iterable<String> values) {
-    ImmutableTable.Builder<ReviewerStateInternal, Address, Timestamp> b = ImmutableTable.builder();
+    ImmutableTable.Builder<ReviewerStateInternal, Address, Instant> b = ImmutableTable.builder();
     for (String v : values) {
       int i = v.indexOf(',');
       if (i < 0) {
@@ -546,7 +595,7 @@ public class ChangeField {
             changeId.get(), v);
         continue;
       }
-      Timestamp timestamp = new Timestamp(l);
+      Instant timestamp = Instant.ofEpochMilli(l);
 
       b.put(reviewerState.get(), address, timestamp);
     }
@@ -612,45 +661,105 @@ public class ChangeField {
   private static Iterable<String> getLabels(ChangeData cd) {
     Set<String> allApprovals = new HashSet<>();
     Set<String> distinctApprovals = new HashSet<>();
+    Table<String, Short, Integer> voteCounts = HashBasedTable.create();
     for (PatchSetApproval a : cd.currentApprovals()) {
       if (a.value() != 0 && !a.isLegacySubmit()) {
-        allApprovals.add(formatLabel(a.label(), a.value(), a.accountId()));
+        increment(voteCounts, a.label(), a.value());
         Optional<LabelType> labelType = cd.getLabelTypes().byLabel(a.labelId());
-        allApprovals.addAll(getMaxMinAnyLabels(a.label(), a.value(), labelType, a.accountId()));
-        if (cd.change().getOwner().equals(a.accountId())) {
-          allApprovals.add(formatLabel(a.label(), a.value(), ChangeQueryBuilder.OWNER_ACCOUNT_ID));
-          allApprovals.addAll(
-              getMaxMinAnyLabels(
-                  a.label(), a.value(), labelType, ChangeQueryBuilder.OWNER_ACCOUNT_ID));
-        }
-        if (!cd.currentPatchSet().uploader().equals(a.accountId())) {
-          allApprovals.add(
-              formatLabel(a.label(), a.value(), ChangeQueryBuilder.NON_UPLOADER_ACCOUNT_ID));
-          allApprovals.addAll(
-              getMaxMinAnyLabels(
-                  a.label(), a.value(), labelType, ChangeQueryBuilder.NON_UPLOADER_ACCOUNT_ID));
-        }
+
+        allApprovals.add(formatLabel(a.label(), a.value(), a.accountId()));
+        allApprovals.addAll(getMagicLabelFormats(a.label(), a.value(), labelType, a.accountId()));
+        allApprovals.addAll(getLabelOwnerFormats(a, cd, labelType));
+        allApprovals.addAll(getLabelNonUploaderFormats(a, cd, labelType));
         distinctApprovals.add(formatLabel(a.label(), a.value()));
-        distinctApprovals.addAll(getMaxMinAnyLabels(a.label(), a.value(), labelType, null));
+        distinctApprovals.addAll(
+            getMagicLabelFormats(a.label(), a.value(), labelType, /* accountId= */ null));
       }
     }
     allApprovals.addAll(distinctApprovals);
+    allApprovals.addAll(getCountLabelFormats(voteCounts, cd));
     return allApprovals;
   }
 
-  private static List<String> getMaxMinAnyLabels(
+  private static void increment(Table<String, Short, Integer> table, String k1, short k2) {
+    if (!table.contains(k1, k2)) {
+      table.put(k1, k2, 1);
+    } else {
+      int val = table.get(k1, k2);
+      table.put(k1, k2, val + 1);
+    }
+  }
+
+  private static List<String> getCountLabelFormats(
+      Table<String, Short, Integer> voteCounts, ChangeData cd) {
+    List<String> allFormats = new ArrayList<>();
+    for (String label : voteCounts.rowMap().keySet()) {
+      Optional<LabelType> labelType = cd.getLabelTypes().byLabel(label);
+      Map<Short, Integer> row = voteCounts.row(label);
+      for (short vote : row.keySet()) {
+        int count = row.get(vote);
+        allFormats.addAll(getCountLabelFormats(labelType, label, vote, count));
+      }
+    }
+    return allFormats;
+  }
+
+  private static List<String> getCountLabelFormats(
+      Optional<LabelType> labelType, String label, short vote, int count) {
+    List<String> formats =
+        getMagicLabelFormats(label, vote, labelType, /* accountId= */ null, /* count= */ count);
+    formats.add(formatLabel(label, vote, count));
+    return formats;
+  }
+
+  /** Get magic label formats corresponding to the {MIN, MAX, ANY} label votes. */
+  private static List<String> getMagicLabelFormats(
       String label, short labelVal, Optional<LabelType> labelType, @Nullable Account.Id accountId) {
+    return getMagicLabelFormats(label, labelVal, labelType, accountId, /* count= */ null);
+  }
+
+  /** Get magic label formats corresponding to the {MIN, MAX, ANY} label votes. */
+  private static List<String> getMagicLabelFormats(
+      String label,
+      short labelVal,
+      Optional<LabelType> labelType,
+      @Nullable Account.Id accountId,
+      @Nullable Integer count) {
     List<String> labels = new ArrayList<>();
     if (labelType.isPresent()) {
       if (labelVal == labelType.get().getMaxPositive()) {
-        labels.add(formatLabel(label, MagicLabelValue.MAX.name(), accountId));
+        labels.add(formatLabel(label, MagicLabelValue.MAX.name(), accountId, count));
       }
       if (labelVal == labelType.get().getMaxNegative()) {
-        labels.add(formatLabel(label, MagicLabelValue.MIN.name(), accountId));
+        labels.add(formatLabel(label, MagicLabelValue.MIN.name(), accountId, count));
       }
     }
-    labels.add(formatLabel(label, MagicLabelValue.ANY.name(), accountId));
+    labels.add(formatLabel(label, MagicLabelValue.ANY.name(), accountId, count));
     return labels;
+  }
+
+  private static List<String> getLabelOwnerFormats(
+      PatchSetApproval a, ChangeData cd, Optional<LabelType> labelType) {
+    List<String> allFormats = new ArrayList<>();
+    if (cd.change().getOwner().equals(a.accountId())) {
+      allFormats.add(formatLabel(a.label(), a.value(), ChangeQueryBuilder.OWNER_ACCOUNT_ID));
+      allFormats.addAll(
+          getMagicLabelFormats(
+              a.label(), a.value(), labelType, ChangeQueryBuilder.OWNER_ACCOUNT_ID));
+    }
+    return allFormats;
+  }
+
+  private static List<String> getLabelNonUploaderFormats(
+      PatchSetApproval a, ChangeData cd, Optional<LabelType> labelType) {
+    List<String> allFormats = new ArrayList<>();
+    if (!cd.currentPatchSet().uploader().equals(a.accountId())) {
+      allFormats.add(formatLabel(a.label(), a.value(), ChangeQueryBuilder.NON_UPLOADER_ACCOUNT_ID));
+      allFormats.addAll(
+          getMagicLabelFormats(
+              a.label(), a.value(), labelType, ChangeQueryBuilder.NON_UPLOADER_ACCOUNT_ID));
+    }
+    return allFormats;
   }
 
   public static Set<String> getAuthorParts(ChangeData cd) {
@@ -727,25 +836,37 @@ public class ChangeField {
                       decodeProtos(field, PatchSetApprovalProtoConverter.INSTANCE)));
 
   public static String formatLabel(String label, int value) {
-    return formatLabel(label, value, null);
+    return formatLabel(label, value, /* accountId= */ null, /* count= */ null);
+  }
+
+  public static String formatLabel(String label, int value, @Nullable Integer count) {
+    return formatLabel(label, value, /* accountId= */ null, count);
   }
 
   public static String formatLabel(String label, int value, Account.Id accountId) {
+    return formatLabel(label, value, accountId, /* count= */ null);
+  }
+
+  public static String formatLabel(
+      String label, int value, @Nullable Account.Id accountId, @Nullable Integer count) {
     return label.toLowerCase()
         + (value >= 0 ? "+" : "")
         + value
-        + (accountId != null ? "," + formatAccount(accountId) : "");
+        + (accountId != null ? "," + formatAccount(accountId) : "")
+        + (count != null ? ",count=" + count : "");
   }
 
-  public static String formatLabel(String label, String value) {
-    return formatLabel(label, value, null);
+  public static String formatLabel(String label, String value, @Nullable Integer count) {
+    return formatLabel(label, value, /* accountId= */ null, count);
   }
 
-  public static String formatLabel(String label, String value, @Nullable Account.Id accountId) {
+  public static String formatLabel(
+      String label, String value, @Nullable Account.Id accountId, @Nullable Integer count) {
     return label.toLowerCase()
         + "="
         + value
-        + (accountId != null ? "," + formatAccount(accountId) : "");
+        + (accountId != null ? "," + formatAccount(accountId) : "")
+        + (count != null ? ",count=" + count : "");
   }
 
   private static String formatAccount(Account.Id accountId) {
@@ -760,6 +881,11 @@ public class ChangeField {
   /** Commit message of the current patch set. */
   public static final FieldDef<ChangeData, String> COMMIT_MESSAGE =
       fullText(ChangeQueryBuilder.FIELD_MESSAGE).build(ChangeData::commitMessage);
+
+  /** Commit message of the current patch set. */
+  public static final FieldDef<ChangeData, String> COMMIT_MESSAGE_EXACT =
+      exact(ChangeQueryBuilder.FIELD_MESSAGE_EXACT)
+          .build(cd -> truncateStringValueToMaxTermLength(cd.commitMessage()));
 
   /** Summary or inline comment. */
   public static final FieldDef<ChangeData, Iterable<String>> COMMENT =
@@ -1100,8 +1226,18 @@ public class ChangeField {
   }
 
   public static List<String> formatSubmitRecordValues(ChangeData cd) {
-    return formatSubmitRecordValues(
-        cd.submitRecords(SUBMIT_RULE_OPTIONS_STRICT), cd.change().getOwner());
+    Set<String> submitRecordValues = new HashSet<>();
+    submitRecordValues.addAll(
+        formatSubmitRecordValues(
+            cd.submitRecords(SUBMIT_RULE_OPTIONS_STRICT), cd.change().getOwner()));
+    // Also backfill results of submit requirements such that users can query submit requirement
+    // results using the label operator, for example a query with "label:CR=NEED" will match with
+    // changes that have a submit-requirement with name="CR" and status=UNSATISFIED.
+    // Reason: We are preserving backward compatibility of the operators `label:$name=$status`
+    // which were previously working with submit records. Now admins can configure submit
+    // requirements and continue querying them with the label operator.
+    submitRecordValues.addAll(formatSubmitRequirementValues(cd.submitRequirements().values()));
+    return submitRecordValues.stream().collect(Collectors.toList());
   }
 
   @VisibleForTesting
@@ -1127,6 +1263,48 @@ public class ChangeField {
     return result;
   }
 
+  /**
+   * Generate submit requirement result formats that are compatible with the legacy submit record
+   * statuses.
+   */
+  @VisibleForTesting
+  static List<String> formatSubmitRequirementValues(Collection<SubmitRequirementResult> srResults) {
+    List<String> result = new ArrayList<>();
+    for (SubmitRequirementResult srResult : srResults) {
+      switch (srResult.status()) {
+        case SATISFIED:
+        case OVERRIDDEN:
+        case FORCED:
+          result.add(
+              SubmitRecord.Label.Status.OK.name()
+                  + ","
+                  + srResult.submitRequirement().name().toLowerCase());
+          result.add(
+              SubmitRecord.Label.Status.MAY.name()
+                  + ","
+                  + srResult.submitRequirement().name().toLowerCase());
+          break;
+        case UNSATISFIED:
+          result.add(
+              SubmitRecord.Label.Status.NEED.name()
+                  + ","
+                  + srResult.submitRequirement().name().toLowerCase());
+          result.add(
+              SubmitRecord.Label.Status.REJECT.name()
+                  + ","
+                  + srResult.submitRequirement().name().toLowerCase());
+          break;
+        case NOT_APPLICABLE:
+        case ERROR:
+          result.add(
+              SubmitRecord.Label.Status.IMPOSSIBLE.name()
+                  + ","
+                  + srResult.submitRequirement().name().toLowerCase());
+      }
+    }
+    return result;
+  }
+
   /** Serialized submit requirements, used for pre-populating results. */
   public static final FieldDef<ChangeData, Iterable<byte[]>> STORED_SUBMIT_REQUIREMENTS =
       storedOnly("full_submit_requirements")
@@ -1144,6 +1322,7 @@ public class ChangeField {
                     SubmitRequirementProtoConverter.INSTANCE.fromProto(
                         Protos.parseUnchecked(
                             SubmitRequirementProtoConverter.INSTANCE.getParser(), f)))
+            .filter(sr -> !sr.isLegacy())
             .collect(
                 ImmutableMap.toImmutableMap(sr -> sr.submitRequirement(), Function.identity())));
   }
@@ -1226,5 +1405,47 @@ public class ChangeField {
 
   private static AllUsersName allUsers(ChangeData cd) {
     return cd.getAllUsersNameForIndexing();
+  }
+
+  private static String truncateStringValueToMaxTermLength(String str) {
+    return truncateStringValue(str, MAX_TERM_LENGTH);
+  }
+
+  @VisibleForTesting
+  static String truncateStringValue(String str, int maxBytes) {
+    if (maxBytes < 0) {
+      throw new IllegalArgumentException("maxBytes < 0 not allowed");
+    }
+
+    if (maxBytes == 0) {
+      return "";
+    }
+
+    if (str.length() > maxBytes) {
+      if (Character.isHighSurrogate(str.charAt(maxBytes - 1))) {
+        str = str.substring(0, maxBytes - 1);
+      } else {
+        str = str.substring(0, maxBytes);
+      }
+    }
+    byte[] strBytes = str.getBytes(UTF_8);
+    if (strBytes.length > maxBytes) {
+      while (maxBytes > 0 && (strBytes[maxBytes] & 0xC0) == 0x80) {
+        maxBytes -= 1;
+      }
+      if (maxBytes > 0) {
+        if (strBytes.length >= maxBytes && (strBytes[maxBytes - 1] & 0xE0) == 0xC0) {
+          maxBytes -= 1;
+        }
+        if (strBytes.length >= maxBytes && (strBytes[maxBytes - 1] & 0xF0) == 0xE0) {
+          maxBytes -= 1;
+        }
+        if (strBytes.length >= maxBytes && (strBytes[maxBytes - 1] & 0xF8) == 0xF0) {
+          maxBytes -= 1;
+        }
+      }
+      return new String(Arrays.copyOfRange(strBytes, 0, maxBytes), UTF_8);
+    }
+    return str;
   }
 }

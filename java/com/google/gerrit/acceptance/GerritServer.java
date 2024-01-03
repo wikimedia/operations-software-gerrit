@@ -22,7 +22,9 @@ import static java.util.Objects.requireNonNull;
 import com.google.auto.value.AutoValue;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Strings;
+import com.google.common.base.Ticker;
 import com.google.common.collect.ImmutableList;
+import com.google.gerrit.acceptance.AbstractDaemonTest.TestTicker;
 import com.google.gerrit.acceptance.FakeGroupAuditService.FakeGroupAuditServiceModule;
 import com.google.gerrit.acceptance.ReindexGroupsAtStartup.ReindexGroupsAtStartupModule;
 import com.google.gerrit.acceptance.ReindexProjectsAtStartup.ReindexProjectsAtStartupModule;
@@ -59,6 +61,7 @@ import com.google.gerrit.server.config.SitePath;
 import com.google.gerrit.server.experiments.ConfigExperimentFeatures.ConfigExperimentFeaturesModule;
 import com.google.gerrit.server.git.receive.AsyncReceiveCommits.AsyncReceiveCommitsModule;
 import com.google.gerrit.server.git.validators.CommitValidationListener;
+import com.google.gerrit.server.index.AbstractIndexModule;
 import com.google.gerrit.server.index.options.AutoFlush;
 import com.google.gerrit.server.schema.JdbcAccountPatchReviewStore;
 import com.google.gerrit.server.ssh.NoSshModule;
@@ -76,6 +79,7 @@ import com.google.inject.Key;
 import com.google.inject.Module;
 import com.google.inject.Provides;
 import com.google.inject.Singleton;
+import com.google.inject.multibindings.OptionalBinder;
 import java.lang.annotation.Annotation;
 import java.lang.annotation.Retention;
 import java.lang.reflect.Field;
@@ -420,7 +424,6 @@ public class GerritServer implements AutoCloseable {
     if (testSshModule != null) {
       daemon.addAdditionalSshModuleForTesting(testSshModule);
     }
-    daemon.setEnableSshd(desc.useSsh());
     daemon.addAdditionalSysModuleForTesting(
         new AbstractModule() {
           @Override
@@ -430,10 +433,37 @@ public class GerritServer implements AutoCloseable {
                 .to(GitObjectVisibilityChecker.class);
           }
         });
+    daemon.addAdditionalSysModuleForTesting(
+        new AbstractModule() {
+          @Override
+          protected void configure() {
+            super.configure();
+            // GerritServer isn't restarted between tests. TestTicker allows to replace actual
+            // Ticker in tests without restarting server and transparently for other code.
+            // Alternative option with Provider<Ticker> is less convinient, because it affects how
+            // gerrit code should be written - i.e. Ticker must not be stored in fields and must
+            // always be obtained from the provider.
+            TestTicker testTicker = new TestTicker();
+            OptionalBinder.newOptionalBinder(binder(), Ticker.class)
+                .setBinding()
+                .toInstance(testTicker);
+            bind(TestTicker.class).toInstance(testTicker);
+          }
+        });
+    daemon.setEnableHttpd(desc.httpd());
+    // Assure that SSHD is enabled if HTTPD is not required, otherwise the Gerrit server would not
+    // even start.
+    daemon.setEnableSshd(!desc.httpd() || desc.useSsh());
+    daemon.setReplica(
+        ReplicaUtil.isReplica(baseConfig) || ReplicaUtil.isReplica(desc.buildConfig(baseConfig)));
 
     if (desc.memory()) {
       checkArgument(additionalArgs.length == 0, "cannot pass args to in-memory server");
-      return startInMemory(desc, site, baseConfig, daemon, inMemoryRepoManager);
+      AbstractIndexModule testIndexModule =
+          (testSysModule instanceof AbstractIndexModule)
+              ? (AbstractIndexModule) testSysModule
+              : null;
+      return startInMemory(desc, site, baseConfig, daemon, inMemoryRepoManager, testIndexModule);
     }
     return startOnDisk(desc, site, daemon, serverStarted, additionalArgs);
   }
@@ -443,10 +473,10 @@ public class GerritServer implements AutoCloseable {
       Path site,
       Config baseConfig,
       Daemon daemon,
-      @Nullable InMemoryRepositoryManager inMemoryRepoManager)
+      @Nullable InMemoryRepositoryManager inMemoryRepoManager,
+      @Nullable AbstractIndexModule testIndexModule)
       throws Exception {
     Config cfg = desc.buildConfig(baseConfig);
-    daemon.setReplica(ReplicaUtil.isReplica(baseConfig) || ReplicaUtil.isReplica(cfg));
     mergeTestConfig(cfg);
     // Set the log4j configuration to an invalid one to prevent system logs
     // from getting configured and creating log files.
@@ -460,24 +490,11 @@ public class GerritServer implements AutoCloseable {
         "accountPatchReviewDb", null, "url", JdbcAccountPatchReviewStore.TEST_IN_MEMORY_URL);
 
     String configuredIndexBackend = cfg.getString("index", null, "type");
-    IndexType indexType;
-    if (configuredIndexBackend != null) {
-      // Explicitly configured index backend from gerrit.config trumps any other ways to configure
-      // index backends so that Reindex tests can be explicit about the backend they want to test
-      // against.
-      indexType = new IndexType(configuredIndexBackend);
-    } else {
-      // Allow configuring the index backend based on sys/env variables so that integration tests
-      // can be run against different index backends.
-      indexType = IndexType.fromEnvironment().orElse(new IndexType("fake"));
-    }
-    if (indexType.isLucene()) {
-      daemon.setIndexModule(
-          LuceneIndexModule.singleVersionAllLatest(
-              0, ReplicaUtil.isReplica(baseConfig), AutoFlush.ENABLED));
-    } else {
-      daemon.setIndexModule(FakeIndexModule.latestVersion(false));
-    }
+    IndexType indexType =
+        (configuredIndexBackend != null)
+            ? new IndexType(configuredIndexBackend)
+            : IndexType.fromEnvironment().orElse(new IndexType("fake"));
+    daemon.setIndexModule(createIndexModule(indexType, baseConfig, testIndexModule));
 
     daemon.setEnableHttpd(desc.httpd());
     daemon.setInMemory(true);
@@ -495,6 +512,17 @@ public class GerritServer implements AutoCloseable {
         new ReindexProjectsAtStartupModule(), new ReindexGroupsAtStartupModule());
     daemon.start();
     return new GerritServer(desc, null, createTestInjector(daemon), daemon, null);
+  }
+
+  private static AbstractIndexModule createIndexModule(
+      IndexType indexType, Config baseConfig, @Nullable AbstractIndexModule testIndexModule) {
+    if (testIndexModule != null) {
+      return testIndexModule;
+    }
+    return indexType.isLucene()
+        ? LuceneIndexModule.singleVersionAllLatest(
+            0, ReplicaUtil.isReplica(baseConfig), AutoFlush.ENABLED)
+        : FakeIndexModule.latestVersion(false);
   }
 
   private static GerritServer startOnDisk(
@@ -722,5 +750,9 @@ public class GerritServer implements AutoCloseable {
   @Override
   public String toString() {
     return MoreObjects.toStringHelper(this).addValue(desc).toString();
+  }
+
+  public boolean isReplica() {
+    return daemon.isReplica();
   }
 }

@@ -50,6 +50,8 @@ export declare interface DiffInfo {
   content: DiffContent[];
   /** Whether the file is binary. */
   binary?: boolean;
+  /** A list of strings representing the patch set diff header. */
+  diff_header?: string[];
 }
 
 /**
@@ -245,6 +247,13 @@ export declare interface RenderPreferences {
   image_diff_prefs?: ImageDiffPreferences;
   responsive_mode?: DiffResponsiveMode;
   num_lines_rendered_at_once?: number;
+  /**
+   * If enabled, then a new (experimental) diff rendering is used that is
+   * based on Lit components and multiple rendering passes. This is planned to
+   * be a temporary setting until the experiment is concluded.
+   */
+  use_lit_components?: boolean;
+  show_sign_col?: boolean;
 }
 
 /**
@@ -284,7 +293,9 @@ export enum CoverageType {
 }
 
 export declare interface LineRange {
+  /** 1-based, inclusive. */
   start_line: number;
+  /** 1-based, inclusive. */
   end_line: number;
 }
 
@@ -319,6 +330,11 @@ export declare interface MovedLinkClickedEventDetail {
 }
 
 export declare interface LineNumberEventDetail {
+  side: Side;
+  lineNum: LineNumber;
+}
+
+export declare interface DisplayLine {
   side: Side;
   lineNum: LineNumber;
 }
@@ -446,6 +462,14 @@ export declare interface GrAnnotation {
 /** An instance of the GrDiff Webcomponent */
 export declare interface GrDiff extends HTMLElement {
   /**
+   * A line that should not be collapsed, e.g. because it contains a
+   * search result, or is pointed to from the URL.
+   * This is considered during rendering, but changing this does not
+   * automatically trigger a re-render.
+   */
+  lineOfInterest?: DisplayLine;
+
+  /**
    * Return line number element for reading only,
    *
    * This is useful e.g. to determine where on screen certain lines are,
@@ -484,5 +508,20 @@ export declare interface GrDiffCursor {
 
   createCommentInPlace(): void;
   resetScrollMode(): void;
-  moveToLineNumber(lineNum: number, side: Side, path?: string): void;
+
+  /**
+   * Moves to a specific line number in the diff
+   *
+   * @param lineNum which line number should be selected
+   * @param side which side should be selected
+   * @param path file path for the file that should be selected
+   * @param intentionalMove Defines if move-related controls should be applied
+   * (e.g. GrCursorManager.focusOnMove)
+   **/
+  moveToLineNumber(
+    lineNum: number,
+    side: Side,
+    path?: string,
+    intentionalMove?: boolean
+  ): void;
 }

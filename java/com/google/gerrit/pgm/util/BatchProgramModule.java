@@ -20,6 +20,7 @@ import com.google.common.cache.Cache;
 import com.google.common.collect.ImmutableSet;
 import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.entities.GroupReference;
+import com.google.gerrit.entities.SubmitRequirement;
 import com.google.gerrit.extensions.api.projects.CommentLinkInfo;
 import com.google.gerrit.extensions.common.AccountVisibility;
 import com.google.gerrit.extensions.config.FactoryModule;
@@ -41,7 +42,6 @@ import com.google.gerrit.server.account.GroupIncludeCacheImpl;
 import com.google.gerrit.server.account.Realm;
 import com.google.gerrit.server.account.ServiceUserClassifierImpl;
 import com.google.gerrit.server.account.externalids.ExternalIdCacheModule;
-import com.google.gerrit.server.approval.ApprovalCacheImpl;
 import com.google.gerrit.server.cache.CacheRemovalListener;
 import com.google.gerrit.server.cache.h2.H2CacheModule;
 import com.google.gerrit.server.cache.mem.DefaultMemoryCacheModule;
@@ -60,14 +60,15 @@ import com.google.gerrit.server.config.EnablePeerIPInReflogRecordProvider;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.GitReceivePackGroups;
 import com.google.gerrit.server.config.GitUploadPackGroups;
+import com.google.gerrit.server.config.SkipCurrentRulesEvaluationOnClosedChangesModule;
 import com.google.gerrit.server.config.SysExecutorModule;
 import com.google.gerrit.server.extensions.events.EventUtil;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.extensions.events.RevisionCreated;
 import com.google.gerrit.server.extensions.events.WorkInProgressStateChanged;
+import com.google.gerrit.server.git.ChangesByProjectCache;
 import com.google.gerrit.server.git.MergeUtil;
 import com.google.gerrit.server.git.PureRevertCache;
-import com.google.gerrit.server.git.SearchingChangeCacheImpl;
 import com.google.gerrit.server.git.TagCache;
 import com.google.gerrit.server.mail.send.ReplacePatchSetSender;
 import com.google.gerrit.server.notedb.NoteDbModule;
@@ -83,11 +84,13 @@ import com.google.gerrit.server.project.ProjectCacheImpl;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.project.SubmitRequirementsEvaluatorImpl;
 import com.google.gerrit.server.project.SubmitRuleEvaluator;
+import com.google.gerrit.server.query.FileEditsPredicate;
 import com.google.gerrit.server.query.approval.ApprovalModule;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.ChangeIsVisibleToPredicate;
 import com.google.gerrit.server.query.change.ChangeQueryBuilder;
 import com.google.gerrit.server.query.change.ConflictsCacheImpl;
+import com.google.gerrit.server.query.change.DistinctVotersPredicate;
 import com.google.gerrit.server.restapi.group.GroupModule;
 import com.google.gerrit.server.rules.DefaultSubmitRule.DefaultSubmitRuleModule;
 import com.google.gerrit.server.rules.IgnoreSelfApprovalRule.IgnoreSelfApprovalRuleModule;
@@ -158,10 +161,6 @@ public class BatchProgramModule extends FactoryModule {
     factory(PatchSetInserter.Factory.class);
     factory(RebaseChangeOp.Factory.class);
 
-    // As Reindex is a batch program, don't assume the index is available for
-    // the change cache.
-    bind(SearchingChangeCacheImpl.class).toProvider(Providers.of(null));
-
     bind(new TypeLiteral<ImmutableSet<GroupReference>>() {})
         .annotatedWith(AdministrateServerGroups.class)
         .toInstance(ImmutableSet.of());
@@ -173,6 +172,8 @@ public class BatchProgramModule extends FactoryModule {
         .toInstance(Collections.emptySet());
 
     modules.add(new BatchGitModule());
+    modules.add(
+        new ChangesByProjectCache.Module(ChangesByProjectCache.UseIndex.FALSE, getConfig()));
     modules.add(new DefaultPermissionBackendModule());
     modules.add(new DefaultMemoryCacheModule());
     modules.add(new H2CacheModule());
@@ -180,7 +181,6 @@ public class BatchProgramModule extends FactoryModule {
     modules.add(new GroupModule());
     modules.add(new NoteDbModule());
     modules.add(AccountCacheImpl.module());
-    modules.add(ApprovalCacheImpl.module());
     modules.add(ConflictsCacheImpl.module());
     modules.add(DefaultPreferencesCacheImpl.module());
     modules.add(GroupCacheImpl.module());
@@ -197,6 +197,7 @@ public class BatchProgramModule extends FactoryModule {
     factory(CapabilityCollection.Factory.class);
     factory(ChangeData.AssistedFactory.class);
     factory(ChangeIsVisibleToPredicate.Factory.class);
+    factory(DistinctVotersPredicate.Factory.class);
     factory(ProjectState.Factory.class);
 
     DynamicMap.mapOf(binder(), ChangeQueryBuilder.ChangeOperatorFactory.class);
@@ -209,6 +210,12 @@ public class BatchProgramModule extends FactoryModule {
     modules.add(new PrologModule(getConfig()));
     modules.add(new DefaultSubmitRuleModule());
     modules.add(new IgnoreSelfApprovalRuleModule());
+    modules.add(new SkipCurrentRulesEvaluationOnClosedChangesModule());
+
+    // Global submit requirements
+    DynamicSet.setOf(binder(), SubmitRequirement.class);
+
+    factory(FileEditsPredicate.Factory.class);
 
     bind(ChangeJson.Factory.class).toProvider(Providers.of(null));
     bind(EventUtil.class).toProvider(Providers.of(null));

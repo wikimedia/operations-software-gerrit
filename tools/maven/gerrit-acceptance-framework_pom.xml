@@ -2,7 +2,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>com.google.gerrit</groupId>
   <artifactId>gerrit-acceptance-framework</artifactId>
-  <version>3.5.6</version>
+  <version>3.6.8</version>
   <packaging>jar</packaging>
   <name>Gerrit Code Review - Acceptance Test Framework</name>
   <description>Framework for Gerrit's acceptance tests</description>
@@ -104,7 +104,7 @@
   </mailingLists>
 
   <issueManagement>
-    <url>https://bugs.chromium.org/p/gerrit/issues/list</url>
+    <url>https://issues.gerritcodereview.com/issues?q=is:open</url>
     <system>Gerrit Issue Tracker</system>
   </issueManagement>
 </project>

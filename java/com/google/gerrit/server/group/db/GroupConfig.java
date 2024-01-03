@@ -19,7 +19,6 @@ import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.joining;
 
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableSet;
@@ -35,7 +34,7 @@ import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.git.meta.VersionedMetaData;
 import com.google.gerrit.server.util.time.TimeUtil;
 import java.io.IOException;
-import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.Optional;
 import java.util.function.Function;
@@ -89,9 +88,9 @@ import org.eclipse.jgit.revwalk.RevSort;
  * doesn't have any members or subgroups.
  */
 public class GroupConfig extends VersionedMetaData {
-  @VisibleForTesting public static final String GROUP_CONFIG_FILE = "group.config";
-  @VisibleForTesting static final String MEMBERS_FILE = "members";
-  @VisibleForTesting static final String SUBGROUPS_FILE = "subgroups";
+  public static final String GROUP_CONFIG_FILE = "group.config";
+  public static final String MEMBERS_FILE = "members";
+  public static final String SUBGROUPS_FILE = "subgroups";
   private static final Pattern LINE_SEPARATOR_PATTERN = Pattern.compile("\\R");
 
   /**
@@ -279,7 +278,7 @@ public class GroupConfig extends VersionedMetaData {
       rw.markStart(revision);
       rw.sort(RevSort.REVERSE);
       RevCommit earliestCommit = rw.next();
-      Timestamp createdOn = new Timestamp(earliestCommit.getCommitTime() * 1000L);
+      Instant createdOn = Instant.ofEpochSecond(earliestCommit.getCommitTime());
 
       Config config = readConfig(GROUP_CONFIG_FILE);
       ImmutableSet<Account.Id> members = readMembers();
@@ -314,9 +313,9 @@ public class GroupConfig extends VersionedMetaData {
 
     // Commit timestamps are internally truncated to seconds. To return the correct 'createdOn' time
     // for new groups, we explicitly need to truncate the timestamp here.
-    Timestamp commitTimestamp =
+    Instant commitTimestamp =
         TimeUtil.truncateToSecond(
-            groupDelta.flatMap(GroupDelta::getUpdatedOn).orElseGet(TimeUtil::nowTs));
+            groupDelta.flatMap(GroupDelta::getUpdatedOn).orElseGet(TimeUtil::now));
     commit.setAuthor(new PersonIdent(commit.getAuthor(), commitTimestamp));
     commit.setCommitter(new PersonIdent(commit.getCommitter(), commitTimestamp));
 
@@ -346,7 +345,7 @@ public class GroupConfig extends VersionedMetaData {
     return Optional.empty();
   }
 
-  private InternalGroup updateGroup(Timestamp commitTimestamp)
+  private InternalGroup updateGroup(Instant commitTimestamp)
       throws IOException, ConfigInvalidException {
     Config config = updateGroupProperties();
 
@@ -358,7 +357,7 @@ public class GroupConfig extends VersionedMetaData {
         loadedGroup.map(InternalGroup::getSubgroups).orElseGet(ImmutableSet::of);
     Optional<ImmutableSet<AccountGroup.UUID>> updatedSubgroups = updateSubgroups(originalSubgroups);
 
-    Timestamp createdOn = loadedGroup.map(InternalGroup::getCreatedOn).orElse(commitTimestamp);
+    Instant createdOn = loadedGroup.map(InternalGroup::getCreatedOn).orElse(commitTimestamp);
 
     return createFrom(
         groupUuid,
@@ -453,7 +452,7 @@ public class GroupConfig extends VersionedMetaData {
       Config config,
       ImmutableSet<Account.Id> members,
       ImmutableSet<AccountGroup.UUID> subgroups,
-      Timestamp createdOn,
+      Instant createdOn,
       ObjectId refState)
       throws ConfigInvalidException {
     InternalGroup.Builder group = InternalGroup.builder();

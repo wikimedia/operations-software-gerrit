@@ -14,6 +14,9 @@
 
 package com.google.gerrit.extensions.common;
 
+import com.google.gerrit.common.Nullable;
+import java.util.Objects;
+
 /** Result of evaluating a submit requirement on a change. */
 public class SubmitRequirementResultInfo {
   public enum Status {
@@ -41,7 +44,13 @@ public class SubmitRequirementResultInfo {
      * Any of the applicability, submittability or override expressions contain invalid syntax and
      * are not parsable.
      */
-    ERROR
+    ERROR,
+
+    /**
+     * The "submit requirement" was bypassed during submission, e.g. by pushing for review with the
+     * %submit option.
+     */
+    FORCED
   }
 
   /** Submit requirement name. */
@@ -57,11 +66,41 @@ public class SubmitRequirementResultInfo {
   public boolean isLegacy;
 
   /** Result of evaluating the applicability expression. */
-  public SubmitRequirementExpressionInfo applicabilityExpressionResult;
+  @Nullable public SubmitRequirementExpressionInfo applicabilityExpressionResult;
 
   /** Result of evaluating the submittability expression. */
-  public SubmitRequirementExpressionInfo submittabilityExpressionResult;
+  @Nullable public SubmitRequirementExpressionInfo submittabilityExpressionResult;
 
   /** Result of evaluating the override expression. */
-  public SubmitRequirementExpressionInfo overrideExpressionResult;
+  @Nullable public SubmitRequirementExpressionInfo overrideExpressionResult;
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (!(o instanceof SubmitRequirementResultInfo)) {
+      return false;
+    }
+    SubmitRequirementResultInfo that = (SubmitRequirementResultInfo) o;
+    return isLegacy == that.isLegacy
+        && Objects.equals(name, that.name)
+        && Objects.equals(description, that.description)
+        && status == that.status
+        && Objects.equals(applicabilityExpressionResult, that.applicabilityExpressionResult)
+        && Objects.equals(submittabilityExpressionResult, that.submittabilityExpressionResult)
+        && Objects.equals(overrideExpressionResult, that.overrideExpressionResult);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(
+        name,
+        description,
+        status,
+        isLegacy,
+        applicabilityExpressionResult,
+        submittabilityExpressionResult,
+        overrideExpressionResult);
+  }
 }

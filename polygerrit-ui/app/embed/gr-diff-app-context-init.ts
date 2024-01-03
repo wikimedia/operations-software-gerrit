@@ -15,18 +15,21 @@
  * limitations under the License.
  */
 
-import {appContext} from '../services/app-context';
+import {create, Registry, Finalizable} from '../services/registry';
+import {AppContext} from '../services/app-context';
+import {AuthService} from '../services/gr-auth/gr-auth';
 import {FlagsService} from '../services/flags/flags';
 import {grReportingMock} from '../services/gr-reporting/gr-reporting_mock';
-import {AuthService} from '../services/gr-auth/gr-auth';
 
 class MockFlagsService implements FlagsService {
   isEnabled() {
     return false;
   }
 
+  finalize() {}
+
   /**
-   * @returns array of all enabled experiments.
+   * @return array of all enabled experiments.
    */
   get enabledExperiments() {
     return [];
@@ -48,6 +51,8 @@ class MockAuthService implements AuthService {
 
   setup() {}
 
+  finalize() {}
+
   fetch() {
     const blob = new Blob();
     const init = {status: 200, statusText: 'Ack'};
@@ -59,15 +64,38 @@ class MockAuthService implements AuthService {
 // Setup mocks for appContext.
 // This is a temporary solution
 // TODO(dmfilippov): find a better solution for gr-diff
-export function initDiffAppContext() {
-  function setMock(serviceName: string, setupMock: unknown) {
-    Object.defineProperty(appContext, serviceName, {
-      get() {
-        return setupMock;
-      },
-    });
-  }
-  setMock('flagsService', new MockFlagsService());
-  setMock('reportingService', grReportingMock);
-  setMock('authService', new MockAuthService());
+export function createDiffAppContext(): AppContext & Finalizable {
+  const appRegistry: Registry<AppContext> = {
+    flagsService: (_ctx: Partial<AppContext>) => new MockFlagsService(),
+    authService: (_ctx: Partial<AppContext>) => new MockAuthService(),
+    reportingService: (_ctx: Partial<AppContext>) => grReportingMock,
+    eventEmitter: (_ctx: Partial<AppContext>) => {
+      throw new Error('eventEmitter is not implemented');
+    },
+    restApiService: (_ctx: Partial<AppContext>) => {
+      throw new Error('restApiService is not implemented');
+    },
+    jsApiService: (_ctx: Partial<AppContext>) => {
+      throw new Error('jsApiService is not implemented');
+    },
+    storageService: (_ctx: Partial<AppContext>) => {
+      throw new Error('storageService is not implemented');
+    },
+    userModel: (_ctx: Partial<AppContext>) => {
+      throw new Error('userModel is not implemented');
+    },
+    routerModel: (_ctx: Partial<AppContext>) => {
+      throw new Error('routerModel is not implemented');
+    },
+    shortcutsService: (_ctx: Partial<AppContext>) => {
+      throw new Error('shortcutsService is not implemented');
+    },
+    pluginsModel: (_ctx: Partial<AppContext>) => {
+      throw new Error('pluginsModel is not implemented');
+    },
+    highlightService: (_ctx: Partial<AppContext>) => {
+      throw new Error('highlightService is not implemented');
+    },
+  };
+  return create<AppContext>(appRegistry);
 }

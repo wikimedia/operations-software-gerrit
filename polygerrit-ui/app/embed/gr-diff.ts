@@ -23,16 +23,17 @@
 // exposed by shared gr-diff component.
 import '../api/embed';
 import '../scripts/bundled-polymer';
-import '../elements/diff/gr-diff/gr-diff';
-import '../elements/diff/gr-diff-cursor/gr-diff-cursor';
-import {TokenHighlightLayer} from '../elements/diff/gr-diff-builder/token-highlight-layer';
-import {GrDiffCursor} from '../elements/diff/gr-diff-cursor/gr-diff-cursor';
-import {GrAnnotation} from '../elements/diff/gr-diff-highlight/gr-annotation';
-import {initDiffAppContext} from './gr-diff-app-context-init';
+import './diff/gr-diff/gr-diff';
+import './diff/gr-diff-cursor/gr-diff-cursor';
+import {TokenHighlightLayer} from './diff/gr-diff-builder/token-highlight-layer';
+import {GrDiffCursor} from './diff/gr-diff-cursor/gr-diff-cursor';
+import {GrAnnotation} from './diff/gr-diff-highlight/gr-annotation';
+import {createDiffAppContext} from './gr-diff-app-context-init';
+import {injectAppContext} from '../services/app-context';
 
 // Setup appContext for diff.
 // TODO (dmfilippov): find a better solution
-initDiffAppContext();
+injectAppContext(createDiffAppContext());
 // Setup global variables for existing usages of this component
 window.grdiff = {
   GrAnnotation,

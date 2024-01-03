@@ -2,8 +2,9 @@
 = Gerrit Code Review - Plugin Development
 
 The Gerrit server functionality can be extended by installing plugins.
-This page describes how plugins for Gerrit can be developed and hosted
-on gerrit-review.googlesource.com.
+This page describes how plugins for Gerrit can be developed. See the overall
+link:dev-plugins-lifecycle.html[Plugin Lifecycle] document for how plugins can
+be hosted on gerrit-review.googlesource.com.
 
 For JavaScript plugin development, consult with
 link:pg-plugin-dev.html[JavaScript Plugin Development] guide.
@@ -206,6 +207,28 @@ name, i.e. `http://review.example.com:8080/plugin-name`.
 
 The canonical web URL may be injected into any .jar plugin regardless of
 whether or not the plugin provides an HTTP servlet.
+
+[[plugin_resources]]
+=== Plugin resources
+
+Plugins are able to access their own resources without having to go through
+the implementation details on how they are packaged or deployed to Gerrit.
+
+The following example shows a MyClass in a plugin that is able to access the
+last modified time of the "myresource" loaded.
+
+[source,java]
+----
+public class MyClass {
+
+  @Inject
+  public MyClass(Plugin plugin) {
+    long myresourceTime = plugin.getContentScanner().getEntry("myresource").getTime();
+  }
+
+  [...]
+}
+----
 
 [[reload_method]]
 === Reload Method
@@ -414,6 +437,17 @@ Update of HEAD on a project
 * `com.google.gerrit.extensions.events.UsageDataPublishedListener`:
 +
 Publication of usage data
+
+* `com.google.gerrit.extensions.events.GitReferenceUpdatedListener`:
++
+A git reference was updated. A separate event for every ref updated in
+a BatchRefUpdate will be fired.
+
+* `com.google.gerrit.extensions.events.GitBatchRefUpdateListener`:
++
+One or more git references were updated. Alternative to GitReferenceUpdatedListener.
+A single event will inform about all refs updated by a BatchRefUpdate. Will also be
+fired, if only a single ref was updated.
 
 * `com.google.gerrit.extensions.events.GarbageCollectorListener`:
 +
@@ -2308,6 +2342,25 @@ file. For example:
 
 will cause the metrics to be recorded under `my-metrics/${metric-name}`.
 
+Note that metric name can be expressed through a limited set of characters
+`[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*` therefore one should either ensure it
+or call
+link:https://gerrit.googlesource.com/gerrit/+/master/java/com/google/gerrit/metrics/dropwizard/DropWizardMetricMaker.java[
+sanitizeMetricName,role=external,window=_blank] to have it enforced.
+
+The
+link:https://gerrit.googlesource.com/gerrit/+/master/java/com/google/gerrit/metrics/dropwizard/DropWizardMetricMaker.java[
+sanitizeMetricName,role=external,window=_blank] performs the following
+modifications:
+
+* leading `/` is replaced with `_`
+* doubled (or repeated more times) `/` are reduced to a single `/`
+* ending `/` is removed
+* all characters that are not `/a-zA-Z0-9_-` are replaced with
+  `\_0x[HEX CODE]_` (code is capitalized)
+* if the replacement prefix (`_0x`) is found then it is prepended with another
+  replacement prefix
+
 See the replication metrics in the
 link:https://gerrit.googlesource.com/plugins/replication/+/master/src/main/java/com/googlesource/gerrit/plugins/replication/ReplicationMetrics.java[
 replication plugin,role=external,window=_blank] for an example of usage.
@@ -2769,6 +2822,23 @@ Implementors of the `SubmitRule` interface should check whether they need to
 contribute to the link:#change-etag-computation[change ETag computation] to
 prevent callers using ETags from potentially seeing outdated submittability
 information.
+
+`SubmitRule` interface will soon deprecated. Instead, a global `SubmitRequirement`
+can be bound by plugin.
+
+[source, java]
+----
+import com.google.gerrit.extensions.annotations.Exports;
+import com.google.inject.AbstractModule;
+
+public class MyPluginModule extends AbstractModule {
+  @Override
+  protected void configure() {
+    bind(SubmitRequirement.class).annotatedWith(Exports.named("myPlugin"))
+        .toInstance(myPluginSubmitRequirement);
+  }
+}
+----
 
 [[change-etag-computation]]
 == Change ETag Computation

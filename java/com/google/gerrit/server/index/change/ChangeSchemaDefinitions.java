@@ -183,8 +183,44 @@ public class ChangeSchemaDefinitions extends SchemaDefinitions<ChangeData> {
       new Schema.Builder<ChangeData>().add(V69).add(ChangeField.ATTENTION_SET_USERS_COUNT).build();
 
   /** Added new field {@link ChangeField#UPLOADER}. */
+  @Deprecated
   static final Schema<ChangeData> V71 =
       new Schema.Builder<ChangeData>().add(V70).add(ChangeField.UPLOADER).build();
+
+  /** Added new field {@link ChangeField#IS_PURE_REVERT}. */
+  @Deprecated
+  static final Schema<ChangeData> V72 =
+      new Schema.Builder<ChangeData>().add(V71).add(ChangeField.IS_PURE_REVERT).build();
+
+  @Deprecated
+  /** Added new "count=$count" argument to the {@link ChangeField#LABEL} operator. */
+  static final Schema<ChangeData> V73 = schema(V72, false);
+
+  @Deprecated
+  /** Added new field {@link ChangeField#IS_SUBMITTABLE} based on submit requirements. */
+  static final Schema<ChangeData> V74 =
+      new Schema.Builder<ChangeData>().add(V73).add(ChangeField.IS_SUBMITTABLE).build();
+
+  /**
+   * Added new field {@link ChangeField#PREFIX_HASHTAG} and {@link ChangeField#PREFIX_TOPIC} to
+   * allow easier search for topics.
+   */
+  @Deprecated
+  static final Schema<ChangeData> V75 =
+      new Schema.Builder<ChangeData>()
+          .add(V74)
+          .add(ChangeField.PREFIX_HASHTAG)
+          .add(ChangeField.PREFIX_TOPIC)
+          .build();
+
+  /** Added new field {@link ChangeField#FOOTER_NAME}. */
+  @Deprecated
+  static final Schema<ChangeData> V76 =
+      new Schema.Builder<ChangeData>().add(V75).add(ChangeField.FOOTER_NAME).build();
+
+  /** Added new field {@link ChangeField#COMMIT_MESSAGE_EXACT}. */
+  static final Schema<ChangeData> V77 =
+      new Schema.Builder<ChangeData>().add(V76).add(ChangeField.COMMIT_MESSAGE_EXACT).build();
 
   /**
    * Name of the change index to be used when contacting index backends or loading configurations.

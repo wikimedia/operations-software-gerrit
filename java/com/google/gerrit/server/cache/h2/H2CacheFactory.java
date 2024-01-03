@@ -14,27 +14,34 @@
 
 package com.google.gerrit.server.cache.h2;
 
+import static java.util.concurrent.TimeUnit.SECONDS;
+
+import com.google.common.base.Strings;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.flogger.FluentLogger;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.extensions.events.LifecycleListener;
 import com.google.gerrit.extensions.registration.DynamicMap;
-import com.google.gerrit.server.cache.CacheBackend;
 import com.google.gerrit.server.cache.MemoryCacheFactory;
 import com.google.gerrit.server.cache.PersistentCacheBaseFactory;
 import com.google.gerrit.server.cache.PersistentCacheDef;
 import com.google.gerrit.server.cache.h2.H2CacheImpl.SqlStore;
 import com.google.gerrit.server.cache.h2.H2CacheImpl.ValueHolder;
+import com.google.gerrit.server.config.ConfigUtil;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.SitePaths;
+import com.google.gerrit.server.index.options.BuildBloomFilter;
+import com.google.gerrit.server.index.options.IsFirstInsertForEntry;
 import com.google.gerrit.server.logging.LoggingContextAwareExecutorService;
 import com.google.gerrit.server.logging.LoggingContextAwareScheduledExecutorService;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
-import java.util.LinkedList;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -58,32 +65,43 @@ class H2CacheFactory extends PersistentCacheBaseFactory implements LifecycleList
   private final ScheduledExecutorService cleanup;
   private final long h2CacheSize;
   private final boolean h2AutoServer;
+  private final boolean isOfflineReindex;
+  private final boolean buildBloomFilter;
 
   @Inject
   H2CacheFactory(
       MemoryCacheFactory memCacheFactory,
       @GerritServerConfig Config cfg,
       SitePaths site,
-      DynamicMap<Cache<?, ?>> cacheMap) {
+      DynamicMap<Cache<?, ?>> cacheMap,
+      @Nullable IsFirstInsertForEntry isFirstInsertForEntry,
+      @Nullable BuildBloomFilter buildBloomFilter) {
     super(memCacheFactory, cfg, site);
     h2CacheSize = cfg.getLong("cache", null, "h2CacheSize", -1);
     h2AutoServer = cfg.getBoolean("cache", null, "h2AutoServer", false);
-    caches = new LinkedList<>();
+    caches = new ArrayList<>();
     this.cacheMap = cacheMap;
+    this.isOfflineReindex =
+        isFirstInsertForEntry != null && isFirstInsertForEntry.equals(IsFirstInsertForEntry.YES);
+    this.buildBloomFilter =
+        !(buildBloomFilter != null && buildBloomFilter.equals(BuildBloomFilter.FALSE));
 
     if (diskEnabled) {
       executor =
           new LoggingContextAwareExecutorService(
               Executors.newFixedThreadPool(
                   1, new ThreadFactoryBuilder().setNameFormat("DiskCache-Store-%d").build()));
+
       cleanup =
-          new LoggingContextAwareScheduledExecutorService(
-              Executors.newScheduledThreadPool(
-                  1,
-                  new ThreadFactoryBuilder()
-                      .setNameFormat("DiskCache-Prune-%d")
-                      .setDaemon(true)
-                      .build()));
+          isOfflineReindex
+              ? null
+              : new LoggingContextAwareScheduledExecutorService(
+                  Executors.newScheduledThreadPool(
+                      1,
+                      new ThreadFactoryBuilder()
+                          .setNameFormat("DiskCache-Prune-%d")
+                          .setDaemon(true)
+                          .build()));
     } else {
       executor = null;
       cleanup = null;
@@ -95,9 +113,11 @@ class H2CacheFactory extends PersistentCacheBaseFactory implements LifecycleList
     if (executor != null) {
       for (H2CacheImpl<?, ?> cache : caches) {
         executor.execute(cache::start);
-        @SuppressWarnings("unused")
-        Future<?> possiblyIgnoredError =
-            cleanup.schedule(() -> cache.prune(cleanup), 30, TimeUnit.SECONDS);
+        if (cleanup != null) {
+          @SuppressWarnings("unused")
+          Future<?> possiblyIgnoredError =
+              cleanup.schedule(() -> cache.prune(cleanup), 30, TimeUnit.SECONDS);
+        }
       }
     }
   }
@@ -106,7 +126,9 @@ class H2CacheFactory extends PersistentCacheBaseFactory implements LifecycleList
   public void stop() {
     if (executor != null) {
       try {
-        cleanup.shutdownNow();
+        if (cleanup != null) {
+          cleanup.shutdownNow();
+        }
 
         List<Runnable> pending = executor.shutdownNow();
         if (executor.awaitTermination(15, TimeUnit.MINUTES)) {
@@ -132,34 +154,28 @@ class H2CacheFactory extends PersistentCacheBaseFactory implements LifecycleList
 
   @SuppressWarnings({"unchecked"})
   @Override
-  public <K, V> Cache<K, V> buildImpl(
-      PersistentCacheDef<K, V> in, long limit, CacheBackend backend) {
+  public <K, V> Cache<K, V> buildImpl(PersistentCacheDef<K, V> in, long limit) {
     H2CacheDefProxy<K, V> def = new H2CacheDefProxy<>(in);
     SqlStore<K, V> store = newSqlStore(def, limit);
     H2CacheImpl<K, V> cache =
         new H2CacheImpl<>(
-            executor,
-            store,
-            def.keyType(),
-            (Cache<K, ValueHolder<V>>) memCacheFactory.build(def, backend));
+            executor, store, def.keyType(), (Cache<K, ValueHolder<V>>) memCacheFactory.build(def));
     synchronized (caches) {
       caches.add(cache);
     }
     return cache;
   }
 
-  @SuppressWarnings("unchecked")
+  @SuppressWarnings({"unchecked"})
   @Override
   public <K, V> LoadingCache<K, V> buildImpl(
-      PersistentCacheDef<K, V> in, CacheLoader<K, V> loader, long limit, CacheBackend backend) {
+      PersistentCacheDef<K, V> in, CacheLoader<K, V> loader, long limit) {
     H2CacheDefProxy<K, V> def = new H2CacheDefProxy<>(in);
     SqlStore<K, V> store = newSqlStore(def, limit);
     Cache<K, ValueHolder<V>> mem =
         (Cache<K, ValueHolder<V>>)
             memCacheFactory.build(
-                def,
-                (CacheLoader<K, V>) new H2CacheImpl.Loader<>(executor, store, loader),
-                backend);
+                def, (CacheLoader<K, V>) new H2CacheImpl.Loader<>(executor, store, loader));
     H2CacheImpl<K, V> cache = new H2CacheImpl<>(executor, store, def.keyType(), mem);
     synchronized (caches) {
       caches.add(cache);
@@ -190,6 +206,22 @@ class H2CacheFactory extends PersistentCacheBaseFactory implements LifecycleList
     if (h2AutoServer) {
       url.append(";AUTO_SERVER=TRUE");
     }
+    Duration refreshAfterWrite = def.refreshAfterWrite();
+    if (has(def.configKey(), "refreshAfterWrite")) {
+      long refreshAfterWriteInSec =
+          ConfigUtil.getTimeUnit(config, "cache", def.configKey(), "refreshAfterWrite", 0, SECONDS);
+      if (refreshAfterWriteInSec != 0) {
+        refreshAfterWrite = Duration.ofSeconds(refreshAfterWriteInSec);
+      }
+    }
+    Duration expireAfterWrite = def.expireAfterWrite();
+    if (has(def.configKey(), "maxAge")) {
+      long expireAfterWriteInsec =
+          ConfigUtil.getTimeUnit(config, "cache", def.configKey(), "maxAge", 0, SECONDS);
+      if (expireAfterWriteInsec != 0) {
+        expireAfterWrite = Duration.ofSeconds(expireAfterWriteInsec);
+      }
+    }
     return new SqlStore<>(
         url.toString(),
         def.keyType(),
@@ -197,7 +229,12 @@ class H2CacheFactory extends PersistentCacheBaseFactory implements LifecycleList
         def.valueSerializer(),
         def.version(),
         maxSize,
-        def.expireAfterWrite(),
-        def.expireFromMemoryAfterAccess());
+        expireAfterWrite,
+        refreshAfterWrite,
+        buildBloomFilter);
+  }
+
+  private boolean has(String name, String var) {
+    return !Strings.isNullOrEmpty(config.getString("cache", name, var));
   }
 }

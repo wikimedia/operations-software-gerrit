@@ -16,7 +16,9 @@ package com.google.gerrit.server.config;
 
 import static com.google.inject.Scopes.SINGLETON;
 
+import com.google.common.base.Ticker;
 import com.google.common.cache.Cache;
+import com.google.gerrit.entities.SubmitRequirement;
 import com.google.gerrit.extensions.annotations.Exports;
 import com.google.gerrit.extensions.api.changes.ActionVisitor;
 import com.google.gerrit.extensions.api.projects.CommentLinkInfo;
@@ -43,6 +45,7 @@ import com.google.gerrit.extensions.events.ChangeRestoredListener;
 import com.google.gerrit.extensions.events.ChangeRevertedListener;
 import com.google.gerrit.extensions.events.CommentAddedListener;
 import com.google.gerrit.extensions.events.GarbageCollectorListener;
+import com.google.gerrit.extensions.events.GitBatchRefUpdateListener;
 import com.google.gerrit.extensions.events.GitReferenceUpdatedListener;
 import com.google.gerrit.extensions.events.GroupIndexedListener;
 import com.google.gerrit.extensions.events.HashtagsEditedListener;
@@ -106,7 +109,6 @@ import com.google.gerrit.server.account.VersionedAuthorizedKeys;
 import com.google.gerrit.server.account.externalids.ExternalIdCacheModule;
 import com.google.gerrit.server.account.externalids.ExternalIdModule;
 import com.google.gerrit.server.account.externalids.ExternalIdUpsertPreprocessor;
-import com.google.gerrit.server.approval.ApprovalCacheImpl;
 import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.auth.AuthBackend;
 import com.google.gerrit.server.auth.UniversalAuthBackend;
@@ -167,9 +169,8 @@ import com.google.gerrit.server.mail.MailFilter;
 import com.google.gerrit.server.mail.send.FromAddressGenerator;
 import com.google.gerrit.server.mail.send.FromAddressGeneratorProvider;
 import com.google.gerrit.server.mail.send.InboundEmailRejectionSender;
-import com.google.gerrit.server.mail.send.MailSoySauceProvider;
+import com.google.gerrit.server.mail.send.MailSoySauceModule;
 import com.google.gerrit.server.mail.send.MailSoyTemplateProvider;
-import com.google.gerrit.server.mail.send.MailTemplates;
 import com.google.gerrit.server.mime.FileTypeRegistry;
 import com.google.gerrit.server.mime.MimeUtilFileTypeRegistry;
 import com.google.gerrit.server.notedb.NoteDbModule;
@@ -187,13 +188,16 @@ import com.google.gerrit.server.project.CommentLinkProvider;
 import com.google.gerrit.server.project.ProjectCacheImpl;
 import com.google.gerrit.server.project.ProjectNameLockManager;
 import com.google.gerrit.server.project.ProjectState;
+import com.google.gerrit.server.project.SubmitRequirementExpressionsValidator;
 import com.google.gerrit.server.project.SubmitRequirementsEvaluatorImpl;
 import com.google.gerrit.server.project.SubmitRuleEvaluator;
+import com.google.gerrit.server.query.FileEditsPredicate;
 import com.google.gerrit.server.query.approval.ApprovalModule;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.ChangeIsVisibleToPredicate;
 import com.google.gerrit.server.query.change.ChangeQueryBuilder;
 import com.google.gerrit.server.query.change.ConflictsCacheImpl;
+import com.google.gerrit.server.query.change.DistinctVotersPredicate;
 import com.google.gerrit.server.quota.QuotaEnforcer;
 import com.google.gerrit.server.restapi.change.OnPostReview;
 import com.google.gerrit.server.restapi.change.SuggestReviewers;
@@ -224,7 +228,7 @@ import com.google.gitiles.blame.cache.BlameCacheImpl;
 import com.google.inject.Inject;
 import com.google.inject.TypeLiteral;
 import com.google.inject.internal.UniqueAnnotations;
-import com.google.template.soy.jbcsrc.api.SoySauce;
+import com.google.inject.multibindings.OptionalBinder;
 import java.util.List;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.transport.PostReceiveHook;
@@ -248,7 +252,6 @@ public class GerritGlobalModule extends FactoryModule {
     bind(RulesCache.class);
     bind(BlameCache.class).to(BlameCacheImpl.class);
     install(AccountCacheImpl.module());
-    install(ApprovalCacheImpl.module());
     install(BatchUpdate.module());
     install(ChangeKindCacheImpl.module());
     install(ChangeFinder.module());
@@ -286,11 +289,14 @@ public class GerritGlobalModule extends FactoryModule {
     install(new FileInfoJsonModule());
     install(ThreadLocalRequestContext.module());
     install(new ApprovalModule());
+    install(new MailSoySauceModule());
+    install(new SkipCurrentRulesEvaluationOnClosedChangesModule());
 
     factory(CapabilityCollection.Factory.class);
     factory(ChangeData.AssistedFactory.class);
     factory(ChangeJson.AssistedFactory.class);
     factory(ChangeIsVisibleToPredicate.Factory.class);
+    factory(DistinctVotersPredicate.Factory.class);
     factory(DeadlineChecker.Factory.class);
     factory(MergeUtil.Factory.class);
     factory(MultiProgressMonitor.Factory.class);
@@ -327,7 +333,6 @@ public class GerritGlobalModule extends FactoryModule {
 
     bind(ApprovalsUtil.class);
 
-    bind(SoySauce.class).annotatedWith(MailTemplates.class).toProvider(MailSoySauceProvider.class);
     bind(FromAddressGenerator.class).toProvider(FromAddressGeneratorProvider.class).in(SINGLETON);
     bind(Boolean.class)
         .annotatedWith(EnablePeerIPInReflogRecord.class)
@@ -337,6 +342,9 @@ public class GerritGlobalModule extends FactoryModule {
     bind(PatchSetInfoFactory.class);
     bind(IdentifiedUser.GenericFactory.class).in(SINGLETON);
     bind(AccountControl.Factory.class);
+    OptionalBinder.newOptionalBinder(binder(), Ticker.class)
+        .setDefault()
+        .toInstance(Ticker.systemTicker());
 
     bind(UiActions.class);
 
@@ -346,6 +354,7 @@ public class GerritGlobalModule extends FactoryModule {
     DynamicMap.mapOf(binder(), CapabilityDefinition.class);
     DynamicMap.mapOf(binder(), PluginProjectPermissionDefinition.class);
     DynamicSet.setOf(binder(), GitReferenceUpdatedListener.class);
+    DynamicSet.setOf(binder(), GitBatchRefUpdateListener.class);
     DynamicSet.setOf(binder(), AssigneeChangedListener.class);
     DynamicSet.setOf(binder(), ChangeAbandonedListener.class);
     DynamicSet.setOf(binder(), ChangeDeletedListener.class);
@@ -381,13 +390,15 @@ public class GerritGlobalModule extends FactoryModule {
     DynamicSet.setOf(binder(), GarbageCollectorListener.class);
     DynamicSet.setOf(binder(), HeadUpdatedListener.class);
     DynamicSet.setOf(binder(), UsageDataPublishedListener.class);
-    DynamicSet.bind(binder(), GitReferenceUpdatedListener.class).to(ReindexAfterRefUpdate.class);
+    DynamicSet.bind(binder(), GitBatchRefUpdateListener.class).to(ReindexAfterRefUpdate.class);
     DynamicSet.bind(binder(), GitReferenceUpdatedListener.class)
         .to(ProjectConfigEntry.UpdateChecker.class);
     DynamicSet.setOf(binder(), EventListener.class);
     DynamicSet.bind(binder(), EventListener.class).to(EventsMetrics.class);
     DynamicSet.setOf(binder(), UserScopedEventListener.class);
     DynamicSet.setOf(binder(), CommitValidationListener.class);
+    DynamicSet.bind(binder(), CommitValidationListener.class)
+        .to(SubmitRequirementExpressionsValidator.class);
     DynamicSet.setOf(binder(), CommentValidator.class);
     DynamicSet.setOf(binder(), ChangeMessageModifier.class);
     DynamicSet.setOf(binder(), RefOperationValidationListener.class);
@@ -430,6 +441,7 @@ public class GerritGlobalModule extends FactoryModule {
     DynamicItem.itemOf(binder(), MergeSuperSetComputation.class);
     DynamicItem.itemOf(binder(), ProjectNameLockManager.class);
     DynamicSet.setOf(binder(), SubmitRule.class);
+    DynamicSet.setOf(binder(), SubmitRequirement.class);
     DynamicSet.setOf(binder(), QuotaEnforcer.class);
     DynamicSet.setOf(binder(), PerformanceLogger.class);
     if (cfg.getBoolean("tracing", "exportPerformanceMetrics", false)) {
@@ -485,6 +497,7 @@ public class GerritGlobalModule extends FactoryModule {
     factory(GitModules.Factory.class);
     factory(VersionedAuthorizedKeys.Factory.class);
     factory(StoreSubmitRequirementsOp.Factory.class);
+    factory(FileEditsPredicate.Factory.class);
 
     bind(AccountManager.class);
     bind(SubscriptionGraph.Factory.class).to(ConfiguredSubscriptionGraphFactory.class);

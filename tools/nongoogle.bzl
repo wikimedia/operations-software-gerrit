@@ -4,6 +4,8 @@ GUAVA_VERSION = "30.1-jre"
 
 GUAVA_BIN_SHA1 = "00d0c3ce2311c9e36e73228da25a6e99b2ab826f"
 
+GUAVA_TESTLIB_BIN_SHA1 = "798c3827308605cd69697d8f1596a1735d3ef6e2"
+
 GUAVA_DOC_URL = "https://google.github.io/guava/releases/" + GUAVA_VERSION + "/api/docs/"
 
 def declare_nongoogle_deps():
@@ -131,30 +133,42 @@ def declare_nongoogle_deps():
     # Google internal dependencies: these are developed at Google, so there is
     # no concern about version skew.
 
-    FLOGGER_VERS = "0.6"
+    maven_jar(
+        name = "error-prone-annotations",
+        artifact = "com.google.errorprone:error_prone_annotations:2.10.0",
+        sha1 = "9bc20b94d3ac42489cf6ce1e42509c86f6f861a1",
+    )
+
+    FLOGGER_VERS = "0.7.4"
 
     maven_jar(
         name = "flogger",
         artifact = "com.google.flogger:flogger:" + FLOGGER_VERS,
-        sha1 = "155dc6e303a58f7bbff5d2cd1a259de86827f4fe",
+        sha1 = "cec29ed8b58413c2e935d86b12d6b696dc285419",
     )
 
     maven_jar(
         name = "flogger-log4j-backend",
         artifact = "com.google.flogger:flogger-log4j-backend:" + FLOGGER_VERS,
-        sha1 = "9743841bf10309163effd8ddf882b5d5190cc9d9",
+        sha1 = "7486b1c0138647cd7714eccb8ce37b5f2ae20a76",
     )
 
     maven_jar(
         name = "flogger-system-backend",
         artifact = "com.google.flogger:flogger-system-backend:" + FLOGGER_VERS,
-        sha1 = "0f0ccf8923c6c315f2f57b108bcc6e46ccd88777",
+        sha1 = "4bee7ebbd97c63ca7fb17529aeb49a57b670d061",
     )
 
     maven_jar(
         name = "guava",
         artifact = "com.google.guava:guava:" + GUAVA_VERSION,
         sha1 = GUAVA_BIN_SHA1,
+    )
+
+    maven_jar(
+        name = "guava-testlib",
+        artifact = "com.google.guava:guava-testlib:" + GUAVA_VERSION,
+        sha1 = GUAVA_TESTLIB_BIN_SHA1,
     )
 
     GUICE_VERS = "5.0.1"

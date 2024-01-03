@@ -35,7 +35,9 @@ import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.query.approval.ApprovalContext;
 import com.google.gerrit.server.query.approval.ApprovalQueryBuilder;
 import com.google.inject.Inject;
-import java.util.Date;
+import java.time.Instant;
+import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.revwalk.RevWalk;
 import org.junit.Test;
 
 public class ApprovalQueryIT extends AbstractDaemonTest {
@@ -62,6 +64,29 @@ public class ApprovalQueryIT extends AbstractDaemonTest {
     assertTrue(queryBuilder.parse("is:ANY").asMatchable().match(contextForCodeReviewLabel(-2)));
     assertTrue(queryBuilder.parse("is:ANY").asMatchable().match(contextForCodeReviewLabel(2)));
     assertTrue(queryBuilder.parse("is:aNy").asMatchable().match(contextForCodeReviewLabel(2)));
+  }
+
+  @Test
+  public void exactValuePredicate() throws Exception {
+    ApprovalContext approvalContextCodeReviewPlusOne = contextForCodeReviewLabel(1);
+    assertFalse(
+        queryBuilder.parse("is:\"-2\"").asMatchable().match(approvalContextCodeReviewPlusOne));
+    assertFalse(
+        queryBuilder.parse("is:\"-1\"").asMatchable().match(approvalContextCodeReviewPlusOne));
+    assertFalse(queryBuilder.parse("is:0").asMatchable().match(approvalContextCodeReviewPlusOne));
+    assertTrue(queryBuilder.parse("is:1").asMatchable().match(approvalContextCodeReviewPlusOne));
+    assertFalse(queryBuilder.parse("is:2").asMatchable().match(approvalContextCodeReviewPlusOne));
+  }
+
+  @Test
+  public void isPredicate_invalidValue() throws Exception {
+    QueryParseException thrown =
+        assertThrows(QueryParseException.class, () -> queryBuilder.parse("is:INVALID"));
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains(
+            "INVALID is not a valid value for operator 'is'. Valid values: ANY, MAX, MIN"
+                + " or integer");
   }
 
   @Test
@@ -122,6 +147,17 @@ public class ApprovalQueryIT extends AbstractDaemonTest {
             .parse("-changekind:rework")
             .asMatchable()
             .match(contextForCodeReviewLabel(/* value= */ -2, ps2, admin.id())));
+  }
+
+  @Test
+  public void changeKindPredicate_invalidValue() throws Exception {
+    QueryParseException thrown =
+        assertThrows(QueryParseException.class, () -> queryBuilder.parse("changekind:INVALID"));
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains(
+            "INVALID is not a valid value for operator 'changekind'. Valid values:"
+                + " MERGE_FIRST_PARENT_UPDATE, NO_CHANGE, NO_CODE_CHANGE, REWORK, TRIVIAL_REBASE");
   }
 
   @Test
@@ -239,7 +275,15 @@ public class ApprovalQueryIT extends AbstractDaemonTest {
     assertThat(thrown)
         .hasMessageThat()
         .contains(
-            "'invalid' is not a supported argument for has. only 'unchanged-files' is supported");
+            "'invalid' is not a valid value for operator 'has'."
+                + " The only valid value is 'unchanged-files'.");
+  }
+
+  @Test
+  public void invalidQuery() throws Exception {
+    QueryParseException thrown =
+        assertThrows(QueryParseException.class, () -> queryBuilder.parse("INVALID"));
+    assertThat(thrown).hasMessageThat().contains("Unsupported query: INVALID");
   }
 
   private ApprovalContext contextForCodeReviewLabel(int value) throws Exception {
@@ -250,7 +294,7 @@ public class ApprovalQueryIT extends AbstractDaemonTest {
   }
 
   private ApprovalContext contextForCodeReviewLabel(
-      int value, PatchSet.Id psId, Account.Id approver) {
+      int value, PatchSet.Id psId, Account.Id approver) throws Exception {
     ChangeNotes changeNotes = changeNotesFactory.create(project, psId.changeId());
     PatchSet.Id newPsId = PatchSet.id(psId.changeId(), psId.get() + 1);
     ChangeKind changeKind =
@@ -259,11 +303,20 @@ public class ApprovalQueryIT extends AbstractDaemonTest {
     PatchSetApproval approval =
         PatchSetApproval.builder()
             .postSubmit(false)
-            .granted(new Date())
+            .granted(Instant.now())
             .key(PatchSetApproval.key(psId, approver, LabelId.create("Code-Review")))
             .value(value)
             .build();
-    return ApprovalContext.create(
-        changeNotes, approval, changeNotes.getPatchSets().get(newPsId), changeKind);
+    try (Repository repo = repoManager.openRepository(project);
+        RevWalk rw = new RevWalk(repo.newObjectReader())) {
+      return ApprovalContext.create(
+          changeNotes,
+          approval,
+          changeNotes.getPatchSets().get(newPsId),
+          changeKind,
+          /* isMerge= */ false,
+          rw,
+          repo.getConfig());
+    }
   }
 }

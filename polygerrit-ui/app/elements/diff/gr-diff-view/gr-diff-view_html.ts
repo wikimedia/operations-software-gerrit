@@ -277,7 +277,6 @@ export const htmlTemplate = html`
         <gr-patch-range-select
           id="rangeSelect"
           change-num="[[_changeNum]]"
-          change-comments="[[_changeComments]]"
           patch-num="[[_patchRange.patchNum]]"
           base-patch-num="[[_patchRange.basePatchNum]]"
           files-weblinks="[[_filesWeblinks]]"
@@ -339,7 +338,6 @@ export const htmlTemplate = html`
           <gr-diff-mode-selector
             id="modeSelect"
             save-on-change="[[_loggedIn]]"
-            mode="{{changeViewState.diffMode}}"
             show-tooltip-below=""
           ></gr-diff-mode-selector>
         </div>
@@ -409,7 +407,6 @@ export const htmlTemplate = html`
     path="[[_path]]"
     prefs="[[_prefs]]"
     project-name="[[_change.project]]"
-    view-mode="[[_diffMode]]"
     is-blame-loaded="{{_isBlameLoaded}}"
     on-comment-anchor-tap="_onLineSelected"
     on-line-selected="_onLineSelected"
@@ -424,9 +421,16 @@ export const htmlTemplate = html`
   </gr-apply-fix-dialog>
   <gr-diff-preferences-dialog
     id="diffPreferencesDialog"
-    diff-prefs="{{_prefs}}"
     on-reload-diff-preference="_handleReloadingDiffPreference"
   >
   </gr-diff-preferences-dialog>
-  <gr-comment-api id="commentAPI"></gr-comment-api>
+  <gr-overlay id="downloadOverlay">
+    <gr-download-dialog
+      id="downloadDialog"
+      change="[[_change]]"
+      patch-num="[[_patchRange.patchNum]]"
+      config="[[_serverConfig.download]]"
+      on-close="_handleDownloadDialogClose"
+    ></gr-download-dialog>
+  </gr-overlay>
 `;

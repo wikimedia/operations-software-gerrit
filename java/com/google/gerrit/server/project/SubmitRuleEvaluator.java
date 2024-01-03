@@ -15,11 +15,10 @@
 package com.google.gerrit.server.project;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
-import static com.google.gerrit.server.project.ProjectCache.noSuchProject;
 
 import com.google.common.collect.Streams;
 import com.google.common.flogger.FluentLogger;
-import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.SubmitRecord;
 import com.google.gerrit.entities.SubmitTypeRecord;
 import com.google.gerrit.exceptions.StorageException;
@@ -37,6 +36,7 @@ import com.google.gerrit.server.rules.DefaultSubmitRule;
 import com.google.gerrit.server.rules.PrologRule;
 import com.google.gerrit.server.rules.SubmitRule;
 import com.google.inject.Inject;
+import com.google.inject.Singleton;
 import com.google.inject.assistedinject.Assisted;
 import java.util.List;
 import java.util.Optional;
@@ -48,41 +48,51 @@ import java.util.Optional;
 public class SubmitRuleEvaluator {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
-  private final ProjectCache projectCache;
-  private final PrologRule prologRule;
-  private final PluginSetContext<SubmitRule> submitRules;
-  private final Timer0 submitRuleEvaluationLatency;
-  private final Timer0 submitTypeEvaluationLatency;
-  private final SubmitRuleOptions opts;
-  private final CallerFinder callerFinder;
-
   public interface Factory {
     /** Returns a new {@link SubmitRuleEvaluator} with the specified options */
     SubmitRuleEvaluator create(SubmitRuleOptions options);
   }
+
+  @Singleton
+  private static class Metrics {
+    final Timer0 submitRuleEvaluationLatency;
+    final Timer0 submitTypeEvaluationLatency;
+
+    @Inject
+    Metrics(MetricMaker metricMaker) {
+      submitRuleEvaluationLatency =
+          metricMaker.newTimer(
+              "change/submit_rule_evaluation",
+              new Description("Latency for evaluating submit rules on a change.")
+                  .setCumulative()
+                  .setUnit(Units.MILLISECONDS));
+      submitTypeEvaluationLatency =
+          metricMaker.newTimer(
+              "change/submit_type_evaluation",
+              new Description("Latency for evaluating the submit type on a change.")
+                  .setCumulative()
+                  .setUnit(Units.MILLISECONDS));
+    }
+  }
+
+  private final ProjectCache projectCache;
+  private final PrologRule prologRule;
+  private final PluginSetContext<SubmitRule> submitRules;
+  private final Metrics metrics;
+  private final SubmitRuleOptions opts;
+  private final CallerFinder callerFinder;
 
   @Inject
   private SubmitRuleEvaluator(
       ProjectCache projectCache,
       PrologRule prologRule,
       PluginSetContext<SubmitRule> submitRules,
-      MetricMaker metricMaker,
+      Metrics metrics,
       @Assisted SubmitRuleOptions options) {
     this.projectCache = projectCache;
     this.prologRule = prologRule;
     this.submitRules = submitRules;
-    this.submitRuleEvaluationLatency =
-        metricMaker.newTimer(
-            "change/submit_rule_evaluation",
-            new Description("Latency for evaluating submit rules on a change.")
-                .setCumulative()
-                .setUnit(Units.MILLISECONDS));
-    this.submitTypeEvaluationLatency =
-        metricMaker.newTimer(
-            "change/submit_type_evaluation",
-            new Description("Latency for evaluating the submit type on a change.")
-                .setCumulative()
-                .setUnit(Units.MILLISECONDS));
+    this.metrics = metrics;
 
     this.opts = options;
 
@@ -106,21 +116,13 @@ public class SubmitRuleEvaluator {
     logger.atFine().log(
         "Evaluate submit rules for change %d (caller: %s)",
         cd.change().getId().get(), callerFinder.findCallerLazy());
-    try (Timer0.Context ignored = submitRuleEvaluationLatency.start()) {
-      Change change;
-      ProjectState projectState;
-      try {
-        change = cd.change();
-        if (change == null) {
-          throw new StorageException("Change not found");
-        }
-
-        projectState = projectCache.get(cd.project()).orElseThrow(noSuchProject(cd.project()));
-      } catch (NoSuchProjectException e) {
-        throw new IllegalStateException("Unable to find project while evaluating submit rule", e);
+    try (Timer0.Context ignored = metrics.submitRuleEvaluationLatency.start()) {
+      if (cd.change() == null) {
+        throw new StorageException("Change not found");
       }
 
-      if (change.isClosed() && (!opts.recomputeOnClosedChanges() || OnlineReindexMode.isActive())) {
+      if (cd.change().isClosed()
+          && (!opts.recomputeOnClosedChanges() || OnlineReindexMode.isActive())) {
         return cd.notes().getSubmitRecords().stream()
             .map(
                 r -> {
@@ -133,6 +135,15 @@ public class SubmitRuleEvaluator {
                 })
             .collect(toImmutableList());
       }
+
+      ProjectState projectState =
+          projectCache
+              .get(cd.project())
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "Unable to find project while evaluating submit rule",
+                          new NoSuchProjectException(cd.project())));
 
       // We evaluate all the plugin-defined evaluators,
       // and then we collect the results in one list.
@@ -147,12 +158,14 @@ public class SubmitRuleEvaluator {
               c ->
                   c.call(
                       s -> {
-                        Optional<SubmitRecord> evaluate = s.evaluate(cd);
-                        if (evaluate.isPresent()) {
-                          evaluate.get().ruleName =
+                        Optional<SubmitRecord> record = s.evaluate(cd);
+                        if (record.isPresent() && record.get().ruleName == null) {
+                          // Only back-fill the ruleName if it was not populated by the "submit
+                          // rule".
+                          record.get().ruleName =
                               c.getPluginName() + "~" + s.getClass().getSimpleName();
                         }
-                        return evaluate;
+                        return record;
                       }))
           .filter(Optional::isPresent)
           .map(Optional::get)
@@ -166,9 +179,13 @@ public class SubmitRuleEvaluator {
    * @return record from the evaluated rules.
    */
   public SubmitTypeRecord getSubmitType(ChangeData cd) {
-    try (Timer0.Context ignored = submitTypeEvaluationLatency.start()) {
+    try (Timer0.Context ignored = metrics.submitTypeEvaluationLatency.start()) {
       try {
-        projectCache.get(cd.project()).orElseThrow(noSuchProject(cd.project()));
+        Project.NameKey name = cd.project();
+        Optional<ProjectState> project = projectCache.get(name);
+        if (!project.isPresent()) {
+          throw new NoSuchProjectException(name);
+        }
       } catch (NoSuchProjectException e) {
         throw new IllegalStateException("Unable to find project while evaluating submit rule", e);
       }

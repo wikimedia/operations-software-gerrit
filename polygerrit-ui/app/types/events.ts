@@ -15,13 +15,13 @@
  * limitations under the License.
  */
 import {PatchSetNum} from './common';
-import {UIComment} from '../utils/comment-util';
+import {ChangeMessage, Comment} from '../utils/comment-util';
 import {FetchRequest} from './types';
 import {LineNumberEventDetail, MovedLinkClickedEventDetail} from '../api/diff';
 import {Category, RunStatus} from '../api/checks';
-import {ChangeMessage} from '../elements/change/gr-message/gr-message';
 
 export enum EventType {
+  BIND_VALUE_CHANGED = 'bind-value-changed',
   CHANGE = 'change',
   CHANGED = 'changed',
   CHANGE_MESSAGE_DELETED = 'change-message-deleted',
@@ -55,6 +55,8 @@ export enum EventType {
 
 declare global {
   interface HTMLElementEventMap {
+    /* prettier-ignore */
+    'bind-value-changed': BindValueChangeEvent;
     /* prettier-ignore */
     'change': ChangeEvent;
     /* prettier-ignore */
@@ -99,8 +101,14 @@ declare global {
     'server-error': ServerErrorEvent;
     'show-alert': ShowAlertEvent;
     'show-error': ShowErrorEvent;
+    'location-change': LocationChangeEvent;
   }
 }
+
+export interface BindValueChangeEventDetail {
+  value: string;
+}
+export type BindValueChangeEvent = CustomEvent<BindValueChangeEventDetail>;
 
 export type ChangeEvent = InputEvent;
 
@@ -160,7 +168,7 @@ export type NetworkErrorEvent = CustomEvent<NetworkErrorEventDetail>;
 
 export interface OpenFixPreviewEventDetail {
   patchNum?: PatchSetNum;
-  comment?: UIComment;
+  comment?: Comment;
 }
 export type OpenFixPreviewEvent = CustomEvent<OpenFixPreviewEventDetail>;
 
@@ -170,7 +178,7 @@ export interface CloseFixPreviewEventDetail {
 export type CloseFixPreviewEvent = CustomEvent<CloseFixPreviewEventDetail>;
 export interface CreateFixCommentEventDetail {
   patchNum?: PatchSetNum;
-  comment?: UIComment;
+  comment?: Comment;
 }
 export type CreateFixCommentEvent = CustomEvent<CreateFixCommentEventDetail>;
 
@@ -232,6 +240,12 @@ export enum CommentTabState {
 export interface ChecksTabState {
   statusOrCategory?: RunStatus | Category;
   checkName?: string;
+  /** regular expression for filtering runs */
+  filter?: string;
+  /** regular expression for selecting runs */
+  select?: string;
+  /** selected attempt for selected runs */
+  attempt?: number;
 }
 export type SwitchTabEvent = CustomEvent<SwitchTabEventDetail>;
 
@@ -241,3 +255,12 @@ export interface TitleChangeEventDetail {
   title: string;
 }
 export type TitleChangeEvent = CustomEvent<TitleChangeEventDetail>;
+
+/**
+ * This event can be used for Polymer properties that have `notify: true` set.
+ * But it is also generally recommended when you want to notify your parent
+ * elements about a property update, also for Lit elements.
+ *
+ * The name of the event should be `prop-name-changed`.
+ */
+export type ValueChangedEvent<T = string> = CustomEvent<{value: T}>;

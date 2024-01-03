@@ -15,12 +15,29 @@
  * limitations under the License.
  */
 
+import {fixture} from '@open-wc/testing-helpers';
+import {html} from 'lit';
+import {
+  SubmitRequirementResultInfo,
+  NumericChangeId,
+} from '../../../api/rest-api';
+import {getAppContext} from '../../../services/app-context';
 import '../../../test/common-test-setup-karma';
 import {
   createAccountWithId,
   createChange,
+  createSubmitRequirementExpressionInfo,
+  createSubmitRequirementResultInfo,
+  createNonApplicableSubmitRequirementResultInfo,
+  createServerInfo,
 } from '../../../test/test-data-generators';
-import {query, queryAndAssert, stubRestApi} from '../../../test/test-utils';
+import {
+  query,
+  queryAndAssert,
+  stubRestApi,
+  stubFlags,
+  waitUntilObserved,
+} from '../../../test/test-utils';
 import {
   AccountId,
   BranchName,
@@ -28,12 +45,21 @@ import {
   RepoName,
   TopicName,
 } from '../../../types/common';
+import {StandardLabels} from '../../../utils/label-util';
 import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {columnNames} from '../gr-change-list/gr-change-list';
 import './gr-change-list-item';
 import {GrChangeListItem, LabelCategory} from './gr-change-list-item';
-
-const basicFixture = fixtureFromElement('gr-change-list-item');
+import {
+  DIProviderElement,
+  wrapInProvider,
+} from '../../../models/di-provider-element';
+import {
+  bulkActionsModelToken,
+  BulkActionsModel,
+} from '../../../models/bulk-actions/bulk-actions-model';
+import {createTestAppContext} from '../../../test/test-app-context-init';
+import {tap} from '@polymer/iron-test-helpers/mock-interactions';
 
 suite('gr-change-list-item tests', () => {
   const account = createAccountWithId();
@@ -46,315 +72,227 @@ suite('gr-change-list-item tests', () => {
   };
 
   let element: GrChangeListItem;
+  let bulkActionsModel: BulkActionsModel;
 
-  setup(() => {
+  setup(async () => {
     stubRestApi('getLoggedIn').returns(Promise.resolve(false));
-    element = basicFixture.instantiate();
+
+    bulkActionsModel = new BulkActionsModel(
+      createTestAppContext().restApiService
+    );
+    element = (
+      await fixture<DIProviderElement>(
+        wrapInProvider(
+          html`<gr-change-list-item></gr-change-list-item>`,
+          bulkActionsModelToken,
+          bulkActionsModel
+        )
+      )
+    ).element as GrChangeListItem;
+    await element.updateComplete;
   });
 
-  test('_computeLabelCategory', () => {
+  test('computeLabelCategory', () => {
+    element.change = {
+      ...change,
+      labels: {},
+    };
     assert.equal(
-      element._computeLabelCategory({...change, labels: {}}, 'Verified'),
+      element.computeLabelCategory('Verified'),
       LabelCategory.NOT_APPLICABLE
     );
+    element.change.labels = {Verified: {approved: account, value: 1}};
     assert.equal(
-      element._computeLabelCategory(
-        {...change, labels: {Verified: {approved: account, value: 1}}},
-        'Verified'
-      ),
+      element.computeLabelCategory('Verified'),
       LabelCategory.APPROVED
     );
+    element.change.labels = {Verified: {rejected: account, value: -1}};
     assert.equal(
-      element._computeLabelCategory(
-        {...change, labels: {Verified: {rejected: account, value: -1}}},
-        'Verified'
-      ),
+      element.computeLabelCategory('Verified'),
       LabelCategory.REJECTED
     );
+    element.change.labels = {'Code-Review': {approved: account, value: 1}};
+    element.change.unresolved_comment_count = 1;
     assert.equal(
-      element._computeLabelCategory(
-        {
-          ...change,
-          labels: {'Code-Review': {approved: account, value: 1}},
-          unresolved_comment_count: 1,
-        },
-        'Code-Review'
-      ),
+      element.computeLabelCategory('Code-Review'),
       LabelCategory.UNRESOLVED_COMMENTS
     );
+    element.change.labels = {'Code-Review': {value: 1}};
+    element.change.unresolved_comment_count = 0;
     assert.equal(
-      element._computeLabelCategory(
-        {...change, labels: {'Code-Review': {value: 1}}},
-        'Code-Review'
-      ),
+      element.computeLabelCategory('Code-Review'),
       LabelCategory.POSITIVE
     );
+    element.change.labels = {'Code-Review': {value: -1}};
     assert.equal(
-      element._computeLabelCategory(
-        {...change, labels: {'Code-Review': {value: -1}}},
-        'Code-Review'
-      ),
+      element.computeLabelCategory('Code-Review'),
       LabelCategory.NEGATIVE
     );
+    element.change.labels = {'Code-Review': {value: -1}};
     assert.equal(
-      element._computeLabelCategory(
-        {...change, labels: {'Code-Review': {value: -1}}},
-        'Verified'
-      ),
+      element.computeLabelCategory('Verified'),
       LabelCategory.NOT_APPLICABLE
     );
   });
 
-  test('_computeLabelClass', () => {
+  test('computeLabelClass', () => {
+    element.change = {
+      ...change,
+      labels: {},
+    };
     assert.equal(
-      element._computeLabelClass({...change, labels: {}}, 'Verified'),
+      element.computeLabelClass('Verified'),
       'cell label u-gray-background'
     );
+    element.change.labels = {Verified: {approved: account, value: 1}};
+    assert.equal(element.computeLabelClass('Verified'), 'cell label u-green');
+    element.change.labels = {Verified: {rejected: account, value: -1}};
+    assert.equal(element.computeLabelClass('Verified'), 'cell label u-red');
+    element.change.labels = {'Code-Review': {value: 1}};
     assert.equal(
-      element._computeLabelClass(
-        {...change, labels: {Verified: {approved: account, value: 1}}},
-        'Verified'
-      ),
-      'cell label u-green'
-    );
-    assert.equal(
-      element._computeLabelClass(
-        {...change, labels: {Verified: {rejected: account, value: -1}}},
-        'Verified'
-      ),
-      'cell label u-red'
-    );
-    assert.equal(
-      element._computeLabelClass(
-        {...change, labels: {'Code-Review': {value: 1}}},
-        'Code-Review'
-      ),
+      element.computeLabelClass('Code-Review'),
       'cell label u-green u-monospace'
     );
+    element.change.labels = {'Code-Review': {value: -1}};
     assert.equal(
-      element._computeLabelClass(
-        {...change, labels: {'Code-Review': {value: -1}}},
-        'Code-Review'
-      ),
+      element.computeLabelClass('Code-Review'),
       'cell label u-monospace u-red'
     );
+    element.change.labels = {'Code-Review': {value: -1}};
     assert.equal(
-      element._computeLabelClass(
-        {...change, labels: {'Code-Review': {value: -1}}},
-        'Verified'
-      ),
+      element.computeLabelClass('Verified'),
       'cell label u-gray-background'
     );
   });
 
-  test('_computeLabelTitle', () => {
+  test('computeLabelTitle', () => {
+    element.change = {
+      ...change,
+      labels: {},
+    };
+    assert.equal(element.computeLabelTitle('Verified'), 'Label not applicable');
+
+    element.change.labels = {Verified: {approved: {name: 'Diffy'}}};
+    assert.equal(element.computeLabelTitle('Verified'), 'Verified by Diffy');
+
+    element.change.labels = {Verified: {approved: {name: 'Diffy'}}};
     assert.equal(
-      element._computeLabelTitle({...change, labels: {}}, 'Verified'),
+      element.computeLabelTitle('Code-Review'),
       'Label not applicable'
     );
+
+    element.change.labels = {Verified: {rejected: {name: 'Diffy'}}};
+    assert.equal(element.computeLabelTitle('Verified'), 'Verified by Diffy');
+
+    element.change.labels = {
+      'Code-Review': {disliked: {name: 'Diffy'}, value: -1},
+    };
     assert.equal(
-      element._computeLabelTitle(
-        {...change, labels: {Verified: {approved: {name: 'Diffy'}}}},
-        'Verified'
-      ),
-      'Verified by Diffy'
-    );
-    assert.equal(
-      element._computeLabelTitle(
-        {...change, labels: {Verified: {approved: {name: 'Diffy'}}}},
-        'Code-Review'
-      ),
-      'Label not applicable'
-    );
-    assert.equal(
-      element._computeLabelTitle(
-        {...change, labels: {Verified: {rejected: {name: 'Diffy'}}}},
-        'Verified'
-      ),
-      'Verified by Diffy'
-    );
-    assert.equal(
-      element._computeLabelTitle(
-        {
-          ...change,
-          labels: {'Code-Review': {disliked: {name: 'Diffy'}, value: -1}},
-        },
-        'Code-Review'
-      ),
+      element.computeLabelTitle('Code-Review'),
       'Code-Review by Diffy'
     );
+
+    element.change.labels = {
+      'Code-Review': {recommended: {name: 'Diffy'}, value: 1},
+    };
     assert.equal(
-      element._computeLabelTitle(
-        {
-          ...change,
-          labels: {'Code-Review': {recommended: {name: 'Diffy'}, value: 1}},
-        },
-        'Code-Review'
-      ),
+      element.computeLabelTitle('Code-Review'),
       'Code-Review by Diffy'
     );
+
+    element.change.labels = {
+      'Code-Review': {recommended: {name: 'Diffy'}, rejected: {name: 'Admin'}},
+    };
     assert.equal(
-      element._computeLabelTitle(
-        {
-          ...change,
-          labels: {
-            'Code-Review': {
-              recommended: {name: 'Diffy'},
-              rejected: {name: 'Admin'},
-            },
-          },
-        },
-        'Code-Review'
-      ),
+      element.computeLabelTitle('Code-Review'),
       'Code-Review by Admin'
     );
+
+    element.change.labels = {
+      'Code-Review': {approved: {name: 'Diffy'}, rejected: {name: 'Admin'}},
+    };
     assert.equal(
-      element._computeLabelTitle(
-        {
-          ...change,
-          labels: {
-            'Code-Review': {
-              approved: {name: 'Diffy'},
-              rejected: {name: 'Admin'},
-            },
-          },
-        },
-        'Code-Review'
-      ),
+      element.computeLabelTitle('Code-Review'),
       'Code-Review by Admin'
     );
+
+    element.change.labels = {
+      'Code-Review': {
+        recommended: {name: 'Diffy'},
+        disliked: {name: 'Admin'},
+        value: -1,
+      },
+    };
     assert.equal(
-      element._computeLabelTitle(
-        {
-          ...change,
-          labels: {
-            'Code-Review': {
-              recommended: {name: 'Diffy'},
-              disliked: {name: 'Admin'},
-              value: -1,
-            },
-          },
-        },
-        'Code-Review'
-      ),
+      element.computeLabelTitle('Code-Review'),
       'Code-Review by Admin'
     );
+
+    element.change.labels = {
+      'Code-Review': {
+        approved: {name: 'Diffy'},
+        disliked: {name: 'Admin'},
+        value: -1,
+      },
+    };
     assert.equal(
-      element._computeLabelTitle(
-        {
-          ...change,
-          labels: {
-            'Code-Review': {
-              approved: {name: 'Diffy'},
-              disliked: {name: 'Admin'},
-              value: -1,
-            },
-          },
-        },
-        'Code-Review'
-      ),
+      element.computeLabelTitle('Code-Review'),
       'Code-Review by Diffy'
     );
+
+    element.change.labels = {'Code-Review': {approved: account, value: 1}};
+    element.change.unresolved_comment_count = 1;
     assert.equal(
-      element._computeLabelTitle(
-        {
-          ...change,
-          labels: {'Code-Review': {approved: account, value: 1}},
-          unresolved_comment_count: 1,
-        },
-        'Code-Review'
-      ),
+      element.computeLabelTitle('Code-Review'),
       '1 unresolved comment'
     );
+
+    element.change.labels = {
+      'Code-Review': {approved: {name: 'Diffy'}, value: 1},
+    };
+    element.change.unresolved_comment_count = 1;
     assert.equal(
-      element._computeLabelTitle(
-        {
-          ...change,
-          labels: {'Code-Review': {approved: {name: 'Diffy'}, value: 1}},
-          unresolved_comment_count: 1,
-        },
-        'Code-Review'
-      ),
+      element.computeLabelTitle('Code-Review'),
       '1 unresolved comment,\nCode-Review by Diffy'
     );
+
+    element.change.labels = {'Code-Review': {approved: account, value: 1}};
+    element.change.unresolved_comment_count = 2;
     assert.equal(
-      element._computeLabelTitle(
-        {
-          ...change,
-          labels: {'Code-Review': {approved: account, value: 1}},
-          unresolved_comment_count: 2,
-        },
-        'Code-Review'
-      ),
+      element.computeLabelTitle('Code-Review'),
       '2 unresolved comments'
     );
   });
 
-  test('_computeLabelIcon', () => {
-    assert.equal(
-      element._computeLabelIcon({...change, labels: {}}, 'missingLabel'),
-      ''
-    );
-    assert.equal(
-      element._computeLabelIcon(
-        {...change, labels: {Verified: {approved: account, value: 1}}},
-        'Verified'
-      ),
-      'gr-icons:check'
-    );
-    assert.equal(
-      element._computeLabelIcon(
-        {
-          ...change,
-          labels: {'Code-Review': {approved: account, value: 1}},
-          unresolved_comment_count: 1,
-        },
-        'Code-Review'
-      ),
-      'gr-icons:comment'
-    );
+  test('computeLabelIcon', () => {
+    element.change = {
+      ...change,
+      labels: {},
+    };
+    assert.equal(element.computeLabelIcon('missingLabel'), '');
+    element.change.labels = {Verified: {approved: account, value: 1}};
+    assert.equal(element.computeLabelIcon('Verified'), 'gr-icons:check');
+    element.change.labels = {'Code-Review': {approved: account, value: 1}};
+    element.change.unresolved_comment_count = 1;
+    assert.equal(element.computeLabelIcon('Code-Review'), 'gr-icons:comment');
   });
 
-  test('_computeLabelValue', () => {
-    assert.equal(
-      element._computeLabelValue({...change, labels: {}}, 'Verified'),
-      ''
-    );
-    assert.equal(
-      element._computeLabelValue(
-        {...change, labels: {Verified: {approved: account, value: 1}}},
-        'Verified'
-      ),
-      '✓'
-    );
-    assert.equal(
-      element._computeLabelValue(
-        {...change, labels: {Verified: {value: 1}}},
-        'Verified'
-      ),
-      '+1'
-    );
-    assert.equal(
-      element._computeLabelValue(
-        {...change, labels: {Verified: {value: -1}}},
-        'Verified'
-      ),
-      '-1'
-    );
-    assert.equal(
-      element._computeLabelValue(
-        {...change, labels: {Verified: {approved: account}}},
-        'Verified'
-      ),
-      '✓'
-    );
-    assert.equal(
-      element._computeLabelValue(
-        {...change, labels: {Verified: {rejected: account}}},
-        'Verified'
-      ),
-      '✕'
-    );
+  test('computeLabelValue', () => {
+    element.change = {
+      ...change,
+      labels: {},
+    };
+    assert.equal(element.computeLabelValue('Verified'), '');
+    element.change.labels = {Verified: {approved: account, value: 1}};
+    assert.equal(element.computeLabelValue('Verified'), '✓');
+    element.change.labels = {Verified: {value: 1}};
+    assert.equal(element.computeLabelValue('Verified'), '+1');
+    element.change.labels = {Verified: {value: -1}};
+    assert.equal(element.computeLabelValue('Verified'), '-1');
+    element.change.labels = {Verified: {approved: account}};
+    assert.equal(element.computeLabelValue('Verified'), '✓');
+    element.change.labels = {Verified: {rejected: account}};
+    assert.equal(element.computeLabelValue('Verified'), '✕');
   });
 
   test('no hidden columns', async () => {
@@ -362,23 +300,90 @@ suite('gr-change-list-item tests', () => {
       'Subject',
       'Status',
       'Owner',
-      'Assignee',
       'Reviewers',
       'Comments',
       'Repo',
       'Branch',
       'Updated',
       'Size',
+      ' Status ',
     ];
 
-    await flush();
+    await element.updateComplete;
 
     for (const column of columnNames) {
-      const elementClass = '.' + column.toLowerCase();
+      const elementClass = '.' + column.trim().toLowerCase();
       assert.isFalse(
         queryAndAssert(element, elementClass).hasAttribute('hidden')
       );
     }
+  });
+
+  suite('checkbox', () => {
+    test('selection checkbox is only shown if experiment is enabled', async () => {
+      assert.isNotOk(query(element, '.selection'));
+      stubFlags('isEnabled').returns(true);
+      element.requestUpdate();
+      await element.updateComplete;
+      assert.isOk(query(element, '.selection'));
+    });
+
+    test('bulk actions checkboxes', async () => {
+      stubFlags('isEnabled').returns(true);
+      element.change = {...createChange(), _number: 1 as NumericChangeId};
+      bulkActionsModel.sync([element.change]);
+      await element.updateComplete;
+
+      const checkbox = queryAndAssert<HTMLInputElement>(
+        element,
+        '.selection > input'
+      );
+      tap(checkbox);
+      let selectedChangeNums = await waitUntilObserved(
+        bulkActionsModel.selectedChangeNums$,
+        s => s.length === 1
+      );
+
+      assert.deepEqual(selectedChangeNums, [1]);
+
+      tap(checkbox);
+      selectedChangeNums = await waitUntilObserved(
+        bulkActionsModel.selectedChangeNums$,
+        s => s.length === 0
+      );
+
+      assert.deepEqual(selectedChangeNums, []);
+    });
+
+    test('checkbox state updates with model updates', async () => {
+      stubFlags('isEnabled').returns(true);
+      element.requestUpdate();
+      await element.updateComplete;
+
+      element.change = {...createChange(), _number: 1 as NumericChangeId};
+      bulkActionsModel.sync([element.change]);
+      bulkActionsModel.addSelectedChangeNum(element.change._number);
+      await waitUntilObserved(
+        bulkActionsModel.selectedChangeNums$,
+        s => s.length === 1
+      );
+      await element.updateComplete;
+
+      const checkbox = queryAndAssert<HTMLInputElement>(
+        element,
+        '.selection > input'
+      );
+      assert.isTrue(checkbox.checked);
+
+      bulkActionsModel.removeSelectedChangeNum(element.change._number);
+      await waitUntilObserved(
+        bulkActionsModel.selectedChangeNums$,
+        s => s.length === 0
+      );
+      await element.updateComplete;
+
+      assert.isFalse(checkbox.checked);
+    });
   });
 
   test('repo column hidden', async () => {
@@ -386,26 +391,22 @@ suite('gr-change-list-item tests', () => {
       'Subject',
       'Status',
       'Owner',
-      'Assignee',
       'Reviewers',
       'Comments',
       'Branch',
       'Updated',
       'Size',
+      ' Status ',
     ];
 
-    await flush();
+    await element.updateComplete;
 
     for (const column of columnNames) {
-      const elementClass = '.' + column.toLowerCase();
+      const elementClass = '.' + column.trim().toLowerCase();
       if (column === 'Repo') {
-        assert.isTrue(
-          queryAndAssert(element, elementClass).hasAttribute('hidden')
-        );
+        assert.isNotOk(query(element, elementClass));
       } else {
-        assert.isFalse(
-          queryAndAssert(element, elementClass).hasAttribute('hidden')
-        );
+        assert.isOk(query(element, elementClass));
       }
     }
   });
@@ -429,16 +430,14 @@ suite('gr-change-list-item tests', () => {
       attention_set: {},
     };
     for (let i = 0; i < reviewerIds.length; i++) {
-      element.change!.reviewers.REVIEWER!.push({
+      element.change.reviewers.REVIEWER!.push({
         _account_id: reviewerIds[i] as AccountId,
         name: reviewerNames[i],
       });
     }
     attSetIds.forEach(id => (element.change!.attention_set![id] = {account}));
 
-    const actual = element
-      ._computeReviewers(element.change)
-      .map(r => r._account_id);
+    const actual = element.computeReviewers().map(r => r._account_id);
     assert.deepEqual(actual, expected as AccountId[]);
   }
 
@@ -468,84 +467,80 @@ suite('gr-change-list-item tests', () => {
   test('random column does not exist', async () => {
     element.visibleChangeTableColumns = ['Bad'];
 
-    await flush();
+    await element.updateComplete;
     const elementClass = '.bad';
     assert.isNotOk(query(element, elementClass));
   });
 
-  test('assignee only displayed if there is one', async () => {
-    element.change = change;
-    await flush();
-    assert.isNotOk(query(element, '.assignee gr-account-link'));
-    assert.equal(
-      queryAndAssert(element, '.assignee').textContent!.trim(),
-      '--'
-    );
+  test('TShirt sizing tooltip', () => {
     element.change = {
       ...change,
-      assignee: {
-        name: 'test',
-        status: 'test',
-      },
+      insertions: NaN,
+      deletions: NaN,
     };
-    await flush();
-    queryAndAssert(element, '.assignee gr-account-link');
-  });
-
-  test('TShirt sizing tooltip', () => {
-    assert.equal(
-      element._computeSizeTooltip({
-        ...change,
-        insertions: NaN,
-        deletions: NaN,
-      }),
-      'Size unknown'
-    );
-    assert.equal(
-      element._computeSizeTooltip({...change, insertions: 0, deletions: 0}),
-      'Size unknown'
-    );
-    assert.equal(
-      element._computeSizeTooltip({...change, insertions: 1, deletions: 2}),
-      'added 1, removed 2 lines'
-    );
+    assert.equal(element.computeSizeTooltip(), 'Size unknown');
+    element.change = {
+      ...change,
+      insertions: 0,
+      deletions: 0,
+    };
+    assert.equal(element.computeSizeTooltip(), 'Size unknown');
+    element.change = {
+      ...change,
+      insertions: 1,
+      deletions: 2,
+    };
+    assert.equal(element.computeSizeTooltip(), 'added 1, removed 2 lines');
   });
 
   test('TShirt sizing', () => {
-    assert.equal(
-      element._computeChangeSize({
-        ...change,
-        insertions: NaN,
-        deletions: NaN,
-      }),
-      null
-    );
-    assert.equal(
-      element._computeChangeSize({...change, insertions: 1, deletions: 1}),
-      'XS'
-    );
-    assert.equal(
-      element._computeChangeSize({...change, insertions: 9, deletions: 1}),
-      'S'
-    );
-    assert.equal(
-      element._computeChangeSize({...change, insertions: 10, deletions: 200}),
-      'M'
-    );
-    assert.equal(
-      element._computeChangeSize({...change, insertions: 99, deletions: 900}),
-      'L'
-    );
-    assert.equal(
-      element._computeChangeSize({...change, insertions: 99, deletions: 999}),
-      'XL'
-    );
+    element.change = {
+      ...change,
+      insertions: NaN,
+      deletions: NaN,
+    };
+    assert.equal(element.computeChangeSize(), null);
+
+    element.change = {
+      ...change,
+      insertions: 1,
+      deletions: 1,
+    };
+    assert.equal(element.computeChangeSize(), 'XS');
+
+    element.change = {
+      ...change,
+      insertions: 9,
+      deletions: 1,
+    };
+    assert.equal(element.computeChangeSize(), 'S');
+
+    element.change = {
+      ...change,
+      insertions: 10,
+      deletions: 200,
+    };
+    assert.equal(element.computeChangeSize(), 'M');
+
+    element.change = {
+      ...change,
+      insertions: 99,
+      deletions: 900,
+    };
+    assert.equal(element.computeChangeSize(), 'L');
+
+    element.change = {
+      ...change,
+      insertions: 99,
+      deletions: 999,
+    };
+    assert.equal(element.computeChangeSize(), 'XL');
   });
 
   test('change params passed to gr-navigation', async () => {
     const navStub = sinon.stub(GerritNav);
     element.change = change;
-    await flush();
+    await element.updateComplete;
 
     assert.deepEqual(navStub.getUrlForChange.lastCall.args, [change]);
     assert.deepEqual(navStub.getUrlForProjectChanges.lastCall.args, [
@@ -565,14 +560,87 @@ suite('gr-change-list-item tests', () => {
     ]);
   });
 
-  test('_computeRepoDisplay', () => {
-    assert.equal(element._computeRepoDisplay(change), 'host/a/test/repo');
-    assert.equal(
-      element._computeTruncatedRepoDisplay(change),
-      'host/…/test/repo'
-    );
+  test('computeRepoDisplay', () => {
+    element.change = {...change};
+    assert.equal(element.computeRepoDisplay(), 'host/a/test/repo');
+    assert.equal(element.computeTruncatedRepoDisplay(), 'host/…/test/repo');
     delete change.internalHost;
-    assert.equal(element._computeRepoDisplay(change), 'a/test/repo');
-    assert.equal(element._computeTruncatedRepoDisplay(change), '…/test/repo');
+    element.change = {...change};
+    assert.equal(element.computeRepoDisplay(), 'a/test/repo');
+    assert.equal(element.computeTruncatedRepoDisplay(), '…/test/repo');
+  });
+
+  test('renders', async () => {
+    element.showStar = true;
+    element.showNumber = true;
+    element.account = createAccountWithId(1);
+    element.config = createServerInfo();
+    element.change = createChange();
+    await element.updateComplete;
+    expect(element).shadowDom.to.equal(`
+      <gr-change-star></gr-change-star>
+      <a href="">42</a>
+      <a href="" title="Test subject">
+        <div class="container">
+          <div class="content"> Test subject </div>
+          <div class="spacer"> Test subject </div>
+          <span></span>
+        </div>
+      </a>
+      <span class="placeholder"> -- </span>
+      <gr-account-label
+        deselected=""
+        clickable=""
+        highlightattention=""
+      ></gr-account-label>
+      <div></div>
+      <span></span>
+      <a class="fullRepo" href=""> test-project </a>
+      <a class="truncatedRepo" href="" title="test-project"> test-project </a>
+      <a href=""> test-branch </a>
+      <gr-date-formatter withtooltip=""></gr-date-formatter>
+      <gr-date-formatter withtooltip=""></gr-date-formatter>
+      <gr-date-formatter forcerelative="" relativeoptionnoago="" withtooltip="">
+      </gr-date-formatter>
+      <gr-tooltip-content has-tooltip="" title="Size unknown">
+        <span class="placeholder"> -- </span>
+      </gr-tooltip-content>
+      <gr-change-list-column-requirements-summary>
+      </gr-change-list-column-requirements-summary>
+    `);
+  });
+
+  test('renders requirement with new submit requirements', async () => {
+    sinon.stub(getAppContext().flagsService, 'isEnabled').returns(true);
+    const submitRequirement: SubmitRequirementResultInfo = {
+      ...createSubmitRequirementResultInfo(),
+      name: StandardLabels.CODE_REVIEW,
+      submittability_expression_result: createSubmitRequirementExpressionInfo(),
+    };
+    const change: ChangeInfo = {
+      ...createChange(),
+      submit_requirements: [
+        submitRequirement,
+        createNonApplicableSubmitRequirementResultInfo(),
+      ],
+      unresolved_comment_count: 1,
+    };
+    const element = (
+      await fixture<DIProviderElement>(
+        wrapInProvider(
+          html`<gr-change-list-item
+            .change=${change}
+            .labelNames=${[StandardLabels.CODE_REVIEW]}
+          ></gr-change-list-item>`,
+          bulkActionsModelToken,
+          bulkActionsModel
+        )
+      )
+    ).element as GrChangeListItem;
+
+    const requirement = queryAndAssert(element, '.requirement');
+    expect(requirement).dom.to
+      .equal(/* HTML */ ` <gr-change-list-column-requirement>
+    </gr-change-list-column-requirement>`);
   });
 });

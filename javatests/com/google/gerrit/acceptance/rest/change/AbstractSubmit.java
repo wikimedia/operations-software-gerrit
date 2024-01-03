@@ -28,6 +28,7 @@ import static com.google.gerrit.extensions.client.ListChangesOption.SUBMITTABLE;
 import static com.google.gerrit.server.group.SystemGroupBackend.CHANGE_OWNER;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toList;
 import static org.eclipse.jgit.lib.Constants.EMPTY_TREE_ID;
@@ -81,7 +82,6 @@ import com.google.gerrit.extensions.common.ChangeInput;
 import com.google.gerrit.extensions.common.LabelInfo;
 import com.google.gerrit.extensions.events.ChangeIndexedListener;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.extensions.restapi.BinaryResult;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.webui.UiAction;
@@ -104,10 +104,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import org.eclipse.jgit.diff.DiffFormatter;
@@ -148,162 +146,25 @@ public abstract class AbstractSubmit extends AbstractDaemonTest {
     assertThat(projectOperations.project(project).hasHead("master")).isFalse();
     PushOneCommit.Result change = createChange();
     assertThat(change.getCommit().getParents()).isEmpty();
-    Map<BranchNameKey, ObjectId> actual = fetchFromSubmitPreview(change.getChangeId());
     assertThat(projectOperations.project(project).hasHead("master")).isFalse();
-    assertThat(actual).hasSize(1);
 
     submit(change.getChangeId());
     assertThat(projectOperations.project(project).getHead("master").getId())
         .isEqualTo(change.getCommit());
-    assertTrees(project, actual);
   }
 
   @Test
   public void submitSingleChange() throws Throwable {
     RevCommit initialHead = projectOperations.project(project).getHead("master");
     PushOneCommit.Result change = createChange();
-    Map<BranchNameKey, ObjectId> actual = fetchFromSubmitPreview(change.getChangeId());
     RevCommit headAfterSubmit = projectOperations.project(project).getHead("master");
     assertThat(headAfterSubmit).isEqualTo(initialHead);
     assertRefUpdatedEvents();
     assertChangeMergedEvents();
 
-    if ((getSubmitType() == SubmitType.CHERRY_PICK)
-        || (getSubmitType() == SubmitType.REBASE_ALWAYS)) {
-      // The change is updated as well:
-      assertThat(actual).hasSize(2);
-    } else {
-      assertThat(actual).hasSize(1);
-    }
-
     submit(change.getChangeId());
-    assertTrees(project, actual);
-  }
-
-  @Test
-  public void submitMultipleChangesOtherMergeConflictPreview() throws Throwable {
-    RevCommit initialHead = projectOperations.project(project).getHead("master");
-
-    PushOneCommit.Result change = createChange("Change 1", "a.txt", "content");
-    submit(change.getChangeId());
-
-    RevCommit headAfterFirstSubmit = projectOperations.project(project).getHead("master");
-    testRepo.reset(initialHead);
-    PushOneCommit.Result change2 = createChange("Change 2", "a.txt", "other content");
-    PushOneCommit.Result change3 = createChange("Change 3", "d", "d");
-    PushOneCommit.Result change4 = createChange("Change 4", "e", "e");
-    // change 2 is not approved, but we ignore labels
-    approve(change3.getChangeId());
-
-    try (BinaryResult request =
-        gApi.changes().id(change4.getChangeId()).current().submitPreview()) {
-      assertThat(getSubmitType()).isEqualTo(SubmitType.CHERRY_PICK);
-      submit(change4.getChangeId());
-    } catch (RestApiException e) {
-      switch (getSubmitType()) {
-        case FAST_FORWARD_ONLY:
-          assertThat(e.getMessage())
-              .isEqualTo(
-                  "Failed to submit 3 changes due to the following problems:\n"
-                      + "Change "
-                      + change2.getChange().getId()
-                      + ": Project policy "
-                      + "requires all submissions to be a fast-forward. Please "
-                      + "rebase the change locally and upload again for review.\n"
-                      + "Change "
-                      + change3.getChange().getId()
-                      + ": Project policy "
-                      + "requires all submissions to be a fast-forward. Please "
-                      + "rebase the change locally and upload again for review.\n"
-                      + "Change "
-                      + change4.getChange().getId()
-                      + ": Project policy "
-                      + "requires all submissions to be a fast-forward. Please "
-                      + "rebase the change locally and upload again for review.");
-          break;
-        case REBASE_IF_NECESSARY:
-        case REBASE_ALWAYS:
-          String change2hash = change2.getChange().currentPatchSet().commitId().name();
-          assertThat(e.getMessage())
-              .isEqualTo(
-                  "Cannot rebase "
-                      + change2hash
-                      + ": The change could "
-                      + "not be rebased due to a conflict during merge.\n\n"
-                      + "merge conflict(s):\n"
-                      + "a.txt");
-          break;
-        case MERGE_ALWAYS:
-        case MERGE_IF_NECESSARY:
-        case INHERIT:
-          assertThat(e.getMessage())
-              .isEqualTo(
-                  "Failed to submit 3 changes due to the following problems:\n"
-                      + "Change "
-                      + change2.getChange().getId()
-                      + ": Change could not be "
-                      + "merged due to a path conflict. Please rebase the change "
-                      + "locally and upload the rebased commit for review.\n"
-                      + "Change "
-                      + change3.getChange().getId()
-                      + ": Change could not be "
-                      + "merged due to a path conflict. Please rebase the change "
-                      + "locally and upload the rebased commit for review.\n"
-                      + "Change "
-                      + change4.getChange().getId()
-                      + ": Change could not be "
-                      + "merged due to a path conflict. Please rebase the change "
-                      + "locally and upload the rebased commit for review.");
-          break;
-        case CHERRY_PICK:
-        default:
-          assertWithMessage("Should not reach here.").fail();
-          break;
-      }
-
-      RevCommit headAfterSubmit = projectOperations.project(project).getHead("master");
-      assertThat(headAfterSubmit).isEqualTo(headAfterFirstSubmit);
-      assertRefUpdatedEvents(initialHead, headAfterFirstSubmit);
-      assertChangeMergedEvents(change.getChangeId(), headAfterFirstSubmit.name());
-    }
-  }
-
-  @Test
-  public void submitMultipleChangesPreview() throws Throwable {
-    RevCommit initialHead = projectOperations.project(project).getHead("master");
-    PushOneCommit.Result change2 = createChange("Change 2", "a.txt", "other content");
-    PushOneCommit.Result change3 = createChange("Change 3", "d", "d");
-    PushOneCommit.Result change4 = createChange("Change 4", "e", "e");
-    // change 2 is not approved, but we ignore labels
-    approve(change3.getChangeId());
-    Map<BranchNameKey, ObjectId> actual = fetchFromSubmitPreview(change4.getChangeId());
-    Map<String, Map<String, Integer>> expected = new HashMap<>();
-    expected.put(project.get(), new HashMap<>());
-    expected.get(project.get()).put("refs/heads/master", 3);
-
-    assertThat(actual).containsKey(BranchNameKey.create(project, "refs/heads/master"));
-    if (getSubmitType() == SubmitType.CHERRY_PICK) {
-      // CherryPick ignores dependencies, thus only change and destination
-      // branch refs are modified.
-      assertThat(actual).hasSize(2);
-    } else if (getSubmitType() == SubmitType.REBASE_ALWAYS) {
-      // RebaseAlways takes care of dependencies, therefore Change{2,3,4} and
-      // destination branch will be modified.
-      assertThat(actual).hasSize(4);
-    } else {
-      assertThat(actual).hasSize(1);
-    }
-
-    // check that the submit preview did not actually submit
-    RevCommit headAfterSubmit = projectOperations.project(project).getHead("master");
-    assertThat(headAfterSubmit).isEqualTo(initialHead);
-    assertRefUpdatedEvents();
-    assertChangeMergedEvents();
-
-    // now check we actually have the same content:
-    approve(change2.getChangeId());
-    submit(change4.getChangeId());
-    assertTrees(project, actual);
+    headAfterSubmit = projectOperations.project(project).getHead("master");
+    assertThat(headAfterSubmit).isNotEqualTo(initialHead);
   }
 
   /**
@@ -1238,14 +1099,11 @@ public abstract class AbstractSubmit extends AbstractDaemonTest {
     assertThat(projectOperations.project(project).hasHead("master")).isFalse();
     PushOneCommit.Result change = createChange();
     assertThat(change.getCommit().getParents()).isEmpty();
-    Map<BranchNameKey, ObjectId> actual = fetchFromSubmitPreview(change.getChangeId());
     assertThat(projectOperations.project(project).hasHead("master")).isFalse();
-    assertThat(actual).hasSize(1);
 
     submit(change.getChangeId());
     assertThat(projectOperations.project(project).getHead("master").getId())
         .isEqualTo(change.getCommit());
-    assertTrees(project, actual);
   }
 
   @Test
@@ -1259,20 +1117,17 @@ public abstract class AbstractSubmit extends AbstractDaemonTest {
     change.assertOkStatus();
     assertThat(change.getCommit().getTree()).isEqualTo(EMPTY_TREE_ID);
 
-    Map<BranchNameKey, ObjectId> actual = fetchFromSubmitPreview(change.getChangeId());
     assertThat(projectOperations.project(project).hasHead("master")).isFalse();
-    assertThat(actual).hasSize(1);
 
     submit(change.getChangeId());
     assertThat(projectOperations.project(project).getHead("master").getId())
         .isEqualTo(change.getCommit());
-    assertTrees(project, actual);
   }
 
   private void setChangeStatusToNew(PushOneCommit.Result... changes) throws Throwable {
     for (PushOneCommit.Result change : changes) {
       try (BatchUpdate bu =
-          batchUpdateFactory.create(project, userFactory.create(admin.id()), TimeUtil.nowTs())) {
+          batchUpdateFactory.create(project, userFactory.create(admin.id()), TimeUtil.now())) {
         bu.addOp(
             change.getChange().getId(),
             new BatchUpdateOp() {
@@ -1395,8 +1250,8 @@ public abstract class AbstractSubmit extends AbstractDaemonTest {
     submit(r.getChangeId());
     assertThat(r.getChange().getMergedOn()).isPresent();
     ChangeInfo change = gApi.changes().id(r.getChangeId()).get();
-    assertThat(r.getChange().getMergedOn().get()).isEqualTo(change.updated);
-    assertThat(r.getChange().getMergedOn().get()).isEqualTo(change.submitted);
+    assertThat(r.getChange().getMergedOn().get()).isEqualTo(change.getUpdated());
+    assertThat(r.getChange().getMergedOn().get()).isEqualTo(change.getSubmitted());
   }
 
   @Override
@@ -1507,9 +1362,10 @@ public abstract class AbstractSubmit extends AbstractDaemonTest {
   }
 
   protected void assertAuthorAndCommitDateEquals(RevCommit commit) {
-    assertThat(commit.getAuthorIdent().getWhen()).isEqualTo(commit.getCommitterIdent().getWhen());
-    assertThat(commit.getAuthorIdent().getTimeZone())
-        .isEqualTo(commit.getCommitterIdent().getTimeZone());
+    assertThat(commit.getAuthorIdent().getWhenAsInstant())
+        .isEqualTo(commit.getCommitterIdent().getWhenAsInstant());
+    assertThat(commit.getAuthorIdent().getZoneId())
+        .isEqualTo(commit.getCommitterIdent().getZoneId());
   }
 
   protected void assertSubmitter(String changeId, int psId) throws Throwable {
@@ -1588,7 +1444,7 @@ public abstract class AbstractSubmit extends AbstractDaemonTest {
       fmt.setRepository(repo);
       fmt.format(oldTreeId, newTreeId);
       fmt.flush();
-      return out.toString();
+      return out.toString(UTF_8);
     }
   }
 

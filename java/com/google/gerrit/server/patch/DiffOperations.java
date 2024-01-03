@@ -1,16 +1,16 @@
-//  Copyright (C) 2020 The Android Open Source Project
+// Copyright (C) 2020 The Android Open Source Project
 //
-//  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//  http://www.apache.org/licenses/LICENSE-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
-//  Unless required by applicable law or agreed to in writing, software
-//  distributed under the License is distributed on an "AS IS" BASIS,
-//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//  See the License for the specific language governing permissions and
-//  limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package com.google.gerrit.server.patch;
 
@@ -18,10 +18,14 @@ import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Patch;
 import com.google.gerrit.entities.Patch.ChangeType;
 import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.Project.NameKey;
 import com.google.gerrit.extensions.client.DiffPreferencesInfo;
 import com.google.gerrit.server.patch.filediff.FileDiffOutput;
+import com.google.gerrit.server.patch.gitdiff.ModifiedFile;
 import java.util.Map;
+import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.revwalk.RevWalk;
 
 /**
  * An interface for all file diff related operations. Clients should use this interface to request:
@@ -56,7 +60,31 @@ public interface DiffOperations {
    *     an internal error occurred in Git while evaluating the diff.
    */
   Map<String, FileDiffOutput> listModifiedFilesAgainstParent(
-      Project.NameKey project, ObjectId newCommit, int parentNum) throws DiffNotAvailableException;
+      Project.NameKey project, ObjectId newCommit, int parentNum, DiffOptions diffOptions)
+      throws DiffNotAvailableException;
+
+  /**
+   * This method is similar to {@link #listModifiedFilesAgainstParent(NameKey, ObjectId, int,
+   * DiffOptions)} but loads the modified files directly instead of retrieving them from the diff
+   * cache.
+   *
+   * <p>A RevWalk and repoConfig are also supplied and are used to look up the commit IDs. This is
+   * useful in case one the commits is currently being created, that's why the {@code revWalk}
+   * parameter is needed.
+   *
+   * <p>Note that rename detection is disabled for this method.
+   *
+   * @return a map of file paths to {@link ModifiedFile}. The {@link ModifiedFile} contains the
+   *     old/new file paths and the change type (added, deleted, etc...).
+   */
+  Map<String, ModifiedFile> loadModifiedFilesAgainstParent(
+      Project.NameKey project,
+      ObjectId newCommit,
+      int parentNum,
+      DiffOptions diffOptions,
+      RevWalk revWalk,
+      Config repoConfig)
+      throws DiffNotAvailableException;
 
   /**
    * Returns the list of added, deleted or modified files between two commits (patchsets). The
@@ -72,7 +100,30 @@ public interface DiffOperations {
    *     diff.
    */
   Map<String, FileDiffOutput> listModifiedFiles(
-      Project.NameKey project, ObjectId oldCommit, ObjectId newCommit)
+      Project.NameKey project, ObjectId oldCommit, ObjectId newCommit, DiffOptions diffOptions)
+      throws DiffNotAvailableException;
+
+  /**
+   * This method is similar to {@link #listModifiedFilesAgainstParent(NameKey, ObjectId, int,
+   * DiffOptions)} but loads the modified files directly instead of retrieving them from the diff
+   * cache.
+   *
+   * <p>A RevWalk and repoConfig are also supplied and are used to look up the commit IDs. This is
+   * useful in case one the commits is currently being created, that's why the {@code revWalk}
+   * parameter is needed.
+   *
+   * <p>Note that rename detection is disabled for this method.
+   *
+   * @return a map of file paths to {@link ModifiedFile}. The {@link ModifiedFile} contains the
+   *     old/new file paths and the change type (added, deleted, etc...).
+   */
+  Map<String, ModifiedFile> loadModifiedFiles(
+      Project.NameKey project,
+      ObjectId oldCommit,
+      ObjectId newCommit,
+      DiffOptions diffOptions,
+      RevWalk revWalk,
+      Config repoConfig)
       throws DiffNotAvailableException;
 
   /**

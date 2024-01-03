@@ -335,7 +335,7 @@ public class ProjectResetterTest {
   private ObjectId createCommit(Repository repo) throws IOException {
     try (ObjectInserter oi = repo.newObjectInserter()) {
       PersonIdent ident =
-          new PersonIdent(new PersonIdent("Foo Bar", "foo.bar@baz.com"), TimeUtil.nowTs());
+          new PersonIdent(new PersonIdent("Foo Bar", "foo.bar@baz.com"), TimeUtil.now());
       CommitBuilder cb = new CommitBuilder();
       cb.setTreeId(oi.insert(Constants.OBJ_TREE, new byte[] {}));
       cb.setCommitter(ident);

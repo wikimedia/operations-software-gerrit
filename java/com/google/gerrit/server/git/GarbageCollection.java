@@ -136,7 +136,7 @@ public class GarbageCollection {
       }
       b.append(s);
     }
-    logger.atInfo().log(b.toString());
+    logger.atInfo().log("%s", b);
   }
 
   private static void logGcConfiguration(
@@ -153,7 +153,7 @@ public class GarbageCollection {
     }
 
     logGcInfo(projectName, "gc config: " + b.toString());
-    logGcInfo(projectName, "pack config: " + (new PackConfig(repo)).toString());
+    logGcInfo(projectName, "pack config: " + new PackConfig(repo).toString());
   }
 
   private static String formatConfigValues(Config config, String section, String subsection) {
@@ -176,7 +176,7 @@ public class GarbageCollection {
     print(writer, "failed.\n\n");
     StringBuilder b = new StringBuilder();
     b.append("[").append(projectName.get()).append("]");
-    logger.atSevere().withCause(e).log(b.toString());
+    logger.atSevere().withCause(e).log("%s", b);
   }
 
   private static void print(PrintWriter writer, String message) {

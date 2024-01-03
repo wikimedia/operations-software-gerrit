@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
 import '../../../test/common-test-setup-karma';
 import {mockPromise, queryAndAssert} from '../../../test/test-utils';
@@ -28,14 +27,14 @@ suite('gr-error-dialog tests', () => {
 
   setup(async () => {
     element = basicFixture.instantiate();
-    await flush();
+    await element.updateComplete;
   });
 
   test('dismiss tap fires event', async () => {
     const dismissCalled = mockPromise();
     element.addEventListener('dismiss', () => dismissCalled.resolve());
     MockInteractions.tap(
-      (queryAndAssert(element, '#dialog') as GrDialog).confirmButton!
+      queryAndAssert<GrDialog>(element, '#dialog').confirmButton!
     );
     await dismissCalled;
   });

@@ -23,8 +23,10 @@ import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_SUBMITTED_WI
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_TAG;
 import static com.google.gerrit.server.util.AccountTemplateUtil.ACCOUNT_TEMPLATE_PATTERN;
 import static com.google.gerrit.server.util.AccountTemplateUtil.ACCOUNT_TEMPLATE_REGEX;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.auto.value.AutoValue;
+import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -69,7 +71,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.eclipse.jgit.diff.DiffAlgorithm;
 import org.eclipse.jgit.diff.DiffFormatter;
 import org.eclipse.jgit.diff.EditList;
@@ -110,6 +112,8 @@ import org.eclipse.jgit.util.RawParseUtils;
 public class CommitRewriter {
   /** Options to run {@link #backfillProject}. */
   public static class RunOptions implements Serializable {
+    private static final long serialVersionUID = 1L;
+
     /** Whether to rewrite the commit history or only find refs that need to be fixed. */
     public boolean dryRun = true;
     /**
@@ -123,10 +127,9 @@ public class CommitRewriter {
     /** Max number of refs to update in a single {@link BatchRefUpdate}. */
     public int maxRefsInBatch = 10000;
     /**
-     * Max number of refs to fix by a single {@link RefsUpdate#backfillProject} run. Since second
-     * run on the same set of refs is a no-op, running with this option in a loop will eventually
-     * fix all refs. Number of executed {@link BatchRefUpdate} depends on {@link #maxRefsInBatch}
-     * option.
+     * Max number of refs to fix by a single {@link RefsUpdate} run. Since the second run on the
+     * same set of refs is a no-op, running with this option in a loop will eventually fix all refs.
+     * The number of executed {@link BatchRefUpdate} depends on {@link #maxRefsInBatch} option.
      */
     public int maxRefsToUpdate = 50000;
   }
@@ -227,6 +230,8 @@ public class CommitRewriter {
 
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
+  private static final Splitter COMMIT_MESSAGE_SPLITTER = Splitter.onPattern("\\r?\\n");
+
   private final ChangeNotes.Factory changeNotesFactory;
   private final AccountCache accountCache;
   private final DiffAlgorithm diffAlgorithm = new HistogramDiff();
@@ -263,6 +268,8 @@ public class CommitRewriter {
     BackfillResult result = new BackfillResult();
     result.ok = true;
     int refsInUpdate = 0;
+
+    @SuppressWarnings("resource")
     RefsUpdate refsUpdate = null;
     try {
       for (Ref ref : repo.getRefDatabase().getRefsByPrefix(RefNames.REFS_CHANGES)) {
@@ -474,7 +481,7 @@ public class CommitRewriter {
           }
           detailedVerificationStatus.append("Commit author:\n");
           detailedVerificationStatus.append(fixedAuthorIdent.toString());
-          logger.atWarning().log(detailedVerificationStatus.toString());
+          logger.atWarning().log("%s", detailedVerificationStatus);
         }
       }
       boolean needsFix =
@@ -573,7 +580,7 @@ public class CommitRewriter {
 
   private boolean verifyPersonIdent(PersonIdent newIdent, PersonIdent originalIdent) {
     return newIdent.getTimeZoneOffset() == originalIdent.getTimeZoneOffset()
-        && newIdent.getWhen().getTime() == originalIdent.getWhen().getTime()
+        && newIdent.getWhenAsInstant().equals(originalIdent.getWhenAsInstant())
         && newIdent.getEmailAddress().equals(originalIdent.getEmailAddress());
   }
 
@@ -687,15 +694,16 @@ public class CommitRewriter {
         || !originalChangeMessage.startsWith(REMOVED_VOTES_CHANGE_MESSAGE_START)) {
       return Optional.empty();
     }
-    String[] lines = originalChangeMessage.split("\\r?\\n");
+    List<String> lines = COMMIT_MESSAGE_SPLITTER.splitToList(originalChangeMessage);
     StringBuilder fixedLines = new StringBuilder();
     boolean anyFixed = false;
-    for (int i = 1; i < lines.length; i++) {
-      if (lines[i].isEmpty()) {
+    for (int i = 1; i < lines.size(); i++) {
+      String line = lines.get(i);
+      if (line.isEmpty()) {
         continue;
       }
-      Matcher matcher = REMOVED_VOTES_CHANGE_MESSAGE_PATTERN.matcher(lines[i]);
-      String replacementLine = lines[i];
+      Matcher matcher = REMOVED_VOTES_CHANGE_MESSAGE_PATTERN.matcher(line);
+      String replacementLine = line;
       if (matcher.matches() && !NON_REPLACE_ACCOUNT_PATTERN.matcher(matcher.group(2)).matches()) {
         anyFixed = true;
         Optional<String> reviewerReplacement =
@@ -766,7 +774,7 @@ public class CommitRewriter {
     // Pre fix, try to replace with something meaningful.
     // Retrieve reviewer accounts from cache and try to match by their name.
     onAddReviewerMatcher.reset();
-    StringBuffer sb = new StringBuffer();
+    StringBuilder sb = new StringBuilder();
     while (onAddReviewerMatcher.find()) {
       String reviewerName = normalizeOnCodeOwnerAddReviewerMatch(onAddReviewerMatcher.group(1));
       Optional<String> replacementName =
@@ -943,7 +951,8 @@ public class CommitRewriter {
           continue;
         }
       } else if (footerKey.equalsIgnoreCase(FOOTER_LABEL.getName())) {
-        int voterIdentStart = footerValue.indexOf(' ');
+        int uuidStart = footerValue.indexOf(", ");
+        int voterIdentStart = footerValue.indexOf(' ', uuidStart != -1 ? uuidStart + 2 : 0);
         FixIdentResult fixedVoter = null;
         if (voterIdentStart > 0) {
           String originalIdentString = footerValue.substring(voterIdentStart + 1);
@@ -1176,7 +1185,8 @@ public class CommitRewriter {
       // Filter further so we match both email & name
       if (possibleReplacements.size() > 1) {
         logger.atWarning().log(
-            "Fixing ref %s, multiple accounts found with the same email address, while replacing %s",
+            "Fixing ref %s, multiple accounts found with the same email address, while replacing"
+                + " %s",
             changeFixProgress.changeMetaRef, accountInfo);
         possibleReplacements =
             possibleReplacements.entrySet().stream()
@@ -1239,7 +1249,7 @@ public class CommitRewriter {
       fmt.setContext(0);
       fmt.format(diff, oldBody, newBody);
       fmt.flush();
-      return out.toString();
+      return out.toString(UTF_8);
     }
   }
 

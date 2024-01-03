@@ -67,9 +67,9 @@ import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
-import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.List;
-import java.util.TimeZone;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.ObjectReader;
@@ -84,7 +84,7 @@ public class CreateMergePatchSet implements RestModifyView<ChangeResource, Merge
   private final BatchUpdate.Factory updateFactory;
   private final GitRepositoryManager gitManager;
   private final CommitsCollection commits;
-  private final TimeZone serverTimeZone;
+  private final ZoneId serverZoneId;
   private final Provider<CurrentUser> user;
   private final ChangeJson.Factory jsonFactory;
   private final PatchSetUtil psUtil;
@@ -111,7 +111,7 @@ public class CreateMergePatchSet implements RestModifyView<ChangeResource, Merge
     this.updateFactory = updateFactory;
     this.gitManager = gitManager;
     this.commits = commits;
-    this.serverTimeZone = myIdent.getTimeZone();
+    this.serverZoneId = myIdent.getZoneId();
     this.user = user;
     this.jsonFactory = json;
     this.psUtil = psUtil;
@@ -176,12 +176,12 @@ public class CreateMergePatchSet implements RestModifyView<ChangeResource, Merge
         currentPsCommit = rw.parseCommit(ps.commitId());
       }
 
-      Timestamp now = TimeUtil.nowTs();
+      Instant now = TimeUtil.now();
       IdentifiedUser me = user.get().asIdentifiedUser();
       PersonIdent author =
           in.author == null
-              ? me.newCommitterIdent(now, serverTimeZone)
-              : new PersonIdent(in.author.name, in.author.email, now, serverTimeZone);
+              ? me.newCommitterIdent(now, serverZoneId)
+              : new PersonIdent(in.author.name, in.author.email, now, serverZoneId);
       CodeReviewCommit newCommit =
           createMergeCommit(
               in,

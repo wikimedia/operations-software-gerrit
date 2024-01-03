@@ -21,7 +21,7 @@ import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.proto.Entities;
 import com.google.protobuf.Parser;
-import java.sql.Timestamp;
+import java.time.Instant;
 
 @Immutable
 public enum ChangeProtoConverter implements ProtoConverter<Entities.Change, Change> {
@@ -44,8 +44,8 @@ public enum ChangeProtoConverter implements ProtoConverter<Entities.Change, Chan
         Entities.Change.newBuilder()
             .setChangeId(changeIdConverter.toProto(change.getId()))
             .setChangeKey(changeKeyConverter.toProto(change.getKey()))
-            .setCreatedOn(change.getCreatedOn().getTime())
-            .setLastUpdatedOn(change.getLastUpdatedOn().getTime())
+            .setCreatedOn(change.getCreatedOn().toEpochMilli())
+            .setLastUpdatedOn(change.getLastUpdatedOn().toEpochMilli())
             .setOwnerAccountId(accountIdConverter.toProto(change.getOwner()))
             .setDest(branchNameConverter.toProto(change.getDest()))
             .setStatus(change.getStatus().getCode())
@@ -96,9 +96,9 @@ public enum ChangeProtoConverter implements ProtoConverter<Entities.Change, Chan
     BranchNameKey destination =
         proto.hasDest() ? branchNameConverter.fromProto(proto.getDest()) : null;
     Change change =
-        new Change(key, changeId, owner, destination, new Timestamp(proto.getCreatedOn()));
+        new Change(key, changeId, owner, destination, Instant.ofEpochMilli(proto.getCreatedOn()));
     if (proto.hasLastUpdatedOn()) {
-      change.setLastUpdatedOn(new Timestamp(proto.getLastUpdatedOn()));
+      change.setLastUpdatedOn(Instant.ofEpochMilli(proto.getLastUpdatedOn()));
     }
     Change.Status status = Change.Status.forCode((char) proto.getStatus());
     if (status != null) {

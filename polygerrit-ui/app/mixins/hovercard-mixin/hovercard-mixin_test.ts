@@ -19,7 +19,8 @@ import '../../test/common-test-setup-karma.js';
 import {HovercardMixin} from './hovercard-mixin.js';
 import {html, LitElement} from 'lit';
 import {customElement} from 'lit/decorators';
-import {MockPromise, mockPromise} from '../../test/test-utils.js';
+import {MockPromise, mockPromise, pressKey} from '../../test/test-utils.js';
+import {findActiveElement, Key} from '../../utils/dom-util.js';
 
 const base = HovercardMixin(LitElement);
 
@@ -37,7 +38,10 @@ class HovercardMixinTest extends base {
   }
 
   override render() {
-    return html`<div id="container"><slot></slot></div>`;
+    return html` <div id="container">
+      <span tabindex="0" id="focusable"></span>
+      <slot></slot>
+    </div>`;
   }
 }
 
@@ -47,7 +51,7 @@ suite('gr-hovercard tests', () => {
   let element: HovercardMixinTest;
 
   let button: HTMLElement;
-  let testPromise: MockPromise;
+  let testPromise: MockPromise<void>;
 
   setup(() => {
     testPromise = mockPromise();
@@ -60,8 +64,9 @@ suite('gr-hovercard tests', () => {
   });
 
   teardown(() => {
-    element.hide(new MouseEvent('click'));
-    button?.remove();
+    pressKey(element, Key.ESC);
+    element.mouseHide(new MouseEvent('click'));
+    if (button) button.remove();
   });
 
   test('updatePosition', async () => {
@@ -95,7 +100,7 @@ suite('gr-hovercard tests', () => {
   });
 
   test('hide', () => {
-    element.hide(new MouseEvent('click'));
+    element.mouseHide(new MouseEvent('click'));
     const style = getComputedStyle(element);
     assert.isFalse(element._isShowing);
     assert.isFalse(element.classList.contains('hovered'));
@@ -104,7 +109,7 @@ suite('gr-hovercard tests', () => {
   });
 
   test('show', async () => {
-    await element.show();
+    await element.show({});
     await element.updateComplete;
     const style = getComputedStyle(element);
     assert.isTrue(element._isShowing);
@@ -114,14 +119,14 @@ suite('gr-hovercard tests', () => {
   });
 
   test('debounceShow does not show immediately', async () => {
-    element.debounceShowBy(100);
+    element.debounceShowBy(100, {});
     setTimeout(() => testPromise.resolve(), 0);
     await testPromise;
     assert.isFalse(element._isShowing);
   });
 
   test('debounceShow shows after delay', async () => {
-    element.debounceShowBy(1);
+    element.debounceShowBy(1, {});
     setTimeout(() => testPromise.resolve(), 10);
     await testPromise;
     assert.isTrue(element._isShowing);
@@ -173,5 +178,53 @@ suite('gr-hovercard tests', () => {
     await clickPromise;
     assert.isFalse(element.isScheduledToShow);
     assert.isFalse(element._isShowing);
+  });
+
+  test('do not show on focus', async () => {
+    const button = document.querySelector('button');
+    button?.focus();
+    await element.updateComplete;
+    assert.isNotTrue(element.isScheduledToShow);
+    assert.isFalse(element._isShowing);
+  });
+
+  test('show on pressing enter when focused', async () => {
+    const button = document.querySelector('button')!;
+    button.focus();
+    await element.updateComplete;
+    pressKey(button, Key.ENTER);
+    await element.updateComplete;
+    assert.isTrue(element._isShowing);
+  });
+
+  test('show on pressing space when focused', async () => {
+    const button = document.querySelector('button')!;
+    button.focus();
+    await element.updateComplete;
+    pressKey(button, Key.SPACE);
+    await element.updateComplete;
+    assert.isTrue(element._isShowing);
+  });
+
+  test('when on pressing enter, focus is moved to hovercard', async () => {
+    const button = document.querySelector('button')!;
+    button.focus();
+    await element.updateComplete;
+    await element.show({keyboardEvent: new KeyboardEvent('enter')});
+    await element.updateComplete;
+    assert.isTrue(element._isShowing);
+    const activeElement = findActiveElement(document);
+    assert.equal(activeElement?.id, 'focusable');
+  });
+
+  test('when on mouseEvent, focus is not moved to hovercard', async () => {
+    const button = document.querySelector('button')!;
+    button.focus();
+    await element.updateComplete;
+    await element.show({mouseEvent: new MouseEvent('enter')});
+    await element.updateComplete;
+    assert.isTrue(element._isShowing);
+    const activeElement = findActiveElement(document);
+    assert.notEqual(activeElement?.id, 'focusable');
   });
 });

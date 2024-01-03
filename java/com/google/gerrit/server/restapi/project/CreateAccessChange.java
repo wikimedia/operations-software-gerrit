@@ -16,6 +16,8 @@ package com.google.gerrit.server.restapi.project;
 
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
 
+import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.gerrit.entities.AccessSection;
 import com.google.gerrit.entities.Change;
@@ -49,7 +51,6 @@ import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
-import java.util.List;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
@@ -113,8 +114,8 @@ public class CreateAccessChange implements RestModifyView<ProjectResource, Proje
         .checkStatePermitsWrite();
 
     MetaDataUpdate.User metaDataUpdateUser = metaDataUpdateFactory.get();
-    List<AccessSection> removals = setAccess.getAccessSections(input.remove);
-    List<AccessSection> additions = setAccess.getAccessSections(input.add);
+    ImmutableList<AccessSection> removals = setAccess.getAccessSections(input.remove);
+    ImmutableList<AccessSection> additions = setAccess.getAccessSections(input.add);
 
     Project.NameKey newParentProjectName =
         input.parent == null ? null : Project.nameKey(input.parent);
@@ -137,7 +138,15 @@ public class CreateAccessChange implements RestModifyView<ProjectResource, Proje
         throw new IllegalStateException(e);
       }
 
-      md.setMessage("Review access change");
+      if (!Strings.isNullOrEmpty(input.message)) {
+        if (!input.message.endsWith("\n")) {
+          input.message += "\n";
+        }
+        md.setMessage(input.message);
+      } else {
+        md.setMessage("Review access change\n");
+      }
+
       md.setInsertChangeId(true);
       Change.Id changeId = Change.id(seq.nextChangeId());
 
@@ -152,7 +161,7 @@ public class CreateAccessChange implements RestModifyView<ProjectResource, Proje
           ObjectReader objReader = objInserter.newReader();
           RevWalk rw = new RevWalk(objReader);
           BatchUpdate bu =
-              updateFactory.create(rsrc.getNameKey(), rsrc.getUser(), TimeUtil.nowTs())) {
+              updateFactory.create(rsrc.getNameKey(), rsrc.getUser(), TimeUtil.now())) {
         bu.setRepository(md.getRepository(), rw, objInserter);
         ChangeInserter ins = newInserter(changeId, commit);
         bu.insertChange(ins);

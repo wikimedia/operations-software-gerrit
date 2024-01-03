@@ -32,6 +32,7 @@ import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.TestAccount;
 import com.google.gerrit.acceptance.config.GerritConfig;
+import com.google.gerrit.acceptance.testsuite.change.IndexOperations;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.common.Nullable;
@@ -82,6 +83,7 @@ public class RefAdvertisementIT extends AbstractDaemonTest {
   @Inject private PermissionBackend permissionBackend;
   @Inject private ProjectOperations projectOperations;
   @Inject private RequestScopeOperations requestScopeOperations;
+  @Inject private IndexOperations.Change changeIndexOperations;
 
   private AccountGroup.UUID admins;
   private AccountGroup.UUID nonInteractiveUsers;
@@ -125,7 +127,7 @@ public class RefAdvertisementIT extends AbstractDaemonTest {
     // Remove read permissions for all users besides admin.
     try (ProjectConfigUpdate u = updateProject(allProjects)) {
 
-      for (AccessSection sec : ImmutableList.copyOf(u.getConfig().getAccessSections())) {
+      for (AccessSection sec : u.getConfig().getAccessSections()) {
         u.getConfig()
             .upsertAccessSection(
                 sec.getName(),
@@ -142,7 +144,7 @@ public class RefAdvertisementIT extends AbstractDaemonTest {
 
     // Remove all read permissions on All-Users.
     try (ProjectConfigUpdate u = updateProject(allUsers)) {
-      for (AccessSection sec : ImmutableList.copyOf(u.getConfig().getAccessSections())) {
+      for (AccessSection sec : u.getConfig().getAccessSections()) {
         u.getConfig()
             .upsertAccessSection(
                 sec.getName(),
@@ -1395,14 +1397,15 @@ public class RefAdvertisementIT extends AbstractDaemonTest {
   public void fetchSingleChangeWithoutIndexAccess() throws Exception {
     PushOneCommit.Result change = createChange();
     String patchSetRef = change.getPatchSetId().toRefName();
-    try (AutoCloseable ignored = disableChangeIndex();
+    try (AutoCloseable ignored = changeIndexOperations.disableReadsAndWrites();
         Repository repo = repoManager.openRepository(project)) {
-      Collection<Ref> singleRef = ImmutableList.of(repo.exactRef(patchSetRef));
-      Collection<Ref> filteredRefs =
-          permissionBackend
-              .user(user(admin))
-              .project(project)
-              .filter(singleRef, repo, RefFilterOptions.defaults());
+      ImmutableList<Ref> singleRef = ImmutableList.of(repo.exactRef(patchSetRef));
+      ImmutableList<Ref> filteredRefs =
+          ImmutableList.copyOf(
+              permissionBackend
+                  .user(user(admin))
+                  .project(project)
+                  .filter(singleRef, repo, RefFilterOptions.defaults()));
       assertThat(filteredRefs).isEqualTo(singleRef);
     }
   }

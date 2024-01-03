@@ -364,6 +364,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
     private final AtomicLong missCount = new AtomicLong();
     private volatile BloomFilter<K> bloomFilter;
     private int estimatedSize;
+    private boolean buildBloomFilter;
 
     SqlStore(
         String jdbcUrl,
@@ -373,7 +374,8 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
         int version,
         long maxSize,
         @Nullable Duration expireAfterWrite,
-        @Nullable Duration refreshAfterWrite) {
+        @Nullable Duration refreshAfterWrite,
+        boolean buildBloomFilter) {
       this.url = jdbcUrl;
       this.keyType = createKeyType(keyType, keySerializer);
       this.valueSerializer = valueSerializer;
@@ -381,6 +383,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
       this.maxSize = maxSize;
       this.expireAfterWrite = expireAfterWrite;
       this.refreshAfterWrite = refreshAfterWrite;
+      this.buildBloomFilter = buildBloomFilter;
 
       int cores = Runtime.getRuntime().availableProcessors();
       int keep = Math.min(cores, 16);
@@ -397,7 +400,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
     }
 
     synchronized void open() {
-      if (bloomFilter == null) {
+      if (buildBloomFilter && bloomFilter == null) {
         bloomFilter = buildBloomFilter();
       }
     }
@@ -411,7 +414,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
 
     boolean mightContain(K key) {
       BloomFilter<K> b = bloomFilter;
-      if (b == null) {
+      if (buildBloomFilter && b == null) {
         synchronized (this) {
           b = bloomFilter;
           if (b == null) {
@@ -548,7 +551,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
         c.touch = c.conn.prepareStatement("UPDATE data SET accessed=? WHERE k=? AND version=?");
       }
       try {
-        c.touch.setTimestamp(1, TimeUtil.nowTs());
+        c.touch.setTimestamp(1, new Timestamp(TimeUtil.nowMs()));
         keyType.set(c.touch, 2, key);
         c.touch.setInt(3, version);
         c.touch.executeUpdate();
@@ -581,7 +584,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
           c.put.setBytes(2, valueSerializer.serialize(holder.value));
           c.put.setInt(3, version);
           c.put.setTimestamp(4, Timestamp.from(holder.created));
-          c.put.setTimestamp(5, TimeUtil.nowTs());
+          c.put.setTimestamp(5, new Timestamp(TimeUtil.nowMs()));
           c.put.executeUpdate();
           holder.clean = true;
         } finally {

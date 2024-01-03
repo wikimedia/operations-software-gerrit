@@ -68,6 +68,8 @@ import {
   GroupId,
   GroupName,
   UrlEncodedRepoName,
+  NumericChangeId,
+  PreferencesInput,
 } from '../../types/common';
 import {DiffInfo, DiffPreferencesInfo} from '../../types/diff';
 import {readResponsePayload} from '../../elements/shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
@@ -83,7 +85,6 @@ import {
 import {
   createDefaultDiffPrefs,
   createDefaultEditPrefs,
-  createDefaultPreferences,
 } from '../../constants/constants';
 import {ParsedChangeInfo} from '../../types/types';
 
@@ -134,9 +135,6 @@ export const grRestApiMock: RestApiService = {
     return Promise.resolve(new Response());
   },
   deleteAccountSSHKey(): void {},
-  deleteAssignee(): Promise<Response> {
-    return Promise.resolve(new Response());
-  },
   deleteChangeCommitMessage(): Promise<Response> {
     return Promise.resolve(new Response());
   },
@@ -173,6 +171,7 @@ export const grRestApiMock: RestApiService = {
   executeChangeAction(): Promise<Response | undefined> {
     return Promise.resolve(new Response());
   },
+  finalize(): void {},
   generateAccountHttpPassword(): Promise<Password> {
     return Promise.resolve('asdf');
   },
@@ -227,11 +226,14 @@ export const grRestApiMock: RestApiService = {
   getChangeConflicts(): Promise<ChangeInfo[] | undefined> {
     return Promise.resolve([]);
   },
-  getChangeDetail(): Promise<ParsedChangeInfo | null | undefined> {
+  getChangeDetail(
+    changeNum?: number | string
+  ): Promise<ParsedChangeInfo | undefined> {
+    if (changeNum === undefined) return Promise.resolve(undefined);
     return Promise.resolve(createChange() as ParsedChangeInfo);
   },
-  getChangeEdit(): Promise<false | EditInfo | undefined> {
-    return Promise.resolve(false);
+  getChangeEdit(): Promise<EditInfo | undefined> {
+    return Promise.resolve(undefined);
   },
   getChangeFiles(): Promise<FileNameToFileInfoMap | undefined> {
     return Promise.resolve({});
@@ -254,8 +256,23 @@ export const grRestApiMock: RestApiService = {
   getChanges() {
     return Promise.resolve([]);
   },
+  getChangesForMultipleQueries() {
+    return Promise.resolve([]);
+  },
   getChangesSubmittedTogether(): Promise<SubmittedTogetherInfo | undefined> {
     return Promise.resolve(createSubmittedTogetherInfo());
+  },
+  getDetailedChangesWithActions(changeNums: NumericChangeId[]) {
+    return Promise.resolve(
+      changeNums.map(changeNum => {
+        return {
+          ...createChange(),
+          actions: {},
+          _number: changeNum,
+          subject: `Subject ${changeNum}`,
+        };
+      })
+    );
   },
   getChangesWithSameTopic(): Promise<ChangeInfo[] | undefined> {
     return Promise.resolve([]);
@@ -275,20 +292,23 @@ export const grRestApiMock: RestApiService = {
   getDiff(): Promise<DiffInfo | undefined> {
     throw new Error('getDiff() not implemented by RestApiMock.');
   },
-  getDiffChangeDetail(): Promise<ChangeInfo | undefined | null> {
-    throw new Error('getDiffChangeDetail() not implemented by RestApiMock.');
-  },
   getDiffComments() {
-    throw new Error('getDiffComments() not implemented by RestApiMock.');
+    // NOTE: This method can not be typed properly due to overloads.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return Promise.resolve({}) as any;
   },
   getDiffDrafts() {
-    throw new Error('getDiffDrafts() not implemented by RestApiMock.');
+    // NOTE: This method can not be typed properly due to overloads.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return Promise.resolve({}) as any;
   },
   getDiffPreferences(): Promise<DiffPreferencesInfo | undefined> {
     return Promise.resolve(createDefaultDiffPrefs());
   },
   getDiffRobotComments() {
-    throw new Error('getDiffRobotComments() not implemented by RestApiMock.');
+    // NOTE: This method can not be typed properly due to overloads.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return Promise.resolve({}) as any;
   },
   getDocumentationSearches(): Promise<DocResult[] | undefined> {
     return Promise.resolve([]);
@@ -482,8 +502,9 @@ export const grRestApiMock: RestApiService = {
   saveIncludedGroup(): Promise<GroupInfo | undefined> {
     throw new Error('saveIncludedGroup() not implemented by RestApiMock.');
   },
-  savePreferences(): Promise<PreferencesInfo> {
-    return Promise.resolve(createDefaultPreferences());
+  savePreferences(input: PreferencesInput): Promise<PreferencesInfo> {
+    const info = input as PreferencesInfo;
+    return Promise.resolve({...info});
   },
   saveRepoConfig(): Promise<Response> {
     return Promise.resolve(new Response());
@@ -505,9 +526,6 @@ export const grRestApiMock: RestApiService = {
   },
   setAccountUsername(): Promise<void> {
     return Promise.resolve();
-  },
-  setAssignee(): Promise<Response> {
-    return Promise.resolve(new Response());
   },
   setChangeHashtag(): Promise<Hashtag[]> {
     return Promise.resolve([]);

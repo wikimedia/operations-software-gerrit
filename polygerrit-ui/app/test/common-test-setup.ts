@@ -21,9 +21,15 @@ import './source-map-support-install';
 import '../scripts/bundled-polymer';
 import '@polymer/iron-test-helpers/iron-test-helpers';
 import './test-router';
-import {_testOnlyInitAppContext} from './test-app-context-init';
+import {AppContext, injectAppContext} from '../services/app-context';
+import {Finalizable} from '../services/registry';
+import {
+  createTestAppContext,
+  createTestDependencies,
+  Creator,
+} from './test-app-context-init';
 import {_testOnly_resetPluginLoader} from '../elements/shared/gr-js-api-interface/gr-plugin-loader';
-import {_testOnlyResetGrRestApiSharedObjects} from '../elements/shared/gr-rest-api-interface/gr-rest-api-interface';
+import {_testOnlyResetGrRestApiSharedObjects} from '../services/gr-rest-api/gr-rest-api-impl';
 import {
   cleanupTestUtils,
   getCleanupsCount,
@@ -33,18 +39,22 @@ import {
   removeThemeStyles,
 } from './test-utils';
 import {safeTypesBridge} from '../utils/safe-types-util';
-import {_testOnly_initGerritPluginApi} from '../elements/shared/gr-js-api-interface/gr-gerrit';
 import {initGlobalVariables} from '../elements/gr-app-global-var-init';
 import 'chai/chai';
+import {chaiDomDiff} from '@open-wc/semantic-dom-diff';
+import {fixtureCleanup} from '@open-wc/testing-helpers';
 import {
   _testOnly_defaultResinReportHandler,
   installPolymerResin,
 } from '../scripts/polymer-resin-install';
 import {_testOnly_allTasks} from '../utils/async-util';
 import {cleanUpStorage} from '../services/storage/gr-storage_mock';
-import {updatePreferences} from '../services/user/user-model';
-import {createDefaultPreferences} from '../constants/constants';
-import {appContext} from '../services/app-context';
+import {
+  DependencyRequestEvent,
+  DependencyError,
+  DependencyToken,
+  Provider,
+} from '../models/dependency';
 
 declare global {
   interface Window {
@@ -53,6 +63,7 @@ declare global {
     fixture: typeof fixtureImpl;
     stub: typeof stubImpl;
     sinon: typeof sinon;
+    chai: typeof chai;
   }
   let assert: typeof chai.assert;
   let expect: typeof chai.expect;
@@ -61,6 +72,7 @@ declare global {
 }
 window.assert = chai.assert;
 window.expect = chai.expect;
+window.chai.use(chaiDomDiff);
 
 window.sinon = sinon;
 
@@ -93,6 +105,40 @@ function fixtureImpl(fixtureId: string, model: unknown) {
 
 window.fixture = fixtureImpl;
 let testSetupTimestampMs = 0;
+let appContext: AppContext & Finalizable;
+
+const injectedDependencies: Map<
+  DependencyToken<unknown>,
+  Provider<unknown>
+> = new Map();
+
+const finalizers: Finalizable[] = [];
+
+function injectDependency<T>(
+  dependency: DependencyToken<T>,
+  creator: Creator<T>
+) {
+  let service: (T & Finalizable) | undefined = undefined;
+  injectedDependencies.set(dependency, () => {
+    if (service) return service;
+    service = creator();
+    finalizers.push(service);
+    return service;
+  });
+}
+
+export function testResolver<T>(token: DependencyToken<T>): T {
+  const provider = injectedDependencies.get(token);
+  if (provider) {
+    return provider() as T;
+  } else {
+    throw new DependencyError(token, 'Forgot to set up dependency for tests');
+  }
+}
+
+function resolveDependency(evt: DependencyRequestEvent<unknown>) {
+  evt.callback(testResolver(evt.dependency));
+}
 
 setup(() => {
   testSetupTimestampMs = new Date().getTime();
@@ -101,11 +147,18 @@ setup(() => {
   // If the following asserts fails - then window.stub is
   // overwritten by some other code.
   assert.equal(getCleanupsCount(), 0);
-  _testOnlyInitAppContext();
+  appContext = createTestAppContext();
+  injectAppContext(appContext);
+  finalizers.push(appContext);
+  const dependencies = createTestDependencies(appContext, testResolver);
+  for (const [token, provider] of dependencies) {
+    injectDependency(token, provider);
+  }
+  document.addEventListener('request-dependency', resolveDependency);
   // The following calls is nessecary to avoid influence of previously executed
   // tests.
-  initGlobalVariables();
-  _testOnly_initGerritPluginApi();
+  initGlobalVariables(appContext);
+
   const shortcuts = appContext.shortcutsService;
   assert.isTrue(shortcuts._testOnly_isEmpty());
   const selection = document.getSelection();
@@ -195,14 +248,19 @@ function cancelAllTasks() {
 
 teardown(() => {
   sinon.restore();
+  fixtureCleanup();
   cleanupTestUtils();
   checkGlobalSpace();
   removeIronOverlayBackdropStyleEl();
   removeThemeStyles();
   cancelAllTasks();
   cleanUpStorage();
+  document.removeEventListener('request-dependency', resolveDependency);
+  injectedDependencies.clear();
   // Reset state
-  updatePreferences(createDefaultPreferences());
+  for (const f of finalizers) {
+    f.finalize();
+  }
   const testTeardownTimestampMs = new Date().getTime();
   const elapsedMs = testTeardownTimestampMs - testSetupTimestampMs;
   if (elapsedMs > 1000) {

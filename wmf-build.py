@@ -34,7 +34,6 @@ UPSTREAM_GERRIT_URL = 'https://gerrit.googlesource.com'
 # copied from the plugin directory to Gerrit ./plugins/.
 PLUGIN_DEP_FILES = [
     'external_plugin_deps.bzl',
-    'package.json',
     ]
 
 # Bazel target for build Gerrit core

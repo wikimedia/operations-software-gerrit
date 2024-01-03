@@ -95,7 +95,7 @@ export function isNumber(psn: PatchSetNum): psn is PatchSetNumber {
  * @return The correspondent revision obj from {revisions}
  */
 export function getRevisionByPatchNum(
-  revisions: RevisionInfo[],
+  revisions: (RevisionInfo | EditRevisionInfo)[],
   patchNum: PatchSetNum
 ) {
   for (const rev of revisions) {
@@ -103,7 +103,7 @@ export function getRevisionByPatchNum(
       return rev;
     }
   }
-  console.warn('no revision found');
+  if (revisions.length > 0) console.warn('no revision found');
   return;
 }
 
@@ -118,20 +118,26 @@ export function getShaByPatchNum(
 }
 
 /**
+ * Find change edit revision if change edit exists.
+ */
+export function findEdit(
+  revisions: Array<RevisionInfo | EditRevisionInfo>
+): EditRevisionInfo | undefined {
+  const editRev = revisions.find(info => info._number === EditPatchSetNum);
+  return editRev as EditRevisionInfo | undefined;
+}
+
+/**
  * Find change edit base revision if change edit exists.
  *
  * @return change edit parent revision or null if change edit
  *     doesn't exist.
- *
  */
 export function findEditParentRevision(
   revisions: Array<RevisionInfo | EditRevisionInfo>
 ) {
-  const editInfo = revisions.find(info => info._number === EditPatchSetNum);
-
-  if (!editInfo) {
-    return null;
-  }
+  const editInfo = findEdit(revisions);
+  if (!editInfo) return null;
 
   return revisions.find(info => info._number === editInfo.basePatchNum) || null;
 }
@@ -309,10 +315,11 @@ export function hasEditPatchsetLoaded(patchRange: PatchRange) {
  */
 export function findSortedIndex(
   patchNum: PatchSetNum,
-  revisions: RevisionInfo[]
+  revisions: (RevisionInfo | EditRevisionInfo)[]
 ) {
   revisions = revisions || [];
-  const findNum = (rev: RevisionInfo) => `${rev._number}` === `${patchNum}`;
+  const findNum = (rev: RevisionInfo | EditRevisionInfo) =>
+    `${rev._number}` === `${patchNum}`;
   return revisions.findIndex(findNum);
 }
 

@@ -20,13 +20,12 @@ import './gr-diff-host.js';
 
 import {dom} from '@polymer/polymer/lib/legacy/polymer.dom.js';
 import {createDefaultDiffPrefs, Side} from '../../../constants/constants.js';
-import {_testOnly_resetState} from '../../../services/comments/comments-model.js';
 import {createChange, createComment, createCommentThread} from '../../../test/test-data-generators.js';
 import {addListenerForTest, mockPromise, stubRestApi} from '../../../test/test-utils.js';
 import {EditPatchSetNum, ParentPatchSetNum} from '../../../types/common.js';
 import {CoverageType} from '../../../types/types.js';
 import {GerritNav} from '../../core/gr-navigation/gr-navigation.js';
-import {GrDiffBuilderImage} from '../gr-diff-builder/gr-diff-builder-image.js';
+import {GrDiffBuilderImage} from '../../../embed/diff/gr-diff-builder/gr-diff-builder-image.js';
 
 const basicFixture = fixtureFromElement('gr-diff-host');
 
@@ -43,7 +42,6 @@ suite('gr-diff-host tests', () => {
     element.path = 'some/path';
     sinon.stub(element.reporting, 'time');
     sinon.stub(element.reporting, 'timeEnd');
-    _testOnly_resetState();
     await flush();
   });
 
@@ -65,22 +63,6 @@ suite('gr-diff-host tests', () => {
   });
 
   suite('render reporting', () => {
-    test('starts total and content timer on render-start', () => {
-      element.dispatchEvent(
-          new CustomEvent('render-start', {bubbles: true, composed: true}));
-      assert.isTrue(element.reporting.time.calledWithExactly(
-          'Diff Total Render'));
-      assert.isTrue(element.reporting.time.calledWithExactly(
-          'Diff Content Render'));
-    });
-
-    test('ends content timer on render-content', () => {
-      element.dispatchEvent(
-          new CustomEvent('render-content', {bubbles: true, composed: true}));
-      assert.isTrue(element.reporting.timeEnd.calledWithExactly(
-          'Diff Content Render'));
-    });
-
     test('ends total and syntax timer after syntax layer', async () => {
       sinon.stub(element.reporting, 'diffViewContentDisplayed');
       let notifySyntaxProcessed;
@@ -99,28 +81,13 @@ suite('gr-diff-host tests', () => {
       notifySyntaxProcessed();
       // Multiple cascading microtasks are scheduled.
       await flush();
-      assert.isTrue(element.reporting.timeEnd.calledWithExactly(
-          'Diff Total Render'));
-      assert.isTrue(element.reporting.timeEnd.calledWithExactly(
-          'Diff Syntax Render'));
+      const calls = element.reporting.timeEnd.getCalls();
+      assert.equal(calls.length, 4);
+      assert.equal(calls[0].args[0], 'Diff Load Render');
+      assert.equal(calls[1].args[0], 'Diff Content Render');
+      assert.equal(calls[2].args[0], 'Diff Syntax Render');
+      assert.equal(calls[3].args[0], 'Diff Total Render');
       assert.isTrue(element.reporting.diffViewContentDisplayed.called);
-    });
-
-    test('ends total timer w/ no syntax layer processing', async () => {
-      stubRestApi('getDiff').returns(Promise.resolve({content: []}));
-      element.patchRange = {};
-      element.change = createChange();
-      element.reload();
-      // Multiple cascading microtasks are scheduled.
-      await flush();
-      await flush();
-      // Reporting can be called with other parameters (ex. PluginsLoaded),
-      // but only 'Diff Total Render' is important in this test.
-      assert.equal(
-          element.reporting.timeEnd.getCalls()
-              .filter(call => call.calledWithExactly('Diff Total Render'))
-              .length,
-          1);
     });
 
     test('completes reload promise after syntax layer processing', async () => {
@@ -749,7 +716,7 @@ suite('gr-diff-host tests', () => {
   });
 
   test('getThreadEls() returns .comment-threads', () => {
-    const threadEl = document.createElement('div');
+    const threadEl = document.createElement('gr-comment-thread');
     threadEl.className = 'comment-thread';
     element.$.diff.appendChild(threadEl);
     assert.deepEqual(element.getThreadEls(), [threadEl]);
@@ -778,11 +745,6 @@ suite('gr-diff-host tests', () => {
     assert.equal(stub.lastCall.args.length, 0);
   });
 
-  test('passes in changeNum', () => {
-    element.changeNum = 12345;
-    assert.equal(element.$.diff.changeNum, 12345);
-  });
-
   test('passes in noAutoRender', () => {
     const value = true;
     element.noAutoRender = value;
@@ -799,11 +761,6 @@ suite('gr-diff-host tests', () => {
     const value = {};
     element.prefs = value;
     assert.equal(element.$.diff.prefs, value);
-  });
-
-  test('passes in changeNum', () => {
-    element.changeNum = 12345;
-    assert.equal(element.$.diff.changeNum, 12345);
   });
 
   test('passes in displayLine', () => {
@@ -838,7 +795,7 @@ suite('gr-diff-host tests', () => {
   });
 
   test('passes in lineOfInterest', () => {
-    const value = {number: 123, leftSide: true};
+    const value = {lineNum: 123, side: Side.LEFT};
     element.lineOfInterest = value;
     assert.equal(element.$.diff.lineOfInterest, value);
   });
@@ -942,6 +899,69 @@ suite('gr-diff-host tests', () => {
     });
   });
 
+  suite('createCheckEl method', () => {
+    test('start_line:12', () => {
+      const result = {
+        codePointers: [{range: {start_line: 12}}],
+      };
+      const el = element.createCheckEl(result);
+      assert.equal(el.getAttribute('slot'), 'right-12');
+      assert.equal(el.getAttribute('diff-side'), 'right');
+      assert.equal(el.getAttribute('line-num'), '12');
+      assert.equal(el.getAttribute('range'), null);
+      assert.equal(el.result, result);
+    });
+
+    test('start_line:13 end_line:14 without char positions', () => {
+      const result = {
+        codePointers: [{range: {start_line: 13, end_line: 14}}],
+      };
+      const el = element.createCheckEl(result);
+      assert.equal(el.getAttribute('slot'), 'right-14');
+      assert.equal(el.getAttribute('diff-side'), 'right');
+      assert.equal(el.getAttribute('line-num'), '14');
+      assert.equal(el.getAttribute('range'), null);
+      assert.equal(el.result, result);
+    });
+
+    test('start_line:13 end_line:14 with char positions', () => {
+      const result = {
+        codePointers: [
+          {
+            range: {
+              start_line: 13,
+              end_line: 14,
+              start_character: 5,
+              end_character: 7,
+            },
+          },
+        ],
+      };
+      const el = element.createCheckEl(result);
+      assert.equal(el.getAttribute('slot'), 'right-14');
+      assert.equal(el.getAttribute('diff-side'), 'right');
+      assert.equal(el.getAttribute('line-num'), '14');
+      assert.equal(el.getAttribute('range'),
+          '{"start_line":13,' +
+          '"end_line":14,' +
+          '"start_character":5,' +
+          '"end_character":7}');
+      assert.equal(el.result, result);
+    });
+
+    test('empty range', () => {
+      const result = {
+        codePointers: [{range: {}}],
+      };
+      const el = element.createCheckEl(result);
+      assert.equal(el.getAttribute('slot'), 'right-FILE');
+      assert.equal(el.getAttribute('diff-side'), 'right');
+      assert.equal(el.getAttribute('line-num'), 'FILE');
+      assert.equal(el.getAttribute('range'), null);
+      assert.equal(el.result, result);
+    });
+  });
+
   suite('create-comment', () => {
     setup(async () => {
       loggedIn = true;
@@ -950,7 +970,6 @@ suite('gr-diff-host tests', () => {
     });
 
     test('creates comments if they do not exist yet', () => {
-      const diffSide = Side.LEFT;
       element.patchRange = {
         basePatchNum: 'PARENT',
         patchNum: 2,
@@ -959,7 +978,7 @@ suite('gr-diff-host tests', () => {
       element.dispatchEvent(new CustomEvent('create-comment', {
         detail: {
           lineNum: 3,
-          side: diffSide,
+          side: Side.LEFT,
           path: '/p',
         },
       }));
@@ -968,10 +987,10 @@ suite('gr-diff-host tests', () => {
           .queryDistributedElements('gr-comment-thread');
 
       assert.equal(threads.length, 1);
-      assert.equal(threads[0].diffSide, diffSide);
-      assert.isTrue(threads[0].isOnParent);
-      assert.equal(threads[0].range, undefined);
-      assert.equal(threads[0].patchNum, 2);
+      assert.equal(threads[0].thread.commentSide, 'PARENT');
+      assert.equal(threads[0].getAttribute('diff-side'), Side.LEFT);
+      assert.equal(threads[0].thread.range, undefined);
+      assert.equal(threads[0].thread.patchNum, 2);
 
       // Try to fetch a thread with a different range.
       const range = {
@@ -988,7 +1007,7 @@ suite('gr-diff-host tests', () => {
       element.dispatchEvent(new CustomEvent('create-comment', {
         detail: {
           lineNum: 1,
-          side: diffSide,
+          side: Side.LEFT,
           path: '/p',
           range,
         },
@@ -998,10 +1017,10 @@ suite('gr-diff-host tests', () => {
           .queryDistributedElements('gr-comment-thread');
 
       assert.equal(threads.length, 2);
-      assert.equal(threads[1].diffSide, diffSide);
-      assert.isTrue(threads[0].isOnParent);
-      assert.equal(threads[1].range, range);
-      assert.equal(threads[1].patchNum, 3);
+      assert.equal(threads[0].thread.commentSide, 'PARENT');
+      assert.equal(threads[0].getAttribute('diff-side'), Side.LEFT);
+      assert.equal(threads[1].thread.range, range);
+      assert.equal(threads[1].thread.patchNum, 3);
     });
 
     test('should not be on parent if on the right', () => {
@@ -1016,10 +1035,11 @@ suite('gr-diff-host tests', () => {
         },
       }));
 
-      const thread = dom(element.$.diff)
+      const threadEl = dom(element.$.diff)
           .queryDistributedElements('gr-comment-thread')[0];
 
-      assert.isFalse(thread.isOnParent);
+      assert.equal(threadEl.thread.commentSide, 'REVISION');
+      assert.equal(threadEl.getAttribute('diff-side'), Side.RIGHT);
     });
 
     test('should be on parent if right and base is PARENT', () => {
@@ -1034,10 +1054,11 @@ suite('gr-diff-host tests', () => {
         },
       }));
 
-      const thread = dom(element.$.diff)
+      const threadEl = dom(element.$.diff)
           .queryDistributedElements('gr-comment-thread')[0];
 
-      assert.isTrue(thread.isOnParent);
+      assert.equal(threadEl.thread.commentSide, 'PARENT');
+      assert.equal(threadEl.getAttribute('diff-side'), Side.LEFT);
     });
 
     test('should be on parent if right and base negative', () => {
@@ -1052,10 +1073,11 @@ suite('gr-diff-host tests', () => {
         },
       }));
 
-      const thread = dom(element.$.diff)
+      const threadEl = dom(element.$.diff)
           .queryDistributedElements('gr-comment-thread')[0];
 
-      assert.isTrue(thread.isOnParent);
+      assert.equal(threadEl.thread.commentSide, 'PARENT');
+      assert.equal(threadEl.getAttribute('diff-side'), Side.LEFT);
     });
 
     test('should not be on parent otherwise', () => {
@@ -1070,24 +1092,25 @@ suite('gr-diff-host tests', () => {
         },
       }));
 
-      const thread = dom(element.$.diff)
+      const threadEl = dom(element.$.diff)
           .queryDistributedElements('gr-comment-thread')[0];
 
-      assert.isFalse(thread.isOnParent);
+      assert.equal(threadEl.thread.commentSide, 'REVISION');
+      assert.equal(threadEl.getAttribute('diff-side'), Side.LEFT);
     });
 
     test('thread should use old file path if first created ' +
-    'on patch set (left) before renaming', () => {
-      const diffSide = Side.LEFT;
+    'on patch set (left) before renaming', async () => {
       element.patchRange = {
         basePatchNum: 2,
         patchNum: 3,
       };
       element.file = {basePath: 'file_renamed.txt', path: element.path};
+      await flush();
 
       element.dispatchEvent(new CustomEvent('create-comment', {
         detail: {
-          side: diffSide,
+          side: Side.LEFT,
           path: '/p',
         },
       }));
@@ -1096,22 +1119,22 @@ suite('gr-diff-host tests', () => {
           .queryDistributedElements('gr-comment-thread');
 
       assert.equal(threads.length, 1);
-      assert.equal(threads[0].diffSide, diffSide);
-      assert.equal(threads[0].path, element.file.basePath);
+      assert.equal(threads[0].getAttribute('diff-side'), Side.LEFT);
+      assert.equal(threads[0].thread.path, element.file.basePath);
     });
 
-    test('thread should use new file path if first created' +
-    'on patch set (right) after renaming', () => {
-      const diffSide = Side.RIGHT;
+    test('thread should use new file path if first created ' +
+    'on patch set (right) after renaming', async () => {
       element.patchRange = {
         basePatchNum: 2,
         patchNum: 3,
       };
       element.file = {basePath: 'file_renamed.txt', path: element.path};
+      await flush();
 
       element.dispatchEvent(new CustomEvent('create-comment', {
         detail: {
-          side: diffSide,
+          side: Side.RIGHT,
           path: '/p',
         },
       }));
@@ -1120,23 +1143,27 @@ suite('gr-diff-host tests', () => {
           .queryDistributedElements('gr-comment-thread');
 
       assert.equal(threads.length, 1);
-      assert.equal(threads[0].diffSide, diffSide);
-      assert.equal(threads[0].path, element.file.path);
+      assert.equal(threads[0].getAttribute('diff-side'), Side.RIGHT);
+      assert.equal(threads[0].thread.path, element.file.path);
     });
 
-    test('multiple threads created on the same range', () => {
+    test('multiple threads created on the same range', async () => {
       element.patchRange = {
         basePatchNum: 2,
         patchNum: 3,
       };
       element.file = {basePath: 'file_renamed.txt', path: element.path};
+      await flush();
 
-      const comment = createComment();
-      comment.range = {
-        start_line: 1,
-        start_character: 1,
-        end_line: 2,
-        end_character: 2,
+      const comment = {
+        ...createComment(),
+        range: {
+          start_line: 1,
+          start_character: 1,
+          end_line: 2,
+          end_character: 2,
+        },
+        patch_set: 3,
       };
       const thread = createCommentThread([comment]);
       element.threads = [thread];
@@ -1161,18 +1188,59 @@ suite('gr-diff-host tests', () => {
       assert.equal(threads.length, 2);
     });
 
-    test('thread should use new file path if first created' +
-    'on patch set (left) but is base', () => {
-      const diffSide = Side.LEFT;
+    test('unsaved thread changes to draft', async () => {
+      element.patchRange = {
+        basePatchNum: 2,
+        patchNum: 3,
+      };
+      element.file = {basePath: 'file_renamed.txt', path: element.path};
+      element.threads = [];
+      await flush();
+
+      element.dispatchEvent(new CustomEvent('create-comment', {
+        detail: {
+          side: Side.RIGHT,
+          path: element.path,
+          lineNum: 13,
+        },
+      }));
+      await flush();
+      assert.equal(element.getThreadEls().length, 1);
+      const threadEl = element.getThreadEls()[0];
+      assert.equal(threadEl.thread.line, 13);
+      assert.isDefined(threadEl.unsavedComment);
+      assert.equal(threadEl.thread.comments.length, 0);
+
+      const draftThread = createCommentThread([{
+        path: element.path,
+        patch_set: 3,
+        line: 13,
+        __draft: true,
+      }]);
+      element.threads = [draftThread];
+      await flush();
+
+      // We expect that no additional thread element was created.
+      assert.equal(element.getThreadEls().length, 1);
+      // In fact the thread element must still be the same.
+      assert.equal(element.getThreadEls()[0], threadEl);
+      // But it must have been updated from unsaved to draft:
+      assert.isUndefined(threadEl.unsavedComment);
+      assert.equal(threadEl.thread.comments.length, 1);
+    });
+
+    test('thread should use new file path if first created ' +
+    'on patch set (left) but is base', async () => {
       element.patchRange = {
         basePatchNum: 'PARENT',
         patchNum: 3,
       };
       element.file = {basePath: 'file_renamed.txt', path: element.path};
+      await flush();
 
       element.dispatchEvent(new CustomEvent('create-comment', {
         detail: {
-          side: diffSide,
+          side: Side.LEFT,
           path: '/p',
         },
       }));
@@ -1181,8 +1249,8 @@ suite('gr-diff-host tests', () => {
           dom(element.$.diff).queryDistributedElements('gr-comment-thread');
 
       assert.equal(threads.length, 1);
-      assert.equal(threads[0].diffSide, diffSide);
-      assert.equal(threads[0].path, element.file.path);
+      assert.equal(threads[0].getAttribute('diff-side'), Side.LEFT);
+      assert.equal(threads[0].thread.path, element.file.path);
     });
 
     test('cannot create thread on an edit', () => {

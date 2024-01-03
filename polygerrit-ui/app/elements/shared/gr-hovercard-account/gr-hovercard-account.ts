@@ -18,16 +18,17 @@
 import '@polymer/iron-icon/iron-icon';
 import '../gr-avatar/gr-avatar';
 import '../gr-button/gr-button';
-import {appContext} from '../../../services/app-context';
+import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
+import '../../plugins/gr-endpoint-param/gr-endpoint-param';
+import {getAppContext} from '../../../services/app-context';
 import {accountKey, isSelf} from '../../../utils/account-util';
-import {customElement, property} from 'lit/decorators';
+import {customElement, property, state} from 'lit/decorators';
 import {
   AccountInfo,
   ChangeInfo,
   ServerInfo,
   ReviewInput,
 } from '../../../types/common';
-import {ReportingService} from '../../../services/gr-reporting/gr-reporting';
 import {
   canHaveAttention,
   getAddedByReason,
@@ -42,7 +43,9 @@ import {isInvolved, isRemovableReviewer} from '../../../utils/change-util';
 import {assertIsDefined} from '../../../utils/common-util';
 import {fontStyles} from '../../../styles/gr-font-styles';
 import {css, html, LitElement} from 'lit';
+import {ifDefined} from 'lit/directives/if-defined';
 import {HovercardMixin} from '../../../mixins/hovercard-mixin/hovercard-mixin';
+import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 
 // This avoids JSC_DYNAMIC_EXTENDS_WITHOUT_JSDOC closure compiler error.
 const base = HovercardMixin(LitElement);
@@ -52,7 +55,7 @@ export class GrHovercardAccount extends base {
   @property({type: Object})
   account!: AccountInfo;
 
-  @property({type: Object})
+  @state()
   _selfAccount?: AccountInfo;
 
   /**
@@ -81,14 +84,9 @@ export class GrHovercardAccount extends base {
   @property({type: Object})
   _config?: ServerInfo;
 
-  reporting: ReportingService;
+  private readonly restApiService = getAppContext().restApiService;
 
-  private readonly restApiService = appContext.restApiService;
-
-  constructor() {
-    super();
-    this.reporting = appContext.reportingService;
-  }
+  private readonly reporting = getAppContext().reportingService;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -110,6 +108,9 @@ export class GrHovercardAccount extends base {
         .status,
         .voteable {
           padding: var(--spacing-s) var(--spacing-l);
+        }
+        .links {
+          padding: var(--spacing-m) 0px var(--spacing-l) var(--spacing-xxl);
         }
         .top {
           display: flex;
@@ -151,6 +152,17 @@ export class GrHovercardAccount extends base {
           position: relative;
           top: 3px;
         }
+        iron-icon.linkIcon {
+          width: var(--line-height-normal, 20px);
+          height: var(--line-height-normal, 20px);
+          vertical-align: top;
+          color: var(--deemphasized-text-color);
+          padding-right: 12px;
+        }
+        .links a {
+          color: var(--link-color);
+          padding: 0px 4px;
+        }
         .reason {
           padding-top: var(--spacing-s);
         }
@@ -171,24 +183,23 @@ export class GrHovercardAccount extends base {
     return html`
       <div class="top">
         <div class="avatar">
-          <gr-avautar .account=${this.account} imageSize="56"></gr-avatar>
+          <gr-avatar .account=${this.account} imageSize="56"></gr-avatar>
         </div>
         <div class="account">
           <h3 class="name heading-3">${this.account.name}</h3>
           <div class="email">${this.account.email}</div>
         </div>
       </div>
-      ${this.renderAccountStatus()}
-      ${
-        this.voteableText
-          ? html`
-              <div class="voteable">
-                <span class="title">Voteable:</span>
-                <span class="value">${this.voteableText}</span>
-              </div>
-            `
-          : ''
-      }
+      ${this.renderAccountStatusPlugins()} ${this.renderAccountStatus()}
+      ${this.renderLinks()}
+      ${this.voteableText
+        ? html`
+            <div class="voteable">
+              <span class="title">Voteable:</span>
+              <span class="value">${this.voteableText}</span>
+            </div>
+          `
+        : ''}
       ${this.renderNeedsAttention()} ${this.renderAddToAttention()}
       ${this.renderRemoveFromAttention()} ${this.renderReviewerOrCcActions()}
     `;
@@ -203,7 +214,7 @@ export class GrHovercardAccount extends base {
           class="removeReviewerOrCC"
           link=""
           no-uppercase
-          @click="${this.handleRemoveReviewerOrCC}"
+          @click=${this.handleRemoveReviewerOrCC}
         >
           Remove ${this.computeReviewerOrCCText()}
         </gr-button>
@@ -213,7 +224,7 @@ export class GrHovercardAccount extends base {
           class="changeReviewerOrCC"
           link=""
           no-uppercase
-          @click="${this.handleChangeReviewerOrCCStatus}"
+          @click=${this.handleChangeReviewerOrCCStatus}
         >
           ${this.computeChangeReviewerOrCCText()}
         </gr-button>
@@ -221,14 +232,51 @@ export class GrHovercardAccount extends base {
     `;
   }
 
+  private renderAccountStatusPlugins() {
+    return html`
+      <gr-endpoint-decorator name="hovercard-status">
+        <gr-endpoint-param
+          name="account"
+          .value=${this.account}
+        ></gr-endpoint-param>
+      </gr-endpoint-decorator>
+    `;
+  }
+
+  private renderLinks() {
+    return html` <div class="links">
+      <iron-icon class="linkIcon" icon="gr-icons:link"></iron-icon
+      ><a
+        href=${ifDefined(this.computeOwnerChangesLink())}
+        @click=${() => {
+          this.forceHide();
+          return true;
+        }}
+        @enter=${() => {
+          this.forceHide();
+          return true;
+        }}
+        >Changes</a
+      >·<a
+        href=${ifDefined(this.computeOwnerDashboardLink())}
+        @click=${() => {
+          this.forceHide();
+          return true;
+        }}
+        @enter=${() => {
+          this.forceHide();
+          return true;
+        }}
+        >Dashboard</a
+      >
+    </div>`;
+  }
+
   private renderAccountStatus() {
     if (!this.account.status) return;
     return html`
       <div class="status">
-        <span class="title">
-          <iron-icon icon="gr-icons:calendar"></iron-icon>
-          Status:
-        </span>
+        <span class="title">About me:</span>
         <span class="value">${this.account.status}</span>
       </div>
     `;
@@ -263,7 +311,7 @@ export class GrHovercardAccount extends base {
           ${lastUpdate
             ? html` (<gr-date-formatter
                   withTooltip
-                  .dateStr="${lastUpdate}"
+                  .dateStr=${lastUpdate}
                 ></gr-date-formatter
                 >)`
             : ''}
@@ -280,7 +328,7 @@ export class GrHovercardAccount extends base {
           class="addToAttentionSet"
           link=""
           no-uppercase
-          @click="${this.handleClickAddToAttentionSet}"
+          @click=${this.handleClickAddToAttentionSet}
         >
           Add to attention set
         </gr-button>
@@ -296,7 +344,7 @@ export class GrHovercardAccount extends base {
           class="removeFromAttentionSet"
           link=""
           no-uppercase
-          @click="${this.handleClickRemoveFromAttentionSet}"
+          @click=${this.handleClickRemoveFromAttentionSet}
         >
           Remove from attention set
         </gr-button>
@@ -308,6 +356,25 @@ export class GrHovercardAccount extends base {
   computePronoun() {
     if (!this.account || !this._selfAccount) return '';
     return isSelf(this.account, this._selfAccount) ? 'Your' : 'Their';
+  }
+
+  computeOwnerChangesLink() {
+    if (!this.account) return undefined;
+    return GerritNav.getUrlForOwner(
+      this.account.email ||
+        this.account.username ||
+        this.account.name ||
+        `${this.account._account_id}`
+    );
+  }
+
+  computeOwnerDashboardLink() {
+    if (!this.account) return undefined;
+    if (this.account._account_id)
+      return GerritNav.getUrlForUserDashboard(`${this.account._account_id}`);
+    if (this.account.email)
+      return GerritNav.getUrlForUserDashboard(this.account.email);
+    return undefined;
   }
 
   get isAttentionEnabled() {
@@ -441,7 +508,7 @@ export class GrHovercardAccount extends base {
       .then(() => {
         this.dispatchEventThroughTarget('hide-alert');
       });
-    this.hide(e);
+    this.mouseHide(e);
   }
 
   private handleClickRemoveFromAttentionSet(e: MouseEvent) {
@@ -472,7 +539,7 @@ export class GrHovercardAccount extends base {
       .then(() => {
         this.dispatchEventThroughTarget('hide-alert');
       });
-    this.hide(e);
+    this.mouseHide(e);
   }
 
   private reportingDetails() {

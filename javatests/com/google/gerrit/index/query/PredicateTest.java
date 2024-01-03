@@ -18,6 +18,7 @@ import org.junit.Ignore;
 
 @Ignore
 public abstract class PredicateTest {
+  @SuppressWarnings("ProtectedMembersInFinalClass")
   protected static class TestDataSourcePredicate extends TestMatchablePredicate<String>
       implements DataSource<String> {
     protected final int cardinality;

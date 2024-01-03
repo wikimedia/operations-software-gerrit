@@ -62,7 +62,7 @@ class ChangeControl {
 
   /** Can this user see this change? */
   boolean isVisible() {
-    if (getChange().isPrivate() && !isPrivateVisible(changeData)) {
+    if (changeData.isPrivateOrThrow() && !isPrivateVisible(changeData)) {
       return false;
     }
     // Does the user have READ permission on the destination?
@@ -92,8 +92,7 @@ class ChangeControl {
 
   /** Can this user revert this change? */
   private boolean canRevert() {
-    return (refControl.canRevert())
-        && refControl.asForRef().testOrFalse(RefPermission.CREATE_CHANGE);
+    return refControl.canRevert() && refControl.asForRef().testOrFalse(RefPermission.CREATE_CHANGE);
   }
 
   /** The range of permitted values associated with a label permission. */
@@ -150,7 +149,7 @@ class ChangeControl {
               Permission.EDIT_TOPIC_NAME) // user can edit topic on a specific ref
           || getProjectControl().isAdmin();
     }
-    return refControl.canForceEditTopicName();
+    return refControl.canForceEditTopicName(isOwner());
   }
 
   /** Can this user toggle WorkInProgress state? */
@@ -257,7 +256,7 @@ class ChangeControl {
           case ABANDON:
             return canAbandon();
           case DELETE:
-            return (getProjectControl().isAdmin() || (refControl.canDeleteChanges(isOwner())));
+            return getProjectControl().isAdmin() || refControl.canDeleteChanges(isOwner());
           case ADD_PATCH_SET:
             return canAddPatchSet();
           case EDIT_ASSIGNEE:

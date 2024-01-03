@@ -95,6 +95,8 @@ public abstract class LabelType {
 
   public abstract String getName();
 
+  public abstract Optional<String> getDescription();
+
   public abstract LabelFunction getFunction();
 
   public abstract boolean isCopyAnyScore();
@@ -141,8 +143,9 @@ public abstract class LabelType {
   }
 
   public static LabelType.Builder builder(String name, List<LabelValue> valueList) {
-    return (new AutoValue_LabelType.Builder())
+    return new AutoValue_LabelType.Builder()
         .setName(name)
+        .setDescription(Optional.empty())
         .setValues(valueList)
         .setDefaultValue((short) 0)
         .setFunction(LabelFunction.MAX_WITH_BLOCK)
@@ -226,6 +229,13 @@ public abstract class LabelType {
   public abstract static class Builder {
     public abstract Builder setName(String name);
 
+    public abstract Builder setDescription(Optional<String> description);
+
+    /**
+     * @deprecated in favour of using submit requirements, except if it’s needed to set the value to
+     *     PatchSetLock
+     */
+    @Deprecated
     public abstract Builder setFunction(LabelFunction function);
 
     public abstract Builder setCanOverride(boolean canOverride);

@@ -662,6 +662,10 @@ If private changes are used, be aware of the following pitfalls:
 * If you have a series of private changes and share one with reviewers,
   the reviewers can also see the commits of the predecessor private
   changes through the commit parent relationship.
+* Users who would have permission to access the change except for its
+  private status and knowledge of its commit ID (e.g. through CI logs
+  or build artifacts containing build numbers) can fetch the code
+  using the commit ID.
 
 [[ignore]]
 == Ignoring Or Marking Changes As 'Reviewed'
@@ -807,16 +811,21 @@ The format that should be used to render dates and timestamps.
 +
 This setting controls the email notifications.
 +
-** `Enabled`:
-+
-Email notifications are enabled.
-+
 ** [[cc-me]]`Every comment`:
 +
 Email notifications are enabled and you get notified by email as CC
 on comments that you write yourself.
 +
-** `Disabled`:
+** `Only comments left by others`
++
+Email notifications are enabled for all activities excluding comments or
+reviews authored by you.
++
+** `Only when I am in the attention set`
++
+Email notifications are only sent if the recipient is in the attention set.
++
+** `None`:
 +
 Email notifications are disabled.
 

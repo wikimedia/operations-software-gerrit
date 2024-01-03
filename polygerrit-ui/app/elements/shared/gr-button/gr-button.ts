@@ -19,19 +19,26 @@ import {spinnerStyles} from '../../../styles/gr-spinner-styles';
 import {votingStyles} from '../../../styles/gr-voting-styles';
 import {css, html, LitElement, PropertyValues} from 'lit';
 import {customElement, property} from 'lit/decorators';
-import {getEventPath, modifierPressed} from '../../../utils/dom-util';
-import {appContext} from '../../../services/app-context';
-import {ReportingService} from '../../../services/gr-reporting/gr-reporting';
+import {addShortcut, getEventPath, Key} from '../../../utils/dom-util';
+import {getAppContext} from '../../../services/app-context';
+import {classMap} from 'lit/directives/class-map';
+import {KnownExperimentId} from '../../../services/flags/flags';
 
 declare global {
   interface HTMLElementTagNameMap {
     'gr-button': GrButton;
   }
 }
-
+/**
+ * @attr {Boolean} no-uppercase - text in button is not uppercased
+ * @attr {Boolean} position-below
+ * @attr {Boolean} primary - set primary button color
+ * @attr {Boolean} secondary - set secondary button color
+ */
 @customElement('gr-button')
 export class GrButton extends LitElement {
-  private readonly reporting: ReportingService = appContext.reportingService;
+  // Private but used in tests.
+  readonly reporting = getAppContext().reportingService;
 
   /**
    * Should this button be rendered as a vote chip? Then we are applying
@@ -49,6 +56,10 @@ export class GrButton extends LitElement {
 
   @property({type: Boolean, reflect: true})
   link = false;
+
+  // If flattened then the button will not be shown as raised.
+  @property({type: Boolean, reflect: true})
+  flatten = false;
 
   @property({type: Boolean, reflect: true})
   loading = false;
@@ -180,18 +191,34 @@ export class GrButton extends LitElement {
         :host([down-arrow]) paper-button:hover .downArrow {
           border-top-color: var(--deemphasized-text-color);
         }
+        .newVoteChip {
+          border: 1px solid var(--border-color);
+          box-shadow: none;
+          box-sizing: border-box;
+          min-width: 3em;
+          color: var(--vote-text-color);
+        }
       `,
     ];
   }
 
+  private readonly flagsService = getAppContext().flagsService;
+
+  private readonly isSubmitRequirementsUiEnabled = this.flagsService.isEnabled(
+    KnownExperimentId.SUBMIT_REQUIREMENTS_UI
+  );
+
   override render() {
     return html`<paper-button
-      ?raised="${!this.link}"
-      ?disabled="${this.disabled || this.loading}"
+      ?raised=${!this.link && !this.flatten}
+      ?disabled=${this.disabled || this.loading}
       role="button"
       tabindex="-1"
       part="paper-button"
-      class="${this.voteChip ? 'voteChip' : ''}"
+      class=${classMap({
+        voteChip: this.voteChip && !this.isSubmitRequirementsUiEnabled,
+        newVoteChip: this.voteChip && this.isSubmitRequirementsUiEnabled,
+      })}
     >
       ${this.loading ? html`<span class="loadingSpin"></span>` : ''}
       <slot></slot>
@@ -203,7 +230,8 @@ export class GrButton extends LitElement {
     super();
     this.initialTabindex = this.getAttribute('tabindex') || '0';
     this.addEventListener('click', e => this._handleAction(e));
-    this.addEventListener('keydown', e => this._handleKeydown(e));
+    addShortcut(this, {key: Key.ENTER}, () => this.click());
+    addShortcut(this, {key: Key.SPACE}, () => this.click());
   }
 
   override updated(changedProperties: PropertyValues) {
@@ -240,15 +268,5 @@ export class GrButton extends LitElement {
     }
 
     this.reporting.reportInteraction('button-click', {path: getEventPath(e)});
-  }
-
-  _handleKeydown(e: KeyboardEvent) {
-    if (modifierPressed(e)) return;
-    // Handle `enter`, `space`.
-    if (e.keyCode === 13 || e.keyCode === 32) {
-      e.preventDefault();
-      e.stopPropagation();
-      this.click();
-    }
   }
 }

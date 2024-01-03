@@ -63,7 +63,6 @@ public class SshCommandsIT extends AbstractDaemonTest {
   private static final ImmutableList<String> MASTER_ONLY_ROOT_COMMANDS =
       ImmutableList.of(
           "ban-commit",
-          "copy-approvals",
           "create-account",
           "create-branch",
           "create-group",
@@ -144,7 +143,7 @@ public class SshCommandsIT extends AbstractDaemonTest {
     // option causes the usage info to be written to stderr. Instead, we assert on the
     // content of the stderr, which will always start with "gerrit command" when the --help
     // option is used.
-    logger.atFine().log(cmd);
+    logger.atFine().log("%s", cmd);
     adminSshSession.exec(String.format("%s --help", cmd));
     String response = adminSshSession.getError();
     assertWithMessage(String.format("command %s failed: %s", cmd, response))
@@ -207,22 +206,22 @@ public class SshCommandsIT extends AbstractDaemonTest {
   private List<String> parseCommandsFromGerritHelpText(String helpText) {
     List<String> commands = new ArrayList<>();
 
-    String[] lines = helpText.split("\\n");
+    List<String> lines = Splitter.on("\n").splitToList(helpText);
 
     // Skip all lines including the line starting with "Available commands"
     int row = 0;
     do {
       row++;
-    } while (row < lines.length && !lines[row - 1].startsWith("Available commands"));
+    } while (row < lines.size() && !lines.get(row - 1).startsWith("Available commands"));
 
     // Skip all empty lines
-    while (lines[row].trim().isEmpty()) {
+    while (lines.get(row).trim().isEmpty()) {
       row++;
     }
 
     // Parse commands from all lines that are indented (start with a space)
-    while (row < lines.length && lines[row].startsWith(" ")) {
-      String line = lines[row].trim();
+    while (row < lines.size() && lines.get(row).startsWith(" ")) {
+      String line = lines.get(row).trim();
       // Abort on empty line
       if (line.isEmpty()) {
         break;

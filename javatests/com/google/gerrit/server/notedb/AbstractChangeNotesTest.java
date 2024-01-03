@@ -39,6 +39,8 @@ import com.google.gerrit.server.account.FakeRealm;
 import com.google.gerrit.server.account.GroupBackend;
 import com.google.gerrit.server.account.Realm;
 import com.google.gerrit.server.account.ServiceUserClassifier;
+import com.google.gerrit.server.approval.PatchSetApprovalUuidGenerator;
+import com.google.gerrit.server.approval.testing.TestPatchSetApprovalUuidGenerator;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.config.AllUsersNameProvider;
 import com.google.gerrit.server.config.AnonymousCowardName;
@@ -65,8 +67,8 @@ import com.google.gerrit.testing.TestTimeUtil;
 import com.google.inject.Guice;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
-import java.sql.Timestamp;
-import java.util.TimeZone;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.concurrent.ExecutorService;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.junit.TestRepository;
@@ -82,7 +84,7 @@ import org.junit.runner.RunWith;
 @Ignore
 @RunWith(ConfigSuite.class)
 public abstract class AbstractChangeNotesTest {
-  private static final TimeZone TZ = TimeZone.getTimeZone("America/Los_Angeles");
+  private static final ZoneId ZONE_ID = ZoneId.of("America/Los_Angeles");
 
   @ConfigSuite.Parameter public Config testConfig;
 
@@ -116,18 +118,18 @@ public abstract class AbstractChangeNotesTest {
   public void setUpTestEnvironment() throws Exception {
     setTimeForTesting();
 
-    serverIdent = new PersonIdent("Gerrit Server", "noreply@gerrit.com", TimeUtil.nowTs(), TZ);
+    serverIdent = new PersonIdent("Gerrit Server", "noreply@gerrit.com", TimeUtil.now(), ZONE_ID);
     project = Project.nameKey("test-project");
     repoManager = new InMemoryRepositoryManager();
     repo = repoManager.createRepository(project);
     tr = new TestRepository<>(repo);
     rw = tr.getRevWalk();
     accountCache = new FakeAccountCache();
-    Account.Builder co = Account.builder(Account.id(1), TimeUtil.nowTs());
+    Account.Builder co = Account.builder(Account.id(1), TimeUtil.now());
     co.setFullName("Change Owner");
     co.setPreferredEmail("change@owner.com");
     accountCache.put(co.build());
-    Account.Builder ou = Account.builder(Account.id(2), TimeUtil.nowTs());
+    Account.Builder ou = Account.builder(Account.id(2), TimeUtil.now());
     ou.setFullName("Other Account");
     ou.setPreferredEmail("other@account.com");
     accountCache.put(ou.build());
@@ -173,6 +175,8 @@ public abstract class AbstractChangeNotesTest {
                         () -> {
                           throw new UnsupportedOperationException();
                         });
+                bind(PatchSetApprovalUuidGenerator.class)
+                    .to(TestPatchSetApprovalUuidGenerator.class);
               }
             });
 
@@ -261,7 +265,7 @@ public abstract class AbstractChangeNotesTest {
       int line,
       IdentifiedUser commenter,
       String parentUUID,
-      Timestamp t,
+      Instant t,
       String message,
       short side,
       ObjectId commitId,
@@ -282,11 +286,11 @@ public abstract class AbstractChangeNotesTest {
     return c;
   }
 
-  protected static Timestamp truncate(Timestamp ts) {
-    return new Timestamp((ts.getTime() / 1000) * 1000);
+  protected static Instant truncate(Instant ts) {
+    return Instant.ofEpochMilli((ts.toEpochMilli() / 1000) * 1000);
   }
 
-  protected static Timestamp after(Change c, long millis) {
-    return new Timestamp(c.getCreatedOn().getTime() + millis);
+  protected static Instant after(Change c, long millis) {
+    return Instant.ofEpochMilli(c.getCreatedOn().toEpochMilli() + millis);
   }
 }

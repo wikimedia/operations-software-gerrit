@@ -31,13 +31,14 @@ import {
   PRIMARY_STATUS_ACTIONS,
   primaryRunAction,
   worstCategory,
-} from '../../services/checks/checks-util';
+} from '../../models/checks/checks-util';
 import {
-  allRunsSelectedPatchset$,
   CheckRun,
   ChecksPatchset,
   ErrorMessages,
-  errorMessagesLatest$,
+} from '../../models/checks/checks-model';
+import {
+  clearAllFakeRuns,
   fakeActions,
   fakeLinks,
   fakeRun0,
@@ -45,9 +46,9 @@ import {
   fakeRun2,
   fakeRun3,
   fakeRun4Att,
-  loginCallbackLatest$,
-  updateStateSetResults,
-} from '../../services/checks/checks-model';
+  fakeRun5,
+  setAllFakeRuns,
+} from '../../models/checks/checks-fakes';
 import {assertIsDefined} from '../../utils/common-util';
 import {modifierPressed, whenVisible} from '../../utils/dom-util';
 import {
@@ -57,10 +58,15 @@ import {
 } from './gr-checks-util';
 import {ChecksTabState} from '../../types/events';
 import {charsOnly} from '../../utils/string-util';
-import {appContext} from '../../services/app-context';
+import {getAppContext} from '../../services/app-context';
 import {KnownExperimentId} from '../../services/flags/flags';
 import {subscribe} from '../lit/subscription-controller';
 import {fontStyles} from '../../styles/gr-font-styles';
+import {durationString} from '../../utils/date-util';
+import {resolve} from '../../models/dependency';
+import {checksModelToken} from '../../models/checks/checks-model';
+import {Interaction} from '../../constants/reporting';
+import {Deduping} from '../../api/reporting';
 
 @customElement('gr-checks-run')
 export class GrChecksRun extends LitElement {
@@ -98,6 +104,10 @@ export class GrChecksRun extends LitElement {
         .name {
           font-weight: var(--font-weight-bold);
         }
+        .eta {
+          color: var(--deemphasized-text-color);
+          padding-left: var(--spacing-s);
+        }
         .chip.error {
           border-left: var(--thick-border) solid var(--error-foreground);
         }
@@ -110,7 +120,8 @@ export class GrChecksRun extends LitElement {
         .chip.check-circle-outline {
           border-left: var(--thick-border) solid var(--success-foreground);
         }
-        .chip.timelapse {
+        .chip.timelapse,
+        .chip.scheduled {
           border-left: var(--thick-border) solid var(--border-color);
         }
         .chip.placeholder {
@@ -198,6 +209,8 @@ export class GrChecksRun extends LitElement {
   @state()
   shouldRender = false;
 
+  private readonly reporting = getAppContext().reportingService;
+
   override firstUpdated() {
     assertIsDefined(this.chipElement, 'chip element');
     whenVisible(this.chipElement, () => (this.shouldRender = true), 200);
@@ -232,31 +245,35 @@ export class GrChecksRun extends LitElement {
 
     return html`
       <div
-        @click="${this.handleChipClick}"
-        @keydown="${this.handleChipKey}"
-        class="${classMap(classes)}"
+        @click=${this.handleChipClick}
+        @keydown=${this.handleChipKey}
+        class=${classMap(classes)}
         tabindex="0"
       >
         <div class="left">
-          <gr-hovercard-run .run="${this.run}"></gr-hovercard-run>
+          <gr-hovercard-run .run=${this.run}></gr-hovercard-run>
           ${this.renderFilterIcon()}
-          <iron-icon class="${icon}" icon="gr-icons:${icon}"></iron-icon>
+          <iron-icon class=${icon} icon="gr-icons:${icon}"></iron-icon>
           ${this.renderAdditionalIcon()}
           <span class="name">${this.run.checkName}</span>
+          ${this.renderETA()}
         </div>
         <div class="middle">
-          <gr-checks-attempt .run="${this.run}"></gr-checks-attempt>
+          <gr-checks-attempt .run=${this.run}></gr-checks-attempt>
           ${this.renderStatusLink()}
         </div>
         <div class="right">
           ${action
-            ? html`<gr-checks-action .action="${action}"></gr-checks-action>`
+            ? html`<gr-checks-action
+                context="runs"
+                .action=${action}
+              ></gr-checks-action>`
             : ''}
         </div>
       </div>
       <div
         class="attemptDetails"
-        ?hidden="${this.run.isSingleAttempt || !this.selected}"
+        ?hidden=${this.run.isSingleAttempt || !this.selected}
       >
         ${this.run.attemptDetails.map(a => this.renderAttempt(a))}
       </div>
@@ -278,14 +295,14 @@ export class GrChecksRun extends LitElement {
     return html`<div class="attemptDetail">
       <input
         type="radio"
-        id="${id}"
-        name="${`${checkNameId}-attempt-choice`}"
-        ?checked="${this.isSelected(detail)}"
-        ?disabled="${!this.isSelected(detail) && wasNotRun}"
-        @change="${() => this.handleAttemptChange(detail)}"
+        id=${id}
+        name=${`${checkNameId}-attempt-choice`}
+        ?checked=${this.isSelected(detail)}
+        ?disabled=${!this.isSelected(detail) && wasNotRun}
+        @change=${() => this.handleAttemptChange(detail)}
       />
-      <iron-icon class="${icon}" icon="gr-icons:${icon}"></iron-icon>
-      <label for="${id}">
+      <iron-icon class=${icon} icon="gr-icons:${icon}"></iron-icon>
+      <label for=${id}>
         Attempt ${detail.attempt}${wasNotRun ? ' (not run)' : ''}
       </label>
     </div>`;
@@ -297,11 +314,20 @@ export class GrChecksRun extends LitElement {
     }
   }
 
+  renderETA() {
+    if (this.run.status !== RunStatus.RUNNING) return;
+    if (!this.run.finishedTimestamp) return;
+    const now = new Date();
+    if (this.run.finishedTimestamp.getTime() < now.getTime()) return;
+    const eta = durationString(new Date(), this.run.finishedTimestamp, true);
+    return html`<span class="eta">ETA: ${eta}</span>`;
+  }
+
   renderStatusLink() {
     const link = this.run.statusLink;
     if (!link) return;
     return html`
-      <a href="${link}" target="_blank" @click="${this.onLinkClick}"
+      <a href=${link} target="_blank" @click=${this.onLinkClick}
         ><iron-icon
           class="statusLinkIcon"
           icon="gr-icons:launch"
@@ -315,6 +341,10 @@ export class GrChecksRun extends LitElement {
   private onLinkClick(e: MouseEvent) {
     // Prevents handleChipClick() from reacting to <a> link clicks.
     e.stopPropagation();
+    this.reporting.reportInteraction(Interaction.CHECKS_RUN_LINK_CLICKED, {
+      checkName: this.run.checkName,
+      status: this.run.status,
+    });
   }
 
   renderFilterIcon() {
@@ -334,7 +364,7 @@ export class GrChecksRun extends LitElement {
     if (!category) return nothing;
     const icon = iconFor(category);
     return html`
-      <iron-icon class="${icon}" icon="gr-icons:${icon}"></iron-icon>
+      <iron-icon class=${icon} icon="gr-icons:${icon}"></iron-icon>
     `;
   }
 
@@ -359,8 +389,12 @@ export class GrChecksRuns extends LitElement {
   @query('#filterInput')
   filterInput?: HTMLInputElement;
 
+  /**
+   * We prefer `undefined` over a RegExp with '', because `.source` yields
+   * a strange '(?:)' for ''.
+   */
   @state()
-  filterRegExp = new RegExp('');
+  filterRegExp?: RegExp;
 
   @property({attribute: false})
   runs: CheckRun[] = [];
@@ -389,15 +423,29 @@ export class GrChecksRuns extends LitElement {
 
   private isSectionExpanded = new Map<RunStatus, boolean>();
 
-  private flagService = appContext.flagsService;
+  private flagService = getAppContext().flagsService;
 
-  private checksService = appContext.checksService;
+  private getChecksModel = resolve(this, checksModelToken);
 
-  constructor() {
-    super();
-    subscribe(this, allRunsSelectedPatchset$, x => (this.runs = x));
-    subscribe(this, errorMessagesLatest$, x => (this.errorMessages = x));
-    subscribe(this, loginCallbackLatest$, x => (this.loginCallback = x));
+  private readonly reporting = getAppContext().reportingService;
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    subscribe(
+      this,
+      this.getChecksModel().allRunsSelectedPatchset$,
+      x => (this.runs = x)
+    );
+    subscribe(
+      this,
+      this.getChecksModel().errorMessagesLatest$,
+      x => (this.errorMessages = x)
+    );
+    subscribe(
+      this,
+      this.getChecksModel().loginCallbackLatest$,
+      x => (this.loginCallback = x)
+    );
   }
 
   static override get styles() {
@@ -508,7 +556,20 @@ export class GrChecksRuns extends LitElement {
 
   protected override updated(changedProperties: PropertyValues) {
     super.updated(changedProperties);
+    // This update is done is response to setting this.filterRegExp below, but
+    // this.filterInput not yet being available at that point.
+    if (this.filterInput && !this.filterInput.value && this.filterRegExp) {
+      this.filterInput.value = this.filterRegExp.source;
+    }
     if (changedProperties.has('tabState') && this.tabState) {
+      // Note that tabState.select and tabState.attempt are processed by
+      // <gr-checks-tab>.
+      if (
+        this.tabState.filter &&
+        this.tabState.filter !== this.filterRegExp?.source
+      ) {
+        this.filterRegExp = new RegExp(this.tabState.filter, 'i');
+      }
       const {statusOrCategory} = this.tabState;
       if (
         statusOrCategory === RunStatus.RUNNING ||
@@ -538,8 +599,8 @@ export class GrChecksRuns extends LitElement {
         id="filterInput"
         type="text"
         placeholder="Filter runs by regular expression"
-        ?hidden="${!this.showFilter()}"
-        @input="${this.onInput}"
+        ?hidden=${!this.showFilter()}
+        @input=${this.onInput}
       />
       ${this.renderSection(RunStatus.RUNNING)}
       ${this.renderSection(RunStatus.COMPLETED)}
@@ -582,7 +643,7 @@ export class GrChecksRuns extends LitElement {
           Sign in to Checks Plugin to see runs and results
         </div>
         <div class="buttonRow">
-          <gr-button @click="${this.loginCallback}" link>Sign in</gr-button>
+          <gr-button @click=${this.loginCallback} link>Sign in</gr-button>
         </div>
       </div>
     `;
@@ -605,22 +666,32 @@ export class GrChecksRuns extends LitElement {
       <gr-button
         class="font-normal"
         link
-        @click="${() => fireRunSelectionReset(this)}"
+        @click=${() => fireRunSelectionReset(this)}
         >Unselect All</gr-button
       >
       <gr-tooltip-content
-        title="${runButtonDisabled
+        title=${runButtonDisabled
           ? 'Disabled. Unselect checks without a "Run" action to enable the button.'
-          : ''}"
+          : ''}
         ?has-tooltip=${runButtonDisabled}
       >
         <gr-button
           class="font-normal"
           link
           ?disabled=${runButtonDisabled}
-          @click="${() => {
-            actions.forEach(action => this.checksService.triggerAction(action));
-          }}"
+          @click=${() => {
+            actions.forEach(action => {
+              if (!action) return;
+              this.getChecksModel().triggerAction(
+                action,
+                undefined,
+                'run-selected'
+              );
+            });
+            this.reporting.reportInteraction(
+              Interaction.CHECKS_RUNS_SELECTED_TRIGGERED
+            );
+          }}
           >Run Selected</gr-button
         >
       </gr-tooltip-content>
@@ -631,67 +702,63 @@ export class GrChecksRuns extends LitElement {
     return html`
       <gr-tooltip-content
         has-tooltip
-        title="${this.collapsed ? 'Expand runs panel' : 'Collapse runs panel'}"
+        title=${this.collapsed ? 'Expand runs panel' : 'Collapse runs panel'}
       >
         <gr-button
           link
           class="expandButton"
           role="switch"
-          aria-checked="${this.collapsed ? 'true' : 'false'}"
-          aria-label="${this.collapsed
+          aria-checked=${this.collapsed ? 'true' : 'false'}
+          aria-label=${this.collapsed
             ? 'Expand runs panel'
-            : 'Collapse runs panel'}"
-          @click="${() => (this.collapsed = !this.collapsed)}"
+            : 'Collapse runs panel'}
+          @click=${this.toggleCollapsed}
           ><iron-icon
             class="expandIcon"
-            icon="${this.collapsed
+            icon=${this.collapsed
               ? 'gr-icons:chevron-right'
-              : 'gr-icons:chevron-left'}"
+              : 'gr-icons:chevron-left'}
           ></iron-icon>
         </gr-button>
       </gr-tooltip-content>
     `;
   }
 
+  private toggleCollapsed() {
+    this.collapsed = !this.collapsed;
+    this.reporting.reportInteraction(Interaction.CHECKS_RUNS_PANEL_TOGGLE, {
+      collapsed: this.collapsed,
+    });
+  }
+
   onInput() {
     assertIsDefined(this.filterInput, 'filter <input> element');
-    this.filterRegExp = new RegExp(this.filterInput.value, 'i');
-  }
-
-  none() {
-    updateStateSetResults('f0', [], [], [], ChecksPatchset.LATEST);
-    updateStateSetResults('f1', [], [], [], ChecksPatchset.LATEST);
-    updateStateSetResults('f2', [], [], [], ChecksPatchset.LATEST);
-    updateStateSetResults('f3', [], [], [], ChecksPatchset.LATEST);
-    updateStateSetResults('f4', [], [], [], ChecksPatchset.LATEST);
-  }
-
-  all() {
-    updateStateSetResults(
-      'f0',
-      [fakeRun0],
-      fakeActions,
-      fakeLinks,
-      ChecksPatchset.LATEST
+    this.reporting.reportInteraction(
+      Interaction.CHECKS_RUN_FILTER_CHANGED,
+      {},
+      {deduping: Deduping.EVENT_ONCE_PER_CHANGE}
     );
-    updateStateSetResults('f1', [fakeRun1], [], [], ChecksPatchset.LATEST);
-    updateStateSetResults('f2', [fakeRun2], [], [], ChecksPatchset.LATEST);
-    updateStateSetResults('f3', [fakeRun3], [], [], ChecksPatchset.LATEST);
-    updateStateSetResults('f4', fakeRun4Att, [], [], ChecksPatchset.LATEST);
+    if (this.filterInput.value) {
+      this.filterRegExp = new RegExp(this.filterInput.value, 'i');
+    } else {
+      this.filterRegExp = undefined;
+    }
   }
 
   toggle(
     plugin: string,
     runs: CheckRun[],
     actions: Action[] = [],
-    links: Link[] = []
+    links: Link[] = [],
+    summaryMessage: string | undefined = undefined
   ) {
     const newRuns = this.runs.includes(runs[0]) ? [] : runs;
-    updateStateSetResults(
+    this.getChecksModel().updateStateSetResults(
       plugin,
       newRuns,
       actions,
       links,
+      summaryMessage,
       ChecksPatchset.LATEST
     );
   }
@@ -699,21 +766,26 @@ export class GrChecksRuns extends LitElement {
   renderSection(status: RunStatus) {
     const runs = this.runs
       .filter(r => r.isLatestAttempt)
-      .filter(r => r.status === status)
-      .filter(r => this.filterRegExp.test(r.checkName))
+      .filter(
+        r =>
+          r.status === status ||
+          (status === RunStatus.RUNNING && r.status === RunStatus.SCHEDULED)
+      )
+      .filter(r => !this.filterRegExp || this.filterRegExp.test(r.checkName))
       .sort(compareByWorstCategory);
     if (runs.length === 0) return;
     const expanded = this.isSectionExpanded.get(status) ?? true;
     const expandedClass = expanded ? 'expanded' : 'collapsed';
     const icon = expanded ? 'gr-icons:expand-less' : 'gr-icons:expand-more';
+    let header = headerForStatus(status);
+    if (runs.some(r => r.status === RunStatus.SCHEDULED)) {
+      header = `${header} / ${headerForStatus(RunStatus.SCHEDULED)}`;
+    }
     return html`
       <div class="${status.toLowerCase()} ${expandedClass}">
-        <div
-          class="sectionHeader"
-          @click="${() => this.toggleExpanded(status)}"
-        >
-          <iron-icon class="expandIcon" icon="${icon}"></iron-icon>
-          <h3 class="heading-3">${headerForStatus(status)}</h3>
+        <div class="sectionHeader" @click=${() => this.toggleExpanded(status)}>
+          <iron-icon class="expandIcon" icon=${icon}></iron-icon>
+          <h3 class="heading-3">${header}</h3>
         </div>
         <div class="sectionRuns">${runs.map(run => this.renderRun(run))}</div>
       </div>
@@ -723,6 +795,10 @@ export class GrChecksRuns extends LitElement {
   toggleExpanded(status: RunStatus) {
     const expanded = this.isSectionExpanded.get(status) ?? true;
     this.isSectionExpanded.set(status, !expanded);
+    this.reporting.reportInteraction(Interaction.CHECKS_RUN_SECTION_TOGGLE, {
+      status,
+      expanded: !expanded,
+    });
     this.requestUpdate();
   }
 
@@ -731,19 +807,15 @@ export class GrChecksRuns extends LitElement {
     const selectedAttempt = this.selectedAttempts.get(run.checkName);
     const deselected = !selectedRun && this.selectedRuns.length > 0;
     return html`<gr-checks-run
-      .run="${run}"
-      .selected="${selectedRun}"
-      .selectedAttempt="${selectedAttempt}"
-      .deselected="${deselected}"
+      .run=${run}
+      .selected=${selectedRun}
+      .selectedAttempt=${selectedAttempt}
+      .deselected=${deselected}
     ></gr-checks-run>`;
   }
 
   showFilter(): boolean {
-    const show = this.runs.length > 10;
-    if (!show && this.filterRegExp.source.length > 0) {
-      this.filterRegExp = new RegExp('');
-    }
-    return show;
+    return this.runs.length > 10 || !!this.filterRegExp;
   }
 
   renderFakeControls() {
@@ -751,26 +823,33 @@ export class GrChecksRuns extends LitElement {
     return html`
       <div class="testing">
         <div>Toggle fake runs by clicking buttons:</div>
-        <gr-button link @click="${this.none}">none</gr-button>
+        <gr-button link @click=${() => clearAllFakeRuns(this.getChecksModel())}
+          >none</gr-button
+        >
         <gr-button
           link
-          @click="${() =>
-            this.toggle('f0', [fakeRun0], fakeActions, fakeLinks)}"
+          @click=${() =>
+            this.toggle('f0', [fakeRun0], fakeActions, fakeLinks, 'ETA: 1 min')}
           >0</gr-button
         >
-        <gr-button link @click="${() => this.toggle('f1', [fakeRun1])}"
+        <gr-button link @click=${() => this.toggle('f1', [fakeRun1])}
           >1</gr-button
         >
-        <gr-button link @click="${() => this.toggle('f2', [fakeRun2])}"
+        <gr-button link @click=${() => this.toggle('f2', [fakeRun2])}
           >2</gr-button
         >
-        <gr-button link @click="${() => this.toggle('f3', [fakeRun3])}"
+        <gr-button link @click=${() => this.toggle('f3', [fakeRun3])}
           >3</gr-button
         >
         <gr-button link @click="${() => this.toggle('f4', fakeRun4Att)}}"
           >4</gr-button
         >
-        <gr-button link @click="${this.all}">all</gr-button>
+        <gr-button link @click=${() => this.toggle('f5', [fakeRun5])}
+          >5</gr-button
+        >
+        <gr-button link @click=${() => setAllFakeRuns(this.getChecksModel())}
+          >all</gr-button
+        >
       </div>
     `;
   }

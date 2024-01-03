@@ -14,14 +14,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {appContext} from '../../../services/app-context';
-import {PLUGIN_LOADING_TIMEOUT_MS, getPluginNameFromUrl} from './gr-api-utils';
+import {getAppContext} from '../../../services/app-context';
+import {
+  PLUGIN_LOADING_TIMEOUT_MS,
+  getPluginNameFromUrl,
+  isThemeFile,
+  THEME_JS,
+} from './gr-api-utils';
 import {Plugin} from './gr-public-js-api';
 import {getBaseUrl} from '../../../utils/url-util';
 import {getPluginEndpoints} from './gr-plugin-endpoints';
 import {PluginApi} from '../../../api/plugin';
 import {ReportingService} from '../../../services/gr-reporting/gr-reporting';
-import {ShowAlertEventDetail} from '../../../types/events';
+import {fireAlert} from '../../../utils/event-util';
 
 enum PluginState {
   /** State that indicates the plugin is pending to be loaded. */
@@ -83,9 +88,11 @@ export class PluginLoader {
   // Resolver to resolve _loadingPromise once all plugins loaded
   _loadingResolver: (() => void) | null = null;
 
+  private instanceId?: string;
+
   _getReporting() {
     if (!this._reporting) {
-      this._reporting = appContext.reportingService;
+      this._reporting = getAppContext().reportingService;
     }
     return this._reporting;
   }
@@ -100,7 +107,8 @@ export class PluginLoader {
   /**
    * Load multiple plugins with certain options.
    */
-  loadPlugins(plugins: string[] = []) {
+  loadPlugins(plugins: string[] = [], instanceId?: string) {
+    this.instanceId = instanceId;
     this._pluginListLoaded = true;
 
     plugins.forEach(path => {
@@ -134,8 +142,8 @@ export class PluginLoader {
     if (!(url instanceof URL)) {
       try {
         url = new URL(url);
-      } catch (e) {
-        this._getReporting().error(e);
+      } catch (e: unknown) {
+        this._getReporting().error(new Error('url parse error'), undefined, e);
         return false;
       }
     }
@@ -182,8 +190,16 @@ export class PluginLoader {
     try {
       callback(plugin);
       this._pluginInstalled(url, plugin);
-    } catch (e) {
-      this._failToLoad(`${e.name}: ${e.message}`, src);
+    } catch (e: unknown) {
+      if (e instanceof Error) {
+        this._failToLoad(`${e.name}: ${e.message}`, src);
+      } else {
+        this._getReporting().error(
+          new Error('plugin callback error'),
+          undefined,
+          e
+        );
+      }
     }
   }
 
@@ -209,20 +225,16 @@ export class PluginLoader {
       this._updatePluginState(plugin.url, PluginState.LOAD_FAILED);
     }
     this._checkIfCompleted();
-    return `Timeout when loading plugins: ${pending
+    const errorMessage = `Timeout when loading plugins: ${pending
       .map(p => p.name)
       .join(',')}`;
+    fireAlert(document, errorMessage);
+    return errorMessage;
   }
 
   _failToLoad(message: string, pluginUrl?: string) {
     // Show an alert with the error
-    document.dispatchEvent(
-      new CustomEvent<ShowAlertEventDetail>('show-alert', {
-        detail: {
-          message: `Plugin install error: ${message} from ${pluginUrl}`,
-        },
-      })
-    );
+    fireAlert(document, `Plugin install error: ${message} from ${pluginUrl}`);
     if (pluginUrl) this._updatePluginState(pluginUrl, PluginState.LOAD_FAILED);
     this._checkIfCompleted();
   }
@@ -241,7 +253,7 @@ export class PluginLoader {
         plugin: null,
       });
     }
-    console.info(`Plugin ${key} ${state}`);
+    console.debug(`Plugin ${key} ${state}`);
     return this._plugins.get(key)!;
   }
 
@@ -309,16 +321,16 @@ export class PluginLoader {
   }
 
   _urlFor(pathOrUrl: string, assetsPath?: string): string {
-    // theme is per host, should always load from assetsPath
-    const isThemeFile = pathOrUrl.endsWith('static/gerrit-theme.js');
-    const shouldTryLoadFromAssetsPathFirst = !isThemeFile && assetsPath;
+    if (isThemeFile(pathOrUrl)) {
+      if (assetsPath && this.instanceId) {
+        return `${assetsPath}/hosts/${this.instanceId}${THEME_JS}`;
+      }
+      return window.location.origin + getBaseUrl() + THEME_JS;
+    }
+
     if (pathOrUrl.startsWith('http')) {
       // Plugins are loaded from another domain or preloaded.
-      if (
-        pathOrUrl.includes(location.host) &&
-        shouldTryLoadFromAssetsPathFirst &&
-        assetsPath
-      ) {
+      if (pathOrUrl.includes(location.host) && assetsPath) {
         // if is loading from host server, try replace with cdn when assetsPath provided
         return pathOrUrl.replace(location.origin, assetsPath);
       }
@@ -328,11 +340,9 @@ export class PluginLoader {
     if (!pathOrUrl.startsWith('/')) {
       pathOrUrl = '/' + pathOrUrl;
     }
-
-    if (shouldTryLoadFromAssetsPathFirst && assetsPath) {
+    if (assetsPath) {
       return assetsPath + pathOrUrl;
     }
-
     return window.location.origin + getBaseUrl() + pathOrUrl;
   }
 

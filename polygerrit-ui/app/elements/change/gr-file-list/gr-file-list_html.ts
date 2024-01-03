@@ -37,13 +37,15 @@ export const htmlTemplate = html`
       max-width: 1px;
       overflow: hidden;
       display: none;
+      vertical-align: top;
     }
     div[role='gridcell']
       > div.comments
       > span:empty
       + span:empty
       + span.noCommentsScreenReaderText {
-      display: inline;
+      /* inline-block instead of block, such that it can control width */
+      display: inline-block;
     }
     :host(.loading) .row {
       opacity: 0.5;
@@ -126,6 +128,7 @@ export const htmlTemplate = html`
     .comments {
       padding-left: var(--spacing-l);
       min-width: 7.5em;
+      white-space: nowrap;
     }
     .row:not(.header-row) .stats,
     .total-stats {
@@ -263,8 +266,19 @@ export const htmlTemplate = html`
       visibility: visible;
     }
 
-    /** small screen breakpoint: 768px */
-    @media screen and (max-width: 55em) {
+    @media screen and (max-width: 1200px) {
+      gr-endpoint-decorator.extra-col {
+        display: none;
+      }
+    }
+
+    @media screen and (max-width: 1000px) {
+      .reviewed {
+        display: none;
+      }
+    }
+
+    @media screen and (max-width: 800px) {
       .desktop {
         display: none;
       }
@@ -280,9 +294,6 @@ export const htmlTemplate = html`
       .reviewed,
       .status {
         justify-content: flex-start;
-      }
-      .reviewed {
-        display: none;
       }
       .comments {
         min-width: initial;
@@ -315,7 +326,11 @@ export const htmlTemplate = html`
           items="[[_dynamicPrependedHeaderEndpoints]]"
           as="headerEndpoint"
         >
-          <gr-endpoint-decorator name$="[[headerEndpoint]]" role="columnheader">
+          <gr-endpoint-decorator
+            class="prepended-col"
+            name$="[[headerEndpoint]]"
+            role="columnheader"
+          >
             <gr-endpoint-param name="change" value="[[change]]">
             </gr-endpoint-param>
             <gr-endpoint-param name="patchRange" value="[[patchRange]]">
@@ -326,8 +341,9 @@ export const htmlTemplate = html`
         </template>
       </template>
       <div class="path" role="columnheader">File</div>
-      <div class="comments" role="columnheader">Comments</div>
-      <div class="sizeBars" role="columnheader">Size</div>
+      <div class="comments desktop" role="columnheader">Comments</div>
+      <div class="comments mobile" role="columnheader" title="Comments">C</div>
+      <div class="sizeBars desktop" role="columnheader">Size</div>
       <div class="header-stats" role="columnheader">Delta</div>
       <!-- endpoint: change-view-file-list-header -->
       <template is="dom-if" if="[[_showDynamicColumns]]">
@@ -336,7 +352,11 @@ export const htmlTemplate = html`
           items="[[_dynamicHeaderEndpoints]]"
           as="headerEndpoint"
         >
-          <gr-endpoint-decorator name$="[[headerEndpoint]]" role="columnheader">
+          <gr-endpoint-decorator
+            class="extra-col"
+            name$="[[headerEndpoint]]"
+            role="columnheader"
+          >
           </gr-endpoint-decorator>
         </template>
       </template>
@@ -373,7 +393,11 @@ export const htmlTemplate = html`
               items="[[_dynamicPrependedContentEndpoints]]"
               as="contentEndpoint"
             >
-              <gr-endpoint-decorator name="[[contentEndpoint]]" role="gridcell">
+              <gr-endpoint-decorator
+                class="prepended-col"
+                name="[[contentEndpoint]]"
+                role="gridcell"
+              >
                 <gr-endpoint-param name="change" value="[[change]]">
                 </gr-endpoint-param>
                 <gr-endpoint-param name="changeNum" value="[[changeNum]]">
@@ -389,13 +413,13 @@ export const htmlTemplate = html`
           </template>
           <!-- TODO: Remove data-url as it appears its not used -->
           <span
-            data-url="[[_computeDiffURL(change, patchRange, file.__path, editMode)]]"
+            data-url="[[_computeDiffURL(change, patchRange.basePatchNum, patchRange.patchNum, file.__path, editMode)]]"
             class="path"
             role="gridcell"
           >
             <a
               class="pathLink"
-              href$="[[_computeDiffURL(change, patchRange, file.__path, editMode)]]"
+              href$="[[_computeDiffURL(change, patchRange.basePatchNum, patchRange.patchNum, file.__path, editMode)]]"
             >
               <span
                 title$="[[_computeDisplayPath(file.__path)]]"
@@ -472,7 +496,7 @@ export const htmlTemplate = html`
               </span>
             </div>
           </div>
-          <div role="gridcell">
+          <div class="desktop" role="gridcell">
             <!-- The content must be in a separate div. It guarantees, that
               gridcell always visible for screen readers.
               For example, without a nested div screen readers pronounce the
@@ -540,7 +564,10 @@ export const htmlTemplate = html`
               as="contentEndpoint"
             >
               <div class$="[[_computeClass('', file.__path)]]" role="gridcell">
-                <gr-endpoint-decorator name="[[contentEndpoint]]">
+                <gr-endpoint-decorator
+                  class="extra-col"
+                  name="[[contentEndpoint]]"
+                >
                   <gr-endpoint-param name="change" value="[[change]]">
                   </gr-endpoint-param>
                   <gr-endpoint-param name="changeNum" value="[[changeNum]]">
@@ -643,7 +670,6 @@ export const htmlTemplate = html`
             prefs="[[diffPrefs]]"
             project-name="[[change.project]]"
             no-render-on-prefs-change=""
-            view-mode="[[diffViewMode]]"
           ></gr-diff-host>
         </template>
       </div>
@@ -660,7 +686,11 @@ export const htmlTemplate = html`
             items="[[_dynamicPrependedContentEndpoints]]"
             as="contentEndpoint"
           >
-            <gr-endpoint-decorator name="[[contentEndpoint]]" role="gridcell">
+            <gr-endpoint-decorator
+              class="prepended-col"
+              name="[[contentEndpoint]]"
+              role="gridcell"
+            >
               <gr-endpoint-param name="change" value="[[change]]">
               </gr-endpoint-param>
               <gr-endpoint-param name="changeNum" value="[[changeNum]]">
@@ -723,7 +753,7 @@ export const htmlTemplate = html`
         items="[[_dynamicSummaryEndpoints]]"
         as="summaryEndpoint"
       >
-        <gr-endpoint-decorator name="[[summaryEndpoint]]">
+        <gr-endpoint-decorator class="extra-col" name="[[summaryEndpoint]]">
           <gr-endpoint-param
             name="change"
             value="[[change]]"

@@ -109,6 +109,8 @@ public class AndPredicate<T> extends Predicate<T>
     return getChild(0).hashCode() * 31 + getChild(1).hashCode();
   }
 
+  // Suppress the EqualsGetClass warning as this is legacy code.
+  @SuppressWarnings("EqualsGetClass")
   @Override
   public boolean equals(Object other) {
     if (other == null) {

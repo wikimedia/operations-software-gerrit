@@ -14,19 +14,100 @@
 
 package com.google.gerrit.server.project;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.gerrit.entities.SubmitRequirement;
 import com.google.gerrit.entities.SubmitRequirementResult;
+import com.google.gerrit.metrics.Counter2;
+import com.google.gerrit.metrics.Description;
+import com.google.gerrit.metrics.Field;
+import com.google.gerrit.metrics.MetricMaker;
+import com.google.gerrit.server.logging.Metadata;
+import com.google.gerrit.server.query.change.ChangeData;
+import com.google.gerrit.server.query.change.ChangeData.StorageConstraint;
+import com.google.inject.Inject;
+import com.google.inject.Singleton;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
  * A utility class for different operations related to {@link
  * com.google.gerrit.entities.SubmitRequirement}s.
  */
+@Singleton
 public class SubmitRequirementsUtil {
 
-  private SubmitRequirementsUtil() {}
+  @Singleton
+  static class Metrics {
+    final Counter2<String, String> submitRequirementsMatchingWithLegacy;
+    final Counter2<String, String> submitRequirementsMismatchingWithLegacy;
+    final Counter2<String, String> legacyNotInSrs;
+    final Counter2<String, String> srsNotInLegacy;
+
+    @Inject
+    Metrics(MetricMaker metricMaker) {
+      submitRequirementsMatchingWithLegacy =
+          metricMaker.newCounter(
+              "change/submit_requirements/matching_with_legacy",
+              new Description(
+                      "Total number of times there was a legacy and non-legacy "
+                          + "submit requirements with the same name for a change, "
+                          + "and the evaluation of both requirements had the same result "
+                          + "w.r.t. change submittability.")
+                  .setRate()
+                  .setUnit("count"),
+              Field.ofProjectName("project").build(),
+              Field.ofString("sr_name", Metadata.Builder::submitRequirementName)
+                  .description("Submit requirement name")
+                  .build());
+      submitRequirementsMismatchingWithLegacy =
+          metricMaker.newCounter(
+              "change/submit_requirements/mismatching_with_legacy",
+              new Description(
+                      "Total number of times there was a legacy and non-legacy "
+                          + "submit requirements with the same name for a change, "
+                          + "and the evaluation of both requirements had a different result "
+                          + "w.r.t. change submittability.")
+                  .setRate()
+                  .setUnit("count"),
+              Field.ofProjectName("project").build(),
+              Field.ofString("sr_name", Metadata.Builder::submitRequirementName)
+                  .description("Submit requirement name")
+                  .build());
+      legacyNotInSrs =
+          metricMaker.newCounter(
+              "change/submit_requirements/legacy_not_in_srs",
+              new Description(
+                      "Total number of times there was a legacy submit requirement result "
+                          + "but not a project config requirement with the same name for a change.")
+                  .setRate()
+                  .setUnit("count"),
+              Field.ofProjectName("project").build(),
+              Field.ofString("sr_name", Metadata.Builder::submitRequirementName)
+                  .description("Submit requirement name")
+                  .build());
+      srsNotInLegacy =
+          metricMaker.newCounter(
+              "change/submit_requirements/srs_not_in_legacy",
+              new Description(
+                      "Total number of times there was a project config submit requirement "
+                          + "result but not a legacy requirement with the same name for a change.")
+                  .setRate()
+                  .setUnit("count"),
+              Field.ofProjectName("project").build(),
+              Field.ofString("sr_name", Metadata.Builder::submitRequirementName)
+                  .description("Submit requirement name")
+                  .build());
+    }
+  }
+
+  private final Metrics metrics;
+
+  @Inject
+  public SubmitRequirementsUtil(Metrics metrics) {
+    this.metrics = metrics;
+  }
 
   /**
    * Merge legacy and non-legacy submit requirement results. If both input maps have submit
@@ -43,9 +124,12 @@ public class SubmitRequirementsUtil {
    * @return a map that is the result of merging both input maps, while eliminating requirements
    *     with the same name and status.
    */
-  public static Map<SubmitRequirement, SubmitRequirementResult> mergeLegacyAndNonLegacyRequirements(
-      Map<SubmitRequirement, SubmitRequirementResult> projectConfigRequirements,
-      Map<SubmitRequirement, SubmitRequirementResult> legacyRequirements) {
+  public ImmutableMap<SubmitRequirement, SubmitRequirementResult>
+      mergeLegacyAndNonLegacyRequirements(
+          Map<SubmitRequirement, SubmitRequirementResult> projectConfigRequirements,
+          Map<SubmitRequirement, SubmitRequirementResult> legacyRequirements,
+          ChangeData cd) {
+    // Cannot use ImmutableMap.Builder here since entries in the map may be overridden.
     Map<SubmitRequirement, SubmitRequirementResult> result = new HashMap<>();
     result.putAll(projectConfigRequirements);
     Map<String, SubmitRequirementResult> requirementsByName =
@@ -53,15 +137,52 @@ public class SubmitRequirementsUtil {
             .collect(Collectors.toMap(sr -> sr.getKey().name().toLowerCase(), sr -> sr.getValue()));
     for (Map.Entry<SubmitRequirement, SubmitRequirementResult> legacy :
         legacyRequirements.entrySet()) {
-      String name = legacy.getKey().name().toLowerCase();
-      SubmitRequirementResult projectConfigResult = requirementsByName.get(name);
+      String srName = legacy.getKey().name().toLowerCase();
+      SubmitRequirementResult projectConfigResult = requirementsByName.get(srName);
       SubmitRequirementResult legacyResult = legacy.getValue();
-      if (projectConfigResult != null && matchByStatus(projectConfigResult, legacyResult)) {
+      // If there's no project config requirement with the same name as the legacy requirement
+      // then add the legacy SR to the result. There is no mismatch in results in this case.
+      if (projectConfigResult == null) {
+        result.put(legacy.getKey(), legacy.getValue());
+        if (shouldReportMetric(cd)) {
+          metrics.legacyNotInSrs.increment(cd.project().get(), srName);
+        }
         continue;
+      }
+      if (matchByStatus(projectConfigResult, legacyResult)) {
+        // There exists a project config SR with the same name as the legacy SR, and they are
+        // matching in result. No need to include the legacy SR in the output since the project
+        // config SR is already there.
+        if (shouldReportMetric(cd)) {
+          metrics.submitRequirementsMatchingWithLegacy.increment(cd.project().get(), srName);
+        }
+        continue;
+      }
+      // There exists a project config SR with the same name as the legacy SR but they are not
+      // matching in their result. Increment the mismatch count and add the legacy SR to the result.
+      if (shouldReportMetric(cd)) {
+        metrics.submitRequirementsMismatchingWithLegacy.increment(cd.project().get(), srName);
       }
       result.put(legacy.getKey(), legacy.getValue());
     }
-    return result;
+    Set<String> legacyNames =
+        legacyRequirements.keySet().stream()
+            .map(SubmitRequirement::name)
+            .map(String::toLowerCase)
+            .collect(Collectors.toSet());
+    for (String projectConfigSrName : requirementsByName.keySet()) {
+      if (!legacyNames.contains(projectConfigSrName) && shouldReportMetric(cd)) {
+        metrics.srsNotInLegacy.increment(cd.project().get(), projectConfigSrName);
+      }
+    }
+
+    return ImmutableMap.copyOf(result);
+  }
+
+  private static boolean shouldReportMetric(ChangeData cd) {
+    // We only care about recording differences in old and new requirements for open changes
+    // that did not have their data retrieved from the (potentially stale) change index.
+    return cd.change().isNew() && cd.getStorageConstraint() == StorageConstraint.NOTEDB_ONLY;
   }
 
   /** Returns true if both input results are equal in allowing/disallowing change submission. */

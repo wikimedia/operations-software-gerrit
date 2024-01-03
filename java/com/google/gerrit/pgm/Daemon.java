@@ -83,8 +83,8 @@ import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.SysExecutorModule;
 import com.google.gerrit.server.events.EventBroker.EventBrokerModule;
 import com.google.gerrit.server.events.StreamEventsApiListener.StreamEventsApiListenerModule;
+import com.google.gerrit.server.git.ChangesByProjectCache;
 import com.google.gerrit.server.git.GarbageCollectionModule;
-import com.google.gerrit.server.git.SearchingChangeCacheImpl.SearchingChangeCacheImplModule;
 import com.google.gerrit.server.git.WorkQueue.WorkQueueModule;
 import com.google.gerrit.server.group.PeriodicGroupIndexer.PeriodicGroupIndexerModule;
 import com.google.gerrit.server.index.AbstractIndexModule;
@@ -247,6 +247,10 @@ public class Daemon extends SiteProgram {
     this.replica = replica;
   }
 
+  public boolean isReplica() {
+    return replica;
+  }
+
   @VisibleForTesting
   public Injector getHttpdInjector() {
     return httpdInjector;
@@ -367,6 +371,7 @@ public class Daemon extends SiteProgram {
     }
     cfgInjector = createCfgInjector();
     config = cfgInjector.getInstance(Key.get(Config.class, GerritServerConfig.class));
+    config.setBoolean("container", null, "replica", replica);
     indexType = IndexModule.getIndexType(cfgInjector);
     sysInjector = createSysInjector();
     sysInjector.getInstance(PluginGuiceEnvironment.class).setDbCfgInjector(dbInjector, cfgInjector);
@@ -448,7 +453,10 @@ public class Daemon extends SiteProgram {
     modules.add(new GerritApiModule());
     modules.add(new PluginApiModule());
 
-    modules.add(new SearchingChangeCacheImplModule(replica));
+    modules.add(
+        new ChangesByProjectCache.Module(
+            replica ? ChangesByProjectCache.UseIndex.FALSE : ChangesByProjectCache.UseIndex.TRUE,
+            config));
     modules.add(new InternalAccountDirectoryModule());
     modules.add(new DefaultPermissionBackendModule());
     modules.add(new DefaultMemoryCacheModule());
@@ -493,7 +501,7 @@ public class Daemon extends SiteProgram {
           });
     }
     modules.add(new DefaultUrlFormatterModule());
-    SshSessionFactoryInitializer.init(config);
+    SshSessionFactoryInitializer.init();
     if (sshd) {
       modules.add(SshKeyCacheImpl.module());
     } else {

@@ -40,6 +40,7 @@ import com.google.common.primitives.Ints;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.AttentionSetUpdate;
+import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.entities.Comment;
@@ -74,9 +75,8 @@ import com.google.gerrit.server.change.CommentThreads;
 import com.google.gerrit.server.change.MergeabilityCache;
 import com.google.gerrit.server.change.PureRevert;
 import com.google.gerrit.server.config.AllUsersName;
+import com.google.gerrit.server.config.SkipCurrentRulesEvaluationOnClosedChanges;
 import com.google.gerrit.server.config.TrackingFooters;
-import com.google.gerrit.server.experiments.ExperimentFeatures;
-import com.google.gerrit.server.experiments.ExperimentFeaturesConstants;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.MergeUtil;
 import com.google.gerrit.server.notedb.ChangeNotes;
@@ -98,7 +98,7 @@ import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 import java.io.IOException;
-import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -240,6 +240,19 @@ public class ChangeData {
       return assistedFactory.create(project, id, null, null);
     }
 
+    public ChangeData create(Project.NameKey project, Change.Id id, ObjectId metaRevision) {
+      ChangeData cd = assistedFactory.create(project, id, null, null);
+      cd.setMetaRevision(metaRevision);
+      return cd;
+    }
+
+    public ChangeData createNonPrivate(BranchNameKey branch, Change.Id id, ObjectId metaRevision) {
+      ChangeData cd = create(branch.project(), id, metaRevision);
+      cd.branch = branch.branch();
+      cd.isPrivate = false;
+      return cd;
+    }
+
     public ChangeData create(Change change) {
       return assistedFactory.create(change.getProject(), change.getId(), change, null);
     }
@@ -272,13 +285,13 @@ public class ChangeData {
     ChangeData cd =
         new ChangeData(
             null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-            null, null, null, project, id, null, null);
+            null, null, null, false, project, id, null, null);
     cd.currentPatchSet =
         PatchSet.builder()
             .id(PatchSet.id(id, currentPatchSetId))
             .commitId(commitId)
             .uploader(Account.id(1000))
-            .createdOn(TimeUtil.nowTs())
+            .createdOn(TimeUtil.now())
             .build();
     return cd;
   }
@@ -290,7 +303,6 @@ public class ChangeData {
   private final ChangeMessagesUtil cmUtil;
   private final ChangeNotes.Factory notesFactory;
   private final CommentsUtil commentsUtil;
-  private final ExperimentFeatures experimentFeatures;
   private final GitRepositoryManager repoManager;
   private final MergeUtil.Factory mergeUtilFactory;
   private final MergeabilityCache mergeabilityCache;
@@ -300,7 +312,9 @@ public class ChangeData {
   private final TrackingFooters trackingFooters;
   private final PureRevert pureRevert;
   private final SubmitRequirementsEvaluator submitRequirementsEvaluator;
+  private final SubmitRequirementsUtil submitRequirementsUtil;
   private final SubmitRuleEvaluator.Factory submitRuleEvaluatorFactory;
+  private final boolean skipCurrentRulesEvaluationOnClosedChanges;
 
   // Required assisted injected fields.
   private final Project.NameKey project;
@@ -321,6 +335,8 @@ public class ChangeData {
   private PatchSet currentPatchSet;
   private Collection<PatchSet> patchSets;
   private ListMultimap<PatchSet.Id, PatchSetApproval> allApprovals;
+
+  private ListMultimap<PatchSet.Id, PatchSetApproval> allApprovalsWithCopied;
   private List<PatchSetApproval> currentApprovals;
   private List<String> currentFiles;
   private Optional<DiffSummary> diffSummary;
@@ -330,7 +346,10 @@ public class ChangeData {
   private List<ChangeMessage> messages;
   private Optional<ChangedLines> changedLines;
   private SubmitTypeRecord submitTypeRecord;
+  private String branch;
+  private Boolean isPrivate;
   private Boolean mergeable;
+  private ObjectId metaRevision;
   private Set<String> hashtags;
   /**
    * Map from {@link com.google.gerrit.entities.Account.Id} to the tip of the edit ref for this
@@ -360,7 +379,7 @@ public class ChangeData {
   private Integer unresolvedCommentCount;
   private Integer totalCommentCount;
   private LabelTypes labelTypes;
-  private Optional<Timestamp> mergedOn;
+  private Optional<Instant> mergedOn;
   private ImmutableSetMultimap<NameKey, RefState> refStates;
   private ImmutableList<byte[]> refStatePatterns;
 
@@ -372,7 +391,6 @@ public class ChangeData {
       ChangeMessagesUtil cmUtil,
       ChangeNotes.Factory notesFactory,
       CommentsUtil commentsUtil,
-      ExperimentFeatures experimentFeatures,
       GitRepositoryManager repoManager,
       MergeUtil.Factory mergeUtilFactory,
       MergeabilityCache mergeabilityCache,
@@ -382,7 +400,9 @@ public class ChangeData {
       TrackingFooters trackingFooters,
       PureRevert pureRevert,
       SubmitRequirementsEvaluator submitRequirementsEvaluator,
+      SubmitRequirementsUtil submitRequirementsUtil,
       SubmitRuleEvaluator.Factory submitRuleEvaluatorFactory,
+      @SkipCurrentRulesEvaluationOnClosedChanges Boolean skipCurrentRulesEvaluationOnClosedChange,
       @Assisted Project.NameKey project,
       @Assisted Change.Id id,
       @Assisted @Nullable Change change,
@@ -392,7 +412,6 @@ public class ChangeData {
     this.cmUtil = cmUtil;
     this.notesFactory = notesFactory;
     this.commentsUtil = commentsUtil;
-    this.experimentFeatures = experimentFeatures;
     this.repoManager = repoManager;
     this.mergeUtilFactory = mergeUtilFactory;
     this.mergeabilityCache = mergeabilityCache;
@@ -403,7 +422,9 @@ public class ChangeData {
     this.trackingFooters = trackingFooters;
     this.pureRevert = pureRevert;
     this.submitRequirementsEvaluator = submitRequirementsEvaluator;
+    this.submitRequirementsUtil = submitRequirementsUtil;
     this.submitRuleEvaluatorFactory = submitRuleEvaluatorFactory;
+    this.skipCurrentRulesEvaluationOnClosedChanges = skipCurrentRulesEvaluationOnClosedChange;
 
     this.project = project;
     this.legacyId = id;
@@ -422,6 +443,10 @@ public class ChangeData {
   public ChangeData setStorageConstraint(StorageConstraint storageConstraint) {
     this.storageConstraint = storageConstraint;
     return this;
+  }
+
+  public StorageConstraint getStorageConstraint() {
+    return storageConstraint;
   }
 
   /** Returns {@code true} if we allow reading data from NoteDb. */
@@ -530,6 +555,55 @@ public class ChangeData {
     return project;
   }
 
+  public BranchNameKey branchOrThrow() {
+    if (change == null) {
+      if (branch != null) {
+        return BranchNameKey.create(project, branch);
+      }
+      throwIfNotLazyLoad("branch");
+      change();
+    }
+    return change.getDest();
+  }
+
+  public boolean isPrivateOrThrow() {
+    if (change == null) {
+      if (isPrivate != null) {
+        return isPrivate;
+      }
+      throwIfNotLazyLoad("isPrivate");
+      change();
+    }
+    return change.isPrivate();
+  }
+
+  public ChangeData setMetaRevision(ObjectId metaRevision) {
+    this.metaRevision = metaRevision;
+    return this;
+  }
+
+  public ObjectId metaRevisionOrThrow() {
+    if (notes == null) {
+      if (metaRevision != null) {
+        return metaRevision;
+      }
+      if (refStates != null) {
+        Set<RefState> refs = refStates.get(project);
+        if (refs != null) {
+          String metaRef = RefNames.changeMetaRef(getId());
+          for (RefState r : refs) {
+            if (r.ref().equals(metaRef)) {
+              return r.id();
+            }
+          }
+        }
+      }
+      throwIfNotLazyLoad("metaRevision");
+      notes();
+    }
+    return notes.getRevision();
+  }
+
   boolean fastIsVisibleTo(CurrentUser user) {
     return visibleTo == user;
   }
@@ -540,7 +614,7 @@ public class ChangeData {
 
   public Change change() {
     if (change == null && lazyload()) {
-      reloadChange();
+      loadChange();
     }
     return change;
   }
@@ -550,12 +624,18 @@ public class ChangeData {
   }
 
   public Change reloadChange() {
+    metaRevision = null;
+    return loadChange();
+  }
+
+  private Change loadChange() {
     try {
-      notes = notesFactory.createChecked(project, legacyId);
+      notes = notesFactory.createChecked(project, legacyId, metaRevision);
     } catch (NoSuchChangeException e) {
       throw new StorageException("Unable to load change " + legacyId, e);
     }
     change = notes.getChange();
+    metaRevision = null;
     setPatchSets(null);
     return change;
   }
@@ -573,7 +653,8 @@ public class ChangeData {
       if (!lazyload()) {
         throw new StorageException("ChangeNotes not available, lazyLoad = false");
       }
-      notes = notesFactory.create(project(), legacyId);
+      notes = notesFactory.create(project(), legacyId, metaRevision);
+      change = notes.getChange();
     }
     return notes;
   }
@@ -707,7 +788,7 @@ public class ChangeData {
    * @throws StorageException if {@code lazyLoad} is off, {@link ChangeNotes} can not be loaded
    *     because we do not expect to call the database.
    */
-  public Optional<Timestamp> getMergedOn() throws StorageException {
+  public Optional<Instant> getMergedOn() throws StorageException {
     if (mergedOn == null) {
       // The value was not loaded yet, try to get from the database.
       mergedOn = notes().getMergedOn();
@@ -716,7 +797,7 @@ public class ChangeData {
   }
 
   /** Sets the value e.g. when loading from index. */
-  public void setMergedOn(@Nullable Timestamp mergedOn) {
+  public void setMergedOn(@Nullable Instant mergedOn) {
     this.mergedOn = Optional.ofNullable(mergedOn);
   }
 
@@ -770,9 +851,19 @@ public class ChangeData {
       if (!lazyload()) {
         return ImmutableListMultimap.of();
       }
-      allApprovals = approvalsUtil.byChange(notes());
+      allApprovals = approvalsUtil.byChangeExcludingCopiedApprovals(notes());
     }
     return allApprovals;
+  }
+
+  public ListMultimap<PatchSet.Id, PatchSetApproval> conditionallyLoadApprovalsWithCopied() {
+    if (allApprovalsWithCopied == null) {
+      if (!lazyload()) {
+        return ImmutableListMultimap.of();
+      }
+      allApprovalsWithCopied = approvalsUtil.byChangeWithCopied(notes());
+    }
+    return allApprovalsWithCopied;
   }
 
   /* @return legacy submit ('SUBM') approval label */
@@ -784,11 +875,7 @@ public class ChangeData {
 
   public ReviewerSet reviewers() {
     if (reviewers == null) {
-      if (!lazyload()) {
-        // We are not allowed to load values from NoteDb. Reviewers were not populated with values
-        // from the index. However, we need these values for permission checks.
-        throw new IllegalStateException("reviewers not populated");
-      }
+      throwIfNotLazyLoad("reviewers");
       reviewers = approvalsUtil.getReviewers(notes());
     }
     return reviewers;
@@ -940,6 +1027,18 @@ public class ChangeData {
   }
 
   /**
+   * Similar to {@link #submitRequirements}, except that it also converts submit records resulting
+   * from the evaluation of legacy submit rules to submit requirements.
+   */
+  public Map<SubmitRequirement, SubmitRequirementResult> submitRequirementsIncludingLegacy() {
+    Map<SubmitRequirement, SubmitRequirementResult> projectConfigReqs = submitRequirements();
+    Map<SubmitRequirement, SubmitRequirementResult> legacyReqs =
+        SubmitRequirementsAdapter.getLegacyRequirements(this);
+    return submitRequirementsUtil.mergeLegacyAndNonLegacyRequirements(
+        projectConfigReqs, legacyReqs, this);
+  }
+
+  /**
    * Get all evaluated submit requirements for this change, including those from parent projects.
    * For closed changes, submit requirements are read from the change notes. For active changes,
    * submit requirements are evaluated online.
@@ -948,10 +1047,6 @@ public class ChangeData {
    * com.google.gerrit.server.index.change.ChangeField#STORED_SUBMIT_REQUIREMENTS}.
    */
   public Map<SubmitRequirement, SubmitRequirementResult> submitRequirements() {
-    if (!experimentFeatures.isFeatureEnabled(
-        ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS)) {
-      return Collections.emptyMap();
-    }
     if (submitRequirements == null) {
       if (!lazyload()) {
         return Collections.emptyMap();
@@ -960,34 +1055,21 @@ public class ChangeData {
       if (c == null || !c.isClosed()) {
         // Open changes: Evaluate submit requirements online.
         submitRequirements =
-            submitRequirementsEvaluator.evaluateAllRequirements(this, /* includeLegacy= */ true);
+            submitRequirementsEvaluator.evaluateAllRequirements(this, /* includeLegacy= */ false);
         return submitRequirements;
       }
       // Closed changes: Load submit requirement results from NoteDb.
-      Map<SubmitRequirement, SubmitRequirementResult> projectConfigRequirements =
+      submitRequirements =
           notes().getSubmitRequirementsResult().stream()
               .filter(r -> !r.isLegacy())
               .collect(Collectors.toMap(r -> r.submitRequirement(), Function.identity()));
-      Map<SubmitRequirement, SubmitRequirementResult> legacyRequirements =
-          SubmitRequirementsAdapter.getLegacyRequirements(submitRuleEvaluatorFactory, this);
-      submitRequirements =
-          SubmitRequirementsUtil.mergeLegacyAndNonLegacyRequirements(
-              projectConfigRequirements, legacyRequirements);
     }
     return submitRequirements;
   }
 
   public void setSubmitRequirements(
       Map<SubmitRequirement, SubmitRequirementResult> submitRequirements) {
-    if (!experimentFeatures.isFeatureEnabled(
-        ExperimentFeaturesConstants
-            .GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS_BACKFILLING_ON_DASHBOARD)) {
-      // Only set back values from the index if the experiment is not active. While the experiment
-      // is active, we want
-      // to compute SRs from scratch to ensure fresh results.
-      // TODO(ghareeb, hiesel): Remove this.
-      this.submitRequirements = submitRequirements;
-    }
+    this.submitRequirements = submitRequirements;
   }
 
   public List<SubmitRecord> submitRecords(SubmitRuleOptions options) {
@@ -1004,6 +1086,9 @@ public class ChangeData {
             "Tried to load SubmitRecords for change fetched from index %s: %d",
             project(), getId().get());
         return Collections.emptyList();
+      }
+      if (skipCurrentRulesEvaluationOnClosedChanges && change().isClosed()) {
+        return notes().getSubmitRecords();
       }
       records = submitRuleEvaluatorFactory.create(options).evaluate(this);
       submitRecords.put(options, records);
@@ -1340,6 +1425,14 @@ public class ChangeData {
     this.refStatePatterns = ImmutableList.copyOf(refStatePatterns);
   }
 
+  private void throwIfNotLazyLoad(String field) {
+    if (!lazyload()) {
+      // We are not allowed to load values from NoteDb. 'field' was not populated, however,
+      // we need this value for permission checks.
+      throw new IllegalStateException("'" + field + "' field not populated");
+    }
+  }
+
   @AutoValue
   abstract static class ReviewedByEvent {
     private static ReviewedByEvent create(ChangeMessage msg) {
@@ -1348,7 +1441,7 @@ public class ChangeData {
 
     public abstract Account.Id author();
 
-    public abstract Timestamp ts();
+    public abstract Instant ts();
   }
 
   @AutoValue

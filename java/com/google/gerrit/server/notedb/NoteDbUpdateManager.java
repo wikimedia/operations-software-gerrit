@@ -306,12 +306,6 @@ public class NoteDbUpdateManager implements AutoCloseable {
     }
   }
 
-  public BatchRefUpdate prepare() throws IOException {
-    checkNotExecuted();
-    stage();
-    return prepare(changeRepo, false, pushCert);
-  }
-
   @Nullable
   public BatchRefUpdate execute() throws IOException {
     return execute(false);
@@ -359,7 +353,7 @@ public class NoteDbUpdateManager implements AutoCloseable {
     }
   }
 
-  private BatchRefUpdate prepare(OpenRepo or, boolean dryrun, @Nullable PushCertificate pushCert)
+  private BatchRefUpdate execute(OpenRepo or, boolean dryrun, @Nullable PushCertificate pushCert)
       throws IOException {
     if (or == null || or.cmds.isEmpty()) {
       return null;
@@ -383,18 +377,12 @@ public class NoteDbUpdateManager implements AutoCloseable {
     bru.setRefLogIdent(refLogIdent != null ? refLogIdent : serverIdent.get());
     bru.setAtomic(true);
     or.cmds.addTo(bru);
-    bru.setAllowNonFastForwards(true);
+    bru.setAllowNonFastForwards(allowNonFastForwards(or.cmds));
     for (BatchUpdateListener listener : batchUpdateListeners) {
       bru = listener.beforeUpdateRefs(bru);
     }
 
-    return bru;
-  }
-
-  private BatchRefUpdate execute(OpenRepo or, boolean dryrun, @Nullable PushCertificate pushCert)
-      throws IOException {
-    BatchRefUpdate bru = prepare(or, dryrun, pushCert);
-    if (bru != null && !dryrun) {
+    if (!dryrun) {
       RefUpdateUtil.executeChecked(bru, or.rw);
     }
     return bru;
@@ -469,5 +457,28 @@ public class NoteDbUpdateManager implements AutoCloseable {
         openRepo.cmds.add(new ReceiveCommand(oldTip, currTip, refName));
       }
     }
+  }
+
+  /**
+   * Returns true if we should allow non-fast-forwards while performing the batch ref update. Non-ff
+   * updates are necessary in some specific cases:
+   *
+   * <p>1. Draft ref updates are non fast-forward, since the ref always points to a single commit
+   * that has no parents.
+   *
+   * <p>2. NoteDb rewriters.
+   *
+   * <p>3. If any of the receive commands is of type {@link
+   * org.eclipse.jgit.transport.ReceiveCommand.Type#UPDATE_NONFASTFORWARD} (for example due to a
+   * force push).
+   *
+   * <p>Note that we don't need to explicitly allow non fast-forward updates for DELETE commands
+   * since JGit forces the update implicitly in this case.
+   */
+  private boolean allowNonFastForwards(ChainedReceiveCommands receiveCommands) {
+    return !draftUpdates.isEmpty()
+        || !rewriters.isEmpty()
+        || receiveCommands.getCommands().values().stream()
+            .anyMatch(cmd -> cmd.getType().equals(ReceiveCommand.Type.UPDATE_NONFASTFORWARD));
   }
 }

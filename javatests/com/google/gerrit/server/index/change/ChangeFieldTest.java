@@ -27,13 +27,17 @@ import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.LegacySubmitRequirement;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.SubmitRecord;
+import com.google.gerrit.entities.SubmitRequirement;
+import com.google.gerrit.entities.SubmitRequirementExpression;
+import com.google.gerrit.entities.SubmitRequirementExpressionResult;
+import com.google.gerrit.entities.SubmitRequirementResult;
 import com.google.gerrit.index.testing.FakeStoredValue;
 import com.google.gerrit.server.ReviewerSet;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.gerrit.testing.TestTimeUtil;
-import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -55,17 +59,22 @@ public class ChangeFieldTest {
 
   @Test
   public void reviewerFieldValues() {
-    Table<ReviewerStateInternal, Account.Id, Timestamp> t = HashBasedTable.create();
-    Timestamp t1 = TimeUtil.nowTs();
+    Table<ReviewerStateInternal, Account.Id, Instant> t = HashBasedTable.create();
+
+    // Timestamps are stored as epoch millis in the reviewer field. Epoch millis are less precise
+    // than Instants which have nanosecond precision. Create Instants with millisecond precision
+    // here so that the comparison for the assertions works.
+    Instant t1 = Instant.ofEpochMilli(TimeUtil.nowMs());
+    Instant t2 = Instant.ofEpochMilli(TimeUtil.nowMs());
+
     t.put(ReviewerStateInternal.REVIEWER, Account.id(1), t1);
-    Timestamp t2 = TimeUtil.nowTs();
     t.put(ReviewerStateInternal.CC, Account.id(2), t2);
     ReviewerSet reviewers = ReviewerSet.fromTable(t);
 
     List<String> values = ChangeField.getReviewerFieldValues(reviewers);
     assertThat(values)
         .containsExactly(
-            "REVIEWER,1", "REVIEWER,1," + t1.getTime(), "CC,2", "CC,2," + t2.getTime());
+            "REVIEWER,1", "REVIEWER,1," + t1.toEpochMilli(), "CC,2", "CC,2," + t2.toEpochMilli());
 
     assertThat(ChangeField.parseReviewerFieldValues(Change.id(1), values)).isEqualTo(reviewers);
   }
@@ -81,6 +90,18 @@ public class ChangeFieldTest {
                         label(SubmitRecord.Label.Status.OK, "Label-2", 1))),
                 Account.id(1)))
         .containsExactly("OK", "MAY,label-1", "OK,label-2", "OK,label-2,0", "OK,label-2,1");
+  }
+
+  @Test
+  public void formatSubmitRequirementValues() {
+    assertThat(
+            ChangeField.formatSubmitRequirementValues(
+                ImmutableList.of(
+                    submitRequirementResult(
+                        "CR", "label:CR=+1", SubmitRequirementExpressionResult.Status.PASS),
+                    submitRequirementResult(
+                        "LC", "label:LC=+1", SubmitRequirementExpressionResult.Status.FAIL))))
+        .containsExactly("MAY,cr", "OK,cr", "NEED,lc", "REJECT,lc");
   }
 
   @Test
@@ -147,6 +168,55 @@ public class ChangeFieldTest {
     assertThat(ChangeField.DELETED.setIfPossible(cd, new FakeStoredValue(null))).isTrue();
   }
 
+  @Test
+  public void shortStringIsNotTruncated() {
+    assertThat(ChangeField.truncateStringValue("short string", 20)).isEqualTo("short string");
+    String two_byte_str = String.format("short string %s", new String(Character.toChars(956)));
+    assertThat(ChangeField.truncateStringValue(two_byte_str, 20)).isEqualTo(two_byte_str);
+    String three_byte_str = String.format("short string %s", new String(Character.toChars(43421)));
+    assertThat(ChangeField.truncateStringValue(three_byte_str, 20)).isEqualTo(three_byte_str);
+    String four_byte_str = String.format("short string %s", new String(Character.toChars(132878)));
+    assertThat(ChangeField.truncateStringValue(four_byte_str, 20)).isEqualTo(four_byte_str);
+    assertThat(ChangeField.truncateStringValue("", 6)).isEqualTo("");
+    assertThat(ChangeField.truncateStringValue("", 0)).isEqualTo("");
+  }
+
+  @Test
+  public void longStringIsTruncated() {
+    assertThat(ChangeField.truncateStringValue("longer string", 6)).isEqualTo("longer");
+    assertThat(ChangeField.truncateStringValue("longer string", 0)).isEqualTo("");
+
+    String two_byte_str =
+        String.format(
+            "multibytechars %1$s%1$s%1$s%1$s present", new String(Character.toChars(956)));
+    assertThat(ChangeField.truncateStringValue(two_byte_str, 16)).isEqualTo("multibytechars ");
+    assertThat(ChangeField.truncateStringValue(two_byte_str, 17))
+        .isEqualTo(String.format("multibytechars %1$s", new String(Character.toChars(956))));
+    assertThat(ChangeField.truncateStringValue(two_byte_str, 18))
+        .isEqualTo(String.format("multibytechars %1$s", new String(Character.toChars(956))));
+
+    String three_byte_str =
+        String.format(
+            "multibytechars %1$s%1$s%1$s%1$s present", new String(Character.toChars(43421)));
+    assertThat(ChangeField.truncateStringValue(three_byte_str, 16)).isEqualTo("multibytechars ");
+    assertThat(ChangeField.truncateStringValue(three_byte_str, 17)).isEqualTo("multibytechars ");
+    assertThat(ChangeField.truncateStringValue(three_byte_str, 18))
+        .isEqualTo(String.format("multibytechars %1$s", new String(Character.toChars(43421))));
+    assertThat(ChangeField.truncateStringValue(three_byte_str, 21))
+        .isEqualTo(String.format("multibytechars %1$s%1$s", new String(Character.toChars(43421))));
+
+    String four_byte_str =
+        String.format(
+            "multibytechars %1$s%1$s%1$s%1$s present", new String(Character.toChars(132878)));
+    assertThat(ChangeField.truncateStringValue(four_byte_str, 16)).isEqualTo("multibytechars ");
+    assertThat(ChangeField.truncateStringValue(four_byte_str, 17)).isEqualTo("multibytechars ");
+    assertThat(ChangeField.truncateStringValue(four_byte_str, 18)).isEqualTo("multibytechars ");
+    assertThat(ChangeField.truncateStringValue(four_byte_str, 19))
+        .isEqualTo(String.format("multibytechars %1$s", new String(Character.toChars(132878))));
+    assertThat(ChangeField.truncateStringValue(four_byte_str, 23))
+        .isEqualTo(String.format("multibytechars %1$s%1$s", new String(Character.toChars(132878))));
+  }
+
   private static SubmitRecord record(SubmitRecord.Status status, SubmitRecord.Label... labels) {
     SubmitRecord r = new SubmitRecord();
     r.status = status;
@@ -154,6 +224,25 @@ public class ChangeFieldTest {
       r.labels = ImmutableList.copyOf(labels);
     }
     return r;
+  }
+
+  private SubmitRequirementResult submitRequirementResult(
+      String srName, String submitExpr, SubmitRequirementExpressionResult.Status submitExprStatus) {
+    return SubmitRequirementResult.builder()
+        .submitRequirement(
+            SubmitRequirement.builder()
+                .setName(srName)
+                .setSubmittabilityExpression(SubmitRequirementExpression.create("NA"))
+                .setAllowOverrideInChildProjects(false)
+                .build())
+        .submittabilityExpressionResult(
+            SubmitRequirementExpressionResult.create(
+                SubmitRequirementExpression.create(submitExpr),
+                submitExprStatus,
+                ImmutableList.of(submitExpr),
+                ImmutableList.of()))
+        .patchSetCommitId(ObjectId.zeroId())
+        .build();
   }
 
   private static SubmitRecord.Label label(

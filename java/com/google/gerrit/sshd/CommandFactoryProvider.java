@@ -191,6 +191,12 @@ class CommandFactoryProvider implements Provider<CommandFactory>, LifecycleListe
                 }
 
                 @Override
+                public void onExit(int rc, String exitMessage) {
+                  exit.onExit(translateExit(rc), exitMessage);
+                  log(rc, exitMessage);
+                }
+
+                @Override
                 public void onExit(int rc) {
                   exit.onExit(translateExit(rc));
                   log(rc);

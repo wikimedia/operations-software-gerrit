@@ -65,7 +65,6 @@ import com.google.gerrit.server.cache.serialize.CacheSerializer;
 import com.google.gerrit.server.cache.serialize.ObjectIdConverter;
 import com.google.gerrit.server.index.change.ChangeField.StoredSubmitRecord;
 import com.google.gson.Gson;
-import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -103,8 +102,8 @@ public abstract class ChangeNotesState {
       ObjectId metaId,
       Change.Id changeId,
       Change.Key changeKey,
-      Timestamp createdOn,
-      Timestamp lastUpdatedOn,
+      Instant createdOn,
+      Instant lastUpdatedOn,
       Account.Id owner,
       String serverId,
       String branch,
@@ -136,7 +135,7 @@ public abstract class ChangeNotesState {
       @Nullable Change.Id revertOf,
       @Nullable PatchSet.Id cherryPickOf,
       int updateCount,
-      @Nullable Timestamp mergedOn) {
+      @Nullable Instant mergedOn) {
     requireNonNull(
         metaId,
         () ->
@@ -203,9 +202,9 @@ public abstract class ChangeNotesState {
 
     abstract Change.Key changeKey();
 
-    abstract Timestamp createdOn();
+    abstract Instant createdOn();
 
-    abstract Timestamp lastUpdatedOn();
+    abstract Instant lastUpdatedOn();
 
     abstract Account.Id owner();
 
@@ -249,9 +248,9 @@ public abstract class ChangeNotesState {
 
       abstract Builder changeKey(Change.Key changeKey);
 
-      abstract Builder createdOn(Timestamp createdOn);
+      abstract Builder createdOn(Instant createdOn);
 
-      abstract Builder lastUpdatedOn(Timestamp lastUpdatedOn);
+      abstract Builder lastUpdatedOn(Instant lastUpdatedOn);
 
       abstract Builder owner(Account.Id owner);
 
@@ -334,7 +333,7 @@ public abstract class ChangeNotesState {
   abstract int updateCount();
 
   @Nullable
-  abstract Timestamp mergedOn();
+  abstract Instant mergedOn();
 
   Change newChange(Project.NameKey project) {
     ChangeColumns c = requireNonNull(columns(), "columns are required");
@@ -456,7 +455,7 @@ public abstract class ChangeNotesState {
 
     abstract Builder updateCount(int updateCount);
 
-    abstract Builder mergedOn(Timestamp mergedOn);
+    abstract Builder mergedOn(Instant mergedOn);
 
     abstract ChangeNotesState build();
   }
@@ -536,7 +535,7 @@ public abstract class ChangeNotesState {
                       SubmitRequirementProtoConverter.INSTANCE.toProto(sr)));
       b.setUpdateCount(object.updateCount());
       if (object.mergedOn() != null) {
-        b.setMergedOnMillis(object.mergedOn().getTime());
+        b.setMergedOnMillis(object.mergedOn().toEpochMilli());
         b.setHasMergedOn(true);
       }
 
@@ -547,8 +546,8 @@ public abstract class ChangeNotesState {
       ChangeColumnsProto.Builder b =
           ChangeColumnsProto.newBuilder()
               .setChangeKey(cols.changeKey().get())
-              .setCreatedOnMillis(cols.createdOn().getTime())
-              .setLastUpdatedOnMillis(cols.lastUpdatedOn().getTime())
+              .setCreatedOnMillis(cols.createdOn().toEpochMilli())
+              .setLastUpdatedOnMillis(cols.lastUpdatedOn().toEpochMilli())
               .setOwner(cols.owner().get())
               .setBranch(cols.branch());
       if (cols.currentPatchSetId() != null) {
@@ -581,26 +580,26 @@ public abstract class ChangeNotesState {
     }
 
     private static ReviewerSetEntryProto toReviewerSetEntry(
-        Table.Cell<ReviewerStateInternal, Account.Id, Timestamp> c) {
+        Table.Cell<ReviewerStateInternal, Account.Id, Instant> c) {
       return ReviewerSetEntryProto.newBuilder()
           .setState(REVIEWER_STATE_CONVERTER.reverse().convert(c.getRowKey()))
           .setAccountId(c.getColumnKey().get())
-          .setTimestampMillis(c.getValue().getTime())
+          .setTimestampMillis(c.getValue().toEpochMilli())
           .build();
     }
 
     private static ReviewerByEmailSetEntryProto toReviewerByEmailSetEntry(
-        Table.Cell<ReviewerStateInternal, Address, Timestamp> c) {
+        Table.Cell<ReviewerStateInternal, Address, Instant> c) {
       return ReviewerByEmailSetEntryProto.newBuilder()
           .setState(REVIEWER_STATE_CONVERTER.reverse().convert(c.getRowKey()))
           .setAddress(c.getColumnKey().toHeaderString())
-          .setTimestampMillis(c.getValue().getTime())
+          .setTimestampMillis(c.getValue().toEpochMilli())
           .build();
     }
 
     private static ReviewerStatusUpdateProto toReviewerStatusUpdateProto(ReviewerStatusUpdate u) {
       return ReviewerStatusUpdateProto.newBuilder()
-          .setTimestampMillis(u.date().getTime())
+          .setTimestampMillis(u.date().toEpochMilli())
           .setUpdatedBy(u.updatedBy().get())
           .setReviewer(u.reviewer().get())
           .setState(REVIEWER_STATE_CONVERTER.reverse().convert(u.state()))
@@ -620,7 +619,7 @@ public abstract class ChangeNotesState {
     private static AssigneeStatusUpdateProto toAssigneeStatusUpdateProto(AssigneeStatusUpdate u) {
       AssigneeStatusUpdateProto.Builder builder =
           AssigneeStatusUpdateProto.newBuilder()
-              .setTimestampMillis(u.date().getTime())
+              .setTimestampMillis(u.date().toEpochMilli())
               .setUpdatedBy(u.updatedBy().get())
               .setHasCurrentAssignee(u.currentAssignee().isPresent());
 
@@ -678,7 +677,8 @@ public abstract class ChangeNotesState {
                       .map(sr -> SubmitRequirementProtoConverter.INSTANCE.fromProto(sr))
                       .collect(toImmutableList()))
               .updateCount(proto.getUpdateCount())
-              .mergedOn(proto.getHasMergedOn() ? new Timestamp(proto.getMergedOnMillis()) : null);
+              .mergedOn(
+                  proto.getHasMergedOn() ? Instant.ofEpochMilli(proto.getMergedOnMillis()) : null);
       return b.build();
     }
 
@@ -686,8 +686,8 @@ public abstract class ChangeNotesState {
       ChangeColumns.Builder b =
           ChangeColumns.builder()
               .changeKey(Change.key(proto.getChangeKey()))
-              .createdOn(new Timestamp(proto.getCreatedOnMillis()))
-              .lastUpdatedOn(new Timestamp(proto.getLastUpdatedOnMillis()))
+              .createdOn(Instant.ofEpochMilli(proto.getCreatedOnMillis()))
+              .lastUpdatedOn(Instant.ofEpochMilli(proto.getLastUpdatedOnMillis()))
               .owner(Account.id(proto.getOwner()))
               .branch(proto.getBranch());
       if (proto.getHasCurrentPatchSetId()) {
@@ -719,26 +719,25 @@ public abstract class ChangeNotesState {
     }
 
     private static ReviewerSet toReviewerSet(List<ReviewerSetEntryProto> protos) {
-      ImmutableTable.Builder<ReviewerStateInternal, Account.Id, Timestamp> b =
+      ImmutableTable.Builder<ReviewerStateInternal, Account.Id, Instant> b =
           ImmutableTable.builder();
       for (ReviewerSetEntryProto e : protos) {
         b.put(
             REVIEWER_STATE_CONVERTER.convert(e.getState()),
             Account.id(e.getAccountId()),
-            new Timestamp(e.getTimestampMillis()));
+            Instant.ofEpochMilli(e.getTimestampMillis()));
       }
       return ReviewerSet.fromTable(b.build());
     }
 
     private static ReviewerByEmailSet toReviewerByEmailSet(
         List<ReviewerByEmailSetEntryProto> protos) {
-      ImmutableTable.Builder<ReviewerStateInternal, Address, Timestamp> b =
-          ImmutableTable.builder();
+      ImmutableTable.Builder<ReviewerStateInternal, Address, Instant> b = ImmutableTable.builder();
       for (ReviewerByEmailSetEntryProto e : protos) {
         b.put(
             REVIEWER_STATE_CONVERTER.convert(e.getState()),
             Address.parse(e.getAddress()),
-            new Timestamp(e.getTimestampMillis()));
+            Instant.ofEpochMilli(e.getTimestampMillis()));
       }
       return ReviewerByEmailSet.fromTable(b.build());
     }
@@ -749,7 +748,7 @@ public abstract class ChangeNotesState {
       for (ReviewerStatusUpdateProto proto : protos) {
         b.add(
             ReviewerStatusUpdate.create(
-                new Timestamp(proto.getTimestampMillis()),
+                Instant.ofEpochMilli(proto.getTimestampMillis()),
                 Account.id(proto.getUpdatedBy()),
                 Account.id(proto.getReviewer()),
                 REVIEWER_STATE_CONVERTER.convert(proto.getState())));
@@ -791,7 +790,7 @@ public abstract class ChangeNotesState {
       for (AssigneeStatusUpdateProto proto : protos) {
         b.add(
             AssigneeStatusUpdate.create(
-                new Timestamp(proto.getTimestampMillis()),
+                Instant.ofEpochMilli(proto.getTimestampMillis()),
                 Account.id(proto.getUpdatedBy()),
                 proto.getHasCurrentAssignee()
                     ? Optional.of(Account.id(proto.getCurrentAssignee()))

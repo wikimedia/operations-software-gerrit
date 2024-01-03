@@ -40,6 +40,7 @@ import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.patch.DiffMappings;
 import com.google.gerrit.server.patch.DiffNotAvailableException;
 import com.google.gerrit.server.patch.DiffOperations;
+import com.google.gerrit.server.patch.DiffOptions;
 import com.google.gerrit.server.patch.GitPositionTransformer;
 import com.google.gerrit.server.patch.GitPositionTransformer.BestPositionOnConflict;
 import com.google.gerrit.server.patch.GitPositionTransformer.FileMapping;
@@ -193,10 +194,9 @@ public class CommentPorter {
                 patchsetComments));
       } else {
         logger.atWarning().log(
-            String.format(
-                "Some comments which should be ported refer to the non-existent patchset %s of"
-                    + " change %d. Omitting %d affected comments.",
-                originalPatchsetId, notes.getChangeId().get(), patchsetComments.size()));
+            "Some comments which should be ported refer to the non-existent patchset %s of"
+                + " change %d. Omitting %d affected comments.",
+            originalPatchsetId, notes.getChangeId().get(), patchsetComments.size());
       }
     }
     return portedComments.build();
@@ -254,8 +254,8 @@ public class CommentPorter {
         mappings = loadMappings(project, change, originalPatchset, targetPatchset, side);
       } catch (Exception e) {
         logger.atWarning().withCause(e).log(
-            "Could not determine some necessary diff mappings for porting comments on change %s from"
-                + " patchset %s to patchset %s. Mapping %d affected comments to the fallback"
+            "Could not determine some necessary diff mappings for porting comments on change %s"
+                + " from patchset %s to patchset %s. Mapping %d affected comments to the fallback"
                 + " destination.",
             change.getChangeId(),
             originalPatchset.id().getId(),
@@ -315,7 +315,11 @@ public class CommentPorter {
         TraceContext.newTimer(
             "Computing diffs", Metadata.builder().commit(originalCommit.name()).build())) {
       Map<String, FileDiffOutput> modifiedFiles =
-          diffOperations.listModifiedFiles(project, originalCommit, targetCommit);
+          diffOperations.listModifiedFiles(
+              project,
+              originalCommit,
+              targetCommit,
+              DiffOptions.builder().skipFilesWithAllEditsDueToRebase(false).build());
       return modifiedFiles.values().stream()
           .map(CommentPorter::getFileEdits)
           .map(DiffMappings::toMapping)

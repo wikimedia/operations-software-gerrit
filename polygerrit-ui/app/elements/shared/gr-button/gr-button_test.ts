@@ -19,23 +19,11 @@ import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions'
 import '../../../test/common-test-setup-karma';
 import './gr-button';
 import {addListener} from '@polymer/polymer/lib/utils/gestures';
-import {appContext} from '../../../services/app-context';
-import {html} from '@polymer/polymer/lib/utils/html-tag';
+import {fixture, html} from '@open-wc/testing-helpers';
 import {GrButton} from './gr-button';
-import {queryAndAssert} from '../../../test/test-utils';
+import {pressKey, queryAndAssert} from '../../../test/test-utils';
 import {PaperButtonElement} from '@polymer/paper-button';
-
-const basicFixture = fixtureFromElement('gr-button');
-
-const nestedFixture = fixtureFromTemplate(html`
-  <div id="test">
-    <gr-button class="testBtn"></gr-button>
-  </div>
-`);
-
-const tabindexFixture = fixtureFromTemplate(html`
-  <gr-button tabindex="3"></gr-button>
-`);
+import {Key, Modifier} from '../../../utils/dom-util';
 
 suite('gr-button tests', () => {
   let element: GrButton;
@@ -51,8 +39,23 @@ suite('gr-button tests', () => {
   };
 
   setup(async () => {
-    element = basicFixture.instantiate();
+    element = await fixture<GrButton>('<gr-button></gr-button>');
     await element.updateComplete;
+  });
+
+  test('renders', () => {
+    expect(element).shadowDom.to.equal(/* HTML */ `
+      <paper-button
+        animated=""
+        aria-disabled="false"
+        elevation="1"
+        part="paper-button"
+        raised=""
+        role="button"
+        tabindex="-1"
+        ><slot></slot><i class="downArrow"></i>
+      </paper-button>
+    `);
   });
 
   test('disabled is set by disabled', async () => {
@@ -111,7 +114,9 @@ suite('gr-button tests', () => {
   });
 
   test('tabindex should be preserved', async () => {
-    const tabIndexElement = tabindexFixture.instantiate() as GrButton;
+    const tabIndexElement = await fixture<GrButton>(html`
+      <gr-button tabindex="3"></gr-button>
+    `);
     tabIndexElement.disabled = false;
     await element.updateComplete;
     assert.equal(tabIndexElement.getAttribute('tabindex'), '3');
@@ -143,23 +148,22 @@ suite('gr-button tests', () => {
     assert.isTrue(spy.calledOnce);
   });
 
-  // Keycodes: 32 for Space, 13 for Enter.
-  for (const key of [32, 13]) {
-    test(`dispatches click event on keycode ${key}`, () => {
+  for (const key of [Key.ENTER, Key.SPACE]) {
+    test(`dispatches click event on key '${key}'`, () => {
       const tapSpy = sinon.spy();
       element.addEventListener('click', tapSpy);
-      MockInteractions.pressAndReleaseKeyOn(element, key);
+      pressKey(element, key);
       assert.isTrue(tapSpy.calledOnce);
     });
 
-    test(`dispatches no click event with modifier on keycode ${key}`, () => {
+    test(`dispatches no click event with modifier on key '${key}'`, () => {
       const tapSpy = sinon.spy();
       element.addEventListener('click', tapSpy);
-      MockInteractions.pressAndReleaseKeyOn(element, key, 'shift');
-      MockInteractions.pressAndReleaseKeyOn(element, key, 'ctrl');
-      MockInteractions.pressAndReleaseKeyOn(element, key, 'meta');
-      MockInteractions.pressAndReleaseKeyOn(element, key, 'alt');
-      assert.isFalse(tapSpy.calledOnce);
+      pressKey(element, key, Modifier.ALT_KEY);
+      pressKey(element, key, Modifier.CTRL_KEY);
+      pressKey(element, key, Modifier.META_KEY);
+      pressKey(element, key, Modifier.SHIFT_KEY);
+      assert.isFalse(tapSpy.called);
     });
   }
 
@@ -177,12 +181,11 @@ suite('gr-button tests', () => {
       });
     }
 
-    // Keycodes: 32 for Space, 13 for Enter.
-    for (const key of [32, 13]) {
+    for (const key of [Key.ENTER, Key.SPACE]) {
       test(`stops click event on keycode ${key}`, () => {
         const tapSpy = sinon.spy();
         element.addEventListener('click', tapSpy);
-        MockInteractions.pressAndReleaseKeyOn(element, key);
+        pressKey(element, key);
         assert.isFalse(tapSpy.called);
       });
     }
@@ -191,7 +194,7 @@ suite('gr-button tests', () => {
   suite('reporting', () => {
     let reportStub: sinon.SinonStub;
     setup(() => {
-      reportStub = sinon.stub(appContext.reportingService, 'reportInteraction');
+      reportStub = sinon.stub(element.reporting, 'reportInteraction');
       reportStub.reset();
     });
 
@@ -200,19 +203,21 @@ suite('gr-button tests', () => {
       assert.isTrue(reportStub.calledOnce);
       assert.equal(reportStub.lastCall.args[0], 'button-click');
       assert.deepEqual(reportStub.lastCall.args[1], {
-        path: `html>body>test-fixture#${element.parentElement!.id}>gr-button`,
+        path: 'html.lightTheme>body>div>gr-button',
       });
     });
 
-    test('report event after click on nested', () => {
-      const nestedElement = nestedFixture.instantiate() as HTMLDivElement;
+    test('report event after click on nested', async () => {
+      const nestedElement = await fixture<HTMLDivElement>(html`
+        <div id="test">
+          <gr-button class="testBtn"></gr-button>
+        </div>
+      `);
       MockInteractions.click(queryAndAssert(nestedElement, 'gr-button'));
       assert.isTrue(reportStub.calledOnce);
       assert.equal(reportStub.lastCall.args[0], 'button-click');
       assert.deepEqual(reportStub.lastCall.args[1], {
-        path:
-          `html>body>test-fixture#${nestedElement.parentElement!.id}` +
-          '>div#test>gr-button.testBtn',
+        path: 'html.lightTheme>body>div>div#test>gr-button.testBtn',
       });
     });
   });

@@ -18,7 +18,7 @@ import '../../shared/gr-button/gr-button';
 import '../../shared/gr-copy-clipboard/gr-copy-clipboard';
 import '../../shared/gr-overlay/gr-overlay';
 import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
-import {appContext} from '../../../services/app-context';
+import {getAppContext} from '../../../services/app-context';
 import {formStyles} from '../../../styles/gr-form-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, css, html} from 'lit';
@@ -44,7 +44,7 @@ export class GrHttpPassword extends LitElement {
   @property({type: String})
   _passwordUrl: string | null = null;
 
-  private readonly restApiService = appContext.restApiService;
+  private readonly restApiService = getAppContext().restApiService;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -125,7 +125,7 @@ export class GrHttpPassword extends LitElement {
           >
         </div>
         <span ?hidden=${!this._passwordUrl}>
-          <a href="${this._passwordUrl!}" target="_blank" rel="noopener">
+          <a href=${this._passwordUrl!} target="_blank" rel="noopener">
             Obtain password</a
           >
           (opens in a new tab)
@@ -144,7 +144,7 @@ export class GrHttpPassword extends LitElement {
               hasTooltip=""
               buttonTitle="Copy password to clipboard"
               hideInput=""
-              .text="${this._generatedPassword}"
+              .text=${this._generatedPassword}
             >
             </gr-copy-clipboard>
           </section>

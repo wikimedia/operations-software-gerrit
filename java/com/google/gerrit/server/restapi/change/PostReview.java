@@ -137,6 +137,7 @@ import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -274,10 +275,10 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
   public Response<ReviewResult> apply(RevisionResource revision, ReviewInput input)
       throws RestApiException, UpdateException, IOException, PermissionBackendException,
           ConfigInvalidException, PatchListNotAvailableException {
-    return apply(revision, input, TimeUtil.nowTs());
+    return apply(revision, input, TimeUtil.now());
   }
 
-  public Response<ReviewResult> apply(RevisionResource revision, ReviewInput input, Timestamp ts)
+  public Response<ReviewResult> apply(RevisionResource revision, ReviewInput input, Instant ts)
       throws RestApiException, UpdateException, IOException, PermissionBackendException,
           ConfigInvalidException, PatchListNotAvailableException {
     // Respect timestamp, but truncate at change created-on time.
@@ -530,7 +531,7 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
       ChangeData cd,
       PatchSet patchSet,
       List<ReviewerModification> reviewerModifications,
-      Timestamp when) {
+      Instant when) {
     List<AccountState> newlyAddedReviewers = new ArrayList<>();
 
     // There are no events for CCs and reviewers added/deleted by email.
@@ -1203,7 +1204,7 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
                     parent);
           } else {
             // In ChangeUpdate#putComment() the draft with the same ID will be deleted.
-            comment.writtenOn = ctx.getWhen();
+            comment.writtenOn = Timestamp.from(ctx.getWhen());
             comment.side = inputComment.side();
             comment.message = inputComment.message;
           }
@@ -1230,7 +1231,9 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
         throws CommentsRejectedException {
       CommentValidationContext commentValidationCtx =
           CommentValidationContext.create(
-              ctx.getChange().getChangeId(), ctx.getChange().getProject().get());
+              ctx.getChange().getChangeId(),
+              ctx.getChange().getProject().get(),
+              ctx.getChange().getDest().branch());
       String changeMessage = Strings.nullToEmpty(in.message).trim();
       ImmutableList<CommentForValidation> draftsForValidation =
           Stream.concat(
@@ -1309,17 +1312,18 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
       return robotComment;
     }
 
-    private List<FixSuggestion> createFixSuggestionsFromInput(
+    private ImmutableList<FixSuggestion> createFixSuggestionsFromInput(
         List<FixSuggestionInfo> fixSuggestionInfos) {
       if (fixSuggestionInfos == null) {
-        return Collections.emptyList();
+        return ImmutableList.of();
       }
 
-      List<FixSuggestion> fixSuggestions = new ArrayList<>(fixSuggestionInfos.size());
+      ImmutableList.Builder<FixSuggestion> fixSuggestions =
+          ImmutableList.builderWithExpectedSize(fixSuggestionInfos.size());
       for (FixSuggestionInfo fixSuggestionInfo : fixSuggestionInfos) {
         fixSuggestions.add(createFixSuggestionFromInput(fixSuggestionInfo));
       }
-      return fixSuggestions;
+      return fixSuggestions.build();
     }
 
     private FixSuggestion createFixSuggestionFromInput(FixSuggestionInfo fixSuggestionInfo) {
@@ -1406,7 +1410,7 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
     }
 
     private boolean updateLabels(ProjectState projectState, ChangeContext ctx)
-        throws ResourceConflictException, IOException {
+        throws ResourceConflictException {
       Map<String, Short> inLabels = firstNonNull(in.labels, Collections.emptyMap());
 
       // If no labels were modified and change is closed, abort early.
@@ -1573,18 +1577,12 @@ public class PostReview implements RestModifyView<RevisionResource, ReviewInput>
     }
 
     private Map<String, PatchSetApproval> scanLabels(
-        ProjectState projectState, ChangeContext ctx, List<PatchSetApproval> del)
-        throws IOException {
+        ProjectState projectState, ChangeContext ctx, List<PatchSetApproval> del) {
       LabelTypes labelTypes = projectState.getLabelTypes(ctx.getNotes());
       Map<String, PatchSetApproval> current = new HashMap<>();
 
       for (PatchSetApproval a :
-          approvalsUtil.byPatchSetUser(
-              ctx.getNotes(),
-              psId,
-              user.getAccountId(),
-              ctx.getRevWalk(),
-              ctx.getRepoView().getConfig())) {
+          approvalsUtil.byPatchSetUser(ctx.getNotes(), psId, user.getAccountId())) {
         if (a.isLegacySubmit()) {
           continue;
         }

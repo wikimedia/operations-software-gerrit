@@ -79,6 +79,7 @@ public class StaticModule extends ServletModule {
           "/dashboard/*",
           "/groups/self",
           "/settings/*",
+          "/topic/*",
           "/Documentation/q/*");
 
   /**
@@ -93,7 +94,8 @@ public class StaticModule extends ServletModule {
           "/elements/*",
           "/fonts/*",
           "/scripts/*",
-          "/styles/*");
+          "/styles/*",
+          "/workers/*");
 
   private static final String DOC_SERVLET = "DocServlet";
   private static final String FAVICON_SERVLET = "FaviconServlet";

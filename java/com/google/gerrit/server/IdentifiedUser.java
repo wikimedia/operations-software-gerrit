@@ -49,10 +49,10 @@ import java.net.InetSocketAddress;
 import java.net.MalformedURLException;
 import java.net.SocketAddress;
 import java.net.URL;
-import java.util.Date;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.Optional;
 import java.util.Set;
-import java.util.TimeZone;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.util.SystemReader;
 
@@ -427,10 +427,10 @@ public class IdentifiedUser extends CurrentUser {
   }
 
   public PersonIdent newRefLogIdent() {
-    return newRefLogIdent(new Date(), TimeZone.getDefault());
+    return newRefLogIdent(Instant.now(), ZoneId.systemDefault());
   }
 
-  public PersonIdent newRefLogIdent(Date when, TimeZone tz) {
+  public PersonIdent newRefLogIdent(Instant when, ZoneId zoneId) {
     final Account ua = getAccount();
 
     String name = ua.fullName();
@@ -450,14 +450,19 @@ public class IdentifiedUser extends CurrentUser {
               ? constructMailAddress(ua, "unknown")
               : ua.preferredEmail();
     }
-    return new PersonIdent(name, user, when, tz);
+
+    return new PersonIdent(name, user, when, zoneId);
   }
 
   private String constructMailAddress(Account ua, String host) {
     return getUserName().orElse("") + "|account-" + ua.id().toString() + "@" + host;
   }
 
-  public PersonIdent newCommitterIdent(Date when, TimeZone tz) {
+  public PersonIdent newCommitterIdent(PersonIdent ident) {
+    return newCommitterIdent(ident.getWhenAsInstant(), ident.getZoneId());
+  }
+
+  public PersonIdent newCommitterIdent(Instant when, ZoneId zoneId) {
     final Account ua = getAccount();
     String name = ua.fullName();
     String email = ua.preferredEmail();
@@ -492,7 +497,7 @@ public class IdentifiedUser extends CurrentUser {
       }
     }
 
-    return new PersonIdent(name, email, when, tz);
+    return new PersonIdent(name, email, when, zoneId);
   }
 
   @Override

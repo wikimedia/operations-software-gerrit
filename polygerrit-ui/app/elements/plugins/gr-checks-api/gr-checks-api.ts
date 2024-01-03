@@ -22,7 +22,7 @@ import {
   CheckResult,
   CheckRun,
 } from '../../../api/checks';
-import {appContext} from '../../../services/app-context';
+import {getAppContext} from '../../../services/app-context';
 
 const DEFAULT_CONFIG: ChecksApiConfig = {
   fetchPollingIntervalSeconds: 60,
@@ -43,9 +43,9 @@ enum State {
 export class GrChecksApi implements ChecksPluginApi {
   private state = State.NOT_REGISTERED;
 
-  private readonly checksService = appContext.checksService;
+  private readonly reporting = getAppContext().reportingService;
 
-  private readonly reporting = appContext.reportingService;
+  private readonly pluginsModel = getAppContext().pluginsModel;
 
   constructor(readonly plugin: PluginApi) {
     this.reporting.trackApi(this.plugin, 'checks', 'constructor');
@@ -53,14 +53,18 @@ export class GrChecksApi implements ChecksPluginApi {
 
   announceUpdate() {
     this.reporting.trackApi(this.plugin, 'checks', 'announceUpdate');
-    this.checksService.reload(this.plugin.getPluginName());
+    this.pluginsModel.checksAnnounce(this.plugin.getPluginName());
   }
 
   updateResult(run: CheckRun, result: CheckResult) {
     if (result.externalId === undefined) {
       throw new Error('ChecksApi.updateResult() was called without externalId');
     }
-    this.checksService.updateResult(this.plugin.getPluginName(), run, result);
+    this.pluginsModel.checksUpdate({
+      pluginName: this.plugin.getPluginName(),
+      run,
+      result,
+    });
   }
 
   register(provider: ChecksProvider, config?: ChecksApiConfig): void {
@@ -68,10 +72,10 @@ export class GrChecksApi implements ChecksPluginApi {
     if (this.state === State.REGISTERED)
       throw new Error('Only one provider can be registered per plugin.');
     this.state = State.REGISTERED;
-    this.checksService.register(
-      this.plugin.getPluginName(),
+    this.pluginsModel.checksRegister({
+      pluginName: this.plugin.getPluginName(),
       provider,
-      config ?? DEFAULT_CONFIG
-    );
+      config: config ?? DEFAULT_CONFIG,
+    });
   }
 }

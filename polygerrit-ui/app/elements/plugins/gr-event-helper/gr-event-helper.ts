@@ -19,10 +19,10 @@ import {
   UnsubscribeCallback,
 } from '../../../api/event-helper';
 import {PluginApi} from '../../../api/plugin';
-import {appContext} from '../../../services/app-context';
+import {getAppContext} from '../../../services/app-context';
 
 export class GrEventHelper implements EventHelperPluginApi {
-  private readonly reporting = appContext.reportingService;
+  private readonly reporting = getAppContext().reportingService;
 
   constructor(readonly plugin: PluginApi, readonly element: HTMLElement) {
     this.reporting.trackApi(this.plugin, 'event', 'constructor');
@@ -56,8 +56,12 @@ export class GrEventHelper implements EventHelperPluginApi {
         let mayContinue = true;
         try {
           mayContinue = callback(e);
-        } catch (exception) {
-          this.reporting.error(exception);
+        } catch (exception: unknown) {
+          this.reporting.error(
+            new Error('event listener callback error'),
+            undefined,
+            exception
+          );
         }
         if (mayContinue === false) {
           e.stopImmediatePropagation();

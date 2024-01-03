@@ -14,14 +14,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import '../gr-account-link/gr-account-link';
+import '../gr-account-label/gr-account-label';
 import '../gr-button/gr-button';
 import '../gr-icons/gr-icons';
-import {AccountInfo, ChangeInfo} from '../../../types/common';
-import {appContext} from '../../../services/app-context';
+import {
+  AccountInfo,
+  ApprovalInfo,
+  ChangeInfo,
+  LabelInfo,
+} from '../../../types/common';
+import {getAppContext} from '../../../services/app-context';
 import {LitElement, css, html} from 'lit';
 import {customElement, property} from 'lit/decorators';
-import {classMap} from 'lit/directives/class-map';
+import {ClassInfo, classMap} from 'lit/directives/class-map';
+import {KnownExperimentId} from '../../../services/flags/flags';
+import {getLabelStatus, hasVoted, LabelStatus} from '../../../utils/label-util';
 
 @customElement('gr-account-chip')
 export class GrAccountChip extends LitElement {
@@ -79,7 +86,15 @@ export class GrAccountChip extends LitElement {
   @property({type: Boolean})
   transparentBackground = false;
 
-  private readonly restApiService = appContext.restApiService;
+  @property({type: Object})
+  vote?: ApprovalInfo;
+
+  @property({type: Object})
+  label?: LabelInfo;
+
+  private readonly restApiService = getAppContext().restApiService;
+
+  private readonly flagsService = getAppContext().flagsService;
 
   static override get styles() {
     return [
@@ -96,6 +111,15 @@ export class GrAccountChip extends LitElement {
           border: 1px solid var(--border-color);
           display: inline-flex;
           padding: 0 1px;
+          /* Any outermost circular icon would fit neatly in the border-radius
+             and won't need padding, but the exact outermost elements will
+             depend on account state and the context gr-account-chip is used.
+             So, these values are passed down to gr-account-label and any
+             outermost elements will use the value and then override it. */
+          --account-label-padding-left: 6px;
+          --account-label-padding-right: 6px;
+          --account-label-circle-padding-left: 0;
+          --account-label-circle-padding-right: 0;
         }
         :host:focus {
           border-color: transparent;
@@ -118,8 +142,23 @@ export class GrAccountChip extends LitElement {
           height: 1.2rem;
           width: 1.2rem;
         }
-        .container gr-account-link::part(gr-account-link-text) {
+        .container gr-account-label::part(gr-account-label-text) {
           color: var(--deemphasized-text-color);
+        }
+        .container.disliked {
+          border: 1px solid var(--vote-outline-disliked);
+        }
+        .container.recommended {
+          border: 1px solid var(--vote-outline-recommended);
+        }
+        .container.disliked,
+        .container.recommended {
+          --account-label-padding-right: var(--spacing-xs);
+          --account-label-circle-padding-right: var(--spacing-xs);
+        }
+        .container.closeShown {
+          --account-label-padding-right: 3px;
+          --account-label-circle-padding-right: 3px;
         }
       `,
     ];
@@ -131,9 +170,6 @@ export class GrAccountChip extends LitElement {
     /* eslint-disable lit/prefer-static-styles */
     const customStyle = html`
       <style>
-        .container {
-          --account-label-padding-horizontal: 6px;
-        }
         gr-button.remove::part(paper-button),
         gr-button.remove:hover::part(paper-button),
         gr-button.remove:focus::part(paper-button) {
@@ -147,36 +183,41 @@ export class GrAccountChip extends LitElement {
           line-height: 10px;
           /* This cancels most of the --account-label-padding-horizontal. */
           margin-left: -4px;
-          padding: 0 2px 0 0;
+          padding: 0 2px 0 1px;
           text-decoration: none;
         }
       </style>
     `;
     return html`${customStyle}
       <div
-        class="${classMap({
+        class=${classMap({
+          ...this.computeVoteClasses(),
           container: true,
           transparentBackground: this.transparentBackground,
-        })}"
+          closeShown: this.removable,
+        })}
       >
-        <gr-account-link
-          .account="${this.account}"
-          .change="${this.change}"
-          ?forceAttention=${this.forceAttention}
-          ?highlightAttention=${this.highlightAttention}
-          .voteableText=${this.voteableText}
-        >
-        </gr-account-link>
+        <div>
+          <gr-account-label
+            .account=${this.account}
+            .change=${this.change}
+            ?forceAttention=${this.forceAttention}
+            ?highlightAttention=${this.highlightAttention}
+            .voteableText=${this.voteableText}
+            clickable
+          >
+          </gr-account-label>
+        </div>
         <slot name="vote-chip"></slot>
         <gr-button
           id="remove"
           link=""
           ?hidden=${!this.removable}
           aria-label="Remove"
-          class="${classMap({
+          class=${classMap({
             remove: true,
             transparentBackground: this.transparentBackground,
-          })}"
+          })}
           @click=${this._handleRemoveTap}
         >
           <iron-icon icon="gr-icons:close"></iron-icon>
@@ -208,6 +249,25 @@ export class GrAccountChip extends LitElement {
       .then(cfg =>
         Promise.resolve(!!(cfg && cfg.plugin && cfg.plugin.has_avatars))
       );
+  }
+
+  private computeVoteClasses(): ClassInfo {
+    if (
+      !this.flagsService.isEnabled(KnownExperimentId.SUBMIT_REQUIREMENTS_UI) ||
+      !this.label ||
+      !this.account ||
+      !hasVoted(this.label, this.account)
+    ) {
+      return {};
+    }
+    const status = getLabelStatus(this.label, this.vote?.value);
+    if ([LabelStatus.APPROVED, LabelStatus.RECOMMENDED].includes(status)) {
+      return {recommended: true};
+    } else if ([LabelStatus.REJECTED, LabelStatus.DISLIKED].includes(status)) {
+      return {disliked: true};
+    } else {
+      return {};
+    }
   }
 }
 

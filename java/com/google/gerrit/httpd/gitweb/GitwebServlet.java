@@ -75,7 +75,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Enumeration;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -137,7 +137,7 @@ class GitwebServlet extends HttpServlet {
     getProjectRoot(allProjects);
 
     final String url = gitwebConfig.getUrl();
-    if ((url != null) && (!url.equals("gitweb"))) {
+    if (url != null && !url.equals("gitweb")) {
       URI uri = null;
       try {
         uri = new URI(url);
@@ -573,9 +573,7 @@ class GitwebServlet extends HttpServlet {
     env.set("SERVER_PROTOCOL", req.getProtocol());
     env.set("SERVER_SOFTWARE", getServletContext().getServerInfo());
 
-    final Enumeration<String> hdrs = enumerateHeaderNames(req);
-    while (hdrs.hasMoreElements()) {
-      final String name = hdrs.nextElement();
+    for (String name : getHeaderNames(req)) {
       final String value = req.getHeader(name);
       env.set("HTTP_" + name.toUpperCase().replace('-', '_'), value);
     }
@@ -720,7 +718,7 @@ class GitwebServlet extends HttpServlet {
                         .collect(Collectors.joining("\n"))
                         .trim();
                 if (!err.isEmpty()) {
-                  logger.atSevere().log(err);
+                  logger.atSevere().log("%s", err);
                 }
               } catch (IOException e) {
                 logger.atSevere().withCause(e).log("Unexpected error copying stderr from CGI");
@@ -728,10 +726,6 @@ class GitwebServlet extends HttpServlet {
             },
             "Gitweb-ErrorLogger")
         .start();
-  }
-
-  private static Enumeration<String> enumerateHeaderNames(HttpServletRequest req) {
-    return req.getHeaderNames();
   }
 
   private void readCgiHeaders(HttpServletResponse res, InputStream in) throws IOException {
@@ -772,6 +766,11 @@ class GitwebServlet extends HttpServlet {
       buf.append((char) b);
     }
     return buf.toString().trim();
+  }
+
+  @SuppressWarnings("JdkObsolete")
+  private static Iterable<String> getHeaderNames(HttpServletRequest req) {
+    return Collections.list(req.getHeaderNames());
   }
 
   /** private utility class that manages the Environment passed to exec. */

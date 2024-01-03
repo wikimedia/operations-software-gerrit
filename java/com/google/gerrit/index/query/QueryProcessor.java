@@ -25,6 +25,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Ordering;
 import com.google.common.flogger.FluentLogger;
+import com.google.common.primitives.Ints;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.index.Index;
@@ -60,7 +61,7 @@ public abstract class QueryProcessor<T> {
   protected static class Metrics {
     final Timer1<String> executionTime;
 
-    Metrics(MetricMaker metricMaker) {
+    protected Metrics(MetricMaker metricMaker) {
       executionTime =
           metricMaker.newTimer(
               "query/query_latency",
@@ -94,14 +95,14 @@ public abstract class QueryProcessor<T> {
   private Set<String> requestedFields;
 
   protected QueryProcessor(
-      MetricMaker metricMaker,
+      Metrics metrics,
       SchemaDefinitions<T> schemaDef,
       IndexConfig indexConfig,
       IndexCollection<?, T, ? extends Index<?, T>> indexes,
       IndexRewriter<T> rewriter,
       String limitField,
       IntSupplier userQueryLimit) {
-    this.metrics = new Metrics(metricMaker);
+    this.metrics = metrics;
     this.schemaDef = schemaDef;
     this.indexConfig = indexConfig;
     this.indexes = indexes;
@@ -265,9 +266,13 @@ public abstract class QueryProcessor<T> {
                 start,
                 initialPageSize,
                 pageSizeMultiplier,
-                limit,
+                // Always bump limit by 1, even if this results in exceeding the permitted
+                // max for this user. The only way to see if there are more entities is to
+                // ask for one more result from the query.
+                // NOTE: This is consistent to the behaviour before the introduction of pagination.`
+                Ints.saturatedCast((long) limit + 1),
                 getRequestedFields());
-        logger.atFine().log("Query options: " + opts);
+        logger.atFine().log("Query options: %s", opts);
         Predicate<T> pred = rewriter.rewrite(q, opts);
         if (enforceVisibility) {
           pred = enforceVisibility(pred);

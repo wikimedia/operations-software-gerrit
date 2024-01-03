@@ -85,7 +85,7 @@ import {
   LabelInfo,
   LabelNameToInfoMap,
   LabelNameToLabelTypeInfoMap,
-  LabelNameToValueMap,
+  LabelNameToValuesMap,
   LabelTypeInfo,
   LabelTypeInfoValues,
   LabelValueToDescriptionMap,
@@ -174,7 +174,7 @@ export {
   LabelInfo,
   LabelNameToInfoMap,
   LabelNameToLabelTypeInfoMap,
-  LabelNameToValueMap,
+  LabelNameToValuesMap,
   LabelTypeInfo,
   LabelTypeInfoValues,
   LabelValueToDescriptionMap,
@@ -206,6 +206,7 @@ export {
   UrlEncodedRepoName,
   UserConfigInfo,
   VotingRangeInfo,
+  WebLinkInfo,
   isDetailedLabelInfo,
   isQuickLabelInfo,
 };
@@ -277,7 +278,9 @@ export type ChangeViewChangeInfo = RequireProperties<
   'current_revision' | 'revisions'
 >;
 
-export function isAccount(x: AccountInfo | GroupInfo): x is AccountInfo {
+export function isAccount(
+  x: AccountInfo | GroupInfo | GitPersonInfo
+): x is AccountInfo {
   const account = x as AccountInfo;
   return account._account_id !== undefined || account.email !== undefined;
 }
@@ -691,9 +694,10 @@ export interface TopMenuItemInfo {
  * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#comment-info
  */
 export interface CommentInfo {
-  // TODO(TS): Make this required.
-  patch_set?: PatchSetNum;
   id: UrlEncodedCommentId;
+  updated: Timestamp;
+  // TODO(TS): Make this required. Every comment must have patch_set set.
+  patch_set?: PatchSetNum;
   path?: string;
   side?: CommentSide;
   parent?: number;
@@ -701,7 +705,6 @@ export interface CommentInfo {
   range?: CommentRange;
   in_reply_to?: UrlEncodedCommentId;
   message?: string;
-  updated: Timestamp;
   author?: AccountInfo;
   tag?: string;
   unresolved?: boolean;
@@ -963,14 +966,6 @@ export interface DeleteDraftCommentsInput {
 }
 
 /**
- * The AssigneeInput entity contains the identity of the user to be set as assignee
- * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#assignee-input
- */
-export interface AssigneeInput {
-  assignee: AccountId;
-}
-
-/**
  * The SshKeyInfo entity contains information about an SSH key of a user
  * https://gerrit-review.googlesource.com/Documentation/rest-api-accounts.html#ssh-key-info
  */
@@ -1147,8 +1142,6 @@ export interface PreferencesInfo {
   work_in_progress_by_default?: boolean;
   // The email_format doesn't mentioned in doc, but exists in Java class GeneralPreferencesInfo
   email_format?: EmailFormat;
-  // The following property doesn't exist in RestAPI, it is added by GrRestApiInterface
-  default_diff_view?: DiffViewMode;
 }
 
 /**
@@ -1176,7 +1169,7 @@ export interface Base64ImageFile extends Base64File {
 export interface ReviewInput {
   message?: string;
   tag?: ReviewInputTag;
-  labels?: LabelNameToValuesMap;
+  labels?: LabelNameToValueMap;
   comments?: PathToCommentsInputMap;
   robot_comments?: PathToRobotCommentsMap;
   drafts?: DraftsAction;
@@ -1218,7 +1211,7 @@ export interface AddReviewerResult {
   confirm?: boolean;
 }
 
-export type LabelNameToValuesMap = {[labelName: string]: number};
+export type LabelNameToValueMap = {[labelName: string]: number};
 export type PathToCommentsInputMap = {[path: string]: CommentInput[]};
 export type PathToRobotCommentsMap = {[path: string]: RobotCommentInput[]};
 export type RecipientTypeToNotifyInfoMap = {

@@ -80,7 +80,9 @@ public class RevertIT extends AbstractDaemonTest {
     assertThat(thrown)
         .hasMessageThat()
         .contains("Failed to submit 1 change due to the following problems");
-    assertThat(thrown).hasMessageThat().contains("needs Is-Pure-Revert");
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains("submit requirement 'Is-Pure-Revert' is unsatisfied.");
   }
 
   @Test
@@ -101,7 +103,9 @@ public class RevertIT extends AbstractDaemonTest {
     assertThat(thrown)
         .hasMessageThat()
         .contains("Failed to submit 1 change due to the following problems");
-    assertThat(thrown).hasMessageThat().contains("needs Is-Pure-Revert");
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains("submit requirement 'Is-Pure-Revert' is unsatisfied.");
   }
 
   @Test
@@ -702,6 +706,43 @@ public class RevertIT extends AbstractDaemonTest {
     assertThat(sender.getMessages(revertChanges.revertChanges.get(1).changeId, "newchange"))
         .hasSize(1);
     assertThat(sender.getMessages(secondResult, "revert")).hasSize(1);
+  }
+
+  @Test
+  public void revertSubmissionSuppressNotifications() throws Exception {
+    String firstResult = createChange("first change", "a.txt", "message").getChangeId();
+    approve(firstResult);
+    gApi.changes().id(firstResult).addReviewer(user.email());
+    String secondResult = createChange("second change", "b.txt", "other").getChangeId();
+    approve(secondResult);
+    gApi.changes().id(secondResult).addReviewer(user.email());
+
+    gApi.changes().id(secondResult).current().submit();
+
+    sender.clear();
+    RevertInput revertInput = new RevertInput();
+    revertInput.notify = NotifyHandling.NONE;
+    gApi.changes().id(secondResult).revertSubmission(revertInput);
+    assertThat(sender.getMessages()).isEmpty();
+  }
+
+  @Test
+  public void revertSubmissionSuppressNotificationsWithWip() throws Exception {
+    String firstResult = createChange("first change", "a.txt", "message").getChangeId();
+    approve(firstResult);
+    gApi.changes().id(firstResult).addReviewer(user.email());
+    String secondResult = createChange("second change", "b.txt", "other").getChangeId();
+    approve(secondResult);
+    gApi.changes().id(secondResult).addReviewer(user.email());
+
+    gApi.changes().id(secondResult).current().submit();
+
+    sender.clear();
+    RevertInput revertInput = new RevertInput();
+    revertInput.workInProgress = true;
+    revertInput.notify = NotifyHandling.NONE;
+    gApi.changes().id(secondResult).revertSubmission(revertInput);
+    assertThat(sender.getMessages()).isEmpty();
   }
 
   @Test

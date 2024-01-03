@@ -47,8 +47,8 @@ import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
-import java.sql.Timestamp;
-import java.util.TimeZone;
+import java.time.Instant;
+import java.time.ZoneId;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.ObjectId;
@@ -64,7 +64,7 @@ public class PutMessage implements RestModifyView<ChangeResource, CommitMessageI
   private final BatchUpdate.Factory updateFactory;
   private final GitRepositoryManager repositoryManager;
   private final Provider<CurrentUser> userProvider;
-  private final TimeZone tz;
+  private final ZoneId zoneId;
   private final PatchSetInserter.Factory psInserterFactory;
   private final PermissionBackend permissionBackend;
   private final PatchSetUtil psUtil;
@@ -86,7 +86,7 @@ public class PutMessage implements RestModifyView<ChangeResource, CommitMessageI
     this.repositoryManager = repositoryManager;
     this.userProvider = userProvider;
     this.psInserterFactory = psInserterFactory;
-    this.tz = gerritIdent.getTimeZone();
+    this.zoneId = gerritIdent.getZoneId();
     this.permissionBackend = permissionBackend;
     this.psUtil = psUtil;
     this.notifyResolver = notifyResolver;
@@ -126,7 +126,7 @@ public class PutMessage implements RestModifyView<ChangeResource, CommitMessageI
         throw new ResourceConflictException("new and existing commit message are the same");
       }
 
-      Timestamp ts = TimeUtil.nowTs();
+      Instant ts = TimeUtil.now();
       try (BatchUpdate bu =
           updateFactory.create(resource.getChange().getProject(), userProvider.get(), ts)) {
         // Ensure that BatchUpdate will update the same repo
@@ -161,13 +161,14 @@ public class PutMessage implements RestModifyView<ChangeResource, CommitMessageI
       ObjectInserter objectInserter,
       RevCommit basePatchSetCommit,
       String commitMessage,
-      Timestamp timestamp)
+      Instant timestamp)
       throws IOException {
     CommitBuilder builder = new CommitBuilder();
     builder.setTreeId(basePatchSetCommit.getTree());
     builder.setParentIds(basePatchSetCommit.getParents());
     builder.setAuthor(basePatchSetCommit.getAuthorIdent());
-    builder.setCommitter(userProvider.get().asIdentifiedUser().newCommitterIdent(timestamp, tz));
+    builder.setCommitter(
+        userProvider.get().asIdentifiedUser().newCommitterIdent(timestamp, zoneId));
     builder.setMessage(commitMessage);
     ObjectId newCommitId = objectInserter.insert(builder);
     objectInserter.flush();

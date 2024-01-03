@@ -14,12 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import {Subscription} from 'rxjs';
 import '@polymer/paper-toggle-button/paper-toggle-button';
 import '../../shared/gr-button/gr-button';
 import '../../shared/gr-icons/gr-icons';
 import '../gr-message/gr-message';
+import '../../../styles/gr-paper-styles';
 import '../../../styles/shared-styles';
-import {PolymerElement} from '@polymer/polymer/polymer-element';
 import {htmlTemplate} from './gr-messages-list_html';
 import {
   Shortcut,
@@ -27,13 +28,12 @@ import {
 } from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
 import {parseDate} from '../../../utils/date-util';
 import {MessageTag} from '../../../constants/constants';
-import {appContext} from '../../../services/app-context';
+import {getAppContext} from '../../../services/app-context';
 import {customElement, property} from '@polymer/decorators';
 import {
   ChangeId,
   ChangeMessageId,
   ChangeMessageInfo,
-  ChangeViewChangeInfo,
   LabelNameToInfoMap,
   NumericChangeId,
   PatchSetNum,
@@ -41,13 +41,23 @@ import {
   ReviewerUpdateInfo,
   VotingRangeInfo,
 } from '../../../types/common';
-import {ChangeComments} from '../../diff/gr-comment-api/gr-comment-api';
-import {CommentThread, isRobot} from '../../../utils/comment-util';
+import {
+  CommentThread,
+  isRobot,
+  LabelExtreme,
+} from '../../../utils/comment-util';
 import {GrMessage, MessageAnchorTapDetail} from '../gr-message/gr-message';
 import {PolymerDeepPropertyChange} from '@polymer/polymer/interfaces';
 import {DomRepeat} from '@polymer/polymer/lib/elements/dom-repeat';
 import {getVotingRange} from '../../../utils/label-util';
-import {FormattedReviewerUpdateInfo} from '../../../types/types';
+import {
+  FormattedReviewerUpdateInfo,
+  ParsedChangeInfo,
+} from '../../../types/types';
+import {commentsModelToken} from '../../../models/comments/comments-model';
+import {changeModelToken} from '../../../models/change/change-model';
+import {resolve, DIPolymerElement} from '../../../models/dependency';
+import {queryAll} from '../../../utils/common-util';
 
 /**
  * The content of the enum is also used in the UI for the button text.
@@ -62,7 +72,7 @@ interface TagsCountReportInfo {
   all: number;
 }
 
-type CombinedMessage = Omit<
+export type CombinedMessage = Omit<
   FormattedReviewerUpdateInfo | ChangeMessageInfo,
   'tag'
 > & {
@@ -91,17 +101,10 @@ function computeThreads(
   message: CombinedMessage,
   allThreadsForChange: CommentThread[]
 ): CommentThread[] {
-  if (message._index === undefined) {
-    return [];
-  }
+  if (message._index === undefined) return [];
   const messageId = getMessageId(message);
   return allThreadsForChange.filter(thread =>
-    thread.comments.some(comment => {
-      const matchesMessage = comment.change_message_id === messageId;
-      if (!matchesMessage) return false;
-      comment.collapsed = !matchesMessage;
-      return matchesMessage;
-    })
+    thread.comments.some(comment => comment.change_message_id === messageId)
   );
 }
 
@@ -132,9 +135,6 @@ function computeTag(message: CombinedMessage) {
 
   if (message.tag === MessageTag.TAG_NEW_WIP_PATCHSET) {
     return MessageTag.TAG_NEW_PATCHSET;
-  }
-  if (message.tag === MessageTag.TAG_UNSET_ASSIGNEE) {
-    return MessageTag.TAG_SET_ASSIGNEE;
   }
   if (message.tag === MessageTag.TAG_UNSET_PRIVATE) {
     return MessageTag.TAG_SET_PRIVATE;
@@ -201,14 +201,16 @@ export interface GrMessagesList {
 }
 
 @customElement('gr-messages-list')
-export class GrMessagesList extends PolymerElement {
+export class GrMessagesList extends DIPolymerElement {
   static get template() {
     return htmlTemplate;
   }
 
+  // Private internal @state, derived from the application state.
   @property({type: Object})
-  change?: ChangeViewChangeInfo;
+  change?: ParsedChangeInfo;
 
+  // Private internal @state, derived from the application state.
   @property({type: String})
   changeNum?: ChangeId | NumericChangeId;
 
@@ -218,12 +220,15 @@ export class GrMessagesList extends PolymerElement {
   @property({type: Array})
   reviewerUpdates: ReviewerUpdateInfo[] = [];
 
+  // Private internal @state, derived from the application state.
   @property({type: Object})
-  changeComments?: ChangeComments;
+  commentThreads: CommentThread[] = [];
 
+  // Private internal @state, derived from the application state.
   @property({type: String})
   projectName?: RepoName;
 
+  // Private internal @state, derived from the application state.
   @property({type: Boolean})
   showReplyButtons = false;
 
@@ -243,19 +248,65 @@ export class GrMessagesList extends PolymerElement {
     type: Array,
     computed:
       '_computeCombinedMessages(messages, reviewerUpdates, ' +
-      'changeComments)',
+      'commentThreads)',
     observer: '_combinedMessagesChanged',
   })
   _combinedMessages: CombinedMessage[] = [];
 
   @property({type: Object, computed: '_computeLabelExtremes(labels.*)'})
-  _labelExtremes: {[labelName: string]: VotingRangeInfo} = {};
+  _labelExtremes: LabelExtreme = {};
 
-  private readonly reporting = appContext.reportingService;
+  private readonly userModel = getAppContext().userModel;
 
-  private readonly shortcuts = appContext.shortcutsService;
+  // Private but used in tests.
+  readonly getCommentsModel = resolve(this, commentsModelToken);
 
-  scrollToMessage(messageID: string) {
+  private readonly changeModel = resolve(this, changeModelToken);
+
+  private readonly reporting = getAppContext().reportingService;
+
+  private readonly shortcuts = getAppContext().shortcutsService;
+
+  private subscriptions: Subscription[] = [];
+
+  override connectedCallback() {
+    super.connectedCallback();
+    this.subscriptions.push(
+      this.getCommentsModel().threads$.subscribe(x => {
+        this.commentThreads = x;
+      })
+    );
+    this.subscriptions.push(
+      this.changeModel().change$.subscribe(x => {
+        this.change = x;
+      })
+    );
+    this.subscriptions.push(
+      this.userModel.loggedIn$.subscribe(x => {
+        this.showReplyButtons = x;
+      })
+    );
+    this.subscriptions.push(
+      this.changeModel().repo$.subscribe(x => {
+        this.projectName = x;
+      })
+    );
+    this.subscriptions.push(
+      this.changeModel().changeNum$.subscribe(x => {
+        this.changeNum = x;
+      })
+    );
+  }
+
+  override disconnectedCallback() {
+    for (const s of this.subscriptions) {
+      s.unsubscribe();
+    }
+    this.subscriptions = [];
+    super.disconnectedCallback();
+  }
+
+  async scrollToMessage(messageID: string) {
     const selector = `[data-message-id="${messageID}"]`;
     const el = this.shadowRoot!.querySelector(selector) as
       | GrMessage
@@ -267,13 +318,15 @@ export class GrMessagesList extends PolymerElement {
       );
       return;
     }
-    if (!el) {
+    if (!el || !el.message) {
       this._showAllActivity = true;
       setTimeout(() => this.scrollToMessage(messageID));
       return;
     }
 
-    el.set('message.expanded', true);
+    el.message.expanded = true;
+    el.requestUpdate();
+    await el.updateComplete;
     let top = el.offsetTop;
     for (
       let offsetParent = el.offsetParent as HTMLElement | null;
@@ -304,16 +357,11 @@ export class GrMessagesList extends PolymerElement {
    * all messages and updates, aligns or massages some of the properties.
    */
   _computeCombinedMessages(
-    messages?: ChangeMessageInfo[],
-    reviewerUpdates?: FormattedReviewerUpdateInfo[],
-    changeComments?: ChangeComments
+    messages: ChangeMessageInfo[] | undefined,
+    reviewerUpdates: FormattedReviewerUpdateInfo[] | undefined,
+    commentThreads: CommentThread[]
   ) {
-    if (
-      messages === undefined ||
-      reviewerUpdates === undefined ||
-      changeComments === undefined
-    )
-      return [];
+    if (messages === undefined || reviewerUpdates === undefined) return;
 
     let mi = 0;
     let ri = 0;
@@ -345,20 +393,12 @@ export class GrMessagesList extends PolymerElement {
       }
     }
 
-    const allThreadsForChange = changeComments.getAllThreadsForChange();
-    // collapse all by default
-    for (const thread of allThreadsForChange) {
-      for (const comment of thread.comments) {
-        comment.collapsed = true;
-      }
-    }
-
     for (let i = 0; i < combinedMessages.length; i++) {
       const message = combinedMessages[i];
       if (message.expanded === undefined) {
         message.expanded = false;
       }
-      message.commentThreads = computeThreads(message, allThreadsForChange);
+      message.commentThreads = computeThreads(message, commentThreads);
       message._revision_number = computeRevision(message, combinedMessages);
       message.tag = computeTag(message);
     }
@@ -372,11 +412,14 @@ export class GrMessagesList extends PolymerElement {
   }
 
   _updateExpandedStateOfAllMessages(exp: boolean) {
-    if (this._combinedMessages) {
-      for (let i = 0; i < this._combinedMessages.length; i++) {
-        this._combinedMessages[i].expanded = exp;
-        this.notifyPath(`_combinedMessages.${i}.expanded`);
-      }
+    if (!this._combinedMessages) return;
+
+    for (let i = 0; i < this._combinedMessages.length; i++) {
+      this._combinedMessages[i].expanded = exp;
+      this.notifyPath(`_combinedMessages.${i}.expanded`);
+    }
+    for (const message of queryAll<GrMessage>(this, 'gr-message')) {
+      message.requestUpdate('message');
     }
   }
 

@@ -39,22 +39,10 @@ import com.google.gerrit.extensions.webui.WebLink;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.util.function.Function;
-import java.util.function.Predicate;
 
 @Singleton
 public class WebLinks {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
-
-  private static final Predicate<WebLinkInfo> INVALID_WEBLINK =
-      link -> {
-        if (link == null) {
-          return false;
-        } else if (Strings.isNullOrEmpty(link.name) || Strings.isNullOrEmpty(link.url)) {
-          logger.atWarning().log("%s is missing name and/or url", link.getClass().getName());
-          return false;
-        }
-        return true;
-      };
 
   private final DynamicSet<PatchSetWebLink> patchSetLinks;
   private final DynamicSet<ResolveConflictsWebLink> resolveConflictsLinks;
@@ -98,12 +86,19 @@ public class WebLinks {
    * @param commit SHA1 of commit.
    * @param commitMessage the commit message of the commit.
    * @param branchName branch of the commit.
+   * @param changeKey change Identifier for this change
    */
   public ImmutableList<WebLinkInfo> getPatchSetLinks(
-      Project.NameKey project, String commit, String commitMessage, String branchName) {
+      Project.NameKey project,
+      String commit,
+      String commitMessage,
+      String branchName,
+      String changeKey) {
     return filterLinks(
         patchSetLinks,
-        webLink -> webLink.getPatchSetWebLink(project.get(), commit, commitMessage, branchName));
+        webLink ->
+            webLink.getPatchSetWebLink(
+                project.get(), commit, commitMessage, branchName, changeKey));
   }
 
   /**
@@ -179,7 +174,7 @@ public class WebLinks {
     }
     return Streams.stream(fileHistoryLinks)
         .map(webLink -> webLink.getFileHistoryWebLink(project, revision, file))
-        .filter(INVALID_WEBLINK)
+        .filter(WebLinks::isValid)
         .collect(toImmutableList());
   }
 
@@ -218,7 +213,7 @@ public class WebLinks {
                     patchSetIdB,
                     revisionB,
                     fileB))
-        .filter(INVALID_WEBLINK)
+        .filter(WebLinks::isValid)
         .collect(toImmutableList());
   }
 
@@ -255,7 +250,17 @@ public class WebLinks {
       DynamicSet<T> links, Function<T, WebLinkInfo> transformer) {
     return Streams.stream(links)
         .map(transformer)
-        .filter(INVALID_WEBLINK)
+        .filter(WebLinks::isValid)
         .collect(toImmutableList());
+  }
+
+  private static boolean isValid(WebLinkInfo link) {
+    if (link == null) {
+      return false;
+    } else if (Strings.isNullOrEmpty(link.name) || Strings.isNullOrEmpty(link.url)) {
+      logger.atWarning().log("%s is missing name and/or url", link.getClass().getName());
+      return false;
+    }
+    return true;
   }
 }

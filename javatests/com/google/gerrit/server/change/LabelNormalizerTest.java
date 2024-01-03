@@ -100,7 +100,7 @@ public class LabelNormalizerTest {
   private void configureProject() throws Exception {
     ProjectConfig pc = loadAllProjects();
 
-    for (AccessSection sec : ImmutableList.copyOf(pc.getAccessSections())) {
+    for (AccessSection sec : pc.getAccessSections()) {
       pc.upsertAccessSection(
           sec.getName(),
           updatedSection -> {
@@ -213,7 +213,7 @@ public class LabelNormalizerTest {
     return PatchSetApproval.builder()
         .key(PatchSetApproval.key(change.currentPatchSetId(), accountId, LabelId.create(label)))
         .value(value)
-        .granted(TimeUtil.nowTs())
+        .granted(TimeUtil.now())
         .build();
   }
 

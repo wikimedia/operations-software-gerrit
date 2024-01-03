@@ -286,7 +286,7 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
       setMerged(ctx, commit, message(ctx, commit, s));
     } catch (StorageException err) {
       String msg = "Error updating change status for " + id;
-      logger.atSevere().withCause(err).log(msg);
+      logger.atSevere().withCause(err).log("%s", msg);
       args.commitStatus.logProblem(id, msg);
       // It's possible this happened before updating anything in the db, but
       // it's hard to know for sure, so just return true below to be safe.
@@ -327,7 +327,7 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
         ctx.getRevWalk(), ctx.getUpdate(psId), psId, alreadyMergedCommit, groups, null, null);
   }
 
-  private void setApproval(ChangeContext ctx, IdentifiedUser user) throws IOException {
+  private void setApproval(ChangeContext ctx, IdentifiedUser user) {
     Change.Id id = ctx.getChange().getId();
     List<SubmitRecord> records = args.commitStatus.getSubmitRecords(id);
     PatchSet.Id oldPsId = toMerge.getPatchsetId();
@@ -348,13 +348,10 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
     }
   }
 
-  private LabelNormalizer.Result approve(ChangeContext ctx, ChangeUpdate update)
-      throws IOException {
+  private LabelNormalizer.Result approve(ChangeContext ctx, ChangeUpdate update) {
     PatchSet.Id psId = update.getPatchSetId();
     Map<PatchSetApproval.Key, PatchSetApproval> byKey = new HashMap<>();
-    for (PatchSetApproval psa :
-        args.approvalsUtil.byPatchSet(
-            ctx.getNotes(), psId, ctx.getRevWalk(), ctx.getRepoView().getConfig())) {
+    for (PatchSetApproval psa : args.approvalsUtil.byPatchSet(ctx.getNotes(), psId)) {
       byKey.put(psa.key(), psa);
     }
 
@@ -521,19 +518,29 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
     }
   }
 
-  /** See {@link #updateRepo(RepoContext)} */
+  /**
+   * See {@link #updateRepo(RepoContext)}
+   *
+   * @param ctx context for the repository update
+   */
   protected void updateRepoImpl(RepoContext ctx) throws Exception {}
 
   /**
    * Returns a new patch set if one was created by the submit strategy, or null if not
    *
    * <p>See {@link #updateChange(ChangeContext)}
+   *
+   * @param ctx context for the change update
    */
   protected PatchSet updateChangeImpl(ChangeContext ctx) throws Exception {
     return null;
   }
 
-  /** See {@link #postUpdate(PostUpdateContext)} */
+  /**
+   * See {@link #postUpdate(PostUpdateContext)}
+   *
+   * @param ctx context for the post update
+   */
   protected void postUpdateImpl(PostUpdateContext ctx) throws Exception {}
 
   /** Amend the commit with gitlink update */

@@ -16,7 +16,6 @@
  */
 
 import {safeTypesBridge} from '../utils/safe-types-util';
-import './gr-app-init';
 import './font-roboto-local-loader';
 // Sets up global Polymer variable, because plugins requires it.
 import '../scripts/bundled-polymer';
@@ -36,18 +35,55 @@ setPassiveTouchGestures(true);
 
 import {initGlobalVariables} from './gr-app-global-var-init';
 import './gr-app-element';
-import {PolymerElement} from '@polymer/polymer/polymer-element';
-import {htmlTemplate} from './gr-app_html';
-import {initGerritPluginApi} from './shared/gr-js-api-interface/gr-gerrit';
-import {customElement} from '@polymer/decorators';
+import {Finalizable} from '../services/registry';
+import {provide} from '../models/dependency';
 import {installPolymerResin} from '../scripts/polymer-resin-install';
+
+import {
+  createAppContext,
+  createAppDependencies,
+} from '../services/app-context-init';
+import {
+  initVisibilityReporter,
+  initPerformanceReporter,
+  initErrorReporter,
+} from '../services/gr-reporting/gr-reporting_impl';
+import {injectAppContext} from '../services/app-context';
+import {html, LitElement} from 'lit';
+import {customElement} from 'lit/decorators';
+
+const appContext = createAppContext();
+injectAppContext(appContext);
+const reportingService = appContext.reportingService;
+initVisibilityReporter(reportingService);
+initPerformanceReporter(reportingService);
+initErrorReporter(reportingService);
 
 installPolymerResin(safeTypesBridge);
 
 @customElement('gr-app')
-export class GrApp extends PolymerElement {
-  static get template() {
-    return htmlTemplate;
+export class GrApp extends LitElement {
+  private finalizables: Finalizable[] = [];
+
+  override connectedCallback() {
+    super.connectedCallback();
+    const dependencies = createAppDependencies(appContext);
+    for (const [token, service] of dependencies) {
+      this.finalizables.push(service);
+      provide(this, token, () => service);
+    }
+  }
+
+  override disconnectedCallback() {
+    for (const f of this.finalizables) {
+      f.finalize();
+    }
+    this.finalizables = [];
+    super.disconnectedCallback();
+  }
+
+  override render() {
+    return html`<gr-app-element id="app-element"></gr-app-element>`;
   }
 }
 
@@ -57,5 +93,4 @@ declare global {
   }
 }
 
-initGlobalVariables();
-initGerritPluginApi();
+initGlobalVariables(appContext);

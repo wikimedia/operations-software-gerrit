@@ -17,6 +17,7 @@ package com.google.gerrit.server.query.change;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.gerrit.entities.Change.CHANGE_ID_PATTERN;
 import static com.google.gerrit.server.account.AccountResolver.isSelf;
+import static com.google.gerrit.server.experiments.ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_COMPUTE_FROM_ALL_USERS_REPOSITORY;
 import static com.google.gerrit.server.query.change.ChangeData.asChanges;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
@@ -42,6 +43,7 @@ import com.google.gerrit.entities.SubmitRecord;
 import com.google.gerrit.exceptions.NotSignedInException;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.registration.DynamicMap;
+import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.IndexConfig;
 import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.SchemaUtil;
@@ -58,6 +60,7 @@ import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountResolver;
 import com.google.gerrit.server.account.AccountResolver.UnresolvableAccountException;
 import com.google.gerrit.server.account.AccountState;
+import com.google.gerrit.server.account.DestinationList;
 import com.google.gerrit.server.account.GroupBackend;
 import com.google.gerrit.server.account.GroupBackends;
 import com.google.gerrit.server.account.GroupMembers;
@@ -70,6 +73,7 @@ import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.HasOperandAliasConfig;
 import com.google.gerrit.server.config.OperatorAliasConfig;
+import com.google.gerrit.server.experiments.ExperimentFeatures;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.index.change.ChangeField;
 import com.google.gerrit.server.index.change.ChangeIndex;
@@ -81,6 +85,7 @@ import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.project.ChildProjects;
 import com.google.gerrit.server.project.ProjectCache;
+import com.google.gerrit.server.query.change.PredicateArgs.ValOp;
 import com.google.gerrit.server.rules.SubmitRule;
 import com.google.gerrit.server.submit.SubmitDryRun;
 import com.google.inject.Inject;
@@ -92,6 +97,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -139,7 +145,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   static final int MAX_ACCOUNTS_PER_DEFAULT_FIELD = 10;
 
   // NOTE: As new search operations are added, please keep the suggestions in
-  // gr-search-bar.js up to date.
+  // gr-search-bar.ts up to date.
 
   public static final String FIELD_ADDED = "added";
   public static final String FIELD_AGE = "age";
@@ -161,6 +167,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   public static final String FIELD_EXTENSION = "extension";
   public static final String FIELD_ONLY_EXTENSIONS = "onlyextensions";
   public static final String FIELD_FOOTER = "footer";
+  public static final String FIELD_FOOTER_NAME = "footernames";
   public static final String FIELD_CONFLICTS = "conflicts";
   public static final String FIELD_DELETED = "deleted";
   public static final String FIELD_DELTA = "delta";
@@ -178,6 +185,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   public static final String FIELD_MERGEABLE = "mergeable2";
   public static final String FIELD_MERGED_ON = "mergedon";
   public static final String FIELD_MESSAGE = "message";
+  public static final String FIELD_MESSAGE_EXACT = "messageexact";
   public static final String FIELD_OWNER = "owner";
   public static final String FIELD_OWNERIN = "ownerin";
   public static final String FIELD_PARENTOF = "parentof";
@@ -203,15 +211,18 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   public static final String FIELD_WATCHEDBY = "watchedby";
   public static final String FIELD_WIP = "wip";
   public static final String FIELD_REVERTOF = "revertof";
+  public static final String FIELD_PURE_REVERT = "ispurerevert";
   public static final String FIELD_CHERRYPICK = "cherrypick";
   public static final String FIELD_CHERRY_PICK_OF_CHANGE = "cherrypickofchange";
   public static final String FIELD_CHERRY_PICK_OF_PATCHSET = "cherrypickofpatchset";
+  public static final String FIELD_IS_SUBMITTABLE = "issubmittable";
 
   public static final String ARG_ID_NAME = "name";
   public static final String ARG_ID_USER = "user";
   public static final String ARG_ID_GROUP = "group";
   public static final String ARG_ID_OWNER = "owner";
   public static final String ARG_ID_NON_UPLOADER = "non_uploader";
+  public static final String ARG_COUNT = "count";
   public static final Account.Id OWNER_ACCOUNT_ID = Account.id(0);
   public static final Account.Id NON_UPLOADER_ACCOUNT_ID = Account.id(-1);
 
@@ -255,6 +266,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     final OperatorAliasConfig operatorAliasConfig;
     final boolean indexMergeable;
     final boolean conflictsPredicateEnabled;
+    final ExperimentFeatures experimentFeatures;
     final HasOperandAliasConfig hasOperandAliasConfig;
     final PluginSetContext<SubmitRule> submitRules;
 
@@ -290,6 +302,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
         GroupMembers groupMembers,
         OperatorAliasConfig operatorAliasConfig,
         @GerritServerConfig Config gerritConfig,
+        ExperimentFeatures experimentFeatures,
         HasOperandAliasConfig hasOperandAliasConfig,
         ChangeIsVisibleToPredicate.Factory changeIsVisbleToPredicateFactory,
         PluginSetContext<SubmitRule> submitRules) {
@@ -322,6 +335,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
           operatorAliasConfig,
           MergeabilityComputationBehavior.fromConfig(gerritConfig).includeInIndex(),
           gerritConfig.getBoolean("change", null, "conflictsPredicateEnabled", true),
+          experimentFeatures,
           hasOperandAliasConfig,
           changeIsVisbleToPredicateFactory,
           submitRules);
@@ -356,6 +370,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
         OperatorAliasConfig operatorAliasConfig,
         boolean indexMergeable,
         boolean conflictsPredicateEnabled,
+        ExperimentFeatures experimentFeatures,
         HasOperandAliasConfig hasOperandAliasConfig,
         ChangeIsVisibleToPredicate.Factory changeIsVisbleToPredicateFactory,
         PluginSetContext<SubmitRule> submitRules) {
@@ -388,6 +403,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
       this.operatorAliasConfig = operatorAliasConfig;
       this.indexMergeable = indexMergeable;
       this.conflictsPredicateEnabled = conflictsPredicateEnabled;
+      this.experimentFeatures = experimentFeatures;
       this.hasOperandAliasConfig = hasOperandAliasConfig;
       this.submitRules = submitRules;
     }
@@ -422,6 +438,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
           operatorAliasConfig,
           indexMergeable,
           conflictsPredicateEnabled,
+          experimentFeatures,
           hasOperandAliasConfig,
           changeIsVisbleToPredicateFactory,
           submitRules);
@@ -466,22 +483,31 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
   private final Arguments args;
   protected Map<String, String> hasOperandAliases = Collections.emptyMap();
+  private Map<Account.Id, DestinationList> destinationListByAccount = new HashMap<>();
+
+  private static final Splitter RULE_SPLITTER = Splitter.on("=");
+  private static final Splitter PLUGIN_SPLITTER = Splitter.on("_");
+  private static final Splitter LABEL_SPLITTER = Splitter.on(",");
 
   @Inject
   ChangeQueryBuilder(Arguments args) {
     this(mydef, args);
-    setupAliases();
   }
 
   @VisibleForTesting
   protected ChangeQueryBuilder(Definition<ChangeData, ChangeQueryBuilder> def, Arguments args) {
     super(def, args.opFactories);
     this.args = args;
+    setupAliases();
   }
 
   private void setupAliases() {
-    setOperatorAliases(args.operatorAliasConfig.getChangeQueryOperatorAliases());
-    hasOperandAliases = args.hasOperandAliasConfig.getChangeQueryHasOperandAliases();
+    if (args.operatorAliasConfig != null) {
+      setOperatorAliases(args.operatorAliasConfig.getChangeQueryOperatorAliases());
+    }
+    if (args.hasOperandAliasConfig != null) {
+      hasOperandAliases = args.hasOperandAliasConfig.getChangeQueryHasOperandAliases();
+    }
   }
 
   public ChangeQueryBuilder asUser(CurrentUser user) {
@@ -515,22 +541,14 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
   @Operator
   public Predicate<ChangeData> mergedBefore(String value) throws QueryParseException {
-    if (!args.index.getSchema().hasField(ChangeField.MERGED_ON)) {
-      throw new QueryParseException(
-          String.format(
-              "'%s' operator is not supported by change index version", OPERATOR_MERGED_BEFORE));
-    }
+    checkFieldAvailable(ChangeField.MERGED_ON, OPERATOR_MERGED_BEFORE);
     return new BeforePredicate(
         ChangeField.MERGED_ON, ChangeQueryBuilder.OPERATOR_MERGED_BEFORE, value);
   }
 
   @Operator
   public Predicate<ChangeData> mergedAfter(String value) throws QueryParseException {
-    if (!args.index.getSchema().hasField(ChangeField.MERGED_ON)) {
-      throw new QueryParseException(
-          String.format(
-              "'%s' operator is not supported by change index version", OPERATOR_MERGED_AFTER));
-    }
+    checkFieldAvailable(ChangeField.MERGED_ON, OPERATOR_MERGED_AFTER);
     return new AfterPredicate(
         ChangeField.MERGED_ON, ChangeQueryBuilder.OPERATOR_MERGED_AFTER, value);
   }
@@ -564,7 +582,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   }
 
   @Operator
-  public Predicate<ChangeData> status(String statusName) {
+  public Predicate<ChangeData> status(String statusName) throws QueryParseException {
     if ("reviewed".equalsIgnoreCase(statusName)) {
       return ChangePredicates.unreviewed();
     }
@@ -579,21 +597,16 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   public Predicate<ChangeData> rule(String value) throws QueryParseException {
     String ruleNameArg = value;
     String statusArg = null;
-    String[] queryArgs = value.split("=");
-    if (queryArgs.length > 2) {
+    List<String> queryArgs = RULE_SPLITTER.splitToList(value);
+    if (queryArgs.size() > 2) {
       throw new QueryParseException(
           "Invalid query arguments. Correct format is 'rule:<rule_name>=<status>' "
               + "with <rule_name> in the form of <plugin>~<rule>. For Gerrit core rules, "
-              + "rule name should be specified either as gerrit~<rule> or <rule>.");
+              + "rule name should be specified as gerrit~<rule>.");
     }
-    if (queryArgs.length == 2) {
-      ruleNameArg = queryArgs[0];
-      statusArg = queryArgs[1];
-    }
-
-    // If ruleName is not prefixed by the plugin name, add the "gerrit~" prefix to it.
-    if (!ruleNameArg.contains("~")) {
-      ruleNameArg = "gerrit~" + ruleNameArg;
+    if (queryArgs.size() == 2) {
+      ruleNameArg = queryArgs.get(0);
+      statusArg = queryArgs.get(1);
     }
 
     return statusArg == null
@@ -620,10 +633,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     }
 
     if ("attention".equalsIgnoreCase(value)) {
-      if (!args.index.getSchema().hasField(ChangeField.ATTENTION_SET_USERS)) {
-        throw new QueryParseException(
-            "'has:attention' operator is not supported by change index version");
-      }
+      checkFieldAvailable(ChangeField.ATTENTION_SET_USERS, "has:attention");
       return new IsAttentionPredicate();
     }
 
@@ -632,7 +642,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     }
 
     // for plugins the value will be operandName_pluginName
-    List<String> names = Lists.newArrayList(Splitter.on('_').split(value));
+    List<String> names = PLUGIN_SPLITTER.splitToList(value);
     if (names.size() == 2) {
       ChangeHasOperandFactory op = args.hasOperands.get(names.get(1), names.get(0));
       if (op != null) {
@@ -666,20 +676,13 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     }
 
     if ("uploader".equalsIgnoreCase(value)) {
-      if (!args.getSchema().hasField(ChangeField.UPLOADER)) {
-        throw new QueryParseException(
-            "'is:uploader' operator is not supported by change index version");
-      }
+      checkFieldAvailable(ChangeField.UPLOADER, "is:uploader");
       return ChangePredicates.uploader(self());
     }
 
     if ("reviewer".equalsIgnoreCase(value)) {
-      if (args.getSchema().hasField(ChangeField.WIP)) {
-        return Predicate.and(
-            Predicate.not(new BooleanPredicate(ChangeField.WIP)),
-            ReviewerPredicate.reviewer(self()));
-      }
-      return ReviewerPredicate.reviewer(self());
+      return Predicate.and(
+          Predicate.not(new BooleanPredicate(ChangeField.WIP)), ReviewerPredicate.reviewer(self()));
     }
 
     if ("cc".equalsIgnoreCase(value)) {
@@ -694,25 +697,16 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     }
 
     if ("merge".equalsIgnoreCase(value)) {
-      if (args.getSchema().hasField(ChangeField.MERGE)) {
-        return new BooleanPredicate(ChangeField.MERGE);
-      }
-      throw new QueryParseException("'is:merge' operator is not supported by change index version");
+      checkFieldAvailable(ChangeField.MERGE, "is:merge");
+      return new BooleanPredicate(ChangeField.MERGE);
     }
 
     if ("private".equalsIgnoreCase(value)) {
-      if (args.getSchema().hasField(ChangeField.PRIVATE)) {
-        return new BooleanPredicate(ChangeField.PRIVATE);
-      }
-      throw new QueryParseException(
-          "'is:private' operator is not supported by change index version");
+      return new BooleanPredicate(ChangeField.PRIVATE);
     }
 
     if ("attention".equalsIgnoreCase(value)) {
-      if (!args.index.getSchema().hasField(ChangeField.ATTENTION_SET_USERS)) {
-        throw new QueryParseException(
-            "'is:attention' operator is not supported by change index version");
-      }
+      checkFieldAvailable(ChangeField.ATTENTION_SET_USERS, "is:attention");
       return new IsAttentionPredicate();
     }
 
@@ -724,16 +718,25 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
       return ChangePredicates.assignee(Account.id(ChangeField.NO_ASSIGNEE));
     }
 
+    if ("pure-revert".equalsIgnoreCase(value)) {
+      checkFieldAvailable(ChangeField.IS_PURE_REVERT, "is:pure-revert");
+      return ChangePredicates.pureRevert("1");
+    }
+
     if ("submittable".equalsIgnoreCase(value)) {
-      // SubmittablePredicate will match if *any* of the submit records are OK,
-      // but we need to check that they're *all* OK, so check that none of the
-      // submit records match any of the negative cases. To avoid checking yet
-      // more negative cases for CLOSED and FORCED, instead make sure at least
-      // one submit record is OK.
-      return Predicate.and(
-          new SubmittablePredicate(SubmitRecord.Status.OK),
-          Predicate.not(new SubmittablePredicate(SubmitRecord.Status.NOT_READY)),
-          Predicate.not(new SubmittablePredicate(SubmitRecord.Status.RULE_ERROR)));
+      if (!args.index.getSchema().hasField(ChangeField.IS_SUBMITTABLE)) {
+        // SubmittablePredicate will match if *any* of the submit records are OK,
+        // but we need to check that they're *all* OK, so check that none of the
+        // submit records match any of the negative cases. To avoid checking yet
+        // more negative cases for CLOSED and FORCED, instead make sure at least
+        // one submit record is OK.
+        return Predicate.and(
+            new SubmittablePredicate(SubmitRecord.Status.OK),
+            Predicate.not(new SubmittablePredicate(SubmitRecord.Status.NOT_READY)),
+            Predicate.not(new SubmittablePredicate(SubmitRecord.Status.RULE_ERROR)));
+      }
+      checkFieldAvailable(ChangeField.IS_SUBMITTABLE, "is:submittable");
+      return new IsSubmittablePredicate();
     }
 
     if ("ignored".equalsIgnoreCase(value)) {
@@ -741,30 +744,21 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     }
 
     if ("started".equalsIgnoreCase(value)) {
-      if (args.getSchema().hasField(ChangeField.STARTED)) {
-        return new BooleanPredicate(ChangeField.STARTED);
-      }
-      throw new QueryParseException(
-          "'is:started' operator is not supported by change index version");
+      checkFieldAvailable(ChangeField.STARTED, "is:started");
+      return new BooleanPredicate(ChangeField.STARTED);
     }
 
     if ("wip".equalsIgnoreCase(value)) {
-      if (args.getSchema().hasField(ChangeField.WIP)) {
-        return new BooleanPredicate(ChangeField.WIP);
-      }
-      throw new QueryParseException("'is:wip' operator is not supported by change index version");
+      return new BooleanPredicate(ChangeField.WIP);
     }
 
     if ("cherrypick".equalsIgnoreCase(value)) {
-      if (args.getSchema().hasField(ChangeField.CHERRY_PICK)) {
-        return new BooleanPredicate(ChangeField.CHERRY_PICK);
-      }
-      throw new QueryParseException(
-          "'is:cherrypick' operator is not supported by change index version");
+      checkFieldAvailable(ChangeField.CHERRY_PICK, "is:cherrypick");
+      return new BooleanPredicate(ChangeField.CHERRY_PICK);
     }
 
     // for plugins the value will be operandName_pluginName
-    List<String> names = Lists.newArrayList(Splitter.on('_').split(value));
+    List<String> names = PLUGIN_SPLITTER.splitToList(value);
     if (names.size() == 2) {
       ChangeIsOperandFactory op = args.isOperands.get(names.get(1), names.get(0));
       if (op != null) {
@@ -894,11 +888,18 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
       return ChangePredicates.hashtag(hashtag);
     }
 
-    if (!args.index.getSchema().hasField(ChangeField.FUZZY_HASHTAG)) {
-      throw new QueryParseException(
-          "'inhashtag' operator is not supported by change index version");
-    }
+    checkFieldAvailable(ChangeField.FUZZY_HASHTAG, "inhashtag");
     return ChangePredicates.fuzzyHashtag(hashtag);
+  }
+
+  @Operator
+  public Predicate<ChangeData> prefixhashtag(String hashtag) throws QueryParseException {
+    if (hashtag.isEmpty()) {
+      return ChangePredicates.hashtag(hashtag);
+    }
+
+    checkFieldAvailable(ChangeField.PREFIX_HASHTAG, "prefixhashtag");
+    return ChangePredicates.prefixHashtag(hashtag);
   }
 
   @Operator
@@ -918,6 +919,16 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   }
 
   @Operator
+  public Predicate<ChangeData> prefixtopic(String name) throws QueryParseException {
+    if (name.isEmpty()) {
+      return ChangePredicates.exactTopic(name);
+    }
+
+    checkFieldAvailable(ChangeField.PREFIX_TOPIC, "prefixtopic");
+    return ChangePredicates.prefixTopic(name);
+  }
+
+  @Operator
   public Predicate<ChangeData> ref(String ref) throws QueryParseException {
     if (ref.startsWith("^")) {
       return new RegexRefPredicate(ref);
@@ -926,12 +937,18 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   }
 
   @Operator
-  public Predicate<ChangeData> f(String file) {
+  public Predicate<ChangeData> f(String file) throws QueryParseException {
     return file(file);
   }
 
+  /**
+   * Creates a predicate to match changes by file.
+   *
+   * @param file the value of the {@code file} query operator
+   * @throws QueryParseException thrown if parsing the value fails (may be thrown by subclasses)
+   */
   @Operator
-  public Predicate<ChangeData> file(String file) {
+  public Predicate<ChangeData> file(String file) throws QueryParseException {
     if (file.startsWith("^")) {
       return new RegexPathPredicate(file);
     }
@@ -947,54 +964,47 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   }
 
   @Operator
-  public Predicate<ChangeData> ext(String ext) throws QueryParseException {
+  public Predicate<ChangeData> ext(String ext) {
     return extension(ext);
   }
 
   @Operator
-  public Predicate<ChangeData> extension(String ext) throws QueryParseException {
-    if (args.getSchema().hasField(ChangeField.EXTENSION)) {
-      return new FileExtensionPredicate(ext);
-    }
-    throw new QueryParseException("'extension' operator is not supported by change index version");
+  public Predicate<ChangeData> extension(String ext) {
+    return new FileExtensionPredicate(ext);
   }
 
   @Operator
-  public Predicate<ChangeData> onlyexts(String extList) throws QueryParseException {
+  public Predicate<ChangeData> onlyexts(String extList) {
     return onlyextensions(extList);
   }
 
   @Operator
-  public Predicate<ChangeData> onlyextensions(String extList) throws QueryParseException {
-    if (args.getSchema().hasField(ChangeField.ONLY_EXTENSIONS)) {
-      return new FileExtensionListPredicate(extList);
-    }
-    throw new QueryParseException(
-        "'onlyextensions' operator is not supported by change index version");
+  public Predicate<ChangeData> onlyextensions(String extList) {
+    return new FileExtensionListPredicate(extList);
   }
 
   @Operator
-  public Predicate<ChangeData> footer(String footer) throws QueryParseException {
-    if (args.getSchema().hasField(ChangeField.FOOTER)) {
-      return ChangePredicates.footer(footer);
-    }
-    throw new QueryParseException("'footer' operator is not supported by change index version");
+  public Predicate<ChangeData> footer(String footer) {
+    return ChangePredicates.footer(footer);
   }
 
   @Operator
-  public Predicate<ChangeData> dir(String directory) throws QueryParseException {
+  public Predicate<ChangeData> hasfooter(String footerName) throws QueryParseException {
+    checkFieldAvailable(ChangeField.FOOTER_NAME, "hasfooter");
+    return ChangePredicates.hasFooter(footerName);
+  }
+
+  @Operator
+  public Predicate<ChangeData> dir(String directory) {
     return directory(directory);
   }
 
   @Operator
-  public Predicate<ChangeData> directory(String directory) throws QueryParseException {
-    if (args.getSchema().hasField(ChangeField.DIRECTORY)) {
-      if (directory.startsWith("^")) {
-        return new RegexDirectoryPredicate(directory);
-      }
-      return ChangePredicates.directory(directory);
+  public Predicate<ChangeData> directory(String directory) {
+    if (directory.startsWith("^")) {
+      return new RegexDirectoryPredicate(directory);
     }
-    throw new QueryParseException("'directory' operator is not supported by change index version");
+    return ChangePredicates.directory(directory);
   }
 
   @Operator
@@ -1002,6 +1012,8 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
       throws QueryParseException, IOException, ConfigInvalidException {
     Set<Account.Id> accounts = null;
     AccountGroup.UUID group = null;
+    Integer count = null;
+    PredicateArgs.Operator countOp = null;
 
     // Parse for:
     // label:Code-Review=1,user=jsmith or
@@ -1012,24 +1024,48 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     // Special case: votes by owners can be tracked with ",owner":
     // label:Code-Review+2,owner
     // label:Code-Review+2,user=owner
-    List<String> splitReviewer = Lists.newArrayList(Splitter.on(',').limit(2).split(name));
+    // label:Code-Review+1,count=2
+    List<String> splitReviewer = LABEL_SPLITTER.limit(2).splitToList(name);
     name = splitReviewer.get(0); // remove all but the vote piece, e.g.'CodeReview=1'
 
     if (splitReviewer.size() == 2) {
       // process the user/group piece
       PredicateArgs lblArgs = new PredicateArgs(splitReviewer.get(1));
 
-      for (Map.Entry<String, String> pair : lblArgs.keyValue.entrySet()) {
-        if (pair.getKey().equalsIgnoreCase(ARG_ID_USER)) {
-          if (pair.getValue().equals(ARG_ID_OWNER)) {
+      // Disallow using the "count=" arg in conjunction with the "user=" or "group=" args. to avoid
+      // unnecessary complexity.
+      assertDisjunctive(lblArgs, ARG_COUNT, ARG_ID_USER);
+      assertDisjunctive(lblArgs, ARG_COUNT, ARG_ID_GROUP);
+
+      for (Map.Entry<String, ValOp> pair : lblArgs.keyValue.entrySet()) {
+        String key = pair.getKey();
+        String value = pair.getValue().value();
+        PredicateArgs.Operator operator = pair.getValue().operator();
+        if (key.equalsIgnoreCase(ARG_ID_USER)) {
+          if (value.equals(ARG_ID_OWNER)) {
             accounts = Collections.singleton(OWNER_ACCOUNT_ID);
-          } else if (pair.getValue().equals(ARG_ID_NON_UPLOADER)) {
+          } else if (value.equals(ARG_ID_NON_UPLOADER)) {
             accounts = Collections.singleton(NON_UPLOADER_ACCOUNT_ID);
           } else {
-            accounts = parseAccount(pair.getValue());
+            accounts = parseAccount(value);
           }
-        } else if (pair.getKey().equalsIgnoreCase(ARG_ID_GROUP)) {
-          group = parseGroup(pair.getValue()).getUUID();
+        } else if (key.equalsIgnoreCase(ARG_ID_GROUP)) {
+          group = parseGroup(value).getUUID();
+        } else if (key.equalsIgnoreCase(ARG_COUNT)) {
+          if (!isInt(value)) {
+            throw new QueryParseException("Invalid count argument. Value should be an integer");
+          }
+          count = Integer.parseInt(value);
+          countOp = operator;
+          if (count == 0) {
+            throw new QueryParseException("Argument count=0 is not allowed.");
+          }
+          if (count > LabelPredicate.MAX_COUNT) {
+            throw new QueryParseException(
+                String.format(
+                    "count=%d is not allowed. Maximum allowed value for count is %d.",
+                    count, LabelPredicate.MAX_COUNT));
+          }
         } else {
           throw new QueryParseException("Invalid argument identifier '" + pair.getKey() + "'");
         }
@@ -1066,7 +1102,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     // If the vote piece looks like Code-Review=NEED with a valid non-numeric
     // submit record status, interpret as a submit record query.
     int eq = name.indexOf('=');
-    if (args.getSchema().hasField(ChangeField.SUBMIT_RECORD) && eq > 0) {
+    if (eq > 0) {
       String statusName = name.substring(eq + 1).toUpperCase();
       if (!isInt(statusName) && !MagicLabelValue.tryParse(statusName).isPresent()) {
         SubmitRecord.Label.Status status =
@@ -1078,7 +1114,18 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
       }
     }
 
-    return new LabelPredicate(args, name, accounts, group);
+    return new LabelPredicate(args, name, accounts, group, count, countOp);
+  }
+
+  /** Assert that keys {@code k1} and {@code k2} do not exist in {@code labelArgs} together. */
+  private void assertDisjunctive(PredicateArgs labelArgs, String k1, String k2)
+      throws QueryParseException {
+    Map<String, ValOp> keyValArgs = labelArgs.keyValue;
+    if (keyValArgs.containsKey(k1) && keyValArgs.containsKey(k2)) {
+      throw new QueryParseException(
+          String.format(
+              "Cannot use the '%s' argument in conjunction with the '%s' argument", k1, k2));
+    }
   }
 
   private static boolean isInt(String s) {
@@ -1092,7 +1139,11 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   }
 
   @Operator
-  public Predicate<ChangeData> message(String text) {
+  public Predicate<ChangeData> message(String text) throws QueryParseException {
+    if (text.startsWith("^")) {
+      checkFieldAvailable(ChangeField.COMMIT_MESSAGE_EXACT, "messageexact");
+      return new RegexMessagePredicate(text);
+    }
     return ChangePredicates.message(text);
   }
 
@@ -1108,15 +1159,29 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   }
 
   private Predicate<ChangeData> ignoredBySelf() throws QueryParseException {
-    return new StarPredicate(self(), StarredChangesUtil.IGNORE_LABEL);
+    return ChangePredicates.starBy(
+        args.experimentFeatures.isFeatureEnabled(
+            GERRIT_BACKEND_REQUEST_FEATURE_COMPUTE_FROM_ALL_USERS_REPOSITORY),
+        args.starredChangesUtil,
+        self(),
+        StarredChangesUtil.IGNORE_LABEL);
   }
 
   private Predicate<ChangeData> starredBySelf() throws QueryParseException {
-    return new StarPredicate(self(), StarredChangesUtil.DEFAULT_LABEL);
+    return ChangePredicates.starBy(
+        args.experimentFeatures.isFeatureEnabled(
+            GERRIT_BACKEND_REQUEST_FEATURE_COMPUTE_FROM_ALL_USERS_REPOSITORY),
+        args.starredChangesUtil,
+        self(),
+        StarredChangesUtil.DEFAULT_LABEL);
   }
 
   private Predicate<ChangeData> draftBySelf() throws QueryParseException {
-    return ChangePredicates.draftBy(self());
+    return ChangePredicates.draftBy(
+        args.experimentFeatures.isFeatureEnabled(
+            GERRIT_BACKEND_REQUEST_FEATURE_COMPUTE_FROM_ALL_USERS_REPOSITORY),
+        args.commentsUtil,
+        self());
   }
 
   @Operator
@@ -1194,9 +1259,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   @Operator
   public Predicate<ChangeData> uploader(String who)
       throws QueryParseException, IOException, ConfigInvalidException {
-    if (!args.getSchema().hasField(ChangeField.UPLOADER)) {
-      throw new QueryParseException("'uploader' operator is not supported by change index version");
-    }
+    checkFieldAvailable(ChangeField.UPLOADER, "uploader");
     return uploader(parseAccount(who, (AccountState s) -> true));
   }
 
@@ -1211,10 +1274,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   @Operator
   public Predicate<ChangeData> attention(String who)
       throws QueryParseException, IOException, ConfigInvalidException {
-    if (!args.index.getSchema().hasField(ChangeField.ATTENTION_SET_USERS)) {
-      throw new QueryParseException(
-          "'attention' operator is not supported by change index version");
-    }
+    checkFieldAvailable(ChangeField.ATTENTION_SET_USERS, "attention");
     return attention(parseAccount(who, (AccountState s) -> true));
   }
 
@@ -1254,9 +1314,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
   @Operator
   public Predicate<ChangeData> uploaderin(String group) throws QueryParseException, IOException {
-    if (!args.getSchema().hasField(ChangeField.UPLOADER)) {
-      throw new QueryParseException("'uploader' operator is not supported by change index version");
-    }
+    checkFieldAvailable(ChangeField.UPLOADER, "uploaderin");
 
     GroupReference g = parseGroup(group);
     AccountGroup.UUID groupId = g.getUUID();
@@ -1296,10 +1354,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     if (Objects.equals(byState, Predicate.<ChangeData>any())) {
       return Predicate.any();
     }
-    if (args.getSchema().hasField(ChangeField.WIP)) {
-      return Predicate.and(Predicate.not(new BooleanPredicate(ChangeField.WIP)), byState);
-    }
-    return byState;
+    return Predicate.and(Predicate.not(new BooleanPredicate(ChangeField.WIP)), byState);
   }
 
   @Operator
@@ -1384,7 +1439,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     try (Repository git = args.repoManager.openRepository(args.allUsersName)) {
       // [name=]<name>
       if (inputArgs.keyValue.containsKey(ARG_ID_NAME)) {
-        name = inputArgs.keyValue.get(ARG_ID_NAME);
+        name = inputArgs.keyValue.get(ARG_ID_NAME).value();
       } else if (inputArgs.positional.size() == 1) {
         name = Iterables.getOnlyElement(inputArgs.positional);
       } else if (inputArgs.positional.size() > 1) {
@@ -1393,7 +1448,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
       // [,user=<user>]
       if (inputArgs.keyValue.containsKey(ARG_ID_USER)) {
-        Set<Account.Id> accounts = parseAccount(inputArgs.keyValue.get(ARG_ID_USER));
+        Set<Account.Id> accounts = parseAccount(inputArgs.keyValue.get(ARG_ID_USER).value());
         if (accounts != null && accounts.size() > 1) {
           throw error(
               String.format(
@@ -1435,7 +1490,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     try (Repository git = args.repoManager.openRepository(args.allUsersName)) {
       // [name=]<name>
       if (inputArgs.keyValue.containsKey(ARG_ID_NAME)) {
-        name = inputArgs.keyValue.get(ARG_ID_NAME);
+        name = inputArgs.keyValue.get(ARG_ID_NAME).value();
       } else if (inputArgs.positional.size() == 1) {
         name = Iterables.getOnlyElement(inputArgs.positional);
       } else if (inputArgs.positional.size() > 1) {
@@ -1444,7 +1499,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
       // [,user=<user>]
       if (inputArgs.keyValue.containsKey(ARG_ID_USER)) {
-        Set<Account.Id> accounts = parseAccount(inputArgs.keyValue.get(ARG_ID_USER));
+        Set<Account.Id> accounts = parseAccount(inputArgs.keyValue.get(ARG_ID_USER).value());
         if (accounts != null && accounts.size() > 1) {
           throw error(
               String.format(
@@ -1455,9 +1510,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
         account = self();
       }
 
-      VersionedAccountDestinations d = VersionedAccountDestinations.forUser(account);
-      d.load(args.allUsersName, git);
-      Set<BranchNameKey> destinations = d.getDestinationList().getDestinations(name);
+      Set<BranchNameKey> destinations = getDestinationList(git, account).getDestinations(name);
       if (destinations != null && !destinations.isEmpty()) {
         return new DestinationPredicate(destinations, value);
       }
@@ -1470,32 +1523,33 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     throw new QueryParseException("Unknown named destination: " + name);
   }
 
+  protected DestinationList getDestinationList(Repository git, Account.Id account)
+      throws ConfigInvalidException, RepositoryNotFoundException, IOException {
+    DestinationList dl = destinationListByAccount.get(account);
+    if (dl == null) {
+      dl = loadDestinationList(git, account);
+      destinationListByAccount.put(account, dl);
+    }
+    return dl;
+  }
+
+  protected DestinationList loadDestinationList(Repository git, Account.Id account)
+      throws ConfigInvalidException, RepositoryNotFoundException, IOException {
+    VersionedAccountDestinations d = VersionedAccountDestinations.forUser(account);
+    d.load(args.allUsersName, git);
+    return d.getDestinationList();
+  }
+
   @Operator
   public Predicate<ChangeData> author(String who) throws QueryParseException {
-    if (args.getSchema().hasField(ChangeField.EXACT_AUTHOR)) {
-      return getAuthorOrCommitterPredicate(
-          who.trim(), ChangePredicates::exactAuthor, ChangePredicates::author);
-    }
-    return getAuthorOrCommitterFullTextPredicate(who.trim(), ChangePredicates::author);
+    return getAuthorOrCommitterPredicate(
+        who.trim(), ChangePredicates::exactAuthor, ChangePredicates::author);
   }
 
   @Operator
   public Predicate<ChangeData> committer(String who) throws QueryParseException {
-    if (args.getSchema().hasField(ChangeField.EXACT_COMMITTER)) {
-      return getAuthorOrCommitterPredicate(
-          who.trim(), ChangePredicates::exactCommitter, ChangePredicates::committer);
-    }
-    return getAuthorOrCommitterFullTextPredicate(who.trim(), ChangePredicates::committer);
-  }
-
-  @Operator
-  public Predicate<ChangeData> submittable(String str) throws QueryParseException {
-    SubmitRecord.Status status =
-        Enums.getIfPresent(SubmitRecord.Status.class, str.toUpperCase()).orNull();
-    if (status == null) {
-      throw error("invalid value for submittable:" + str);
-    }
-    return new SubmittablePredicate(status);
+    return getAuthorOrCommitterPredicate(
+        who.trim(), ChangePredicates::exactCommitter, ChangePredicates::committer);
   }
 
   @Operator
@@ -1508,41 +1562,31 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     if (value == null || Ints.tryParse(value) == null) {
       throw new QueryParseException("'revertof' must be an integer");
     }
-    if (args.getSchema().hasField(ChangeField.REVERT_OF)) {
-      return ChangePredicates.revertOf(Change.id(Ints.tryParse(value)));
-    }
-    throw new QueryParseException("'revertof' operator is not supported by change index version");
+    return ChangePredicates.revertOf(Change.id(Ints.tryParse(value)));
   }
 
   @Operator
-  public Predicate<ChangeData> submissionId(String value) throws QueryParseException {
-    if (args.getSchema().hasField(ChangeField.SUBMISSIONID)) {
-      return ChangePredicates.submissionId(value);
-    }
-    throw new QueryParseException(
-        "'submissionid' operator is not supported by change index version");
+  public Predicate<ChangeData> submissionId(String value) {
+    return ChangePredicates.submissionId(value);
   }
 
   @Operator
   public Predicate<ChangeData> cherryPickOf(String value) throws QueryParseException {
-    if (args.getSchema().hasField(ChangeField.CHERRY_PICK_OF_CHANGE)
-        && args.getSchema().hasField(ChangeField.CHERRY_PICK_OF_PATCHSET)) {
-      if (Ints.tryParse(value) != null) {
-        return ChangePredicates.cherryPickOf(Change.id(Ints.tryParse(value)));
-      }
-      try {
-        PatchSet.Id patchSetId = PatchSet.Id.parse(value);
-        return ChangePredicates.cherryPickOf(patchSetId);
-      } catch (IllegalArgumentException e) {
-        throw new QueryParseException(
-            "'"
-                + value
-                + "' is not a valid input. It must be in the 'ChangeNumber[,PatchsetNumber]' format.",
-            e);
-      }
+    checkFieldAvailable(ChangeField.CHERRY_PICK_OF_CHANGE, "cherryPickOf");
+    checkFieldAvailable(ChangeField.CHERRY_PICK_OF_PATCHSET, "cherryPickOf");
+    if (Ints.tryParse(value) != null) {
+      return ChangePredicates.cherryPickOf(Change.id(Ints.tryParse(value)));
     }
-    throw new QueryParseException(
-        "'cherrypickof' operator is not supported by change index version");
+    try {
+      PatchSet.Id patchSetId = PatchSet.Id.parse(value);
+      return ChangePredicates.cherryPickOf(patchSetId);
+    } catch (IllegalArgumentException e) {
+      throw new QueryParseException(
+          "'"
+              + value
+              + "' is not a valid input. It must be in the 'ChangeNumber[,PatchsetNumber]' format.",
+          e);
+    }
   }
 
   @Override
@@ -1599,6 +1643,14 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     // Adapt the capacity of the "predicates" list when adding more default
     // predicates.
     return Predicate.or(predicates);
+  }
+
+  protected void checkFieldAvailable(FieldDef<ChangeData, ?> field, String operator)
+      throws QueryParseException {
+    if (!args.index.getSchema().hasField(field)) {
+      throw new QueryParseException(
+          String.format("'%s' operator is not supported by change index version", operator));
+    }
   }
 
   private Predicate<ChangeData> getAuthorOrCommitterPredicate(
@@ -1715,11 +1767,9 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
       String who, ReviewerStateInternal state, boolean forDefaultField)
       throws QueryParseException, IOException, ConfigInvalidException {
     Predicate<ChangeData> reviewerByEmailPredicate = null;
-    if (args.index.getSchema().hasField(ChangeField.REVIEWER_BY_EMAIL)) {
-      Address address = Address.tryParse(who);
-      if (address != null) {
-        reviewerByEmailPredicate = ReviewerByEmailPredicate.forState(address, state);
-      }
+    Address address = Address.tryParse(who);
+    if (address != null) {
+      reviewerByEmailPredicate = ReviewerByEmailPredicate.forState(address, state);
     }
 
     Predicate<ChangeData> reviewerPredicate = null;

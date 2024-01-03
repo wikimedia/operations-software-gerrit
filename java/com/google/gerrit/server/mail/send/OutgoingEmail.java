@@ -42,9 +42,9 @@ import com.google.gerrit.server.validators.ValidationException;
 import com.google.template.soy.jbcsrc.api.SoySauce;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -67,6 +67,7 @@ public abstract class OutgoingEmail {
   private final Set<Account.Id> rcptTo = new HashSet<>();
   private final Map<String, EmailHeader> headers;
   private final Set<Address> smtpRcptTo = new HashSet<>();
+  private final Set<Address> smtpBccRcptTo = new HashSet<>();
   private Address smtpFromAddress;
   private StringBuilder textBody;
   private StringBuilder htmlBody;
@@ -228,8 +229,13 @@ public abstract class OutgoingEmail {
             j.add(address.email());
           }
         }
-        smtpRcptTo.stream().forEach(a -> j.add(a.email()));
-        smtpRcptToPlaintextOnly.stream().forEach(a -> j.add(a.email()));
+        // For users who prefer plaintext, this comes at the cost of not being
+        // listed in the multipart To and Cc headers. We work around this by adding
+        // all users to the Reply-To address in both the plaintext and multipart
+        // email. We should exclude any BCC addresses from reply-to, because they should be
+        // invisible to other recipients.
+        Sets.difference(Sets.union(smtpRcptTo, smtpRcptToPlaintextOnly), smtpBccRcptTo).stream()
+            .forEach(a -> j.add(a.email()));
         setHeader(FieldName.REPLY_TO, j.toString());
       }
 
@@ -318,7 +324,7 @@ public abstract class OutgoingEmail {
     setupSoyContext();
 
     smtpFromAddress = args.fromAddressGenerator.get().from(fromId);
-    setHeader(FieldName.DATE, new Date());
+    setHeader(FieldName.DATE, Instant.now());
     headers.put(FieldName.FROM, new EmailHeader.AddressList(smtpFromAddress));
     headers.put(FieldName.TO, new EmailHeader.AddressList());
     headers.put(FieldName.CC, new EmailHeader.AddressList());
@@ -392,7 +398,7 @@ public abstract class OutgoingEmail {
     headers.remove(name);
   }
 
-  protected void setHeader(String name, Date date) {
+  protected void setHeader(String name, Instant date) {
     headers.put(name, new EmailHeader.Date(date));
   }
 
@@ -548,6 +554,8 @@ public abstract class OutgoingEmail {
    * Returns whether this email is visible to the given account
    *
    * @param to account.
+   * @throws PermissionBackendException thrown if checking a permission fails due to an error in the
+   *     permission backend
    */
   protected boolean isVisibleTo(Account.Id to) throws PermissionBackendException {
     return true;
@@ -569,6 +577,7 @@ public abstract class OutgoingEmail {
           }
           ((EmailHeader.AddressList) headers.get(FieldName.TO)).remove(addr.email());
           ((EmailHeader.AddressList) headers.get(FieldName.CC)).remove(addr.email());
+          smtpBccRcptTo.remove(addr);
         }
         switch (rt) {
           case TO:
@@ -578,6 +587,7 @@ public abstract class OutgoingEmail {
             ((EmailHeader.AddressList) headers.get(FieldName.CC)).add(addr);
             break;
           case BCC:
+            smtpBccRcptTo.add(addr);
             break;
         }
       }

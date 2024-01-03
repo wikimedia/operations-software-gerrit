@@ -24,8 +24,9 @@ import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.change.NotifyResolver;
 import java.io.IOException;
-import java.sql.Timestamp;
-import java.util.TimeZone;
+import java.time.Instant;
+import java.time.ZoneId;
+import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.revwalk.RevWalk;
 
 /**
@@ -66,16 +67,16 @@ public interface Context {
    *
    * @return timestamp.
    */
-  Timestamp getWhen();
+  Instant getWhen();
 
   /**
-   * Get the time zone in which this update takes place.
+   * Get the time zone ID in which this update takes place.
    *
-   * <p>In the current implementation, this is always the time zone of the server.
+   * <p>In the current implementation, this is always the time zone ID of the server.
    *
-   * @return time zone.
+   * @return zone ID.
    */
-  TimeZone getTimeZone();
+  ZoneId getZoneId();
 
   /**
    * Get the user performing the update.
@@ -133,5 +134,34 @@ public interface Context {
    */
   default Account.Id getAccountId() {
     return getIdentifiedUser().getAccountId();
+  }
+
+  /**
+   * Creates a new {@link PersonIdent} with {@link #getWhen()} as timestamp.
+   *
+   * @param personIdent {@link PersonIdent} to be copied
+   * @return copied {@link PersonIdent} with {@link #getWhen()} as timestamp
+   */
+  default PersonIdent newPersonIdent(PersonIdent personIdent) {
+    return new PersonIdent(personIdent, getWhen().toEpochMilli(), personIdent.getTimeZoneOffset());
+  }
+
+  /**
+   * Creates a committer {@link PersonIdent} for {@link #getIdentifiedUser()}.
+   *
+   * @return the created committer {@link PersonIdent}
+   */
+  default PersonIdent newCommitterIdent() {
+    return newCommitterIdent(getIdentifiedUser());
+  }
+
+  /**
+   * Creates a committer {@link PersonIdent} for the given user.
+   *
+   * @param user user for which a committer {@link PersonIdent} should be created
+   * @return the created committer {@link PersonIdent}
+   */
+  default PersonIdent newCommitterIdent(IdentifiedUser user) {
+    return user.newCommitterIdent(getWhen(), getZoneId());
   }
 }

@@ -35,7 +35,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Map;
-import java.util.SortedSet;
+import java.util.NavigableSet;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
@@ -263,10 +263,10 @@ public class LocalDiskRepositoryManager implements GitRepositoryManager {
   }
 
   @Override
-  public SortedSet<Project.NameKey> list() {
+  public NavigableSet<Project.NameKey> list() {
     ProjectVisitor visitor = new ProjectVisitor(basePath);
     scanProjects(visitor);
-    return Collections.unmodifiableSortedSet(visitor.found);
+    return Collections.unmodifiableNavigableSet(visitor.found);
   }
 
   protected void scanProjects(ProjectVisitor visitor) {
@@ -295,7 +295,7 @@ public class LocalDiskRepositoryManager implements GitRepositoryManager {
   }
 
   protected class ProjectVisitor extends SimpleFileVisitor<Path> {
-    private final SortedSet<Project.NameKey> found = new TreeSet<>();
+    private final NavigableSet<Project.NameKey> found = new TreeSet<>();
     private Path startFolder;
 
     public ProjectVisitor(Path startFolder) {
@@ -318,7 +318,7 @@ public class LocalDiskRepositoryManager implements GitRepositoryManager {
 
     @Override
     public FileVisitResult visitFileFailed(Path file, IOException e) {
-      logger.atWarning().log(e.getMessage());
+      logger.atWarning().log("%s", e.getMessage());
       return FileVisitResult.CONTINUE;
     }
 

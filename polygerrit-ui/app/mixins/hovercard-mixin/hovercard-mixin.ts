@@ -22,6 +22,19 @@ import {ShowAlertEventDetail} from '../../types/events';
 import {debounce, DelayedTask} from '../../utils/async-util';
 import {hovercardStyles} from '../../styles/gr-hovercard-styles';
 import {sharedStyles} from '../../styles/shared-styles';
+import {DependencyRequestEvent} from '../../models/dependency';
+import {
+  addShortcut,
+  findActiveElement,
+  isElementTarget,
+  Key,
+  Modifier,
+} from '../../utils/dom-util';
+import {ShortcutController} from '../../elements/lit/shortcut-controller';
+import {
+  getFocusableElements,
+  getFocusableElementsReverse,
+} from '../../utils/focusable';
 
 interface ReloadEventDetail {
   clearPatchset?: boolean;
@@ -34,6 +47,12 @@ const HIDE_CLASS = 'hide';
  * ID for the container element.
  */
 const containerId = 'gr-hovercard-container';
+
+export interface MouseKeyboardOrFocusEvent {
+  keyboardEvent?: KeyboardEvent;
+  mouseEvent?: MouseEvent;
+  focusEvent?: FocusEvent;
+}
 
 export function getHovercardContainer(
   options: {createIfNotExists: boolean} = {createIfNotExists: false}
@@ -126,6 +145,13 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
 
     isScheduledToHide?: boolean;
 
+    openedByKeyboard = false;
+
+    private targetCleanups: Array<() => void> = [];
+
+    /** Called in disconnectedCallback. */
+    private cleanups: (() => void)[] = [];
+
     static get styles() {
       return [sharedStyles, hovercardStyles];
     }
@@ -135,9 +161,13 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
       super(...args);
       // show the hovercard if mouse moves to hovercard
       // this will cancel pending hide as well
-      this.addEventListener('mouseenter', this.show);
+      this.addEventListener('mouseenter', this.mouseShow);
       // when leave hovercard, hide it immediately
-      this.addEventListener('mouseleave', this.hide);
+      this.addEventListener('mouseleave', this.mouseHide);
+      const keyboardController = new ShortcutController(this);
+      keyboardController.addGlobal({key: Key.ESC}, (e: KeyboardEvent) =>
+        this.hide({keyboardEvent: e})
+      );
     }
 
     override connectedCallback() {
@@ -150,11 +180,37 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
       }
 
       this.container = getHovercardContainer({createIfNotExists: true});
+      this.cleanups.push(
+        addShortcut(
+          this,
+          {key: Key.TAB},
+          (e: KeyboardEvent) => {
+            this.pressTab(e);
+          },
+          {
+            doNotPrevent: true,
+          }
+        )
+      );
+      this.cleanups.push(
+        addShortcut(
+          this,
+          {key: Key.TAB, modifiers: [Modifier.SHIFT_KEY]},
+          (e: KeyboardEvent) => {
+            this.pressShiftTab(e);
+          },
+          {
+            doNotPrevent: true,
+          }
+        )
+      );
     }
 
     override disconnectedCallback() {
       this.cancelShowTask();
       this.cancelHideTask();
+      for (const cleanup of this.cleanups) cleanup();
+      this.cleanups = [];
       super.disconnectedCallback();
     }
 
@@ -164,19 +220,35 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
       // trigger the hovercard, which can annoying for the user, for example
       // when added reviewer chips appear in the reply dialog via keyboard
       // interaction.
-      this._target?.addEventListener('mousemove', this.debounceShow);
-      this._target?.addEventListener('focus', this.debounceShow);
-      this._target?.addEventListener('mouseleave', this.debounceHide);
-      this._target?.addEventListener('blur', this.debounceHide);
-      this._target?.addEventListener('click', this.hide);
+      this._target?.addEventListener('mousemove', this.mouseDebounceShow);
+      this._target?.addEventListener('mouseleave', this.mouseDebounceHide);
+      this._target?.addEventListener('blur', this.focusDebounceHide);
+      this._target?.addEventListener('click', this.mouseHide);
+      if (this._target) {
+        this.targetCleanups.push(
+          addShortcut(this._target, {key: Key.ENTER}, (e: KeyboardEvent) => {
+            this.show({keyboardEvent: e});
+          })
+        );
+        this.targetCleanups.push(
+          addShortcut(this._target, {key: Key.SPACE}, (e: KeyboardEvent) => {
+            this.show({keyboardEvent: e});
+          })
+        );
+      }
+      this.addEventListener('request-dependency', this.resolveDep);
     }
 
     private removeTargetEventListeners() {
-      this._target?.removeEventListener('mousemove', this.debounceShow);
-      this._target?.removeEventListener('focus', this.debounceShow);
-      this._target?.removeEventListener('mouseleave', this.debounceHide);
-      this._target?.removeEventListener('blur', this.debounceHide);
-      this._target?.removeEventListener('click', this.hide);
+      this._target?.removeEventListener('mousemove', this.mouseDebounceShow);
+      this._target?.removeEventListener('mouseleave', this.mouseDebounceHide);
+      this._target?.removeEventListener('blur', this.focusDebounceHide);
+      this._target?.removeEventListener('click', this.mouseHide);
+      for (const cleanup of this.targetCleanups) {
+        cleanup();
+      }
+      this.targetCleanups = [];
+      this.removeEventListener('request-dependency', this.resolveDep);
     }
 
     /**
@@ -192,7 +264,27 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
       }
     }
 
-    readonly debounceHide = () => {
+    readonly mouseDebounceHide = (e: MouseEvent) => {
+      this.debounceHide({mouseEvent: e});
+    };
+
+    readonly mouseDebounceShow = (e: MouseEvent) => {
+      this.debounceShow({mouseEvent: e});
+    };
+
+    readonly mouseHide = (e: MouseEvent) => {
+      this.hide({mouseEvent: e});
+    };
+
+    readonly mouseShow = (e: MouseEvent) => {
+      this.show({mouseEvent: e});
+    };
+
+    readonly focusDebounceHide = (e: FocusEvent) => {
+      this.debounceHide({focusEvent: e});
+    };
+
+    readonly debounceHide = (props: MouseKeyboardOrFocusEvent) => {
       this.cancelShowTask();
       if (!this._isShowing || this.isScheduledToHide) return;
       this.isScheduledToHide = true;
@@ -202,7 +294,7 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
           // This happens when hide immediately through click or mouse leave
           // on the hovercard
           if (!this.isScheduledToHide) return;
-          this.hide();
+          this.hide(props);
         },
         HIDE_DELAY_MS
       );
@@ -264,23 +356,44 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
       return target as HTMLElement;
     }
 
+    private readonly documentClickListener = (e: MouseEvent) => {
+      if (!e.target || !isElementTarget(e.target)) return;
+      if (this.contains(e.target)) return;
+      this.forceHide();
+    };
+
+    /**
+     * Hovercards aren't children of <gr-app>. Dependencies must be resolved via
+     * their targets, so re-route 'request-dependency' events.
+     */
+    readonly resolveDep = (e: DependencyRequestEvent<unknown>) => {
+      this._target?.dispatchEvent(
+        new DependencyRequestEvent<unknown>(e.dependency, e.callback)
+      );
+    };
+
+    readonly forceHide = () => {
+      this.hide({keyboardEvent: new KeyboardEvent('enter')});
+    };
+
     /**
      * Hides/closes the hovercard. This occurs when the user triggers the
      * `mouseleave` event on the hovercard's `target` element (as long as the
-     * user is not hovering over the hovercard).
-     *
+     * user is not hovering over the hovercard). If event is not specified
+     * in props, code assumes mouseEvent
      */
-    readonly hide = (e?: MouseEvent) => {
+    readonly hide = (props: MouseKeyboardOrFocusEvent) => {
       this.cancelHideTask();
       this.cancelShowTask();
       if (!this._isShowing) {
         return;
       }
-
-      // If the user is now hovering over the hovercard or the user is returning
-      // from the hovercard but now hovering over the target (to stop an annoying
-      // flicker effect), just return.
-      if (e) {
+      if (!props?.keyboardEvent && this.openedByKeyboard) return;
+      // If the user is clicking on a link and still hovering over the hovercard
+      // or the user is returning from the hovercard but now hovering over the
+      // target (to stop an annoying flicker effect), just return.
+      if (props?.mouseEvent) {
+        const e = props.mouseEvent;
         if (
           e.relatedTarget === this ||
           (e.target === this && e.relatedTarget === this._target)
@@ -288,6 +401,14 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
           return;
         }
       }
+      if (this.openedByKeyboard) {
+        if (this._target) {
+          this._target.focus();
+        }
+      }
+      // Make sure to reset the keyboard variable so new shows will not
+      // assume keyboard is the reason for opening the hovercard.
+      this.openedByKeyboard = false;
 
       // Mark that the hovercard is not visible and do not allow focusing
       this._isShowing = false;
@@ -304,19 +425,20 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
       if (this.container?.contains(this)) {
         this.container.removeChild(this);
       }
+      document.removeEventListener('click', this.documentClickListener);
     };
 
     /**
      * Shows/opens the hovercard with a fixed delay.
      */
-    readonly debounceShow = () => {
-      this.debounceShowBy(SHOW_DELAY_MS);
+    readonly debounceShow = (props: MouseKeyboardOrFocusEvent) => {
+      this.debounceShowBy(SHOW_DELAY_MS, props);
     };
 
     /**
      * Shows/opens the hovercard with the given delay.
      */
-    debounceShowBy(delayMs: number) {
+    debounceShowBy(delayMs: number, props: MouseKeyboardOrFocusEvent) {
       this.cancelHideTask();
       if (this._isShowing || this.isScheduledToShow) return;
       this.isScheduledToShow = true;
@@ -325,10 +447,33 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
         () => {
           // This happens when the mouse leaves the target before the delay is over.
           if (!this.isScheduledToShow) return;
-          this.show();
+          this.show(props);
         },
         delayMs
       );
+    }
+
+    override focus(options?: FocusOptions): void {
+      const a = getFocusableElements(this).next();
+      if (!a.done) a.value.focus(options);
+    }
+
+    pressTab(e: KeyboardEvent) {
+      const activeElement = findActiveElement(document);
+      const lastFocusable = getFocusableElementsReverse(this).next();
+      if (!lastFocusable.done && activeElement === lastFocusable.value) {
+        e.preventDefault();
+        this.forceHide();
+      }
+    }
+
+    pressShiftTab(e: KeyboardEvent) {
+      const activeElement = findActiveElement(document);
+      const firstFocusable = getFocusableElements(this).next();
+      if (!firstFocusable.done && activeElement === firstFocusable.value) {
+        e.preventDefault();
+        this.forceHide();
+      }
     }
 
     cancelShowTask() {
@@ -340,18 +485,22 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
 
     /**
      * Shows/opens the hovercard. This occurs when the user triggers the
-     * `mousenter` event on the hovercard's `target` element.
+     * `mousenter` event on the hovercard's `target` element or when a user
+     * presses enter/space on the hovercard's `target` element. If event is not
+     * specified in props, code assumes mouseEvent
      */
-    readonly show = async () => {
+    readonly show = async (props: MouseKeyboardOrFocusEvent) => {
       this.cancelHideTask();
       this.cancelShowTask();
+      // If we are calling show again because of a mouse reason, then keep
+      // the keyboard valuable set.
+      this.openedByKeyboard = this.openedByKeyboard || !!props?.keyboardEvent;
       if (this._isShowing || !this.container) {
         return;
       }
 
       // Mark that the hovercard is now visible
       this._isShowing = true;
-      this.setAttribute('tabindex', '0');
 
       // Add it to the DOM and calculate its position
       this.container.appendChild(this);
@@ -367,6 +516,10 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
       });
       this.updatePosition();
       this.classList.remove(HIDE_CLASS);
+      if (props?.keyboardEvent) {
+        this.focus();
+      }
+      document.addEventListener('click', this.documentClickListener);
     };
 
     updatePosition() {
@@ -385,6 +538,7 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
         this.updatePositionTo(position);
         if (this._isInsideViewport()) return;
       }
+      this.updatePositionTo(this.position);
       console.warn('Could not find a visible position for the hovercard.');
     }
 
@@ -478,15 +632,17 @@ export interface HovercardMixinInterface {
   _target: HTMLElement | null;
   _isShowing: boolean;
   dispatchEventThroughTarget(eventName: string, detail?: unknown): void;
-  show(): void;
+  show(props: MouseKeyboardOrFocusEvent): Promise<void>;
+  forceHide(): void;
 
   // Used for tests
-  hide(e: MouseEvent): void;
+  mouseHide(e: MouseEvent): void;
+  hide(props: MouseKeyboardOrFocusEvent): void;
   container: HTMLElement | null;
   hideTask?: DelayedTask;
   showTask?: DelayedTask;
   position: string;
-  debounceShowBy(delayMs: number): void;
+  debounceShowBy(delayMs: number, props: MouseKeyboardOrFocusEvent): void;
   updatePosition(): void;
   isScheduledToShow?: boolean;
   isScheduledToHide?: boolean;

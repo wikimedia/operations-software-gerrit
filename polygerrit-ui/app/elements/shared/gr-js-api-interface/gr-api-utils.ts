@@ -18,9 +18,17 @@
 import {getBaseUrl} from '../../../utils/url-util';
 import {HttpMethod} from '../../../constants/constants';
 import {RequestPayload} from '../../../types/common';
-import {appContext} from '../../../services/app-context';
+import {RestApiService} from '../../../services/gr-rest-api/gr-rest-api';
 
 export const PLUGIN_LOADING_TIMEOUT_MS = 10000;
+
+export const THEME_JS = '/static/gerrit-theme.js';
+
+const THEME_NAME = 'gerrit-theme';
+
+export function isThemeFile(path: string) {
+  return path.endsWith(THEME_JS);
+}
 
 /**
  * Retrieves the name of the plugin base on the url.
@@ -40,12 +48,10 @@ export function getPluginNameFromUrl(url: URL | string) {
   if (window.ASSETS_PATH && url.href.includes(window.ASSETS_PATH)) {
     pathname = url.href.replace(window.ASSETS_PATH, '');
   }
-  // Site theme is server from predefined path.
-  if (
-    ['/static/gerrit-theme.html', '/static/gerrit-theme.js'].includes(pathname)
-  ) {
-    return 'gerrit-theme';
-  } else if (!pathname.startsWith('/plugins')) {
+
+  if (isThemeFile(pathname)) return THEME_NAME;
+
+  if (!pathname.startsWith('/plugins')) {
     console.warn(
       'Plugin not being loaded from /plugins base path:',
       url.href,
@@ -56,20 +62,20 @@ export function getPluginNameFromUrl(url: URL | string) {
 
   // Pathname should normally look like this:
   // /plugins/PLUGINNAME/static/SCRIPTNAME.js
-  // Or, for app/samples:
+  // Or:
   // /plugins/PLUGINNAME.js
   // TODO(taoalpha): guard with a regex
   return pathname.split('/')[2].split('.')[0];
 }
 
-// TODO(taoalpha): to be deprecated.
 export function send(
+  restApiService: RestApiService,
   method: HttpMethod,
   url: string,
   opt_callback?: (response: unknown) => void,
   opt_payload?: RequestPayload
 ) {
-  return appContext.restApiService
+  return restApiService
     .send(method, url, opt_payload)
     .then(response => {
       if (response.status < 200 || response.status >= 300) {
@@ -81,7 +87,7 @@ export function send(
           }
         });
       } else {
-        return appContext.restApiService.getResponseObject(response);
+        return restApiService.getResponseObject(response);
       }
     })
     .then(response => {

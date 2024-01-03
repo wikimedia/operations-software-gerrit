@@ -118,6 +118,10 @@ public class ActionJson {
     copy.topic = changeInfo.topic;
     copy.attentionSet =
         changeInfo.attentionSet == null ? null : ImmutableMap.copyOf(changeInfo.attentionSet);
+    copy.removedFromAttentionSet =
+        changeInfo.removedFromAttentionSet == null
+            ? null
+            : ImmutableMap.copyOf(changeInfo.removedFromAttentionSet);
     copy.assignee = changeInfo.assignee;
     copy.hashtags = changeInfo.hashtags;
     copy.changeId = changeInfo.changeId;
@@ -202,7 +206,7 @@ public class ActionJson {
     return out;
   }
 
-  private Map<String, ActionInfo> toActionMap(
+  private ImmutableMap<String, ActionInfo> toActionMap(
       RevisionResource rsrc,
       List<ActionVisitor> visitors,
       ChangeInfo changeInfo,
@@ -222,6 +226,6 @@ public class ActionJson {
       }
       out.put(d.getId(), actionInfo);
     }
-    return out;
+    return ImmutableMap.copyOf(out);
   }
 }

@@ -16,6 +16,7 @@
  */
 import {getBaseUrl} from '../../utils/url-util';
 import {EventEmitterService} from '../gr-event-interface/gr-event-interface';
+import {Finalizable} from '../registry';
 import {
   AuthRequestInit,
   AuthService,
@@ -44,7 +45,7 @@ interface AuthRequestInitWithHeaders extends AuthRequestInit {
 /**
  * Auth class.
  */
-export class Auth implements AuthService {
+export class Auth implements AuthService, Finalizable {
   // TODO(dmfilippov): Remove Type and Status properties, expose AuthType and
   // AuthStatus to API
   static TYPE = {
@@ -87,6 +88,8 @@ export class Auth implements AuthService {
   get baseUrl() {
     return getBaseUrl();
   }
+
+  finalize() {}
 
   /**
    * Returns if user is authed or not.
@@ -188,7 +191,8 @@ export class Auth implements AuthService {
     }
   }
 
-  private _getCookie(name: string): string {
+  // private but used in test
+  _getCookie(name: string): string {
     const key = name + '=';
     let result = '';
     document.cookie.split(';').some(c => {
@@ -202,7 +206,8 @@ export class Auth implements AuthService {
     return result;
   }
 
-  private _isTokenValid(token: Token | null): token is ValidToken {
+  // private but used in test
+  _isTokenValid(token: Token | null): token is ValidToken {
     if (!token) {
       return false;
     }

@@ -166,12 +166,14 @@ export interface HighlightJS {
     languageName: string,
     code: string,
     ignore_illegals: boolean,
-    continuation: unknown
+    continuation?: unknown
   ): HighlightJSResult;
 }
 
 export type DiffLayerListener = (
+  /** 1-based inclusive */
   start: number,
+  /** 1-based inclusive */
   end: number,
   side: Side
 ) => void;
@@ -186,10 +188,8 @@ export interface ChangeViewState {
   patchRange: PatchRange | null;
   selectedFileIndex: number;
   showReplyDialog: boolean;
-  showDownloadDialog: boolean;
   diffMode: DiffViewMode | null;
   numFilesShown: number | null;
-  diffViewMode?: boolean;
 }
 
 export interface ChangeListViewState {
@@ -199,7 +199,6 @@ export interface ChangeListViewState {
   selectedFileIndex?: number;
   selectedChangeIndex?: number;
   showReplyDialog?: boolean;
-  showDownloadDialog?: boolean;
   diffMode?: DiffViewMode;
   numFilesShown?: number;
   scrollTop?: number;

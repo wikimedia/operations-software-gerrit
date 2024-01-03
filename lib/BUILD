@@ -47,13 +47,6 @@ java_library(
 )
 
 java_library(
-    name = "jgit-ssh-jsch",
-    data = ["//lib:LICENSE-jgit"],
-    visibility = ["//visibility:public"],
-    exports = ["@jgit//org.eclipse.jgit.ssh.jsch:ssh-jsch"],
-)
-
-java_library(
     name = "jgit-ssh-apache",
     data = ["//lib:LICENSE-jgit"],
     visibility = ["//visibility:public"],
@@ -99,7 +92,10 @@ java_library(
     name = "protobuf",
     data = ["//lib:LICENSE-protobuf"],
     visibility = ["//visibility:public"],
-    exports = ["@com_google_protobuf//:protobuf_java"],
+    exports = [
+        "@com_google_protobuf//:protobuf_java",
+        "@com_google_protobuf//:protobuf_javalite",
+    ],
 )
 
 java_library(
@@ -128,6 +124,15 @@ java_library(
 )
 
 java_library(
+    name = "guava-testlib",
+    data = ["//lib:LICENSE-Apache2.0"],
+    visibility = ["//visibility:public"],
+    exports = [
+        "@guava-testlib//jar",
+    ],
+)
+
+java_library(
     name = "caffeine",
     data = ["//lib:LICENSE-Apache2.0"],
     visibility = [
@@ -150,13 +155,6 @@ java_library(
         "//java/com/google/gerrit/server/cache/mem:__pkg__",
     ],
     exports = [":caffeine-guava-renamed"],
-)
-
-java_library(
-    name = "jsch",
-    data = ["//lib:LICENSE-jsch"],
-    visibility = ["//visibility:public"],
-    exports = ["@jsch//jar"],
 )
 
 java_library(
@@ -538,18 +536,6 @@ java_library(
     data = ["//lib:LICENSE-icu4j"],
     visibility = ["//visibility:public"],
     exports = ["@icu4j//jar"],
-)
-
-java_library(
-    name = "javax-annotation",
-    data = ["//lib:LICENSE-DO_NOT_DISTRIBUTE"],
-    visibility = [
-        "//java/com/google/gerrit/acceptance:__pkg__",
-        "//java/com/google/gerrit/extensions:__pkg__",
-        "//java/com/google/gerrit/server:__pkg__",
-        "//plugins:__subpackages__",
-    ],
-    exports = ["@javax-annotation//jar"],
 )
 
 sh_test(

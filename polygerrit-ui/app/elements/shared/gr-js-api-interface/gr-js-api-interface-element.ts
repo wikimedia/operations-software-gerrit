@@ -18,7 +18,7 @@ import {getPluginLoader} from './gr-plugin-loader';
 import {hasOwnProperty} from '../../../utils/common-util';
 import {
   ChangeInfo,
-  LabelNameToValuesMap,
+  LabelNameToValueMap,
   ReviewInput,
   RevisionInfo,
 } from '../../../types/common';
@@ -32,14 +32,17 @@ import {
 } from './gr-js-api-types';
 import {EventType, TargetElement} from '../../../api/plugin';
 import {DiffLayer, HighlightJS, ParsedChangeInfo} from '../../../types/types';
-import {appContext} from '../../../services/app-context';
 import {MenuLink} from '../../../api/admin';
+import {Finalizable} from '../../../services/registry';
+import {ReportingService} from '../../../services/gr-reporting/gr-reporting';
 
 const elements: {[key: string]: HTMLElement} = {};
 const eventCallbacks: {[key: string]: EventCallback[]} = {};
 
-export class GrJsApiInterface implements JsApiService {
-  private readonly reporting = appContext.reportingService;
+export class GrJsApiInterface implements JsApiService, Finalizable {
+  constructor(readonly reporting: ReportingService) {}
+
+  finalize() {}
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   handleEvent(type: EventType, detail: any) {
@@ -95,8 +98,12 @@ export class GrJsApiInterface implements JsApiService {
     const cancelSubmit = submitCallbacks.some(callback => {
       try {
         return callback(change, revision) === false;
-      } catch (err) {
-        this.reporting.error(err);
+      } catch (err: unknown) {
+        this.reporting.error(
+          new Error('canSubmitChange callback error'),
+          undefined,
+          err
+        );
       }
       return false;
     });
@@ -116,8 +123,12 @@ export class GrJsApiInterface implements JsApiService {
     for (const cb of this._getEventCallbacks(EventType.HISTORY)) {
       try {
         cb(detail.path);
-      } catch (err) {
-        this.reporting.error(err);
+      } catch (err: unknown) {
+        this.reporting.error(
+          new Error('handleHistory callback error'),
+          undefined,
+          err
+        );
       }
     }
   }
@@ -157,8 +168,12 @@ export class GrJsApiInterface implements JsApiService {
     for (const cb of this._getEventCallbacks(EventType.SHOW_CHANGE)) {
       try {
         cb(change, revision, info);
-      } catch (err) {
-        this.reporting.error(err);
+      } catch (err: unknown) {
+        this.reporting.error(
+          new Error('showChange callback error'),
+          undefined,
+          err
+        );
       }
     }
   }
@@ -170,8 +185,12 @@ export class GrJsApiInterface implements JsApiService {
     for (const cb of registeredCallbacks) {
       try {
         cb(detail.revisionActions, detail.change);
-      } catch (err) {
-        this.reporting.error(err);
+      } catch (err: unknown) {
+        this.reporting.error(
+          new Error('showRevisionActions callback error'),
+          undefined,
+          err
+        );
       }
     }
   }
@@ -180,8 +199,12 @@ export class GrJsApiInterface implements JsApiService {
     for (const cb of this._getEventCallbacks(EventType.COMMIT_MSG_EDIT)) {
       try {
         cb(change, msg);
-      } catch (err) {
-        this.reporting.error(err);
+      } catch (err: unknown) {
+        this.reporting.error(
+          new Error('commitMessage callback error'),
+          undefined,
+          err
+        );
       }
     }
   }
@@ -191,8 +214,12 @@ export class GrJsApiInterface implements JsApiService {
     for (const cb of this._getEventCallbacks(EventType.COMMENT)) {
       try {
         cb(detail.node);
-      } catch (err) {
-        this.reporting.error(err);
+      } catch (err: unknown) {
+        this.reporting.error(
+          new Error('comment callback error'),
+          undefined,
+          err
+        );
       }
     }
   }
@@ -201,8 +228,12 @@ export class GrJsApiInterface implements JsApiService {
     for (const cb of this._getEventCallbacks(EventType.LABEL_CHANGE)) {
       try {
         cb(detail.change);
-      } catch (err) {
-        this.reporting.error(err);
+      } catch (err: unknown) {
+        this.reporting.error(
+          new Error('labelChange callback error'),
+          undefined,
+          err
+        );
       }
     }
   }
@@ -211,8 +242,12 @@ export class GrJsApiInterface implements JsApiService {
     for (const cb of this._getEventCallbacks(EventType.HIGHLIGHTJS_LOADED)) {
       try {
         cb(detail.hljs);
-      } catch (err) {
-        this.reporting.error(err);
+      } catch (err: unknown) {
+        this.reporting.error(
+          new Error('HighlightjsLoaded callback error'),
+          undefined,
+          err
+        );
       }
     }
   }
@@ -221,8 +256,12 @@ export class GrJsApiInterface implements JsApiService {
     for (const cb of this._getEventCallbacks(EventType.REVERT)) {
       try {
         revertMsg = cb(change, revertMsg, origMsg) as string;
-      } catch (err) {
-        this.reporting.error(err);
+      } catch (err: unknown) {
+        this.reporting.error(
+          new Error('modifyRevertMsg callback error'),
+          undefined,
+          err
+        );
       }
     }
     return revertMsg;
@@ -240,8 +279,12 @@ export class GrJsApiInterface implements JsApiService {
           revertSubmissionMsg,
           origMsg
         ) as string;
-      } catch (err) {
-        this.reporting.error(err);
+      } catch (err: unknown) {
+        this.reporting.error(
+          new Error('modifyRevertSubmissionMsg callback error'),
+          undefined,
+          err
+        );
       }
     }
     return revertSubmissionMsg;
@@ -254,8 +297,12 @@ export class GrJsApiInterface implements JsApiService {
       try {
         const layer = annotationApi.createLayer(path);
         if (layer) layers.push(layer);
-      } catch (err) {
-        this.reporting.error(err);
+      } catch (err: unknown) {
+        this.reporting.error(
+          new Error('getDiffLayers callback error'),
+          undefined,
+          err
+        );
       }
     }
     return layers;
@@ -266,8 +313,12 @@ export class GrJsApiInterface implements JsApiService {
       try {
         const annotationApi = cb as unknown as GrAnnotationActionsInterface;
         annotationApi.disposeLayer(path);
-      } catch (err) {
-        this.reporting.error(err);
+      } catch (err: unknown) {
+        this.reporting.error(
+          new Error('disposeDiffLayers callback error'),
+          undefined,
+          err
+        );
       }
     }
   }
@@ -310,10 +361,14 @@ export class GrJsApiInterface implements JsApiService {
         if (hasOwnProperty(r, 'labels')) {
           review = r as ReviewInput;
         } else {
-          review = {labels: r as LabelNameToValuesMap};
+          review = {labels: r as LabelNameToValueMap};
         }
-      } catch (err) {
-        this.reporting.error(err);
+      } catch (err: unknown) {
+        this.reporting.error(
+          new Error('getReviewPostRevert callback error'),
+          undefined,
+          err
+        );
       }
     }
     return review;

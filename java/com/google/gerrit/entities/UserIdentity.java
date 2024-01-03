@@ -14,26 +14,26 @@
 
 package com.google.gerrit.entities;
 
-import java.sql.Timestamp;
+import java.time.Instant;
 
 public final class UserIdentity {
   /** Full name of the user. */
-  protected String name;
+  private String name;
 
   /** Email address (or user@host style string anyway). */
-  protected String email;
+  private String email;
 
   /** Username of the user. */
-  protected String username;
+  private String username;
 
   /** Time (in UTC) when the identity was constructed. */
-  protected Timestamp when;
+  private Instant when;
 
   /** Offset from UTC */
-  protected int tz;
+  private int tz;
 
   /** If the user has a Gerrit account, their account identity. */
-  protected Account.Id accountId;
+  private Account.Id accountId;
 
   public String getName() {
     return name;
@@ -55,11 +55,11 @@ public final class UserIdentity {
     return username;
   }
 
-  public Timestamp getDate() {
+  public Instant getDate() {
     return when;
   }
 
-  public void setDate(Timestamp d) {
+  public void setDate(Instant d) {
     when = d;
   }
 

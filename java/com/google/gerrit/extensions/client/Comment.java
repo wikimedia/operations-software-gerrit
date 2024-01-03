@@ -15,6 +15,7 @@
 package com.google.gerrit.extensions.client;
 
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Comparator;
 import java.util.Objects;
 
@@ -35,7 +36,11 @@ public abstract class Comment {
 
   public Range range;
   public String inReplyTo;
+
+  // TODO(issue-15508): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
+  // Instant
   public Timestamp updated;
+
   public String message;
 
   /**
@@ -43,6 +48,20 @@ public abstract class Comment {
    * comment applies.
    */
   public String commitId;
+
+  // TODO(issue-15508): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
+  // Instant
+  @SuppressWarnings("JdkObsolete")
+  public Instant getUpdated() {
+    return updated.toInstant();
+  }
+
+  // TODO(issue-15508): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
+  // Instant
+  @SuppressWarnings("JdkObsolete")
+  public void setUpdated(Instant when) {
+    updated = Timestamp.from(when);
+  }
 
   public static class Range implements Comparable<Range> {
     private static final Comparator<Range> RANGE_COMPARATOR =
@@ -70,10 +89,10 @@ public abstract class Comment {
     public boolean equals(Object o) {
       if (o instanceof Range) {
         Range r = (Range) o;
-        return Objects.equals(startLine, r.startLine)
-            && Objects.equals(startCharacter, r.startCharacter)
-            && Objects.equals(endLine, r.endLine)
-            && Objects.equals(endCharacter, r.endCharacter);
+        return startLine == r.startLine
+            && startCharacter == r.startCharacter
+            && endLine == r.endLine
+            && endCharacter == r.endCharacter;
       }
       return false;
     }
@@ -110,6 +129,11 @@ public abstract class Comment {
     return 1;
   }
 
+  // This is a value class that allows adding attributes by subclassing.
+  // Doing this is discouraged and using composition rather than inheritance to add fields to value
+  // types is preferred. However this class is part of the extension API, hence we cannot change it
+  // without breaking the API. Hence suppress the EqualsGetClass warning here.
+  @SuppressWarnings("EqualsGetClass")
   @Override
   public boolean equals(Object o) {
     if (this == o) {

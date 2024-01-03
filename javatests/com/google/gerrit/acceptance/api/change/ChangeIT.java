@@ -14,7 +14,7 @@
 
 package com.google.gerrit.acceptance.api.change;
 
-import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.common.truth.Truth8.assertThat;
@@ -31,6 +31,8 @@ import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.b
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.labelPermissionKey;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.permissionKey;
 import static com.google.gerrit.entities.RefNames.changeMetaRef;
+import static com.google.gerrit.extensions.client.ChangeStatus.ABANDONED;
+import static com.google.gerrit.extensions.client.ChangeStatus.MERGED;
 import static com.google.gerrit.extensions.client.ListChangesOption.ALL_REVISIONS;
 import static com.google.gerrit.extensions.client.ListChangesOption.CHANGE_ACTIONS;
 import static com.google.gerrit.extensions.client.ListChangesOption.CHECK;
@@ -69,7 +71,6 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
-import com.google.common.collect.MoreCollectors;
 import com.google.common.truth.ThrowableSubject;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.ChangeIndexedCounter;
@@ -85,6 +86,7 @@ import com.google.gerrit.acceptance.UseTimezone;
 import com.google.gerrit.acceptance.VerifyNoPiiInChangeNotes;
 import com.google.gerrit.acceptance.config.GerritConfig;
 import com.google.gerrit.acceptance.testsuite.account.AccountOperations;
+import com.google.gerrit.acceptance.testsuite.change.IndexOperations;
 import com.google.gerrit.acceptance.testsuite.group.GroupOperations;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
@@ -99,16 +101,10 @@ import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.LabelFunction;
 import com.google.gerrit.entities.LabelId;
 import com.google.gerrit.entities.LabelType;
-import com.google.gerrit.entities.LegacySubmitRequirement;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.Permission;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.RefNames;
-import com.google.gerrit.entities.SubmitRecord;
-import com.google.gerrit.entities.SubmitRequirement;
-import com.google.gerrit.entities.SubmitRequirementExpression;
-import com.google.gerrit.entities.SubmitRequirementExpressionResult;
-import com.google.gerrit.entities.SubmitRequirementResult;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.annotations.Exports;
 import com.google.gerrit.extensions.api.accounts.DeleteDraftCommentsInput;
@@ -150,12 +146,7 @@ import com.google.gerrit.extensions.common.CommentInfo;
 import com.google.gerrit.extensions.common.CommitInfo;
 import com.google.gerrit.extensions.common.GitPerson;
 import com.google.gerrit.extensions.common.LabelInfo;
-import com.google.gerrit.extensions.common.LegacySubmitRequirementInfo;
 import com.google.gerrit.extensions.common.RevisionInfo;
-import com.google.gerrit.extensions.common.SubmitRecordInfo;
-import com.google.gerrit.extensions.common.SubmitRequirementInput;
-import com.google.gerrit.extensions.common.SubmitRequirementResultInfo;
-import com.google.gerrit.extensions.common.SubmitRequirementResultInfo.Status;
 import com.google.gerrit.extensions.common.TrackingIdInfo;
 import com.google.gerrit.extensions.events.WorkInProgressStateChangedListener;
 import com.google.gerrit.extensions.restapi.AuthException;
@@ -174,13 +165,15 @@ import com.google.gerrit.server.StarredChangesUtil;
 import com.google.gerrit.server.change.ChangeMessages;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.change.testing.TestChangeETagComputation;
-import com.google.gerrit.server.experiments.ExperimentFeaturesConstants;
+import com.google.gerrit.server.events.CommitReceivedEvent;
 import com.google.gerrit.server.git.ChangeMessageModifier;
+import com.google.gerrit.server.git.validators.CommitValidationException;
+import com.google.gerrit.server.git.validators.CommitValidationListener;
+import com.google.gerrit.server.git.validators.CommitValidationMessage;
 import com.google.gerrit.server.group.SystemGroupBackend;
 import com.google.gerrit.server.index.change.ChangeIndex;
 import com.google.gerrit.server.index.change.ChangeIndexCollection;
 import com.google.gerrit.server.index.change.IndexedChangeQuery;
-import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.patch.DiffSummary;
 import com.google.gerrit.server.patch.DiffSummaryKey;
 import com.google.gerrit.server.patch.IntraLineDiff;
@@ -189,7 +182,6 @@ import com.google.gerrit.server.project.testing.TestLabels;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.ChangeQueryBuilder.ChangeOperatorFactory;
 import com.google.gerrit.server.restapi.change.PostReview;
-import com.google.gerrit.server.rules.SubmitRule;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
@@ -203,9 +195,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.text.MessageFormat;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -214,6 +208,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.junit.TestRepository;
@@ -225,7 +220,6 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.transport.PushResult;
-import org.junit.Ignore;
 import org.junit.Test;
 
 @NoHttpd
@@ -240,6 +234,7 @@ public class ChangeIT extends AbstractDaemonTest {
   @Inject private ProjectOperations projectOperations;
   @Inject private RequestScopeOperations requestScopeOperations;
   @Inject private ExtensionRegistry extensionRegistry;
+  @Inject private IndexOperations.Change changeIndexOperations;
 
   @Inject
   @Named("diff_intraline")
@@ -1023,6 +1018,31 @@ public class ChangeIT extends AbstractDaemonTest {
     AuthException thrown =
         assertThrows(AuthException.class, () -> gApi.changes().id(changeId).rebase());
     assertThat(thrown).hasMessageThat().contains("rebase not permitted");
+  }
+
+  @Test
+  public void rebaseWithValidationOptions() throws Exception {
+    // Create two changes both with the same parent
+    PushOneCommit.Result r = createChange();
+    testRepo.reset("HEAD~1");
+    PushOneCommit.Result r2 = createChange();
+
+    // Approve and submit the first change
+    RevisionApi revision = gApi.changes().id(r.getChangeId()).current();
+    revision.review(ReviewInput.approve());
+    revision.submit();
+
+    RebaseInput rebaseInput = new RebaseInput();
+    rebaseInput.validationOptions = ImmutableMap.of("key", "value");
+
+    TestCommitValidationListener testCommitValidationListener = new TestCommitValidationListener();
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(testCommitValidationListener)) {
+      // Rebase the second change
+      gApi.changes().id(r2.getChangeId()).current().rebase(rebaseInput);
+      assertThat(testCommitValidationListener.receiveEvent.pushOptions)
+          .containsExactly("key", "value");
+    }
   }
 
   @Test
@@ -1925,7 +1945,7 @@ public class ChangeIT extends AbstractDaemonTest {
     PushOneCommit.Result r = createChange();
     ChangeResource rsrc = parseResource(r);
     String oldETag = rsrc.getETag();
-    Timestamp oldTs = rsrc.getChange().getLastUpdatedOn();
+    Instant oldTs = rsrc.getChange().getLastUpdatedOn();
 
     addReviewer.call(r.getChangeId(), user.email());
 
@@ -2036,7 +2056,7 @@ public class ChangeIT extends AbstractDaemonTest {
     PushOneCommit.Result r = createChange();
     ChangeResource rsrc = parseResource(r);
     String oldETag = rsrc.getETag();
-    Timestamp oldTs = rsrc.getChange().getLastUpdatedOn();
+    Instant oldTs = rsrc.getChange().getLastUpdatedOn();
 
     // create a group named "ab" with one user: testUser
     String email = "abcd@example.com";
@@ -2085,7 +2105,7 @@ public class ChangeIT extends AbstractDaemonTest {
     PushOneCommit.Result r = createChange();
     ChangeResource rsrc = parseResource(r);
     String oldETag = rsrc.getETag();
-    Timestamp oldTs = rsrc.getChange().getLastUpdatedOn();
+    Instant oldTs = rsrc.getChange().getLastUpdatedOn();
 
     // create a group named "kobe" with one user: lee
     String testUserFullname = "kobebryant";
@@ -2186,7 +2206,7 @@ public class ChangeIT extends AbstractDaemonTest {
     PushOneCommit.Result r = createChange();
     ChangeResource rsrc = parseResource(r);
     String oldETag = rsrc.getETag();
-    Timestamp oldTs = rsrc.getChange().getLastUpdatedOn();
+    Instant oldTs = rsrc.getChange().getLastUpdatedOn();
 
     ReviewerInput in = new ReviewerInput();
     in.reviewer = user.email();
@@ -2830,6 +2850,53 @@ public class ChangeIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void labelPermissionsChange_doesNotAffectCurrentVotes() throws Exception {
+    String heads = "refs/heads/*";
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allowLabel(LabelId.CODE_REVIEW).ref(heads).group(REGISTERED_USERS).range(-2, +2))
+        .update();
+
+    PushOneCommit.Result r = createChange();
+    String changeId = r.getChangeId();
+
+    // Approve the change as user
+    requestScopeOperations.setApiUser(user.id());
+    approve(changeId);
+    assertThat(
+            gApi.changes().id(changeId).get(DETAILED_LABELS).labels.get("Code-Review").all.stream()
+                .collect(toImmutableMap(vote -> Account.id(vote._accountId), vote -> vote.value)))
+        .isEqualTo(ImmutableMap.of(user.id(), 2));
+
+    // Remove permissions for CODE_REVIEW. The user still has [-1,+1], inherited from All-Projects.
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .remove(labelPermissionKey(LabelId.CODE_REVIEW).ref(heads).group(REGISTERED_USERS))
+        .update();
+
+    // No permissions to vote +2
+    assertThrows(AuthException.class, () -> approve(changeId));
+
+    assertThat(
+            get(changeId, DETAILED_LABELS).labels.get(LabelId.CODE_REVIEW).all.stream()
+                .map(vote -> vote.value))
+        .containsExactly(2);
+
+    // The change is still submittable
+    requestScopeOperations.setApiUser(admin.id());
+    gApi.changes().id(changeId).current().submit();
+    assertThat(info(changeId).status).isEqualTo(MERGED);
+
+    // The +2 vote out of permissions range is still present.
+    assertThat(
+            get(changeId, DETAILED_LABELS).labels.get(LabelId.CODE_REVIEW).all.stream()
+                .collect(toImmutableMap(vote -> Account.id(vote._accountId), vote -> vote.value)))
+        .isEqualTo(ImmutableMap.of(user.id(), 2, admin.id(), 0));
+  }
+
+  @Test
   public void createEmptyChange() throws Exception {
     ChangeInput in = new ChangeInput();
     in.branch = Constants.MASTER;
@@ -3091,17 +3158,14 @@ public class ChangeIT extends AbstractDaemonTest {
   public void submitStaleChange() throws Exception {
     PushOneCommit.Result r = createChange();
 
-    disableChangeIndexWrites();
-    try {
+    try (AutoCloseable ignored = changeIndexOperations.disableWrites()) {
       r = amendChange(r.getChangeId());
-    } finally {
-      enableChangeIndexWrites();
     }
 
     gApi.changes().id(r.getChangeId()).current().review(ReviewInput.approve());
 
     gApi.changes().id(r.getChangeId()).current().submit();
-    assertThat(gApi.changes().id(r.getChangeId()).info().status).isEqualTo(ChangeStatus.MERGED);
+    assertThat(gApi.changes().id(r.getChangeId()).info().status).isEqualTo(MERGED);
   }
 
   @Test
@@ -3127,7 +3191,7 @@ public class ChangeIT extends AbstractDaemonTest {
         .update();
     requestScopeOperations.setApiUser(user.id());
     gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).submit();
-    assertThat(gApi.changes().id(r.getChangeId()).info().status).isEqualTo(ChangeStatus.MERGED);
+    assertThat(gApi.changes().id(r.getChangeId()).info().status).isEqualTo(MERGED);
   }
 
   @Test
@@ -3373,7 +3437,7 @@ public class ChangeIT extends AbstractDaemonTest {
       assertThat(commitPatchSetCreation.getShortMessage()).isEqualTo("Create patch set 2");
       PersonIdent expectedAuthor =
           changeNoteUtil.newAccountIdIdent(
-              getAccount(admin.id()).id(), c.updated, serverIdent.get());
+              getAccount(admin.id()).id(), c.updated.toInstant(), serverIdent.get());
       assertThat(commitPatchSetCreation.getAuthorIdent()).isEqualTo(expectedAuthor);
       assertThat(commitPatchSetCreation.getCommitterIdent())
           .isEqualTo(new PersonIdent(serverIdent.get(), c.updated));
@@ -3383,7 +3447,7 @@ public class ChangeIT extends AbstractDaemonTest {
       assertThat(commitChangeCreation.getShortMessage()).isEqualTo("Create change");
       expectedAuthor =
           changeNoteUtil.newAccountIdIdent(
-              getAccount(admin.id()).id(), c.created, serverIdent.get());
+              getAccount(admin.id()).id(), c.created.toInstant(), serverIdent.get());
       assertThat(commitChangeCreation.getAuthorIdent()).isEqualTo(expectedAuthor);
       assertThat(commitChangeCreation.getCommitterIdent())
           .isEqualTo(new PersonIdent(serverIdent.get(), c.created));
@@ -3495,6 +3559,55 @@ public class ChangeIT extends AbstractDaemonTest {
     r2.assertOkStatus();
   }
 
+  private void assertLabelDescription(ChangeInfo changeInfo, String labelName, String description) {
+    assertThat(changeInfo.labels.get(labelName).description).isEqualTo(description);
+  }
+
+  @Test
+  public void checkLabelVotesForUnsubmittedChange() throws Exception {
+    List<ListChangesOption> options =
+        EnumSet.complementOf(
+                EnumSet.of(
+                    ListChangesOption.CHECK,
+                    ListChangesOption.SKIP_DIFFSTAT,
+                    ListChangesOption.DETAILED_LABELS))
+            .stream()
+            .collect(Collectors.toList());
+    PushOneCommit.Result r = createChange();
+    ChangeInfo change = gApi.changes().id(r.getChangeId()).get(options);
+    assertThat(change.status).isEqualTo(ChangeStatus.NEW);
+    assertThat(change.labels.keySet()).containsExactly(LabelId.CODE_REVIEW);
+    assertThat(change.labels.get(LabelId.CODE_REVIEW).all).isNull();
+
+    voteLabel(r.getChangeId(), LabelId.CODE_REVIEW, +1);
+    change = gApi.changes().id(r.getChangeId()).get(options);
+    assertThat(change.labels.keySet()).containsExactly(LabelId.CODE_REVIEW);
+    List<ApprovalInfo> codeReviewApprovals = change.labels.get(LabelId.CODE_REVIEW).all;
+    assertThat(codeReviewApprovals).hasSize(1);
+    ApprovalInfo codeReviewApproval = codeReviewApprovals.get(0);
+    // permittedVotingRange is not served if DETAILED_LABELS is not requested.
+    assertThat(codeReviewApproval.permittedVotingRange).isNull();
+    assertThat(codeReviewApproval.value).isEqualTo(1);
+    assertThat(codeReviewApproval.username).isEqualTo(admin.username());
+
+    // Add another +1 vote as user
+    requestScopeOperations.setApiUser(user.id());
+    voteLabel(r.getChangeId(), LabelId.CODE_REVIEW, +1);
+    change = gApi.changes().id(r.getChangeId()).get(options);
+    assertThat(change.labels.keySet()).containsExactly(LabelId.CODE_REVIEW);
+    assertThat(change.labels.get(LabelId.CODE_REVIEW).all).hasSize(2);
+    // All available label votes and their meanings are also served if DETAILED_LABELS is not
+    // requested.
+    assertThat(change.labels.get(LabelId.CODE_REVIEW).values).isNotNull();
+    codeReviewApprovals = change.labels.get(LabelId.CODE_REVIEW).all;
+    assertThat(codeReviewApprovals.stream().map(a -> a.permittedVotingRange).collect(toList()))
+        .containsExactly(null, null);
+    assertThat(codeReviewApprovals.stream().map(a -> a.value).collect(toList()))
+        .containsExactly(1, 1);
+    assertThat(codeReviewApprovals.stream().map(a -> a.username).collect(toList()))
+        .containsExactly(admin.username(), user.username());
+  }
+
   @Test
   public void checkLabelsForUnsubmittedChange() throws Exception {
     PushOneCommit.Result r = createChange();
@@ -3524,6 +3637,7 @@ public class ChangeIT extends AbstractDaemonTest {
         .containsExactly(LabelId.CODE_REVIEW, LabelId.VERIFIED);
     assertPermitted(change, LabelId.CODE_REVIEW, -2, -1, 0, 1, 2);
     assertPermitted(change, LabelId.VERIFIED, -1, 0, 1);
+    assertLabelDescription(change, LabelId.VERIFIED, TestLabels.VERIFIED_LABEL_DESCRIPTION);
 
     // add an approval on the new label
     gApi.changes()
@@ -3560,13 +3674,63 @@ public class ChangeIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void checkLabelVotesForMergedChange() throws Exception {
+    List<ListChangesOption> options =
+        EnumSet.complementOf(
+                EnumSet.of(
+                    ListChangesOption.CHECK,
+                    ListChangesOption.SKIP_DIFFSTAT,
+                    ListChangesOption.DETAILED_LABELS))
+            .stream()
+            .collect(Collectors.toList());
+    PushOneCommit.Result r = createChange();
+    voteLabel(r.getChangeId(), LabelId.CODE_REVIEW, +2);
+
+    // Add another label for 'Verified'
+    LabelType verified = TestLabels.verified();
+    AccountGroup.UUID registeredUsers = systemGroupBackend.getGroup(REGISTERED_USERS).getUUID();
+    String heads = RefNames.REFS_HEADS + "*";
+    try (ProjectConfigUpdate u = updateProject(project)) {
+      u.getConfig().upsertLabelType(verified);
+      u.save();
+    }
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allowLabel(verified.getName()).ref(heads).group(registeredUsers).range(-1, 1))
+        .update();
+
+    // Submit the change
+    voteLabel(r.getChangeId(), TestLabels.verified().getName(), 1);
+    gApi.changes().id(r.getChangeId()).current().submit();
+
+    // Make sure label votes are available if DETAILED_LABELS is not requested.
+    ChangeInfo change = gApi.changes().id(r.getChangeId()).get(options);
+    assertThat(change.status).isEqualTo(ChangeStatus.MERGED);
+    assertThat(change.labels.keySet())
+        .containsExactly(LabelId.CODE_REVIEW, TestLabels.verified().getName());
+    List<ApprovalInfo> codeReviewApprovals = change.labels.get(LabelId.CODE_REVIEW).all;
+    List<ApprovalInfo> verifiedApprovals = change.labels.get(TestLabels.verified().getName()).all;
+
+    assertThat(codeReviewApprovals).hasSize(1);
+    assertThat(codeReviewApprovals.get(0).value).isEqualTo(2);
+    assertThat(codeReviewApprovals.get(0).username).isEqualTo(admin.username());
+    assertThat(codeReviewApprovals.get(0).permittedVotingRange).isNull();
+
+    assertThat(verifiedApprovals).hasSize(1);
+    assertThat(verifiedApprovals.get(0).value).isEqualTo(1);
+    assertThat(verifiedApprovals.get(0).username).isEqualTo(admin.username());
+    assertThat(codeReviewApprovals.get(0).permittedVotingRange).isNull();
+  }
+
+  @Test
   public void checkLabelsForMergedChange() throws Exception {
     PushOneCommit.Result r = createChange();
     gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).review(ReviewInput.approve());
     gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).submit();
 
     ChangeInfo change = gApi.changes().id(r.getChangeId()).get();
-    assertThat(change.status).isEqualTo(ChangeStatus.MERGED);
+    assertThat(change.status).isEqualTo(MERGED);
     assertThat(change.submissionId).isNotNull();
     assertThat(change.labels.keySet()).containsExactly(LabelId.CODE_REVIEW);
     assertThat(change.permittedLabels.keySet()).containsExactly(LabelId.CODE_REVIEW);
@@ -3593,9 +3757,10 @@ public class ChangeIT extends AbstractDaemonTest {
         .containsExactly(LabelId.CODE_REVIEW, LabelId.VERIFIED);
     assertPermitted(change, LabelId.CODE_REVIEW, 2);
     assertPermitted(change, LabelId.VERIFIED, 0, 1);
+    assertLabelDescription(change, LabelId.VERIFIED, TestLabels.VERIFIED_LABEL_DESCRIPTION);
 
-    // ignore the new label by Prolog submit rule and assert that the label is
-    // no longer returned
+    // Ignore the new label by Prolog submit rule. Permitted ranges are still going to be
+    // returned for the label.
     GitUtil.fetch(testRepo, RefNames.REFS_CONFIG + ":config");
     testRepo.reset("config");
     PushOneCommit push2 =
@@ -3609,11 +3774,10 @@ public class ChangeIT extends AbstractDaemonTest {
 
     change = gApi.changes().id(r.getChangeId()).get();
     assertPermitted(change, LabelId.CODE_REVIEW, 2);
-    assertPermitted(change, LabelId.VERIFIED);
+    assertPermitted(change, LabelId.VERIFIED, 0, 1);
 
-    // add an approval on the new label and assert that the label is now
-    // returned although it is ignored by the Prolog submit rule and hence not
-    // included in the submit records
+    // add an approval on the new label. The label can still be voted +1 although it is ignored
+    // in Prolog. 0 is not permitted because votes cannot be decreased.
     gApi.changes()
         .id(r.getChangeId())
         .revision(r.getCommit().name())
@@ -3622,7 +3786,7 @@ public class ChangeIT extends AbstractDaemonTest {
     change = gApi.changes().id(r.getChangeId()).get();
     assertThat(change.labels.keySet()).containsExactly(LabelId.CODE_REVIEW, LabelId.VERIFIED);
     assertPermitted(change, LabelId.CODE_REVIEW, 2);
-    assertPermitted(change, LabelId.VERIFIED);
+    assertPermitted(change, LabelId.VERIFIED, 1);
 
     // remove label and assert that it's no longer returned for existing
     // changes, even if there is an approval for it
@@ -3640,6 +3804,74 @@ public class ChangeIT extends AbstractDaemonTest {
     assertThat(change.labels.keySet()).containsExactly(LabelId.CODE_REVIEW);
     assertThat(change.permittedLabels.keySet()).containsExactly(LabelId.CODE_REVIEW);
     assertPermitted(change, LabelId.CODE_REVIEW, 2);
+  }
+
+  @Test
+  @GerritConfig(name = "change.skipCurrentRulesEvaluationOnClosedChanges", value = "true")
+  public void checkLabelsNotUpdatedForMergedChange() throws Exception {
+    PushOneCommit.Result r = createChange();
+    gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).review(ReviewInput.approve());
+    gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).submit();
+
+    ChangeInfo change = gApi.changes().id(r.getChangeId()).get();
+    assertThat(change.status).isEqualTo(MERGED);
+    assertThat(change.submissionId).isNotNull();
+    assertThat(change.labels.keySet()).containsExactly(LabelId.CODE_REVIEW);
+    assertThat(change.permittedLabels.keySet()).containsExactly(LabelId.CODE_REVIEW);
+    assertPermitted(change, LabelId.CODE_REVIEW, 2);
+
+    LabelType verified = TestLabels.verified();
+    AccountGroup.UUID registeredUsers = systemGroupBackend.getGroup(REGISTERED_USERS).getUUID();
+    String heads = RefNames.REFS_HEADS + "*";
+
+    // add new label and assert that it's returned for existing changes
+    try (ProjectConfigUpdate u = updateProject(project)) {
+      u.getConfig().upsertLabelType(verified);
+      u.save();
+    }
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allowLabel(verified.getName()).ref(heads).group(registeredUsers).range(-1, 1))
+        .update();
+
+    change = gApi.changes().id(r.getChangeId()).get();
+    assertThat(change.labels.keySet()).containsExactly(LabelId.CODE_REVIEW);
+    assertThat(change.permittedLabels.keySet())
+        .containsExactly(LabelId.CODE_REVIEW, LabelId.VERIFIED);
+    assertPermitted(change, LabelId.CODE_REVIEW, 2);
+  }
+
+  @Test
+  @GerritConfig(name = "change.skipCurrentRulesEvaluationOnClosedChanges", value = "true")
+  public void checkLabelsNotUpdatedForAbandonedChange() throws Exception {
+    PushOneCommit.Result r = createChange();
+    gApi.changes().id(r.getChangeId()).abandon();
+
+    ChangeInfo change = gApi.changes().id(r.getChangeId()).get();
+    assertThat(change.status).isEqualTo(ABANDONED);
+    assertThat(change.labels.keySet()).isEmpty();
+    assertThat(change.submitRecords).isEmpty();
+
+    LabelType verified = TestLabels.verified();
+    AccountGroup.UUID registeredUsers = systemGroupBackend.getGroup(REGISTERED_USERS).getUUID();
+    String heads = RefNames.REFS_HEADS + "*";
+
+    // add new label and assert that it's returned for existing changes
+    try (ProjectConfigUpdate u = updateProject(project)) {
+      u.getConfig().upsertLabelType(verified);
+      u.save();
+    }
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allowLabel(verified.getName()).ref(heads).group(registeredUsers).range(-1, 1))
+        .update();
+
+    change = gApi.changes().id(r.getChangeId()).get();
+    assertThat(change.labels.keySet()).isEmpty();
+    assertThat(change.permittedLabels.keySet()).isEmpty();
+    assertThat(change.submitRecords).isEmpty();
   }
 
   @Test
@@ -3730,7 +3962,7 @@ public class ChangeIT extends AbstractDaemonTest {
     gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).submit();
 
     ChangeInfo change = gApi.changes().id(r.getChangeId()).get();
-    assertThat(change.status).isEqualTo(ChangeStatus.MERGED);
+    assertThat(change.status).isEqualTo(MERGED);
     assertThat(change.submissionId).isNotNull();
     assertThat(change.labels.keySet())
         .containsExactly(LabelId.CODE_REVIEW, "Non-Author-Code-Review");
@@ -3747,7 +3979,7 @@ public class ChangeIT extends AbstractDaemonTest {
     result.assertOkStatus();
 
     ChangeInfo change = gApi.changes().id(r.getChangeId()).get();
-    assertThat(change.status).isEqualTo(ChangeStatus.MERGED);
+    assertThat(change.status).isEqualTo(MERGED);
     assertThat(change.submissionId).isNotNull();
     assertThat(change.labels.keySet()).containsExactly(LabelId.CODE_REVIEW);
     assertPermitted(change, LabelId.CODE_REVIEW, 0, 1, 2);
@@ -3764,11 +3996,11 @@ public class ChangeIT extends AbstractDaemonTest {
     result.assertOkStatus();
 
     ChangeInfo firstChange = gApi.changes().id(first.getChangeId()).get();
-    assertThat(firstChange.status).isEqualTo(ChangeStatus.MERGED);
+    assertThat(firstChange.status).isEqualTo(MERGED);
     assertThat(firstChange.submissionId).isNotNull();
 
     ChangeInfo secondChange = gApi.changes().id(second.getChangeId()).get();
-    assertThat(secondChange.status).isEqualTo(ChangeStatus.MERGED);
+    assertThat(secondChange.status).isEqualTo(MERGED);
     assertThat(secondChange.submissionId).isNotNull();
 
     assertThat(secondChange.submissionId).isEqualTo(firstChange.submissionId);
@@ -3924,7 +4156,9 @@ public class ChangeIT extends AbstractDaemonTest {
     assertThat(thrown)
         .hasMessageThat()
         .contains("Failed to submit 1 change due to the following problems");
-    assertThat(thrown).hasMessageThat().contains("needs All-Comments-Resolved");
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains("submit requirement 'All-Comments-Resolved' is unsatisfied");
   }
 
   @Test
@@ -4047,938 +4281,6 @@ public class ChangeIT extends AbstractDaemonTest {
             ResourceConflictException.class,
             () -> gApi.changes().id(r.getChangeId()).setMessage(getCommitMessage(r.getChangeId())));
     assertThat(thrown).hasMessageThat().contains("new and existing commit message are the same");
-  }
-
-  @Test
-  public void submitRecords() throws Exception {
-    PushOneCommit.Result r = createChange();
-    TestSubmitRule testSubmitRule = new TestSubmitRule();
-    try (Registration registration = extensionRegistry.newRegistration().add(testSubmitRule)) {
-      String changeId = r.getChangeId();
-
-      ChangeInfo change = gApi.changes().id(changeId).get();
-      assertThat(change.submitRecords).hasSize(2);
-      // Check the default submit record for the code-review label
-      SubmitRecordInfo codeReviewRecord = Iterables.get(change.submitRecords, 0);
-      assertThat(codeReviewRecord.ruleName).isEqualTo("gerrit~DefaultSubmitRule");
-      assertThat(codeReviewRecord.status).isEqualTo(SubmitRecordInfo.Status.NOT_READY);
-      assertThat(codeReviewRecord.labels).hasSize(1);
-      SubmitRecordInfo.Label label = Iterables.getOnlyElement(codeReviewRecord.labels);
-      assertThat(label.label).isEqualTo("Code-Review");
-      assertThat(label.status).isEqualTo(SubmitRecordInfo.Label.Status.NEED);
-      assertThat(label.appliedBy).isNull();
-      // Check the custom test record created by the TestSubmitRule
-      SubmitRecordInfo testRecord = Iterables.get(change.submitRecords, 1);
-      assertThat(testRecord.ruleName).isEqualTo("gerrit~TestSubmitRule");
-      assertThat(testRecord.status).isEqualTo(SubmitRecordInfo.Status.OK);
-      assertThat(testRecord.requirements)
-          .containsExactly(new LegacySubmitRequirementInfo("OK", "fallback text", "type"));
-      assertThat(testRecord.labels).hasSize(1);
-      SubmitRecordInfo.Label testLabel = Iterables.getOnlyElement(testRecord.labels);
-      assertThat(testLabel.label).isEqualTo("label");
-      assertThat(testLabel.status).isEqualTo(SubmitRecordInfo.Label.Status.OK);
-      assertThat(testLabel.appliedBy).isNull();
-
-      voteLabel(changeId, "code-review", 2);
-      // Code review record is satisfied after voting +2
-      change = gApi.changes().id(changeId).get();
-      assertThat(change.submitRecords).hasSize(2);
-      codeReviewRecord = Iterables.get(change.submitRecords, 0);
-      assertThat(codeReviewRecord.ruleName).isEqualTo("gerrit~DefaultSubmitRule");
-      assertThat(codeReviewRecord.status).isEqualTo(SubmitRecordInfo.Status.OK);
-      assertThat(codeReviewRecord.labels).hasSize(1);
-      label = Iterables.getOnlyElement(codeReviewRecord.labels);
-      assertThat(label.label).isEqualTo("Code-Review");
-      assertThat(label.status).isEqualTo(SubmitRecordInfo.Label.Status.OK);
-      assertThat(label.appliedBy._accountId).isEqualTo(admin.id().get());
-    }
-  }
-
-  @Test
-  public void checkSubmitRequirement_satisfied() throws Exception {
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-
-    SubmitRequirementInput in =
-        createSubmitRequirementInput(
-            "Code-Review", /* submittabilityExpression= */ "label:Code-Review=+2");
-
-    SubmitRequirementResultInfo result = gApi.changes().id(changeId).checkSubmitRequirement(in);
-    assertThat(result.status).isEqualTo(SubmitRequirementResultInfo.Status.UNSATISFIED);
-
-    voteLabel(changeId, "Code-Review", 2);
-    result = gApi.changes().id(changeId).checkSubmitRequirement(in);
-    assertThat(result.status).isEqualTo(SubmitRequirementResultInfo.Status.SATISFIED);
-  }
-
-  @Test
-  public void checkSubmitRequirement_notApplicable() throws Exception {
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-
-    SubmitRequirementInput in =
-        createSubmitRequirementInput(
-            "Code-Review",
-            /* applicableIf= */ "branch:non-existent",
-            /* submittableIf= */ "label:Code-Review=+2",
-            /* overrideIf= */ null);
-
-    SubmitRequirementResultInfo result = gApi.changes().id(changeId).checkSubmitRequirement(in);
-    assertThat(result.status).isEqualTo(SubmitRequirementResultInfo.Status.NOT_APPLICABLE);
-
-    voteLabel(changeId, "Code-Review", 2);
-    result = gApi.changes().id(changeId).checkSubmitRequirement(in);
-    assertThat(result.status).isEqualTo(SubmitRequirementResultInfo.Status.NOT_APPLICABLE);
-  }
-
-  @Test
-  public void checkSubmitRequirement_overridden() throws Exception {
-    configLabel("Override-Label", LabelFunction.NO_OP); // label function has no effect
-    projectOperations
-        .project(project)
-        .forUpdate()
-        .add(
-            allowLabel("Override-Label")
-                .ref("refs/heads/master")
-                .group(REGISTERED_USERS)
-                .range(-1, 1))
-        .update();
-
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-
-    SubmitRequirementInput in =
-        createSubmitRequirementInput(
-            "Code-Review",
-            /* applicableIf= */ null,
-            /* submittableIf= */ "label:Code-Review=+2",
-            /* overrideIf= */ "label:Override-Label=+1");
-
-    SubmitRequirementResultInfo result = gApi.changes().id(changeId).checkSubmitRequirement(in);
-    assertThat(result.status).isEqualTo(SubmitRequirementResultInfo.Status.UNSATISFIED);
-
-    voteLabel(changeId, "Code-Review", 2);
-    result = gApi.changes().id(changeId).checkSubmitRequirement(in);
-    assertThat(result.status).isEqualTo(SubmitRequirementResultInfo.Status.SATISFIED);
-
-    voteLabel(changeId, "Override-Label", 1);
-    result = gApi.changes().id(changeId).checkSubmitRequirement(in);
-    assertThat(result.status).isEqualTo(SubmitRequirementResultInfo.Status.OVERRIDDEN);
-  }
-
-  @Test
-  public void checkSubmitRequirement_error() throws Exception {
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-
-    SubmitRequirementInput in =
-        createSubmitRequirementInput("Code-Review", /* submittabilityExpression= */ "!!!");
-
-    SubmitRequirementResultInfo result = gApi.changes().id(changeId).checkSubmitRequirement(in);
-    assertThat(result.status).isEqualTo(SubmitRequirementResultInfo.Status.ERROR);
-  }
-
-  @Test
-  @GerritConfig(
-      name = "experiments.enabled",
-      value = ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS)
-  public void submitRequirement_withLabelEqualsMax() throws Exception {
-    configSubmitRequirement(
-        project,
-        SubmitRequirement.builder()
-            .setName("code-review")
-            .setSubmittabilityExpression(
-                SubmitRequirementExpression.create("label:code-review=MAX"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-
-    ChangeInfo change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(1);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.UNSATISFIED, /* isLegacy= */ false);
-
-    voteLabel(changeId, "code-review", 2);
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(1);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.SATISFIED, /* isLegacy= */ false);
-  }
-
-  @Test
-  @GerritConfig(
-      name = "experiments.enabled",
-      value = ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS)
-  public void submitRequirement_withLabelEqualsMax_fromNonUploader() throws Exception {
-    configLabel("my-label", LabelFunction.NO_OP); // label function has no effect
-    projectOperations
-        .project(project)
-        .forUpdate()
-        .add(allowLabel("my-label").ref("refs/heads/master").group(REGISTERED_USERS).range(-1, 1))
-        .update();
-    configSubmitRequirement(
-        project,
-        SubmitRequirement.builder()
-            .setName("my-label")
-            .setSubmittabilityExpression(
-                SubmitRequirementExpression.create("label:my-label=MAX,user=non_uploader"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-    ChangeInfo change = gApi.changes().id(changeId).get();
-    // The second requirement is coming from the legacy code-review label function
-    assertThat(change.submitRequirements).hasSize(2);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "my-label", Status.UNSATISFIED, /* isLegacy= */ false);
-
-    // Voting with a max vote as the uploader will not satisfy the submit requirement.
-    voteLabel(changeId, "my-label", 1);
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(2);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "my-label", Status.UNSATISFIED, /* isLegacy= */ false);
-
-    // Voting as a non-uploader will satisfy the submit requirement.
-    requestScopeOperations.setApiUser(user.id());
-    voteLabel(changeId, "my-label", 1);
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(2);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "my-label", Status.SATISFIED, /* isLegacy= */ false);
-  }
-
-  @Test
-  @GerritConfig(
-      name = "experiments.enabled",
-      value = ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS)
-  public void submitRequirement_withLabelEqualsMinBlockingSubmission() throws Exception {
-    configSubmitRequirement(
-        project,
-        SubmitRequirement.builder()
-            .setName("code-review")
-            .setSubmittabilityExpression(
-                SubmitRequirementExpression.create("-label:code-review=MIN"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-
-    ChangeInfo change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(2);
-    // Requirement is satisfied because there are no votes
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.SATISFIED, /* isLegacy= */ false);
-    // Legacy requirement (coming from the label function definition) is not satisfied. We return
-    // both legacy and non-legacy requirements in this case since their statuses are not identical.
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "Code-Review", Status.UNSATISFIED, /* isLegacy= */ true);
-
-    voteLabel(changeId, "code-review", -1);
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(2);
-    // Requirement is still satisfied because -1 is not the max negative value
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.SATISFIED, /* isLegacy= */ false);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "Code-Review", Status.UNSATISFIED, /* isLegacy= */ true);
-
-    voteLabel(changeId, "code-review", -2);
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(1);
-    // Requirement is now unsatisfied because -2 is the max negative value
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.UNSATISFIED, /* isLegacy= */ false);
-  }
-
-  @Test
-  @GerritConfig(
-      name = "experiments.enabled",
-      value = ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS)
-  public void submitRequirement_withMaxWithBlock_ignoringSelfApproval() throws Exception {
-    configLabel("my-label", LabelFunction.MAX_WITH_BLOCK);
-    projectOperations
-        .project(project)
-        .forUpdate()
-        .add(allowLabel("my-label").ref("refs/heads/master").group(REGISTERED_USERS).range(-1, 1))
-        .update();
-
-    configSubmitRequirement(
-        project,
-        SubmitRequirement.builder()
-            .setName("my-label")
-            .setSubmittabilityExpression(
-                SubmitRequirementExpression.create(
-                    "label:my-label=MAX,user=non_uploader -label:my-label=MIN"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-
-    // Create the change as admin
-    requestScopeOperations.setApiUser(admin.id());
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-
-    // Admin (a.k.a uploader) adds a -1 min vote. This is going to block submission.
-    voteLabel(changeId, "my-label", -1);
-    ChangeInfo change = gApi.changes().id(changeId).get();
-    // The other requirement is coming from the code-review label function
-    assertThat(change.submitRequirements).hasSize(2);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "my-label", Status.UNSATISFIED, /* isLegacy= */ false);
-
-    // user (i.e. non_uploader) votes 1. Requirement is still blocking because of -1 of uploader.
-    requestScopeOperations.setApiUser(user.id());
-    voteLabel(changeId, "my-label", 1);
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(2);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "my-label", Status.UNSATISFIED, /* isLegacy= */ false);
-
-    // Admin (a.k.a uploader) removes -1. Now requirement is fulfilled.
-    requestScopeOperations.setApiUser(admin.id());
-    voteLabel(changeId, "my-label", 0);
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(2);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "my-label", Status.SATISFIED, /* isLegacy= */ false);
-  }
-
-  @Test
-  @GerritConfig(
-      name = "experiments.enabled",
-      value = ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS)
-  public void submitRequirement_withLabelEqualsAny() throws Exception {
-    configSubmitRequirement(
-        project,
-        SubmitRequirement.builder()
-            .setName("code-review")
-            .setSubmittabilityExpression(
-                SubmitRequirementExpression.create("label:code-review=ANY"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-
-    ChangeInfo change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(1);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.UNSATISFIED, /* isLegacy= */ false);
-
-    voteLabel(changeId, "code-review", 1);
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(2);
-    // Legacy and non-legacy requirements have mismatching status. Both are returned from the API.
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.SATISFIED, /* isLegacy= */ false);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "Code-Review", Status.UNSATISFIED, /* isLegacy= */ true);
-  }
-
-  @Test
-  @GerritConfig(
-      name = "experiments.enabled",
-      value = ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS)
-  public void submitRequirementIsSatisfied_whenSubmittabilityExpressionIsFulfilled()
-      throws Exception {
-    configSubmitRequirement(
-        project,
-        SubmitRequirement.builder()
-            .setName("code-review")
-            .setSubmittabilityExpression(SubmitRequirementExpression.create("label:code-review=+2"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-    configSubmitRequirement(
-        project,
-        SubmitRequirement.builder()
-            .setName("verified")
-            .setSubmittabilityExpression(SubmitRequirementExpression.create("label:verified=+1"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-
-    ChangeInfo change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(2);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.UNSATISFIED, /* isLegacy= */ false);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "verified", Status.UNSATISFIED, /* isLegacy= */ false);
-
-    voteLabel(changeId, "code-review", 2);
-
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(2);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.SATISFIED, /* isLegacy= */ false);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "verified", Status.UNSATISFIED, /* isLegacy= */ false);
-  }
-
-  @Test
-  @GerritConfig(
-      name = "experiments.enabled",
-      value = ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS)
-  public void submitRequirementIsNotApplicable_whenApplicabilityExpressionIsNotFulfilled()
-      throws Exception {
-    configSubmitRequirement(
-        project,
-        SubmitRequirement.builder()
-            .setName("code-review")
-            .setApplicabilityExpression(SubmitRequirementExpression.of("project:foo"))
-            .setSubmittabilityExpression(SubmitRequirementExpression.create("label:code-review=+2"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-
-    ChangeInfo change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(2);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.NOT_APPLICABLE, /* isLegacy= */ false);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "Code-Review", Status.UNSATISFIED, /* isLegacy= */ true);
-  }
-
-  @Test
-  @GerritConfig(
-      name = "experiments.enabled",
-      value = ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS)
-  public void submitRequirementIsOverridden_whenOverrideExpressionIsFulfilled() throws Exception {
-    configLabel("build-cop-override", LabelFunction.NO_BLOCK);
-    projectOperations
-        .project(project)
-        .forUpdate()
-        .add(
-            allowLabel("build-cop-override")
-                .ref("refs/heads/master")
-                .group(REGISTERED_USERS)
-                .range(-1, 1))
-        .update();
-
-    configSubmitRequirement(
-        project,
-        SubmitRequirement.builder()
-            .setName("code-review")
-            .setSubmittabilityExpression(SubmitRequirementExpression.create("label:code-review=+2"))
-            .setOverrideExpression(SubmitRequirementExpression.of("label:build-cop-override=+1"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-    ChangeInfo change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(1);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.UNSATISFIED, /* isLegacy= */ false);
-
-    voteLabel(changeId, "build-cop-override", 1);
-
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(2);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.OVERRIDDEN, /* isLegacy= */ false);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "Code-Review", Status.UNSATISFIED, /* isLegacy= */ true);
-  }
-
-  @Test
-  @Ignore("Test is flaky")
-  public void submitRequirement_overriddenInChildProject() throws Exception {
-    configSubmitRequirement(
-        allProjects,
-        SubmitRequirement.builder()
-            .setName("code-review")
-            .setSubmittabilityExpression(SubmitRequirementExpression.create("label:code-review=+1"))
-            .setOverrideExpression(SubmitRequirementExpression.of("label:build-cop-override=+1"))
-            .setAllowOverrideInChildProjects(true)
-            .build());
-
-    // Override submit requirement in child project (requires code-review=+2 instead of +1)
-    configSubmitRequirement(
-        project,
-        SubmitRequirement.builder()
-            .setName("code-review")
-            .setSubmittabilityExpression(SubmitRequirementExpression.create("label:code-review=+2"))
-            .setOverrideExpression(SubmitRequirementExpression.of("label:build-cop-override=+1"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-    ChangeInfo change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(1);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.UNSATISFIED, /* isLegacy= */ false);
-
-    voteLabel(changeId, "code-review", 1);
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(1);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.UNSATISFIED, /* isLegacy= */ false);
-
-    voteLabel(changeId, "code-review", 2);
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(1);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.SATISFIED, /* isLegacy= */ false);
-  }
-
-  @Test
-  @GerritConfig(
-      name = "experiments.enabled",
-      value = ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS)
-  public void submitRequirement_inheritedFromParentProject() throws Exception {
-    configSubmitRequirement(
-        allProjects,
-        SubmitRequirement.builder()
-            .setName("code-review")
-            .setSubmittabilityExpression(SubmitRequirementExpression.create("label:code-review=+1"))
-            .setOverrideExpression(SubmitRequirementExpression.of("label:build-cop-override=+1"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-    ChangeInfo change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(1);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.UNSATISFIED, /* isLegacy= */ false);
-
-    voteLabel(changeId, "code-review", 1);
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(2);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.SATISFIED, /* isLegacy= */ false);
-    // Legacy requirement is coming from the label MaxWithBlock function. Still unsatisfied.
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "Code-Review", Status.UNSATISFIED, /* isLegacy= */ true);
-  }
-
-  @Test
-  @GerritConfig(
-      name = "experiments.enabled",
-      value = ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS)
-  public void submitRequirement_ignoredInChildProject_ifParentDoesNotAllowOverride()
-      throws Exception {
-    configSubmitRequirement(
-        allProjects,
-        SubmitRequirement.builder()
-            .setName("code-review")
-            .setSubmittabilityExpression(SubmitRequirementExpression.create("label:code-review=+1"))
-            .setOverrideExpression(SubmitRequirementExpression.of("label:build-cop-override=+1"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-
-    // Override submit requirement in child project (requires code-review=+2 instead of +1).
-    // Will have no effect since parent does not allow override.
-    configSubmitRequirement(
-        project,
-        SubmitRequirement.builder()
-            .setName("code-review")
-            .setSubmittabilityExpression(SubmitRequirementExpression.create("label:code-review=+2"))
-            .setOverrideExpression(SubmitRequirementExpression.of("label:build-cop-override=+1"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-    ChangeInfo change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(1);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.UNSATISFIED, /* isLegacy= */ false);
-
-    voteLabel(changeId, "code-review", 1);
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(2);
-    // +1 was enough to fulfill the requirement: override in child project was ignored
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.SATISFIED, /* isLegacy= */ false);
-    // Legacy requirement is coming from the label MaxWithBlock function. Still unsatisfied.
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "Code-Review", Status.UNSATISFIED, /* isLegacy= */ true);
-  }
-
-  @Test
-  @GerritConfig(
-      name = "experiments.enabled",
-      values = {
-        ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS,
-        ExperimentFeaturesConstants
-            .GERRIT_BACKEND_REQUEST_FEATURE_STORE_SUBMIT_REQUIREMENTS_ON_MERGE
-      })
-  public void submitRequirement_storedForClosedChanges() throws Exception {
-    for (SubmitType submitType : SubmitType.values()) {
-      Project.NameKey project = createProjectForPush(submitType);
-      TestRepository<InMemoryRepository> repo = cloneProject(project);
-      configSubmitRequirement(
-          project,
-          SubmitRequirement.builder()
-              .setName("code-review")
-              .setSubmittabilityExpression(
-                  SubmitRequirementExpression.create("label:code-review=+2"))
-              .setAllowOverrideInChildProjects(false)
-              .build());
-
-      PushOneCommit.Result r =
-          createChange(repo, "master", "Add a file", "foo", "content", "topic");
-      String changeId = r.getChangeId();
-
-      voteLabel(changeId, "code-review", 2);
-
-      ChangeInfo change = gApi.changes().id(changeId).get();
-      assertThat(change.submitRequirements).hasSize(1);
-      assertSubmitRequirementStatus(
-          change.submitRequirements, "code-review", Status.SATISFIED, /* isLegacy= */ false);
-
-      RevisionApi revision = gApi.changes().id(r.getChangeId()).current();
-      revision.review(ReviewInput.approve());
-      revision.submit();
-
-      ChangeNotes notes = notesFactory.create(project, r.getChange().getId());
-
-      SubmitRequirementResult result =
-          notes.getSubmitRequirementsResult().stream().collect(MoreCollectors.onlyElement());
-      assertThat(result.status()).isEqualTo(SubmitRequirementResult.Status.SATISFIED);
-      assertThat(result.submittabilityExpressionResult().status())
-          .isEqualTo(SubmitRequirementExpressionResult.Status.PASS);
-      assertThat(result.submittabilityExpressionResult().expression().expressionString())
-          .isEqualTo("label:code-review=+2");
-    }
-  }
-
-  @Test
-  @GerritConfig(
-      name = "experiments.enabled",
-      values = {
-        ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS,
-        ExperimentFeaturesConstants
-            .GERRIT_BACKEND_REQUEST_FEATURE_STORE_SUBMIT_REQUIREMENTS_ON_MERGE
-      })
-  public void submitRequirement_retrievedFromNoteDbForClosedChanges() throws Exception {
-    configSubmitRequirement(
-        project,
-        SubmitRequirement.builder()
-            .setName("code-review")
-            .setSubmittabilityExpression(SubmitRequirementExpression.create("label:code-review=+2"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-
-    ChangeInfo change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(1);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.UNSATISFIED, /* isLegacy= */ false);
-
-    voteLabel(changeId, "code-review", 2);
-
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(1);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.SATISFIED, /* isLegacy= */ false);
-
-    gApi.changes().id(changeId).current().submit();
-
-    // Add new submit requirement
-    configSubmitRequirement(
-        project,
-        SubmitRequirement.builder()
-            .setName("verified")
-            .setSubmittabilityExpression(SubmitRequirementExpression.create("label:verified=+1"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-
-    // The new "verified" submit requirement is not returned, since this change is closed
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(1);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "code-review", Status.SATISFIED, /* isLegacy= */ false);
-  }
-
-  @Test
-  @GerritConfig(
-      name = "experiments.enabled",
-      values = {
-        ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS,
-        ExperimentFeaturesConstants
-            .GERRIT_BACKEND_REQUEST_FEATURE_STORE_SUBMIT_REQUIREMENTS_ON_MERGE
-      })
-  public void
-      submitRequirements_returnOneEntryForMatchingLegacyAndNonLegacyResultsWithTheSameName_ifLegacySubmitRecordsAreEnabled()
-          throws Exception {
-    // Configure a legacy submit requirement: label with a max with block function
-    configLabel("build-cop-override", LabelFunction.MAX_WITH_BLOCK);
-    projectOperations
-        .project(project)
-        .forUpdate()
-        .add(
-            allowLabel("build-cop-override")
-                .ref("refs/heads/master")
-                .group(REGISTERED_USERS)
-                .range(-1, 1))
-        .update();
-
-    // Configure a submit requirement with the same name.
-    configSubmitRequirement(
-        project,
-        SubmitRequirement.builder()
-            .setName("build-cop-override")
-            .setSubmittabilityExpression(
-                SubmitRequirementExpression.create(
-                    "label:build-cop-override=MAX -label:build-cop-override=MIN"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-
-    // Create a change. Vote to fulfill all requirements.
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-    voteLabel(changeId, "build-cop-override", 1);
-    voteLabel(changeId, "Code-Review", 2);
-
-    // Project has two legacy requirements: Code-Review and bco, and a non-legacy requirement: bco.
-    // Only non-legacy bco is returned.
-    ChangeInfo change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(2);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "Code-Review", Status.SATISFIED, /* isLegacy= */ true);
-    assertSubmitRequirementStatus(
-        change.submitRequirements,
-        "build-cop-override",
-        Status.SATISFIED,
-        /* isLegacy= */ false,
-        /* submittabilityCondition= */ "label:build-cop-override=MAX -label:build-cop-override=MIN");
-
-    // Merge the change. Submit requirements are still the same.
-    gApi.changes().id(changeId).current().submit();
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(2);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "Code-Review", Status.SATISFIED, /* isLegacy= */ true);
-    assertSubmitRequirementStatus(
-        change.submitRequirements,
-        "build-cop-override",
-        Status.SATISFIED,
-        /* isLegacy= */ false,
-        /* submittabilityCondition= */ "label:build-cop-override=MAX -label:build-cop-override=MIN");
-  }
-
-  @Test
-  @GerritConfig(
-      name = "experiments.enabled",
-      value = ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS)
-  public void
-      submitRequirements_returnTwoEntriesForMismatchingLegacyAndNonLegacyResultsWithTheSameName_ifLegacySubmitRecordsAreEnabled()
-          throws Exception {
-    // Configure a legacy submit requirement: label with a max with block function
-    configLabel("build-cop-override", LabelFunction.MAX_WITH_BLOCK);
-    projectOperations
-        .project(project)
-        .forUpdate()
-        .add(
-            allowLabel("build-cop-override")
-                .ref("refs/heads/master")
-                .group(REGISTERED_USERS)
-                .range(-1, 1))
-        .update();
-
-    // Configure a submit requirement with the same name.
-    configSubmitRequirement(
-        project,
-        SubmitRequirement.builder()
-            .setName("build-cop-override")
-            .setSubmittabilityExpression(
-                SubmitRequirementExpression.create("label:build-cop-override=MIN"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-
-    // Create a change
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-    voteLabel(changeId, "build-cop-override", 1);
-    voteLabel(changeId, "Code-Review", 2);
-
-    // Project has two legacy requirements: Code-Review and bco, and a non-legacy requirement: bco.
-    // Two instances of bco will be returned since their status is not matching.
-    ChangeInfo change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(3);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "Code-Review", Status.SATISFIED, /* isLegacy= */ true);
-    assertSubmitRequirementStatus(
-        change.submitRequirements,
-        "build-cop-override",
-        Status.SATISFIED,
-        /* isLegacy= */ true,
-        // MAX_WITH_BLOCK function was translated to a submittability expression.
-        /* submittabilityCondition= */ "label:build-cop-override=MAX -label:build-cop-override=MIN");
-    assertSubmitRequirementStatus(
-        change.submitRequirements,
-        "build-cop-override",
-        Status.UNSATISFIED,
-        /* isLegacy= */ false,
-        /* submittabilityCondition= */ "label:build-cop-override=MIN");
-  }
-
-  @Test
-  @GerritConfig(
-      name = "experiments.enabled",
-      value = ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS)
-  public void submitRequirements_returnForLegacySubmitRecords_ifEnabled() throws Exception {
-    configLabel("build-cop-override", LabelFunction.MAX_WITH_BLOCK);
-    projectOperations
-        .project(project)
-        .forUpdate()
-        .add(
-            allowLabel("build-cop-override")
-                .ref("refs/heads/master")
-                .group(REGISTERED_USERS)
-                .range(-1, 1))
-        .update();
-
-    // 1. Project has two legacy requirements: Code-Review and bco. Both unsatisfied.
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-    ChangeInfo change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(2);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "Code-Review", Status.UNSATISFIED, /* isLegacy= */ true);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "build-cop-override", Status.UNSATISFIED, /* isLegacy= */ true);
-
-    // 2. Vote +1 on bco. bco becomes satisfied
-    voteLabel(changeId, "build-cop-override", 1);
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(2);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "Code-Review", Status.UNSATISFIED, /* isLegacy= */ true);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "build-cop-override", Status.SATISFIED, /* isLegacy= */ true);
-
-    // 3. Vote +1 on Code-Review. Code-Review becomes satisfied
-    voteLabel(changeId, "Code-Review", 2);
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).hasSize(2);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "Code-Review", Status.SATISFIED, /* isLegacy= */ true);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "build-cop-override", Status.SATISFIED, /* isLegacy= */ true);
-
-    // 4. Merge the change. Submit requirements status is presented from NoteDb.
-    gApi.changes().id(changeId).current().submit();
-    change = gApi.changes().id(changeId).get();
-    // Legacy submit records are returned as submit requirements.
-    assertThat(change.submitRequirements).hasSize(2);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "Code-Review", Status.SATISFIED, /* isLegacy= */ true);
-    assertSubmitRequirementStatus(
-        change.submitRequirements, "build-cop-override", Status.SATISFIED, /* isLegacy= */ true);
-  }
-
-  @Test
-  @GerritConfig(
-      name = "experiments.enabled",
-      value = ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS)
-  public void submitRequirement_backFilledFromIndexForActiveChanges() throws Exception {
-    configSubmitRequirement(
-        project,
-        SubmitRequirement.builder()
-            .setName("code-review")
-            .setSubmittabilityExpression(SubmitRequirementExpression.create("label:code-review=+2"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-
-    voteLabel(changeId, "code-review", 2);
-
-    // Query the change. ChangeInfo is back-filled from the change index.
-    List<ChangeInfo> changeInfos =
-        gApi.changes()
-            .query()
-            .withQuery("project:{" + project.get() + "} (status:open OR status:closed)")
-            .withOptions(ImmutableSet.of(ListChangesOption.SUBMIT_REQUIREMENTS))
-            .get();
-    assertThat(changeInfos).hasSize(1);
-    assertSubmitRequirementStatus(
-        changeInfos.get(0).submitRequirements,
-        "code-review",
-        Status.SATISFIED,
-        /* isLegacy= */ false);
-  }
-
-  @Test
-  @GerritConfig(
-      name = "experiments.enabled",
-      values = {
-        ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_ENABLE_SUBMIT_REQUIREMENTS,
-        ExperimentFeaturesConstants
-            .GERRIT_BACKEND_REQUEST_FEATURE_STORE_SUBMIT_REQUIREMENTS_ON_MERGE
-      })
-  public void submitRequirement_backFilledFromIndexForClosedChanges() throws Exception {
-    configSubmitRequirement(
-        project,
-        SubmitRequirement.builder()
-            .setName("code-review")
-            .setSubmittabilityExpression(SubmitRequirementExpression.create("label:code-review=+2"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-
-    voteLabel(changeId, "code-review", 2);
-    gApi.changes().id(changeId).current().submit();
-
-    // Query the change. ChangeInfo is back-filled from the change index.
-    List<ChangeInfo> changeInfos =
-        gApi.changes()
-            .query()
-            .withQuery("project:{" + project.get() + "} (status:open OR status:closed)")
-            .withOptions(ImmutableSet.of(ListChangesOption.SUBMIT_REQUIREMENTS))
-            .get();
-    assertThat(changeInfos).hasSize(1);
-    assertSubmitRequirementStatus(
-        changeInfos.get(0).submitRequirements,
-        "code-review",
-        Status.SATISFIED,
-        /* isLegacy= */ false);
-  }
-
-  @Test
-  public void submitRequirements_notServedIfExperimentNotEnabled() throws Exception {
-    configSubmitRequirement(
-        project,
-        SubmitRequirement.builder()
-            .setName("code-review")
-            .setSubmittabilityExpression(SubmitRequirementExpression.create("label:code-review=+2"))
-            .setAllowOverrideInChildProjects(false)
-            .build());
-
-    PushOneCommit.Result r = createChange();
-    String changeId = r.getChangeId();
-
-    ChangeInfo change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).isEmpty();
-
-    voteLabel(changeId, "code-review", -1);
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).isEmpty();
-
-    voteLabel(changeId, "code-review", 2);
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).isEmpty();
-
-    gApi.changes().id(changeId).current().submit();
-    change = gApi.changes().id(changeId).get();
-    assertThat(change.submitRequirements).isEmpty();
   }
 
   @Test
@@ -5233,7 +4535,7 @@ public class ChangeIT extends AbstractDaemonTest {
 
   private void setChangeStatus(Change.Id id, Change.Status newStatus) throws Exception {
     try (BatchUpdate batchUpdate =
-        batchUpdateFactory.create(project, atrScope.get().getUser(), TimeUtil.nowTs())) {
+        batchUpdateFactory.create(project, atrScope.get().getUser(), TimeUtil.now())) {
       batchUpdate.addOp(id, new ChangeStatusUpdateOp(newStatus));
       batchUpdate.execute();
     }
@@ -5466,7 +4768,7 @@ public class ChangeIT extends AbstractDaemonTest {
     PushOneCommit.Result change = createChange();
     int number = gApi.changes().id(change.getChangeId()).get()._number;
 
-    try (AutoCloseable ignored = disableChangeIndex()) {
+    try (AutoCloseable ignored = changeIndexOperations.disableReadsAndWrites()) {
       assertThat(gApi.changes().id(project.get(), number).get(options).changeId)
           .isEqualTo(change.getChangeId());
     }
@@ -5523,99 +4825,14 @@ public class ChangeIT extends AbstractDaemonTest {
     gApi.changes().id(changeId).current().review(new ReviewInput().label(labelName, score));
   }
 
-  private void assertSubmitRequirementStatus(
-      Collection<SubmitRequirementResultInfo> results,
-      String requirementName,
-      SubmitRequirementResultInfo.Status status,
-      boolean isLegacy,
-      String submittabilityCondition) {
-    for (SubmitRequirementResultInfo result : results) {
-      if (result.name.equals(requirementName)
-          && result.status == status
-          && result.isLegacy == isLegacy
-          && result.submittabilityExpressionResult.expression.equals(submittabilityCondition)) {
-        return;
-      }
-    }
-    throw new AssertionError(
-        String.format(
-            "Could not find submit requirement %s with status %s (results = %s)",
-            requirementName,
-            status,
-            results.stream()
-                .map(r -> String.format("%s=%s", r.name, r.status))
-                .collect(toImmutableList())));
-  }
+  private static class TestCommitValidationListener implements CommitValidationListener {
+    public CommitReceivedEvent receiveEvent;
 
-  private void assertSubmitRequirementStatus(
-      Collection<SubmitRequirementResultInfo> results,
-      String requirementName,
-      SubmitRequirementResultInfo.Status status,
-      boolean isLegacy) {
-    for (SubmitRequirementResultInfo result : results) {
-      if (result.name.equals(requirementName)
-          && result.status == status
-          && result.isLegacy == isLegacy) {
-        return;
-      }
-    }
-    throw new AssertionError(
-        String.format(
-            "Could not find submit requirement %s with status %s (results = %s)",
-            requirementName,
-            status,
-            results.stream()
-                .map(r -> String.format("%s=%s", r.name, r.status))
-                .collect(toImmutableList())));
-  }
-
-  private Project.NameKey createProjectForPush(SubmitType submitType) throws Exception {
-    Project.NameKey project = projectOperations.newProject().submitType(submitType).create();
-    projectOperations
-        .project(project)
-        .forUpdate()
-        .add(allow(Permission.PUSH).ref("refs/heads/*").group(adminGroupUuid()))
-        .add(allow(Permission.SUBMIT).ref("refs/for/refs/heads/*").group(adminGroupUuid()))
-        .update();
-    return project;
-  }
-
-  /** Returns a hard-coded submit record containing all fields. */
-  private static class TestSubmitRule implements SubmitRule {
     @Override
-    public Optional<SubmitRecord> evaluate(ChangeData changeData) {
-      SubmitRecord record = new SubmitRecord();
-      record.ruleName = "testSubmitRule";
-      record.status = SubmitRecord.Status.OK;
-      SubmitRecord.Label label = new SubmitRecord.Label();
-      label.label = "label";
-      label.status = SubmitRecord.Label.Status.OK;
-      record.labels = Arrays.asList(label);
-      record.requirements =
-          Arrays.asList(
-              LegacySubmitRequirement.builder()
-                  .setType("type")
-                  .setFallbackText("fallback text")
-                  .build());
-      return Optional.of(record);
+    public List<CommitValidationMessage> onCommitReceived(CommitReceivedEvent receiveEvent)
+        throws CommitValidationException {
+      this.receiveEvent = receiveEvent;
+      return ImmutableList.of();
     }
-  }
-
-  private static SubmitRequirementInput createSubmitRequirementInput(
-      String name, String submittabilityExpression) {
-    SubmitRequirementInput input = new SubmitRequirementInput();
-    input.name = name;
-    input.submittabilityExpression = submittabilityExpression;
-    return input;
-  }
-
-  private static SubmitRequirementInput createSubmitRequirementInput(
-      String name, String applicableIf, String submittableIf, String overrideIf) {
-    SubmitRequirementInput input = new SubmitRequirementInput();
-    input.name = name;
-    input.applicabilityExpression = applicableIf;
-    input.submittabilityExpression = submittableIf;
-    input.overrideExpression = overrideIf;
-    return input;
   }
 }

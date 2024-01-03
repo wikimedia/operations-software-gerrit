@@ -23,7 +23,6 @@ import com.google.gerrit.index.query.LazyResultSet;
 import com.google.gerrit.index.query.OrPredicate;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.ResultSet;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
@@ -50,7 +49,7 @@ public class OrSource extends OrPredicate<ChangeData> implements ChangeDataSourc
         getChildren().stream().map(p -> ((ChangeDataSource) p).read()).collect(toImmutableList());
     return new LazyResultSet<>(
         () -> {
-          List<ChangeData> r = new ArrayList<>();
+          ImmutableList.Builder<ChangeData> r = ImmutableList.builder();
           Set<Change.Id> have = new HashSet<>();
           for (ResultSet<ChangeData> resultSet : results) {
             for (ChangeData result : resultSet) {
@@ -59,7 +58,7 @@ public class OrSource extends OrPredicate<ChangeData> implements ChangeDataSourc
               }
             }
           }
-          return ImmutableList.copyOf(r);
+          return r.build();
         });
   }
 

@@ -41,7 +41,7 @@ import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.server.project.ProjectConfig;
 import com.google.inject.Inject;
-import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -222,14 +222,14 @@ public class TagsIT extends AbstractDaemonTest {
     assertThat(result.ref).isEqualTo(R_TAGS + input.ref);
     assertThat(result.revision).isEqualTo(input.revision);
     assertThat(result.canDelete).isTrue();
-    assertThat(result.created).isEqualTo(timestamp(r));
+    assertThat(result.created.toInstant()).isEqualTo(instant(r));
 
     input.ref = "refs/tags/v2.0";
     result = tag(input.ref).create(input).get();
     assertThat(result.ref).isEqualTo(input.ref);
     assertThat(result.revision).isEqualTo(input.revision);
     assertThat(result.canDelete).isTrue();
-    assertThat(result.created).isEqualTo(timestamp(r));
+    assertThat(result.created.toInstant()).isEqualTo(instant(r));
 
     requestScopeOperations.setApiUser(user.id());
     result = tag(input.ref).get();
@@ -457,8 +457,8 @@ public class TagsIT extends AbstractDaemonTest {
     return gApi.projects().name(project.get()).tag(tagname);
   }
 
-  private Timestamp timestamp(PushOneCommit.Result r) {
-    return new Timestamp(r.getCommit().getCommitterIdent().getWhen().getTime());
+  private Instant instant(PushOneCommit.Result r) {
+    return r.getCommit().getCommitterIdent().getWhenAsInstant();
   }
 
   private void assertBadRequest(ListRefsRequest<TagInfo> req) throws Exception {
@@ -477,7 +477,7 @@ public class TagsIT extends AbstractDaemonTest {
   }
 
   private static void removeAllBranchPermissions(ProjectConfig cfg, String... permissions) {
-    for (AccessSection accessSection : ImmutableList.copyOf(cfg.getAccessSections())) {
+    for (AccessSection accessSection : cfg.getAccessSections()) {
       cfg.upsertAccessSection(
           accessSection.getName(),
           updatedAccessSection -> {

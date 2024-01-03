@@ -36,6 +36,7 @@ import com.google.gerrit.acceptance.testsuite.change.ChangeOperations;
 import com.google.gerrit.acceptance.testsuite.change.TestHumanComment;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
+import com.google.gerrit.common.RawInputUtil;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.HumanComment;
@@ -47,9 +48,11 @@ import com.google.gerrit.extensions.api.changes.DraftInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput.CommentInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput.DraftHandling;
+import com.google.gerrit.extensions.api.changes.ReviewerInput;
 import com.google.gerrit.extensions.client.Comment;
 import com.google.gerrit.extensions.client.Side;
 import com.google.gerrit.extensions.common.ChangeInfo;
+import com.google.gerrit.extensions.common.ChangeInput;
 import com.google.gerrit.extensions.common.CommentInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
@@ -66,7 +69,7 @@ import com.google.gerrit.testing.FakeEmailSender;
 import com.google.gerrit.testing.FakeEmailSender.Message;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
-import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -215,6 +218,30 @@ public class CommentsIT extends AbstractDaemonTest {
         Iterables.getOnlyElement(getPublishedComments(changeId, revId).get(PATCHSET_LEVEL));
 
     assertThat(updatedComment.message).doesNotContain(commentMessage);
+  }
+
+  @Test
+  public void deletedCommentsAreResolved() throws Exception {
+    requestScopeOperations.setApiUser(admin.id());
+    PushOneCommit.Result r = createChange();
+    String changeId = r.getChangeId();
+    String revId = r.getCommit().getName();
+    String commentMessage = "to be deleted";
+    CommentInput comment =
+        CommentsUtil.newComment(
+            COMMIT_MSG, Side.REVISION, /*line= */ 0, commentMessage, /*unresolved= */ true);
+    CommentsUtil.addComments(gApi, changeId, revId, comment);
+
+    Map<String, List<CommentInfo>> results = getPublishedComments(changeId, revId);
+    CommentInfo oldComment = Iterables.getOnlyElement(results.get(COMMIT_MSG));
+
+    DeleteCommentInput input = new DeleteCommentInput("reason");
+    gApi.changes().id(changeId).revision(revId).comment(oldComment.id).delete(input);
+    CommentInfo updatedComment =
+        Iterables.getOnlyElement(getPublishedComments(changeId, revId).get(COMMIT_MSG));
+
+    assertThat(updatedComment.message).doesNotContain(commentMessage);
+    assertThat(updatedComment.unresolved).isFalse();
   }
 
   @Test
@@ -640,7 +667,7 @@ public class CommentsIT extends AbstractDaemonTest {
   public void putDraft() throws Exception {
     for (Integer line : lines) {
       PushOneCommit.Result r = createChange();
-      Timestamp origLastUpdated = r.getChange().change().getLastUpdatedOn();
+      Instant origLastUpdated = r.getChange().change().getLastUpdatedOn();
       String changeId = r.getChangeId();
       String revId = r.getCommit().getName();
       String path = "file1";
@@ -887,7 +914,7 @@ public class CommentsIT extends AbstractDaemonTest {
   public void deleteDraft() throws Exception {
     for (Integer line : lines) {
       PushOneCommit.Result r = createChange();
-      Timestamp origLastUpdated = r.getChange().change().getLastUpdatedOn();
+      Instant origLastUpdated = r.getChange().change().getLastUpdatedOn();
       String changeId = r.getChangeId();
       String revId = r.getCommit().getName();
       DraftInput draft = CommentsUtil.newDraft("file1", Side.REVISION, line, "comment 1");
@@ -903,7 +930,7 @@ public class CommentsIT extends AbstractDaemonTest {
 
   @Test
   public void insertCommentsWithHistoricTimestamp() throws Exception {
-    Timestamp timestamp = new Timestamp(0);
+    Instant timestamp = Instant.EPOCH;
     for (Integer line : lines) {
       String file = "file";
       String contents = "contents " + line;
@@ -912,11 +939,11 @@ public class CommentsIT extends AbstractDaemonTest {
       PushOneCommit.Result r = push.to("refs/for/master");
       String changeId = r.getChangeId();
       String revId = r.getCommit().getName();
-      Timestamp origLastUpdated = r.getChange().change().getLastUpdatedOn();
+      Instant origLastUpdated = r.getChange().change().getLastUpdatedOn();
 
       ReviewInput input = new ReviewInput();
       CommentInput comment = CommentsUtil.newComment(file, Side.REVISION, line, "comment 1", false);
-      comment.updated = timestamp;
+      comment.setUpdated(timestamp);
       input.comments = new HashMap<>();
       input.comments.put(comment.path, Lists.newArrayList(comment));
       ChangeResource changeRsrc =
@@ -1853,6 +1880,72 @@ public class CommentsIT extends AbstractDaemonTest {
     assertThat(exception.getMessage()).contains(String.format("%s not found", comment.inReplyTo));
   }
 
+  @Test
+  public void commentsOnRootCommitsAreIncludedInEmails() throws Exception {
+    // Create a change in a new branch, making the patch-set commit a root commit.
+    ChangeInfo changeInfo = createChangeInNewBranch("newBranch");
+    Change.Id changeId = Change.Id.tryParse(Integer.toString(changeInfo._number)).get();
+
+    // Add a file.
+    gApi.changes().id(changeId.get()).edit().modifyFile("f1.txt", RawInputUtil.create("content"));
+    gApi.changes().id(changeId.get()).edit().publish();
+    email.clear();
+
+    ReviewerInput reviewerInput = new ReviewerInput();
+    reviewerInput.reviewer = admin.email();
+    gApi.changes().id(changeId.get()).addReviewer(reviewerInput);
+    changeInfo = gApi.changes().id(changeId.get()).get();
+    assertThat(email.getMessages()).hasSize(1);
+    Message message = email.getMessages().get(0);
+    assertThat(message.body()).contains("f1.txt");
+    email.clear();
+
+    // Send a comment. Make sure the email that is sent includes the comment text.
+    CommentInput c1 =
+        CommentsUtil.newComment(
+            "f1.txt",
+            Side.REVISION,
+            /* line= */ 1,
+            /* message= */ "Comment text",
+            /* unresolved= */ false);
+    CommentsUtil.addComments(gApi, changeId.toString(), changeInfo.currentRevision, c1);
+    assertThat(email.getMessages()).hasSize(1);
+    Message commentMessage = email.getMessages().get(0);
+    assertThat(commentMessage.body())
+        .contains("Patch Set 2:\n" + "\n" + "(1 comment)\n" + "\n" + "File f1.txt:");
+    assertThat(commentMessage.body()).contains("PS2, Line 1: content\n" + "Comment text");
+  }
+
+  @Test
+  public void commentsOnDeletedFileIsIncludedInEmails() throws Exception {
+    // Create a change with a file.
+    createChange("subject", "f1.txt", "content");
+
+    // Stack a second change that deletes the file.
+    PushOneCommit.Result r = createChange();
+    String changeId = r.getChangeId();
+    gApi.changes().id(changeId).edit().deleteFile("f1.txt");
+    gApi.changes().id(changeId).edit().publish();
+    String currentRevision = gApi.changes().id(changeId).get().currentRevision;
+
+    // Add a comment on the deleted file on the parent side.
+    email.clear();
+    CommentInput commentInput =
+        CommentsUtil.newComment(
+            "f1.txt",
+            Side.PARENT,
+            /* line= */ 1,
+            /* message= */ "Comment text",
+            /* unresolved= */ false);
+    CommentsUtil.addComments(gApi, changeId, currentRevision, commentInput);
+
+    // Assert email contains the comment text.
+    assertThat(email.getMessages()).hasSize(1);
+    Message commentMessage = email.getMessages().get(0);
+    assertThat(commentMessage.body()).contains("Patch Set 2:\n\n(1 comment)\n\nFile f1.txt:");
+    assertThat(commentMessage.body()).contains("PS2, Line 1: content\nComment text");
+  }
+
   private List<CommentInfo> getRevisionComments(String changeId, String revId) throws Exception {
     return getPublishedComments(changeId, revId).values().stream()
         .flatMap(List::stream)
@@ -2016,5 +2109,14 @@ public class CommentsIT extends AbstractDaemonTest {
     reviewInput.message = message;
     reviewInput.draftIdsToPublish = draftIdsToPublish;
     return reviewInput;
+  }
+
+  private ChangeInfo createChangeInNewBranch(String branchName) throws Exception {
+    ChangeInput in = new ChangeInput();
+    in.project = project.get();
+    in.branch = branchName;
+    in.newBranch = true;
+    in.subject = "New changes";
+    return gApi.changes().create(in).get();
   }
 }

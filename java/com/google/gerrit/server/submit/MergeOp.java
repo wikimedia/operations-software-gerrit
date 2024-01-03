@@ -16,6 +16,7 @@ package com.google.gerrit.server.submit;
 
 import static com.google.common.base.MoreObjects.firstNonNull;
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.gerrit.server.project.ProjectCache.illegalState;
 import static java.util.Comparator.comparing;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toSet;
@@ -36,13 +37,14 @@ import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Change.Status;
-import com.google.gerrit.entities.LegacySubmitRequirement;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.SubmissionId;
 import com.google.gerrit.entities.SubmitRecord;
+import com.google.gerrit.entities.SubmitRequirement;
+import com.google.gerrit.entities.SubmitRequirementResult;
 import com.google.gerrit.entities.SubmitTypeRecord;
-import com.google.gerrit.exceptions.InternalServerWithUserMessageException;
+import com.google.gerrit.exceptions.MergeUpdateException;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.api.changes.SubmitInput;
@@ -70,6 +72,8 @@ import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.StoreSubmitRequirementsOp;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.NoSuchProjectException;
+import com.google.gerrit.server.project.ProjectCache;
+import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.project.SubmitRuleOptions;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
@@ -88,7 +92,7 @@ import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
-import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -96,6 +100,7 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -242,11 +247,12 @@ public class MergeOp implements AutoCloseable {
   private final RetryHelper retryHelper;
   private final ChangeData.Factory changeDataFactory;
   private final StoreSubmitRequirementsOp.Factory storeSubmitRequirementsOpFactory;
+  private final ProjectCache projectCache;
 
   // Changes that were updated by this MergeOp.
   private final Map<Change.Id, Change> updatedChanges;
 
-  private Timestamp ts;
+  private Instant ts;
   private SubmissionId submissionId;
   private IdentifiedUser caller;
 
@@ -254,7 +260,7 @@ public class MergeOp implements AutoCloseable {
   private CommitStatus commitStatus;
   private SubmitInput submitInput;
   private NotifyResolver.Result notify;
-  private Set<Project.NameKey> allProjects;
+  private Set<Project.NameKey> projects;
   private boolean dryrun;
   private TopicMetrics topicMetrics;
 
@@ -276,7 +282,8 @@ public class MergeOp implements AutoCloseable {
       TopicMetrics topicMetrics,
       RetryHelper retryHelper,
       ChangeData.Factory changeDataFactory,
-      StoreSubmitRequirementsOp.Factory storeSubmitRequirementsOpFactory) {
+      StoreSubmitRequirementsOp.Factory storeSubmitRequirementsOpFactory,
+      ProjectCache projectCache) {
     this.cmUtil = cmUtil;
     this.batchUpdateFactory = batchUpdateFactory;
     this.internalUserFactory = internalUserFactory;
@@ -294,6 +301,7 @@ public class MergeOp implements AutoCloseable {
     this.changeDataFactory = changeDataFactory;
     this.updatedChanges = new HashMap<>();
     this.storeSubmitRequirementsOpFactory = storeSubmitRequirementsOpFactory;
+    this.projectCache = projectCache;
   }
 
   @Override
@@ -303,43 +311,47 @@ public class MergeOp implements AutoCloseable {
     }
   }
 
-  public static void checkSubmitRule(ChangeData cd, boolean allowClosed)
-      throws ResourceConflictException {
+  public static void checkSubmitRequirements(ChangeData cd) throws ResourceConflictException {
     PatchSet patchSet = cd.currentPatchSet();
     if (patchSet == null) {
       throw new ResourceConflictException("missing current patch set for change " + cd.getId());
     }
-    List<SubmitRecord> results = getSubmitRecords(cd, allowClosed);
-    if (SubmitRecord.allRecordsOK(results)) {
-      // Rules supplied a valid solution.
+    Map<SubmitRequirement, SubmitRequirementResult> srResults =
+        cd.submitRequirementsIncludingLegacy();
+    if (srResults.values().stream().allMatch(SubmitRequirementResult::fulfilled)) {
       return;
-    } else if (results.isEmpty()) {
+    } else if (srResults.isEmpty()) {
       throw new IllegalStateException(
           String.format(
-              "SubmitRuleEvaluator.evaluate for change %s returned empty list for %s in %s",
+              "Submit requirement results for change '%s' and patchset '%s' "
+                  + "are empty in project '%s'",
               cd.getId(), patchSet.id(), cd.change().getProject().get()));
     }
 
-    for (SubmitRecord record : results) {
-      switch (record.status) {
-        case OK:
+    for (SubmitRequirementResult srResult : srResults.values()) {
+      switch (srResult.status()) {
+        case SATISFIED:
+        case NOT_APPLICABLE:
+        case OVERRIDDEN:
+        case FORCED:
           break;
 
-        case CLOSED:
-          throw new ResourceConflictException("change is closed");
+        case ERROR:
+          throw new ResourceConflictException(
+              String.format(
+                  "submit requirement '%s' has an error: %s",
+                  srResult.submitRequirement().name(), srResult.errorMessage().orElse("")));
 
-        case RULE_ERROR:
-          throw new ResourceConflictException("submit rule error: " + record.errorMessage);
+        case UNSATISFIED:
+          throw new ResourceConflictException(
+              String.format(
+                  "submit requirement '%s' is unsatisfied.", srResult.submitRequirement().name()));
 
-        case NOT_READY:
-          throw new ResourceConflictException(describeNotReady(cd, record));
-
-        case FORCED:
         default:
           throw new IllegalStateException(
               String.format(
-                  "Unexpected SubmitRecord status %s for %s in %s",
-                  record.status, patchSet.id().getId(), cd.change().getProject().get()));
+                  "Unexpected submit requirement status %s for %s in %s",
+                  srResult.status().name(), patchSet.id().getId(), cd.change().getProject().get()));
       }
     }
     throw new IllegalStateException();
@@ -349,56 +361,8 @@ public class MergeOp implements AutoCloseable {
     return allowClosed ? SUBMIT_RULE_OPTIONS_ALLOW_CLOSED : SUBMIT_RULE_OPTIONS;
   }
 
-  private static List<SubmitRecord> getSubmitRecords(ChangeData cd, boolean allowClosed) {
-    return cd.submitRecords(submitRuleOptions(allowClosed));
-  }
-
-  private static String describeNotReady(ChangeData cd, SubmitRecord record) {
-    List<String> blockingConditions = new ArrayList<>();
-    if (record.labels != null) {
-      blockingConditions.add(describeLabels(cd, record.labels));
-    }
-    if (record.requirements != null) {
-      record.requirements.stream()
-          .map(MergeOp::describeSubmitRequirement)
-          .forEach(blockingConditions::add);
-    }
-    return Joiner.on("; ").join(blockingConditions);
-  }
-
-  private static String describeLabels(ChangeData cd, List<SubmitRecord.Label> labels) {
-    List<String> labelResults = new ArrayList<>();
-    for (SubmitRecord.Label lbl : labels) {
-      switch (lbl.status) {
-        case OK:
-        case MAY:
-          break;
-
-        case REJECT:
-          labelResults.add("blocked by " + lbl.label);
-          break;
-
-        case NEED:
-          labelResults.add("needs " + lbl.label);
-          break;
-
-        case IMPOSSIBLE:
-          labelResults.add("needs " + lbl.label + " (check project access)");
-          break;
-
-        default:
-          throw new IllegalStateException(
-              String.format(
-                  "Unsupported SubmitRecord.Label %s for %s in %s",
-                  lbl, cd.change().currentPatchSetId(), cd.change().getProject()));
-      }
-    }
-    return Joiner.on("; ").join(labelResults);
-  }
-
-  private static String describeSubmitRequirement(LegacySubmitRequirement legacySubmitRequirement) {
-    return String.format(
-        "Submit requirement not fulfilled: %s", legacySubmitRequirement.fallbackText());
+  private static List<SubmitRecord> getSubmitRecords(ChangeData cd) {
+    return cd.submitRecords(submitRuleOptions(/* allowClosed= */ false));
   }
 
   private void checkSubmitRulesAndState(ChangeSet cs, boolean allowMerged)
@@ -415,7 +379,7 @@ public class MergeOp implements AutoCloseable {
         } else if (cd.change().isWorkInProgress()) {
           commitStatus.problem(cd.getId(), "Change " + cd.getId() + " is work in progress");
         } else {
-          checkSubmitRule(cd, allowMerged);
+          checkSubmitRequirements(cd);
         }
       } catch (ResourceConflictException e) {
         commitStatus.problem(cd.getId(), e.getMessage());
@@ -428,15 +392,32 @@ public class MergeOp implements AutoCloseable {
     commitStatus.maybeFailVerbose();
   }
 
-  private void bypassSubmitRules(ChangeSet cs, boolean allowClosed) {
+  private void bypassSubmitRulesAndRequirements(ChangeSet cs) {
     checkArgument(
         !cs.furtherHiddenChanges(), "cannot bypass submit rules for topic with hidden change");
     for (ChangeData cd : cs.changes()) {
-      List<SubmitRecord> records = new ArrayList<>(getSubmitRecords(cd, allowClosed));
+      Change change = cd.change();
+      if (change == null) {
+        throw new StorageException("Change not found");
+      }
+      if (change.isClosed()) {
+        // No need to check submit rules if the change is closed.
+        continue;
+      }
+      List<SubmitRecord> records = new ArrayList<>(getSubmitRecords(cd));
       SubmitRecord forced = new SubmitRecord();
       forced.status = SubmitRecord.Status.FORCED;
       records.add(forced);
-      cd.setSubmitRecords(submitRuleOptions(allowClosed), records);
+      cd.setSubmitRecords(submitRuleOptions(/* allowClosed= */ false), records);
+
+      // Also bypass submit requirements. Mark them as forced.
+      Map<SubmitRequirement, SubmitRequirementResult> forcedSRs =
+          cd.submitRequirementsIncludingLegacy().entrySet().stream()
+              .collect(
+                  Collectors.toMap(
+                      Map.Entry::getKey,
+                      entry -> entry.getValue().toBuilder().forced(Optional.of(true)).build()));
+      cd.setSubmitRequirements(forcedSRs);
     }
   }
 
@@ -470,7 +451,7 @@ public class MergeOp implements AutoCloseable {
             firstNonNull(submitInput.notify, NotifyHandling.ALL), submitInput.notifyDetails);
     this.dryrun = dryrun;
     this.caller = caller;
-    this.ts = TimeUtil.nowTs();
+    this.ts = TimeUtil.now();
     this.submissionId = new SubmissionId(change);
 
     try (TraceContext traceContext =
@@ -481,7 +462,9 @@ public class MergeOp implements AutoCloseable {
       logger.atFine().log("Beginning integration of %s", change);
       try {
         ChangeSet indexBackedChangeSet =
-            mergeSuperSet.setMergeOpRepoManager(orm).completeChangeSet(change, caller);
+            mergeSuperSet
+                .setMergeOpRepoManager(orm)
+                .completeChangeSet(change, caller, /* includingTopicClosure= */ false);
         if (!indexBackedChangeSet.ids().contains(change.getId())) {
           // indexBackedChangeSet contains only open changes, if the change is missing in this set
           // it might be that the change was concurrently submitted in the meantime.
@@ -509,7 +492,7 @@ public class MergeOp implements AutoCloseable {
           if (!changeData.change().getStatus().equals(Status.NEW)) {
             logger.atFine().log(
                 "Change %s has status %s due to stale index, so it is skipped during submit",
-                changeData.getId().toString(), changeData.change().getStatus().name());
+                changeData.getId(), changeData.change().getStatus().name());
             continue;
           }
           filteredChanges.add(changeData);
@@ -538,7 +521,7 @@ public class MergeOp implements AutoCloseable {
                   boolean isRetry = attempt > 1;
                   if (isRetry) {
                     logger.atFine().log("Retrying, attempt #%d; skipping merged changes", attempt);
-                    this.ts = TimeUtil.nowTs();
+                    this.ts = TimeUtil.now();
                     openRepoManager();
                   }
                   this.commitStatus = new CommitStatus(filteredNoteDbChangeSet, isRetry);
@@ -547,9 +530,10 @@ public class MergeOp implements AutoCloseable {
                     checkSubmitRulesAndState(filteredNoteDbChangeSet, isRetry);
                   } else {
                     logger.atFine().log("Bypassing submit rules");
-                    bypassSubmitRules(filteredNoteDbChangeSet, isRetry);
+                    bypassSubmitRulesAndRequirements(filteredNoteDbChangeSet);
                   }
-                  integrateIntoHistory(filteredNoteDbChangeSet, submissionExecutor);
+                  integrateIntoHistory(
+                      filteredNoteDbChangeSet, submissionExecutor, checkSubmitRules);
                   return null;
                 })
             .listener(retryTracker)
@@ -627,7 +611,8 @@ public class MergeOp implements AutoCloseable {
     }
   }
 
-  private void integrateIntoHistory(ChangeSet cs, SubmissionExecutor submissionExecutor)
+  private void integrateIntoHistory(
+      ChangeSet cs, SubmissionExecutor submissionExecutor, boolean checkSubmitRules)
       throws RestApiException, UpdateException {
     checkArgument(!cs.furtherHiddenChanges(), "cannot integrate hidden changes into history");
     logger.atFine().log("Beginning merge attempt on %s", cs);
@@ -658,17 +643,23 @@ public class MergeOp implements AutoCloseable {
       List<SubmitStrategy> strategies =
           getSubmitStrategies(
               toSubmit, updateOrderCalculator, submoduleCommits, subscriptionGraph, dryrun);
-      this.allProjects = updateOrderCalculator.getProjectsInOrder();
-      List<BatchUpdate> batchUpdates = orm.batchUpdates(allProjects);
+      this.projects = updateOrderCalculator.getProjectsInOrder();
+      List<BatchUpdate> batchUpdates =
+          orm.batchUpdates(
+              projects, /* refLogMessage= */ checkSubmitRules ? "merged" : "forced-merge");
       // Group batch updates by project
       Map<Project.NameKey, BatchUpdate> batchUpdatesByProject =
           batchUpdates.stream().collect(Collectors.toMap(b -> b.getProject(), Function.identity()));
       for (Map.Entry<Change.Id, ChangeData> entry : cs.changesById().entrySet()) {
         Project.NameKey project = entry.getValue().project();
         Change.Id changeId = entry.getKey();
+        ChangeData cd = entry.getValue();
+        Collection<SubmitRequirementResult> srResults =
+            cd.submitRequirementsIncludingLegacy().values();
         batchUpdatesByProject
             .get(project)
-            .addOp(changeId, storeSubmitRequirementsOpFactory.create());
+            .addOp(changeId, storeSubmitRequirementsOpFactory.create(srResults, cd));
+        crossCheckSubmitRequirementResults(cd, srResults, project);
       }
       try {
         submissionExecutor.setAdditionalBatchUpdateListeners(
@@ -682,7 +673,7 @@ public class MergeOp implements AutoCloseable {
 
         // Do not leave executed BatchUpdates in the OpenRepos
         if (!dryrun) {
-          orm.resetUpdates(ImmutableSet.copyOf(this.allProjects));
+          orm.resetUpdates(ImmutableSet.copyOf(this.projects));
         }
       }
     } catch (NoSuchProjectException e) {
@@ -711,12 +702,12 @@ public class MergeOp implements AutoCloseable {
       if (e.getCause() instanceof IntegrationConflictException) {
         throw (IntegrationConflictException) e.getCause();
       }
-      throw new InternalServerWithUserMessageException(genericMergeError(cs), e);
+      throw new MergeUpdateException(genericMergeError(cs), e);
     }
   }
 
   public Set<Project.NameKey> getAllProjects() {
-    return allProjects;
+    return projects;
   }
 
   public MergeOpRepoManager getMergeOpRepoManager() {
@@ -1017,5 +1008,29 @@ public class MergeOp implements AutoCloseable {
         + p
         + " projects involved; some projects may have submitted successfully, but others may have"
         + " failed";
+  }
+
+  /**
+   * Make sure that for every project config submit requirement there exists a corresponding result
+   * with the same name in {@code srResults}. If no result is found, log a warning message.
+   */
+  private void crossCheckSubmitRequirementResults(
+      ChangeData cd, Collection<SubmitRequirementResult> srResults, Project.NameKey project) {
+    ProjectState state = projectCache.get(project).orElseThrow(illegalState(project));
+    Map<String, SubmitRequirement> projectConfigRequirements = state.getSubmitRequirements();
+    for (String srName : projectConfigRequirements.keySet()) {
+      boolean hasResult = false;
+      for (SubmitRequirementResult srResult : srResults) {
+        if (!srResult.isLegacy() && srResult.submitRequirement().name().equals(srName)) {
+          hasResult = true;
+          break;
+        }
+      }
+      if (!hasResult) {
+        logger.atWarning().log(
+            "Change %d: No result found for project config submit requirement '%s'",
+            cd.getId().get(), srName);
+      }
+    }
   }
 }

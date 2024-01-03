@@ -41,10 +41,13 @@ public class ExternalIdCaseSensitivityMigrationCommand extends SshCommand {
 
     if (!isUserNameCaseInsensitive || !isUserNameCaseInsensitiveMigrationMode) {
       die(
-          "External IDs online migration requires auth.userNameCaseInsensitive and auth.userNameCaseInsensitiveMigrationMode to be set to true. Cannot start migration!");
+          "External IDs online migration requires auth.userNameCaseInsensitive and"
+              + " auth.userNameCaseInsensitiveMigrationMode to be set to true. Cannot start"
+              + " migration!");
     }
     onlineExternalIdCaseSensivityMigrator.migrate();
     stdout.println(
-        "External ids case insensitivity migration started. To check if it's completed look for \"External IDs migration completed!\" message in the Gerrit server logs");
+        "External ids case insensitivity migration started. To check if it's completed look for"
+            + " \"External IDs migration completed!\" message in the Gerrit server logs");
   }
 }

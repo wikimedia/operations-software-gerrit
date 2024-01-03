@@ -30,6 +30,7 @@ import {
   createSubmittedTogetherInfo,
 } from '../../../test/test-data-generators';
 import {
+  query,
   queryAndAssert,
   resetPlugins,
   stubRestApi,
@@ -46,7 +47,6 @@ import {
 } from '../../../types/common';
 import {ParsedChangeInfo} from '../../../types/types';
 import {GrEndpointDecorator} from '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
-import {_testOnly_initGerritPluginApi} from '../../shared/gr-js-api-interface/gr-gerrit';
 import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import './gr-related-changes-list';
 import {
@@ -55,8 +55,6 @@ import {
   GrRelatedCollapse,
   Section,
 } from './gr-related-changes-list';
-
-const pluginApi = _testOnly_initGerritPluginApi();
 
 const basicFixture = fixtureFromElement('gr-related-changes-list');
 
@@ -216,7 +214,7 @@ suite('gr-related-changes-list', () => {
         section,
         'gr-related-collapse'
       );
-      assert.isTrue(relatedChanges!.classList.contains('first'));
+      assert.isTrue(relatedChanges.classList.contains('first'));
     });
 
     test('first empty second non-empty', async () => {
@@ -227,16 +225,13 @@ suite('gr-related-changes-list', () => {
         Promise.resolve(submittedTogether)
       );
       await element.reload();
-      const relatedChanges = queryAndAssert<GrRelatedCollapse>(
-        queryAndAssert<HTMLElement>(element, '#relatedChanges'),
-        'gr-related-collapse'
-      );
-      assert.isFalse(relatedChanges!.classList.contains('first'));
+      const relatedChanges = query<HTMLElement>(element, '#relatedChanges');
+      assert.notExists(relatedChanges);
       const submittedTogetherSection = queryAndAssert<GrRelatedCollapse>(
         queryAndAssert<HTMLElement>(element, '#submittedTogether'),
         'gr-related-collapse'
       );
-      assert.isTrue(submittedTogetherSection!.classList.contains('first'));
+      assert.isTrue(submittedTogetherSection.classList.contains('first'));
     });
 
     test('first non-empty second empty third non-empty', async () => {
@@ -254,17 +249,17 @@ suite('gr-related-changes-list', () => {
         queryAndAssert<HTMLElement>(element, '#relatedChanges'),
         'gr-related-collapse'
       );
-      assert.isTrue(relatedChanges!.classList.contains('first'));
-      const submittedTogetherSection = queryAndAssert<GrRelatedCollapse>(
-        queryAndAssert<HTMLElement>(element, '#submittedTogether'),
-        'gr-related-collapse'
+      assert.isTrue(relatedChanges.classList.contains('first'));
+      const submittedTogetherSection = query<HTMLElement>(
+        element,
+        '#submittedTogether'
       );
-      assert.isFalse(submittedTogetherSection!.classList.contains('first'));
+      assert.notExists(submittedTogetherSection);
       const cherryPicks = queryAndAssert<GrRelatedCollapse>(
         queryAndAssert<HTMLElement>(element, '#cherryPicks'),
         'gr-related-collapse'
       );
-      assert.isFalse(cherryPicks!.classList.contains('first'));
+      assert.isFalse(cherryPicks.classList.contains('first'));
     });
   });
 
@@ -608,7 +603,7 @@ suite('gr-related-changes-list', () => {
       }
       let hookEl: RelatedChangesListGrEndpointDecorator;
       let plugin: PluginApi;
-      pluginApi.install(
+      window.Gerrit.install(
         p => {
           plugin = p;
           plugin

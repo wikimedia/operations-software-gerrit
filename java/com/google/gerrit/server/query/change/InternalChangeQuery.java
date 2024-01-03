@@ -22,6 +22,7 @@ import static com.google.gerrit.server.query.change.ChangeStatusPredicate.open;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
@@ -294,7 +295,7 @@ public class InternalChangeQuery extends InternalQuery<ChangeData, InternalChang
     return and(project(project), or(groupPredicates));
   }
 
-  public static List<ChangeData> byProjectGroups(
+  public static ImmutableList<ChangeData> byProjectGroups(
       Provider<InternalChangeQuery> queryProvider,
       IndexConfig indexConfig,
       Project.NameKey project,
@@ -314,7 +315,7 @@ public class InternalChangeQuery extends InternalQuery<ChangeData, InternalChang
           querySupplier, byProjectGroupsPredicate(indexConfig, project, groups));
     }
     Set<Change.Id> seen = new HashSet<>();
-    List<ChangeData> result = new ArrayList<>();
+    ImmutableList.Builder<ChangeData> result = ImmutableList.builder();
     for (List<String> part : Iterables.partition(groups, batchSize)) {
       for (ChangeData cd :
           queryExhaustively(querySupplier, byProjectGroupsPredicate(indexConfig, project, part))) {
@@ -323,6 +324,6 @@ public class InternalChangeQuery extends InternalQuery<ChangeData, InternalChang
         }
       }
     }
-    return result;
+    return result.build();
   }
 }

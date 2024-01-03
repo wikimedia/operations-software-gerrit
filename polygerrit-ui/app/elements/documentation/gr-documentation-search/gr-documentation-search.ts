@@ -14,76 +14,116 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import '../../../styles/gr-table-styles';
-import '../../../styles/shared-styles';
 import '../../shared/gr-list-view/gr-list-view';
-import {PolymerElement} from '@polymer/polymer/polymer-element';
-import {htmlTemplate} from './gr-documentation-search_html';
 import {getBaseUrl} from '../../../utils/url-util';
-import {customElement, property} from '@polymer/decorators';
 import {DocResult} from '../../../types/common';
 import {fireTitleChange} from '../../../utils/event-util';
-import {appContext} from '../../../services/app-context';
+import {getAppContext} from '../../../services/app-context';
 import {ListViewParams} from '../../gr-app-types';
+import {sharedStyles} from '../../../styles/shared-styles';
+import {tableStyles} from '../../../styles/gr-table-styles';
+import {LitElement, PropertyValues, html} from 'lit';
+import {customElement, property, state} from 'lit/decorators';
 
 @customElement('gr-documentation-search')
-export class GrDocumentationSearch extends PolymerElement {
-  static get template() {
-    return htmlTemplate;
-  }
-
+export class GrDocumentationSearch extends LitElement {
   /**
    * URL params passed from the router.
    */
-  @property({type: Object, observer: '_paramsChanged'})
+  @property({type: Object})
   params?: ListViewParams;
 
-  @property({type: Array})
-  _documentationSearches?: DocResult[];
+  // private but used in test
+  @state() documentationSearches?: DocResult[];
 
-  @property({type: Boolean})
-  _loading = true;
+  // private but used in test
+  @state() loading = true;
 
-  @property({type: String})
-  _filter?: string;
+  @state() private filter = '';
 
-  private readonly restApiService = appContext.restApiService;
+  private readonly restApiService = getAppContext().restApiService;
 
   override connectedCallback() {
     super.connectedCallback();
     fireTitleChange(this, 'Documentation Search');
   }
 
-  _paramsChanged(params: ListViewParams) {
-    this._loading = true;
-    this._filter = params?.filter ?? '';
-
-    return this._getDocumentationSearches(this._filter);
+  static override get styles() {
+    return [sharedStyles, tableStyles];
   }
 
-  _getDocumentationSearches(filter: string) {
-    this._documentationSearches = [];
+  override render() {
+    return html` <gr-list-view
+      .filter=${this.filter}
+      .offset=${0}
+      .loading=${this.loading}
+      .path=${'/Documentation'}
+    >
+      <table id="list" class="genericList">
+        <tbody>
+          <tr class="headerRow">
+            <th class="name topHeader">Name</th>
+            <th class="name topHeader"></th>
+            <th class="name topHeader"></th>
+          </tr>
+          <tr id="loading" class="loadingMsg ${this.loading ? 'loading' : ''}">
+            <td>Loading...</td>
+          </tr>
+        </tbody>
+        <tbody class=${this.loading ? 'loading' : ''}>
+          ${this.documentationSearches?.map(search =>
+            this.renderDocumentationList(search)
+          )}
+        </tbody>
+      </table>
+    </gr-list-view>`;
+  }
+
+  private renderDocumentationList(search: DocResult) {
+    return html`
+      <tr class="table">
+        <td class="name">
+          <a href=${this.computeSearchUrl(search.url)}>${search.title}</a>
+        </td>
+        <td></td>
+        <td></td>
+      </tr>
+    `;
+  }
+
+  override willUpdate(changedProperties: PropertyValues) {
+    if (changedProperties.has('params')) {
+      this.paramsChanged();
+    }
+  }
+
+  // private but used in test
+  paramsChanged() {
+    this.loading = true;
+    this.filter = this.params?.filter ?? '';
+
+    return this.getDocumentationSearches(this.filter);
+  }
+
+  private getDocumentationSearches(filter: string) {
+    this.documentationSearches = [];
     return this.restApiService
       .getDocumentationSearches(filter)
       .then(searches => {
         // Late response.
-        if (filter !== this._filter || !searches) {
+        if (filter !== this.filter || !searches) {
           return;
         }
-        this._documentationSearches = searches;
-        this._loading = false;
+        this.documentationSearches = searches;
+      })
+      .finally(() => {
+        this.loading = false;
       });
   }
 
-  _computeSearchUrl(url?: string) {
-    if (!url) {
-      return '';
-    }
+  private computeSearchUrl(url?: string) {
+    if (!url) return '';
     return `${getBaseUrl()}/${url}`;
-  }
-
-  computeLoadingClass(loading: boolean) {
-    return loading ? 'loading' : '';
   }
 }
 

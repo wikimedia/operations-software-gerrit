@@ -33,12 +33,14 @@ import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.PatchSetUtil;
+import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.edit.tree.ChangeFileContentModification;
 import com.google.gerrit.server.edit.tree.DeleteFileModification;
 import com.google.gerrit.server.edit.tree.RenameFileModification;
 import com.google.gerrit.server.edit.tree.RestoreFileModification;
 import com.google.gerrit.server.edit.tree.TreeCreator;
 import com.google.gerrit.server.edit.tree.TreeModification;
+import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.index.change.ChangeIndexer;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.permissions.ChangePermission;
@@ -52,11 +54,11 @@ import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
-import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.TimeZone;
 import org.eclipse.jgit.diff.DiffAlgorithm;
 import org.eclipse.jgit.diff.DiffAlgorithm.SupportedAlgorithm;
 import org.eclipse.jgit.diff.RawText;
@@ -91,7 +93,7 @@ import org.eclipse.jgit.transport.ReceiveCommand;
 @Singleton
 public class ChangeEditModifier {
 
-  private final TimeZone tz;
+  private final ZoneId zoneId;
   private final Provider<CurrentUser> currentUser;
   private final PermissionBackend permissionBackend;
   private final ChangeEditUtil changeEditUtil;
@@ -107,15 +109,16 @@ public class ChangeEditModifier {
       PermissionBackend permissionBackend,
       ChangeEditUtil changeEditUtil,
       PatchSetUtil patchSetUtil,
-      ProjectCache projectCache) {
+      ProjectCache projectCache,
+      GitReferenceUpdated gitRefUpdated) {
     this.currentUser = currentUser;
     this.permissionBackend = permissionBackend;
-    this.tz = gerritIdent.getTimeZone();
+    this.zoneId = gerritIdent.getZoneId();
     this.changeEditUtil = changeEditUtil;
     this.patchSetUtil = patchSetUtil;
     this.projectCache = projectCache;
 
-    noteDbEdits = new NoteDbEdits(tz, indexer, currentUser);
+    noteDbEdits = new NoteDbEdits(zoneId, indexer, currentUser, gitRefUpdated);
   }
 
   /**
@@ -139,7 +142,7 @@ public class ChangeEditModifier {
 
     PatchSet currentPatchSet = lookupCurrentPatchSet(notes);
     ObjectId patchSetCommitId = currentPatchSet.commitId();
-    noteDbEdits.createEdit(repository, notes, currentPatchSet, patchSetCommitId, TimeUtil.nowTs());
+    noteDbEdits.createEdit(repository, notes, currentPatchSet, patchSetCommitId, TimeUtil.now());
   }
 
   /**
@@ -187,7 +190,7 @@ public class ChangeEditModifier {
     RevTree basePatchSetTree = basePatchSetCommit.getTree();
 
     ObjectId newTreeId = merge(repository, changeEdit, basePatchSetTree);
-    Timestamp nowTimestamp = TimeUtil.nowTs();
+    Instant nowTimestamp = TimeUtil.now();
     String commitMessage = currentEditCommit.getFullMessage();
     ObjectId newEditCommitId =
         createCommit(repository, basePatchSetCommit, newTreeId, commitMessage, nowTimestamp);
@@ -385,7 +388,7 @@ public class ChangeEditModifier {
       return unmodifiedEdit.get();
     }
 
-    Timestamp nowTimestamp = TimeUtil.nowTs();
+    Instant nowTimestamp = TimeUtil.now();
     ObjectId newEditCommit =
         createCommit(repository, basePatchsetCommit, newTreeId, newCommitMessage, nowTimestamp);
 
@@ -407,14 +410,15 @@ public class ChangeEditModifier {
 
     // Not allowed to edit if the current patch set is locked.
     patchSetUtil.checkPatchSetNotLocked(notes);
-    try {
-      permissionBackend.currentUser().change(notes).check(ChangePermission.ADD_PATCH_SET);
-      projectCache
-          .get(notes.getProjectName())
-          .orElseThrow(illegalState(notes.getProjectName()))
-          .checkStatePermitsWrite();
-    } catch (AuthException denied) {
-      throw new AuthException("edit not permitted", denied);
+    boolean canEdit =
+        permissionBackend.currentUser().change(notes).test(ChangePermission.ADD_PATCH_SET);
+    canEdit &=
+        projectCache
+            .get(notes.getProjectName())
+            .orElseThrow(illegalState(notes.getProjectName()))
+            .statePermitsWrite();
+    if (!canEdit) {
+      throw new AuthException("edit not permitted");
     }
   }
 
@@ -501,7 +505,7 @@ public class ChangeEditModifier {
       RevCommit basePatchsetCommit,
       ObjectId tree,
       String commitMessage,
-      Timestamp timestamp)
+      Instant timestamp)
       throws IOException {
     try (ObjectInserter objectInserter = repository.newObjectInserter()) {
       CommitBuilder builder = new CommitBuilder();
@@ -516,9 +520,9 @@ public class ChangeEditModifier {
     }
   }
 
-  private PersonIdent getCommitterIdent(Timestamp commitTimestamp) {
+  private PersonIdent getCommitterIdent(Instant commitTimestamp) {
     IdentifiedUser user = currentUser.get().asIdentifiedUser();
-    return user.newCommitterIdent(commitTimestamp, tz);
+    return user.newCommitterIdent(commitTimestamp, zoneId);
   }
 
   /**
@@ -547,7 +551,7 @@ public class ChangeEditModifier {
         ChangeNotes notes,
         PatchSet basePatchSet,
         ObjectId newEditCommitId,
-        Timestamp timestamp)
+        Instant timestamp)
         throws IOException;
   }
 
@@ -647,7 +651,7 @@ public class ChangeEditModifier {
         ChangeNotes notes,
         PatchSet basePatchSet,
         ObjectId newEditCommitId,
-        Timestamp timestamp)
+        Instant timestamp)
         throws IOException {
       return noteDbEdits.updateEdit(
           notes.getProjectName(), repository, changeEdit, newEditCommitId, timestamp);
@@ -701,21 +705,27 @@ public class ChangeEditModifier {
         ChangeNotes notes,
         PatchSet basePatchSet,
         ObjectId newEditCommitId,
-        Timestamp timestamp)
+        Instant timestamp)
         throws IOException {
       return noteDbEdits.createEdit(repository, notes, basePatchSet, newEditCommitId, timestamp);
     }
   }
 
   private static class NoteDbEdits {
-    private final TimeZone tz;
+    private final ZoneId zoneId;
     private final ChangeIndexer indexer;
     private final Provider<CurrentUser> currentUser;
+    private final GitReferenceUpdated gitRefUpdated;
 
-    NoteDbEdits(TimeZone tz, ChangeIndexer indexer, Provider<CurrentUser> currentUser) {
-      this.tz = tz;
+    NoteDbEdits(
+        ZoneId zoneId,
+        ChangeIndexer indexer,
+        Provider<CurrentUser> currentUser,
+        GitReferenceUpdated gitRefUpdated) {
+      this.zoneId = zoneId;
       this.indexer = indexer;
       this.currentUser = currentUser;
+      this.gitRefUpdated = gitRefUpdated;
     }
 
     ChangeEdit createEdit(
@@ -723,7 +733,7 @@ public class ChangeEditModifier {
         ChangeNotes notes,
         PatchSet basePatchset,
         ObjectId newEditCommitId,
-        Timestamp timestamp)
+        Instant timestamp)
         throws IOException {
       Change change = notes.getChange();
       String editRefName = getEditRefName(change, basePatchset);
@@ -750,7 +760,7 @@ public class ChangeEditModifier {
         Repository repository,
         ChangeEdit changeEdit,
         ObjectId newEditCommitId,
-        Timestamp timestamp)
+        Instant timestamp)
         throws IOException {
       String editRefName = changeEdit.getRefName();
       RevCommit currentEditCommit = changeEdit.getEditCommit();
@@ -769,8 +779,9 @@ public class ChangeEditModifier {
         String refName,
         ObjectId currentObjectId,
         ObjectId targetObjectId,
-        Timestamp timestamp)
+        Instant timestamp)
         throws IOException {
+      AccountState userAccountState = currentUser.get().asIdentifiedUser().state();
       RefUpdate ru = repository.updateRef(refName);
       ru.setExpectedOldObjectId(currentObjectId);
       ru.setNewObjectId(targetObjectId);
@@ -786,6 +797,7 @@ public class ChangeEditModifier {
         if (res != RefUpdate.Result.NEW && res != RefUpdate.Result.FORCED) {
           throw new IOException(message);
         }
+        gitRefUpdated.fire(projectName, ru, userAccountState);
       }
     }
 
@@ -795,7 +807,7 @@ public class ChangeEditModifier {
         PatchSet currentPatchSet,
         ObjectId currentEditCommit,
         ObjectId newEditCommitId,
-        Timestamp nowTimestamp)
+        Instant nowTimestamp)
         throws IOException {
       String newEditRefName = getEditRefName(changeEdit.getChange(), currentPatchSet);
       updateReferenceWithNameChange(
@@ -814,7 +826,7 @@ public class ChangeEditModifier {
         ObjectId currentObjectId,
         String newRefName,
         ObjectId targetObjectId,
-        Timestamp timestamp)
+        Instant timestamp)
         throws IOException {
       BatchRefUpdate batchRefUpdate = repository.getRefDatabase().newBatchUpdate();
       batchRefUpdate.addCommand(new ReceiveCommand(ObjectId.zeroId(), targetObjectId, newRefName));
@@ -838,9 +850,9 @@ public class ChangeEditModifier {
       }
     }
 
-    private PersonIdent getRefLogIdent(Timestamp timestamp) {
+    private PersonIdent getRefLogIdent(Instant timestamp) {
       IdentifiedUser user = currentUser.get().asIdentifiedUser();
-      return user.newRefLogIdent(timestamp, tz);
+      return user.newRefLogIdent(timestamp, zoneId);
     }
 
     private void reindex(Change change) {

@@ -499,7 +499,7 @@ public class AccountIT extends AbstractDaemonTest {
       assertThat(ref).isNotNull();
       RevCommit c = rw.parseCommit(ref.getObjectId());
       long timestampDiffMs =
-          Math.abs(c.getCommitTime() * 1000L - getAccount(accountId).registeredOn().getTime());
+          Math.abs(c.getCommitTime() * 1000L - getAccount(accountId).registeredOn().toEpochMilli());
       assertThat(timestampDiffMs).isAtMost(SECONDS.toMillis(1));
 
       // Check the 'account.config' file.
@@ -980,7 +980,8 @@ public class AccountIT extends AbstractDaemonTest {
     assertThat(detail.email).isEqualTo(email);
     assertThat(detail.secondaryEmails).containsExactly(secondaryEmail);
     assertThat(detail.status).isEqualTo(status);
-    assertThat(detail.registeredOn).isEqualTo(getAccount(foo.id()).registeredOn());
+    assertThat(detail.registeredOn.getTime())
+        .isEqualTo(getAccount(foo.id()).registeredOn().toEpochMilli());
     assertThat(detail.inactive).isNull();
     assertThat(detail._moreAccounts).isNull();
   }
@@ -2477,7 +2478,7 @@ public class AccountIT extends AbstractDaemonTest {
         RevWalk rw = new RevWalk(repo)) {
       RevCommit commit = rw.parseCommit(repo.exactRef(userRef).getObjectId());
 
-      PersonIdent ident = new PersonIdent(serverIdent.get(), TimeUtil.nowTs());
+      PersonIdent ident = new PersonIdent(serverIdent.get(), TimeUtil.now());
       CommitBuilder cb = new CommitBuilder();
       cb.setTreeId(commit.getTree());
       cb.setCommitter(ident);
@@ -2497,7 +2498,7 @@ public class AccountIT extends AbstractDaemonTest {
     // stale.
     try (Repository repo = repoManager.openRepository(allUsers)) {
       ExternalIdNotes extIdNotes =
-          ExternalIdNotes.loadNoCacheUpdate(
+          ExternalIdNotes.load(
               allUsers,
               repo,
               externalIdFactory,
@@ -2511,7 +2512,7 @@ public class AccountIT extends AbstractDaemonTest {
       assertStaleAccountAndReindex(accountId);
 
       extIdNotes =
-          ExternalIdNotes.loadNoCacheUpdate(
+          ExternalIdNotes.load(
               allUsers,
               repo,
               externalIdFactory,
@@ -2523,7 +2524,7 @@ public class AccountIT extends AbstractDaemonTest {
       assertStaleAccountAndReindex(accountId);
 
       extIdNotes =
-          ExternalIdNotes.loadNoCacheUpdate(
+          ExternalIdNotes.load(
               allUsers,
               repo,
               externalIdFactory,

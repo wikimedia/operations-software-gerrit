@@ -15,9 +15,11 @@
  * limitations under the License.
  */
 
-import {NumericChangeId, PatchSetNum} from '../../types/common';
-import {BehaviorSubject, Observable} from 'rxjs';
+import {Observable} from 'rxjs';
 import {distinctUntilChanged, map} from 'rxjs/operators';
+import {Finalizable} from '../registry';
+import {NumericChangeId, PatchSetNum} from '../../types/common';
+import {Model} from '../../models/model';
 
 export enum GerritView {
   ADMIN = 'admin',
@@ -41,41 +43,40 @@ export interface RouterState {
   patchNum?: PatchSetNum;
 }
 
-// TODO: Figure out how to best enforce immutability of all states. Use Immer?
-// Use DeepReadOnly?
-const initialState: RouterState = {};
+export class RouterModel extends Model<RouterState> implements Finalizable {
+  readonly routerView$: Observable<GerritView | undefined>;
 
-const privateState$ = new BehaviorSubject<RouterState>(initialState);
+  readonly routerChangeNum$: Observable<NumericChangeId | undefined>;
 
-// Re-exporting as Observable so that you can only subscribe, but not emit.
-export const routerState$: Observable<RouterState> = privateState$;
+  readonly routerPatchNum$: Observable<PatchSetNum | undefined>;
 
-// Must only be used by the router service or whatever is in control of this
-// model.
-export function updateState(
-  view?: GerritView,
-  changeNum?: NumericChangeId,
-  patchNum?: PatchSetNum
-) {
-  privateState$.next({
-    ...privateState$.getValue(),
-    view,
-    changeNum,
-    patchNum,
-  });
+  constructor() {
+    super({});
+    this.routerView$ = this.state$.pipe(
+      map(state => state.view),
+      distinctUntilChanged()
+    );
+    this.routerChangeNum$ = this.state$.pipe(
+      map(state => state.changeNum),
+      distinctUntilChanged()
+    );
+    this.routerPatchNum$ = this.state$.pipe(
+      map(state => state.patchNum),
+      distinctUntilChanged()
+    );
+  }
+
+  finalize() {}
+
+  // Private but used in tests
+  setState(state: RouterState) {
+    this.subject$.next(state);
+  }
+
+  updateState(partial: Partial<RouterState>) {
+    this.subject$.next({
+      ...this.subject$.getValue(),
+      ...partial,
+    });
+  }
 }
-
-export const routerView$ = routerState$.pipe(
-  map(state => state.view),
-  distinctUntilChanged()
-);
-
-export const routerChangeNum$ = routerState$.pipe(
-  map(state => state.changeNum),
-  distinctUntilChanged()
-);
-
-export const routerPatchNum$ = routerState$.pipe(
-  map(state => state.patchNum),
-  distinctUntilChanged()
-);

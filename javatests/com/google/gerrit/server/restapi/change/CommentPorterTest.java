@@ -38,9 +38,10 @@ import com.google.gerrit.server.CommentsUtil;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.patch.DiffNotAvailableException;
 import com.google.gerrit.server.patch.DiffOperations;
+import com.google.gerrit.server.patch.DiffOptions;
 import com.google.gerrit.server.restapi.change.CommentPorter.Metrics;
 import com.google.gerrit.truth.NullAwareCorrespondence;
-import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.Optional;
 import org.eclipse.jgit.lib.ObjectId;
@@ -78,7 +79,10 @@ public class CommentPorterTest {
     when(commentsUtil.determineCommitId(any(), any(), anyShort()))
         .thenReturn(Optional.of(dummyObjectId));
     when(diffOperations.listModifiedFiles(
-            any(Project.NameKey.class), any(ObjectId.class), any(ObjectId.class)))
+            any(Project.NameKey.class),
+            any(ObjectId.class),
+            any(ObjectId.class),
+            any(DiffOptions.class)))
         .thenThrow(DiffNotAvailableException.class);
     ImmutableList<HumanComment> portedComments =
         commentPorter.portComments(
@@ -101,7 +105,10 @@ public class CommentPorterTest {
     when(commentsUtil.determineCommitId(any(), any(), anyShort()))
         .thenReturn(Optional.of(dummyObjectId));
     when(diffOperations.listModifiedFiles(
-            any(Project.NameKey.class), any(ObjectId.class), any(ObjectId.class)))
+            any(Project.NameKey.class),
+            any(ObjectId.class),
+            any(ObjectId.class),
+            any(DiffOptions.class)))
         .thenThrow(IllegalStateException.class);
     ImmutableList<HumanComment> portedComments =
         commentPorter.portComments(
@@ -144,7 +151,10 @@ public class CommentPorterTest {
     when(commentsUtil.determineCommitId(any(), any(), anyShort()))
         .thenReturn(Optional.of(dummyObjectId));
     when(diffOperations.listModifiedFiles(
-            any(Project.NameKey.class), any(ObjectId.class), any(ObjectId.class)))
+            any(Project.NameKey.class),
+            any(ObjectId.class),
+            any(ObjectId.class),
+            any(DiffOptions.class)))
         .thenThrow(IllegalStateException.class);
     ImmutableList<HumanComment> portedComments =
         commentPorter.portComments(
@@ -173,7 +183,10 @@ public class CommentPorterTest {
         .thenReturn(Optional.of(dummyObjectId));
     // Throw an exception on the first diff request but return an actual value on the second.
     when(diffOperations.listModifiedFiles(
-            any(Project.NameKey.class), any(ObjectId.class), any(ObjectId.class)))
+            any(Project.NameKey.class),
+            any(ObjectId.class),
+            any(ObjectId.class),
+            any(DiffOptions.class)))
         .thenThrow(IllegalStateException.class)
         .thenReturn(ImmutableMap.of());
     ImmutableList<HumanComment> portedComments =
@@ -200,7 +213,10 @@ public class CommentPorterTest {
     when(commentsUtil.determineCommitId(any(), any(), anyShort()))
         .thenReturn(Optional.of(dummyObjectId));
     when(diffOperations.listModifiedFiles(
-            any(Project.NameKey.class), any(ObjectId.class), any(ObjectId.class)))
+            any(Project.NameKey.class),
+            any(ObjectId.class),
+            any(ObjectId.class),
+            any(DiffOptions.class)))
         .thenReturn(ImmutableMap.of());
     ImmutableList<HumanComment> portedComments =
         commentPorter.portComments(
@@ -215,7 +231,7 @@ public class CommentPorterTest {
         changeId,
         Account.id(123),
         BranchNameKey.create(project, "myBranch"),
-        new Timestamp(12345));
+        Instant.ofEpochMilli(12345));
   }
 
   private PatchSet createPatchset(PatchSet.Id id) {
@@ -223,7 +239,7 @@ public class CommentPorterTest {
         .id(id)
         .commitId(dummyObjectId)
         .uploader(Account.id(123))
-        .createdOn(new Timestamp(12345))
+        .createdOn(Instant.ofEpochMilli(12345))
         .build();
   }
 
@@ -246,7 +262,7 @@ public class CommentPorterTest {
     return new HumanComment(
         new Comment.Key(getUniqueUuid(), filePath, patchsetId.get()),
         Account.id(100),
-        new Timestamp(1234),
+        Instant.ofEpochMilli(1234),
         (short) 1,
         "Comment text",
         "serverId",

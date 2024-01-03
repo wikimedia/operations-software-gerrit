@@ -14,9 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+import {Finalizable} from '../registry';
 import {NumericChangeId} from '../../types/common';
-import {EventDetails} from '../../api/reporting';
+import {EventDetails, ReportingOptions} from '../../api/reporting';
 import {PluginApi} from '../../api/plugin';
 import {
   Execution,
@@ -33,7 +33,7 @@ export interface Timer {
   withMaximum(maximum: number): this;
 }
 
-export interface ReportingService {
+export interface ReportingService extends Finalizable {
   reporter(
     type: string,
     category: string,
@@ -51,7 +51,6 @@ export interface ReportingService {
   changeDisplayed(eventDetails?: EventDetails): void;
   changeFullyLoaded(): void;
   diffViewDisplayed(): void;
-  diffViewFullyLoaded(): void;
   diffViewContentDisplayed(): void;
   fileListDisplayed(): void;
   reportExtension(name: string): void;
@@ -67,20 +66,6 @@ export interface ReportingService {
    * Finish named timer and report it to server.
    */
   timeEnd(name: Timing, eventDetails?: EventDetails): void;
-  /**
-   * Reports just line timeEnd, but additionally reports an average given a
-   * denominator and a separate reporting name for the average.
-   *
-   * @param name Timing name.
-   * @param averageName Average timing name.
-   * @param denominator Number by which to divide the total to
-   *     compute the average.
-   */
-  timeEndWithAverage(
-    name: Timing,
-    averageName: Timing,
-    denominator: number
-  ): void;
   /**
    * Get a timer object for reporting a user timing. The start time will be
    * the time that the object has been created, and the end time will be the
@@ -113,13 +98,9 @@ export interface ReportingService {
   ): void;
   reportInteraction(
     eventName: string | Interaction,
-    details?: EventDetails
+    details?: EventDetails,
+    options?: ReportingOptions
   ): void;
-  /**
-   * A draft interaction was started. Update the time-between-draft-actions
-   * timer.
-   */
-  recordDraftInteraction(): void;
   reportErrorDialog(message: string): void;
   setRepoName(repoName: string): void;
   setChangeId(changeId: NumericChangeId): void;

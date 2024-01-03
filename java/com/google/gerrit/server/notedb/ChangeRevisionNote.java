@@ -17,6 +17,8 @@ package com.google.gerrit.server.notedb;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.collect.ImmutableList;
+import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.Comment;
 import com.google.gerrit.entities.HumanComment;
 import com.google.gerrit.entities.SubmitRequirementResult;
 import java.io.ByteArrayInputStream;
@@ -33,18 +35,29 @@ import org.eclipse.jgit.util.MutableInteger;
 /** Implements the parsing of comment data, handling JSON decoding and push certificates. */
 class ChangeRevisionNote extends RevisionNote<HumanComment> {
   private final ChangeNoteJson noteJson;
-  private final HumanComment.Status status;
+  private final Comment.Status status;
   private String pushCert;
 
-  private ImmutableList<SubmitRequirementResult> submitRequirementsResult;
+  /**
+   * Submit requirement results stored in this revision note. If null, then no SRs were stored in
+   * the revision note . Otherwise, there were stored SRs in this revision note. The list could be
+   * empty, meaning that no SRs were configured for the project.
+   */
+  @Nullable private ImmutableList<SubmitRequirementResult> submitRequirementsResult;
 
   ChangeRevisionNote(
-      ChangeNoteJson noteJson, ObjectReader reader, ObjectId noteId, HumanComment.Status status) {
+      ChangeNoteJson noteJson, ObjectReader reader, ObjectId noteId, Comment.Status status) {
     super(reader, noteId);
     this.noteJson = noteJson;
     this.status = status;
   }
 
+  /**
+   * Returns null if no submit requirements were stored in the revision note. Otherwise, this method
+   * returns a list of submit requirements, which can probably be empty if there were no SRs
+   * configured for the project at the time when the SRs were stored.
+   */
+  @Nullable
   public ImmutableList<SubmitRequirementResult> getSubmitRequirementsResult() {
     checkParsed();
     return submitRequirementsResult;
@@ -69,7 +82,7 @@ class ChangeRevisionNote extends RevisionNote<HumanComment> {
     }
     this.submitRequirementsResult =
         data.submitRequirementResults == null
-            ? ImmutableList.of()
+            ? null
             : ImmutableList.copyOf(data.submitRequirementResults);
     return data.comments;
   }

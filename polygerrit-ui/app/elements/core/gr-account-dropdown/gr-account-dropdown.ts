@@ -18,7 +18,7 @@ import '../../shared/gr-dropdown/gr-dropdown';
 import '../../shared/gr-avatar/gr-avatar';
 import {getUserName} from '../../../utils/display-name-util';
 import {AccountInfo, ServerInfo} from '../../../types/common';
-import {appContext} from '../../../services/app-context';
+import {getAppContext} from '../../../services/app-context';
 import {fireEvent} from '../../../utils/event-util';
 import {
   DropdownContent,
@@ -53,7 +53,7 @@ export class GrAccountDropdown extends LitElement {
   @property({type: String})
   _switchAccountUrl = '';
 
-  private readonly restApiService = appContext.restApiService;
+  private readonly restApiService = getAppContext().restApiService;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -97,16 +97,16 @@ export class GrAccountDropdown extends LitElement {
   override render() {
     return html`<gr-dropdown
       link=""
-      .items="${this.links}"
-      .topContent="${this.topContent}"
+      .items=${this.links}
+      .topContent=${this.topContent}
       @tap-item-shortcuts=${this._handleShortcutsTap}
       .horizontalAlign=${'right'}
     >
-      <span ?hidden="${this._hasAvatars}"
+      <span ?hidden=${this._hasAvatars}
         >${this._accountName(this.account)}</span
       >
       <gr-avatar
-        .account="${this.account}"
+        .account=${this.account}
         ?hidden=${!this._hasAvatars}
         .imageSize=${56}
         aria-label="Account avatar"

@@ -16,18 +16,15 @@
  */
 
 import '../../../test/common-test-setup-karma';
-import '../../core/gr-router/gr-router';
 import './gr-change-metadata';
 import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
-import {_testOnly_initGerritPluginApi} from '../../shared/gr-js-api-interface/gr-gerrit';
-import {GrChangeMetadata} from './gr-change-metadata';
+import {ChangeRole, GrChangeMetadata} from './gr-change-metadata';
 import {
   createServerInfo,
   createUserConfig,
   createParsedChange,
   createAccountWithId,
-  createRequirement,
   createCommitInfoWithRequiredCommit,
   createWebLinkInfo,
   createGerritInfo,
@@ -35,13 +32,11 @@ import {
   createCommit,
   createRevision,
   createAccountDetailWithId,
-  createChangeConfig,
   createConfig,
 } from '../../../test/test-data-generators';
 import {
   ChangeStatus,
   SubmitType,
-  RequirementStatus,
   GpgKeyInfoStatus,
   InheritedBooleanInfoConfiguredValue,
 } from '../../../constants/constants';
@@ -53,221 +48,246 @@ import {
   RevisionInfo,
   ParentCommitInfo,
   TopicName,
-  ElementPropertyDeepChange,
   PatchSetNum,
   NumericChangeId,
   LabelValueToDescriptionMap,
   Hashtag,
+  CommitInfo,
 } from '../../../types/common';
-import {SinonStubbedMember} from 'sinon';
-import {RestApiService} from '../../../services/gr-rest-api/gr-rest-api';
 import {tap} from '@polymer/iron-test-helpers/mock-interactions';
 import {GrEditableLabel} from '../../shared/gr-editable-label/gr-editable-label';
 import {PluginApi} from '../../../api/plugin';
 import {GrEndpointDecorator} from '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
-import {queryAndAssert, stubRestApi} from '../../../test/test-utils';
+import {
+  queryAndAssert,
+  resetPlugins,
+  stubRestApi,
+} from '../../../test/test-utils';
 import {ParsedChangeInfo} from '../../../types/types';
 import {GrLinkedChip} from '../../shared/gr-linked-chip/gr-linked-chip';
 import {GrButton} from '../../shared/gr-button/gr-button';
+import {GrRouter} from '../../core/gr-router/gr-router';
+import {nothing} from 'lit';
 
 const basicFixture = fixtureFromElement('gr-change-metadata');
-
-const pluginApi = _testOnly_initGerritPluginApi();
 
 suite('gr-change-metadata tests', () => {
   let element: GrChangeMetadata;
 
-  setup(() => {
+  setup(async () => {
     stubRestApi('getLoggedIn').returns(Promise.resolve(false));
     stubRestApi('getConfig').returns(
       Promise.resolve({
         ...createServerInfo(),
         user: {
           ...createUserConfig(),
-          anonymous_coward_name: 'test coward name',
+          anonymouscowardname: 'test coward name',
         },
       })
     );
     element = basicFixture.instantiate();
+    element.change = createParsedChange();
+    await element.updateComplete;
   });
 
-  test('_computeMergedCommitInfo', () => {
+  test('renders', async () => {
+    await element.updateComplete;
+    expect(element).shadowDom.to.equal(/* HTML */ `<div>
+      <div class="metadata-header">
+        <h3 class="heading-3 metadata-title">Change Info</h3>
+        <gr-button
+          class="show-all-button"
+          link=""
+          role="button"
+          tabindex="0"
+          aria-disabled="false"
+        >
+          Show all <iron-icon icon="gr-icons:expand-more"> </iron-icon>
+          <iron-icon hidden="" icon="gr-icons:expand-less"> </iron-icon>
+        </gr-button>
+      </div>
+      <section class="hideDisplay">
+        <span class="title">
+          <gr-tooltip-content
+            has-tooltip=""
+            title="Last update of (meta)data for this change."
+          >
+            Updated
+          </gr-tooltip-content>
+        </span>
+        <span class="value">
+          <gr-date-formatter showyesterday="" withtooltip="">
+          </gr-date-formatter>
+        </span>
+      </section>
+      <section>
+        <span class="title">
+          <gr-tooltip-content
+            has-tooltip=""
+            title="This user created or uploaded the first patchset of this change."
+          >
+            Owner
+          </gr-tooltip-content>
+        </span>
+        <span class="value">
+          <gr-account-chip highlightattention=""
+            ><gr-vote-chip circle-shape="" slot="vote-chip"> </gr-vote-chip
+          ></gr-account-chip>
+        </span>
+      </section>
+      <section>
+        <span class="title">
+          <gr-tooltip-content
+            has-tooltip=""
+            title="This user wrote the code change."
+          >
+            Author
+          </gr-tooltip-content>
+        </span>
+        <span class="value">
+          <gr-account-chip><gr-vote-chip circle-shape="" slot="vote-chip"></gr-vote-chip
+          ></gr-account-chip>
+        </span>
+      </section>
+      <section>
+        <span class="title">
+          <gr-tooltip-content
+            has-tooltip=""
+            title="This user committed the code change to the Git repository (typically to the local Git repo before uploading)."
+          >
+            Committer
+          </gr-tooltip-content>
+        </span>
+        <span class="value">
+          <gr-account-chip><gr-vote-chip circle-shape="" slot="vote-chip"></gr-account-chip>
+        </span>
+      </section>
+      <section>
+        <span class="title"> Reviewers </span>
+        <span class="value">
+          <gr-reviewer-list reviewers-only=""> </gr-reviewer-list>
+        </span>
+      </section>
+      <section class="hideDisplay">
+        <span class="title"> CC </span>
+        <span class="value">
+          <gr-reviewer-list ccs-only=""> </gr-reviewer-list>
+        </span>
+      </section>
+      <section>
+          <span class="title">
+            Repo | Branch
+          </span>
+          <span class="value">
+            <a href="">
+              test-project
+            </a>
+            |
+            <a href="">
+              test-branch
+            </a>
+          </span>
+        </section>
+      <section class="hideDisplay">
+        <span class="title">Parent</span>
+        <span class="value">
+          <ol  class="nonMerge notCurrent parentList"></ol>
+        </span>
+      </section>
+      <section class="hideDisplay strategy">
+        <span class="title"> Strategy </span> <span class="value"> </span>
+      </section>
+      <section class="hashtag hideDisplay">
+        <span class="title"> Hashtags </span>
+        <span class="value"> </span>
+      </section>
+      <div class="oldSeparatedSection">
+      <gr-change-requirements></gr-change-requirements>
+      </div>
+      <gr-endpoint-decorator name="change-metadata-item">
+        <gr-endpoint-param name="labels"> </gr-endpoint-param>
+        <gr-endpoint-param name="change"> </gr-endpoint-param>
+        <gr-endpoint-param name="revision"> </gr-endpoint-param>
+      </gr-endpoint-decorator>
+    </div>`);
+  });
+
+  test('computeMergedCommitInfo', () => {
     const dummyRevs: {[revisionId: string]: RevisionInfo} = {
       1: createRevision(1),
       2: createRevision(2),
     };
     assert.deepEqual(
-      element._computeMergedCommitInfo('0' as CommitId, dummyRevs),
-      {}
+      element.computeMergedCommitInfo('0' as CommitId, dummyRevs),
+      undefined
     );
     assert.deepEqual(
-      element._computeMergedCommitInfo('1' as CommitId, dummyRevs),
+      element.computeMergedCommitInfo('1' as CommitId, dummyRevs),
       dummyRevs[1].commit
     );
 
     // Regression test for issue 5337.
-    const commit = element._computeMergedCommitInfo('2' as CommitId, dummyRevs);
-    assert.notDeepEqual(commit, dummyRevs[2]);
+    const commit = element.computeMergedCommitInfo('2' as CommitId, dummyRevs);
+    assert.notDeepEqual(commit, dummyRevs[2] as unknown as CommitInfo);
     assert.deepEqual(commit, dummyRevs[2].commit);
   });
 
-  test('computed fields', () => {
-    assert.isFalse(
-      element._computeHideStrategy({
-        ...createParsedChange(),
-        status: ChangeStatus.NEW,
-      })
-    );
-    assert.isTrue(
-      element._computeHideStrategy({
-        ...createParsedChange(),
-        status: ChangeStatus.MERGED,
-      })
-    );
-    assert.isTrue(
-      element._computeHideStrategy({
-        ...createParsedChange(),
-        status: ChangeStatus.ABANDONED,
-      })
-    );
-    assert.equal(
-      element._computeStrategy({
-        ...createParsedChange(),
-        submit_type: SubmitType.CHERRY_PICK,
-      }),
-      'Cherry Pick'
-    );
-    assert.equal(
-      element._computeStrategy({
-        ...createParsedChange(),
-        submit_type: SubmitType.REBASE_ALWAYS,
-      }),
-      'Rebase Always'
-    );
-  });
-
-  test('computed fields requirements', () => {
-    assert.isFalse(
-      element._computeShowRequirements({
-        ...createParsedChange(),
-        status: ChangeStatus.MERGED,
-      })
-    );
-    assert.isFalse(
-      element._computeShowRequirements({
-        ...createParsedChange(),
-        status: ChangeStatus.ABANDONED,
-      })
-    );
-
-    // No labels and no requirements: submit status is useless
-    assert.isFalse(
-      element._computeShowRequirements({
-        ...createParsedChange(),
-        status: ChangeStatus.NEW,
-        labels: {},
-      })
-    );
-
-    // Work in Progress: submit status should be present
-    assert.isTrue(
-      element._computeShowRequirements({
-        ...createParsedChange(),
-        status: ChangeStatus.NEW,
-        labels: {},
-        work_in_progress: true,
-      })
-    );
-
-    // We have at least one reason to display Submit Status
-    assert.isTrue(
-      element._computeShowRequirements({
-        ...createParsedChange(),
-        status: ChangeStatus.NEW,
-        labels: {
-          Verified: {
-            approved: createAccountWithId(),
-          },
-        },
-        requirements: [],
-      })
-    );
-    assert.isTrue(
-      element._computeShowRequirements({
-        ...createParsedChange(),
-        status: ChangeStatus.NEW,
-        labels: {},
-        requirements: [
-          {
-            ...createRequirement(),
-            fallbackText: 'Resolve all comments',
-            status: RequirementStatus.OK,
-          },
-        ],
-      })
-    );
-  });
-
-  test('show strategy for open change', () => {
+  test('show strategy for open change', async () => {
     element.change = {
       ...createParsedChange(),
       status: ChangeStatus.NEW,
       submit_type: SubmitType.CHERRY_PICK,
       labels: {},
     };
-    flush();
+    await element.updateComplete;
     const strategy = element.shadowRoot?.querySelector('.strategy');
     assert.ok(strategy);
     assert.isFalse(strategy?.hasAttribute('hidden'));
-    assert.equal(strategy?.children[1].innerHTML, 'Cherry Pick');
+    assert.equal(strategy?.children[1].textContent, 'Cherry Pick');
   });
 
-  test('hide strategy for closed change', () => {
+  test('hide strategy for closed change', async () => {
     element.change = {
       ...createParsedChange(),
       status: ChangeStatus.MERGED,
       labels: {},
     };
-    flush();
-    assert.isTrue(
-      element.shadowRoot?.querySelector('.strategy')?.hasAttribute('hidden')
-    );
+    await element.updateComplete;
+    assert.isNull(element.shadowRoot?.querySelector('.strategy'));
   });
 
-  test('weblinks use GerritNav interface', () => {
+  test('weblinks use GerritNav interface', async () => {
     const weblinksStub = sinon
       .stub(GerritNav, '_generateWeblinks')
       .returns([{name: 'stubb', url: '#s'}]);
     element.commitInfo = createCommitInfoWithRequiredCommit();
     element.serverConfig = createServerInfo();
-    flush();
-    const webLinks = element.$.webLinks;
+    await element.updateComplete;
+    const webLinks = element.webLinks!;
     assert.isTrue(weblinksStub.called);
-    assert.isFalse(webLinks.hasAttribute('hidden'));
-    assert.equal(element._computeWebLinks(element.commitInfo)?.length, 1);
+    assert.isNotNull(webLinks);
+    assert.equal(element.computeWebLinks().length, 1);
   });
 
-  test('weblinks hidden when no weblinks', () => {
+  test('weblinks hidden when no weblinks', async () => {
     element.commitInfo = createCommitInfoWithRequiredCommit();
     element.serverConfig = createServerInfo();
-    flush();
-    const webLinks = element.$.webLinks;
-    assert.isTrue(webLinks.hasAttribute('hidden'));
+    await element.updateComplete;
+    assert.isNull(element.webLinks);
   });
 
-  test('weblinks hidden when only gitiles weblink', () => {
+  test('weblinks hidden when only gitiles weblink', async () => {
     element.commitInfo = {
       ...createCommitInfoWithRequiredCommit(),
       web_links: [{...createWebLinkInfo(), name: 'gitiles', url: '#'}],
     };
     element.serverConfig = createServerInfo();
-    flush();
-    const webLinks = element.$.webLinks;
-    assert.isTrue(webLinks.hasAttribute('hidden'));
-    assert.equal(element._computeWebLinks(element.commitInfo), null);
+    await element.updateComplete;
+    assert.isNull(element.webLinks);
+    assert.equal(element.computeWebLinks().length, 0);
   });
 
-  test('weblinks hidden when sole weblink is set as primary', () => {
+  test('weblinks hidden when sole weblink is set as primary', async () => {
     const browser = 'browser';
     element.commitInfo = {
       ...createCommitInfoWithRequiredCommit(),
@@ -280,25 +300,24 @@ suite('gr-change-metadata tests', () => {
         primary_weblink_name: browser,
       },
     };
-    flush();
-    const webLinks = element.$.webLinks;
-    assert.isTrue(webLinks.hasAttribute('hidden'));
+    await element.updateComplete;
+    assert.isNull(element.webLinks);
   });
 
-  test('weblinks are visible when other weblinks', () => {
-    const router = document.createElement('gr-router');
+  test('weblinks are visible when other weblinks', async () => {
+    const router = new GrRouter();
     sinon
       .stub(GerritNav, '_generateWeblinks')
-      .callsFake(router._generateWeblinks.bind(router));
+      .callsFake(router.generateWeblinks.bind(router));
 
     element.commitInfo = {
       ...createCommitInfoWithRequiredCommit(),
       web_links: [{...createWebLinkInfo(), name: 'test', url: '#'}],
     };
-    flush();
-    const webLinks = element.$.webLinks;
+    await element.updateComplete;
+    const webLinks = element.webLinks!;
     assert.isFalse(webLinks.hasAttribute('hidden'));
-    assert.equal(element._computeWebLinks(element.commitInfo)?.length, 1);
+    assert.equal(element.computeWebLinks().length, 1);
     // With two non-gitiles weblinks, there are two returned.
     element.commitInfo = {
       ...createCommitInfoWithRequiredCommit(),
@@ -307,14 +326,14 @@ suite('gr-change-metadata tests', () => {
         {...createWebLinkInfo(), name: 'test2', url: '#'},
       ],
     };
-    assert.equal(element._computeWebLinks(element.commitInfo)?.length, 2);
+    assert.equal(element.computeWebLinks().length, 2);
   });
 
-  test('weblinks are visible when gitiles and other weblinks', () => {
-    const router = document.createElement('gr-router');
+  test('weblinks are visible when gitiles and other weblinks', async () => {
+    const router = new GrRouter();
     sinon
       .stub(GerritNav, '_generateWeblinks')
-      .callsFake(router._generateWeblinks.bind(router));
+      .callsFake(router.generateWeblinks.bind(router));
 
     element.commitInfo = {
       ...createCommitInfoWithRequiredCommit(),
@@ -323,14 +342,14 @@ suite('gr-change-metadata tests', () => {
         {...createWebLinkInfo(), name: 'gitiles', url: '#'},
       ],
     };
-    flush();
-    const webLinks = element.$.webLinks;
+    await element.updateComplete;
+    const webLinks = element.webLinks!;
     assert.isFalse(webLinks.hasAttribute('hidden'));
     // Only the non-gitiles weblink is returned.
-    assert.equal(element._computeWebLinks(element.commitInfo)?.length, 1);
+    assert.equal(element.computeWebLinks().length, 1);
   });
 
-  suite('_getNonOwnerRole', () => {
+  suite('getNonOwnerRole', () => {
     let change: ParsedChangeInfo | undefined;
 
     setup(() => {
@@ -364,95 +383,85 @@ suite('gr-change-metadata tests', () => {
     });
 
     suite('role=uploader', () => {
-      test('_getNonOwnerRole for uploader', () => {
-        assert.deepEqual(
-          element._getNonOwnerRole(change, element._CHANGE_ROLE.UPLOADER),
-          {
-            ...createAccountWithId(),
-            email: 'ghi@def' as EmailAddress,
-            _account_id: 1011123 as AccountId,
-          }
-        );
+      test('getNonOwnerRole for uploader', () => {
+        element.change = change;
+        assert.deepEqual(element.getNonOwnerRole(ChangeRole.UPLOADER), {
+          ...createAccountWithId(),
+          email: 'ghi@def' as EmailAddress,
+          _account_id: 1011123 as AccountId,
+        });
       });
 
-      test('_getNonOwnerRole that it does not return uploader', () => {
+      test('getNonOwnerRole that it does not return uploader', () => {
         // Set the uploader email to be the same as the owner.
         change!.revisions.rev1.uploader!._account_id = 1019328 as AccountId;
-        assert.isNotOk(
-          element._getNonOwnerRole(change, element._CHANGE_ROLE.UPLOADER)
-        );
+        element.change = change;
+        assert.isNotOk(element.getNonOwnerRole(ChangeRole.UPLOADER));
       });
 
-      test('_computeShowRoleClass show uploader', () => {
-        assert.equal(
-          element._computeShowRoleClass(change, element._CHANGE_ROLE.UPLOADER),
-          ''
-        );
+      test('computeShowRoleClass show uploader', () => {
+        element.change = change;
+        assert.notEqual(element.renderNonOwner(ChangeRole.UPLOADER), nothing);
       });
 
-      test('_computeShowRoleClass hide uploader', () => {
+      test('computeShowRoleClass hide uploader', () => {
         // Set the uploader email to be the same as the owner.
         change!.revisions.rev1.uploader!._account_id = 1019328 as AccountId;
-        assert.equal(
-          element._computeShowRoleClass(change, element._CHANGE_ROLE.UPLOADER),
-          'hideDisplay'
-        );
+        element.change = change;
+        assert.equal(element.renderNonOwner(ChangeRole.UPLOADER), nothing);
       });
     });
 
     suite('role=committer', () => {
-      test('_getNonOwnerRole for committer', () => {
+      test('getNonOwnerRole for committer', () => {
         change!.revisions.rev1.uploader!.email = 'ghh@def' as EmailAddress;
-        assert.deepEqual(
-          element._getNonOwnerRole(change, element._CHANGE_ROLE.COMMITTER),
-          {...createGitPerson(), email: 'ghi@def' as EmailAddress}
-        );
+        element.change = change;
+        assert.deepEqual(element.getNonOwnerRole(ChangeRole.COMMITTER), {
+          ...createGitPerson(),
+          email: 'ghi@def' as EmailAddress,
+        });
       });
 
-      test('_getNonOwnerRole is null if committer is same as uploader', () => {
-        assert.isNotOk(
-          element._getNonOwnerRole(change, element._CHANGE_ROLE.COMMITTER)
-        );
+      test('getNonOwnerRole is null if committer is same as uploader', () => {
+        element.change = change;
+        assert.isNotOk(element.getNonOwnerRole(ChangeRole.COMMITTER));
       });
 
-      test('_getNonOwnerRole that it does not return committer', () => {
+      test('getNonOwnerRole that it does not return committer', () => {
         // Set the committer email to be the same as the owner.
         change!.revisions.rev1.commit!.committer.email =
           'abc@def' as EmailAddress;
-        assert.isNotOk(
-          element._getNonOwnerRole(change, element._CHANGE_ROLE.COMMITTER)
-        );
+        element.change = change;
+        assert.isNotOk(element.getNonOwnerRole(ChangeRole.COMMITTER));
       });
 
-      test('_getNonOwnerRole null for committer with no commit', () => {
+      test('getNonOwnerRole null for committer with no commit', () => {
         delete change!.revisions.rev1.commit;
-        assert.isNotOk(
-          element._getNonOwnerRole(change, element._CHANGE_ROLE.COMMITTER)
-        );
+        element.change = change;
+        assert.isNotOk(element.getNonOwnerRole(ChangeRole.COMMITTER));
       });
     });
 
     suite('role=author', () => {
-      test('_getNonOwnerRole for author', () => {
-        assert.deepEqual(
-          element._getNonOwnerRole(change, element._CHANGE_ROLE.AUTHOR),
-          {...createGitPerson(), email: 'jkl@def' as EmailAddress}
-        );
+      test('getNonOwnerRole for author', () => {
+        element.change = change;
+        assert.deepEqual(element.getNonOwnerRole(ChangeRole.AUTHOR), {
+          ...createGitPerson(),
+          email: 'jkl@def' as EmailAddress,
+        });
       });
 
-      test('_getNonOwnerRole that it does not return author', () => {
+      test('getNonOwnerRole that it does not return author', () => {
         // Set the author email to be the same as the owner.
         change!.revisions.rev1.commit!.author.email = 'abc@def' as EmailAddress;
-        assert.isNotOk(
-          element._getNonOwnerRole(change, element._CHANGE_ROLE.AUTHOR)
-        );
+        element.change = change;
+        assert.isNotOk(element.getNonOwnerRole(ChangeRole.AUTHOR));
       });
 
-      test('_getNonOwnerRole null for author with no commit', () => {
+      test('getNonOwnerRole null for author with no commit', () => {
         delete change!.revisions.rev1.commit;
-        assert.isNotOk(
-          element._getNonOwnerRole(change, element._CHANGE_ROLE.AUTHOR)
-        );
+        element.change = change;
+        assert.isNotOk(element.getNonOwnerRole(ChangeRole.AUTHOR));
       });
     });
   });
@@ -504,11 +513,9 @@ suite('gr-change-metadata tests', () => {
           problems: ['No public keys found for key ID E5E20E52'],
         },
       };
-      const result = element._computePushCertificateValidation(
-        serverConfig,
-        change,
-        element.repoConfig
-      );
+      element.change = change;
+      element.serverConfig = serverConfig;
+      const result = element.computePushCertificateValidation();
       assert.equal(
         result?.message,
         'Push certificate is invalid:\n' +
@@ -525,11 +532,9 @@ suite('gr-change-metadata tests', () => {
           status: GpgKeyInfoStatus.TRUSTED,
         },
       };
-      const result = element._computePushCertificateValidation(
-        serverConfig,
-        change,
-        element.repoConfig
-      );
+      element.change = change;
+      element.serverConfig = serverConfig;
+      const result = element.computePushCertificateValidation();
       assert.equal(
         result?.message,
         'Push certificate is valid and key is trusted'
@@ -539,12 +544,10 @@ suite('gr-change-metadata tests', () => {
     });
 
     test('Push Certificate Validation is missing test', () => {
-      change!.revisions.rev1! = createRevision(1);
-      const result = element._computePushCertificateValidation(
-        serverConfig,
-        change,
-        element.repoConfig
-      );
+      change!.revisions.rev1 = createRevision(1);
+      element.change = change;
+      element.serverConfig = serverConfig;
+      const result = element.computePushCertificateValidation();
       assert.equal(
         result?.message,
         'This patch set was created without a push certificate'
@@ -553,14 +556,11 @@ suite('gr-change-metadata tests', () => {
       assert.equal(result?.class, 'help');
     });
 
-    test('_computePushCertificateValidation returns undefined', () => {
+    test('computePushCertificateValidation returns undefined', () => {
+      element.change = change;
       delete serverConfig!.receive!.enable_signed_push;
-      const result = element._computePushCertificateValidation(
-        serverConfig,
-        change,
-        element.repoConfig
-      );
-      assert.isUndefined(result);
+      element.serverConfig = serverConfig;
+      assert.isUndefined(element.computePushCertificateValidation());
     });
 
     test('isEnabledSignedPushOnRepo', () => {
@@ -575,21 +575,21 @@ suite('gr-change-metadata tests', () => {
       element.repoConfig!.enable_signed_push!.configured_value =
         InheritedBooleanInfoConfiguredValue.INHERIT;
       element.repoConfig!.enable_signed_push!.inherited_value = true;
-      assert.isTrue(element.isEnabledSignedPushOnRepo(element.repoConfig));
+      assert.isTrue(element.isEnabledSignedPushOnRepo());
 
       element.repoConfig!.enable_signed_push!.inherited_value = false;
-      assert.isFalse(element.isEnabledSignedPushOnRepo(element.repoConfig));
+      assert.isFalse(element.isEnabledSignedPushOnRepo());
 
       element.repoConfig!.enable_signed_push!.configured_value =
         InheritedBooleanInfoConfiguredValue.TRUE;
-      assert.isTrue(element.isEnabledSignedPushOnRepo(element.repoConfig));
+      assert.isTrue(element.isEnabledSignedPushOnRepo());
 
       element.repoConfig = undefined;
-      assert.isFalse(element.isEnabledSignedPushOnRepo(element.repoConfig));
+      assert.isFalse(element.isEnabledSignedPushOnRepo());
     });
   });
 
-  test('_computeParents', () => {
+  test('computeParents', () => {
     const parents: ParentCommitInfo[] = [
       {...createCommit(), commit: '123' as CommitId, subject: 'abc'},
     ];
@@ -597,7 +597,9 @@ suite('gr-change-metadata tests', () => {
       ...createRevision(1),
       commit: {...createCommit(), parents},
     };
-    assert.equal(element._computeParents(undefined, revision), parents);
+    element.change = undefined;
+    element.revision = revision;
+    assert.equal(element.computeParents(), parents);
     const change = (current_revision: CommitId): ParsedChangeInfo => {
       return {
         ...createParsedChange(),
@@ -605,22 +607,25 @@ suite('gr-change-metadata tests', () => {
         revisions: {456: revision},
       };
     };
-    const change_bad_revision = change('789' as CommitId);
-    assert.deepEqual(
-      element._computeParents(change_bad_revision, createRevision()),
-      []
-    );
-    const change_no_commit: ParsedChangeInfo = {
+    const changebadrevision = change('789' as CommitId);
+    element.change = changebadrevision;
+    element.revision = createRevision();
+    assert.deepEqual(element.computeParents(), []);
+    const changenocommit: ParsedChangeInfo = {
       ...createParsedChange(),
       current_revision: '456' as CommitId,
       revisions: {456: createRevision()},
     };
-    assert.deepEqual(element._computeParents(change_no_commit, undefined), []);
-    const change_good = change('456' as CommitId);
-    assert.equal(element._computeParents(change_good, undefined), parents);
+    element.change = changenocommit;
+    element.revision = undefined;
+    assert.deepEqual(element.computeParents(), []);
+    const changegood = change('456' as CommitId);
+    element.change = changegood;
+    element.revision = undefined;
+    assert.equal(element.computeParents(), parents);
   });
 
-  test('_currentParents', () => {
+  test('currentParents', async () => {
     const revision = (parent: CommitId): RevisionInfo => {
       return {
         ...createRevision(),
@@ -637,91 +642,116 @@ suite('gr-change-metadata tests', () => {
       owner: {},
     };
     element.revision = revision('222' as CommitId);
-    assert.equal(element._currentParents[0].commit, '222');
+    await element.updateComplete;
+    assert.equal(element.currentParents[0].commit, '222');
     element.revision = revision('333' as CommitId);
-    assert.equal(element._currentParents[0].commit, '333');
+    await element.updateComplete;
+    assert.equal(element.currentParents[0].commit, '333');
     element.revision = undefined;
-    assert.equal(element._currentParents[0].commit, '111');
+    await element.updateComplete;
+    assert.equal(element.currentParents[0].commit, '111');
     element.change = createParsedChange();
-    assert.deepEqual(element._currentParents, []);
+    await element.updateComplete;
+    assert.deepEqual(element.currentParents, []);
   });
 
-  test('_computeParentsLabel', () => {
+  test('computeParentListClass', () => {
     const parent: ParentCommitInfo = {
       ...createCommit(),
       commit: 'abc123' as CommitId,
       subject: 'My parent commit',
     };
-    assert.equal(element._computeParentsLabel([parent]), 'Parent');
-    assert.equal(element._computeParentsLabel([parent, parent]), 'Parents');
-  });
-
-  test('_computeParentListClass', () => {
-    const parent: ParentCommitInfo = {
-      ...createCommit(),
-      commit: 'abc123' as CommitId,
-      subject: 'My parent commit',
-    };
+    element.currentParents = [parent];
+    element.parentIsCurrent = true;
     assert.equal(
-      element._computeParentListClass([parent], true),
+      element.computeParentListClass(),
       'parentList nonMerge current'
     );
+    element.currentParents = [parent];
+    element.parentIsCurrent = false;
     assert.equal(
-      element._computeParentListClass([parent], false),
+      element.computeParentListClass(),
       'parentList nonMerge notCurrent'
     );
+    element.currentParents = [parent, parent];
+    element.parentIsCurrent = false;
     assert.equal(
-      element._computeParentListClass([parent, parent], false),
+      element.computeParentListClass(),
       'parentList merge notCurrent'
     );
-    assert.equal(
-      element._computeParentListClass([parent, parent], true),
-      'parentList merge current'
-    );
+    element.currentParents = [parent, parent];
+    element.parentIsCurrent = true;
+    assert.equal(element.computeParentListClass(), 'parentList merge current');
   });
 
-  test('_showAddTopic', () => {
-    const changeRecord: ElementPropertyDeepChange<GrChangeMetadata, 'change'> =
-      {
-        base: {...createParsedChange()},
-        path: '',
-        value: undefined,
-      };
-    assert.isTrue(element._showAddTopic(undefined, false));
-    assert.isTrue(element._showAddTopic(changeRecord, false));
-    assert.isFalse(element._showAddTopic(changeRecord, true));
-    changeRecord.base!.topic = 'foo' as TopicName;
-    assert.isFalse(element._showAddTopic(changeRecord, true));
-    assert.isFalse(element._showAddTopic(changeRecord, false));
+  test('showAddTopic', () => {
+    const change = createParsedChange();
+    element.change = undefined;
+    element.settingTopic = false;
+    element.topicReadOnly = false;
+    assert.isTrue(element.showAddTopic());
+    // do not show for 'readonly'
+    element.change = undefined;
+    element.settingTopic = false;
+    element.topicReadOnly = true;
+    assert.isFalse(element.showAddTopic());
+    element.change = change;
+    element.settingTopic = false;
+    element.topicReadOnly = false;
+    assert.isTrue(element.showAddTopic());
+    element.change = change;
+    element.settingTopic = true;
+    element.topicReadOnly = false;
+    assert.isFalse(element.showAddTopic());
+    change.topic = 'foo' as TopicName;
+    element.change = change;
+    element.settingTopic = true;
+    element.topicReadOnly = false;
+    assert.isFalse(element.showAddTopic());
+    element.change = change;
+    element.settingTopic = false;
+    element.topicReadOnly = false;
+    assert.isFalse(element.showAddTopic());
   });
 
-  test('_showTopicChip', () => {
-    const changeRecord: ElementPropertyDeepChange<GrChangeMetadata, 'change'> =
-      {
-        base: {...createParsedChange()},
-        path: '',
-        value: undefined,
-      };
-    assert.isFalse(element._showTopicChip(undefined, false));
-    assert.isFalse(element._showTopicChip(changeRecord, false));
-    assert.isFalse(element._showTopicChip(changeRecord, true));
-    changeRecord.base!.topic = 'foo' as TopicName;
-    assert.isFalse(element._showTopicChip(changeRecord, true));
-    assert.isTrue(element._showTopicChip(changeRecord, false));
+  test('showTopicChip', async () => {
+    const change = createParsedChange();
+    element.change = change;
+    element.settingTopic = true;
+    await element.updateComplete;
+    assert.isFalse(element.showTopicChip());
+    element.change = change;
+    element.settingTopic = false;
+    await element.updateComplete;
+    assert.isFalse(element.showTopicChip());
+    element.change = change;
+    element.settingTopic = true;
+    await element.updateComplete;
+    assert.isFalse(element.showTopicChip());
+    change.topic = 'foo' as TopicName;
+    element.change = change;
+    element.settingTopic = true;
+    await element.updateComplete;
+    assert.isFalse(element.showTopicChip());
+    element.change = change;
+    element.settingTopic = false;
+    await element.updateComplete;
+    assert.isTrue(element.showTopicChip());
   });
 
-  test('_showCherryPickOf', () => {
-    const changeRecord: ElementPropertyDeepChange<GrChangeMetadata, 'change'> =
-      {
-        base: {...createParsedChange()},
-        path: '',
-        value: undefined,
-      };
-    assert.isFalse(element._showCherryPickOf(undefined));
-    assert.isFalse(element._showCherryPickOf(changeRecord));
-    changeRecord.base!.cherry_pick_of_change = 123 as NumericChangeId;
-    changeRecord.base!.cherry_pick_of_patch_set = 1 as PatchSetNum;
-    assert.isTrue(element._showCherryPickOf(changeRecord));
+  test('showCherryPickOf', async () => {
+    element.change = undefined;
+    await element.updateComplete;
+    assert.isFalse(element.showCherryPickOf());
+    const change = createParsedChange();
+    element.change = change;
+    await element.updateComplete;
+    assert.isFalse(element.showCherryPickOf());
+    change.cherry_pick_of_change = 123 as NumericChangeId;
+    change.cherry_pick_of_patch_set = 1 as PatchSetNum;
+    element.change = change;
+    await element.updateComplete;
+    assert.isTrue(element.showCherryPickOf());
   });
 
   suite('Topic removal', () => {
@@ -746,22 +776,28 @@ suite('gr-change-metadata tests', () => {
       };
     });
 
-    test('_computeTopicReadOnly', () => {
+    test('computeTopicReadOnly', () => {
       let mutable = false;
-      assert.isTrue(element._computeTopicReadOnly(mutable, change));
+      element.mutable = mutable;
+      element.change = change;
+      assert.isTrue(element.computeTopicReadOnly());
       mutable = true;
-      assert.isTrue(element._computeTopicReadOnly(mutable, change));
+      element.mutable = mutable;
+      assert.isTrue(element.computeTopicReadOnly());
       change!.actions!.topic!.enabled = true;
-      assert.isFalse(element._computeTopicReadOnly(mutable, change));
+      element.mutable = mutable;
+      element.change = change;
+      assert.isFalse(element.computeTopicReadOnly());
       mutable = false;
-      assert.isTrue(element._computeTopicReadOnly(mutable, change));
+      element.mutable = mutable;
+      assert.isTrue(element.computeTopicReadOnly());
     });
 
     test('topic read only hides delete button', async () => {
       element.account = createAccountDetailWithId();
       element.change = change;
       sinon.stub(GerritNav, 'getUrlForTopic').returns('/q/topic:test');
-      await flush();
+      await element.updateComplete;
       const chip = queryAndAssert<GrLinkedChip>(element, 'gr-linked-chip');
       const button = queryAndAssert<GrButton>(chip, 'gr-button');
       assert.isTrue(button.hasAttribute('hidden'));
@@ -772,7 +808,7 @@ suite('gr-change-metadata tests', () => {
       change.actions!.topic!.enabled = true;
       element.change = change;
       sinon.stub(GerritNav, 'getUrlForTopic').returns('/q/topic:test');
-      await flush();
+      await element.updateComplete;
       const chip = queryAndAssert<GrLinkedChip>(element, 'gr-linked-chip');
       const button = queryAndAssert<GrButton>(chip, 'gr-button');
       assert.isFalse(button.hasAttribute('hidden'));
@@ -799,40 +835,57 @@ suite('gr-change-metadata tests', () => {
       };
     });
 
-    test('_computeHashtagReadOnly', async () => {
-      await flush();
+    test('computeHashtagReadOnly', async () => {
+      await element.updateComplete;
       let mutable = false;
-      assert.isTrue(element._computeHashtagReadOnly(mutable, change));
+      element.change = change;
+      element.mutable = mutable;
+      await element.updateComplete;
+      assert.isTrue(element.computeHashtagReadOnly());
       mutable = true;
-      assert.isTrue(element._computeHashtagReadOnly(mutable, change));
+      element.change = change;
+      element.mutable = mutable;
+      await element.updateComplete;
+      assert.isTrue(element.computeHashtagReadOnly());
       change!.actions!.hashtags!.enabled = true;
-      assert.isFalse(element._computeHashtagReadOnly(mutable, change));
+      element.change = change;
+      element.mutable = mutable;
+      await element.updateComplete;
+      assert.isFalse(element.computeHashtagReadOnly());
       mutable = false;
-      assert.isTrue(element._computeHashtagReadOnly(mutable, change));
+      element.change = change;
+      element.mutable = mutable;
+      await element.updateComplete;
+      assert.isTrue(element.computeHashtagReadOnly());
     });
 
     test('hashtag read only hides delete button', async () => {
-      await flush();
       element.account = createAccountDetailWithId();
       element.change = change;
       sinon
         .stub(GerritNav, 'getUrlForHashtag')
         .returns('/q/hashtag:test+(status:open%20OR%20status:merged)');
-      await flush();
+      await element.updateComplete;
+      assert.isTrue(element.mutable, 'Mutable');
+      assert.isFalse(
+        element.change.actions?.hashtags?.enabled,
+        'hashtags disabled'
+      );
+      assert.isTrue(element.hashtagReadOnly, 'hashtag read only');
       const chip = queryAndAssert<GrLinkedChip>(element, 'gr-linked-chip');
       const button = queryAndAssert<GrButton>(chip, 'gr-button');
-      assert.isTrue(button.hasAttribute('hidden'));
+      assert.isTrue(button.hasAttribute('hidden'), 'button hidden');
     });
 
     test('hashtag not read only does not hide delete button', async () => {
-      await flush();
+      await element.updateComplete;
       element.account = createAccountDetailWithId();
       change!.actions!.hashtags!.enabled = true;
       element.change = change;
       sinon
         .stub(GerritNav, 'getUrlForHashtag')
         .returns('/q/hashtag:test+(status:open%20OR%20status:merged)');
-      await flush();
+      await element.updateComplete;
       const chip = queryAndAssert<GrLinkedChip>(element, 'gr-linked-chip');
       const button = queryAndAssert<GrButton>(chip, 'gr-button');
       assert.isFalse(button.hasAttribute('hidden'));
@@ -840,8 +893,8 @@ suite('gr-change-metadata tests', () => {
   });
 
   suite('remove reviewer votes', () => {
-    setup(() => {
-      sinon.stub(element, '_computeTopicReadOnly').returns(true);
+    setup(async () => {
+      sinon.stub(element, 'computeTopicReadOnly').returns(true);
       element.change = {
         ...createParsedChange(),
         topic: 'the topic' as TopicName,
@@ -854,65 +907,7 @@ suite('gr-change-metadata tests', () => {
         },
         removable_reviewers: [],
       };
-      flush();
-    });
-
-    suite('assignee field', () => {
-      const dummyAccount = createAccountWithId();
-      const change: ParsedChangeInfo = {
-        ...createParsedChange(),
-        actions: {
-          assignee: {enabled: false},
-        },
-        assignee: dummyAccount,
-      };
-      let deleteStub: SinonStubbedMember<RestApiService['deleteAssignee']>;
-      let setStub: SinonStubbedMember<RestApiService['setAssignee']>;
-
-      setup(() => {
-        deleteStub = stubRestApi('deleteAssignee');
-        setStub = stubRestApi('setAssignee');
-        element.serverConfig = {
-          ...createServerInfo(),
-          change: {
-            ...createChangeConfig(),
-            enable_assignee: true,
-          },
-        };
-      });
-
-      test('changing change recomputes _assignee', () => {
-        assert.isFalse(!!element._assignee?.length);
-        const change = element.change;
-        change!.assignee = dummyAccount;
-        element._changeChanged(change);
-        assert.deepEqual(element?._assignee?.[0], dummyAccount);
-      });
-
-      test('modifying _assignee calls API', () => {
-        assert.isFalse(!!element._assignee?.length);
-        element.set('_assignee', [dummyAccount]);
-        assert.isTrue(setStub.calledOnce);
-        assert.deepEqual(element.change!.assignee, dummyAccount);
-        element.set('_assignee', [dummyAccount]);
-        assert.isTrue(setStub.calledOnce);
-        element.set('_assignee', []);
-        assert.isTrue(deleteStub.calledOnce);
-        assert.equal(element.change!.assignee, undefined);
-        element.set('_assignee', []);
-        assert.isTrue(deleteStub.calledOnce);
-      });
-
-      test('_computeAssigneeReadOnly', () => {
-        let mutable = false;
-        assert.isTrue(element._computeAssigneeReadOnly(mutable, change));
-        mutable = true;
-        assert.isTrue(element._computeAssigneeReadOnly(mutable, change));
-        change.actions!.assignee!.enabled = true;
-        assert.isFalse(element._computeAssigneeReadOnly(mutable, change));
-        mutable = false;
-        assert.isTrue(element._computeAssigneeReadOnly(mutable, change));
-      });
+      await element.updateComplete;
     });
 
     test('changing topic', () => {
@@ -920,7 +915,7 @@ suite('gr-change-metadata tests', () => {
       const setChangeTopicStub = stubRestApi('setChangeTopic').returns(
         Promise.resolve(newTopic)
       );
-      element._handleTopicChanged(new CustomEvent('test', {detail: newTopic}));
+      element.handleTopicChanged(new CustomEvent('test', {detail: newTopic}));
       const topicChangedSpy = sinon.spy();
       element.addEventListener('topic-changed', topicChangedSpy);
       assert.isTrue(
@@ -938,7 +933,7 @@ suite('gr-change-metadata tests', () => {
         Promise.resolve(newTopic)
       );
       sinon.stub(GerritNav, 'getUrlForTopic').returns('/q/topic:the+new+topic');
-      await flush();
+      await element.updateComplete;
       const chip = queryAndAssert<GrLinkedChip>(element, 'gr-linked-chip');
       const remove = queryAndAssert(chip, '#remove');
       const topicChangedSpy = sinon.spy();
@@ -954,13 +949,14 @@ suite('gr-change-metadata tests', () => {
     });
 
     test('changing hashtag', async () => {
-      await flush();
-      element._newHashtag = 'new hashtag' as Hashtag;
+      await element.updateComplete;
       const newHashtag: Hashtag[] = ['new hashtag' as Hashtag];
       const setChangeHashtagStub = stubRestApi('setChangeHashtag').returns(
         Promise.resolve(newHashtag)
       );
-      element._handleHashtagChanged();
+      element.handleHashtagChanged(
+        new CustomEvent('test', {detail: 'new hashtag'})
+      );
       assert.isTrue(
         setChangeHashtagStub.calledWith(42 as NumericChangeId, {
           add: ['new hashtag' as Hashtag],
@@ -978,7 +974,7 @@ suite('gr-change-metadata tests', () => {
       ...createParsedChange(),
       actions: {topic: {enabled: true}},
     };
-    await flush();
+    await element.updateComplete;
 
     const label = element.shadowRoot!.querySelector(
       '.topicEditableLabel'
@@ -986,38 +982,47 @@ suite('gr-change-metadata tests', () => {
     assert.ok(label);
     const openStub = sinon.stub(label, 'open');
     element.editTopic();
-    await flush();
+    await element.updateComplete;
 
     assert.isTrue(openStub.called);
   });
 
   suite('plugin endpoints', () => {
-    test('endpoint params', async () => {
+    setup(async () => {
+      resetPlugins();
+      element = basicFixture.instantiate();
       element.change = createParsedChange();
       element.revision = createRevision();
+      await element.updateComplete;
+    });
+
+    teardown(() => {
+      resetPlugins();
+    });
+
+    test('endpoint params', async () => {
       interface MetadataGrEndpointDecorator extends GrEndpointDecorator {
         plugin: PluginApi;
         change: ParsedChangeInfo;
         revision: RevisionInfo;
       }
-      let hookEl: MetadataGrEndpointDecorator;
       let plugin: PluginApi;
-      pluginApi.install(
+      window.Gerrit.install(
         p => {
           plugin = p;
-          plugin
-            .hook('change-metadata-item')
-            .getLastAttached()
-            .then(el => (hookEl = el as MetadataGrEndpointDecorator));
         },
         '0.1',
         'http://some/plugins/url.js'
       );
+      await element.updateComplete;
+      const hookEl = (await plugin!
+        .hook('change-metadata-item')
+        .getLastAttached()) as MetadataGrEndpointDecorator;
       getPluginLoader().loadPlugins([]);
-      await flush();
-      assert.strictEqual(hookEl!.plugin, plugin!);
-      assert.strictEqual(hookEl!.change, element.change);
-      assert.strictEqual(hookEl!.revision, element.revision);
+      await element.updateComplete;
+      assert.strictEqual(hookEl.plugin, plugin!);
+      assert.strictEqual(hookEl.change, element.change);
+      assert.strictEqual(hookEl.revision, element.revision);
     });
   });
 });

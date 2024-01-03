@@ -18,6 +18,7 @@ import {ReportingService, Timer} from './gr-reporting';
 import {EventDetails} from '../../api/reporting';
 import {PluginApi} from '../../api/plugin';
 import {Execution, Interaction} from '../../constants/reporting';
+import {Finalizable} from '../registry';
 
 export class MockTimer implements Timer {
   end(): this {
@@ -37,7 +38,7 @@ const log = function (msg: string) {
   console.info(`ReportingMock.${msg}`);
 };
 
-export const grReportingMock: ReportingService = {
+export const grReportingMock: ReportingService & Finalizable = {
   appStarted: () => {},
   beforeLocationChanged: () => {},
   changeDisplayed: () => {},
@@ -45,8 +46,8 @@ export const grReportingMock: ReportingService = {
   dashboardDisplayed: () => {},
   diffViewContentDisplayed: () => {},
   diffViewDisplayed: () => {},
-  diffViewFullyLoaded: () => {},
   fileListDisplayed: () => {},
+  finalize: () => {},
   getTimer: () => new MockTimer(),
   locationChanged: (page: string) => {
     log(`locationChanged: ${page}`);
@@ -57,7 +58,6 @@ export const grReportingMock: ReportingService = {
   pluginLoaded: () => {},
   pluginsLoaded: () => {},
   pluginsFailed: () => {},
-  recordDraftInteraction: () => {},
   reporter: () => {},
   reportErrorDialog: (message: string) => {
     log(`reportErrorDialog: ${message}`);
@@ -65,20 +65,13 @@ export const grReportingMock: ReportingService = {
   error: () => {
     log('error');
   },
-  reportExecution: (id: Execution, details?: EventDetails) => {
-    log(`reportExecution '${id}': ${JSON.stringify(details)}`);
-  },
-  trackApi: (pluginApi: PluginApi, object: string, method: string) => {
-    const plugin = pluginApi?.getPluginName() ?? 'unknown';
-    log(`trackApi '${plugin}', ${object}, ${method}`);
-  },
+  reportExecution: (_id: Execution, _details?: EventDetails) => {},
+  trackApi: (_pluginApi: PluginApi, _object: string, _method: string) => {},
   reportExtension: () => {},
   reportInteraction: (
-    eventName: string | Interaction,
-    details?: EventDetails
-  ) => {
-    log(`reportInteraction '${eventName}': ${JSON.stringify(details)}`);
-  },
+    _eventName: string | Interaction,
+    _details?: EventDetails
+  ) => {},
   reportLifeCycle: () => {},
   reportPluginLifeCycleLog: () => {},
   reportPluginInteractionLog: () => {},
@@ -87,5 +80,4 @@ export const grReportingMock: ReportingService = {
   setChangeId: () => {},
   time: () => {},
   timeEnd: () => {},
-  timeEndWithAverage: () => {},
 };

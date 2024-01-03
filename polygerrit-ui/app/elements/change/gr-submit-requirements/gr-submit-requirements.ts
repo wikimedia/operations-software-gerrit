@@ -16,39 +16,46 @@
  */
 import '../../shared/gr-label-info/gr-label-info';
 import '../gr-submit-requirement-hovercard/gr-submit-requirement-hovercard';
-import '../gr-trigger-vote-hovercard/gr-trigger-vote-hovercard';
-import {LitElement, css, html} from 'lit';
+import '../gr-trigger-vote/gr-trigger-vote';
+import '../gr-change-summary/gr-change-summary';
+import '../../shared/gr-limited-text/gr-limited-text';
+import '../../shared/gr-vote-chip/gr-vote-chip';
+import {LitElement, css, html, TemplateResult} from 'lit';
 import {customElement, property, state} from 'lit/decorators';
 import {ParsedChangeInfo} from '../../../types/types';
 import {
   AccountInfo,
   isDetailedLabelInfo,
   isQuickLabelInfo,
-  LabelInfo,
   LabelNameToInfoMap,
   SubmitRequirementResultInfo,
   SubmitRequirementStatus,
 } from '../../../api/rest-api';
-import {unique} from '../../../utils/common-util';
 import {
   extractAssociatedLabels,
   getAllUniqueApprovals,
+  getRequirements,
+  getTriggerVotes,
   hasNeutralStatus,
   hasVotes,
   iconForStatus,
   orderSubmitRequirements,
 } from '../../../utils/label-util';
 import {fontStyles} from '../../../styles/gr-font-styles';
-import {charsOnly, pluralize} from '../../../utils/string-util';
+import {capitalizeFirstLetter, charsOnly} from '../../../utils/string-util';
 import {subscribe} from '../../lit/subscription-controller';
-import {
-  allRunsLatestPatchsetLatestAttempt$,
-  CheckRun,
-} from '../../../services/checks/checks-model';
-import {getResultsOf, hasResultsOf} from '../../../services/checks/checks-util';
+import {CheckRun} from '../../../models/checks/checks-model';
+import {getResultsOf, hasResultsOf} from '../../../models/checks/checks-util';
 import {Category} from '../../../api/checks';
-import '../../shared/gr-vote-chip/gr-vote-chip';
+import {fireShowPrimaryTab} from '../../../utils/event-util';
+import {PrimaryTab} from '../../../constants/constants';
+import {submitRequirementsStyles} from '../../../styles/gr-submit-requirements-styles';
+import {resolve} from '../../../models/dependency';
+import {checksModelToken} from '../../../models/checks/checks-model';
 
+/**
+ * @attr {Boolean} suppress-title - hide titles, currently for hovercard view
+ */
 @customElement('gr-submit-requirements')
 export class GrSubmitRequirements extends LitElement {
   @property({type: Object})
@@ -60,30 +67,33 @@ export class GrSubmitRequirements extends LitElement {
   @property({type: Boolean})
   mutable?: boolean;
 
+  @property({type: Boolean, attribute: 'disable-hovercards'})
+  disableHovercards = false;
+
+  @property({type: Boolean, attribute: 'disable-endpoints'})
+  disableEndpoints = false;
+
   @state()
   runs: CheckRun[] = [];
 
   static override get styles() {
     return [
       fontStyles,
+      submitRequirementsStyles,
       css`
+        :host([suppress-title]) .metadata-title {
+          display: none;
+        }
         .metadata-title {
           color: var(--deemphasized-text-color);
           padding-left: var(--metadata-horizontal-padding);
           margin: 0 0 var(--spacing-s);
-          border-top: 1px solid var(--border-color);
           padding-top: var(--spacing-s);
         }
         iron-icon {
           width: var(--line-height-normal, 20px);
           height: var(--line-height-normal, 20px);
-        }
-        iron-icon.check,
-        iron-icon.overridden {
-          color: var(--success-foreground);
-        }
-        iron-icon.close {
-          color: var(--error-foreground);
+          vertical-align: top;
         }
         .requirements,
         section.trigger-votes {
@@ -108,42 +118,37 @@ export class GrSubmitRequirements extends LitElement {
         }
         td {
           padding: var(--spacing-s);
+          white-space: nowrap;
         }
         .votes-cell {
           display: flex;
         }
-        .check-error {
-          margin-right: var(--spacing-l);
-        }
-        .check-error iron-icon {
-          color: var(--error-foreground);
-          vertical-align: top;
-        }
         gr-vote-chip {
           margin-right: var(--spacing-s);
+        }
+        gr-checks-chip {
+          /* .checksChip has top: 2px, this is canceling it */
+          margin-top: -2px;
         }
       `,
     ];
   }
 
-  constructor() {
-    super();
-    subscribe(this, allRunsLatestPatchsetLatestAttempt$, x => (this.runs = x));
+  private readonly getChecksModel = resolve(this, checksModelToken);
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    subscribe(
+      this,
+      this.getChecksModel().allRunsLatestPatchsetLatestAttempt$,
+      x => (this.runs = x)
+    );
   }
 
   override render() {
-    let submit_requirements = orderSubmitRequirements(
-      this.change?.submit_requirements ?? []
-    ).filter(req => req.status !== SubmitRequirementStatus.NOT_APPLICABLE);
-
-    const hasNonLegacyRequirements = submit_requirements.some(
-      req => req.is_legacy === false
+    const submit_requirements = orderSubmitRequirements(
+      getRequirements(this.change)
     );
-    if (hasNonLegacyRequirements) {
-      submit_requirements = submit_requirements.filter(
-        req => req.is_legacy === false
-      );
-    }
 
     return html` <h3
         class="metadata-title heading-3"
@@ -160,53 +165,99 @@ export class GrSubmitRequirements extends LitElement {
           </tr>
         </thead>
         <tbody>
-          ${submit_requirements.map(
-            requirement => html`<tr
-              id="requirement-${charsOnly(requirement.name)}"
-            >
-              <td>${this.renderStatus(requirement.status)}</td>
-              <td class="name">
-                <gr-limited-text
-                  class="name"
-                  limit="25"
-                  .text="${requirement.name}"
-                ></gr-limited-text>
-              </td>
-              <td>
-                <div class="votes-cell">
-                  ${this.renderVotes(requirement)}
-                  ${this.renderChecks(requirement)}
-                </div>
-              </td>
-            </tr>`
+          ${submit_requirements.map((requirement, index) =>
+            this.renderRequirement(requirement, index)
           )}
         </tbody>
       </table>
-      ${submit_requirements.map(
-        requirement => html`
-          <gr-submit-requirement-hovercard
-            for="requirement-${charsOnly(requirement.name)}"
-            .requirement="${requirement}"
-            .change="${this.change}"
-            .account="${this.account}"
-            .mutable="${this.mutable ?? false}"
-          ></gr-submit-requirement-hovercard>
-        `
-      )}
-      ${this.renderTriggerVotes(submit_requirements)}`;
+      ${this.disableHovercards
+        ? ''
+        : submit_requirements.map(
+            (requirement, index) => html`
+              <gr-submit-requirement-hovercard
+                for="requirement-${index}-${charsOnly(requirement.name)}"
+                .requirement=${requirement}
+                .change=${this.change}
+                .account=${this.account}
+                .mutable=${this.mutable ?? false}
+              ></gr-submit-requirement-hovercard>
+            `
+          )}
+      ${this.renderTriggerVotes()}`;
+  }
+
+  renderRequirement(requirement: SubmitRequirementResultInfo, index: number) {
+    const row = html`
+     <td>${this.renderStatus(requirement.status)}</td>
+        <td class="name">
+          <gr-limited-text
+            class="name"
+            limit="25"
+            .text=${requirement.name}
+          ></gr-limited-text>
+        </td>
+        <td>
+          ${this.renderEndpoint(
+            requirement,
+            html`${this.renderVotesAndChecksChips(requirement)}
+            ${this.renderOverrideLabels(requirement)}`
+          )}
+        </td>
+      </tr>
+    `;
+
+    if (this.disableHovercards) {
+      // when hovercards are disabled, we don't make line focusable (tabindex)
+      // since otherwise there is no action associated with the line
+      return html`<tr>
+        ${row}
+      </tr>`;
+    } else {
+      return html`<tr
+        id="requirement-${index}-${charsOnly(requirement.name)}"
+        role="button"
+        tabindex="0"
+      >
+        ${row}
+      </tr>`;
+    }
+  }
+
+  renderEndpoint(
+    requirement: SubmitRequirementResultInfo,
+    slot: TemplateResult
+  ) {
+    if (this.disableEndpoints)
+      return html`<div class="votes-cell">${slot}</div>`;
+
+    const endpointName = this.calculateEndpointName(requirement.name);
+    return html`<gr-endpoint-decorator class="votes-cell" name=${endpointName}>
+      <gr-endpoint-param
+        name="change"
+        .value=${this.change}
+      ></gr-endpoint-param>
+      <gr-endpoint-param
+        name="requirement"
+        .value=${requirement}
+      ></gr-endpoint-param>
+      ${slot}
+    </gr-endpoint-decorator>`;
   }
 
   renderStatus(status: SubmitRequirementStatus) {
     const icon = iconForStatus(status);
     return html`<iron-icon
-      class="${icon}"
+      class=${icon}
       icon="gr-icons:${icon}"
       role="img"
-      aria-label="${status.toLowerCase()}"
+      aria-label=${status.toLowerCase()}
     ></iron-icon>`;
   }
 
-  renderVotes(requirement: SubmitRequirementResultInfo) {
+  renderVotesAndChecksChips(requirement: SubmitRequirementResultInfo) {
+    if (requirement.status === SubmitRequirementStatus.ERROR) {
+      return html`<span class="error">Error</span>`;
+    }
     const requirementLabels = extractAssociatedLabels(requirement);
     const allLabels = this.change?.labels ?? {};
     const associatedLabels = Object.keys(allLabels).filter(label =>
@@ -216,11 +267,23 @@ export class GrSubmitRequirements extends LitElement {
     const everyAssociatedLabelsIsWithoutVotes = associatedLabels.every(
       label => !hasVotes(allLabels[label])
     );
-    if (everyAssociatedLabelsIsWithoutVotes) return html`No votes`;
 
-    return associatedLabels.map(label =>
+    const checksChips = this.renderChecks(requirement);
+
+    const requirementWithoutLabelToVoteOn = associatedLabels.length === 0;
+    if (requirementWithoutLabelToVoteOn) {
+      const status = capitalizeFirstLetter(requirement.status.toLowerCase());
+      return checksChips || html`${status}`;
+    }
+
+    if (everyAssociatedLabelsIsWithoutVotes) {
+      return checksChips || html`No votes`;
+    }
+
+    return html`${associatedLabels.map(label =>
       this.renderLabelVote(label, allLabels)
-    );
+    )}
+    ${checksChips}`;
   }
 
   renderLabelVote(label: string, labels: LabelNameToInfoMap) {
@@ -232,15 +295,15 @@ export class GrSubmitRequirements extends LitElement {
       return uniqueApprovals.map(
         approvalInfo =>
           html`<gr-vote-chip
-            .vote="${approvalInfo}"
-            .label="${labelInfo}"
-            .more="${(labelInfo.all ?? []).filter(
+            .vote=${approvalInfo}
+            .label=${labelInfo}
+            .more=${(labelInfo.all ?? []).filter(
               other => other.value === approvalInfo.value
-            ).length > 1}"
+            ).length > 1}
           ></gr-vote-chip>`
       );
     } else if (isQuickLabelInfo(labelInfo)) {
-      return [html`<gr-vote-chip .label="${labelInfo}"></gr-vote-chip>`];
+      return [html`<gr-vote-chip .label=${labelInfo}></gr-vote-chip>`];
     } else {
       return html``;
     }
@@ -257,137 +320,72 @@ export class GrSubmitRequirements extends LitElement {
       (sum, run) => sum + getResultsOf(run, Category.ERROR).length,
       0
     );
-    if (runsCount > 0) {
-      return html`<span class="check-error"
-        ><iron-icon icon="gr-icons:error"></iron-icon>${pluralize(
-          runsCount,
-          'error'
-        )}</span
-      >`;
+    if (runsCount === 0) return;
+    const links = [];
+    if (requirementRuns.length === 1 && requirementRuns[0].statusLink) {
+      links.push(requirementRuns[0].statusLink);
     }
-    return;
+    return html`<gr-checks-chip
+      .text=${`${runsCount}`}
+      .links=${links}
+      .statusOrCategory=${Category.ERROR}
+      @click=${() => {
+        fireShowPrimaryTab(this, PrimaryTab.CHECKS, false, {
+          checksTab: {
+            statusOrCategory: Category.ERROR,
+          },
+        });
+      }}
+    ></gr-checks-chip>`;
   }
 
-  renderTriggerVotes(submitReqs: SubmitRequirementResultInfo[]) {
+  renderOverrideLabels(requirement: SubmitRequirementResultInfo) {
+    if (requirement.status !== SubmitRequirementStatus.OVERRIDDEN) return;
+    const requirementLabels = extractAssociatedLabels(
+      requirement,
+      'onlyOverride'
+    ).filter(label => {
+      const allLabels = this.change?.labels ?? {};
+      return allLabels[label] && hasVotes(allLabels[label]);
+    });
+    return requirementLabels.map(
+      label => html`<span class="overrideLabel">${label}</span>`
+    );
+  }
+
+  renderTriggerVotes() {
     const labels = this.change?.labels ?? {};
-    const allLabels = Object.keys(labels);
-    const labelAssociatedWithSubmitReqs = submitReqs
-      .flatMap(req => extractAssociatedLabels(req))
-      .filter(unique);
-    const triggerVotes = allLabels
-      .filter(label => !labelAssociatedWithSubmitReqs.includes(label))
-      .filter(label => hasVotes(labels[label]));
+    const triggerVotes = getTriggerVotes(this.change).filter(label =>
+      hasVotes(labels[label])
+    );
     if (!triggerVotes.length) return;
     return html`<h3 class="metadata-title heading-3">Trigger Votes</h3>
       <section class="trigger-votes">
         ${triggerVotes.map(
           label =>
             html`<gr-trigger-vote
-              .label="${label}"
-              .labelInfo="${labels[label]}"
-              .change="${this.change}"
-              .account="${this.account}"
-              .mutable="${this.mutable ?? false}"
+              .label=${label}
+              .labelInfo=${labels[label]}
+              .change=${this.change}
+              .account=${this.account}
+              .mutable=${this.mutable ?? false}
+              .disableHovercards=${this.disableHovercards}
             ></gr-trigger-vote>`
         )}
       </section>`;
   }
-}
 
-@customElement('gr-trigger-vote')
-export class GrTriggerVote extends LitElement {
-  @property()
-  label?: string;
-
-  @property({type: Object})
-  labelInfo?: LabelInfo;
-
-  @property({type: Object})
-  change?: ParsedChangeInfo;
-
-  @property({type: Object})
-  account?: AccountInfo;
-
-  @property({type: Boolean})
-  mutable?: boolean;
-
-  static override get styles() {
-    return css`
-      :host {
-        display: block;
-      }
-      .container {
-        box-sizing: border-box;
-        border: 1px solid var(--border-color);
-        border-radius: calc(var(--border-radius) + 2px);
-        background-color: var(--background-color-primary);
-        display: flex;
-        padding: 0;
-        padding-left: var(--spacing-s);
-        padding-right: var(--spacing-xxs);
-        align-items: center;
-      }
-      .label {
-        padding-right: var(--spacing-s);
-        font-weight: var(--font-weight-bold);
-      }
-      gr-vote-chip {
-        --gr-vote-chip-width: 14px;
-        --gr-vote-chip-height: 14px;
-        margin-right: 0px;
-        margin-left: var(--spacing-xs);
-      }
-      gr-vote-chip:first-of-type {
-        margin-left: 0px;
-      }
-    `;
-  }
-
-  override render() {
-    if (!this.labelInfo) return;
-    return html`
-      <div class="container">
-        <gr-trigger-vote-hovercard .labelName=${this.label}>
-          <gr-label-info
-            slot="label-info"
-            .change=${this.change}
-            .account=${this.account}
-            .mutable=${this.mutable}
-            .label=${this.label}
-            .labelInfo=${this.labelInfo}
-            .showAllReviewers=${false}
-          ></gr-label-info>
-        </gr-trigger-vote-hovercard>
-        <span class="label">${this.label}</span>
-        ${this.renderVotes()}
-      </div>
-    `;
-  }
-
-  private renderVotes() {
-    const {labelInfo} = this;
-    if (!labelInfo) return;
-    if (isDetailedLabelInfo(labelInfo)) {
-      const approvals = getAllUniqueApprovals(labelInfo).filter(
-        approval => !hasNeutralStatus(labelInfo, approval)
-      );
-      return approvals.map(
-        approvalInfo => html`<gr-vote-chip
-          .vote="${approvalInfo}"
-          .label="${labelInfo}"
-        ></gr-vote-chip>`
-      );
-    } else if (isQuickLabelInfo(labelInfo)) {
-      return [html`<gr-vote-chip .label="${this.labelInfo}"></gr-vote-chip>`];
-    } else {
-      return html``;
-    }
+  // not private for tests
+  calculateEndpointName(requirementName: string) {
+    // remove class name annnotation after ~
+    const name = requirementName.split('~')[0];
+    const normalizedName = charsOnly(name).toLowerCase();
+    return `submit-requirement-${normalizedName}`;
   }
 }
 
 declare global {
   interface HTMLElementTagNameMap {
     'gr-submit-requirements': GrSubmitRequirements;
-    'gr-trigger-vote': GrTriggerVote;
   }
 }

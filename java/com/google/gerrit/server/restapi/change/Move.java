@@ -113,7 +113,7 @@ public class Move implements RestModifyView<ChangeResource, MoveInput>, UiAction
       throws RestApiException, UpdateException, PermissionBackendException, IOException {
     if (!moveEnabled) {
       // This will be removed with the above config once we reach consensus for the move change
-      // behavior. See: https://bugs.chromium.org/p/gerrit/issues/detail?id=9877
+      // behavior. See: https://issues.gerritcodereview.com/issues/40009784
       throw new MethodNotAllowedException("move changes endpoint is disabled");
     }
 
@@ -159,7 +159,7 @@ public class Move implements RestModifyView<ChangeResource, MoveInput>, UiAction
     projectCache.get(project).orElseThrow(illegalState(project)).checkStatePermitsWrite();
 
     Op op = new Op(input);
-    try (BatchUpdate u = updateFactory.create(project, caller, TimeUtil.nowTs())) {
+    try (BatchUpdate u = updateFactory.create(project, caller, TimeUtil.now())) {
       u.addOp(change.getId(), op);
       u.execute();
     }
@@ -257,11 +257,8 @@ public class Move implements RestModifyView<ChangeResource, MoveInput>, UiAction
      * proposal: https://gerrit-review.googlesource.com/c/gerrit/+/129171
      */
     private void updateApprovals(
-        ChangeContext ctx, ChangeUpdate update, PatchSet.Id psId, Project.NameKey project)
-        throws IOException {
-      for (PatchSetApproval psa :
-          approvalsUtil.byPatchSet(
-              ctx.getNotes(), psId, ctx.getRevWalk(), ctx.getRepoView().getConfig())) {
+        ChangeContext ctx, ChangeUpdate update, PatchSet.Id psId, Project.NameKey project) {
+      for (PatchSetApproval psa : approvalsUtil.byPatchSet(ctx.getNotes(), psId)) {
         ProjectState projectState = projectCache.get(project).orElseThrow(illegalState(project));
         Optional<LabelType> type =
             projectState.getLabelTypes(ctx.getNotes()).byLabel(psa.labelId());
@@ -287,6 +284,9 @@ public class Move implements RestModifyView<ChangeResource, MoveInput>, UiAction
             .setTitle("Move change to a different branch")
             .setVisible(false);
 
+    if (!moveEnabled) {
+      return description;
+    }
     Change change = rsrc.getChange();
     if (!change.isNew()) {
       return description;

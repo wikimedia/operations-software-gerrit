@@ -16,6 +16,9 @@ package com.google.gerrit.acceptance.rest.project;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth8.assertThat;
+import static com.google.gerrit.acceptance.GitUtil.assertPushOk;
+import static com.google.gerrit.acceptance.GitUtil.assertPushRejected;
+import static com.google.gerrit.acceptance.GitUtil.pushHead;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block;
 import static com.google.gerrit.entities.RefNames.REFS_HEADS;
@@ -24,8 +27,10 @@ import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.ExtensionRegistry;
+import com.google.gerrit.acceptance.ExtensionRegistry.Registration;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.RestResponse;
 import com.google.gerrit.acceptance.TestAccount;
@@ -58,6 +63,7 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.transport.PushResult;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -415,6 +421,87 @@ public class CreateBranchIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void createBranchViaRestApiFailsIfCommitIsInvalid() throws Exception {
+    BranchInput input = new BranchInput();
+    input.ref = "new";
+
+    TestRefOperationValidationListener testRefOperationValidationListener =
+        new TestRefOperationValidationListener();
+    testRefOperationValidationListener.doReject = true;
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(testRefOperationValidationListener)) {
+      ResourceConflictException ex =
+          assertThrows(
+              ResourceConflictException.class,
+              () -> gApi.projects().name(project.get()).branch(input.ref).create(input));
+      assertThat(ex)
+          .hasMessageThat()
+          .isEqualTo(
+              String.format(
+                  "Validation for creation of ref 'refs/heads/new' in project %s failed:\n%s",
+                  project, TestRefOperationValidationListener.FAILURE_MESSAGE));
+    }
+  }
+
+  @Test
+  public void createBranchViaRestApiWithValidationOptions() throws Exception {
+    BranchInput input = new BranchInput();
+    input.ref = "new";
+    input.validationOptions = ImmutableMap.of("key", "value");
+
+    TestRefOperationValidationListener testRefOperationValidationListener =
+        new TestRefOperationValidationListener();
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(testRefOperationValidationListener)) {
+      gApi.projects().name(project.get()).branch(input.ref).create(input);
+      assertThat(testRefOperationValidationListener.refReceivedEvent.pushOptions)
+          .containsExactly("key", "value");
+    }
+  }
+
+  @Test
+  public void createBranchViaPushFailsIfCommitIsInvalid() throws Exception {
+    TestRefOperationValidationListener testRefOperationValidationListener =
+        new TestRefOperationValidationListener();
+    testRefOperationValidationListener.doReject = true;
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(testRefOperationValidationListener)) {
+      PushResult r =
+          pushHead(
+              testRepo,
+              "refs/heads/new",
+              /* pushTags= */ false,
+              /* force= */ false,
+              /* pushOptions= */ ImmutableList.of());
+      assertPushRejected(
+          r,
+          "refs/heads/new",
+          String.format(
+              "Validation for creation of ref 'refs/heads/new' in project %s failed:\n%s",
+              project, TestRefOperationValidationListener.FAILURE_MESSAGE));
+    }
+  }
+
+  @Test
+  public void createBranchViaPushWithValidationOptions() throws Exception {
+    TestRefOperationValidationListener testRefOperationValidationListener =
+        new TestRefOperationValidationListener();
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(testRefOperationValidationListener)) {
+      PushResult r =
+          pushHead(
+              testRepo,
+              "refs/heads/new",
+              /* pushTags= */ false,
+              /* force= */ false,
+              /* pushOptions= */ ImmutableList.of("key=value"));
+      assertPushOk(r, "refs/heads/new");
+      assertThat(testRefOperationValidationListener.refReceivedEvent.pushOptions)
+          .containsExactly("key", "value");
+    }
+  }
+
+  @Test
   public void createBranchRevisionVisibility() throws Exception {
     AccountGroup.UUID privilegedGroupUuid =
         groupOperations.newGroup().name(name("privilegedGroup")).create();
@@ -500,6 +587,26 @@ public class CreateBranchIT extends AbstractDaemonTest {
     RestApiException thrown = assertThrows(errType, () -> branch(branch).create(in));
     if (errMsg != null) {
       assertThat(thrown).hasMessageThat().contains(errMsg);
+    }
+  }
+
+  private static class TestRefOperationValidationListener
+      implements RefOperationValidationListener {
+    static final String FAILURE_MESSAGE = "failure from test";
+
+    public boolean doReject;
+    public RefReceivedEvent refReceivedEvent;
+
+    @Override
+    public List<ValidationMessage> onRefOperation(RefReceivedEvent refReceivedEvent)
+        throws ValidationException {
+      this.refReceivedEvent = refReceivedEvent;
+
+      if (doReject) {
+        throw new ValidationException(FAILURE_MESSAGE);
+      }
+
+      return ImmutableList.of();
     }
   }
 }

@@ -16,6 +16,7 @@
  */
 
 import {HttpMethod} from '../../constants/constants';
+import {Finalizable} from '../registry';
 import {
   AccountCapabilityInfo,
   AccountDetailInfo,
@@ -108,16 +109,9 @@ import {
 } from '../../types/diff';
 import {ParsedChangeInfo} from '../../types/types';
 import {ErrorCallback} from '../../api/rest';
+import {DraftInfo} from '../../utils/comment-util';
 
 export type CancelConditionCallback = () => boolean;
-
-// TODO(TS): remove when GrReplyDialog converted to typescript
-export interface GrReplyDialog {
-  getLabelValue(label: string): string;
-  setLabelValue(label: string, value: string): void;
-  send(includeComments?: boolean, startReview?: boolean): Promise<unknown>;
-  setPluginMessage(message: string): void;
-}
 
 export interface GetDiffCommentsOutput {
   baseComments: CommentInfo[];
@@ -129,7 +123,7 @@ export interface GetDiffRobotCommentsOutput {
   comments: RobotCommentInfo[];
 }
 
-export interface RestApiService {
+export interface RestApiService extends Finalizable {
   getConfig(noCache?: boolean): Promise<ServerInfo | undefined>;
   getLoggedIn(): Promise<boolean>;
   getPreferences(): Promise<PreferencesInfo | undefined>;
@@ -200,10 +194,10 @@ export interface RestApiService {
   ): Promise<BranchInfo[] | undefined>;
 
   getChangeDetail(
-    changeNum: number | string,
+    changeNum?: number | string,
     opt_errFn?: ErrorCallback,
     opt_cancelCondition?: Function
-  ): Promise<ParsedChangeInfo | null | undefined>;
+  ): Promise<ParsedChangeInfo | undefined>;
 
   getChange(
     changeNum: ChangeId | NumericChangeId,
@@ -325,7 +319,7 @@ export interface RestApiService {
 
   getIsAdmin(): Promise<boolean | undefined>;
 
-  getIsGroupOwner(groupName: GroupName): Promise<boolean>;
+  getIsGroupOwner(groupName?: GroupName): Promise<boolean>;
 
   saveGroupName(
     groupId: GroupId | GroupName,
@@ -365,10 +359,7 @@ export interface RestApiService {
     errFn?: ErrorCallback
   ): Promise<Response>;
 
-  getChangeEdit(
-    changeNum: NumericChangeId,
-    downloadCommands?: boolean
-  ): Promise<false | EditInfo | undefined>;
+  getChangeEdit(changeNum?: NumericChangeId): Promise<EditInfo | undefined>;
 
   getChangeActionURL(
     changeNum: NumericChangeId,
@@ -400,10 +391,6 @@ export interface RestApiService {
     patchNum: PatchSetNum,
     draft: CommentInput
   ): Promise<Response>;
-
-  getDiffChangeDetail(
-    changeNum: NumericChangeId
-  ): Promise<ChangeInfo | undefined | null>;
 
   getPortedComments(
     changeNum: NumericChangeId,
@@ -453,21 +440,7 @@ export interface RestApiService {
 
   getDiffDrafts(
     changeNum: NumericChangeId
-  ): Promise<PathToCommentsInfoMap | undefined>;
-  getDiffDrafts(
-    changeNum: NumericChangeId,
-    basePatchNum: PatchSetNum,
-    patchNum: PatchSetNum,
-    path: string
-  ): Promise<GetDiffCommentsOutput>;
-  getDiffDrafts(
-    changeNum: NumericChangeId,
-    basePatchNum?: BasePatchSetNum,
-    patchNum?: PatchSetNum,
-    path?: string
-  ):
-    | Promise<GetDiffCommentsOutput>
-    | Promise<PathToCommentsInfoMap | undefined>;
+  ): Promise<{[path: string]: DraftInfo[]} | undefined>;
 
   createGroup(config: GroupInput & {name: string}): Promise<Response>;
 
@@ -478,30 +451,22 @@ export interface RestApiService {
     errFn?: ErrorCallback
   ): Promise<{[pluginName: string]: PluginInfo} | undefined>;
 
+  getDetailedChangesWithActions(
+    changeNums: NumericChangeId[]
+  ): Promise<ChangeInfo[] | undefined>;
+
   getChanges(
     changesPerPage?: number,
     query?: string,
     offset?: 'n,z' | number,
     options?: string
   ): Promise<ChangeInfo[] | undefined>;
-  getChanges(
+  getChangesForMultipleQueries(
     changesPerPage?: number,
     query?: string[],
     offset?: 'n,z' | number,
     options?: string
   ): Promise<ChangeInfo[][] | undefined>;
-  /**
-   * @return If opt_query is an
-   * array, _fetchJSON will return an array of arrays of changeInfos. If it
-   * is unspecified or a string, _fetchJSON will return an array of
-   * changeInfos.
-   */
-  getChanges(
-    changesPerPage?: number,
-    query?: string | string[],
-    offset?: 'n,z' | number,
-    options?: string
-  ): Promise<ChangeInfo[] | ChangeInfo[][] | undefined>;
 
   getDocumentationSearches(filter: string): Promise<DocResult[] | undefined>;
 
@@ -647,7 +612,8 @@ export interface RestApiService {
   ): Promise<RelatedChangesInfo | undefined>;
 
   getChangesSubmittedTogether(
-    changeNum: NumericChangeId
+    changeNum: NumericChangeId,
+    options?: string[]
   ): Promise<SubmittedTogetherInfo | undefined>;
 
   getChangeConflicts(
@@ -662,7 +628,10 @@ export interface RestApiService {
 
   getChangesWithSameTopic(
     topic: string,
-    changeNum: NumericChangeId
+    options?: {
+      openChangesOnly?: boolean;
+      changeToExclude?: NumericChangeId;
+    }
   ): Promise<ChangeInfo[] | undefined>;
   getChangesWithSimilarTopic(topic: string): Promise<ChangeInfo[] | undefined>;
 
@@ -726,13 +695,6 @@ export interface RestApiService {
   ): Promise<DashboardInfo | undefined>;
 
   deleteDraftComments(query: string): Promise<Response>;
-
-  setAssignee(
-    changeNum: NumericChangeId,
-    assignee: AccountId
-  ): Promise<Response>;
-
-  deleteAssignee(changeNum: NumericChangeId): Promise<Response>;
 
   setChangeHashtag(
     changeNum: NumericChangeId,

@@ -21,6 +21,7 @@ import static org.eclipse.jgit.lib.Constants.R_REFS;
 import static org.eclipse.jgit.lib.Constants.R_TAGS;
 import static org.eclipse.jgit.transport.ReceiveCommand.Type.DELETE;
 
+import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.flogger.FluentLogger;
@@ -113,13 +114,20 @@ public class DeleteRef {
         .check(RefPermission.DELETE);
 
     try (Repository repository = repoManager.openRepository(projectState.getNameKey())) {
-      RefUpdate.Result result;
+      Ref refObj = repository.exactRef(ref);
+      if (refObj == null) {
+        throw new ResourceConflictException(String.format("ref %s doesn't exist", ref));
+      }
       RefUpdate u = repository.updateRef(ref);
-      u.setExpectedOldObjectId(repository.exactRef(ref).getObjectId());
+      u.setExpectedOldObjectId(refObj.getObjectId());
       u.setNewObjectId(ObjectId.zeroId());
       u.setForceUpdate(true);
-      refDeletionValidator.validateRefOperation(projectState.getName(), identifiedUser.get(), u);
-      result = u.delete();
+      refDeletionValidator.validateRefOperation(
+          projectState.getName(),
+          identifiedUser.get(),
+          u,
+          /* pushOptions */ ImmutableListMultimap.of());
+      RefUpdate.Result result = u.delete();
 
       switch (result) {
         case NEW:
@@ -243,9 +251,13 @@ public class DeleteRef {
 
     RefUpdate u = r.updateRef(refName);
     u.setForceUpdate(true);
-    u.setExpectedOldObjectId(r.exactRef(refName).getObjectId());
+    u.setExpectedOldObjectId(ref.getObjectId());
     u.setNewObjectId(ObjectId.zeroId());
-    refDeletionValidator.validateRefOperation(projectState.getName(), identifiedUser.get(), u);
+    refDeletionValidator.validateRefOperation(
+        projectState.getName(),
+        identifiedUser.get(),
+        u,
+        /* pushOptions */ ImmutableListMultimap.of());
     return command;
   }
 
@@ -269,7 +281,7 @@ public class DeleteRef {
         msg = format("Cannot delete %s: %s", cmd.getRefName(), cmd.getResult());
         break;
     }
-    logger.atSevere().log(msg);
+    logger.atSevere().log("%s", msg);
     errorMessages.append(msg);
     errorMessages.append("\n");
   }

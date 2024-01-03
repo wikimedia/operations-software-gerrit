@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 import {
+  DashboardSection,
   GenerateUrlParameters,
   GroupDetailView,
   RepoDetailView,
@@ -42,7 +43,7 @@ export interface AppElementDashboardParams {
   project?: RepoName;
   dashboard: DashboardId;
   user?: string;
-  sections: Array<{name: string; query: string}>;
+  sections?: DashboardSection[];
   title?: string;
 }
 
@@ -124,8 +125,15 @@ export interface AppElementChangeViewParams {
   edit?: boolean;
   patchNum?: RevisionPatchSetNum;
   basePatchNum?: BasePatchSetNum;
-  queryMap?: Map<string, string> | URLSearchParams;
   commentId?: UrlEncodedCommentId;
+  forceReload?: boolean;
+  tab?: string;
+  /** regular expression for filtering check runs */
+  filter?: string;
+  /** regular expression for selecting check runs */
+  select?: string;
+  /** selected attempt for selected check runs */
+  attempt?: number;
 }
 
 export interface AppElementJustRegisteredParams {

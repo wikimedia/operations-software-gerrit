@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 import {
   AccountDetailInfo,
   AccountId,
@@ -31,12 +30,15 @@ import {
   ChangeMessageId,
   ChangeMessageInfo,
   ChangeViewChangeInfo,
+  CommentInfo,
   CommentLinkInfo,
   CommentLinks,
+  CommentRange,
   CommitId,
   CommitInfo,
   ConfigInfo,
   DownloadInfo,
+  EditInfo,
   EditPatchSetNum,
   EmailAddress,
   FixId,
@@ -63,6 +65,9 @@ import {
   RequirementType,
   Reviewers,
   RevisionInfo,
+  RobotCommentInfo,
+  RobotId,
+  RobotRunId,
   SchemesInfoMap,
   ServerInfo,
   SubmittedTogetherInfo,
@@ -93,23 +98,45 @@ import {
 } from '../constants/constants';
 import {formatDate} from '../utils/date-util';
 import {GetDiffCommentsOutput} from '../services/gr-rest-api/gr-rest-api';
-import {AppElementChangeViewParams} from '../elements/gr-app-types';
+import {
+  AppElementChangeViewParams,
+  AppElementSearchParam,
+} from '../elements/gr-app-types';
 import {CommitInfoWithRequiredCommit} from '../elements/change/gr-change-metadata/gr-change-metadata';
 import {WebLinkInfo} from '../types/diff';
-import {createCommentThreads, UIComment, UIDraft} from '../utils/comment-util';
+import {
+  ChangeMessage,
+  CommentThread,
+  createCommentThreads,
+  DraftInfo,
+  UnsavedInfo,
+} from '../utils/comment-util';
 import {GerritView} from '../services/router/router-model';
 import {ChangeComments} from '../elements/diff/gr-comment-api/gr-comment-api';
 import {EditRevisionInfo, ParsedChangeInfo} from '../types/types';
-import {ChangeMessage} from '../elements/change/gr-message/gr-message';
 import {GenerateUrlEditViewParameters} from '../elements/core/gr-navigation/gr-navigation';
 import {
   DetailedLabelInfo,
+  QuickLabelInfo,
   SubmitRequirementExpressionInfo,
   SubmitRequirementResultInfo,
   SubmitRequirementStatus,
 } from '../api/rest-api';
-import {RunResult} from '../services/checks/checks-model';
+import {RunResult} from '../models/checks/checks-model';
 import {Category, RunStatus} from '../api/checks';
+import {DiffInfo} from '../api/diff';
+
+const TEST_DEFAULT_EXPRESSION = 'label:Verified=MAX -label:Verified=MIN';
+export const TEST_PROJECT_NAME: RepoName = 'test-project' as RepoName;
+export const TEST_BRANCH_ID: BranchName = 'test-branch' as BranchName;
+export const TEST_CHANGE_ID: ChangeId = 'TestChangeId' as ChangeId;
+export const TEST_CHANGE_INFO_ID: ChangeInfoId =
+  `${TEST_PROJECT_NAME}~${TEST_BRANCH_ID}~${TEST_CHANGE_ID}` as ChangeInfoId;
+export const TEST_SUBJECT = 'Test subject';
+export const TEST_NUMERIC_CHANGE_ID = 42 as NumericChangeId;
+
+export const TEST_CHANGE_CREATED = new Date(2020, 1, 1, 1, 2, 3);
+export const TEST_CHANGE_UPDATED = new Date(2020, 10, 6, 5, 12, 34);
 
 export function dateToTimestamp(date: Date): Timestamp {
   const nanosecondSuffix = '.000000000';
@@ -156,6 +183,7 @@ export function createConfig(): ConfigInfo {
     work_in_progress_by_default: createInheritedBoolean(),
     max_object_size_limit: createMaxObjectSizeLimit(),
     default_submit_type: createSubmitType(),
+    enable_reviewer_by_email: createInheritedBoolean(),
     submit_type: SubmitType.INHERIT,
     commentlinks: createCommentLinks(),
   };
@@ -188,20 +216,20 @@ export function createAccountWithIdNameAndEmail(id = 5): AccountInfo {
   };
 }
 
+export function createAccountDetailWithIdNameAndEmail(
+  id = 5
+): AccountDetailInfo {
+  return {
+    _account_id: id as AccountId,
+    email: `user-${id}@` as EmailAddress,
+    name: `User-${id}`,
+    registered_on: dateToTimestamp(new Date(2020, 10, 15, 14, 5, 8)),
+  };
+}
+
 export function createReviewers(): Reviewers {
   return {};
 }
-
-export const TEST_PROJECT_NAME: RepoName = 'test-project' as RepoName;
-export const TEST_BRANCH_ID: BranchName = 'test-branch' as BranchName;
-export const TEST_CHANGE_ID: ChangeId = 'TestChangeId' as ChangeId;
-export const TEST_CHANGE_INFO_ID: ChangeInfoId =
-  `${TEST_PROJECT_NAME}~${TEST_BRANCH_ID}~${TEST_CHANGE_ID}` as ChangeInfoId;
-export const TEST_SUBJECT = 'Test subject';
-export const TEST_NUMERIC_CHANGE_ID = 42 as NumericChangeId;
-
-export const TEST_CHANGE_CREATED = new Date(2020, 1, 1, 1, 2, 3);
-export const TEST_CHANGE_UPDATED = new Date(2020, 10, 6, 5, 12, 34);
 
 export function createGitPerson(name = 'Test name'): GitPersonInfo {
   return {
@@ -255,7 +283,10 @@ export function createCommitInfoWithRequiredCommit(
   };
 }
 
-export function createRevision(patchSetNum = 1): RevisionInfo {
+export function createRevision(
+  patchSetNum = 1,
+  description = ''
+): RevisionInfo {
   return {
     _number: patchSetNum as PatchSetNum,
     commit: createCommit(),
@@ -263,14 +294,29 @@ export function createRevision(patchSetNum = 1): RevisionInfo {
     kind: RevisionKind.REWORK,
     ref: 'refs/changes/5/6/1' as GitRef,
     uploader: createAccountWithId(),
+    description,
   };
 }
 
-export function createEditRevision(): EditRevisionInfo {
+export function createEditInfo(): EditInfo {
+  return {
+    commit: {...createCommit(), commit: 'commit-id-of-edit-ps' as CommitId},
+    base_patch_set_number: 1 as BasePatchSetNum,
+    base_revision: 'base-revision-of-edit',
+    ref: 'refs/changes/5/6/1' as GitRef,
+    fetch: {},
+    files: {},
+  };
+}
+
+export function createEditRevision(basePatchNum = 1): EditRevisionInfo {
   return {
     _number: EditPatchSetNum,
-    basePatchNum: 1 as BasePatchSetNum,
-    commit: createCommit(),
+    basePatchNum: basePatchNum as BasePatchSetNum,
+    commit: {
+      ...createCommit(),
+      commit: 'test-commit-id-of-edit-rev' as CommitId,
+    },
   };
 }
 
@@ -295,7 +341,7 @@ export function createRevisions(count: number): {
   [revisionId: string]: RevisionInfo;
 } {
   const revisions: {[revisionId: string]: RevisionInfo} = {};
-  const revisionDate = TEST_CHANGE_CREATED;
+  let revisionDate = TEST_CHANGE_CREATED;
   const revisionIdStart = 1; // The same as getCurrentRevision
   for (let i = 0; i < count; i++) {
     const revisionId = (i + revisionIdStart).toString(16);
@@ -306,6 +352,7 @@ export function createRevisions(count: number): {
     };
     revisions[revisionId] = revision;
     // advance 1 day
+    revisionDate = new Date(revisionDate);
     revisionDate.setDate(revisionDate.getDate() + 1);
   }
   return revisions;
@@ -319,12 +366,13 @@ export function getCurrentRevision(count: number): CommitId {
 export function createChangeMessages(count: number): ChangeMessageInfo[] {
   const messageIdStart = 1000;
   const messages: ChangeMessageInfo[] = [];
-  const messageDate = TEST_CHANGE_CREATED;
+  let messageDate = TEST_CHANGE_CREATED;
   for (let i = 0; i < count; i++) {
     messages.push({
       ...createChangeMessageInfo((i + messageIdStart).toString(16)),
       date: dateToTimestamp(messageDate),
     });
+    messageDate = new Date(messageDate);
     messageDate.setDate(messageDate.getDate() + 1);
   }
   return messages;
@@ -385,7 +433,6 @@ export function createChangeConfig(): ChangeConfigInfo {
     update_delay: 0,
     mergeability_computation_behavior:
       MergeabilityComputationBehavior.REF_UPDATED_AND_CHANGE_REINDEX,
-    enable_assignee: false,
   };
 }
 
@@ -447,6 +494,122 @@ export function createGetDiffCommentsOutput(): GetDiffCommentsOutput {
   };
 }
 
+export function createDiff(): DiffInfo {
+  return {
+    meta_a: {
+      name: 'lorem-ipsum.txt',
+      content_type: 'text/plain',
+      lines: 45,
+    },
+    meta_b: {
+      name: 'lorem-ipsum.txt',
+      content_type: 'text/plain',
+      lines: 48,
+    },
+    intraline_status: 'OK',
+    change_type: 'MODIFIED',
+    diff_header: [
+      'diff --git a/lorem-ipsum.txt b/lorem-ipsum.txt',
+      'index b2adcf4..554ae49 100644',
+      '--- a/lorem-ipsum.txt',
+      '+++ b/lorem-ipsum.txt',
+    ],
+    content: [
+      {
+        ab: [
+          'Lorem ipsum dolor sit amet, suspendisse inceptos vehicula, ' +
+            'nulla phasellus.',
+          'Mattis lectus.',
+          'Sodales duis.',
+          'Orci a faucibus.',
+        ],
+      },
+      {
+        b: [
+          'Nullam neque, ligula ac, id blandit.',
+          'Sagittis tincidunt torquent, tempor nunc amet.',
+          'At rhoncus id.',
+        ],
+      },
+      {
+        ab: [
+          'Sem nascetur, erat ut, non in.',
+          'A donec, venenatis pellentesque dis.',
+          'Mauris mauris.',
+          'Quisque nisl duis, facilisis viverra.',
+          'Justo purus, semper eget et.',
+        ],
+      },
+      {
+        a: [
+          'Est amet, vestibulum pellentesque.',
+          'Erat ligula.',
+          'Justo eros.',
+          'Fringilla quisque.',
+        ],
+      },
+      {
+        ab: [
+          'Arcu eget, rhoncus amet cursus, ipsum elementum.',
+          'Eros suspendisse.',
+        ],
+      },
+      {
+        a: ['Rhoncus tempor, ultricies aliquam ipsum.'],
+        b: ['Rhoncus tempor, ultricies praesent ipsum.'],
+        edit_a: [[26, 7]],
+        edit_b: [[26, 8]],
+      },
+      {
+        ab: [
+          'Sollicitudin duis.',
+          'Blandit blandit, ante nisl fusce.',
+          'Felis ac at, tellus consectetuer.',
+          'Sociis ligula sapien, egestas leo.',
+          'Cum pulvinar, sed mauris, cursus neque velit.',
+          'Augue porta lobortis.',
+          'Nibh lorem, amet fermentum turpis, vel pulvinar diam.',
+          'Id quam ipsum, id urna et, massa suspendisse.',
+          'Ac nec, nibh praesent.',
+          'Rutrum vestibulum.',
+          'Est tellus, bibendum habitasse.',
+          'Justo facilisis, vel nulla.',
+          'Donec eu, vulputate neque aliquam, nulla dui.',
+          'Risus adipiscing in.',
+          'Lacus arcu arcu.',
+          'Urna velit.',
+          'Urna a dolor.',
+          'Lectus magna augue, convallis mattis tortor, sed tellus ' +
+            'consequat.',
+          'Etiam dui, blandit wisi.',
+          'Mi nec.',
+          'Vitae eget vestibulum.',
+          'Ullamcorper nunc ante, nec imperdiet felis, consectetur in.',
+          'Ac eget.',
+          'Vel fringilla, interdum pellentesque placerat, proin ante.',
+        ],
+      },
+      {
+        b: [
+          'Eu congue risus.',
+          'Enim ac, quis elementum.',
+          'Non et elit.',
+          'Etiam aliquam, diam vel nunc.',
+        ],
+      },
+      {
+        ab: [
+          'Nec at.',
+          'Arcu mauris, venenatis lacus fermentum, praesent duis.',
+          'Pellentesque amet et, tellus duis.',
+          'Ipsum arcu vitae, justo elit, sed libero tellus.',
+          'Metus rutrum euismod, vivamus sodales, vel arcu nisl.',
+        ],
+      },
+    ],
+  };
+}
+
 export function createMergeable(): MergeableInfo {
   return {
     submit_type: SubmitType.MERGE_IF_NECESSARY,
@@ -481,6 +644,14 @@ export function createAppElementChangeViewParams(): AppElementChangeViewParams {
   };
 }
 
+export function createAppElementSearchViewParams(): AppElementSearchParam {
+  return {
+    view: GerritView.SEARCH,
+    query: TEST_NUMERIC_CHANGE_ID.toString(),
+    offset: '0',
+  };
+}
+
 export function createGenerateUrlEditViewParameters(): GenerateUrlEditViewParameters {
   return {
     view: GerritView.EDIT,
@@ -507,7 +678,18 @@ export function createWebLinkInfo(): WebLinkInfo {
   };
 }
 
-export function createComment(): UIComment {
+export function createRange(): CommentRange {
+  return {
+    start_line: 1,
+    start_character: 0,
+    end_line: 1,
+    end_character: 1,
+  };
+}
+
+export function createComment(
+  extra: Partial<CommentInfo | DraftInfo> = {}
+): CommentInfo {
   return {
     patch_set: 1 as PatchSetNum,
     id: '12345' as UrlEncodedCommentId,
@@ -517,15 +699,38 @@ export function createComment(): UIComment {
     updated: '2018-02-13 22:48:48.018000000' as Timestamp,
     unresolved: false,
     path: 'abc.txt',
+    ...extra,
   };
 }
 
-export function createDraft(): UIDraft {
+export function createDraft(extra: Partial<CommentInfo> = {}): DraftInfo {
   return {
     ...createComment(),
-    collapsed: false,
     __draft: true,
-    __editing: false,
+    ...extra,
+  };
+}
+
+export function createUnsaved(extra: Partial<CommentInfo> = {}): UnsavedInfo {
+  return {
+    ...createComment(),
+    __unsaved: true,
+    id: undefined,
+    updated: undefined,
+    ...extra,
+  };
+}
+
+export function createRobotComment(
+  extra: Partial<CommentInfo> = {}
+): RobotCommentInfo {
+  return {
+    ...createComment(),
+    robot_id: 'robot-id-123' as RobotId,
+    robot_run_id: 'robot-run-id-456' as RobotRunId,
+    properties: {},
+    fix_suggestions: [],
+    ...extra,
   };
 }
 
@@ -632,14 +837,27 @@ export function createChangeComments(): ChangeComments {
   return new ChangeComments(comments, {}, drafts, {}, {});
 }
 
-export function createCommentThread(comments: UIComment[]) {
+export function createThread(
+  ...comments: Partial<CommentInfo | DraftInfo>[]
+): CommentThread {
+  return {
+    comments: comments.map(c => createComment(c)),
+    rootId: 'test-root-id-comment-thread' as UrlEncodedCommentId,
+    path: 'test-path-comment-thread',
+    commentSide: CommentSide.REVISION,
+    patchNum: 1 as PatchSetNum,
+    line: 314,
+  };
+}
+
+export function createCommentThread(comments: Array<Partial<CommentInfo>>) {
   if (!comments.length) {
     throw new Error('comment is required to create a thread');
   }
-  comments = comments.map(comment => {
+  const filledComments = comments.map(comment => {
     return {...createComment(), ...comment};
   });
-  const threads = createCommentThreads(comments);
+  const threads = createCommentThreads(filledComments);
   return threads[0];
 }
 
@@ -700,20 +918,36 @@ export function createGroupAuditEventInfo(
   }
 }
 
-export function createSubmitRequirementExpressionInfo(): SubmitRequirementExpressionInfo {
+export function createSubmitRequirementExpressionInfo(
+  expression = TEST_DEFAULT_EXPRESSION
+): SubmitRequirementExpressionInfo {
   return {
-    expression: 'label:Verified=MAX -label:Verified=MIN',
+    expression,
     fulfilled: true,
     passing_atoms: ['label2:verified=MAX'],
     failing_atoms: ['label2:verified=MIN'],
   };
 }
 
-export function createSubmitRequirementResultInfo(): SubmitRequirementResultInfo {
+export function createSubmitRequirementResultInfo(
+  expression = TEST_DEFAULT_EXPRESSION
+): SubmitRequirementResultInfo {
   return {
     name: 'Verified',
     status: SubmitRequirementStatus.SATISFIED,
+    submittability_expression_result:
+      createSubmitRequirementExpressionInfo(expression),
+    is_legacy: false,
+  };
+}
+
+export function createNonApplicableSubmitRequirementResultInfo(): SubmitRequirementResultInfo {
+  return {
+    name: 'Verified',
+    status: SubmitRequirementStatus.NOT_APPLICABLE,
+    applicability_expression_result: createSubmitRequirementExpressionInfo(),
     submittability_expression_result: createSubmitRequirementExpressionInfo(),
+    is_legacy: false,
   };
 }
 
@@ -741,4 +975,8 @@ export function createDetailedLabelInfo(): DetailedLabelInfo {
       '-1': 'Wrong Style or Formatting',
     },
   };
+}
+
+export function createQuickLabelInfo(): QuickLabelInfo {
+  return {};
 }

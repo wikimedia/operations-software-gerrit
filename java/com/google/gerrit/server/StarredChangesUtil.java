@@ -54,10 +54,10 @@ import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.Collection;
-import java.util.HashSet;
+import java.util.Collections;
 import java.util.List;
+import java.util.NavigableSet;
 import java.util.Set;
-import java.util.SortedSet;
 import java.util.TreeSet;
 import org.eclipse.jgit.lib.BatchRefUpdate;
 import org.eclipse.jgit.lib.Constants;
@@ -113,7 +113,7 @@ public class StarredChangesUtil {
   @AutoValue
   public abstract static class StarRef {
     private static final StarRef MISSING =
-        new AutoValue_StarredChangesUtil_StarRef(null, ImmutableSortedSet.of());
+        new AutoValue_StarredChangesUtil_StarRef(null, Collections.emptyNavigableSet());
 
     private static StarRef create(Ref ref, Iterable<String> labels) {
       return new AutoValue_StarredChangesUtil_StarRef(
@@ -123,7 +123,7 @@ public class StarredChangesUtil {
     @Nullable
     public abstract Ref ref();
 
-    public abstract ImmutableSortedSet<String> labels();
+    public abstract NavigableSet<String> labels();
 
     public ObjectId objectId() {
       return ref() != null ? ref().getObjectId() : ObjectId.zeroId();
@@ -185,7 +185,7 @@ public class StarredChangesUtil {
     this.queryProvider = queryProvider;
   }
 
-  public ImmutableSortedSet<String> getLabels(Account.Id accountId, Change.Id changeId) {
+  public NavigableSet<String> getLabels(Account.Id accountId, Change.Id changeId) {
     try (Repository repo = repoManager.openRepository(allUsers)) {
       return readLabels(repo, RefNames.refsStarredChanges(changeId, accountId)).labels();
     } catch (IOException e) {
@@ -197,7 +197,7 @@ public class StarredChangesUtil {
     }
   }
 
-  public ImmutableSortedSet<String> star(
+  public NavigableSet<String> star(
       Account.Id accountId,
       Project.NameKey project,
       Change.Id changeId,
@@ -208,7 +208,7 @@ public class StarredChangesUtil {
       String refName = RefNames.refsStarredChanges(changeId, accountId);
       StarRef old = readLabels(repo, refName);
 
-      Set<String> labels = new HashSet<>(old.labels());
+      NavigableSet<String> labels = new TreeSet<>(old.labels());
       if (labelsToAdd != null) {
         labels.addAll(labelsToAdd);
       }
@@ -224,7 +224,7 @@ public class StarredChangesUtil {
       }
 
       indexer.index(project, changeId);
-      return ImmutableSortedSet.copyOf(labels);
+      return Collections.unmodifiableNavigableSet(labels);
     } catch (IOException e) {
       throw new StorageException(
           String.format("Star change %d for account %d failed", changeId.get(), accountId.get()),
@@ -286,6 +286,35 @@ public class StarredChangesUtil {
     } catch (IOException e) {
       throw new StorageException(
           String.format("Get accounts that starred change %d failed", changeId.get()), e);
+    }
+  }
+
+  public ImmutableSet<Change.Id> byAccountId(Account.Id accountId, String label) {
+    try (Repository repo = repoManager.openRepository(allUsers)) {
+      ImmutableSet.Builder<Change.Id> builder = ImmutableSet.builder();
+      for (Ref ref : repo.getRefDatabase().getRefsByPrefix(RefNames.REFS_STARRED_CHANGES)) {
+        Account.Id currentAccountId = Account.Id.fromRef(ref.getName());
+        // Skip all refs that don't correspond with accountId.
+        if (currentAccountId == null || !currentAccountId.equals(accountId)) {
+          continue;
+        }
+        // Skip all refs that don't contain the required label.
+        StarRef starRef = readLabels(repo, ref.getName());
+        if (!starRef.labels().contains(label)) {
+          continue;
+        }
+
+        // Skip invalid change ids.
+        Change.Id changeId = Change.Id.fromAllUsersRef(ref.getName());
+        if (changeId == null) {
+          continue;
+        }
+        builder.add(changeId);
+      }
+      return builder.build();
+    } catch (IOException e) {
+      throw new StorageException(
+          String.format("Get starred changes for account %d failed", accountId.get()), e);
     }
   }
 
@@ -397,7 +426,7 @@ public class StarredChangesUtil {
       return;
     }
 
-    SortedSet<String> invalidLabels = new TreeSet<>();
+    NavigableSet<String> invalidLabels = new TreeSet<>();
     for (String label : labels) {
       if (CharMatcher.whitespace().matchesAnyOf(label)) {
         invalidLabels.add(label);

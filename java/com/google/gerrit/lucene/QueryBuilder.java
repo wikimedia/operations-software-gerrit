@@ -33,7 +33,6 @@ import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
 import com.google.gerrit.index.query.RegexPredicate;
 import com.google.gerrit.index.query.TimestampRangePredicate;
-import java.util.Date;
 import java.util.List;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.document.IntPoint;
@@ -232,15 +231,17 @@ public class QueryBuilder<V> {
     if (p instanceof TimestampRangePredicate) {
       TimestampRangePredicate<V> r = (TimestampRangePredicate<V>) p;
       return longRangeQuery.get(
-          r.getField().getName(), r.getMinTimestamp().getTime(), r.getMaxTimestamp().getTime());
+          r.getField().getName(),
+          r.getMinTimestamp().toEpochMilli(),
+          r.getMaxTimestamp().toEpochMilli());
     }
     throw new QueryParseException("not a timestamp: " + p);
   }
 
   private Query notTimestamp(TimestampRangePredicate<V> r) throws QueryParseException {
-    if (r.getMinTimestamp().getTime() == 0) {
+    if (r.getMinTimestamp().toEpochMilli() == 0) {
       return longRangeQuery.get(
-          r.getField().getName(), r.getMaxTimestamp().getTime(), Long.MAX_VALUE);
+          r.getField().getName(), r.getMaxTimestamp().toEpochMilli(), Long.MAX_VALUE);
     }
     throw new QueryParseException("cannot negate: " + r);
   }
@@ -277,10 +278,6 @@ public class QueryBuilder<V> {
       throw new QueryParseException("Cannot create full-text query with value: " + value);
     }
     return query;
-  }
-
-  public int toIndexTimeInMinutes(Date ts) {
-    return (int) (ts.getTime() / 60000);
   }
 
   public Schema<V> getSchema() {

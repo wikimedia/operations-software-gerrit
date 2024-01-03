@@ -15,7 +15,6 @@
 package com.google.gerrit.server;
 
 import com.google.gerrit.extensions.common.GitPerson;
-import java.sql.Timestamp;
 import org.eclipse.jgit.lib.PersonIdent;
 
 /**
@@ -30,7 +29,7 @@ public class CommonConverters {
     GitPerson result = new GitPerson();
     result.name = ident.getName();
     result.email = ident.getEmailAddress();
-    result.date = new Timestamp(ident.getWhen().getTime());
+    result.setDate(ident.getWhenAsInstant());
     result.tz = ident.getTimeZoneOffset();
     return result;
   }

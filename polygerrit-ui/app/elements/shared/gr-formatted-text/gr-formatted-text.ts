@@ -20,18 +20,50 @@ import {LitElement, css, html, TemplateResult} from 'lit';
 import {customElement, property} from 'lit/decorators';
 
 const CODE_MARKER_PATTERN = /^(`{1,3})([^`]+?)\1$/;
+const INLINE_PATTERN = /(\[.+?\]\(.+?\)|`[^`]+?`)/;
+const EXTRACT_LINK_PATTERN = /\[(.+?)\]\((.+?)\)/;
 
-export type Block = ListBlock | QuoteBlock | TextBlock;
+export type Block = ListBlock | QuoteBlock | Paragraph | CodeBlock | PreBlock;
 export interface ListBlock {
   type: 'list';
-  items: string[];
+  items: ListItem[];
 }
+export interface ListItem {
+  spans: InlineItem[];
+}
+
 export interface QuoteBlock {
   type: 'quote';
   blocks: Block[];
 }
-export interface TextBlock {
-  type: 'paragraph' | 'code' | 'pre';
+export interface Paragraph {
+  type: 'paragraph';
+  spans: InlineItem[];
+}
+export interface CodeBlock {
+  type: 'code';
+  text: string;
+}
+export interface PreBlock {
+  type: 'pre';
+  text: string;
+}
+
+export type InlineItem = TextSpan | LinkSpan | CodeSpan;
+
+export interface TextSpan {
+  type: 'text';
+  text: string;
+}
+
+export interface LinkSpan {
+  type: 'link';
+  text: string;
+  url: string;
+}
+
+export interface CodeSpan {
+  type: 'code';
   text: string;
 }
 
@@ -58,6 +90,9 @@ export class GrFormattedText extends LitElement {
           display: block;
           font-family: var(--font-family);
         }
+        a {
+          color: var(--link-color);
+        }
         p,
         ul,
         code,
@@ -77,7 +112,6 @@ export class GrFormattedText extends LitElement {
         :host([noTrailingMargin]) gr-linked-text.pre:last-child {
           margin: 0;
         }
-        code,
         blockquote {
           border-left: 1px solid #aaa;
           padding: 0 var(--spacing-m);
@@ -85,18 +119,25 @@ export class GrFormattedText extends LitElement {
         code {
           display: block;
           white-space: pre-wrap;
-          color: var(--deemphasized-text-color);
+          background-color: var(--background-color-secondary);
+          border: 1px solid var(--border-color);
+          border-left-width: var(--spacing-s);
+          margin: var(--spacing-m) 0;
+          padding: var(--spacing-s) var(--spacing-m);
+          overflow-x: scroll;
         }
         li {
           list-style-type: disc;
           margin-left: var(--spacing-xl);
         }
-        code,
-        gr-linked-text.pre {
+        .inline-code,
+        code {
           font-family: var(--monospace-font-family);
           font-size: var(--font-size-code);
-          /* usually 16px = 12px + 4px */
-          line-height: calc(var(--font-size-code) + var(--spacing-s));
+          line-height: var(--line-height-mono);
+          background-color: var(--background-color-secondary);
+          border: 1px solid var(--border-color);
+          padding: 1px var(--spacing-s);
         }
       `,
     ];
@@ -111,13 +152,16 @@ export class GrFormattedText extends LitElement {
   /**
    * Given a source string, parse into an array of block objects. Each block
    * has a `type` property which takes any of the following values.
-   * * 'paragraph'
+   * * 'paragraph' (Paragraph of regular text)
    * * 'quote' (Block quote.)
    * * 'pre' (Pre-formatted text.)
    * * 'list' (Unordered list.)
    * * 'code' (code blocks.)
    *
-   * For blocks of type 'paragraph', 'pre' and 'code' there is a `text`
+   * For blocks of type 'paragraph' there is a list of spans that is the content
+   * for that paragraph.
+   *
+   * For blocks of type 'pre' and 'code' there is a `text`
    * property that maps to a string of the block's content.
    *
    * For blocks of type 'list', there is an `items` property that maps to a
@@ -198,12 +242,49 @@ export class GrFormattedText extends LitElement {
         );
         result.push({
           type: 'paragraph',
-          text: lines.slice(i, endOfRegularLines).join('\n'),
+          spans: this.computeInlineItems(
+            lines.slice(i, endOfRegularLines).join('\n')
+          ),
         });
         i = endOfRegularLines - 1;
       }
     }
 
+    return result;
+  }
+
+  private computeInlineItems(content: string): InlineItem[] {
+    const result: InlineItem[] = [];
+    const textSpans = content.split(INLINE_PATTERN);
+    for (let i = 0; i < textSpans.length; ++i) {
+      // Because INLINE_PATTERN has a single capturing group, string.split will
+      // return strings before and after each match as well as the matched
+      // group. These are always interleaved starting with a non-matched string
+      // which may be empty.
+      if (textSpans[i].length === 0) {
+        // No point in processing empty strings.
+        continue;
+      } else if (i % 2 === 0) {
+        // A non-matched string.
+        result.push({type: 'text', text: textSpans[i]});
+      } else if (textSpans[i].startsWith('`')) {
+        result.push({type: 'code', text: textSpans[i].slice(1, -1)});
+      } else {
+        const m = textSpans[i].match(EXTRACT_LINK_PATTERN);
+        if (!m) {
+          result.push({type: 'text', text: textSpans[i]});
+        } else {
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const [_, text, url] = m;
+          // Disallow javascript protocol in the href as an XSS mitigation
+          if (url.trimStart().startsWith('javascript:')) {
+            result.push({type: 'link', text, url: ''});
+          } else {
+            result.push({type: 'link', text, url});
+          }
+        }
+      }
+    }
     return result;
   }
 
@@ -231,8 +312,14 @@ export class GrFormattedText extends LitElement {
    * @param lines The block containing the list.
    */
   private makeList(lines: string[]): Block {
-    const items = lines.map(line => line.substring(1).trim());
-    return {type: 'list', items};
+    return {
+      type: 'list',
+      items: lines.map(line => {
+        return {
+          spans: this.computeInlineItems(line.substring(1).trim()),
+        };
+      }),
+    };
   }
 
   private isRegularLine(line: string): boolean {
@@ -269,21 +356,50 @@ export class GrFormattedText extends LitElement {
     return /^\s+$/.test(line);
   }
 
-  private renderLinkedText(content: string, isPre?: boolean): TemplateResult {
+  private renderInlineText(content: string): TemplateResult {
     return html`
       <gr-linked-text
-        class="${isPre ? 'pre' : ''}"
         .config=${this.config}
         content=${content}
         pre
+        inline
       ></gr-linked-text>
     `;
+  }
+
+  private renderLink(text: string, url: string): TemplateResult {
+    return html`<a href=${url}>${text}</a>`;
+  }
+
+  private renderInlineCode(text: string): TemplateResult {
+    return html`<span class="inline-code">${text}</span>`;
+  }
+
+  private renderInlineItem(span: InlineItem): TemplateResult {
+    switch (span.type) {
+      case 'text':
+        return this.renderInlineText(span.text);
+      case 'link':
+        return this.renderLink(span.text, span.url);
+      case 'code':
+        return this.renderInlineCode(span.text);
+      default:
+        return html``;
+    }
+  }
+
+  private renderListItem(item: ListItem): TemplateResult {
+    return html` <li>
+      ${item.spans.map(item => this.renderInlineItem(item))}
+    </li>`;
   }
 
   private renderBlock(block: Block): TemplateResult {
     switch (block.type) {
       case 'paragraph':
-        return html`<p>${this.renderLinkedText(block.text)}</p>`;
+        return html` <p>
+          ${block.spans.map(item => this.renderInlineItem(item))}
+        </p>`;
       case 'quote':
         return html`
           <blockquote>
@@ -293,13 +409,11 @@ export class GrFormattedText extends LitElement {
       case 'code':
         return html`<code>${block.text}</code>`;
       case 'pre':
-        return this.renderLinkedText(block.text, true);
+        return html`<pre><code>${block.text}</code></pre>`;
       case 'list':
         return html`
           <ul>
-            ${block.items.map(
-              item => html`<li>${this.renderLinkedText(item)}</li>`
-            )}
+            ${block.items.map(item => this.renderListItem(item))}
           </ul>
         `;
     }

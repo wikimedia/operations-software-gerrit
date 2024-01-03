@@ -103,29 +103,6 @@ export class CounterService {
         this._count++;
     }
 }
-
-// app-context.js
-export const appContext = {
-    //...
-    mouseClickCounterService: null,
-    keypressCounterService: null,
-};
-
-// services/app-context-init.js
-export function initAppContext() {
-    //...
-    // Add the following line before the Object.defineProperties(appContext, registeredServices);
-    addService('mouseClickCounterService', () => new CounterService());
-    addService('keypressCounterService', () => new CounterService());
-    // If a service depends on other services, pass dependencies as shown below
-    // If circular dependencies exist, app-init-context tests fail with timeout or stack overflow
-    // (we are  going to improve it in the future)
-    addService('analyticService', () =>
-        new CounterService(appContext.mouseClickCounterService, appContext.keypressCounterService));
-    //...
-    // This following line must remains the last one in the initAppContext
-    Object.defineProperties(appContext, registeredServices);
-}
 ```
 
 **Bad:**
@@ -146,7 +123,7 @@ export function incCount() {
 If a class/service depends on some other service (or multiple services), the class must accept all dependencies
 as parameters in the constructor.
 
-Do not use appContext anywhere else in a class.
+Do not use getAppContext() anywhere else in a class.
 
 **Note:** This rule doesn't apply for HTML/Polymer elements classes. A browser creates instances of such classes
 implicitly and calls the constructor without parameters. See
@@ -166,19 +143,19 @@ export class UserService {
 
 **Bad:**
 ```Javascript
-import {appContext} from "./app-context";
+import {getAppContext} from "./app-context";
 
 export class UserService {
     constructor() {
         // Incorrect: you must pass all dependencies to a constructor
-        this._restApiService = appContext.restApiService;
+        this._restApiService = getAppContext().restApiService;
     }
 }
 
 export class AdminService {
     isAdmin() {
         // Incorrect: you must pass all dependencies to a constructor
-        return appContext.restApiService.sendRequest(...);
+        return getAppContext().restApiService.sendRequest(...);
     }
 }
 
@@ -210,11 +187,11 @@ import {appContext} from `.../services/app-context.js`;
 export class MyCustomElement extends ...{
     constructor() {
         super(); //This is mandatory to call parent constructor
-        this._userService = appContext.userService;
+        this._userModel = appContext.userModel;
     }
     //...
     _getUserName() {
-        return this._userService.activeUserName();
+        return this._userModel.activeUserName();
     }
 }
 ```
@@ -226,12 +203,12 @@ import {appContext} from `.../services/app-context.js`;
 export class MyCustomElement extends ...{
     created() {
         // Incorrect: assign all dependencies in the constructor
-        this._userService = appContext.userService;
+        this._userModel = appContext.userModel;
     }
     //...
     _getUserName() {
         // Incorrect: use appContext outside of a constructor
-        return appContext.userService.activeUserName();
+        return appContext.userModel.activeUserName();
     }
 }
 ```
@@ -260,7 +237,7 @@ export class MyCustomElement extends ...LegacyElementMixin(...) {
     constructor() {
         super();
         // Assign services here
-        this._userService = appContext.userService;
+        this._userModel = appContext.userModel;
         // Code from the created method - put it before existing actions in constructor
         createdAction1();
         createdAction2();

@@ -20,16 +20,12 @@ import static com.google.gerrit.server.notedb.ReviewerStateInternal.REVIEWER;
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
-import com.google.common.collect.Table;
 import com.google.common.flogger.FluentLogger;
-import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.LabelId;
@@ -45,6 +41,7 @@ import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.ReviewerSet;
 import com.google.gerrit.server.ReviewerStatusUpdate;
+import com.google.gerrit.server.change.LabelNormalizer;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ChangeUpdate;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
@@ -56,10 +53,10 @@ import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.util.LabelVote;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Date;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -83,7 +80,7 @@ public class ApprovalsUtil {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
   public static PatchSetApproval.Builder newApproval(
-      PatchSet.Id psId, CurrentUser user, LabelId labelId, int value, Date when) {
+      PatchSet.Id psId, CurrentUser user, LabelId labelId, int value, Instant when) {
     PatchSetApproval.Builder b =
         PatchSetApproval.builder()
             .key(PatchSetApproval.key(psId, user.getAccountId(), labelId))
@@ -98,22 +95,22 @@ public class ApprovalsUtil {
     return Iterables.filter(psas, a -> Objects.equals(a.accountId(), accountId));
   }
 
-  private final ApprovalInference approvalInference;
+  private final ApprovalCopier approvalInference;
   private final PermissionBackend permissionBackend;
   private final ProjectCache projectCache;
-  private final ApprovalCache approvalCache;
+  private final LabelNormalizer labelNormalizer;
 
   @VisibleForTesting
   @Inject
   public ApprovalsUtil(
-      ApprovalInference approvalInference,
+      ApprovalCopier approvalInference,
       PermissionBackend permissionBackend,
       ProjectCache projectCache,
-      ApprovalCache approvalCache) {
+      LabelNormalizer labelNormalizer) {
     this.approvalInference = approvalInference;
     this.permissionBackend = permissionBackend;
     this.projectCache = projectCache;
-    this.approvalCache = approvalCache;
+    this.labelNormalizer = labelNormalizer;
   }
 
   /**
@@ -226,10 +223,7 @@ public class ApprovalsUtil {
           .statePermitsRead()) {
         return false;
       }
-      permissionBackend.absentUser(accountId).change(notes).check(ChangePermission.READ);
-      return true;
-    } catch (AuthException e) {
-      return false;
+      return permissionBackend.absentUser(accountId).change(notes).test(ChangePermission.READ);
     } catch (PermissionBackendException e) {
       logger.atWarning().withCause(e).log(
           "Failed to check if account %d can see change %d",
@@ -300,7 +294,7 @@ public class ApprovalsUtil {
     }
     checkApprovals(approvals, permissionBackend.user(user).change(update.getNotes()));
     List<PatchSetApproval> cells = new ArrayList<>(approvals.size());
-    Date ts = update.getWhen();
+    Instant ts = update.getWhen();
     for (Map.Entry<String, Short> vote : approvals.entrySet()) {
       Optional<LabelType> lt = labelTypes.byLabel(vote.getKey());
       if (!lt.isPresent()) {
@@ -333,26 +327,20 @@ public class ApprovalsUtil {
     for (Map.Entry<String, Short> vote : approvals.entrySet()) {
       String name = vote.getKey();
       Short value = vote.getValue();
-      try {
-        forChange.check(new LabelPermission.WithValue(name, value));
-      } catch (AuthException e) {
+      if (!forChange.test(new LabelPermission.WithValue(name, value))) {
         throw new AuthException(
-            String.format("applying label \"%s\": %d is restricted", name, value), e);
+            String.format("applying label \"%s\": %d is restricted", name, value));
       }
     }
   }
 
-  public ListMultimap<PatchSet.Id, PatchSetApproval> byChange(ChangeNotes notes) {
+  public ListMultimap<PatchSet.Id, PatchSetApproval> byChangeExcludingCopiedApprovals(
+      ChangeNotes notes) {
     return notes.load().getApprovals();
   }
 
-  public Iterable<PatchSetApproval> byPatchSet(
-      ChangeNotes notes, PatchSet.Id psId, @Nullable RevWalk rw, @Nullable Config repoConfig) {
-    return approvalInference.forPatchSet(notes, psId, rw, repoConfig);
-  }
-
-  public Iterable<PatchSetApproval> byPatchSet(ChangeNotes notes, PatchSet patchSet) {
-    return approvalInference.forPatchSet(notes, patchSet, /* rw= */ null, /* repoConfig= */ null);
+  public ListMultimap<PatchSet.Id, PatchSetApproval> byChangeWithCopied(ChangeNotes notes) {
+    return notes.load().getApprovalsWithCopied();
   }
 
   /**
@@ -369,44 +357,23 @@ public class ApprovalsUtil {
       RevWalk revWalk,
       Config repoConfig,
       ChangeUpdate changeUpdate) {
-    Set<PatchSetApproval> current =
-        ImmutableSet.copyOf(notes.getApprovalsWithCopied().get(notes.getCurrentPatchSet().id()));
-    Set<PatchSetApproval> inferred =
-        ImmutableSet.copyOf(approvalInference.forPatchSet(notes, patchSet, revWalk, repoConfig));
-
-    // Exempt granted timestamp from comparisson, otherwise, we would persist the copied
-    // labels every time this method is called.
-    Table<LabelId, Account.Id, Short> approvalTable = HashBasedTable.create();
-    for (PatchSetApproval psa : current) {
-      Account.Id id = psa.accountId();
-      approvalTable.put(psa.labelId(), id, psa.value());
-    }
-
-    for (PatchSetApproval psa : inferred) {
-      if (psa.value() != 0) {
-        if (approvalTable.contains(psa.labelId(), psa.accountId())) {
-          Short v = approvalTable.get(psa.labelId(), psa.accountId());
-          if (v.shortValue() != psa.value()) {
-            changeUpdate.putCopiedApproval(psa);
-          }
-        } else {
-          changeUpdate.putCopiedApproval(psa);
-        }
-      }
-    }
+    approvalInference
+        .forPatchSet(notes, patchSet, revWalk, repoConfig)
+        .forEach(a -> changeUpdate.putCopiedApproval(a));
   }
 
+  /**
+   * Gets {@link PatchSetApproval}s for a specified patch-set. The result includes copied votes but
+   * does not include deleted labels.
+   *
+   * @param notes changenotes of the change.
+   * @param psId patch-set id for the change and patch-set we want to get approvals.
+   * @return all approvals for the specified patch-set, including copied votes, not including
+   *     deleted labels.
+   */
   public Iterable<PatchSetApproval> byPatchSet(ChangeNotes notes, PatchSet.Id psId) {
-    return approvalCache.get(notes, psId);
-  }
-
-  public Iterable<PatchSetApproval> byPatchSetUser(
-      ChangeNotes notes,
-      PatchSet.Id psId,
-      Account.Id accountId,
-      @Nullable RevWalk rw,
-      @Nullable Config repoConfig) {
-    return filterApprovals(byPatchSet(notes, psId, rw, repoConfig), accountId);
+    List<PatchSetApproval> approvalsNotNormalized = notes.load().getApprovalsWithCopied().get(psId);
+    return labelNormalizer.normalize(notes, approvalsNotNormalized).getNormalized();
   }
 
   public Iterable<PatchSetApproval> byPatchSetUser(
@@ -419,8 +386,8 @@ public class ApprovalsUtil {
       return null;
     }
     try {
-      // Submit approval is never copied, so bypass expensive byPatchSet call.
-      return getSubmitter(c, byChange(notes).get(c));
+      // Submit approval is never copied.
+      return getSubmitter(c, byChangeExcludingCopiedApprovals(notes).get(c));
     } catch (StorageException e) {
       return null;
     }

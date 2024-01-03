@@ -15,12 +15,13 @@ src_dirs = [
     "embed",
     "gr-diff",
     "mixins",
-    "samples",
+    "models",
     "scripts",
     "services",
     "styles",
     "types",
     "utils",
+    "workers",
 ]
 
 ts_config(
@@ -94,19 +95,9 @@ ts_project(
 # so template tests pass.
 # TODO: fix problems reported by template checker in these files.
 ignore_templates_list = [
-    "elements/admin/gr-admin-view/gr-admin-view_html.ts",
-    "elements/admin/gr-create-repo-dialog/gr-create-repo-dialog_html.ts",
-    "elements/admin/gr-group-members/gr-group-members_html.ts",
-    "elements/admin/gr-group/gr-group_html.ts",
     "elements/admin/gr-permission/gr-permission_html.ts",
-    "elements/admin/gr-plugin-list/gr-plugin-list_html.ts",
     "elements/admin/gr-repo-access/gr-repo-access_html.ts",
-    "elements/admin/gr-repo-commands/gr-repo-commands_html.ts",
-    "elements/admin/gr-repo-plugin-config/gr-repo-plugin-config_html.ts",
-    "elements/admin/gr-repo/gr-repo_html.ts",
     "elements/admin/gr-rule-editor/gr-rule-editor_html.ts",
-    "elements/change-list/gr-change-list-view/gr-change-list-view_html.ts",
-    "elements/change-list/gr-change-list/gr-change-list_html.ts",
     "elements/change-list/gr-dashboard-view/gr-dashboard-view_html.ts",
     "elements/change/gr-change-actions/gr-change-actions_html.ts",
     "elements/change/gr-change-metadata/gr-change-metadata_html.ts",
@@ -120,15 +111,15 @@ ignore_templates_list = [
     "elements/change/gr-reply-dialog/gr-reply-dialog_html.ts",
     "elements/change/gr-reviewer-list/gr-reviewer-list_html.ts",
     "elements/change/gr-thread-list/gr-thread-list_html.ts",
-    "elements/diff/gr-diff-builder/gr-diff-builder-element_html.ts",
-    "elements/diff/gr-diff-host/gr-diff-host_html.ts",
     "elements/diff/gr-diff-preferences-dialog/gr-diff-preferences-dialog_html.ts",
-    "elements/diff/gr-diff-view/gr-diff-view_html.ts",
-    "elements/diff/gr-diff/gr-diff_html.ts",
-    "elements/diff/gr-patch-range-select/gr-patch-range-select_html.ts",
     "elements/gr-app-element_html.ts",
     "elements/settings/gr-watched-projects-editor/gr-watched-projects-editor_html.ts",
     "elements/shared/gr-account-list/gr-account-list_html.ts",
+    "embed/diff/gr-diff-builder/gr-diff-builder-element_html.ts",
+    "embed/diff/gr-diff-host/gr-diff-host_html.ts",
+    "embed/diff/gr-diff-view/gr-diff-view_html.ts",
+    "embed/diff/gr-diff/gr-diff_html.ts",
+    "models/dependency.ts",
 ]
 
 sources_for_template_checking = glob(
@@ -170,9 +161,9 @@ sh_test(
         "$(location tsconfig_template_test.json)",
     ],
     data = [
-        "tsconfig_template_test.json",
-        "tsconfig_bazel.json",
         "tsconfig.json",
+        "tsconfig_bazel.json",
+        "tsconfig_template_test.json",
         "//tools/node_tools:tsc-bin",
         "@ui_npm//:node_modules",
     ] + templates_srcs + sources_for_template_checking,
@@ -246,6 +237,7 @@ eslint(
         "tsconfig_eslint.json",
         # tsconfig_eslint.json extends tsconfig.json, pass it as a dependency
         "tsconfig.json",
+        "@npm//typescript",
     ],
     extensions = [
         ".html",
@@ -275,22 +267,29 @@ filegroup(
             "**/*_test.ts",
         ],
     ) + [
+        "@npm//typescript",
         "@ui_dev_npm//:node_modules",
         "@ui_npm//:node_modules",
     ],
 )
 
-nodejs_binary(
+nodejs_test(
     name = "lit_analysis",
     data = [
         ":lit_analysis_src_code",
         "@npm//lit-analyzer",
     ],
     entry_point = "@npm//:node_modules/lit-analyzer/cli.js",
+    tags = [
+        "local",
+        "manual",
+    ],
     templated_args = [
         "**/elements/**/*.ts",
         "--strict",
         "--rules.no-property-visibility-mismatch off",
         "--rules.no-incompatible-property-type off",
+        "--rules.no-incompatible-type-binding off",
+        "--rules.no-unknown-attribute error",
     ],
 )

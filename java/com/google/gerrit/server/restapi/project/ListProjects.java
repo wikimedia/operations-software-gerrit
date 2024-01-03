@@ -76,9 +76,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.NavigableSet;
 import java.util.Optional;
 import java.util.SortedMap;
-import java.util.SortedSet;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.stream.Stream;
@@ -338,7 +338,8 @@ public class ListProjects implements RestReadView<TopLevelResource> {
             && state != HIDDEN
             && isNullOrEmpty(matchPrefix)
             && isNullOrEmpty(matchRegex)
-            && isNullOrEmpty(matchSubstring) // TODO: see Issue 10446
+            && isNullOrEmpty(
+                matchSubstring) // TODO: see https://issues.gerritcodereview.com/issues/40010295
             && type == FilterType.ALL
             && showBranch.isEmpty()
             && !showTree
@@ -666,7 +667,7 @@ public class ListProjects implements RestReadView<TopLevelResource> {
       } catch (IllegalArgumentException e) {
         throw new BadRequestException(e.getMessage());
       }
-      return searcher.search(ImmutableList.copyOf(projectCache.all()));
+      return searcher.search(projectCache.all().asList());
     } else {
       return projectCache.all().stream();
     }
@@ -680,7 +681,7 @@ public class ListProjects implements RestReadView<TopLevelResource> {
 
   private void printProjectTree(
       final PrintWriter stdout, TreeMap<Project.NameKey, ProjectNode> treeMap) {
-    final SortedSet<ProjectNode> sortedNodes = new TreeSet<>();
+    final NavigableSet<ProjectNode> sortedNodes = new TreeSet<>();
 
     // Builds the inheritance tree using a list.
     //

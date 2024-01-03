@@ -48,7 +48,6 @@ import com.google.gerrit.extensions.config.DownloadCommand;
 import com.google.gerrit.extensions.config.DownloadScheme;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.registration.Extension;
-import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.server.AnonymousUser;
 import com.google.gerrit.server.CurrentUser;
@@ -169,7 +168,8 @@ public class RevisionJson {
       RevCommit commit,
       boolean addLinks,
       boolean fillCommit,
-      String branchName)
+      String branchName,
+      String changeKey)
       throws IOException {
     CommitInfo info = new CommitInfo();
     if (fillCommit) {
@@ -183,7 +183,8 @@ public class RevisionJson {
 
     if (addLinks) {
       ImmutableList<WebLinkInfo> patchSetLinks =
-          webLinks.getPatchSetLinks(project, commit.name(), commit.getFullMessage(), branchName);
+          webLinks.getPatchSetLinks(
+              project, commit.name(), commit.getFullMessage(), branchName, changeKey);
       info.webLinks = patchSetLinks.isEmpty() ? null : patchSetLinks;
       ImmutableList<WebLinkInfo> resolveConflictsLinks =
           webLinks.getResolveConflictsLinks(
@@ -286,7 +287,7 @@ public class RevisionJson {
     out.isCurrent = in.id().equals(c.currentPatchSetId());
     out._number = in.id().get();
     out.ref = in.refName();
-    out.created = in.createdOn();
+    out.setCreated(in.createdOn());
     out.uploader = accountLoader.get(in.uploader());
     out.fetch = makeFetchMap(cd, in);
     out.kind = changeKindCache.getChangeKind(rw, repo != null ? repo.getConfig() : null, cd, in);
@@ -303,7 +304,9 @@ public class RevisionJson {
       rw.parseBody(commit);
       String branchName = cd.change().getDest().branch();
       if (setCommit) {
-        out.commit = getCommitInfo(project, rw, commit, has(WEB_LINKS), fillCommit, branchName);
+        out.commit =
+            getCommitInfo(
+                project, rw, commit, has(WEB_LINKS), fillCommit, branchName, c.getKey().get());
       }
       if (addFooters) {
         Ref ref = repo.exactRef(branchName);
@@ -354,9 +357,7 @@ public class RevisionJson {
   }
 
   private boolean isWorldReadable(ChangeData cd) throws PermissionBackendException {
-    try {
-      permissionBackend.user(anonymous).change(cd).check(ChangePermission.READ);
-    } catch (AuthException ae) {
+    if (!permissionBackend.user(anonymous).change(cd).test(ChangePermission.READ)) {
       return false;
     }
     ProjectState projectState =

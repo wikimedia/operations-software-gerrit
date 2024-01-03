@@ -36,7 +36,7 @@ import java.io.UnsupportedEncodingException;
 import java.net.URL;
 import java.nio.charset.Charset;
 import java.util.concurrent.atomic.AtomicBoolean;
-import org.apache.commons.lang.StringEscapeUtils;
+import org.apache.commons.text.StringEscapeUtils;
 import org.eclipse.jgit.util.RawParseUtils;
 import org.eclipse.jgit.util.TemporaryBuffer;
 
@@ -78,12 +78,12 @@ public class MarkdownFormatter {
   }
 
   public MarkdownFormatter setCss(String css) {
-    this.css = StringEscapeUtils.escapeHtml(css);
+    this.css = StringEscapeUtils.escapeHtml4(css);
     return this;
   }
 
   private MutableDataHolder markDownOptions() {
-    int options = ALL & ~(HARDWRAPS);
+    int options = ALL & ~HARDWRAPS;
     if (suppressHtml) {
       options |= SUPPRESS_ALL_HTML;
     }

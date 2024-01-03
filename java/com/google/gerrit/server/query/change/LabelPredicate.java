@@ -14,8 +14,8 @@
 
 package com.google.gerrit.server.query.change;
 
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.index.query.OrPredicate;
@@ -30,9 +30,11 @@ import com.google.gerrit.server.util.LabelVote;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.IntStream;
 
 public class LabelPredicate extends OrPredicate<ChangeData> {
   protected static final int MAX_LABEL_VALUE = 4;
+  protected static final int MAX_COUNT = 5; // inclusive
 
   protected static class Args {
     protected final ProjectCache projectCache;
@@ -41,6 +43,8 @@ public class LabelPredicate extends OrPredicate<ChangeData> {
     protected final String value;
     protected final Set<Account.Id> accounts;
     protected final AccountGroup.UUID group;
+    protected final Integer count;
+    protected final PredicateArgs.Operator countOp;
     protected final GroupBackend groupBackend;
 
     protected Args(
@@ -50,6 +54,8 @@ public class LabelPredicate extends OrPredicate<ChangeData> {
         String value,
         Set<Account.Id> accounts,
         AccountGroup.UUID group,
+        @Nullable Integer count,
+        @Nullable PredicateArgs.Operator countOp,
         GroupBackend groupBackend) {
       this.projectCache = projectCache;
       this.permissionBackend = permissionBackend;
@@ -57,6 +63,8 @@ public class LabelPredicate extends OrPredicate<ChangeData> {
       this.value = value;
       this.accounts = accounts;
       this.group = group;
+      this.count = count;
+      this.countOp = countOp;
       this.groupBackend = groupBackend;
     }
   }
@@ -79,7 +87,9 @@ public class LabelPredicate extends OrPredicate<ChangeData> {
       ChangeQueryBuilder.Arguments a,
       String value,
       Set<Account.Id> accounts,
-      AccountGroup.UUID group) {
+      AccountGroup.UUID group,
+      @Nullable Integer count,
+      @Nullable PredicateArgs.Operator countOp) {
     super(
         predicates(
             new Args(
@@ -89,16 +99,24 @@ public class LabelPredicate extends OrPredicate<ChangeData> {
                 value,
                 accounts,
                 group,
+                count,
+                countOp,
                 a.groupBackend)));
     this.value = value;
   }
 
   protected static List<Predicate<ChangeData>> predicates(Args args) {
     String v = args.value;
-
+    List<Integer> counts = getCounts(args.count, args.countOp);
     try {
       MagicLabelVote mlv = MagicLabelVote.parseWithEquals(v);
-      return ImmutableList.of(magicLabelPredicate(args, mlv));
+      List<Predicate<ChangeData>> result = Lists.newArrayListWithCapacity(counts.size());
+      if (counts.isEmpty()) {
+        result.add(magicLabelPredicate(args, mlv, /* count= */ null));
+      } else {
+        counts.forEach(count -> result.add(magicLabelPredicate(args, mlv, count)));
+      }
+      return result;
     } catch (IllegalArgumentException e) {
       // Try next format.
     }
@@ -134,16 +152,24 @@ public class LabelPredicate extends OrPredicate<ChangeData> {
     int min = range.min;
     int max = range.max;
 
-    List<Predicate<ChangeData>> r = Lists.newArrayListWithCapacity(max - min + 1);
+    List<Predicate<ChangeData>> r =
+        Lists.newArrayListWithCapacity((counts.isEmpty() ? 1 : counts.size()) * (max - min + 1));
     for (int i = min; i <= max; i++) {
-      r.add(onePredicate(args, prefix, i));
+      if (counts.isEmpty()) {
+        r.add(onePredicate(args, prefix, i, /* count= */ null));
+      } else {
+        for (int count : counts) {
+          r.add(onePredicate(args, prefix, i, count));
+        }
+      }
     }
     return r;
   }
 
-  protected static Predicate<ChangeData> onePredicate(Args args, String label, int expVal) {
+  protected static Predicate<ChangeData> onePredicate(
+      Args args, String label, int expVal, @Nullable Integer count) {
     if (expVal != 0) {
-      return equalsLabelPredicate(args, label, expVal);
+      return equalsLabelPredicate(args, label, expVal, count);
     }
     return noLabelQuery(args, label);
   }
@@ -151,44 +177,79 @@ public class LabelPredicate extends OrPredicate<ChangeData> {
   protected static Predicate<ChangeData> noLabelQuery(Args args, String label) {
     List<Predicate<ChangeData>> r = Lists.newArrayListWithCapacity(2 * MAX_LABEL_VALUE);
     for (int i = 1; i <= MAX_LABEL_VALUE; i++) {
-      r.add(equalsLabelPredicate(args, label, i));
-      r.add(equalsLabelPredicate(args, label, -i));
+      r.add(equalsLabelPredicate(args, label, i, /* count= */ null));
+      r.add(equalsLabelPredicate(args, label, -i, /* count= */ null));
     }
     return not(or(r));
   }
 
-  protected static Predicate<ChangeData> equalsLabelPredicate(Args args, String label, int expVal) {
+  protected static Predicate<ChangeData> equalsLabelPredicate(
+      Args args, String label, int expVal, @Nullable Integer count) {
     if (args.groupBackend.isOrContainsExternalGroup(args.group)) {
       // We can only get members of internal groups and negating an index search that doesn't
       // include the external group information leads to incorrect query results. Use a
       // PostFilterPredicate in this case instead.
-      return new EqualsLabelPredicates.PostFilterEqualsLabelPredicate(args, label, expVal);
+      return new EqualsLabelPredicates.PostFilterEqualsLabelPredicate(args, label, expVal, count);
     }
     if (args.accounts == null || args.accounts.isEmpty()) {
-      return new EqualsLabelPredicates.IndexEqualsLabelPredicate(args, label, expVal);
+      return new EqualsLabelPredicates.IndexEqualsLabelPredicate(args, label, expVal, count);
     }
     List<Predicate<ChangeData>> r = new ArrayList<>();
     for (Account.Id a : args.accounts) {
-      r.add(new EqualsLabelPredicates.IndexEqualsLabelPredicate(args, label, expVal, a));
+      r.add(new EqualsLabelPredicates.IndexEqualsLabelPredicate(args, label, expVal, a, count));
     }
     return or(r);
   }
 
-  protected static Predicate<ChangeData> magicLabelPredicate(Args args, MagicLabelVote mlv) {
+  protected static Predicate<ChangeData> magicLabelPredicate(
+      Args args, MagicLabelVote mlv, @Nullable Integer count) {
     if (args.groupBackend.isOrContainsExternalGroup(args.group)) {
       // We can only get members of internal groups and negating an index search that doesn't
       // include the external group information leads to incorrect query results. Use a
       // PostFilterPredicate in this case instead.
-      return new MagicLabelPredicates.PostFilterMagicLabelPredicate(args, mlv);
+      return new MagicLabelPredicates.PostFilterMagicLabelPredicate(args, mlv, count);
     }
     if (args.accounts == null || args.accounts.isEmpty()) {
-      return new MagicLabelPredicates.IndexMagicLabelPredicate(args, mlv);
+      return new MagicLabelPredicates.IndexMagicLabelPredicate(args, mlv, count);
     }
     List<Predicate<ChangeData>> r = new ArrayList<>();
     for (Account.Id a : args.accounts) {
-      r.add(new MagicLabelPredicates.IndexMagicLabelPredicate(args, mlv, a));
+      r.add(new MagicLabelPredicates.IndexMagicLabelPredicate(args, mlv, a, count));
     }
     return or(r);
+  }
+
+  private static List<Integer> getCounts(
+      @Nullable Integer count, @Nullable PredicateArgs.Operator countOp) {
+    List<Integer> result = new ArrayList<>();
+    if (count == null) {
+      return result;
+    }
+    switch (countOp) {
+      case EQUAL:
+      case GREATER_EQUAL:
+      case LESS_EQUAL:
+        result.add(count);
+        break;
+      case GREATER:
+      case LESS:
+      default:
+        break;
+    }
+    switch (countOp) {
+      case GREATER:
+      case GREATER_EQUAL:
+        IntStream.range(count + 1, MAX_COUNT + 1).forEach(result::add);
+        break;
+      case LESS:
+      case LESS_EQUAL:
+        IntStream.range(0, count).forEach(result::add);
+        break;
+      case EQUAL:
+      default:
+        break;
+    }
+    return result;
   }
 
   @Override

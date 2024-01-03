@@ -27,8 +27,7 @@ import com.google.gerrit.entities.SubmissionId;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.gerrit.testing.TestChanges;
-import java.util.Date;
-import java.util.TimeZone;
+import java.time.ZoneId;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -61,21 +60,22 @@ public class CommitMessageOutputTest extends AbstractChangeNotesTest {
             + "\n"
             + "Reviewer: Gerrit User 1 <1@gerrit>\n"
             + "CC: Gerrit User 2 <2@gerrit>\n"
-            + "Label: Code-Review=-1\n"
-            + "Label: Verified=+1\n",
+            + "Label: Code-Review=-1, 1_1_1_code_review__1_1\n"
+            + "Label: Verified=+1, 1_1_1_verified_1_2\n",
         commit);
 
     PersonIdent author = commit.getAuthorIdent();
     assertThat(author.getName()).isEqualTo("Gerrit User 1");
     assertThat(author.getEmailAddress()).isEqualTo("1@gerrit");
-    assertThat(author.getWhen()).isEqualTo(new Date(c.getCreatedOn().getTime() + 1000));
-    assertThat(author.getTimeZone()).isEqualTo(TimeZone.getTimeZone("GMT-7:00"));
+    assertThat(author.getWhenAsInstant().toEpochMilli())
+        .isEqualTo(c.getCreatedOn().toEpochMilli() + 1000);
+    assertThat(author.getZoneId()).isEqualTo(ZoneId.of("GMT-7"));
 
     PersonIdent committer = commit.getCommitterIdent();
     assertThat(committer.getName()).isEqualTo("Gerrit Server");
     assertThat(committer.getEmailAddress()).isEqualTo("noreply@gerrit.com");
-    assertThat(committer.getWhen()).isEqualTo(author.getWhen());
-    assertThat(committer.getTimeZone()).isEqualTo(author.getTimeZone());
+    assertThat(committer.getWhenAsInstant()).isEqualTo(author.getWhenAsInstant());
+    assertThat(committer.getZoneId()).isEqualTo(author.getZoneId());
   }
 
   @Test
@@ -184,20 +184,21 @@ public class CommitMessageOutputTest extends AbstractChangeNotesTest {
     PersonIdent author = commit.getAuthorIdent();
     assertThat(author.getName()).isEqualTo("Gerrit User 1");
     assertThat(author.getEmailAddress()).isEqualTo("1@gerrit");
-    assertThat(author.getWhen()).isEqualTo(new Date(c.getCreatedOn().getTime() + 2000));
-    assertThat(author.getTimeZone()).isEqualTo(TimeZone.getTimeZone("GMT-7:00"));
+    assertThat(author.getWhenAsInstant().toEpochMilli())
+        .isEqualTo(c.getCreatedOn().toEpochMilli() + 2000);
+    assertThat(author.getZoneId()).isEqualTo(ZoneId.of("GMT-7"));
 
     PersonIdent committer = commit.getCommitterIdent();
     assertThat(committer.getName()).isEqualTo("Gerrit Server");
     assertThat(committer.getEmailAddress()).isEqualTo("noreply@gerrit.com");
-    assertThat(committer.getWhen()).isEqualTo(author.getWhen());
-    assertThat(committer.getTimeZone()).isEqualTo(author.getTimeZone());
+    assertThat(committer.getWhenAsInstant()).isEqualTo(author.getWhenAsInstant());
+    assertThat(committer.getZoneId()).isEqualTo(author.getZoneId());
   }
 
   @Test
   public void anonymousUser() throws Exception {
     Account anon =
-        Account.builder(Account.id(3), TimeUtil.nowTs())
+        Account.builder(Account.id(3), TimeUtil.now())
             .setMetaId("1234567812345678123456781234567812345678")
             .build();
     accountCache.put(anon);

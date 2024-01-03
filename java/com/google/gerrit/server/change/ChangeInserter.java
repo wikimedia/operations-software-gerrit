@@ -313,6 +313,7 @@ public class ChangeInserter implements InsertChangeOp {
 
   public ChangeInserter setValidationOptions(
       ImmutableListMultimap<String, String> validationOptions) {
+    requireNonNull(validationOptions, "validationOptions may not be null");
     checkState(
         patchSet == null,
         "setValidationOptions(ImmutableListMultimap<String, String>) only valid before creating a"
@@ -364,7 +365,7 @@ public class ChangeInserter implements InsertChangeOp {
    * <p>Should not be used in new code, as it doesn't result in a single atomic batch ref update for
    * code and NoteDb meta refs.
    *
-   * @param updateRef whether to update the ref during {@code updateRepo}.
+   * @param updateRef whether to update the ref during {@link #updateRepo(RepoContext)}.
    */
   @Deprecated
   public ChangeInserter setUpdateRef(boolean updateRef) {
@@ -497,15 +498,15 @@ public class ChangeInserter implements InsertChangeOp {
                 emailSender.setPatchSet(patchSet, patchSetInfo);
                 emailSender.setNotify(notify);
                 emailSender.addReviewers(
-                    reviewerAdditions.flattenResults(AddReviewersOp.Result::addedReviewers).stream()
+                    reviewerAdditions.flattenResults(ReviewerOp.Result::addedReviewers).stream()
                         .map(PatchSetApproval::accountId)
                         .collect(toImmutableSet()));
                 emailSender.addReviewersByEmail(
-                    reviewerAdditions.flattenResults(AddReviewersOp.Result::addedReviewersByEmail));
+                    reviewerAdditions.flattenResults(ReviewerOp.Result::addedReviewersByEmail));
                 emailSender.addExtraCC(
-                    reviewerAdditions.flattenResults(AddReviewersOp.Result::addedCCs));
+                    reviewerAdditions.flattenResults(ReviewerOp.Result::addedCCs));
                 emailSender.addExtraCCByEmail(
-                    reviewerAdditions.flattenResults(AddReviewersOp.Result::addedCCsByEmail));
+                    reviewerAdditions.flattenResults(ReviewerOp.Result::addedCCsByEmail));
                 emailSender.setMessageId(
                     messageIdGenerator.fromChangeUpdate(ctx.getRepoView(), patchSet.id()));
                 emailSender.send();

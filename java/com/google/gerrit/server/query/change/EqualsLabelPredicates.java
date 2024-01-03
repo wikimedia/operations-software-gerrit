@@ -14,6 +14,7 @@
 
 package com.google.gerrit.server.query.change;
 
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.entities.Change;
@@ -29,15 +30,17 @@ import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectState;
+import com.google.gerrit.server.query.change.ChangeData.StorageConstraint;
 import java.util.Optional;
 
 public class EqualsLabelPredicates {
   public static class PostFilterEqualsLabelPredicate extends PostFilterPredicate<ChangeData> {
     private final Matcher matcher;
 
-    public PostFilterEqualsLabelPredicate(LabelPredicate.Args args, String label, int expVal) {
-      super(ChangeQueryBuilder.FIELD_LABEL, ChangeField.formatLabel(label, expVal));
-      matcher = new Matcher(args, label, expVal);
+    public PostFilterEqualsLabelPredicate(
+        LabelPredicate.Args args, String label, int expVal, @Nullable Integer count) {
+      super(ChangeQueryBuilder.FIELD_LABEL, ChangeField.formatLabel(label, expVal, count));
+      matcher = new Matcher(args, label, expVal, count);
     }
 
     @Override
@@ -54,14 +57,19 @@ public class EqualsLabelPredicates {
   public static class IndexEqualsLabelPredicate extends ChangeIndexPostFilterPredicate {
     private final Matcher matcher;
 
-    public IndexEqualsLabelPredicate(LabelPredicate.Args args, String label, int expVal) {
-      this(args, label, expVal, null);
+    public IndexEqualsLabelPredicate(
+        LabelPredicate.Args args, String label, int expVal, @Nullable Integer count) {
+      this(args, label, expVal, null, count);
     }
 
     public IndexEqualsLabelPredicate(
-        LabelPredicate.Args args, String label, int expVal, Account.Id account) {
-      super(ChangeField.LABEL, ChangeField.formatLabel(label, expVal, account));
-      this.matcher = new Matcher(args, label, expVal, account);
+        LabelPredicate.Args args,
+        String label,
+        int expVal,
+        Account.Id account,
+        @Nullable Integer count) {
+      super(ChangeField.LABEL, ChangeField.formatLabel(label, expVal, account, count));
+      this.matcher = new Matcher(args, label, expVal, account, count);
     }
 
     @Override
@@ -79,16 +87,32 @@ public class EqualsLabelPredicates {
     protected final ProjectCache projectCache;
     protected final PermissionBackend permissionBackend;
     protected final IdentifiedUser.GenericFactory userFactory;
+    /** label name to be matched. */
     protected final String label;
+    /** Expected vote value for the label. */
     protected final int expVal;
+
+    /**
+     * Number of times the value {@link #expVal} for label {@link #label} should occur. If null,
+     * match with any count greater or equal to 1.
+     */
+    @Nullable protected final Integer count;
+
+    /** Account ID that has voted on the label. */
     protected final Account.Id account;
+
     protected final AccountGroup.UUID group;
 
-    public Matcher(LabelPredicate.Args args, String label, int expVal) {
-      this(args, label, expVal, null);
+    public Matcher(LabelPredicate.Args args, String label, int expVal, @Nullable Integer count) {
+      this(args, label, expVal, null, count);
     }
 
-    public Matcher(LabelPredicate.Args args, String label, int expVal, Account.Id account) {
+    public Matcher(
+        LabelPredicate.Args args,
+        String label,
+        int expVal,
+        Account.Id account,
+        @Nullable Integer count) {
       this.permissionBackend = args.permissionBackend;
       this.projectCache = args.projectCache;
       this.userFactory = args.userFactory;
@@ -96,12 +120,21 @@ public class EqualsLabelPredicates {
       this.label = label;
       this.expVal = expVal;
       this.account = account;
+      this.count = count;
     }
 
     public boolean match(ChangeData cd) {
       Change c = cd.change();
       if (c == null) {
         // The change has disappeared.
+        return false;
+      }
+
+      if (Integer.valueOf(0).equals(count)) {
+        // We don't match against count=0 so that the computation is identical to the stored values
+        // in the index. We do that since computing count=0 requires looping on all {label_type,
+        // vote_value} for the change and storing a {count=0} format for it in the change index
+        // which is computationally expensive.
         return false;
       }
 
@@ -117,21 +150,23 @@ public class EqualsLabelPredicates {
       }
 
       boolean hasVote = false;
+      int matchingVotes = 0;
+      StorageConstraint currentStorageConstraint = cd.getStorageConstraint();
       cd.setStorageConstraint(ChangeData.StorageConstraint.INDEX_PRIMARY_NOTEDB_SECONDARY);
       for (PatchSetApproval psa : cd.currentApprovals()) {
         if (labelType.matches(psa)) {
           hasVote = true;
           if (match(cd, psa)) {
-            return true;
+            matchingVotes += 1;
           }
         }
       }
-
+      cd.setStorageConstraint(currentStorageConstraint);
       if (!hasVote && expVal == 0) {
         return true;
       }
 
-      return false;
+      return count == null ? matchingVotes >= 1 : matchingVotes == count;
     }
 
     private boolean match(ChangeData cd, PatchSetApproval psa) {

@@ -19,13 +19,11 @@ import '../../../styles/gr-voting-styles';
 import '../../../styles/shared-styles';
 import '../gr-vote-chip/gr-vote-chip';
 import '../gr-account-label/gr-account-label';
-import '../gr-account-link/gr-account-link';
 import '../gr-account-chip/gr-account-chip';
 import '../gr-button/gr-button';
 import '../gr-icons/gr-icons';
 import '../gr-label/gr-label';
 import '../gr-tooltip-content/gr-tooltip-content';
-import {dom, EventApi} from '@polymer/polymer/lib/legacy/polymer.dom';
 import {
   AccountInfo,
   LabelInfo,
@@ -44,16 +42,16 @@ import {
   getVotingRangeOrDefault,
   hasNeutralStatus,
   hasVoted,
+  showNewSubmitRequirements,
   valueString,
 } from '../../../utils/label-util';
-import {appContext} from '../../../services/app-context';
+import {getAppContext} from '../../../services/app-context';
 import {ParsedChangeInfo} from '../../../types/types';
 import {fontStyles} from '../../../styles/gr-font-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {votingStyles} from '../../../styles/gr-voting-styles';
 import {ifDefined} from 'lit/directives/if-defined';
 import {fireReload} from '../../../utils/event-util';
-import {KnownExperimentId} from '../../../services/flags/flags';
 import {sortReviewers} from '../../../utils/attention-set-util';
 
 declare global {
@@ -104,13 +102,11 @@ export class GrLabelInfo extends LitElement {
   @property({type: Boolean})
   showAllReviewers = true;
 
-  /** temporary until submit requirements are finished */
-  @property({type: Boolean})
-  showAlwaysOldUI = false;
+  private readonly restApiService = getAppContext().restApiService;
 
-  private readonly restApiService = appContext.restApiService;
+  private readonly reporting = getAppContext().reportingService;
 
-  private readonly reporting = appContext.reportingService;
+  private readonly flagsService = getAppContext().flagsService;
 
   // TODO(TS): not used, remove later
   _xhrPromise?: Promise<void>;
@@ -176,7 +172,7 @@ export class GrLabelInfo extends LitElement {
         gr-button[disabled] iron-icon {
           color: var(--border-color);
         }
-        gr-account-link {
+        gr-account-label {
           --account-max-length: 100px;
           margin-right: var(--spacing-xs);
         }
@@ -205,19 +201,13 @@ export class GrLabelInfo extends LitElement {
         gr-vote-chip {
           --gr-vote-chip-width: 14px;
           --gr-vote-chip-height: 14px;
-          margin-right: var(--spacing-s);
         }
       `,
     ];
   }
 
-  private readonly flagsService = appContext.flagsService;
-
   override render() {
-    if (
-      this.flagsService.isEnabled(KnownExperimentId.SUBMIT_REQUIREMENTS_UI) &&
-      !this.showAlwaysOldUI
-    ) {
+    if (showNewSubmitRequirements(this.flagsService, this.change)) {
       return this.renderNewSubmitRequirements();
     } else {
       return this.renderOldSubmitRequirements();
@@ -228,11 +218,19 @@ export class GrLabelInfo extends LitElement {
     const labelInfo = this.labelInfo;
     if (!labelInfo) return;
     const reviewers = (this.change?.reviewers['REVIEWER'] ?? [])
-      .filter(
-        reviewer =>
-          (this.showAllReviewers && canVote(labelInfo, reviewer)) ||
-          (!this.showAllReviewers && hasVoted(labelInfo, reviewer))
-      )
+      .filter(reviewer => {
+        if (this.showAllReviewers) {
+          if (isDetailedLabelInfo(labelInfo)) {
+            return canVote(labelInfo, reviewer);
+          } else {
+            // isQuickLabelInfo
+            return hasVoted(labelInfo, reviewer);
+          }
+        } else {
+          // !showAllReviewers
+          return hasVoted(labelInfo, reviewer);
+        }
+      })
       .sort((r1, r2) => sortReviewers(r1, r2, this.change, this.account));
     return html`<div>
       ${reviewers.map(reviewer => this.renderReviewerVote(reviewer))}
@@ -258,16 +256,26 @@ export class GrLabelInfo extends LitElement {
 
   renderReviewerVote(reviewer: AccountInfo) {
     const labelInfo = this.labelInfo;
-    if (!labelInfo || !isDetailedLabelInfo(labelInfo)) return;
-    const approvalInfo = getApprovalInfo(labelInfo, reviewer);
+    if (!labelInfo) return;
+    const approvalInfo = isDetailedLabelInfo(labelInfo)
+      ? getApprovalInfo(labelInfo, reviewer)
+      : undefined;
     const noVoteYet =
-      !approvalInfo || hasNeutralStatus(labelInfo, approvalInfo);
+      !hasVoted(labelInfo, reviewer) ||
+      (isDetailedLabelInfo(labelInfo) &&
+        hasNeutralStatus(labelInfo, approvalInfo));
     return html`<div class="reviewer-row">
-      <gr-account-chip .account="${reviewer}" .change="${this.change}">
+      <gr-account-chip
+        .account=${reviewer}
+        .change=${this.change}
+        .vote=${approvalInfo}
+        .label=${labelInfo}
+      >
         <gr-vote-chip
           slot="vote-chip"
-          .vote="${approvalInfo}"
-          .label="${labelInfo}"
+          .vote=${approvalInfo}
+          .label=${labelInfo}
+          circle-shape
         ></gr-vote-chip
       ></gr-account-chip>
       ${noVoteYet
@@ -282,7 +290,7 @@ export class GrLabelInfo extends LitElement {
       <td>
         <gr-tooltip-content
           has-tooltip
-          title="${this._computeValueTooltip(labelInfo, mappedLabel.value)}"
+          title=${this._computeValueTooltip(labelInfo, mappedLabel.value)}
         >
           <gr-label class="${mappedLabel.className} voteChip font-small">
             ${mappedLabel.value}
@@ -290,10 +298,11 @@ export class GrLabelInfo extends LitElement {
         </gr-tooltip-content>
       </td>
       <td>
-        <gr-account-link
-          .account="${mappedLabel.account}"
-          .change="${change}"
-        ></gr-account-link>
+        <gr-account-label
+          clickable
+          .account=${mappedLabel.account}
+          .change=${change}
+        ></gr-account-label>
       </td>
       <td>${this.renderRemoveVote(mappedLabel.account)}</td>
     </tr>`;
@@ -317,8 +326,8 @@ export class GrLabelInfo extends LitElement {
       <gr-button
         link
         aria-label="Remove vote"
-        @click="${this.onDeleteVote}"
-        data-account-id="${ifDefined(reviewer._account_id)}"
+        @click=${this.onDeleteVote}
+        data-account-id=${ifDefined(reviewer._account_id as number | undefined)}
         class="deleteBtn ${this.computeDeleteClass(
           reviewer,
           this.mutable,
@@ -438,7 +447,7 @@ export class GrLabelInfo extends LitElement {
     if (!this.change) return;
 
     e.preventDefault();
-    let target = (dom(e) as EventApi).rootTarget as GrButton;
+    let target = e.composedPath()[0] as GrButton;
     while (!target.classList.contains('deleteBtn')) {
       if (!target.parentElement) {
         return;

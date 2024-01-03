@@ -20,6 +20,7 @@ import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.config.ChangeCleanupConfig;
+import com.google.gerrit.server.notedb.StoreSubmitRequirementsOp;
 import com.google.gerrit.server.plugincontext.PluginItemContext;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.update.BatchUpdate;
@@ -34,15 +35,18 @@ public class BatchAbandon {
   private final AbandonOp.Factory abandonOpFactory;
   private final ChangeCleanupConfig cfg;
   private final PluginItemContext<AccountPatchReviewStore> accountPatchReviewStore;
+  private final StoreSubmitRequirementsOp.Factory storeSubmitRequirementsOpFactory;
 
   @Inject
   BatchAbandon(
       AbandonOp.Factory abandonOpFactory,
       ChangeCleanupConfig cfg,
-      PluginItemContext<AccountPatchReviewStore> accountPatchReviewStore) {
+      PluginItemContext<AccountPatchReviewStore> accountPatchReviewStore,
+      StoreSubmitRequirementsOp.Factory storeSubmitRequirementsOpFactory) {
     this.abandonOpFactory = abandonOpFactory;
     this.cfg = cfg;
     this.accountPatchReviewStore = accountPatchReviewStore;
+    this.storeSubmitRequirementsOpFactory = storeSubmitRequirementsOpFactory;
   }
 
   /**
@@ -64,7 +68,7 @@ public class BatchAbandon {
       return;
     }
     AccountState accountState = user.isIdentifiedUser() ? user.asIdentifiedUser().state() : null;
-    try (BatchUpdate u = updateFactory.create(project, user, TimeUtil.nowTs())) {
+    try (BatchUpdate u = updateFactory.create(project, user, TimeUtil.now())) {
       u.setNotify(notify);
       for (ChangeData change : changes) {
         if (!project.equals(change.project())) {
@@ -74,6 +78,9 @@ public class BatchAbandon {
                   change.project().get(), project.get()));
         }
         u.addOp(change.getId(), abandonOpFactory.create(accountState, msgTxt));
+        u.addOp(
+            change.getId(),
+            storeSubmitRequirementsOpFactory.create(change.submitRequirements().values(), change));
       }
       u.execute();
 

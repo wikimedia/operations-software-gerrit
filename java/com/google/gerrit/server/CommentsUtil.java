@@ -44,17 +44,20 @@ import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ChangeUpdate;
 import com.google.gerrit.server.patch.DiffNotAvailableException;
 import com.google.gerrit.server.patch.DiffOperations;
+import com.google.gerrit.server.patch.DiffOptions;
 import com.google.gerrit.server.patch.filediff.FileDiffOutput;
 import com.google.gerrit.server.update.ChangeContext;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
-import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
@@ -64,7 +67,7 @@ import org.eclipse.jgit.revwalk.RevCommit;
 @Singleton
 public class CommentsUtil {
   public static final Ordering<Comment> COMMENT_ORDER =
-      new Ordering<Comment>() {
+      new Ordering<>() {
         @Override
         public int compare(Comment c1, Comment c2) {
           return ComparisonChain.start()
@@ -78,7 +81,7 @@ public class CommentsUtil {
       };
 
   public static final Ordering<CommentInfo> COMMENT_INFO_ORDER =
-      new Ordering<CommentInfo>() {
+      new Ordering<>() {
         @Override
         public int compare(CommentInfo a, CommentInfo b) {
           return ComparisonChain.start()
@@ -130,7 +133,7 @@ public class CommentsUtil {
   public HumanComment newHumanComment(
       ChangeNotes changeNotes,
       CurrentUser currentUser,
-      Timestamp when,
+      Instant when,
       String path,
       PatchSet.Id psId,
       short side,
@@ -302,7 +305,7 @@ public class CommentsUtil {
   }
 
   private static boolean isAfter(CommentInfo c, ChangeMessage cm) {
-    return c.updated.after(cm.getWrittenOn());
+    return c.getUpdated().isAfter(cm.getWrittenOn());
   }
 
   /**
@@ -335,7 +338,7 @@ public class CommentsUtil {
   }
 
   public void putHumanComments(
-      ChangeUpdate update, HumanComment.Status status, Iterable<HumanComment> comments) {
+      ChangeUpdate update, Comment.Status status, Iterable<HumanComment> comments) {
     for (HumanComment c : comments) {
       update.putComment(status, c);
     }
@@ -438,7 +441,7 @@ public class CommentsUtil {
       // unignore the test in PortedCommentsIT.
       Map<String, FileDiffOutput> modifiedFiles =
           diffOperations.listModifiedFilesAgainstParent(
-              change.getProject(), patchset.commitId(), /* parentNum= */ 0);
+              change.getProject(), patchset.commitId(), /* parentNum= */ 0, DiffOptions.DEFAULTS);
       return modifiedFiles.isEmpty()
           ? null
           : modifiedFiles.values().iterator().next().oldCommitId();
@@ -465,8 +468,33 @@ public class CommentsUtil {
     }
   }
 
+  /** returns all changes that contain draft comments of {@code accountId}. */
+  public Collection<Change.Id> getChangesWithDrafts(Account.Id accountId) {
+    try (Repository repo = repoManager.openRepository(allUsers)) {
+      return getChangesWithDrafts(repo, accountId);
+    } catch (IOException e) {
+      throw new StorageException(e);
+    }
+  }
+
   private Collection<Ref> getDraftRefs(Repository repo, Change.Id changeId) throws IOException {
     return repo.getRefDatabase().getRefsByPrefix(RefNames.refsDraftCommentsPrefix(changeId));
+  }
+
+  private Collection<Change.Id> getChangesWithDrafts(Repository repo, Account.Id accountId)
+      throws IOException {
+    Set<Change.Id> changes = new HashSet<>();
+    for (Ref ref : repo.getRefDatabase().getRefsByPrefix(RefNames.REFS_DRAFT_COMMENTS)) {
+      Integer accountIdFromRef = RefNames.parseRefSuffix(ref.getName());
+      if (accountIdFromRef != null && accountIdFromRef == accountId.get()) {
+        Change.Id changeId = Change.Id.fromAllUsersRef(ref.getName());
+        if (changeId == null) {
+          continue;
+        }
+        changes.add(changeId);
+      }
+    }
+    return changes;
   }
 
   private static <T extends Comment> List<T> sort(List<T> comments) {

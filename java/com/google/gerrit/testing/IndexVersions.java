@@ -27,7 +27,7 @@ import com.google.gerrit.index.SchemaDefinitions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.SortedMap;
+import java.util.NavigableMap;
 import org.eclipse.jgit.lib.Config;
 
 public class IndexVersions {
@@ -90,13 +90,13 @@ public class IndexVersions {
       value = value.trim();
     }
 
-    SortedMap<Integer, Schema<V>> schemas = schemaDef.getSchemas();
+    NavigableMap<Integer, Schema<V>> schemas = schemaDef.getSchemas();
     if (!Strings.isNullOrEmpty(value)) {
       if (ALL.equals(value)) {
         return ImmutableList.copyOf(schemas.keySet());
       }
 
-      List<Integer> versions = new ArrayList<>();
+      ImmutableList.Builder<Integer> versions = ImmutableList.builder();
       for (String s : Splitter.on(',').trimResults().split(value)) {
         if (CURRENT.equals(s)) {
           versions.add(schemaDef.getLatest().getVersion());
@@ -115,15 +115,15 @@ public class IndexVersions {
           versions.add(version);
         }
       }
-      return ImmutableList.copyOf(versions);
+      return versions.build();
     }
 
-    List<Integer> schemaVersions = new ArrayList<>(2);
+    ImmutableList.Builder<Integer> schemaVersions = ImmutableList.builderWithExpectedSize(2);
     if (schemaDef.getPrevious() != null) {
       schemaVersions.add(schemaDef.getPrevious().getVersion());
     }
     schemaVersions.add(schemaDef.getLatest().getVersion());
-    return ImmutableList.copyOf(schemaVersions);
+    return schemaVersions.build();
   }
 
   public static <V> Map<String, Config> asConfigMap(

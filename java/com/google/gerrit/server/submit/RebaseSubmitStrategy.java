@@ -15,9 +15,9 @@
 package com.google.gerrit.server.submit;
 
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.gerrit.server.submit.CommitMergeStatus.EMPTY_COMMIT;
 import static com.google.gerrit.server.submit.CommitMergeStatus.SKIPPED_IDENTICAL_TREE;
-import static java.util.stream.Collectors.toList;
 
 import com.google.common.collect.ImmutableList;
 import com.google.gerrit.entities.BooleanProjectConfig;
@@ -38,7 +38,6 @@ import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.gerrit.server.update.RepoContext;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import org.eclipse.jgit.lib.ObjectId;
@@ -56,7 +55,7 @@ public class RebaseSubmitStrategy extends SubmitStrategy {
   }
 
   @Override
-  public List<SubmitStrategyOp> buildOps(Collection<CodeReviewCommit> toMerge) {
+  public ImmutableList<SubmitStrategyOp> buildOps(Collection<CodeReviewCommit> toMerge) {
     List<CodeReviewCommit> sorted;
     try {
       sorted = args.rebaseSorter.sort(toMerge);
@@ -92,12 +91,13 @@ public class RebaseSubmitStrategy extends SubmitStrategy {
         // found a merge commit that depends on a normal change, this means we are required to merge
         // the whole series at once
         sorted = args.mergeUtil.reduceToMinimalMerge(args.mergeSorter, sorted);
-        return sorted.stream().map(n -> new MergeIfNecessaryOp(n)).collect(toList());
+        return sorted.stream().map(n -> new MergeIfNecessaryOp(n)).collect(toImmutableList());
       }
       foundNonMerge = true;
     }
 
-    List<SubmitStrategyOp> ops = new ArrayList<>(sorted.size());
+    ImmutableList.Builder<SubmitStrategyOp> ops =
+        ImmutableList.builderWithExpectedSize(sorted.size());
     boolean first = true;
     while (!sorted.isEmpty()) {
       CodeReviewCommit n = sorted.remove(0);
@@ -114,7 +114,7 @@ public class RebaseSubmitStrategy extends SubmitStrategy {
       }
       first = false;
     }
-    return ops;
+    return ops.build();
   }
 
   private class RebaseRootOp extends SubmitStrategyOp {
@@ -166,8 +166,7 @@ public class RebaseSubmitStrategy extends SubmitStrategy {
         RevCommit mergeTip = args.mergeTip.getCurrentTip();
         args.rw.parseBody(mergeTip);
         String cherryPickCmtMsg = args.mergeUtil.createCommitMessageOnSubmit(toMerge, mergeTip);
-        PersonIdent committer =
-            args.caller.newCommitterIdent(ctx.getWhen(), args.serverIdent.getTimeZone());
+        PersonIdent committer = ctx.newCommitterIdent(args.caller);
         try {
           newCommit =
               args.mergeUtil.createCherryPickFromCommit(
@@ -304,8 +303,7 @@ public class RebaseSubmitStrategy extends SubmitStrategy {
           && !args.subscriptionGraph.hasSubscription(args.destBranch)) {
         mergeTip.moveTipTo(toMerge, toMerge);
       } else {
-        PersonIdent caller =
-            ctx.getIdentifiedUser().newCommitterIdent(ctx.getWhen(), ctx.getTimeZone());
+        PersonIdent caller = ctx.newCommitterIdent();
         CodeReviewCommit newTip =
             args.mergeUtil.mergeOneCommit(
                 caller,

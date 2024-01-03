@@ -257,9 +257,19 @@ public class Submit
           return "Change " + c.getId() + " is marked work in progress";
         }
         try {
-          MergeOp.checkSubmitRule(c, false);
+          // The data in the change index may be stale (e.g. if submit requirements have been
+          // changed). For that one change for which the submit action is computed, use the
+          // freshly loaded ChangeData instance 'cd' instead of the potentially stale ChangeData
+          // instance 'c' that was loaded from the index. This makes a difference if the ChangeSet
+          // 'cs' only contains this one single change. If the ChangeSet contains further changes
+          // those may still be stale.
+          MergeOp.checkSubmitRequirements(cd.getId().equals(c.getId()) ? cd : c);
         } catch (ResourceConflictException e) {
-          return "Change " + c.getId() + " is not ready: " + e.getMessage();
+          return (c.getId() == cd.getId())
+              ? String.format("Change %s is not ready: %s", cd.getId(), e.getMessage())
+              : String.format(
+                  "Change %s must be submitted with change %s but %s is not ready: %s",
+                  cd.getId(), c.getId(), c.getId(), e.getMessage());
         }
       }
 
@@ -299,12 +309,15 @@ public class Submit
 
     ChangeData cd = resource.getChangeResource().getChangeData();
     try {
-      MergeOp.checkSubmitRule(cd, false);
+      MergeOp.checkSubmitRequirements(cd);
     } catch (ResourceConflictException e) {
       return null; // submit not visible
     }
 
-    ChangeSet cs = mergeSuperSet.get().completeChangeSet(cd.change(), resource.getUser());
+    ChangeSet cs =
+        mergeSuperSet
+            .get()
+            .completeChangeSet(cd.change(), resource.getUser(), /*includingTopicClosure= */ false);
     String topic = change.getTopic();
     int topicSize = 0;
     if (!Strings.isNullOrEmpty(topic)) {
@@ -314,14 +327,6 @@ public class Submit
 
     String submitProblems = problemsForSubmittingChangeset(cd, cs, resource.getUser());
 
-    // Recheck mergeability rather than using value stored in the index, which may be stale.
-    // TODO(dborowitz): This is ugly; consider providing a way to not read stored fields from the
-    // index in the first place.
-    // cd.setMergeable(null);
-    // That was done in unmergeableChanges which was called by problemsForSubmittingChangeset, so
-    // now it is safe to read from the cache, as it yields the same result.
-    Boolean enabled = cd.isMergeable();
-
     if (submitProblems != null) {
       return new UiAction.Description()
           .setLabel(treatWithTopic ? submitTopicLabel : (cs.size() > 1) ? labelWithParents : label)
@@ -329,6 +334,14 @@ public class Submit
           .setVisible(true)
           .setEnabled(false);
     }
+
+    // Recheck mergeability rather than using value stored in the index, which may be stale.
+    // TODO(dborowitz): This is ugly; consider providing a way to not read stored fields from the
+    // index in the first place.
+    // cd.setMergeable(null);
+    // That was done in unmergeableChanges which was called by problemsForSubmittingChangeset, so
+    // now it is safe to read from the cache, as it yields the same result.
+    Boolean enabled = cd.isMergeable();
 
     if (treatWithTopic) {
       Map<String, String> params =

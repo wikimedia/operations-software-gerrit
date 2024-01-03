@@ -105,7 +105,7 @@ public abstract class BaseCommand implements Command {
 
   @Inject protected Injector injector;
 
-  @Inject protected DynamicMap<DynamicOptions.DynamicBean> dynamicBeans = null;
+  @Inject protected DynamicMap<DynamicOptions.DynamicBean> dynamicBeans;
 
   /** The task, as scheduled on a worker thread. */
   private final AtomicReference<Future<?>> task;
@@ -399,7 +399,7 @@ public abstract class BaseCommand implements Command {
       isZeroLength = Arrays.stream(stackTrace).anyMatch(s -> s.toString().contains(zeroLength));
     }
     if (!isZeroLength) {
-      logger.atSevere().withCause(e).log(message.toString());
+      logger.atSevere().withCause(e).log("%s", message);
     }
   }
 

@@ -32,6 +32,11 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+/**
+ * Tests for {@link ChangeNotesParser}.
+ *
+ * <p>When modifying storage format, please, add tests that both old and new data can be parsed.
+ */
 public class ChangeNotesParserTest extends AbstractChangeNotesTest {
   private TestRepository<InMemoryRepository> testRepo;
   private ChangeNotesRevWalk walk;
@@ -134,6 +139,7 @@ public class ChangeNotesParserTest extends AbstractChangeNotesTest {
             + "Label: Label2=1\n"
             + "Label: Label3=0\n"
             + "Label: Label4=-1\n"
+            + "Label: Label1=+1 Gerrit User 1 (name,with, comma) <1@gerrit>\n"
             + "Subject: This is a test change\n");
     assertParseSucceeds(
         "Update change\n"
@@ -154,7 +160,6 @@ public class ChangeNotesParserTest extends AbstractChangeNotesTest {
 
   @Test
   public void parseApprovalWithUUID() throws Exception {
-    // Introduced by https://gerrit-review.googlesource.com/c/gerrit/+/324937
     assertParseSucceeds(
         "Update change\n"
             + "\n"
@@ -164,7 +169,30 @@ public class ChangeNotesParserTest extends AbstractChangeNotesTest {
             + "Label: Label1=+1, 577fb248e474018276351785930358ec0450e9f7\n"
             + "Label: Label1=+1, 577fb248e474018276351785930358ec0450e9f7 Gerrit User 2 <2@gerrit>\n"
             + "Label: Label1=0, 577fb248e474018276351785930358ec0450e9f7 Gerrit User 2 <2@gerrit>\n"
+            + "Label: Label1=0, 577fb248e474018276351785930358ec0450e9f7 Gerrit User 3 (name,with, comma) <3@gerrit>\n"
             + "Subject: This is a test change\n");
+
+    assertParseSucceeds(
+        "Update change\n"
+            + "\n"
+            + "Branch: refs/heads/master\n"
+            + "Change-id: I577fb248e474018276351785930358ec0450e9f7\n"
+            + "Patch-set: 1\n"
+            + "Label: Label1=+1, non-SHA1_UUID\n"
+            + "Label: Label1=+1, non-SHA1_UUID Gerrit User 2 <2@gerrit>\n"
+            + "Label: Label1=0, non-SHA1_UUID Gerrit User 2 <2@gerrit>\n"
+            + "Subject: This is a test change\n");
+    assertParseFails("Update change\n\nPatch-set: 1\nLabel: Label1=+1, \n");
+    assertParseFails("Update change\n\nPatch-set: 1\nLabel: Label1=+1,\n");
+    assertParseFails(
+        "Update change\n\nPatch-set: 1\nLabel: Label1=-1,  577fb248e474018276351785930358ec0450e9f7 Gerrit User 2 <2@gerrit>\n");
+    assertParseFails(
+        "Update change\n\nPatch-set: 1\nLabel: Label1=-1,  577fb248e474018276351785930358ec0450e9f7\n");
+    // UUID for removals is not supported.
+    assertParseFails(
+        "Update change\n\nPatch-set: 1\nLabel: -Label1, 577fb248e474018276351785930358ec0450e9f7\n");
+    assertParseFails(
+        "Update change\n\nPatch-set: 1\nLabel: -Label1, 577fb248e474018276351785930358ec0450e9f7 Other Account <2@gerrit>\n");
   }
 
   @Test
@@ -179,16 +207,10 @@ public class ChangeNotesParserTest extends AbstractChangeNotesTest {
             + "Copied-Label: Label2=+1 Account <1@gerrit>\n"
             + "Copied-Label: Label3=+1 Account <1@gerrit>,Other Account <2@Gerrit> :\"tag\"\n"
             + "Copied-Label: Label4=+1 Account <1@Gerrit> :\"tag with characters %^#@^( *::!\"\n"
+            + "Copied-Label: Label1=+1 Gerrit User 1 (name,with, comma) <1@gerrit>\n"
+            + "Copied-Label: Label2=+1 Gerrit User 1 (name,with, comma) <1@gerrit>,Gerrit User 2 (name,with, comma) <2@gerrit>\n"
             + "Subject: This is a test change\n");
-    assertParseSucceeds(
-        "Update change\n"
-            + "\n"
-            + "Branch: refs/heads/master\n"
-            + "Change-id: I577fb248e474018276351785930358ec0450e9f7\n"
-            + "Patch-set: 1\n"
-            + "Label: -Label1\n"
-            + "Label: -Label4 Account <1@gerrit>\n"
-            + "Subject: This is a test change\n");
+
     assertParseFails("Update change\n\nPatch-set: 1\nCopied-Label: Label1=X\n");
     assertParseFails("Update change\n\nPatch-set: 1\nCopied-Label: Label1 = 1\n");
     assertParseFails("Update change\n\nPatch-set: 1\nCopied-Label: X+Y\n");
@@ -206,7 +228,7 @@ public class ChangeNotesParserTest extends AbstractChangeNotesTest {
 
   @Test
   public void parseCopiedApprovalWithUUID() throws Exception {
-    // Introduced by https://gerrit-review.googlesource.com/c/gerrit/+/324937
+    assertParseFails("Update change\n\nPatch-set: 1\nCopied-Label: Label1=+1 ,\n");
     assertParseSucceeds(
         "Update change\n"
             + "\n"
@@ -220,7 +242,33 @@ public class ChangeNotesParserTest extends AbstractChangeNotesTest {
             + "Copied-Label: Label4=+1, 577fb248e474018276351785930358ec0450e9f7 Gerrit User 1 <1@gerrit> :\"tag with uuid delimiter , \"\n"
             + "Copied-Label: Label4=+1, 577fb248e474018276351785930358ec0450e9f7 Gerrit User 1 <1@gerrit>,Gerrit User 2 <2@gerrit> :\"tag with characters %^#@^( *::!\"\n"
             + "Copied-Label: Label4=+1, 577fb248e474018276351785930358ec0450e9f7 Gerrit User 1 <1@gerrit>,Gerrit User 2 <2@gerrit> :\"tag with uuid delimiter , \"\n"
+            + "Copied-Label: Label4=+1, 577fb248e474018276351785930358ec0450e9f7 Gerrit User 1 (name,with, comma) <2@gerrit>,Gerrit User 3 (name,with, comma) <3@gerrit>\n"
             + "Subject: This is a test change\n");
+
+    assertParseSucceeds(
+        "Update change\n"
+            + "\n"
+            + "Branch: refs/heads/master\n"
+            + "Change-id: I577fb248e474018276351785930358ec0450e9f7\n"
+            + "Patch-set: 1\n"
+            + "Copied-Label: Label2=+1, non-SHA1_UUID Gerrit User 1 <1@gerrit>\n"
+            + "Copied-Label: Label1=+1, non-SHA1_UUID Gerrit User 1 <1@gerrit>,Gerrit User 2 <2@gerrit>\n"
+            + "Copied-Label: Label3=+1, non-SHA1_UUID Gerrit User 1 <1@gerrit>,Gerrit User 2 <2@gerrit> :\"tag\"\n"
+            + "Copied-Label: Label4=+1, non-SHA1_UUID Gerrit User 1 <1@gerrit> :\"tag with characters %^#@^( *::!\"\n"
+            + "Copied-Label: Label4=+1, non-SHA1_UUID Gerrit User 1 <1@gerrit> :\"tag with uuid delimiter , \"\n"
+            + "Copied-Label: Label4=+1, non-SHA1_UUID Gerrit User 1 <1@gerrit>,Gerrit User 2 <2@gerrit> :\"tag with characters %^#@^( *::!\"\n"
+            + "Copied-Label: Label4=+1, non-SHA1_UUID Gerrit User 1 <1@gerrit>,Gerrit User 2 <2@gerrit> :\"tag with uuid delimiter , \"\n"
+            + "Subject: This is a test change\n");
+
+    assertParseFails("Update change\n\nPatch-set: 1\nCopied-Label: Label1=+1,\n");
+    assertParseFails("Update change\n\nPatch-set: 1\nCopied-Label: Label1=+1,\n");
+    assertParseFails("Update change\n\nPatch-set: 1\nCopied-Label: Label1=+1 ,\n");
+    assertParseFails(
+        "Copied-Label: Label1=+1,  577fb248e474018276351785930358ec0450e9f7 Gerrit User 1 <1@gerrit>,Gerrit User 2 <2@gerrit>\n\n");
+    assertParseFails(
+        "Update change\n\nPatch-set: 1\nCopied-Label: Label1=+1, 577fb248e474018276351785930358ec0450e9f7");
+    assertParseFails(
+        "Update change\n\nPatch-set: 1\nCopied-Label: Label1=+1, 577fb248e474018276351785930358ec0450e9f7 :\"tag\"\n");
   }
 
   @Test
@@ -674,7 +722,7 @@ public class ChangeNotesParserTest extends AbstractChangeNotesTest {
     ChangeNoteUtil noteUtil = injector.getInstance(ChangeNoteUtil.class);
     return writeCommit(
         body,
-        noteUtil.newAccountIdIdent(changeOwner.getAccount().id(), TimeUtil.nowTs(), serverIdent),
+        noteUtil.newAccountIdIdent(changeOwner.getAccount().id(), TimeUtil.now(), serverIdent),
         false);
   }
 
@@ -686,7 +734,7 @@ public class ChangeNotesParserTest extends AbstractChangeNotesTest {
     ChangeNoteUtil noteUtil = injector.getInstance(ChangeNoteUtil.class);
     return writeCommit(
         body,
-        noteUtil.newAccountIdIdent(changeOwner.getAccount().id(), TimeUtil.nowTs(), serverIdent),
+        noteUtil.newAccountIdIdent(changeOwner.getAccount().id(), TimeUtil.now(), serverIdent),
         initWorkInProgress);
   }
 

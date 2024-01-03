@@ -436,7 +436,7 @@ public class MailProcessorIT extends AbstractMailIT {
     String txt = newPlaintextBody(getChangeUrl(changeInfo) + "/1", COMMENT_TEXT, null, null);
     b.textContent(txt + textFooterForChange(changeInfo._number, ts));
 
-    Collection<CommentInfo> commentsBefore = testCommentHelper.getPublishedComments(changeId);
+    List<CommentInfo> commentsBefore = testCommentHelper.getPublishedComments(changeId);
     mailProcessor.process(b.build());
     assertThat(testCommentHelper.getPublishedComments(changeId)).isEqualTo(commentsBefore);
 
@@ -445,7 +445,7 @@ public class MailProcessorIT extends AbstractMailIT {
     assertThat(message.body()).contains("rejected one or more comments");
 
     // ensure the message header contains a valid message id.
-    assertThat(((StringEmailHeader) (message.headers().get("Message-ID"))).getString())
+    assertThat(((StringEmailHeader) message.headers().get("Message-ID")).getString())
         .containsMatch("<someid-REJECTION-HTML@" + new URL(canonicalWebUrl.get()).getHost() + ">");
   }
 
@@ -465,7 +465,7 @@ public class MailProcessorIT extends AbstractMailIT {
     String txt = newPlaintextBody(getChangeUrl(changeInfo) + "/1", null, COMMENT_TEXT, null);
     b.textContent(txt + textFooterForChange(changeInfo._number, ts));
 
-    Collection<CommentInfo> commentsBefore = testCommentHelper.getPublishedComments(changeId);
+    List<CommentInfo> commentsBefore = testCommentHelper.getPublishedComments(changeId);
     mailProcessor.process(b.build());
     assertThat(testCommentHelper.getPublishedComments(changeId)).isEqualTo(commentsBefore);
 
@@ -490,7 +490,7 @@ public class MailProcessorIT extends AbstractMailIT {
     String txt = newPlaintextBody(getChangeUrl(changeInfo) + "/1", null, null, COMMENT_TEXT);
     b.textContent(txt + textFooterForChange(changeInfo._number, ts));
 
-    Collection<CommentInfo> commentsBefore = testCommentHelper.getPublishedComments(changeId);
+    List<CommentInfo> commentsBefore = testCommentHelper.getPublishedComments(changeId);
     mailProcessor.process(b.build());
     assertThat(testCommentHelper.getPublishedComments(changeId)).isEqualTo(commentsBefore);
 
@@ -576,7 +576,7 @@ public class MailProcessorIT extends AbstractMailIT {
             null);
     mailMessage.textContent(txt + textFooterForChange(changeInfo._number, ts));
 
-    Collection<CommentInfo> commentsBefore = testCommentHelper.getPublishedComments(changeId);
+    List<CommentInfo> commentsBefore = testCommentHelper.getPublishedComments(changeId);
     mailProcessor.process(mailMessage.build());
     assertThat(testCommentHelper.getPublishedComments(changeId)).isEqualTo(commentsBefore);
 
@@ -596,7 +596,7 @@ public class MailProcessorIT extends AbstractMailIT {
             CommentForValidation.CommentSource.HUMAN, type, COMMENT_TEXT, COMMENT_TEXT.length());
 
     when(mockCommentValidator.validateComments(
-            CommentValidationContext.create(failChange, failProject),
+            CommentValidationContext.create(failChange, failProject, "refs/heads/master"),
             ImmutableList.of(commentForValidation)))
         .thenReturn(ImmutableList.of(commentForValidation.failValidation("Oh no!")));
   }

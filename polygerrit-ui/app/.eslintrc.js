@@ -88,7 +88,11 @@ module.exports = {
     // https://eslint.org/docs/rules/no-console
     'no-console': [
       'error',
-      {allow: ['warn', 'error', 'info', 'assert', 'group', 'groupEnd']},
+      {
+        allow: [
+          'warn', 'error', 'info', 'debug', 'assert', 'group', 'groupEnd',
+        ],
+      },
     ],
     // https://eslint.org/docs/rules/no-multiple-empty-lines
     'no-multiple-empty-lines': ['error', {max: 1}],
@@ -174,7 +178,9 @@ module.exports = {
     // https://github.com/gajus/eslint-plugin-jsdoc#eslint-plugin-jsdoc-rules-check-syntax
     'jsdoc/check-syntax': 0,
     // https://github.com/gajus/eslint-plugin-jsdoc#eslint-plugin-jsdoc-rules-check-tag-names
-    'jsdoc/check-tag-names': 0,
+    'jsdoc/check-tag-names': ['error', {
+      definedTags: ['attr', 'lit', 'mixinFunction', 'mixinClass', 'polymer'],
+    }],
     // https://github.com/gajus/eslint-plugin-jsdoc#eslint-plugin-jsdoc-rules-check-types
     'jsdoc/check-types': 0,
     // https://github.com/gajus/eslint-plugin-jsdoc#eslint-plugin-jsdoc-rules-implements-on-classes
@@ -293,6 +299,12 @@ module.exports = {
       extends: [require.resolve('gts/.eslintrc.json')],
       rules: {
         'no-restricted-imports': ['error', {
+          name: 'lit-html/static',
+          message: 'Use lit instead',
+        }, {
+          name: '@lit/reactive-element',
+          message: 'Use lit instead',
+        }, {
           name: '@polymer/decorators/lib/decorators',
           message: 'Use @polymer/decorators instead',
         }],
@@ -301,6 +313,11 @@ module.exports = {
         '@typescript-eslint/ban-ts-comment': 'off',
         // The following rules is required to match internal google rules
         '@typescript-eslint/restrict-plus-operands': 'error',
+        '@typescript-eslint/no-unnecessary-type-assertion': 'error',
+        '@typescript-eslint/no-confusing-void-expression': [
+          'error',
+          {ignoreArrowShorthand: true},
+        ],
         '@typescript-eslint/no-unused-vars': [
           'error',
           {argsIgnorePattern: '^_'},
@@ -419,15 +436,17 @@ module.exports = {
         'lit/attribute-value-entities': 'error',
         'lit/binding-positions': 'error',
         'lit/no-duplicate-template-bindings': 'error',
+        'lit/no-invalid-escape-sequences': 'error',
         'lit/no-invalid-html': 'error',
         'lit/no-legacy-template-syntax': 'error',
-        'lit/no-property-change-update': 'error',
-        'lit/no-invalid-escape-sequences': 'error',
         'lit/no-legacy-imports': 'error',
         'lit/no-private-properties': 'error',
+        'lit/no-property-change-update': 'error',
+        'lit/no-template-bind': 'error',
         'lit/no-useless-template-literals': 'error',
         'lit/no-value-attribute': 'error',
         'lit/prefer-static-styles': 'error',
+        'lit/quoted-expressions': ['error', 'never'],
       },
     },
   ],
@@ -444,6 +463,12 @@ module.exports = {
     'import/resolver': {
       node: {},
       [path.resolve(__dirname, './.eslint-ts-resolver.js')]: {},
+    },
+    'jsdoc': {
+      tagNamePreference: {
+        returns: 'return',
+        file: 'fileoverview',
+      },
     },
   },
 };

@@ -27,7 +27,7 @@ import com.google.gerrit.entities.Project;
 import com.google.gerrit.proto.Entities;
 import com.google.gerrit.proto.testing.SerializedClassSubject;
 import java.lang.reflect.Type;
-import java.sql.Timestamp;
+import java.time.Instant;
 import org.junit.Test;
 
 public class ChangeProtoConverterTest {
@@ -41,8 +41,8 @@ public class ChangeProtoConverterTest {
             Change.id(14),
             Account.id(35),
             BranchNameKey.create(Project.nameKey("project 67"), "branch 74"),
-            new Timestamp(987654L));
-    change.setLastUpdatedOn(new Timestamp(1234567L));
+            Instant.ofEpochMilli(987654L));
+    change.setLastUpdatedOn(Instant.ofEpochMilli(1234567L));
     change.setStatus(Change.Status.MERGED);
     change.setCurrentPatchSet(
         PatchSet.id(Change.id(14), 23), "subject XYZ", "original subject ABC");
@@ -90,7 +90,7 @@ public class ChangeProtoConverterTest {
             Change.id(14),
             Account.id(35),
             BranchNameKey.create(Project.nameKey("project 67"), "branch-74"),
-            new Timestamp(987654L));
+            Instant.ofEpochMilli(987654L));
 
     Entities.Change proto = changeProtoConverter.toProto(change);
 
@@ -125,7 +125,7 @@ public class ChangeProtoConverterTest {
             Change.id(14),
             Account.id(35),
             BranchNameKey.create(Project.nameKey("project 67"), "branch-74"),
-            new Timestamp(987654L));
+            Instant.ofEpochMilli(987654L));
     // O as ID actually means that no current patch set is present.
     change.setCurrentPatchSet(PatchSet.id(Change.id(14), 0), null, null);
 
@@ -162,7 +162,7 @@ public class ChangeProtoConverterTest {
             Change.id(14),
             Account.id(35),
             BranchNameKey.create(Project.nameKey("project 67"), "branch-74"),
-            new Timestamp(987654L));
+            Instant.ofEpochMilli(987654L));
     change.setCurrentPatchSet(PatchSet.id(Change.id(14), 23), "subject ABC", null);
 
     Entities.Change proto = changeProtoConverter.toProto(change);
@@ -198,8 +198,8 @@ public class ChangeProtoConverterTest {
             Change.id(14),
             Account.id(35),
             BranchNameKey.create(Project.nameKey("project 67"), "branch-74"),
-            new Timestamp(987654L));
-    change.setLastUpdatedOn(new Timestamp(1234567L));
+            Instant.ofEpochMilli(987654L));
+    change.setLastUpdatedOn(Instant.ofEpochMilli(1234567L));
     change.setStatus(Change.Status.MERGED);
     change.setCurrentPatchSet(
         PatchSet.id(Change.id(14), 23), "subject XYZ", "original subject ABC");
@@ -223,7 +223,7 @@ public class ChangeProtoConverterTest {
             Change.id(14),
             Account.id(35),
             BranchNameKey.create(Project.nameKey("project 67"), "branch-74"),
-            new Timestamp(987654L));
+            Instant.ofEpochMilli(987654L));
 
     Change convertedChange = changeProtoConverter.fromProto(changeProtoConverter.toProto(change));
     assertEqualChange(convertedChange, change);
@@ -242,8 +242,8 @@ public class ChangeProtoConverterTest {
     assertThat(change.getKey()).isNull();
     assertThat(change.getOwner()).isNull();
     assertThat(change.getDest()).isNull();
-    assertThat(change.getCreatedOn()).isEqualTo(new Timestamp(0));
-    assertThat(change.getLastUpdatedOn()).isEqualTo(new Timestamp(0));
+    assertThat(change.getCreatedOn()).isEqualTo(Instant.EPOCH);
+    assertThat(change.getLastUpdatedOn()).isEqualTo(Instant.EPOCH);
     assertThat(change.getSubject()).isNull();
     assertThat(change.currentPatchSetId()).isNull();
     // Default values for unset protobuf fields which can't be unset in the entity object.
@@ -268,7 +268,7 @@ public class ChangeProtoConverterTest {
             .build();
     Change change = changeProtoConverter.fromProto(proto);
 
-    assertThat(change.getLastUpdatedOn()).isEqualTo(new Timestamp(987654L));
+    assertThat(change.getLastUpdatedOn()).isEqualTo(Instant.ofEpochMilli(987654L));
   }
 
   /** See {@link SerializedClassSubject} for background and what to do if this test fails. */
@@ -279,8 +279,8 @@ public class ChangeProtoConverterTest {
             ImmutableMap.<String, Type>builder()
                 .put("changeId", Change.Id.class)
                 .put("changeKey", Change.Key.class)
-                .put("createdOn", Timestamp.class)
-                .put("lastUpdatedOn", Timestamp.class)
+                .put("createdOn", Instant.class)
+                .put("lastUpdatedOn", Instant.class)
                 .put("owner", Account.Id.class)
                 .put("dest", BranchNameKey.class)
                 .put("status", char.class)

@@ -14,33 +14,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import '../../../styles/shared-styles';
+import {css, html, LitElement} from 'lit';
+import {customElement, property} from 'lit/decorators';
+import {sharedStyles} from '../../../styles/shared-styles';
+import {BranchName, RepoName} from '../../../types/common';
+import {getAppContext} from '../../../services/app-context';
 import '../../shared/gr-autocomplete/gr-autocomplete';
 import '../../shared/gr-dialog/gr-dialog';
-import {PolymerElement} from '@polymer/polymer/polymer-element';
-import {htmlTemplate} from './gr-confirm-move-dialog_html';
-import {customElement, property} from '@polymer/decorators';
-import {BranchName, RepoName} from '../../../types/common';
-import {appContext} from '../../../services/app-context';
-import {GrTypedAutocomplete} from '../../shared/gr-autocomplete/gr-autocomplete';
+import '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
 import {addShortcut, Key, Modifier} from '../../../utils/dom-util';
+import {ValueChangedEvent} from '../../../types/events';
 
 const SUGGESTIONS_LIMIT = 15;
 
-// This is used to make sure 'branch'
-// can be typed as BranchName.
-export interface GrConfirmMoveDialog {
-  $: {
-    branchInput: GrTypedAutocomplete<BranchName>;
-  };
-}
-
 @customElement('gr-confirm-move-dialog')
-export class GrConfirmMoveDialog extends PolymerElement {
-  static get template() {
-    return htmlTemplate;
-  }
-
+export class GrConfirmMoveDialog extends LitElement {
   /**
    * Fired when the confirm button is pressed.
    *
@@ -62,9 +50,6 @@ export class GrConfirmMoveDialog extends PolymerElement {
   @property({type: String})
   project?: RepoName;
 
-  @property({type: Object})
-  _query?: (input: string) => Promise<{name: BranchName}[]>;
-
   /** Called in disconnectedCallback. */
   private cleanups: (() => void)[] = [];
 
@@ -78,24 +63,90 @@ export class GrConfirmMoveDialog extends PolymerElement {
     super.connectedCallback();
     this.cleanups.push(
       addShortcut(this, {key: Key.ENTER, modifiers: [Modifier.CTRL_KEY]}, e =>
-        this._handleConfirmTap(e)
+        this.handleConfirmTap(e)
       )
     );
     this.cleanups.push(
       addShortcut(this, {key: Key.ENTER, modifiers: [Modifier.META_KEY]}, e =>
-        this._handleConfirmTap(e)
+        this.handleConfirmTap(e)
       )
     );
   }
 
-  private readonly restApiService = appContext.restApiService;
+  private readonly restApiService = getAppContext().restApiService;
 
-  constructor() {
-    super();
-    this._query = (text: string) => this._getProjectBranchesSuggestions(text);
+  static override get styles() {
+    return [
+      sharedStyles,
+      css`
+        :host {
+          display: block;
+          width: 30em;
+        }
+        :host([disabled]) {
+          opacity: 0.5;
+          pointer-events: none;
+        }
+        label {
+          cursor: pointer;
+        }
+        .main {
+          display: flex;
+          flex-direction: column;
+          width: 100%;
+        }
+        .main label,
+        .main input[type='text'] {
+          display: block;
+          width: 100%;
+        }
+        .main .message {
+          width: 100%;
+        }
+        .warning {
+          color: var(--error-text-color);
+        }
+      `,
+    ];
   }
 
-  _handleConfirmTap(e: Event) {
+  override render() {
+    return html`
+      <gr-dialog
+        confirm-label="Move Change"
+        @confirm=${(e: Event) => this.handleConfirmTap(e)}
+        @cancel=${(e: Event) => this.handleCancelTap(e)}
+      >
+        <div class="header" slot="header">Move Change to Another Branch</div>
+        <div class="main" slot="main">
+          <p class="warning">
+            Warning: moving a change will not change its parents.
+          </p>
+          <label for="branchInput"> Move change to branch </label>
+          <gr-autocomplete
+            id="branchInput"
+            .text=${this.branch}
+            @text-changed=${(e: ValueChangedEvent) =>
+              (this.branch = e.detail.value as BranchName)}
+            .query=${(text: string) => this.getProjectBranchesSuggestions(text)}
+            placeholder="Destination branch"
+          >
+          </gr-autocomplete>
+          <label for="messageInput"> Move Change Message </label>
+          <iron-autogrow-textarea
+            id="messageInput"
+            class="message"
+            autocomplete="on"
+            .rows=${4}
+            .maxRows=${15}
+            .bindValue=${this.message}
+          ></iron-autogrow-textarea>
+        </div>
+      </gr-dialog>
+    `;
+  }
+
+  private handleConfirmTap(e: Event) {
     e.preventDefault();
     e.stopPropagation();
     this.dispatchEvent(
@@ -106,7 +157,7 @@ export class GrConfirmMoveDialog extends PolymerElement {
     );
   }
 
-  _handleCancelTap(e: Event) {
+  private handleCancelTap(e: Event) {
     e.preventDefault();
     e.stopPropagation();
     this.dispatchEvent(
@@ -117,7 +168,7 @@ export class GrConfirmMoveDialog extends PolymerElement {
     );
   }
 
-  _getProjectBranchesSuggestions(input: string) {
+  private getProjectBranchesSuggestions(input: string) {
     if (!this.project) return Promise.reject(new Error('Missing project'));
     if (input.startsWith('refs/heads/')) {
       input = input.substring('refs/heads/'.length);

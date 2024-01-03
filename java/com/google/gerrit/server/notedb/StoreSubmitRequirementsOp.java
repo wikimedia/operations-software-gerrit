@@ -1,4 +1,4 @@
-// Copyright (C) 2021 The Android Open Source Project
+// Copyright (C) 2022 The Android Open Source Project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,58 +14,64 @@
 
 package com.google.gerrit.server.notedb;
 
-import com.google.gerrit.server.experiments.ExperimentFeatures;
-import com.google.gerrit.server.experiments.ExperimentFeaturesConstants;
-import com.google.gerrit.server.project.SubmitRequirementsEvaluator;
+import com.google.gerrit.entities.SubmitRequirementResult;
+import com.google.gerrit.server.project.OnStoreSubmitRequirementResultModifier;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
 import com.google.inject.Inject;
+import com.google.inject.assistedinject.Assisted;
+import java.util.Collection;
+import java.util.List;
+import java.util.stream.Collectors;
 
 /** A {@link BatchUpdateOp} that stores the evaluated submit requirements of a change in NoteDb. */
 public class StoreSubmitRequirementsOp implements BatchUpdateOp {
-  private final ChangeData.Factory changeDataFactory;
-  private final SubmitRequirementsEvaluator evaluator;
-  private final boolean storeRequirementsInNoteDb;
+  private final Collection<SubmitRequirementResult> submitRequirementResults;
+  private final ChangeData changeData;
+  private final OnStoreSubmitRequirementResultModifier onStoreSubmitRequirementResultModifier;
 
   public interface Factory {
-    StoreSubmitRequirementsOp create();
+
+    /**
+     * {@code submitRequirements} are explicitly passed to the operation so that they are evaluated
+     * before the {@link #updateChange} is called.
+     *
+     * <p>This is because the return results of {@link ChangeData#submitRequirements()} depend on
+     * the status of the change, which can be modified by other {@link BatchUpdateOp}, sharing the
+     * same {@link ChangeContext}.
+     */
+    StoreSubmitRequirementsOp create(
+        Collection<SubmitRequirementResult> submitRequirements, ChangeData changeData);
   }
 
   @Inject
   public StoreSubmitRequirementsOp(
-      ChangeData.Factory changeDataFactory,
-      ExperimentFeatures experimentFeatures,
-      SubmitRequirementsEvaluator evaluator) {
-    this.changeDataFactory = changeDataFactory;
-    this.evaluator = evaluator;
-    this.storeRequirementsInNoteDb =
-        experimentFeatures.isFeatureEnabled(
-            ExperimentFeaturesConstants
-                .GERRIT_BACKEND_REQUEST_FEATURE_STORE_SUBMIT_REQUIREMENTS_ON_MERGE);
+      OnStoreSubmitRequirementResultModifier onStoreSubmitRequirementResultModifier,
+      @Assisted Collection<SubmitRequirementResult> submitRequirementResults,
+      @Assisted ChangeData changeData) {
+    this.onStoreSubmitRequirementResultModifier = onStoreSubmitRequirementResultModifier;
+    this.submitRequirementResults = submitRequirementResults;
+    this.changeData = changeData;
   }
 
   @Override
   public boolean updateChange(ChangeContext ctx) throws Exception {
-    if (!storeRequirementsInNoteDb) {
-      // Temporarily stop storing submit requirements in NoteDb when the change is merged.
-      return false;
-    }
-    // Create ChangeData using the project/change IDs instead of ctx.getChange(). We do that because
-    // for changes requiring a rebase before submission (e.g. if submit type = RebaseAlways), the
-    // RebaseOp inserts a new patchset that is visible here (via Change#getCurrentPatchset). If we
-    // then try to get ChangeData#currentPatchset it will return null, since it loads patchsets from
-    // NoteDb but tries to find the patchset with the ID of the one just inserted by the rebase op.
-    // Note that this implementation means that, in this case, submit requirement results will be
-    // stored in change notes of the pre last patchset commit. This is fine since submit requirement
-    // results should evaluate to the exact same results for both commits. Additionally, the
-    // pre-last commit is the one for which we displayed the submit requirement results of the last
-    // patchset to the user before it was merged.
-    ChangeData changeData = changeDataFactory.create(ctx.getProject(), ctx.getChange().getId());
     ChangeUpdate update = ctx.getUpdate(ctx.getChange().currentPatchSetId());
-    // We do not want to store submit requirements in NoteDb for legacy submit records
-    update.putSubmitRequirementResults(
-        evaluator.evaluateAllRequirements(changeData, /* includeLegacy= */ false).values());
-    return !changeData.submitRequirements().isEmpty();
+    List<SubmitRequirementResult> nonLegacySubmitRequirements =
+        submitRequirementResults.stream()
+            // We don't store results for legacy submit requirements in NoteDb. While
+            // surfacing submit requirements for closed changes, we load submit records
+            // from NoteDb and convert them to submit requirement results. See
+            // ChangeData#submitRequirements().
+            .filter(srResult -> !srResult.isLegacy())
+            .map(
+                // Pass to OnStoreSubmitRequirementResultModifier for override
+                srResult ->
+                    onStoreSubmitRequirementResultModifier.modifyResultOnStore(
+                        srResult.submitRequirement(), srResult, changeData, ctx))
+            .collect(Collectors.toList());
+    update.putSubmitRequirementResults(nonLegacySubmitRequirements);
+    return !nonLegacySubmitRequirements.isEmpty();
   }
 }

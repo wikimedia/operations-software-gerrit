@@ -15,13 +15,9 @@
  * limitations under the License.
  */
 import '@polymer/iron-icon/iron-icon';
-import '../../../styles/shared-styles';
 import '../gr-icons/gr-icons';
 import '../gr-labeled-autocomplete/gr-labeled-autocomplete';
-import {PolymerElement} from '@polymer/polymer/polymer-element';
-import {htmlTemplate} from './gr-repo-branch-picker_html';
 import {singleDecodeURL} from '../../../utils/url-util';
-import {customElement, property} from '@polymer/decorators';
 import {AutocompleteQuery} from '../gr-autocomplete/gr-autocomplete';
 import {
   BranchName,
@@ -30,59 +26,107 @@ import {
   BranchInfo,
 } from '../../../types/common';
 import {GrLabeledAutocomplete} from '../gr-labeled-autocomplete/gr-labeled-autocomplete';
-import {appContext} from '../../../services/app-context';
+import {getAppContext} from '../../../services/app-context';
+import {sharedStyles} from '../../../styles/shared-styles';
+import {LitElement, PropertyValues, html, css} from 'lit';
+import {customElement, property, state, query} from 'lit/decorators';
+import {assertIsDefined} from '../../../utils/common-util';
+import {fire} from '../../../utils/event-util';
+import {BindValueChangeEvent} from '../../../types/events';
 
 const SUGGESTIONS_LIMIT = 15;
 const REF_PREFIX = 'refs/heads/';
 
-export interface GrRepoBranchPicker {
-  $: {
-    repoInput: GrLabeledAutocomplete;
-    branchInput: GrLabeledAutocomplete;
-  };
-}
 @customElement('gr-repo-branch-picker')
-export class GrRepoBranchPicker extends PolymerElement {
-  static get template() {
-    return htmlTemplate;
-  }
+export class GrRepoBranchPicker extends LitElement {
+  @query('#repoInput') protected repoInput?: GrLabeledAutocomplete;
 
-  @property({type: String, notify: true, observer: '_repoChanged'})
+  @query('#branchInput') protected branchInput?: GrLabeledAutocomplete;
+
+  @property({type: String})
   repo?: RepoName;
 
-  @property({type: String, notify: true})
+  @property({type: String})
   branch?: BranchName;
 
-  @property({type: Boolean})
-  _branchDisabled = false;
+  @state() private branchDisabled = false;
 
-  @property({type: Object})
-  _query: AutocompleteQuery = () => Promise.resolve([]);
+  private readonly query: AutocompleteQuery = () => Promise.resolve([]);
 
-  @property({type: Object})
-  _repoQuery: AutocompleteQuery = () => Promise.resolve([]);
+  private readonly repoQuery: AutocompleteQuery = () => Promise.resolve([]);
 
-  private readonly restApiService = appContext.restApiService;
+  private readonly restApiService = getAppContext().restApiService;
 
   constructor() {
     super();
-    this._query = input => this._getRepoBranchesSuggestions(input);
-    this._repoQuery = input => this._getRepoSuggestions(input);
+    this.query = input => this.getRepoBranchesSuggestions(input);
+    this.repoQuery = input => this.getRepoSuggestions(input);
   }
 
   override connectedCallback() {
     super.connectedCallback();
     if (this.repo) {
-      this.$.repoInput.setText(this.repo);
+      assertIsDefined(this.repoInput, 'repoInput');
+      this.repoInput.setText(this.repo);
+    }
+    this.branchDisabled = !this.repo;
+  }
+
+  static override get styles() {
+    return [
+      sharedStyles,
+      css`
+        :host {
+          display: block;
+        }
+        gr-labeled-autocomplete,
+        iron-icon {
+          display: inline-block;
+        }
+        iron-icon {
+          margin-bottom: var(--spacing-l);
+        }
+      `,
+    ];
+  }
+
+  override render() {
+    return html`
+      <div>
+        <gr-labeled-autocomplete
+          id="repoInput"
+          label="Repository"
+          placeholder="Select repo"
+          .query=${this.repoQuery}
+          @commit=${(e: CustomEvent<{value: string}>) => {
+            this.repoCommitted(e);
+          }}
+        >
+        </gr-labeled-autocomplete>
+        <iron-icon icon="gr-icons:chevron-right"></iron-icon>
+        <gr-labeled-autocomplete
+          id="branchInput"
+          label="Branch"
+          placeholder="Select branch"
+          ?disabled=${this.branchDisabled}
+          .query=${this.query}
+          @commit=${(e: CustomEvent<{value: string}>) => {
+            this.branchCommitted(e);
+          }}
+        >
+        </gr-labeled-autocomplete>
+      </div>
+    `;
+  }
+
+  override willUpdate(changedProperties: PropertyValues) {
+    if (changedProperties.has('repo')) {
+      this.repoChanged();
     }
   }
 
-  override ready() {
-    super.ready();
-    this._branchDisabled = !this.repo;
-  }
-
-  _getRepoBranchesSuggestions(input: string) {
+  // private but used in test
+  getRepoBranchesSuggestions(input: string) {
     if (!this.repo) {
       return Promise.resolve([]);
     }
@@ -91,16 +135,32 @@ export class GrRepoBranchPicker extends PolymerElement {
     }
     return this.restApiService
       .getRepoBranches(input, this.repo, SUGGESTIONS_LIMIT)
-      .then(res => this._branchResponseToSuggestions(res));
+      .then(res => this.branchResponseToSuggestions(res));
   }
 
-  _getRepoSuggestions(input: string) {
+  private branchResponseToSuggestions(res: BranchInfo[] | undefined) {
+    if (!res) return [];
+    return res
+      .filter(branchInfo => branchInfo.ref !== 'HEAD')
+      .map(branchInfo => {
+        let branch;
+        if (branchInfo.ref.startsWith(REF_PREFIX)) {
+          branch = branchInfo.ref.substring(REF_PREFIX.length);
+        } else {
+          branch = branchInfo.ref;
+        }
+        return {name: branch, value: branch};
+      });
+  }
+
+  // private but used in test
+  getRepoSuggestions(input: string) {
     return this.restApiService
       .getRepos(input, SUGGESTIONS_LIMIT)
-      .then(res => this._repoResponseToSuggestions(res));
+      .then(res => this.repoResponseToSuggestions(res));
   }
 
-  _repoResponseToSuggestions(res: ProjectInfoWithName[] | undefined) {
+  private repoResponseToSuggestions(res: ProjectInfoWithName[] | undefined) {
     if (!res) return [];
     return res.map(repo => {
       return {
@@ -110,34 +170,28 @@ export class GrRepoBranchPicker extends PolymerElement {
     });
   }
 
-  _branchResponseToSuggestions(res: BranchInfo[] | undefined) {
-    if (!res) return [];
-    return res.map(branchInfo => {
-      let branch;
-      if (branchInfo.ref.startsWith(REF_PREFIX)) {
-        branch = branchInfo.ref.substring(REF_PREFIX.length);
-      } else {
-        branch = branchInfo.ref;
-      }
-      return {name: branch, value: branch};
-    });
-  }
-
-  _repoCommitted(e: CustomEvent<{value: string}>) {
+  private repoCommitted(e: CustomEvent<{value: string}>) {
     this.repo = e.detail.value as RepoName;
+    fire(this, 'repo-changed', {value: e.detail.value});
   }
 
-  _branchCommitted(e: CustomEvent<{value: string}>) {
+  private branchCommitted(e: CustomEvent<{value: string}>) {
     this.branch = e.detail.value as BranchName;
+    fire(this, 'branch-changed', {value: e.detail.value});
   }
 
-  _repoChanged() {
-    this.$.branchInput.clear();
-    this._branchDisabled = !this.repo;
+  private repoChanged() {
+    assertIsDefined(this.branchInput, 'branchInput');
+    this.branchInput.clear();
+    this.branchDisabled = !this.repo;
   }
 }
 
 declare global {
+  interface HTMLElementEventMap {
+    'branch-changed': BindValueChangeEvent;
+    'repo-changed': BindValueChangeEvent;
+  }
   interface HTMLElementTagNameMap {
     'gr-repo-branch-picker': GrRepoBranchPicker;
   }

@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
+import {NumericChangeId} from '../../types/common';
 import {StorageLocation, StorageObject, StorageService} from './gr-storage';
-import {DURATION_DAY} from './gr-storage_impl';
 
 const storage = new Map<string, StorageObject>();
 
@@ -45,6 +45,7 @@ export function cleanUpStorage() {
 }
 
 export const grStorageMock: StorageService = {
+  finalize(): void {},
   getDraftComment(location: StorageLocation): StorageObject | null {
     return storage.get(getDraftKey(location)) ?? null;
   },
@@ -70,17 +71,15 @@ export const grStorageMock: StorageService = {
     });
   },
 
-  getRespectfulTipVisibility(): StorageObject | null {
-    return storage.get('respectfultip:visibility') ?? null;
-  },
-
-  setRespectfulTipVisibility(delayDays = 0): void {
-    storage.set('respectfultip:visibility', {
-      updated: Date.now() + delayDays * DURATION_DAY,
-    });
-  },
-
   eraseEditableContentItem(key: string): void {
     storage.delete(getEditableContentKey(key));
+  },
+
+  eraseEditableContentItemsForChangeEdit(changeNum?: NumericChangeId): void {
+    for (const key of Array.from(storage.keys())) {
+      if (key.startsWith(`editablecontent:c${changeNum}_ps`)) {
+        this.eraseEditableContentItem(key.replace('editablecontent:', ''));
+      }
+    }
   },
 };

@@ -52,7 +52,6 @@ export enum Shortcut {
   OPEN_CHANGE = 'OPEN_CHANGE',
   NEXT_PAGE = 'NEXT_PAGE',
   PREV_PAGE = 'PREV_PAGE',
-  TOGGLE_CHANGE_REVIEWED = 'TOGGLE_CHANGE_REVIEWED',
   TOGGLE_CHANGE_STAR = 'TOGGLE_CHANGE_STAR',
   REFRESH_CHANGE_LIST = 'REFRESH_CHANGE_LIST',
   OPEN_SUBMIT_DIALOG = 'OPEN_SUBMIT_DIALOG',
@@ -180,13 +179,13 @@ describe(
   Shortcut.CURSOR_NEXT_CHANGE,
   ShortcutSection.ACTIONS,
   'Select next change',
-  {key: 'j'}
+  {key: 'j', allowRepeat: true}
 );
 describe(
   Shortcut.CURSOR_PREV_CHANGE,
   ShortcutSection.ACTIONS,
   'Select previous change',
-  {key: 'k'}
+  {key: 'k', allowRepeat: true}
 );
 describe(
   Shortcut.OPEN_CHANGE,
@@ -237,12 +236,6 @@ describe(
   ShortcutSection.ACTIONS,
   'Reload the change at the latest patch',
   {key: 'R'}
-);
-describe(
-  Shortcut.TOGGLE_CHANGE_REVIEWED,
-  ShortcutSection.ACTIONS,
-  'Mark/unmark change as reviewed',
-  {key: 'r'}
 );
 describe(
   Shortcut.TOGGLE_FILE_REVIEWED,
@@ -316,15 +309,15 @@ describe(
   Shortcut.NEXT_LINE,
   ShortcutSection.DIFFS,
   'Go to next line',
-  {key: 'j'},
-  {key: Key.DOWN}
+  {key: 'j', allowRepeat: true},
+  {key: Key.DOWN, allowRepeat: true}
 );
 describe(
   Shortcut.PREV_LINE,
   ShortcutSection.DIFFS,
   'Go to previous line',
-  {key: 'k'},
-  {key: Key.UP}
+  {key: 'k', allowRepeat: true},
+  {key: Key.UP, allowRepeat: true}
 );
 describe(
   Shortcut.VISIBLE_LINE,
@@ -480,15 +473,15 @@ describe(
   Shortcut.CURSOR_NEXT_FILE,
   ShortcutSection.FILE_LIST,
   'Select next file',
-  {key: 'j'},
-  {key: Key.DOWN}
+  {key: 'j', allowRepeat: true},
+  {key: Key.DOWN, allowRepeat: true}
 );
 describe(
   Shortcut.CURSOR_PREV_FILE,
   ShortcutSection.FILE_LIST,
   'Select previous file',
-  {key: 'k'},
-  {key: Key.UP}
+  {key: 'k', allowRepeat: true},
+  {key: Key.UP, allowRepeat: true}
 );
 describe(
   Shortcut.OPEN_FILE,

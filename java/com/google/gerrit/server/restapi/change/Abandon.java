@@ -30,8 +30,10 @@ import com.google.gerrit.server.change.ChangeJson;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.change.NotifyResolver;
 import com.google.gerrit.server.notedb.ChangeNotes;
+import com.google.gerrit.server.notedb.StoreSubmitRequirementsOp;
 import com.google.gerrit.server.permissions.ChangePermission;
 import com.google.gerrit.server.permissions.PermissionBackendException;
+import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.time.TimeUtil;
@@ -43,24 +45,30 @@ import org.eclipse.jgit.errors.ConfigInvalidException;
 @Singleton
 public class Abandon
     implements RestModifyView<ChangeResource, AbandonInput>, UiAction<ChangeResource> {
+  private final ChangeData.Factory changeDataFactory;
   private final BatchUpdate.Factory updateFactory;
   private final ChangeJson.Factory json;
   private final AbandonOp.Factory abandonOpFactory;
   private final NotifyResolver notifyResolver;
   private final PatchSetUtil patchSetUtil;
+  private final StoreSubmitRequirementsOp.Factory storeSubmitRequirementsOpFactory;
 
   @Inject
   Abandon(
+      ChangeData.Factory changeDataFactory,
       BatchUpdate.Factory updateFactory,
       ChangeJson.Factory json,
       AbandonOp.Factory abandonOpFactory,
       NotifyResolver notifyResolver,
-      PatchSetUtil patchSetUtil) {
+      PatchSetUtil patchSetUtil,
+      StoreSubmitRequirementsOp.Factory storeSubmitRequirementsOpFactory) {
+    this.changeDataFactory = changeDataFactory;
     this.updateFactory = updateFactory;
     this.json = json;
     this.abandonOpFactory = abandonOpFactory;
     this.notifyResolver = notifyResolver;
     this.patchSetUtil = patchSetUtil;
+    this.storeSubmitRequirementsOpFactory = storeSubmitRequirementsOpFactory;
   }
 
   @Override
@@ -117,9 +125,15 @@ public class Abandon
       throws RestApiException, UpdateException {
     AccountState accountState = user.isIdentifiedUser() ? user.asIdentifiedUser().state() : null;
     AbandonOp op = abandonOpFactory.create(accountState, msgTxt);
-    try (BatchUpdate u = updateFactory.create(notes.getProjectName(), user, TimeUtil.nowTs())) {
+    ChangeData changeData = changeDataFactory.create(notes.getProjectName(), notes.getChangeId());
+    try (BatchUpdate u = updateFactory.create(notes.getProjectName(), user, TimeUtil.now())) {
       u.setNotify(notify);
-      u.addOp(notes.getChangeId(), op).execute();
+      u.addOp(notes.getChangeId(), op);
+      u.addOp(
+          notes.getChangeId(),
+          storeSubmitRequirementsOpFactory.create(
+              changeData.submitRequirements().values(), changeData));
+      u.execute();
     }
     return op.getChange();
   }

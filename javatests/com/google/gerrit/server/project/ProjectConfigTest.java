@@ -20,6 +20,7 @@ import static com.google.gerrit.entities.BooleanProjectConfig.REQUIRE_CHANGE_ID;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
+import com.google.gerrit.common.RuntimeVersion;
 import com.google.gerrit.entities.AccessSection;
 import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.entities.AccountsSection;
@@ -217,7 +218,7 @@ public class ProjectConfigTest {
                 "[submit-requirement \"Code-review\"]\n"
                     + "  description =  At least one Code Review +2\n"
                     + "  applicableIf =branch(refs/heads/master)\n"
-                    + "  submittableIf =  label(code-review, +2)\n"
+                    + "  submittableIf =  label(Code-Review, +2)\n"
                     + "[submit-requirement \"api-review\"]\n"
                     + "  description =  Additional review required for API modifications\n"
                     + "  applicableIf =commit_filepath_contains(\\\"/api/.*\\\")\n"
@@ -237,7 +238,7 @@ public class ProjectConfigTest {
                 .setApplicabilityExpression(
                     SubmitRequirementExpression.of("branch(refs/heads/master)"))
                 .setSubmittabilityExpression(
-                    SubmitRequirementExpression.create("label(code-review, +2)"))
+                    SubmitRequirementExpression.create("label(Code-Review, +2)"))
                 .setOverrideExpression(Optional.empty())
                 .setAllowOverrideInChildProjects(false)
                 .build(),
@@ -262,19 +263,19 @@ public class ProjectConfigTest {
             .add("groups", group(developers))
             .add(
                 "project.config",
-                "[submit-requirement \"code-review\"]\n"
-                    + "  submittableIf =  label(code-review, +2)\n")
+                "[submit-requirement \"Code-Review\"]\n"
+                    + "  submittableIf =  label(Code-Review, +2)\n")
             .create();
 
     ProjectConfig cfg = read(rev);
     Map<String, SubmitRequirement> submitRequirements = cfg.getSubmitRequirementSections();
     assertThat(submitRequirements)
         .containsExactly(
-            "code-review",
+            "Code-Review",
             SubmitRequirement.builder()
-                .setName("code-review")
+                .setName("Code-Review")
                 .setSubmittabilityExpression(
-                    SubmitRequirementExpression.create("label(code-review, +2)"))
+                    SubmitRequirementExpression.create("label(Code-Review, +2)"))
                 .setAllowOverrideInChildProjects(false)
                 .build());
   }
@@ -320,8 +321,8 @@ public class ProjectConfigTest {
             .add("groups", group(developers))
             .add(
                 "project.config",
-                "[submit-requirement \"code-review\"]\n"
-                    + "  applicableIf =label(code-review, +2)\n")
+                "[submit-requirement \"Code-Review\"]\n"
+                    + "  applicableIf =label(Code-Review, +2)\n")
             .create();
 
     ProjectConfig cfg = read(rev);
@@ -330,8 +331,9 @@ public class ProjectConfigTest {
     assertThat(cfg.getValidationErrors()).hasSize(1);
     assertThat(Iterables.getOnlyElement(cfg.getValidationErrors()).getMessage())
         .isEqualTo(
-            "project.config: Submit requirement 'code-review' does not define a submittability"
-                + " expression.");
+            "project.config: Setting a submittability expression for submit requirement"
+                + " 'Code-Review' is required: Missing"
+                + " submit-requirement.Code-Review.submittableIf");
   }
 
   @Test
@@ -392,6 +394,31 @@ public class ProjectConfigTest {
     assertThat(cfg.getValidationErrors()).hasSize(1);
     assertThat(Iterables.getOnlyElement(cfg.getValidationErrors()).getMessage())
         .isEqualTo("project.config: Invalid defaultValue \"-2\" for label \"CustomLabel\"");
+  }
+
+  @Test
+  public void readConfigLabelInvalidBranchPattern() throws Exception {
+    RevCommit rev =
+        tr.commit()
+            .add("groups", group(developers))
+            .add(
+                "project.config",
+                "[label \"CustomLabel\"]\n"
+                    + "  value = -1 Negative\n"
+                    + "  value = 0 No Score\n"
+                    + "  value =  1 Positive\n"
+                    + "  branch = ^***\n"
+                    + "  defaultValue = 0\n")
+            .create();
+
+    ProjectConfig cfg = read(rev);
+    assertThat(cfg.getValidationErrors()).hasSize(1);
+    assertThat(Iterables.getOnlyElement(cfg.getValidationErrors()).getMessage())
+        .isEqualTo(
+            "project.config: Invalid ref pattern \"^***\""
+                + " in label.CustomLabel.branch: Dangling meta character '*' near index 2\n"
+                + "^***\n"
+                + "  ^");
   }
 
   @Test
@@ -604,7 +631,7 @@ public class ProjectConfigTest {
     PluginConfig pluginCfg = cfg.getPluginConfig("somePlugin");
     assertThat(pluginCfg.getNames()).hasSize(2);
     assertThat(pluginCfg.getString("key1")).isEqualTo("value1");
-    assertThat(pluginCfg.getStringList(("key2"))).isEqualTo(new String[] {"value2a", "value2b"});
+    assertThat(pluginCfg.getStringList("key2")).isEqualTo(new String[] {"value2a", "value2b"});
   }
 
   @Test
@@ -729,6 +756,7 @@ public class ProjectConfigTest {
     ProjectConfig cfg = read(rev);
     assertThat(cfg.getCommentLinkSections())
         .containsExactly(StoredCommentLinkInfo.enabled("bugzilla"));
+    assertThat(Iterables.getOnlyElement(cfg.getCommentLinkSections()).getEnabled()).isNull();
   }
 
   @Test
@@ -740,6 +768,7 @@ public class ProjectConfigTest {
     ProjectConfig cfg = read(rev);
     assertThat(cfg.getCommentLinkSections())
         .containsExactly(StoredCommentLinkInfo.disabled("bugzilla"));
+    assertThat(Iterables.getOnlyElement(cfg.getCommentLinkSections()).getEnabled()).isFalse();
   }
 
   @Test
@@ -775,13 +804,19 @@ public class ProjectConfigTest {
             .create();
     ProjectConfig cfg = read(rev);
     assertThat(cfg.getCommentLinkSections()).isEmpty();
+
+    boolean atLeastJava17 = RuntimeVersion.isAtLeast17();
     assertThat(cfg.getValidationErrors())
         .containsExactly(
             ValidationError.create(
                 "project.config: Invalid pattern \"(bugs{+#?)(d+)\" in commentlink.bugzilla.match: "
-                    + "Illegal repetition near index 4\n"
+                    + "Illegal repetition near index "
+                    + (atLeastJava17 ? "6" : "4")
+                    + "\n"
                     + "(bugs{+#?)(d+)\n"
-                    + "    ^"));
+                    + "    "
+                    + (atLeastJava17 ? "  " : "")
+                    + "^"));
   }
 
   @Test
@@ -952,10 +987,10 @@ public class ProjectConfigTest {
         tr.commit()
             .add(
                 "project.config",
-                "[submit-requirement \"code-review\"]\n"
+                "[submit-requirement \"Code-Review\"]\n"
                     + "  description =  At least one Code Review +2\n"
                     + "  applicableIf =branch(refs/heads/master)\n"
-                    + "  submittableIf =  label(code-review, +2)\n"
+                    + "  submittableIf =  label(Code-Review, +2)\n"
                     + "[notify \"name\"]\n"
                     + "  email = example@example.com\n")
             .create();
@@ -1022,6 +1057,24 @@ public class ProjectConfigTest {
             new byte[] {
               -53, -97, -1, 52, -119, 104, -13, -41, -7, 82, -90, 126, -32, -13, -91, 49
             });
+  }
+
+  @Test
+  public void readCopyValues_emptyValueIsIgnored() throws Exception {
+    RevCommit rev =
+        tr.commit()
+            .add(
+                "project.config",
+                "[label \"CustomLabel\"]\n"
+                    + "  copyValue = 1\n"
+                    + "  copyValue = 2\n"
+                    + "  copyValue = \n")
+            .create();
+
+    ProjectConfig cfg = read(rev);
+    Map<String, LabelType> labels = cfg.getLabelSections();
+    assertThat(labels.entrySet().iterator().next().getValue().getCopyValues())
+        .containsExactly((short) 1, (short) 2);
   }
 
   private Path writeDefaultAllProjectsConfig(String... lines) throws IOException {

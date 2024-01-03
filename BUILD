@@ -4,24 +4,17 @@ load("//tools/bzl:pkg_war.bzl", "pkg_war")
 package(default_visibility = ["//visibility:public"])
 
 config_setting(
-    name = "java11",
+    name = "java17",
     values = {
-        "java_toolchain": "@bazel_tools//tools/jdk:toolchain_java11",
-    },
-)
-
-config_setting(
-    name = "java_next",
-    values = {
-        "java_toolchain": "//tools:toolchain_vanilla",
+        "java_language_version": "17",
     },
 )
 
 genrule(
     name = "gen_version",
     outs = ["version.txt"],
-    cmd = ("cat bazel-out/volatile-status.txt bazel-out/stable-status.txt | " +
-           "grep STABLE_BUILD_GERRIT_LABEL | cut -d ' ' -f 2 > $@"),
+    cmd = ("(cat bazel-out/volatile-status.txt bazel-out/stable-status.txt | " +
+           "grep STABLE_BUILD_GERRIT_LABEL | cut -d ' ' -f 2) > $@ || echo 'UNKNOWN' > $@"),
     stamp = 1,
 )
 

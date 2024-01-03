@@ -49,6 +49,10 @@ are added to the same query string, they further restrict the
 returned results. Search can also be performed by typing only a
 text with no operator, which will match against a variety of fields.
 
+Characters in operator values can be escaped by enclosing the value with
+double quotes and escaping characters with a backslash. For example
+`message:"This \"is\" fixing a bug"`.
+
 [[age]]
 age:'AGE'::
 +
@@ -262,6 +266,11 @@ Changes whose designated topic matches 'TOPIC' exactly.  This is
 often combined with 'branch:' and 'project:' operators to select
 all related changes in a series.
 
+[[prefixtopic]]
+prefixtopic:'TOPIC'::
++
+Changes whose designated topic start with 'TOPIC'.
+
 [[inhashtag]]
 inhashtag:'HASHTAG'::
 +
@@ -276,6 +285,12 @@ library,role=external,window=_blank] is used for evaluation of such patterns.
 hashtag:'HASHTAG'::
 +
 Changes whose link:intro-user.html#hashtags[hashtag] matches 'HASHTAG'.
+The match is case-insensitive.
+
+[[prefixhashtag]]
+prefixhashtag:'HASHTAG'::
++
+Changes whose link:intro-user.html#hashtags[hashtag] start with 'HASHTAG'.
 The match is case-insensitive.
 
 [[cherrypickof]]
@@ -321,6 +336,12 @@ of the argument.
 message:'MESSAGE'::
 +
 Changes that match 'MESSAGE' arbitrary string in the commit message body.
+By default full text matching is used, but regular expressions can be
+enabled by starting with `^`.
+The link:http://www.brics.dk/automaton/[dk.brics.automaton library,role=external,window=_blank]
+is used for the evaluation of such patterns. Note, that searching with
+regular expressions is limited to the first 32766 bytes of the
+commit message due to limitations in Lucene.
 
 [[comment]]
 comment:'TEXT'::
@@ -405,6 +426,12 @@ footer:'FOOTER'::
 Matches any change that has 'FOOTER' as footer in the commit message of the
 current patch set. 'FOOTER' can be specified verbatim ('<key>: <value>', must
 be quoted) or as '<key>=<value>'. The matching is done case-insensitive.
+
+[[hasfooter-operator]]
+hasfooter:'FOOTERNAME'::
++
+Matches any change that has a commit message with a footer where the footer
+name is equal to 'FOOTERNAME'.The matching is done case-sensitive.
 
 [[star]]
 star:'LABEL'::
@@ -505,6 +532,7 @@ is:merged, is:abandoned::
 +
 Same as <<status,status:'STATE'>>.
 
+[[is-submittable]]
 is:submittable::
 +
 True if the change is submittable according to the submit rules for
@@ -516,8 +544,6 @@ appear for matching changes. To check whether a submit button appears,
 use the
 link:rest-api-changes.html#get-revision-actions[Get Revision Actions]
 API.
-+
-Equivalent to <<submittable,submittable:ok>>.
 
 [[mergeable]]
 is:mergeable::
@@ -562,6 +588,11 @@ This is limited to changes which are cherrypicked using REST API
 or WebUI only. It is not able to identify changes which are
 cherry-picked locally using the git cherry-pick command and then
 pushed to Gerrit.
+
+[[pure-revert]]
+is:pure-revert::
++
+True if the change is a pure revert.
 
 [[status]]
 status:open, status:pending, status:new::
@@ -632,16 +663,6 @@ Changes where 'COMMITTER' is the committer of the current patch set.
 email address. The special case of `committer:self` will find changes committed
 by the caller.
 
-
-[[submittable]]
-submittable:'SUBMIT_STATUS'::
-+
-Changes having the given submit record status after applying submit
-rules. Valid statuses are in the `status` field of
-link:rest-api-changes.html#submit-record[SubmitRecord]. This operator
-only applies to the top-level status; individual label statuses can be
-searched link:#labels[by label].
-
 [[rule]]
 rule:'SUBMIT_RULE_NAME'::
 +
@@ -649,8 +670,7 @@ Changes where 'SUBMIT_RULE_NAME' returns a submit record with status in {OK,
 FORCED}. This means that the submit rule has passed and is not blocking the
 change submission. 'SUBMIT_RULE_NAME' should be in the form of
 '$plugin_name~$rule_name'. For gerrit core rules, 'SUBMIT_RULE_NAME' should
-be in the form of '$rule_name' (example: `DefaultSubmitRule`), or
-'gerrit~$rule_name' (example: `gerrit~DefaultSubmitRule`).
+be in the form of 'gerrit~$rule_name' (example: `gerrit~DefaultSubmitRule`).
 
 rule:'SUBMIT_RULE_NAME'='STATUS'::
 +
@@ -770,12 +790,41 @@ Matches changes with label voted with the lowest possible score.
 +
 Matches changes with label voted with any score.
 
-`label:Non-Author-Code-Review=need`::
+`label:Code-Review=+1,count=2`::
++
+Matches changes with exactly two +1 votes to the code-review label. The {MAX,
+MIN, ANY} votes can also be used, for example `label:Code-Review=MAX,count=2` is
+equivalent to `label:Code-Review=2,count=2` (if 2 is the maximum positive vote
+for the code review label). The maximum supported value for `count` is 5.
+`count=0` is not allowed and the query request will fail with `400 Bad Request`.
+
+`label:Code-Review=+1,count>=2`::
++
+Matches changes having two or more +1 votes to the code-review label. Can also
+be used with the {MAX, MIN, ANY} label votes. All operators `>`, `>=`, `<`, `<=`
+are supported.
+Note that a query like `label:Code-Review=+1,count<x` will not match with
+changes having zero +1 votes to this label.
+
+`label:Non-Author-Code-Review=need` (deprecated)::
 +
 Matches changes where the submit rules indicate that a label named
 `Non-Author-Code-Review` is needed. (See the
 link:prolog-cookbook.html#NonAuthorCodeReview[Prolog Cookbook] for how
 this label can be configured.)
++
+This operator is also compatible with
+link:config-submit-requirements.html[submit requirement] results. A submit
+requirement name could be used instead of the label name. The submit record
+statuses are mapped to submit requirement result statuses as follows:
++
+  * {`need`, `reject`} -> {`UNSATISFED`}
+  * {`ok`, `may`} -> {`SATISFIED`, `OVERRIDDEN`}
++
+For example, a query like `label:Code-Review=ok` will also match changes
+having a submit requirement with a result that is either `SATISFIED` or
+`OVERRIDDEN`. Users are encouraged not to rely on this operator since submit
+records are deprecated.
 
 `label:Code-Review=+2,aname`::
 `label:Code-Review=ok,aname`::
@@ -813,7 +862,7 @@ ldap/linux.workflow group.
 +
 Matches changes that are ready to be submitted according to one common
 label configuration. (For a more general check, use
-link:#submittable[submittable:ok].)
+link:#is-submittable[is:submittable].)
 
 `is:open (label:Verified-1 OR label:Code-Review-2)`::
 `is:open (label:Verified=reject OR label:Code-Review=reject)`::

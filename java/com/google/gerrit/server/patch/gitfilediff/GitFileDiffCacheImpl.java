@@ -1,16 +1,16 @@
-//  Copyright (C) 2020 The Android Open Source Project
+// Copyright (C) 2020 The Android Open Source Project
 //
-//  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//  http://www.apache.org/licenses/LICENSE-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
-//  Unless required by applicable law or agreed to in writing, software
-//  distributed under the License is distributed on an "AS IS" BASIS,
-//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//  See the License for the specific language governing permissions and
-//  limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package com.google.gerrit.server.patch.gitfilediff;
 
@@ -60,7 +60,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.DiffEntry.ChangeType;
@@ -156,16 +155,6 @@ public class GitFileDiffCacheImpl implements GitFileDiffCache {
   }
 
   static class Loader extends CacheLoader<GitFileDiffCacheKey, GitFileDiff> {
-    /**
-     * Extractor for the file path from a {@link DiffEntry}. Returns the old file path if the entry
-     * corresponds to a deleted file, otherwise it returns the new file path.
-     */
-    private static final Function<DiffEntry, String> pathExtractor =
-        (DiffEntry entry) ->
-            entry.getChangeType().equals(ChangeType.DELETE)
-                ? entry.getOldPath()
-                : entry.getNewPath();
-
     private final GitRepositoryManager repoManager;
     private final ExecutorService diffExecutor;
     private final long timeoutMillis;
@@ -294,10 +283,10 @@ public class GitFileDiffCacheImpl implements GitFileDiffCache {
               diffOptions.newTree());
 
       return diffEntries.stream()
-          .filter(d -> filePathsSet.contains(pathExtractor.apply(d)))
+          .filter(d -> filePathsSet.contains(extractPath(d)))
           .collect(
               Multimaps.toMultimap(
-                  d -> pathExtractor.apply(d),
+                  Loader::extractPath,
                   identity(),
                   MultimapBuilder.treeKeys().arrayListValues()::build));
     }
@@ -369,7 +358,7 @@ public class GitFileDiffCacheImpl implements GitFileDiffCache {
               });
       try {
         // We employ the timeout because of a bug in Myers diff in JGit. See
-        // bugs.chromium.org/p/gerrit/issues/detail?id=487 for more details. The bug may happen
+        // https://issues.gerritcodereview.com/issues/40000618 for more details. The bug may happen
         // if the algorithm used in diffs is HISTOGRAM_WITH_FALLBACK_MYERS.
         return fileDiffFuture.get(timeoutMillis, TimeUnit.MILLISECONDS);
       } catch (InterruptedException | TimeoutException e) {
@@ -385,6 +374,16 @@ public class GitFileDiffCacheImpl implements GitFileDiffCache {
         Throwables.throwIfInstanceOf(e.getCause(), IOException.class);
         throw new IOException(e.getMessage(), e.getCause());
       }
+    }
+
+    /**
+     * Extract the file path from a {@link DiffEntry}. Returns the old file path if the entry
+     * corresponds to a deleted file, otherwise it returns the new file path.
+     */
+    private static String extractPath(DiffEntry diffEntry) {
+      return diffEntry.getChangeType().equals(ChangeType.DELETE)
+          ? diffEntry.getOldPath()
+          : diffEntry.getNewPath();
     }
   }
 

@@ -28,7 +28,7 @@ import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.InternalUser;
 import java.io.IOException;
-import java.util.Date;
+import java.time.Instant;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
@@ -45,7 +45,7 @@ public abstract class AbstractChangeUpdate {
   protected final Account.Id accountId;
   protected final Account.Id realAccountId;
   protected final PersonIdent authorIdent;
-  protected final Date when;
+  protected final Instant when;
 
   @Nullable private final ChangeNotes notes;
   private final Change change;
@@ -60,7 +60,7 @@ public abstract class AbstractChangeUpdate {
       CurrentUser user,
       PersonIdent serverIdent,
       ChangeNoteUtil noteUtil,
-      Date when) {
+      Instant when) {
     this.noteUtil = noteUtil;
     this.serverIdent = new PersonIdent(serverIdent, when);
     this.notes = notes;
@@ -80,7 +80,7 @@ public abstract class AbstractChangeUpdate {
       Account.Id accountId,
       Account.Id realAccountId,
       PersonIdent authorIdent,
-      Date when) {
+      Instant when) {
     checkArgument(
         (notes != null && change == null) || (notes == null && change != null),
         "exactly one of notes or change required");
@@ -107,7 +107,7 @@ public abstract class AbstractChangeUpdate {
   }
 
   private static PersonIdent ident(
-      ChangeNoteUtil noteUtil, PersonIdent serverIdent, CurrentUser u, Date when) {
+      ChangeNoteUtil noteUtil, PersonIdent serverIdent, CurrentUser u, Instant when) {
     checkUserType(u);
     if (u instanceof IdentifiedUser) {
       return noteUtil.newAccountIdIdent(u.asIdentifiedUser().getAccount().id(), when, serverIdent);
@@ -137,7 +137,7 @@ public abstract class AbstractChangeUpdate {
     return change;
   }
 
-  public Date getWhen() {
+  public Instant getWhen() {
     return when;
   }
 

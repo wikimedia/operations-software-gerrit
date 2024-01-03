@@ -30,11 +30,10 @@ import com.google.gerrit.server.logging.LoggingContextAwareRunnable;
 import com.google.gerrit.server.util.IdGenerator;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
-import java.lang.Thread.UncaughtExceptionHandler;
 import java.lang.reflect.Field;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Date;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
@@ -83,10 +82,6 @@ public class WorkQueue {
       listener().to(Lifecycle.class);
     }
   }
-
-  private static final UncaughtExceptionHandler LOG_UNCAUGHT_EXCEPTION =
-      (t, e) ->
-          logger.atSevere().withCause(e).log("WorkQueue thread %s threw exception", t.getName());
 
   private final ScheduledExecutorService defaultQueue;
   private final IdGenerator idGenerator;
@@ -152,6 +147,7 @@ public class WorkQueue {
    * @param threadPriority thread priority.
    * @param withMetrics whether to create metrics.
    */
+  @SuppressWarnings("ThreadPriorityCheck")
   public ScheduledThreadPoolExecutor createQueue(
       int poolsize, String queueName, int threadPriority, boolean withMetrics) {
     Executor executor = new Executor(poolsize, queueName);
@@ -259,7 +255,7 @@ public class WorkQueue {
             public Thread newThread(Runnable task) {
               final Thread t = parent.newThread(task);
               t.setName(queueName + "-" + tid.getAndIncrement());
-              t.setUncaughtExceptionHandler(LOG_UNCAUGHT_EXCEPTION);
+              t.setUncaughtExceptionHandler(WorkQueue::logUncaughtException);
               return t;
             }
           });
@@ -444,6 +440,10 @@ public class WorkQueue {
     }
   }
 
+  private static void logUncaughtException(Thread t, Throwable e) {
+    logger.atSevere().withCause(e).log("WorkQueue thread %s threw exception", t.getName());
+  }
+
   /**
    * Runnable needing to know it was canceled. Note that cancel is called only in case the task is
    * not in progress already.
@@ -496,7 +496,7 @@ public class WorkQueue {
     private final Executor executor;
     private final int taskId;
     private final AtomicBoolean running;
-    private final Date startTime;
+    private final Instant startTime;
 
     Task(Runnable runnable, RunnableScheduledFuture<V> task, Executor executor, int taskId) {
       this.runnable = runnable;
@@ -504,7 +504,7 @@ public class WorkQueue {
       this.executor = executor;
       this.taskId = taskId;
       this.running = new AtomicBoolean();
-      this.startTime = new Date();
+      this.startTime = Instant.now();
     }
 
     public int getTaskId() {
@@ -527,7 +527,7 @@ public class WorkQueue {
       return State.SLEEPING;
     }
 
-    public Date getStartTime() {
+    public Instant getStartTime() {
       return startTime;
     }
 

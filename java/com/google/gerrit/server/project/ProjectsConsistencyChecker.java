@@ -247,7 +247,7 @@ public class ProjectsConsistencyChecker {
     return r;
   }
 
-  private List<ChangeInfo> executeQueryAndAutoCloseChanges(
+  private ImmutableList<ChangeInfo> executeQueryAndAutoCloseChanges(
       Predicate<ChangeData> basePredicate,
       Set<Change.Id> seenChanges,
       List<Predicate<ChangeData>> predicates,
@@ -269,7 +269,7 @@ public class ProjectsConsistencyChecker {
               .call();
 
       // Result for this query that we want to return to the client.
-      List<ChangeInfo> autoCloseableChangesByBranch = new ArrayList<>();
+      ImmutableList.Builder<ChangeInfo> autoCloseableChangesByBranch = ImmutableList.builder();
 
       for (ChangeData autoCloseableChange : queryResult) {
         // Skip changes that we have already processed, either by this query or by
@@ -306,7 +306,7 @@ public class ProjectsConsistencyChecker {
         }
       }
 
-      return autoCloseableChangesByBranch;
+      return autoCloseableChangesByBranch.build();
     } catch (Exception e) {
       Throwables.throwIfUnchecked(e);
       throw new StorageException(e);

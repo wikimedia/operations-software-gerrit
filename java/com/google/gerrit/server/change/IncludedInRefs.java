@@ -16,11 +16,8 @@ package com.google.gerrit.server.change;
 
 import static java.util.stream.Collectors.toSet;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.gerrit.entities.Project;
-import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.extensions.restapi.BadRequestException;
-import com.google.gerrit.extensions.restapi.ResourceConflictException;
-import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackend.RefFilterOptions;
@@ -28,7 +25,6 @@ import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.inject.Inject;
 import java.io.IOException;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -55,8 +51,7 @@ public class IncludedInRefs {
 
   public Map<String, Set<String>> apply(
       Project.NameKey project, Set<String> commits, Set<String> refNames)
-      throws ResourceConflictException, BadRequestException, IOException,
-          PermissionBackendException, ResourceNotFoundException, AuthException {
+      throws IOException, PermissionBackendException {
     try (Repository repo = repoManager.openRepository(project)) {
       Set<Ref> visibleRefs = getVisibleRefs(repo, refNames, project);
 
@@ -72,7 +67,7 @@ public class IncludedInRefs {
         }
       }
     }
-    return Collections.EMPTY_MAP;
+    return ImmutableMap.of();
   }
 
   private Set<Ref> getVisibleRefs(Repository repo, Set<String> refNames, Project.NameKey project)

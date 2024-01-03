@@ -48,7 +48,7 @@ export enum AuthType {
 }
 
 /**
- * @desc Specifies status for a change
+ * Specifies status for a change
  */
 export enum ChangeStatus {
   ABANDONED = 'ABANDONED',
@@ -72,7 +72,7 @@ export enum ConfigParameterInfoType {
 }
 
 /**
- * @desc Used for server config of accounts
+ * Used for server config of accounts
  */
 export enum DefaultDisplayNameConfig {
   USERNAME = 'USERNAME',
@@ -91,7 +91,7 @@ export enum EditableAccountField {
 }
 
 /**
- * @desc The status of the file
+ * The status of the file
  */
 export enum FileInfoStatus {
   ADDED = 'A',
@@ -104,7 +104,7 @@ export enum FileInfoStatus {
 }
 
 /**
- * @desc The status of the file
+ * The status of the file
  */
 export enum GpgKeyInfoStatus {
   BAD = 'BAD',
@@ -144,7 +144,7 @@ export enum MergeabilityComputationBehavior {
 }
 
 /**
- * @desc The status of fixing the problem
+ * The status of fixing the problem
  */
 export enum ProblemInfoStatus {
   FIXED = 'FIXED',
@@ -152,7 +152,7 @@ export enum ProblemInfoStatus {
 }
 
 /**
- * @desc The state of the projects
+ * The state of the projects
  */
 export enum ProjectState {
   ACTIVE = 'ACTIVE',
@@ -161,7 +161,7 @@ export enum ProjectState {
 }
 
 /**
- * @desc The reviewer state
+ * The reviewer state
  */
 export enum RequirementStatus {
   OK = 'OK',
@@ -170,7 +170,7 @@ export enum RequirementStatus {
 }
 
 /**
- * @desc The reviewer state
+ * The reviewer state
  */
 export enum ReviewerState {
   REVIEWER = 'REVIEWER',
@@ -179,7 +179,7 @@ export enum ReviewerState {
 }
 
 /**
- * @desc The patchset kind
+ * The patchset kind
  */
 export enum RevisionKind {
   REWORK = 'REWORK',
@@ -286,7 +286,6 @@ export declare interface ActionNameToActionInfoMap {
   submit?: ActionInfo;
   topic?: ActionInfo;
   hashtags?: ActionInfo;
-  assignee?: ActionInfo;
   ready?: ActionInfo;
   includedIn?: ActionInfo;
 }
@@ -363,7 +362,7 @@ export declare interface ChangeConfigInfo {
   submit_whole_topic?: boolean;
   disable_private_changes?: boolean;
   mergeability_computation_behavior: MergeabilityComputationBehavior;
-  enable_assignee: boolean;
+  conflicts_predicate_enabled?: boolean;
 }
 
 export type ChangeId = BrandType<string, '_changeId'>;
@@ -378,7 +377,6 @@ export declare interface ChangeInfo {
   branch: BranchName;
   topic?: TopicName;
   attention_set?: IdToAttentionSetMap;
-  assignee?: AccountInfo;
   hashtags?: Hashtag[];
   change_id: ChangeId;
   subject: string;
@@ -389,7 +387,6 @@ export declare interface ChangeInfo {
   submitter?: AccountInfo;
   starred?: boolean; // not set if false
   stars?: StarLabel[];
-  reviewed?: boolean; // not set if false
   submit_type?: SubmitType;
   mergeable?: boolean;
   submittable?: boolean;
@@ -402,7 +399,7 @@ export declare interface ChangeInfo {
   actions?: ActionNameToActionInfoMap;
   requirements?: Requirement[];
   labels?: LabelNameToInfoMap;
-  permitted_labels?: LabelNameToValueMap;
+  permitted_labels?: LabelNameToValuesMap;
   removable_reviewers?: AccountInfo[];
   // This is documented as optional, but actually always set.
   reviewers: Reviewers;
@@ -424,6 +421,7 @@ export declare interface ChangeInfo {
   contains_git_conflicts?: boolean;
   internalHost?: string; // TODO(TS): provide an explanation what is its
   submit_requirements?: SubmitRequirementResultInfo[];
+  submit_records?: SubmitRecordInfo[];
 }
 
 // The ID of the change in the format "'<project>~<branch>~<Change-Id>'"
@@ -524,6 +522,7 @@ export declare interface ConfigInfo {
   plugin_config?: PluginNameToPluginParametersMap;
   actions?: {[viewName: string]: ActionInfo};
   reject_empty_commit?: InheritedBooleanInfo;
+  enable_reviewer_by_email: InheritedBooleanInfo;
 }
 
 export declare interface ConfigListParameterInfo
@@ -559,7 +558,7 @@ export declare interface ConfigParameterInfoBase {
 export declare interface ContributorAgreementInfo {
   name: string;
   description: string;
-  url: string;
+  url?: string;
   auto_verify_group?: GroupInfo;
 }
 
@@ -645,6 +644,7 @@ export declare interface GerritInfo {
   report_bug_url?: string;
   // The following property is missed in doc
   primary_weblink_name?: string;
+  instance_id?: string;
 }
 
 export type GitRef = BrandType<string, '_gitRef'>;
@@ -728,12 +728,13 @@ export declare interface InheritedBooleanInfo {
 
 export declare interface LabelCommonInfo {
   optional?: boolean; // not set if false
+  description?: string;
 }
 
 export type LabelNameToInfoMap = {[labelName: string]: LabelInfo};
 
 // {Verified: ["-1", " 0", "+1"]}
-export type LabelNameToValueMap = {[labelName: string]: string[]};
+export type LabelNameToValuesMap = {[labelName: string]: string[]};
 
 /**
  * The LabelInfo entity contains information about a label on a change, always
@@ -951,9 +952,8 @@ export declare interface RevisionInfo {
   fetch?: {[protocol: string]: FetchInfo};
   commit?: CommitInfo;
   files?: {[filename: string]: FileInfo};
-  actions?: ActionNameToActionInfoMap;
   reviewed?: boolean;
-  commit_with_footers?: boolean;
+  commit_with_footers?: string;
   push_certificate?: PushCertificateInfo;
   description?: string;
   basePatchNum?: BasePatchSetNum;
@@ -981,6 +981,7 @@ export declare interface ServerInfo {
   suggest: SuggestInfo;
   user: UserConfigInfo;
   default_theme?: string;
+  submit_requirement_dashboard_columns?: string[];
 }
 
 /**
@@ -1065,7 +1066,7 @@ export declare interface WebLinkInfo {
   url: string;
   /** URL to the icon of the link. */
   image_url?: string;
-  /* The links target. */
+  /* Value of the "target" attribute for anchor elements. */
   target?: string;
 }
 
@@ -1091,9 +1092,18 @@ export declare interface SubmitRequirementResultInfo {
  */
 export declare interface SubmitRequirementExpressionInfo {
   expression: string;
-  fulfilled: boolean;
-  passing_atoms: string[];
-  failing_atoms: string[];
+  fulfilled?: boolean;
+  status?: SubmitRequirementExpressionInfoStatus;
+  passing_atoms?: string[];
+  failing_atoms?: string[];
+  error_message?: string;
+}
+
+export enum SubmitRequirementExpressionInfoStatus {
+  PASS = 'PASS',
+  FAIL = 'FAIL',
+  ERROR = 'ERROR',
+  NOT_EVALUATED = 'NOT_EVALUATED',
 }
 
 /**
@@ -1105,6 +1115,64 @@ export enum SubmitRequirementStatus {
   UNSATISFIED = 'UNSATISFIED',
   OVERRIDDEN = 'OVERRIDDEN',
   NOT_APPLICABLE = 'NOT_APPLICABLE',
+  ERROR = 'ERROR',
+  FORCED = 'FORCED',
 }
 
 export type UrlEncodedRepoName = BrandType<string, '_urlEncodedRepoName'>;
+
+/**
+ * The SubmitRecordInfo entity describes results from a submit_rule.
+ * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#submit-record-info
+ */
+export declare interface SubmitRecordInfo {
+  rule_name: string;
+  status?: SubmitRecordInfoStatus;
+  labels?: SubmitRecordInfoLabel[];
+  requirements?: Requirement[];
+  error_message?: string;
+}
+
+export enum SubmitRecordInfoStatus {
+  OK = 'OK',
+  NOT_READY = 'NOT_READY',
+  CLOSED = 'CLOSED',
+  FORCED = 'FORCED',
+  RULE_ERROR = 'RULE_ERROR',
+}
+
+export enum LabelStatus {
+  /**
+   * This label provides what is necessary for submission.
+   */
+  OK = 'OK',
+  /**
+   * This label prevents the change from being submitted.
+   */
+  REJECT = 'REJECT',
+  /**
+   * The label may be set, but it's neither necessary for submission
+   * nor does it block submission if set.
+   */
+  MAY = 'MAY',
+  /**
+   * The label is required for submission, but has not been satisfied.
+   */
+  NEED = 'NEED',
+  /**
+   * The label is required for submission, but is impossible to complete.
+   * The likely cause is access has not been granted correctly by the
+   * project owner or site administrator.
+   */
+  IMPOSSIBLE = 'IMPOSSIBLE',
+  OPTIONAL = 'OPTIONAL',
+}
+
+/**
+ * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#submit-record-info
+ */
+export declare interface SubmitRecordInfoLabel {
+  label: string;
+  status: LabelStatus;
+  appliedBy: AccountInfo;
+}

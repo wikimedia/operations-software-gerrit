@@ -89,7 +89,10 @@ public class IndexPreloadingUtil {
           .map(query -> query.replaceAll("\\$\\{user}", "self"))
           .collect(toImmutableList());
   public static final ImmutableSet<ListChangesOption> DASHBOARD_OPTIONS =
-      ImmutableSet.of(ListChangesOption.LABELS, ListChangesOption.DETAILED_ACCOUNTS);
+      ImmutableSet.of(
+          ListChangesOption.LABELS,
+          ListChangesOption.DETAILED_ACCOUNTS,
+          ListChangesOption.SUBMIT_REQUIREMENTS);
 
   public static final ImmutableSet<ListChangesOption> CHANGE_DETAIL_OPTIONS =
       ImmutableSet.of(
@@ -101,13 +104,8 @@ public class IndexPreloadingUtil {
           ListChangesOption.MESSAGES,
           ListChangesOption.SUBMITTABLE,
           ListChangesOption.WEB_LINKS,
-          ListChangesOption.SKIP_DIFFSTAT);
-
-  public static final ImmutableSet<ListChangesOption> DIFF_OPTIONS =
-      ImmutableSet.of(
-          ListChangesOption.ALL_COMMITS,
-          ListChangesOption.ALL_REVISIONS,
-          ListChangesOption.SKIP_DIFFSTAT);
+          ListChangesOption.SKIP_DIFFSTAT,
+          ListChangesOption.SUBMIT_REQUIREMENTS);
 
   public static String getPath(@Nullable String requestedURL) throws URISyntaxException {
     if (requestedURL == null) {

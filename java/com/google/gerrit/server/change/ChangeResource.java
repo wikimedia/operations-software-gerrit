@@ -62,8 +62,7 @@ public class ChangeResource implements RestResource, HasETag {
    */
   public static final int JSON_FORMAT_VERSION = 1;
 
-  public static final TypeLiteral<RestView<ChangeResource>> CHANGE_KIND =
-      new TypeLiteral<RestView<ChangeResource>>() {};
+  public static final TypeLiteral<RestView<ChangeResource>> CHANGE_KIND = new TypeLiteral<>() {};
 
   public interface Factory {
     ChangeResource create(ChangeNotes notes, CurrentUser user);
@@ -166,7 +165,7 @@ public class ChangeResource implements RestResource, HasETag {
   // unrelated to the UI.
   public void prepareETag(Hasher h, CurrentUser user) {
     h.putInt(JSON_FORMAT_VERSION)
-        .putLong(getChange().getLastUpdatedOn().getTime())
+        .putLong(getChange().getLastUpdatedOn().toEpochMilli())
         .putInt(user.isIdentifiedUser() ? user.getAccountId().get() : 0);
 
     if (user.isIdentifiedUser()) {

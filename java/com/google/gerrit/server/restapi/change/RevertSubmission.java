@@ -80,8 +80,8 @@ import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import java.io.IOException;
-import java.sql.Timestamp;
 import java.text.MessageFormat;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -92,7 +92,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import org.apache.commons.lang.RandomStringUtils;
+import org.apache.commons.lang3.RandomStringUtils;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
@@ -251,7 +251,7 @@ public class RevertSubmission
     Multimap<BranchNameKey, ChangeData> changesPerProjectAndBranch = ArrayListMultimap.create();
     changeData.stream().forEach(c -> changesPerProjectAndBranch.put(c.change().getDest(), c));
     cherryPickInput = createCherryPickInput(revertInput);
-    Timestamp timestamp = TimeUtil.nowTs();
+    Instant timestamp = TimeUtil.now();
 
     for (BranchNameKey projectAndBranch : changesPerProjectAndBranch.keySet()) {
       cherryPickInput.base = null;
@@ -290,7 +290,7 @@ public class RevertSubmission
       Project.NameKey project,
       Iterator<PatchSetData> sortedChangesInProjectAndBranch,
       Set<ObjectId> commitIdsInProjectAndBranch,
-      Timestamp timestamp)
+      Instant timestamp)
       throws IOException, RestApiException, UpdateException, ConfigInvalidException,
           PermissionBackendException {
 
@@ -314,10 +314,7 @@ public class RevertSubmission
   }
 
   private void createCherryPickedRevert(
-      RevertInput revertInput,
-      Project.NameKey project,
-      ChangeNotes changeNotes,
-      Timestamp timestamp)
+      RevertInput revertInput, Project.NameKey project, ChangeNotes changeNotes, Instant timestamp)
       throws IOException, ConfigInvalidException, UpdateException, RestApiException {
     ObjectId revCommitId =
         commitUtil.createRevertCommit(revertInput.message, changeNotes, user.get(), timestamp);
@@ -326,7 +323,7 @@ public class RevertSubmission
     cherryPickInput.message = revertInput.message;
     ObjectId generatedChangeId = CommitMessageUtil.generateChangeId();
     Change.Id cherryPickRevertChangeId = Change.id(seq.nextChangeId());
-    try (BatchUpdate bu = updateFactory.create(project, user.get(), TimeUtil.nowTs())) {
+    try (BatchUpdate bu = updateFactory.create(project, user.get(), TimeUtil.now())) {
       bu.setNotify(
           notifyResolver.resolve(
               firstNonNull(cherryPickInput.notify, NotifyHandling.ALL),
@@ -349,7 +346,7 @@ public class RevertSubmission
   }
 
   private void createNormalRevert(
-      RevertInput revertInput, ChangeNotes changeNotes, Timestamp timestamp)
+      RevertInput revertInput, ChangeNotes changeNotes, Instant timestamp)
       throws IOException, RestApiException, UpdateException, ConfigInvalidException {
 
     Change.Id revertId =
@@ -558,14 +555,14 @@ public class RevertSubmission
     private final ObjectId revCommitId;
     private final ObjectId computedChangeId;
     private final Change.Id cherryPickRevertChangeId;
-    private final Timestamp timestamp;
+    private final Instant timestamp;
     private final boolean workInProgress;
 
     CreateCherryPickOp(
         ObjectId revCommitId,
         ObjectId computedChangeId,
         Change.Id cherryPickRevertChangeId,
-        Timestamp timestamp,
+        Instant timestamp,
         Boolean workInProgress) {
       this.revCommitId = revCommitId;
       this.computedChangeId = computedChangeId;

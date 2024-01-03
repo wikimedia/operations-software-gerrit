@@ -17,6 +17,7 @@ package com.google.gerrit.server.index;
 import static com.google.gerrit.server.git.QueueProvider.QueueType.BATCH;
 import static com.google.gerrit.server.git.QueueProvider.QueueType.INTERACTIVE;
 
+import com.google.common.base.Ticker;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
@@ -52,6 +53,7 @@ import com.google.gerrit.server.index.group.GroupIndexRewriter;
 import com.google.gerrit.server.index.group.GroupIndexer;
 import com.google.gerrit.server.index.group.GroupIndexerImpl;
 import com.google.gerrit.server.index.group.GroupSchemaDefinitions;
+import com.google.gerrit.server.index.options.BuildBloomFilter;
 import com.google.gerrit.server.index.options.IsFirstInsertForEntry;
 import com.google.gerrit.server.index.project.ProjectIndexDefinition;
 import com.google.gerrit.server.index.project.ProjectIndexerImpl;
@@ -114,6 +116,9 @@ public class IndexModule extends LifecycleModule {
   @Override
   protected void configure() {
     factory(MultiProgressMonitor.Factory.class);
+    OptionalBinder.newOptionalBinder(binder(), Ticker.class)
+        .setDefault()
+        .toInstance(Ticker.systemTicker());
 
     bind(AccountIndexRewriter.class);
     bind(AccountIndexCollection.class);
@@ -150,6 +155,9 @@ public class IndexModule extends LifecycleModule {
     OptionalBinder.newOptionalBinder(binder(), IsFirstInsertForEntry.class)
         .setDefault()
         .toInstance(IsFirstInsertForEntry.NO);
+    OptionalBinder.newOptionalBinder(binder(), BuildBloomFilter.class)
+        .setDefault()
+        .toInstance(BuildBloomFilter.TRUE);
   }
 
   @Provides

@@ -15,10 +15,7 @@
 package com.google.gerrit.server.util.time;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.gerrit.common.UsedAt;
-import com.google.gerrit.common.UsedAt.Project;
 import com.google.gerrit.server.util.git.DelegateSystemReader;
-import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
@@ -44,23 +41,8 @@ public class TimeUtil {
     return Instant.ofEpochMilli(nowMs());
   }
 
-  public static Timestamp nowTs() {
-    return new Timestamp(nowMs());
-  }
-
-  /**
-   * Returns the magic timestamp representing no specific time.
-   *
-   * <p>This "null object" is helpful in contexts where using {@code null} directly is not possible.
-   */
-  @UsedAt(Project.PLUGIN_CHECKS)
-  public static Timestamp never() {
-    // Always create a new object as timestamps are mutable.
-    return new Timestamp(0);
-  }
-
-  public static Timestamp truncateToSecond(Timestamp t) {
-    return new Timestamp((t.getTime() / 1000) * 1000);
+  public static Instant truncateToSecond(Instant t) {
+    return Instant.ofEpochMilli(t.getEpochSecond() * 1000);
   }
 
   @VisibleForTesting

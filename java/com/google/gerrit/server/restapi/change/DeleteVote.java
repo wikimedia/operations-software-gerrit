@@ -40,6 +40,7 @@ import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.change.AddToAttentionSetOp;
+import com.google.gerrit.server.change.AttentionSetUnchangedOp;
 import com.google.gerrit.server.change.NotifyResolver;
 import com.google.gerrit.server.change.ReviewerResource;
 import com.google.gerrit.server.change.VoteResource;
@@ -81,7 +82,7 @@ public class DeleteVote implements RestModifyView<VoteResource, DeleteVoteInput>
   private final RemoveReviewerControl removeReviewerControl;
   private final ProjectCache projectCache;
   private final MessageIdGenerator messageIdGenerator;
-  private final AddToAttentionSetOp.Factory attentionSetOpfactory;
+  private final AddToAttentionSetOp.Factory attentionSetOpFactory;
   private final Provider<CurrentUser> currentUserProvider;
 
   @Inject
@@ -108,7 +109,7 @@ public class DeleteVote implements RestModifyView<VoteResource, DeleteVoteInput>
     this.removeReviewerControl = removeReviewerControl;
     this.projectCache = projectCache;
     this.messageIdGenerator = messageIdGenerator;
-    this.attentionSetOpfactory = attentionSetOpFactory;
+    this.attentionSetOpFactory = attentionSetOpFactory;
     this.currentUserProvider = currentUserProvider;
   }
 
@@ -133,7 +134,7 @@ public class DeleteVote implements RestModifyView<VoteResource, DeleteVoteInput>
 
     try (BatchUpdate bu =
         updateFactory.create(
-            change.getProject(), r.getChangeResource().getUser(), TimeUtil.nowTs())) {
+            change.getProject(), r.getChangeResource().getUser(), TimeUtil.now())) {
       bu.setNotify(
           notifyResolver.resolve(
               firstNonNull(input.notify, NotifyHandling.ALL), input.notifyDetails));
@@ -146,13 +147,17 @@ public class DeleteVote implements RestModifyView<VoteResource, DeleteVoteInput>
               r.getReviewerUser().state(),
               rsrc.getLabel(),
               input));
-      if (!r.getReviewerUser().getAccountId().equals(currentUserProvider.get().getAccountId())) {
+      if (!input.ignoreAutomaticAttentionSetRules
+          && !r.getReviewerUser().getAccountId().equals(currentUserProvider.get().getAccountId())) {
         bu.addOp(
             change.getId(),
-            attentionSetOpfactory.create(
+            attentionSetOpFactory.create(
                 r.getReviewerUser().getAccountId(),
                 /* reason= */ "Their vote was deleted",
                 /* notify= */ false));
+      }
+      if (input.ignoreAutomaticAttentionSetRules) {
+        bu.addOp(change.getId(), new AttentionSetUnchangedOp());
       }
       bu.execute();
     }
@@ -192,9 +197,7 @@ public class DeleteVote implements RestModifyView<VoteResource, DeleteVoteInput>
 
       Account.Id accountId = accountState.account().id();
 
-      for (PatchSetApproval a :
-          approvalsUtil.byPatchSetUser(
-              ctx.getNotes(), psId, accountId, ctx.getRevWalk(), ctx.getRepoView().getConfig())) {
+      for (PatchSetApproval a : approvalsUtil.byPatchSetUser(ctx.getNotes(), psId, accountId)) {
         if (!labelTypes.byLabel(a.labelId()).isPresent()) {
           continue; // Ignore undefined labels.
         } else if (!a.label().equals(label)) {

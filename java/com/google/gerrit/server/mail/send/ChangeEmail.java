@@ -24,7 +24,9 @@ import com.google.common.collect.ListMultimap;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AttentionSetUpdate;
 import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.ChangeSizeBucket;
 import com.google.gerrit.entities.NotifyConfig.NotifyType;
 import com.google.gerrit.entities.Patch;
 import com.google.gerrit.entities.PatchSet;
@@ -42,6 +44,7 @@ import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.mail.send.ProjectWatch.Watchers;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
 import com.google.gerrit.server.patch.DiffNotAvailableException;
+import com.google.gerrit.server.patch.DiffOptions;
 import com.google.gerrit.server.patch.FilePathAdapter;
 import com.google.gerrit.server.patch.PatchSetInfoNotAvailableException;
 import com.google.gerrit.server.patch.filediff.FileDiffOutput;
@@ -51,15 +54,15 @@ import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.query.change.ChangeData;
 import java.io.IOException;
-import java.sql.Timestamp;
 import java.text.MessageFormat;
+import java.time.Instant;
 import java.util.Collection;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
 import org.apache.james.mime4j.dom.field.FieldName;
@@ -72,6 +75,7 @@ import org.eclipse.jgit.util.TemporaryBuffer;
 
 /** Sends an email to one or more interested parties. */
 public abstract class ChangeEmail extends NotificationEmail {
+
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
   protected static ChangeData newChangeData(
@@ -86,7 +90,7 @@ public abstract class ChangeEmail extends NotificationEmail {
   protected PatchSet patchSet;
   protected PatchSetInfo patchSetInfo;
   protected String changeMessage;
-  protected Timestamp timestamp;
+  protected Instant timestamp;
 
   protected ProjectState projectState;
   protected Set<Account.Id> authors;
@@ -96,17 +100,17 @@ public abstract class ChangeEmail extends NotificationEmail {
   protected ChangeEmail(EmailArguments args, String messageClass, ChangeData changeData) {
     super(args, messageClass, changeData.change().getDest());
     this.changeData = changeData;
-    this.change = changeData.change();
-    this.emailOnlyAuthors = false;
-    this.emailOnlyAttentionSetIfEnabled = true;
-    this.currentAttentionSet = getAttentionSet();
+    change = changeData.change();
+    emailOnlyAuthors = false;
+    emailOnlyAttentionSetIfEnabled = true;
+    currentAttentionSet = getAttentionSet();
   }
 
   @Override
   public void setFrom(Account.Id id) {
     super.setFrom(id);
 
-    /** Is the from user in an email squelching group? */
+    // Is the from user in an email squelching group?
     try {
       args.permissionBackend.absentUser(id).check(GlobalPermission.EMAIL_REVIEWERS);
     } catch (AuthException | PermissionBackendException e) {
@@ -123,7 +127,7 @@ public abstract class ChangeEmail extends NotificationEmail {
     patchSetInfo = psi;
   }
 
-  public void setChangeMessage(String cm, Timestamp t) {
+  public void setChangeMessage(String cm, Instant t) {
     changeMessage = cm;
     timestamp = t;
   }
@@ -190,7 +194,7 @@ public abstract class ChangeEmail extends NotificationEmail {
 
     super.init();
     if (timestamp != null) {
-      setHeader(FieldName.DATE, new Date(timestamp.getTime()));
+      setHeader(FieldName.DATE, timestamp);
     }
     setChangeSubjectHeader();
     setHeader(MailHeader.CHANGE_ID.fieldName(), "" + change.getKey().get());
@@ -229,6 +233,18 @@ public abstract class ChangeEmail extends NotificationEmail {
     setHeader(FieldName.SUBJECT, textTemplate("ChangeSubject"));
   }
 
+  private int getInsertionsCount() {
+    return listModifiedFiles().values().stream()
+        .map(FileDiffOutput::insertions)
+        .reduce(0, Integer::sum);
+  }
+
+  private int getDeletionsCount() {
+    return listModifiedFiles().values().stream()
+        .map(FileDiffOutput::deletions)
+        .reduce(0, Integer::sum);
+  }
+
   /** Get a link to the change; null if the server doesn't know its own address. */
   @Nullable
   public String getChangeUrl() {
@@ -240,11 +256,11 @@ public abstract class ChangeEmail extends NotificationEmail {
 
   public String getChangeMessageThreadId() {
     return "<gerrit."
-        + change.getCreatedOn().getTime()
+        + change.getCreatedOn().toEpochMilli()
         + "."
         + change.getKey().get()
         + "@"
-        + this.getGerritHost()
+        + getGerritHost()
         + ">";
   }
 
@@ -269,7 +285,8 @@ public abstract class ChangeEmail extends NotificationEmail {
 
       if (patchSet != null) {
         detail.append("---\n");
-        Map<String, FileDiffOutput> modifiedFiles = listModifiedFiles();
+        // Sort files by name.
+        TreeMap<String, FileDiffOutput> modifiedFiles = new TreeMap<>(listModifiedFiles());
         for (FileDiffOutput fileDiff : modifiedFiles.values()) {
           if (fileDiff.newPath().isPresent() && Patch.isMagic(fileDiff.newPath().get())) {
             continue;
@@ -282,10 +299,6 @@ public abstract class ChangeEmail extends NotificationEmail {
                       fileDiff.oldPath(), fileDiff.newPath(), fileDiff.changeType()))
               .append("\n");
         }
-        Integer insertions =
-            modifiedFiles.values().stream().map(FileDiffOutput::insertions).reduce(0, Integer::sum);
-        Integer deletions =
-            modifiedFiles.values().stream().map(FileDiffOutput::deletions).reduce(0, Integer::sum);
         detail.append(
             MessageFormat.format(
                 "" //
@@ -294,8 +307,8 @@ public abstract class ChangeEmail extends NotificationEmail {
                     + "{2,choice,0#0 deletions|1#1 deletion|1<{2} deletions}(-)" //
                     + "\n",
                 modifiedFiles.size() - 1, //
-                insertions, //
-                deletions));
+                getInsertionsCount(), //
+                getDeletionsCount()));
         detail.append("\n");
       }
       return detail.toString();
@@ -306,29 +319,35 @@ public abstract class ChangeEmail extends NotificationEmail {
   }
 
   /** Get the patch list corresponding to patch set patchSetId of this change. */
-  protected Map<String, FileDiffOutput> listModifiedFiles(int patchSetId)
-      throws DiffNotAvailableException {
-    PatchSet ps;
-    if (patchSetId == patchSet.number()) {
-      ps = patchSet;
-    } else {
-      try {
+  protected Map<String, FileDiffOutput> listModifiedFiles(int patchSetId) {
+    try {
+      PatchSet ps;
+      if (patchSetId == patchSet.number()) {
+        ps = patchSet;
+      } else {
         ps = args.patchSetUtil.get(changeData.notes(), PatchSet.id(change.getId(), patchSetId));
-      } catch (StorageException e) {
-        throw new DiffNotAvailableException("Failed to get patchSet", e);
       }
+      return args.diffOperations.listModifiedFilesAgainstParent(
+          change.getProject(), ps.commitId(), /* parentNum= */ 0, DiffOptions.DEFAULTS);
+    } catch (StorageException | DiffNotAvailableException e) {
+      logger.atSevere().withCause(e).log("Failed to get modified files");
+      return new HashMap<>();
     }
-    return args.diffOperations.listModifiedFilesAgainstParent(
-        change.getProject(), ps.commitId(), /* parentNum= */ 0);
   }
 
   /** Get the patch list corresponding to this patch set. */
-  protected Map<String, FileDiffOutput> listModifiedFiles() throws DiffNotAvailableException {
+  protected Map<String, FileDiffOutput> listModifiedFiles() {
     if (patchSet != null) {
-      return args.diffOperations.listModifiedFilesAgainstParent(
-          change.getProject(), patchSet.commitId(), /* parentNum= */ 0);
+      try {
+        return args.diffOperations.listModifiedFilesAgainstParent(
+            change.getProject(), patchSet.commitId(), /* parentNum= */ 0, DiffOptions.DEFAULTS);
+      } catch (DiffNotAvailableException e) {
+        logger.atSevere().withCause(e).log("Failed to get modified files");
+      }
+    } else {
+      logger.atSevere().log("no patchSet specified");
     }
-    throw new DiffNotAvailableException("no patchSet specified");
+    return new HashMap<>();
   }
 
   /** Get the project entity the change is in; null if its been deleted. */
@@ -504,6 +523,9 @@ public abstract class ChangeEmail extends NotificationEmail {
     changeData.put("ownerName", getNameFor(change.getOwner()));
     changeData.put("ownerEmail", getNameEmailFor(change.getOwner()));
     changeData.put("changeNumber", Integer.toString(change.getChangeId()));
+    changeData.put(
+        "sizeBucket",
+        ChangeSizeBucket.getChangeSizeBucket(getInsertionsCount() + getDeletionsCount()));
     soyContext.put("change", changeData);
 
     Map<String, Object> patchSetData = new HashMap<>();
@@ -517,7 +539,7 @@ public abstract class ChangeEmail extends NotificationEmail {
     soyContext.put("patchSetInfo", patchSetInfoData);
 
     footers.add(MailHeader.CHANGE_ID.withDelimiter() + change.getKey().get());
-    footers.add(MailHeader.CHANGE_NUMBER.withDelimiter() + Integer.toString(change.getChangeId()));
+    footers.add(MailHeader.CHANGE_NUMBER.withDelimiter() + change.getChangeId());
     footers.add(MailHeader.PATCH_SET.withDelimiter() + patchSet.number());
     footers.add(MailHeader.OWNER.withDelimiter() + getNameEmailFor(change.getOwner()));
     if (change.getAssignee() != null) {
@@ -569,7 +591,7 @@ public abstract class ChangeEmail extends NotificationEmail {
     try {
       attentionSet =
           additionsOnly(changeData.attentionSet()).stream()
-              .map(a -> a.account())
+              .map(AttentionSetUpdate::account)
               .collect(Collectors.toSet());
     } catch (StorageException e) {
       logger.atWarning().withCause(e).log("Cannot get change attention set");
@@ -586,16 +608,11 @@ public abstract class ChangeEmail extends NotificationEmail {
   /** Show patch set as unified difference. */
   public String getUnifiedDiff() {
     Map<String, FileDiffOutput> modifiedFiles;
-    try {
-      modifiedFiles = listModifiedFiles();
-      if (modifiedFiles.isEmpty()) {
-        // Octopus merges are not well supported for diff output by Gerrit.
-        // Currently these always have a null oldId in the PatchList.
-        return "[Octopus merge; cannot be formatted as a diff.]\n";
-      }
-    } catch (DiffNotAvailableException e) {
-      logger.atSevere().withCause(e).log("Cannot format patch");
-      return "";
+    modifiedFiles = listModifiedFiles();
+    if (modifiedFiles.isEmpty()) {
+      // Octopus merges are not well supported for diff output by Gerrit.
+      // Currently these always have a null oldId in the PatchList.
+      return "[Empty change (potentially Octopus merge); cannot be formatted as a diff.]\n";
     }
 
     int maxSize = args.settings.maximumDiffSize;
@@ -605,6 +622,11 @@ public abstract class ChangeEmail extends NotificationEmail {
         try {
           ObjectId oldId = modifiedFiles.values().iterator().next().oldCommitId();
           ObjectId newId = modifiedFiles.values().iterator().next().newCommitId();
+          if (oldId.equals(ObjectId.zeroId())) {
+            // DiffOperations returns ObjectId.zeroId if newCommit is a root commit, i.e. has no
+            // parents.
+            oldId = null;
+          }
           fmt.setRepository(git);
           fmt.setDetectRenames(true);
           fmt.format(oldId, newId);
@@ -631,7 +653,8 @@ public abstract class ChangeEmail extends NotificationEmail {
    * @param sourceDiff the unified diff that we're converting to the map.
    * @return map of 'type' to a line's content.
    */
-  protected ImmutableList<ImmutableMap<String, String>> getDiffTemplateData(String sourceDiff) {
+  protected static ImmutableList<ImmutableMap<String, String>> getDiffTemplateData(
+      String sourceDiff) {
     ImmutableList.Builder<ImmutableMap<String, String>> result = ImmutableList.builder();
     Splitter lineSplitter = Splitter.on(System.getProperty("line.separator"));
     for (String diffLine : lineSplitter.split(sourceDiff)) {

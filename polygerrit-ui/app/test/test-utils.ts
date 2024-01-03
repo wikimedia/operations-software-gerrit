@@ -17,28 +17,40 @@
 import '../types/globals';
 import {_testOnly_resetPluginLoader} from '../elements/shared/gr-js-api-interface/gr-plugin-loader';
 import {_testOnly_resetEndpoints} from '../elements/shared/gr-js-api-interface/gr-plugin-endpoints';
-import {appContext} from '../services/app-context';
+import {getAppContext} from '../services/app-context';
 import {RestApiService} from '../services/gr-rest-api/gr-rest-api';
-import {SinonSpy} from 'sinon';
+import {SinonSpy, SinonStub} from 'sinon';
 import {StorageService} from '../services/storage/gr-storage';
 import {AuthService} from '../services/gr-auth/gr-auth';
 import {ReportingService} from '../services/gr-reporting/gr-reporting';
-import {CommentsService} from '../services/comments/comments-service';
-import {UserService} from '../services/user/user-service';
+import {UserModel} from '../models/user/user-model';
+import {ShortcutsService} from '../services/shortcuts/shortcuts-service';
+import {queryAndAssert, query} from '../utils/common-util';
+import {FlagsService} from '../services/flags/flags';
+import {Key, Modifier} from '../utils/dom-util';
+import {Observable} from 'rxjs';
+import {filter, take, timeout} from 'rxjs/operators';
+import {HighlightService} from '../services/highlight/highlight-service';
 export {query, queryAll, queryAndAssert} from '../utils/common-util';
 
-export interface MockPromise extends Promise<unknown> {
-  resolve: (value?: unknown) => void;
+export interface MockPromise<T> extends Promise<T> {
+  resolve: (value?: T) => void;
+  reject: (reason?: any) => void;
 }
 
-export const mockPromise = () => {
-  let res: (value?: unknown) => void;
-  const promise: MockPromise = new Promise(resolve => {
-    res = resolve;
-  }) as MockPromise;
+export function mockPromise<T = unknown>(): MockPromise<T> {
+  let res: (value?: T) => void;
+  let rej: (reason?: any) => void;
+  const promise: MockPromise<T> = new Promise<T | undefined>(
+    (resolve, reject) => {
+      res = resolve;
+      rej = reject;
+    }
+  ) as MockPromise<T>;
   promise.resolve = res!;
+  promise.reject = rej!;
   return promise;
-};
+}
 
 export function isHidden(el: Element | undefined | null) {
   if (!el) return true;
@@ -101,35 +113,45 @@ export function stubBaseUrl(newUrl: string) {
 }
 
 export function stubRestApi<K extends keyof RestApiService>(method: K) {
-  return sinon.stub(appContext.restApiService, method);
+  return sinon.stub(getAppContext().restApiService, method);
 }
 
 export function spyRestApi<K extends keyof RestApiService>(method: K) {
-  return sinon.spy(appContext.restApiService, method);
+  return sinon.spy(getAppContext().restApiService, method);
 }
 
-export function stubComments<K extends keyof CommentsService>(method: K) {
-  return sinon.stub(appContext.commentsService, method);
+export function stubUsers<K extends keyof UserModel>(method: K) {
+  return sinon.stub(getAppContext().userModel, method);
 }
 
-export function stubUsers<K extends keyof UserService>(method: K) {
-  return sinon.stub(appContext.userService, method);
+export function stubShortcuts<K extends keyof ShortcutsService>(method: K) {
+  return sinon.stub(getAppContext().shortcutsService, method);
+}
+
+export function stubHighlightService<K extends keyof HighlightService>(
+  method: K
+) {
+  return sinon.stub(getAppContext().highlightService, method);
 }
 
 export function stubStorage<K extends keyof StorageService>(method: K) {
-  return sinon.stub(appContext.storageService, method);
+  return sinon.stub(getAppContext().storageService, method);
 }
 
 export function spyStorage<K extends keyof StorageService>(method: K) {
-  return sinon.spy(appContext.storageService, method);
+  return sinon.spy(getAppContext().storageService, method);
 }
 
 export function stubAuth<K extends keyof AuthService>(method: K) {
-  return sinon.stub(appContext.authService, method);
+  return sinon.stub(getAppContext().authService, method);
 }
 
 export function stubReporting<K extends keyof ReportingService>(method: K) {
-  return sinon.stub(appContext.reportingService, method);
+  return sinon.stub(getAppContext().reportingService, method);
+}
+
+export function stubFlags<K extends keyof FlagsService>(method: K) {
+  return sinon.stub(getAppContext().flagsService, method);
 }
 
 export type SinonSpyMember<F extends (...args: any) => any> = SinonSpy<
@@ -162,24 +184,64 @@ export function removeThemeStyles() {
   document.head.querySelector('#dark-theme')?.remove();
 }
 
+export async function waitQueryAndAssert<E extends Element = Element>(
+  el: Element | null | undefined,
+  selector: string
+): Promise<E> {
+  await waitUntil(
+    () => !!query<E>(el, selector),
+    `The element '${selector}' did not appear in the DOM within 1000 ms.`
+  );
+  return queryAndAssert<E>(el, selector);
+}
+
 export function waitUntil(
   predicate: () => boolean,
-  maxMillis = 100
+  message = 'The waitUntil() predicate is still false after 1000 ms.'
 ): Promise<void> {
   const start = Date.now();
-  let sleep = 1;
+  let sleep = 0;
+  if (predicate()) return Promise.resolve();
+  const error = new Error(message);
   return new Promise((resolve, reject) => {
     const waiter = () => {
       if (predicate()) {
-        return resolve();
+        resolve();
+        return;
       }
-      if (Date.now() - start >= maxMillis) {
-        return reject(new Error('Took to long to waitUntil'));
+      if (Date.now() - start >= 1000) {
+        reject(error);
+        return;
       }
       setTimeout(waiter, sleep);
-      sleep *= 2;
+      sleep = sleep === 0 ? 1 : sleep * 4;
     };
     waiter();
+  });
+}
+
+export function waitUntilCalled(stub: SinonStub | SinonSpy, name: string) {
+  return waitUntil(() => stub.called, `${name} was not called`);
+}
+
+/**
+ * Subscribes to the observable and resolves once it emits a matching value.
+ * Usage:
+ *   await waitUntilObserved(
+ *     myTestModel.state$,
+ *     state => state.prop === expectedValue
+ *   );
+ */
+export async function waitUntilObserved<T>(
+  observable$: Observable<T>,
+  predicate: (t: T) => boolean,
+  message = 'The waitUntilObserved() predicate did not match after 1000 ms.'
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    observable$.pipe(filter(predicate), take(1), timeout(1000)).subscribe({
+      next: t => resolve(t),
+      error: () => reject(new Error(message)),
+    });
   });
 }
 
@@ -190,17 +252,71 @@ export function waitUntil(
  *   await listenOnce(el, 'render');
  *   ...
  */
-export function listenOnce(el: EventTarget, eventType: string) {
-  return new Promise<void>(resolve => {
-    const listener = () => {
+export function listenOnce<T extends Event>(
+  el: EventTarget,
+  eventType: string
+) {
+  return new Promise<T>(resolve => {
+    const listener = (e: Event) => {
       removeEventListener();
-      resolve();
+      resolve(e as T);
     };
-    el.addEventListener(eventType, listener);
     let removeEventListener = () => {
       el.removeEventListener(eventType, listener);
       removeEventListener = () => {};
     };
+    el.addEventListener(eventType, listener);
     registerTestCleanup(removeEventListener);
   });
+}
+
+export function dispatch<T>(element: HTMLElement, type: string, detail: T) {
+  const eventOptions = {
+    detail,
+    bubbles: true,
+    composed: true,
+  };
+  element.dispatchEvent(new CustomEvent<T>(type, eventOptions));
+}
+
+export function pressKey(
+  element: HTMLElement,
+  key: string | Key,
+  ...modifiers: Modifier[]
+) {
+  const eventOptions = {
+    key,
+    bubbles: true,
+    composed: true,
+    altKey: modifiers.includes(Modifier.ALT_KEY),
+    ctrlKey: modifiers.includes(Modifier.CTRL_KEY),
+    metaKey: modifiers.includes(Modifier.META_KEY),
+    shiftKey: modifiers.includes(Modifier.SHIFT_KEY),
+  };
+  element.dispatchEvent(new KeyboardEvent('keydown', eventOptions));
+}
+
+export function mouseDown(element: HTMLElement) {
+  const rect = element.getBoundingClientRect();
+  const eventOptions = {
+    bubbles: true,
+    composed: true,
+    clientX: (rect.left + rect.right) / 2,
+    clientY: (rect.top + rect.bottom) / 2,
+    screenX: (rect.left + rect.right) / 2,
+    screenY: (rect.top + rect.bottom) / 2,
+  };
+  element.dispatchEvent(new MouseEvent('mousedown', eventOptions));
+}
+
+export function assertFails(promise: Promise<unknown>, error?: unknown) {
+  promise
+    .then((_v: unknown) => {
+      assert.fail('Promise resolved but should have failed');
+    })
+    .catch((e: unknown) => {
+      if (error) {
+        assert.equal(e, error);
+      }
+    });
 }

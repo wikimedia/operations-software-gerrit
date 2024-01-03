@@ -59,6 +59,7 @@ import com.google.gerrit.server.data.TrackingIdAttribute;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.patch.DiffNotAvailableException;
 import com.google.gerrit.server.patch.DiffOperations;
+import com.google.gerrit.server.patch.DiffOptions;
 import com.google.gerrit.server.patch.FilePathAdapter;
 import com.google.gerrit.server.patch.filediff.FileDiffOutput;
 import com.google.gerrit.server.query.change.ChangeData;
@@ -133,7 +134,7 @@ public class EventFactory {
     a.owner = asAccountAttribute(change.getOwner(), accountLoader);
     a.assignee = asAccountAttribute(change.getAssignee(), accountLoader);
     a.status = change.getStatus();
-    a.createdOn = change.getCreatedOn().getTime() / 1000L;
+    a.createdOn = change.getCreatedOn().getEpochSecond();
     a.wip = change.isWorkInProgress() ? true : null;
     a.isPrivate = change.isPrivate() ? true : null;
     a.cherryPickOfChange =
@@ -166,7 +167,7 @@ public class EventFactory {
 
   /** Extend the existing {@link ChangeAttribute} with additional fields. */
   public void extend(ChangeAttribute a, Change change) {
-    a.lastUpdated = change.getLastUpdatedOn().getTime() / 1000L;
+    a.lastUpdated = change.getLastUpdatedOn().getEpochSecond();
     a.open = change.isNew();
   }
 
@@ -408,7 +409,7 @@ public class EventFactory {
     try {
       Map<String, FileDiffOutput> modifiedFiles =
           diffOperations.listModifiedFilesAgainstParent(
-              change.getProject(), patchSet.commitId(), /* parentNum= */ 0);
+              change.getProject(), patchSet.commitId(), /* parentNum= */ 0, DiffOptions.DEFAULTS);
 
       for (FileDiffOutput diff : modifiedFiles.values()) {
         if (patchSetAttribute.files == null) {
@@ -452,7 +453,7 @@ public class EventFactory {
     p.number = patchSet.number();
     p.ref = patchSet.refName();
     p.uploader = asAccountAttribute(patchSet.uploader(), accountLoader);
-    p.createdOn = patchSet.createdOn().getTime() / 1000L;
+    p.createdOn = patchSet.createdOn().getEpochSecond();
     PatchSet.Id pId = patchSet.id();
     try {
       p.parents = new ArrayList<>();
@@ -473,7 +474,7 @@ public class EventFactory {
 
       Map<String, FileDiffOutput> modifiedFiles =
           diffOperations.listModifiedFilesAgainstParent(
-              change.getProject(), patchSet.commitId(), /* parentNum= */ 0);
+              change.getProject(), patchSet.commitId(), /* parentNum= */ 0, DiffOptions.DEFAULTS);
       for (FileDiffOutput fileDiff : modifiedFiles.values()) {
         p.sizeDeletions += fileDiff.deletions();
         p.sizeInsertions += fileDiff.insertions();
@@ -558,7 +559,7 @@ public class EventFactory {
     a.type = approval.labelId().get();
     a.value = Short.toString(approval.value());
     a.by = asAccountAttribute(approval.accountId(), accountLoader);
-    a.grantedOn = approval.granted().getTime() / 1000L;
+    a.grantedOn = approval.granted().getEpochSecond();
     a.oldValue = null;
 
     Optional<LabelType> lt = labelTypes.byLabel(approval.labelId());
@@ -569,7 +570,7 @@ public class EventFactory {
   public MessageAttribute asMessageAttribute(
       ChangeMessage message, AccountAttributeLoader accountLoader) {
     MessageAttribute a = new MessageAttribute();
-    a.timestamp = message.getWrittenOn().getTime() / 1000L;
+    a.timestamp = message.getWrittenOn().getEpochSecond();
     a.reviewer =
         message.getAuthor() != null
             ? asAccountAttribute(message.getAuthor(), accountLoader)

@@ -747,14 +747,19 @@ class ReceiveCommits {
       return;
     }
 
-    if (!magicCommands.isEmpty()) {
-      metrics.pushCount.increment("magic", project.getName(), getUpdateType(magicCommands));
-    }
-    if (!regularCommands.isEmpty()) {
-      metrics.pushCount.increment("direct", project.getName(), getUpdateType(regularCommands));
-    }
-
     try {
+      if (!magicCommands.isEmpty()) {
+        parseMagicBranch(Iterables.getLast(magicCommands));
+        // Using the submit option submits the created change(s) immediately without checking labels
+        // nor submit rules. Hence we shouldn't record such pushes as "magic" which implies that
+        // code review is being done.
+        String pushKind = magicBranch != null && magicBranch.submit ? "direct_submit" : "magic";
+        metrics.pushCount.increment(pushKind, project.getName(), getUpdateType(magicCommands));
+      }
+      if (!regularCommands.isEmpty()) {
+        metrics.pushCount.increment("direct", project.getName(), getUpdateType(regularCommands));
+      }
+
       if (!regularCommands.isEmpty()) {
         handleRegularCommands(regularCommands, progress);
         return;
@@ -763,7 +768,6 @@ class ReceiveCommits {
       boolean first = true;
       for (ReceiveCommand cmd : magicCommands) {
         if (first) {
-          parseMagicBranch(cmd);
           first = false;
         } else {
           reject(cmd, "duplicate request");
@@ -777,7 +781,7 @@ class ReceiveCommits {
     Task newProgress = progress.beginSubTask("new", UNKNOWN);
     Task replaceProgress = progress.beginSubTask("updated", UNKNOWN);
 
-    List<CreateRequest> newChanges = Collections.emptyList();
+    ImmutableList<CreateRequest> newChanges = ImmutableList.of();
     try {
       if (magicBranch != null && magicBranch.cmd.getResult() == NOT_ATTEMPTED) {
         try {
@@ -836,7 +840,7 @@ class ReceiveCommits {
       Map<BranchNameKey, ReceiveCommand> branches;
       try (BatchUpdate bu =
               batchUpdateFactory.create(
-                  project.getNameKey(), user.materializedCopy(), TimeUtil.nowTs());
+                  project.getNameKey(), user.materializedCopy(), TimeUtil.now());
           ObjectInserter ins = repo.newObjectInserter();
           ObjectReader reader = ins.newReader();
           RevWalk rw = new RevWalk(reader);
@@ -858,7 +862,7 @@ class ReceiveCommits {
 
         submissionExecutor.execute(ImmutableList.of(bu));
 
-        orm.setContext(TimeUtil.nowTs(), user, NotifyResolver.Result.none());
+        orm.setContext(TimeUtil.now(), user, NotifyResolver.Result.none());
         submissionExecutor.afterExecutions(orm);
 
         branches = bu.getSuccessfullyUpdatedBranches(false);
@@ -1005,7 +1009,8 @@ class ReceiveCommits {
     addMessage(changeFormatter.changeUpdated(input));
   }
 
-  private void insertChangesAndPatchSets(List<CreateRequest> newChanges, Task replaceProgress) {
+  private void insertChangesAndPatchSets(
+      ImmutableList<CreateRequest> newChanges, Task replaceProgress) {
     try (TraceTimer traceTimer =
         newTimer(
             "insertChangesAndPatchSets", Metadata.builder().resourceCount(newChanges.size()))) {
@@ -1069,7 +1074,7 @@ class ReceiveCommits {
       throws RestApiException, IOException {
     try (BatchUpdate bu =
             batchUpdateFactory.create(
-                project.getNameKey(), user.materializedCopy(), TimeUtil.nowTs());
+                project.getNameKey(), user.materializedCopy(), TimeUtil.now());
         ObjectInserter ins = repo.newObjectInserter();
         ObjectReader reader = ins.newReader();
         RevWalk rw = new RevWalk(reader)) {
@@ -1090,13 +1095,15 @@ class ReceiveCommits {
                 publishCommentsOp.create(replace.psId, project.getNameKey()));
             Optional<ChangeNotes> changeNotes = getChangeNotes(replace.notes.getChangeId());
             if (!changeNotes.isPresent()) {
-              // If not present, no need to update attention set here since this is a new change.
+              // If not present, no need to update attention set here since this is a
+              // new change.
               continue;
             }
             List<HumanComment> drafts =
                 commentsUtil.draftByChangeAuthor(changeNotes.get(), user.getAccountId());
             if (drafts.isEmpty()) {
-              // If no comments, attention set shouldn't update since the user didn't reply.
+              // If no comments, attention set shouldn't update since the user didn't
+              // reply.
               continue;
             }
             replyAttentionSetUpdates.processAutomaticAttentionSetRulesOnReply(
@@ -1134,7 +1141,8 @@ class ReceiveCommits {
         String rejectMessage = replace.getRejectMessage();
         if (rejectMessage == null) {
           if (replace.inputCommand.getResult() == NOT_ATTEMPTED) {
-            // Not necessarily the magic branch, so need to set OK on the original value.
+            // Not necessarily the magic branch, so need to set OK on the original
+            // value.
             replace.inputCommand.setResult(OK);
           }
         } else {
@@ -1446,6 +1454,12 @@ class ReceiveCommits {
   private void parseCreate(ReceiveCommand cmd)
       throws PermissionBackendException, NoSuchProjectException, IOException {
     try (TraceTimer traceTimer = newTimer("parseCreate")) {
+      if (repo.resolve(cmd.getRefName()) != null) {
+        reject(
+            cmd,
+            String.format("Cannot create ref '%s' because it already exists.", cmd.getRefName()));
+        return;
+      }
       RevObject obj;
       try {
         obj = receivePack.getRevWalk().parseAny(cmd.getNewId());
@@ -2248,7 +2262,8 @@ class ReceiveCommits {
                             comment.message.length()))
                 .collect(toImmutableList());
         CommentValidationContext ctx =
-            CommentValidationContext.create(change.getChangeId(), change.getProject().get());
+            CommentValidationContext.create(
+                change.getChangeId(), change.getProject().get(), change.getDest().branch());
         ImmutableList<CommentValidationFailure> commentValidationFailures =
             PublishCommentUtil.findInvalidComments(ctx, commentValidators, draftsForValidation);
         magicBranch.setWithholdComments(!commentValidationFailures.isEmpty());
@@ -2264,7 +2279,7 @@ class ReceiveCommits {
     }
   }
 
-  private void warnAboutMissingChangeId(List<CreateRequest> newChanges) {
+  private void warnAboutMissingChangeId(ImmutableList<CreateRequest> newChanges) {
     for (CreateRequest create : newChanges) {
       try {
         receivePack.getRevWalk().parseBody(create.commit);
@@ -2281,7 +2296,7 @@ class ReceiveCommits {
     }
   }
 
-  private List<CreateRequest> selectNewAndReplacedChangesFromMagicBranch(Task newProgress)
+  private ImmutableList<CreateRequest> selectNewAndReplacedChangesFromMagicBranch(Task newProgress)
       throws IOException {
     try (TraceTimer traceTimer = newTimer("selectNewAndReplacedChangesFromMagicBranch")) {
       logger.atFine().log("Finding new and replaced changes");
@@ -2296,7 +2311,7 @@ class ReceiveCommits {
       try {
         RevCommit start = setUpWalkForSelectingChanges();
         if (start == null) {
-          return Collections.emptyList();
+          return ImmutableList.of();
         }
 
         LinkedHashMap<RevCommit, ChangeLookup> pending = new LinkedHashMap<>();
@@ -2374,7 +2389,7 @@ class ReceiveCommits {
             reject(
                 magicBranch.cmd,
                 "the number of pushed changes in a batch exceeds the max limit " + maxBatchChanges);
-            return Collections.emptyList();
+            return ImmutableList.of();
           }
 
           if (commitAlreadyTracked) {
@@ -2407,7 +2422,7 @@ class ReceiveCommits {
           if (!validationResult.isValid()) {
             // Not a change the user can propose? Abort as early as possible.
             logger.atFine().log("Aborting early due to invalid commit");
-            return Collections.emptyList();
+            return ImmutableList.of();
           }
 
           // Don't allow merges to be uploaded in commit chain via all-not-in-target
@@ -2444,7 +2459,7 @@ class ReceiveCommits {
           if (newChangeIds.contains(p.changeKey)) {
             logger.atFine().log("Multiple commits with Change-Id %s", p.changeKey);
             reject(magicBranch.cmd, SAME_CHANGE_ID_IN_MULTIPLE_CHANGES);
-            return Collections.emptyList();
+            return ImmutableList.of();
           }
 
           List<ChangeData> changes = p.destChanges;
@@ -2460,7 +2475,7 @@ class ReceiveCommits {
             // this error message as Change-Id should be unique per branch.
             //
             reject(magicBranch.cmd, p.changeKey.get() + " has duplicates");
-            return Collections.emptyList();
+            return ImmutableList.of();
           }
 
           if (changes.size() == 1) {
@@ -2485,13 +2500,13 @@ class ReceiveCommits {
                 magicBranch.cmd, false, changes.get(0).change(), p.commit)) {
               continue;
             }
-            return Collections.emptyList();
+            return ImmutableList.of();
           }
 
           if (changes.isEmpty()) {
             if (!isValidChangeId(p.changeKey.get())) {
               reject(magicBranch.cmd, "invalid Change-Id");
-              return Collections.emptyList();
+              return ImmutableList.of();
             }
 
             // In case the change look up from the index failed,
@@ -2499,7 +2514,7 @@ class ReceiveCommits {
             if (foundInExistingPatchSets(receivePackRefCache.patchSetIdsFromObjectId(p.commit))) {
               if (pending.size() == 1) {
                 reject(magicBranch.cmd, "commit(s) already exists (as current patchset)");
-                return Collections.emptyList();
+                return ImmutableList.of();
               }
               itr.remove();
               continue;
@@ -2519,11 +2534,11 @@ class ReceiveCommits {
 
       if (newChanges.isEmpty() && replaceByChange.isEmpty()) {
         reject(magicBranch.cmd, "no new changes");
-        return Collections.emptyList();
+        return ImmutableList.of();
       }
       if (!newChanges.isEmpty() && magicBranch.edit) {
         reject(magicBranch.cmd, "edit is not supported for new changes");
-        return newChanges;
+        return ImmutableList.copyOf(newChanges);
       }
 
       SortedSetMultimap<ObjectId, String> groups = groupCollector.getGroups();
@@ -2537,10 +2552,10 @@ class ReceiveCommits {
         replace.groups = ImmutableList.copyOf(groups.get(replace.newCommitId));
       }
       for (UpdateGroupsRequest update : updateGroups) {
-        update.groups = ImmutableList.copyOf((groups.get(update.commit)));
+        update.groups = ImmutableList.copyOf(groups.get(update.commit));
       }
       logger.atFine().log("Finished updating groups from GroupCollector");
-      return newChanges;
+      return ImmutableList.copyOf(newChanges);
     }
   }
 
@@ -2843,7 +2858,7 @@ class ReceiveCommits {
     }
   }
 
-  private void preparePatchSetsForReplace(List<CreateRequest> newChanges) {
+  private void preparePatchSetsForReplace(ImmutableList<CreateRequest> newChanges) {
     try (TraceTimer traceTimer =
         newTimer(
             "preparePatchSetsForReplace", Metadata.builder().resourceCount(newChanges.size()))) {
@@ -3357,7 +3372,9 @@ class ReceiveCommits {
   // REJECTED, and the return value is 'false'
   private boolean validRefOperation(ReceiveCommand cmd) {
     try (TraceTimer traceTimer = newTimer("validRefOperation")) {
-      RefOperationValidators refValidators = refValidatorsFactory.create(getProject(), user, cmd);
+      RefOperationValidators refValidators =
+          refValidatorsFactory.create(
+              getProject(), user, cmd, ImmutableListMultimap.copyOf(pushOptions));
 
       try {
         messages.addAll(refValidators.validateForRefOperation());
@@ -3470,7 +3487,7 @@ class ReceiveCommits {
                 "autoCloseChanges",
                 updateFactory -> {
                   try (BatchUpdate bu =
-                          updateFactory.create(projectState.getNameKey(), user, TimeUtil.nowTs());
+                          updateFactory.create(projectState.getNameKey(), user, TimeUtil.now());
                       ObjectInserter ins = repo.newObjectInserter();
                       ObjectReader reader = ins.newReader();
                       RevWalk rw = new RevWalk(reader)) {

@@ -16,10 +16,15 @@
  */
 
 import '../../../test/common-test-setup-karma';
-import {createChange, createRevision} from '../../../test/test-data-generators';
+import {
+  createParsedChange,
+  createRevision,
+  createThread,
+} from '../../../test/test-data-generators';
 import {queryAndAssert} from '../../../test/test-utils';
 import {PatchSetNum} from '../../../types/common';
 import {GrConfirmSubmitDialog} from './gr-confirm-submit-dialog';
+import './gr-confirm-submit-dialog';
 
 const basicFixture = fixtureFromElement('gr-confirm-submit-dialog');
 
@@ -28,17 +33,17 @@ suite('gr-confirm-submit-dialog tests', () => {
 
   setup(() => {
     element = basicFixture.instantiate();
-    element._initialised = true;
+    element.initialised = true;
   });
 
   test('display', async () => {
     element.action = {label: 'my-label'};
     element.change = {
-      ...createChange(),
+      ...createParsedChange(),
       subject: 'my-subject',
       revisions: {},
     };
-    await flush();
+    await element.updateComplete;
     const header = queryAndAssert(element, '.header');
     assert.equal(header.textContent!.trim(), 'my-label');
 
@@ -47,23 +52,24 @@ suite('gr-confirm-submit-dialog tests', () => {
     assert.notEqual(message.textContent!.indexOf('my-subject'), -1);
   });
 
-  test('_computeUnresolvedCommentsWarning', () => {
-    const change = {...createChange(), unresolved_comment_count: 1};
+  test('computeUnresolvedCommentsWarning', () => {
+    element.change = {...createParsedChange()};
+    element.unresolvedThreads = [createThread()];
     assert.equal(
-      element._computeUnresolvedCommentsWarning(change),
+      element.computeUnresolvedCommentsWarning(),
       'Heads Up! 1 unresolved comment.'
     );
 
-    const change2 = {...createChange(), unresolved_comment_count: 2};
+    element.unresolvedThreads = [...element.unresolvedThreads, createThread()];
     assert.equal(
-      element._computeUnresolvedCommentsWarning(change2),
+      element.computeUnresolvedCommentsWarning(),
       'Heads Up! 2 unresolved comments.'
     );
   });
 
-  test('_computeHasChangeEdit', () => {
-    const change = {
-      ...createChange(),
+  test('computeHasChangeEdit', () => {
+    element.change = {
+      ...createParsedChange(),
       revisions: {
         d442ff05d6c4f2a3af0eeca1f67374b39f9dc3d8: {
           ...createRevision(),
@@ -73,10 +79,10 @@ suite('gr-confirm-submit-dialog tests', () => {
       unresolved_comment_count: 0,
     };
 
-    assert.isTrue(element._computeHasChangeEdit(change));
+    assert.isTrue(element.computeHasChangeEdit());
 
-    const change2 = {
-      ...createChange(),
+    element.change = {
+      ...createParsedChange(),
       revisions: {
         d442ff05d6c4f2a3af0eeca1f67374b39f9dc3d8: {
           ...createRevision(),
@@ -84,6 +90,6 @@ suite('gr-confirm-submit-dialog tests', () => {
         },
       },
     };
-    assert.isFalse(element._computeHasChangeEdit(change2));
+    assert.isFalse(element.computeHasChangeEdit());
   });
 });

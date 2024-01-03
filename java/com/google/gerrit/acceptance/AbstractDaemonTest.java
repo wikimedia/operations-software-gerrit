@@ -26,6 +26,7 @@ import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.b
 import static com.google.gerrit.entities.Patch.COMMIT_MSG;
 import static com.google.gerrit.entities.Patch.MERGE_LIST;
 import static com.google.gerrit.extensions.api.changes.SubmittedTogetherOption.NON_VISIBLE_CHANGES;
+import static com.google.gerrit.extensions.api.changes.SubmittedTogetherOption.TOPIC_CLOSURE;
 import static com.google.gerrit.server.group.SystemGroupBackend.ANONYMOUS_USERS;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
@@ -38,12 +39,15 @@ import static org.eclipse.jgit.lib.Constants.HEAD;
 
 import com.github.rholder.retry.BlockStrategy;
 import com.google.common.base.Strings;
+import com.google.common.base.Ticker;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.jimfs.Jimfs;
 import com.google.common.primitives.Chars;
+import com.google.common.testing.FakeTicker;
 import com.google.gerrit.acceptance.AcceptanceTestRequestScope.Context;
 import com.google.gerrit.acceptance.PushOneCommit.Result;
 import com.google.gerrit.acceptance.testsuite.account.TestSshKeys;
@@ -78,6 +82,7 @@ import com.google.gerrit.extensions.api.changes.ChangeApi;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.api.changes.RevisionApi;
 import com.google.gerrit.extensions.api.changes.SubmittedTogetherInfo;
+import com.google.gerrit.extensions.api.changes.SubmittedTogetherOption;
 import com.google.gerrit.extensions.api.projects.BranchApi;
 import com.google.gerrit.extensions.api.projects.BranchInfo;
 import com.google.gerrit.extensions.api.projects.BranchInput;
@@ -95,8 +100,6 @@ import com.google.gerrit.extensions.common.EditInfo;
 import com.google.gerrit.extensions.restapi.BinaryResult;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.index.project.ProjectIndex;
-import com.google.gerrit.index.project.ProjectIndexCollection;
 import com.google.gerrit.json.OutputFormat;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.IdentifiedUser;
@@ -123,11 +126,7 @@ import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.group.SystemGroupBackend;
-import com.google.gerrit.server.index.account.AccountIndex;
-import com.google.gerrit.server.index.account.AccountIndexCollection;
 import com.google.gerrit.server.index.account.AccountIndexer;
-import com.google.gerrit.server.index.change.ChangeIndex;
-import com.google.gerrit.server.index.change.ChangeIndexCollection;
 import com.google.gerrit.server.index.change.ChangeIndexer;
 import com.google.gerrit.server.notedb.AbstractChangeNotes;
 import com.google.gerrit.server.notedb.ChangeNoteUtil;
@@ -163,7 +162,6 @@ import java.nio.file.FileSystem;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.KeyPair;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -290,6 +288,7 @@ public abstract class AbstractDaemonTest {
   @Inject protected ChangeNotes.Factory notesFactory;
   @Inject protected BatchAbandon batchAbandon;
   @Inject protected TestSshKeys sshKeys;
+  @Inject protected TestTicker testTicker;
 
   protected EventRecorder eventRecorder;
   protected GerritServer server;
@@ -310,14 +309,11 @@ public abstract class AbstractDaemonTest {
   protected BlockStrategy noSleepBlockStrategy = t -> {}; // Don't sleep in tests.
 
   @Inject private AbstractChangeNotes.Args changeNotesArgs;
-  @Inject private AccountIndexCollection accountIndexes;
   @Inject private AccountIndexer accountIndexer;
-  @Inject private ChangeIndexCollection changeIndexes;
   @Inject private EventRecorder.Factory eventRecorderFactory;
   @Inject private InProcessProtocol inProcessProtocol;
   @Inject private PluginGuiceEnvironment pluginGuiceEnvironment;
   @Inject private PluginUser.Factory pluginUserFactory;
-  @Inject private ProjectIndexCollection projectIndexes;
   @Inject private RequestScopeOperations requestScopeOperations;
   @Inject private SitePaths sitePaths;
   @Inject private ProjectOperations projectOperations;
@@ -579,8 +575,7 @@ public abstract class AbstractDaemonTest {
         && SshMode.useSsh()
         && (adminSshSession == null || userSshSession == null)) {
       // Create Ssh sessions
-      KeyPair adminKeyPair = sshKeys.getKeyPair(admin);
-      SshSessionFactory.initSsh(adminKeyPair);
+      SshSessionFactory.initSsh();
       Context ctx = newRequestContext(user);
       atrScope.set(ctx);
       userSshSession = ctx.getSession();
@@ -655,7 +650,10 @@ public abstract class AbstractDaemonTest {
   }
 
   protected Project.NameKey createProjectOverAPI(
-      String nameSuffix, Project.NameKey parent, boolean createEmptyCommit, SubmitType submitType)
+      String nameSuffix,
+      @Nullable Project.NameKey parent,
+      boolean createEmptyCommit,
+      @Nullable SubmitType submitType)
       throws RestApiException {
     ProjectInput in = new ProjectInput();
     in.name = name(nameSuffix);
@@ -702,6 +700,8 @@ public abstract class AbstractDaemonTest {
     }
     SystemReader.setInstance(oldSystemReader);
     oldSystemReader = null;
+    // Set useDefaultTicker in afterTest, so the next beforeTest will use the default ticker
+    testTicker.useDefaultTicker();
   }
 
   protected void closeSsh() {
@@ -1063,87 +1063,6 @@ public abstract class AbstractDaemonTest {
     };
   }
 
-  protected void disableChangeIndexWrites() {
-    for (ChangeIndex i : changeIndexes.getWriteIndexes()) {
-      if (!(i instanceof ReadOnlyChangeIndex)) {
-        changeIndexes.addWriteIndex(new ReadOnlyChangeIndex(i));
-      }
-    }
-  }
-
-  protected void enableChangeIndexWrites() {
-    for (ChangeIndex i : changeIndexes.getWriteIndexes()) {
-      if (i instanceof ReadOnlyChangeIndex) {
-        changeIndexes.addWriteIndex(((ReadOnlyChangeIndex) i).unwrap());
-      }
-    }
-  }
-
-  protected AutoCloseable disableChangeIndex() {
-    disableChangeIndexWrites();
-    ChangeIndex maybeDisabledSearchIndex = changeIndexes.getSearchIndex();
-    if (!(maybeDisabledSearchIndex instanceof DisabledChangeIndex)) {
-      changeIndexes.setSearchIndex(new DisabledChangeIndex(maybeDisabledSearchIndex), false);
-    }
-
-    return () -> {
-      enableChangeIndexWrites();
-      ChangeIndex maybeEnabledSearchIndex = changeIndexes.getSearchIndex();
-      if (maybeEnabledSearchIndex instanceof DisabledChangeIndex) {
-        changeIndexes.setSearchIndex(
-            ((DisabledChangeIndex) maybeEnabledSearchIndex).unwrap(), false);
-      }
-    };
-  }
-
-  protected AutoCloseable disableAccountIndex() {
-    AccountIndex maybeDisabledSearchIndex = accountIndexes.getSearchIndex();
-    if (!(maybeDisabledSearchIndex instanceof DisabledAccountIndex)) {
-      accountIndexes.setSearchIndex(new DisabledAccountIndex(maybeDisabledSearchIndex), false);
-    }
-
-    return () -> {
-      AccountIndex maybeEnabledSearchIndex = accountIndexes.getSearchIndex();
-      if (maybeEnabledSearchIndex instanceof DisabledAccountIndex) {
-        accountIndexes.setSearchIndex(
-            ((DisabledAccountIndex) maybeEnabledSearchIndex).unwrap(), false);
-      }
-    };
-  }
-
-  protected AutoCloseable disableProjectIndex() {
-    disableProjectIndexWrites();
-    ProjectIndex maybeDisabledSearchIndex = projectIndexes.getSearchIndex();
-    if (!(maybeDisabledSearchIndex instanceof DisabledProjectIndex)) {
-      projectIndexes.setSearchIndex(new DisabledProjectIndex(maybeDisabledSearchIndex), false);
-    }
-
-    return () -> {
-      enableProjectIndexWrites();
-      ProjectIndex maybeEnabledSearchIndex = projectIndexes.getSearchIndex();
-      if (maybeEnabledSearchIndex instanceof DisabledProjectIndex) {
-        projectIndexes.setSearchIndex(
-            ((DisabledProjectIndex) maybeEnabledSearchIndex).unwrap(), false);
-      }
-    };
-  }
-
-  protected void disableProjectIndexWrites() {
-    for (ProjectIndex i : projectIndexes.getWriteIndexes()) {
-      if (!(i instanceof DisabledProjectIndex)) {
-        projectIndexes.addWriteIndex(new DisabledProjectIndex(i));
-      }
-    }
-  }
-
-  protected void enableProjectIndexWrites() {
-    for (ProjectIndex i : projectIndexes.getWriteIndexes()) {
-      if (i instanceof DisabledProjectIndex) {
-        projectIndexes.addWriteIndex(((DisabledProjectIndex) i).unwrap());
-      }
-    }
-  }
-
   protected static Gson newGson() {
     return OutputFormat.JSON_COMPACT.newGson();
   }
@@ -1194,9 +1113,37 @@ public abstract class AbstractDaemonTest {
   }
 
   protected void assertSubmittedTogether(String chId, String... expected) throws Exception {
-    List<ChangeInfo> actual = gApi.changes().id(chId).submittedTogether();
+    assertSubmittedTogether(chId, ImmutableSet.of(), expected);
+  }
+
+  protected void assertSubmittedTogetherWithTopicClosure(String chId, String... expected)
+      throws Exception {
+    assertSubmittedTogether(chId, ImmutableSet.of(TOPIC_CLOSURE), expected);
+  }
+
+  protected void assertSubmittedTogether(
+      String chId,
+      ImmutableSet<SubmittedTogetherOption> submittedTogetherOptions,
+      String... expected)
+      throws Exception {
+    // This does not include NON_VISIBILE_CHANGES
+    List<ChangeInfo> actual =
+        submittedTogetherOptions.isEmpty()
+            ? gApi.changes().id(chId).submittedTogether()
+            : gApi.changes()
+                .id(chId)
+                .submittedTogether(EnumSet.copyOf(submittedTogetherOptions))
+                .changes;
+
+    EnumSet<SubmittedTogetherOption> enumSetIncludingNonVisibleChanges =
+        submittedTogetherOptions.isEmpty()
+            ? EnumSet.of(NON_VISIBLE_CHANGES)
+            : EnumSet.copyOf(submittedTogetherOptions);
+    enumSetIncludingNonVisibleChanges.add(NON_VISIBLE_CHANGES);
+
+    // This includes NON_VISIBLE_CHANGES for comparison.
     SubmittedTogetherInfo info =
-        gApi.changes().id(chId).submittedTogether(EnumSet.of(NON_VISIBLE_CHANGES));
+        gApi.changes().id(chId).submittedTogether(enumSetIncludingNonVisibleChanges);
 
     assertThat(info.nonVisibleChanges).isEqualTo(0);
     assertThat(Iterables.transform(actual, i1 -> i1.changeId))
@@ -1250,10 +1197,10 @@ public abstract class AbstractDaemonTest {
     assertThat(replyTo.getString()).contains(email);
   }
 
-  protected Map<BranchNameKey, ObjectId> fetchFromSubmitPreview(String changeId) throws Exception {
-    try (BinaryResult result = gApi.changes().id(changeId).current().submitPreview()) {
-      return fetchFromBundles(result);
-    }
+  protected void assertMailNotReplyTo(Message message, String email) throws Exception {
+    assertThat(message.headers()).containsKey("Reply-To");
+    StringEmailHeader replyTo = (StringEmailHeader) message.headers().get("Reply-To");
+    assertThat(replyTo.getString()).doesNotContain(email);
   }
 
   /**
@@ -1608,6 +1555,13 @@ public abstract class AbstractDaemonTest {
     }
   }
 
+  protected void clearSubmitRequirements(Project.NameKey project) throws Exception {
+    try (ProjectConfigUpdate u = updateProject(project)) {
+      u.getConfig().clearSubmitRequirements();
+      u.save();
+    }
+  }
+
   protected void configLabel(String label, LabelFunction func) throws Exception {
     configLabel(label, func, ImmutableList.of());
   }
@@ -1761,6 +1715,34 @@ public abstract class AbstractDaemonTest {
           (moduleClass.getModifiers() & Modifier.STATIC) != 0,
           "module must be static: %s",
           moduleClass.getName());
+    }
+  }
+
+  /** {@link Ticker} implementation for mocking without restarting GerritServer */
+  public static class TestTicker extends Ticker {
+    Ticker actualTicker;
+
+    public TestTicker() {
+      useDefaultTicker();
+    }
+
+    /** Switches to system ticker */
+    public Ticker useDefaultTicker() {
+      this.actualTicker = Ticker.systemTicker();
+      return actualTicker;
+    }
+
+    /** Switches to {@link FakeTicker} */
+    public FakeTicker useFakeTicker() {
+      if (!(this.actualTicker instanceof FakeTicker)) {
+        this.actualTicker = new FakeTicker();
+      }
+      return (FakeTicker) actualTicker;
+    }
+
+    @Override
+    public long read() {
+      return actualTicker.read();
     }
   }
 }

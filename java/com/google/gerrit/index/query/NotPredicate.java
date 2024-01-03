@@ -21,10 +21,10 @@ import java.util.Collections;
 import java.util.List;
 
 /** Negates the result of another predicate. */
-public class NotPredicate<T> extends Predicate<T> implements Matchable<T> {
+public final class NotPredicate<T> extends Predicate<T> implements Matchable<T> {
   private final Predicate<T> that;
 
-  protected NotPredicate(Predicate<T> that) {
+  NotPredicate(Predicate<T> that) {
     if (that instanceof NotPredicate) {
       throw new IllegalArgumentException("Double negation unsupported");
     }
@@ -87,7 +87,7 @@ public class NotPredicate<T> extends Predicate<T> implements Matchable<T> {
     if (other == null) {
       return false;
     }
-    return getClass() == other.getClass()
+    return other instanceof NotPredicate
         && getChildren().equals(((Predicate<?>) other).getChildren());
   }
 

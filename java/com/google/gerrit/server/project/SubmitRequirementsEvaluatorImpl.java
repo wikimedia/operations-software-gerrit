@@ -14,6 +14,7 @@
 
 package com.google.gerrit.server.project;
 
+import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
 
 import com.google.common.collect.ImmutableMap;
@@ -24,23 +25,29 @@ import com.google.gerrit.entities.SubmitRequirementExpressionResult.PredicateRes
 import com.google.gerrit.entities.SubmitRequirementResult;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
+import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.SubmitRequirementChangeQueryBuilder;
+import com.google.gerrit.server.util.ManualRequestContext;
+import com.google.gerrit.server.util.OneOffRequestContext;
 import com.google.inject.AbstractModule;
 import com.google.inject.Inject;
 import com.google.inject.Module;
 import com.google.inject.Provider;
 import com.google.inject.Scopes;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
+import java.util.stream.Stream;
 
 /** Evaluates submit requirements for different change data. */
 public class SubmitRequirementsEvaluatorImpl implements SubmitRequirementsEvaluator {
 
   private final Provider<SubmitRequirementChangeQueryBuilder> queryBuilder;
   private final ProjectCache projectCache;
-  private final SubmitRuleEvaluator.Factory legacyEvaluator;
+  private final PluginSetContext<SubmitRequirement> globalSubmitRequirements;
+  private final SubmitRequirementsUtil submitRequirementsUtil;
+  private final OneOffRequestContext requestContext;
 
   public static Module module() {
     return new AbstractModule() {
@@ -57,10 +64,14 @@ public class SubmitRequirementsEvaluatorImpl implements SubmitRequirementsEvalua
   private SubmitRequirementsEvaluatorImpl(
       Provider<SubmitRequirementChangeQueryBuilder> queryBuilder,
       ProjectCache projectCache,
-      SubmitRuleEvaluator.Factory legacyEvaluator) {
+      PluginSetContext<SubmitRequirement> globalSubmitRequirements,
+      SubmitRequirementsUtil submitRequirementsUtil,
+      OneOffRequestContext requestContext) {
     this.queryBuilder = queryBuilder;
     this.projectCache = projectCache;
-    this.legacyEvaluator = legacyEvaluator;
+    this.globalSubmitRequirements = globalSubmitRequirements;
+    this.submitRequirementsUtil = submitRequirementsUtil;
+    this.requestContext = requestContext;
   }
 
   @Override
@@ -70,43 +81,50 @@ public class SubmitRequirementsEvaluatorImpl implements SubmitRequirementsEvalua
   }
 
   @Override
-  public Map<SubmitRequirement, SubmitRequirementResult> evaluateAllRequirements(
+  public ImmutableMap<SubmitRequirement, SubmitRequirementResult> evaluateAllRequirements(
       ChangeData cd, boolean includeLegacy) {
-    Map<SubmitRequirement, SubmitRequirementResult> projectConfigRequirements = getRequirements(cd);
-    Map<SubmitRequirement, SubmitRequirementResult> result = projectConfigRequirements;
-    if (includeLegacy) {
-      Map<SubmitRequirement, SubmitRequirementResult> legacyReqs =
-          SubmitRequirementsAdapter.getLegacyRequirements(legacyEvaluator, cd);
-      result =
-          SubmitRequirementsUtil.mergeLegacyAndNonLegacyRequirements(
-              projectConfigRequirements, legacyReqs);
+    ImmutableMap<SubmitRequirement, SubmitRequirementResult> projectConfigRequirements =
+        getRequirements(cd);
+    if (!includeLegacy) {
+      return projectConfigRequirements;
     }
-    return ImmutableMap.copyOf(result);
+    Map<SubmitRequirement, SubmitRequirementResult> legacyReqs =
+        SubmitRequirementsAdapter.getLegacyRequirements(cd);
+    return submitRequirementsUtil.mergeLegacyAndNonLegacyRequirements(
+        projectConfigRequirements, legacyReqs, cd);
   }
 
   @Override
   public SubmitRequirementResult evaluateRequirement(SubmitRequirement sr, ChangeData cd) {
-    SubmitRequirementExpressionResult blockingResult =
-        evaluateExpression(sr.submittabilityExpression(), cd);
+    try (ManualRequestContext ignored = requestContext.open()) {
+      // Use a request context to execute predicates as an internal user with expanded visibility.
+      // This is so that the evaluation does not depend on who is running the current request (e.g.
+      // a "ownerin" predicate with group that is not visible to the person making this request).
 
-    Optional<SubmitRequirementExpressionResult> applicabilityResult =
-        sr.applicabilityExpression().isPresent()
-            ? Optional.of(evaluateExpression(sr.applicabilityExpression().get(), cd))
-            : Optional.empty();
+      Optional<SubmitRequirementExpressionResult> applicabilityResult =
+          sr.applicabilityExpression().isPresent()
+              ? Optional.of(evaluateExpression(sr.applicabilityExpression().get(), cd))
+              : Optional.empty();
+      Optional<SubmitRequirementExpressionResult> submittabilityResult = Optional.empty();
+      Optional<SubmitRequirementExpressionResult> overrideResult = Optional.empty();
+      if (!sr.applicabilityExpression().isPresent()
+          || SubmitRequirementResult.assertPass(applicabilityResult)) {
+        submittabilityResult = Optional.of(evaluateExpression(sr.submittabilityExpression(), cd));
+        overrideResult =
+            sr.overrideExpression().isPresent()
+                ? Optional.of(evaluateExpression(sr.overrideExpression().get(), cd))
+                : Optional.empty();
+      }
 
-    Optional<SubmitRequirementExpressionResult> overrideResult =
-        sr.overrideExpression().isPresent()
-            ? Optional.of(evaluateExpression(sr.overrideExpression().get(), cd))
-            : Optional.empty();
-
-    return SubmitRequirementResult.builder()
-        .legacy(Optional.of(false))
-        .submitRequirement(sr)
-        .patchSetCommitId(cd.currentPatchSet().commitId())
-        .submittabilityExpressionResult(blockingResult)
-        .applicabilityExpressionResult(applicabilityResult)
-        .overrideExpressionResult(overrideResult)
-        .build();
+      return SubmitRequirementResult.builder()
+          .legacy(Optional.of(false))
+          .submitRequirement(sr)
+          .patchSetCommitId(cd.currentPatchSet().commitId())
+          .submittabilityExpressionResult(submittabilityResult)
+          .applicabilityExpressionResult(applicabilityResult)
+          .overrideExpressionResult(overrideResult)
+          .build();
+    }
   }
 
   @Override
@@ -116,20 +134,58 @@ public class SubmitRequirementsEvaluatorImpl implements SubmitRequirementsEvalua
       Predicate<ChangeData> predicate = queryBuilder.get().parse(expression.expressionString());
       PredicateResult predicateResult = evaluatePredicateTree(predicate, changeData);
       return SubmitRequirementExpressionResult.create(expression, predicateResult);
-    } catch (QueryParseException e) {
+    } catch (QueryParseException | SubmitRequirementEvaluationException e) {
       return SubmitRequirementExpressionResult.error(expression, e.getMessage());
     }
   }
 
-  /** Evaluate and return submit requirements stored in this project's config and its parents. */
-  private Map<SubmitRequirement, SubmitRequirementResult> getRequirements(ChangeData cd) {
+  /**
+   * Evaluate and return all {@link SubmitRequirement}s.
+   *
+   * <p>This includes all globally bound {@link SubmitRequirement}s, as well as requirements stored
+   * in this project's config and its parents.
+   *
+   * <p>The behaviour in case of the name match is controlled by {@link
+   * SubmitRequirement#allowOverrideInChildProjects} of global {@link SubmitRequirement}.
+   */
+  private ImmutableMap<SubmitRequirement, SubmitRequirementResult> getRequirements(ChangeData cd) {
+    Map<String, SubmitRequirement> globalRequirements = getGlobalRequirements();
+
     ProjectState state = projectCache.get(cd.project()).orElseThrow(illegalState(cd.project()));
-    Map<String, SubmitRequirement> requirements = state.getSubmitRequirements();
-    Map<SubmitRequirement, SubmitRequirementResult> result = new HashMap<>();
+    Map<String, SubmitRequirement> projectConfigRequirements = state.getSubmitRequirements();
+
+    ImmutableMap<String, SubmitRequirement> requirements =
+        Stream.concat(
+                globalRequirements.entrySet().stream(),
+                projectConfigRequirements.entrySet().stream())
+            .collect(
+                toImmutableMap(
+                    Map.Entry::getKey,
+                    Map.Entry::getValue,
+                    (globalSubmitRequirement, projectConfigRequirement) ->
+                        // Override with projectConfigRequirement if allowed by
+                        // globalSubmitRequirement configuration
+                        globalSubmitRequirement.allowOverrideInChildProjects()
+                            ? projectConfigRequirement
+                            : globalSubmitRequirement));
+    ImmutableMap.Builder<SubmitRequirement, SubmitRequirementResult> results =
+        ImmutableMap.builder();
     for (SubmitRequirement requirement : requirements.values()) {
-      result.put(requirement, evaluateRequirement(requirement, cd));
+      results.put(requirement, evaluateRequirement(requirement, cd));
     }
-    return result;
+    return results.build();
+  }
+
+  /**
+   * Returns a map of all global {@link SubmitRequirement}s, keyed by their lower-case name.
+   *
+   * <p>The global {@link SubmitRequirement}s apply to all projects and can be bound by plugins.
+   */
+  private Map<String, SubmitRequirement> getGlobalRequirements() {
+    return globalSubmitRequirements.stream()
+        .collect(
+            toImmutableMap(
+                globalRequirement -> globalRequirement.name().toLowerCase(), Function.identity()));
   }
 
   /** Evaluate the predicate recursively using change data. */

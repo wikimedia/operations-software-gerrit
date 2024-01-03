@@ -15,7 +15,6 @@
  * limitations under the License.
  */
 import {EventApi} from '@polymer/polymer/lib/legacy/polymer.dom';
-import {check} from './common-util';
 
 /**
  * Event emitted from polymer elements.
@@ -277,11 +276,12 @@ export function whenVisible(
 ) {
   const observer = new IntersectionObserver(
     (entries: IntersectionObserverEntry[]) => {
-      check(entries.length === 1, 'Expected one intersection observer entry.');
-      const entry = entries[0];
-      if (entry.isIntersecting) {
-        observer.unobserve(entry.target);
-        callback();
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          observer.unobserve(entry.target);
+          callback();
+          return;
+        }
       }
     },
     {rootMargin: `${marginPx}px`}
@@ -338,6 +338,8 @@ export interface Binding {
   combo?: ComboKey;
   /** Defaults to no modifiers. */
   modifiers?: Modifier[];
+  /** Defaults to false. If true, then `event.repeat === true` is allowed. */
+  allowRepeat?: boolean;
 }
 
 const ALPHA_NUM = new RegExp(/^[A-Za-z0-9]$/);
@@ -388,29 +390,51 @@ export function eventMatchesShortcut(
   return true;
 }
 
-export function addGlobalShortcut(
-  shortcut: Binding,
-  listener: (e: KeyboardEvent) => void
-) {
-  return addShortcut(document.body, shortcut, listener);
+export interface ShortcutOptions {
+  /**
+   * Do you want to suppress events from <input> elements and such?
+   */
+  shouldSuppress?: boolean;
+  /**
+   * Do you want to take care of calling preventDefault() and
+   * stopPropagation() yourself?
+   */
+  doNotPrevent?: boolean;
 }
 
+export function addGlobalShortcut(
+  shortcut: Binding,
+  listener: (e: KeyboardEvent) => void,
+  options: ShortcutOptions = {
+    shouldSuppress: true,
+    doNotPrevent: false,
+  }
+) {
+  return addShortcut(document.body, shortcut, listener, options);
+}
+
+/**
+ * Deprecated.
+ *
+ * For LitElement use the shortcut-controller.
+ * For PolymerElement use the keyboard-shortcut-mixin.
+ */
 export function addShortcut(
   element: HTMLElement,
   shortcut: Binding,
   listener: (e: KeyboardEvent) => void,
-  options: {
-    shouldSuppress: boolean;
-  } = {
+  options: ShortcutOptions = {
     shouldSuppress: false,
+    doNotPrevent: false,
   }
 ) {
   const wrappedListener = (e: KeyboardEvent) => {
-    if (e.repeat) return;
+    if (e.repeat && !shortcut.allowRepeat) return;
     if (options.shouldSuppress && shouldSuppress(e)) return;
-    if (eventMatchesShortcut(e, shortcut)) {
-      listener(e);
-    }
+    if (!eventMatchesShortcut(e, shortcut)) return;
+    if (!options.doNotPrevent) e.preventDefault();
+    if (!options.doNotPrevent) e.stopPropagation();
+    listener(e);
   };
   element.addEventListener('keydown', wrappedListener);
   return () => element.removeEventListener('keydown', wrappedListener);
@@ -465,4 +489,19 @@ export function shouldSuppress(e: KeyboardEvent): boolean {
     if (el.tagName === 'GR-OVERLAY') return true;
   }
   return false;
+}
+
+/** Executes the given callback when the element's height is > 0. */
+export function whenRendered(el: HTMLElement, callback: () => void) {
+  if (el.clientHeight > 0) {
+    callback();
+    return;
+  }
+  const obs = new ResizeObserver(() => {
+    if (el.clientHeight > 0) {
+      callback();
+      obs.unobserve(el);
+    }
+  });
+  obs.observe(el);
 }

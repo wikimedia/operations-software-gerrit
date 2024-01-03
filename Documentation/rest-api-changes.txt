@@ -224,19 +224,18 @@ default. Optional fields are:
 
 [[labels]]
 --
-* `LABELS`: a summary of each label required for submit, and
-  approvers that have granted (or rejected) with that label
-  as well as all reviewers by state, and reviewers that may
-  be removed by the current user.
+* `LABELS`: Includes the `labels` field which contains all information about
+labels and approvers that have granted (or rejected) that label. Does not
+include the `permitted_voting_range` attribute with the list of
+link:#approval-info[ApprovalInfo] of the `all` attribute.
 --
 
 [[detailed-labels]]
 --
-* `DETAILED_LABELS`: detailed label information, including numeric
-  values of all existing approvals, recognized label values, values
-  permitted to be set by any reviewer and the change owner, all
-  reviewers by state, and reviewers that may be removed by the
-  current user.
+* `DETAILED_LABELS`: Includes the `labels` field which contains all information
+about labels and approvers that have granted (or rejected) that label, including
+the `permitted_voting_range` attribute with the list of
+link:#approval-info[ApprovalInfo] of the `all` attribute.
 --
 
 [[submit-requirements]]
@@ -795,8 +794,8 @@ REJECTED > APPROVED > DISLIKED > RECOMMENDED.
           }
         ]
         "values": {
-          "-2": "This shall not be merged",
-          "-1": "I would prefer this is not merged as is",
+          "-2": "This shall not be submitted",
+          "-1": "I would prefer this is not submitted as is",
           " 0": "No score",
           "+1": "Looks good to me, but someone else must approve",
           "+2": "Looks good to me, approved"
@@ -1857,7 +1856,8 @@ The list consists of:
 
 * The given change.
 * If link:config-gerrit.html#change.submitWholeTopic[`change.submitWholeTopic`]
-  is enabled, include all open changes with the same topic.
+  is enabled OR if the `o=TOPIC_CLOSURE` query parameter is passed, include all
+  open changes with the same topic.
 * For each change whose submit type is not CHERRY_PICK, include unmerged
   ancestors targeting the same branch.
 
@@ -1884,7 +1884,7 @@ link:#submittable[`SUBMITTABLE`] options set.
 
 Standard link:#query-options[formatting options] can be specified
 with the `o` parameter, as well as the `submitted_together` specific
-option `NON_VISIBLE_CHANGES`.
+options `NON_VISIBLE_CHANGES` and `TOPIC_CLOSURE`.
 
 .Response
 ----
@@ -1925,8 +1925,8 @@ option `NON_VISIBLE_CHANGES`.
             }
           ],
           "values": {
-            "-2": "This shall not be merged",
-            "-1": "I would prefer this is not merged as is",
+            "-2": "This shall not be submitted",
+            "-1": "I would prefer this is not submitted as is",
             " 0": "No score",
             "+1": "Looks good to me, but someone else must approve",
             "+2": "Looks good to me, approved"
@@ -2022,8 +2022,8 @@ option `NON_VISIBLE_CHANGES`.
             }
           ],
           "values": {
-            "-2": "This shall not be merged",
-            "-1": "I would prefer this is not merged as is",
+            "-2": "This shall not be submitted",
+            "-1": "I would prefer this is not submitted as is",
             " 0": "No score",
             "+1": "Looks good to me, but someone else must approve",
             "+2": "Looks good to me, approved"
@@ -3973,8 +3973,8 @@ for the current patch set.
           }
         ]
         "values": {
-          "-2": "This shall not be merged",
-          "-1": "I would prefer this is not merged as is",
+          "-2": "This shall not be submitted",
+          "-1": "I would prefer this is not submitted as is",
           " 0": "No score",
           "+1": "Looks good to me, but someone else must approve",
           "+2": "Looks good to me, approved"
@@ -4581,60 +4581,6 @@ for later processing by command line tools.
 If the `path` parameter is set, the returned content is a diff of the single
 file that the path refers to.
 
-[[submit-preview]]
-=== Submit Preview
---
-'GET /changes/link:#change-id[\{change-id\}]/revisions/link:#revision-id[\{revision-id\}]/preview_submit'
---
-Gets a file containing thin bundles of all modified projects if this
-change was submitted. The bundles are named `${ProjectName}.git`.
-Each thin bundle contains enough to construct the state in which a project would
-be in if this change were submitted. The base of the thin bundles are the
-current target branches, so to make use of this call in a non-racy way, first
-get the bundles and then fetch all projects contained in the bundle.
-(This assumes no non-fastforward pushes).
-
-You need to give a parameter '?format=zip' or '?format=tar' to specify the
-format for the outer container. It is always possible to use tgz, even if
-tgz is not in the list of allowed archive formats.
-
-To make good use of this call, you would roughly need code as found at:
-----
- $ curl -Lo preview_submit_test.sh http://review.example.com:8080/tools/scripts/preview_submit_test.sh
-----
-.Request
-----
-  GET /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/revisions/current/preview_submit?zip HTTP/1.0
-----
-
-.Response
-----
-  HTTP/1.1 200 OK
-  Date: Tue, 13 Sep 2016 19:13:46 GMT
-  Content-Disposition: attachment; filename="submit-preview-147.zip"
-  X-Content-Type-Options: nosniff
-  Cache-Control: no-cache, no-store, max-age=0, must-revalidate
-  Pragma: no-cache
-  Expires: Mon, 01 Jan 1990 00:00:00 GMT
-  Content-Type: application/x-zip
-  Transfer-Encoding: chunked
-
-  [binary stuff]
-----
-
-In case of an error, the response is not a zip file but a regular json response,
-containing only the error message:
-
-.Response
-----
-  HTTP/1.1 200 OK
-  Content-Disposition: attachment
-  Content-Type: application/json; charset=UTF-8
-
-  )]}'
-  "Anonymous users cannot submit"
-----
-
 [[get-mergeable]]
 === Get Mergeable
 --
@@ -5084,6 +5030,9 @@ whole comment, this endpoint just replaces the comment's message
 with a new message, which contains the name of the user who deletes
 the comment and the reason why it's deleted.
 
+This endpoint also marks the comment as resolved since deleted comments are not
+actionable.
+
 Note that only users with the
 link:access-control.html#capability_administrateServer[Administrate Server]
 global capability are permitted to delete a comment.
@@ -5224,8 +5173,8 @@ returned that describes the robot comment.
   }
 ----
 
-[[get-ported-comments]]
-=== Get Ported Comments
+[[list-ported-comments]]
+=== List Ported Comments
 --
 'GET /changes/link:#change-id[\{change-id\}]/revisions/link:#revision-id[\{revision-id\}]/ported_comments'
 --
@@ -5308,24 +5257,24 @@ comments may change.
   }
 ----
 
-[[get-ported-drafts]]
-=== Get Ported Drafts
+[[list-ported-drafts]]
+=== List Ported Drafts
 --
 'GET /changes/link:#change-id[\{change-id\}]/revisions/link:#revision-id[\{revision-id\}]/ported_drafts'
 --
 
 Ports draft comments of other revisions to the requested revision.
 
-This endpoint behaves similarly to the link:#get-ported-comments[Get Ported Comments] endpoint.
+This endpoint behaves similarly to the link:#list-ported-comments[List Ported Comments] endpoint.
 With this endpoint, only draft comments of the calling user are ported, though. If a draft comment
 is a reply to a published comment, only the ported draft comment is returned.
 
 Depending on the filtering rules, it's possible that this endpoint returns a draft comment which is
 a reply to a comment thread which is not returned by the
-link:#get-ported-comments[Get Ported Comments] endpoint. That's intended behavior. Callers must be
+link:#list-ported-comments[List Ported Comments] endpoint. That's intended behavior. Callers must be
 able to handle this situation. The same holds for drafts which are a reply to a robot comment.
 
-Different than the link:#get-ported-comments[Get Ported Comments] endpoint, the `author` of the
+Different than the link:#list-ported-comments[List Ported Comments] endpoint, the `author` of the
 returned comments is not filled for this endpoint as only comments of the calling user are returned.
 
 This endpoint requires authentication.
@@ -6529,7 +6478,14 @@ The `refs/heads/` prefix is omitted.
 |`topic`              |optional|The topic to which this change belongs.
 |`attention_set`      |optional|
 The map that maps link:rest-api-accounts.html#account-id[account IDs]
-to link:#attention-set-info[AttentionSetInfo] of that account.
+to link:#attention-set-info[AttentionSetInfo] of that account. Those are all
+accounts that are currently in the attention set.
+|`removed_from_attention_set`      |optional|
+The map that maps link:rest-api-accounts.html#account-id[account IDs]
+to link:#attention-set-info[AttentionSetInfo] of that account. Those are all
+accounts that were in the attention set but were removed. The
+link:#attention-set-info[AttentionSetInfo] is the latest and most recent removal
+ of the account from the attention set.
 |`assignee`           |optional|
 The assignee of the change as an link:rest-api-accounts.html#account-info[
 AccountInfo] entity.
@@ -6807,28 +6763,28 @@ The `CherryPickInput` entity contains information for cherry-picking a change to
 
 [options="header",cols="1,^1,5"]
 |===========================
-|Field Name         ||Description
-|`message`          |optional|
+|Field Name          ||Description
+|`message`           |optional|
 Commit message for the cherry-pick change. If not set, the commit message of
 the cherry-picked commit is used.
-|`destination`      ||Destination branch
-|`base`             |optional|
+|`destination`       ||Destination branch
+|`base`              |optional|
 40-hex digit SHA-1 of the commit which will be the parent commit of the newly created change.
 If set, it must be a merged commit or a change revision on the destination branch.
-|`parent`           |optional, defaults to 1|
+|`parent`            |optional, defaults to 1|
 Number of the parent relative to which the cherry-pick should be considered.
-|`notify`           |optional|
+|`notify`            |optional|
 Notify handling that defines to whom email notifications should be sent
 after the cherry-pick. +
 Allowed values are `NONE`, `OWNER`, `OWNER_REVIEWERS` and `ALL`. +
 If not set, the default is `ALL`.
-|`notify_details`   |optional|
+|`notify_details`    |optional|
 Additional information about whom to notify about the update as a map
 of link:user-notify.html#recipient-types[recipient type] to
 link:#notify-info[NotifyInfo] entity.
-|`keep_reviewers`   |optional, defaults to false|
+|`keep_reviewers`    |optional, defaults to false|
 If `true`, carries reviewers and ccs over from original change to newly created one.
-|`allow_conflicts`  |optional, defaults to false|
+|`allow_conflicts`   |optional, defaults to false|
 If `true`, the cherry-pick uses content merge and succeeds also if
 there are conflicts. If there are conflicts the file contents of the
 created change contain git conflict markers to indicate the conflicts.
@@ -6836,7 +6792,7 @@ Callers can find out if there were conflicts by checking the
 `contains_git_conflicts` field in the link:#change-info[ChangeInfo]. If
 there are conflicts the cherry-pick change is marked as
 work-in-progress.
-|`topic`            |optional|
+|`topic`             |optional|
 The topic of the created cherry-picked change. If not set, the default depends
 on the source. If the source is a change with a topic, the resulting topic
 of the cherry-picked change will be {source_change_topic}-{destination_branch}.
@@ -6844,10 +6800,18 @@ Otherwise, if the source change has no topic, or the source is a commit,
 the created change will have no topic.
 If the change already exists, the topic will not change if not set. If set, the
 topic will be overridden.
-|`allow_empty`      |optional, defaults to false|
+|`allow_empty`       |optional, defaults to false|
 If `true`, the cherry-pick succeeds also if the created commit will be empty.
 If `false`, a cherry-pick that would create an empty commit fails without creating
 the commit.
+|`validation_options`|optional|
+Map with key-value pairs that are forwarded as options to the commit validation
+listeners (e.g. can be used to skip certain validations). Which validation
+options are supported depends on the installed commit validation listeners.
+Gerrit core doesn't support any validation options, but commit validation
+listeners that are implemented in plugins may. Please refer to the
+documentation of the installed plugins to learn whether they support validation
+options. Unknown validation options are silently ignored.
 |===========================
 
 [[comment-info]]
@@ -7113,6 +7077,9 @@ If not set, the default is `ALL`.
 Additional information about whom to notify about the update as a map
 of link:user-notify.html#recipient-types[recipient type] to
 link:#notify-info[NotifyInfo] entity.
+|`ignore_automatic_attention_set_rules`|optional|
+If set to true, ignore all automatic attention set rules described in the
+link:#attention-set[attention set]. When not set, the default is false.
 |=============================
 
 [[description-input]]
@@ -7164,7 +7131,11 @@ The `DiffFileMetaInfo` entity contains meta information about a file diff.
 |==========================
 |Field Name    ||Description
 |`name`        ||The name of the file.
-|`content_type`||The content type of the file.
+|`content_type`||The content type of the file. For the commit message and merge
+list the value is `text/x-gerrit-commit-message` and `text/x-gerrit-merge-list`
+respectively. For git links the value is `x-git/gitlink`. For symlinks the value
+is `x-git/symlink`. For regular files the value is the file mime type (e.g.
+`text/x-java`, `text/x-c++src`, etc...).
 |`lines`       ||The total number of lines in the file.
 |`web_links`   |optional|
 Links to the file in external sites as a list of
@@ -7433,11 +7404,10 @@ corresponding to the current patch set.
 There are two options that control the contents of `LabelInfo`:
 link:#labels[`LABELS`] and link:#detailed-labels[`DETAILED_LABELS`].
 
-* For a quick summary of the state of labels, use `LABELS`.
-* For detailed information about labels, including exact numeric votes for all
-  users and the allowed range of votes for the current user, use `DETAILED_LABELS`.
+* Using `LABELS` will skip the `all.permitted_voting_range` attribute.
+* Using `DETAILED_LABELS` will include the `all.permitted_voting_range`
+  attribute.
 
-==== Common fields
 [options="header",cols="1,^1,5"]
 |===========================
 |Field Name    ||Description
@@ -7445,12 +7415,7 @@ link:#labels[`LABELS`] and link:#detailed-labels[`DETAILED_LABELS`].
 Whether the label is optional. Optional means the label may be set, but
 it's neither necessary for submission nor does it block submission if
 set.
-|===========================
-
-==== Fields set by `LABELS`
-[options="header",cols="1,^1,5"]
-|===========================
-|Field Name    ||Description
+|`description` |optional| The description of the label.
 |`approved`    |optional|One user who approved this label on the change
 (voted the maximum value) as an
 link:rest-api-accounts.html#account-info[AccountInfo] entity.
@@ -7470,16 +7435,14 @@ recommended/disliked this label on the change if it is not
 "`+1`"/"`-1`".
 |`default_value`|optional|The default voting value for the label.
 This value may be outside the range specified in permitted_labels.
-|===========================
-
-==== Fields set by `DETAILED_LABELS`
-[options="header",cols="1,^1,5"]
-|===========================
-|Field Name    ||Description
+|votes|optional|A list of integers containing the vote values applied to this
+label at the latest patchset.
 |`all`         |optional|List of all approvals for this label as a list
 of link:#approval-info[ApprovalInfo] entities. Items in this list may
 not represent actual votes cast by users; if a user votes on any label,
-a corresponding ApprovalInfo will appear in this list for all labels.
+a corresponding ApprovalInfo will appear in this list for all labels. +
+The `permitted_voting_range` attribute is only set if the `DETAILED_LABELS`
+option is requested.
 |`values`      |optional|A map of all values that are allowed for this
 label. The map maps the values ("`-2`", "`-1`", " `0`", "`+1`", "`+2`")
 to the value descriptions.
@@ -7697,22 +7660,30 @@ The `RangeInfo` entity stores the coordinates of a range.
 === RebaseInput
 The `RebaseInput` entity contains information for changing parent when rebasing.
 
-[options="header",width="50%",cols="1,^1,5"]
+[options="header",cols="1,^1,5"]
 |===========================
-|Field Name    ||Description
-|`base`        |optional|
+|Field Name          ||Description
+|`base`              |optional|
 The new parent revision. This can be a ref or a SHA-1 to a concrete patchset. +
 Alternatively, a change number can be specified, in which case the current
 patch set is inferred. +
 Empty string is used for rebasing directly on top of the target branch,
 which effectively breaks dependency towards a parent change.
-|`allow_conflicts`|optional, defaults to false|
+|`allow_conflicts`   |optional, defaults to false|
 If `true`, the rebase also succeeds if there are conflicts. +
 If there are conflicts the file contents of the rebased patch set contain
 git conflict markers to indicate the conflicts. +
 Callers can find out whether there were conflicts by checking the
 `contains_git_conflicts` field in the returned link:#change-info[ChangeInfo]. +
 If there are conflicts the change is marked as work-in-progress.
+|`validation_options`|optional|
+Map with key-value pairs that are forwarded as options to the commit validation
+listeners (e.g. can be used to skip certain validations). Which validation
+options are supported depends on the installed commit validation listeners.
+Gerrit core doesn't support any validation options, but commit validation
+listeners that are implemented in plugins may. Please refer to the
+documentation of the installed plugins to learn whether they support validation
+options. Unknown validation options are silently ignored.
 |===========================
 
 [[related-change-and-commit-info]]
@@ -8272,21 +8243,24 @@ the failure of the rule predicate.
 The `SubmitRequirementExpressionInfo` describes the result of evaluating a
 single submit requirement expression, for example `label:code-review=+2`.
 
-[options="header",cols="1,6"]
+[options="header",cols="1,^1,5"]
 |===========================
-|Field Name      |Description
-|`expression`|
+|Field Name      ||Description
+|`expression`|optional|
 The submit requirement expression as a string, for example
 `branch:refs/heads/foo and label:verified=+1`.
-|`fulfilled`|
+|`fulfilled`||
 True if the submit requirement is fulfilled for the change.
-|`passing_atoms`|
+|`passing_atoms`|optional|
 A list of passing atoms as strings. For the above expression,
 `passing_atoms` can contain ["branch:refs/heads/foo"] if the branch predicate is
 fulfilled for the change.
-|`failing_atoms`|
+|`failing_atoms`|optional|
 A list of failing atoms. This is similar to `passing_atoms` except that it
 contains the list of predicates that are not fulfilled for the change.
+|`error_message`|optional|
+If the submit requirement fails during evaluation, this string will contain
+an error message describing why it failed.
 |===========================
 
 [[submit-requirement-input]]
@@ -8329,7 +8303,8 @@ The submit requirement name.
 Description of the submit requirement.
 |`status`||
 Status describing the result of evaluating the submit requirement. The status
-is one of (`SATISFIED`, `UNSATISFIED`, `OVERRIDDEN`, `NOT_APPLICABLE`, `ERROR`).
+is one of (`SATISFIED`, `UNSATISFIED`, `OVERRIDDEN`, `NOT_APPLICABLE`, `ERROR`,
+`FORCED`).
 |`is_legacy`||
 If true, this submit requirement result was created from a legacy
 link:#submit-record[SubmitRecord]. Otherwise, it was created by evaluating a
@@ -8338,13 +8313,18 @@ submit requirement.
 A link:#submit-requirement-expression-info[SubmitRequirementExpressionInfo]
 containing the result of evaluating the applicability expression. Not set if the
 submit requirement did not define an applicability expression.
-|`submittability_expression_result`||
+Note that fields `expression`, `passing_atoms` and `failing_atoms` are always
+omitted for the `applicability_expression_result`.
+|`submittability_expression_result`|optional|
 A link:#submit-requirement-expression-info[SubmitRequirementExpressionInfo]
-containing the result of evaluating the submittability expression.
+containing the result of evaluating the submittability expression. +
+If the submit requirement does not apply, the expression is not evaluated and
+the field is not set.
 |`override_expression_result`|optional|
 A link:#submit-requirement-expression-info[SubmitRequirementExpressionInfo]
-containing the result of evaluating the override expression. Not set if the
-submit requirement did not define an override expression.
+containing the result of evaluating the override expression. +
+Not set if the submit requirement did not define an override expression or
+if it does not apply.
 |===========================
 
 [[submitted-together-info]]

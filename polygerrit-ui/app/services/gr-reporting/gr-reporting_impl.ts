@@ -14,13 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {AppContext} from '../app-context';
 import {FlagsService} from '../flags/flags';
 import {EventValue, ReportingService, Timer} from './gr-reporting';
 import {hasOwnProperty} from '../../utils/common-util';
 import {NumericChangeId} from '../../types/common';
-import {EventDetails} from '../../api/reporting';
+import {Deduping, EventDetails, ReportingOptions} from '../../api/reporting';
 import {PluginApi} from '../../api/plugin';
+import {Finalizable} from '../registry';
 import {
   Execution,
   Interaction,
@@ -91,20 +91,15 @@ const STARTUP_TIMERS: {[name: string]: number} = {
   [Timing.STARTUP_DASHBOARD_DISPLAYED]: 0,
   [Timing.STARTUP_DIFF_VIEW_CONTENT_DISPLAYED]: 0,
   [Timing.STARTUP_DIFF_VIEW_DISPLAYED]: 0,
-  [Timing.STARTUP_DIFF_VIEW_LOAD_FULL]: 0,
   [Timing.STARTUP_FILE_LIST_DISPLAYED]: 0,
   [Timing.APP_STARTED]: 0,
   // WebComponentsReady timer is triggered from gr-router.
   [Timing.WEB_COMPONENTS_READY]: 0,
 };
 
-const DRAFT_ACTION_TIMER = 'TimeBetweenDraftActions';
-const DRAFT_ACTION_TIMER_MAX = 2 * 60 * 1000; // 2 minutes.
 const SLOW_RPC_THRESHOLD = 500;
 
-export function initErrorReporter(appContext: AppContext) {
-  const reportingService = appContext.reportingService;
-
+export function initErrorReporter(reportingService: ReportingService) {
   const normalizeError = (err: Error | unknown) => {
     if (err instanceof Error) {
       return err;
@@ -169,8 +164,7 @@ export function initErrorReporter(appContext: AppContext) {
   return {catchErrors};
 }
 
-export function initPerformanceReporter(appContext: AppContext) {
-  const reportingService = appContext.reportingService;
+export function initPerformanceReporter(reportingService: ReportingService) {
   // PerformanceObserver interface is a browser API.
   if (window.PerformanceObserver) {
     const supportedEntryTypes = PerformanceObserver.supportedEntryTypes || [];
@@ -196,8 +190,7 @@ export function initPerformanceReporter(appContext: AppContext) {
   }
 }
 
-export function initVisibilityReporter(appContext: AppContext) {
-  const reportingService = appContext.reportingService;
+export function initVisibilityReporter(reportingService: ReportingService) {
   document.addEventListener('visibilitychange', () => {
     reportingService.onVisibilityChange();
   });
@@ -277,7 +270,7 @@ interface SlowRpcCall {
 
 type PendingReportInfo = [EventInfo, boolean | undefined];
 
-export class GrReporting implements ReportingService {
+export class GrReporting implements ReportingService, Finalizable {
   private readonly _flagsService: FlagsService;
 
   private readonly _baselines = STARTUP_TIMERS;
@@ -286,19 +279,15 @@ export class GrReporting implements ReportingService {
 
   private reportChangeId: NumericChangeId | undefined;
 
-  private timers: {timeBetweenDraftActions: Timer | null} = {
-    timeBetweenDraftActions: null,
-  };
-
   private pending: PendingReportInfo[] = [];
 
   private slowRpcList: SlowRpcCall[] = [];
 
   /**
-   * Keeps track of which ids were already reported to have been executed.
-   * Execution ids should only be reported once per session.
+   * Keeps track of which ids were already reported for events that should only
+   * be reported once per session.
    */
-  private executionReported = new Set<string>();
+  private reportedIds = new Set<string>();
 
   public readonly hiddenDurationTimer = new HiddenDurationTimer();
 
@@ -327,6 +316,8 @@ export class GrReporting implements ReportingService {
         !hasOwnProperty(this._baselines, Timing.METRICS_PLUGIN_LOADED))
     );
   }
+
+  finalize() {}
 
   /**
    * Reporter reports events. Events will be queued if metrics plugin is not
@@ -371,16 +362,18 @@ export class GrReporting implements ReportingService {
   }
 
   private _reportEvent(eventInfo: EventInfo, opt_noLog?: boolean) {
-    const {type, value, name} = eventInfo;
+    const {type, value, name, eventDetails} = eventInfo;
     document.dispatchEvent(new CustomEvent(type, {detail: eventInfo}));
     if (opt_noLog) {
       return;
     }
     if (type !== ERROR.TYPE) {
       if (value !== undefined) {
-        console.info(`Reporting: ${name}: ${value}`);
+        console.debug(`Reporting: ${name}: ${value}`);
+      } else if (eventDetails !== undefined) {
+        console.debug(`Reporting: ${name}: ${eventDetails}`);
       } else {
-        console.info(`Reporting: ${name}`);
+        console.debug(`Reporting: ${name}`);
       }
     }
   }
@@ -498,7 +491,6 @@ export class GrReporting implements ReportingService {
     this.time(Timing.DASHBOARD_DISPLAYED);
     this.time(Timing.DIFF_VIEW_CONTENT_DISPLAYED);
     this.time(Timing.DIFF_VIEW_DISPLAYED);
-    this.time(Timing.DIFF_VIEW_LOAD_FULL);
     this.time(Timing.FILE_LIST_DISPLAYED);
     this.reportRepoName = undefined;
     this.reportChangeId = undefined;
@@ -546,14 +538,6 @@ export class GrReporting implements ReportingService {
       this.timeEnd(Timing.STARTUP_DIFF_VIEW_DISPLAYED, this._pageLoadDetails());
     } else {
       this.timeEnd(Timing.DIFF_VIEW_DISPLAYED, this._pageLoadDetails());
-    }
-  }
-
-  diffViewFullyLoaded() {
-    if (hasOwnProperty(this._baselines, Timing.STARTUP_DIFF_VIEW_LOAD_FULL)) {
-      this.timeEnd(Timing.STARTUP_DIFF_VIEW_LOAD_FULL);
-    } else {
-      this.timeEnd(Timing.DIFF_VIEW_LOAD_FULL);
     }
   }
 
@@ -632,7 +616,7 @@ export class GrReporting implements ReportingService {
       LifeCycle.PLUGINS_INSTALLED,
       undefined,
       {pluginsList: pluginsList || []},
-      true
+      false
     );
   }
 
@@ -644,7 +628,7 @@ export class GrReporting implements ReportingService {
       LifeCycle.PLUGINS_FAILED,
       undefined,
       {pluginsList: pluginsList || []},
-      true
+      false
     );
   }
 
@@ -676,30 +660,6 @@ export class GrReporting implements ReportingService {
       // (if undefined).
       window.performance.measure(name);
     }
-  }
-
-  /**
-   * Reports just line timeEnd, but additionally reports an average given a
-   * denominator and a separate reporting name for the average.
-   *
-   * @param name Timing name.
-   * @param averageName Average timing name.
-   * @param denominator Number by which to divide the total to
-   *     compute the average.
-   */
-  timeEndWithAverage(name: Timing, averageName: Timing, denominator: number) {
-    if (!hasOwnProperty(this._baselines, name)) {
-      return;
-    }
-    const baseTime = this._baselines[name];
-    this.timeEnd(name);
-
-    // Guard against division by zero.
-    if (!denominator) {
-      return;
-    }
-    const time = now() - baseTime;
-    this._reportTiming(averageName, time / denominator);
   }
 
   /**
@@ -797,7 +757,7 @@ export class GrReporting implements ReportingService {
       eventName,
       undefined,
       details,
-      true
+      false
     );
   }
 
@@ -808,7 +768,7 @@ export class GrReporting implements ReportingService {
       eventName,
       undefined,
       details,
-      true
+      false
     );
   }
 
@@ -823,21 +783,55 @@ export class GrReporting implements ReportingService {
     );
   }
 
-  reportInteraction(eventName: string | Interaction, details: EventDetails) {
+  /**
+   * Returns true when the event was deduped and thus should not be reported.
+   */
+  _dedup(
+    eventName: string | Interaction,
+    details: EventDetails,
+    deduping?: Deduping
+  ): boolean {
+    if (!deduping) return false;
+    let id = '';
+    switch (deduping) {
+      case Deduping.DETAILS_ONCE_PER_CHANGE:
+        id = `${eventName}-${this.reportChangeId}-${JSON.stringify(details)}`;
+        break;
+      case Deduping.DETAILS_ONCE_PER_SESSION:
+        id = `${eventName}-${JSON.stringify(details)}`;
+        break;
+      case Deduping.EVENT_ONCE_PER_CHANGE:
+        id = `${eventName}-${this.reportChangeId}`;
+        break;
+      case Deduping.EVENT_ONCE_PER_SESSION:
+        id = `${eventName}`;
+        break;
+      default:
+        throw new Error(`Invalid 'deduping' option '${deduping}'.`);
+    }
+    if (this.reportedIds.has(id)) return true;
+    this.reportedIds.add(id);
+    return false;
+  }
+
+  reportInteraction(
+    eventName: string | Interaction,
+    details: EventDetails,
+    options?: ReportingOptions
+  ) {
+    if (this._dedup(eventName, details, options?.deduping)) return;
     this.reporter(
       INTERACTION.TYPE,
       INTERACTION.CATEGORY.DEFAULT,
       eventName,
       undefined,
       details,
-      true
+      false
     );
   }
 
   reportExecution(name: Execution, details?: EventDetails) {
-    const id = `${name}${JSON.stringify(details)}`;
-    if (this.executionReported.has(id)) return;
-    this.executionReported.add(id);
+    if (this._dedup(name, details, Deduping.DETAILS_ONCE_PER_SESSION)) return;
     this.reporter(
       LIFECYCLE.TYPE,
       LIFECYCLE.CATEGORY.EXECUTION,
@@ -855,27 +849,6 @@ export class GrReporting implements ReportingService {
   ) {
     const plugin = pluginApi?.getPluginName() ?? 'unknown';
     this.reportExecution(Execution.PLUGIN_API, {plugin, object, method});
-  }
-
-  /**
-   * A draft interaction was started. Update the time-between-draft-actions
-   * Timing.
-   */
-  recordDraftInteraction() {
-    // If there is no timer defined, then this is the first interaction.
-    // Set up the timer so that it's ready to record the intervening time when
-    // called again.
-    const timer = this.timers.timeBetweenDraftActions;
-    if (!timer) {
-      // Create a timer with a maximum length.
-      this.timers.timeBetweenDraftActions = this.getTimer(
-        DRAFT_ACTION_TIMER
-      ).withMaximum(DRAFT_ACTION_TIMER_MAX);
-      return;
-    }
-
-    // Mark the time and reinitialize the timer.
-    timer.end().reset();
   }
 
   error(error: Error, errorSource?: string, details?: EventDetails) {

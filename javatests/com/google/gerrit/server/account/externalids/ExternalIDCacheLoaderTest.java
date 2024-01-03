@@ -17,8 +17,9 @@ package com.google.gerrit.server.account.externalids;
 import static com.google.common.truth.Truth.assertThat;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
+import com.google.common.base.CharMatcher;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ImmutableList;
@@ -33,9 +34,11 @@ import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.testing.InMemoryRepositoryManager;
-import com.google.inject.util.Providers;
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -64,23 +67,14 @@ public class ExternalIDCacheLoaderTest {
 
   @Before
   public void setUp() throws Exception {
-    externalIdFactory =
-        new ExternalIdFactory(
-            new ExternalIdKeyFactory(
-                new ExternalIdKeyFactory.Config() {
-                  @Override
-                  public boolean isUserNameCaseInsensitive() {
-                    return false;
-                  }
-                }),
-            authConfig);
+    externalIdFactory = new ExternalIdFactory(new ExternalIdKeyFactory(() -> false), authConfig);
     externalIdCache = CacheBuilder.newBuilder().build();
     repoManager.createRepository(ALL_USERS).close();
     externalIdReader =
         new ExternalIdReader(
             repoManager, ALL_USERS, new DisabledMetricMaker(), externalIdFactory, authConfig);
     externalIdReaderSpy = Mockito.spy(externalIdReader);
-    loader = createLoader(true);
+    loader = createLoader();
   }
 
   @Test
@@ -97,7 +91,38 @@ public class ExternalIDCacheLoaderTest {
     externalIdCache.put(firstState, allFromGit(firstState));
 
     assertThat(loader.load(head)).isEqualTo(allFromGit(head));
-    verifyNoInteractions(externalIdReaderSpy);
+    verify(externalIdReaderSpy, times(1)).checkReadEnabled();
+    verifyNoMoreInteractions(externalIdReaderSpy);
+  }
+
+  @Test
+  public void loadCacheSuccessfullyWhenInInconsistentState() throws Exception {
+    int key = 1;
+    int account = 1;
+    ExternalId externalId = externalId(key, account);
+    ExternalId.Key externalIdKey = externalId.key();
+
+    Repository repo = repoManager.openRepository(ALL_USERS);
+    ObjectId newState = insertExternalId(key, account);
+    TreeWalk tw = new TreeWalk(repo);
+    tw.reset(new RevWalk(repo).parseCommit(newState).getTree());
+    tw.next();
+
+    HashMap<ObjectId, ObjectId> additions = new HashMap<>();
+    additions.put(fileNameToObjectId(tw.getPathString()), tw.getObjectId(0));
+    AllExternalIds oldExternalIds =
+        AllExternalIds.create(Stream.<ExternalId>builder().add(externalId).build());
+
+    AllExternalIds allExternalIds =
+        loader.buildAllExternalIds(repo, oldExternalIds, additions, new HashSet<>());
+
+    assertThat(allExternalIds).isNotNull();
+    assertThat(allExternalIds.byKey().containsKey(externalIdKey)).isTrue();
+    assertThat(allExternalIds.byKey().get(externalIdKey)).isEqualTo(externalId);
+  }
+
+  private static ObjectId fileNameToObjectId(String path) {
+    return ObjectId.fromString(CharMatcher.is('/').removeFrom(path));
   }
 
   @Test
@@ -109,21 +134,12 @@ public class ExternalIDCacheLoaderTest {
     externalIdCache.put(firstState, allFromGit(firstState));
 
     assertThat(loader.load(head)).isEqualTo(allFromGit(head));
-    verifyNoInteractions(externalIdReaderSpy);
+    verify(externalIdReaderSpy, times(1)).checkReadEnabled();
+    verifyNoMoreInteractions(externalIdReaderSpy);
   }
 
   @Test
   public void reloadsAllExternalIdsWhenNoOldStateIsCached() throws Exception {
-    insertExternalId(1, 1);
-    ObjectId head = insertExternalId(2, 2);
-
-    assertThat(loader.load(head)).isEqualTo(allFromGit(head));
-    verify(externalIdReaderSpy, times(1)).all(head);
-  }
-
-  @Test
-  public void partialReloadingDisabledAlwaysTriggersFullReload() throws Exception {
-    loader = createLoader(false);
     insertExternalId(1, 1);
     ObjectId head = insertExternalId(2, 2);
 
@@ -159,7 +175,8 @@ public class ExternalIDCacheLoaderTest {
     externalIdCache.put(firstState, allFromGit(firstState));
 
     assertThat(loader.load(head)).isEqualTo(allFromGit(head));
-    verifyNoInteractions(externalIdReaderSpy);
+    verify(externalIdReaderSpy, times(1)).checkReadEnabled();
+    verifyNoMoreInteractions(externalIdReaderSpy);
   }
 
   @Test
@@ -174,7 +191,8 @@ public class ExternalIDCacheLoaderTest {
     externalIdCache.put(firstState, allFromGit(firstState));
 
     assertThat(loader.load(head)).isEqualTo(allFromGit(head));
-    verifyNoInteractions(externalIdReaderSpy);
+    verify(externalIdReaderSpy, times(1)).checkReadEnabled();
+    verifyNoMoreInteractions(externalIdReaderSpy);
   }
 
   @Test
@@ -191,26 +209,28 @@ public class ExternalIDCacheLoaderTest {
     externalIdCache.put(firstState, allFromGit(firstState));
 
     assertThat(loader.load(head)).isEqualTo(allFromGit(head));
-    verifyNoInteractions(externalIdReaderSpy);
+    verify(externalIdReaderSpy, times(1)).checkReadEnabled();
+    verifyNoMoreInteractions(externalIdReaderSpy);
   }
 
   @Test
   public void handlesTreePrefixesInDifferentialReload() throws Exception {
     // Create more than 256 notes (NoteMap's current sharding limit) and check that we really have
     // created a situation where NoteNames are sharded.
-    ObjectId oldState = inserExternalIds(257);
+    ObjectId oldState = insertExternalIds(257);
     assertAllFilesHaveSlashesInPath();
     ObjectId head = insertExternalId(500, 500);
     externalIdCache.put(oldState, allFromGit(oldState));
 
     assertThat(loader.load(head)).isEqualTo(allFromGit(head));
-    verifyNoInteractions(externalIdReaderSpy);
+    verify(externalIdReaderSpy, times(1)).checkReadEnabled();
+    verifyNoMoreInteractions(externalIdReaderSpy);
   }
 
   @Test
   public void handlesReshard() throws Exception {
     // Create 256 notes (NoteMap's current sharding limit) and check that we are not yet sharding
-    ObjectId oldState = inserExternalIds(256);
+    ObjectId oldState = insertExternalIds(256);
     assertNoFilesHaveSlashesInPath();
     // Create one more external ID and then have the Loader compute the new state
     ObjectId head = insertExternalId(500, 500);
@@ -218,19 +238,18 @@ public class ExternalIDCacheLoaderTest {
     externalIdCache.put(oldState, allFromGit(oldState));
 
     assertThat(loader.load(head)).isEqualTo(allFromGit(head));
-    verifyNoInteractions(externalIdReaderSpy);
+    verify(externalIdReaderSpy, times(1)).checkReadEnabled();
+    verifyNoMoreInteractions(externalIdReaderSpy);
   }
 
-  private ExternalIdCacheLoader createLoader(boolean allowPartial) {
-    Config cfg = new Config();
-    cfg.setBoolean("cache", "external_ids_map", "enablePartialReloads", allowPartial);
+  private ExternalIdCacheLoader createLoader() {
     return new ExternalIdCacheLoader(
         repoManager,
         ALL_USERS,
         externalIdReaderSpy,
-        Providers.of(externalIdCache),
+        externalIdCache,
         new DisabledMetricMaker(),
-        cfg,
+        new Config(),
         externalIdFactory);
   }
 
@@ -238,7 +257,7 @@ public class ExternalIDCacheLoaderTest {
     return AllExternalIds.create(externalIdReader.all(revision).stream());
   }
 
-  private ObjectId inserExternalIds(int numberOfIdsToInsert) throws Exception {
+  private ObjectId insertExternalIds(int numberOfIdsToInsert) throws Exception {
     ObjectId oldState = null;
     // Create more than 256 notes (NoteMap's current sharding limit) and check that we really have
     // created a situation where NoteNames are sharded.
@@ -281,8 +300,7 @@ public class ExternalIDCacheLoaderTest {
   private ObjectId performExternalIdUpdate(Consumer<ExternalIdNotes> update) throws Exception {
     try (Repository repo = repoManager.openRepository(ALL_USERS)) {
       PersonIdent updater = new PersonIdent("Foo bar", "foo@bar.com");
-      ExternalIdNotes extIdNotes =
-          ExternalIdNotes.loadNoCacheUpdate(ALL_USERS, repo, externalIdFactory, false);
+      ExternalIdNotes extIdNotes = ExternalIdNotes.load(ALL_USERS, repo, externalIdFactory, false);
       update.accept(extIdNotes);
       try (MetaDataUpdate metaDataUpdate =
           new MetaDataUpdate(GitReferenceUpdated.DISABLED, null, repo)) {

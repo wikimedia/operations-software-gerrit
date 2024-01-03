@@ -102,8 +102,7 @@ docker build . -t e2e-tests
 === SSH keys
 
 If you are running SSH commands, the private keys of the users used for testing need to go in
-`/tmp/ssh-keys`. The keys need to be generated this way (JSch won't validate them
-link:https://stackoverflow.com/questions/53134212/invalid-privatekey-when-using-jsch[otherwise,role=external,window=_blank]):
+`/tmp/ssh-keys`. The keys need to be generated this way and won't be validated.
 
 ----
 mkdir /tmp/ssh-keys
@@ -174,6 +173,9 @@ currently be set with either one or many of these supported properties, from the
 * `-Dcom.google.gerrit.scenarios.ssh_port=29418`
 * `-Dcom.google.gerrit.scenarios.http_port=8080`
 * `-Dcom.google.gerrit.scenarios.http_scheme=http`
+* `-Dcom.google.gerrit.scenarios.username=admin`
+* `-Dcom.google.gerrit.scenarios.replica_hostname=localhost`
+* `-Dcom.google.gerrit.scenarios.project_prefix=`
 
 Above, the properties can be set with values matching specific deployment topologies under test.
 The name of the property corresponds to the uppercase keyword found in the json file. For example,
@@ -194,6 +196,13 @@ There is a short time buffer added to this property. Now, the replication starts
 plugin's own `replicationDelay`, in seconds, and typically takes some more seconds to complete.
 That whole replication time depends on the system under test. Therefore, this property here should
 be set to a value high enough, so that the test checks for a done replication at the right time.
+
+==== Context path
+
+The `context_path` property allows test scenarios to send Gerrit REST requests to Gerrit instances
+that use a context path in the URL. Its default is no context path and can be set using another value:
+
+* `-Dcom.google.gerrit.scenarios.context_path=/context`
 
 ==== Automatic properties
 

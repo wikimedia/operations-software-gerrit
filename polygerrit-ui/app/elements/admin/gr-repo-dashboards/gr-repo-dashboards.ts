@@ -18,7 +18,7 @@
 import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {RepoName, DashboardId, DashboardInfo} from '../../../types/common';
 import {firePageError} from '../../../utils/event-util';
-import {appContext} from '../../../services/app-context';
+import {getAppContext} from '../../../services/app-context';
 import {ErrorCallback} from '../../../api/rest';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {tableStyles} from '../../../styles/gr-table-styles';
@@ -41,7 +41,7 @@ export class GrRepoDashboards extends LitElement {
   @property({type: Array})
   _dashboards?: DashboardRef[];
 
-  private readonly restApiService = appContext.restApiService;
+  private readonly restApiService = getAppContext().restApiService;
 
   static override get styles() {
     return [
@@ -90,7 +90,7 @@ export class GrRepoDashboards extends LitElement {
               info => html`
                 <tr class="table">
                   <td class="name">
-                    <a href="${this._getUrl(info.project, info.id)}"
+                    <a href=${this._getUrl(info.project, info.id)}
                       >${info.path}</a
                     >
                   </td>

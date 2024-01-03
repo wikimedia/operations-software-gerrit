@@ -15,10 +15,13 @@
  * limitations under the License.
  */
 import {
+  ChangeInfo,
   isQuickLabelInfo,
   SubmitRequirementResultInfo,
   SubmitRequirementStatus,
+  LabelNameToValuesMap,
 } from '../api/rest-api';
+import {FlagsService, KnownExperimentId} from '../services/flags/flags';
 import {
   AccountInfo,
   ApprovalInfo,
@@ -28,7 +31,13 @@ import {
   LabelNameToInfoMap,
   VotingRangeInfo,
 } from '../types/common';
-import {assertNever, unique} from './common-util';
+import {ParsedChangeInfo} from '../types/types';
+import {assertNever, unique, hasOwnProperty} from './common-util';
+
+export interface Label {
+  name: string;
+  value: string | null;
+}
 
 // Name of the standard Code-Review label.
 export enum StandardLabels {
@@ -88,8 +97,10 @@ export function getLabelStatus(label?: LabelInfo, vote?: number): LabelStatus {
         : LabelStatus.RECOMMENDED;
     }
   } else if (isQuickLabelInfo(label)) {
-    if (label.approved) return LabelStatus.RECOMMENDED;
-    if (label.rejected) return LabelStatus.DISLIKED;
+    if (label.approved) return LabelStatus.APPROVED;
+    if (label.rejected) return LabelStatus.REJECTED;
+    if (label.disliked) return LabelStatus.DISLIKED;
+    if (label.recommended) return LabelStatus.RECOMMENDED;
   }
   return LabelStatus.NEUTRAL;
 }
@@ -143,7 +154,10 @@ export function hasVoted(label: LabelInfo, account: AccountInfo) {
   if (isDetailedLabelInfo(label)) {
     return !hasNeutralStatus(label, getApprovalInfo(label, account));
   } else if (isQuickLabelInfo(label)) {
-    return label.approved === account || label.rejected === account;
+    return (
+      label.approved?._account_id === account._account_id ||
+      label.rejected?._account_id === account._account_id
+    );
   }
   return false;
 }
@@ -176,7 +190,12 @@ export function hasVotes(labelInfo: LabelInfo): boolean {
     );
   }
   if (isQuickLabelInfo(labelInfo)) {
-    return !!labelInfo.rejected || !!labelInfo.approved;
+    return (
+      !!labelInfo.rejected ||
+      !!labelInfo.approved ||
+      !!labelInfo.recommended ||
+      !!labelInfo.disliked
+    );
   }
   return false;
 }
@@ -204,18 +223,30 @@ export function getCodeReviewLabel(
   return;
 }
 
-export function extractAssociatedLabels(
-  requirement: SubmitRequirementResultInfo
-): string[] {
+function extractLabelsFrom(expression: string) {
   const pattern = new RegExp('label[0-9]*:([\\w-]+)', 'g');
   const labels = [];
   let match;
-  while (
-    (match = pattern.exec(
-      requirement.submittability_expression_result.expression
-    )) !== null
-  ) {
+  while ((match = pattern.exec(expression)) !== null) {
     labels.push(match[1]);
+  }
+  return labels;
+}
+
+export function extractAssociatedLabels(
+  requirement: SubmitRequirementResultInfo,
+  type: 'all' | 'onlyOverride' | 'onlySubmittability' = 'all'
+): string[] {
+  let labels: string[] = [];
+  if (requirement.submittability_expression_result && type !== 'onlyOverride') {
+    labels = labels.concat(
+      extractLabelsFrom(requirement.submittability_expression_result.expression)
+    );
+  }
+  if (requirement.override_expression_result && type !== 'onlySubmittability') {
+    labels = labels.concat(
+      extractLabelsFrom(requirement.override_expression_result.expression)
+    );
   }
   return labels.filter(unique);
 }
@@ -223,20 +254,33 @@ export function extractAssociatedLabels(
 export function iconForStatus(status: SubmitRequirementStatus) {
   switch (status) {
     case SubmitRequirementStatus.SATISFIED:
-      return 'check';
+      return 'check-circle-filled';
     case SubmitRequirementStatus.UNSATISFIED:
-      return 'close';
+      return 'block';
     case SubmitRequirementStatus.OVERRIDDEN:
       return 'overridden';
     case SubmitRequirementStatus.NOT_APPLICABLE:
       return 'info';
+    case SubmitRequirementStatus.ERROR:
+      return 'error';
+    case SubmitRequirementStatus.FORCED:
+      return 'check-circle-filled';
     default:
       assertNever(status, `Unsupported status: ${status}`);
   }
 }
 
+/**
+ * Show only applicable.
+ */
+export function getRequirements(change?: ParsedChangeInfo | ChangeInfo) {
+  return (change?.submit_requirements ?? []).filter(
+    req => req.status !== SubmitRequirementStatus.NOT_APPLICABLE
+  );
+}
+
 // TODO(milutin): This may be temporary for demo purposes
-const PRIORITY_REQUIREMENTS_ORDER: string[] = [
+export const PRIORITY_REQUIREMENTS_ORDER: string[] = [
   StandardLabels.CODE_REVIEW,
   StandardLabels.CODE_OWNERS,
   StandardLabels.PRESUBMIT_VERIFIED,
@@ -254,4 +298,139 @@ export function orderSubmitRequirements(
     r => !PRIORITY_REQUIREMENTS_ORDER.includes(r.name)
   );
   return priorityRequirementList.concat(nonPriorityRequirements);
+}
+
+function getStringLabelValue(
+  labels: LabelNameToInfoMap,
+  labelName: string,
+  numberValue?: number
+): string {
+  const detailedInfo = labels[labelName] as DetailedLabelInfo;
+  if (detailedInfo.values) {
+    for (const labelValue of Object.keys(detailedInfo.values)) {
+      if (Number(labelValue) === numberValue) {
+        return labelValue;
+      }
+    }
+  }
+  // TODO: This code is sometimes executed with numberValue taking the
+  // values 0 and undefined.
+  // For now it is unclear how this is happening, ideally this code should
+  // never be executed.
+  return `${numberValue}`;
+}
+
+export function getDefaultValue(
+  labels?: LabelNameToInfoMap,
+  labelName?: string
+) {
+  if (!labelName || !labels?.[labelName]) return undefined;
+  const labelInfo = labels[labelName] as DetailedLabelInfo;
+  return labelInfo.default_value;
+}
+
+export function getVoteForAccount(
+  labelName: string,
+  account?: AccountInfo,
+  change?: ParsedChangeInfo | ChangeInfo
+): string | null {
+  const labels = change?.labels;
+  if (!account || !labels) return null;
+  const votes = labels[labelName] as DetailedLabelInfo;
+  if (!votes.all?.length) return null;
+  for (let i = 0; i < votes.all.length; i++) {
+    if (votes.all[i]._account_id === account._account_id) {
+      return getStringLabelValue(labels, labelName, votes.all[i].value);
+    }
+  }
+  return null;
+}
+
+export function computeOrderedLabelValues(
+  permittedLabels?: LabelNameToValuesMap
+) {
+  if (!permittedLabels) return [];
+  const labels = Object.keys(permittedLabels);
+  const values: Set<number> = new Set();
+  for (const label of labels) {
+    for (const value of permittedLabels[label]) {
+      values.add(Number(value));
+    }
+  }
+
+  return Array.from(values.values()).sort((a, b) => a - b);
+}
+
+export function mergeLabelInfoMaps(
+  a?: LabelNameToInfoMap,
+  b?: LabelNameToInfoMap
+): LabelNameToInfoMap {
+  if (!a || !b) return {};
+  const mergedMap: LabelNameToInfoMap = {};
+  for (const key of Object.keys(a)) {
+    if (!hasOwnProperty(b, key)) continue;
+    mergedMap[key] = a[key];
+  }
+  return mergedMap;
+}
+
+export function mergeLabelMaps(
+  a?: LabelNameToValuesMap,
+  b?: LabelNameToValuesMap
+): LabelNameToValuesMap {
+  if (!a || !b) return {};
+  const mergedMap: LabelNameToValuesMap = {};
+  for (const key of Object.keys(a)) {
+    if (!hasOwnProperty(b, key)) continue;
+    mergedMap[key] = mergeLabelValues(a[key], b[key]);
+  }
+  return mergedMap;
+}
+
+export function mergeLabelValues(a: string[], b: string[]) {
+  return a.filter(value => b.includes(value));
+}
+
+export function computeLabels(
+  account?: AccountInfo,
+  change?: ParsedChangeInfo | ChangeInfo
+): Label[] {
+  if (!account) return [];
+  const labelsObj = change?.labels;
+  if (!labelsObj) return [];
+  return Object.keys(labelsObj)
+    .sort(labelCompare)
+    .map(key => {
+      return {
+        name: key,
+        value: getVoteForAccount(key, account, change),
+      };
+    });
+}
+
+export function getTriggerVotes(change?: ParsedChangeInfo | ChangeInfo) {
+  const allLabels = Object.keys(change?.labels ?? {});
+  // Normally there is utility method getRequirements, which filter out
+  // not_applicable requirements. In this case we don't want to filter out them,
+  // because trigger votes are labels not associated with any requirement.
+  const submitReqs = change?.submit_requirements ?? [];
+  const labelAssociatedWithSubmitReqs = submitReqs
+    .flatMap(req => extractAssociatedLabels(req))
+    .filter(unique);
+  return allLabels.filter(
+    label => !labelAssociatedWithSubmitReqs.includes(label)
+  );
+}
+
+export function showNewSubmitRequirements(
+  flagsService: FlagsService,
+  change?: ParsedChangeInfo | ChangeInfo
+) {
+  const isSubmitRequirementsUiEnabled = flagsService.isEnabled(
+    KnownExperimentId.SUBMIT_REQUIREMENTS_UI
+  );
+  if (!isSubmitRequirementsUiEnabled) return false;
+  if ((getRequirements(change) ?? []).length === 0) return false;
+
+  return true;
 }

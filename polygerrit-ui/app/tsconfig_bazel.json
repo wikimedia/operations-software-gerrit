@@ -16,12 +16,13 @@
     "embed/**/*",
     "gr-diff/**/*",
     "mixins/**/*",
-    "samples/**/*",
+    "models/**/*",
     "scripts/**/*",
     "services/**/*",
     "styles/**/*",
     "types/**/*",
-    "utils/**/*"
+    "utils/**/*",
+    "workers/**/*"
   ],
   "exclude": [
     "**/*_test.ts",

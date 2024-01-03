@@ -31,7 +31,6 @@ import com.google.gerrit.server.project.NoSuchChangeException;
 import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.update.RepoContext;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import org.eclipse.jgit.lib.ObjectId;
@@ -45,9 +44,10 @@ public class CherryPick extends SubmitStrategy {
   }
 
   @Override
-  public List<SubmitStrategyOp> buildOps(Collection<CodeReviewCommit> toMerge) {
+  public ImmutableList<SubmitStrategyOp> buildOps(Collection<CodeReviewCommit> toMerge) {
     List<CodeReviewCommit> sorted = CodeReviewCommit.ORDER.sortedCopy(toMerge);
-    List<SubmitStrategyOp> ops = new ArrayList<>(sorted.size());
+    ImmutableList.Builder<SubmitStrategyOp> ops =
+        ImmutableList.builderWithExpectedSize(sorted.size());
     boolean first = true;
     while (!sorted.isEmpty()) {
       CodeReviewCommit n = sorted.remove(0);
@@ -62,7 +62,7 @@ public class CherryPick extends SubmitStrategy {
       }
       first = false;
     }
-    return ops;
+    return ops.build();
   }
 
   private class CherryPickRootOp extends SubmitStrategyOp {
@@ -102,8 +102,7 @@ public class CherryPick extends SubmitStrategy {
       args.rw.parseBody(mergeTip);
       String cherryPickCmtMsg = args.mergeUtil.createCommitMessageOnSubmit(toMerge, mergeTip);
 
-      PersonIdent committer =
-          args.caller.newCommitterIdent(ctx.getWhen(), args.serverIdent.getTimeZone());
+      PersonIdent committer = ctx.newCommitterIdent(args.caller);
       try {
         newCommit =
             args.mergeUtil.createCherryPickFromCommit(
@@ -196,7 +195,7 @@ public class CherryPick extends SubmitStrategy {
           && !args.subscriptionGraph.hasSubscription(args.destBranch)) {
         mergeTip.moveTipTo(toMerge, toMerge);
       } else {
-        PersonIdent myIdent = new PersonIdent(args.serverIdent, ctx.getWhen());
+        PersonIdent myIdent = ctx.newPersonIdent(args.serverIdent);
         CodeReviewCommit result =
             args.mergeUtil.mergeOneCommit(
                 myIdent,

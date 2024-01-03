@@ -34,6 +34,11 @@ export class GrTooltipContent extends LitElement {
   @property({type: Boolean, attribute: 'has-tooltip', reflect: true})
   hasTooltip = false;
 
+  // A light tooltip will disappear immediately when the original hovered
+  // over content is no longer hovered over.
+  @property({type: Boolean, attribute: 'light-tooltip', reflect: true})
+  lightTooltip = false;
+
   @property({type: Boolean, attribute: 'position-below', reflect: true})
   positionBelow = false;
 
@@ -123,7 +128,7 @@ export class GrTooltipContent extends LitElement {
     this.addEventListener('mouseenter', this.showHandler);
   }
 
-  _handleShowTooltip() {
+  async _handleShowTooltip() {
     if (this.isTouchDevice) {
       return;
     }
@@ -145,22 +150,25 @@ export class GrTooltipContent extends LitElement {
     tooltip.text = this.originalTitle;
     tooltip.maxWidth = this.getAttribute('max-width') || '';
     tooltip.positionBelow = this.hasAttribute('position-below');
+    this.tooltip = tooltip;
 
     // Set visibility to hidden before appending to the DOM so that
     // calculations can be made based on the element’s size.
     tooltip.style.visibility = 'hidden';
     getRootElement().appendChild(tooltip);
+    await tooltip.updateComplete;
     this._positionTooltip(tooltip);
     tooltip.style.visibility = 'initial';
 
-    this.tooltip = tooltip;
     window.addEventListener('scroll', this.windowScrollHandler);
     this.addEventListener('mouseleave', this.hideHandler);
     this.addEventListener('click', this.hideHandler);
-    tooltip.addEventListener('mouseleave', this.hideHandler);
+    if (!this.lightTooltip) {
+      tooltip.addEventListener('mouseleave', this.hideHandler);
+    }
   }
 
-  _handleHideTooltip(e: Event | undefined) {
+  _handleHideTooltip(e?: Event) {
     if (this.isTouchDevice) {
       return;
     }
@@ -170,7 +178,8 @@ export class GrTooltipContent extends LitElement {
     // Do not hide if mouse left this or this.tooltip and came to this or
     // this.tooltip
     if (
-      (e as MouseEvent)?.relatedTarget === this.tooltip ||
+      (!this.lightTooltip &&
+        (e as MouseEvent)?.relatedTarget === this.tooltip) ||
       (e as MouseEvent)?.relatedTarget === this
     ) {
       return;
@@ -180,7 +189,9 @@ export class GrTooltipContent extends LitElement {
     this.removeEventListener('mouseleave', this.hideHandler);
     this.removeEventListener('click', this.hideHandler);
     this.setAttribute('title', this.originalTitle);
-    this.tooltip?.removeEventListener('mouseleave', this.hideHandler);
+    if (!this.lightTooltip) {
+      this.tooltip?.removeEventListener('mouseleave', this.hideHandler);
+    }
 
     if (this.tooltip?.parentNode) {
       this.tooltip.parentNode.removeChild(this.tooltip);
@@ -198,7 +209,7 @@ export class GrTooltipContent extends LitElement {
   }
 
   // private but used in tests.
-  async _positionTooltip(tooltip: GrTooltip | null) {
+  _positionTooltip(tooltip: GrTooltip | null) {
     if (tooltip === null) return;
     const rect = this.getBoundingClientRect();
     const boxRect = tooltip.getBoundingClientRect();
@@ -210,13 +221,9 @@ export class GrTooltipContent extends LitElement {
     const left = rect.left - parentRect.left + (rect.width - boxRect.width) / 2;
     const right = parentRect.width - left - boxRect.width;
     if (left < 0) {
-      tooltip.updateStyles({
-        '--gr-tooltip-arrow-center-offset': `${left}px`,
-      });
+      tooltip.arrowCenterOffset = `${left}px`;
     } else if (right < 0) {
-      tooltip.updateStyles({
-        '--gr-tooltip-arrow-center-offset': `${-0.5 * right}px`,
-      });
+      tooltip.arrowCenterOffset = `${-0.5 * right}px`;
     }
     tooltip.style.left = `${Math.max(0, left)}px`;
 

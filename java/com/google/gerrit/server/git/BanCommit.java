@@ -30,9 +30,9 @@ import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
-import java.util.Date;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.List;
-import java.util.TimeZone;
 import org.eclipse.jgit.errors.IncorrectObjectTypeException;
 import org.eclipse.jgit.errors.MissingObjectException;
 import org.eclipse.jgit.lib.Constants;
@@ -78,7 +78,7 @@ public class BanCommit {
 
   private final Provider<IdentifiedUser> currentUser;
   private final GitRepositoryManager repoManager;
-  private final TimeZone tz;
+  private final ZoneId zoneId;
   private final PermissionBackend permissionBackend;
   private final NotesBranchUtil.Factory notesBranchUtilFactory;
 
@@ -93,7 +93,7 @@ public class BanCommit {
     this.repoManager = repoManager;
     this.notesBranchUtilFactory = notesBranchUtilFactory;
     this.permissionBackend = permissionBackend;
-    this.tz = gerritIdent.getTimeZone();
+    this.zoneId = gerritIdent.getZoneId();
   }
 
   /**
@@ -155,8 +155,7 @@ public class BanCommit {
   }
 
   private PersonIdent createPersonIdent() {
-    Date now = new Date();
-    return currentUser.get().newCommitterIdent(now, tz);
+    return currentUser.get().newCommitterIdent(Instant.now(), zoneId);
   }
 
   private static String buildCommitMessage(List<ObjectId> bannedCommits, String reason) {

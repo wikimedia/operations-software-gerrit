@@ -24,9 +24,15 @@ import {
   getRepresentativeValue,
   getVotingRange,
   getVotingRangeOrDefault,
+  getRequirements,
+  getTriggerVotes,
   hasNeutralStatus,
   labelCompare,
   LabelStatus,
+  computeLabels,
+  mergeLabelMaps,
+  computeOrderedLabelValues,
+  mergeLabelInfoMaps,
 } from './label-util';
 import {
   AccountId,
@@ -38,9 +44,18 @@ import {
 } from '../types/common';
 import {
   createAccountWithEmail,
+  createChange,
   createSubmitRequirementExpressionInfo,
   createSubmitRequirementResultInfo,
+  createNonApplicableSubmitRequirementResultInfo,
+  createDetailedLabelInfo,
+  createAccountWithId,
 } from '../test/test-data-generators';
+import {
+  SubmitRequirementResultInfo,
+  SubmitRequirementStatus,
+  LabelNameToInfoMap,
+} from '../api/rest-api';
 
 const VALUES_0 = {
   '0': 'neutral',
@@ -179,8 +194,12 @@ suite('label-util', () => {
     let labelInfo: QuickLabelInfo = {};
     assert.equal(getLabelStatus(labelInfo), LabelStatus.NEUTRAL);
     labelInfo = {approved: createAccountWithEmail()};
-    assert.equal(getLabelStatus(labelInfo), LabelStatus.RECOMMENDED);
+    assert.equal(getLabelStatus(labelInfo), LabelStatus.APPROVED);
     labelInfo = {rejected: createAccountWithEmail()};
+    assert.equal(getLabelStatus(labelInfo), LabelStatus.REJECTED);
+    labelInfo = {recommended: createAccountWithEmail()};
+    assert.equal(getLabelStatus(labelInfo), LabelStatus.RECOMMENDED);
+    labelInfo = {disliked: createAccountWithEmail()};
     assert.equal(getLabelStatus(labelInfo), LabelStatus.DISLIKED);
   });
 
@@ -224,37 +243,360 @@ suite('label-util', () => {
     assert.equal(getRepresentativeValue(labelInfo), -2);
   });
 
-  suite('extractAssociatedLabels()', () => {
-    function createSubmitRequirementExpressionInfoWith(expression: string) {
-      return {
-        ...createSubmitRequirementResultInfo(),
-        submittability_expression_result: {
-          ...createSubmitRequirementExpressionInfo(),
-          expression,
-        },
-      };
-    }
+  test('computeOrderedLabelValues', () => {
+    const labelValues = computeOrderedLabelValues({
+      'Code-Review': ['-2', '-1', ' 0', '+1', '+2'],
+      Verified: ['-1', ' 0', '+1'],
+    });
+    assert.deepEqual(labelValues, [-2, -1, 0, 1, 2]);
+  });
 
+  test('computeLabels', async () => {
+    const accountId = 123 as AccountId;
+    const account = createAccountWithId(accountId);
+    const change = {
+      ...createChange(),
+      labels: {
+        'Code-Review': {
+          values: {
+            '0': 'No score',
+            '+1': 'good',
+            '+2': 'excellent',
+            '-1': 'bad',
+            '-2': 'terrible',
+          },
+          default_value: 0,
+        } as DetailedLabelInfo,
+        Verified: {
+          values: {
+            '0': 'No score',
+            '+1': 'good',
+            '+2': 'excellent',
+            '-1': 'bad',
+            '-2': 'terrible',
+          },
+          default_value: 0,
+        } as DetailedLabelInfo,
+      } as LabelNameToInfoMap,
+    };
+    let labels = computeLabels(account, change);
+    assert.deepEqual(labels, [
+      {name: 'Code-Review', value: null},
+      {name: 'Verified', value: null},
+    ]);
+    change.labels = {
+      ...change.labels,
+      Verified: {
+        ...change.labels.Verified,
+        all: [
+          {
+            _account_id: accountId,
+            value: 1,
+          },
+        ],
+      } as DetailedLabelInfo,
+    } as LabelNameToInfoMap;
+    labels = computeLabels(account, change);
+    assert.deepEqual(labels, [
+      {name: 'Code-Review', value: null},
+      {name: 'Verified', value: '+1'},
+    ]);
+  });
+
+  test('mergeLabelInfoMaps', () => {
+    assert.deepEqual(
+      mergeLabelInfoMaps(
+        {
+          A: createDetailedLabelInfo(),
+          B: createDetailedLabelInfo(),
+        },
+        undefined
+      ),
+      {}
+    );
+    assert.deepEqual(
+      mergeLabelInfoMaps(undefined, {
+        A: createDetailedLabelInfo(),
+        B: createDetailedLabelInfo(),
+      }),
+      {}
+    );
+
+    assert.deepEqual(
+      mergeLabelInfoMaps(
+        {
+          A: createDetailedLabelInfo(),
+          B: createDetailedLabelInfo(),
+        },
+        {
+          A: createDetailedLabelInfo(),
+          B: createDetailedLabelInfo(),
+        }
+      ),
+      {
+        A: createDetailedLabelInfo(),
+        B: createDetailedLabelInfo(),
+      }
+    );
+
+    assert.deepEqual(
+      mergeLabelInfoMaps(
+        {
+          A: createDetailedLabelInfo(),
+          B: createDetailedLabelInfo(),
+        },
+        {
+          B: createDetailedLabelInfo(),
+          C: createDetailedLabelInfo(),
+        }
+      ),
+      {
+        B: createDetailedLabelInfo(),
+      }
+    );
+
+    assert.deepEqual(
+      mergeLabelInfoMaps(
+        {
+          A: createDetailedLabelInfo(),
+          B: createDetailedLabelInfo(),
+        },
+        {
+          X: createDetailedLabelInfo(),
+          Y: createDetailedLabelInfo(),
+        }
+      ),
+      {}
+    );
+  });
+
+  test('mergeLabelMaps', () => {
+    assert.deepEqual(
+      mergeLabelMaps(
+        {
+          A: ['-1', '0', '+1', '+2'],
+          B: ['-1', '0'],
+          C: ['-1', '0'],
+          D: ['0'],
+        },
+        undefined
+      ),
+      {}
+    );
+
+    assert.deepEqual(
+      mergeLabelMaps(undefined, {
+        A: ['-1', '0', '+1', '+2'],
+        B: ['-1', '0'],
+        C: ['-1', '0'],
+        D: ['0'],
+      }),
+      {}
+    );
+
+    assert.deepEqual(
+      mergeLabelMaps(
+        {
+          A: ['-1', '0', '+1', '+2'],
+          B: ['-1', '0'],
+          C: ['-1', '0'],
+          D: ['0'],
+        },
+        {
+          A: ['-1', '0', '+1', '+2'],
+          B: ['-1', '0'],
+          C: ['-1', '0'],
+          D: ['0'],
+        }
+      ),
+      {
+        A: ['-1', '0', '+1', '+2'],
+        B: ['-1', '0'],
+        C: ['-1', '0'],
+        D: ['0'],
+      }
+    );
+
+    assert.deepEqual(
+      mergeLabelMaps(
+        {
+          A: ['-1', '0', '+1', '+2'],
+          B: ['-1', '0'],
+          C: ['-1', '0'],
+        },
+        {
+          A: ['-1', '0', '+1', '+2'],
+          B: ['-1', '0'],
+          D: ['0'],
+        }
+      ),
+      {
+        A: ['-1', '0', '+1', '+2'],
+        B: ['-1', '0'],
+      }
+    );
+
+    assert.deepEqual(
+      mergeLabelMaps(
+        {
+          A: ['-1', '0', '+1', '+2'],
+          B: ['-1', '0'],
+          C: ['-1', '0'],
+          D: ['0'],
+        },
+        {
+          A: [],
+          B: ['-1', '0'],
+          C: ['0', '+1'],
+          D: ['0'],
+        }
+      ),
+      {
+        A: [],
+        B: ['-1', '0'],
+        C: ['0'],
+        D: ['0'],
+      }
+    );
+
+    assert.deepEqual(
+      mergeLabelMaps(
+        {
+          A: ['-1', '0', '+1', '+2'],
+          B: ['-1', '0'],
+          C: ['-1', '0'],
+        },
+        {
+          X: ['-1', '0', '+1', '+2'],
+          Y: ['-1', '0'],
+          Z: ['0'],
+        }
+      ),
+      {}
+    );
+  });
+
+  suite('extractAssociatedLabels()', () => {
     test('1 label', () => {
-      const submitRequirement = createSubmitRequirementExpressionInfoWith(
-        'label:Verified=MAX -label:Verified=MIN'
-      );
+      const submitRequirement = createSubmitRequirementResultInfo();
       const labels = extractAssociatedLabels(submitRequirement);
       assert.deepEqual(labels, ['Verified']);
     });
     test('label with number', () => {
-      const submitRequirement = createSubmitRequirementExpressionInfoWith(
+      const submitRequirement = createSubmitRequirementResultInfo(
         'label2:verified=MAX'
       );
       const labels = extractAssociatedLabels(submitRequirement);
       assert.deepEqual(labels, ['verified']);
     });
     test('2 labels', () => {
-      const submitRequirement = createSubmitRequirementExpressionInfoWith(
+      const submitRequirement = createSubmitRequirementResultInfo(
         'label:Verified=MAX -label:Code-Review=MIN'
       );
       const labels = extractAssociatedLabels(submitRequirement);
       assert.deepEqual(labels, ['Verified', 'Code-Review']);
+    });
+    test('overridden label', () => {
+      const submitRequirement = {
+        ...createSubmitRequirementResultInfo(),
+        override_expression_result: createSubmitRequirementExpressionInfo(
+          'label:Build-cop-override'
+        ),
+      };
+      const labels = extractAssociatedLabels(submitRequirement);
+      assert.deepEqual(labels, ['Verified', 'Build-cop-override']);
+    });
+  });
+
+  suite('getRequirements()', () => {
+    function createChangeInfoWith(
+      submit_requirements: SubmitRequirementResultInfo[]
+    ) {
+      return {
+        ...createChange(),
+        submit_requirements,
+      };
+    }
+    test('only legacy', () => {
+      const requirement = {
+        ...createSubmitRequirementResultInfo(),
+        is_legacy: true,
+      };
+      const change = createChangeInfoWith([requirement]);
+      assert.deepEqual(getRequirements(change), [requirement]);
+    });
+    test('legacy and non-legacy - show all', () => {
+      const requirement = {
+        ...createSubmitRequirementResultInfo(),
+        is_legacy: true,
+      };
+      const requirement2 = {
+        ...createSubmitRequirementResultInfo(),
+        is_legacy: false,
+      };
+      const change = createChangeInfoWith([requirement, requirement2]);
+      assert.deepEqual(getRequirements(change), [requirement, requirement2]);
+    });
+    test('filter not applicable', () => {
+      const requirement = createSubmitRequirementResultInfo();
+      const requirement2 = createNonApplicableSubmitRequirementResultInfo();
+      const change = createChangeInfoWith([requirement, requirement2]);
+      assert.deepEqual(getRequirements(change), [requirement]);
+    });
+  });
+
+  suite('getTriggerVotes()', () => {
+    test('no requirements', () => {
+      const triggerVote = 'Trigger-Vote';
+      const change = {
+        ...createChange(),
+        labels: {
+          [triggerVote]: createDetailedLabelInfo(),
+        },
+      };
+      assert.deepEqual(getTriggerVotes(change), [triggerVote]);
+    });
+    test('no trigger votes, all labels associated with sub requirement', () => {
+      const triggerVote = 'Trigger-Vote';
+      const change = {
+        ...createChange(),
+        submit_requirements: [
+          {
+            ...createSubmitRequirementResultInfo(),
+            submittability_expression_result: {
+              ...createSubmitRequirementExpressionInfo(),
+              expression: `label:${triggerVote}=MAX`,
+            },
+            is_legacy: false,
+          },
+        ],
+        labels: {
+          [triggerVote]: createDetailedLabelInfo(),
+        },
+      };
+      assert.deepEqual(getTriggerVotes(change), []);
+    });
+
+    test('labels in not-applicable requirement are not trigger vote', () => {
+      const triggerVote = 'Trigger-Vote';
+      const change = {
+        ...createChange(),
+        submit_requirements: [
+          {
+            ...createSubmitRequirementResultInfo(),
+            status: SubmitRequirementStatus.NOT_APPLICABLE,
+            submittability_expression_result: {
+              ...createSubmitRequirementExpressionInfo(),
+              expression: `label:${triggerVote}=MAX`,
+            },
+            is_legacy: false,
+          },
+        ],
+        labels: {
+          [triggerVote]: createDetailedLabelInfo(),
+        },
+      };
+      assert.deepEqual(getTriggerVotes(change), []);
     });
   });
 });

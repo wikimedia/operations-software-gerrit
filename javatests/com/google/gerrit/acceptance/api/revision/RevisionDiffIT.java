@@ -52,12 +52,13 @@ import com.google.gerrit.extensions.restapi.BinaryResult;
 import com.google.gerrit.extensions.webui.EditWebLink;
 import com.google.gerrit.extensions.webui.FileWebLink;
 import com.google.gerrit.server.patch.DiffOperations;
+import com.google.gerrit.server.patch.DiffOptions;
 import com.google.gerrit.server.patch.filediff.FileDiffOutput;
 import com.google.inject.Inject;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.text.SimpleDateFormat;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -149,7 +150,7 @@ public class RevisionDiffIT extends AbstractDaemonTest {
 
     Map<String, FileDiffOutput> modifiedFiles =
         diffOperations.listModifiedFilesAgainstParent(
-            project, result.getCommit(), /* parentNum= */ 0);
+            project, result.getCommit(), /* parentNum= */ 0, DiffOptions.DEFAULTS);
 
     assertThat(modifiedFiles.keySet()).containsExactly("/COMMIT_MSG", "f.txt");
     assertThat(
@@ -1034,7 +1035,7 @@ public class RevisionDiffIT extends AbstractDaemonTest {
   public void intralineEditsAreIdentified() throws Exception {
     // In some corner cases, intra-line diffs produce wrong results. In this case, the algorithm
     // falls back to a single edit covering the whole range.
-    // See: bugs.chromium.org/p/gerrit/issues/detail?id=13563
+    // See: https://issues.gerritcodereview.com/issues/40013030
 
     assume().that(intraline).isTrue();
 
@@ -3022,16 +3023,18 @@ public class RevisionDiffIT extends AbstractDaemonTest {
           abbreviateName(parentCommit, 8, testRepo.getRevWalk().getObjectReader());
       headers.add("Parent:     " + parentCommitId + " (" + parentCommit.getShortMessage() + ")");
 
-      SimpleDateFormat dtfmt = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.US);
       PersonIdent author = c.getAuthorIdent();
-      dtfmt.setTimeZone(author.getTimeZone());
+      DateTimeFormatter fmt =
+          DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss Z")
+              .withLocale(Locale.US)
+              .withZone(author.getZoneId());
       headers.add("Author:     " + author.getName() + " <" + author.getEmailAddress() + ">");
-      headers.add("AuthorDate: " + dtfmt.format(author.getWhen().getTime()));
+      headers.add("AuthorDate: " + fmt.format(author.getWhenAsInstant()));
 
       PersonIdent committer = c.getCommitterIdent();
-      dtfmt.setTimeZone(committer.getTimeZone());
+      fmt = fmt.withZone(committer.getZoneId());
       headers.add("Commit:     " + committer.getName() + " <" + committer.getEmailAddress() + ">");
-      headers.add("CommitDate: " + dtfmt.format(committer.getWhen().getTime()));
+      headers.add("CommitDate: " + fmt.format(committer.getWhenAsInstant()));
       headers.add("");
     }
 

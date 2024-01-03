@@ -20,6 +20,9 @@ export const htmlTemplate = html`
   <style include="gr-a11y-styles">
     /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
   </style>
+  <style include="gr-paper-styles">
+    /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+  </style>
   <style include="shared-styles">
     .container:not(.loading) {
       background-color: var(--background-color-tertiary);
@@ -312,13 +315,9 @@ export const htmlTemplate = html`
     }
   </style>
   <div class="container loading" hidden$="[[!_loading]]">Loading...</div>
-  <!-- TODO(taoalpha): remove on-show-checks-table,
-    Gerrit should not have any thing too special for a plugin,
-    replace with a generic event: show-primary-tab. -->
   <div
     id="mainContent"
     class="container"
-    on-show-checks-table="_setActivePrimaryTab"
     hidden$="{{_loading}}"
     aria-hidden="[[_changeViewAriaHidden]]"
   >
@@ -340,7 +339,7 @@ export const htmlTemplate = html`
           </div>
           <gr-change-star
             id="changeStar"
-            change="{{_change}}"
+            change="[[_change]]"
             on-toggle-star="_handleToggleStar"
             hidden$="[[!_loggedIn]]"
           ></gr-change-star>
@@ -348,7 +347,7 @@ export const htmlTemplate = html`
           <a
             class="changeNumber"
             aria-label$="[[_computeChangePermalinkAriaLabel(_change._number)]]"
-            href$="[[_computeChangeUrl(_change)]]"
+            href$="[[_computeChangeUrl(_change, 'forceReload')]]"
             >[[_change._number]]</a
           >
           <span class="changeNumberColon">:&nbsp;</span>
@@ -368,8 +367,7 @@ export const htmlTemplate = html`
             change="[[_change]]"
             disable-edit="[[disableEdit]]"
             has-parent="[[hasParent]]"
-            actions="[[_change.actions]]"
-            revision-actions="{{_currentRevisionActions}}"
+            revision-actions="[[_currentRevisionActions]]"
             account="[[_account]]"
             change-num="[[_changeNum]]"
             change-status="[[_change.status]]"
@@ -385,7 +383,7 @@ export const htmlTemplate = html`
             on-stop-edit-tap="_handleStopEditTap"
             on-download-tap="_handleOpenDownloadDialog"
             on-included-tap="_handleOpenIncludedInDialog"
-            comment-threads="[[_commentThreads]]"
+            on-revision-actions-changed="_handleRevisionActionsChanged"
           ></gr-change-actions>
         </div>
         <!-- end commit actions -->
@@ -428,8 +426,10 @@ export const htmlTemplate = html`
               <div id="commitMessage" class="commitMessage">
                 <gr-editable-content
                   id="commitMessageEditor"
-                  editing="{{_editingCommitMessage}}"
-                  content="{{_latestCommitMessage}}"
+                  editing="[[_editingCommitMessage]]"
+                  content="[[_latestCommitMessage]]"
+                  on-editing-changed="handleEditingChanged"
+                  on-content-changed="handleContentChanged"
                   storage-key="[[_computeCommitMessageKey(_change._number, _change.current_revision)]]"
                   hide-edit-commit-message="[[_hideEditCommitMessage]]"
                   commit-collapsible="[[_commitCollapsible]]"
@@ -457,12 +457,7 @@ export const htmlTemplate = html`
                 </div>
               </div>
               <h3 class="assistive-tech-only">Comments and Checks Summary</h3>
-              <gr-change-summary
-                change-comments="[[_changeComments]]"
-                comment-threads="[[_commentThreads]]"
-                self-account="[[_account]]"
-              >
-              </gr-change-summary>
+              <gr-change-summary></gr-change-summary>
               <gr-endpoint-decorator name="commit-container">
                 <gr-endpoint-param name="change" value="[[_change]]">
                 </gr-endpoint-param>
@@ -546,7 +541,6 @@ export const htmlTemplate = html`
           change="[[_change]]"
           change-num="[[_changeNum]]"
           revision-info="[[_revisionInfo]]"
-          change-comments="[[_changeComments]]"
           commit-info="[[_commitInfo]]"
           change-url="[[_computeChangeUrl(_change)]]"
           edit-mode="[[_editMode]]"
@@ -554,7 +548,6 @@ export const htmlTemplate = html`
           server-config="[[_serverConfig]]"
           shown-file-count="[[_shownFileCount]]"
           diff-prefs="[[_diffPrefs]]"
-          diff-view-mode="{{viewState.diffMode}}"
           patch-num="{{_patchRange.patchNum}}"
           base-patch-num="{{_patchRange.basePatchNum}}"
           files-expanded="[[_filesExpanded]]"
@@ -572,7 +565,6 @@ export const htmlTemplate = html`
           change="[[_change]]"
           change-num="[[_changeNum]]"
           patch-range="{{_patchRange}}"
-          change-comments="[[_changeComments]]"
           selected-index="{{viewState.selectedFileIndex}}"
           diff-view-mode="[[viewState.diffMode]]"
           edit-mode="[[_editMode]]"
@@ -592,11 +584,7 @@ export const htmlTemplate = html`
         <h3 class="assistive-tech-only">Comments</h3>
         <gr-thread-list
           threads="[[_commentThreads]]"
-          change="[[_change]]"
-          change-num="[[_changeNum]]"
-          logged-in="[[_loggedIn]]"
-          account="[[_account]]"
-          comment-tab-state="[[_tabState.commentTab]]"
+          comment-tab-state="[[_tabState]]"
           only-show-robot-comments-with-human-reply=""
           unresolved-only="[[unresolvedOnly]]"
           scroll-comment-id="[[scrollCommentId]]"
@@ -608,10 +596,7 @@ export const htmlTemplate = html`
         if="[[_isTabActive(_constants.PrimaryTab.CHECKS, _activeTabs)]]"
       >
         <h3 class="assistive-tech-only">Checks</h3>
-        <gr-checks-tab
-          id="checksTab"
-          tab-state="[[_tabState.checksTab]]"
-        ></gr-checks-tab>
+        <gr-checks-tab id="checksTab" tab-state="[[_tabState]]"></gr-checks-tab>
       </template>
       <template
         is="dom-if"
@@ -624,14 +609,7 @@ export const htmlTemplate = html`
           value="[[_currentRobotCommentsPatchSet]]"
         >
         </gr-dropdown-list>
-        <gr-thread-list
-          threads="[[_robotCommentThreads]]"
-          change="[[_change]]"
-          change-num="[[_changeNum]]"
-          logged-in="[[_loggedIn]]"
-          hide-dropdown
-          empty-thread-msg="[[_messages.NO_ROBOT_COMMENTS_THREADS_MSG]]"
-        >
+        <gr-thread-list threads="[[_robotCommentThreads]]" hide-dropdown>
         </gr-thread-list>
         <template is="dom-if" if="[[_showRobotCommentsButton]]">
           <gr-button
@@ -674,14 +652,9 @@ export const htmlTemplate = html`
       <h2 class="assistive-tech-only">Change Log</h2>
       <gr-messages-list
         class="hideOnMobileOverlay"
-        change="[[_change]]"
-        change-num="[[_changeNum]]"
         labels="[[_change.labels]]"
         messages="[[_change.messages]]"
         reviewer-updates="[[_change.reviewer_updates]]"
-        change-comments="[[_changeComments]]"
-        project-name="[[_change.project]]"
-        show-reply-buttons="[[_loggedIn]]"
         on-message-anchor-tap="_handleMessageAnchorTap"
         on-reply="_handleMessageReply"
       ></gr-messages-list>
@@ -717,24 +690,26 @@ export const htmlTemplate = html`
     no-cancel-on-esc-key=""
     scroll-action="lock"
     with-backdrop=""
+    opened="{{replyOverlayOpened}}"
     on-iron-overlay-canceled="onReplyOverlayCanceled"
   >
-    <gr-reply-dialog
-      id="replyDialog"
-      change="{{_change}}"
-      patch-num="[[_computeLatestPatchNum(_allPatchSets)]]"
-      permitted-labels="[[_change.permitted_labels]]"
-      draft-comment-threads="[[_draftCommentThreads]]"
-      project-config="[[_projectConfig]]"
-      server-config="[[_serverConfig]]"
-      can-be-started="[[_canStartReview]]"
-      on-send="_handleReplySent"
-      on-cancel="_handleReplyCancel"
-      on-autogrow="_handleReplyAutogrow"
-      on-send-disabled-changed="_resetReplyOverlayFocusStops"
-      hidden$="[[!_loggedIn]]"
-    >
-    </gr-reply-dialog>
+    <template is="dom-if" if="[[replyOverlayOpened]]">
+      <gr-reply-dialog
+        id="replyDialog"
+        change="{{_change}}"
+        patch-num="[[_computeLatestPatchNum(_allPatchSets)]]"
+        permitted-labels="[[_change.permitted_labels]]"
+        draft-comment-threads="[[_draftCommentThreads]]"
+        project-config="[[_projectConfig]]"
+        server-config="[[_serverConfig]]"
+        can-be-started="[[_canStartReview]]"
+        on-send="_handleReplySent"
+        on-cancel="_handleReplyCancel"
+        on-autogrow="_handleReplyAutogrow"
+        on-send-disabled-changed="_resetReplyOverlayFocusStops"
+        hidden$="[[!_loggedIn]]"
+      >
+      </gr-reply-dialog>
+    </template>
   </gr-overlay>
-  <gr-comment-api id="commentAPI"></gr-comment-api>
 `;

@@ -40,65 +40,7 @@ import {ParsedChangeInfo} from '../../../types/types';
 //
 // Each object has a `view` property with a value from GerritNav.View. The
 // remaining properties depend on the value used for view.
-//
-//  - GerritNav.View.CHANGE:
-//    - `changeNum`, required, String: the numeric ID of the change.
-//    - `project`, optional, String: the project name.
-//    - `patchNum`, optional, Number: the patch for the right-hand-side of
-//        the diff.
-//    - `basePatchNum`, optional, Number: the patch for the left-hand-side
-//        of the diff. If `basePatchNum` is provided, then `patchNum` must
-//        also be provided.
-//    - `edit`, optional, Boolean: whether or not to load the file list with
-//        edit controls.
-//    - `messageHash`, optional, String: the hash of the change message to
-//        scroll to.
-//
-// - GerritNav.View.SEARCH:
-//    - `query`, optional, String: the literal search query. If provided,
-//        the string will be used as the query, and all other params will be
-//        ignored.
-//    - `owner`, optional, String: the owner name.
-//    - `project`, optional, String: the project name.
-//    - `branch`, optional, String: the branch name.
-//    - `topic`, optional, String: the topic name.
-//    - `hashtag`, optional, String: the hashtag name.
-//    - `statuses`, optional, Array<String>: the list of change statuses to
-//        search for. If more than one is provided, the search will OR them
-//        together.
-//    - `offset`, optional, Number: the offset for the query.
-//
-//  - GerritNav.View.DIFF:
-//    - `changeNum`, required, String: the numeric ID of the change.
-//    - `path`, required, String: the filepath of the diff.
-//    - `patchNum`, required, Number: the patch for the right-hand-side of
-//        the diff.
-//    - `basePatchNum`, optional, Number: the patch for the left-hand-side
-//        of the diff. If `basePatchNum` is provided, then `patchNum` must
-//        also be provided.
-//    - `lineNum`, optional, Number: the line number to be selected on load.
-//    - `leftSide`, optional, Boolean: if a `lineNum` is provided, a value
-//        of true selects the line from base of the patch range. False by
-//        default.
-//
-//  - GerritNav.View.GROUP:
-//    - `groupId`, required, String: the ID of the group.
-//    - `detail`, optional, String: the name of the group detail view.
-//      Takes any value from GerritNav.GroupDetailView.
-//
-//  - GerritNav.View.REPO:
-//    - `repoName`, required, String: the name of the repo
-//    - `detail`, optional, String: the name of the repo detail view.
-//      Takes any value from GerritNav.RepoDetailView.
-//
-//  - GerritNav.View.DASHBOARD
-//    - `repo`, optional, String.
-//    - `sections`, optional, Array of objects with `title` and `query`
-//      strings.
-//    - `user`, optional, String.
-//
-//  - GerritNav.View.ROOT:
-//    - no possible parameters.
+// GenerateUrlParameters lists all the possible view parameters.
 
 const uninitialized = () => {
   console.warn('Use of uninitialized routing');
@@ -132,8 +74,6 @@ export interface DashboardSection {
   suffixForDashboard?: string;
   selfOnly?: boolean;
   hideIfEmpty?: boolean;
-  assigneeOnly?: boolean;
-  isOutgoing?: boolean;
   results?: ChangeInfo[];
 }
 
@@ -165,16 +105,6 @@ export const YOUR_TURN: DashboardSection = {
   hideIfEmpty: false,
   suffixForDashboard: 'limit:25',
 };
-const ASSIGNED: DashboardSection = {
-  // Changes that are assigned to the viewed user.
-  name: 'Assigned reviews',
-  query:
-    'assignee:${user} (-is:wip OR owner:self OR assignee:self) ' +
-    'is:open -is:ignored',
-  hideIfEmpty: true,
-  suffixForDashboard: 'limit:25',
-  assigneeOnly: true,
-};
 const WIP: DashboardSection = {
   // WIP open changes owned by viewing user. This section is omitted when
   // viewing other users, so we don't need to filter anything out.
@@ -184,22 +114,19 @@ const WIP: DashboardSection = {
   hideIfEmpty: true,
   suffixForDashboard: 'limit:25',
 };
-const OUTGOING: DashboardSection = {
+export const OUTGOING: DashboardSection = {
   // Non-WIP open changes owned by viewed user. Filter out changes ignored
   // by the viewing user.
   name: 'Outgoing reviews',
   query: 'is:open owner:${user} -is:wip -is:ignored',
-  isOutgoing: true,
   suffixForDashboard: 'limit:25',
 };
 const INCOMING: DashboardSection = {
   // Non-WIP open changes not owned by the viewed user, that the viewed user
-  // is associated with (as either a reviewer or the assignee). Changes
-  // ignored by the viewing user are filtered out.
+  // is associated with as a reviewer. Changes ignored by the viewing user are
+  // filtered out.
   name: 'Incoming reviews',
-  query:
-    'is:open -owner:${user} -is:wip -is:ignored ' +
-    '(reviewer:${user} OR assignee:${user})',
+  query: 'is:open -owner:${user} -is:wip -is:ignored reviewer:${user}',
   suffixForDashboard: 'limit:25',
 };
 const CCED: DashboardSection = {
@@ -211,20 +138,18 @@ const CCED: DashboardSection = {
 };
 export const CLOSED: DashboardSection = {
   name: 'Recently closed',
-  // Closed changes where viewed user is owner, reviewer, or assignee.
+  // Closed changes where viewed user is owner or reviewer.
   // Changes ignored by the viewing user are filtered out, and so are WIP
   // changes not owned by the viewing user (the one instance of
   // 'owner:self' is intentional and implements this logic).
   query:
     'is:closed -is:ignored (-is:wip OR owner:self) ' +
-    '(owner:${user} OR reviewer:${user} OR assignee:${user} ' +
-    'OR cc:${user})',
+    '(owner:${user} OR reviewer:${user} OR cc:${user})',
   suffixForDashboard: '-age:4w limit:10',
 };
 const DEFAULT_SECTIONS: DashboardSection[] = [
   HAS_DRAFTS,
   YOUR_TURN,
-  ASSIGNED,
   WIP,
   OUTGOING,
   INCOMING,
@@ -256,11 +181,15 @@ export interface GenerateUrlChangeViewParameters {
   edit?: boolean;
   host?: string;
   messageHash?: string;
-  queryMap?: Map<string, string> | URLSearchParams;
   commentId?: UrlEncodedCommentId;
-
-  // TODO(TS): querystring isn't set anywhere, try to remove
-  querystring?: string;
+  forceReload?: boolean;
+  tab?: string;
+  /** regular expression for filtering check runs */
+  filter?: string;
+  /** regular expression for selecting check runs */
+  select?: string;
+  /** selected attempt for selected check runs */
+  attempt?: number;
 }
 
 export interface GenerateUrlRepoViewParameters {
@@ -435,6 +364,18 @@ export enum WeblinkType {
   RESOLVE_CONFLICTS = 'resolve-conflicts',
 }
 
+interface NavigateToChangeParams {
+  patchNum?: PatchSetNum;
+  basePatchNum?: BasePatchSetNum;
+  isEdit?: boolean;
+  redirect?: boolean;
+  forceReload?: boolean;
+}
+
+interface ChangeUrlParams extends NavigateToChangeParams {
+  messageHash?: string;
+}
+
 // TODO(dmfilippov) Convert to class, extract consts, give better name and
 // expose as a service from appContext
 export const GerritNav = {
@@ -594,14 +535,14 @@ export const GerritNav = {
    * Navigate to a search query
    */
   navigateToSearchQuery(query: string, offset?: number) {
-    return this._navigate(this.getUrlForSearchQuery(query, offset));
+    this._navigate(this.getUrlForSearchQuery(query, offset));
   },
 
   /**
    * Navigate to the user's dashboard
    */
   navigateToUserDashboard() {
-    return this._navigate(this.getUrlForUserDashboard('self'));
+    this._navigate(this.getUrlForUserDashboard('self'));
   },
 
   /**
@@ -609,11 +550,9 @@ export const GerritNav = {
    */
   getUrlForChange(
     change: Pick<ChangeInfo, '_number' | 'project' | 'internalHost'>,
-    patchNum?: PatchSetNum,
-    basePatchNum?: BasePatchSetNum,
-    isEdit?: boolean,
-    messageHash?: string
+    options: ChangeUrlParams = {}
   ) {
+    let {patchNum, basePatchNum, isEdit, messageHash, forceReload} = options;
     if (basePatchNum === ParentPatchSetNum) {
       basePatchNum = undefined;
     }
@@ -628,6 +567,7 @@ export const GerritNav = {
       edit: isEdit,
       host: change.internalHost || undefined,
       messageHash,
+      forceReload,
     });
   },
 
@@ -649,17 +589,22 @@ export const GerritNav = {
    * @param redirect redirect to a change - if true, the current
    *     location (i.e. page which makes redirect) is not added to a history.
    *     I.e. back/forward buttons skip current location
-   *
+   * @param forceReload Some views are smart about how to handle the reload
+   *     of the view. In certain cases we want to force the view to reload
+   *     and re-render everything.
    */
   navigateToChange(
     change: Pick<ChangeInfo, '_number' | 'project' | 'internalHost'>,
-    patchNum?: PatchSetNum,
-    basePatchNum?: BasePatchSetNum,
-    isEdit?: boolean,
-    redirect?: boolean
+    options: NavigateToChangeParams = {}
   ) {
+    const {patchNum, basePatchNum, isEdit, forceReload, redirect} = options;
     this._navigate(
-      this.getUrlForChange(change, patchNum, basePatchNum, isEdit),
+      this.getUrlForChange(change, {
+        patchNum,
+        basePatchNum,
+        isEdit,
+        forceReload,
+      }),
       redirect
     );
   },
@@ -1016,12 +961,9 @@ export const GerritNav = {
   getUserDashboard(
     user = 'self',
     sections = DEFAULT_SECTIONS,
-    title = '',
-    config: UserDashboardConfig = {}
+    title = ''
   ): UserDashboard {
-    const assigneeEnabled = config.change && !!config.change.enable_assignee;
     sections = sections
-      .filter(section => assigneeEnabled || !section.assigneeOnly)
       .filter(section => user === 'self' || !section.selfOnly)
       .map(section => {
         return {

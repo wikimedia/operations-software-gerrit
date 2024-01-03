@@ -14,6 +14,7 @@
 
 package com.google.gerrit.server.query.change;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.common.ProjectInfo;
@@ -23,9 +24,6 @@ import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.ChildProjects;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectState;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
 import java.util.Optional;
 
 public class ParentProjectPredicate extends OrPredicate<ChangeData> {
@@ -39,14 +37,14 @@ public class ParentProjectPredicate extends OrPredicate<ChangeData> {
     this.value = value;
   }
 
-  protected static List<Predicate<ChangeData>> predicates(
+  protected static ImmutableList<Predicate<ChangeData>> predicates(
       ProjectCache projectCache, ChildProjects childProjects, String value) {
     Optional<ProjectState> projectState = projectCache.get(Project.nameKey(value));
     if (!projectState.isPresent()) {
-      return Collections.emptyList();
+      return ImmutableList.of();
     }
 
-    List<Predicate<ChangeData>> r = new ArrayList<>();
+    ImmutableList.Builder<Predicate<ChangeData>> r = ImmutableList.builder();
     r.add(ChangePredicates.project(projectState.get().getNameKey()));
     try {
       for (ProjectInfo p : childProjects.list(projectState.get().getNameKey())) {
@@ -55,7 +53,7 @@ public class ParentProjectPredicate extends OrPredicate<ChangeData> {
     } catch (PermissionBackendException e) {
       logger.atWarning().withCause(e).log("cannot check permissions to expand child projects");
     }
-    return r;
+    return r.build();
   }
 
   @Override

@@ -68,7 +68,8 @@ import com.google.inject.Inject;
 import com.google.inject.Module;
 import com.google.inject.assistedinject.Assisted;
 import java.io.IOException;
-import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -76,7 +77,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.TimeZone;
 import java.util.TreeMap;
 import java.util.function.Function;
 import org.eclipse.jgit.lib.BatchRefUpdate;
@@ -122,7 +122,7 @@ public class BatchUpdate implements AutoCloseable {
   }
 
   public interface Factory {
-    BatchUpdate create(Project.NameKey project, CurrentUser user, Timestamp when);
+    BatchUpdate create(Project.NameKey project, CurrentUser user, Instant when);
   }
 
   public static void execute(
@@ -252,13 +252,13 @@ public class BatchUpdate implements AutoCloseable {
     }
 
     @Override
-    public Timestamp getWhen() {
+    public Instant getWhen() {
       return when;
     }
 
     @Override
-    public TimeZone getTimeZone() {
-      return tz;
+    public ZoneId getZoneId() {
+      return zoneId;
     }
 
     @Override
@@ -311,14 +311,9 @@ public class BatchUpdate implements AutoCloseable {
 
     @Override
     public ChangeUpdate getUpdate(PatchSet.Id psId) {
-      return getUpdate(psId, when);
-    }
-
-    @Override
-    public ChangeUpdate getUpdate(PatchSet.Id psId, Timestamp whenOverride) {
       ChangeUpdate u = defaultUpdates.get(psId);
       if (u == null) {
-        u = getNewChangeUpdate(psId, whenOverride);
+        u = getNewChangeUpdate(psId);
         defaultUpdates.put(psId, u);
       }
       return u;
@@ -326,18 +321,13 @@ public class BatchUpdate implements AutoCloseable {
 
     @Override
     public ChangeUpdate getDistinctUpdate(PatchSet.Id psId) {
-      return getDistinctUpdate(psId, when);
-    }
-
-    @Override
-    public ChangeUpdate getDistinctUpdate(PatchSet.Id psId, Timestamp whenOverride) {
-      ChangeUpdate u = getNewChangeUpdate(psId, whenOverride);
+      ChangeUpdate u = getNewChangeUpdate(psId);
       distinctUpdates.put(psId, u);
       return u;
     }
 
-    private ChangeUpdate getNewChangeUpdate(PatchSet.Id psId, Timestamp whenOverride) {
-      ChangeUpdate u = changeUpdateFactory.create(notes, user, whenOverride);
+    private ChangeUpdate getNewChangeUpdate(PatchSet.Id psId) {
+      ChangeUpdate u = changeUpdateFactory.create(notes, user, when);
       if (newChanges.containsKey(notes.getChangeId())) {
         u.setAllowWriteToNewRef(true);
       }
@@ -386,8 +376,8 @@ public class BatchUpdate implements AutoCloseable {
 
   private final Project.NameKey project;
   private final CurrentUser user;
-  private final Timestamp when;
-  private final TimeZone tz;
+  private final Instant when;
+  private final ZoneId zoneId;
 
   private final ListMultimap<Change.Id, BatchUpdateOp> ops =
       MultimapBuilder.linkedHashKeys().arrayListValues().build();
@@ -415,7 +405,7 @@ public class BatchUpdate implements AutoCloseable {
       GitReferenceUpdated gitRefUpdated,
       @Assisted Project.NameKey project,
       @Assisted CurrentUser user,
-      @Assisted Timestamp when) {
+      @Assisted Instant when) {
     this.repoManager = repoManager;
     this.changeDataFactory = changeDataFactory;
     this.changeNotesFactory = changeNotesFactory;
@@ -426,7 +416,7 @@ public class BatchUpdate implements AutoCloseable {
     this.project = project;
     this.user = user;
     this.when = when;
-    tz = serverIdent.getTimeZone();
+    zoneId = serverIdent.getZoneId();
   }
 
   @Override
@@ -442,11 +432,6 @@ public class BatchUpdate implements AutoCloseable {
 
   public void execute() throws UpdateException, RestApiException {
     execute(ImmutableList.of(this), ImmutableList.of(), false);
-  }
-
-  public BatchRefUpdate prepareRefUpdates() throws Exception {
-    ChangesHandle handle = executeChangeOps(ImmutableList.of(), false);
-    return handle.prepare();
   }
 
   public boolean isExecuted() {
@@ -625,21 +610,18 @@ public class BatchUpdate implements AutoCloseable {
       checkArgument(old == null, "result for change %s already set: %s", id, old);
     }
 
-    public BatchRefUpdate prepare() throws IOException {
-      return manager.prepare();
-    }
-
     void execute() throws IOException {
       BatchUpdate.this.batchRefUpdate = manager.execute(dryrun);
       BatchUpdate.this.executed = manager.isExecuted();
     }
 
-    List<ListenableFuture<ChangeData>> startIndexFutures() {
+    ImmutableList<ListenableFuture<ChangeData>> startIndexFutures() {
       if (dryrun) {
         return ImmutableList.of();
       }
       logDebug("Reindexing %d changes", results.size());
-      List<ListenableFuture<ChangeData>> indexFutures = new ArrayList<>(results.size());
+      ImmutableList.Builder<ListenableFuture<ChangeData>> indexFutures =
+          ImmutableList.builderWithExpectedSize(results.size());
       for (Map.Entry<Change.Id, ChangeResult> e : results.entrySet()) {
         Change.Id id = e.getKey();
         switch (e.getValue()) {
@@ -655,7 +637,7 @@ public class BatchUpdate implements AutoCloseable {
             throw new IllegalStateException("unexpected result: " + e.getValue());
         }
       }
-      return indexFutures;
+      return indexFutures.build();
     }
   }
 
@@ -678,7 +660,7 @@ public class BatchUpdate implements AutoCloseable {
                     repo, repoView.getRevWalk(), repoView.getInserter(), repoView.getCommands()),
             dryrun);
     if (user.isIdentifiedUser()) {
-      handle.manager.setRefLogIdent(user.asIdentifiedUser().newRefLogIdent(when, tz));
+      handle.manager.setRefLogIdent(user.asIdentifiedUser().newRefLogIdent(when, zoneId));
     }
     handle.manager.setRefLogMessage(refLogMessage);
     handle.manager.setPushCertificate(pushCert);
@@ -755,7 +737,7 @@ public class BatchUpdate implements AutoCloseable {
     // expensive/complicated requests like MergeOp. Doing it every time would be
     // noisy.
     if (RequestId.isSet()) {
-      logger.atFine().log(msg);
+      logger.atFine().log("%s", msg);
     }
   }
 

@@ -15,37 +15,31 @@
  * limitations under the License.
  */
 import {LitElement, css, html} from 'lit';
-import {customElement, property} from 'lit/decorators';
+import {customElement, property, state} from 'lit/decorators';
 import {subscribe} from '../../lit/subscription-controller';
 import {sharedStyles} from '../../../styles/shared-styles';
-import {appContext} from '../../../services/app-context';
+import {getAppContext} from '../../../services/app-context';
 import {
-  allRunsLatestPatchsetLatestAttempt$,
-  aPluginHasRegistered$,
   CheckResult,
   CheckRun,
   ErrorMessages,
-  errorMessagesLatest$,
-  loginCallbackLatest$,
-  someProvidersAreLoadingFirstTime$,
-  topLevelActionsLatest$,
-} from '../../../services/checks/checks-model';
-import {Action, Category, Link, RunStatus} from '../../../api/checks';
+} from '../../../models/checks/checks-model';
+import {Action, Category, RunStatus} from '../../../api/checks';
 import {fireShowPrimaryTab} from '../../../utils/event-util';
 import '../../shared/gr-avatar/gr-avatar';
 import '../../checks/gr-checks-action';
 import {
-  firstPrimaryLink,
+  compareByWorstCategory,
   getResultsOf,
   hasCompletedWithoutResults,
   hasResults,
   hasResultsOf,
   iconFor,
-  isRunning,
-  isRunningOrHasCompleted,
+  isRunningOrScheduled,
+  isRunningScheduledOrCompleted,
   isStatus,
   labelFor,
-} from '../../../services/checks/checks-util';
+} from '../../../models/checks/checks-util';
 import {ChangeComments} from '../../diff/gr-comment-api/gr-comment-api';
 import {
   CommentThread,
@@ -65,6 +59,12 @@ import {spinnerStyles} from '../../../styles/gr-spinner-styles';
 import {modifierPressed} from '../../../utils/dom-util';
 import {DropdownLink} from '../../shared/gr-dropdown/gr-dropdown';
 import {fontStyles} from '../../../styles/gr-font-styles';
+import {commentsModelToken} from '../../../models/comments/comments-model';
+import {resolve} from '../../../models/dependency';
+import {checksModelToken} from '../../../models/checks/checks-model';
+import {changeModelToken} from '../../../models/change/change-model';
+import {Interaction} from '../../../constants/reporting';
+import {roleDetails} from '../../../utils/change-util';
 
 export enum SummaryChipStyles {
   INFO = 'info',
@@ -93,7 +93,7 @@ export class GrSummaryChip extends LitElement {
   @property()
   category?: CommentTabState;
 
-  private readonly reporting = appContext.reportingService;
+  private readonly reporting = getAppContext().reportingService;
 
   static override get styles() {
     return [
@@ -155,8 +155,8 @@ export class GrSummaryChip extends LitElement {
   override render() {
     const chipClass = `summaryChip font-small ${this.styleType}`;
     const grIcon = this.icon ? `gr-icons:${this.icon}` : '';
-    return html`<button class="${chipClass}" @click="${this.handleClick}">
-      ${this.icon && html`<iron-icon icon="${grIcon}"></iron-icon>`}
+    return html`<button class=${chipClass} @click=${this.handleClick}>
+      ${this.icon && html`<iron-icon icon=${grIcon}></iron-icon>`}
       <slot></slot>
     </button>`;
   }
@@ -182,7 +182,9 @@ export class GrChecksChip extends LitElement {
   text = '';
 
   @property()
-  links: Link[] = [];
+  links: string[] = [];
+
+  private readonly reporting = getAppContext().reportingService;
 
   static override get styles() {
     return [
@@ -214,7 +216,7 @@ export class GrChecksChip extends LitElement {
           display: none;
         }
         .checksChip.hoverFullLength .text {
-          max-width: 400px;
+          max-width: 500px;
         }
         :host(:hover) .checksChip.hoverFullLength {
           display: inline-block;
@@ -231,6 +233,9 @@ export class GrChecksChip extends LitElement {
           width: var(--line-height-small);
           height: var(--line-height-small);
           vertical-align: top;
+        }
+        .checksChip a iron-icon.launch {
+          color: var(--link-color);
         }
         .checksChip.error {
           color: var(--error-foreground);
@@ -289,18 +294,22 @@ export class GrChecksChip extends LitElement {
         .checksChip.check-circle-outline iron-icon {
           color: var(--success-foreground);
         }
-        .checksChip.timelapse {
+        .checksChip.timelapse,
+        .checksChip.scheduled {
           border-color: var(--gray-foreground);
           background: var(--gray-background);
         }
-        .checksChip.timelapse:hover {
+        .checksChip.timelapse:hover,
+        .checksChip.scheduled:hover {
           background: var(--gray-background-hover);
           box-shadow: var(--elevation-level-1);
         }
-        .checksChip.timelapse:focus-within {
+        .checksChip.timelapse:focus-within,
+        .checksChip.scheduled:focus-within {
           background: var(--gray-background-focus);
         }
-        .checksChip.timelapse iron-icon {
+        .checksChip.timelapse iron-icon,
+        .checksChip.scheduled iron-icon {
           color: var(--gray-foreground);
         }
       `,
@@ -333,10 +342,10 @@ export class GrChecksChip extends LitElement {
 
   private renderChip(clazz: string, ariaLabel: string, icon: string) {
     return html`
-      <div class="${clazz}" role="link" tabindex="0" aria-label="${ariaLabel}">
-        <iron-icon icon="${icon}"></iron-icon>
-        <div class="text">${this.text}</div>
+      <div class=${clazz} role="link" tabindex="0" aria-label=${ariaLabel}>
+        <iron-icon icon=${icon}></iron-icon>
         ${this.renderLinks()}
+        <div class="text">${this.text}</div>
       </div>
     `;
   }
@@ -345,10 +354,10 @@ export class GrChecksChip extends LitElement {
     return this.links.map(
       link => html`
         <a
-          href="${link.url}"
+          href=${link}
           target="_blank"
-          @click="${this.onLinkClick}"
-          @keydown="${this.onLinkKeyDown}"
+          @click=${this.onLinkClick}
+          @keydown=${this.onLinkKeyDown}
           aria-label="Link to check details"
           ><iron-icon class="launch" icon="gr-icons:launch"></iron-icon
         ></a>
@@ -364,6 +373,10 @@ export class GrChecksChip extends LitElement {
   private onLinkClick(e: MouseEvent) {
     // Prevents onChipClick() from reacting to <a> link clicks.
     e.stopPropagation();
+    this.reporting.reportInteraction(Interaction.CHECKS_CHIP_LINK_CLICKED, {
+      text: this.text,
+      status: this.statusOrCategory,
+    });
   }
 }
 
@@ -375,49 +388,96 @@ DETAILS_QUOTA.set(RunStatus.RUNNING, 2);
 
 @customElement('gr-change-summary')
 export class GrChangeSummary extends LitElement {
-  @property({type: Object})
+  @state()
   changeComments?: ChangeComments;
 
-  @property({type: Array})
+  @state()
   commentThreads?: CommentThread[];
 
-  @property({type: Object})
+  @state()
   selfAccount?: AccountInfo;
 
-  @property()
+  @state()
   runs: CheckRun[] = [];
 
-  @property()
+  @state()
   showChecksSummary = false;
 
-  @property()
+  @state()
   someProvidersAreLoading = false;
 
-  @property()
+  @state()
   errorMessages: ErrorMessages = {};
 
-  @property()
+  @state()
   loginCallback?: () => void;
 
-  @property()
+  @state()
   actions: Action[] = [];
 
-  private showAllChips = new Map<RunStatus | Category, boolean>();
+  @state()
+  messages: string[] = [];
 
-  private checksService = appContext.checksService;
+  private readonly showAllChips = new Map<RunStatus | Category, boolean>();
 
-  constructor() {
-    super();
-    subscribe(this, allRunsLatestPatchsetLatestAttempt$, x => (this.runs = x));
-    subscribe(this, aPluginHasRegistered$, x => (this.showChecksSummary = x));
+  private readonly getCommentsModel = resolve(this, commentsModelToken);
+
+  private readonly userModel = getAppContext().userModel;
+
+  private readonly getChecksModel = resolve(this, checksModelToken);
+
+  private readonly getChangeModel = resolve(this, changeModelToken);
+
+  private readonly reporting = getAppContext().reportingService;
+
+  override connectedCallback() {
+    super.connectedCallback();
     subscribe(
       this,
-      someProvidersAreLoadingFirstTime$,
+      this.getChecksModel().allRunsLatestPatchsetLatestAttempt$,
+      x => (this.runs = x)
+    );
+    subscribe(
+      this,
+      this.getChecksModel().aPluginHasRegistered$,
+      x => (this.showChecksSummary = x)
+    );
+    subscribe(
+      this,
+      this.getChecksModel().someProvidersAreLoadingFirstTime$,
       x => (this.someProvidersAreLoading = x)
     );
-    subscribe(this, errorMessagesLatest$, x => (this.errorMessages = x));
-    subscribe(this, loginCallbackLatest$, x => (this.loginCallback = x));
-    subscribe(this, topLevelActionsLatest$, x => (this.actions = x));
+    subscribe(
+      this,
+      this.getChecksModel().errorMessagesLatest$,
+      x => (this.errorMessages = x)
+    );
+    subscribe(
+      this,
+      this.getChecksModel().loginCallbackLatest$,
+      x => (this.loginCallback = x)
+    );
+    subscribe(
+      this,
+      this.getChecksModel().topLevelActionsLatest$,
+      x => (this.actions = x)
+    );
+    subscribe(
+      this,
+      this.getChecksModel().topLevelMessagesLatest$,
+      x => (this.messages = x)
+    );
+    subscribe(
+      this,
+      this.getCommentsModel().changeComments$,
+      x => (this.changeComments = x)
+    );
+    subscribe(
+      this,
+      this.getCommentsModel().threads$,
+      x => (this.commentThreads = x)
+    );
+    subscribe(this, this.userModel.account$, x => (this.selfAccount = x));
   }
 
   static override get styles() {
@@ -518,8 +578,16 @@ export class GrChangeSummary extends LitElement {
         .actions #moreMessage {
           display: none;
         }
+        .summaryMessage {
+          line-height: var(--line-height-normal);
+          color: var(--primary-text-color);
+        }
       `,
     ];
+  }
+
+  private renderSummaryMessage() {
+    return this.messages.map(m => html`<div class="summaryMessage">${m}</div>`);
   }
 
   private renderActions() {
@@ -544,11 +612,18 @@ export class GrChangeSummary extends LitElement {
 
   private renderAction(action?: Action) {
     if (!action) return;
-    return html`<gr-checks-action .action="${action}"></gr-checks-action>`;
+    return html`<gr-checks-action
+      context="summary"
+      .action=${action}
+    ></gr-checks-action>`;
   }
 
   private handleAction(e: CustomEvent<Action>) {
-    this.checksService.triggerAction(e.detail);
+    this.getChecksModel().triggerAction(
+      e.detail,
+      undefined,
+      'summary-dropdown'
+    );
   }
 
   private renderOverflow(items: DropdownLink[], disabledIds: string[] = []) {
@@ -559,9 +634,9 @@ export class GrChangeSummary extends LitElement {
         link=""
         vertical-offset="32"
         horizontal-align="right"
-        @tap-item="${this.handleAction}"
-        .items="${items}"
-        .disabledIds="${disabledIds}"
+        @tap-item=${this.handleAction}
+        .items=${items}
+        .disabledIds=${disabledIds}
       >
         <iron-icon icon="gr-icons:more-vert" aria-labelledby="moreMessage">
         </iron-icon>
@@ -579,7 +654,7 @@ export class GrChangeSummary extends LitElement {
               <iron-icon icon="gr-icons:error"></iron-icon>
             </div>
             <div class="right">
-              <div class="message" title="${message}">
+              <div class="message" title=${message}>
                 Error while fetching results for ${plugin}: ${message}
               </div>
             </div>
@@ -600,7 +675,7 @@ export class GrChangeSummary extends LitElement {
           Not logged in
         </div>
         <div class="right">
-          <gr-button @click="${this.loginCallback}" link>Sign in</gr-button>
+          <gr-button @click=${this.loginCallback} link>Sign in</gr-button>
         </div>
       </div>
     `;
@@ -609,7 +684,7 @@ export class GrChangeSummary extends LitElement {
   renderChecksZeroState() {
     if (Object.keys(this.errorMessages).length > 0) return;
     if (this.loginCallback) return;
-    if (this.runs.some(isRunningOrHasCompleted)) return;
+    if (this.runs.some(isRunningScheduledOrCompleted)) return;
     const msg = this.someProvidersAreLoading ? 'Loading results' : 'No results';
     return html`<span role="status" class="loading zeroState">${msg}</span>`;
   }
@@ -623,18 +698,19 @@ export class GrChangeSummary extends LitElement {
     if (category === Category.SUCCESS || category === Category.INFO) {
       return this.renderChecksChipsCollapsed(runs, category, count);
     }
-    return this.renderChecksChipsExpanded(runs, category, count);
+    return this.renderChecksChipsExpanded(runs, category);
   }
 
   renderChecksChipRunning() {
-    const runs = this.runs.filter(isRunning);
-    return this.renderChecksChipsExpanded(runs, RunStatus.RUNNING, () => []);
+    const runs = this.runs
+      .filter(isRunningOrScheduled)
+      .sort(compareByWorstCategory);
+    return this.renderChecksChipsExpanded(runs, RunStatus.RUNNING);
   }
 
   renderChecksChipsExpanded(
     runs: CheckRun[],
-    statusOrCategory: RunStatus | Category,
-    resultFilter: (run: CheckRun) => CheckResult[]
+    statusOrCategory: RunStatus | Category
   ) {
     if (runs.length === 0) return;
     const showAll = this.showAllChips.get(statusOrCategory) ?? false;
@@ -644,7 +720,7 @@ export class GrChangeSummary extends LitElement {
     return html`${runs
       .slice(0, count)
       .map(run =>
-        this.renderChecksChipDetailed(run, statusOrCategory, resultFilter)
+        this.renderChecksChipDetailed(run, statusOrCategory)
       )}${this.renderChecksChipPlusMore(statusOrCategory, more)}`;
   }
 
@@ -660,10 +736,10 @@ export class GrChangeSummary extends LitElement {
     if (count === 0) return;
     const handler = () => this.onChipClick({statusOrCategory});
     return html`<gr-checks-chip
-      .statusOrCategory="${statusOrCategory}"
-      .text="${`${count}`}"
-      @click="${handler}"
-      @keydown="${(e: KeyboardEvent) => handleSpaceOrEnter(e, handler)}"
+      .statusOrCategory=${statusOrCategory}
+      .text=${`${count}`}
+      @click=${handler}
+      @keydown=${(e: KeyboardEvent) => handleSpaceOrEnter(e, handler)}
     ></gr-checks-chip>`;
   }
 
@@ -678,38 +754,48 @@ export class GrChangeSummary extends LitElement {
       this.requestUpdate();
     };
     return html`<gr-checks-chip
-      .statusOrCategory="${statusOrCategory}"
+      .statusOrCategory=${statusOrCategory}
       .text="+ ${count} more"
-      @click="${handler}"
-      @keydown="${(e: KeyboardEvent) => handleSpaceOrEnter(e, handler)}"
+      @click=${handler}
+      @keydown=${(e: KeyboardEvent) => handleSpaceOrEnter(e, handler)}
     ></gr-checks-chip>`;
   }
 
   private renderChecksChipDetailed(
     run: CheckRun,
-    statusOrCategory: RunStatus | Category,
-    resultFilter: (run: CheckRun) => CheckResult[]
+    statusOrCategory: RunStatus | Category
   ) {
-    const allPrimaryLinks = resultFilter(run)
-      .map(firstPrimaryLink)
-      .filter(notUndefined);
-    const links = allPrimaryLinks.length === 1 ? allPrimaryLinks : [];
+    const links = [];
+    if (run.statusLink) links.push(run.statusLink);
     const text = `${run.checkName}`;
     const tabState: ChecksTabState = {
       checkName: run.checkName,
       statusOrCategory,
     };
+    // Scheduled runs are rendered in the RUNNING section, but the icon of the
+    // chip must be the one for SCHEDULED.
+    if (
+      statusOrCategory === RunStatus.RUNNING &&
+      run.status === RunStatus.SCHEDULED
+    ) {
+      statusOrCategory = RunStatus.SCHEDULED;
+    }
     const handler = () => this.onChipClick(tabState);
     return html`<gr-checks-chip
-      .statusOrCategory="${statusOrCategory}"
-      .text="${text}"
-      .links="${links}"
-      @click="${handler}"
-      @keydown="${(e: KeyboardEvent) => handleSpaceOrEnter(e, handler)}"
+      .statusOrCategory=${statusOrCategory}
+      .text=${text}
+      .links=${links}
+      @click=${handler}
+      @keydown=${(e: KeyboardEvent) => handleSpaceOrEnter(e, handler)}
     ></gr-checks-chip>`;
   }
 
   private onChipClick(state: ChecksTabState) {
+    this.reporting.reportInteraction(Interaction.CHECKS_CHIP_CLICKED, {
+      statusOrCategory: state.statusOrCategory,
+      checkName: state.checkName,
+      ...roleDetails(this.getChangeModel().getChange(), this.selfAccount),
+    });
     fireShowPrimaryTab(this, PrimaryTab.CHECKS, false, {
       checksTab: state,
     });
@@ -727,7 +813,7 @@ export class GrChangeSummary extends LitElement {
     const hasNonRunningChip = this.runs.some(
       run => hasCompletedWithoutResults(run) || hasResults(run)
     );
-    const hasRunningChip = this.runs.some(isRunning);
+    const hasRunningChip = this.runs.some(isRunningOrScheduled);
     return html`
       <div>
         <table>
@@ -748,9 +834,10 @@ export class GrChangeSummary extends LitElement {
                   : ''}${this.renderChecksChipRunning()}
                 <span
                   class="loadingSpin"
-                  ?hidden="${!this.someProvidersAreLoading}"
+                  ?hidden=${!this.someProvidersAreLoading}
                 ></span>
-                ${this.renderErrorMessages()}${this.renderChecksLogin()}${this.renderActions()}
+                ${this.renderErrorMessages()} ${this.renderChecksLogin()}
+                ${this.renderSummaryMessage()} ${this.renderActions()}
               </div>
             </td>
           </tr>
@@ -779,7 +866,7 @@ export class GrChangeSummary extends LitElement {
                 ${unresolvedAuthors.map(
                   account =>
                     html`<gr-avatar
-                      .account="${account}"
+                      .account=${account}
                       imageSize="32"
                     ></gr-avatar>`
                 )}

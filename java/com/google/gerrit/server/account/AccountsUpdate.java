@@ -49,7 +49,6 @@ import com.google.inject.Provider;
 import com.google.inject.assistedinject.Assisted;
 import com.google.inject.assistedinject.AssistedInject;
 import java.io.IOException;
-import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -201,8 +200,6 @@ public class AccountsUpdate {
   /** Single instance that accumulates updates from the batch. */
   private ExternalIdNotes externalIdNotes;
 
-  private static final Runnable DO_NOTHING = () -> {};
-
   @AssistedInject
   @SuppressWarnings("BindingAnnotationWithoutInject")
   AccountsUpdate(
@@ -225,8 +222,8 @@ public class AccountsUpdate {
         extIdNotesLoader,
         serverIdent,
         createPersonIdent(serverIdent, Optional.empty()),
-        DO_NOTHING,
-        DO_NOTHING);
+        AccountsUpdate::doNothing,
+        AccountsUpdate::doNothing);
   }
 
   @AssistedInject
@@ -252,8 +249,8 @@ public class AccountsUpdate {
         extIdNotesLoader,
         serverIdent,
         createPersonIdent(serverIdent, Optional.of(currentUser)),
-        DO_NOTHING,
-        DO_NOTHING);
+        AccountsUpdate::doNothing,
+        AccountsUpdate::doNothing);
   }
 
   @VisibleForTesting
@@ -297,9 +294,7 @@ public class AccountsUpdate {
 
   private static PersonIdent createPersonIdent(
       PersonIdent serverIdent, Optional<IdentifiedUser> user) {
-    return user.isPresent()
-        ? user.get().newCommitterIdent(serverIdent.getWhen(), serverIdent.getTimeZone())
-        : serverIdent;
+    return user.isPresent() ? user.get().newCommitterIdent(serverIdent) : serverIdent;
   }
 
   /**
@@ -330,9 +325,7 @@ public class AccountsUpdate {
             ImmutableList.of(
                 repo -> {
                   AccountConfig accountConfig = read(repo, accountId);
-                  Account account =
-                      accountConfig.getNewAccount(
-                          new Timestamp(committerIdent.getWhen().getTime()));
+                  Account account = accountConfig.getNewAccount(committerIdent.getWhenAsInstant());
                   AccountState accountState = AccountState.forAccount(account);
                   AccountDelta.Builder deltaBuilder = AccountDelta.builder();
                   init.configure(accountState, deltaBuilder);
@@ -585,6 +578,8 @@ public class AccountsUpdate {
     metaDataUpdate.getCommitBuilder().setAuthor(authorIdent);
     return metaDataUpdate;
   }
+
+  private static void doNothing() {}
 
   @FunctionalInterface
   private interface ExecutableUpdate {

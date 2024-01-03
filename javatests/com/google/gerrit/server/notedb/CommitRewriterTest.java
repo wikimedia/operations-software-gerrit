@@ -47,10 +47,12 @@ import com.google.gerrit.server.util.AccountTemplateUtil;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.gson.Gson;
 import com.google.inject.Inject;
-import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.IntStream;
 import org.eclipse.jgit.lib.BatchRefUpdate;
 import org.eclipse.jgit.lib.ObjectId;
@@ -261,6 +263,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
       Ref metaRefBeforeRewrite = repo.exactRef(refName);
       expectedSkippedRefsToOldMetaBuilder.put(refName, metaRefBeforeRewrite.getObjectId());
     }
+    Set<String> invalidRefs = new HashSet<>();
     for (int i = 0; i < numberOfInvalidChanges; i++) {
       Change c = newChange();
       ChangeUpdate update = newUpdate(c, changeOwner);
@@ -270,12 +273,20 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
       updateWithSubject.setSubjectForCommit("Update with subject");
       updateWithSubject.commit();
       String refName = RefNames.changeMetaRef(c.getId());
-      Ref metaRefBeforeRewrite = repo.exactRef(refName);
-      if (i < maxRefsToUpdate) {
-        expectedFixedRefsToOldMetaBuilder.put(refName, metaRefBeforeRewrite.getObjectId());
-      } else {
-        expectedSkippedRefsToOldMetaBuilder.put(refName, metaRefBeforeRewrite.getObjectId());
+      invalidRefs.add(refName);
+    }
+    int i = 0;
+    for (Ref ref : repo.getRefDatabase().getRefsByPrefix(RefNames.REFS_CHANGES)) {
+      Ref metaRefBeforeRewrite = repo.exactRef(ref.getName());
+      if (!invalidRefs.contains(ref.getName())) {
+        continue;
       }
+      if (i < maxRefsToUpdate) {
+        expectedFixedRefsToOldMetaBuilder.put(ref.getName(), metaRefBeforeRewrite.getObjectId());
+      } else {
+        expectedSkippedRefsToOldMetaBuilder.put(ref.getName(), metaRefBeforeRewrite.getObjectId());
+      }
+      i++;
     }
     ImmutableMap<String, ObjectId> expectedFixedRefsToOldMeta =
         expectedFixedRefsToOldMetaBuilder.build();
@@ -312,13 +323,13 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
   @Test
   public void fixAuthorIdent() throws Exception {
     Change c = newChange();
-    Timestamp when = TimeUtil.nowTs();
+    Instant when = TimeUtil.now();
     PersonIdent invalidAuthorIdent =
         new PersonIdent(
             changeOwner.getName(),
             changeNoteUtil.getAccountIdAsEmailAddress(changeOwner.getAccountId()),
             when,
-            serverIdent.getTimeZone());
+            serverIdent.getZoneId());
     RevCommit invalidUpdateCommit =
         writeUpdate(
             RefNames.changeMetaRef(c.getId()),
@@ -359,7 +370,8 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     assertThat(fixedUpdateCommit.getAuthorIdent().getName())
         .isEqualTo("Gerrit User " + changeOwner.getAccountId());
     assertThat(originalAuthorIdent.getEmailAddress()).isEqualTo(fixedAuthorIdent.getEmailAddress());
-    assertThat(originalAuthorIdent.getWhen()).isEqualTo(fixedAuthorIdent.getWhen());
+    assertThat(originalAuthorIdent.getWhenAsInstant())
+        .isEqualTo(fixedAuthorIdent.getWhenAsInstant());
     assertThat(originalAuthorIdent.getTimeZone()).isEqualTo(fixedAuthorIdent.getTimeZone());
     assertThat(invalidUpdateCommit.getFullMessage()).isEqualTo(fixedUpdateCommit.getFullMessage());
     assertThat(invalidUpdateCommit.getCommitterIdent())
@@ -483,7 +495,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     BackfillResult result = rewriter.backfillProject(project, repo, options);
     assertThat(result.fixedRefDiff.keySet()).containsExactly(RefNames.changeMetaRef(c.getId()));
 
-    Timestamp updateTimestamp = new Timestamp(serverIdent.getWhen().getTime());
+    Instant updateTimestamp = serverIdent.getWhenAsInstant();
     ImmutableList<ReviewerStatusUpdate> expectedReviewerUpdates =
         ImmutableList.of(
             ReviewerStatusUpdate.create(
@@ -567,21 +579,15 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     BackfillResult result = rewriter.backfillProject(project, repo, options);
     assertThat(result.fixedRefDiff.keySet()).containsExactly(RefNames.changeMetaRef(c.getId()));
 
-    Timestamp updateTimestamp = new Timestamp(serverIdent.getWhen().getTime());
+    Instant updateTimestamp = serverIdent.getWhenAsInstant();
     ImmutableList<ReviewerStatusUpdate> expectedReviewerUpdates =
         ImmutableList.of(
             ReviewerStatusUpdate.create(
-                new Timestamp(addReviewerUpdate.when.getTime()),
-                changeOwner.getAccountId(),
-                otherUserId,
-                REVIEWER),
+                addReviewerUpdate.when, changeOwner.getAccountId(), otherUserId, REVIEWER),
             ReviewerStatusUpdate.create(
                 updateTimestamp, changeOwner.getAccountId(), otherUserId, REMOVED),
             ReviewerStatusUpdate.create(
-                new Timestamp(addCcUpdate.when.getTime()),
-                changeOwner.getAccountId(),
-                otherUserId,
-                CC),
+                addCcUpdate.when, changeOwner.getAccountId(), otherUserId, CC),
             ReviewerStatusUpdate.create(
                 updateTimestamp, changeOwner.getAccountId(), otherUserId, REMOVED));
     ChangeNotes notesAfterRewrite = newNotes(c);
@@ -703,7 +709,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     BackfillResult result = rewriter.backfillProject(project, repo, options);
     assertThat(result.fixedRefDiff.keySet()).containsExactly(RefNames.changeMetaRef(c.getId()));
 
-    Timestamp updateTimestamp = new Timestamp(serverIdent.getWhen().getTime());
+    Instant updateTimestamp = serverIdent.getWhenAsInstant();
     ImmutableList<PatchSetApproval> expectedApprovals =
         ImmutableList.of(
             PatchSetApproval.builder()
@@ -840,7 +846,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     BackfillResult result = rewriter.backfillProject(project, repo, options);
     assertThat(result.fixedRefDiff.keySet()).containsExactly(RefNames.changeMetaRef(c.getId()));
 
-    Timestamp updateTimestamp = new Timestamp(serverIdent.getWhen().getTime());
+    Instant updateTimestamp = serverIdent.getWhenAsInstant();
     ImmutableList<PatchSetApproval> expectedApprovals =
         ImmutableList.of(
             PatchSetApproval.builder()
@@ -915,10 +921,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     Change c = newChange();
     PersonIdent invalidAuthorIdent =
         new PersonIdent(
-            changeOwner.getName(),
-            "server@" + serverId,
-            TimeUtil.nowTs(),
-            serverIdent.getTimeZone());
+            changeOwner.getName(), "server@" + serverId, TimeUtil.now(), serverIdent.getZoneId());
     writeUpdate(
         RefNames.changeMetaRef(c.getId()),
         getChangeUpdateBody(
@@ -1053,7 +1056,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
   public void fixRemoveVoteChangeMessageWithNoFooterLabel_matchDuplicateAccounts()
       throws Exception {
     Account duplicateCodeOwner =
-        Account.builder(Account.id(4), TimeUtil.nowTs())
+        Account.builder(Account.id(4), TimeUtil.now())
             .setFullName(changeOwner.getName())
             .setPreferredEmail("other@test.com")
             .build();
@@ -1243,46 +1246,46 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     BackfillResult result = rewriter.backfillProject(project, repo, options);
     assertThat(result.fixedRefDiff.keySet()).containsExactly(RefNames.changeMetaRef(c.getId()));
     notesBeforeRewrite.getAttentionSetUpdates();
-    Timestamp updateTimestamp = new Timestamp(serverIdent.getWhen().getTime());
+    Instant updateTimestamp = serverIdent.getWhenAsInstant();
     ImmutableList<AttentionSetUpdate> attentionSetUpdatesBeforeRewrite =
         ImmutableList.of(
             AttentionSetUpdate.createFromRead(
-                invalidRemovedByClickUpdate.getWhen().toInstant(),
+                invalidRemovedByClickUpdate.getWhen(),
                 changeOwner.getAccountId(),
                 Operation.REMOVE,
                 String.format("Removed by %s by clicking the attention icon", otherUser.getName())),
             AttentionSetUpdate.createFromRead(
-                validAttentionSetUpdate.getWhen().toInstant(),
+                validAttentionSetUpdate.getWhen(),
                 changeOwner.getAccountId(),
                 Operation.ADD,
                 "Added by someone"),
             AttentionSetUpdate.createFromRead(
-                validAttentionSetUpdate.getWhen().toInstant(),
+                validAttentionSetUpdate.getWhen(),
                 otherUserId,
                 Operation.REMOVE,
                 "Removed by someone"),
             AttentionSetUpdate.createFromRead(
-                updateTimestamp.toInstant(),
+                updateTimestamp,
                 changeOwner.getAccountId(),
                 Operation.REMOVE,
                 String.format("%s replied on the change", otherUser.getName())),
             AttentionSetUpdate.createFromRead(
-                updateTimestamp.toInstant(),
+                updateTimestamp,
                 otherUserId,
                 Operation.ADD,
                 "Added by someone using the hovercard menu"),
             AttentionSetUpdate.createFromRead(
-                invalidMultipleAttentionSetUpdate.getWhen().toInstant(),
+                invalidMultipleAttentionSetUpdate.getWhen(),
                 otherUserId,
                 Operation.REMOVE,
                 String.format("Removed by %s using the hovercard menu", otherUser.getName())),
             AttentionSetUpdate.createFromRead(
-                invalidMultipleAttentionSetUpdate.getWhen().toInstant(),
+                invalidMultipleAttentionSetUpdate.getWhen(),
                 changeOwner.getAccountId(),
                 Operation.ADD,
                 String.format("%s replied on the change", otherUser.getName())),
             AttentionSetUpdate.createFromRead(
-                invalidAttentionSetUpdate.getWhen().toInstant(),
+                invalidAttentionSetUpdate.getWhen(),
                 otherUserId,
                 Operation.ADD,
                 String.format("Added by %s using the hovercard menu", otherUser.getName())));
@@ -1290,42 +1293,42 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     ImmutableList<AttentionSetUpdate> attentionSetUpdatesAfterRewrite =
         ImmutableList.of(
             AttentionSetUpdate.createFromRead(
-                invalidRemovedByClickUpdate.getWhen().toInstant(),
+                invalidRemovedByClickUpdate.getWhen(),
                 changeOwner.getAccountId(),
                 Operation.REMOVE,
                 "Removed by someone by clicking the attention icon"),
             AttentionSetUpdate.createFromRead(
-                validAttentionSetUpdate.getWhen().toInstant(),
+                validAttentionSetUpdate.getWhen(),
                 changeOwner.getAccountId(),
                 Operation.ADD,
                 "Added by someone"),
             AttentionSetUpdate.createFromRead(
-                validAttentionSetUpdate.getWhen().toInstant(),
+                validAttentionSetUpdate.getWhen(),
                 otherUserId,
                 Operation.REMOVE,
                 "Removed by someone"),
             AttentionSetUpdate.createFromRead(
-                updateTimestamp.toInstant(),
+                updateTimestamp,
                 changeOwner.getAccountId(),
                 Operation.REMOVE,
                 "Someone replied on the change"),
             AttentionSetUpdate.createFromRead(
-                updateTimestamp.toInstant(),
+                updateTimestamp,
                 otherUserId,
                 Operation.ADD,
                 "Added by someone using the hovercard menu"),
             AttentionSetUpdate.createFromRead(
-                invalidMultipleAttentionSetUpdate.getWhen().toInstant(),
+                invalidMultipleAttentionSetUpdate.getWhen(),
                 otherUserId,
                 Operation.REMOVE,
                 "Removed by someone using the hovercard menu"),
             AttentionSetUpdate.createFromRead(
-                invalidMultipleAttentionSetUpdate.getWhen().toInstant(),
+                invalidMultipleAttentionSetUpdate.getWhen(),
                 changeOwner.getAccountId(),
                 Operation.ADD,
                 "Someone replied on the change"),
             AttentionSetUpdate.createFromRead(
-                invalidAttentionSetUpdate.getWhen().toInstant(),
+                invalidAttentionSetUpdate.getWhen(),
                 otherUserId,
                 Operation.ADD,
                 "Added by someone using the hovercard menu"));
@@ -1420,22 +1423,22 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
       thirdAttentionSetUpdate.commit();
       attentionSetUpdatesBeforeRewrite.add(
           AttentionSetUpdate.createFromRead(
-              thirdAttentionSetUpdate.getWhen().toInstant(),
+              thirdAttentionSetUpdate.getWhen(),
               changeOwner.getAccountId(),
               Operation.REMOVE,
               String.format("Removed by %s by clicking the attention icon", okAccountName)),
           AttentionSetUpdate.createFromRead(
-              secondAttentionSetUpdate.getWhen().toInstant(),
+              secondAttentionSetUpdate.getWhen(),
               otherUserId,
               Operation.REMOVE,
               String.format("Removed by %s using the hovercard menu", okAccountName)),
           AttentionSetUpdate.createFromRead(
-              secondAttentionSetUpdate.getWhen().toInstant(),
+              secondAttentionSetUpdate.getWhen(),
               changeOwner.getAccountId(),
               Operation.ADD,
               String.format("%s replied on the change", okAccountName)),
           AttentionSetUpdate.createFromRead(
-              firstAttentionSetUpdate.getWhen().toInstant(),
+              firstAttentionSetUpdate.getWhen(),
               otherUserId,
               Operation.ADD,
               String.format("Added by %s using the hovercard menu", okAccountName)));
@@ -1548,8 +1551,8 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
         new PersonIdent(
             changeOwner.getName(),
             changeNoteUtil.getAccountIdAsEmailAddress(changeOwner.getAccountId()),
-            TimeUtil.nowTs(),
-            serverIdent.getTimeZone());
+            TimeUtil.now(),
+            serverIdent.getZoneId());
     String changeOwnerIdentToFix = getAccountIdentToFix(changeOwner.getAccount());
     writeUpdate(
         RefNames.changeMetaRef(c.getId()),
@@ -1744,16 +1747,16 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
   public void fixCodeOwnersOnAddReviewerChangeMessage() throws Exception {
 
     Account reviewer =
-        Account.builder(Account.id(3), TimeUtil.nowTs())
+        Account.builder(Account.id(3), TimeUtil.now())
             .setFullName("Reviewer User")
             .setPreferredEmail("reviewer@account.com")
             .build();
     accountCache.put(reviewer);
     Account duplicateCodeOwner =
-        Account.builder(Account.id(4), TimeUtil.nowTs()).setFullName(changeOwner.getName()).build();
+        Account.builder(Account.id(4), TimeUtil.now()).setFullName(changeOwner.getName()).build();
     accountCache.put(duplicateCodeOwner);
     Account duplicateReviewer =
-        Account.builder(Account.id(5), TimeUtil.nowTs()).setFullName(reviewer.getName()).build();
+        Account.builder(Account.id(5), TimeUtil.now()).setFullName(reviewer.getName()).build();
     accountCache.put(duplicateReviewer);
     Change c = newChange();
     ImmutableList.Builder<ObjectId> commitsToFix = new ImmutableList.Builder<>();
@@ -2211,7 +2214,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
         getChangeUpdateBody(c, "Assignee deleted: " + otherUser.getName()),
         getAuthorIdent(changeOwner.getAccount()));
     Account reviewer =
-        Account.builder(Account.id(3), TimeUtil.nowTs())
+        Account.builder(Account.id(3), TimeUtil.now())
             .setFullName("Reviewer User")
             .setPreferredEmail("reviewer@account.com")
             .build();
@@ -2253,14 +2256,14 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
   @Test
   public void singleRunFixesAll() throws Exception {
     Change c = newChange();
-    Timestamp when = TimeUtil.nowTs();
+    Instant when = TimeUtil.now();
     String assigneeIdentToFix = getAccountIdentToFix(otherUser.getAccount());
     PersonIdent authorIdentToFix =
         new PersonIdent(
             changeOwner.getName(),
             changeNoteUtil.getAccountIdAsEmailAddress(changeOwner.getAccountId()),
             when,
-            serverIdent.getTimeZone());
+            serverIdent.getZoneId());
 
     RevCommit invalidUpdateCommit =
         writeUpdate(
@@ -2416,7 +2419,6 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
   }
 
   private PersonIdent getAuthorIdent(Account account) {
-    Timestamp when = TimeUtil.nowTs();
-    return changeNoteUtil.newAccountIdIdent(account.id(), when, serverIdent);
+    return changeNoteUtil.newAccountIdIdent(account.id(), TimeUtil.now(), serverIdent);
   }
 }

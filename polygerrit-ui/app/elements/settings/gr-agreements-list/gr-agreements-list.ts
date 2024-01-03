@@ -17,7 +17,7 @@
 
 import {getBaseUrl} from '../../../utils/url-util';
 import {ContributorAgreementInfo} from '../../../types/common';
-import {appContext} from '../../../services/app-context';
+import {getAppContext} from '../../../services/app-context';
 import {formStyles} from '../../../styles/gr-form-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {css, html, LitElement} from 'lit';
@@ -28,7 +28,7 @@ export class GrAgreementsList extends LitElement {
   @property({type: Array})
   _agreements?: ContributorAgreementInfo[];
 
-  private readonly restApiService = appContext.restApiService;
+  private readonly restApiService = getAppContext().restApiService;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -62,7 +62,7 @@ export class GrAgreementsList extends LitElement {
     return html`
       <tr>
         <td class="nameColumn">
-          <a href="${this.getUrlBase(agreement.url)}" rel="external">
+          <a href=${this.getUrlBase(agreement?.url)} rel="external">
             ${agreement.name}
           </a>
         </td>
@@ -86,7 +86,7 @@ export class GrAgreementsList extends LitElement {
           )}
         </tbody>
       </table>
-      <a href="${this.getUrl()}">New Contributor Agreement</a>
+      <a href=${this.getUrl()}>New Contributor Agreement</a>
     </div>`;
   }
 
@@ -94,8 +94,8 @@ export class GrAgreementsList extends LitElement {
     return `${getBaseUrl()}/settings/new-agreement`;
   }
 
-  getUrlBase(item: string) {
-    return `${getBaseUrl()}/${item}`;
+  getUrlBase(item?: string) {
+    return item ? `${getBaseUrl()}/${item}` : '';
   }
 }
 

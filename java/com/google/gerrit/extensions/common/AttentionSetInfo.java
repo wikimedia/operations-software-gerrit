@@ -16,6 +16,7 @@ package com.google.gerrit.extensions.common;
 
 import com.google.gerrit.common.Nullable;
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Objects;
 
 /**
@@ -28,8 +29,12 @@ import java.util.Objects;
 public class AttentionSetInfo {
   /** The user included in the attention set. */
   public AccountInfo account;
+
   /** The timestamp of the last update. */
+  // TODO(issue-15508): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
+  // Instant
   public Timestamp lastUpdate;
+
   /** The human readable reason why the user was added. */
   public String reason;
 
@@ -47,6 +52,17 @@ public class AttentionSetInfo {
       @Nullable AccountInfo reasonAccount) {
     this.account = account;
     this.lastUpdate = lastUpdate;
+    this.reason = reason;
+    this.reasonAccount = reasonAccount;
+  }
+
+  // TODO(issue-15508): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
+  // Instant
+  @SuppressWarnings("JdkObsolete")
+  public AttentionSetInfo(
+      AccountInfo account, Instant lastUpdate, String reason, @Nullable AccountInfo reasonAccount) {
+    this.account = account;
+    this.lastUpdate = Timestamp.from(lastUpdate);
     this.reason = reason;
     this.reasonAccount = reasonAccount;
   }

@@ -825,7 +825,7 @@ public class RestApiServlet extends HttpServlet {
       if (isRead(request)) {
         logger.atWarning().log(
             "request %s performed a ref update %s although the request is a READ request",
-            request.getRequestURL().toString(), refUpdateFormat);
+            request.getRequestURL(), refUpdateFormat);
       }
       response.addHeader(X_GERRIT_UPDATED_REF, refUpdateFormat);
     }
@@ -1714,7 +1714,7 @@ public class RestApiServlet extends HttpServlet {
   private static List<IdString> splitPath(HttpServletRequest req) {
     String path = RequestUtil.getEncodedPathInfo(req);
     if (Strings.isNullOrEmpty(path)) {
-      return Collections.emptyList();
+      return new ArrayList<>();
     }
     List<IdString> out = new ArrayList<>();
     for (String p : Splitter.on('/').split(path)) {

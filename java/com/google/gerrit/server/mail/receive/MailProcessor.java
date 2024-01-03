@@ -301,7 +301,9 @@ public class MailProcessor {
               .collect(ImmutableList.toImmutableList());
       CommentValidationContext commentValidationCtx =
           CommentValidationContext.create(
-              cd.change().getChangeId(), cd.change().getProject().get());
+              cd.change().getChangeId(),
+              cd.change().getProject().get(),
+              cd.change().getDest().branch());
       ImmutableList<CommentValidationFailure> commentValidationFailures =
           PublishCommentUtil.findInvalidComments(
               commentValidationCtx, commentValidators, parsedCommentsForValidation);
@@ -311,7 +313,7 @@ public class MailProcessor {
       }
 
       Op o = new Op(PatchSet.id(cd.getId(), metadata.patchSet), parsedComments, message.id());
-      BatchUpdate batchUpdate = buf.create(project, ctx.getUser(), TimeUtil.nowTs());
+      BatchUpdate batchUpdate = buf.create(project, ctx.getUser(), TimeUtil.now());
       batchUpdate.addOp(cd.getId(), o);
       batchUpdate.execute();
     }
@@ -378,8 +380,7 @@ public class MailProcessor {
       // Get previous approvals from this user
       Map<String, Short> approvals = new HashMap<>();
       approvalsUtil
-          .byPatchSetUser(
-              notes, psId, ctx.getAccountId(), ctx.getRevWalk(), ctx.getRepoView().getConfig())
+          .byPatchSetUser(notes, psId, ctx.getAccountId())
           .forEach(a -> approvals.put(a.label(), a.value()));
       // Fire Gerrit event. Note that approvals can't be granted via email, so old and new approvals
       // are always the same here.

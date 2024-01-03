@@ -19,21 +19,30 @@ import com.google.gerrit.entities.LabelId;
 import com.google.gerrit.entities.LabelType;
 import com.google.gerrit.entities.LabelValue;
 import java.util.Arrays;
+import java.util.Optional;
 
 public class TestLabels {
+  public static final String CODE_REVIEW_LABEL_DESCRIPTION = "Code review label description";
+  public static final String VERIFIED_LABEL_DESCRIPTION = "Verified label description";
+
   public static LabelType codeReview() {
     return label(
         LabelId.CODE_REVIEW,
+        CODE_REVIEW_LABEL_DESCRIPTION,
         value(2, "Looks good to me, approved"),
         value(1, "Looks good to me, but someone else must approve"),
         value(0, "No score"),
-        value(-1, "I would prefer this is not merged as is"),
-        value(-2, "This shall not be merged"));
+        value(-1, "I would prefer this is not submitted as is"),
+        value(-2, "This shall not be submitted"));
   }
 
   public static LabelType verified() {
     return label(
-        LabelId.VERIFIED, value(1, LabelId.VERIFIED), value(0, "No score"), value(-1, "Fails"));
+        LabelId.VERIFIED,
+        VERIFIED_LABEL_DESCRIPTION,
+        value(1, LabelId.VERIFIED),
+        value(0, "No score"),
+        value(-1, "Fails"));
   }
 
   public static LabelType patchSetLock() {
@@ -46,6 +55,10 @@ public class TestLabels {
 
   public static LabelValue value(int value, String text) {
     return LabelValue.create((short) value, text);
+  }
+
+  public static LabelType label(String name, String description, LabelValue... values) {
+    return labelBuilder(name, values).setDescription(Optional.of(description)).build();
   }
 
   public static LabelType label(String name, LabelValue... values) {

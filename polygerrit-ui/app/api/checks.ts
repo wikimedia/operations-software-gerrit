@@ -97,6 +97,11 @@ export declare interface FetchResponse {
   actions?: Action[];
 
   /**
+   * Shown prominently in the change summary below the run chips.
+   */
+  summaryMessage?: string;
+
+  /**
    * Top-level links that are not associated with a specific run or result.
    * Will be shown as icons in the header of the Checks tab.
    */
@@ -186,7 +191,11 @@ export declare interface CheckRun {
    * RUNNABLE:  Not run (yet). Mostly useful for runs that the user can trigger
    *            (see actions) and for indicating that a check was not run at a
    *            later attempt. Cannot contain results.
-   * RUNNING:   Subsumes "scheduled".
+   * RUNNING:   The run is in progress.
+   * SCHEDULED: Refinement of RUNNING: The run was triggered, but is not yet
+   *            running. It may have to wait for resources or for some other run
+   *            to finish. The UI treats this mostly identical to RUNNING, but
+   *            uses a differnt icon.
    * COMPLETED: The attempt of the run has finished. Does not indicate at all
    *            whether the run was successful or not. Outcomes can and should
    *            be modeled using the CheckResult entity.
@@ -221,12 +230,16 @@ export declare interface CheckRun {
    * each plugin. The most important actions (which get special UI treatment)
    * are:
    * "Run" for RUNNABLE and COMPLETED runs.
-   * "Cancel" for RUNNING runs.
+   * "Cancel" for RUNNING and SCHEDULED runs.
    */
   actions?: Action[];
 
   scheduledTimestamp?: Date;
   startedTimestamp?: Date;
+  /**
+   * For RUNNING runs this is considered to be an estimate of when the run will
+   * be finished.
+   */
   finishedTimestamp?: Date;
 
   /**
@@ -316,9 +329,11 @@ export declare interface ActionResult {
   errorMessage?: string;
 }
 
+/** See CheckRun.status for documentation. */
 export enum RunStatus {
   RUNNABLE = 'RUNNABLE',
   RUNNING = 'RUNNING',
+  SCHEDULED = 'SCHEDULED',
   COMPLETED = 'COMPLETED',
 }
 
@@ -372,9 +387,11 @@ export declare interface CheckResult {
    * responsible for not killing the browser. :-)
    *
    * For now this is just a plain unformatted string. The only formatting
-   * applied is the one that Gerrit also applies to human comments. TBD: Both
-   * human comments and check result messages should get richer formatting
-   * options.
+   * applied is the one that Gerrit also applies to human comments.
+   *
+   * To provide richer formatting to the check result messages you should use
+   * the `check-result-expanded` plugin endpoint to attach a Web Component.
+   * See `Documentation/pg-plugin-endpoints.txt`.
    */
   message?: string;
 
@@ -407,7 +424,11 @@ export declare interface CheckResult {
   links?: Link[];
 
   /**
-   * Links to lines of code. The referenced path must be part of this patchset.
+   * Link to lines of code. The referenced path must be part of this patchset.
+   *
+   * Only one code pointer is supported. If the array contains, more than one
+   * pointer, then all the other pointers will be ignored. Support for multiple
+   * code pointers will only added on demand.
    */
   codePointers?: CodePointer[];
 

@@ -42,6 +42,9 @@ const base = IronOverlayMixin(
 
 /**
  * @attr {Boolean} with-backdrop - inherited from IronOverlay
+ * @attr {Boolean} always-on-top - inherited from IronOverlay
+ * @attr {Boolean} no-cancel-on-esc-key - inherited from IronOverlay
+ * @attr {Boolean} no-cancel-on-outside-click - inherited from IronOverlay
  */
 @customElement('gr-overlay')
 export class GrOverlay extends base {
@@ -61,9 +64,11 @@ export class GrOverlay extends base {
    * @event fullscreen-overlay-opened
    */
 
-  private fullScreenOpen = false;
+  // private but used in test
+  fullScreenOpen = false;
 
-  private _boundHandleClose: () => void = () => super.close();
+  // private but used in test
+  _boundHandleClose: () => void = () => super.close();
 
   private focusableNodes?: Node[];
 

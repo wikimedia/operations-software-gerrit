@@ -22,6 +22,7 @@ import static com.google.gerrit.server.project.ProjectCache.illegalState;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.FooterConstants;
@@ -265,12 +266,6 @@ public class CommitValidators {
         "multiple Change-Id lines in message footer";
     private static final String INVALID_CHANGE_ID_MSG =
         "invalid Change-Id line format in message footer";
-    private static final String HTTP_INSTALL_HOOK =
-        "f=\"$(git rev-parse --git-dir)/hooks/commit-msg\"; curl -o \"$f\""
-            + " %stools/hooks/commit-msg ; chmod +x \"$f\"";
-    private static final String SSH_INSTALL_HOOK =
-        "gitdir=$(git rev-parse --git-dir); scp -p -P %d %s@%s:hooks/commit-msg ${gitdir}/hooks/";
-    private static final String CHANGE_ID_MISSING_INSTALL_HOOKS = "  %s\nor, for http(s):\n  %s";
 
     @VisibleForTesting
     public static final String CHANGE_ID_MISMATCH_MSG =
@@ -378,7 +373,10 @@ public class CommitValidators {
       // HTTP(S)
       Optional<String> webUrl = urlFormatter.getWebUrl();
 
-      String httpHook = String.format(HTTP_INSTALL_HOOK, webUrl.get());
+      String httpHook =
+          String.format(
+              "f=\"$(git rev-parse --git-dir)/hooks/commit-msg\"; curl -o \"$f\" %stools/hooks/commit-msg ; chmod +x \"$f\"",
+              webUrl.get());
 
       if (hostKeys.isEmpty()) {
         checkState(webUrl.isPresent());
@@ -405,8 +403,9 @@ public class CommitValidators {
 
       String sshHook =
           String.format(
-              SSH_INSTALL_HOOK, sshPort, user.getUserName().orElse("<USERNAME>"), sshHost);
-      return String.format(CHANGE_ID_MISSING_INSTALL_HOOKS, sshHook, httpHook);
+              "gitdir=$(git rev-parse --git-dir); scp -p -P %d %s@%s:hooks/commit-msg ${gitdir}/hooks/",
+              sshPort, user.getUserName().orElse("<USERNAME>"), sshHost);
+      return String.format("  %s\nor, for http(s):\n  %s", sshHook, httpHook);
     }
   }
 
@@ -449,7 +448,7 @@ public class CommitValidators {
         // This happens e.g. for cherrypicks.
         if (!receiveEvent.command.getRefName().startsWith(REFS_CHANGES)) {
           logger.atWarning().withCause(e).log(
-              "Failed to validate file count for commit: %s", receiveEvent.commit.toString());
+              "Failed to validate file count for commit: %s", receiveEvent.commit);
         }
       }
       return Collections.emptyList();
@@ -510,7 +509,7 @@ public class CommitValidators {
             for (ValidationError err : cfg.getValidationErrors()) {
               addError("  " + err.getMessage(), messages);
             }
-            throw new ConfigInvalidException("invalid project configuration");
+            throw new CommitValidationException("invalid project configuration", messages);
           }
           if (allUsers.equals(receiveEvent.project.getNameKey())
               && !allProjects.equals(cfg.getProject().getParent(allProjects))) {
@@ -518,9 +517,12 @@ public class CommitValidators {
             addError(
                 String.format("  %s must inherit from %s", allUsers.get(), allProjects.get()),
                 messages);
-            throw new ConfigInvalidException("invalid project configuration");
+            throw new CommitValidationException("invalid project configuration", messages);
           }
         } catch (ConfigInvalidException | IOException e) {
+          if (e instanceof ConfigInvalidException && !Strings.isNullOrEmpty(e.getMessage())) {
+            addError(e.getMessage(), messages);
+          }
           logger.atSevere().withCause(e).log(
               "User %s tried to push an invalid project configuration %s for project %s",
               user.getLoggableName(),
@@ -647,10 +649,10 @@ public class CommitValidators {
       }
       if (!sboAuthor && !sboCommitter && !sboMe) {
         try {
-          perm.check(RefPermission.FORGE_COMMITTER);
-        } catch (AuthException denied) {
-          throw new CommitValidationException(
-              "not Signed-off-by author/committer/uploader in message footer", denied);
+          if (!perm.test(RefPermission.FORGE_COMMITTER)) {
+            throw new CommitValidationException(
+                "not Signed-off-by author/committer/uploader in message footer");
+          }
         } catch (PermissionBackendException e) {
           logger.atSevere().withCause(e).log("cannot check FORGE_COMMITTER");
           throw new CommitValidationException("internal auth error");
@@ -681,11 +683,11 @@ public class CommitValidators {
         return Collections.emptyList();
       }
       try {
-        perm.check(RefPermission.FORGE_AUTHOR);
+        if (!perm.test(RefPermission.FORGE_AUTHOR)) {
+          throw new CommitValidationException(
+              "invalid author", invalidEmail("author", author, user, urlFormatter));
+        }
         return Collections.emptyList();
-      } catch (AuthException e) {
-        throw new CommitValidationException(
-            "invalid author", invalidEmail("author", author, user, urlFormatter), e);
       } catch (PermissionBackendException e) {
         logger.atSevere().withCause(e).log("cannot check FORGE_AUTHOR");
         throw new CommitValidationException("internal auth error");
@@ -714,11 +716,11 @@ public class CommitValidators {
         return Collections.emptyList();
       }
       try {
-        perm.check(RefPermission.FORGE_COMMITTER);
+        if (!perm.test(RefPermission.FORGE_COMMITTER)) {
+          throw new CommitValidationException(
+              "invalid committer", invalidEmail("committer", committer, user, urlFormatter));
+        }
         return Collections.emptyList();
-      } catch (AuthException e) {
-        throw new CommitValidationException(
-            "invalid committer", invalidEmail("committer", committer, user, urlFormatter), e);
       } catch (PermissionBackendException e) {
         logger.atSevere().withCause(e).log("cannot check FORGE_COMMITTER");
         throw new CommitValidationException("internal auth error");
@@ -786,9 +788,7 @@ public class CommitValidators {
         }
         return Collections.emptyList();
       } catch (IOException e) {
-        String m = "error checking banned commits";
-        logger.atWarning().withCause(e).log(m);
-        throw new CommitValidationException(m, e);
+        throw new CommitValidationException("error checking banned commits", e);
       }
     }
   }
@@ -827,9 +827,7 @@ public class CommitValidators {
           }
           return msgs;
         } catch (IOException | ConfigInvalidException e) {
-          String m = "error validating external IDs";
-          logger.atWarning().withCause(e).log(m);
-          throw new CommitValidationException(m, e);
+          throw new CommitValidationException("error validating external IDs", e);
         }
       }
       return Collections.emptyList();
@@ -884,9 +882,8 @@ public class CommitValidators {
                   .collect(toList()));
         }
       } catch (IOException e) {
-        String m = String.format("Validating update for account %s failed", accountId.get());
-        logger.atSevere().withCause(e).log(m);
-        throw new CommitValidationException(m, e);
+        throw new CommitValidationException(
+            String.format("Validating update for account %s failed", accountId.get()), e);
       }
       return Collections.emptyList();
     }
@@ -977,6 +974,9 @@ public class CommitValidators {
       try {
         return new URL(canonicalWebUrl).getHost();
       } catch (MalformedURLException ignored) {
+        logger.atWarning().log(
+            "configured canonical web URL is invalid, using system default: %s",
+            ignored.getMessage());
       }
     }
 

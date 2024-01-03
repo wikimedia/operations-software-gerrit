@@ -14,17 +14,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import {Subscription} from 'rxjs';
+import {map, distinctUntilChanged} from 'rxjs/operators';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../shared/gr-dropdown/gr-dropdown';
 import '../../shared/gr-icons/gr-icons';
 import '../gr-account-dropdown/gr-account-dropdown';
 import '../gr-smart-search/gr-smart-search';
-import {PolymerElement} from '@polymer/polymer/polymer-element';
-import {htmlTemplate} from './gr-main-header_html';
 import {getBaseUrl, getDocsBaseUrl} from '../../../utils/url-util';
 import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {getAdminLinks, NavLink} from '../../../utils/admin-nav-util';
-import {customElement, property} from '@polymer/decorators';
 import {
   AccountDetailInfo,
   RequireProperties,
@@ -34,12 +33,13 @@ import {
 } from '../../../types/common';
 import {AuthType} from '../../../constants/constants';
 import {DropdownLink} from '../../shared/gr-dropdown/gr-dropdown';
-import {appContext} from '../../../services/app-context';
-import {Subject} from 'rxjs';
-import {serverConfig$} from '../../../services/config/config-model';
-import {takeUntil} from 'rxjs/operators';
-import {myTopMenuItems$} from '../../../services/user/user-model';
-import {assertIsDefined} from '../../../utils/common-util';
+import {getAppContext} from '../../../services/app-context';
+import {sharedStyles} from '../../../styles/shared-styles';
+import {LitElement, PropertyValues, html, css} from 'lit';
+import {customElement, property, state} from 'lit/decorators';
+import {fireEvent} from '../../../utils/event-util';
+import {resolve} from '../../../models/dependency';
+import {configModelToken} from '../../../models/config/config-model';
 
 type MainHeaderLink = RequireProperties<DropdownLink, 'url' | 'name'>;
 
@@ -103,107 +103,397 @@ const AUTH_TYPES_WITH_REGISTER_URL: Set<AuthType> = new Set([
   AuthType.CUSTOM_EXTENSION,
 ]);
 
-@customElement('gr-main-header')
-export class GrMainHeader extends PolymerElement {
-  static get template() {
-    return htmlTemplate;
+declare global {
+  interface HTMLElementTagNameMap {
+    'gr-main-header': GrMainHeader;
   }
+}
 
-  @property({type: String, notify: true})
+@customElement('gr-main-header')
+export class GrMainHeader extends LitElement {
+  @property({type: String})
   searchQuery = '';
 
-  @property({type: Boolean, reflectToAttribute: true})
+  @property({type: Boolean, reflect: true})
   loggedIn?: boolean;
 
-  @property({type: Boolean, reflectToAttribute: true})
+  @property({type: Boolean, reflect: true})
   loading?: boolean;
-
-  @property({type: Object})
-  _account?: AccountDetailInfo;
-
-  @property({type: Array})
-  _adminLinks: NavLink[] = [];
-
-  @property({type: String})
-  _docBaseUrl: string | null = null;
-
-  @property({
-    type: Array,
-    computed: '_computeLinks(_userLinks, _adminLinks, _topMenus, _docBaseUrl)',
-  })
-  _links?: MainHeaderLinkGroup[];
 
   @property({type: String})
   loginUrl = '/login';
 
-  @property({type: Array})
-  _userLinks: MainHeaderLink[] = [];
-
-  @property({type: Array})
-  _topMenus?: TopMenuEntryInfo[] = [];
-
   @property({type: String})
-  _registerText = 'Sign up';
-
-  // Empty string means that the register <div> will be hidden.
-  @property({type: String})
-  _registerURL = '';
-
-  @property({type: String})
-  _feedbackURL = '';
+  loginText = 'Sign in';
 
   @property({type: Boolean})
   mobileSearchHidden = false;
 
-  private readonly restApiService = appContext.restApiService;
+  // private but used in test
+  @state() account?: AccountDetailInfo;
 
-  private readonly jsAPI = appContext.jsApiService;
+  @state() private adminLinks: NavLink[] = [];
 
-  private readonly disconnected$ = new Subject();
+  @state() private docBaseUrl: string | null = null;
 
-  override ready() {
-    super.ready();
-    this._ensureAttribute('role', 'banner');
-  }
+  @state() private userLinks: MainHeaderLink[] = [];
+
+  @state() private topMenus?: TopMenuEntryInfo[] = [];
+
+  // private but used in test
+  @state() registerText = 'Sign up';
+
+  // Empty string means that the register <div> will be hidden.
+  // private but used in test
+  @state() registerURL = '';
+
+  // private but used in test
+  @state() feedbackURL = '';
+
+  @state() private serverConfig?: ServerInfo;
+
+  private readonly restApiService = getAppContext().restApiService;
+
+  private readonly jsAPI = getAppContext().jsApiService;
+
+  private readonly userModel = getAppContext().userModel;
+
+  private readonly configModel = resolve(this, configModelToken);
+
+  private subscriptions: Subscription[] = [];
 
   override connectedCallback() {
-    // TODO(brohlfs): This just ensures that the userService is instantiated at
-    // all. We need the service to manage the model, but we are not making any
-    // direct calls. Will need to find a better solution to this problem ...
-    assertIsDefined(appContext.userService);
-
     super.connectedCallback();
-    this._loadAccount();
+    this.loadAccount();
 
-    myTopMenuItems$.pipe(takeUntil(this.disconnected$)).subscribe(items => {
-      this._userLinks = items.map(this._createHeaderLink);
-    });
-
-    serverConfig$.pipe(takeUntil(this.disconnected$)).subscribe(config => {
-      if (!config) return;
-      this._retrieveFeedbackURL(config);
-      this._retrieveRegisterURL(config);
-      getDocsBaseUrl(config, this.restApiService).then(docBaseUrl => {
-        this._docBaseUrl = docBaseUrl;
-      });
-    });
+    this.subscriptions.push(
+      this.userModel.preferences$
+        .pipe(
+          map(preferences => preferences?.my ?? []),
+          distinctUntilChanged()
+        )
+        .subscribe(items => {
+          this.userLinks = items.map(this.createHeaderLink);
+        })
+    );
+    this.subscriptions.push(
+      this.configModel().serverConfig$.subscribe(config => {
+        if (!config) return;
+        this.serverConfig = config;
+        this.retrieveFeedbackURL(config);
+        this.retrieveRegisterURL(config);
+        getDocsBaseUrl(config, this.restApiService).then(docBaseUrl => {
+          this.docBaseUrl = docBaseUrl;
+        });
+      })
+    );
   }
 
   override disconnectedCallback() {
-    this.disconnected$.next();
+    for (const s of this.subscriptions) {
+      s.unsubscribe();
+    }
+    this.subscriptions = [];
     super.disconnectedCallback();
   }
 
+  static override get styles() {
+    return [
+      sharedStyles,
+      css`
+        :host {
+          display: block;
+        }
+        nav {
+          align-items: center;
+          display: flex;
+        }
+        .bigTitle {
+          color: var(--header-text-color);
+          font-size: var(--header-title-font-size);
+          text-decoration: none;
+        }
+        .bigTitle:hover {
+          text-decoration: underline;
+        }
+        .titleText::before {
+          background-image: var(--header-icon);
+          background-size: var(--header-icon-size) var(--header-icon-size);
+          background-repeat: no-repeat;
+          content: '';
+          display: inline-block;
+          height: var(--header-icon-size);
+          margin-right: calc(var(--header-icon-size) / 4);
+          vertical-align: text-bottom;
+          width: var(--header-icon-size);
+        }
+        .titleText::after {
+          content: var(--header-title-content);
+        }
+        ul {
+          list-style: none;
+          padding-left: var(--spacing-l);
+        }
+        .links > li {
+          cursor: default;
+          display: inline-block;
+          padding: 0;
+          position: relative;
+        }
+        .linksTitle {
+          display: inline-block;
+          font-weight: var(--font-weight-bold);
+          position: relative;
+          text-transform: uppercase;
+        }
+        .linksTitle:hover {
+          opacity: 0.75;
+        }
+        .rightItems {
+          align-items: center;
+          display: flex;
+          flex: 1;
+          justify-content: flex-end;
+        }
+        .rightItems gr-endpoint-decorator:not(:empty) {
+          margin-left: var(--spacing-l);
+        }
+        gr-smart-search {
+          flex-grow: 1;
+          margin: 0 var(--spacing-m);
+          max-width: 500px;
+          min-width: 150px;
+        }
+        gr-dropdown,
+        .browse {
+          padding: var(--spacing-m);
+        }
+        gr-dropdown {
+          --gr-dropdown-item-color: var(--primary-text-color);
+        }
+        .settingsButton {
+          margin-left: var(--spacing-m);
+        }
+        .feedbackButton {
+          margin-left: var(--spacing-s);
+        }
+        .browse {
+          color: var(--header-text-color);
+          /* Same as gr-button */
+          margin: 5px 4px;
+          text-decoration: none;
+        }
+        .invisible,
+        .settingsButton,
+        gr-account-dropdown {
+          display: none;
+        }
+        :host([loading]) .accountContainer,
+        :host([loggedIn]) .loginButton,
+        :host([loggedIn]) .registerButton {
+          display: none;
+        }
+        :host([loggedIn]) .settingsButton,
+        :host([loggedIn]) gr-account-dropdown {
+          display: inline;
+        }
+        .accountContainer {
+          align-items: center;
+          display: flex;
+          margin: 0 calc(0 - var(--spacing-m)) 0 var(--spacing-m);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .loginButton,
+        .registerButton {
+          padding: var(--spacing-m) var(--spacing-l);
+        }
+        .dropdown-trigger {
+          text-decoration: none;
+        }
+        .dropdown-content {
+          background-color: var(--view-background-color);
+          box-shadow: var(--elevation-level-2);
+        }
+        /*
+           * We are not using :host to do this, because :host has a lowest css priority
+           * compared to others. This means that using :host to do this would break styles.
+           */
+        .linksTitle,
+        .bigTitle,
+        .loginButton,
+        .registerButton,
+        iron-icon,
+        gr-account-dropdown {
+          color: var(--header-text-color);
+        }
+        #mobileSearch {
+          display: none;
+        }
+        @media screen and (max-width: 50em) {
+          .bigTitle {
+            font-family: var(--header-font-family);
+            font-size: var(--font-size-h3);
+            font-weight: var(--font-weight-h3);
+            line-height: var(--line-height-h3);
+          }
+          gr-smart-search,
+          .browse,
+          .rightItems .hideOnMobile,
+          .links > li.hideOnMobile {
+            display: none;
+          }
+          #mobileSearch {
+            display: inline-flex;
+          }
+          .accountContainer {
+            margin-left: var(--spacing-m) !important;
+          }
+          gr-dropdown {
+            padding: var(--spacing-m) 0 var(--spacing-m) var(--spacing-m);
+          }
+        }
+      `,
+    ];
+  }
+
+  override render() {
+    return html`
+  <nav>
+    <a href=${`//${window.location.host}${getBaseUrl()}/`} class="bigTitle">
+      <gr-endpoint-decorator name="header-title">
+        <span class="titleText"></span>
+      </gr-endpoint-decorator>
+    </a>
+    <ul class="links">
+      ${this.computeLinks(
+        this.userLinks,
+        this.adminLinks,
+        this.topMenus,
+        this.docBaseUrl
+      ).map(linkGroup => this.renderLinkGroup(linkGroup))}
+    </ul>
+    <div class="rightItems">
+      <gr-endpoint-decorator
+        class="hideOnMobile"
+        name="header-small-banner"
+      ></gr-endpoint-decorator>
+      <gr-smart-search
+        id="search"
+        label="Search for changes"
+        .searchQuery=${this.searchQuery}
+        .serverConfig=${this.serverConfig}
+      ></gr-smart-search>
+      <gr-endpoint-decorator
+        class="hideOnMobile"
+        name="header-browse-source"
+      ></gr-endpoint-decorator>
+      <gr-endpoint-decorator class="feedbackButton" name="header-feedback">
+        ${this.renderFeedback()}
+      </gr-endpoint-decorator>
+      </div>
+      ${this.renderAccount()}
+    </div>
+  </nav>
+    `;
+  }
+
+  private renderLinkGroup(linkGroup: MainHeaderLinkGroup) {
+    return html`
+      <li class=${linkGroup.class ?? ''}>
+        <gr-dropdown
+          link
+          down-arrow
+          .items=${linkGroup.links}
+          horizontal-align="left"
+        >
+          <span class="linksTitle" id=${linkGroup.title}>
+            ${linkGroup.title}
+          </span>
+        </gr-dropdown>
+      </li>
+    `;
+  }
+
+  private renderFeedback() {
+    if (!this.feedbackURL) return;
+
+    return html`
+      <a
+        href=${this.feedbackURL}
+        title="File a bug"
+        aria-label="File a bug"
+        target="_blank"
+        role="button"
+      >
+        <iron-icon icon="gr-icons:bug"></iron-icon>
+      </a>
+    `;
+  }
+
+  private renderAccount() {
+    return html`
+      <div class="accountContainer" id="accountContainer">
+        <iron-icon
+          id="mobileSearch"
+          icon="gr-icons:search"
+          @click=${(e: Event) => {
+            this.onMobileSearchTap(e);
+          }}
+          role="button"
+          aria-label=${this.mobileSearchHidden
+            ? 'Show Searchbar'
+            : 'Hide Searchbar'}
+        ></iron-icon>
+        ${this.renderRegister()}
+        <a class="loginButton" href=${this.loginUrl}>${this.loginText}</a>
+        <a
+          class="settingsButton"
+          href="${getBaseUrl()}/settings/"
+          title="Settings"
+          aria-label="Settings"
+          role="button"
+        >
+          <iron-icon icon="gr-icons:settings"></iron-icon>
+        </a>
+        ${this.renderAccountDropdown()}
+      </div>
+    `;
+  }
+
+  private renderRegister() {
+    if (!this.registerURL) return;
+
+    return html`
+      <div class="registerDiv">
+        <a class="registerButton" href=${this.registerURL}>
+          ${this.registerText}
+        </a>
+      </div>
+    `;
+  }
+
+  private renderAccountDropdown() {
+    if (!this.account) return;
+
+    return html`
+      <gr-account-dropdown .account=${this.account}></gr-account-dropdown>
+    `;
+  }
+
+  override firstUpdated(changedProperties: PropertyValues) {
+    super.firstUpdated(changedProperties);
+    if (!this.getAttribute('role')) this.setAttribute('role', 'banner');
+  }
+
   reload() {
-    this._loadAccount();
+    this.loadAccount();
   }
 
-  _computeRelativeURL(path: string) {
-    return '//' + window.location.host + getBaseUrl() + path;
-  }
-
-  _computeLinks(
-    userLinks?: TopMenuItemInfo[],
+  // private but used in test
+  computeLinks(
+    userLinks?: MainHeaderLink[],
     adminLinks?: NavLink[],
     topMenus?: TopMenuEntryInfo[],
     docBaseUrl?: string | null,
@@ -217,7 +507,7 @@ export class GrMainHeader extends PolymerElement {
       topMenus === undefined ||
       docBaseUrl === undefined
     ) {
-      return undefined;
+      return [];
     }
 
     const links: MainHeaderLinkGroup[] = defaultLinks.map(menu => {
@@ -232,7 +522,7 @@ export class GrMainHeader extends PolymerElement {
         links: userLinks.slice(),
       });
     }
-    const docLinks = this._getDocLinks(docBaseUrl, DOCUMENTATION_LINKS);
+    const docLinks = this.getDocLinks(docBaseUrl, DOCUMENTATION_LINKS);
     if (docLinks.length) {
       links.push({
         title: 'Documentation',
@@ -249,7 +539,7 @@ export class GrMainHeader extends PolymerElement {
       topMenuLinks[link.title] = link.links;
     });
     for (const m of topMenus) {
-      const items = m.items.map(this._createHeaderLink).filter(
+      const items = m.items.map(this.createHeaderLink).filter(
         link =>
           // Ignore GWT project links
           !link.url.includes('${projectName}')
@@ -268,7 +558,8 @@ export class GrMainHeader extends PolymerElement {
     return links;
   }
 
-  _getDocLinks(docBaseUrl: string | null, docLinks: MainHeaderLink[]) {
+  // private but used in test
+  getDocLinks(docBaseUrl: string | null, docLinks: MainHeaderLink[]) {
     if (!docBaseUrl) {
       return [];
     }
@@ -285,7 +576,8 @@ export class GrMainHeader extends PolymerElement {
     });
   }
 
-  _loadAccount() {
+  // private but used in test
+  loadAccount() {
     this.loading = true;
 
     return Promise.all([
@@ -294,10 +586,10 @@ export class GrMainHeader extends PolymerElement {
       getPluginLoader().awaitPluginsLoaded(),
     ]).then(result => {
       const account = result[0];
-      this._account = account;
+      this.account = account;
       this.loggedIn = !!account;
       this.loading = false;
-      this._topMenus = result[1];
+      this.topMenus = result[1];
 
       return getAdminLinks(
         account,
@@ -310,33 +602,32 @@ export class GrMainHeader extends PolymerElement {
           }),
         () => this.jsAPI.getAdminMenuLinks()
       ).then(res => {
-        this._adminLinks = res.links;
+        this.adminLinks = res.links;
       });
     });
   }
 
-  _retrieveFeedbackURL(config: ServerInfo) {
+  // private but used in test
+  retrieveFeedbackURL(config: ServerInfo) {
     if (config.gerrit?.report_bug_url) {
-      this._feedbackURL = config.gerrit.report_bug_url;
+      this.feedbackURL = config.gerrit.report_bug_url;
     }
   }
 
-  _retrieveRegisterURL(config: ServerInfo) {
+  // private but used in test
+  retrieveRegisterURL(config: ServerInfo) {
     if (AUTH_TYPES_WITH_REGISTER_URL.has(config.auth.auth_type)) {
-      this._registerURL = config.auth.register_url ?? '';
+      this.registerURL = config.auth.register_url ?? '';
       if (config.auth.register_text) {
-        this._registerText = config.auth.register_text;
+        this.registerText = config.auth.register_text;
       }
     }
   }
 
-  _computeRegisterHidden(registerURL: string) {
-    return !registerURL;
-  }
-
-  _createHeaderLink(linkObj: TopMenuItemInfo): MainHeaderLink {
+  // private but used in test
+  createHeaderLink(linkObj: TopMenuItemInfo): MainHeaderLink {
     // Delete target property due to complications of
-    // https://bugs.chromium.org/p/gerrit/issues/detail?id=5888
+    // https://issues.gerritcodereview.com/issues/40006107
     //
     // The server tries to guess whether URL is a view within the UI.
     // If not, it sets target='_blank' on the menu item. The server
@@ -353,36 +644,9 @@ export class GrMainHeader extends PolymerElement {
     return headerLink;
   }
 
-  _generateSettingsLink() {
-    return getBaseUrl() + '/settings/';
-  }
-
-  _onMobileSearchTap(e: Event) {
+  private onMobileSearchTap(e: Event) {
     e.preventDefault();
     e.stopPropagation();
-    this.dispatchEvent(
-      new CustomEvent('mobile-search', {
-        composed: true,
-        bubbles: false,
-      })
-    );
-  }
-
-  _computeLinkGroupClass(linkGroup: MainHeaderLinkGroup) {
-    return linkGroup.class ?? '';
-  }
-
-  _computeShowHideAriaLabel(mobileSearchHidden: boolean) {
-    if (mobileSearchHidden) {
-      return 'Show Searchbar';
-    } else {
-      return 'Hide Searchbar';
-    }
-  }
-}
-
-declare global {
-  interface HTMLElementTagNameMap {
-    'gr-main-header': GrMainHeader;
+    fireEvent(this, 'mobile-search');
   }
 }

@@ -70,7 +70,9 @@ public class OnlineExternalIdCaseSensivityMigrator {
   public void migrate() {
     if (!isUserNameCaseInsensitive || !isUserNameCaseInsensitiveMigrationMode) {
       logger.atSevere().log(
-          "External IDs online migration requires auth.userNameCaseInsensitive and auth.userNameCaseInsensitiveMigrationMode to be set to true. Skipping migration!");
+          "External IDs online migration requires auth.userNameCaseInsensitive and"
+              + " auth.userNameCaseInsensitiveMigrationMode to be set to true. Skipping"
+              + " migration!");
       return;
     }
     executor.execute(

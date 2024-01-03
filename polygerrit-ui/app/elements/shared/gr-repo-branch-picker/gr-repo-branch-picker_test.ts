@@ -26,11 +26,12 @@ const basicFixture = fixtureFromElement('gr-repo-branch-picker');
 suite('gr-repo-branch-picker tests', () => {
   let element: GrRepoBranchPicker;
 
-  setup(() => {
+  setup(async () => {
     element = basicFixture.instantiate();
+    await element.updateComplete;
   });
 
-  suite('_getRepoSuggestions', () => {
+  suite('getRepoSuggestions', () => {
     let getReposStub: sinon.SinonStub;
     setup(() => {
       getReposStub = stubRestApi('getRepos').returns(
@@ -57,7 +58,7 @@ suite('gr-repo-branch-picker tests', () => {
 
     test('converts to suggestion objects', async () => {
       const input = 'plugins/avatars';
-      const suggestions = await element._getRepoSuggestions(input);
+      const suggestions = await element.getRepoSuggestions(input);
       assert.isTrue(getReposStub.calledWith(input));
       const unencodedNames = [
         'plugins/avatars-external',
@@ -76,13 +77,14 @@ suite('gr-repo-branch-picker tests', () => {
     });
   });
 
-  suite('_getRepoBranchesSuggestions', () => {
+  suite('getRepoBranchesSuggestions', () => {
     let getRepoBranchesStub: sinon.SinonStub;
     setup(() => {
       getRepoBranchesStub = stubRestApi('getRepoBranches').returns(
         Promise.resolve([
-          {ref: 'refs/heads/stable-2.10' as GitRef, revision: '123'},
-          {ref: 'refs/heads/stable-2.11' as GitRef, revision: '1234'},
+          {ref: 'HEAD' as GitRef, revision: 'main'},
+          {ref: 'refs/heads/stable-2.10' as GitRef, revision: '123af'},
+          {ref: 'refs/heads/stable-2.11' as GitRef, revision: '1234b'},
           {ref: 'refs/heads/stable-2.12' as GitRef, revision: '12345'},
           {ref: 'refs/heads/stable-2.13' as GitRef, revision: '123456'},
           {ref: 'refs/heads/stable-2.14' as GitRef, revision: '1234567'},
@@ -95,9 +97,7 @@ suite('gr-repo-branch-picker tests', () => {
       const repo = 'gerrit';
       const branchInput = 'stable-2.1';
       element.repo = repo as RepoName;
-      const suggestions = await element._getRepoBranchesSuggestions(
-        branchInput
-      );
+      const suggestions = await element.getRepoBranchesSuggestions(branchInput);
       assert.isTrue(getRepoBranchesStub.calledWith(branchInput, repo, 15));
       const refNames = [
         'stable-2.10',
@@ -121,16 +121,16 @@ suite('gr-repo-branch-picker tests', () => {
       const repo = 'gerrit' as RepoName;
       const branchInput = 'refs/heads/stable-2.1';
       element.repo = repo;
-      return element._getRepoBranchesSuggestions(branchInput).then(() => {
+      return element.getRepoBranchesSuggestions(branchInput).then(() => {
         assert.isTrue(getRepoBranchesStub.calledWith('stable-2.1', repo, 15));
       });
     });
 
     test('does not query when repo is unset', async () => {
-      await element._getRepoBranchesSuggestions('');
+      await element.getRepoBranchesSuggestions('');
       assert.isFalse(getRepoBranchesStub.called);
       element.repo = 'gerrit' as RepoName;
-      await element._getRepoBranchesSuggestions('');
+      await element.getRepoBranchesSuggestions('');
       assert.isTrue(getRepoBranchesStub.called);
     });
   });

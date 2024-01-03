@@ -15,9 +15,9 @@
 package com.google.gerrit.index.query;
 
 public interface DataSource<T> extends HasCardinality {
-  /** Returns read from the database and return the results. */
+  /** Returns read from the index and return the results. */
   ResultSet<T> read();
 
-  /** Returns read from the database and return the raw results. */
+  /** Returns read from the index and return the raw results. */
   ResultSet<FieldBundle> readRaw();
 }

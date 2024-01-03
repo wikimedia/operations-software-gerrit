@@ -40,7 +40,7 @@ import com.google.inject.Inject;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.stream.Stream;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.internal.storage.file.FileRepository;
@@ -165,7 +165,7 @@ public class GroupsOnInit {
     return AuditLogFormatter.createBackedBy(ImmutableSet.of(account), ImmutableSet.of(), serverId);
   }
 
-  private void commit(Repository repository, GroupConfig groupConfig, Timestamp groupCreatedOn)
+  private void commit(Repository repository, GroupConfig groupConfig, Instant groupCreatedOn)
       throws IOException {
     PersonIdent personIdent =
         new PersonIdent(new GerritPersonIdentProvider(flags.cfg).get(), groupCreatedOn);

@@ -95,12 +95,15 @@ import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
 import com.google.gerrit.extensions.webui.PatchSetWebLink;
 import com.google.gerrit.extensions.webui.ResolveConflictsWebLink;
+import com.google.gerrit.server.events.CommitReceivedEvent;
+import com.google.gerrit.server.git.validators.CommitValidationException;
+import com.google.gerrit.server.git.validators.CommitValidationListener;
+import com.google.gerrit.server.git.validators.CommitValidationMessage;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.util.AccountTemplateUtil;
 import com.google.gerrit.testing.FakeEmailSender;
 import com.google.inject.Inject;
 import java.io.ByteArrayOutputStream;
-import java.sql.Timestamp;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Collection;
@@ -682,6 +685,26 @@ public class RevisionIT extends AbstractDaemonTest {
                 + "The following files contain Git conflicts:\n"
                 + "* "
                 + PushOneCommit.FILE_NAME);
+  }
+
+  @Test
+  public void cherryPickWithValidationOptions() throws Exception {
+    PushOneCommit.Result r = createChange();
+
+    CherryPickInput in = new CherryPickInput();
+    in.destination = "foo";
+    in.message = "Cherry Pick";
+    in.validationOptions = ImmutableMap.of("key", "value");
+
+    gApi.projects().name(project.get()).branch(in.destination).create(new BranchInput());
+
+    TestCommitValidationListener testCommitValidationListener = new TestCommitValidationListener();
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(testCommitValidationListener)) {
+      gApi.changes().id(r.getChangeId()).current().cherryPickAsInfo(in);
+      assertThat(testCommitValidationListener.receiveEvent.pushOptions)
+          .containsExactly("key", "value");
+    }
   }
 
   @Test
@@ -1683,10 +1706,13 @@ public class RevisionIT extends AbstractDaemonTest {
     }
   }
 
+  // TODO(issue-15508): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
+  // Instant
+  @SuppressWarnings("JdkObsolete")
   private void assertPersonIdent(GitPerson gitPerson, PersonIdent expectedIdent) {
     assertThat(gitPerson.name).isEqualTo(expectedIdent.getName());
     assertThat(gitPerson.email).isEqualTo(expectedIdent.getEmailAddress());
-    assertThat(gitPerson.date).isEqualTo(new Timestamp(expectedIdent.getWhen().getTime()));
+    assertThat(gitPerson.date.getTime()).isEqualTo(expectedIdent.getWhenAsInstant().toEpochMilli());
     assertThat(gitPerson.tz).isEqualTo(expectedIdent.getTimeZoneOffset());
   }
 
@@ -2076,5 +2102,16 @@ public class RevisionIT extends AbstractDaemonTest {
 
   private static Iterable<Account.Id> getReviewers(Collection<AccountInfo> r) {
     return Iterables.transform(r, a -> Account.id(a._accountId));
+  }
+
+  private static class TestCommitValidationListener implements CommitValidationListener {
+    public CommitReceivedEvent receiveEvent;
+
+    @Override
+    public List<CommitValidationMessage> onCommitReceived(CommitReceivedEvent receiveEvent)
+        throws CommitValidationException {
+      this.receiveEvent = receiveEvent;
+      return ImmutableList.of();
+    }
   }
 }

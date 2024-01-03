@@ -399,7 +399,7 @@ public class LuceneChangeIndex implements ChangeIndex {
       }
       ImmutableList<FieldBundle> fieldBundles =
           documents.stream().map(rawDocumentMapper).collect(toImmutableList());
-      return new ResultSet<FieldBundle>() {
+      return new ResultSet<>() {
         @Override
         public Iterator<FieldBundle> iterator() {
           return fieldBundles.iterator();
@@ -430,6 +430,7 @@ public class LuceneChangeIndex implements ChangeIndex {
         if (Integer.MAX_VALUE - opts.pageSize() < opts.start()) {
           realPageSize = Integer.MAX_VALUE;
         }
+        int queryLimit = AbstractLuceneIndex.getLimitBasedOnPaginationType(opts, realPageSize);
         List<TopFieldDocs> hits = new ArrayList<>();
         int searchAfterHitsCount = 0;
         for (int i = 0; i < indexes.size(); i++) {
@@ -453,11 +454,10 @@ public class LuceneChangeIndex implements ChangeIndex {
                   subIndex, Iterables.getLast(Arrays.asList(subIndexHits.scoreDocs), searchAfter));
             }
           } else {
-            hits.add(searchers[i].search(query, realPageSize, sort));
+            hits.add(searchers[i].search(query, queryLimit, sort));
           }
         }
-        TopDocs docs =
-            TopDocs.merge(sort, realPageSize, hits.stream().toArray(TopFieldDocs[]::new));
+        TopDocs docs = TopDocs.merge(sort, queryLimit, hits.stream().toArray(TopFieldDocs[]::new));
 
         List<Document> result = new ArrayList<>(docs.scoreDocs.length);
         for (int i = opts.start(); i < docs.scoreDocs.length; i++) {

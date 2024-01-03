@@ -14,6 +14,8 @@
 
 package com.google.gerrit.server.query.change;
 
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
+
 import com.google.common.base.CharMatcher;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
@@ -21,12 +23,15 @@ import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.git.ObjectIds;
 import com.google.gerrit.index.query.Predicate;
+import com.google.gerrit.server.CommentsUtil;
+import com.google.gerrit.server.StarredChangesUtil;
 import com.google.gerrit.server.change.HashtagsUtil;
 import com.google.gerrit.server.index.change.ChangeField;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /** Predicates that match against {@link ChangeData}. */
 public class ChangePredicates {
@@ -76,8 +81,37 @@ public class ChangePredicates {
    * Returns a predicate that matches changes where the provided {@link
    * com.google.gerrit.entities.Account.Id} has a pending draft comment.
    */
-  public static Predicate<ChangeData> draftBy(Account.Id id) {
-    return new ChangeIndexCardinalPredicate(ChangeField.DRAFTBY, id.toString(), 20);
+  public static Predicate<ChangeData> draftBy(
+      boolean computeFromAllUsersRepository, CommentsUtil commentsUtil, Account.Id id) {
+    if (!computeFromAllUsersRepository) {
+      return new ChangeIndexCardinalPredicate(ChangeField.DRAFTBY, id.toString(), 20);
+    }
+    Set<Predicate<ChangeData>> changeIdPredicates =
+        commentsUtil.getChangesWithDrafts(id).stream()
+            .map(ChangePredicates::idStr)
+            .collect(toImmutableSet());
+    return changeIdPredicates.isEmpty()
+        ? ChangeIndexPredicate.none()
+        : Predicate.or(changeIdPredicates);
+  }
+
+  /**
+   * Returns a predicate that matches changes where the provided {@link
+   * com.google.gerrit.entities.Account.Id} has starred changes with {@code label}.
+   */
+  public static Predicate<ChangeData> starBy(
+      boolean computeFromAllUsersRepository,
+      StarredChangesUtil starredChangesUtil,
+      Account.Id id,
+      String label) {
+    if (!computeFromAllUsersRepository) {
+      return new StarPredicate(id, label);
+    }
+    Set<Predicate<ChangeData>> starredChanges =
+        starredChangesUtil.byAccountId(id, label).stream()
+            .map(ChangePredicates::idStr)
+            .collect(toImmutableSet());
+    return starredChanges.isEmpty() ? ChangeIndexPredicate.none() : Predicate.or(starredChanges);
   }
 
   /**
@@ -173,6 +207,11 @@ public class ChangePredicates {
     return new ChangeIndexPredicate(ChangeField.FUZZY_TOPIC, topic);
   }
 
+  /** Returns a predicate that matches changes in the provided {@code topic}. Used with prefixes */
+  public static Predicate<ChangeData> prefixTopic(String topic) {
+    return new ChangeIndexPredicate(ChangeField.PREFIX_TOPIC, topic);
+  }
+
   /** Returns a predicate that matches changes submitted in the provided {@code changeSet}. */
   public static Predicate<ChangeData> submissionId(String changeSet) {
     return new ChangeIndexPredicate(ChangeField.SUBMISSIONID, changeSet);
@@ -197,6 +236,15 @@ public class ChangePredicates {
         ChangeField.FUZZY_HASHTAG, HashtagsUtil.cleanupHashtag(hashtag).toLowerCase());
   }
 
+  /**
+   * Returns a predicate that matches changes in the provided {@code hashtag}. Used with prefixes
+   */
+  public static Predicate<ChangeData> prefixHashtag(String hashtag) {
+    // Use toLowerCase without locale to match behavior in ChangeField.
+    return new ChangeIndexPredicate(
+        ChangeField.PREFIX_HASHTAG, HashtagsUtil.cleanupHashtag(hashtag).toLowerCase());
+  }
+
   /** Returns a predicate that matches changes that modified the provided {@code file}. */
   public static Predicate<ChangeData> file(ChangeQueryBuilder.Arguments args, String file) {
     Predicate<ChangeData> eqPath = path(file);
@@ -219,6 +267,14 @@ public class ChangePredicates {
       footer = footer.substring(0, indexEquals) + ": " + footer.substring(indexEquals + 1);
     }
     return new ChangeIndexPredicate(ChangeField.FOOTER, footer.toLowerCase(Locale.US));
+  }
+
+  /**
+   * Returns a predicate that matches changes with the provided {@code footer} name in their commit
+   * message.
+   */
+  public static Predicate<ChangeData> hasFooter(String footerName) {
+    return new ChangeIndexPredicate(ChangeField.FOOTER_NAME, footerName);
   }
 
   /**
@@ -310,5 +366,24 @@ public class ChangePredicates {
    */
   public static Predicate<ChangeData> submitRuleStatus(String value) {
     return new ChangeIndexPredicate(ChangeField.SUBMIT_RULE_RESULT, value);
+  }
+
+  /**
+   * Returns a predicate that matches with changes that are pure reverts if {@code value} is equal
+   * to "1", or non-pure reverts if {@code value} is "0".
+   */
+  public static Predicate<ChangeData> pureRevert(String value) {
+    return new ChangeIndexPredicate(ChangeField.IS_PURE_REVERT, value);
+  }
+
+  /**
+   * Returns a predicate that matches with changes that are submittable if {@code value} is equal to
+   * "1", or non-submittable if {@code value} is "0".
+   *
+   * <p>The computation of this field is based on the evaluation of {@link
+   * com.google.gerrit.entities.SubmitRequirement}s.
+   */
+  public static Predicate<ChangeData> isSubmittable(String value) {
+    return new ChangeIndexPredicate(ChangeField.IS_SUBMITTABLE, value);
   }
 }

@@ -14,75 +14,109 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {appContext, AppContext} from './app-context';
+import {AppContext} from './app-context';
+import {create, Finalizable, Registry} from './registry';
+import {DependencyToken} from '../models/dependency';
 import {FlagsServiceImplementation} from './flags/flags_impl';
 import {GrReporting} from './gr-reporting/gr-reporting_impl';
 import {EventEmitter} from './gr-event-interface/gr-event-interface_impl';
 import {Auth} from './gr-auth/gr-auth_impl';
-import {GrRestApiInterface} from '../elements/shared/gr-rest-api-interface/gr-rest-api-interface';
-import {ChangeService} from './change/change-service';
-import {ChecksService} from './checks/checks-service';
+import {GrRestApiServiceImpl} from './gr-rest-api/gr-rest-api-impl';
+import {ChangeModel, changeModelToken} from '../models/change/change-model';
+import {ChecksModel, checksModelToken} from '../models/checks/checks-model';
 import {GrJsApiInterface} from '../elements/shared/gr-js-api-interface/gr-js-api-interface-element';
 import {GrStorageService} from './storage/gr-storage_impl';
-import {ConfigService} from './config/config-service';
-import {UserService} from './user/user-service';
-import {CommentsService} from './comments/comments-service';
+import {UserModel} from '../models/user/user-model';
+import {
+  CommentsModel,
+  commentsModelToken,
+} from '../models/comments/comments-model';
+import {RouterModel} from './router/router-model';
 import {ShortcutsService} from './shortcuts/shortcuts-service';
-
-type ServiceName = keyof AppContext;
-type ServiceCreator<T> = () => T;
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const initializedServices: Map<ServiceName, any> = new Map<ServiceName, any>();
-
-function getService<K extends ServiceName>(
-  serviceName: K,
-  serviceCreator: ServiceCreator<AppContext[K]>
-): AppContext[K] {
-  if (!initializedServices.has(serviceName)) {
-    initializedServices.set(serviceName, serviceCreator());
-  }
-  return initializedServices.get(serviceName);
-}
+import {assertIsDefined} from '../utils/common-util';
+import {ConfigModel, configModelToken} from '../models/config/config-model';
+import {BrowserModel, browserModelToken} from '../models/browser/browser-model';
+import {PluginsModel} from '../models/plugins/plugins-model';
+import {HighlightService} from './highlight/highlight-service';
 
 /**
  * The AppContext lazy initializator for all services
  */
-export function initAppContext() {
-  function populateAppContext(
-    serviceCreators: {[P in ServiceName]: ServiceCreator<AppContext[P]>}
-  ) {
-    const registeredServices = Object.keys(serviceCreators).reduce(
-      (registeredServices, key) => {
-        const serviceName = key as ServiceName;
-        const serviceCreator = serviceCreators[serviceName];
-        registeredServices[serviceName] = {
-          configurable: true, // Tests can mock properties
-          get() {
-            return getService(serviceName, serviceCreator);
-          },
-        };
-        return registeredServices;
-      },
-      {} as PropertyDescriptorMap
-    );
-    Object.defineProperties(appContext, registeredServices);
-  }
+export function createAppContext(): AppContext & Finalizable {
+  const appRegistry: Registry<AppContext> = {
+    routerModel: (_ctx: Partial<AppContext>) => new RouterModel(),
+    flagsService: (_ctx: Partial<AppContext>) =>
+      new FlagsServiceImplementation(),
+    reportingService: (ctx: Partial<AppContext>) => {
+      assertIsDefined(ctx.flagsService, 'flagsService)');
+      return new GrReporting(ctx.flagsService);
+    },
+    eventEmitter: (_ctx: Partial<AppContext>) => new EventEmitter(),
+    authService: (ctx: Partial<AppContext>) => {
+      assertIsDefined(ctx.eventEmitter, 'eventEmitter');
+      return new Auth(ctx.eventEmitter);
+    },
+    restApiService: (ctx: Partial<AppContext>) => {
+      assertIsDefined(ctx.authService, 'authService');
+      return new GrRestApiServiceImpl(ctx.authService);
+    },
+    jsApiService: (ctx: Partial<AppContext>) => {
+      const reportingService = ctx.reportingService;
+      assertIsDefined(reportingService, 'reportingService');
+      return new GrJsApiInterface(reportingService);
+    },
+    storageService: (_ctx: Partial<AppContext>) => new GrStorageService(),
+    userModel: (ctx: Partial<AppContext>) => {
+      assertIsDefined(ctx.restApiService, 'restApiService');
+      return new UserModel(ctx.restApiService);
+    },
+    shortcutsService: (ctx: Partial<AppContext>) => {
+      assertIsDefined(ctx.userModel, 'userModel');
+      assertIsDefined(ctx.reportingService, 'reportingService');
+      return new ShortcutsService(ctx.userModel, ctx.reportingService);
+    },
+    pluginsModel: (_ctx: Partial<AppContext>) => new PluginsModel(),
+    highlightService: (ctx: Partial<AppContext>) => {
+      assertIsDefined(ctx.reportingService, 'reportingService');
+      return new HighlightService(ctx.reportingService);
+    },
+  };
+  return create<AppContext>(appRegistry);
+}
 
-  populateAppContext({
-    flagsService: () => new FlagsServiceImplementation(),
-    reportingService: () => new GrReporting(appContext.flagsService),
-    eventEmitter: () => new EventEmitter(),
-    authService: () => new Auth(appContext.eventEmitter),
-    restApiService: () =>
-      new GrRestApiInterface(appContext.authService, appContext.flagsService),
-    changeService: () => new ChangeService(),
-    commentsService: () => new CommentsService(appContext.restApiService),
-    checksService: () => new ChecksService(appContext.reportingService),
-    jsApiService: () => new GrJsApiInterface(),
-    storageService: () => new GrStorageService(),
-    configService: () => new ConfigService(),
-    userService: () => new UserService(appContext.restApiService),
-    shortcutsService: () => new ShortcutsService(appContext.reportingService),
-  });
+export function createAppDependencies(
+  appContext: AppContext
+): Map<DependencyToken<unknown>, Finalizable> {
+  const dependencies = new Map<DependencyToken<unknown>, Finalizable>();
+  const browserModel = new BrowserModel(appContext.userModel);
+  dependencies.set(browserModelToken, browserModel);
+
+  const changeModel = new ChangeModel(
+    appContext.routerModel,
+    appContext.restApiService,
+    appContext.userModel
+  );
+  dependencies.set(changeModelToken, changeModel);
+
+  const commentsModel = new CommentsModel(
+    appContext.routerModel,
+    changeModel,
+    appContext.restApiService,
+    appContext.reportingService
+  );
+  dependencies.set(commentsModelToken, commentsModel);
+
+  const configModel = new ConfigModel(changeModel, appContext.restApiService);
+  dependencies.set(configModelToken, configModel);
+
+  const checksModel = new ChecksModel(
+    appContext.routerModel,
+    changeModel,
+    appContext.reportingService,
+    appContext.pluginsModel
+  );
+
+  dependencies.set(checksModelToken, checksModel);
+
+  return dependencies;
 }

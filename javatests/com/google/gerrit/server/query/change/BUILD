@@ -28,7 +28,6 @@ java_library(
         "//java/com/google/gerrit/httpd",
         "//java/com/google/gerrit/index",
         "//java/com/google/gerrit/index:query_exception",
-        "//java/com/google/gerrit/index/testing",
         "//java/com/google/gerrit/lifecycle",
         "//java/com/google/gerrit/server",
         "//java/com/google/gerrit/server/group/testing",

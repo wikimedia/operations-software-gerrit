@@ -15,7 +15,8 @@
  * limitations under the License.
  */
 
-import {CommentRange, PatchSetNum} from '../../types/common';
+import {CommentRange, NumericChangeId, PatchSetNum} from '../../types/common';
+import {Finalizable} from '../registry';
 
 export interface StorageLocation {
   changeNum: number;
@@ -30,7 +31,7 @@ export interface StorageObject {
   updated: number;
 }
 
-export interface StorageService {
+export interface StorageService extends Finalizable {
   getDraftComment(location: StorageLocation): StorageObject | null;
 
   setDraftComment(location: StorageLocation, message: string): void;
@@ -41,9 +42,7 @@ export interface StorageService {
 
   setEditableContentItem(key: string, message: string): void;
 
-  getRespectfulTipVisibility(): StorageObject | null;
-
-  setRespectfulTipVisibility(delayDays?: number): void;
-
   eraseEditableContentItem(key: string): void;
+
+  eraseEditableContentItemsForChangeEdit(changeNum?: NumericChangeId): void;
 }

@@ -40,7 +40,7 @@ import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
-import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Collections;
 import java.util.Optional;
 
@@ -87,7 +87,7 @@ public class PutDraftComment implements RestModifyView<DraftCommentResource, Dra
           String.format("Invalid inReplyTo, comment %s not found", in.inReplyTo));
     }
     try (BatchUpdate bu =
-        updateFactory.create(rsrc.getChange().getProject(), rsrc.getUser(), TimeUtil.nowTs())) {
+        updateFactory.create(rsrc.getChange().getProject(), rsrc.getUser(), TimeUtil.now())) {
       Op op = new Op(rsrc.getComment().key, in);
       bu.addOp(rsrc.getChange().getId(), op);
       bu.execute();
@@ -145,7 +145,7 @@ public class PutDraftComment implements RestModifyView<DraftCommentResource, Dra
     }
   }
 
-  private static HumanComment update(HumanComment e, DraftInput in, Timestamp when) {
+  private static HumanComment update(HumanComment e, DraftInput in, Instant when) {
     if (in.side != null) {
       e.side = in.side();
     }
@@ -154,7 +154,7 @@ public class PutDraftComment implements RestModifyView<DraftCommentResource, Dra
     }
     e.setLineNbrAndRange(in.line, in.range);
     e.message = in.message.trim();
-    e.writtenOn = when;
+    e.setWrittenOn(when);
     if (in.tag != null) {
       // TODO(dborowitz): Can we support changing tags via PUT?
       e.tag = in.tag;

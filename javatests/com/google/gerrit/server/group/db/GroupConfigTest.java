@@ -35,13 +35,12 @@ import com.google.gerrit.server.group.testing.InternalGroupSubject;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.gerrit.truth.OptionalSubject;
 import java.io.IOException;
-import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.Month;
 import java.time.ZoneId;
 import java.util.Optional;
-import java.util.TimeZone;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.internal.storage.dfs.DfsRepositoryDescription;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
@@ -63,7 +62,7 @@ public class GroupConfigTest {
   private final AccountGroup.Id groupId = AccountGroup.id(123);
   private final AuditLogFormatter auditLogFormatter =
       AuditLogFormatter.createBackedBy(ImmutableSet.of(), ImmutableSet.of(), "server-id");
-  private final TimeZone timeZone = TimeZone.getTimeZone("America/Los_Angeles");
+  private final ZoneId zoneId = ZoneId.of("America/Los_Angeles");
 
   @Before
   public void setUp() throws Exception {
@@ -246,7 +245,7 @@ public class GroupConfigTest {
   @Test
   public void createdOnDefaultsToNow() throws Exception {
     // Git timestamps are only precise to the second.
-    Timestamp testStart = TimeUtil.truncateToSecond(TimeUtil.nowTs());
+    Instant testStart = TimeUtil.truncateToSecond(TimeUtil.now());
 
     InternalGroupCreation groupCreation =
         InternalGroupCreation.builder()
@@ -262,7 +261,7 @@ public class GroupConfigTest {
 
   @Test
   public void specifiedCreatedOnIsRespectedForNewGroup() throws Exception {
-    Timestamp createdOn = toTimestamp(LocalDate.of(2017, Month.DECEMBER, 11).atTime(13, 44, 10));
+    Instant createdOn = toInstant(LocalDate.of(2017, Month.DECEMBER, 11).atTime(13, 44, 10));
 
     InternalGroupCreation groupCreation = getPrefilledGroupCreationBuilder().build();
     GroupDelta groupDelta = GroupDelta.builder().setUpdatedOn(createdOn).build();
@@ -607,8 +606,8 @@ public class GroupConfigTest {
 
   @Test
   public void createdOnIsNotAffectedByFurtherUpdates() throws Exception {
-    Timestamp createdOn = toTimestamp(LocalDate.of(2017, Month.MAY, 11).atTime(13, 44, 10));
-    Timestamp updatedOn = toTimestamp(LocalDate.of(2017, Month.DECEMBER, 12).atTime(10, 21, 49));
+    Instant createdOn = toInstant(LocalDate.of(2017, Month.MAY, 11).atTime(13, 44, 10));
+    Instant updatedOn = toInstant(LocalDate.of(2017, Month.DECEMBER, 12).atTime(10, 21, 49));
 
     InternalGroupCreation groupCreation = getPrefilledGroupCreationBuilder().build();
     GroupDelta initialGroupDelta = GroupDelta.builder().setUpdatedOn(createdOn).build();
@@ -740,7 +739,7 @@ public class GroupConfigTest {
             .setOwnerGroupUUID(AccountGroup.uuid("another owner"))
             .setVisibleToAll(true)
             .setName(AccountGroup.nameKey("Another name"))
-            .setUpdatedOn(new Timestamp(92900892))
+            .setUpdatedOn(Instant.ofEpochMilli(92900892))
             .setMemberModification(members -> ImmutableSet.of(Account.id(1), Account.id(2)))
             .setSubgroupModification(subgroups -> ImmutableSet.of(AccountGroup.uuid("subgroup")))
             .build();
@@ -761,7 +760,7 @@ public class GroupConfigTest {
             .setOwnerGroupUUID(AccountGroup.uuid("another owner"))
             .setVisibleToAll(true)
             .setName(AccountGroup.nameKey("Another name"))
-            .setUpdatedOn(new Timestamp(92900892))
+            .setUpdatedOn(Instant.ofEpochMilli(92900892))
             .setMemberModification(members -> ImmutableSet.of(Account.id(1), Account.id(2)))
             .setSubgroupModification(subgroups -> ImmutableSet.of(AccountGroup.uuid("subgroup")))
             .build();
@@ -783,7 +782,7 @@ public class GroupConfigTest {
             .setOwnerGroupUUID(AccountGroup.uuid("another owner"))
             .setVisibleToAll(true)
             .setName(AccountGroup.nameKey("Another name"))
-            .setUpdatedOn(new Timestamp(92900892))
+            .setUpdatedOn(Instant.ofEpochMilli(92900892))
             .setMemberModification(members -> ImmutableSet.of(Account.id(1), Account.id(2)))
             .setSubgroupModification(subgroups -> ImmutableSet.of(AccountGroup.uuid("subgroup")))
             .build();
@@ -867,7 +866,7 @@ public class GroupConfigTest {
   public void newCommitIsNotCreatedForPureUpdatedOnUpdate() throws Exception {
     createArbitraryGroup(groupUuid);
 
-    Timestamp updatedOn = toTimestamp(LocalDate.of(3017, Month.DECEMBER, 12).atTime(10, 21, 49));
+    Instant updatedOn = toInstant(LocalDate.of(3017, Month.DECEMBER, 12).atTime(10, 21, 49));
     GroupDelta groupDelta = GroupDelta.builder().setUpdatedOn(updatedOn).build();
 
     RevCommit commitBeforeUpdate = getLatestCommitForGroup(groupUuid);
@@ -1008,7 +1007,7 @@ public class GroupConfigTest {
   @Test
   public void commitTimeMatchesDefaultCreatedOnOfNewGroup() throws Exception {
     // Git timestamps are only precise to the second.
-    long testStartAsSecondsSinceEpoch = TimeUtil.nowTs().getTime() / 1000;
+    long testStartAsSecondsSinceEpoch = TimeUtil.now().getEpochSecond();
 
     InternalGroupCreation groupCreation =
         InternalGroupCreation.builder()
@@ -1035,7 +1034,7 @@ public class GroupConfigTest {
             .build();
     GroupDelta groupDelta =
         GroupDelta.builder()
-            .setUpdatedOn(new Timestamp(createdOnAsSecondsSinceEpoch * 1000))
+            .setUpdatedOn(Instant.ofEpochSecond(createdOnAsSecondsSinceEpoch))
             .build();
     createGroup(groupCreation, groupDelta);
 
@@ -1045,9 +1044,9 @@ public class GroupConfigTest {
 
   @Test
   public void timestampOfCommitterMatchesSpecifiedCreatedOnOfNewGroup() throws Exception {
-    Timestamp committerTimestamp =
-        toTimestamp(LocalDate.of(2017, Month.DECEMBER, 13).atTime(15, 5, 27));
-    Timestamp createdOn = toTimestamp(LocalDate.of(2016, Month.MARCH, 11).atTime(23, 49, 11));
+    Instant committerTimestamp =
+        toInstant(LocalDate.of(2017, Month.DECEMBER, 13).atTime(15, 5, 27));
+    Instant createdOn = toInstant(LocalDate.of(2016, Month.MARCH, 11).atTime(23, 49, 11));
 
     InternalGroupCreation groupCreation =
         InternalGroupCreation.builder()
@@ -1064,23 +1063,22 @@ public class GroupConfigTest {
     groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
 
     PersonIdent committerIdent =
-        new PersonIdent("Jane", "Jane@gerritcodereview.com", committerTimestamp, timeZone);
+        new PersonIdent("Jane", "Jane@gerritcodereview.com", committerTimestamp, zoneId);
     try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
       metaDataUpdate.getCommitBuilder().setCommitter(committerIdent);
       groupConfig.commit(metaDataUpdate);
     }
 
     RevCommit revCommit = getLatestCommitForGroup(groupUuid);
-    assertThat(revCommit.getCommitterIdent().getWhen()).isEqualTo(createdOn);
-    assertThat(revCommit.getCommitterIdent().getTimeZone().getRawOffset())
-        .isEqualTo(timeZone.getRawOffset());
+    assertThat(revCommit.getCommitterIdent().getWhenAsInstant()).isEqualTo(createdOn);
+    assertThat(revCommit.getCommitterIdent().getZoneId().getRules().getOffset(createdOn))
+        .isEqualTo(zoneId.getRules().getOffset(createdOn));
   }
 
   @Test
   public void timestampOfAuthorMatchesSpecifiedCreatedOnOfNewGroup() throws Exception {
-    Timestamp authorTimestamp =
-        toTimestamp(LocalDate.of(2017, Month.DECEMBER, 13).atTime(15, 5, 27));
-    Timestamp createdOn = toTimestamp(LocalDate.of(2016, Month.MARCH, 11).atTime(23, 49, 11));
+    Instant authorTimestamp = toInstant(LocalDate.of(2017, Month.DECEMBER, 13).atTime(15, 5, 27));
+    Instant createdOn = toInstant(LocalDate.of(2016, Month.MARCH, 11).atTime(23, 49, 11));
 
     InternalGroupCreation groupCreation =
         InternalGroupCreation.builder()
@@ -1097,22 +1095,22 @@ public class GroupConfigTest {
     groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
 
     PersonIdent authorIdent =
-        new PersonIdent("Jane", "Jane@gerritcodereview.com", authorTimestamp, timeZone);
+        new PersonIdent("Jane", "Jane@gerritcodereview.com", authorTimestamp, zoneId);
     try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
       metaDataUpdate.getCommitBuilder().setAuthor(authorIdent);
       groupConfig.commit(metaDataUpdate);
     }
 
     RevCommit revCommit = getLatestCommitForGroup(groupUuid);
-    assertThat(revCommit.getAuthorIdent().getWhen()).isEqualTo(createdOn);
-    assertThat(revCommit.getAuthorIdent().getTimeZone().getRawOffset())
-        .isEqualTo(timeZone.getRawOffset());
+    assertThat(revCommit.getAuthorIdent().getWhenAsInstant()).isEqualTo(createdOn);
+    assertThat(revCommit.getAuthorIdent().getZoneId().getRules().getOffset(createdOn))
+        .isEqualTo(zoneId.getRules().getOffset(createdOn));
   }
 
   @Test
   public void commitTimeMatchesDefaultUpdatedOnOfUpdatedGroup() throws Exception {
     // Git timestamps are only precise to the second.
-    long testStartAsSecondsSinceEpoch = TimeUtil.nowTs().getTime() / 1000;
+    long testStartAsSecondsSinceEpoch = TimeUtil.now().getEpochSecond();
 
     createArbitraryGroup(groupUuid);
     GroupDelta groupDelta =
@@ -1132,7 +1130,7 @@ public class GroupConfigTest {
     GroupDelta groupDelta =
         GroupDelta.builder()
             .setName(AccountGroup.nameKey("Another name"))
-            .setUpdatedOn(new Timestamp(updatedOnAsSecondsSinceEpoch * 1000))
+            .setUpdatedOn(Instant.ofEpochSecond(updatedOnAsSecondsSinceEpoch))
             .build();
     updateGroup(groupUuid, groupDelta);
 
@@ -1142,9 +1140,9 @@ public class GroupConfigTest {
 
   @Test
   public void timestampOfCommitterMatchesSpecifiedUpdatedOnOfUpdatedGroup() throws Exception {
-    Timestamp committerTimestamp =
-        toTimestamp(LocalDate.of(2017, Month.DECEMBER, 13).atTime(15, 5, 27));
-    Timestamp updatedOn = toTimestamp(LocalDate.of(2016, Month.MARCH, 11).atTime(23, 49, 11));
+    Instant committerTimestamp =
+        toInstant(LocalDate.of(2017, Month.DECEMBER, 13).atTime(15, 5, 27));
+    Instant updatedOn = toInstant(LocalDate.of(2016, Month.MARCH, 11).atTime(23, 49, 11));
 
     createArbitraryGroup(groupUuid);
     GroupDelta groupDelta =
@@ -1156,23 +1154,22 @@ public class GroupConfigTest {
     groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
 
     PersonIdent committerIdent =
-        new PersonIdent("Jane", "Jane@gerritcodereview.com", committerTimestamp, timeZone);
+        new PersonIdent("Jane", "Jane@gerritcodereview.com", committerTimestamp, zoneId);
     try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
       metaDataUpdate.getCommitBuilder().setCommitter(committerIdent);
       groupConfig.commit(metaDataUpdate);
     }
 
     RevCommit revCommit = getLatestCommitForGroup(groupUuid);
-    assertThat(revCommit.getCommitterIdent().getWhen()).isEqualTo(updatedOn);
-    assertThat(revCommit.getCommitterIdent().getTimeZone().getRawOffset())
-        .isEqualTo(timeZone.getRawOffset());
+    assertThat(revCommit.getCommitterIdent().getWhenAsInstant()).isEqualTo(updatedOn);
+    assertThat(revCommit.getCommitterIdent().getZoneId().getRules().getOffset(updatedOn))
+        .isEqualTo(zoneId.getRules().getOffset(updatedOn));
   }
 
   @Test
   public void timestampOfAuthorMatchesSpecifiedUpdatedOnOfUpdatedGroup() throws Exception {
-    Timestamp authorTimestamp =
-        toTimestamp(LocalDate.of(2017, Month.DECEMBER, 13).atTime(15, 5, 27));
-    Timestamp updatedOn = toTimestamp(LocalDate.of(2016, Month.MARCH, 11).atTime(23, 49, 11));
+    Instant authorTimestamp = toInstant(LocalDate.of(2017, Month.DECEMBER, 13).atTime(15, 5, 27));
+    Instant updatedOn = toInstant(LocalDate.of(2016, Month.MARCH, 11).atTime(23, 49, 11));
 
     createArbitraryGroup(groupUuid);
     GroupDelta groupDelta =
@@ -1184,16 +1181,16 @@ public class GroupConfigTest {
     groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
 
     PersonIdent authorIdent =
-        new PersonIdent("Jane", "Jane@gerritcodereview.com", authorTimestamp, timeZone);
+        new PersonIdent("Jane", "Jane@gerritcodereview.com", authorTimestamp, zoneId);
     try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
       metaDataUpdate.getCommitBuilder().setAuthor(authorIdent);
       groupConfig.commit(metaDataUpdate);
     }
 
     RevCommit revCommit = getLatestCommitForGroup(groupUuid);
-    assertThat(revCommit.getAuthorIdent().getWhen()).isEqualTo(updatedOn);
-    assertThat(revCommit.getAuthorIdent().getTimeZone().getRawOffset())
-        .isEqualTo(timeZone.getRawOffset());
+    assertThat(revCommit.getAuthorIdent().getWhenAsInstant()).isEqualTo(updatedOn);
+    assertThat(revCommit.getAuthorIdent().getZoneId().getRules().getOffset(updatedOn))
+        .isEqualTo(zoneId.getRules().getOffset(updatedOn));
   }
 
   @Test
@@ -1458,8 +1455,8 @@ public class GroupConfigTest {
                 + "Rename from Old name to New name");
   }
 
-  private static Timestamp toTimestamp(LocalDateTime localDateTime) {
-    return Timestamp.from(localDateTime.atZone(ZoneId.systemDefault()).toInstant());
+  private static Instant toInstant(LocalDateTime localDateTime) {
+    return localDateTime.atZone(ZoneId.systemDefault()).toInstant();
   }
 
   private void populateGroupConfig(AccountGroup.UUID uuid, String fileContent) throws Exception {
@@ -1544,8 +1541,7 @@ public class GroupConfigTest {
 
   private MetaDataUpdate createMetaDataUpdate() {
     PersonIdent serverIdent =
-        new PersonIdent(
-            "Gerrit Server", "noreply@gerritcodereview.com", TimeUtil.nowTs(), timeZone);
+        new PersonIdent("Gerrit Server", "noreply@gerritcodereview.com", TimeUtil.now(), zoneId);
 
     MetaDataUpdate metaDataUpdate =
         new MetaDataUpdate(
@@ -1567,7 +1563,7 @@ public class GroupConfigTest {
   }
 
   private static Account createAccount(Account.Id id, String name) {
-    Account.Builder account = Account.builder(id, TimeUtil.nowTs());
+    Account.Builder account = Account.builder(id, TimeUtil.now());
     account.setFullName(name);
     return account.build();
   }

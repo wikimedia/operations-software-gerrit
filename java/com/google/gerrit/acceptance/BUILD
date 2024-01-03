@@ -39,11 +39,9 @@ DEPLOY_ENV = [
     "//lib:gson",
     "//lib:guava-retrying",
     "//lib:jgit",
-    "//lib:jgit-ssh-jsch",
     "//lib:jgit-ssh-apache",
-    "//lib:jsch",
     "//lib/commons:compress",
-    "//lib/commons:lang",
+    "//lib/commons:lang3",
     "//lib/flogger:api",
     "//lib/guice",
     "//lib/guice:guice-assistedinject",
@@ -125,6 +123,7 @@ exported_deps = [
     "//lib/truth",
     "//lib/truth:truth-java8-extension",
     "//lib/greenmail",
+    "//lib:guava-testlib",
 ] + TEST_DEPS
 
 java_library(

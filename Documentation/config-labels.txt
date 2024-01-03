@@ -6,7 +6,10 @@ a given user is allowed to set are defined according to the
 link:access-control.html#category_review_labels[access controls].  Gerrit
 comes pre-configured with the Code-Review label that can be granted to
 groups within projects, enabling functionality for that group's members.
-
+Project owners and admins might also need to configure rules which require
+labels to be voted before a change can be submittable. See the
+link:config-submit-requirements.html[submit requirements] documentation to
+configure such rules.
 
 [[label_Code-Review]]
 == Label: Code-Review
@@ -18,7 +21,7 @@ originally invented by the Android Open Source Project to mean
 
 The range of values is:
 
-* -2 This shall not be merged
+* -2 This shall not be submitted
 +
 The code is so horribly incorrect/buggy/broken that it must not be
 submitted to this project, or to this branch.  This value is valid
@@ -28,7 +31,7 @@ is submittable.
 +
 *Any -2 blocks submit.*
 
-* -1 I would prefer this is not merged as is
+* -1 I would prefer this is not submitted as is
 +
 The code doesn't look right, or could be done differently, but
 the reviewer is willing to live with it as-is if another reviewer
@@ -61,8 +64,8 @@ how the project will develop.
 
 For a change to be submittable, the latest patch set must have a
 `+2 Looks good to me, approved` in this category, and no
-`-2 Do not submit`.  Thus `-2` on any patch set can block a submit,
-while `+2` on the latest patch set can enable it.
+`-2 This shall not be submitted`.  Thus `-2` on any patch set can
+block a submit, while `+2` on the latest patch set can enable it.
 
 If a Gerrit installation does not wish to use this label in any project,
 the `[label "Code-Review"]` section can be deleted from `project.config`
@@ -97,7 +100,7 @@ adding the following to `project.config` in `All-Projects`:
       value = -1 Fails
       value = 0 No score
       value = +1 Verified
-      copyAllScoresIfNoCodeChange = true
+      copyCondition = changekind:NO_CODE_CHANGE
 ----
 
 The range of values is:
@@ -176,6 +179,11 @@ Labels are laid out in alphabetical order.
 The name for a label, consisting only of alphanumeric characters and
 `-`.
 
+[[label_description]]
+=== `label.Label-Name.description`
+
+The label description. This field can provide extra information of what the
+label is supposed to do.
 
 [[label_value]]
 === `label.Label-Name.value`
@@ -200,7 +208,12 @@ box will be either the lowest or highest score in the permissible range.
 
 
 [[label_function]]
-=== `label.Label-Name.function`
+=== `label.Label-Name.function (deprecated)`
+
+Label functions dictate the rules for requiring certain label votes before a
+change is allowed for submission. Label functions are **deprecated**, favour
+using link:config-submit-requirements.html[submit requirements] instead,
+except if it's needed to set the value to `PatchSetLock`.
 
 The name of a function for evaluating multiple votes for a label.  This
 function is only applied if the default submit rule is used for a label.
@@ -265,6 +278,9 @@ Defaults to true.
 [[label_copyAnyScore]]
 === `label.Label-Name.copyAnyScore`
 
+*DEPRECATED: use `is:ANY` predicate in
+link:config-labels.html#label_copyCondition[copyCondition] instead*
+
 If true, any score for the label is copied forward when a new patch
 set is uploaded. Defaults to false.
 
@@ -284,35 +300,66 @@ Gerrit currently supports the following predicates:
 
 Matches if the diff between two patch sets was of a certain change kind.
 
+`REWORK` matches all kind of change kinds because any other change kind
+is just a more trivial version of a rework. This means setting
+`changekind:REWORK` is equivalent to setting `is:ANY`.
+
+`NO_CHANGE` is more trivial than a trivial rebase, no code change and
+a first parent update, hence this change kind is also matched by
+`changekind:TRIVIAL_REBASE`, `changekind:NO_CODE_CHANGE` and
+`changekind:MERGE_FIRST_PARENT_UPDATE` (only if the change is for a
+merge commit).
+
 ==== is:{MIN,MAX,ANY}
 
 Matches votes that are equal to the minimal or maximal voting range. Or any votes.
 
-==== approverin:link:rest-api-groups.html#group-id[\{group-id\}]
+==== is:'VALUE'
+
+Matches approvals that have a voting value that is equal to 'VALUE'.
+
+Negative values need to be quoted, e.g.: is:"-1"
+
+[[approverin]]
+==== approverin:link:#group-id[\{group-id\}]
 
 Matches votes granted by a user who is a member of
-link:rest-api-groups.html#group-id[\{group-id\}].
+link:#group-id[\{group-id\}].
 
-Avoid using a group name with spaces (if it has spaces, use the group uuid).
-Although supported for convenience, it's better to use group uuid than group
-name since using names only works as long as the names are unique (and future
-groups with the same name will break the query).
+[[uploaderin]]
+==== uploaderin:link:#group-id[\{group-id\}]
 
-==== uploaderin:link:rest-api-groups.html#group-id[\{group-id\}]
-
-Matches votes where the new patch set was uploaded by a member of
-link:rest-api-groups.html#group-id[\{group-id\}].
-
-Avoid using a group name with spaces (if it has spaces, use the group uuid).
-Although supported for convenience, it's better to use group uuid than group
-name since using names only works as long as the names are unique (and future
-groups with the same name will break the query).
+Matches all votes if the new patch set was uploaded by a member of
+link:#group-id[\{group-id\}].
 
 ==== has:unchanged-files
 
 Matches when the new patch-set includes the same files as the old patch-set.
 
 Only 'unchanged-files' is supported for 'has'.
+
+[[group-id]]
+==== Group ID
+
+Some predicates (link:#approverin[approverin], link:#uploaderin[uploaderin])
+expect a group ID as value. This group ID can be any of the
+link:rest-api-groups.html#group-id[group identifiers] that are supported in the
+REST API: group UUID, group ID (for Gerrit internal groups only) and group name
+
+It's preferred to reference groups by UUID, rather than name. Referencing
+groups by name is not recommended because:
+
+* Groups may be renamed and then the group reference can no longer be resolved.
+  If this happens another group with different members can take over the group
+  name, so that exemptions which have been granted by this predicate apply to
+  the other group. This is a security concern.
+* Group names that contain spaces are not supported.
+* Ambiguous group names cannot be resolved. This means if another group with
+  the same name gets created at a later point in time, the group name can no
+  longer be resolved and the predicate breaks.
+
+Using the group UUID has a small drawback though, since it makes the condition
+less human-readable.
 
 ==== Example
 
@@ -323,12 +370,18 @@ copyCondition = is:MIN OR -change-kind:REWORK OR uploaderin:dead...beef
 [[label_copyMinScore]]
 === `label.Label-Name.copyMinScore`
 
+*DEPRECATED: use `is:MIN` predicate in
+link:config-labels.html#label_copyCondition[copyCondition] instead*
+
 If true, the lowest possible negative value for the label is copied
 forward when a new patch set is uploaded. Defaults to false, except
 for All-Projects which has it true by default.
 
 [[label_copyMaxScore]]
 === `label.Label-Name.copyMaxScore`
+
+*DEPRECATED: use `is:MAX` predicate in
+link:config-labels.html#label_copyCondition[copyCondition] instead*
 
 If true, the highest possible positive value for the label is copied
 forward when a new patch set is uploaded. This can be used to enable
@@ -337,6 +390,9 @@ submitting a change. Defaults to false.
 
 [[label_copyAllScoresIfListOfFilesDidNotChange]]
 === `label.Label-Name.copyAllScoresIfListOfFilesDidNotChange`
+
+*DEPRECATED: use `is:ANY AND has:unchanged-files` predicates in
+link:config-labels.html#label_copyCondition[copyCondition] instead*
 
 This policy is useful if you don't want to trigger CI or human
 verification again if the list of files didn't change.
@@ -353,6 +409,9 @@ Defaults to false.
 
 [[label_copyAllScoresOnMergeFirstParentUpdate]]
 === `label.Label-Name.copyAllScoresOnMergeFirstParentUpdate`
+
+*DEPRECATED: use `is:ANY AND changekind:MERGE_FIRST_PARENT_UPDATE` predicates
+in link:config-labels.html#label_copyCondition[copyCondition] instead*
 
 This policy is useful if you don't want to trigger CI or human
 verification again if your target branch moved on but the feature
@@ -371,6 +430,9 @@ Defaults to false.
 [[label_copyAllScoresOnTrivialRebase]]
 === `label.Label-Name.copyAllScoresOnTrivialRebase`
 
+*DEPRECATED: use `is:ANY AND changekind:TRIVIAL_REBASE` predicates
+in link:config-labels.html#label_copyCondition[copyCondition] instead*
+
 If true, all scores for the label are copied forward when a new patch set is
 uploaded that is a trivial rebase. A new patch set is considered to be trivial
 rebase if the commit message is the same as in the previous patch set and if it
@@ -388,6 +450,9 @@ Defaults to false.
 [[label_copyAllScoresIfNoCodeChange]]
 === `label.Label-Name.copyAllScoresIfNoCodeChange`
 
+*DEPRECATED: use `is:ANY AND changekind:NO_CODE_CHANGE` predicates in
+link:config-labels.html#label_copyCondition[copyCondition] instead*
+
 If true, all scores for the label are copied forward when a new patch set is
 uploaded that has the same parent tree as the previous patch set and the same
 code diff (including context lines) as the previous patch set. This means only
@@ -402,6 +467,9 @@ Defaults to false.
 [[label_copyAllScoresIfNoChange]]
 === `label.Label-Name.copyAllScoresIfNoChange`
 
+*DEPRECATED: use `is:ANY AND changekind:NO_CHANGE` predicates in
+link:config-labels.html#label_copyCondition[copyCondition] instead*
+
 If true, all scores for the label are copied forward when a new patch
 set is uploaded that has the same parent tree, code delta, and commit
 message as the previous patch set. This means that only the patch
@@ -414,6 +482,9 @@ Defaults to true.
 
 [[label_copyValue]]
 === `label.Label-Name.copyValue`
+
+*DEPRECATED: use `is:<value>` predicate in
+link:config-labels.html#label_copyCondition[copyCondition] instead*
 
 Value that should be copied forward when a new patch set is uploaded.
 This can be used to enable sticky votes. Can be specified multiple
@@ -457,13 +528,20 @@ link:access-control.html#reference[here], but must not contain `${username}` or
 `${shardeduserid}`.
 
 [[label_ignoreSelfApproval]]
-=== `label.Label-Name.ignoreSelfApproval`
+=== `label.Label-Name.ignoreSelfApproval (deprecated)`
 
 If true, the label may be voted on by the uploader of the latest patch set,
 but their approval does not make a change submittable. Instead, a
 non-uploader who has the right to vote has to approve the change.
 
 Defaults to false.
+
+The `ignoreSelfApproval` attribute is **deprecated**, favour
+using link:config-submit-requirements.html[submit requirements] and
+define the `submittableIf` expression with the `label` operator and
+the `user=non_uploader` argument. See the
+link:config-submit-requirements.html#code-review-example[Code Review] submit
+requirement example.
 
 [[label_example]]
 === Example

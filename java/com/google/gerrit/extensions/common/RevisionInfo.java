@@ -16,6 +16,7 @@ package com.google.gerrit.extensions.common;
 
 import com.google.gerrit.extensions.client.ChangeKind;
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 
@@ -25,7 +26,11 @@ public class RevisionInfo {
   public transient boolean isCurrent;
   public ChangeKind kind;
   public int _number;
+
+  // TODO(issue-15508): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
+  // Instant
   public Timestamp created;
+
   public AccountInfo uploader;
   public String ref;
   public Map<String, FetchInfo> fetch;
@@ -49,6 +54,13 @@ public class RevisionInfo {
 
   public RevisionInfo(AccountInfo uploader) {
     this.uploader = uploader;
+  }
+
+  // TODO(issue-15508): Migrate timestamp fields in *Info/*Input classes from type Timestamp to
+  // Instant
+  @SuppressWarnings("JdkObsolete")
+  public void setCreated(Instant date) {
+    this.created = Timestamp.from(date);
   }
 
   @Override

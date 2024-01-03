@@ -40,11 +40,13 @@ import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_TOPIC;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_WORK_IN_PROGRESS;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.parseCommitMessageRange;
 import static java.util.Comparator.comparing;
+import static java.util.Comparator.comparingInt;
 import static java.util.stream.Collectors.joining;
 
 import com.google.common.base.Enums;
 import com.google.common.base.Splitter;
 import com.google.common.collect.HashBasedTable;
+import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableTable;
 import com.google.common.collect.ListMultimap;
@@ -70,12 +72,14 @@ import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.entities.SubmitRecord;
+import com.google.gerrit.entities.SubmitRecord.Label.Status;
 import com.google.gerrit.entities.SubmitRequirementResult;
 import com.google.gerrit.metrics.Timer0;
 import com.google.gerrit.server.AssigneeStatusUpdate;
 import com.google.gerrit.server.ReviewerByEmailSet;
 import com.google.gerrit.server.ReviewerSet;
 import com.google.gerrit.server.ReviewerStatusUpdate;
+import com.google.gerrit.server.notedb.ChangeNoteUtil.ParsedPatchSetApproval;
 import com.google.gerrit.server.notedb.ChangeNotesCommit.ChangeNotesRevWalk;
 import com.google.gerrit.server.util.LabelVote;
 import java.io.IOException;
@@ -83,6 +87,7 @@ import java.nio.charset.Charset;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -95,6 +100,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.errors.InvalidObjectIdException;
 import org.eclipse.jgit.lib.ObjectId;
@@ -104,8 +110,36 @@ import org.eclipse.jgit.notes.NoteMap;
 import org.eclipse.jgit.revwalk.FooterKey;
 import org.eclipse.jgit.util.RawParseUtils;
 
+/**
+ * Parses {@link ChangeNotesState} out of the change meta ref.
+ *
+ * <p>NOTE: all changes to the change notes storage format must be both forward and backward
+ * compatible, i.e.:
+ *
+ * <ul>
+ *   <li>The server, running the new binary version must be able to parse the data, written by the
+ *       previous binary version.
+ *   <li>The server, running the old binary version must be able to parse the data, written by the
+ *       new binary version.
+ * </ul>
+ *
+ * <p>Thus, when introducing storage format update, the following procedure must be used:
+ *
+ * <ol>
+ *   <li>The read path ({@link ChangeNotesParser}) needs to be updated to handle both the old and
+ *       the new data format.
+ *   <li>In a separate change, the write path (e.g. {@link ChangeUpdate}, {@link ChangeNoteJson}) is
+ *       updated to write the new format, guarded by {@link
+ *       com.google.gerrit.server.experiments.ExperimentFeatures} flag, if possible.
+ *   <li>Once the 'read' change is roll out and is roll back safe, the 'write' change can be
+ *       submitted/the experiment flag can be flipped.
+ * </ol>
+ */
 class ChangeNotesParser {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
+
+  private static final Splitter RULE_SPLITTER = Splitter.on(": ");
+  private static final Splitter HASHTAG_SPLITTER = Splitter.on(",");
 
   // Private final members initialized in the constructor.
   private final ChangeNoteJson changeNoteJson;
@@ -116,8 +150,8 @@ class ChangeNotesParser {
 
   // Private final but mutable members initialized in the constructor and filled
   // in during the parsing process.
-  private final Table<Account.Id, ReviewerStateInternal, Timestamp> reviewers;
-  private final Table<Address, ReviewerStateInternal, Timestamp> reviewersByEmail;
+  private final Table<Account.Id, ReviewerStateInternal, Instant> reviewers;
+  private final Table<Address, ReviewerStateInternal, Instant> reviewersByEmail;
   private final List<Account.Id> allPastReviewers;
   private final List<ReviewerStatusUpdate> reviewerUpdates;
   /** Holds only the most recent update per user. Older updates are discarded. */
@@ -142,8 +176,8 @@ class ChangeNotesParser {
   private Change.Status status;
   private String topic;
   private Set<String> hashtags;
-  private Timestamp createdOn;
-  private Timestamp lastUpdatedOn;
+  private Instant createdOn;
+  private Instant lastUpdatedOn;
   private Account.Id ownerId;
   private String serverId;
   private String changeId;
@@ -164,7 +198,7 @@ class ChangeNotesParser {
   // We only set the value once, based on the latest update (the actual value or Optional.empty() if
   // the latest record unsets the field).
   private Optional<PatchSet.Id> cherryPickOf;
-  private Timestamp mergedOn;
+  private Instant mergedOn;
 
   ChangeNotesParser(
       Change.Id changeId,
@@ -312,8 +346,79 @@ class ChangeNotesParser {
       }
       result.put(a.key().patchSetId(), a.build());
     }
+    if (status != null && status.isClosed() && !isAnyApprovalCopied(result)) {
+      // If the change is closed, check if there are "submit records" with approvals that do not
+      // exist on the latest patch-set and copy them to the latest patch-set.
+      // We do not invoke this logic if any approval is copied. This is because prior to change
+      // https://gerrit-review.googlesource.com/c/gerrit/+/318135 we used to copy approvals
+      // dynamically (e.g. when requesting the change page). After that change, we started
+      // persisting copied votes in NoteDb, so we don't need to do this back-filling.
+      // Prior to that change (318135), we could've had changes with dynamically copied approvals
+      // that were merged in NoteDb but these approvals do not exist on the latest patch-set, so
+      // we need to back-fill these approvals.
+      PatchSet.Id latestPs = buildCurrentPatchSetId();
+      backFillMissingCopiedApprovalsFromSubmitRecords(result, latestPs).stream()
+          .forEach(a -> result.put(latestPs, a));
+    }
     result.keySet().forEach(k -> result.get(k).sort(ChangeNotes.PSA_BY_TIME));
     return result;
+  }
+
+  /**
+   * Returns patch-set approvals that do not exist on the latest patch-set but for which a submit
+   * record exists in NoteDb when the change was merged.
+   */
+  private List<PatchSetApproval> backFillMissingCopiedApprovalsFromSubmitRecords(
+      ListMultimap<PatchSet.Id, PatchSetApproval> allApprovals, @Nullable PatchSet.Id latestPs) {
+    List<PatchSetApproval> copiedApprovals = new ArrayList<>();
+    if (latestPs == null) {
+      return copiedApprovals;
+    }
+    List<PatchSetApproval> approvalsOnLatestPs = allApprovals.get(latestPs);
+    ListMultimap<Account.Id, PatchSetApproval> approvalsByUser = getApprovalsByUser(allApprovals);
+    List<SubmitRecord.Label> submitRecordLabels =
+        submitRecords.stream()
+            .filter(r -> r.labels != null)
+            .flatMap(r -> r.labels.stream())
+            .filter(label -> Status.OK.equals(label.status) || Status.MAY.equals(label.status))
+            .collect(Collectors.toList());
+    for (SubmitRecord.Label recordLabel : submitRecordLabels) {
+      String labelName = recordLabel.label;
+      Account.Id appliedBy = recordLabel.appliedBy;
+      if (appliedBy == null || labelName == null) {
+        continue;
+      }
+      boolean existsAtLatestPs =
+          approvalsOnLatestPs.stream()
+              .anyMatch(a -> a.accountId().equals(appliedBy) && a.label().equals(labelName));
+      if (existsAtLatestPs) {
+        continue;
+      }
+      // Search for an approval for this label on the max previous patch-set and copy the approval.
+      Collection<PatchSetApproval> userApprovals =
+          approvalsByUser.get(appliedBy).stream()
+              .filter(approval -> approval.label().equals(labelName))
+              .collect(Collectors.toList());
+      if (userApprovals.isEmpty()) {
+        continue;
+      }
+      PatchSetApproval lastApproved =
+          Collections.max(userApprovals, comparingInt(a -> a.patchSetId().get()));
+      copiedApprovals.add(lastApproved.copyWithPatchSet(latestPs));
+    }
+    return copiedApprovals;
+  }
+
+  private boolean isAnyApprovalCopied(ListMultimap<PatchSet.Id, PatchSetApproval> allApprovals) {
+    return allApprovals.values().stream().anyMatch(approval -> approval.copied());
+  }
+
+  private ListMultimap<Account.Id, PatchSetApproval> getApprovalsByUser(
+      ListMultimap<PatchSet.Id, PatchSetApproval> allApprovals) {
+    return allApprovals.values().stream()
+        .collect(
+            ImmutableListMultimap.toImmutableListMultimap(
+                PatchSetApproval::accountId, Function.identity()));
   }
 
   private List<ReviewerStatusUpdate> buildReviewerUpdates() {
@@ -333,7 +438,7 @@ class ChangeNotesParser {
   }
 
   private void parse(ChangeNotesCommit commit) throws ConfigInvalidException {
-    Timestamp commitTimestamp = getCommitTimestamp(commit);
+    Instant commitTimestamp = getCommitTimestamp(commit);
 
     createdOn = commitTimestamp;
     parseTag(commit);
@@ -387,7 +492,7 @@ class ChangeNotesParser {
 
     parseSubmission(commit, commitTimestamp);
 
-    if (lastUpdatedOn == null || commitTimestamp.after(lastUpdatedOn)) {
+    if (lastUpdatedOn == null || commitTimestamp.isAfter(lastUpdatedOn)) {
       lastUpdatedOn = commitTimestamp;
     }
 
@@ -449,7 +554,7 @@ class ChangeNotesParser {
     }
   }
 
-  private void parseSubmission(ChangeNotesCommit commit, Timestamp commitTimestamp)
+  private void parseSubmission(ChangeNotesCommit commit, Instant commitTimestamp)
       throws ConfigInvalidException {
     // Only parse the most recent sumbit commit (there should be exactly one).
     if (submissionId == null) {
@@ -532,7 +637,7 @@ class ChangeNotesParser {
     }
   }
 
-  private void parsePatchSet(PatchSet.Id psId, ObjectId rev, Account.Id accountId, Timestamp ts)
+  private void parsePatchSet(PatchSet.Id psId, ObjectId rev, Account.Id accountId, Instant ts)
       throws ConfigInvalidException {
     if (accountId == null) {
       throw parseException("patch set %s requires an identified user as uploader", psId.get());
@@ -605,7 +710,7 @@ class ChangeNotesParser {
     } else if (hashtagsLines.get(0).isEmpty()) {
       hashtags = ImmutableSet.of();
     } else {
-      hashtags = Sets.newHashSet(Splitter.on(',').split(hashtagsLines.get(0)));
+      hashtags = Sets.newHashSet(HASHTAG_SPLITTER.split(hashtagsLines.get(0)));
     }
   }
 
@@ -627,7 +732,7 @@ class ChangeNotesParser {
     }
   }
 
-  private void parseAssigneeUpdates(Timestamp ts, ChangeNotesCommit commit)
+  private void parseAssigneeUpdates(Instant ts, ChangeNotesCommit commit)
       throws ConfigInvalidException {
     String assigneeValue = parseOneFooter(commit, FOOTER_ASSIGNEE);
     if (assigneeValue != null) {
@@ -737,7 +842,7 @@ class ChangeNotesParser {
       Account.Id accountId,
       Account.Id realAccountId,
       ChangeNotesCommit commit,
-      Timestamp ts) {
+      Instant ts) {
     Optional<String> changeMsgString = getChangeMessageString(commit);
     if (!changeMsgString.isPresent()) {
       return false;
@@ -783,8 +888,28 @@ class ChangeNotesParser {
       for (HumanComment c : e.getValue().getEntities()) {
         humanComments.put(e.getKey(), c);
       }
-      for (SubmitRequirementResult sr : e.getValue().getSubmitRequirementsResult()) {
-        submitRequirementResults.add(sr);
+    }
+
+    // Lookup submit requirement results from the revision notes of the last PS that has stored
+    // submit requirements. This is important for cases where the change was abandoned/un-abandoned
+    // multiple times. With each abandon, we store submit requirement results in NoteDb, so we can
+    // end up having stored SRs in many revision notes. We should only return SRs from the last
+    // PS of them.
+    for (PatchSet.Builder ps :
+        patchSets.values().stream()
+            .sorted(comparingInt((PatchSet.Builder p) -> p.id().get()).reversed())
+            .collect(Collectors.toList())) {
+      Optional<ObjectId> maybePsCommitId = ps.commitId();
+      if (!maybePsCommitId.isPresent()) {
+        continue;
+      }
+      ObjectId psCommitId = maybePsCommitId.get();
+      if (rns.containsKey(psCommitId)
+          && rns.get(psCommitId).getSubmitRequirementsResult() != null) {
+        rns.get(psCommitId)
+            .getSubmitRequirementsResult()
+            .forEach(sr -> submitRequirementResults.add(sr));
+        break;
       }
     }
 
@@ -801,69 +926,46 @@ class ChangeNotesParser {
     }
   }
 
-  // Footer example: Copied-Label: <LABEL>=VOTE <Gerrit Account>,<Gerrit Real Account> :"<TAG>"
-  // ":<"TAG>"" is optional. <Gerrit Real Account> is also optional, if it was not set.
-  // The label, vote, and the Gerrit account are mandatory (unlike FOOTER_LABEL where Gerrit
-  // Account is also optional since by default it's the committer).
-  private void parseCopiedApproval(PatchSet.Id psId, Timestamp ts, String line)
+  /** Parses copied {@link PatchSetApproval}. */
+  private void parseCopiedApproval(PatchSet.Id psId, Instant ts, String line)
       throws ConfigInvalidException {
-    // Copied approvals can't be explicitly removed. They are removed the same way as non-copied
-    // approvals.
-    checkFooter(!line.startsWith("-"), FOOTER_COPIED_LABEL, line);
+    ParsedPatchSetApproval parsedPatchSetApproval = ChangeNoteUtil.parseCopiedApproval(line);
+    checkFooter(
+        parsedPatchSetApproval.accountIdent().isPresent(),
+        FOOTER_COPIED_LABEL,
+        parsedPatchSetApproval.footerLine());
+    PersonIdent accountIdent =
+        RawParseUtils.parsePersonIdent(parsedPatchSetApproval.accountIdent().get());
 
-    Account.Id accountId, realAccountId = null;
-    String labelVoteStr;
-    String tag = null;
-    int tagStart = line.indexOf(":\"");
-    // UUID introduced in https://gerrit-review.googlesource.com/c/gerrit/+/324937
-    // Only parsed for backward compatibility
-    // Footer has the following format in this case:
-    // Copied-Label: <LABEL>=VOTE <Gerrit Account>,<Gerrit Real Account> :"<TAG>"
-    int uuidStart = line.indexOf(", ");
-    // Wired tag that contains uuid delimiter. The uuid is actually not present.
-    if (tagStart != -1 && uuidStart > tagStart) {
-      uuidStart = -1;
-    }
-    int identitiesStart = line.indexOf(' ', uuidStart != -1 ? uuidStart + 2 : 0);
-    // The first account is the accountId, and second (if applicable) is the realAccountId.
-    try {
-      labelVoteStr = line.substring(0, uuidStart != -1 ? uuidStart : identitiesStart);
-    } catch (StringIndexOutOfBoundsException ex) {
-      throw new ConfigInvalidException(ex.getMessage(), ex);
-    }
-    String[] identities =
-        line.substring(identitiesStart + 1, tagStart == -1 ? line.length() : tagStart).split(",");
-    PersonIdent ident = RawParseUtils.parsePersonIdent(identities[0]);
-    checkFooter(ident != null, FOOTER_COPIED_LABEL, line);
-    accountId = parseIdent(ident);
+    checkFooter(accountIdent != null, FOOTER_COPIED_LABEL, parsedPatchSetApproval.footerLine());
+    Account.Id accountId = parseIdent(accountIdent);
 
-    if (identities.length > 1) {
-      PersonIdent realIdent = RawParseUtils.parsePersonIdent(identities[1]);
-      checkFooter(realIdent != null, FOOTER_COPIED_LABEL, line);
+    Account.Id realAccountId = null;
+    if (parsedPatchSetApproval.realAccountIdent().isPresent()) {
+      PersonIdent realIdent =
+          RawParseUtils.parsePersonIdent(parsedPatchSetApproval.realAccountIdent().get());
+      checkFooter(realIdent != null, FOOTER_COPIED_LABEL, parsedPatchSetApproval.footerLine());
       realAccountId = parseIdent(realIdent);
     }
 
     LabelVote l;
     try {
-      l = LabelVote.parseWithEquals(labelVoteStr);
+      l = LabelVote.parseWithEquals(parsedPatchSetApproval.labelVote());
     } catch (IllegalArgumentException e) {
-      ConfigInvalidException pe = parseException("invalid %s: %s", FOOTER_COPIED_LABEL, line);
+      ConfigInvalidException pe =
+          parseException(
+              "invalid %s: %s", FOOTER_COPIED_LABEL, parsedPatchSetApproval.footerLine());
       pe.initCause(e);
       throw pe;
-    }
-
-    if (tagStart != -1) {
-      // tagStart+2 skips ":\"" to parse the actual tag. Tags are in brackets.
-      // line.length()-1 skips the last ".
-      tag = line.substring(tagStart + 2, line.length() - 1);
     }
 
     PatchSetApproval.Builder psa =
         PatchSetApproval.builder()
             .key(PatchSetApproval.key(psId, accountId, LabelId.create(l.label())))
+            .uuid(parsedPatchSetApproval.uuid().map(PatchSetApproval::uuid))
             .value(l.value())
             .granted(ts)
-            .tag(Optional.ofNullable(tag))
+            .tag(parsedPatchSetApproval.tag())
             .copied(true);
     if (realAccountId != null) {
       psa.realAccountId(realAccountId);
@@ -873,69 +975,46 @@ class ChangeNotesParser {
   }
 
   private void parseApproval(
-      PatchSet.Id psId, Account.Id accountId, Account.Id realAccountId, Timestamp ts, String line)
+      PatchSet.Id psId, Account.Id accountId, Account.Id realAccountId, Instant ts, String line)
       throws ConfigInvalidException {
     if (accountId == null) {
       throw parseException("patch set %s requires an identified user as uploader", psId.get());
     }
     PatchSetApproval.Builder psa;
+    ParsedPatchSetApproval parsedPatchSetApproval = ChangeNoteUtil.parseApproval(line);
     if (line.startsWith("-")) {
-      psa = parseRemoveApproval(psId, accountId, realAccountId, ts, line);
+      psa = parseRemoveApproval(psId, accountId, realAccountId, ts, parsedPatchSetApproval);
     } else {
-      psa = parseAddApproval(psId, accountId, realAccountId, ts, line);
+      psa = parseAddApproval(psId, accountId, realAccountId, ts, parsedPatchSetApproval);
     }
     bufferedApprovals.add(psa);
   }
 
+  /** Parses {@link PatchSetApproval} out of the {@link ChangeNoteUtil#FOOTER_LABEL} value. */
   private PatchSetApproval.Builder parseAddApproval(
-      PatchSet.Id psId, Account.Id committerId, Account.Id realAccountId, Timestamp ts, String line)
+      PatchSet.Id psId,
+      Account.Id committerId,
+      Account.Id realAccountId,
+      Instant ts,
+      ParsedPatchSetApproval parsedPatchSetApproval)
       throws ConfigInvalidException {
-    // There are potentially 3 accounts involved here:
-    //  1. The account from the commit, which is the effective IdentifiedUser
-    //     that produced the update.
-    //  2. The account in the label footer itself, which is used during submit
-    //     to copy other users' labels to a new patch set.
-    //  3. The account in the Real-user footer, indicating that the whole
-    //     update operation was executed by this user on behalf of the effective
-    //     user.
-    Account.Id effectiveAccountId;
-    String labelVoteStr;
-    // UUID introduced in https://gerrit-review.googlesource.com/c/gerrit/+/324937
-    // Only parsed for backward compatibility
-    // Footer has the following format in this case: Label: <LABEL>=VOTE, <UUID> <Gerrit Account>
-    int uuidStart = line.indexOf(", ");
-    int reviewerStart = line.indexOf(' ', uuidStart != -1 ? uuidStart + 2 : 0);
-    if (uuidStart != -1) {
-      labelVoteStr = line.substring(0, uuidStart);
-    } else if (reviewerStart != -1) {
-      labelVoteStr = line.substring(0, reviewerStart);
-    } else {
-      labelVoteStr = line;
-    }
-    if (reviewerStart > 0) {
-      // Account in the label line (2) becomes the effective ID of the
-      // approval. If there is a real user (3) different from the commit user
-      // (2), we actually don't store that anywhere in this case; it's more
-      // important to record that the real user (3) actually initiated submit.
-      PersonIdent ident = RawParseUtils.parsePersonIdent(line.substring(reviewerStart + 1));
-      checkFooter(ident != null, FOOTER_LABEL, line);
-      effectiveAccountId = parseIdent(ident);
-    } else {
-      effectiveAccountId = committerId;
-    }
+
+    Account.Id approverId = parseApprover(committerId, parsedPatchSetApproval);
 
     LabelVote l;
     try {
-      l = LabelVote.parseWithEquals(labelVoteStr);
+      l = LabelVote.parseWithEquals(parsedPatchSetApproval.labelVote());
     } catch (IllegalArgumentException e) {
-      ConfigInvalidException pe = parseException("invalid %s: %s", FOOTER_LABEL, line);
+      ConfigInvalidException pe =
+          parseException("invalid %s: %s", FOOTER_LABEL, parsedPatchSetApproval.footerLine());
       pe.initCause(e);
       throw pe;
     }
 
     PatchSetApproval.Builder psa =
         PatchSetApproval.builder()
-            .key(PatchSetApproval.key(psId, effectiveAccountId, LabelId.create(l.label())))
+            .key(PatchSetApproval.key(psId, approverId, LabelId.create(l.label())))
+            .uuid(parsedPatchSetApproval.uuid().map(PatchSetApproval::uuid))
             .value(l.value())
             .granted(ts)
             .tag(Optional.ofNullable(tag));
@@ -947,26 +1026,24 @@ class ChangeNotesParser {
   }
 
   private PatchSetApproval.Builder parseRemoveApproval(
-      PatchSet.Id psId, Account.Id committerId, Account.Id realAccountId, Timestamp ts, String line)
+      PatchSet.Id psId,
+      Account.Id committerId,
+      Account.Id realAccountId,
+      Instant ts,
+      ParsedPatchSetApproval parsedPatchSetApproval)
       throws ConfigInvalidException {
-    // See comments in parseAddApproval about the various users involved.
-    Account.Id effectiveAccountId;
-    String label;
-    int s = line.indexOf(' ');
-    if (s > 0) {
-      label = line.substring(1, s);
-      PersonIdent ident = RawParseUtils.parsePersonIdent(line.substring(s + 1));
-      checkFooter(ident != null, FOOTER_LABEL, line);
-      effectiveAccountId = parseIdent(ident);
-    } else {
-      label = line.substring(1);
-      effectiveAccountId = committerId;
-    }
+
+    checkFooter(
+        parsedPatchSetApproval.footerLine().startsWith("-"),
+        FOOTER_LABEL,
+        parsedPatchSetApproval.footerLine());
+    Account.Id approverId = parseApprover(committerId, parsedPatchSetApproval);
 
     try {
-      LabelType.checkNameInternal(label);
+      LabelType.checkNameInternal(parsedPatchSetApproval.labelVote());
     } catch (IllegalArgumentException e) {
-      ConfigInvalidException pe = parseException("invalid %s: %s", FOOTER_LABEL, line);
+      ConfigInvalidException pe =
+          parseException("invalid %s: %s", FOOTER_LABEL, parsedPatchSetApproval.footerLine());
       pe.initCause(e);
       throw pe;
     }
@@ -975,7 +1052,9 @@ class ChangeNotesParser {
     // needs an actual approval in order to block copying an earlier approval over a later delete.
     PatchSetApproval.Builder remove =
         PatchSetApproval.builder()
-            .key(PatchSetApproval.key(psId, effectiveAccountId, LabelId.create(label)))
+            .key(
+                PatchSetApproval.key(
+                    psId, approverId, LabelId.create(parsedPatchSetApproval.labelVote())))
             .value(0)
             .granted(ts);
     if (!Objects.equals(realAccountId, committerId)) {
@@ -983,6 +1062,30 @@ class ChangeNotesParser {
     }
     approvals.putIfAbsent(remove.key(), remove);
     return remove;
+  }
+
+  /**
+   * Identifies the {@link com.google.gerrit.entities.Account.Id} that issued the vote.
+   *
+   * <p>There are potentially 3 accounts involved here: 1. The account from the commit, which is the
+   * effective IdentifiedUser that produced the update. 2. The account in the label footer itself,
+   * which is used during submit to copy other users' labels to a new patch set. 3. The account in
+   * the Real-user footer, indicating that the whole update operation was executed by this user on
+   * behalf of the effective user.
+   */
+  private Account.Id parseApprover(
+      Account.Id committerId, ParsedPatchSetApproval parsedPatchSetApproval)
+      throws ConfigInvalidException {
+    Account.Id effectiveAccountId;
+    if (parsedPatchSetApproval.accountIdent().isPresent()) {
+      PersonIdent ident =
+          RawParseUtils.parsePersonIdent(parsedPatchSetApproval.accountIdent().get());
+      checkFooter(ident != null, FOOTER_LABEL, parsedPatchSetApproval.footerLine());
+      effectiveAccountId = parseIdent(ident);
+    } else {
+      effectiveAccountId = committerId;
+    }
+    return effectiveAccountId;
   }
 
   private void parseSubmitRecords(List<String> lines) throws ConfigInvalidException {
@@ -1003,7 +1106,7 @@ class ChangeNotesParser {
       } else {
         checkFooter(rec != null, FOOTER_SUBMITTED_WITH, line);
         if (line.startsWith("Rule-Name: ")) {
-          String ruleName = line.split(": ")[1];
+          String ruleName = RULE_SPLITTER.splitToList(line).get(1);
           rec.ruleName = ruleName;
           continue;
         }
@@ -1040,7 +1143,7 @@ class ChangeNotesParser {
     return parseIdent(a);
   }
 
-  private void parseReviewer(Timestamp ts, ReviewerStateInternal state, String line)
+  private void parseReviewer(Instant ts, ReviewerStateInternal state, String line)
       throws ConfigInvalidException {
     PersonIdent ident = RawParseUtils.parsePersonIdent(line);
     if (ident == null) {
@@ -1053,7 +1156,7 @@ class ChangeNotesParser {
     }
   }
 
-  private void parseReviewerByEmail(Timestamp ts, ReviewerStateInternal state, String line)
+  private void parseReviewerByEmail(Instant ts, ReviewerStateInternal state, String line)
       throws ConfigInvalidException {
     Address adr;
     try {
@@ -1167,15 +1270,15 @@ class ChangeNotesParser {
    * @param commit the commit to return commit time.
    * @return the timestamp when the commit was applied.
    */
-  private Timestamp getCommitTimestamp(ChangeNotesCommit commit) {
-    return new Timestamp(commit.getCommitterIdent().getWhen().getTime());
+  private Instant getCommitTimestamp(ChangeNotesCommit commit) {
+    return commit.getCommitterIdent().getWhenAsInstant();
   }
 
   private void pruneReviewers() {
-    Iterator<Table.Cell<Account.Id, ReviewerStateInternal, Timestamp>> rit =
+    Iterator<Table.Cell<Account.Id, ReviewerStateInternal, Instant>> rit =
         reviewers.cellSet().iterator();
     while (rit.hasNext()) {
-      Table.Cell<Account.Id, ReviewerStateInternal, Timestamp> e = rit.next();
+      Table.Cell<Account.Id, ReviewerStateInternal, Instant> e = rit.next();
       if (e.getColumnKey() == ReviewerStateInternal.REMOVED) {
         rit.remove();
       }
@@ -1183,10 +1286,10 @@ class ChangeNotesParser {
   }
 
   private void pruneReviewersByEmail() {
-    Iterator<Table.Cell<Address, ReviewerStateInternal, Timestamp>> rit =
+    Iterator<Table.Cell<Address, ReviewerStateInternal, Instant>> rit =
         reviewersByEmail.cellSet().iterator();
     while (rit.hasNext()) {
-      Table.Cell<Address, ReviewerStateInternal, Timestamp> e = rit.next();
+      Table.Cell<Address, ReviewerStateInternal, Instant> e = rit.next();
       if (e.getColumnKey() == ReviewerStateInternal.REMOVED) {
         rit.remove();
       }

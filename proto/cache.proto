@@ -448,7 +448,7 @@ message LabelValueProto {
 }
 
 // Serialized form of com.google.gerrit.common.data.LabelType.
-// Next ID: 21
+// Next ID: 22
 message LabelTypeProto {
   string name = 1;
   string function = 2; // ENUM as String
@@ -470,6 +470,7 @@ message LabelTypeProto {
   repeated string ref_patterns = 18;
   bool copy_all_scores_if_list_of_files_did_not_change = 19;
   string copy_condition = 20;
+  string description = 21;
 }
 
 // Serialized form of com.google.gerrit.entities.SubmitRequirement.
@@ -484,7 +485,7 @@ message SubmitRequirementProto {
 }
 
 // Serialized form of com.google.gerrit.entities.SubmitRequirementResult.
-// Next ID: 7
+// Next ID: 8
 message SubmitRequirementResultProto {
   SubmitRequirementProto submit_requirement = 1;
   SubmitRequirementExpressionResultProto applicability_expression_result = 2;
@@ -496,6 +497,10 @@ message SubmitRequirementResultProto {
 
   // Whether this result was created from a legacy submit record.
   bool legacy = 6;
+
+  // Whether the submit requirement was bypassed during submission (i.e. by
+  // performing a push with the %submit option).
+  bool forced = 7;
 }
 
 // Serialized form of com.google.gerrit.entities.SubmitRequirementExpressionResult.
@@ -717,19 +722,4 @@ message FileDiffOutputProto {
   bytes new_commit = 10;
   ComparisonType comparison_type = 11;
   bool negative = 12;
-}
-
-// Serialized form of com.google.gerrit.server.approval.ApprovalCacheImpl.Key.
-// Next ID: 5
-message PatchSetApprovalsKeyProto {
-  string project = 1;
-  int32 change_id = 2;
-  int32 patch_set_id = 3;
-  bytes id = 4;
-}
-
-// Repeated version of PatchSetApprovalProto
-// Next ID: 2
-message AllPatchSetApprovalsProto {
-  repeated devtools.gerritcodereview.PatchSetApproval approval = 1;
 }
