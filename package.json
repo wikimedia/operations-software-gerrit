@@ -4,7 +4,7 @@
     "test": "nyc qunit && eslint . && tsc"
   },
   "devDependencies": {
-    "@gerritcodereview/typescript-api": "3.4.5",
+    "@gerritcodereview/typescript-api": "3.6.0",
     "@types/webcomponents.js": "^0.6.38",
     "eslint-config-wikimedia": "^0.23.0",
     "nyc": "^15.1.0",

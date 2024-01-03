@@ -12,7 +12,7 @@ Get the Gerrit upstream war by:
 - mvn package
 - git add pom.xml gerrit.war
 - git commit -m 'Gerrit vX.Y.Z'
-- git push origin HEAD:refs/for/deploy/wmf/stable-3.5
+- git push origin HEAD:refs/for/deploy/wmf/stable-3.6
 
 Testing javascript plugins locally
 ==================================
