@@ -332,10 +332,14 @@ class ZuulStatusChecksProvider {
       // placeholder until a job has started.
       const runningJob = statusJobs.find(job => job.pipeline !== null);
       let checkName;
+      /** @type {RunStatus} */
+      let runStatus;
       if (runningJob === undefined) {
         checkName = 'Waiting for jobs';
+        runStatus = /** @type {RunStatus} */ ('SCHEDULED');
       } else {
         checkName = runningJob.pipeline;
+        runStatus = /** @type {RunStatus} */ ('RUNNING');
         this.curChecks.add(checkName);
       }
 
@@ -367,8 +371,8 @@ class ZuulStatusChecksProvider {
       const checkRun = {
         attempt: 1, // FIXME conflicts with previous runs found by wm-checks-api
         checkName: checkName,
-        // RUNNABLE / RUNNING / COMPLETED  check active?
-        status: /** @type {RunStatus} */ ('RUNNING'),
+        // RUNNABLE / RUNNING / SCHEDULED / COMPLETED  check active?
+        status: runStatus,
         statusLink: `https://integration.wikimedia.org/zuul/#q=${status.id}`,
         // labelName: 'Verified',
         scheduledTimestamp: new Date(status.enqueue_time),

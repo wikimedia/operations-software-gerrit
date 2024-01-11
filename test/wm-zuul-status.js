@@ -165,11 +165,14 @@ QUnit.module( '[wm-zuul-status]', () => {
 
       assert.propContains(checkRun[0], {
         checkName: 'Waiting for jobs',
+        status: 'SCHEDULED',
       });
 
       assert.propContains(checkRun[1], {
         checkName: 'test',
+        status: 'RUNNING',
       });
+
       assert.deepEqual(checkRun[1].results.length, 1);
     } );
 
