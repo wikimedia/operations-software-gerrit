@@ -1,26 +1,11 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-// This should be the first import to install handler before any other code
-import './source-map-support-install';
 // TODO(dmfilippov): remove bundled-polymer.js imports when the following issue
 // https://github.com/Polymer/polymer-resin/issues/9 is resolved.
 import '../scripts/bundled-polymer';
-import '@polymer/iron-test-helpers/iron-test-helpers';
-import './test-router';
 import {AppContext, injectAppContext} from '../services/app-context';
 import {Finalizable} from '../services/registry';
 import {
@@ -33,16 +18,13 @@ import {_testOnlyResetGrRestApiSharedObjects} from '../services/gr-rest-api/gr-r
 import {
   cleanupTestUtils,
   getCleanupsCount,
-  registerTestCleanup,
   addIronOverlayBackdropStyleEl,
   removeIronOverlayBackdropStyleEl,
   removeThemeStyles,
 } from './test-utils';
 import {safeTypesBridge} from '../utils/safe-types-util';
 import {initGlobalVariables} from '../elements/gr-app-global-var-init';
-import 'chai/chai';
-import {chaiDomDiff} from '@open-wc/semantic-dom-diff';
-import {fixtureCleanup} from '@open-wc/testing-helpers';
+import {assert, fixtureCleanup} from '@open-wc/testing';
 import {
   _testOnly_defaultResinReportHandler,
   installPolymerResin,
@@ -55,24 +37,15 @@ import {
   DependencyToken,
   Provider,
 } from '../models/dependency';
+import * as sinon from 'sinon';
+import '../styles/themes/app-theme.ts';
 
 declare global {
   interface Window {
-    assert: typeof chai.assert;
-    expect: typeof chai.expect;
-    fixture: typeof fixtureImpl;
-    stub: typeof stubImpl;
     sinon: typeof sinon;
-    chai: typeof chai;
   }
-  let assert: typeof chai.assert;
-  let expect: typeof chai.expect;
-  let stub: typeof stubImpl;
   let sinon: typeof sinon;
 }
-window.assert = chai.assert;
-window.expect = chai.expect;
-window.chai.use(chaiDomDiff);
 
 window.sinon = sinon;
 
@@ -80,30 +53,11 @@ installPolymerResin(safeTypesBridge, (isViolation, fmt, ...args) => {
   const log = _testOnly_defaultResinReportHandler;
   log(isViolation, fmt, ...args);
   if (isViolation) {
-    // This will cause the test to fail if there is a data binding
-    // violation.
+    // This will cause the test to fail if there is a data binding violation.
     throw new Error('polymer-resin violation: ' + fmt + JSON.stringify(args));
   }
 });
 
-interface TestFixtureElement extends HTMLElement {
-  restore(): void;
-  create(model?: unknown): HTMLElement | HTMLElement[];
-}
-
-function getFixtureElementById(fixtureId: string) {
-  return document.getElementById(fixtureId) as TestFixtureElement;
-}
-
-// For karma always set our implementation
-// (karma doesn't provide the fixture method)
-function fixtureImpl(fixtureId: string, model: unknown) {
-  // This method is inspired by web-component-tester method
-  registerTestCleanup(() => getFixtureElementById(fixtureId).restore());
-  return getFixtureElementById(fixtureId).create(model);
-}
-
-window.fixture = fixtureImpl;
 let testSetupTimestampMs = 0;
 let appContext: AppContext & Finalizable;
 
@@ -155,12 +109,10 @@ setup(() => {
     injectDependency(token, provider);
   }
   document.addEventListener('request-dependency', resolveDependency);
-  // The following calls is nessecary to avoid influence of previously executed
+  // The following calls is necessary to avoid influence of previously executed
   // tests.
   initGlobalVariables(appContext);
 
-  const shortcuts = appContext.shortcutsService;
-  assert.isTrue(shortcuts._testOnly_isEmpty());
   const selection = document.getSelection();
   if (selection) {
     selection.removeAllRanges();
@@ -177,28 +129,10 @@ setup(() => {
   _testOnlyResetGrRestApiSharedObjects();
 });
 
-// For karma always set our implementation
-// (karma doesn't provide the stub method)
-function stubImpl<
-  T extends keyof HTMLElementTagNameMap,
-  K extends keyof HTMLElementTagNameMap[T]
->(tagName: T, method: K) {
-  // This method is inspired by web-component-tester method
-  const proto = document.createElement(tagName).constructor
-    .prototype as HTMLElementTagNameMap[T];
-  const stub = sinon.stub(proto, method);
-  registerTestCleanup(() => {
-    stub.restore();
-  });
-  return stub;
-}
-
-window.stub = stubImpl;
-
 // Very simple function to catch unexpected elements in documents body.
 // It can't catch everything, but in most cases it is enough.
 function checkChildAllowed(element: Element) {
-  const allowedTags = ['SCRIPT', 'IRON-A11Y-ANNOUNCER'];
+  const allowedTags = ['SCRIPT', 'IRON-A11Y-ANNOUNCER', 'LINK'];
   if (allowedTags.includes(element.tagName)) {
     return;
   }

@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '@polymer/paper-button/paper-button';
 import '@polymer/paper-card/paper-card';
@@ -24,15 +13,16 @@ import '@polymer/paper-item/paper-item';
 import '@polymer/paper-listbox/paper-listbox';
 import './gr-overview-image';
 import './gr-zoomed-image';
+import '../../../elements/shared/gr-icons/gr-icons';
 
 import {GrLibLoader} from '../../../elements/shared/gr-lib-loader/gr-lib-loader';
 import {RESEMBLEJS_LIBRARY_CONFIG} from '../../../elements/shared/gr-lib-loader/resemblejs_config';
 
 import {css, html, LitElement, PropertyValues} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
-import {ifDefined} from 'lit/directives/if-defined';
-import {classMap} from 'lit/directives/class-map';
-import {StyleInfo, styleMap} from 'lit/directives/style-map';
+import {customElement, property, query, state} from 'lit/decorators.js';
+import {ifDefined} from 'lit/directives/if-defined.js';
+import {classMap} from 'lit/directives/class-map.js';
+import {StyleInfo, styleMap} from 'lit/directives/style-map.js';
 
 import {
   createEvent,
@@ -586,18 +576,20 @@ export class GrImageViewer extends LitElement {
     /* eslint-disable lit/prefer-static-styles */
     const customStyle = html`
       <style>
+        /* prettier formatter removes semi-colons after css mixins. */
+        /* prettier-ignore */
         paper-item {
           --paper-item-min-height: 48;
           --paper-item: {
             min-height: 48px;
             padding: 0 var(--spacing-xl);
-          }
+          };
           --paper-item-focused-before: {
             background-color: var(--selection-background-color);
-          }
+          };
           --paper-item-focused: {
             background-color: var(--selection-background-color);
-          }
+          };
         }
       </style>
     `;

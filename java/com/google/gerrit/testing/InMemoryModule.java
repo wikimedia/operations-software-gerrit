@@ -19,6 +19,7 @@ import static com.google.common.util.concurrent.MoreExecutors.newDirectExecutorS
 import static com.google.inject.Scopes.SINGLETON;
 
 import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.gerrit.acceptance.testsuite.group.GroupOperations;
 import com.google.gerrit.acceptance.testsuite.group.GroupOperationsImpl;
@@ -63,6 +64,8 @@ import com.google.gerrit.server.config.DefaultUrlFormatter.DefaultUrlFormatterMo
 import com.google.gerrit.server.config.FileBasedAllProjectsConfigProvider;
 import com.google.gerrit.server.config.FileBasedGlobalPluginConfigProvider;
 import com.google.gerrit.server.config.GerritGlobalModule;
+import com.google.gerrit.server.config.GerritImportedServerIds;
+import com.google.gerrit.server.config.GerritImportedServerIdsProvider;
 import com.google.gerrit.server.config.GerritInstanceIdModule;
 import com.google.gerrit.server.config.GerritInstanceNameModule;
 import com.google.gerrit.server.config.GerritOptions;
@@ -310,6 +313,17 @@ public class InMemoryModule extends FactoryModule {
 
       return "gerrit";
     }
+  }
+
+  @Provides
+  @Singleton
+  @GerritImportedServerIds
+  public ImmutableList<String> createImportedServerIds() {
+    ImmutableList<String> serverIds =
+        ImmutableList.copyOf(
+            cfg.getStringList(
+                GerritServerIdProvider.SECTION, null, GerritImportedServerIdsProvider.KEY));
+    return serverIds;
   }
 
   @Provides

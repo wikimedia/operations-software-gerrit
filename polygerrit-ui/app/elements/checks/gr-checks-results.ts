@@ -1,28 +1,24 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the 'License');
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an 'AS IS' BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import {classMap} from 'lit/directives/class-map';
-import {repeat} from 'lit/directives/repeat';
-import {ifDefined} from 'lit/directives/if-defined';
-import {LitElement, css, html, PropertyValues, TemplateResult} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
+import '../shared/gr-icon/gr-icon';
+import {classMap} from 'lit/directives/class-map.js';
+import {repeat} from 'lit/directives/repeat.js';
+import {ifDefined} from 'lit/directives/if-defined.js';
+import {
+  LitElement,
+  css,
+  html,
+  PropertyValues,
+  TemplateResult,
+  nothing,
+} from 'lit';
+import {customElement, property, query, state} from 'lit/decorators.js';
 import './gr-checks-action';
 import './gr-hovercard-run';
 import '@polymer/paper-tooltip/paper-tooltip';
-import '@polymer/iron-icon/iron-icon';
 import {
   Action,
   Category,
@@ -34,7 +30,15 @@ import {
 import {sharedStyles} from '../../styles/shared-styles';
 import {CheckRun, RunResult} from '../../models/checks/checks-model';
 import {
+  ALL_ATTEMPTS,
+  AttemptChoice,
+  attemptChoiceLabel,
+  isAttemptChoice,
+  LATEST_ATTEMPT,
+  sortAttemptChoices,
+  stringToAttemptChoice,
   allResults,
+  createFixAction,
   firstPrimaryLink,
   hasCompletedWithoutResults,
   iconFor,
@@ -44,35 +48,36 @@ import {
   secondaryLinks,
   tooltipForLink,
 } from '../../models/checks/checks-util';
-import {assertIsDefined, check} from '../../utils/common-util';
+import {assertIsDefined, assert, unique} from '../../utils/common-util';
 import {modifierPressed, toggleClass, whenVisible} from '../../utils/dom-util';
 import {durationString} from '../../utils/date-util';
 import {charsOnly} from '../../utils/string-util';
 import {isAttemptSelected, matches} from './gr-checks-util';
-import {ChecksTabState} from '../../types/events';
-import {
-  ConfigInfo,
-  LabelNameToInfoMap,
-  PatchSetNumber,
-} from '../../types/common';
+import {ChecksTabState, ValueChangedEvent} from '../../types/events';
+import {LabelNameToInfoMap, PatchSetNumber} from '../../types/common';
 import {spinnerStyles} from '../../styles/gr-spinner-styles';
 import {
   getLabelStatus,
   getRepresentativeValue,
   valueString,
 } from '../../utils/label-util';
-import {GerritNav} from '../core/gr-navigation/gr-navigation';
 import {DropdownLink} from '../shared/gr-dropdown/gr-dropdown';
 import {subscribe} from '../lit/subscription-controller';
 import {fontStyles} from '../../styles/gr-font-styles';
 import {fire} from '../../utils/event-util';
 import {resolve} from '../../models/dependency';
-import {configModelToken} from '../../models/config/config-model';
 import {checksModelToken} from '../../models/checks/checks-model';
 import {Interaction} from '../../constants/reporting';
 import {Deduping} from '../../api/reporting';
 import {changeModelToken} from '../../models/change/change-model';
 import {getAppContext} from '../../services/app-context';
+import {when} from 'lit/directives/when.js';
+import {KnownExperimentId} from '../../services/flags/flags';
+import {HtmlPatched} from '../../utils/lit-util';
+import {DropdownItem} from '../shared/gr-dropdown-list/gr-dropdown-list';
+import './gr-checks-attempt';
+import {createDiffUrl} from '../../models/views/diff';
+import {changeViewModelToken} from '../../models/views/change';
 
 /**
  * Firing this event sets the regular expression of the results filter.
@@ -89,7 +94,7 @@ declare global {
 }
 
 @customElement('gr-result-row')
-class GrResultRow extends LitElement {
+export class GrResultRow extends LitElement {
   @query('td.nameCol div.name')
   nameEl?: HTMLElement;
 
@@ -108,15 +113,37 @@ class GrResultRow extends LitElement {
   @state()
   labels?: LabelNameToInfoMap;
 
+  @state()
+  latestPatchNum?: PatchSetNumber;
+
+  @state()
+  selectedAttempt: AttemptChoice = LATEST_ATTEMPT;
+
   private getChangeModel = resolve(this, changeModelToken);
 
   private getChecksModel = resolve(this, checksModelToken);
 
   private readonly reporting = getAppContext().reportingService;
 
-  override connectedCallback() {
-    super.connectedCallback();
-    subscribe(this, this.getChangeModel().labels$, x => (this.labels = x));
+  private readonly flags = getAppContext().flagsService;
+
+  constructor() {
+    super();
+    subscribe(
+      this,
+      () => this.getChangeModel().labels$,
+      x => (this.labels = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().latestPatchNum$,
+      x => (this.latestPatchNum = x)
+    );
+    subscribe(
+      this,
+      () => this.getChecksModel().checksSelectedAttemptNumber$,
+      x => (this.selectedAttempt = x)
+    );
   }
 
   static override get styles() {
@@ -138,7 +165,7 @@ class GrResultRow extends LitElement {
         a.link {
           margin-right: var(--spacing-s);
         }
-        iron-icon.link {
+        gr-icon.link {
           color: var(--link-color);
         }
         td.nameCol div.flex {
@@ -257,7 +284,7 @@ class GrResultRow extends LitElement {
           margin: -4px 0;
           vertical-align: top;
         }
-        #moreActions iron-icon {
+        #moreActions gr-icon {
           color: var(--link-color);
         }
         #moreMessage {
@@ -346,6 +373,7 @@ class GrResultRow extends LitElement {
             >
               ${this.result.checkName}
             </div>
+            ${this.renderAttempt()}
             <div class="space"></div>
           </div>
         </td>
@@ -375,11 +403,9 @@ class GrResultRow extends LitElement {
               : 'Expand result row'}
             @keydown=${this.toggleExpandedPress}
           >
-            <iron-icon
-              icon=${this.isExpanded
-                ? 'gr-icons:expand-less'
-                : 'gr-icons:expand-more'}
-            ></iron-icon>
+            <gr-icon
+              icon=${this.isExpanded ? 'expand_less' : 'expand_more'}
+            ></gr-icon>
           </div>
         </td>
       </tr>
@@ -387,6 +413,11 @@ class GrResultRow extends LitElement {
         <td class="expandedCol" colspan="3">${this.renderExpanded()}</td>
       </tr>
     `;
+  }
+
+  private renderAttempt() {
+    if (this.selectedAttempt !== ALL_ATTEMPTS) return nothing;
+    return html`<gr-checks-attempt .run=${this.result}></gr-checks-attempt>`;
   }
 
   private renderExpanded() {
@@ -416,8 +447,7 @@ class GrResultRow extends LitElement {
   private toggleExpandedPress(e: KeyboardEvent) {
     if (!this.isExpandable) return;
     if (modifierPressed(e)) return;
-    // Only react to `return` and `space`.
-    if (e.keyCode !== 13 && e.keyCode !== 32) return;
+    if (e.key !== 'Enter' && e.key !== ' ') return;
     e.preventDefault();
     e.stopPropagation();
     this.toggleExpanded();
@@ -437,7 +467,9 @@ class GrResultRow extends LitElement {
     return html`
       <!-- The &nbsp; is for being able to shrink a tiny amount without
        the text itself getting shrunk with an ellipsis. -->
-      <div class="summary" @click=${this.toggleExpanded}>${text}&nbsp;</div>
+      <div class="summary" @click=${this.toggleExpanded} title=${text}>
+        ${text}&nbsp;
+      </div>
     `;
   }
 
@@ -447,6 +479,12 @@ class GrResultRow extends LitElement {
     const label = this.result?.labelName;
     if (!label) return;
     if (!this.result?.isLatestAttempt) return;
+    // For check results on older patchsets it is impossible to decide whether
+    // the current label score is still influenced by them. But typically it
+    // is really confusing for the user, if we claim that an old (error) result
+    // influences the current (positive) score. So we prefer to be conservative
+    // and only display the label chip for checks results on the latest ps.
+    if (this.result.patchset !== this.latestPatchNum) return;
     const info = this.labels?.[label];
     const status = getLabelStatus(info).toLowerCase();
     const value = getRepresentativeValue(info);
@@ -484,18 +522,24 @@ class GrResultRow extends LitElement {
     if (this.isExpanded) return;
     if (!link) return;
     const tooltipText = link.tooltip ?? tooltipForLink(link.icon);
+    const icon = iconForLink(link.icon);
     return html`<a href=${link.url} class="link" target="_blank"
-      ><iron-icon
+      ><gr-icon
+        icon=${icon.name}
+        ?filled=${icon.filled}
         aria-label="external link to details"
         class="link"
-        icon="gr-icons:${iconForLink(link.icon)}"
-      ></iron-icon
+      ></gr-icon
       ><paper-tooltip offset="5">${tooltipText}</paper-tooltip></a
     >`;
   }
 
   private renderActions() {
-    const actions = this.result?.actions ?? [];
+    const actions = [...(this.result?.actions ?? [])];
+    if (this.flags.isEnabled(KnownExperimentId.CHECKS_FIXES)) {
+      const fixAction = createFixAction(this, this.result);
+      if (fixAction) actions.unshift(fixAction);
+    }
     if (actions.length === 0) return;
     const overflowItems = actions.slice(2).map(action => {
       return {...action, id: action.name};
@@ -511,14 +555,13 @@ class GrResultRow extends LitElement {
         vertical-offset="32"
         horizontal-align="right"
         @tap-item=${this.handleAction}
-        @opened-changed=${(e: CustomEvent) =>
+        @opened-changed=${(e: ValueChangedEvent<boolean>) =>
           toggleClass(this, 'dropdown-open', e.detail.value)}
         ?hidden=${overflowItems.length === 0}
         .items=${overflowItems}
         .disabledIds=${disabledItems}
       >
-        <iron-icon icon="gr-icons:more-vert" aria-labelledby="moreMessage">
-        </iron-icon>
+        <gr-icon icon="more_vert" aria-labelledby="moreMessage"></gr-icon>
         <span id="moreMessage">More</span>
       </gr-dropdown>
     </div>`;
@@ -580,12 +623,7 @@ class GrResultExpanded extends LitElement {
   @property({type: Boolean})
   hideCodePointers = false;
 
-  @state()
-  repoConfig?: ConfigInfo;
-
   private getChangeModel = resolve(this, changeModelToken);
-
-  private getConfigModel = resolve(this, configModelToken);
 
   static override get styles() {
     return [
@@ -598,7 +636,7 @@ class GrResultExpanded extends LitElement {
           display: inline-block;
           margin-right: var(--spacing-xl);
         }
-        .links a iron-icon {
+        .links a gr-icon {
           margin-right: var(--spacing-xs);
         }
         .message {
@@ -606,15 +644,6 @@ class GrResultExpanded extends LitElement {
         }
       `,
     ];
-  }
-
-  override connectedCallback() {
-    super.connectedCallback();
-    subscribe(
-      this,
-      this.getConfigModel().repoConfig$,
-      x => (this.repoConfig = x)
-    );
   }
 
   override render() {
@@ -632,10 +661,9 @@ class GrResultExpanded extends LitElement {
           .value=${this.result}
         ></gr-endpoint-param>
         <gr-formatted-text
-          noTrailingMargin
           class="message"
-          .content=${this.result.message}
-          .config=${this.repoConfig?.commentlinks}
+          .markdown=${true}
+          .content=${this.result.message ?? ''}
         ></gr-formatted-text>
       </gr-endpoint-decorator>
     `;
@@ -681,7 +709,13 @@ class GrResultExpanded extends LitElement {
       return {
         icon: LinkIcon.CODE,
         tooltip: `${path}${rangeText}`,
-        url: GerritNav.getUrlForDiff(change, path, patchset, undefined, line),
+        url: createDiffUrl({
+          changeNum: change._number,
+          project: change.project,
+          path,
+          patchNum: patchset,
+          lineNum: line,
+        }),
         primary: true,
       };
     });
@@ -694,12 +728,10 @@ class GrResultExpanded extends LitElement {
     if (!link) return;
     const text = link.tooltip ?? tooltipForLink(link.icon);
     const target = targetBlank ? '_blank' : undefined;
+    const icon = iconForLink(link.icon);
     return html`<a href=${link.url} target=${ifDefined(target)}>
-      <iron-icon
-        class="link"
-        icon="gr-icons:${iconForLink(link.icon)}"
-      ></iron-icon
-      ><span>${text}</span>
+      <gr-icon icon=${icon.name} class="link" ?filled=${icon.filled}></gr-icon>
+      <span>${text}</span>
     </a>`;
   }
 }
@@ -725,7 +757,7 @@ export class GrChecksResults extends LitElement {
   filterInput?: HTMLInputElement;
 
   @state()
-  filterRegExp = new RegExp('');
+  filterRegExp = '';
 
   /** All runs. Shown should only the selected/filtered ones. */
   @property({attribute: false})
@@ -735,8 +767,8 @@ export class GrChecksResults extends LitElement {
    * Check names of runs that are selected in the runs panel. When this array
    * is empty, then no run is selected and all runs should be shown.
    */
-  @property({attribute: false})
-  selectedRuns: string[] = [];
+  @state()
+  selectedRuns: Set<string> = new Set();
 
   @state()
   actions: Action[] = [];
@@ -756,12 +788,8 @@ export class GrChecksResults extends LitElement {
   @state()
   latestPatchsetNumber: PatchSetNumber | undefined = undefined;
 
-  /** Maps checkName to selected attempt number. `undefined` means `latest`. */
-  @property({attribute: false})
-  selectedAttempts: Map<string, number | undefined> = new Map<
-    string,
-    number | undefined
-  >();
+  @state()
+  selectedAttempt: AttemptChoice = LATEST_ATTEMPT;
 
   /** Maintains the state of which result sections should show all results. */
   @state()
@@ -781,38 +809,62 @@ export class GrChecksResults extends LitElement {
    */
   private isSectionExpandedByUser = new Map<Category, boolean>();
 
+  private readonly getViewModel = resolve(this, changeViewModelToken);
+
   private readonly getChangeModel = resolve(this, changeModelToken);
 
   private readonly getChecksModel = resolve(this, checksModelToken);
 
   private readonly reporting = getAppContext().reportingService;
 
-  override connectedCallback() {
-    super.connectedCallback();
+  private readonly patched = new HtmlPatched(key => {
+    this.reporting.reportInteraction(Interaction.AUTOCLOSE_HTML_PATCHED, {
+      component: this.tagName,
+      key: key.substring(0, 300),
+    });
+  });
+
+  constructor() {
+    super();
     subscribe(
       this,
-      this.getChecksModel().topLevelActionsSelected$,
+      () => this.getChecksModel().topLevelActionsSelected$,
       x => (this.actions = x)
     );
     subscribe(
       this,
-      this.getChecksModel().topLevelLinksSelected$,
+      () => this.getChecksModel().topLevelLinksSelected$,
       x => (this.links = x)
     );
     subscribe(
       this,
-      this.getChecksModel().checksSelectedPatchsetNumber$,
+      () => this.getChecksModel().checksSelectedPatchsetNumber$,
       x => (this.checksPatchsetNumber = x)
     );
     subscribe(
       this,
-      this.getChangeModel().latestPatchNum$,
+      () => this.getChecksModel().checksSelectedAttemptNumber$,
+      x => (this.selectedAttempt = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().latestPatchNum$,
       x => (this.latestPatchsetNumber = x)
     );
     subscribe(
       this,
-      this.getChecksModel().someProvidersAreLoadingSelected$,
+      () => this.getChecksModel().someProvidersAreLoadingSelected$,
       x => (this.someProvidersAreLoading = x)
+    );
+    subscribe(
+      this,
+      () => this.getViewModel().checksRunsSelected$,
+      x => (this.selectedRuns = x)
+    );
+    subscribe(
+      this,
+      () => this.getViewModel().checksResultsFilter$,
+      x => (this.filterRegExp = x)
     );
   }
 
@@ -838,7 +890,6 @@ export class GrChecksResults extends LitElement {
         }
         .headerTopRow,
         .headerBottomRow {
-          max-width: 1600px;
           display: flex;
           justify-content: space-between;
           align-items: flex-end;
@@ -878,11 +929,13 @@ export class GrChecksResults extends LitElement {
         .notLatest .headerTopRow .right .goToLatest {
           display: block;
         }
+        .headerTopRow .right > * {
+          margin-left: var(--spacing-m);
+        }
         .headerTopRow .right .goToLatest gr-button {
-          margin-right: var(--spacing-m);
           --gr-button-padding: var(--spacing-s) var(--spacing-m);
         }
-        .headerBottomRow iron-icon {
+        .headerBottomRow gr-icon {
           color: var(--link-color);
         }
         .headerBottomRow .space {
@@ -893,7 +946,7 @@ export class GrChecksResults extends LitElement {
         .headerBottomRow a {
           margin-right: var(--spacing-l);
         }
-        #moreActions iron-icon {
+        #moreActions gr-icon {
           color: var(--link-color);
         }
         #moreMessage {
@@ -948,7 +1001,7 @@ export class GrChecksResults extends LitElement {
         .categoryHeader .statusIcon.success {
           color: var(--success-foreground);
         }
-        .categoryHeader.empty iron-icon.statusIcon {
+        .categoryHeader.empty gr-icon.statusIcon {
           color: var(--deemphasized-text-color);
         }
         .categoryHeader .filtered {
@@ -964,7 +1017,6 @@ export class GrChecksResults extends LitElement {
         }
         .noResultsMessage {
           width: 100%;
-          max-width: 1600px;
           margin-top: var(--spacing-m);
           background-color: var(--background-color-primary);
           box-shadow: var(--elevation-level-1);
@@ -973,7 +1025,6 @@ export class GrChecksResults extends LitElement {
         }
         table.resultsTable {
           width: 100%;
-          max-width: 1600px;
           table-layout: fixed;
           margin-top: var(--spacing-m);
           background-color: var(--background-color-primary);
@@ -1013,6 +1064,9 @@ export class GrChecksResults extends LitElement {
 
   protected override updated(changedProperties: PropertyValues) {
     super.updated(changedProperties);
+    if (changedProperties.has('filterRegExp') && this.filterInput) {
+      this.filterInput.value = this.filterRegExp;
+    }
     if (changedProperties.has('tabState') && this.tabState) {
       const {statusOrCategory, checkName} = this.tabState;
       if (isCategory(statusOrCategory)) {
@@ -1052,6 +1106,7 @@ export class GrChecksResults extends LitElement {
       header: true,
       notLatest: !!this.checksPatchsetNumber,
     };
+    const attemptItems = this.createAttemptDropdownItems();
     return html`
       <div class=${classMap(headerClasses)}>
         <div class="headerTopRow">
@@ -1068,6 +1123,14 @@ export class GrChecksResults extends LitElement {
                 >Go to latest patchset</gr-button
               >
             </div>
+            ${when(
+              attemptItems.length > 0,
+              () => html` <gr-dropdown-list
+                value=${this.selectedAttempt ?? 0}
+                .items=${attemptItems}
+                @value-change=${this.onAttemptSelected}
+              ></gr-dropdown-list>`
+            )}
             <gr-dropdown-list
               value=${this.checksPatchsetNumber ??
               this.latestPatchsetNumber ??
@@ -1138,13 +1201,15 @@ export class GrChecksResults extends LitElement {
   private renderLink(link?: Link) {
     if (!link) return;
     const tooltipText = link.tooltip ?? tooltipForLink(link.icon);
+    const icon = iconForLink(link.icon);
     return html`<a href=${link.url} target="_blank"
-      ><iron-icon
+      ><gr-icon
+        icon=${icon.name}
         aria-label=${tooltipText}
         class="link"
-        icon="gr-icons:${iconForLink(link.icon)}"
-      ></iron-icon
-      ><paper-tooltip offset="5">${tooltipText}</paper-tooltip></a
+        ?filled=${icon.filled}
+      ></gr-icon>
+      <paper-tooltip offset="5">${tooltipText}</paper-tooltip></a
     >`;
   }
 
@@ -1160,8 +1225,7 @@ export class GrChecksResults extends LitElement {
         .items=${items}
         .disabledIds=${disabledIds}
       >
-        <iron-icon icon="gr-icons:more-vert" aria-labelledby="moreMessage">
-        </iron-icon>
+        <gr-icon icon="more_vert" aria-labelledby="moreMessage"></gr-icon>
         <span id="moreMessage">More</span>
       </gr-dropdown>
     `;
@@ -1176,11 +1240,10 @@ export class GrChecksResults extends LitElement {
   }
 
   private handleFilter(e: ChecksResultsFilterEvent) {
-    if (!this.filterInput) return;
-    const oldValue = this.filterInput.value ?? '';
     const newValue = e.detail.filterRegExp ?? '';
-    this.filterInput.value = oldValue === newValue ? '' : newValue;
-    this.onFilterInputChange();
+    this.getViewModel().updateState({
+      checksResultsFilter: this.filterRegExp === newValue ? '' : newValue,
+    });
   }
 
   private renderAction(action?: Action) {
@@ -1191,14 +1254,40 @@ export class GrChecksResults extends LitElement {
     ></gr-checks-action>`;
   }
 
+  private onAttemptSelected(e: CustomEvent<{value: string | undefined}>) {
+    const attempt = stringToAttemptChoice(e.detail.value);
+    assertIsDefined(attempt, `unexpected attempt choice ${e.detail.value}`);
+    this.getChecksModel().updateStateSetAttempt(attempt);
+  }
+
   private onPatchsetSelected(e: CustomEvent<{value: string}>) {
-    const patchset = Number(e.detail.value);
-    check(!isNaN(patchset), 'selected patchset must be a number');
-    this.getChecksModel().setPatchset(patchset as PatchSetNumber);
+    let patchset: number | undefined = Number(e.detail.value);
+    assert(Number.isInteger(patchset), `patchset must be integer: ${patchset}`);
+    if (patchset === this.latestPatchsetNumber) patchset = undefined;
+    this.getChecksModel().updateStateSetPatchset(
+      patchset as PatchSetNumber | undefined
+    );
   }
 
   private goToLatestPatchset() {
-    this.getChecksModel().setPatchset(undefined);
+    this.getChecksModel().updateStateSetPatchset(undefined);
+  }
+
+  private createAttemptDropdownItems() {
+    if (this.runs.every(run => run.isSingleAttempt)) return [];
+    const attempts: AttemptChoice[] = this.runs
+      .map(run => run.attempt ?? 0)
+      .filter(isAttemptChoice)
+      .filter(unique);
+    attempts.push(LATEST_ATTEMPT);
+    attempts.push(ALL_ATTEMPTS);
+    const items: DropdownItem[] = attempts.sort(sortAttemptChoices).map(a => {
+      return {
+        value: a,
+        text: attemptChoiceLabel(a),
+      };
+    });
+    return items;
   }
 
   private createPatchsetDropdownItems() {
@@ -1215,21 +1304,19 @@ export class GrChecksResults extends LitElement {
   }
 
   isRunSelected(run: {checkName: string}) {
-    return (
-      this.selectedRuns.length === 0 ||
-      this.selectedRuns.includes(run.checkName)
-    );
+    return this.selectedRuns.size === 0 || this.selectedRuns.has(run.checkName);
   }
 
   renderFilter() {
     const runs = this.runs.filter(
       run =>
-        this.isRunSelected(run) && isAttemptSelected(this.selectedAttempts, run)
+        this.isRunSelected(run) && isAttemptSelected(this.selectedAttempt, run)
     );
-    if (this.selectedRuns.length === 0 && allResults(runs).length <= 3) {
-      if (this.filterRegExp.source.length > 0) {
-        this.filterRegExp = new RegExp('');
-      }
+    if (
+      this.selectedRuns.size === 0 &&
+      allResults(runs).length <= 3 &&
+      this.filterRegExp === ''
+    ) {
       return;
     }
     return html`
@@ -1251,7 +1338,9 @@ export class GrChecksResults extends LitElement {
       {},
       {deduping: Deduping.EVENT_ONCE_PER_CHANGE}
     );
-    this.filterRegExp = new RegExp(this.filterInput.value, 'i');
+    this.getViewModel().updateState({
+      checksResultsFilter: this.filterInput.value,
+    });
   }
 
   renderSection(category: Category) {
@@ -1259,7 +1348,7 @@ export class GrChecksResults extends LitElement {
     const isWarningOrError =
       category === Category.WARNING || category === Category.ERROR;
     const allRuns = this.runs.filter(run =>
-      isAttemptSelected(this.selectedAttempts, run)
+      isAttemptSelected(this.selectedAttempt, run)
     );
     const all = allRuns.reduce(
       (results: RunResult[], run) => [
@@ -1268,19 +1357,32 @@ export class GrChecksResults extends LitElement {
       ],
       []
     );
-    const isSelection = this.selectedRuns.length > 0;
+    const isSelectionActive = this.selectedRuns.size > 0;
     const selected = all.filter(result => this.isRunSelected(result));
-    const filtered = selected.filter(result =>
-      matches(result, this.filterRegExp)
-    );
+    const re = new RegExp(this.filterRegExp, 'i');
+    const filtered = selected.filter(result => matches(result, re));
+    const isFilterActiveWithResults =
+      this.filterRegExp !== '' && filtered.length > 0;
+
+    // The logic for deciding whether to expand a section by default is a bit
+    // complicated, but we want to collapse empty and info/success sections by
+    // default for a clean and focused user experience. However, as soon as the
+    // user starts selecting or filtering we must take this into account and
+    // prefer to expand the sections.
     let expanded = this.isSectionExpanded.get(category);
     const expandedByUser = this.isSectionExpandedByUser.get(category) ?? false;
     if (!expandedByUser || expanded === undefined) {
-      expanded = selected.length > 0 && (isWarningOrError || isSelection);
+      // Note that we are using `selected` for `isEmpty` and not `filtered`,
+      // because if the filter is what makes a section empty, then we want to
+      // show an expanded section, which contains a message about this.
+      const isEmpty = selected.length === 0;
+      expanded =
+        !isEmpty &&
+        (isWarningOrError || isSelectionActive || isFilterActiveWithResults);
       this.isSectionExpanded.set(category, expanded);
     }
     const expandedClass = expanded ? 'expanded' : 'collapsed';
-    const icon = expanded ? 'gr-icons:expand-less' : 'gr-icons:expand-more';
+
     const isShowAll = this.isShowAll.get(category) ?? false;
     const resultCount = filtered.length;
     const empty = resultCount === 0 ? 'empty' : '';
@@ -1291,18 +1393,23 @@ export class GrChecksResults extends LitElement {
       resultLimit,
       resultCount
     );
+    const icon = iconFor(category);
     return html`
       <div class=${expandedClass}>
         <h3
           class="categoryHeader ${catString} ${empty} heading-3"
           @click=${() => this.toggleExpanded(category)}
         >
-          <iron-icon class="expandIcon" icon=${icon}></iron-icon>
+          <gr-icon
+            class="expandIcon"
+            icon=${expanded ? 'expand_less' : 'expand_more'}
+          ></gr-icon>
           <div class="statusIconWrapper">
-            <iron-icon
-              icon="gr-icons:${iconFor(category)}"
+            <gr-icon
+              icon=${icon.name}
+              ?filled=${icon.filled}
               class="statusIcon ${catString}"
-            ></iron-icon>
+            ></gr-icon>
             <span class="title">${catString}</span>
             <span class="count">${this.renderCount(all, filtered)}</span>
             <paper-tooltip offset="5"
@@ -1310,12 +1417,14 @@ export class GrChecksResults extends LitElement {
             >
           </div>
         </h3>
-        ${this.renderResults(
-          all,
-          selected,
-          filtered,
-          resultLimit,
-          showAllButton
+        ${when(expanded, () =>
+          this.renderResults(
+            all,
+            selected,
+            filtered,
+            resultLimit,
+            showAllButton
+          )
         )}
       </div>
     `;
@@ -1392,7 +1501,7 @@ export class GrChecksResults extends LitElement {
           ${repeat(
             filtered,
             result => result.internalResultId,
-            (result?: RunResult) => html`
+            (result?: RunResult) => this.patched.html`
               <gr-result-row
                 class=${charsOnly(result!.checkName)}
                 .result=${result}

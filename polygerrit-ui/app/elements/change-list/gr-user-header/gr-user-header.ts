@@ -1,25 +1,12 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../plugins/gr-endpoint-param/gr-endpoint-param';
 import '../../shared/gr-avatar/gr-avatar';
 import '../../shared/gr-date-formatter/gr-date-formatter';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {AccountDetailInfo, AccountId} from '../../../types/common';
 import {getDisplayName} from '../../../utils/display-name-util';
 import {getAppContext} from '../../../services/app-context';
@@ -27,7 +14,8 @@ import {dashboardHeaderStyles} from '../../../styles/dashboard-header-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {fontStyles} from '../../../styles/gr-font-styles';
 import {LitElement, css, html, PropertyValues} from 'lit';
-import {customElement, property} from 'lit/decorators';
+import {customElement, property} from 'lit/decorators.js';
+import {createDashboardUrl} from '../../../models/views/dashboard';
 
 @customElement('gr-user-header')
 export class GrUserHeader extends LitElement {
@@ -152,18 +140,15 @@ export class GrUserHeader extends LitElement {
   }
 
   _computeDashboardUrl(accountDetails: AccountDetailInfo | undefined) {
-    if (!accountDetails) {
-      return undefined;
-    }
+    if (!accountDetails) return '';
+
     const id = accountDetails._account_id;
-    if (id) {
-      return GerritNav.getUrlForUserDashboard(String(id));
-    }
+    if (id) return createDashboardUrl({user: String(id)});
+
     const email = accountDetails.email;
-    if (email) {
-      return GerritNav.getUrlForUserDashboard(email);
-    }
-    return undefined;
+    if (email) return createDashboardUrl({user: email});
+
+    return '';
   }
 
   _computeDashboardLinkClass(showDashboardLink: boolean, loggedIn: boolean) {

@@ -128,20 +128,6 @@ public interface ChangeApi {
   }
 
   /**
-   * Ignore or un-ignore this change.
-   *
-   * @param ignore ignore the change if true
-   */
-  void ignore(boolean ignore) throws RestApiException;
-
-  /**
-   * Check if this change is ignored.
-   *
-   * @return true if the change is ignored
-   */
-  boolean ignored() throws RestApiException;
-
-  /**
    * Create a new change that reverts this change.
    *
    * @see Changes#id(int)
@@ -426,6 +412,39 @@ public interface ChangeApi {
   ChangeInfo check() throws RestApiException;
 
   ChangeInfo check(FixInput fix) throws RestApiException;
+
+  abstract class CheckSubmitRequirementRequest {
+    /** Submit requirement name. */
+    private String name;
+
+    /**
+     * A change ID for a change in {@link com.google.gerrit.entities.RefNames#REFS_CONFIG} branch
+     * from which the submit-requirement will be loaded.
+     */
+    private String refsConfigChangeId;
+
+    public abstract SubmitRequirementResultInfo get() throws RestApiException;
+
+    public CheckSubmitRequirementRequest srName(String srName) {
+      this.name = srName;
+      return this;
+    }
+
+    public CheckSubmitRequirementRequest refsConfigChangeId(String changeId) {
+      this.refsConfigChangeId = changeId;
+      return this;
+    }
+
+    protected String srName() {
+      return name;
+    }
+
+    protected String getRefsConfigChangeId() {
+      return refsConfigChangeId;
+    }
+  }
+
+  CheckSubmitRequirementRequest checkSubmitRequirementRequest() throws RestApiException;
 
   /** Returns the result of evaluating the {@link SubmitRequirementInput} input on the change. */
   SubmitRequirementResultInfo checkSubmitRequirement(SubmitRequirementInput input)
@@ -767,6 +786,11 @@ public interface ChangeApi {
     }
 
     @Override
+    public CheckSubmitRequirementRequest checkSubmitRequirementRequest() throws RestApiException {
+      throw new NotImplementedException();
+    }
+
+    @Override
     public SubmitRequirementResultInfo checkSubmitRequirement(SubmitRequirementInput input)
         throws RestApiException {
       throw new NotImplementedException();
@@ -796,16 +820,6 @@ public interface ChangeApi {
 
     @Override
     public ChangeInfo createMergePatchSet(MergePatchSetInput in) throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
-    public void ignore(boolean ignore) throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
-    public boolean ignored() throws RestApiException {
       throw new NotImplementedException();
     }
 

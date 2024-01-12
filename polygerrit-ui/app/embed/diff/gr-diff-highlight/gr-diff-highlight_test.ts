@@ -3,10 +3,10 @@
  * Copyright 2016 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-diff-highlight';
 import {_getTextOffset} from './gr-range-normalizer';
-import {fixture, fixtureCleanup, html} from '@open-wc/testing-helpers';
+import {fixture, fixtureCleanup, html, assert} from '@open-wc/testing';
 import {
   GrDiffHighlight,
   DiffBuilderInterface,
@@ -16,7 +16,11 @@ import {Side} from '../../../api/diff';
 import {SinonStubbedMember} from 'sinon';
 import {queryAndAssert} from '../../../utils/common-util';
 import {GrDiffThreadElement} from '../gr-diff/gr-diff-utils';
-import {waitQueryAndAssert, waitUntil} from '../../../test/test-utils';
+import {
+  stubElement,
+  waitQueryAndAssert,
+  waitUntil,
+} from '../../../test/test-utils';
 import {GrSelectionActionBox} from '../gr-selection-action-box/gr-selection-action-box';
 
 // Splitting long lines in html into shorter rows breaks tests:
@@ -222,8 +226,8 @@ suite('gr-diff-highlight', () => {
       element = new GrDiffHighlight();
       element.init(diff, builder);
       contentStubs = [];
-      stub('gr-selection-action-box', 'placeAbove');
-      stub('gr-selection-action-box', 'placeBelow');
+      stubElement('gr-selection-action-box', 'placeAbove');
+      stubElement('gr-selection-action-box', 'placeBelow');
     });
 
     teardown(() => {

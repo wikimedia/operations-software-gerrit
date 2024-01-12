@@ -1,20 +1,8 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import '../../shared/gr-list-view/gr-list-view';
 import {PluginInfo} from '../../../types/common';
 import {firePageError, fireTitleChange} from '../../../utils/event-util';
@@ -22,11 +10,11 @@ import {getAppContext} from '../../../services/app-context';
 import {ErrorCallback} from '../../../api/rest';
 import {encodeURL, getBaseUrl} from '../../../utils/url-util';
 import {SHOWN_ITEMS_COUNT} from '../../../constants/constants';
-import {AppElementAdminParams} from '../../gr-app-types';
 import {tableStyles} from '../../../styles/gr-table-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, css, html} from 'lit';
-import {customElement, property, state} from 'lit/decorators';
+import {customElement, property, state} from 'lit/decorators.js';
+import {AdminViewState} from '../../../models/views/admin';
 
 // Exported for tests
 export interface PluginInfoWithName extends PluginInfo {
@@ -41,7 +29,7 @@ export class GrPluginList extends LitElement {
    * URL params passed from the router.
    */
   @property({type: Object})
-  params?: AppElementAdminParams;
+  params?: AdminViewState;
 
   /**
    * Offset of currently visible query results.

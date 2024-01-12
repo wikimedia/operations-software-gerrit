@@ -1,26 +1,8 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import {EventApi} from '@polymer/polymer/lib/legacy/polymer.dom';
-
-/**
- * Event emitted from polymer elements.
- */
-export interface PolymerEvent extends EventApi, Event {}
-
 interface ElementWithShadowRoot extends Element {
   shadowRoot: ShadowRoot;
 }
@@ -397,43 +379,30 @@ export interface ShortcutOptions {
   shouldSuppress?: boolean;
   /**
    * Do you want to take care of calling preventDefault() and
-   * stopPropagation() yourself?
+   * stopPropagation() yourself? Then set this option to `false`.
    */
-  doNotPrevent?: boolean;
-}
-
-export function addGlobalShortcut(
-  shortcut: Binding,
-  listener: (e: KeyboardEvent) => void,
-  options: ShortcutOptions = {
-    shouldSuppress: true,
-    doNotPrevent: false,
-  }
-) {
-  return addShortcut(document.body, shortcut, listener, options);
+  preventDefault?: boolean;
 }
 
 /**
- * Deprecated.
+ * @deprecated
  *
  * For LitElement use the shortcut-controller.
- * For PolymerElement use the keyboard-shortcut-mixin.
  */
 export function addShortcut(
   element: HTMLElement,
   shortcut: Binding,
   listener: (e: KeyboardEvent) => void,
-  options: ShortcutOptions = {
-    shouldSuppress: false,
-    doNotPrevent: false,
-  }
+  options?: ShortcutOptions
 ) {
+  const optShouldSuppress = options?.shouldSuppress ?? false;
+  const optPreventDefault = options?.preventDefault ?? true;
   const wrappedListener = (e: KeyboardEvent) => {
     if (e.repeat && !shortcut.allowRepeat) return;
-    if (options.shouldSuppress && shouldSuppress(e)) return;
+    if (optShouldSuppress && shouldSuppress(e)) return;
     if (!eventMatchesShortcut(e, shortcut)) return;
-    if (!options.doNotPrevent) e.preventDefault();
-    if (!options.doNotPrevent) e.stopPropagation();
+    if (optPreventDefault) e.preventDefault();
+    if (optPreventDefault) e.stopPropagation();
     listener(e);
   };
   element.addEventListener('keydown', wrappedListener);
@@ -473,9 +442,7 @@ export function shouldSuppress(e: KeyboardEvent): boolean {
     // mark-reviewed and then press ] to go to the next file'.
     (tagName === 'INPUT' && type !== 'checkbox') ||
     tagName === 'TEXTAREA' ||
-    // Suppress shortcuts if the key is 'enter'
-    // and target is an anchor or button or paper-tab.
-    (e.keyCode === 13 &&
+    (e.key === 'Enter' &&
       (tagName === 'A' ||
         tagName === 'BUTTON' ||
         tagName === 'GR-BUTTON' ||
@@ -491,8 +458,18 @@ export function shouldSuppress(e: KeyboardEvent): boolean {
   return false;
 }
 
+/** Returns a promise that waits for the element's height to become > 0. */
+export function untilRendered(el: HTMLElement) {
+  return new Promise(resolve => {
+    whenRendered(el, resolve);
+  });
+}
+
 /** Executes the given callback when the element's height is > 0. */
-export function whenRendered(el: HTMLElement, callback: () => void) {
+export function whenRendered(
+  el: HTMLElement,
+  callback: (value?: unknown) => void
+) {
   if (el.clientHeight > 0) {
     callback();
     return;

@@ -1,21 +1,10 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import {PatchSetNum} from './common';
-import {ChangeMessage, Comment} from '../utils/comment-util';
+import {FixSuggestionInfo, PatchSetNum} from './common';
+import {ChangeMessage} from '../utils/comment-util';
 import {FetchRequest} from './types';
 import {LineNumberEventDetail, MovedLinkClickedEventDetail} from '../api/diff';
 import {Category, RunStatus} from '../api/checks';
@@ -47,7 +36,7 @@ export enum EventType {
   SHORTCUT_TRIGGERERD = 'shortcut-triggered',
   SHOW_ALERT = 'show-alert',
   SHOW_ERROR = 'show-error',
-  SHOW_PRIMARY_TAB = 'show-primary-tab',
+  SHOW_TAB = 'show-tab',
   SHOW_SECONDARY_TAB = 'show-secondary-tab',
   TAP_ITEM = 'tap-item',
   TITLE_CHANGE = 'title-change',
@@ -77,14 +66,14 @@ declare global {
     'moved-link-clicked': MovedLinkClickedEvent;
     'open-fix-preview': OpenFixPreviewEvent;
     'close-fix-preview': CloseFixPreviewEvent;
-    'create-fix-comment': CreateFixCommentEvent;
+    'reply-to-comment': ReplyToCommentEvent;
     /* prettier-ignore */
     'reload': ReloadEvent;
     /* prettier-ignore */
     'reply': ReplyEvent;
     'show-alert': ShowAlertEvent;
     'show-error': ShowErrorEvent;
-    'show-primary-tab': SwitchTabEvent;
+    'show-tab': SwitchTabEvent;
     'show-secondary-tab': SwitchTabEvent;
     'tap-item': TapItemEvent;
     'title-change': TitleChangeEvent;
@@ -106,7 +95,7 @@ declare global {
 }
 
 export interface BindValueChangeEventDetail {
-  value: string;
+  value: string | undefined;
 }
 export type BindValueChangeEvent = CustomEvent<BindValueChangeEventDetail>;
 
@@ -167,8 +156,8 @@ export interface NetworkErrorEventDetail {
 export type NetworkErrorEvent = CustomEvent<NetworkErrorEventDetail>;
 
 export interface OpenFixPreviewEventDetail {
-  patchNum?: PatchSetNum;
-  comment?: Comment;
+  patchNum: PatchSetNum;
+  fixSuggestions: FixSuggestionInfo[];
 }
 export type OpenFixPreviewEvent = CustomEvent<OpenFixPreviewEventDetail>;
 
@@ -176,11 +165,12 @@ export interface CloseFixPreviewEventDetail {
   fixApplied: boolean;
 }
 export type CloseFixPreviewEvent = CustomEvent<CloseFixPreviewEventDetail>;
-export interface CreateFixCommentEventDetail {
-  patchNum?: PatchSetNum;
-  comment?: Comment;
+export interface ReplyToCommentEventDetail {
+  content: string;
+  userWantsToEdit: boolean;
+  unresolved: boolean;
 }
-export type CreateFixCommentEvent = CustomEvent<CreateFixCommentEventDetail>;
+export type ReplyToCommentEvent = CustomEvent<ReplyToCommentEventDetail>;
 
 export interface PageErrorEventDetail {
   response?: Response;
@@ -220,9 +210,7 @@ export type ShowErrorEvent = CustomEvent<ShowErrorEventDetail>;
 // Type for the custom event to switch tab.
 export interface SwitchTabEventDetail {
   // name of the tab to set as active, from custom event
-  tab?: string;
-  // index of tab to set as active, from paper-tabs event
-  value?: number;
+  tab: string;
   // scroll into the tab afterwards, from custom event
   scrollIntoView?: boolean;
   // define state of tab after opening
@@ -236,16 +224,11 @@ export enum CommentTabState {
   UNRESOLVED = 'unresolved',
   DRAFTS = 'drafts',
   SHOW_ALL = 'show all',
+  MENTIONS = 'mentions',
 }
 export interface ChecksTabState {
   statusOrCategory?: RunStatus | Category;
   checkName?: string;
-  /** regular expression for filtering runs */
-  filter?: string;
-  /** regular expression for selecting runs */
-  select?: string;
-  /** selected attempt for selected runs */
-  attempt?: number;
 }
 export type SwitchTabEvent = CustomEvent<SwitchTabEventDetail>;
 

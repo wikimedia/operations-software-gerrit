@@ -1,25 +1,18 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-settings-view';
 import {GrSettingsView} from './gr-settings-view';
-import {GerritView} from '../../../services/router/router-model';
-import {queryAll, queryAndAssert, stubRestApi} from '../../../test/test-utils';
+import {
+  queryAll,
+  queryAndAssert,
+  stubFlags,
+  stubRestApi,
+  waitEventLoop,
+} from '../../../test/test-utils';
 import {
   AuthInfo,
   AccountDetailInfo,
@@ -35,19 +28,17 @@ import {
   DiffViewMode,
   EmailFormat,
   EmailStrategy,
+  AppTheme,
   TimeFormat,
 } from '../../../constants/constants';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
 import {
   createAccountDetailWithId,
   createPreferences,
   createServerInfo,
 } from '../../../test/test-data-generators';
 import {GrSelect} from '../../shared/gr-select/gr-select';
-import {AppElementSettingsParam} from '../../gr-app-types';
-
-const basicFixture = fixtureFromElement('gr-settings-view');
-const blankFixture = fixtureFromElement('div');
+import {fixture, html, assert} from '@open-wc/testing';
+import {EventType} from '../../../types/events';
 
 suite('gr-settings-view tests', () => {
   let element: GrSettingsView;
@@ -101,6 +92,7 @@ suite('gr-settings-view tests', () => {
     preferences = {
       ...createPreferences(),
       changes_per_page: 25,
+      theme: AppTheme.LIGHT,
       date_format: DateFormat.UK,
       time_format: TimeFormat.HHMM_12,
       diff_view: DiffViewMode.UNIFIED,
@@ -121,8 +113,7 @@ suite('gr-settings-view tests', () => {
     stubRestApi('getPreferences').returns(Promise.resolve(preferences));
     stubRestApi('getAccountEmails').returns(Promise.resolve(undefined));
     stubRestApi('getConfig').returns(Promise.resolve(config));
-    element = basicFixture.instantiate();
-    await element.updateComplete;
+    element = await fixture(html`<gr-settings-view></gr-settings-view>`);
 
     // Allow the element to render.
     if (element._testOnly_loadingPromise)
@@ -137,7 +128,9 @@ suite('gr-settings-view tests', () => {
     element.docsBaseUrl = 'https://test.com';
     await element.updateComplete;
     // this cannot be formatted with /* HTML */, because it breaks test
-    expect(element).shadowDom.to.equal(/* HTML*/ `<div
+    assert.shadowDom.equal(
+      element,
+      /* HTML*/ `<div
         class="loading"
         hidden=""
       >
@@ -163,24 +156,6 @@ suite('gr-settings-view tests', () => {
         </gr-page-nav>
         <div class="gr-form-styles main">
           <h1 class="heading-1">User Settings</h1>
-          <h2 id="Theme">Theme</h2>
-          <section class="darkToggle">
-            <div class="toggle">
-              <paper-toggle-button
-                aria-disabled="false"
-                aria-labelledby="darkThemeToggleLabel"
-                aria-pressed="false"
-                role="button"
-                style="touch-action: none;"
-                tabindex="0"
-                toggles=""
-              >
-              </paper-toggle-button>
-              <div id="darkThemeToggleLabel">
-                Dark theme
-              </div>
-            </div>
-          </section>
           <h2 id="Profile">Profile</h2>
           <fieldset id="profile">
             <gr-account-info id="accountInfo"> </gr-account-info>
@@ -195,6 +170,20 @@ suite('gr-settings-view tests', () => {
           </fieldset>
           <h2 id="Preferences">Preferences</h2>
           <fieldset id="preferences">
+            <section>
+              <label class="title" for="themeSelect">
+                Theme
+              </label>
+              <span class="value">
+                <gr-select>
+                  <select id="themeSelect">
+                    <option value="AUTO">Auto (based on OS prefs)</option>
+                    <option value="LIGHT">Light</option>
+                    <option value="DARK">Dark</option>
+                  </select>
+                </gr-select>
+              </span>
+            </section>
             <section>
               <label class="title" for="changesPerPageSelect">
                 Changes per page
@@ -260,17 +249,6 @@ suite('gr-settings-view tests', () => {
                   <select id="emailFormatSelect">
                     <option value="HTML_PLAINTEXT">HTML and plaintext</option>
                     <option value="PLAINTEXT">Plaintext only</option>
-                  </select>
-                </gr-select>
-              </span>
-            </section>
-            <section>
-              <span class="title"> Default Base For Merges </span>
-              <span class="value">
-                <gr-select>
-                  <select id="defaultBaseForMergesSelect">
-                    <option value="AUTO_MERGE">Auto Merge</option>
-                    <option value="FIRST_PARENT">First Parent</option>
                   </select>
                 </gr-select>
               </span>
@@ -535,40 +513,39 @@ suite('gr-settings-view tests', () => {
           <gr-endpoint-decorator name="settings-screen">
           </gr-endpoint-decorator>
         </div>
-      </div>`);
-  });
-
-  test('theme changing', async () => {
-    const reloadStub = sinon.stub(element, 'reloadPage');
-
-    window.localStorage.removeItem('dark-theme');
-    assert.isFalse(window.localStorage.getItem('dark-theme') === 'true');
-    const themeToggle = queryAndAssert(
-      element,
-      '.darkToggle paper-toggle-button'
+      </div>`
     );
-    MockInteractions.tap(themeToggle);
-    assert.isTrue(window.localStorage.getItem('dark-theme') === 'true');
-    assert.isTrue(reloadStub.calledOnce);
-
-    element.isDark = true;
-    await flush();
-    MockInteractions.tap(themeToggle);
-    assert.isFalse(window.localStorage.getItem('dark-theme') === 'true');
-    assert.isTrue(reloadStub.calledTwice);
   });
 
-  test('calls the title-change event', () => {
+  test('allow browser notifications', async () => {
+    stubFlags('isEnabled').returns(true);
+    element = await fixture(html`<gr-settings-view></gr-settings-view>`);
+    element.account = createAccountDetailWithId();
+    await element.updateComplete;
+    assert.dom.equal(
+      queryAndAssert(element, '#allowBrowserNotificationsSection'),
+      /* HTML */ `<section id="allowBrowserNotificationsSection">
+        <label class="title" for="allowBrowserNotifications">
+          Allow browser notifications
+        </label>
+        <span class="value">
+          <input checked="" id="allowBrowserNotifications" type="checkbox" />
+        </span>
+      </section>`
+    );
+  });
+
+  test('calls the title-change event', async () => {
     const titleChangedStub = sinon.stub();
 
     // Create a new view.
     const newElement = document.createElement('gr-settings-view');
     newElement.addEventListener('title-change', titleChangedStub);
 
-    const blank = blankFixture.instantiate();
-    blank.appendChild(newElement);
+    const div = await fixture(html`<div></div>`);
+    div.appendChild(newElement);
 
-    flush();
+    await waitEventLoop();
 
     assert.isTrue(titleChangedStub.called);
     assert.equal(titleChangedStub.getCall(0).args[0].detail.title, 'Settings');
@@ -584,6 +561,10 @@ suite('gr-settings-view tests', () => {
         ).bindValue
       ),
       preferences.changes_per_page
+    );
+    assert.equal(
+      (valueOf('Theme', 'preferences').firstElementChild as GrSelect).bindValue,
+      preferences.theme
     );
     assert.equal(
       (
@@ -608,13 +589,6 @@ suite('gr-settings-view tests', () => {
       (valueOf('Email format', 'preferences')!.firstElementChild as GrSelect)
         .bindValue,
       preferences.email_format
-    );
-    assert.equal(
-      (
-        valueOf('Default Base For Merges', 'preferences')!
-          .firstElementChild as GrSelect
-      ).bindValue,
-      preferences.default_base_for_merges
     );
     assert.equal(
       (
@@ -670,16 +644,28 @@ suite('gr-settings-view tests', () => {
 
     assert.isFalse(element.prefsChanged);
 
-    const publishOnPush = valueOf('Publish comments on push', 'preferences')!
-      .firstElementChild!;
+    const themeSelect = valueOf('Theme', 'preferences')
+      .firstElementChild as GrSelect;
+    themeSelect.bindValue = 'DARK';
 
-    MockInteractions.tap(publishOnPush);
+    themeSelect.dispatchEvent(
+      new CustomEvent('change', {
+        composed: true,
+        bubbles: true,
+      })
+    );
+
+    const publishOnPush = valueOf('Publish comments on push', 'preferences')!
+      .firstElementChild! as HTMLSpanElement;
+
+    publishOnPush.click();
 
     assert.isTrue(element.prefsChanged);
 
     stubRestApi('savePreferences').callsFake(prefs => {
       assertMenusEqual(prefs.my, preferences.my);
       assert.equal(prefs.publish_comments_on_push, true);
+      assert.equal(prefs.theme, AppTheme.DARK);
       return Promise.resolve(createDefaultPreferences());
     });
 
@@ -692,8 +678,8 @@ suite('gr-settings-view tests', () => {
     const publishCommentsOnPush = valueOf(
       'Publish comments on push',
       'preferences'
-    )!.firstElementChild!;
-    MockInteractions.tap(publishCommentsOnPush);
+    )!.firstElementChild! as HTMLSpanElement;
+    publishCommentsOnPush.click();
 
     assert.isTrue(element.prefsChanged);
 
@@ -711,8 +697,8 @@ suite('gr-settings-view tests', () => {
     const newChangesWorkInProgress = valueOf(
       'Set new changes to "work in progress" by default',
       'preferences'
-    )!.firstElementChild!;
-    MockInteractions.tap(newChangesWorkInProgress);
+    )!.firstElementChild! as HTMLSpanElement;
+    newChangesWorkInProgress.click();
 
     assert.isTrue(element.prefsChanged);
 
@@ -792,9 +778,6 @@ suite('gr-settings-view tests', () => {
 
   test('emails are loaded without emailToken', () => {
     const emailEditorLoadDataStub = sinon.stub(element.emailEditor, 'loadData');
-    element.params = {
-      view: GerritView.SETTINGS,
-    } as AppElementSettingsParam;
     element.firstUpdated();
     assert.isTrue(emailEditorLoadDataStub.calledOnce);
   });
@@ -898,8 +881,8 @@ suite('gr-settings-view tests', () => {
         })
       );
 
-      element.params = {view: GerritView.SETTINGS, emailToken: 'foo'};
-      element.firstUpdated();
+      element.emailToken = 'foo';
+      element.confirmEmail();
     });
 
     test('it is used to confirm email via rest API', () => {
@@ -924,7 +907,7 @@ suite('gr-settings-view tests', () => {
       await element._testOnly_loadingPromise;
       assert.equal(
         (dispatchEventSpy.lastCall.args[0] as CustomEvent).type,
-        'show-alert'
+        EventType.SHOW_ALERT
       );
       assert.deepEqual(
         (dispatchEventSpy.lastCall.args[0] as CustomEvent).detail,

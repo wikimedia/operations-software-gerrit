@@ -1,23 +1,11 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import '@polymer/iron-input/iron-input';
 import '../../shared/gr-button/gr-button';
-import '../../shared/gr-icons/gr-icons';
+import '../../shared/gr-icon/gr-icon';
 import '../gr-permission/gr-permission';
 import {
   AccessPermissions,
@@ -42,7 +30,7 @@ import {fontStyles} from '../../../styles/gr-font-styles';
 import {formStyles} from '../../../styles/gr-form-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, html, css} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
+import {customElement, property, query, state} from 'lit/decorators.js';
 import {BindValueChangeEvent, ValueChangedEvent} from '../../../types/events';
 import {assertIsDefined, queryAndAssert} from '../../../utils/common-util';
 
@@ -191,7 +179,7 @@ export class GrAccessSection extends LitElement {
                 class=${this.section?.id === GLOBAL_NAME ? 'global' : ''}
                 @click=${this.editReference}
               >
-                <iron-icon id="icon" icon="gr-icons:create"></iron-icon>
+                <gr-icon id="icon" icon="edit" filled small></gr-icon>
               </gr-button>
             </div>
             <iron-input
@@ -369,6 +357,7 @@ export class GrAccessSection extends LitElement {
     if (!this.permissions) {
       return;
     }
+    delete this.section?.value.permissions[this.permissions[index].id];
     this.permissions = this.permissions
       .slice(0, index)
       .concat(this.permissions.slice(index + 1, this.permissions.length));

@@ -4,10 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import {html, LitElement} from 'lit';
-import {customElement, state} from 'lit/decorators';
+import {customElement, state} from 'lit/decorators.js';
 import {define, resolve} from './dependency';
-import '../test/common-test-setup-karma.js';
-import {fixture} from '@open-wc/testing-helpers';
+import '../test/common-test-setup';
+import {fixture, assert} from '@open-wc/testing';
 import {DIProviderElement, wrapInProvider} from './di-provider-element';
 import {BehaviorSubject} from 'rxjs';
 import {waitUntilObserved} from '../test/test-utils';
@@ -26,9 +26,13 @@ class ConsumerElement extends LitElement {
   @state()
   private injectedValue = '';
 
-  override connectedCallback() {
-    super.connectedCallback();
-    subscribe(this, this.getModel(), value => (this.injectedValue = value));
+  constructor() {
+    super();
+    subscribe(
+      this,
+      () => this.getModel(),
+      value => (this.injectedValue = value)
+    );
   }
 
   override render() {
@@ -56,13 +60,13 @@ suite('di-provider-element', () => {
   });
 
   test('provides values to the wrapped element', () => {
-    expect(element).shadowDom.to.equal('<div>foo</div>');
+    assert.shadowDom.equal(element, '<div>foo</div>');
   });
 
   test('enables the test to control the injected dependency', async () => {
     injectedModel.next('bar');
     await waitUntilObserved(injectedModel, value => value === 'bar');
 
-    expect(element).shadowDom.to.equal('<div>bar</div>');
+    assert.shadowDom.equal(element, '<div>bar</div>');
   });
 });

@@ -1,38 +1,24 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-admin-group-list';
 import {GrAdminGroupList} from './gr-admin-group-list';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {queryAndAssert, stubRestApi} from '../../../test/test-utils';
 import {
   GroupId,
   GroupName,
   GroupNameToGroupInfoMap,
 } from '../../../types/common';
-import {AppElementAdminParams} from '../../gr-app-types';
 import {GerritView} from '../../../services/router/router-model';
 import {GrListView} from '../../shared/gr-list-view/gr-list-view';
 import {GrDialog} from '../../shared/gr-dialog/gr-dialog';
 import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
 import {SHOWN_ITEMS_COUNT} from '../../../constants/constants';
-
-const basicFixture = fixtureFromElement('gr-admin-group-list');
+import {fixture, html, assert} from '@open-wc/testing';
+import {AdminChildView, AdminViewState} from '../../../models/views/admin';
 
 function createGroup(name: string, counter: number) {
   return {
@@ -69,36 +55,58 @@ suite('gr-admin-group-list tests', () => {
   let element: GrAdminGroupList;
   let groups: GroupNameToGroupInfoMap;
 
-  const value: AppElementAdminParams = {view: GerritView.ADMIN, adminView: ''};
+  const value: AdminViewState = {
+    view: GerritView.ADMIN,
+    adminView: AdminChildView.GROUPS,
+  };
 
   setup(async () => {
-    element = basicFixture.instantiate();
-    await element.updateComplete;
+    element = await fixture(html`<gr-admin-group-list></gr-admin-group-list>`);
   });
 
-  test('computeGroupUrl', () => {
-    let urlStub = sinon
-      .stub(GerritNav, 'getUrlForGroup')
-      .callsFake(
-        () => '/admin/groups/e2cd66f88a2db4d391ac068a92d987effbe872f5'
-      );
-
-    let group = 'e2cd66f88a2db4d391ac068a92d987effbe872f5';
-    assert.equal(
-      element.computeGroupUrl(group),
-      '/admin/groups/e2cd66f88a2db4d391ac068a92d987effbe872f5'
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <gr-list-view>
+          <table class="genericList" id="list">
+            <tbody>
+              <tr class="headerRow">
+                <th class="name topHeader">Group Name</th>
+                <th class="description topHeader">Group Description</th>
+                <th class="topHeader visibleToAll">Visible To All</th>
+              </tr>
+              <tr class="loading loadingMsg" id="loading">
+                <td>Loading...</td>
+              </tr>
+            </tbody>
+            <tbody class="loading"></tbody>
+          </table>
+        </gr-list-view>
+        <gr-overlay
+          aria-hidden="true"
+          id="createOverlay"
+          style="outline: none; display: none;"
+          tabindex="-1"
+          with-backdrop=""
+        >
+          <gr-dialog
+            class="confirmDialog"
+            confirm-label="Create"
+            confirm-on-enter=""
+            disabled=""
+            id="createDialog"
+            role="dialog"
+          >
+            <div class="header" slot="header">Create Group</div>
+            <div class="main" slot="main">
+              <gr-create-group-dialog id="createNewModal">
+              </gr-create-group-dialog>
+            </div>
+          </gr-dialog>
+        </gr-overlay>
+      `
     );
-
-    urlStub.restore();
-
-    urlStub = sinon
-      .stub(GerritNav, 'getUrlForGroup')
-      .callsFake(() => '/admin/groups/user/test');
-
-    group = 'user%2Ftest';
-    assert.equal(element.computeGroupUrl(group), '/admin/groups/user/test');
-
-    urlStub.restore();
   });
 
   suite('list with groups', () => {

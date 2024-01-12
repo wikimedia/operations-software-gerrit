@@ -3,17 +3,11 @@
  * Copyright 2022 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-
 import {LitElement, html, css, PropertyValues} from 'lit';
-import {customElement, property, state} from 'lit/decorators';
+import {customElement, property, state} from 'lit/decorators.js';
 import {ChangeListSection} from '../gr-change-list/gr-change-list';
 import '../gr-change-list-action-bar/gr-change-list-action-bar';
-import {
-  CLOSED,
-  YOUR_TURN,
-  GerritNav,
-} from '../../core/gr-navigation/gr-navigation';
-import {KnownExperimentId} from '../../../services/flags/flags';
+import {CLOSED, YOUR_TURN} from '../../../utils/dashboard-util';
 import {getAppContext} from '../../../services/app-context';
 import {ChangeInfo, ServerInfo, AccountInfo} from '../../../api/rest-api';
 import {changeListStyles} from '../../../styles/gr-change-list-styles';
@@ -21,15 +15,16 @@ import {fontStyles} from '../../../styles/gr-font-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {Metadata} from '../../../utils/change-metadata-util';
 import {WAITING} from '../../../constants/constants';
-import {ifDefined} from 'lit/directives/if-defined';
 import {provide} from '../../../models/dependency';
 import {
   bulkActionsModelToken,
   BulkActionsModel,
 } from '../../../models/bulk-actions/bulk-actions-model';
+import {createSearchUrl} from '../../../models/views/search';
 import {subscribe} from '../../lit/subscription-controller';
+import {classMap} from 'lit/directives/class-map.js';
 
-const NUMBER_FIXED_COLUMNS = 3;
+const NUMBER_FIXED_COLUMNS = 4;
 const LABEL_PREFIX_INVALID_PROLOG = 'Invalid-Prolog-Rules-Label-Name--';
 const MAX_SHORTCUT_CHARS = 5;
 const INVALID_TOKENS = ['limit:', 'age:', '-age:'];
@@ -55,9 +50,6 @@ export function computeLabelShortcut(labelName: string) {
 export class GrChangeListSection extends LitElement {
   @property({type: Array})
   visibleChangeTableColumns?: string[];
-
-  @property({type: Boolean})
-  showStar = false;
 
   @property({type: Boolean})
   showNumber?: boolean; // No default value to prevent flickering.
@@ -87,13 +79,32 @@ export class GrChangeListSection extends LitElement {
   @property({type: Object})
   account: AccountInfo | undefined = undefined;
 
-  @state() showBulkActionsHeader = false;
+  @property({type: String})
+  usp?: string;
 
-  private readonly flagsService = getAppContext().flagsService;
+  /** Index of the first element in the section in the overall list order. */
+  @property({type: Number})
+  startIndex = 0;
+
+  /** Callback to call to request the item to be selected in the list. */
+  @property({type: Function})
+  triggerSelectionCallback?: (globalIndex: number) => void;
+
+  // private but used in tests
+  @state()
+  numSelected = 0;
+
+  @state()
+  private totalChangeCount = 0;
 
   bulkActionsModel: BulkActionsModel = new BulkActionsModel(
     getAppContext().restApiService
   );
+
+  // Private but used in test.
+  userModel = getAppContext().userModel;
+
+  private isLoggedIn = false;
 
   static override get styles() {
     return [
@@ -111,6 +122,23 @@ export class GrChangeListSection extends LitElement {
           font-weight: var(--font-weight-normal);
           line-height: var(--line-height-small);
         }
+        /*
+         * checkbox styles match checkboxes in <gr-change-list-item> rows to
+         * vertically align with them.
+         */
+        input.selection-checkbox {
+          background-color: var(--background-color-primary);
+          border: 1px solid var(--border-color);
+          border-radius: var(--border-radius);
+          box-sizing: border-box;
+          color: var(--primary-text-color);
+          margin: 0px;
+          padding: var(--spacing-s);
+          vertical-align: middle;
+        }
+        .showSelectionBorder {
+          border-bottom: 2px solid var(--input-focus-border-color);
+        }
       `,
     ];
   }
@@ -118,15 +146,22 @@ export class GrChangeListSection extends LitElement {
   constructor() {
     super();
     provide(this, bulkActionsModelToken, () => this.bulkActionsModel);
-  }
-
-  override connectedCallback() {
-    super.connectedCallback();
     subscribe(
       this,
-      this.bulkActionsModel.selectedChangeNums$,
-      selectedChanges =>
-        (this.showBulkActionsHeader = selectedChanges.length > 0)
+      () => this.bulkActionsModel.selectedChangeNums$,
+      selectedChanges => {
+        this.numSelected = selectedChanges.length;
+      }
+    );
+    subscribe(
+      this,
+      () => this.bulkActionsModel.totalChangeCount$,
+      totalChangeCount => (this.totalChangeCount = totalChangeCount)
+    );
+    subscribe(
+      this,
+      () => this.userModel.loggedIn$,
+      isLoggedIn => (this.isLoggedIn = isLoggedIn)
     );
   }
 
@@ -135,9 +170,7 @@ export class GrChangeListSection extends LitElement {
       // In case the list of changes is updated due to auto reloading, we want
       // to ensure the model removes any stale change that is not a part of the
       // new section changes.
-      if (this.flagsService.isEnabled(KnownExperimentId.BULK_ACTIONS)) {
-        this.bulkActionsModel.sync(this.changeSection.results);
-      }
+      this.bulkActionsModel.sync(this.changeSection.results);
     }
   }
 
@@ -163,8 +196,8 @@ export class GrChangeListSection extends LitElement {
         <td class="leftPadding" aria-hidden="true"></td>
         <td
           class="star"
-          ?aria-hidden=${!this.showStar}
-          ?hidden=${!this.showStar}
+          ?aria-hidden=${!this.isLoggedIn}
+          ?hidden=${!this.isLoggedIn}
         ></td>
         <td class="cell" colspan=${colSpan}>
           ${this.changeSection.emptyStateSlotName
@@ -187,8 +220,7 @@ export class GrChangeListSection extends LitElement {
       <tbody>
         <tr class="groupHeader">
           <td aria-hidden="true" class="leftPadding"></td>
-          ${this.renderSelectionHeader()}
-          <td aria-hidden="true" class="star" ?hidden=${!this.showStar}></td>
+          <td aria-hidden="true" class="star" ?hidden=${!this.isLoggedIn}></td>
           <td class="cell" colspan=${colSpan}>
             <h2 class="heading-3">
               <a
@@ -208,17 +240,22 @@ export class GrChangeListSection extends LitElement {
   }
 
   private renderColumnHeaders(columns: string[]) {
+    const showBulkActionsHeader = this.numSelected > 0;
     return html`
-      <tr class="groupTitle">
-        ${this.showBulkActionsHeader &&
-        this.flagsService.isEnabled(KnownExperimentId.BULK_ACTIONS)
+      <tr
+        class=${classMap({
+          groupTitle: true,
+          showSelectionBorder: showBulkActionsHeader,
+        })}
+      >
+        <td class="leftPadding"></td>
+        ${this.renderSelectionHeader()}
+        ${showBulkActionsHeader
           ? html`<gr-change-list-action-bar></gr-change-list-action-bar>`
-          : html` <td class="leftPadding" aria-hidden="true"></td>
-              ${this.renderSelectionHeader()}
-              <td
+          : html` <td
                 class="star"
                 aria-label="Star status column"
-                ?hidden=${!this.showStar}
+                ?hidden=${!this.isLoggedIn}
               ></td>
               <td class="number" ?hidden=${!this.showNumber}>#</td>
               ${columns.map(item => this.renderHeaderCell(item))}
@@ -233,8 +270,26 @@ export class GrChangeListSection extends LitElement {
   }
 
   private renderSelectionHeader() {
-    if (!this.flagsService.isEnabled(KnownExperimentId.BULK_ACTIONS)) return;
-    return html`<td aria-hidden="true" class="selection"></td>`;
+    const checked = this.numSelected > 0;
+    const indeterminate =
+      this.numSelected > 0 && this.numSelected !== this.totalChangeCount;
+    return html`
+      <td class="selection" ?hidden=${!this.isLoggedIn}>
+        <!--
+          The .checked property must be used rather than the attribute because
+          the attribute only controls the default checked state and does not
+          update the current checked state.
+          See: https://developer.mozilla.org/en-US/docs/Web/HTML/Element/input/checkbox#attr-checked
+        -->
+        <input
+          class="selection-checkbox"
+          type="checkbox"
+          .checked=${checked}
+          .indeterminate=${indeterminate}
+          @click=${this.handleSelectAllCheckboxClicked}
+        />
+      </td>
+    `;
   }
 
   private renderHeaderCell(item: string) {
@@ -264,22 +319,32 @@ export class GrChangeListSection extends LitElement {
   ) {
     const ariaLabel = this.computeAriaLabel(change);
     const selected = this.computeItemSelected(index);
-    const tabindex = this.computeTabIndex(index);
     return html`
       <gr-change-list-item
+        tabindex="0"
         .account=${this.account}
-        ?selected=${selected}
+        .selected=${selected}
         .change=${change}
         .config=${this.config}
         .sectionName=${this.changeSection.name}
         .visibleChangeTableColumns=${columns}
         .showNumber=${this.showNumber}
-        ?showStar=${this.showStar}
-        tabindex=${ifDefined(tabindex)}
+        .usp=${this.usp}
         .labelNames=${this.labelNames}
+        .globalIndex=${this.startIndex + index}
+        .triggerSelectionCallback=${this.triggerSelectionCallback}
         aria-label=${ariaLabel}
+        role="button"
       ></gr-change-list-item>
     `;
+  }
+
+  private handleSelectAllCheckboxClicked() {
+    if (this.numSelected === 0) {
+      this.bulkActionsModel.selectAll();
+    } else {
+      this.bulkActionsModel.clearSelectedChangeNums();
+    }
   }
 
   /**
@@ -301,14 +366,15 @@ export class GrChangeListSection extends LitElement {
     return cols;
   }
 
+  toggleChange(index: number) {
+    this.bulkActionsModel.toggleSelectedChangeNum(
+      this.changeSection.results[index]._number
+    );
+  }
+
   // private but used in test
   computeItemSelected(index: number) {
     return index === this.selectedIndex;
-  }
-
-  private computeTabIndex(index: number) {
-    if (this.isCursorMoving) return 0;
-    return this.computeItemSelected(index) ? 0 : undefined;
   }
 
   // private but used in test
@@ -328,8 +394,8 @@ export class GrChangeListSection extends LitElement {
   }
 
   private sectionHref(query?: string) {
-    if (!query) return;
-    return GerritNav.getUrlForSearchQuery(this.processQuery(query));
+    if (!query) return '';
+    return createSearchUrl({query: this.processQuery(query)});
   }
 
   // private but used in test

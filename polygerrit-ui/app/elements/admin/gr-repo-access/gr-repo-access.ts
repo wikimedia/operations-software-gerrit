@@ -1,23 +1,11 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import '../gr-access-section/gr-access-section';
 import {encodeURL, getBaseUrl, singleDecodeURL} from '../../../utils/url-util';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {toSortedPermissionsArray} from '../../../utils/access-util';
 import {
   RepoName,
@@ -49,10 +37,12 @@ import {menuPageStyles} from '../../../styles/gr-menu-page-styles';
 import {subpageStyles} from '../../../styles/gr-subpage-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, css, html} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
+import {customElement, property, query, state} from 'lit/decorators.js';
 import {assertIsDefined} from '../../../utils/common-util';
 import {ValueChangedEvent} from '../../../types/events';
-import {ifDefined} from 'lit/directives/if-defined';
+import {ifDefined} from 'lit/directives/if-defined.js';
+import {resolve} from '../../../models/dependency';
+import {createChangeUrl} from '../../../models/views/change';
 
 const NOTHING_TO_SAVE = 'No changes to save.';
 
@@ -75,9 +65,6 @@ export class GrRepoAccess extends LitElement {
 
   @property({type: String})
   repo?: RepoName;
-
-  @property({type: String})
-  path?: string;
 
   // private but used in test
   @state() canUpload?: boolean = false; // restAPI can return undefined
@@ -123,6 +110,8 @@ export class GrRepoAccess extends LitElement {
   private readonly query: AutocompleteQuery;
 
   private readonly restApiService = getAppContext().restApiService;
+
+  private readonly getNavigation = resolve(this, navigationToken);
 
   constructor() {
     super();
@@ -428,8 +417,11 @@ export class GrRepoAccess extends LitElement {
     this.editing = !this.editing;
   }
 
-  private handleAddedSectionRemoved(index: number) {
+  // private but used in tests
+  handleAddedSectionRemoved(index: number) {
     if (!this.sections) return;
+    assertIsDefined(this.local, 'local');
+    delete this.local[this.sections[index].id];
     this.sections = this.sections
       .slice(0, index)
       .concat(this.sections.slice(index + 1, this.sections.length));
@@ -623,7 +615,7 @@ export class GrRepoAccess extends LitElement {
     return addRemoveObj;
   }
 
-  private async handleCreateSection() {
+  private handleCreateSection() {
     if (!this.local) return;
     let newRef = 'refs/for/*';
     // Avoid using an already used key for the placeholder, since it
@@ -704,7 +696,7 @@ export class GrRepoAccess extends LitElement {
     return this.restApiService
       .setRepoAccessRightsForReview(this.repo, obj)
       .then(change => {
-        GerritNav.navigateToChange(change);
+        this.getNavigation().setUrl(createChangeUrl({change}));
       })
       .finally(() => {
         this.modified = false;

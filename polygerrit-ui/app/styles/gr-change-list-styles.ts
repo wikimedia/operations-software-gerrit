@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2015 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2015 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {css} from 'lit';
 
@@ -35,8 +24,8 @@ export const changeListStyles = css`
   .cell {
     vertical-align: middle;
   }
-  .groupTitle td:not(.label):not(.endpoint),
-  .cell:not(.label):not(.endpoint) {
+  .groupTitle td:not(.label):not(.endpoint):not(.star),
+  .cell:not(.label):not(.endpoint):not(.star) {
     padding-right: 8px;
   }
   .groupTitle td {
@@ -68,10 +57,7 @@ export const changeListStyles = css`
     padding-top: var(--spacing-l);
   }
   .star {
-    padding: 0;
-  }
-  gr-change-star {
-    vertical-align: middle;
+    padding: 0 var(--spacing-s) 0 0;
   }
   .owner {
     --account-max-length: 100px;
@@ -89,14 +75,8 @@ export const changeListStyles = css`
   .repo {
     white-space: nowrap;
   }
-  .star {
-    vertical-align: middle;
-  }
   .leftPadding {
     width: var(--spacing-l);
-  }
-  .star {
-    width: 30px;
   }
   .reviewers div {
     overflow: hidden;
@@ -158,6 +138,7 @@ export const changeListStyles = css`
     }
     .groupTitle,
     .leftPadding,
+    .selection,
     .status,
     .repo,
     .branch,

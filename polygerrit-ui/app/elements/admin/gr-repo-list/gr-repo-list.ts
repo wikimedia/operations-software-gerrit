@@ -1,25 +1,12 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '../../shared/gr-dialog/gr-dialog';
 import '../../shared/gr-list-view/gr-list-view';
 import '../../shared/gr-overlay/gr-overlay';
 import '../gr-create-repo-dialog/gr-create-repo-dialog';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
-import {AppElementAdminParams} from '../../gr-app-types';
 import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
 import {
   RepoName,
@@ -34,7 +21,9 @@ import {encodeURL, getBaseUrl} from '../../../utils/url-util';
 import {tableStyles} from '../../../styles/gr-table-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, css, html} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
+import {customElement, property, query, state} from 'lit/decorators.js';
+import {AdminViewState} from '../../../models/views/admin';
+import {createSearchUrl} from '../../../models/views/search';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -51,7 +40,7 @@ export class GrRepoList extends LitElement {
   @query('#createNewModal') private createNewModal?: GrCreateRepoDialog;
 
   @property({type: Object})
-  params?: AppElementAdminParams;
+  params?: AdminViewState;
 
   // private but used in test
   @state() offset = 0;
@@ -215,7 +204,7 @@ export class GrRepoList extends LitElement {
    *
    * private but used in test
    */
-  maybeOpenCreateOverlay(params?: AppElementAdminParams) {
+  maybeOpenCreateOverlay(params?: AdminViewState) {
     if (params?.openCreateModal) {
       this.createOverlay?.open();
     }
@@ -226,7 +215,7 @@ export class GrRepoList extends LitElement {
   }
 
   private computeChangesLink(name: string) {
-    return GerritNav.getUrlForProjectChanges(name as RepoName);
+    return createSearchUrl({project: name as RepoName});
   }
 
   private async getCreateRepoCapability() {

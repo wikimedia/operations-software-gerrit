@@ -1,21 +1,10 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {css, html, LitElement, PropertyValues} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
+import {customElement, property, query, state} from 'lit/decorators.js';
 import {NumericChangeId, BranchName} from '../../../types/common';
 import '../../shared/gr-dialog/gr-dialog';
 import '../../shared/gr-autocomplete/gr-autocomplete';
@@ -35,6 +24,7 @@ export interface RebaseChange {
 
 export interface ConfirmRebaseEventDetail {
   base: string | null;
+  allowConflicts: boolean;
 }
 
 @customElement('gr-confirm-rebase-dialog')
@@ -81,6 +71,9 @@ export class GrConfirmRebaseDialog extends LitElement {
   @query('#rebaseOnOtherInput')
   rebaseOnOtherInput!: HTMLInputElement;
 
+  @query('#rebaseAllowConflicts')
+  private rebaseAllowConflicts!: HTMLInputElement;
+
   @query('#parentInput')
   parentInput!: GrAutocomplete;
 
@@ -122,8 +115,8 @@ export class GrConfirmRebaseDialog extends LitElement {
         display: block;
         width: 100%;
       }
-      .parentRevisionContainer label {
-        margin-bottom: var(--spacing-xs);
+      .rebaseAllowConflicts {
+        margin-top: var(--spacing-m);
       }
       .rebaseOption {
         margin: var(--spacing-m) 0;
@@ -209,6 +202,12 @@ export class GrConfirmRebaseDialog extends LitElement {
               placeholder="Change number, ref, or commit hash"
             >
             </gr-autocomplete>
+          </div>
+          <div class="rebaseAllowConflicts">
+            <input id="rebaseAllowConflicts" type="checkbox" />
+            <label for="rebaseAllowConflicts"
+              >Allow rebase with conflicts</label
+            >
           </div>
         </div>
       </gr-dialog>
@@ -308,6 +307,7 @@ export class GrConfirmRebaseDialog extends LitElement {
     e.stopPropagation();
     const detail: ConfirmRebaseEventDetail = {
       base: this.getSelectedBase(),
+      allowConflicts: this.rebaseAllowConflicts.checked,
     };
     this.dispatchEvent(new CustomEvent('confirm', {detail}));
     this.text = '';

@@ -1,47 +1,47 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '../../shared/gr-list-view/gr-list-view';
 import {getBaseUrl} from '../../../utils/url-util';
 import {DocResult} from '../../../types/common';
 import {fireTitleChange} from '../../../utils/event-util';
 import {getAppContext} from '../../../services/app-context';
-import {ListViewParams} from '../../gr-app-types';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {tableStyles} from '../../../styles/gr-table-styles';
-import {LitElement, PropertyValues, html} from 'lit';
-import {customElement, property, state} from 'lit/decorators';
+import {LitElement, html} from 'lit';
+import {customElement, state} from 'lit/decorators.js';
+import {resolve} from '../../../models/dependency';
+import {subscribe} from '../../lit/subscription-controller';
+import {documentationViewModelToken} from '../../../models/views/documentation';
 
 @customElement('gr-documentation-search')
 export class GrDocumentationSearch extends LitElement {
-  /**
-   * URL params passed from the router.
-   */
-  @property({type: Object})
-  params?: ListViewParams;
-
   // private but used in test
   @state() documentationSearches?: DocResult[];
 
   // private but used in test
   @state() loading = true;
 
-  @state() private filter = '';
+  // private but used in test
+  @state() filter = '';
 
   private readonly restApiService = getAppContext().restApiService;
+
+  private readonly getViewModel = resolve(this, documentationViewModelToken);
+
+  constructor() {
+    super();
+    subscribe(
+      this,
+      () => this.getViewModel().state$,
+      x => {
+        this.filter = x?.filter ?? '';
+        if (x !== undefined) this.getDocumentationSearches();
+      }
+    );
+  }
 
   override connectedCallback() {
     super.connectedCallback();
@@ -91,21 +91,9 @@ export class GrDocumentationSearch extends LitElement {
     `;
   }
 
-  override willUpdate(changedProperties: PropertyValues) {
-    if (changedProperties.has('params')) {
-      this.paramsChanged();
-    }
-  }
-
-  // private but used in test
-  paramsChanged() {
+  getDocumentationSearches() {
+    const filter = this.filter;
     this.loading = true;
-    this.filter = this.params?.filter ?? '';
-
-    return this.getDocumentationSearches(this.filter);
-  }
-
-  private getDocumentationSearches(filter: string) {
     this.documentationSearches = [];
     return this.restApiService
       .getDocumentationSearches(filter)

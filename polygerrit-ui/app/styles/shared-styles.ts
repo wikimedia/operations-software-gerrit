@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {css} from 'lit';
 
@@ -123,6 +112,8 @@ export const sharedStyles = css`
     margin: 0;
     padding: var(--spacing-s);
   }
+  /* prettier formatter removes semi-colons after css mixins. */
+  /* prettier-ignore */
   iron-autogrow-textarea {
     background-color: inherit;
     color: var(--primary-text-color);
@@ -133,13 +124,13 @@ export const sharedStyles = css`
     /* iron-autogrow-textarea has a "-webkit-appearance: textarea" :host
         css rule, which prevents overriding the border color. Clear that. */
     -webkit-appearance: none;
-
     --iron-autogrow-textarea: {
       box-sizing: border-box;
       padding: var(--spacing-s);
-    }
+    };
     --iron-autogrow-textarea_-_box-sizing: border-box;
     --iron-autogrow-textarea_-_padding: var(--spacing-s);
+    --iron-autogrow-textarea_-_white-space: pre-wrap;
   }
   a {
     color: var(--link-color);
@@ -190,10 +181,6 @@ export const sharedStyles = css`
   }
   .separator.transparent {
     border-color: transparent;
-  }
-  iron-autogrow-textarea {
-    /** This is needed for firefox */
-    --iron-autogrow-textarea_-_white-space: pre-wrap;
   }
 
   /**

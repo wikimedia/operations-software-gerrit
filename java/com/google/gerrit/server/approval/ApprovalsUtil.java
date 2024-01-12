@@ -15,18 +15,29 @@
 package com.google.gerrit.server.approval;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.common.collect.ImmutableListMultimap.toImmutableListMultimap;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.CC;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.REVIEWER;
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
+import static java.util.Comparator.comparing;
+import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.joining;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableListMultimap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Multimap;
+import com.google.common.collect.Multimaps;
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AttentionSetUpdate;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.LabelId;
 import com.google.gerrit.entities.LabelType;
@@ -38,10 +49,13 @@ import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.RestApiException;
+import com.google.gerrit.index.query.QueryParseException;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.ReviewerSet;
 import com.google.gerrit.server.ReviewerStatusUpdate;
+import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.change.LabelNormalizer;
+import com.google.gerrit.server.config.AnonymousCowardName;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ChangeUpdate;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
@@ -50,13 +64,20 @@ import com.google.gerrit.server.permissions.LabelPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.ProjectCache;
+import com.google.gerrit.server.query.approval.ApprovalQueryBuilder;
+import com.google.gerrit.server.query.approval.UserInPredicate;
+import com.google.gerrit.server.util.AccountTemplateUtil;
 import com.google.gerrit.server.util.LabelVote;
+import com.google.gerrit.server.util.ManualRequestContext;
+import com.google.gerrit.server.util.OneOffRequestContext;
 import com.google.inject.Inject;
+import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -95,22 +116,34 @@ public class ApprovalsUtil {
     return Iterables.filter(psas, a -> Objects.equals(a.accountId(), accountId));
   }
 
-  private final ApprovalCopier approvalInference;
+  private final AccountCache accountCache;
+  private final String anonymousCowardName;
+  private final ApprovalCopier approvalCopier;
+  private final Provider<ApprovalQueryBuilder> approvalQueryBuilderProvider;
   private final PermissionBackend permissionBackend;
   private final ProjectCache projectCache;
   private final LabelNormalizer labelNormalizer;
+  private final OneOffRequestContext requestContext;
 
   @VisibleForTesting
   @Inject
   public ApprovalsUtil(
-      ApprovalCopier approvalInference,
+      AccountCache accountCache,
+      @AnonymousCowardName String anonymousCowardName,
+      ApprovalCopier approvalCopier,
+      Provider<ApprovalQueryBuilder> approvalQueryBuilderProvider,
       PermissionBackend permissionBackend,
       ProjectCache projectCache,
-      LabelNormalizer labelNormalizer) {
-    this.approvalInference = approvalInference;
+      LabelNormalizer labelNormalizer,
+      OneOffRequestContext requestContext) {
+    this.accountCache = accountCache;
+    this.anonymousCowardName = anonymousCowardName;
+    this.approvalCopier = approvalCopier;
+    this.approvalQueryBuilderProvider = approvalQueryBuilderProvider;
     this.permissionBackend = permissionBackend;
     this.projectCache = projectCache;
     this.labelNormalizer = labelNormalizer;
+    this.requestContext = requestContext;
   }
 
   /**
@@ -336,30 +369,345 @@ public class ApprovalsUtil {
 
   public ListMultimap<PatchSet.Id, PatchSetApproval> byChangeExcludingCopiedApprovals(
       ChangeNotes notes) {
-    return notes.load().getApprovals();
+    return notes.load().getApprovals().onlyNonCopied();
   }
 
-  public ListMultimap<PatchSet.Id, PatchSetApproval> byChangeWithCopied(ChangeNotes notes) {
-    return notes.load().getApprovalsWithCopied();
+  public ListMultimap<PatchSet.Id, PatchSetApproval> byChangeIncludingCopiedApprovals(
+      ChangeNotes notes) {
+    return notes.load().getApprovals().all();
   }
 
   /**
-   * This method should only be used when we want to dynamically compute the approvals. Generally,
-   * the copied approvals are available in {@link ChangeNotes}. However, if the patch-set is just
-   * being created, we need to dynamically compute the approvals so that we can persist them in
-   * storage. The {@link RevWalk} and {@link Config} objects that are being used to create the new
-   * patch-set are required for this method. Here we also add those votes to the provided {@link
-   * ChangeUpdate} object.
+   * Copies approvals to a new patch set.
+   *
+   * <p>Computes the approvals of the prior patch set that should be copied to the new patch set and
+   * stores them in NoteDb.
+   *
+   * <p>For outdated approvals (approvals on the prior patch set which are outdated by the new patch
+   * set and hence not copied) the approvers are added to the attention set since they need to
+   * re-review the change and renew their approvals.
+   *
+   * @param notes the change notes
+   * @param patchSet the newly created patch set
+   * @param revWalk {@link RevWalk} that can see the new patch set revision
+   * @param repoConfig the repo config
+   * @param changeUpdate changeUpdate that is used to persist the copied approvals and update the
+   *     attention set
+   * @return the result of the approval copying
    */
-  public void persistCopiedApprovals(
+  public ApprovalCopier.Result copyApprovalsToNewPatchSet(
       ChangeNotes notes,
       PatchSet patchSet,
       RevWalk revWalk,
       Config repoConfig,
       ChangeUpdate changeUpdate) {
-    approvalInference
-        .forPatchSet(notes, patchSet, revWalk, repoConfig)
-        .forEach(a -> changeUpdate.putCopiedApproval(a));
+    ApprovalCopier.Result approvalCopierResult =
+        approvalCopier.forPatchSet(notes, patchSet, revWalk, repoConfig);
+    approvalCopierResult.copiedApprovals().forEach(a -> changeUpdate.putCopiedApproval(a));
+
+    if (!notes.getChange().isWorkInProgress()) {
+      // The attention set should not be updated when the change is work-in-progress.
+      addAttentionSetUpdatesForOutdatedApprovals(
+          changeUpdate, approvalCopierResult.outdatedApprovals());
+    }
+
+    return approvalCopierResult;
+  }
+
+  private void addAttentionSetUpdatesForOutdatedApprovals(
+      ChangeUpdate changeUpdate, ImmutableSet<PatchSetApproval> outdatedApprovals) {
+    Set<AttentionSetUpdate> updates = new HashSet<>();
+
+    Multimap<Account.Id, PatchSetApproval> outdatedApprovalsByUser = ArrayListMultimap.create();
+    outdatedApprovals.forEach(psa -> outdatedApprovalsByUser.put(psa.accountId(), psa));
+    for (Map.Entry<Account.Id, Collection<PatchSetApproval>> e :
+        outdatedApprovalsByUser.asMap().entrySet()) {
+      Account.Id approverId = e.getKey();
+      Collection<PatchSetApproval> outdatedUserApprovals = e.getValue();
+
+      String message;
+      if (outdatedUserApprovals.size() == 1) {
+        PatchSetApproval outdatedUserApproval = Iterables.getOnlyElement(outdatedUserApprovals);
+        message =
+            String.format(
+                "Vote got outdated and was removed: %s",
+                LabelVote.create(outdatedUserApproval.label(), outdatedUserApproval.value())
+                    .format());
+      } else {
+        message =
+            String.format(
+                "Votes got outdated and were removed: %s",
+                outdatedUserApprovals.stream()
+                    .map(
+                        outdatedUserApproval ->
+                            LabelVote.create(
+                                    outdatedUserApproval.label(), outdatedUserApproval.value())
+                                .format())
+                    .sorted()
+                    .collect(joining(", ")));
+      }
+
+      updates.add(
+          AttentionSetUpdate.createForWrite(approverId, AttentionSetUpdate.Operation.ADD, message));
+    }
+    changeUpdate.addToPlannedAttentionSetUpdates(updates);
+  }
+
+  public Optional<String> formatApprovalCopierResult(
+      ApprovalCopier.Result approvalCopierResult, LabelTypes labelTypes) {
+    requireNonNull(approvalCopierResult, "approvalCopierResult");
+    requireNonNull(labelTypes, "labelTypes");
+
+    if (approvalCopierResult.copiedApprovals().isEmpty()
+        && approvalCopierResult.outdatedApprovals().isEmpty()) {
+      return Optional.empty();
+    }
+
+    StringBuilder message = new StringBuilder();
+
+    if (!approvalCopierResult.copiedApprovals().isEmpty()) {
+      message.append("Copied Votes:\n");
+      message.append(
+          formatApprovalListWithCopyCondition(approvalCopierResult.copiedApprovals(), labelTypes));
+    }
+    if (!approvalCopierResult.outdatedApprovals().isEmpty()) {
+      if (!approvalCopierResult.copiedApprovals().isEmpty()) {
+        message.append("\n");
+      }
+      message.append("Outdated Votes:\n");
+      message.append(
+          formatApprovalListWithCopyCondition(
+              approvalCopierResult.outdatedApprovals(), labelTypes));
+    }
+
+    return Optional.of(message.toString());
+  }
+
+  /**
+   * Formats the given approvals as a bullet list, each approval with the corresponding copy
+   * condition if available.
+   *
+   * <p>E.g.:
+   *
+   * <pre>
+   * * Code-Review+1, Code-Review+2 (copy condition: "is:MIN")
+   * * Verified+1 (copy condition: "is:MIN")
+   * </pre>
+   *
+   * <p>Entries in the list can have the following formats:
+   *
+   * <ul>
+   *   <li>{@code <comma-separated-list-of-approvals-for-the-same-label> (copy condition:
+   *       "<copy-condition-without-UserInPredicate>")} (if a copy condition without UserInPredicate
+   *       is present), e.g.: {@code Code-Review+1, Code-Review+2 (copy condition: "is:MIN")}
+   *   <li>{@code <approval> by <comma-separated-list-of-approvers> (copy condition:
+   *       "<copy-condition-with-UserInPredicate>")} (if a copy condition with UserInPredicate is
+   *       present), e.g. {@code Code-Review+1 by <GERRIT_ACCOUNT_1000000>, <GERRIT_ACCOUNT_1000001>
+   *       (copy condition: "approverin:7d9e2d5b561e75230e4463ae757ac5d6ff715d85")}
+   *   <li>{@code <comma-separated-list-of-approval-for-the-same-label>} (if no copy condition is
+   *       present), e.g.: {@code Code-Review+1, Code-Review+2}
+   *   <li>{@code <comma-separated-list-of-approval-for-the-same-label> (label type is missing)} (if
+   *       the label type is missing), e.g.: {@code Code-Review+1, Code-Review+2 (label type is
+   *       missing)}
+   *   <li>{@code <comma-separated-list-of-approval-for-the-same-label> (non-parseable copy
+   *       condition: "<non-parseable copy-condition>")} (if a non-parseable copy condition is
+   *       present), e.g.: {@code Code-Review+1, Code-Review+2 (non-parseable copy condition:
+   *       "is:FOO")}
+   * </ul>
+   *
+   * @param approvals the approvals that should be formatted
+   * @param labelTypes the label types
+   * @return bullet list with the formatted approvals
+   */
+  private String formatApprovalListWithCopyCondition(
+      ImmutableSet<PatchSetApproval> approvals, LabelTypes labelTypes) {
+    StringBuilder message = new StringBuilder();
+
+    // sort approvals by label vote so that we list them in a deterministic order
+    ImmutableList<PatchSetApproval> approvalsSortedByLabelVote =
+        approvals.stream()
+            .sorted(comparing(psa -> LabelVote.create(psa.label(), psa.value()).format()))
+            .collect(toImmutableList());
+
+    ImmutableListMultimap<String, PatchSetApproval> approvalsByLabel =
+        Multimaps.index(approvalsSortedByLabelVote, PatchSetApproval::label);
+
+    for (Map.Entry<String, Collection<PatchSetApproval>> approvalsByLabelEntry :
+        approvalsByLabel.asMap().entrySet()) {
+      String label = approvalsByLabelEntry.getKey();
+      Collection<PatchSetApproval> approvalsForSameLabel = approvalsByLabelEntry.getValue();
+
+      message.append("* ");
+      if (!labelTypes.byLabel(label).isPresent()) {
+        message
+            .append(formatApprovalsAsLabelVotesList(approvalsForSameLabel))
+            .append(" (label type is missing)\n");
+        continue;
+      }
+
+      LabelType labelType = labelTypes.byLabel(label).get();
+      if (!labelType.getCopyCondition().isPresent()) {
+        message.append(formatApprovalsAsLabelVotesList(approvalsForSameLabel)).append("\n");
+        continue;
+      }
+
+      message
+          .append(
+              formatApprovalsWithCopyCondition(
+                  approvalsForSameLabel, labelType.getCopyCondition().get()))
+          .append("\n");
+    }
+
+    return message.toString();
+  }
+
+  /**
+   * Formats the given approvals of the same label with the given copy condition.
+   *
+   * <p>E.g.: {Code-Review+1, Code-Review+2 (copy condition: "is:MIN")}
+   *
+   * <p>The following format may be returned:
+   *
+   * <ul>
+   *   <li>{@code <comma-separated-list-of-approvals-for-the-same-label> (copy condition:
+   *       "<copy-condition-without-UserInPredicate>")} (if a copy condition without UserInPredicate
+   *       is present), e.g.: {@code Code-Review+1, Code-Review+2 (copy condition: "is:MIN")}
+   *   <li>{@code <approval> by <comma-separated-list-of-approvers> (copy condition:
+   *       "<copy-condition-with-UserInPredicate>")} (if a copy condition with UserInPredicate is
+   *       present), e.g. {@code Code-Review+1 by <GERRIT_ACCOUNT_1000000>, <GERRIT_ACCOUNT_1000001>
+   *       (copy condition: "approverin:7d9e2d5b561e75230e4463ae757ac5d6ff715d85")}
+   *   <li>{@code <comma-separated-list-of-approval-for-the-same-label> (non-parseable copy
+   *       condition: "<non-parseable copy-condition>")} (if a non-parseable copy condition is
+   *       present), e.g.: {@code Code-Review+1, Code-Review+2 (non-parseable copy condition:
+   *       "is:FOO")}
+   * </ul>
+   *
+   * @param approvalsForSameLabel the approvals that should be formatted, must be for the same label
+   * @param copyCondition the copy condition of the label
+   * @return the formatted approvals
+   */
+  private String formatApprovalsWithCopyCondition(
+      Collection<PatchSetApproval> approvalsForSameLabel, String copyCondition) {
+    StringBuilder message = new StringBuilder();
+
+    boolean containsUserInPredicate;
+    try {
+      containsUserInPredicate = containsUserInPredicate(copyCondition);
+    } catch (QueryParseException e) {
+      logger.atWarning().withCause(e).log("Non-parsable query condition");
+      message.append(formatApprovalsAsLabelVotesList(approvalsForSameLabel));
+      message.append(String.format(" (non-parseable copy condition: \"%s\")", copyCondition));
+      return message.toString();
+    }
+
+    if (containsUserInPredicate) {
+      // If a UserInPredicate is used (e.g. 'approverin:<group>' or 'uploaderin:<group>') we need to
+      // include the approvers into the change message since they are relevant for the matching. For
+      // example it can happen that the same approval of different users is copied for the one user
+      // but not for the other user (since the one user is a member of the approverin group and the
+      // other user isn't).
+      //
+      // Example:
+      // * label Foo has the copy condition 'is:ANY approverin:123'
+      // * group 123 contains UserA as member, but not UserB
+      // * a change has the following approvals: Foo+1 by UserA and Foo+1 by UserB
+      //
+      // In this case Foo+1 by UserA is copied because UserA is a member of group 123 and the copy
+      // condition matches, while Foo+1 by UserB is not copied because UserB is not a member of
+      // group 123 and the copy condition doesn't match.
+      //
+      // So it can happen that the same approval Foo+1, but by different users, is copied and
+      // outdated at the same time. To allow users to understand that the copying depends on who did
+      // the approval, the approvers must be included into the change message.
+
+      // sort the approvals by their approvers name-email so that the approvers always appear in a
+      // deterministic order
+      ImmutableList<PatchSetApproval> approvalsSortedByLabelVoteAndApprover =
+          approvalsForSameLabel.stream()
+              .sorted(
+                  comparing(
+                          (PatchSetApproval psa) ->
+                              LabelVote.create(psa.label(), psa.value()).format())
+                      .thenComparing(
+                          psa ->
+                              accountCache
+                                  .getEvenIfMissing(psa.accountId())
+                                  .account()
+                                  .getNameEmail(anonymousCowardName)))
+              .collect(toImmutableList());
+
+      ImmutableListMultimap<LabelVote, Account.Id> approversByLabelVote =
+          Multimaps.index(
+                  approvalsSortedByLabelVoteAndApprover,
+                  psa -> LabelVote.create(psa.label(), psa.value()))
+              .entries().stream()
+              .collect(toImmutableListMultimap(e -> e.getKey(), e -> e.getValue().accountId()));
+      message.append(
+          approversByLabelVote.asMap().entrySet().stream()
+              .map(
+                  approversByLabelVoteEntry ->
+                      formatLabelVoteWithApprovers(
+                          approversByLabelVoteEntry.getKey(), approversByLabelVoteEntry.getValue()))
+              .collect(joining(", ")));
+    } else {
+      // copy condition doesn't contain a UserInPredicate
+      message.append(formatApprovalsAsLabelVotesList(approvalsForSameLabel));
+    }
+    message.append(String.format(" (copy condition: \"%s\")", copyCondition));
+    return message.toString();
+  }
+
+  private boolean containsUserInPredicate(String copyCondition) throws QueryParseException {
+    // Use a request context to run checks as an internal user with expanded visibility. This is
+    // so that the output of the copy condition does not depend on who is running the current
+    // request (e.g. a group used in this query might not be visible to the person sending this
+    // request).
+    try (ManualRequestContext ignored = requestContext.open()) {
+      return approvalQueryBuilderProvider.get().parse(copyCondition).getFlattenedPredicateList()
+          .stream()
+          .anyMatch(UserInPredicate.class::isInstance);
+    }
+  }
+
+  /**
+   * Formats the given approvals as a comma-separated list of label votes.
+   *
+   * <p>E.g.: {@code Code-Review+1, CodeReview+2}
+   *
+   * @param sortedApprovalsForSameLabel the approvals that should be formatted as a comma-separated
+   *     list of label votes, must be sorted
+   * @return the given approvals as a comma-separated list of label votes
+   */
+  private String formatApprovalsAsLabelVotesList(
+      Collection<PatchSetApproval> sortedApprovalsForSameLabel) {
+    return sortedApprovalsForSameLabel.stream()
+        .map(psa -> LabelVote.create(psa.label(), psa.value()))
+        .distinct()
+        .map(LabelVote::format)
+        .collect(joining(", "));
+  }
+
+  /**
+   * Formats the given label vote with a comma-separated list of the given approvers.
+   *
+   * <p>E.g.: {@code Code-Review+1 by <user1-placeholder>, <user2-placeholder>}
+   *
+   * @param labelVote the label vote that should be formatted with a comma-separated list of the
+   *     given approver
+   * @param sortedApprovers the approvers that should be formatted as a comma-separated list for the
+   *     given label vote
+   * @return the given label vote with a comma-separated list of the given approvers
+   */
+  private String formatLabelVoteWithApprovers(
+      LabelVote labelVote, Collection<Account.Id> sortedApprovers) {
+    return new StringBuilder()
+        .append(labelVote.format())
+        .append(" by ")
+        .append(
+            sortedApprovers.stream()
+                .map(AccountTemplateUtil::getAccountTemplate)
+                .collect(joining(", ")))
+        .toString();
   }
 
   /**
@@ -372,7 +720,7 @@ public class ApprovalsUtil {
    *     deleted labels.
    */
   public Iterable<PatchSetApproval> byPatchSet(ChangeNotes notes, PatchSet.Id psId) {
-    List<PatchSetApproval> approvalsNotNormalized = notes.load().getApprovalsWithCopied().get(psId);
+    List<PatchSetApproval> approvalsNotNormalized = notes.load().getApprovals().all().get(psId);
     return labelNormalizer.normalize(notes, approvalsNotNormalized).getNormalized();
   }
 

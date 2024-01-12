@@ -1,38 +1,27 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import '@polymer/iron-icon/iron-icon';
 import '../gr-avatar/gr-avatar';
 import '../gr-hovercard-account/gr-hovercard-account';
+import '../gr-icon/gr-icon';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../plugins/gr-endpoint-param/gr-endpoint-param';
 import {getAppContext} from '../../../services/app-context';
 import {getDisplayName} from '../../../utils/display-name-util';
 import {isSelf, isServiceUser} from '../../../utils/account-util';
 import {ChangeInfo, AccountInfo, ServerInfo} from '../../../types/common';
-import {hasOwnProperty} from '../../../utils/common-util';
+import {assertIsDefined, hasOwnProperty} from '../../../utils/common-util';
 import {fireEvent} from '../../../utils/event-util';
 import {isInvolved} from '../../../utils/change-util';
-import {ShowAlertEventDetail} from '../../../types/events';
+import {EventType, ShowAlertEventDetail} from '../../../types/events';
 import {LitElement, css, html, TemplateResult} from 'lit';
-import {customElement, property, state} from 'lit/decorators';
-import {classMap} from 'lit/directives/class-map';
+import {customElement, property, state} from 'lit/decorators.js';
+import {classMap} from 'lit/directives/class-map.js';
 import {getRemovedByIconClickReason} from '../../../utils/attention-set-util';
-import {ifDefined} from 'lit/directives/if-defined';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
+import {ifDefined} from 'lit/directives/if-defined.js';
+import {createSearchUrl} from '../../../models/views/search';
 
 @customElement('gr-account-label')
 export class GrAccountLabel extends LitElement {
@@ -49,9 +38,6 @@ export class GrAccountLabel extends LitElement {
    */
   @property({type: Object})
   change?: ChangeInfo;
-
-  @property({type: String})
-  voteableText?: string;
 
   /**
    * Should this user be considered to be in the attention set, regardless
@@ -111,6 +97,8 @@ export class GrAccountLabel extends LitElement {
 
   private readonly restApiService = getAppContext().restApiService;
 
+  private readonly accountsModel = getAppContext().accountsModel;
+
   static override get styles() {
     return [
       css`
@@ -154,7 +142,7 @@ export class GrAccountLabel extends LitElement {
           border-radius: 8px;
           color: var(--chip-selected-text-color);
         }
-        :host([selected]) iron-icon.attention {
+        :host([selected]) gr-icon.attention {
           color: var(--chip-selected-text-color);
         }
         gr-avatar {
@@ -169,12 +157,12 @@ export class GrAccountLabel extends LitElement {
           /* This negates the 4px horizontal padding, which we appreciate as a
          larger click target, but which we don't want to consume space. :-) */
           margin: 0 -4px 0 -4px;
+          --gr-button-padding: 0 var(--spacing-xs);
           vertical-align: top;
         }
-        iron-icon.attention {
+        gr-icon.attention {
           color: var(--deemphasized-text-color);
-          width: 12px;
-          height: 12px;
+          transform: scaleX(0.8);
         }
         .name {
           display: inline-block;
@@ -200,6 +188,12 @@ export class GrAccountLabel extends LitElement {
     ];
   }
 
+  override async updated() {
+    assertIsDefined(this.account, 'account');
+    const account = await this.accountsModel.fillDetails(this.account);
+    if (account) this.account = account;
+  }
+
   override render() {
     const {account, change, highlightAttention, forceAttention, _config} = this;
     if (!account) return;
@@ -218,7 +212,6 @@ export class GrAccountLabel extends LitElement {
               .account=${account}
               .change=${change}
               .highlightAttention=${highlightAttention}
-              .voteableText=${this.voteableText}
             ></gr-hovercard-account>`
           : ''}
         ${this.attentionIconShown
@@ -251,10 +244,16 @@ export class GrAccountLabel extends LitElement {
                   this.selected,
                   this._selfAccount
                 )}
-                ><iron-icon
-                  class="attention"
-                  icon="gr-icons:attention"
-                ></iron-icon>
+              >
+                <div>
+                  <gr-icon
+                    icon="label_important"
+                    filled
+                    small
+                    class="attention"
+                  >
+                  </gr-icon>
+                </div>
               </gr-button>
             </gr-tooltip-content>`
           : ''}
@@ -300,12 +299,13 @@ export class GrAccountLabel extends LitElement {
 
   private maybeRenderLink(span: TemplateResult) {
     if (!this.clickable || !this.account) return span;
-    const url = GerritNav.getUrlForOwner(
-      this.account.email ||
+    const url = createSearchUrl({
+      owner:
+        this.account.email ||
         this.account.username ||
         this.account.name ||
-        `${this.account._account_id}`
-    );
+        `${this.account._account_id}`,
+    });
     if (!url) return span;
     return html`<a class="ownerLink" href=${url} tabindex="-1">${span}</a>`;
   }
@@ -363,7 +363,7 @@ export class GrAccountLabel extends LitElement {
     if (!this.account._account_id) return;
 
     this.dispatchEvent(
-      new CustomEvent<ShowAlertEventDetail>('show-alert', {
+      new CustomEvent<ShowAlertEventDetail>(EventType.SHOW_ALERT, {
         detail: {
           message: 'Saving attention set update ...',
           dismissOnNavigation: true,
@@ -447,8 +447,11 @@ export class GrAccountLabel extends LitElement {
       selected,
       selfAccount
     );
+    const removeFromASTooltip = `Click to remove ${
+      account._account_id === selfAccount?._account_id ? 'yourself' : 'the user'
+    } from the attention set`;
     return enabled
-      ? 'Click to remove the user from the attention set'
+      ? removeFromASTooltip
       : force
       ? 'Disabled. Use "Modify" to make changes.'
       : 'Disabled. Only involved users can change.';

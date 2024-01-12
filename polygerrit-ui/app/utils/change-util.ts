@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {getBaseUrl} from './url-util';
 import {ChangeStatus} from '../constants/constants';
@@ -25,6 +14,7 @@ import {
 } from '../types/common';
 import {ParsedChangeInfo} from '../types/types';
 import {ChangeStates} from '../elements/shared/gr-change-status/gr-change-status';
+import {getUserId, isServiceUser} from './account-util';
 
 // This can be wrong! See WARNING above
 interface ChangeStatusesOptions {
@@ -147,6 +137,20 @@ export function changeIsAbandoned(
 ) {
   return change?.status === ChangeStatus.ABANDONED;
 }
+/**
+ * Get the change number from either a ChangeInfo (such as those included in
+ * SubmittedTogetherInfo responses) or get the change number from a
+ * RelatedChangeAndCommitInfo (such as those included in a
+ * RelatedChangesInfo response).
+ */
+export function getChangeNumber(
+  change: ChangeInfo | ParsedChangeInfo | RelatedChangeAndCommitInfo
+): NumericChangeId {
+  if (isChangeInfo(change)) {
+    return change._number;
+  }
+  return change._change_number!;
+}
 
 export function changeStatuses(
   change: ChangeInfo,
@@ -154,15 +158,19 @@ export function changeStatuses(
 ): ChangeStates[] {
   const states = [];
   if (change.status === ChangeStatus.MERGED) {
-    states.push(ChangeStates.MERGED);
-  } else if (change.status === ChangeStatus.ABANDONED) {
-    states.push(ChangeStates.ABANDONED);
-  } else if (
+    return [ChangeStates.MERGED];
+  }
+  if (change.status === ChangeStatus.ABANDONED) {
+    return [ChangeStates.ABANDONED];
+  }
+  if (
     change.mergeable === false ||
     (opt_options && opt_options.mergeable === false)
   ) {
     // 'mergeable' prop may not always exist (@see Issue 6819)
     states.push(ChangeStates.MERGE_CONFLICT);
+  } else if (change.contains_git_conflicts) {
+    states.push(ChangeStates.GIT_CONFLICT);
   }
   if (change.work_in_progress) {
     states.push(ChangeStates.WIP);
@@ -260,11 +268,23 @@ export function getRevisionKey(
   );
 }
 
+export function hasHumanReviewer(
+  change?: ChangeInfo | ParsedChangeInfo
+): boolean {
+  if (!change) return false;
+  const reviewers = change.reviewers.REVIEWER ?? [];
+  return reviewers
+    .filter(r => getUserId(r) !== getUserId(change.owner))
+    .some(r => !isServiceUser(r));
+}
+
 export function isRemovableReviewer(
   change?: ChangeInfo,
   reviewer?: AccountInfo
 ): boolean {
-  if (!change?.removable_reviewers || !reviewer) return false;
+  if (!reviewer || !change) return false;
+  if (isCc(change, reviewer)) return true;
+  if (!change.removable_reviewers) return false;
   return change.removable_reviewers.some(
     account =>
       account._account_id === reviewer._account_id ||

@@ -1,23 +1,11 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-change-actions';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {
   createAccountWithId,
@@ -48,7 +36,7 @@ import {
   ChangeSubmissionId,
   CommitId,
   NumericChangeId,
-  PatchSetNum,
+  PatchSetNumber,
   RepoName,
   ReviewInput,
   TopicName,
@@ -60,7 +48,7 @@ import {GrButton} from '../../shared/gr-button/gr-button';
 import {GrDialog} from '../../shared/gr-dialog/gr-dialog';
 import {UIActionInfo} from '../../shared/gr-js-api-interface/gr-change-actions-js-api';
 import {getAppContext} from '../../../services/app-context';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
 import {GrConfirmCherrypickDialog} from '../gr-confirm-cherrypick-dialog/gr-confirm-cherrypick-dialog';
 import {GrDropdown} from '../../shared/gr-dropdown/gr-dropdown';
 import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
@@ -69,6 +57,8 @@ import {GrConfirmRebaseDialog} from '../gr-confirm-rebase-dialog/gr-confirm-reba
 import {GrConfirmMoveDialog} from '../gr-confirm-move-dialog/gr-confirm-move-dialog';
 import {GrConfirmAbandonDialog} from '../gr-confirm-abandon-dialog/gr-confirm-abandon-dialog';
 import {GrConfirmRevertDialog} from '../gr-confirm-revert-dialog/gr-confirm-revert-dialog';
+import {EventType} from '../../../types/events';
+import {testResolver} from '../../../test/common-test-setup';
 
 // TODO(dhruvsri): remove use of _populateRevertMessage as it's private
 suite('gr-change-actions tests', () => {
@@ -147,7 +137,7 @@ suite('gr-change-actions tests', () => {
         },
       };
       element.changeNum = 42 as NumericChangeId;
-      element.latestPatchNum = 2 as PatchSetNum;
+      element.latestPatchNum = 2 as PatchSetNumber;
       element.account = {
         _account_id: 123 as AccountId,
       };
@@ -155,6 +145,143 @@ suite('gr-change-actions tests', () => {
 
       await element.updateComplete;
       await element.reload();
+    });
+
+    test('render', () => {
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `
+          <div id="mainContent">
+            <span hidden="" id="actionLoadingMessage"> </span>
+            <section id="primaryActions">
+              <gr-tooltip-content
+                has-tooltip=""
+                position-below=""
+                title="Submit patch set 2 into master"
+              >
+                <gr-button
+                  aria-disabled="false"
+                  class="submit"
+                  data-action-key="submit"
+                  data-label="Submit"
+                  link=""
+                  role="button"
+                  tabindex="0"
+                >
+                  <gr-icon icon="done_all"></gr-icon>
+                  Submit
+                </gr-button>
+              </gr-tooltip-content>
+            </section>
+            <section id="secondaryActions">
+              <gr-tooltip-content
+                has-tooltip=""
+                position-below=""
+                title="Rebase onto tip of branch or parent change"
+              >
+                <gr-button
+                  aria-disabled="true"
+                  class="rebase"
+                  data-action-key="rebase"
+                  data-label="Rebase"
+                  disabled=""
+                  link=""
+                  role="button"
+                  tabindex="-1"
+                >
+                  <gr-icon icon="rebase"> </gr-icon>
+                  Rebase
+                </gr-button>
+              </gr-tooltip-content>
+            </section>
+            <gr-button
+              aria-disabled="false"
+              hidden=""
+              role="button"
+              tabindex="0"
+            >
+              Loading actions...
+            </gr-button>
+            <gr-dropdown id="moreActions" link="">
+              <gr-icon icon="more_vert" aria-labelledby="moreMessage"></gr-icon>
+              <span id="moreMessage"> More </span>
+            </gr-dropdown>
+          </div>
+          <gr-overlay
+            aria-hidden="true"
+            id="overlay"
+            style="outline: none; display: none;"
+            tabindex="-1"
+            with-backdrop=""
+          >
+            <gr-confirm-rebase-dialog class="confirmDialog" id="confirmRebase">
+            </gr-confirm-rebase-dialog>
+            <gr-confirm-cherrypick-dialog
+              class="confirmDialog"
+              id="confirmCherrypick"
+            >
+            </gr-confirm-cherrypick-dialog>
+            <gr-confirm-cherrypick-conflict-dialog
+              class="confirmDialog"
+              id="confirmCherrypickConflict"
+            >
+            </gr-confirm-cherrypick-conflict-dialog>
+            <gr-confirm-move-dialog class="confirmDialog" id="confirmMove">
+            </gr-confirm-move-dialog>
+            <gr-confirm-revert-dialog
+              class="confirmDialog"
+              id="confirmRevertDialog"
+            >
+            </gr-confirm-revert-dialog>
+            <gr-confirm-abandon-dialog
+              class="confirmDialog"
+              id="confirmAbandonDialog"
+            >
+            </gr-confirm-abandon-dialog>
+            <gr-confirm-submit-dialog
+              class="confirmDialog"
+              id="confirmSubmitDialog"
+            >
+            </gr-confirm-submit-dialog>
+            <gr-dialog
+              class="confirmDialog"
+              confirm-label="Create"
+              id="createFollowUpDialog"
+              role="dialog"
+            >
+              <div class="header" slot="header">Create Follow-Up Change</div>
+              <div class="main" slot="main">
+                <gr-create-change-dialog id="createFollowUpChange">
+                </gr-create-change-dialog>
+              </div>
+            </gr-dialog>
+            <gr-dialog
+              class="confirmDialog"
+              confirm-label="Delete"
+              confirm-on-enter=""
+              id="confirmDeleteDialog"
+              role="dialog"
+            >
+              <div class="header" slot="header">Delete Change</div>
+              <div class="main" slot="main">
+                Do you really want to delete the change?
+              </div>
+            </gr-dialog>
+            <gr-dialog
+              class="confirmDialog"
+              confirm-label="Delete"
+              confirm-on-enter=""
+              id="confirmDeleteEditDialog"
+              role="dialog"
+            >
+              <div class="header" slot="header">Delete Change Edit</div>
+              <div class="main" slot="main">
+                Do you really want to delete the edit?
+              </div>
+            </gr-dialog>
+          </gr-overlay>
+        `
+      );
     });
 
     test('show-revision-actions event should fire', async () => {
@@ -311,18 +438,20 @@ suite('gr-change-actions tests', () => {
 
     test('get revision object from change', () => {
       const revObj = {
-        ...createRevision(),
-        _number: 2 as PatchSetNum,
+        ...createRevision(2),
         foo: 'bar',
       };
       const change = {
         ...createChangeViewChange(),
         revisions: {
-          rev1: {...createRevision(), _number: 1 as PatchSetNum},
+          rev1: createRevision(1),
           rev2: revObj,
         },
       };
-      assert.deepEqual(element.getRevision(change, 2 as PatchSetNum), revObj);
+      assert.deepEqual(
+        element.getRevision(change, 2 as PatchSetNumber),
+        revObj
+      );
     });
 
     test('actionComparator sort order', () => {
@@ -356,11 +485,11 @@ suite('gr-change-actions tests', () => {
       element.change = {
         ...createChangeViewChange(),
         revisions: {
-          rev1: {...createRevision(), _number: 1 as PatchSetNum},
-          rev2: {...createRevision(), _number: 2 as PatchSetNum},
+          rev1: {...createRevision(), _number: 1 as PatchSetNumber},
+          rev2: {...createRevision(), _number: 2 as PatchSetNumber},
         },
       };
-      element.latestPatchNum = 2 as PatchSetNum;
+      element.latestPatchNum = 2 as PatchSetNumber;
 
       queryAndAssert<GrButton>(
         element,
@@ -395,17 +524,35 @@ suite('gr-change-actions tests', () => {
       element.change = {
         ...createChangeViewChange(),
         revisions: {
-          rev1: {...createRevision(), _number: 1 as PatchSetNum},
-          rev2: {...createRevision(), _number: 2 as PatchSetNum},
+          rev1: {...createRevision(), _number: 1 as PatchSetNumber},
+          rev2: {...createRevision(), _number: 2 as PatchSetNumber},
         },
       };
-      element.latestPatchNum = 2 as PatchSetNum;
+      element.latestPatchNum = 2 as PatchSetNumber;
 
       queryAndAssert<GrButton>(
         element,
-        'gr-button[data-action-key="submit"] iron-icon'
+        'gr-button[data-action-key="submit"] gr-icon'
       ).click();
       await submitted;
+    });
+
+    test('correct icons', async () => {
+      element.loggedIn = true;
+      await element.updateComplete;
+
+      queryAndAssert<GrButton>(
+        element,
+        'gr-button[data-action-key="submit"] gr-icon'
+      );
+      queryAndAssert<GrButton>(
+        element,
+        'gr-button[data-action-key="rebase"] gr-icon'
+      );
+      queryAndAssert<GrButton>(
+        element,
+        'gr-button[data-action-key="edit"] gr-icon[filled]'
+      );
     });
 
     test('handleSubmitConfirm', () => {
@@ -491,13 +638,14 @@ suite('gr-change-actions tests', () => {
       };
       assert.isTrue(fetchChangesStub.called);
       element.handleRebaseConfirm(
-        new CustomEvent('', {detail: {base: '1234'}})
+        new CustomEvent('', {detail: {base: '1234', allowConflicts: false}})
       );
       assert.deepEqual(fireActionStub.lastCall.args, [
         '/rebase',
         assertUIActionInfo(rebaseAction),
         true,
-        {base: '1234'},
+        {base: '1234', allow_conflicts: false},
+        {allow_conflicts: false},
       ]);
     });
 
@@ -1659,7 +1807,7 @@ suite('gr-change-actions tests', () => {
         element.change!.is_private = false;
 
         element.changeNum = 2 as NumericChangeId;
-        element.latestPatchNum = 2 as PatchSetNum;
+        element.latestPatchNum = 2 as PatchSetNumber;
 
         await element.updateComplete;
         await element.reload();
@@ -1713,7 +1861,7 @@ suite('gr-change-actions tests', () => {
         element.change!.is_private = true;
 
         element.changeNum = 2 as NumericChangeId;
-        element.latestPatchNum = 2 as PatchSetNum;
+        element.latestPatchNum = 2 as PatchSetNumber;
 
         await element.updateComplete;
         await element.reload();
@@ -2182,7 +2330,7 @@ suite('gr-change-actions tests', () => {
       const reloadStub = sinon.stub(element, 'reload');
       element.changeNum = 123 as NumericChangeId;
       assert.isFalse(reloadStub.called);
-      element.latestPatchNum = 456 as PatchSetNum;
+      element.latestPatchNum = 456 as PatchSetNumber;
       assert.isFalse(reloadStub.called);
     });
 
@@ -2278,7 +2426,7 @@ suite('gr-change-actions tests', () => {
       setup(async () => {
         cleanup = sinon.stub();
         element.changeNum = 42 as NumericChangeId;
-        element.latestPatchNum = 12 as PatchSetNum;
+        element.latestPatchNum = 12 as PatchSetNumber;
         element.change = {
           ...createChangeViewChange(),
           revisions: createRevisions(element.latestPatchNum as number),
@@ -2290,7 +2438,7 @@ suite('gr-change-actions tests', () => {
         onShowError = sinon.stub();
         element.addEventListener('show-error', onShowError);
         onShowAlert = sinon.stub();
-        element.addEventListener('show-alert', onShowAlert);
+        element.addEventListener(EventType.SHOW_ALERT, onShowAlert);
       });
 
       suite('happy path', () => {
@@ -2308,7 +2456,6 @@ suite('gr-change-actions tests', () => {
           sendStub = stubRestApi('executeChangeAction').returns(
             Promise.resolve(new Response())
           );
-          sinon.stub(GerritNav, 'navigateToChange');
         });
 
         test('change action', async () => {
@@ -2358,15 +2505,14 @@ suite('gr-change-actions tests', () => {
         });
 
         suite('single changes revert', () => {
-          let navigateToSearchQueryStub: sinon.SinonStub;
+          let setUrlStub: sinon.SinonStub;
           setup(() => {
             getResponseObjectStub.returns(
-              Promise.resolve({revert_changes: [{change_id: 12345}]})
+              Promise.resolve({
+                revert_changes: [{change_id: 12345, topic: 'T'}],
+              })
             );
-            navigateToSearchQueryStub = sinon.stub(
-              GerritNav,
-              'navigateToSearchQuery'
-            );
+            setUrlStub = sinon.stub(testResolver(navigationToken), 'setUrl');
           });
 
           test('revert submission single change', async () => {
@@ -2386,13 +2532,14 @@ suite('gr-change-actions tests', () => {
               },
               new Response()
             );
-            assert.isTrue(navigateToSearchQueryStub.called);
+            assert.isTrue(setUrlStub.called);
+            assert.equal(setUrlStub.lastCall.args[0], '/q/topic:T');
           });
         });
 
         suite('multiple changes revert', () => {
           let showActionDialogStub: sinon.SinonStub;
-          let navigateToSearchQueryStub: sinon.SinonStub;
+          let setUrlStub: sinon.SinonStub;
           setup(() => {
             getResponseObjectStub.returns(
               Promise.resolve({
@@ -2403,10 +2550,7 @@ suite('gr-change-actions tests', () => {
               })
             );
             showActionDialogStub = sinon.stub(element, 'showActionDialog');
-            navigateToSearchQueryStub = sinon.stub(
-              GerritNav,
-              'navigateToSearchQuery'
-            );
+            setUrlStub = sinon.stub(testResolver(navigationToken), 'setUrl');
           });
 
           test('revert submission multiple change', async () => {
@@ -2427,7 +2571,8 @@ suite('gr-change-actions tests', () => {
               new Response()
             );
             assert.isFalse(showActionDialogStub.called);
-            assert.isTrue(navigateToSearchQueryStub.calledWith('topic: T'));
+            assert.isTrue(setUrlStub.called);
+            assert.equal(setUrlStub.lastCall.args[0], '/q/topic:T');
           });
         });
 
@@ -2549,7 +2694,7 @@ suite('gr-change-actions tests', () => {
       // set the following properties
       element.change = createChangeViewChange();
       element.changeNum = 42 as NumericChangeId;
-      element.latestPatchNum = 2 as PatchSetNum;
+      element.latestPatchNum = 2 as PatchSetNumber;
 
       stubRestApi('getRepoBranches').returns(Promise.resolve([]));
       await element.updateComplete;

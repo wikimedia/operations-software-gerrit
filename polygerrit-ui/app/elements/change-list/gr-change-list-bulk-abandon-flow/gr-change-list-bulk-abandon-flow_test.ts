@@ -3,7 +3,6 @@
  * Copyright 2022 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-
 import {createChange} from '../../../test/test-data-generators';
 import {
   NumericChangeId,
@@ -13,14 +12,14 @@ import {
   PatchSetNum,
 } from '../../../api/rest-api';
 import {GrChangeListBulkAbandonFlow} from './gr-change-list-bulk-abandon-flow';
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import {
   BulkActionsModel,
   bulkActionsModelToken,
   LoadingState,
 } from '../../../models/bulk-actions/bulk-actions-model';
 import './gr-change-list-bulk-abandon-flow';
-import {fixture, waitUntil} from '@open-wc/testing-helpers';
+import {fixture, waitUntil, assert} from '@open-wc/testing';
 import {wrapInProvider} from '../../../models/di-provider-element';
 import {html} from 'lit';
 import {getAppContext} from '../../../services/app-context';
@@ -32,7 +31,6 @@ import {
   query,
 } from '../../../test/test-utils';
 import {GrButton} from '../../shared/gr-button/gr-button';
-import {tap} from '@polymer/iron-test-helpers/mock-interactions';
 import {ProgressStatus} from '../../../constants/constants';
 import {RequestPayload} from '../../../types/common';
 import {ErrorCallback} from '../../../api/rest';
@@ -69,6 +67,60 @@ suite('gr-change-list-bulk-abandon-flow tests', () => {
     await element.updateComplete;
   });
 
+  test('render', async () => {
+    const changes: ChangeInfo[] = [{...change1, actions: {abandon: {}}}];
+    getChangesStub.returns(changes);
+    model.sync(changes);
+    await waitUntilObserved(
+      model.loadingState$,
+      state => state === LoadingState.LOADED
+    );
+    await selectChange(change1);
+    await element.updateComplete;
+
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <gr-button
+          aria-disabled="false"
+          flatten=""
+          id="abandon"
+          role="button"
+          tabindex="0"
+        >
+          Abandon
+        </gr-button>
+        <gr-overlay
+          aria-hidden="true"
+          id="actionOverlay"
+          style="outline: none; display: none;"
+          tabindex="-1"
+          with-backdrop=""
+        >
+          <gr-dialog role="dialog">
+            <div slot="header">1 changes to abandon</div>
+            <div slot="main">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Subject</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Change: Test subject</td>
+                    <td id="status">Status: NOT STARTED</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </gr-dialog>
+        </gr-overlay>
+      `
+    );
+  });
+
   test('button state updates as changes are updated', async () => {
     const changes: ChangeInfo[] = [{...change1, actions: {abandon: {}}}];
     getChangesStub.returns(changes);
@@ -79,8 +131,7 @@ suite('gr-change-list-bulk-abandon-flow tests', () => {
     );
     await selectChange(change1);
     await element.updateComplete;
-    await flush();
-    // await waitUntil(() => element.selectedChanges.length > 0);
+
     assert.isFalse(queryAndAssert<GrButton>(element, '#abandon').disabled);
 
     changes.push({...change2, actions: {}});
@@ -109,10 +160,10 @@ suite('gr-change-list-bulk-abandon-flow tests', () => {
     );
     await selectChange(change1);
     await element.updateComplete;
-    await flush();
+
     assert.isFalse(queryAndAssert<GrButton>(element, '#abandon').disabled);
 
-    tap(queryAndAssert(query(element, 'gr-dialog'), '#confirm'));
+    queryAndAssert<GrButton>(query(element, 'gr-dialog'), '#confirm').click();
 
     await waitUntil(
       () =>
@@ -152,7 +203,7 @@ suite('gr-change-list-bulk-abandon-flow tests', () => {
       queryAndAssert<GrButton>(query(element, 'gr-dialog'), '#cancel').disabled
     );
 
-    tap(queryAndAssert(query(element, 'gr-dialog'), '#confirm'));
+    queryAndAssert<GrButton>(query(element, 'gr-dialog'), '#confirm').click();
     await element.updateComplete;
 
     assert.isTrue(
@@ -226,7 +277,7 @@ suite('gr-change-list-bulk-abandon-flow tests', () => {
         })
     );
 
-    tap(queryAndAssert(query(element, 'gr-dialog'), '#confirm'));
+    queryAndAssert<GrButton>(query(element, 'gr-dialog'), '#confirm').click();
     await element.updateComplete;
 
     assert.equal(
@@ -283,7 +334,7 @@ suite('gr-change-list-bulk-abandon-flow tests', () => {
     await selectChange(change2);
     await element.updateComplete;
 
-    tap(queryAndAssert(query(element, 'gr-dialog'), '#confirm'));
+    queryAndAssert<GrButton>(query(element, 'gr-dialog'), '#confirm').click();
 
     await waitUntil(
       () => element.progress.get(2 as NumericChangeId) === ProgressStatus.FAILED
@@ -291,7 +342,7 @@ suite('gr-change-list-bulk-abandon-flow tests', () => {
 
     assert.isFalse(fireStub.called);
 
-    tap(queryAndAssert(query(element, 'gr-dialog'), '#cancel'));
+    queryAndAssert<GrButton>(query(element, 'gr-dialog'), '#cancel').click();
 
     await waitUntil(() => fireStub.called);
     assert.equal(fireStub.lastCall.args[0].type, 'reload');

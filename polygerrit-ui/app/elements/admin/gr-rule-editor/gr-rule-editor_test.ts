@@ -1,29 +1,16 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-rule-editor';
 import {GrRuleEditor} from './gr-rule-editor';
 import {AccessPermissionId} from '../../../utils/access-util';
 import {query, queryAll, queryAndAssert} from '../../../test/test-utils';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {GrSelect} from '../../shared/gr-select/gr-select';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
 import {EditablePermissionRuleInfo} from '../gr-repo-access/gr-repo-access-interfaces';
 import {PermissionAction} from '../../../constants/constants';
 
@@ -39,44 +26,47 @@ suite('gr-rule-editor tests', () => {
 
   suite('dom tests', () => {
     test('default', () => {
-      expect(element).shadowDom.to.equal(/* HTML */ `
-        <div class="gr-form-styles" id="mainContainer">
-          <div id="options">
-            <gr-select id="action">
-              <select disabled="">
-                <option value="ALLOW">ALLOW</option>
-                <option value="DENY">DENY</option>
-                <option value="BLOCK">BLOCK</option>
-              </select>
-            </gr-select>
-            <a class="groupPath"> </a>
-            <gr-select id="force">
-              <select disabled=""></select>
-            </gr-select>
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `
+          <div class="gr-form-styles" id="mainContainer">
+            <div id="options">
+              <gr-select id="action">
+                <select disabled="">
+                  <option value="ALLOW">ALLOW</option>
+                  <option value="DENY">DENY</option>
+                  <option value="BLOCK">BLOCK</option>
+                </select>
+              </gr-select>
+              <a class="groupPath"> </a>
+              <gr-select id="force">
+                <select disabled=""></select>
+              </gr-select>
+            </div>
+            <gr-button
+              aria-disabled="false"
+              id="removeBtn"
+              link=""
+              role="button"
+              tabindex="0"
+            >
+              Remove
+            </gr-button>
           </div>
-          <gr-button
-            aria-disabled="false"
-            id="removeBtn"
-            link=""
-            role="button"
-            tabindex="0"
-          >
-            Remove
-          </gr-button>
-        </div>
-        <div class="gr-form-styles" id="deletedContainer">
-          was deleted
-          <gr-button
-            aria-disabled="false"
-            id="undoRemoveBtn"
-            link=""
-            role="button"
-            tabindex="0"
-          >
-            Undo
-          </gr-button>
-        </div>
-      `);
+          <div class="gr-form-styles" id="deletedContainer">
+            was deleted
+            <gr-button
+              aria-disabled="false"
+              id="undoRemoveBtn"
+              link=""
+              role="button"
+              tabindex="0"
+            >
+              Undo
+            </gr-button>
+          </div>
+        `
+      );
     });
 
     test('push options', async () => {
@@ -92,26 +82,31 @@ suite('gr-rule-editor tests', () => {
           .permission=${AccessPermissionId.PUSH}
         ></gr-rule-editor>
       `);
-      expect(queryAndAssert(element, '#options')).dom.to.equal(/* HTML */ `
-        <div id="options">
-          <gr-select id="action">
-            <select>
-              <option value="ALLOW">ALLOW</option>
-              <option value="DENY">DENY</option>
-              <option value="BLOCK">BLOCK</option>
-            </select>
-          </gr-select>
-          <a class="groupPath"> </a>
-          <gr-select class="force" id="force">
-            <select>
-              <option value="false">
-                Allow pushing (but not force pushing)
-              </option>
-              <option value="true">Allow pushing with or without force</option>
-            </select>
-          </gr-select>
-        </div>
-      `);
+      assert.dom.equal(
+        queryAndAssert(element, '#options'),
+        /* HTML */ `
+          <div id="options">
+            <gr-select id="action">
+              <select>
+                <option value="ALLOW">ALLOW</option>
+                <option value="DENY">DENY</option>
+                <option value="BLOCK">BLOCK</option>
+              </select>
+            </gr-select>
+            <a class="groupPath"> </a>
+            <gr-select class="force" id="force">
+              <select>
+                <option value="false">
+                  Allow pushing (but not force pushing)
+                </option>
+                <option value="true">
+                  Allow pushing with or without force
+                </option>
+              </select>
+            </gr-select>
+          </div>
+        `
+      );
     });
   });
 
@@ -367,7 +362,7 @@ suite('gr-rule-editor tests', () => {
           '#deletedContainer'
         ).classList.contains('deleted')
       );
-      MockInteractions.tap(queryAndAssert<GrButton>(element, '#removeBtn'));
+      queryAndAssert<GrButton>(element, '#removeBtn').click();
       await element.updateComplete;
       assert.isTrue(
         queryAndAssert<HTMLDivElement>(
@@ -378,7 +373,7 @@ suite('gr-rule-editor tests', () => {
       assert.isTrue(element.deleted);
       assert.isTrue(element.rule.value!.deleted);
 
-      MockInteractions.tap(queryAndAssert<GrButton>(element, '#undoRemoveBtn'));
+      queryAndAssert<GrButton>(element, '#undoRemoveBtn').click();
       await element.updateComplete;
       assert.isFalse(element.deleted);
       assert.isNotOk(element.rule.value!.deleted);
@@ -401,7 +396,7 @@ suite('gr-rule-editor tests', () => {
 
       element.rule = {value: {action: PermissionAction.ALLOW}};
       await element.updateComplete;
-      MockInteractions.tap(queryAndAssert<GrButton>(element, '#removeBtn'));
+      queryAndAssert<GrButton>(element, '#removeBtn').click();
       await element.updateComplete;
       assert.notEqual(
         getComputedStyle(queryAndAssert<GrButton>(element, '#removeBtn'))
@@ -466,16 +461,16 @@ suite('gr-rule-editor tests', () => {
         added: true,
       };
       assert.deepEqual(element.rule!.value, expectedRuleValue);
-      test('values are set correctly', () => {
-        assert.equal(
-          queryAndAssert<GrSelect>(element, '#action').bindValue,
-          expectedRuleValue.action
-        );
-        assert.equal(
-          queryAndAssert<GrSelect>(element, '#force').bindValue,
-          expectedRuleValue.action
-        );
-      });
+
+      // values are set correctly
+      assert.equal(
+        queryAndAssert<GrSelect>(element, '#action').bindValue,
+        expectedRuleValue.action
+      );
+      assert.equal(
+        queryAndAssert<GrSelect>(element, '#force').bindValue,
+        expectedRuleValue.force
+      );
     });
 
     test('modify value', async () => {
@@ -493,7 +488,7 @@ suite('gr-rule-editor tests', () => {
       element.editing = true;
       const removeStub = sinon.stub();
       element.addEventListener('added-rule-removed', removeStub);
-      MockInteractions.tap(queryAndAssert<GrButton>(element, '#removeBtn'));
+      queryAndAssert<GrButton>(element, '#removeBtn').click();
       await element.updateComplete;
       assert.isTrue(removeStub.called);
     });
@@ -601,20 +596,20 @@ suite('gr-rule-editor tests', () => {
         added: true,
       };
       assert.deepEqual(element.rule!.value, expectedRuleValue);
-      test('values are set correctly', () => {
-        assert.equal(
-          queryAndAssert<GrSelect>(element, '#action').bindValue,
-          expectedRuleValue.action
-        );
-        assert.equal(
-          queryAndAssert<GrSelect>(element, '#labelMin').bindValue,
-          expectedRuleValue.min
-        );
-        assert.equal(
-          queryAndAssert<GrSelect>(element, '#labelMax').bindValue,
-          expectedRuleValue.max
-        );
-      });
+
+      // values are set correctly
+      assert.equal(
+        queryAndAssert<GrSelect>(element, '#action').bindValue,
+        expectedRuleValue.action
+      );
+      assert.equal(
+        queryAndAssert<GrSelect>(element, '#labelMin').bindValue,
+        expectedRuleValue.min
+      );
+      assert.equal(
+        queryAndAssert<GrSelect>(element, '#labelMax').bindValue,
+        expectedRuleValue.max
+      );
     });
 
     test('modify value', async () => {
@@ -700,16 +695,15 @@ suite('gr-rule-editor tests', () => {
         added: true,
       };
       assert.deepEqual(element.rule!.value, expectedRuleValue);
-      test('values are set correctly', () => {
-        assert.equal(
-          queryAndAssert<GrSelect>(element, '#action').bindValue,
-          expectedRuleValue.action
-        );
-        assert.equal(
-          queryAndAssert<GrSelect>(element, '#force').bindValue,
-          expectedRuleValue.action
-        );
-      });
+      // values are set correctly
+      assert.equal(
+        queryAndAssert<GrSelect>(element, '#action').bindValue,
+        expectedRuleValue.action
+      );
+      assert.equal(
+        queryAndAssert<GrSelect>(element, '#force').bindValue,
+        expectedRuleValue.force
+      );
     });
 
     test('modify value', async () => {

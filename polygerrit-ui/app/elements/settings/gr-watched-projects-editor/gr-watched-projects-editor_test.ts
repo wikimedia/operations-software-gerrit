@@ -1,32 +1,19 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-watched-projects-editor';
 import {GrWatchedProjectsEditor} from './gr-watched-projects-editor';
 import {stubRestApi, waitUntil} from '../../../test/test-utils';
 import {ProjectWatchInfo} from '../../../types/common';
-import {queryAll, queryAndAssert} from '../../../test/test-utils';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
+import {queryAndAssert} from '../../../test/test-utils';
 import {IronInputElement} from '@polymer/iron-input';
 import {assertIsDefined} from '../../../utils/common-util';
+import {fixture, html, assert} from '@open-wc/testing';
+import {GrButton} from '../../shared/gr-button/gr-button';
 import {GrAutocomplete} from '../../shared/gr-autocomplete/gr-autocomplete';
-
-const basicFixture = fixtureFromElement('gr-watched-projects-editor');
 
 suite('gr-watched-projects-editor tests', () => {
   let element: GrWatchedProjectsEditor;
@@ -71,38 +58,212 @@ suite('gr-watched-projects-editor tests', () => {
       }
     });
 
-    element = basicFixture.instantiate();
+    element = await fixture(
+      html`<gr-watched-projects-editor></gr-watched-projects-editor>`
+    );
 
     await element.loadData();
     await element.updateComplete;
   });
 
   test('renders', () => {
-    const rows = queryAndAssert(element, 'table').querySelectorAll('tbody tr');
-    assert.equal(rows.length, 4);
-
-    function getKeysOfRow(row: number) {
-      const boxes = queryAll(rows[row], 'input[checked]');
-      return Array.prototype.map.call(boxes, e => e.getAttribute('data-key'));
-    }
-
-    let checkedKeys = getKeysOfRow(0);
-    assert.equal(checkedKeys.length, 2);
-    assert.equal(checkedKeys[0], 'notify_submitted_changes');
-    assert.equal(checkedKeys[1], 'notify_abandoned_changes');
-
-    checkedKeys = getKeysOfRow(1);
-    assert.equal(checkedKeys.length, 1);
-    assert.equal(checkedKeys[0], 'notify_new_changes');
-
-    checkedKeys = getKeysOfRow(2);
-    assert.equal(checkedKeys.length, 0);
-
-    checkedKeys = getKeysOfRow(3);
-    assert.equal(checkedKeys.length, 3);
-    assert.equal(checkedKeys[0], 'notify_new_changes');
-    assert.equal(checkedKeys[1], 'notify_new_patch_sets');
-    assert.equal(checkedKeys[2], 'notify_all_comments');
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="gr-form-styles">
+          <table id="watchedProjects">
+            <thead>
+              <tr>
+                <th>Repo</th>
+                <th class="notifType">Changes</th>
+                <th class="notifType">Patches</th>
+                <th class="notifType">Comments</th>
+                <th class="notifType">Submits</th>
+                <th class="notifType">Abandons</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>project a</td>
+                <td class="notifControl">
+                  <input data-key="notify_new_changes" type="checkbox" />
+                </td>
+                <td class="notifControl">
+                  <input data-key="notify_new_patch_sets" type="checkbox" />
+                </td>
+                <td class="notifControl">
+                  <input data-key="notify_all_comments" type="checkbox" />
+                </td>
+                <td class="notifControl">
+                  <input
+                    checked=""
+                    data-key="notify_submitted_changes"
+                    type="checkbox"
+                  />
+                </td>
+                <td class="notifControl">
+                  <input
+                    checked=""
+                    data-key="notify_abandoned_changes"
+                    type="checkbox"
+                  />
+                </td>
+                <td>
+                  <gr-button
+                    aria-disabled="false"
+                    link=""
+                    role="button"
+                    tabindex="0"
+                  >
+                    Delete
+                  </gr-button>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  project b
+                  <div class="projectFilter">filter 1</div>
+                </td>
+                <td class="notifControl">
+                  <input
+                    checked=""
+                    data-key="notify_new_changes"
+                    type="checkbox"
+                  />
+                </td>
+                <td class="notifControl">
+                  <input data-key="notify_new_patch_sets" type="checkbox" />
+                </td>
+                <td class="notifControl">
+                  <input data-key="notify_all_comments" type="checkbox" />
+                </td>
+                <td class="notifControl">
+                  <input data-key="notify_submitted_changes" type="checkbox" />
+                </td>
+                <td class="notifControl">
+                  <input data-key="notify_abandoned_changes" type="checkbox" />
+                </td>
+                <td>
+                  <gr-button
+                    aria-disabled="false"
+                    link=""
+                    role="button"
+                    tabindex="0"
+                  >
+                    Delete
+                  </gr-button>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  project b
+                  <div class="projectFilter">filter 2</div>
+                </td>
+                <td class="notifControl">
+                  <input data-key="notify_new_changes" type="checkbox" />
+                </td>
+                <td class="notifControl">
+                  <input data-key="notify_new_patch_sets" type="checkbox" />
+                </td>
+                <td class="notifControl">
+                  <input data-key="notify_all_comments" type="checkbox" />
+                </td>
+                <td class="notifControl">
+                  <input data-key="notify_submitted_changes" type="checkbox" />
+                </td>
+                <td class="notifControl">
+                  <input data-key="notify_abandoned_changes" type="checkbox" />
+                </td>
+                <td>
+                  <gr-button
+                    aria-disabled="false"
+                    link=""
+                    role="button"
+                    tabindex="0"
+                  >
+                    Delete
+                  </gr-button>
+                </td>
+              </tr>
+              <tr>
+                <td>project c</td>
+                <td class="notifControl">
+                  <input
+                    checked=""
+                    data-key="notify_new_changes"
+                    type="checkbox"
+                  />
+                </td>
+                <td class="notifControl">
+                  <input
+                    checked=""
+                    data-key="notify_new_patch_sets"
+                    type="checkbox"
+                  />
+                </td>
+                <td class="notifControl">
+                  <input
+                    checked=""
+                    data-key="notify_all_comments"
+                    type="checkbox"
+                  />
+                </td>
+                <td class="notifControl">
+                  <input data-key="notify_submitted_changes" type="checkbox" />
+                </td>
+                <td class="notifControl">
+                  <input data-key="notify_abandoned_changes" type="checkbox" />
+                </td>
+                <td>
+                  <gr-button
+                    aria-disabled="false"
+                    link=""
+                    role="button"
+                    tabindex="0"
+                  >
+                    Delete
+                  </gr-button>
+                </td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr>
+                <th>
+                  <gr-autocomplete
+                    allow-non-suggested-values=""
+                    id="newProject"
+                    placeholder="Repo"
+                    tab-complete=""
+                    threshold="1"
+                  >
+                  </gr-autocomplete>
+                </th>
+                <th colspan="5">
+                  <iron-input class="newFilterInput" id="newFilterInput">
+                    <input
+                      class="newFilterInput"
+                      id="newFilter"
+                      placeholder="branch:name, or other search expression"
+                    />
+                  </iron-input>
+                </th>
+                <th>
+                  <gr-button
+                    aria-disabled="false"
+                    link=""
+                    role="button"
+                    tabindex="0"
+                  >
+                    Add
+                  </gr-button>
+                </th>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      `
+    );
   });
 
   test('getProjectSuggestions empty', async () => {
@@ -210,11 +371,11 @@ suite('gr-watched-projects-editor tests', () => {
   test('_handleRemoveProject', async () => {
     assert.deepEqual(element.projectsToRemove, []);
 
-    const button = queryAndAssert(
+    const button = queryAndAssert<GrButton>(
       element,
       'table tbody tr:nth-child(2) gr-button'
     );
-    MockInteractions.tap(button);
+    button.click();
 
     await element.updateComplete;
 

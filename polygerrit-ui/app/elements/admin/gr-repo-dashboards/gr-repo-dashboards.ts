@@ -1,21 +1,8 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {RepoName, DashboardId, DashboardInfo} from '../../../types/common';
 import {firePageError} from '../../../utils/event-util';
 import {getAppContext} from '../../../services/app-context';
@@ -23,7 +10,8 @@ import {ErrorCallback} from '../../../api/rest';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {tableStyles} from '../../../styles/gr-table-styles';
 import {LitElement, css, html, PropertyValues} from 'lit';
-import {customElement, property} from 'lit/decorators';
+import {customElement, property} from 'lit/decorators.js';
+import {createDashboardUrl} from '../../../models/views/dashboard';
 
 interface DashboardRef {
   section: string;
@@ -165,12 +153,10 @@ export class GrRepoDashboards extends LitElement {
       });
   }
 
-  _getUrl(project?: RepoName, id?: DashboardId) {
-    if (!project || !id) {
-      return '';
-    }
+  _getUrl(project?: RepoName, dashboard?: DashboardId) {
+    if (!project || !dashboard) return '';
 
-    return GerritNav.getUrlForRepoDashboard(project, id);
+    return createDashboardUrl({project, dashboard});
   }
 
   _computeLoadingClass(loading: boolean) {

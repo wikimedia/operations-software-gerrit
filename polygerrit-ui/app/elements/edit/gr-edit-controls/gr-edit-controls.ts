@@ -1,20 +1,8 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import '@polymer/iron-input/iron-input';
 import '../../shared/gr-autocomplete/gr-autocomplete';
 import '../../shared/gr-button/gr-button';
@@ -22,8 +10,8 @@ import '../../shared/gr-dialog/gr-dialog';
 import '../../shared/gr-dropdown/gr-dropdown';
 import '../../shared/gr-overlay/gr-overlay';
 import {GrEditAction, GrEditConstants} from '../gr-edit-constants';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
-import {ChangeInfo, PatchSetNum} from '../../../types/common';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
+import {ChangeInfo, RevisionPatchSetNum} from '../../../types/common';
 import {GrDialog} from '../../shared/gr-dialog/gr-dialog';
 import {
   AutocompleteQuery,
@@ -39,10 +27,12 @@ import {
 } from '../../../utils/common-util';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, html, css} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
+import {customElement, property, query, state} from 'lit/decorators.js';
 import {BindValueChangeEvent} from '../../../types/events';
 import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
 import {IronInputElement} from '@polymer/iron-input/iron-input';
+import {createEditUrl} from '../../../models/views/edit';
+import {resolve} from '../../../models/dependency';
 
 @customElement('gr-edit-controls')
 export class GrEditControls extends LitElement {
@@ -67,7 +57,7 @@ export class GrEditControls extends LitElement {
   change?: ChangeInfo;
 
   @property({type: String})
-  patchNum?: PatchSetNum;
+  patchNum?: RevisionPatchSetNum;
 
   @property({type: Array})
   hiddenActions: string[] = [GrEditConstants.Actions.RESTORE.id];
@@ -85,6 +75,8 @@ export class GrEditControls extends LitElement {
     this.queryFiles(input);
 
   private readonly restApiService = getAppContext().restApiService;
+
+  private readonly getNavigation = resolve(this, navigationToken);
 
   static override get styles() {
     return [
@@ -434,12 +426,15 @@ export class GrEditControls extends LitElement {
       this.closeDialog(this.openDialog);
       return;
     }
-    const url = GerritNav.getEditUrlForDiff(
-      this.change,
-      this.path,
-      this.patchNum
-    );
-    GerritNav.navigateToRelativeUrl(url);
+    assertIsDefined(this.patchNum, 'patchset number');
+    const url = createEditUrl({
+      changeNum: this.change._number,
+      project: this.change.project,
+      path: this.path,
+      patchNum: this.patchNum,
+    });
+
+    this.getNavigation().setUrl(url);
     this.closeDialog(this.getDialogFromEvent(e));
   };
 
@@ -477,7 +472,7 @@ export class GrEditControls extends LitElement {
           return;
         }
         this.closeDialog(dialog);
-        fireReload(this);
+        fireReload(this, true);
       });
   };
 
@@ -495,7 +490,7 @@ export class GrEditControls extends LitElement {
           return;
         }
         this.closeDialog(dialog);
-        fireReload(this);
+        fireReload(this, true);
       });
   };
 
@@ -579,17 +574,17 @@ export class GrEditControls extends LitElement {
   };
 
   private readonly handleTextChanged = (e: BindValueChangeEvent) => {
-    this.path = e.detail.value;
+    this.path = e.detail.value ?? '';
   };
 
   private readonly handleBindValueChangedNewPath = (
     e: BindValueChangeEvent
   ) => {
-    this.newPath = e.detail.value;
+    this.newPath = e.detail.value ?? '';
   };
 
   private readonly handleBindValueChangedPath = (e: BindValueChangeEvent) => {
-    this.path = e.detail.value;
+    this.path = e.detail.value ?? '';
   };
 }
 

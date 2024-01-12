@@ -1,34 +1,24 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import '../test/common-test-setup-karma';
+import '../test/common-test-setup';
 import {
   descendedFromClass,
   eventMatchesShortcut,
   getComputedStyleValue,
   getEventPath,
+  Key,
   Modifier,
   querySelectorAll,
   shouldSuppress,
   strToClassName,
 } from './dom-util';
-import {PolymerElement} from '@polymer/polymer/polymer-element';
-import {html} from '@polymer/polymer/lib/utils/html-tag';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
-import {mockPromise, queryAndAssert} from '../test/test-utils';
+import {mockPromise, pressKey, queryAndAssert} from '../test/test-utils';
+import {fixture, assert} from '@open-wc/testing';
+import {LitElement, html} from 'lit';
+import {customElement} from 'lit/decorators.js';
 
 /**
  * You might think that instead of passing in the callback with assertions as a
@@ -40,7 +30,6 @@ import {mockPromise, queryAndAssert} from '../test/test-utils';
 function keyEventOn(
   el: HTMLElement,
   callback: (e: KeyboardEvent) => void,
-  keyCode = 75,
   key = 'k'
 ): Promise<KeyboardEvent> {
   const promise = mockPromise<KeyboardEvent>();
@@ -48,16 +37,13 @@ function keyEventOn(
     callback(e);
     promise.resolve(e);
   });
-  MockInteractions.keyDownOn(el, keyCode, null, key);
+  pressKey(el, key);
   return promise;
 }
 
-class TestEle extends PolymerElement {
-  static get is() {
-    return 'dom-util-test-element';
-  }
-
-  static get template() {
+@customElement('dom-util-test-element')
+export class TestElement extends LitElement {
+  override render() {
     return html`
       <div>
         <div class="a">
@@ -72,15 +58,13 @@ class TestEle extends PolymerElement {
   }
 }
 
-customElements.define(TestEle.is, TestEle);
-
-const basicFixture = fixtureFromTemplate(html`
-  <div id="test" class="a b c">
+async function createFixture() {
+  return await fixture<HTMLElement>(html` <div id="test" class="a b c">
     <a class="testBtn" style="color:red;"></a>
     <dom-util-test-element></dom-util-test-element>
     <span class="ss"></span>
-  </div>
-`);
+  </div>`);
+}
 
 suite('dom-util tests', () => {
   suite('getEventPath', () => {
@@ -135,25 +119,21 @@ suite('dom-util tests', () => {
       );
     });
 
-    test('event with real click', () => {
-      const element = basicFixture.instantiate() as HTMLElement;
-      const aLink = queryAndAssert(element, 'a');
+    test('event with real click', async () => {
+      const element = await createFixture();
+      const aLink = queryAndAssert<HTMLAnchorElement>(element, 'a');
       let path;
       aLink.addEventListener('click', (e: Event) => {
         path = getEventPath(e as MouseEvent);
       });
-      MockInteractions.click(aLink);
-      assert.equal(
-        path,
-        `html.lightTheme>body>test-fixture#${basicFixture.fixtureId}>` +
-          'div#test.a.b.c>a.testBtn'
-      );
+      aLink.click();
+      assert.equal(path, 'html>body>div>div#test.a.b.c>a.testBtn');
     });
   });
 
   suite('querySelector and querySelectorAll', () => {
-    test('query cross shadow dom', () => {
-      const element = basicFixture.instantiate() as HTMLElement;
+    test('query cross shadow dom', async () => {
+      const element = await createFixture();
       const theFirstEl = queryAndAssert(element, '.ss');
       const allEls = querySelectorAll(element, '.ss');
       assert.equal(allEls.length, 3);
@@ -162,16 +142,16 @@ suite('dom-util tests', () => {
   });
 
   suite('getComputedStyleValue', () => {
-    test('color style', () => {
-      const element = basicFixture.instantiate() as HTMLElement;
+    test('color style', async () => {
+      const element = await createFixture();
       const testBtn = queryAndAssert(element, '.testBtn');
       assert.equal(getComputedStyleValue('color', testBtn), 'rgb(255, 0, 0)');
     });
   });
 
   suite('descendedFromClass', () => {
-    test('basic tests', () => {
-      const element = basicFixture.instantiate() as HTMLElement;
+    test('basic tests', async () => {
+      const element = await createFixture();
       const testEl = queryAndAssert(element, 'dom-util-test-element');
       // .c is a child of .a and not vice versa.
       assert.isTrue(descendedFromClass(queryAndAssert(testEl, '.c'), 'a'));
@@ -330,8 +310,7 @@ suite('dom-util tests', () => {
       await keyEventOn(
         document.createElement('gr-button'),
         e => assert.isTrue(shouldSuppress(e)),
-        13,
-        'enter'
+        Key.ENTER
       );
     });
 
@@ -342,8 +321,7 @@ suite('dom-util tests', () => {
       await keyEventOn(
         document.createElement('a'),
         e => assert.isTrue(shouldSuppress(e)),
-        13,
-        'enter'
+        Key.ENTER
       );
     });
   });

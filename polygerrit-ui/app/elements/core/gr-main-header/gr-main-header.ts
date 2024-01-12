@@ -1,24 +1,13 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {Subscription} from 'rxjs';
 import {map, distinctUntilChanged} from 'rxjs/operators';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../shared/gr-dropdown/gr-dropdown';
-import '../../shared/gr-icons/gr-icons';
+import '../../shared/gr-icon/gr-icon';
 import '../gr-account-dropdown/gr-account-dropdown';
 import '../gr-smart-search/gr-smart-search';
 import {getBaseUrl, getDocsBaseUrl} from '../../../utils/url-util';
@@ -36,7 +25,7 @@ import {DropdownLink} from '../../shared/gr-dropdown/gr-dropdown';
 import {getAppContext} from '../../../services/app-context';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, html, css} from 'lit';
-import {customElement, property, state} from 'lit/decorators';
+import {customElement, property, state} from 'lit/decorators.js';
 import {fireEvent} from '../../../utils/event-util';
 import {resolve} from '../../../models/dependency';
 import {configModelToken} from '../../../models/config/config-model';
@@ -324,8 +313,10 @@ export class GrMainHeader extends LitElement {
         .bigTitle,
         .loginButton,
         .registerButton,
-        iron-icon,
+        gr-icon,
+        gr-dropdown,
         gr-account-dropdown {
+          --gr-button-text-color: var(--header-text-color);
           color: var(--header-text-color);
         }
         #mobileSearch {
@@ -427,7 +418,7 @@ export class GrMainHeader extends LitElement {
         target="_blank"
         role="button"
       >
-        <iron-icon icon="gr-icons:bug"></iron-icon>
+        <gr-icon icon="bug_report" filled></gr-icon>
       </a>
     `;
   }
@@ -435,17 +426,19 @@ export class GrMainHeader extends LitElement {
   private renderAccount() {
     return html`
       <div class="accountContainer" id="accountContainer">
-        <iron-icon
-          id="mobileSearch"
-          icon="gr-icons:search"
-          @click=${(e: Event) => {
-            this.onMobileSearchTap(e);
-          }}
-          role="button"
-          aria-label=${this.mobileSearchHidden
-            ? 'Show Searchbar'
-            : 'Hide Searchbar'}
-        ></iron-icon>
+        <div>
+          <gr-icon
+            id="mobileSearch"
+            icon="search"
+            @click=${(e: Event) => {
+              this.onMobileSearchTap(e);
+            }}
+            role="button"
+            aria-label=${this.mobileSearchHidden
+              ? 'Show Searchbar'
+              : 'Hide Searchbar'}
+          ></gr-icon>
+        </div>
         ${this.renderRegister()}
         <a class="loginButton" href=${this.loginUrl}>${this.loginText}</a>
         <a
@@ -455,7 +448,7 @@ export class GrMainHeader extends LitElement {
           aria-label="Settings"
           role="button"
         >
-          <iron-icon icon="gr-icons:settings"></iron-icon>
+          <gr-icon icon="settings" filled></gr-icon>
         </a>
         ${this.renderAccountDropdown()}
       </div>
@@ -500,7 +493,6 @@ export class GrMainHeader extends LitElement {
     // defaultLinks parameter is used in tests only
     defaultLinks = DEFAULT_LINKS
   ) {
-    // Polymer 2: check for undefined
     if (
       userLinks === undefined ||
       adminLinks === undefined ||

@@ -28,6 +28,8 @@ const darkThemeCss = safeStyleSheet`
       var(--red-tonal);
     --error-ripple: var(--white-10);
 
+    --code-review-warning-background: var(--blue-tonal);
+
     --warning-foreground: var(--orange-200);
     --warning-background: var(--orange-tonal);
     --warning-background-hover: linear-gradient(
@@ -57,6 +59,7 @@ const darkThemeCss = safeStyleSheet`
 
     --selected-foreground: var(--blue-200);
     --selected-background: var(--blue-900);
+    --selected-chip-background: var(--blue-300-24);
 
     --success-foreground: var(--green-200);
     --success-background: var(--green-tonal);
@@ -91,12 +94,14 @@ const darkThemeCss = safeStyleSheet`
     --not-working-hours-icon-background-color: var(--purple-tonal);
     --not-working-hours-icon-color: var(--purple-100);
     --unavailability-icon-color: var(--gray-500);
+    --unavailability-chip-icon-color: var(--orange-700);
+    --unavailability-chip-background-color: var(--orange-tonal);
 
     /* text colors */
     --primary-text-color: var(--gray-200);
     --link-color: var(--gerrit-blue-dark);
     --comment-text-color: var(--primary-text-color);
-    --deemphasized-text-color: var(--gray-500);
+    --deemphasized-text-color: var(--gray-400);
     --default-button-text-color: var(--gerrit-blue-dark);
     --chip-selected-text-color: var(--blue-100);
     --error-text-color: var(--red-200);
@@ -178,9 +183,12 @@ const darkThemeCss = safeStyleSheet`
     --status-custom: var(--purple-400);
 
     /* file status colors */
-    --file-status-added: var(--green-tonal);
-    --file-status-changed: var(--red-tonal);
-    --file-status-unchanged: var(--gray-700);
+    --file-status-added: var(--green-400);
+    --file-status-deleted: var(--red-300);
+    --file-status-modified: var(--gray-500);
+    --file-status-renamed: var(--orange-400);
+    --file-status-unchanged: var(--gray-500);
+    --file-status-reverted: var(--gray-500);
 
     /* fonts */
     --font-weight-bold: 700; /* 700 is the same as 'bold' */
@@ -207,9 +215,20 @@ const darkThemeCss = safeStyleSheet`
 
     /* diff colors */
     --dark-add-highlight-color: var(--green-tonal);
-    --dark-rebased-add-highlight-color: rgba(11, 255, 155, 0.15);
-    --dark-rebased-remove-highlight-color: rgba(255, 139, 6, 0.15);
+    --light-add-highlight-color: #182b1f;
     --dark-remove-highlight-color: #62110f;
+    --light-remove-highlight-color: #320404;
+
+    --dark-rebased-add-highlight-color: var(--deep-purple-800);
+    --light-rebased-add-highlight-color: var(--deep-purple-600);
+    --dark-rebased-remove-highlight-color: rgba(255, 139, 6, 0.15);
+    --light-rebased-remove-highlight-color: #2f3f2f;
+
+    --diff-moved-in-background: #1d4042;
+    --diff-moved-in-label-color: var(--cyan-50);
+    --diff-moved-out-background: #230e34;
+    --diff-moved-out-label-color: var(--purple-50);
+
     --diff-blank-background-color: var(--background-color-secondary);
     --diff-context-control-background-color: #333311;
     --diff-context-control-border-color: var(--border-color);
@@ -220,15 +239,8 @@ const darkThemeCss = safeStyleSheet`
     --diff-tab-indicator-color: var(--deemphasized-text-color);
     --diff-trailing-whitespace-indicator: #ff9ad2;
     --focused-line-outline-color: var(--blue-200);
-    --light-add-highlight-color: #182b1f;
-    --light-rebased-add-highlight-color: #487165;
-    --diff-moved-in-background: #1d4042;
-    --diff-moved-out-background: #230e34;
-    --diff-moved-in-label-color: var(--cyan-50);
-    --diff-moved-out-label-color: var(--purple-50);
-    --light-remove-add-highlight-color: #2f3f2f;
-    --light-remove-highlight-color: #320404;
-    --coverage-covered: #112826;
+    --coverage-covered: #37674a;
+    --coverage-covered-line-num-color: var(--gray-200);
     --coverage-not-covered: #6b3600;
     --ranged-comment-hint-text-color: var(--blue-50);
     --token-highlighting-color: var(--yellow-tonal);
@@ -276,8 +288,14 @@ const darkThemeCss = safeStyleSheet`
 `;
 
 export function applyTheme() {
+  if (document.head.querySelector('#dark-theme')) return;
   const styleEl = document.createElement('style');
   styleEl.setAttribute('id', 'dark-theme');
   safeStyleEl.setTextContent(styleEl, darkThemeCss);
   document.head.appendChild(styleEl);
+}
+
+export function removeTheme() {
+  const styleEl = document.head.querySelector('#dark-theme');
+  styleEl?.remove();
 }

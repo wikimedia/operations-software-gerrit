@@ -3,11 +3,11 @@
  * Copyright 2020 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-endpoint-decorator';
 import '../gr-endpoint-param/gr-endpoint-param';
 import '../gr-endpoint-slot/gr-endpoint-slot';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
 import {
   mockPromise,
   queryAndAssert,

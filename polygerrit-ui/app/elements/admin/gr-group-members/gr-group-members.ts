@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
 import '../../shared/gr-account-label/gr-account-label';
@@ -28,6 +17,7 @@ import {
   AccountInfo,
   GroupInfo,
   GroupName,
+  ServerInfo,
 } from '../../../types/common';
 import {
   AutocompleteQuery,
@@ -48,10 +38,13 @@ import {sharedStyles} from '../../../styles/shared-styles';
 import {subpageStyles} from '../../../styles/gr-subpage-styles';
 import {tableStyles} from '../../../styles/gr-table-styles';
 import {LitElement, css, html} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
-import {ifDefined} from 'lit/directives/if-defined';
+import {customElement, property, query, state} from 'lit/decorators.js';
+import {ifDefined} from 'lit/directives/if-defined.js';
+import {getAccountSuggestions} from '../../../utils/account-util';
+import {subscribe} from '../../lit/subscription-controller';
+import {configModelToken} from '../../../models/config/config-model';
+import {resolve} from '../../../models/dependency';
 
-const SUGGESTIONS_LIMIT = 15;
 const SAVING_ERROR_TEXT =
   'Group may not exist, or you may not have ' + 'permission to add it';
 
@@ -112,9 +105,21 @@ export class GrGroupMembers extends LitElement {
 
   private readonly restApiService = getAppContext().restApiService;
 
+  private readonly getConfigModel = resolve(this, configModelToken);
+
+  private serverConfig?: ServerInfo;
+
   constructor() {
     super();
-    this.queryMembers = input => this.getAccountSuggestions(input);
+    subscribe(
+      this,
+      () => this.getConfigModel().serverConfig$,
+      config => {
+        this.serverConfig = config;
+      }
+    );
+    this.queryMembers = input =>
+      getAccountSuggestions(input, this.restApiService, this.serverConfig);
     this.queryIncludedGroup = input => this.getGroupSuggestions(input);
   }
 
@@ -521,32 +526,6 @@ export class GrGroupMembers extends LitElement {
     this.itemId = id;
     this.itemType = ItemType.INCLUDED_GROUP;
     this.overlay.open();
-  }
-
-  /* private but used in test */
-  getAccountSuggestions(input: string) {
-    if (input.length === 0) {
-      return Promise.resolve([]);
-    }
-    return this.restApiService
-      .getSuggestedAccounts(input, SUGGESTIONS_LIMIT)
-      .then(accounts => {
-        if (!accounts) return [];
-        const accountSuggestions = [];
-        for (const account of accounts) {
-          let nameAndEmail;
-          if (account.email !== undefined) {
-            nameAndEmail = `${account.name} <${account.email}>`;
-          } else {
-            nameAndEmail = account.name;
-          }
-          accountSuggestions.push({
-            name: nameAndEmail,
-            value: account._account_id?.toString(),
-          });
-        }
-        return accountSuggestions;
-      });
   }
 
   /* private but used in test */

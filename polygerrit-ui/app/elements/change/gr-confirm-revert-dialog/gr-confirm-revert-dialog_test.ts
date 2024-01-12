@@ -1,24 +1,13 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import {fixture, html} from '@open-wc/testing-helpers';
-import '../../../test/common-test-setup-karma';
+import {fixture, html, assert} from '@open-wc/testing';
+import '../../../test/common-test-setup';
 import {createChange} from '../../../test/test-data-generators';
 import {CommitId} from '../../../types/common';
+import {EventType} from '../../../types/events';
 import './gr-confirm-revert-dialog';
 import {GrConfirmRevertDialog} from './gr-confirm-revert-dialog';
 
@@ -32,30 +21,33 @@ suite('gr-confirm-revert-dialog tests', () => {
   });
 
   test('renders', () => {
-    expect(element).shadowDom.to.equal(/* HTML */ `
-      <gr-dialog role="dialog">
-        <div class="header" slot="header">Revert Merged Change</div>
-        <div class="main" slot="main">
-          <div class="error" hidden="">
-            <span> A reason is required </span>
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <gr-dialog role="dialog">
+          <div class="header" slot="header">Revert Merged Change</div>
+          <div class="main" slot="main">
+            <div class="error" hidden="">
+              <span> A reason is required </span>
+            </div>
+            <gr-endpoint-decorator name="confirm-revert-change">
+              <label for="messageInput"> Revert Commit Message </label>
+              <iron-autogrow-textarea
+                id="messageInput"
+                class="message"
+                aria-disabled="false"
+              ></iron-autogrow-textarea>
+            </gr-endpoint-decorator>
           </div>
-          <gr-endpoint-decorator name="confirm-revert-change">
-            <label for="messageInput"> Revert Commit Message </label>
-            <iron-autogrow-textarea
-              id="messageInput"
-              class="message"
-              aria-disabled="false"
-            ></iron-autogrow-textarea>
-          </gr-endpoint-decorator>
-        </div>
-      </gr-dialog>
-    `);
+        </gr-dialog>
+      `
+    );
   });
 
   test('no match', () => {
     assert.isNotOk(element.message);
     const alertStub = sinon.stub();
-    element.addEventListener('show-alert', alertStub);
+    element.addEventListener(EventType.SHOW_ALERT, alertStub);
     element.populateRevertSingleChangeMessage(
       createChange(),
       'not a commitHash in sight',

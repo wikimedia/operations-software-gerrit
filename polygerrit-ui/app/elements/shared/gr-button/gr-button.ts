@@ -1,28 +1,16 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '@polymer/paper-button/paper-button';
 import {spinnerStyles} from '../../../styles/gr-spinner-styles';
 import {votingStyles} from '../../../styles/gr-voting-styles';
-import {css, html, LitElement, PropertyValues} from 'lit';
-import {customElement, property} from 'lit/decorators';
+import {css, html, LitElement, nothing, PropertyValues} from 'lit';
+import {customElement, property} from 'lit/decorators.js';
 import {addShortcut, getEventPath, Key} from '../../../utils/dom-util';
 import {getAppContext} from '../../../services/app-context';
-import {classMap} from 'lit/directives/class-map';
-import {KnownExperimentId} from '../../../services/flags/flags';
+import {classMap} from 'lit/directives/class-map.js';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -51,7 +39,7 @@ export class GrButton extends LitElement {
   // after created, the initial value maybe overridden by this
   private initialTabindex?: string;
 
-  @property({type: Boolean, reflect: true, attribute: 'down-arrow'})
+  @property({type: Boolean, attribute: 'down-arrow'})
   downArrow = false;
 
   @property({type: Boolean, reflect: true})
@@ -161,6 +149,11 @@ export class GrButton extends LitElement {
           cursor: default;
         }
 
+        :host([disabled][flatten]) {
+          --background-color: transparent;
+          --text-color: var(--disabled-foreground);
+        }
+
         /* Styles for link buttons specifically */
         :host([link]) {
           --background-color: transparent;
@@ -172,24 +165,11 @@ export class GrButton extends LitElement {
         :host([disabled][link]),
         :host([loading][link]) {
           --background-color: transparent;
-          --text-color: var(--deemphasized-text-color);
+          --text-color: var(--disabled-foreground);
           cursor: default;
         }
-
-        /* Styles for the optional down arrow */
-        :host(:not([down-arrow])) .downArrow {
-          display: none;
-        }
-        :host([down-arrow]) .downArrow {
-          border-top: 0.36em solid #ccc;
-          border-left: 0.36em solid transparent;
-          border-right: 0.36em solid transparent;
-          margin-bottom: var(--spacing-xxs);
-          margin-left: var(--spacing-m);
-          transition: border-top-color 200ms;
-        }
-        :host([down-arrow]) paper-button:hover .downArrow {
-          border-top-color: var(--deemphasized-text-color);
+        gr-icon.downArrow {
+          color: inherit;
         }
         .newVoteChip {
           border: 1px solid var(--border-color);
@@ -202,12 +182,6 @@ export class GrButton extends LitElement {
     ];
   }
 
-  private readonly flagsService = getAppContext().flagsService;
-
-  private readonly isSubmitRequirementsUiEnabled = this.flagsService.isEnabled(
-    KnownExperimentId.SUBMIT_REQUIREMENTS_UI
-  );
-
   override render() {
     return html`<paper-button
       ?raised=${!this.link && !this.flatten}
@@ -216,14 +190,18 @@ export class GrButton extends LitElement {
       tabindex="-1"
       part="paper-button"
       class=${classMap({
-        voteChip: this.voteChip && !this.isSubmitRequirementsUiEnabled,
-        newVoteChip: this.voteChip && this.isSubmitRequirementsUiEnabled,
+        newVoteChip: this.voteChip,
       })}
     >
       ${this.loading ? html`<span class="loadingSpin"></span>` : ''}
       <slot></slot>
-      <i class="downArrow"></i>
+      ${this.renderArrowIcon()}
     </paper-button>`;
+  }
+
+  renderArrowIcon() {
+    if (!this.downArrow) return nothing;
+    return html`<gr-icon icon="arrow_drop_down" class="downArrow"></gr-icon>`;
   }
 
   constructor() {

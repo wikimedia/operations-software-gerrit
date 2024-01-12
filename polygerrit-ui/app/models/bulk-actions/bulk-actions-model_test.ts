@@ -3,10 +3,10 @@
  * Copyright 2022 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-
 import {
   createAccountWithIdNameAndEmail,
   createChange,
+  createGroupInfo,
   createRevisions,
 } from '../../test/test-data-generators';
 import {
@@ -14,19 +14,24 @@ import {
   NumericChangeId,
   ChangeStatus,
   HttpMethod,
-  SubmitRequirementStatus,
   AccountInfo,
   ReviewerState,
-  AccountId,
+  GroupInfo,
+  Hashtag,
 } from '../../api/rest-api';
 import {BulkActionsModel, LoadingState} from './bulk-actions-model';
 import {getAppContext} from '../../services/app-context';
-import '../../test/common-test-setup-karma';
-import {stubRestApi, waitUntilObserved} from '../../test/test-utils';
+import '../../test/common-test-setup';
+import {
+  stubRestApi,
+  waitEventLoop,
+  waitUntilObserved,
+} from '../../test/test-utils';
 import {mockPromise} from '../../test/test-utils';
 import {SinonStubbedMember} from 'sinon';
 import {RestApiService} from '../../services/gr-rest-api/gr-rest-api';
 import {ReviewInput} from '../../types/common';
+import {assert} from '@open-wc/testing';
 
 suite('bulk actions model test', () => {
   let bulkActionsModel: BulkActionsModel;
@@ -42,7 +47,7 @@ suite('bulk actions model test', () => {
     assert.isTrue(detailedActionsStub.notCalled);
   });
 
-  test('add changes before sync', () => {
+  test('add changes before sync does not add them', () => {
     const c1 = createChange();
     c1._number = 1 as NumericChangeId;
     const c2 = createChange();
@@ -72,6 +77,7 @@ suite('bulk actions model test', () => {
     bulkActionsModel.sync([c1, c2]);
 
     assert.isEmpty(bulkActionsModel.getState().selectedChangeNums);
+    assert.deepEqual(bulkActionsModel.getState().selectableChangeNums, [1, 2]);
 
     bulkActionsModel.addSelectedChangeNum(c1._number);
     assert.sameMembers(bulkActionsModel.getState().selectedChangeNums, [
@@ -93,6 +99,41 @@ suite('bulk actions model test', () => {
     assert.isEmpty(bulkActionsModel.getState().selectedChangeNums);
   });
 
+  test('toggle selected changes', async () => {
+    const change1 = createChange();
+    change1._number = 1 as NumericChangeId;
+    const change2 = createChange();
+    change2._number = 2 as NumericChangeId;
+    bulkActionsModel.sync([change1, change2]);
+
+    // toggle first change on
+    bulkActionsModel.toggleSelectedChangeNum(change1._number);
+
+    let selectedChangeNums = await waitUntilObserved(
+      bulkActionsModel.selectedChangeNums$,
+      selectedChangeNums => selectedChangeNums.includes(change1._number)
+    );
+    assert.sameMembers(selectedChangeNums, [change1._number]);
+
+    // toggle second change on
+    bulkActionsModel.toggleSelectedChangeNum(change2._number);
+
+    selectedChangeNums = await waitUntilObserved(
+      bulkActionsModel.selectedChangeNums$,
+      selectedChangeNums => selectedChangeNums.includes(change2._number)
+    );
+    assert.sameMembers(selectedChangeNums, [change1._number, change2._number]);
+
+    // toggle first change off
+    bulkActionsModel.toggleSelectedChangeNum(change1._number);
+
+    selectedChangeNums = await waitUntilObserved(
+      bulkActionsModel.selectedChangeNums$,
+      selectedChangeNums => !selectedChangeNums.includes(change1._number)
+    );
+    assert.sameMembers(selectedChangeNums, [change2._number]);
+  });
+
   test('clears selected change numbers', async () => {
     const c1 = createChange();
     c1._number = 1 as NumericChangeId;
@@ -102,7 +143,7 @@ suite('bulk actions model test', () => {
     bulkActionsModel.addSelectedChangeNum(c1._number);
     bulkActionsModel.addSelectedChangeNum(c2._number);
     let selectedChangeNums = await waitUntilObserved(
-      bulkActionsModel!.selectedChangeNums$,
+      bulkActionsModel.selectedChangeNums$,
       s => s.length === 2
     );
     let totalChangeCount = await waitUntilObserved(
@@ -114,7 +155,7 @@ suite('bulk actions model test', () => {
 
     bulkActionsModel.clearSelectedChangeNums();
     selectedChangeNums = await waitUntilObserved(
-      bulkActionsModel!.selectedChangeNums$,
+      bulkActionsModel.selectedChangeNums$,
       s => s.length === 0
     );
     totalChangeCount = await waitUntilObserved(
@@ -123,6 +164,37 @@ suite('bulk actions model test', () => {
     );
 
     assert.isEmpty(selectedChangeNums);
+    assert.equal(totalChangeCount, 2);
+  });
+
+  test('selects all changes', async () => {
+    const c1 = createChange();
+    c1._number = 1 as NumericChangeId;
+    const c2 = createChange();
+    c2._number = 2 as NumericChangeId;
+    bulkActionsModel.sync([c1, c2]);
+    let selectedChangeNums = await waitUntilObserved(
+      bulkActionsModel.selectedChangeNums$,
+      s => s.length === 0
+    );
+    let totalChangeCount = await waitUntilObserved(
+      bulkActionsModel.totalChangeCount$,
+      totalChangeCount => totalChangeCount === 2
+    );
+    assert.isEmpty(selectedChangeNums);
+    assert.equal(totalChangeCount, 2);
+
+    bulkActionsModel.selectAll();
+    selectedChangeNums = await waitUntilObserved(
+      bulkActionsModel.selectedChangeNums$,
+      s => s.length === 2
+    );
+    totalChangeCount = await waitUntilObserved(
+      bulkActionsModel.totalChangeCount$,
+      totalChangeCount => totalChangeCount === 2
+    );
+
+    assert.sameMembers(selectedChangeNums, [c1._number, c2._number]);
     assert.equal(totalChangeCount, 2);
   });
 
@@ -169,6 +241,7 @@ suite('bulk actions model test', () => {
       createAccountWithIdNameAndEmail(0),
       createAccountWithIdNameAndEmail(1),
     ];
+    const groups: GroupInfo[] = [createGroupInfo('groupId')];
     const changes: ChangeInfo[] = [
       {
         ...createChange(),
@@ -203,20 +276,48 @@ suite('bulk actions model test', () => {
     test('adds reviewers/cc only to changes that need it', async () => {
       bulkActionsModel.addReviewers(
         new Map([
-          [ReviewerState.REVIEWER, [accounts[0]]],
+          [ReviewerState.REVIEWER, [accounts[0], groups[0]]],
           [ReviewerState.CC, [accounts[1]]],
-        ])
+        ]),
+        '<GERRIT_ACCOUNT_12345> replied on the change'
       );
 
-      // changes[0] is not updated since it already has the reviewer & CC
-      assert.isTrue(saveChangeReviewStub.calledOnce);
+      assert.isTrue(saveChangeReviewStub.calledTwice);
+      // changes[0] only adds the group since it already has the other
+      // reviewer/CCs
       assert.sameDeepOrderedMembers(saveChangeReviewStub.firstCall.args, [
+        changes[0]._number,
+        'current',
+        {
+          reviewers: [{reviewer: groups[0].id, state: ReviewerState.REVIEWER}],
+          ignore_automatic_attention_set_rules: true,
+          add_to_attention_set: [
+            {
+              reason: '<GERRIT_ACCOUNT_12345> replied on the change',
+              user: groups[0].id,
+            },
+          ],
+        },
+      ]);
+      assert.sameDeepOrderedMembers(saveChangeReviewStub.secondCall.args, [
         changes[1]._number,
         'current',
         {
           reviewers: [
             {reviewer: accounts[0]._account_id, state: ReviewerState.REVIEWER},
+            {reviewer: groups[0].id, state: ReviewerState.REVIEWER},
             {reviewer: accounts[1]._account_id, state: ReviewerState.CC},
+          ],
+          ignore_automatic_attention_set_rules: true,
+          add_to_attention_set: [
+            {
+              reason: '<GERRIT_ACCOUNT_12345> replied on the change',
+              user: accounts[0]._account_id,
+            },
+            {
+              reason: '<GERRIT_ACCOUNT_12345> replied on the change',
+              user: groups[0].id,
+            },
           ],
         },
       ]);
@@ -278,6 +379,47 @@ suite('bulk actions model test', () => {
     });
   });
 
+  suite('add hashtags', () => {
+    const change1: ChangeInfo = {
+      ...createChange(),
+      _number: 1 as NumericChangeId,
+      hashtags: ['existingHashtag' as Hashtag],
+    };
+    const change2: ChangeInfo = {
+      ...createChange(),
+      _number: 2 as NumericChangeId,
+      hashtags: ['existingHashtag' as Hashtag],
+    };
+    const existingHashtag = 'existingHashtag' as Hashtag;
+    const newHashtag = 'newHashtag' as Hashtag;
+    let detailedActionsStub: SinonStubbedMember<
+      RestApiService['getDetailedChangesWithActions']
+    >;
+    setup(async () => {
+      detailedActionsStub = stubRestApi('getDetailedChangesWithActions');
+      detailedActionsStub.returns(Promise.resolve([change1, change2]));
+
+      await bulkActionsModel.sync([change1, change2]);
+      bulkActionsModel.addSelectedChangeNum(change1._number);
+      bulkActionsModel.addSelectedChangeNum(change2._number);
+      stubRestApi('setChangeHashtag').resolves([existingHashtag, newHashtag]);
+    });
+
+    test('server-acked hashtags are added to the model', async () => {
+      await Promise.all(bulkActionsModel.addHashtags([newHashtag]));
+
+      const updatedChanges = await waitUntilObserved(
+        bulkActionsModel.selectedChanges$,
+        changes => changes.some(change => change.hashtags?.includes(newHashtag))
+      );
+
+      assert.deepEqual(updatedChanges, [
+        {...change1, hashtags: [existingHashtag, newHashtag]},
+        {...change2, hashtags: [existingHashtag, newHashtag]},
+      ]);
+    });
+  });
+
   test('stale changes are removed from the model', async () => {
     const c1 = createChange();
     c1._number = 1 as NumericChangeId;
@@ -289,7 +431,7 @@ suite('bulk actions model test', () => {
     bulkActionsModel.addSelectedChangeNum(c2._number);
 
     let selectedChangeNums = await waitUntilObserved(
-      bulkActionsModel!.selectedChangeNums$,
+      bulkActionsModel.selectedChangeNums$,
       s => s.length === 2
     );
     let totalChangeCount = await waitUntilObserved(
@@ -302,7 +444,7 @@ suite('bulk actions model test', () => {
 
     bulkActionsModel.sync([c1]);
     selectedChangeNums = await waitUntilObserved(
-      bulkActionsModel!.selectedChangeNums$,
+      bulkActionsModel.selectedChangeNums$,
       s => s.length === 1
     );
     totalChangeCount = await waitUntilObserved(
@@ -347,60 +489,6 @@ suite('bulk actions model test', () => {
     );
   });
 
-  test('sync retains keys from original change including reviewers', async () => {
-    const c1: ChangeInfo = {
-      ...createChange(),
-      _number: 1 as NumericChangeId,
-      submit_requirements: [
-        {
-          name: 'a',
-          status: SubmitRequirementStatus.FORCED,
-          submittability_expression_result: {
-            expression: 'b',
-          },
-        },
-      ],
-      reviewers: {
-        REVIEWER: [{_account_id: 1 as AccountId, display_name: 'MyName'}],
-      },
-    };
-
-    stubRestApi('getDetailedChangesWithActions').callsFake(() => {
-      const change: ChangeInfo = {
-        ...createChange(),
-        _number: 1 as NumericChangeId,
-        actions: {abandon: {}},
-        // detailed data will be missing names
-        reviewers: {REVIEWER: [createAccountWithIdNameAndEmail()]},
-      };
-      assert.isNotOk(change.submit_requirements);
-      return Promise.resolve([change]);
-    });
-
-    bulkActionsModel.sync([c1]);
-
-    await waitUntilObserved(
-      bulkActionsModel.loadingState$,
-      s => s === LoadingState.LOADED
-    );
-
-    const changeAfterSync = bulkActionsModel
-      .getState()
-      .allChanges.get(1 as NumericChangeId);
-    assert.deepEqual(changeAfterSync!.submit_requirements, [
-      {
-        name: 'a',
-        status: SubmitRequirementStatus.FORCED,
-        submittability_expression_result: {
-          expression: 'b',
-        },
-      },
-    ]);
-    assert.deepEqual(changeAfterSync!.actions, {abandon: {}});
-    // original reviewers are kept, which includes more details than loaded ones
-    assert.deepEqual(changeAfterSync!.reviewers, c1.reviewers);
-  });
-
   test('sync ignores outdated fetch responses', async () => {
     const c1 = createChange();
     c1._number = 1 as NumericChangeId;
@@ -412,7 +500,7 @@ suite('bulk actions model test', () => {
     const getChangesStub = stubRestApi(
       'getDetailedChangesWithActions'
     ).callsFake(() => promise);
-    bulkActionsModel.sync([c1, c2]);
+    bulkActionsModel.sync([c1]);
     assert.strictEqual(getChangesStub.callCount, 1);
     await waitUntilObserved(
       bulkActionsModel.loadingState$,
@@ -446,9 +534,8 @@ suite('bulk actions model test', () => {
     // Resolve the old promise.
     responsePromise1.resolve([
       {...createChange(), _number: 1, subject: 'Subject 1-old'},
-      {...createChange(), _number: 2, subject: 'Subject 2-old'},
     ] as ChangeInfo[]);
-    await flush();
+    await waitEventLoop();
     const model2 = bulkActionsModel.getState();
 
     // No change should happen.

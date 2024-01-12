@@ -1,78 +1,33 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-dropdown-list';
 import {GrDropdownList} from './gr-dropdown-list';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
-import {query, queryAll, queryAndAssert} from '../../../test/test-utils';
+import {
+  query,
+  queryAll,
+  queryAndAssert,
+  waitEventLoop,
+} from '../../../test/test-utils';
 import {PaperListboxElement} from '@polymer/paper-listbox';
 import {Timestamp} from '../../../types/common';
-
-const basicFixture = fixtureFromElement('gr-dropdown-list');
+import {assertIsDefined} from '../../../utils/common-util';
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-dropdown-list tests', () => {
   let element: GrDropdownList;
 
-  setup(() => {
-    element = basicFixture.instantiate();
+  setup(async () => {
+    element = await fixture<GrDropdownList>(
+      html`<gr-dropdown-list></gr-dropdown-list>`
+    );
   });
 
-  test('hide copy by default', () => {
-    const copyEl = query<HTMLElement>(
-      element,
-      '#triggerText + gr-copy-clipboard'
-    )!;
-    assert.isOk(copyEl);
-    assert.isTrue(copyEl.hidden);
-  });
-
-  test('show copy if enabled', () => {
-    element.showCopyForTriggerText = true;
-    flush();
-    const copyEl = query<HTMLElement>(
-      element,
-      '#triggerText + gr-copy-clipboard'
-    )!;
-    assert.isOk(copyEl);
-    assert.isFalse(copyEl.hidden);
-  });
-
-  test('tap on trigger opens menu', () => {
-    sinon.stub(element, 'open').callsFake(() => {
-      element.$.dropdown.open();
-    });
-    assert.isFalse(element.$.dropdown.opened);
-    MockInteractions.tap(element.$.trigger);
-    assert.isTrue(element.$.dropdown.opened);
-  });
-
-  test('_computeMobileText', () => {
-    const item: any = {
-      value: 1,
-      text: 'text',
-    };
-    assert.equal(element._computeMobileText(item), item.text);
-    item.mobileText = 'mobile text';
-    assert.equal(element._computeMobileText(item), item.mobileText);
-  });
-
-  test('options are selected and laid out correctly', async () => {
-    element.value = 2;
+  test('render', async () => {
+    element.value = '2';
     element.items = [
       {
         value: 1,
@@ -95,12 +50,169 @@ suite('gr-dropdown-list tests', () => {
         mobileText: 'Mobile Text 3',
       },
     ];
+    await element.updateComplete;
+
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <gr-button
+          aria-disabled="false"
+          class="dropdown-trigger"
+          down-arrow=""
+          id="trigger"
+          link=""
+          no-uppercase=""
+          role="button"
+          slot="dropdown-trigger"
+          tabindex="0"
+        >
+          <span id="triggerText"> Button Text 2 </span>
+          <gr-copy-clipboard hidden="" hideinput=""> </gr-copy-clipboard>
+        </gr-button>
+        <iron-dropdown
+          aria-disabled="false"
+          aria-hidden="true"
+          horizontal-align="left"
+          id="dropdown"
+          style="outline: none; display: none;"
+          vertical-align="top"
+        >
+          <paper-listbox
+            class="dropdown-content"
+            role="listbox"
+            slot="dropdown-content"
+            tabindex="0"
+          >
+            <paper-item
+              aria-disabled="false"
+              aria-selected="false"
+              data-value="1"
+              role="option"
+              tabindex="-1"
+            >
+              <div class="topContent">
+                <div>Top Text 1</div>
+              </div>
+            </paper-item>
+            <paper-item
+              aria-disabled="false"
+              aria-selected="true"
+              class="iron-selected"
+              data-value="2"
+              role="option"
+              tabindex="0"
+            >
+              <div class="topContent">
+                <div>Top Text 2</div>
+              </div>
+              <div class="bottomContent">
+                <div>Bottom Text 2</div>
+              </div>
+            </paper-item>
+            <paper-item
+              aria-disabled="true"
+              aria-selected="false"
+              data-value="3"
+              disabled=""
+              role="option"
+              style="pointer-events: none;"
+              tabindex="-1"
+            >
+              <div class="topContent">
+                <div>Top Text 3</div>
+                <gr-date-formatter> </gr-date-formatter>
+              </div>
+              <div class="bottomContent">
+                <div>Bottom Text 3</div>
+              </div>
+            </paper-item>
+          </paper-listbox>
+        </iron-dropdown>
+        <gr-select>
+          <select>
+            <option value="1">Top Text 1</option>
+            <option value="2">Mobile Text 2</option>
+            <option disabled="" value="3">Mobile Text 3</option>
+          </select>
+        </gr-select>
+      `
+    );
+  });
+
+  test('hide copy by default', () => {
+    const copyEl = query<HTMLElement>(
+      element,
+      '#triggerText + gr-copy-clipboard'
+    )!;
+    assert.isOk(copyEl);
+    assert.isTrue(copyEl.hidden);
+  });
+
+  test('show copy if enabled', async () => {
+    element.showCopyForTriggerText = true;
+    await element.updateComplete;
+    const copyEl = query<HTMLElement>(
+      element,
+      '#triggerText + gr-copy-clipboard'
+    )!;
+    assert.isOk(copyEl);
+    assert.isFalse(copyEl.hidden);
+  });
+
+  test('tap on trigger opens menu', () => {
+    sinon.stub(element, 'open').callsFake(() => {
+      assertIsDefined(element.dropdown);
+      element.dropdown.open();
+    });
+    assertIsDefined(element.dropdown);
+    assert.isFalse(element.dropdown.opened);
+    assertIsDefined(element.trigger);
+    element.trigger.click();
+    assert.isTrue(element.dropdown.opened);
+  });
+
+  test('computeMobileText', () => {
+    const item: any = {
+      value: 1,
+      text: 'text',
+    };
+    assert.equal(element.computeMobileText(item), item.text);
+    item.mobileText = 'mobile text';
+    assert.equal(element.computeMobileText(item), item.mobileText);
+  });
+
+  test('options are selected and laid out correctly', async () => {
+    element.value = '2';
+    element.items = [
+      {
+        value: 1,
+        text: 'Top Text 1',
+      },
+      {
+        value: 2,
+        bottomText: 'Bottom Text 2',
+        triggerText: 'Button Text 2',
+        text: 'Top Text 2',
+        mobileText: 'Mobile Text 2',
+      },
+      {
+        value: 3,
+        disabled: true,
+        bottomText: 'Bottom Text 3',
+        triggerText: 'Button Text 3',
+        date: '2017-08-18 23:11:42.569000000' as Timestamp,
+        text: 'Top Text 3',
+        mobileText: 'Mobile Text 3',
+      },
+    ];
+    await element.updateComplete;
+    await waitEventLoop();
+
     assert.equal(
       queryAndAssert<PaperListboxElement>(element, 'paper-listbox').selected,
       element.value
     );
     assert.equal(element.text, 'Button Text 2');
-    await flush();
 
     const items = queryAll<HTMLInputElement>(element, 'paper-item');
     const mobileItems = queryAll<HTMLOptionElement>(element, 'option');
@@ -169,9 +281,9 @@ suite('gr-dropdown-list tests', () => {
     assert.equal(mobileItems[2].text, element.items[2].mobileText);
 
     // Select a new item.
-    MockInteractions.tap(items[0]);
-    flush();
-    assert.equal(element.value, 1);
+    items[0].click();
+    await element.updateComplete;
+    assert.equal(element.value, '1');
     assert.isTrue(items[0].classList.contains('iron-selected'));
     assert.isTrue(mobileItems[0].selected);
 

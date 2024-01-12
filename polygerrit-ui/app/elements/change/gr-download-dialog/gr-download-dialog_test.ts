@@ -1,22 +1,9 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
-import {tap} from '@polymer/iron-test-helpers/mock-interactions';
+import '../../../test/common-test-setup';
 import {
   createChange,
   createCommit,
@@ -33,8 +20,8 @@ import './gr-download-dialog';
 import {GrDownloadDialog} from './gr-download-dialog';
 import {mockPromise, queryAll, queryAndAssert} from '../../../test/test-utils';
 import {GrDownloadCommands} from '../../shared/gr-download-commands/gr-download-commands';
-
-const basicFixture = fixtureFromElement('gr-download-dialog');
+import {fixture, html, assert} from '@open-wc/testing';
+import {GrButton} from '../../shared/gr-button/gr-button';
 
 function getChangeObject() {
   return {
@@ -108,10 +95,61 @@ suite('gr-download-dialog', () => {
   let element: GrDownloadDialog;
 
   setup(async () => {
-    element = basicFixture.instantiate();
+    element = await fixture(html`<gr-download-dialog></gr-download-dialog>`);
     element.patchNum = 1 as PatchSetNum;
     element.config = createDownloadInfo();
     await element.updateComplete;
+  });
+
+  test('render', () => {
+    // prettier and shadowDom string don't agree on the long text in the h3
+    assert.shadowDom.equal(
+      element,
+      /* prettier-ignore */ /* HTML */ `
+      <section>
+        <h3 class="heading-3">
+          Patch set 1 of
+          0
+        </h3>
+      </section>
+      <section class="hidden">
+        <gr-download-commands
+          id="downloadCommands"
+          show-keyboard-shortcut-tooltips=""
+        >
+        </gr-download-commands>
+      </section>
+      <section class="flexContainer">
+        <div class="patchFiles">
+          <label> Patch file </label>
+          <div>
+            <a download="" href="" id="download"> </a>
+            <a download="" href=""> </a>
+          </div>
+        </div>
+        <div class="archivesContainer">
+          <label> Archive </label>
+          <div class="archives" id="archives">
+            <a download="" href=""> tgz </a>
+            <a download="" href=""> tar </a>
+          </div>
+        </div>
+      </section>
+      <section class="footer">
+        <span class="closeButtonContainer">
+          <gr-button
+            aria-disabled="false"
+            id="closeButton"
+            link=""
+            role="button"
+            tabindex="0"
+          >
+            Close
+          </gr-button>
+        </span>
+      </section>
+    `
+    );
   });
 
   test('anchors use download attribute', () => {
@@ -182,11 +220,11 @@ suite('gr-download-dialog', () => {
       element.addEventListener('close', () => {
         closeCalled.resolve();
       });
-      const closeButton = queryAndAssert(
+      const closeButton = queryAndAssert<GrButton>(
         element,
         '.closeButtonContainer gr-button'
       );
-      tap(closeButton);
+      closeButton.click();
       await closeCalled;
     });
   });

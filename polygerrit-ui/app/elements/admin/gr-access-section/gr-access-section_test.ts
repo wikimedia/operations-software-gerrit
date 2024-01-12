@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-access-section';
 import {
   AccessPermissions,
@@ -25,7 +13,7 @@ import {GrAccessSection} from './gr-access-section';
 import {GitRef} from '../../../types/common';
 import {queryAndAssert} from '../../../utils/common-util';
 import {GrButton} from '../../shared/gr-button/gr-button';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-access-section tests', () => {
   let element: GrAccessSection;
@@ -80,6 +68,108 @@ suite('gr-access-section tests', () => {
       };
       element.updateSection();
       await element.updateComplete;
+    });
+
+    test('render', () => {
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `
+          <fieldset class="gr-form-styles" id="section">
+            <div id="mainContainer">
+              <div class="header">
+                <div class="name">
+                  <h3 class="heading-3">Reference: refs/*</h3>
+                  <gr-button
+                    aria-disabled="false"
+                    id="editBtn"
+                    link=""
+                    role="button"
+                    tabindex="0"
+                  >
+                    <gr-icon icon="edit" id="icon" small filled></gr-icon>
+                  </gr-button>
+                </div>
+                <iron-input class="editRefInput">
+                  <input class="editRefInput" type="text" />
+                </iron-input>
+                <gr-button
+                  aria-disabled="false"
+                  id="deleteBtn"
+                  link=""
+                  role="button"
+                  tabindex="0"
+                >
+                  Remove
+                </gr-button>
+              </div>
+              <div class="sectionContent">
+                <gr-permission> </gr-permission>
+                <div id="addPermission">
+                  Add permission:
+                  <select id="permissionSelect">
+                    <option value="label-Code-Review">Label Code-Review</option>
+                    <option value="labelAs-Code-Review">
+                      Label Code-Review (On Behalf Of)
+                    </option>
+                    <option value="abandon">Abandon</option>
+                    <option value="addPatchSet">Add Patch Set</option>
+                    <option value="create">Create Reference</option>
+                    <option value="createSignedTag">Create Signed Tag</option>
+                    <option value="createTag">Create Annotated Tag</option>
+                    <option value="delete">Delete Reference</option>
+                    <option value="deleteChanges">Delete Changes</option>
+                    <option value="deleteOwnChanges">Delete Own Changes</option>
+                    <option value="editHashtags">Edit Hashtags</option>
+                    <option value="editTopicName">Edit Topic Name</option>
+                    <option value="forgeAuthor">Forge Author Identity</option>
+                    <option value="forgeCommitter">
+                      Forge Committer Identity
+                    </option>
+                    <option value="forgeServerAsCommitter">
+                      Forge Server Identity
+                    </option>
+                    <option value="owner">Owner</option>
+                    <option value="push">Push</option>
+                    <option value="pushMerge">Push Merge Commit</option>
+                    <option value="rebase">Rebase</option>
+                    <option value="removeReviewer">Remove Reviewer</option>
+                    <option value="revert">Revert</option>
+                    <option value="submit">Submit</option>
+                    <option value="submitAs">Submit (On Behalf Of)</option>
+                    <option value="toggleWipState">
+                      Toggle Work In Progress State
+                    </option>
+                    <option value="viewPrivateChanges">
+                      View Private Changes
+                    </option>
+                  </select>
+                  <gr-button
+                    aria-disabled="false"
+                    id="addBtn"
+                    link=""
+                    role="button"
+                    tabindex="0"
+                  >
+                    Add
+                  </gr-button>
+                </div>
+              </div>
+            </div>
+            <div id="deletedContainer">
+              <span> Reference: refs/* was deleted </span>
+              <gr-button
+                aria-disabled="false"
+                id="undoRemoveBtn"
+                link=""
+                role="button"
+                tabindex="0"
+              >
+                Undo
+              </gr-button>
+            </div>
+          </fieldset>
+        `
+      );
     });
 
     test('updateSection', () => {

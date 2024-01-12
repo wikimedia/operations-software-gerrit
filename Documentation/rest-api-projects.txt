@@ -415,12 +415,12 @@ As result a list of link:#project-info[ProjectInfo] entities is returned.
   Content-Type: application/json; charset=UTF-8
 
   )]}'
-  {
-    "test": {
+  [
+    {
       "id": "test",
       "description": "\u003chtml\u003e is escaped"
     }
-  }
+  ]
 ----
 
 [[project-query-limit]]
@@ -3092,9 +3092,7 @@ label name.
       },
       "default_value": 0,
       "can_override": true,
-      "copy_min_score": true,
-      "copy_all_scores_if_no_change": true,
-      "copy_all_scores_on_trivial_rebase": true,
+      "copy_condition": "changekind:NO_CHANGE OR changekind:TRIVIAL_REBASE or is:MIN",
       "allow_post_submit": true
     }
   ]
@@ -3139,9 +3137,7 @@ Labels that belong to the same project are sorted by label name.
       },
       "default_value": 0,
       "can_override": true,
-      "copy_min_score": true,
-      "copy_all_scores_if_no_change": true,
-      "copy_all_scores_on_trivial_rebase": true,
+      "copy_condition": "changekind:NO_CHANGE OR changekind:TRIVIAL_REBASE or is:MIN",
       "allow_post_submit": true
     },
     {
@@ -3157,7 +3153,7 @@ Labels that belong to the same project are sorted by label name.
       },
       "default_value": 0,
       "can_override": true,
-      "copy_any_score": true,
+      "copy_condition": "is:ANY",
       "allow_post_submit": true
     }
   ]
@@ -3202,9 +3198,7 @@ returned that describes the label.
     },
     "default_value": 0,
     "can_override": true,
-    "copy_min_score": true,
-    "copy_all_scores_if_no_change": true,
-    "copy_all_scores_on_trivial_rebase": true,
+    "copy_condition": "changekind:NO_CHANGE OR changekind:TRIVIAL_REBASE OR is:MIN",
     "allow_post_submit": true
   }
 ----
@@ -3263,7 +3257,7 @@ returned that describes the created label.
     },
     "default_value": 0,
     "can_override": true,
-    "copy_all_scores_if_no_change": true,
+    "copy_condition": "changekind:NO_CHANGE",
     "allow_post_submit": true
   }
 ----
@@ -3315,9 +3309,7 @@ returned that describes the updated label.
     },
     "default_value": 0,
     "can_override": true,
-    "copy_min_score": true,
-    "copy_all_scores_if_no_change": true,
-    "copy_all_scores_on_trivial_rebase": true,
+    "copy_condition": "changekind:NO_CHANGE OR changekind:TRIVIAL_REBASE OR is:MIN",
     "allow_post_submit": true,
     "ignore_self_approval": true
   }
@@ -3401,7 +3393,7 @@ The updates are processed in the following order:
         "function": "MaxWithBlock"
       },
       "Baz-Review": {
-        "copy_min_score": true
+        "copy_condition": "is:MIN"
       }
     }
   }
@@ -3414,6 +3406,198 @@ If the label updates were done successfully the response is "`200 OK`".
   HTTP/1.1 200 OK
 ----
 
+[[submit-requirement-endpoints]]
+== Submit Requirement Endpoints
+
+[[create-submit-requirement]]
+=== Create Submit Requirement
+
+--
+'PUT /projects/link:#project-name[\{project-name\}]/submit_requirements/link:#submit-requirement-name[\{submit-requirement-name\}]'
+--
+
+Creates a new submit requirement definition in this project.
+
+The calling user must have write access to the `refs/meta/config` branch of the
+project.
+
+If a submit requirement with this name is already defined in this project, this
+submit requirement definition is updated
+(see link:#update-submit-requirement[Update Submit Requirement]).
+
+The submit requirement data must be provided in the request body as
+link:#submit-requirement-input[SubmitRequirementInput].
+
+.Request
+----
+  PUT /projects/My-Project/submit_requirements/Code-Review HTTP/1.0
+  Content-Type: application/json; charset=UTF-8
+
+  {
+    "name": "Code-Review",
+    "description": "At least one maximum vote for the Code-Review label is required",
+    "submittability_expression": "label:Code-Review=+2"
+  }
+----
+
+As response a link:#submit-requirement-info[SubmitRequirementInfo] entity is
+returned that describes the created submit requirement.
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Disposition: attachment
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+      "name": "Code-Review",
+      "description": "At least one maximum vote for the Code-Review label is required",
+      "submittability_expression": "label:Code-Review=+2",
+      "allow_override_in_child_projects": false
+   }
+----
+
+[[update-submit-requirement]]
+=== Update Submit Requirement
+
+--
+'PUT /projects/link:#project-name[\{project-name\}]/submit_requirements/link:#submit-requirement-name[\{submit-requirement-name\}]'
+--
+
+Updates the definition of a submit requirement that is defined in this project.
+
+The calling user must have write access to the `refs/meta/config` branch of the
+project.
+
+The new submit requirement will overwrite the existing submit requirement.
+That is, unspecified attributes will be set to their defaults.
+
+.Request
+----
+  PUT /projects/My-Project/submit_requirements/Code-Review HTTP/1.0
+  Content-Type: application/json; charset=UTF-8
+
+  {
+    "name": "Code-Review",
+    "description": "At least one maximum vote for the Code-Review label is required",
+    "submittability_expression": "label:Code-Review=+2"
+  }
+----
+
+As response a link:#submit-requirement-info[SubmitRequirementInfo] entity is
+returned that describes the created submit requirement.
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Disposition: attachment
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+      "name": "Code-Review",
+      "description": "At least one maximum vote for the Code-Review label is required",
+      "submittability_expression": "label:Code-Review=+2",
+      "allow_override_in_child_projects": false
+   }
+----
+
+[[get-submit-requirement]]
+=== Get Submit Requirement
+--
+'GET /projects/link:#project-name[\{project-name\}]/submit_requirements/link:#submit-requirement-name[\{submit-requirement-name\}]'
+--
+
+Retrieves the definition of a submit requirement that is defined in this project.
+
+The calling user must have read access to the `refs/meta/config` branch of the
+project.
+
+.Request
+----
+  GET /projects/All-Projects/submit-requirement/Code-Review HTTP/1.0
+----
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Disposition: attachment
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+      "name": "Code-Review",
+      "description": "At least one maximum vote for the Code-Review label is required",
+      "submittability_expression": "label:Code-Review=+2",
+      "allow_override_in_child_projects": false
+   }
+----
+
+[[list-submit-requirements]]
+=== List Submit Requirements
+--
+'GET /projects/link:#project-name[\{project-name\}]/submit_requirements'
+--
+
+Retrieves a list of all submit requirements for this project. The `inherited`
+parameter can be supplied to also list submit requirements from parent projects.
+
+The calling user must have read access to the `refs/meta/config` branch of the
+project. If the `inherited` option is used, the caller must have read access to
+the `refs/meta/config` branch of all parent projects as well.
+
+As response a list of link:#submit-requirement-info[SubmitRequirementInfo]
+entities is returned.
+
+.Request
+----
+  GET /projects/All-Projects/submit-requirements HTTP/1.0
+----
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Disposition: attachment
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  [
+    {
+      "name": "Code-Review",
+      "description": "At least one maximum vote for the Code-Review label is required",
+      "submittability_expression": "label:Code-Review=+2",
+      "allow_override_in_child_projects": false
+    }
+  ]
+----
+
+[[delete-submit-requirement]]
+=== Delete Submit Requirement
+--
+'DELETE /projects/link:#project-name[\{project-name\}]/submit_requirements/link:#submit-requirement-name[\{submit-requirement-name\}]'
+--
+
+Deletes the definition of a submit requirement that is defined in this project.
+
+The calling user must have write access to the `refs/meta/config` branch of the
+project. The request would fail with `404 Not Found` if there is no submit
+requirement with this name for this project.
+
+No request body is needed.
+
+.Request
+----
+  DELETE /projects/My-Project/submit_requirements/Foo-Review HTTP/1.0
+  Content-Type: application/json; charset=UTF-8
+----
+
+If a submit requirement was deleted the response is "`204 No Content`".
+
+.Response
+----
+  HTTP/1.1 204 No Content
+----
 
 [[ids]]
 == IDs
@@ -3441,6 +3625,11 @@ dashboard of a project.
 [[label-name]]
 === \{label-name\}
 The name of a review label.
+
+[[submit-requirement-name]]
+=== \{submit-requirement-name\}
+The name of a submit requirement.
+
 
 [[project-name]]
 === \{project-name\}
@@ -3622,6 +3811,9 @@ link:config-gerrit.html#commentlink.name.match[commentlink.name.match].
 |`link`     |        |The URL to direct the user to whenever the
 regular expression is matched, as documented in
 link:config-gerrit.html#commentlink.name.link[commentlink.name.link].
+|`prefix`   |optional|Text inserted before the link.
+|`suffix`   |optional|Text inserted after the link.
+|`text`     |optional|Text of the link.
 |`enabled`  |optional|Whether the commentlink is enabled, as documented
 in link:config-gerrit.html#commentlink.name.enabled[
 commentlink.name.enabled]. If not set the commentlink is enabled.
@@ -3641,6 +3833,9 @@ link:config-gerrit.html#commentlink.name.match[commentlink.name.match].
 |`link`     |        |The URL to direct the user to whenever the
 regular expression is matched, as documented in
 link:config-gerrit.html#commentlink.name.link[commentlink.name.link].
+|`prefix`   |optional|Text inserted before the link.
+|`suffix`   |optional|Text inserted after the link.
+|`text`     |optional|Text of the link.
 |`enabled`  |optional|Whether the commentlink is enabled, as documented
 in link:config-gerrit.html#commentlink.name.enabled[
 commentlink.name.enabled]. If not set the commentlink is enabled.
@@ -4028,36 +4223,8 @@ set, the label applies for all branches.
 |`can_override`  |`false` if not set|
 Whether this label can be link:config-labels.html#label_canOverride[overridden]
 by child projects.
-|`copy_any_score`|`false` if not set|
-*DEPRECATED* Whether link:config-labels.html#label_copyAnyScore[copyAnyScore]
-is set on the label.
 |`copy_condition`|optional|
 See link:config-labels.html#label_copyCondition[copyCondition].
-|`copy_min_score`|`false` if not set|
-*DEPRECATED* Whether link:config-labels.html#label_copyMinScore[copyMinScore]
-is set on the label.
-|`copy_max_score`|`false` if not set|
-*DEPRECATED* Whether link:config-labels.html#label_copyMaxScore[copyMaxScore]
-is set on the label.
-|`copy_all_scores_if_no_change`|`false` if not set|
-*DEPRECATED* Whether link:config-labels.html#label_copyAllScoresIfNoChange[
-copyAllScoresIfNoChange] is set on the label.
-|`copy_all_scores_if_no_code_change`|`false` if not set|
-*DEPRECATED* Whether link:config-labels.html#label_copyAllScoresIfNoCodeChange[
-copyAllScoresIfNoCodeChange] is set on the label.
-|`copy_all_scores_on_trivial_rebase`|`false` if not set|
-*DEPRECATED* Whether link:config-labels.html#label_copyAllScoresOnTrivialRebase[
-copyAllScoresOnTrivialRebase] is set on the label.
-|`copy_all_scores_if_list_of_files_did_not_change`|`false` if not set|
-*DEPRECATED* Whether
-link:config-labels.html#label_copyAllScoresIfListOfFilesDidNotChange[
-copyAllScoresIfListOfFilesDidNotChange] is set on the label.
-|`copy_all_scores_on_merge_first_parent_update`|`false` if not set|
-*DEPRECATED* Whether
-link:config-labels.html#label_copyAllScoresOnMergeFirstParentUpdate[
-copyAllScoresOnMergeFirstParentUpdate] is set on the label.
-|`copy_values`   |optional|
-List of values that should be copied forward when a new patch set is uploaded.
 |`allow_post_submit`|`false` if not set|
 Whether link:config-labels.html#label_allowPostSubmit[allowPostSubmit] is set
 on the label.
@@ -4104,36 +4271,10 @@ branches.
 |`can_override`  |optional|
 Whether this label can be link:config-labels.html#label_canOverride[overridden]
 by child projects.
-|`copy_any_score`|optional|
-Whether link:config-labels.html#label_copyAnyScore[copyAnyScore] is set on the
-label.
 |`copy_condition`|optional|
 See link:config-labels.html#label_copyCondition[copyCondition].
 |`unset_copy_condition`|optional|
 If true, clears the value stored in `copy_condition`.
-|`copy_min_score`|optional|
-Whether link:config-labels.html#label_copyMinScore[copyMinScore] is set on the
-label.
-|`copy_max_score`|optional|
-Whether link:config-labels.html#label_copyMaxScore[copyMaxScore] is set on the
-label.
-|`copy_all_scores_if_no_change`|optional|
-Whether link:config-labels.html#label_copyAllScoresIfNoChange[
-copyAllScoresIfNoChange] is set on the label.
-|`copy_all_scores_if_no_code_change`|optional|
-Whether link:config-labels.html#label_copyAllScoresIfNoCodeChange[
-copyAllScoresIfNoCodeChange] is set on the label.
-|`copy_all_scores_on_trivial_rebase`|optional|
-Whether link:config-labels.html#label_copyAllScoresOnTrivialRebase[
-copyAllScoresOnTrivialRebase] is set on the label.
-|`copy_all_scores_if_list_of_files_did_not_change`|optional|
-Whether link:config-labels.html#label_copyAllScoresIfListOfFilesDidNotChange[
-copyAllScoresIfListOfFilesDidNotChange] is set on the label.
-|`copy_all_scores_on_merge_first_parent_update`|optional|
-Whether link:config-labels.html#label_copyAllScoresOnMergeFirstParentUpdate[
-copyAllScoresOnMergeFirstParentUpdate] is set on the label.
-|`copy_values`   |optional|
-List of values that should be copied forward when a new patch set is uploaded.
 |`allow_post_submit`|optional|
 Whether link:config-labels.html#label_allowPostSubmit[allowPostSubmit] is set
 on the label.
@@ -4386,6 +4527,57 @@ statistics of a Git repository.
 |`size_of_loose_objects`   |Size of loose objects in bytes.
 |`size_of_packed_objects`  |Size of packed objects in bytes.
 |======================================
+
+[[submit-requirement-info]]
+=== SubmitRequirementInfo
+The `SubmitRequirementInfo` entity describes a submit requirement.
+
+[options="header",cols="1,^1,5"]
+|===========================
+|Field Name      ||Description
+|`name`||
+The submit requirement name.
+|`description`|optional|
+Description of the submit requirement.
+|`applicability_expression`|optional|
+Query expression that can be evaluated on any change. If evaluated to true on a
+change, the submit requirement is then applicable for this change.
+If not specified, the submit requirement is applicable for all changes.
+|`submittability_expression`||
+Query expression that can be evaluated on any change. If evaluated to true on a
+change, the submit requirement is fulfilled and not blocking change submission.
+|`override_expression`|optional|
+Query expression that can be evaluated on any change. If evaluated to true on a
+change, the submit requirement is overridden and not blocking change submission.
+|`allow_override_in_child_projects`||
+Whether this submit requirement can be overridden in child projects.
+|===========================
+
+[[submit-requirement-input]]
+=== SubmitRequirementInput
+The `SubmitRequirementInput` entity describes a submit requirement.
+
+[options="header",cols="1,^1,5"]
+|===========================
+|Field Name      ||Description
+|`name`||
+The submit requirement name.
+|`description`|optional|
+Description of the submit requirement.
+|`applicability_expression`|optional|
+Query expression that can be evaluated on any change. If evaluated to true on a
+change, the submit requirement is then applicable for this change.
+If not specified, the submit requirement is applicable for all changes.
+|`submittability_expression`||
+Query expression that can be evaluated on any change. If evaluated to true on a
+change, the submit requirement is fulfilled and not blocking change submission.
+|`override_expression`|optional|
+Query expression that can be evaluated on any change. If evaluated to true on a
+change, the submit requirement is overridden and not blocking change submission.
+|`allow_override_in_child_projects`|optional|
+Whether this submit requirement can be overridden in child projects. Default is
+`false`.
+|===========================
 
 [[submit-type-info]]
 === SubmitTypeInfo

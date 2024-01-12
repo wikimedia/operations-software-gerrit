@@ -3,19 +3,20 @@
  * Copyright 2022 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-
 import {
   GrChangeListSection,
   computeLabelShortcut,
 } from './gr-change-list-section';
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-change-list-section';
+import '../gr-change-list-item/gr-change-list-item';
 import {
   createChange,
   createAccountDetailWithId,
+  createAccountWithEmail,
   createServerInfo,
 } from '../../../test/test-data-generators';
-import {NumericChangeId, ChangeInfoId} from '../../../api/rest-api';
+import {ChangeInfoId, NumericChangeId, Timestamp} from '../../../api/rest-api';
 import {
   queryAll,
   query,
@@ -24,8 +25,9 @@ import {
   waitUntilObserved,
 } from '../../../test/test-utils';
 import {GrChangeListItem} from '../gr-change-list-item/gr-change-list-item';
-import {columnNames, ChangeListSection} from '../gr-change-list/gr-change-list';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {ChangeListSection} from '../gr-change-list/gr-change-list';
+import {fixture, html, assert} from '@open-wc/testing';
+import {ColumnNames} from '../../../constants/constants';
 
 suite('gr-change-list section', () => {
   let element: GrChangeListSection;
@@ -52,23 +54,42 @@ suite('gr-change-list section', () => {
       html`<gr-change-list-section
         .account=${createAccountDetailWithId(1)}
         .config=${createServerInfo()}
-        .visibleChangeTableColumns=${columnNames}
+        .visibleChangeTableColumns=${Object.values(ColumnNames)}
         .changeSection=${changeSection}
       ></gr-change-list-section> `
     );
   });
 
-  test('selection checkbox is only shown if experiment is enabled', async () => {
-    assert.isNotOk(query(element, '.selection'));
-
-    stubFlags('isEnabled').returns(true);
-    element.requestUpdate();
-    await element.updateComplete;
-
-    assert.isOk(query(element, '.selection'));
+  test('renders headers when no changes are selected', () => {
+    // TODO: Check table elements. The shadowDom helper does not understand
+    // tables interacting with display: contents, even wrapping the element in a
+    // table, does not help.
+    assert.shadowDom.equal(
+      element,
+      /* prettier-ignore */ /* HTML */ `
+      <td class="selection">
+        <input class="selection-checkbox" type="checkbox"/>
+      </td>
+      #
+              SubjectStatusOwnerReviewersCommentsRepoBranchUpdatedSize Status
+      <gr-change-list-item
+        aria-label="Test subject, section: test"
+        role="button"
+        tabindex="0"
+      >
+      </gr-change-list-item>
+      <gr-change-list-item
+        aria-label="Test subject, section: test"
+        role="button"
+        tabindex="0"
+      >
+      </gr-change-list-item>
+    `
+    );
   });
 
-  test('selection header is only shown if experiment is enabled', async () => {
+  test('renders action bar when some changes are selected', async () => {
+    assert.isNotOk(query(element, 'gr-change-list-action-bar'));
     element.bulkActionsModel.setState({
       ...element.bulkActionsModel.getState(),
       selectedChangeNums: [1 as NumericChangeId],
@@ -78,11 +99,30 @@ suite('gr-change-list section', () => {
       s => s.length === 1
     );
 
-    assert.isNotOk(query(element, 'gr-change-list-action-bar'));
-    stubFlags('isEnabled').returns(true);
     element.requestUpdate();
     await element.updateComplete;
-    queryAndAssert(element, 'gr-change-list-action-bar');
+    assert.shadowDom.equal(
+      element,
+      /* prettier-ignore */ /* HTML */ `
+        <td class="selection">
+          <input class="selection-checkbox" type="checkbox" />
+        </td>
+        <gr-change-list-action-bar></gr-change-list-action-bar>
+        <gr-change-list-item
+          aria-label="Test subject, section: test"
+          role="button"
+          tabindex="0"
+        >
+        </gr-change-list-item>
+        <gr-change-list-item
+          aria-label="Test subject, section: test"
+          checked=""
+          role="button"
+          tabindex="0"
+        >
+        </gr-change-list-item>
+      `
+    );
   });
 
   suite('bulk actions selection', () => {
@@ -114,27 +154,6 @@ suite('gr-change-list section', () => {
       assert.isTrue(syncStub.called);
     });
 
-    test('changing section does on trigger model sync when flag is disabled', async () => {
-      isEnabled.returns(false);
-      const syncStub = sinon.stub(element.bulkActionsModel, 'sync');
-      assert.isFalse(syncStub.called);
-      element.changeSection = {
-        name: 'test',
-        query: 'test',
-        results: [
-          {
-            ...createChange(),
-            _number: 1 as NumericChangeId,
-            id: '1' as ChangeInfoId,
-          },
-        ],
-        emptyStateSlotName: 'test',
-      };
-      await element.updateComplete;
-
-      assert.isFalse(syncStub.called);
-    });
-
     test('actions header is enabled/disabled based on selected changes', async () => {
       element.bulkActionsModel.setState({
         ...element.bulkActionsModel.getState(),
@@ -144,7 +163,7 @@ suite('gr-change-list section', () => {
         element.bulkActionsModel.selectedChangeNums$,
         s => s.length === 0
       );
-      assert.isFalse(element.showBulkActionsHeader);
+      assert.isFalse(element.numSelected > 0);
 
       element.bulkActionsModel.setState({
         ...element.bulkActionsModel.getState(),
@@ -154,8 +173,138 @@ suite('gr-change-list section', () => {
         element.bulkActionsModel.selectedChangeNums$,
         s => s.length === 1
       );
-      assert.isTrue(element.showBulkActionsHeader);
+      assert.isTrue(element.numSelected > 0);
     });
+
+    test('select all checkbox checks all when none are selected', async () => {
+      element.changeSection = {
+        name: 'test',
+        query: 'test',
+        results: [
+          {
+            ...createChange(),
+            _number: 1 as NumericChangeId,
+            id: '1' as ChangeInfoId,
+          },
+          {
+            ...createChange(),
+            _number: 2 as NumericChangeId,
+            id: '2' as ChangeInfoId,
+          },
+        ],
+        emptyStateSlotName: 'test',
+      };
+      element.userModel.setAccount({
+        ...createAccountWithEmail('abc@def.com'),
+        registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
+      });
+      await element.updateComplete;
+      let rows = queryAll(element, 'gr-change-list-item');
+      assert.lengthOf(rows, 2);
+      assert.isFalse(
+        queryAndAssert<HTMLInputElement>(rows[0], 'input').checked
+      );
+      assert.isFalse(
+        queryAndAssert<HTMLInputElement>(rows[1], 'input').checked
+      );
+
+      const checkbox = queryAndAssert<HTMLInputElement>(element, 'input');
+      checkbox.click();
+      await waitUntilObserved(
+        element.bulkActionsModel.selectedChangeNums$,
+        s => s.length === 2
+      );
+      await element.updateComplete;
+
+      rows = queryAll(element, 'gr-change-list-item');
+      assert.lengthOf(rows, 2);
+      assert.isTrue(queryAndAssert<HTMLInputElement>(rows[0], 'input').checked);
+      assert.isTrue(queryAndAssert<HTMLInputElement>(rows[1], 'input').checked);
+    });
+
+    test('checkbox matches partial and fully selected state', async () => {
+      element.changeSection = {
+        name: 'test',
+        query: 'test',
+        results: [
+          {
+            ...createChange(),
+            _number: 1 as NumericChangeId,
+            id: '1' as ChangeInfoId,
+          },
+          {
+            ...createChange(),
+            _number: 2 as NumericChangeId,
+            id: '2' as ChangeInfoId,
+          },
+        ],
+        emptyStateSlotName: 'test',
+      };
+      element.userModel.setAccount({
+        ...createAccountWithEmail('abc@def.com'),
+        registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
+      });
+      await element.updateComplete;
+      const rows = queryAll(element, 'gr-change-list-item');
+
+      // zero case
+      let checkbox = queryAndAssert<HTMLInputElement>(element, 'input');
+      assert.isFalse(checkbox.checked);
+      assert.isFalse(checkbox.indeterminate);
+
+      // partial case
+      queryAndAssert<HTMLInputElement>(rows[0], 'input').click();
+      await element.updateComplete;
+
+      checkbox = queryAndAssert<HTMLInputElement>(element, 'input');
+      assert.isTrue(checkbox.indeterminate);
+
+      // plural case
+      queryAndAssert<HTMLInputElement>(rows[1], 'input').click();
+      await element.updateComplete;
+
+      checkbox = queryAndAssert<HTMLInputElement>(element, 'input');
+      assert.isFalse(checkbox.indeterminate);
+      assert.isTrue(checkbox.checked);
+
+      // Clicking Check All checkbox when all checkboxes selected unselects
+      // all checkboxes
+      queryAndAssert<HTMLInputElement>(element, 'input');
+      checkbox.click();
+      await element.updateComplete;
+
+      assert.isFalse(
+        queryAndAssert<HTMLInputElement>(rows[0], 'input').checked
+      );
+      assert.isFalse(
+        queryAndAssert<HTMLInputElement>(rows[1], 'input').checked
+      );
+    });
+  });
+
+  test('no checkbox when logged out', async () => {
+    element.changeSection = {
+      name: 'test',
+      query: 'test',
+      results: [
+        {
+          ...createChange(),
+          _number: 1 as NumericChangeId,
+          id: '1' as ChangeInfoId,
+        },
+        {
+          ...createChange(),
+          _number: 2 as NumericChangeId,
+          id: '2' as ChangeInfoId,
+        },
+      ],
+      emptyStateSlotName: 'test',
+    };
+    element.userModel.setAccount(undefined);
+    await element.updateComplete;
+    const rows = queryAll(element, 'gr-change-list-item');
+    assert.lengthOf(rows, 2);
+    assert.isUndefined(query<HTMLInputElement>(rows[0], 'input'));
   });
 
   test('colspans', async () => {

@@ -73,6 +73,7 @@ mailing list):
 ** edit hashtags on all changes
 ** edit topics on all open changes
 ** abandon changes
+** revert changes
 * approve posts to the
   link:https://groups.google.com/d/forum/repo-discuss[repo-discuss,role=external,window=_blank]
   mailing list
@@ -116,7 +117,7 @@ group, which allows to:
 * propose project config changes (push changes for the
   `refs/meta/config` branch
 
-Being member of the `gerrit-verifiers` group includes further
+Being member of the `gerrit-trusted-contributors` group includes further
 permissions (see link:#supporter[supporter] section above).
 
 It's highly appreciated if contributors engage in code reviews,

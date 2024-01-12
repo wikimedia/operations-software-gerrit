@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-account-info';
 import {query, queryAll, stubRestApi} from '../../../test/test-utils';
 import {GrAccountInfo} from './gr-account-info';
@@ -31,8 +19,7 @@ import {IronInputElement} from '@polymer/iron-input';
 import {SinonStubbedMember} from 'sinon';
 import {RestApiService} from '../../../services/gr-rest-api/gr-rest-api';
 import {EditableAccountField} from '../../../api/rest-api';
-
-const basicFixture = fixtureFromElement('gr-account-info');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-account-info tests', () => {
   let element!: GrAccountInfo;
@@ -66,62 +53,65 @@ suite('gr-account-info tests', () => {
     stubRestApi('getConfig').resolves(config);
     stubRestApi('getPreferences').resolves(createPreferences());
 
-    element = basicFixture.instantiate();
+    element = await fixture(html`<gr-account-info></gr-account-info>`);
     await element.loadData();
     await element.updateComplete;
   });
 
   test('renders', () => {
-    expect(element).shadowDom.to.equal(/* HTML */ `
-      <div class="gr-form-styles">
-        <section>
-          <span class="title"></span>
-          <span class="value">
-            <gr-avatar hidden="" imagesize="120"></gr-avatar>
-          </span>
-        </section>
-        <section>
-          <span class="title">ID</span>
-          <span class="value">123</span>
-        </section>
-        <section>
-          <span class="title">Email</span>
-          <span class="value">user-123@</span>
-        </section>
-        <section>
-          <span class="title">Registered</span>
-          <span class="value">
-            <gr-date-formatter withtooltip=""></gr-date-formatter>
-          </span>
-        </section>
-        <section id="usernameSection">
-          <span class="title">Username</span>
-          <span class="value"></span>
-        </section>
-        <section id="nameSection">
-          <label class="title" for="nameInput">Full name</label>
-          <span class="value">User-123</span>
-        </section>
-        <section>
-          <label class="title" for="displayNameInput">Display name</label>
-          <span class="value">
-            <iron-input>
-              <input id="displayNameInput" />
-            </iron-input>
-          </span>
-        </section>
-        <section>
-          <label class="title" for="statusInput">
-            About me (e.g. employer)
-          </label>
-          <span class="value">
-            <iron-input id="statusIronInput">
-              <input id="statusInput" />
-            </iron-input>
-          </span>
-        </section>
-      </div>
-    `);
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="gr-form-styles">
+          <section>
+            <span class="title"></span>
+            <span class="value">
+              <gr-avatar hidden="" imagesize="120"></gr-avatar>
+            </span>
+          </section>
+          <section>
+            <span class="title">ID</span>
+            <span class="value">123</span>
+          </section>
+          <section>
+            <span class="title">Email</span>
+            <span class="value">user-123@</span>
+          </section>
+          <section>
+            <span class="title">Registered</span>
+            <span class="value">
+              <gr-date-formatter withtooltip=""></gr-date-formatter>
+            </span>
+          </section>
+          <section id="usernameSection">
+            <span class="title">Username</span>
+            <span class="value"></span>
+          </section>
+          <section id="nameSection">
+            <label class="title" for="nameInput">Full name</label>
+            <span class="value">User-123</span>
+          </section>
+          <section>
+            <label class="title" for="displayNameInput">Display name</label>
+            <span class="value">
+              <iron-input>
+                <input id="displayNameInput" />
+              </iron-input>
+            </span>
+          </section>
+          <section>
+            <label class="title" for="statusInput">
+              About me (e.g. employer)
+            </label>
+            <span class="value">
+              <iron-input id="statusIronInput">
+                <input id="statusInput" />
+              </iron-input>
+            </span>
+          </section>
+        </div>
+      `
+    );
   });
 
   test('basic account info render', () => {

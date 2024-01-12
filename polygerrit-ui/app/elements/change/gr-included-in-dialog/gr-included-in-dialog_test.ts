@@ -1,35 +1,49 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-included-in-dialog';
 import {GrIncludedInDialog} from './gr-included-in-dialog';
 import {BranchName, IncludedInInfo, TagName} from '../../../types/common';
 import {IronInputElement} from '@polymer/iron-input';
 import {queryAndAssert} from '../../../test/test-utils';
-
-const basicFixture = fixtureFromElement('gr-included-in-dialog');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-included-in-dialog', () => {
   let element: GrIncludedInDialog;
 
   setup(async () => {
-    element = basicFixture.instantiate();
-    await element.updateComplete;
+    element = await fixture(
+      html`<gr-included-in-dialog></gr-included-in-dialog>`
+    );
+  });
+
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <header>
+          <h1 class="heading-1" id="title">Included In:</h1>
+          <span class="closeButtonContainer">
+            <gr-button
+              aria-disabled="false"
+              id="closeButton"
+              link=""
+              role="button"
+              tabindex="0"
+            >
+              Close
+            </gr-button>
+          </span>
+          <iron-input id="filterInput">
+            <input placeholder="Filter" />
+          </iron-input>
+        </header>
+        <div>Loading...</div>
+      `
+    );
   });
 
   test('computeGroups', () => {

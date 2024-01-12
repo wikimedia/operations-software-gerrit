@@ -1,79 +1,91 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {
   page,
   PageContext,
   PageNextCallback,
 } from '../../../utils/page-wrapper-utils';
-import {
-  DashboardSection,
-  GeneratedWebLink,
-  GenerateUrlChangeViewParameters,
-  GenerateUrlDashboardViewParameters,
-  GenerateUrlDiffViewParameters,
-  GenerateUrlEditViewParameters,
-  GenerateUrlGroupViewParameters,
-  GenerateUrlParameters,
-  GenerateUrlRepoViewParameters,
-  GenerateUrlSearchViewParameters,
-  GenerateWebLinksChangeParameters,
-  GenerateWebLinksEditParameters,
-  GenerateWebLinksFileParameters,
-  GenerateWebLinksParameters,
-  GenerateWebLinksPatchsetParameters,
-  GenerateWebLinksResolveConflictsParameters,
-  GerritNav,
-  GroupDetailView,
-  isGenerateUrlDiffViewParameters,
-  RepoDetailView,
-  WeblinkType,
-} from '../gr-navigation/gr-navigation';
+import {NavigationService} from '../gr-navigation/gr-navigation';
 import {getAppContext} from '../../../services/app-context';
 import {convertToPatchSetNum} from '../../../utils/patch-set-util';
-import {assertNever} from '../../../utils/common-util';
+import {assertIsDefined} from '../../../utils/common-util';
 import {
   BasePatchSetNum,
   DashboardId,
   GroupId,
   NumericChangeId,
-  PatchSetNum,
+  RevisionPatchSetNum,
   RepoName,
-  ServerInfo,
   UrlEncodedCommentId,
-  ParentPatchSetNum,
+  PARENT,
+  PatchSetNumber,
 } from '../../../types/common';
-import {
-  AppElement,
-  AppElementAgreementParam,
-  AppElementParams,
-} from '../../gr-app-types';
+import {AppElement, AppElementParams} from '../../gr-app-types';
 import {LocationChangeEventDetail} from '../../../types/events';
-import {GerritView} from '../../../services/router/router-model';
+import {GerritView, RouterModel} from '../../../services/router/router-model';
 import {firePageError} from '../../../utils/event-util';
-import {addQuotesWhen} from '../../../utils/string-util';
 import {windowLocationReload} from '../../../utils/dom-util';
 import {
-  encodeURL,
   getBaseUrl,
+  PatchRangeParams,
   toPath,
   toPathname,
   toSearchParams,
 } from '../../../utils/url-util';
-import {Execution, LifeCycle, Timing} from '../../../constants/reporting';
+import {LifeCycle, Timing} from '../../../constants/reporting';
+import {
+  LATEST_ATTEMPT,
+  stringToAttemptChoice,
+} from '../../../models/checks/checks-util';
+import {
+  AdminChildView,
+  AdminViewModel,
+  AdminViewState,
+} from '../../../models/views/admin';
+import {
+  AgreementViewModel,
+  AgreementViewState,
+} from '../../../models/views/agreement';
+import {
+  RepoDetailView,
+  RepoViewModel,
+  RepoViewState,
+} from '../../../models/views/repo';
+import {
+  GroupDetailView,
+  GroupViewModel,
+  GroupViewState,
+} from '../../../models/views/group';
+import {DiffViewModel, DiffViewState} from '../../../models/views/diff';
+import {
+  ChangeViewModel,
+  ChangeViewState,
+  createChangeUrl,
+} from '../../../models/views/change';
+import {EditViewModel, EditViewState} from '../../../models/views/edit';
+import {
+  DashboardViewModel,
+  DashboardViewState,
+} from '../../../models/views/dashboard';
+import {
+  SettingsViewModel,
+  SettingsViewState,
+} from '../../../models/views/settings';
+import {define} from '../../../models/dependency';
+import {Finalizable} from '../../../services/registry';
+import {ReportingService} from '../../../services/gr-reporting/gr-reporting';
+import {RestApiService} from '../../../services/gr-rest-api/gr-rest-api';
+import {
+  DocumentationViewModel,
+  DocumentationViewState,
+} from '../../../models/views/documentation';
+import {PluginViewModel, PluginViewState} from '../../../models/views/plugin';
+import {SearchViewModel, SearchViewState} from '../../../models/views/search';
+import {DashboardSection} from '../../../utils/dashboard-util';
+import {Subscription} from 'rxjs';
 
 const RoutePattern = {
   ROOT: '/',
@@ -240,23 +252,11 @@ export const _testOnly_RoutePattern = RoutePattern;
 const LINE_ADDRESS_PATTERN = /^([ab]?)(\d+)$/;
 
 /**
- * Pattern to recognize '+' in url-encoded strings for replacement with ' '.
- */
-const PLUS_PATTERN = /\+/g;
-
-/**
- * Pattern to recognize leading '?' in window.location.search, for stripping.
- */
-const QUESTION_PATTERN = /^\?*/;
-
-/**
  * GWT UI would use @\d+ at the end of a path to indicate linenum.
  */
 const LEGACY_LINENUM_PATTERN = /@([ab]?\d+)$/;
 
 const LEGACY_QUERY_SUFFIX_PATTERN = /,n,z$/;
-
-const REPO_TOKEN_PATTERN = /\${(project|repo)}/g;
 
 // Polymer makes `app` intrinsically defined on the window by virtue of the
 // custom element having the id "pg-app", but it is made explicit here.
@@ -274,18 +274,9 @@ if (!app) {
   });
 })();
 
-export interface PageContextWithQueryMap extends PageContext {
-  queryMap: Map<string, string> | URLSearchParams;
-}
+export const routerToken = define<GrRouter>('router');
 
-type QueryStringItem = [string, string]; // [key, value]
-
-export interface PatchRangeParams {
-  patchNum?: PatchSetNum;
-  basePatchNum?: BasePatchSetNum;
-}
-
-export class GrRouter {
+export class GrRouter implements Finalizable, NavigationService {
   readonly _app = app;
 
   _isRedirecting?: boolean;
@@ -294,11 +285,58 @@ export class GrRouter {
   // and for first navigation in app after loaded from server (true).
   _isInitialLoad = true;
 
-  private readonly reporting = getAppContext().reportingService;
+  private subscriptions: Subscription[] = [];
 
-  private readonly routerModel = getAppContext().routerModel;
+  private view?: GerritView;
 
-  private readonly restApiService = getAppContext().restApiService;
+  constructor(
+    private readonly reporting: ReportingService,
+    private readonly routerModel: RouterModel,
+    private readonly restApiService: RestApiService,
+    private readonly adminViewModel: AdminViewModel,
+    private readonly agreementViewModel: AgreementViewModel,
+    private readonly changeViewModel: ChangeViewModel,
+    private readonly dashboardViewModel: DashboardViewModel,
+    private readonly diffViewModel: DiffViewModel,
+    private readonly documentationViewModel: DocumentationViewModel,
+    private readonly editViewModel: EditViewModel,
+    private readonly groupViewModel: GroupViewModel,
+    private readonly pluginViewModel: PluginViewModel,
+    private readonly repoViewModel: RepoViewModel,
+    private readonly searchViewModel: SearchViewModel,
+    private readonly settingsViewModel: SettingsViewModel
+  ) {
+    this.subscriptions = [
+      // TODO: Do the same for other view models.
+      // We want to make sure that the current view model state is always
+      // reflected back into the URL bar.
+      this.changeViewModel.state$.subscribe(state => {
+        if (!state) return;
+        // Note that router model view must be updated before view model state.
+        // So this check is slightly fragile, but should work.
+        if (this.view !== GerritView.CHANGE) return;
+        const browserUrl = new URL(window.location.toString());
+        const stateUrl = new URL(createChangeUrl(state), browserUrl);
+        stateUrl.hash = browserUrl.hash;
+        if (browserUrl.toString() !== stateUrl.toString()) {
+          page.replace(
+            stateUrl.toString(),
+            null,
+            /* init: */ false,
+            /* dispatch: */ false
+          );
+        }
+      }),
+      this.routerModel.routerView$.subscribe(view => (this.view = view)),
+    ];
+  }
+
+  finalize(): void {
+    for (const subscription of this.subscriptions) {
+      subscription.unsubscribe();
+    }
+    this.subscriptions = [];
+  }
 
   start() {
     if (!this._app) {
@@ -307,20 +345,22 @@ export class GrRouter {
     this.startRouter();
   }
 
-  setParams(params: AppElementParams | GenerateUrlParameters) {
+  setState(state: AppElementParams) {
     if (
-      'project' in params &&
-      params.project !== undefined &&
-      'changeNum' in params
+      'project' in state &&
+      state.project !== undefined &&
+      'changeNum' in state
     )
-      this.restApiService.setInProjectLookup(params.changeNum, params.project);
+      this.restApiService.setInProjectLookup(state.changeNum, state.project);
 
-    this.routerModel.updateState({
-      view: params.view,
-      changeNum: 'changeNum' in params ? params.changeNum : undefined,
-      patchNum: 'patchNum' in params ? params.patchNum ?? undefined : undefined,
+    this.routerModel.setState({
+      view: state.view,
+      changeNum: 'changeNum' in state ? state.changeNum : undefined,
+      patchNum: 'patchNum' in state ? state.patchNum ?? undefined : undefined,
+      basePatchNum:
+        'basePatchNum' in state ? state.basePatchNum ?? undefined : undefined,
     });
-    this.appElement().params = params;
+    this.appElement().params = state;
   }
 
   private appElement(): AppElement {
@@ -343,365 +383,24 @@ export class GrRouter {
     page.redirect(url);
   }
 
-  generateUrl(params: GenerateUrlParameters) {
-    const base = getBaseUrl();
-    let url = '';
-
-    if (params.view === GerritView.SEARCH) {
-      url = this.generateSearchUrl(params);
-    } else if (params.view === GerritView.CHANGE) {
-      url = this.generateChangeUrl(params);
-    } else if (params.view === GerritView.DASHBOARD) {
-      url = this.generateDashboardUrl(params);
-    } else if (
-      params.view === GerritView.DIFF ||
-      params.view === GerritView.EDIT
-    ) {
-      url = this.generateDiffOrEditUrl(params);
-    } else if (params.view === GerritView.GROUP) {
-      url = this.generateGroupUrl(params);
-    } else if (params.view === GerritView.REPO) {
-      url = this.generateRepoUrl(params);
-    } else if (params.view === GerritView.ROOT) {
-      url = '/';
-    } else if (params.view === GerritView.SETTINGS) {
-      url = this.generateSettingsUrl();
-    } else {
-      assertNever(params, "Can't generate");
-    }
-
-    return base + url;
-  }
-
-  generateWeblinks(
-    params: GenerateWebLinksParameters
-  ): GeneratedWebLink[] | GeneratedWebLink {
-    switch (params.type) {
-      case WeblinkType.EDIT:
-        return this.getEditWebLinks(params);
-      case WeblinkType.FILE:
-        return this.getFileWebLinks(params);
-      case WeblinkType.CHANGE:
-        return this.getChangeWeblinks(params);
-      case WeblinkType.PATCHSET:
-        return this.getPatchSetWeblink(params);
-      case WeblinkType.RESOLVE_CONFLICTS:
-        return this.getResolveConflictsWeblinks(params);
-      default:
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        assertNever(params, `Unsupported weblink ${(params as any).type}!`);
-    }
-  }
-
-  private getPatchSetWeblink(
-    params: GenerateWebLinksPatchsetParameters
-  ): GeneratedWebLink {
-    const {commit, options} = params;
-    const {weblinks, config} = options || {};
-    const name = commit && commit.slice(0, 7);
-    const weblink = this.getBrowseCommitWeblink(weblinks, config);
-    if (!weblink || !weblink.url) {
-      return {name};
-    } else {
-      return {name, url: weblink.url};
-    }
-  }
-
-  private getResolveConflictsWeblinks(
-    params: GenerateWebLinksResolveConflictsParameters
-  ): GeneratedWebLink[] {
-    return params.options?.weblinks ?? [];
-  }
-
-  firstCodeBrowserWeblink(weblinks: GeneratedWebLink[]) {
-    // This is an ordered allowed list of web link types that provide direct
-    // links to the commit in the url property.
-    const codeBrowserLinks = ['gitiles', 'browse', 'gitweb'];
-    for (let i = 0; i < codeBrowserLinks.length; i++) {
-      const weblink = weblinks.find(
-        weblink => weblink.name === codeBrowserLinks[i]
-      );
-      if (weblink) {
-        return weblink;
-      }
-    }
-    return null;
-  }
-
-  getBrowseCommitWeblink(weblinks?: GeneratedWebLink[], config?: ServerInfo) {
-    if (!weblinks) {
-      return null;
-    }
-    let weblink;
-    // Use primary weblink if configured and exists.
-    if (config?.gerrit?.primary_weblink_name) {
-      const primaryWeblinkName = config.gerrit.primary_weblink_name;
-      weblink = weblinks.find(weblink => weblink.name === primaryWeblinkName);
-    }
-    if (!weblink) {
-      weblink = this.firstCodeBrowserWeblink(weblinks);
-    }
-    if (!weblink) {
-      return null;
-    }
-    return weblink;
-  }
-
-  getChangeWeblinks(
-    params: GenerateWebLinksChangeParameters
-  ): GeneratedWebLink[] {
-    const weblinks = params.options?.weblinks;
-    const config = params.options?.config;
-    if (!weblinks || !weblinks.length) return [];
-    const commitWeblink = this.getBrowseCommitWeblink(weblinks, config);
-    return weblinks.filter(
-      weblink =>
-        !commitWeblink ||
-        !commitWeblink.name ||
-        weblink.name !== commitWeblink.name
-    );
-  }
-
-  private getEditWebLinks(
-    params: GenerateWebLinksEditParameters
-  ): GeneratedWebLink[] {
-    return params.options?.weblinks ?? [];
-  }
-
-  private getFileWebLinks(
-    params: GenerateWebLinksFileParameters
-  ): GeneratedWebLink[] {
-    return params.options?.weblinks ?? [];
-  }
-
-  private generateSearchUrl(params: GenerateUrlSearchViewParameters) {
-    let offsetExpr = '';
-    if (params.offset && params.offset > 0) {
-      offsetExpr = `,${params.offset}`;
-    }
-
-    if (params.query) {
-      return '/q/' + encodeURL(params.query, true) + offsetExpr;
-    }
-
-    const operators: string[] = [];
-    if (params.owner) {
-      operators.push('owner:' + encodeURL(params.owner, false));
-    }
-    if (params.project) {
-      operators.push('project:' + encodeURL(params.project, false));
-    }
-    if (params.branch) {
-      operators.push('branch:' + encodeURL(params.branch, false));
-    }
-    if (params.topic) {
-      operators.push(
-        'topic:' +
-          addQuotesWhen(
-            encodeURL(params.topic, false),
-            /[\s:]/.test(params.topic)
-          )
-      );
-    }
-    if (params.hashtag) {
-      operators.push(
-        'hashtag:' +
-          addQuotesWhen(
-            encodeURL(params.hashtag.toLowerCase(), false),
-            /[\s:]/.test(params.hashtag)
-          )
-      );
-    }
-    if (params.statuses) {
-      if (params.statuses.length === 1) {
-        operators.push('status:' + encodeURL(params.statuses[0], false));
-      } else if (params.statuses.length > 1) {
-        operators.push(
-          '(' +
-            params.statuses
-              .map(s => `status:${encodeURL(s, false)}`)
-              .join(' OR ') +
-            ')'
-        );
-      }
-    }
-
-    return '/q/' + operators.join('+') + offsetExpr;
-  }
-
-  private generateChangeUrl(params: GenerateUrlChangeViewParameters) {
-    let range = this.getPatchRangeExpression(params);
-    if (range.length) {
-      range = '/' + range;
-    }
-    let suffix = `${range}`;
-    let queryString = '';
-    if (params.forceReload) {
-      queryString = 'forceReload=true';
-    }
-    if (params.edit) {
-      suffix += ',edit';
-    }
-    if (params.commentId) {
-      suffix = suffix + `/comments/${params.commentId}`;
-    }
-    if (queryString) {
-      suffix += '?' + queryString;
-    }
-    if (params.messageHash) {
-      suffix += params.messageHash;
-    }
-    if (params.project) {
-      const encodedProject = encodeURL(params.project, true);
-      return `/c/${encodedProject}/+/${params.changeNum}${suffix}`;
-    } else {
-      return `/c/${params.changeNum}${suffix}`;
-    }
-  }
-
-  private generateDashboardUrl(params: GenerateUrlDashboardViewParameters) {
-    const repoName = params.repo || params.project || undefined;
-    if (params.sections) {
-      // Custom dashboard.
-      const queryParams = this.sectionsToEncodedParams(
-        params.sections,
-        repoName
-      );
-      if (params.title) {
-        queryParams.push('title=' + encodeURIComponent(params.title));
-      }
-      const user = params.user ? params.user : '';
-      return `/dashboard/${user}?${queryParams.join('&')}`;
-    } else if (repoName) {
-      // Project dashboard.
-      const encodedRepo = encodeURL(repoName, true);
-      return `/p/${encodedRepo}/+/dashboard/${params.dashboard}`;
-    } else {
-      // User dashboard.
-      return `/dashboard/${params.user || 'self'}`;
-    }
-  }
-
-  private sectionsToEncodedParams(
-    sections: DashboardSection[],
-    repoName?: RepoName
-  ) {
-    return sections.map(section => {
-      // If there is a repo name provided, make sure to substitute it into the
-      // ${repo} (or legacy ${project}) query tokens.
-      const query = repoName
-        ? section.query.replace(REPO_TOKEN_PATTERN, repoName)
-        : section.query;
-      return encodeURIComponent(section.name) + '=' + encodeURIComponent(query);
-    });
-  }
-
-  private generateDiffOrEditUrl(
-    params: GenerateUrlDiffViewParameters | GenerateUrlEditViewParameters
-  ) {
-    let range = this.getPatchRangeExpression(params);
-    if (range.length) {
-      range = '/' + range;
-    }
-
-    let suffix = `${range}/${encodeURL(params.path || '', true)}`;
-
-    if (params.view === GerritView.EDIT) {
-      suffix += ',edit';
-    }
-
-    if (params.lineNum) {
-      suffix += '#';
-      if (isGenerateUrlDiffViewParameters(params) && params.leftSide) {
-        suffix += 'b';
-      }
-      suffix += params.lineNum;
-    }
-
-    if (isGenerateUrlDiffViewParameters(params) && params.commentId) {
-      suffix = `/comment/${params.commentId}` + suffix;
-    }
-
-    if (params.project) {
-      const encodedProject = encodeURL(params.project, true);
-      return `/c/${encodedProject}/+/${params.changeNum}${suffix}`;
-    } else {
-      return `/c/${params.changeNum}${suffix}`;
-    }
-  }
-
-  private generateGroupUrl(params: GenerateUrlGroupViewParameters) {
-    let url = `/admin/groups/${encodeURL(`${params.groupId}`, true)}`;
-    if (params.detail === GroupDetailView.MEMBERS) {
-      url += ',members';
-    } else if (params.detail === GroupDetailView.LOG) {
-      url += ',audit-log';
-    }
-    return url;
-  }
-
-  private generateRepoUrl(params: GenerateUrlRepoViewParameters) {
-    let url = `/admin/repos/${encodeURL(`${params.repoName}`, true)}`;
-    if (params.detail === RepoDetailView.GENERAL) {
-      url += ',general';
-    } else if (params.detail === RepoDetailView.ACCESS) {
-      url += ',access';
-    } else if (params.detail === RepoDetailView.BRANCHES) {
-      url += ',branches';
-    } else if (params.detail === RepoDetailView.TAGS) {
-      url += ',tags';
-    } else if (params.detail === RepoDetailView.COMMANDS) {
-      url += ',commands';
-    } else if (params.detail === RepoDetailView.DASHBOARDS) {
-      url += ',dashboards';
-    }
-    return url;
-  }
-
-  private generateSettingsUrl() {
-    return '/settings';
-  }
-
   /**
-   * Given an object of parameters, potentially including a `patchNum` or a
-   * `basePatchNum` or both, return a string representation of that range. If
-   * no range is indicated in the params, the empty string is returned.
-   */
-  getPatchRangeExpression(params: PatchRangeParams) {
-    let range = '';
-    if (params.patchNum) {
-      range = `${params.patchNum}`;
-    }
-    if (params.basePatchNum && params.basePatchNum !== ParentPatchSetNum) {
-      range = `${params.basePatchNum}..${range}`;
-    }
-    return range;
-  }
-
-  /**
-   * Normalizes the params object, and determines if the URL needs to be
-   * modified to fit the proper schema.
-   *
+   * Normalizes the patchset numbers of the params object.
    */
   normalizePatchRangeParams(params: PatchRangeParams) {
-    if (params.basePatchNum === undefined) {
-      return false;
-    }
-    const hasPatchNum = params.patchNum !== undefined;
-    let needsRedirect = false;
+    if (params.basePatchNum === undefined) return;
 
     // Diffing a patch against itself is invalid, so if the base and revision
     // patches are equal clear the base.
     if (params.patchNum && params.basePatchNum === params.patchNum) {
-      needsRedirect = true;
-      params.basePatchNum = ParentPatchSetNum;
-    } else if (!hasPatchNum) {
-      // Regexes set basePatchNum instead of patchNum when only one is
-      // specified. Redirect is not needed in this case.
-      params.patchNum = params.basePatchNum;
-      params.basePatchNum = ParentPatchSetNum;
+      params.basePatchNum = PARENT;
+      return;
     }
-    return needsRedirect;
+    // Regexes set basePatchNum instead of patchNum when only one is
+    // specified.
+    if (params.patchNum === undefined) {
+      params.patchNum = params.basePatchNum as RevisionPatchSetNum;
+      params.basePatchNum = PARENT;
+    }
   }
 
   /**
@@ -740,15 +439,15 @@ export class GrRouter {
    * resolves if the user is logged in. If the user us not logged in, the
    * promise is rejected and the page is redirected to the login flow.
    *
-   * @return A promise yielding the original route data
+   * @return A promise yielding the original route ctx
    * (if it resolves).
    */
-  redirectIfNotLoggedIn(data: PageContext) {
+  redirectIfNotLoggedIn(ctx: PageContext) {
     return this.restApiService.getLoggedIn().then(loggedIn => {
       if (loggedIn) {
         return Promise.resolve();
       } else {
-        this.redirectToLogin(data.canonicalPath);
+        this.redirectToLogin(ctx.canonicalPath);
         return Promise.reject(new Error());
       }
     });
@@ -759,27 +458,6 @@ export class GrRouter {
     this.restApiService.getLoggedIn().then(() => {
       next();
     });
-  }
-
-  /**  Page.js middleware that try parse the querystring into queryMap. */
-  private queryStringMiddleware(ctx: PageContext, next: PageNextCallback) {
-    (ctx as PageContextWithQueryMap).queryMap = this.createQueryMap(ctx);
-    next();
-  }
-
-  private createQueryMap(ctx: PageContext) {
-    if (ctx.querystring) {
-      // https://caniuse.com/#search=URLSearchParams
-      if (window.URLSearchParams) {
-        return new URLSearchParams(ctx.querystring);
-      } else {
-        this.reporting.reportExecution(Execution.REACHABLE_CODE, {
-          id: 'noURLSearchParams',
-        });
-        return new Map(this.parseQueryString(ctx.querystring));
-      }
-    }
-    return new Map<string, string>();
   }
 
   /**
@@ -798,22 +476,58 @@ export class GrRouter {
   mapRoute(
     pattern: string | RegExp,
     handlerName: string,
-    handler: (ctx: PageContextWithQueryMap) => void,
+    handler: (ctx: PageContext) => void,
     authRedirect?: boolean
   ) {
     page(
       pattern,
       (ctx, next) => this.loadUserMiddleware(ctx, next),
-      (ctx, next) => this.queryStringMiddleware(ctx, next),
       ctx => {
         this.reporting.locationChanged(handlerName);
         const promise = authRedirect
           ? this.redirectIfNotLoggedIn(ctx)
           : Promise.resolve();
         promise.then(() => {
-          handler(ctx as PageContextWithQueryMap);
+          handler(ctx);
         });
       }
+    );
+  }
+
+  /**
+   * This is similar to letting the browser navigate to this URL when the user
+   * clicks it, or to just setting `window.location.href` directly.
+   *
+   * This adds a new entry to the browser location history. Consier using
+   * `replaceUrl()`, if you want to avoid that.
+   *
+   * page.show() eventually just calls `window.history.pushState()`.
+   */
+  setUrl(url: string) {
+    page.show(url);
+  }
+
+  /**
+   * Navigate to this URL, but replace the current URL in the history instead of
+   * adding a new one (which is what `setUrl()` would do).
+   *
+   * page.redirect() eventually just calls `window.history.replaceState()`.
+   */
+  replaceUrl(url: string) {
+    this.redirect(url);
+  }
+
+  private dispatchLocationChangeEvent() {
+    const detail: LocationChangeEventDetail = {
+      hash: window.location.hash,
+      pathname: window.location.pathname,
+    };
+    document.dispatchEvent(
+      new CustomEvent('location-change', {
+        detail,
+        composed: true,
+        bubbles: true,
+      })
     );
   }
 
@@ -822,19 +536,6 @@ export class GrRouter {
     if (base) {
       page.base(base);
     }
-
-    GerritNav.setup(
-      (url, redirect?) => {
-        if (redirect) {
-          page.redirect(url);
-        } else {
-          page.show(url);
-        }
-      },
-      params => this.generateUrl(params),
-      params => this.generateWeblinks(params),
-      x => x
-    );
 
     page.exit('*', (_, next) => {
       if (!this._isRedirecting) {
@@ -877,17 +578,7 @@ export class GrRouter {
       // Fire asynchronously so that the URL is changed by the time the event
       // is processed.
       setTimeout(() => {
-        const detail: LocationChangeEventDetail = {
-          hash: window.location.hash,
-          pathname: window.location.pathname,
-        };
-        document.dispatchEvent(
-          new CustomEvent('location-change', {
-            detail,
-            composed: true,
-            bubbles: true,
-          })
-        );
+        this.dispatchLocationChangeEvent();
       }, 1);
       next();
     });
@@ -1175,7 +866,7 @@ export class GrRouter {
     this.mapRoute(
       RoutePattern.NEW_AGREEMENTS,
       'handleNewAgreementsRoute',
-      ctx => this.handleNewAgreementsRoute(ctx),
+      () => this.handleNewAgreementsRoute(),
       true
     );
 
@@ -1244,13 +935,13 @@ export class GrRouter {
    * @return if handling the route involves asynchrony, then a
    * promise is returned. Otherwise, synchronous handling returns null.
    */
-  handleRootRoute(data: PageContextWithQueryMap) {
-    if (data.querystring.match(/^closeAfterLogin/)) {
+  handleRootRoute(ctx: PageContext) {
+    if (ctx.querystring.match(/^closeAfterLogin/)) {
       // Close child window on redirect after login.
       window.close();
       return null;
     }
-    let hash = this.getHashFromCanonicalPath(data.canonicalPath);
+    let hash = this.getHashFromCanonicalPath(ctx.canonicalPath);
     // For backward compatibility with GWT links.
     if (hash) {
       // In certain login flows the server may redirect to a hash without
@@ -1258,7 +949,7 @@ export class GrRouter {
       if (hash[0] !== '/') {
         hash = '/' + hash;
       }
-      if (hash.includes('/ /') && data.canonicalPath.includes('/+/')) {
+      if (hash.includes('/ /') && ctx.canonicalPath.includes('/+/')) {
         // Path decodes all '+' to ' ' -- this breaks project-based URLs.
         // See Issue 6888.
         hash = hash.replace('/ /', '/+/');
@@ -1281,500 +972,528 @@ export class GrRouter {
   }
 
   /**
-   * Decode an application/x-www-form-urlencoded string.
-   *
-   * @param qs The application/x-www-form-urlencoded string.
-   * @return The decoded string.
-   */
-  private decodeQueryString(qs: string) {
-    return decodeURIComponent(qs.replace(PLUS_PATTERN, ' '));
-  }
-
-  /**
-   * Parse a query string (e.g. window.location.search) into an array of
-   * name/value pairs.
-   *
-   * @param qs The application/x-www-form-urlencoded query string.
-   * @return An array of name/value pairs, where each
-   * element is a 2-element array.
-   */
-  parseQueryString(qs: string): Array<QueryStringItem> {
-    qs = qs.replace(QUESTION_PATTERN, '');
-    if (!qs) {
-      return [];
-    }
-    const params: Array<[string, string]> = [];
-    qs.split('&').forEach(param => {
-      const idx = param.indexOf('=');
-      let name;
-      let value;
-      if (idx < 0) {
-        name = this.decodeQueryString(param);
-        value = '';
-      } else {
-        name = this.decodeQueryString(param.substring(0, idx));
-        value = this.decodeQueryString(param.substring(idx + 1));
-      }
-      if (name) {
-        params.push([name, value]);
-      }
-    });
-    return params;
-  }
-
-  /**
    * Handle dashboard routes. These may be user, or project dashboards.
    */
-  handleDashboardRoute(data: PageContextWithQueryMap) {
+  handleDashboardRoute(ctx: PageContext) {
     // User dashboard. We require viewing user to be logged in, else we
     // redirect to login for self dashboard or simple owner search for
     // other user dashboard.
     return this.restApiService.getLoggedIn().then(loggedIn => {
       if (!loggedIn) {
-        if (data.params[0].toLowerCase() === 'self') {
-          this.redirectToLogin(data.canonicalPath);
+        if (ctx.params[0].toLowerCase() === 'self') {
+          this.redirectToLogin(ctx.canonicalPath);
         } else {
-          this.redirect('/q/owner:' + encodeURIComponent(data.params[0]));
+          this.redirect('/q/owner:' + encodeURIComponent(ctx.params[0]));
         }
       } else {
-        this.setParams({
+        const state: DashboardViewState = {
           view: GerritView.DASHBOARD,
-          user: data.params[0],
-        });
+          user: ctx.params[0],
+        };
+        // Note that router model view must be updated before view models.
+        this.setState(state);
+        this.dashboardViewModel.setState(state);
       }
     });
   }
 
-  /**
-   * Handle custom dashboard routes.
-   *
-   * @param qs Optional query string associated with the route.
-   * If not given, window.location.search is used. (Used by tests).
-   */
-  handleCustomDashboardRoute(
-    _: PageContextWithQueryMap,
-    qs: string = window.location.search
-  ) {
-    const queryParams = this.parseQueryString(qs);
-    let title = 'Custom Dashboard';
-    const titleParam = queryParams.find(
-      elem => elem[0].toLowerCase() === 'title'
-    );
-    if (titleParam) {
-      title = titleParam[1];
-    }
-    // Dashboards support a foreach param which adds a base query to any
-    // additional query.
-    const forEachParam = queryParams.find(
-      elem => elem[0].toLowerCase() === 'foreach'
-    );
-    let forEachQuery: string | null = null;
-    if (forEachParam) {
-      forEachQuery = forEachParam[1];
-    }
-    const sectionParams = queryParams.filter(
-      elem =>
-        elem[0] &&
-        elem[1] &&
-        elem[0].toLowerCase() !== 'title' &&
-        elem[0].toLowerCase() !== 'foreach'
-    );
-    const sections = sectionParams.map(elem => {
-      const query = forEachQuery ? `${forEachQuery} ${elem[1]}` : elem[1];
-      return {
-        name: elem[0],
-        query,
-      };
-    });
+  handleCustomDashboardRoute(ctx: PageContext) {
+    const queryParams = new URLSearchParams(ctx.querystring);
 
-    if (sections.length > 0) {
-      // Custom dashboard view.
-      this.setParams({
-        view: GerritView.DASHBOARD,
-        user: 'self',
-        sections,
-        title,
-      });
+    let title = 'Custom Dashboard';
+    const titleParam = queryParams.get('title');
+    if (titleParam) title = titleParam;
+    queryParams.delete('title');
+
+    let forEachQuery = '';
+    const forEachParam = queryParams.get('foreach');
+    if (forEachParam) forEachQuery = forEachParam + ' ';
+    queryParams.delete('foreach');
+
+    const sections: DashboardSection[] = [];
+    for (const [name, query] of queryParams) {
+      if (!name || !query) continue;
+      sections.push({name, query: `${forEachQuery}${query}`});
+    }
+
+    if (sections.length === 0) {
+      this.redirect('/dashboard/self');
       return Promise.resolve();
     }
 
-    // Redirect /dashboard/ -> /dashboard/self.
-    this.redirect('/dashboard/self');
+    const state: DashboardViewState = {
+      view: GerritView.DASHBOARD,
+      user: 'self',
+      sections,
+      title,
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.dashboardViewModel.setState(state);
     return Promise.resolve();
   }
 
-  handleProjectDashboardRoute(data: PageContextWithQueryMap) {
-    const project = data.params[0] as RepoName;
-    this.setParams({
+  handleProjectDashboardRoute(ctx: PageContext) {
+    const project = ctx.params[0] as RepoName;
+    const state: DashboardViewState = {
       view: GerritView.DASHBOARD,
       project,
-      dashboard: decodeURIComponent(data.params[1]) as DashboardId,
-    });
+      dashboard: decodeURIComponent(ctx.params[1]) as DashboardId,
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.dashboardViewModel.setState(state);
     this.reporting.setRepoName(project);
   }
 
-  handleLegacyProjectDashboardRoute(data: PageContextWithQueryMap) {
-    this.redirect('/p/' + data.params[0] + '/+/dashboard/' + data.params[1]);
+  handleLegacyProjectDashboardRoute(ctx: PageContext) {
+    this.redirect('/p/' + ctx.params[0] + '/+/dashboard/' + ctx.params[1]);
   }
 
-  handleGroupInfoRoute(data: PageContextWithQueryMap) {
-    this.redirect('/admin/groups/' + encodeURIComponent(data.params[0]));
+  handleGroupInfoRoute(ctx: PageContext) {
+    this.redirect('/admin/groups/' + encodeURIComponent(ctx.params[0]));
   }
 
-  handleGroupSelfRedirectRoute(_: PageContextWithQueryMap) {
+  handleGroupSelfRedirectRoute(_: PageContext) {
     this.redirect('/settings/#Groups');
   }
 
-  handleGroupRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handleGroupRoute(ctx: PageContext) {
+    const state: GroupViewState = {
       view: GerritView.GROUP,
-      groupId: data.params[0] as GroupId,
-    });
+      groupId: ctx.params[0] as GroupId,
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.groupViewModel.setState(state);
   }
 
-  handleGroupAuditLogRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handleGroupAuditLogRoute(ctx: PageContext) {
+    const state: GroupViewState = {
       view: GerritView.GROUP,
       detail: GroupDetailView.LOG,
-      groupId: data.params[0] as GroupId,
-    });
+      groupId: ctx.params[0] as GroupId,
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.groupViewModel.setState(state);
   }
 
-  handleGroupMembersRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handleGroupMembersRoute(ctx: PageContext) {
+    const state: GroupViewState = {
       view: GerritView.GROUP,
       detail: GroupDetailView.MEMBERS,
-      groupId: data.params[0] as GroupId,
-    });
+      groupId: ctx.params[0] as GroupId,
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.groupViewModel.setState(state);
   }
 
-  handleGroupListOffsetRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handleGroupListOffsetRoute(ctx: PageContext) {
+    const state: AdminViewState = {
       view: GerritView.ADMIN,
-      adminView: 'gr-admin-group-list',
-      offset: data.params[1] || 0,
+      adminView: AdminChildView.GROUPS,
+      offset: ctx.params[1] || 0,
       filter: null,
-      openCreateModal: data.hash === 'create',
-    });
+      openCreateModal: ctx.hash === 'create',
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.adminViewModel.setState(state);
   }
 
-  handleGroupListFilterOffsetRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handleGroupListFilterOffsetRoute(ctx: PageContext) {
+    const state: AdminViewState = {
       view: GerritView.ADMIN,
-      adminView: 'gr-admin-group-list',
-      offset: data.params['offset'],
-      filter: data.params['filter'],
-    });
+      adminView: AdminChildView.GROUPS,
+      offset: ctx.params['offset'],
+      filter: ctx.params['filter'],
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.adminViewModel.setState(state);
   }
 
-  handleGroupListFilterRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handleGroupListFilterRoute(ctx: PageContext) {
+    const state: AdminViewState = {
       view: GerritView.ADMIN,
-      adminView: 'gr-admin-group-list',
-      filter: data.params['filter'] || null,
-    });
+      adminView: AdminChildView.GROUPS,
+      filter: ctx.params['filter'] || null,
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.adminViewModel.setState(state);
   }
 
-  handleProjectsOldRoute(data: PageContextWithQueryMap) {
+  handleProjectsOldRoute(ctx: PageContext) {
     let params = '';
-    if (data.params[1]) {
-      params = encodeURIComponent(data.params[1]);
-      if (data.params[1].includes(',')) {
-        params = encodeURIComponent(data.params[1]).replace('%2C', ',');
+    if (ctx.params[1]) {
+      params = encodeURIComponent(ctx.params[1]);
+      if (ctx.params[1].includes(',')) {
+        params = encodeURIComponent(ctx.params[1]).replace('%2C', ',');
       }
     }
 
     this.redirect(`/admin/repos/${params}`);
   }
 
-  handleRepoCommandsRoute(data: PageContextWithQueryMap) {
-    const repo = data.params[0] as RepoName;
-    this.setParams({
+  handleRepoCommandsRoute(ctx: PageContext) {
+    const repo = ctx.params[0] as RepoName;
+    const state: RepoViewState = {
       view: GerritView.REPO,
       detail: RepoDetailView.COMMANDS,
       repo,
-    });
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.repoViewModel.setState(state);
     this.reporting.setRepoName(repo);
   }
 
-  handleRepoGeneralRoute(data: PageContextWithQueryMap) {
-    const repo = data.params[0] as RepoName;
-    this.setParams({
+  handleRepoGeneralRoute(ctx: PageContext) {
+    const repo = ctx.params[0] as RepoName;
+    const state: RepoViewState = {
       view: GerritView.REPO,
       detail: RepoDetailView.GENERAL,
       repo,
-    });
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.repoViewModel.setState(state);
     this.reporting.setRepoName(repo);
   }
 
-  handleRepoAccessRoute(data: PageContextWithQueryMap) {
-    const repo = data.params[0] as RepoName;
-    this.setParams({
+  handleRepoAccessRoute(ctx: PageContext) {
+    const repo = ctx.params[0] as RepoName;
+    const state: RepoViewState = {
       view: GerritView.REPO,
       detail: RepoDetailView.ACCESS,
       repo,
-    });
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.repoViewModel.setState(state);
     this.reporting.setRepoName(repo);
   }
 
-  handleRepoDashboardsRoute(data: PageContextWithQueryMap) {
-    const repo = data.params[0] as RepoName;
-    this.setParams({
+  handleRepoDashboardsRoute(ctx: PageContext) {
+    const repo = ctx.params[0] as RepoName;
+    const state: RepoViewState = {
       view: GerritView.REPO,
       detail: RepoDetailView.DASHBOARDS,
       repo,
-    });
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.repoViewModel.setState(state);
     this.reporting.setRepoName(repo);
   }
 
-  handleBranchListOffsetRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handleBranchListOffsetRoute(ctx: PageContext) {
+    const state: RepoViewState = {
       view: GerritView.REPO,
       detail: RepoDetailView.BRANCHES,
-      repo: data.params[0] as RepoName,
-      offset: data.params[2] || 0,
+      repo: ctx.params[0] as RepoName,
+      offset: ctx.params[2] || 0,
       filter: null,
-    });
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.repoViewModel.setState(state);
   }
 
-  handleBranchListFilterOffsetRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handleBranchListFilterOffsetRoute(ctx: PageContext) {
+    const state: RepoViewState = {
       view: GerritView.REPO,
       detail: RepoDetailView.BRANCHES,
-      repo: data.params['repo'] as RepoName,
-      offset: data.params['offset'],
-      filter: data.params['filter'],
-    });
+      repo: ctx.params['repo'] as RepoName,
+      offset: ctx.params['offset'],
+      filter: ctx.params['filter'],
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.repoViewModel.setState(state);
   }
 
-  handleBranchListFilterRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handleBranchListFilterRoute(ctx: PageContext) {
+    const state: RepoViewState = {
       view: GerritView.REPO,
       detail: RepoDetailView.BRANCHES,
-      repo: data.params['repo'] as RepoName,
-      filter: data.params['filter'] || null,
-    });
+      repo: ctx.params['repo'] as RepoName,
+      filter: ctx.params['filter'] || null,
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.repoViewModel.setState(state);
   }
 
-  handleTagListOffsetRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handleTagListOffsetRoute(ctx: PageContext) {
+    const state: RepoViewState = {
       view: GerritView.REPO,
       detail: RepoDetailView.TAGS,
-      repo: data.params[0] as RepoName,
-      offset: data.params[2] || 0,
+      repo: ctx.params[0] as RepoName,
+      offset: ctx.params[2] || 0,
       filter: null,
-    });
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.repoViewModel.setState(state);
   }
 
-  handleTagListFilterOffsetRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handleTagListFilterOffsetRoute(ctx: PageContext) {
+    const state: RepoViewState = {
       view: GerritView.REPO,
       detail: RepoDetailView.TAGS,
-      repo: data.params['repo'] as RepoName,
-      offset: data.params['offset'],
-      filter: data.params['filter'],
-    });
+      repo: ctx.params['repo'] as RepoName,
+      offset: ctx.params['offset'],
+      filter: ctx.params['filter'],
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.repoViewModel.setState(state);
   }
 
-  handleTagListFilterRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handleTagListFilterRoute(ctx: PageContext) {
+    const state: RepoViewState = {
       view: GerritView.REPO,
       detail: RepoDetailView.TAGS,
-      repo: data.params['repo'] as RepoName,
-      filter: data.params['filter'] || null,
-    });
+      repo: ctx.params['repo'] as RepoName,
+      filter: ctx.params['filter'] || null,
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.repoViewModel.setState(state);
   }
 
-  handleRepoListOffsetRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handleRepoListOffsetRoute(ctx: PageContext) {
+    const state: AdminViewState = {
       view: GerritView.ADMIN,
-      adminView: 'gr-repo-list',
-      offset: data.params[1] || 0,
+      adminView: AdminChildView.REPOS,
+      offset: ctx.params[1] || 0,
       filter: null,
-      openCreateModal: data.hash === 'create',
-    });
+      openCreateModal: ctx.hash === 'create',
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.adminViewModel.setState(state);
   }
 
-  handleRepoListFilterOffsetRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handleRepoListFilterOffsetRoute(ctx: PageContext) {
+    const state: AdminViewState = {
       view: GerritView.ADMIN,
-      adminView: 'gr-repo-list',
-      offset: data.params['offset'],
-      filter: data.params['filter'],
-    });
+      adminView: AdminChildView.REPOS,
+      offset: ctx.params['offset'],
+      filter: ctx.params['filter'],
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.adminViewModel.setState(state);
   }
 
-  handleRepoListFilterRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handleRepoListFilterRoute(ctx: PageContext) {
+    const state: AdminViewState = {
       view: GerritView.ADMIN,
-      adminView: 'gr-repo-list',
-      filter: data.params['filter'] || null,
-    });
+      adminView: AdminChildView.REPOS,
+      filter: ctx.params['filter'] || null,
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.adminViewModel.setState(state);
   }
 
-  handleCreateProjectRoute(_: PageContextWithQueryMap) {
+  handleCreateProjectRoute(_: PageContext) {
     // Redirects the legacy route to the new route, which displays the project
     // list with a hash 'create'.
     this.redirect('/admin/repos#create');
   }
 
-  handleCreateGroupRoute(_: PageContextWithQueryMap) {
+  handleCreateGroupRoute(_: PageContext) {
     // Redirects the legacy route to the new route, which displays the group
     // list with a hash 'create'.
     this.redirect('/admin/groups#create');
   }
 
-  handleRepoRoute(data: PageContextWithQueryMap) {
-    this.redirect(data.path + ',general');
+  handleRepoRoute(ctx: PageContext) {
+    this.redirect(ctx.path + ',general');
   }
 
-  handlePluginListOffsetRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handlePluginListOffsetRoute(ctx: PageContext) {
+    const state: AdminViewState = {
       view: GerritView.ADMIN,
-      adminView: 'gr-plugin-list',
-      offset: data.params[1] || 0,
+      adminView: AdminChildView.PLUGINS,
+      offset: ctx.params[1] || 0,
       filter: null,
-    });
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.adminViewModel.setState(state);
   }
 
-  handlePluginListFilterOffsetRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handlePluginListFilterOffsetRoute(ctx: PageContext) {
+    const state: AdminViewState = {
       view: GerritView.ADMIN,
-      adminView: 'gr-plugin-list',
-      offset: data.params['offset'],
-      filter: data.params['filter'],
-    });
+      adminView: AdminChildView.PLUGINS,
+      offset: ctx.params['offset'],
+      filter: ctx.params['filter'],
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.adminViewModel.setState(state);
   }
 
-  handlePluginListFilterRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handlePluginListFilterRoute(ctx: PageContext) {
+    const state: AdminViewState = {
       view: GerritView.ADMIN,
-      adminView: 'gr-plugin-list',
-      filter: data.params['filter'] || null,
-    });
+      adminView: AdminChildView.PLUGINS,
+      filter: ctx.params['filter'] || null,
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.adminViewModel.setState(state);
   }
 
-  handlePluginListRoute(_: PageContextWithQueryMap) {
-    this.setParams({
+  handlePluginListRoute(_: PageContext) {
+    const state: AdminViewState = {
       view: GerritView.ADMIN,
-      adminView: 'gr-plugin-list',
-    });
+      adminView: AdminChildView.PLUGINS,
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.adminViewModel.setState(state);
   }
 
-  handleQueryRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handleQueryRoute(ctx: PageContext) {
+    const state: Partial<SearchViewState> = {
       view: GerritView.SEARCH,
-      query: data.params[0],
-      offset: data.params[2],
-    });
+      query: ctx.params[0],
+      offset: ctx.params[2],
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state as AppElementParams);
+    this.searchViewModel.updateState(state);
   }
 
-  handleChangeIdQueryRoute(data: PageContextWithQueryMap) {
+  handleChangeIdQueryRoute(ctx: PageContext) {
     // TODO(pcc): This will need to indicate that this was a change ID query if
     // standard queries gain the ability to search places like commit messages
     // for change IDs.
-    this.setParams({
-      view: GerritNav.View.SEARCH,
-      query: data.params[0],
-    });
+    const state: Partial<SearchViewState> = {
+      view: GerritView.SEARCH,
+      query: ctx.params[0],
+      offset: undefined,
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state as AppElementParams);
+    this.searchViewModel.updateState(state);
   }
 
-  handleQueryLegacySuffixRoute(ctx: PageContextWithQueryMap) {
+  handleQueryLegacySuffixRoute(ctx: PageContext) {
     this.redirect(ctx.path.replace(LEGACY_QUERY_SUFFIX_PATTERN, ''));
   }
 
-  handleChangeNumberLegacyRoute(ctx: PageContextWithQueryMap) {
+  handleChangeNumberLegacyRoute(ctx: PageContext) {
     this.redirect('/c/' + encodeURIComponent(ctx.params[0]));
   }
 
-  handleChangeRoute(ctx: PageContextWithQueryMap) {
+  handleChangeRoute(ctx: PageContext) {
     // Parameter order is based on the regex group number matched.
     const changeNum = Number(ctx.params[1]) as NumericChangeId;
-    const params: GenerateUrlChangeViewParameters = {
+    const state: ChangeViewState = {
       project: ctx.params[0] as RepoName,
       changeNum,
       basePatchNum: convertToPatchSetNum(ctx.params[4]) as BasePatchSetNum,
-      patchNum: convertToPatchSetNum(ctx.params[6]),
+      patchNum: convertToPatchSetNum(ctx.params[6]) as RevisionPatchSetNum,
       view: GerritView.CHANGE,
     };
 
-    if (ctx.queryMap.has('forceReload')) {
-      params.forceReload = true;
-      history.replaceState(
-        null,
-        '',
-        location.href.replace(/[?&]forceReload=true/, '')
-      );
-    }
+    const queryMap = new URLSearchParams(ctx.querystring);
+    if (queryMap.has('forceReload')) state.forceReload = true;
+    if (queryMap.has('openReplyDialog')) state.openReplyDialog = true;
 
-    const tab = ctx.queryMap.get('tab');
-    if (tab) params.tab = tab;
-    const filter = ctx.queryMap.get('filter');
-    if (filter) params.filter = filter;
-    const select = ctx.queryMap.get('select');
-    if (select) params.select = select;
-    const attempt = ctx.queryMap.get('attempt');
-    if (attempt) {
-      const attemptInt = parseInt(attempt);
-      if (!isNaN(attemptInt) && attemptInt > 0) {
-        params.attempt = attemptInt;
-      }
+    const tab = queryMap.get('tab');
+    if (tab) state.tab = tab;
+    const checksPatchset = Number(queryMap.get('checksPatchset'));
+    if (Number.isInteger(checksPatchset) && checksPatchset > 0) {
+      state.checksPatchset = checksPatchset as PatchSetNumber;
     }
+    const filter = queryMap.get('filter');
+    if (filter) state.filter = filter;
+    const checksResultsFilter = queryMap.get('checksResultsFilter');
+    if (checksResultsFilter) state.checksResultsFilter = checksResultsFilter;
+    const attempt = stringToAttemptChoice(queryMap.get('attempt'));
+    if (attempt && attempt !== LATEST_ATTEMPT) state.attempt = attempt;
+    const selected = queryMap.get('checksRunsSelected');
+    if (selected) state.checksRunsSelected = new Set(selected.split(','));
 
-    this.reporting.setRepoName(params.project);
+    assertIsDefined(state.project, 'project');
+    this.reporting.setRepoName(state.project);
     this.reporting.setChangeId(changeNum);
-    this.redirectOrNavigate(params);
+    this.normalizePatchRangeParams(state);
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.changeViewModel.setState(state);
   }
 
-  handleCommentRoute(ctx: PageContextWithQueryMap) {
+  handleCommentRoute(ctx: PageContext) {
     const changeNum = Number(ctx.params[1]) as NumericChangeId;
-    const params: GenerateUrlDiffViewParameters = {
+    const state: DiffViewState = {
       project: ctx.params[0] as RepoName,
       changeNum,
       commentId: ctx.params[2] as UrlEncodedCommentId,
       view: GerritView.DIFF,
       commentLink: true,
     };
-    this.reporting.setRepoName(params.project);
+    this.reporting.setRepoName(state.project ?? '');
     this.reporting.setChangeId(changeNum);
-    this.redirectOrNavigate(params);
+    this.normalizePatchRangeParams(state);
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.diffViewModel.setState(state);
   }
 
-  handleCommentsRoute(ctx: PageContextWithQueryMap) {
+  handleCommentsRoute(ctx: PageContext) {
     const changeNum = Number(ctx.params[1]) as NumericChangeId;
-    const params: GenerateUrlChangeViewParameters = {
+    const state: ChangeViewState = {
       project: ctx.params[0] as RepoName,
       changeNum,
       commentId: ctx.params[2] as UrlEncodedCommentId,
       view: GerritView.CHANGE,
     };
-    this.reporting.setRepoName(params.project);
+    assertIsDefined(state.project);
+    this.reporting.setRepoName(state.project);
     this.reporting.setChangeId(changeNum);
-    this.redirectOrNavigate(params);
+    this.normalizePatchRangeParams(state);
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.changeViewModel.setState(state);
   }
 
-  handleDiffRoute(ctx: PageContextWithQueryMap) {
+  handleDiffRoute(ctx: PageContext) {
     const changeNum = Number(ctx.params[1]) as NumericChangeId;
     // Parameter order is based on the regex group number matched.
-    const params: GenerateUrlDiffViewParameters = {
+    const state: DiffViewState = {
       project: ctx.params[0] as RepoName,
       changeNum,
       basePatchNum: convertToPatchSetNum(ctx.params[4]) as BasePatchSetNum,
-      patchNum: convertToPatchSetNum(ctx.params[6]),
+      patchNum: convertToPatchSetNum(ctx.params[6]) as RevisionPatchSetNum,
       path: ctx.params[8],
       view: GerritView.DIFF,
     };
     const address = this.parseLineAddress(ctx.hash);
     if (address) {
-      params.leftSide = address.leftSide;
-      params.lineNum = address.lineNum;
+      state.leftSide = address.leftSide;
+      state.lineNum = address.lineNum;
     }
-    this.reporting.setRepoName(params.project);
+    this.reporting.setRepoName(state.project ?? '');
     this.reporting.setChangeId(changeNum);
-    this.redirectOrNavigate(params);
+    this.normalizePatchRangeParams(state);
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.diffViewModel.setState(state);
   }
 
-  handleChangeLegacyRoute(ctx: PageContextWithQueryMap) {
+  handleChangeLegacyRoute(ctx: PageContext) {
     const changeNum = Number(ctx.params[0]) as NumericChangeId;
     if (!changeNum) {
       this.show404();
@@ -1791,93 +1510,97 @@ export class GrRouter {
     });
   }
 
-  handleLegacyLinenum(ctx: PageContextWithQueryMap) {
+  handleLegacyLinenum(ctx: PageContext) {
     this.redirect(ctx.path.replace(LEGACY_LINENUM_PATTERN, '#$1'));
   }
 
-  handleDiffEditRoute(ctx: PageContextWithQueryMap) {
+  handleDiffEditRoute(ctx: PageContext) {
     // Parameter order is based on the regex group number matched.
     const project = ctx.params[0] as RepoName;
     const changeNum = Number(ctx.params[1]) as NumericChangeId;
-    this.redirectOrNavigate({
+    const state: EditViewState = {
       project,
       changeNum,
       // for edit view params, patchNum cannot be undefined
-      patchNum: convertToPatchSetNum(ctx.params[2])!,
+      patchNum: convertToPatchSetNum(ctx.params[2]) as RevisionPatchSetNum,
       path: ctx.params[3],
-      lineNum: ctx.hash,
+      lineNum: Number(ctx.hash),
       view: GerritView.EDIT,
-    });
+    };
+    this.normalizePatchRangeParams(state);
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.editViewModel.setState(state);
     this.reporting.setRepoName(project);
     this.reporting.setChangeId(changeNum);
   }
 
-  handleChangeEditRoute(ctx: PageContextWithQueryMap) {
+  handleChangeEditRoute(ctx: PageContext) {
     // Parameter order is based on the regex group number matched.
     const project = ctx.params[0] as RepoName;
     const changeNum = Number(ctx.params[1]) as NumericChangeId;
-    const params: GenerateUrlChangeViewParameters = {
+    const queryMap = new URLSearchParams(ctx.querystring);
+    const state: ChangeViewState = {
       project,
       changeNum,
-      patchNum: convertToPatchSetNum(ctx.params[3]),
+      patchNum: convertToPatchSetNum(ctx.params[3]) as RevisionPatchSetNum,
       view: GerritView.CHANGE,
       edit: true,
-      tab: ctx.queryMap.get('tab') ?? '',
     };
-    if (ctx.queryMap.has('forceReload')) {
-      params.forceReload = true;
+    const tab = queryMap.get('tab');
+    if (tab) state.tab = tab;
+    if (queryMap.has('forceReload')) {
+      state.forceReload = true;
       history.replaceState(
         null,
         '',
         location.href.replace(/[?&]forceReload=true/, '')
       );
     }
-    this.redirectOrNavigate(params);
-
+    this.normalizePatchRangeParams(state);
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.changeViewModel.setState(state);
     this.reporting.setRepoName(project);
     this.reporting.setChangeId(changeNum);
-  }
-
-  /**
-   * Normalize the patch range params for a the change or diff view and
-   * redirect if URL upgrade is needed.
-   */
-  private redirectOrNavigate(params: GenerateUrlParameters & PatchRangeParams) {
-    const needsRedirect = this.normalizePatchRangeParams(params);
-    if (needsRedirect) {
-      this.redirect(this.generateUrl(params));
-    } else {
-      this.setParams(params);
-    }
   }
 
   handleAgreementsRoute() {
     this.redirect('/settings/#Agreements');
   }
 
-  handleNewAgreementsRoute(data: PageContextWithQueryMap) {
-    data.params['view'] = GerritView.AGREEMENTS;
-    // TODO(TS): create valid object
-    this.setParams(data.params as unknown as AppElementAgreementParam);
+  handleNewAgreementsRoute() {
+    const state: AgreementViewState = {
+      view: GerritView.AGREEMENTS,
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.agreementViewModel.setState(state);
   }
 
-  handleSettingsLegacyRoute(data: PageContextWithQueryMap) {
+  handleSettingsLegacyRoute(ctx: PageContext) {
     // email tokens may contain '+' but no space.
     // The parameter parsing replaces all '+' with a space,
     // undo that to have valid tokens.
-    const token = data.params[0].replace(/ /g, '+');
-    this.setParams({
+    const token = ctx.params[0].replace(/ /g, '+');
+    const state: SettingsViewState = {
       view: GerritView.SETTINGS,
       emailToken: token,
-    });
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.settingsViewModel.setState(state);
   }
 
-  handleSettingsRoute(_: PageContextWithQueryMap) {
-    this.setParams({view: GerritView.SETTINGS});
+  handleSettingsRoute(_: PageContext) {
+    const state: SettingsViewState = {view: GerritView.SETTINGS};
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.settingsViewModel.setState(state);
   }
 
-  handleRegisterRoute(ctx: PageContextWithQueryMap) {
-    this.setParams({justRegistered: true});
+  handleRegisterRoute(ctx: PageContext) {
+    this.setState({justRegistered: true});
     let path = ctx.params[0] || '/';
 
     // Prevent redirect looping.
@@ -1903,7 +1626,7 @@ export class GrRouter {
    * URL may sometimes have /+/ encoded to / /.
    * Context: Issue 6888, Issue 7100
    */
-  handleImproperlyEncodedPlusRoute(ctx: PageContextWithQueryMap) {
+  handleImproperlyEncodedPlusRoute(ctx: PageContext) {
     let hash = this.getHashFromCanonicalPath(ctx.canonicalPath);
     if (hash.length) {
       hash = '#' + hash;
@@ -1911,28 +1634,35 @@ export class GrRouter {
     this.redirect(`/c/${ctx.params[0]}/+/${ctx.params[1]}${hash}`);
   }
 
-  handlePluginScreen(ctx: PageContextWithQueryMap) {
-    const view = GerritView.PLUGIN_SCREEN;
-    const plugin = ctx.params[0];
-    const screen = ctx.params[1];
-    this.setParams({view, plugin, screen});
+  handlePluginScreen(ctx: PageContext) {
+    const state: PluginViewState = {
+      view: GerritView.PLUGIN_SCREEN,
+      plugin: ctx.params[0],
+      screen: ctx.params[1],
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.pluginViewModel.setState(state);
   }
 
-  handleDocumentationSearchRoute(data: PageContextWithQueryMap) {
-    this.setParams({
+  handleDocumentationSearchRoute(ctx: PageContext) {
+    const state: DocumentationViewState = {
       view: GerritView.DOCUMENTATION_SEARCH,
-      filter: data.params['filter'] || null,
-    });
+      filter: ctx.params['filter'] || null,
+    };
+    // Note that router model view must be updated before view models.
+    this.setState(state);
+    this.documentationViewModel.setState(state);
   }
 
-  handleDocumentationSearchRedirectRoute(data: PageContextWithQueryMap) {
+  handleDocumentationSearchRedirectRoute(ctx: PageContext) {
     this.redirect(
-      '/Documentation/q/filter:' + encodeURIComponent(data.params[0])
+      '/Documentation/q/filter:' + encodeURIComponent(ctx.params[0])
     );
   }
 
-  handleDocumentationRedirectRoute(data: PageContextWithQueryMap) {
-    if (data.params[1]) {
+  handleDocumentationRedirectRoute(ctx: PageContext) {
+    if (ctx.params[1]) {
       windowLocationReload();
     } else {
       // Redirect /Documentation to /Documentation/index.html

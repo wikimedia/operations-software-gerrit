@@ -1,22 +1,13 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the 'License');
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an 'AS IS' BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {BLANK_LINE, GrDiffLine, GrDiffLineType} from './gr-diff-line';
 import {LineRange, Side} from '../../../api/diff';
 import {LineNumber} from './gr-diff-line';
+import {assertIsDefined, assert} from '../../../utils/common-util';
+import {untilRendered} from '../../../utils/dom-util';
 
 export enum GrDiffGroupType {
   /** Unchanged context. */
@@ -263,7 +254,7 @@ export class GrDiffGroup {
           throw new Error('Cannot set skip and lines');
         }
         this.skip = options.skip;
-        if (options.skip) {
+        if (options.skip !== undefined) {
           this.lineRange = {
             left: {
               start_line: options.offsetLeft,
@@ -275,7 +266,9 @@ export class GrDiffGroup {
             },
           };
         } else {
-          for (const line of options.lines ?? []) {
+          assertIsDefined(options.lines);
+          assert(options.lines.length > 0, 'diff group must have lines');
+          for (const line of options.lines) {
             this.addLine(line);
           }
         }
@@ -463,6 +456,22 @@ export class GrDiffGroup {
         this.lineRange.left.end_line = line.beforeNumber;
       }
     }
+  }
+
+  async waitUntilRendered() {
+    const lineNumber = this.lines[0]?.beforeNumber;
+    // The LOST or FILE lines may be hidden and thus never resolve an
+    // untilRendered() promise.
+    if (
+      this.skip ||
+      lineNumber === 'LOST' ||
+      lineNumber === 'FILE' ||
+      this.type === GrDiffGroupType.CONTEXT_CONTROL
+    ) {
+      return Promise.resolve();
+    }
+    assertIsDefined(this.element);
+    await untilRendered(this.element);
   }
 
   /**

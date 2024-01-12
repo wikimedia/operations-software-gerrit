@@ -1,20 +1,15 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import {AttemptDetail, createAttemptMap} from './checks-util';
+import {
+  AttemptChoice,
+  AttemptDetail,
+  createAttemptMap,
+  LATEST_ATTEMPT,
+  sortAttemptDetails,
+} from './checks-util';
 import {assertIsDefined} from '../../utils/common-util';
 import {select} from '../../utils/observable-util';
 import {Finalizable} from '../../services/registry';
@@ -25,7 +20,6 @@ import {
   Observable,
   of,
   Subject,
-  Subscription,
   timer,
 } from 'rxjs';
 import {
@@ -35,6 +29,7 @@ import {
   take,
   takeUntil,
   takeWhile,
+  timeout,
   throttleTime,
   withLatestFrom,
 } from 'rxjs/operators';
@@ -66,6 +61,7 @@ import {
   ChecksUpdate,
   PluginsModel,
 } from '../plugins/plugins-model';
+import {ChangeViewModel} from '../views/change';
 
 /**
  * The checks model maintains the state of checks for two patchsets: the latest
@@ -141,11 +137,6 @@ export interface ChecksProviderState {
 }
 
 interface ChecksState {
-  /**
-   * This is the patchset number selected by the user. The *latest* patchset
-   * can be picked up from the change model.
-   */
-  patchsetNumberSelected?: PatchSetNumber;
   /** Checks data for the latest patchset. */
   pluginStateLatest: {
     [name: string]: ChecksProviderState;
@@ -158,6 +149,13 @@ interface ChecksState {
     [name: string]: ChecksProviderState;
   };
 }
+
+/**
+ * Android's Checks Plugin has a 15s timeout internally. So we are using
+ * something slightly larger, so that we get a proper error from the plugin,
+ * if they run into timeout issues.
+ */
+const FETCH_RESULT_TIMEOUT_MS = 16000;
 
 /**
  * Can be used in `reduce()` to collect all results from all runs from all
@@ -191,9 +189,11 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
 
   private checkToPluginMap = new Map<string, string>();
 
-  private changeNum?: NumericChangeId;
+  // visible for testing
+  changeNum?: NumericChangeId;
 
-  private latestPatchNum?: PatchSetNumber;
+  // visible for testing
+  latestPatchNum?: PatchSetNumber;
 
   private readonly documentVisibilityChange$ = new BehaviorSubject(undefined);
 
@@ -201,19 +201,29 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
 
   private readonly visibilityChangeListener: () => void;
 
-  private subscriptions: Subscription[] = [];
-
   public checksSelectedPatchsetNumber$ = select(
-    this.state$,
-    state => state.patchsetNumberSelected
+    this.changeViewModel.checksPatchset$,
+    ps => ps
+  );
+
+  public checksSelectedAttemptNumber$ = select(
+    this.changeViewModel.attempt$,
+    attempt => attempt ?? LATEST_ATTEMPT
+  );
+
+  public runFilterRegexp$ = select(
+    this.changeViewModel.filter$,
+    filter => filter ?? ''
   );
 
   public checksLatest$ = select(this.state$, state => state.pluginStateLatest);
 
-  public checksSelected$ = select(this.state$, state =>
-    state.patchsetNumberSelected
-      ? state.pluginStateSelected
-      : state.pluginStateLatest
+  public checksSelected$ = select(
+    combineLatest([this.state$, this.changeViewModel.checksPatchset$]),
+    ([state, ps]) => {
+      const checksPs = ps ? ChecksPatchset.SELECTED : ChecksPatchset.LATEST;
+      return this.getPluginState(state, checksPs);
+    }
   );
 
   public aPluginHasRegistered$ = select(
@@ -283,7 +293,7 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
     const messages = Object.values(state).map(
       providerState => providerState.summaryMessage
     );
-    return messages.filter(m => m !== undefined) as string[];
+    return messages.filter(m => !!m) as string[];
   });
 
   public topLevelActionsSelected$ = select(this.checksSelected$, state =>
@@ -365,6 +375,7 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
 
   constructor(
     readonly routerModel: RouterModel,
+    readonly changeViewModel: ChangeViewModel,
     readonly changeModel: ChangeModel,
     readonly reporting: ReportingService,
     readonly pluginsModel: PluginsModel
@@ -376,6 +387,9 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
     this.reporting.time(Timing.CHECKS_LOAD);
     this.subscriptions = [
       this.changeModel.changeNum$.subscribe(x => (this.changeNum = x)),
+      this.changeModel.latestPatchNum$.subscribe(
+        x => (this.latestPatchNum = x)
+      ),
       this.pluginsModel.checksPlugins$.subscribe(plugins => {
         for (const plugin of plugins) {
           this.register(plugin);
@@ -387,19 +401,6 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
       this.pluginsModel.checksUpdate$.subscribe(u => this.updateResult(u)),
       this.checkToPluginMap$.subscribe(map => {
         this.checkToPluginMap = map;
-      }),
-      combineLatest([
-        this.routerModel.routerPatchNum$,
-        this.changeModel.latestPatchNum$,
-      ]).subscribe(([routerPs, latestPs]) => {
-        this.latestPatchNum = latestPs;
-        if (latestPs === undefined) {
-          this.setPatchset(undefined);
-        } else if (typeof routerPs === 'number') {
-          this.setPatchset(routerPs as PatchSetNumber);
-        } else {
-          this.setPatchset(latestPs);
-        }
       }),
       this.firstLoadCompleted$
         .pipe(
@@ -460,23 +461,19 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
     this.reporting.reportInteraction(Interaction.CHECKS_STATS, stats);
   }
 
-  finalize() {
+  override finalize() {
     document.removeEventListener('reload', this.reloadListener);
     document.removeEventListener(
       'visibilitychange',
       this.visibilityChangeListener
     );
-    for (const s of this.subscriptions) {
-      s.unsubscribe();
-    }
-    this.subscriptions = [];
-    this.subject$.complete();
+    super.finalize();
   }
 
   // Must only be used by the checks service or whatever is in control of this
   // model.
   updateStateSetProvider(pluginName: string, patchset: ChecksPatchset) {
-    const nextState = {...this.subject$.getValue()};
+    const nextState = {...this.getState()};
     const pluginState = this.getPluginState(nextState, patchset);
     pluginState[pluginName] = {
       pluginName,
@@ -486,7 +483,7 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
       actions: [],
       links: [],
     };
-    this.subject$.next(nextState);
+    this.setState(nextState);
   }
 
   getPluginState(
@@ -503,13 +500,13 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
   }
 
   updateStateSetLoading(pluginName: string, patchset: ChecksPatchset) {
-    const nextState = {...this.subject$.getValue()};
+    const nextState = {...this.getState()};
     const pluginState = this.getPluginState(nextState, patchset);
     pluginState[pluginName] = {
       ...pluginState[pluginName],
       loading: true,
     };
-    this.subject$.next(nextState);
+    this.setState(nextState);
   }
 
   updateStateSetError(
@@ -517,7 +514,7 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
     errorMessage: string,
     patchset: ChecksPatchset
   ) {
-    const nextState = {...this.subject$.getValue()};
+    const nextState = {...this.getState()};
     const pluginState = this.getPluginState(nextState, patchset);
     pluginState[pluginName] = {
       ...pluginState[pluginName],
@@ -528,7 +525,7 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
       runs: [],
       actions: [],
     };
-    this.subject$.next(nextState);
+    this.setState(nextState);
   }
 
   updateStateSetNotLoggedIn(
@@ -536,7 +533,7 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
     loginCallback: () => void,
     patchset: ChecksPatchset
   ) {
-    const nextState = {...this.subject$.getValue()};
+    const nextState = {...this.getState()};
     const pluginState = this.getPluginState(nextState, patchset);
     pluginState[pluginName] = {
       ...pluginState[pluginName],
@@ -547,7 +544,7 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
       runs: [],
       actions: [],
     };
-    this.subject$.next(nextState);
+    this.setState(nextState);
   }
 
   updateStateSetResults(
@@ -558,15 +555,13 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
     summaryMessage: string | undefined,
     patchset: ChecksPatchset
   ) {
+    // Protect against plugins not respecting required fields.
+    runs = runs.filter(run => !!run.checkName && !!run.status);
     const attemptMap = createAttemptMap(runs);
     for (const attemptInfo of attemptMap.values()) {
-      // Per run only one attempt can be undefined, so the '?? -1' is not really
-      // relevant for sorting.
-      attemptInfo.attempts.sort(
-        (a, b) => (a.attempt ?? -1) - (b.attempt ?? -1)
-      );
+      attemptInfo.attempts.sort(sortAttemptDetails);
     }
-    const nextState = {...this.subject$.getValue()};
+    const nextState = {...this.getState()};
     const pluginState = this.getPluginState(nextState, patchset);
     const oldState = pluginState[pluginName];
     pluginState[pluginName] = {
@@ -581,9 +576,10 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
         assertIsDefined(attemptInfo, 'attemptInfo');
         return {
           ...run,
+          attempt: run.attempt ?? 0,
           pluginName,
           internalRunId: runId,
-          isLatestAttempt: attemptInfo.latestAttempt === run.attempt,
+          isLatestAttempt: attemptInfo.latestAttempt === (run.attempt ?? 0),
           isSingleAttempt: attemptInfo.isSingleAttempt,
           attemptDetails: attemptInfo.attempts,
           results: (run.results ?? []).map((result, i) => {
@@ -598,7 +594,7 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
       links: [...links],
       summaryMessage,
     };
-    this.subject$.next(nextState);
+    this.setState(nextState);
   }
 
   updateStateUpdateResult(
@@ -607,7 +603,7 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
     updatedResult: CheckResultApi,
     patchset: ChecksPatchset
   ) {
-    const nextState = {...this.subject$.getValue()};
+    const nextState = {...this.getState()};
     const pluginState = this.getPluginState(nextState, patchset);
     let runUpdated = false;
     const runs: CheckRun[] = pluginState[pluginName].runs.map(run => {
@@ -637,17 +633,21 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
       ...pluginState[pluginName],
       runs,
     };
-    this.subject$.next(nextState);
+    this.setState(nextState);
   }
 
-  updateStateSetPatchset(patchsetNumber?: PatchSetNumber) {
-    const nextState = {...this.subject$.getValue()};
-    nextState.patchsetNumberSelected = patchsetNumber;
-    this.subject$.next(nextState);
+  updateStateSetPatchset(num?: PatchSetNumber) {
+    this.changeViewModel.updateState({
+      checksPatchset: num === this.latestPatchNum ? undefined : num,
+    });
   }
 
-  setPatchset(num?: PatchSetNumber) {
-    this.updateStateSetPatchset(num === this.latestPatchNum ? undefined : num);
+  updateStateSetAttempt(attemptNumberSelected: AttemptChoice) {
+    this.changeViewModel.updateState({attempt: attemptNumberSelected});
+  }
+
+  updateStateSetRunFilter(runFilterRegexp: string) {
+    this.changeViewModel.updateState({filter: runFilterRegexp});
   }
 
   reload(pluginName: string) {
@@ -753,8 +753,10 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
         patchset === ChecksPatchset.LATEST
           ? this.changeModel.latestPatchNum$
           : this.checksSelectedPatchsetNumber$,
-        this.reloadSubjects[pluginName].pipe(throttleTime(1000)),
-        timer(0, pollIntervalMs),
+        this.reloadSubjects[pluginName].pipe(
+          throttleTime(1000, undefined, {trailing: true, leading: true})
+        ),
+        pollIntervalMs === 0 ? from([0]) : timer(0, pollIntervalMs),
         this.documentVisibilityChange$,
       ])
         .pipe(
@@ -782,7 +784,7 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
             // This should not happen and is really severe, because it means that
             // the Observable has terminated and we won't recover from that. No
             // further attempts to fetch results for this plugin will be made.
-            this.reporting.error(e, `checks-model crash for ${pluginName}`);
+            this.reporting.error(`checks-model crash for ${pluginName}`, e);
             return of(this.createErrorResponse(pluginName, e));
           })
         )
@@ -835,15 +837,12 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
     };
   }
 
-  private createErrorResponse(
-    pluginName: string,
-    message: object
-  ): FetchResponse {
+  private createErrorResponse(pluginName: string, error: Error): FetchResponse {
     return {
       responseCode: ResponseCode.ERROR,
       errorMessage:
         `Error message from plugin '${pluginName}':` +
-        ` ${JSON.stringify(message)}`,
+        ` ${JSON.stringify(error)}`,
     };
   }
 
@@ -860,8 +859,9 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
         timer.end({pluginName});
         return response;
       });
-    return from(fetchPromise).pipe(
-      catchError(e => of(this.createErrorResponse(pluginName, e)))
-    );
+
+    return from(fetchPromise)
+      .pipe(timeout(FETCH_RESULT_TIMEOUT_MS))
+      .pipe(catchError(e => of(this.createErrorResponse(pluginName, e))));
   }
 }

@@ -1,27 +1,21 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import '../../test/common-test-setup-karma';
-import {createDraft} from '../../test/test-data-generators';
-import {UrlEncodedCommentId} from '../../types/common';
-import './comments-model';
-import {CommentsModel} from './comments-model';
-import {deleteDraft} from './comments-model';
+import '../../test/common-test-setup';
+import {
+  createAccountWithEmail,
+  createDraft,
+} from '../../test/test-data-generators';
+import {
+  AccountInfo,
+  EmailAddress,
+  Timestamp,
+  UrlEncodedCommentId,
+} from '../../types/common';
+import {CommentsModel, deleteDraft} from './comments-model';
 import {Subscription} from 'rxjs';
-import '../../test/common-test-setup-karma';
 import {
   createComment,
   createParsedChange,
@@ -32,6 +26,8 @@ import {getAppContext} from '../../services/app-context';
 import {GerritView} from '../../services/router/router-model';
 import {PathToCommentsInfoMap} from '../../types/common';
 import {changeModelToken} from '../change/change-model';
+import {assert} from '@open-wc/testing';
+import {testResolver} from '../../test/common-test-setup';
 
 suite('comments model tests', () => {
   test('updateStateDeleteDraft', () => {
@@ -75,6 +71,7 @@ suite('change service tests', () => {
     const model = new CommentsModel(
       getAppContext().routerModel,
       testResolver(changeModelToken),
+      getAppContext().accountsModel,
       getAppContext().restApiService,
       getAppContext().reportingService
     );
@@ -100,7 +97,7 @@ suite('change service tests', () => {
       model.portedComments$.subscribe(c => (portedComments = c ?? {}))
     );
 
-    model.routerModel.updateState({
+    model.routerModel.setState({
       view: GerritView.CHANGE,
       changeNum: TEST_NUMERIC_CHANGE_ID,
     });
@@ -124,5 +121,69 @@ suite('change service tests', () => {
     assert.equal(comments['foo.c'][0].id, '12345');
     assert.equal(portedComments['foo.c'].length, 1);
     assert.equal(portedComments['foo.c'][0].id, '12345');
+  });
+
+  test('duplicate mentions are filtered out', async () => {
+    const account = {
+      ...createAccountWithEmail('abcd@def.com' as EmailAddress),
+      registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
+    };
+    stubRestApi('getAccountDetails').returns(Promise.resolve(account));
+    const model = new CommentsModel(
+      getAppContext().routerModel,
+      testResolver(changeModelToken),
+      getAppContext().accountsModel,
+      getAppContext().restApiService,
+      getAppContext().reportingService
+    );
+    let mentionedUsers: AccountInfo[] = [];
+    const draft = {...createDraft(), message: 'hey @abc@def.com'};
+    model.mentionedUsersInDrafts$.subscribe(x => (mentionedUsers = x));
+    model.setState({
+      drafts: {
+        'abc.txt': [draft, draft],
+      },
+      discardedDrafts: [],
+    });
+
+    await waitUntil(() => mentionedUsers.length > 0);
+
+    assert.deepEqual(mentionedUsers, [account]);
+  });
+
+  test('empty mentions are emitted', async () => {
+    const account = {
+      ...createAccountWithEmail('abcd@def.com' as EmailAddress),
+      registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
+    };
+    stubRestApi('getAccountDetails').returns(Promise.resolve(account));
+    const model = new CommentsModel(
+      getAppContext().routerModel,
+      testResolver(changeModelToken),
+      getAppContext().accountsModel,
+      getAppContext().restApiService,
+      getAppContext().reportingService
+    );
+    let mentionedUsers: AccountInfo[] = [];
+    const draft = {...createDraft(), message: 'hey @abc@def.com'};
+    model.mentionedUsersInDrafts$.subscribe(x => (mentionedUsers = x));
+    model.setState({
+      drafts: {
+        'abc.txt': [draft],
+      },
+      discardedDrafts: [],
+    });
+
+    await waitUntil(() => mentionedUsers.length > 0);
+
+    assert.deepEqual(mentionedUsers, [account]);
+
+    model.setState({
+      drafts: {
+        'abc.txt': [],
+      },
+      discardedDrafts: [],
+    });
+    await waitUntil(() => mentionedUsers.length === 0);
   });
 });

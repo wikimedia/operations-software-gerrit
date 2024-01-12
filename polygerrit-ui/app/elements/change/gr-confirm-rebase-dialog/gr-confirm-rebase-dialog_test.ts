@@ -1,28 +1,21 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-confirm-rebase-dialog';
 import {GrConfirmRebaseDialog, RebaseChange} from './gr-confirm-rebase-dialog';
-import {queryAndAssert, stubRestApi, waitUntil} from '../../../test/test-utils';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
+import {
+  pressKey,
+  queryAndAssert,
+  stubRestApi,
+  waitUntil,
+} from '../../../test/test-utils';
 import {NumericChangeId, BranchName} from '../../../types/common';
 import {createChangeViewChange} from '../../../test/test-data-generators';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
+import {Key} from '../../../utils/dom-util';
 
 suite('gr-confirm-rebase-dialog tests', () => {
   let element: GrConfirmRebaseDialog;
@@ -36,55 +29,64 @@ suite('gr-confirm-rebase-dialog tests', () => {
   test('render', async () => {
     element.branch = 'test' as BranchName;
     await element.updateComplete;
-    expect(element).shadowDom.to.equal(/* HTML */ `<gr-dialog
-      confirm-label="Rebase"
-      id="confirmDialog"
-      role="dialog"
-    >
-      <div class="header" slot="header">Confirm rebase</div>
-      <div class="main" slot="main">
-        <div class="rebaseOption" hidden="" id="rebaseOnParent">
-          <input id="rebaseOnParentInput" name="rebaseOptions" type="radio" />
-          <label for="rebaseOnParentInput" id="rebaseOnParentLabel">
-            Rebase on parent change
-          </label>
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `<gr-dialog
+        confirm-label="Rebase"
+        id="confirmDialog"
+        role="dialog"
+      >
+        <div class="header" slot="header">Confirm rebase</div>
+        <div class="main" slot="main">
+          <div class="rebaseOption" hidden="" id="rebaseOnParent">
+            <input id="rebaseOnParentInput" name="rebaseOptions" type="radio" />
+            <label for="rebaseOnParentInput" id="rebaseOnParentLabel">
+              Rebase on parent change
+            </label>
+          </div>
+          <div class="message" hidden="" id="parentUpToDateMsg">
+            This change is up to date with its parent.
+          </div>
+          <div class="rebaseOption" hidden="" id="rebaseOnTip">
+            <input
+              disabled=""
+              id="rebaseOnTipInput"
+              name="rebaseOptions"
+              type="radio"
+            />
+            <label for="rebaseOnTipInput" id="rebaseOnTipLabel">
+              Rebase on top of the test branch
+              <span hidden=""> (breaks relation chain) </span>
+            </label>
+          </div>
+          <div class="message" id="tipUpToDateMsg">
+            Change is up to date with the target branch already (test)
+          </div>
+          <div class="rebaseOption" id="rebaseOnOther">
+            <input id="rebaseOnOtherInput" name="rebaseOptions" type="radio" />
+            <label for="rebaseOnOtherInput" id="rebaseOnOtherLabel">
+              Rebase on a specific change, ref, or commit
+              <span hidden=""> (breaks relation chain) </span>
+            </label>
+          </div>
+          <div class="parentRevisionContainer">
+            <gr-autocomplete
+              allow-non-suggested-values=""
+              id="parentInput"
+              no-debounce=""
+              placeholder="Change number, ref, or commit hash"
+            >
+            </gr-autocomplete>
+          </div>
+          <div class="rebaseAllowConflicts">
+            <input id="rebaseAllowConflicts" type="checkbox" />
+            <label for="rebaseAllowConflicts">
+              Allow rebase with conflicts
+            </label>
+          </div>
         </div>
-        <div class="message" hidden="" id="parentUpToDateMsg">
-          This change is up to date with its parent.
-        </div>
-        <div class="rebaseOption" hidden="" id="rebaseOnTip">
-          <input
-            disabled=""
-            id="rebaseOnTipInput"
-            name="rebaseOptions"
-            type="radio"
-          />
-          <label for="rebaseOnTipInput" id="rebaseOnTipLabel">
-            Rebase on top of the test branch
-            <span hidden=""> (breaks relation chain) </span>
-          </label>
-        </div>
-        <div class="message" id="tipUpToDateMsg">
-          Change is up to date with the target branch already (test)
-        </div>
-        <div class="rebaseOption" id="rebaseOnOther">
-          <input id="rebaseOnOtherInput" name="rebaseOptions" type="radio" />
-          <label for="rebaseOnOtherInput" id="rebaseOnOtherLabel">
-            Rebase on a specific change, ref, or commit
-            <span hidden=""> (breaks relation chain) </span>
-          </label>
-        </div>
-        <div class="parentRevisionContainer">
-          <gr-autocomplete
-            allow-non-suggested-values=""
-            id="parentInput"
-            no-debounce=""
-            placeholder="Change number, ref, or commit hash"
-          >
-          </gr-autocomplete>
-        </div>
-      </div>
-    </gr-dialog> `);
+      </gr-dialog> `
+    );
   });
 
   test('controls with parent and rebase on current available', async () => {
@@ -290,11 +292,9 @@ suite('gr-confirm-rebase-dialog tests', () => {
     test('input text change triggers function', async () => {
       const recentChangesSpy = sinon.spy(element, 'getRecentChanges');
       element.parentInput.noDebounce = true;
-      MockInteractions.pressAndReleaseKeyOn(
+      pressKey(
         queryAndAssert(queryAndAssert(element, '#parentInput'), '#input'),
-        13,
-        null,
-        'enter'
+        Key.ENTER
       );
       await element.updateComplete;
       element.text = '1';

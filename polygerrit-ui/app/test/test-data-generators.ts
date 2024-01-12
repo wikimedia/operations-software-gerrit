@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {
   AccountDetailInfo,
@@ -22,6 +11,7 @@ import {
   ApprovalInfo,
   AuthInfo,
   BasePatchSetNum,
+  BlameInfo,
   BranchName,
   ChangeConfigInfo,
   ChangeId,
@@ -39,7 +29,7 @@ import {
   ConfigInfo,
   DownloadInfo,
   EditInfo,
-  EditPatchSetNum,
+  EDIT,
   EmailAddress,
   FixId,
   FixSuggestionInfo,
@@ -55,7 +45,8 @@ import {
   MaxObjectSizeLimitInfo,
   MergeableInfo,
   NumericChangeId,
-  PatchSetNum,
+  PARENT,
+  PatchRange,
   PluginConfigInfo,
   PreferencesInfo,
   RelatedChangeAndCommitInfo,
@@ -65,6 +56,7 @@ import {
   RequirementType,
   Reviewers,
   RevisionInfo,
+  RevisionPatchSetNum,
   RobotCommentInfo,
   RobotId,
   RobotRunId,
@@ -80,6 +72,7 @@ import {
 } from '../types/common';
 import {
   AccountsVisibility,
+  AccountTag,
   AppTheme,
   AuthType,
   ChangeStatus,
@@ -98,10 +91,6 @@ import {
 } from '../constants/constants';
 import {formatDate} from '../utils/date-util';
 import {GetDiffCommentsOutput} from '../services/gr-rest-api/gr-rest-api';
-import {
-  AppElementChangeViewParams,
-  AppElementSearchParam,
-} from '../elements/gr-app-types';
 import {CommitInfoWithRequiredCommit} from '../elements/change/gr-change-metadata/gr-change-metadata';
 import {WebLinkInfo} from '../types/diff';
 import {
@@ -114,17 +103,20 @@ import {
 import {GerritView} from '../services/router/router-model';
 import {ChangeComments} from '../elements/diff/gr-comment-api/gr-comment-api';
 import {EditRevisionInfo, ParsedChangeInfo} from '../types/types';
-import {GenerateUrlEditViewParameters} from '../elements/core/gr-navigation/gr-navigation';
 import {
   DetailedLabelInfo,
+  FileInfo,
   QuickLabelInfo,
   SubmitRequirementExpressionInfo,
   SubmitRequirementResultInfo,
   SubmitRequirementStatus,
 } from '../api/rest-api';
-import {RunResult} from '../models/checks/checks-model';
+import {CheckResult, RunResult} from '../models/checks/checks-model';
 import {Category, RunStatus} from '../api/checks';
 import {DiffInfo} from '../api/diff';
+import {SearchViewState} from '../models/views/search';
+import {ChangeViewState} from '../models/views/change';
+import {EditViewState} from '../models/views/edit';
 
 const TEST_DEFAULT_EXPRESSION = 'label:Verified=MAX -label:Verified=MIN';
 export const TEST_PROJECT_NAME: RepoName = 'test-project' as RepoName;
@@ -192,6 +184,14 @@ export function createConfig(): ConfigInfo {
 export function createAccountWithId(id = 5): AccountInfo {
   return {
     _account_id: id as AccountId,
+    email: `${id}` as EmailAddress,
+  };
+}
+
+export function createServiceUserWithId(id = 5): AccountInfo {
+  return {
+    ...createAccountWithId(id),
+    tags: [AccountTag.SERVICE_USER],
   };
 }
 
@@ -203,6 +203,13 @@ export function createAccountDetailWithId(id = 5): AccountDetailInfo {
 }
 
 export function createAccountWithEmail(email = 'test@'): AccountInfo {
+  return {
+    email: email as EmailAddress,
+    _account_id: 1 as AccountId,
+  };
+}
+
+export function createAccountWithEmailOnly(email = 'test@'): AccountInfo {
   return {
     email: email as EmailAddress,
   };
@@ -283,12 +290,22 @@ export function createCommitInfoWithRequiredCommit(
   };
 }
 
+export function createPatchRange(
+  basePatchNum?: number,
+  patchNum?: number
+): PatchRange {
+  return {
+    basePatchNum: (basePatchNum ?? PARENT) as BasePatchSetNum,
+    patchNum: (patchNum ?? 1) as RevisionPatchSetNum,
+  };
+}
+
 export function createRevision(
-  patchSetNum = 1,
+  patchSetNum: number | RevisionPatchSetNum = 1,
   description = ''
 ): RevisionInfo {
   return {
-    _number: patchSetNum as PatchSetNum,
+    _number: patchSetNum as RevisionPatchSetNum,
     commit: createCommit(),
     created: dateToTimestamp(TEST_CHANGE_CREATED),
     kind: RevisionKind.REWORK,
@@ -311,7 +328,7 @@ export function createEditInfo(): EditInfo {
 
 export function createEditRevision(basePatchNum = 1): EditRevisionInfo {
   return {
-    _number: EditPatchSetNum,
+    _number: EDIT,
     basePatchNum: basePatchNum as BasePatchSetNum,
     commit: {
       ...createCommit(),
@@ -376,6 +393,13 @@ export function createChangeMessages(count: number): ChangeMessageInfo[] {
     messageDate.setDate(messageDate.getDate() + 1);
   }
   return messages;
+}
+
+export function createFileInfo(): FileInfo {
+  return {
+    size: 314,
+    size_delta: 7,
+  };
 }
 
 export function createChange(): ChangeInfo {
@@ -494,6 +518,24 @@ export function createGetDiffCommentsOutput(): GetDiffCommentsOutput {
   };
 }
 
+export function createEmptyDiff(): DiffInfo {
+  return {
+    meta_a: {
+      name: 'empty-left.txt',
+      content_type: 'text/plain',
+      lines: 1,
+    },
+    meta_b: {
+      name: 'empty-right.txt',
+      content_type: 'text/plain',
+      lines: 1,
+    },
+    intraline_status: 'OK',
+    change_type: 'MODIFIED',
+    content: [],
+  };
+}
+
 export function createDiff(): DiffInfo {
   return {
     meta_a: {
@@ -549,10 +591,15 @@ export function createDiff(): DiffInfo {
         ],
       },
       {
-        ab: [
+        a: [
+          'Arcu eget, rhoncus amet cursus, ipsum elementum.  ',
+          'Eros suspendisse.  ',
+        ],
+        b: [
           'Arcu eget, rhoncus amet cursus, ipsum elementum.',
           'Eros suspendisse.',
         ],
+        common: true,
       },
       {
         a: ['Rhoncus tempor, ultricies aliquam ipsum.'],
@@ -610,6 +657,16 @@ export function createDiff(): DiffInfo {
   };
 }
 
+export function createBlame(): BlameInfo {
+  return {
+    author: 'test-author',
+    id: 'test-id',
+    time: 123,
+    commit_msg: 'test-commit-message',
+    ranges: [],
+  };
+}
+
 export function createMergeable(): MergeableInfo {
   return {
     submit_type: SubmitType.MERGE_IF_NECESSARY,
@@ -621,7 +678,7 @@ export function createMergeable(): MergeableInfo {
 export function createPreferences(): PreferencesInfo {
   return {
     changes_per_page: 10,
-    theme: AppTheme.LIGHT,
+    theme: AppTheme.AUTO,
     date_format: DateFormat.ISO,
     time_format: TimeFormat.HHMM_24,
     diff_view: DiffViewMode.SIDE_BY_SIDE,
@@ -629,14 +686,15 @@ export function createPreferences(): PreferencesInfo {
     change_table: [],
     email_strategy: EmailStrategy.ENABLED,
     default_base_for_merges: DefaultBase.AUTO_MERGE,
+    allow_browser_notifications: true,
   };
 }
 
-export function createApproval(): ApprovalInfo {
-  return createAccountWithId();
+export function createApproval(account?: AccountInfo): ApprovalInfo {
+  return account ?? createAccountWithId();
 }
 
-export function createAppElementChangeViewParams(): AppElementChangeViewParams {
+export function createChangeViewState(): ChangeViewState {
   return {
     view: GerritView.CHANGE,
     changeNum: TEST_NUMERIC_CHANGE_ID,
@@ -644,19 +702,21 @@ export function createAppElementChangeViewParams(): AppElementChangeViewParams {
   };
 }
 
-export function createAppElementSearchViewParams(): AppElementSearchParam {
+export function createAppElementSearchViewParams(): SearchViewState {
   return {
     view: GerritView.SEARCH,
     query: TEST_NUMERIC_CHANGE_ID.toString(),
     offset: '0',
+    changes: [],
+    loading: false,
   };
 }
 
-export function createGenerateUrlEditViewParameters(): GenerateUrlEditViewParameters {
+export function createEditViewState(): EditViewState {
   return {
     view: GerritView.EDIT,
     changeNum: TEST_NUMERIC_CHANGE_ID,
-    patchNum: EditPatchSetNum as PatchSetNum,
+    patchNum: EDIT,
     path: 'foo/bar.baz',
     project: TEST_PROJECT_NAME,
   };
@@ -691,7 +751,7 @@ export function createComment(
   extra: Partial<CommentInfo | DraftInfo> = {}
 ): CommentInfo {
   return {
-    patch_set: 1 as PatchSetNum,
+    patch_set: 1 as RevisionPatchSetNum,
     id: '12345' as UrlEncodedCommentId,
     side: CommentSide.REVISION,
     line: 1,
@@ -751,7 +811,7 @@ export function createChangeComments(): ChangeComments {
       },
       {
         ...createComment(),
-        patch_set: 2 as PatchSetNum,
+        patch_set: 2 as RevisionPatchSetNum,
         message: 'hello',
         updated: '2017-02-10 16:40:49' as Timestamp,
         id: '3' as UrlEncodedCommentId,
@@ -766,14 +826,14 @@ export function createChangeComments(): ChangeComments {
       },
       {
         ...createComment(),
-        patch_set: 2 as PatchSetNum,
+        patch_set: 2 as RevisionPatchSetNum,
         message: 'wat!?',
         updated: '2017-02-09 16:40:49' as Timestamp,
         id: '5' as UrlEncodedCommentId,
       },
       {
         ...createComment(),
-        patch_set: 2 as PatchSetNum,
+        patch_set: 2 as RevisionPatchSetNum,
         message: 'hi',
         updated: '2017-02-10 16:40:49' as Timestamp,
         id: '6' as UrlEncodedCommentId,
@@ -782,7 +842,7 @@ export function createChangeComments(): ChangeComments {
     'unresolved.file': [
       {
         ...createComment(),
-        patch_set: 2 as PatchSetNum,
+        patch_set: 2 as RevisionPatchSetNum,
         message: 'wat!?',
         updated: '2017-02-09 16:40:49' as Timestamp,
         id: '7' as UrlEncodedCommentId,
@@ -790,7 +850,7 @@ export function createChangeComments(): ChangeComments {
       },
       {
         ...createComment(),
-        patch_set: 2 as PatchSetNum,
+        patch_set: 2 as RevisionPatchSetNum,
         message: 'hi',
         updated: '2017-02-10 16:40:49' as Timestamp,
         id: '8' as UrlEncodedCommentId,
@@ -799,7 +859,7 @@ export function createChangeComments(): ChangeComments {
       },
       {
         ...createComment(),
-        patch_set: 2 as PatchSetNum,
+        patch_set: 2 as RevisionPatchSetNum,
         message: 'good news!',
         updated: '2017-02-08 16:40:49' as Timestamp,
         id: '9' as UrlEncodedCommentId,
@@ -845,12 +905,14 @@ export function createThread(
     rootId: 'test-root-id-comment-thread' as UrlEncodedCommentId,
     path: 'test-path-comment-thread',
     commentSide: CommentSide.REVISION,
-    patchNum: 1 as PatchSetNum,
+    patchNum: 1 as RevisionPatchSetNum,
     line: 314,
   };
 }
 
-export function createCommentThread(comments: Array<Partial<CommentInfo>>) {
+export function createCommentThread(
+  comments: Array<Partial<CommentInfo | DraftInfo>>
+) {
   if (!comments.length) {
     throw new Error('comment is required to create a thread');
   }
@@ -924,8 +986,8 @@ export function createSubmitRequirementExpressionInfo(
   return {
     expression,
     fulfilled: true,
-    passing_atoms: ['label2:verified=MAX'],
-    failing_atoms: ['label2:verified=MIN'],
+    passing_atoms: ['label:Verified=MAX'],
+    failing_atoms: ['label:Verified=MIN'],
   };
 }
 
@@ -964,6 +1026,14 @@ export function createRunResult(): RunResult {
     status: RunStatus.COMPLETED,
     summary: 'This is the test summary.',
     message: 'This is the test message.',
+  };
+}
+
+export function createCheckResult(): CheckResult {
+  return {
+    category: Category.ERROR,
+    summary: 'error',
+    internalResultId: 'test-internal-result-id',
   };
 }
 

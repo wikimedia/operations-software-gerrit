@@ -1,30 +1,18 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-account-label';
 import {
   query,
   queryAndAssert,
   spyRestApi,
   stubRestApi,
+  waitEventLoop,
 } from '../../../test/test-utils';
 import {GrAccountLabel} from './gr-account-label';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {AccountDetailInfo, ServerInfo} from '../../../types/common';
 import {
   createAccountDetailWithIdNameAndEmail,
@@ -32,9 +20,8 @@ import {
   createPluginConfig,
   createServerInfo,
 } from '../../../test/test-data-generators';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
-
-const basicFixture = fixtureFromElement('gr-account-label');
+import {fixture, html, assert} from '@open-wc/testing';
+import {GrButton} from '../gr-button/gr-button';
 
 suite('gr-account-label tests', () => {
   let element: GrAccountLabel;
@@ -44,7 +31,6 @@ suite('gr-account-label tests', () => {
   };
 
   setup(async () => {
-    sinon.stub(GerritNav, 'getUrlForOwner').callsFake(() => 'test');
     stubRestApi('getAccount').resolves(kermit);
     stubRestApi('getLoggedIn').resolves(false);
     stubRestApi('getConfig').resolves({
@@ -57,47 +43,18 @@ suite('gr-account-label tests', () => {
         anonymous_coward_name: 'Anonymous Coward',
       },
     });
-    element = basicFixture.instantiate();
+    element = await fixture(html`<gr-account-label></gr-account-label>`);
     await element.updateComplete;
   });
 
   test('renders', async () => {
     element.account = kermit;
     await element.updateComplete;
-    expect(element).shadowDom.to.equal(/* HTML */ `
-      <div class="container">
-        <gr-hovercard-account for="hovercardTarget"></gr-hovercard-account>
-        <span class="hovercardTargetWrapper">
-          <gr-avatar hidden="" imagesize="32"> </gr-avatar>
-          <span
-            class="name"
-            id="hovercardTarget"
-            part="gr-account-label-text"
-            role="button"
-            tabindex="0"
-          >
-            kermit
-          </span>
-          <gr-endpoint-decorator
-            class="accountStatusDecorator"
-            name="account-status-icon"
-          >
-            <gr-endpoint-param name="accountId"></gr-endpoint-param>
-            <span class="rightSidePadding"></span>
-          </gr-endpoint-decorator>
-        </span>
-      </div>
-    `);
-  });
-
-  test('renders clickable', async () => {
-    element.account = kermit;
-    element.clickable = true;
-    await element.updateComplete;
-    expect(element).shadowDom.to.equal(/* HTML */ `
-      <div class="container">
-        <gr-hovercard-account for="hovercardTarget"></gr-hovercard-account>
-        <a class="ownerLink" href="test" tabindex="-1">
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="container">
+          <gr-hovercard-account for="hovercardTarget"></gr-hovercard-account>
           <span class="hovercardTargetWrapper">
             <gr-avatar hidden="" imagesize="32"> </gr-avatar>
             <span
@@ -117,9 +74,44 @@ suite('gr-account-label tests', () => {
               <span class="rightSidePadding"></span>
             </gr-endpoint-decorator>
           </span>
-        </a>
-      </div>
-    `);
+        </div>
+      `
+    );
+  });
+
+  test('renders clickable', async () => {
+    element.account = kermit;
+    element.clickable = true;
+    await element.updateComplete;
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="container">
+          <gr-hovercard-account for="hovercardTarget"></gr-hovercard-account>
+          <a class="ownerLink" href="/q/owner:user-31%2540" tabindex="-1">
+            <span class="hovercardTargetWrapper">
+              <gr-avatar hidden="" imagesize="32"> </gr-avatar>
+              <span
+                class="name"
+                id="hovercardTarget"
+                part="gr-account-label-text"
+                role="button"
+                tabindex="0"
+              >
+                kermit
+              </span>
+              <gr-endpoint-decorator
+                class="accountStatusDecorator"
+                name="account-status-icon"
+              >
+                <gr-endpoint-param name="accountId"></gr-endpoint-param>
+                <span class="rightSidePadding"></span>
+              </gr-endpoint-decorator>
+            </span>
+          </a>
+        </div>
+      `
+    );
   });
 
   suite('_computeName', () => {
@@ -181,7 +173,7 @@ suite('gr-account-label tests', () => {
         owner: kermit,
         reviewers: {},
       };
-      await flush();
+      await waitEventLoop();
     });
 
     test('show attention button', () => {
@@ -192,10 +184,10 @@ suite('gr-account-label tests', () => {
 
     test('tap attention button', async () => {
       const apiSpy = spyRestApi('removeFromAttentionSet');
-      const button = queryAndAssert(element, '#attentionButton');
+      const button = queryAndAssert<GrButton>(element, '#attentionButton');
       assert.ok(button);
       assert.isNull(button.getAttribute('disabled'));
-      MockInteractions.tap(button);
+      button.click();
       assert.isTrue(apiSpy.calledOnce);
       assert.equal(apiSpy.lastCall.args[1], 42);
     });

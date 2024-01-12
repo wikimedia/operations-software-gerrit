@@ -1,22 +1,10 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
-import {fixture} from '@open-wc/testing-helpers';
+import '../../../test/common-test-setup';
+import {fixture, assert} from '@open-wc/testing';
 import {html} from 'lit';
 import './gr-hovercard-account';
 import {GrHovercardAccount} from './gr-hovercard-account';
@@ -31,12 +19,14 @@ import {
   AccountId,
   EmailAddress,
   ReviewerState,
-} from '../../../api/rest-api.js';
+} from '../../../api/rest-api';
 import {
   createAccountDetailWithId,
   createChange,
-} from '../../../test/test-data-generators.js';
-import {GrButton} from '../gr-button/gr-button.js';
+  createDetailedLabelInfo,
+} from '../../../test/test-data-generators';
+import {GrButton} from '../gr-button/gr-button';
+import {EventType} from '../../../types/events';
 
 suite('gr-hovercard-account tests', () => {
   let element: GrHovercardAccount;
@@ -51,7 +41,6 @@ suite('gr-hovercard-account tests', () => {
   };
 
   setup(async () => {
-    stubRestApi('getAccount').returns(Promise.resolve({...ACCOUNT}));
     const change = {
       ...createChange(),
       attention_set: {},
@@ -67,6 +56,7 @@ suite('gr-hovercard-account tests', () => {
       </gr-hovercard-account>`
     );
     await element.show({});
+    element.userModel.setAccount({...ACCOUNT});
     await element.updateComplete;
   });
 
@@ -76,30 +66,74 @@ suite('gr-hovercard-account tests', () => {
   });
 
   test('renders', () => {
-    expect(element).shadowDom.to.equal(/* HTML */ `
-      <div id="container" role="tooltip" tabindex="-1">
-        <div class="top">
-          <div class="avatar">
-            <gr-avatar hidden="" imagesize="56"></gr-avatar>
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div id="container" role="tooltip" tabindex="-1">
+          <div class="top">
+            <div class="avatar">
+              <gr-avatar hidden="" imagesize="56"></gr-avatar>
+            </div>
+            <div class="account">
+              <h3 class="heading-3 name">Kermit The Frog</h3>
+              <div class="email">kermit@gmail.com</div>
+            </div>
           </div>
-          <div class="account">
-            <h3 class="heading-3 name">Kermit The Frog</h3>
-            <div class="email">kermit@gmail.com</div>
+          <gr-endpoint-decorator name="hovercard-status">
+            <gr-endpoint-param name="account"></gr-endpoint-param>
+          </gr-endpoint-decorator>
+          <div class="status">
+            <span class="title">About me:</span>
+            <span class="value">I am a frog</span>
+          </div>
+          <div class="links">
+            <gr-icon icon="link" class="linkIcon"></gr-icon>
+            <a href="/q/owner:kermit%2540gmail.com">Changes</a>
+            ·
+            <a href="/dashboard/31415926535">Dashboard</a>
           </div>
         </div>
-        <gr-endpoint-decorator name="hovercard-status">
-          <gr-endpoint-param name="account"></gr-endpoint-param>
-        </gr-endpoint-decorator>
-        <div class="status">
-          <span class="title">About me:</span>
-          <span class="value">I am a frog</span>
+      `
+    );
+  });
+
+  test('renders without change data', async () => {
+    const elementWithoutChange = await fixture<GrHovercardAccount>(
+      html`<gr-hovercard-account class="hovered" .account=${ACCOUNT}>
+      </gr-hovercard-account>`
+    );
+    await elementWithoutChange.show({});
+    assert.shadowDom.equal(
+      elementWithoutChange,
+      /* HTML */ `
+        <div id="container" role="tooltip" tabindex="-1">
+          <div class="top">
+            <div class="avatar">
+              <gr-avatar hidden="" imagesize="56"> </gr-avatar>
+            </div>
+            <div class="account">
+              <h3 class="heading-3 name">Kermit The Frog</h3>
+              <div class="email">kermit@gmail.com</div>
+            </div>
+          </div>
+          <gr-endpoint-decorator name="hovercard-status">
+            <gr-endpoint-param name="account"> </gr-endpoint-param>
+          </gr-endpoint-decorator>
+          <div class="status">
+            <span class="title"> About me: </span>
+            <span class="value"> I am a frog </span>
+          </div>
+          <div class="links">
+            <gr-icon class="linkIcon" icon="link"> </gr-icon>
+            <a href="/q/owner:kermit%2540gmail.com"> Changes </a>
+            ·
+            <a href="/dashboard/31415926535"> Dashboard </a>
+          </div>
         </div>
-        <div class="links">
-          <iron-icon class="linkIcon" icon="gr-icons:link"></iron-icon>
-          <a href="">Changes</a>·<a href="">Dashboard</a>
-        </div>
-      </div>
-    `);
+      `
+    );
+    elementWithoutChange.mouseHide(new MouseEvent('click'));
+    await elementWithoutChange.updateComplete;
   });
 
   test('account name is shown', () => {
@@ -109,7 +143,7 @@ suite('gr-hovercard-account tests', () => {
 
   test('computePronoun', async () => {
     element.account = createAccountDetailWithId(1);
-    element._selfAccount = createAccountDetailWithId(1);
+    element.selfAccount = createAccountDetailWithId(1);
     await element.updateComplete;
     assert.equal(element.computePronoun(), 'Your');
     element.account = createAccountDetailWithId(2);
@@ -133,13 +167,49 @@ suite('gr-hovercard-account tests', () => {
   });
 
   test('voteable div is displayed', async () => {
-    element.voteableText = 'CodeReview: +2';
+    element.change = {
+      ...createChange(),
+      labels: {
+        Foo: {
+          ...createDetailedLabelInfo(),
+          all: [
+            {
+              _account_id: 7 as AccountId,
+              permitted_voting_range: {max: 2, min: 0},
+            },
+          ],
+        },
+        Bar: {
+          ...createDetailedLabelInfo(),
+          all: [
+            {
+              ...createAccountDetailWithId(1),
+              permitted_voting_range: {max: 1, min: 0},
+            },
+            {
+              _account_id: 7 as AccountId,
+              permitted_voting_range: {max: 1, min: 0},
+            },
+          ],
+        },
+        FooBar: {
+          ...createDetailedLabelInfo(),
+          all: [{_account_id: 7 as AccountId, value: 0}],
+        },
+      },
+      permitted_labels: {
+        Foo: ['-1', ' 0', '+1', '+2'],
+        FooBar: ['-1', ' 0'],
+      },
+    };
+    element.account = createAccountDetailWithId(1);
+
     await element.updateComplete;
     const voteableEl = queryAndAssert<HTMLSpanElement>(
       element,
       '.voteable .value'
     );
-    assert.equal(voteableEl.innerText, element.voteableText);
+    assert.equal(voteableEl.innerText, 'Bar: +1');
   });
 
   test('remove reviewer', async () => {
@@ -253,7 +323,7 @@ suite('gr-hovercard-account tests', () => {
     const showAlertListener = sinon.spy();
     const hideAlertListener = sinon.spy();
     const updatedListener = sinon.spy();
-    element._target.addEventListener('show-alert', showAlertListener);
+    element._target.addEventListener(EventType.SHOW_ALERT, showAlertListener);
     element._target.addEventListener('hide-alert', hideAlertListener);
     element._target.addEventListener('attention-set-updated', updatedListener);
 
@@ -307,7 +377,7 @@ suite('gr-hovercard-account tests', () => {
     const showAlertListener = sinon.spy();
     const hideAlertListener = sinon.spy();
     const updatedListener = sinon.spy();
-    element._target.addEventListener('show-alert', showAlertListener);
+    element._target.addEventListener(EventType.SHOW_ALERT, showAlertListener);
     element._target.addEventListener('hide-alert', hideAlertListener);
     element._target.addEventListener('attention-set-updated', updatedListener);
 

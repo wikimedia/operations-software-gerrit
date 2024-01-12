@@ -1,22 +1,10 @@
 /**
  * @license
- * Copyright (C) 2022 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2022 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
-import {fixture} from '@open-wc/testing-helpers';
+import '../../../test/common-test-setup';
+import {fixture, assert} from '@open-wc/testing';
 import {html} from 'lit';
 import './gr-change-list-column-requirement';
 import {GrChangeListColumnRequirement} from './gr-change-list-column-requirement';
@@ -66,14 +54,11 @@ suite('gr-change-list-column-requirement tests', () => {
       >
       </gr-change-list-column-requirement>`
     );
-    expect(element).shadowDom.to.equal(
+    assert.shadowDom.equal(
+      element,
       /* HTML */
       ` <div class="container" title="Satisfied">
-        <iron-icon
-          class="check-circle-filled"
-          icon="gr-icons:check-circle-filled"
-        >
-        </iron-icon>
+        <gr-icon class="check_circle" filled icon="check_circle"></gr-icon>
       </div>`
     );
   });
@@ -113,14 +98,16 @@ suite('gr-change-list-column-requirement tests', () => {
       >
       </gr-change-list-column-requirement>`
     );
-    expect(element).shadowDom.to.equal(
+    assert.shadowDom.equal(
+      element,
       /* HTML */
       ` <div class="container">
         <gr-vote-chip tooltip-with-who-voted=""></gr-vote-chip>
       </div>`
     );
     const voteChip = queryAndAssert(element, 'gr-vote-chip');
-    expect(voteChip).shadowDom.to.equal(
+    assert.shadowDom.equal(
+      voteChip,
       /* HTML */
       ` <gr-tooltip-content
         class="container"
@@ -160,14 +147,16 @@ suite('gr-change-list-column-requirement tests', () => {
       >
       </gr-change-list-column-requirement>`
     );
-    expect(element).shadowDom.to.equal(
+    assert.shadowDom.equal(
+      element,
       /* HTML */
       ` <div class="container">
         <gr-vote-chip tooltip-with-who-voted=""></gr-vote-chip>
       </div>`
     );
     const voteChip = queryAndAssert(element, 'gr-vote-chip');
-    expect(voteChip).shadowDom.to.equal(
+    assert.shadowDom.equal(
+      voteChip,
       /* HTML */
       ` <gr-tooltip-content
         class="container"

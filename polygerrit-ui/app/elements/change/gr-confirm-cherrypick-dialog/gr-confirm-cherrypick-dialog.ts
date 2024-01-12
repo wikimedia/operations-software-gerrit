@@ -1,25 +1,14 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
 import '@polymer/iron-input/iron-input';
 import '../../../styles/shared-styles';
 import '../../shared/gr-autocomplete/gr-autocomplete';
 import '../../shared/gr-dialog/gr-dialog';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {getAppContext} from '../../../services/app-context';
 import {
   ChangeInfo,
@@ -28,7 +17,7 @@ import {
   CommitId,
   ChangeInfoId,
 } from '../../../types/common';
-import {customElement, property, query, state} from 'lit/decorators';
+import {customElement, property, query, state} from 'lit/decorators.js';
 import {
   AutocompleteQuery,
   AutocompleteSuggestion,
@@ -42,9 +31,11 @@ import {
 import {fireEvent} from '../../../utils/event-util';
 import {css, html, LitElement, PropertyValues} from 'lit';
 import {sharedStyles} from '../../../styles/shared-styles';
-import {choose} from 'lit/directives/choose';
-import {when} from 'lit/directives/when';
+import {choose} from 'lit/directives/choose.js';
+import {when} from 'lit/directives/when.js';
 import {BindValueChangeEvent} from '../../../types/events';
+import {resolve} from '../../../models/dependency';
+import {createSearchUrl} from '../../../models/views/search';
 
 const SUGGESTIONS_LIMIT = 15;
 const CHANGE_SUBJECT_LIMIT = 50;
@@ -134,6 +125,8 @@ export class GrConfirmCherrypickDialog extends LitElement {
   private readonly restApiService = getAppContext().restApiService;
 
   private readonly reporting = getAppContext().reportingService;
+
+  private readonly getNavigation = resolve(this, navigationToken);
 
   constructor() {
     super();
@@ -242,34 +235,40 @@ export class GrConfirmCherrypickDialog extends LitElement {
           Cherry Pick Change to Another Branch
         </div>
         <div class="main" slot="main">
-          ${when(this.showCherryPickTopic, () =>
-            this.renderCherrypickTopicLayout()
-          )}
-          <label for="branchInput"> Cherry Pick to branch </label>
-          <gr-autocomplete
-            id="branchInput"
-            .text=${this.branch}
-            .query=${this.query}
-            placeholder="Destination branch"
-            @text-changed=${(e: BindValueChangeEvent) =>
-              (this.branch = e.detail.value as BranchName)}
-          >
-          </gr-autocomplete>
-          ${when(
-            this.invalidBranch,
-            () => html`
-              <span class="error"
-                >Branch name cannot contain space or commas.</span
-              >
-            `
-          )}
-          ${choose(this.cherryPickType, [
-            [
-              CherryPickType.SINGLE_CHANGE,
-              () => this.renderCherrypickSingleChangeInputs(),
-            ],
-            [CherryPickType.TOPIC, () => this.renderCherrypickTopicTable()],
-          ])}
+          <gr-endpoint-decorator name="cherrypick-main">
+            <gr-endpoint-param name="changes" .value=${this.changes}>
+            </gr-endpoint-param>
+            <gr-endpoint-slot name="top"></gr-endpoint-slot>
+            ${when(this.showCherryPickTopic, () =>
+              this.renderCherrypickTopicLayout()
+            )}
+            <label for="branchInput"> Cherry Pick to branch </label>
+            <gr-autocomplete
+              id="branchInput"
+              .text=${this.branch}
+              .query=${this.query}
+              placeholder="Destination branch"
+              @text-changed=${(e: BindValueChangeEvent) =>
+                (this.branch = e.detail.value as BranchName)}
+            >
+            </gr-autocomplete>
+            ${when(
+              this.invalidBranch,
+              () => html`
+                <span class="error"
+                  >Branch name cannot contain space or commas.</span
+                >
+              `
+            )}
+            ${choose(this.cherryPickType, [
+              [
+                CherryPickType.SINGLE_CHANGE,
+                () => this.renderCherrypickSingleChangeInputs(),
+              ],
+              [CherryPickType.TOPIC, () => this.renderCherrypickTopicTable()],
+            ])}
+            <gr-endpoint-slot name="bottom"></gr-endpoint-slot>
+          </gr-endpoint-decorator>
         </div>
       </gr-dialog>
     `;
@@ -327,7 +326,7 @@ export class GrConfirmCherrypickDialog extends LitElement {
         .maxRows=${15}
         .bindValue=${this.message}
         @bind-value-changed=${(e: BindValueChangeEvent) =>
-          (this.message = e.detail.value)}
+          (this.message = e.detail.value ?? '')}
       ></iron-autogrow-textarea>
     `;
   }
@@ -507,7 +506,6 @@ export class GrConfirmCherrypickDialog extends LitElement {
   }
 
   private computeMessage() {
-    // Polymer 2: check for undefined
     if (
       this.changeStatus === undefined ||
       this.commitNum === undefined ||
@@ -582,9 +580,10 @@ export class GrConfirmCherrypickDialog extends LitElement {
             v => v.status !== ProgressStatus.SUCCESSFUL
           );
           if (!failedOrPending) {
-            /* This needs some more work, as the new topic may not always be
-          created, instead we may end up creating a new patchset */
-            GerritNav.navigateToSearchQuery(`topic: "${topic}"`);
+            // This needs some more work, as the new topic may not always be
+            // created, instead we may end up creating a new patchset */
+            const query = `topic: "${topic}"`;
+            this.getNavigation().setUrl(createSearchUrl({query}));
           }
         });
     });

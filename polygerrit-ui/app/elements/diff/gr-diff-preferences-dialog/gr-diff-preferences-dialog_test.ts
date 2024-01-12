@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-diff-preferences-dialog';
 import {GrDiffPreferencesDialog} from './gr-diff-preferences-dialog';
 import {createDefaultDiffPrefs} from '../../../constants/constants';
@@ -23,7 +11,7 @@ import {queryAndAssert, stubRestApi, waitUntil} from '../../../test/test-utils';
 import {DiffPreferencesInfo} from '../../../api/diff';
 import {ParsedJSON} from '../../../types/common';
 import {GrButton} from '../../shared/gr-button/gr-button';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-diff-preferences-dialog', () => {
   let element: GrDiffPreferencesDialog;
@@ -42,6 +30,50 @@ suite('gr-diff-preferences-dialog', () => {
     element = await fixture<GrDiffPreferencesDialog>(html`
       <gr-diff-preferences-dialog></gr-diff-preferences-dialog>
     `);
+  });
+
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <gr-overlay
+          aria-hidden="true"
+          id="diffPrefsOverlay"
+          style="outline: none; display: none;"
+          tabindex="-1"
+          with-backdrop=""
+        >
+          <div aria-labelledby="diffPreferencesTitle" role="dialog">
+            <h3 class="diffHeader heading-3" id="diffPreferencesTitle">
+              Diff Preferences
+            </h3>
+            <gr-diff-preferences id="diffPreferences"> </gr-diff-preferences>
+            <div class="diffActions">
+              <gr-button
+                aria-disabled="false"
+                id="cancelButton"
+                link=""
+                role="button"
+                tabindex="0"
+              >
+                Cancel
+              </gr-button>
+              <gr-button
+                aria-disabled="true"
+                disabled=""
+                id="saveButton"
+                link=""
+                primary=""
+                role="button"
+                tabindex="-1"
+              >
+                Save
+              </gr-button>
+            </div>
+          </div>
+        </gr-overlay>
+      `
+    );
   });
 
   test('changes applies only on save', async () => {

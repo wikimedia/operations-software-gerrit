@@ -19,12 +19,18 @@ import static com.google.gerrit.index.SchemaUtil.schema;
 import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.SchemaDefinitions;
 
-/** Definition of project index versions (schemata). See {@link SchemaDefinitions}. */
+/**
+ * Definition of project index versions (schemata). See {@link SchemaDefinitions}.
+ *
+ * <p>Upgrades are subject to constraints, see {@code
+ * com.google.gerrit.index.IndexUpgradeValidator}.
+ */
 public class ProjectSchemaDefinitions extends SchemaDefinitions<ProjectData> {
 
   @Deprecated
   static final Schema<ProjectData> V1 =
       schema(
+          /* version= */ 1,
           ProjectField.NAME,
           ProjectField.DESCRIPTION,
           ProjectField.PARENT_NAME,
@@ -38,7 +44,10 @@ public class ProjectSchemaDefinitions extends SchemaDefinitions<ProjectData> {
   @Deprecated static final Schema<ProjectData> V3 = schema(V2);
 
   // Lucene index was changed to add an additional field for sorting.
-  static final Schema<ProjectData> V4 = schema(V3);
+  @Deprecated static final Schema<ProjectData> V4 = schema(V3);
+
+  // Upgrade Lucene to 7.x requires reindexing.
+  static final Schema<ProjectData> V5 = schema(V4);
 
   /**
    * Name of the project index to be used when contacting index backends or loading configurations.

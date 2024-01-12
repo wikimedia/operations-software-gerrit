@@ -1,22 +1,10 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
-import {fixture} from '@open-wc/testing-helpers';
+import '../../../test/common-test-setup';
+import {fixture, assert} from '@open-wc/testing';
 import {html} from 'lit';
 import './gr-submit-requirements';
 import {GrSubmitRequirements} from './gr-submit-requirements';
@@ -28,9 +16,15 @@ import {
   createSubmitRequirementExpressionInfo,
   createSubmitRequirementResultInfo,
   createNonApplicableSubmitRequirementResultInfo,
+  createRunResult,
+  createCheckResult,
 } from '../../../test/test-data-generators';
-import {SubmitRequirementResultInfo} from '../../../api/rest-api';
+import {
+  SubmitRequirementResultInfo,
+  SubmitRequirementStatus,
+} from '../../../api/rest-api';
 import {ParsedChangeInfo} from '../../../types/types';
+import {RunStatus} from '../../../api/checks';
 
 suite('gr-submit-requirements tests', () => {
   let element: GrSubmitRequirements;
@@ -69,48 +63,55 @@ suite('gr-submit-requirements tests', () => {
   });
 
   test('renders', () => {
-    expect(element).shadowDom.to.equal(/* HTML */ `
-      <h3 class="heading-3 metadata-title" id="submit-requirements-caption">
-        Submit Requirements
-      </h3>
-      <table aria-labelledby="submit-requirements-caption" class="requirements">
-        <thead hidden="">
-          <tr>
-            <th>Status</th>
-            <th>Name</th>
-            <th>Votes</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr id="requirement-0-Verified" role="button" tabindex="0">
-            <td>
-              <iron-icon
-                aria-label="satisfied"
-                class="check-circle-filled"
-                icon="gr-icons:check-circle-filled"
-                role="img"
-              >
-              </iron-icon>
-            </td>
-            <td class="name">
-              <gr-limited-text class="name" limit="25"></gr-limited-text>
-            </td>
-            <td>
-              <gr-endpoint-decorator
-                class="votes-cell"
-                name="submit-requirement-verified"
-              >
-                <gr-endpoint-param name="change"></gr-endpoint-param>
-                <gr-endpoint-param name="requirement"></gr-endpoint-param>
-                <gr-vote-chip></gr-vote-chip>
-              </gr-endpoint-decorator>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <gr-submit-requirement-hovercard for="requirement-0-Verified">
-      </gr-submit-requirement-hovercard>
-    `);
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <h3 class="heading-3 metadata-title" id="submit-requirements-caption">
+          Submit Requirements
+        </h3>
+        <table
+          aria-labelledby="submit-requirements-caption"
+          class="requirements"
+        >
+          <thead hidden="">
+            <tr>
+              <th>Status</th>
+              <th>Name</th>
+              <th>Votes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr id="requirement-0-Verified" role="button" tabindex="0">
+              <td>
+                <gr-icon
+                  aria-label="satisfied"
+                  role="img"
+                  class="check_circle"
+                  filled
+                  icon="check_circle"
+                >
+                </gr-icon>
+              </td>
+              <td class="name">
+                <gr-limited-text class="name"></gr-limited-text>
+              </td>
+              <td>
+                <gr-endpoint-decorator
+                  class="votes-cell"
+                  name="submit-requirement-verified"
+                >
+                  <gr-endpoint-param name="change"></gr-endpoint-param>
+                  <gr-endpoint-param name="requirement"></gr-endpoint-param>
+                  <gr-vote-chip></gr-vote-chip>
+                </gr-endpoint-decorator>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <gr-submit-requirement-hovercard for="requirement-0-Verified">
+        </gr-submit-requirement-hovercard>
+      `
+    );
   });
 
   suite('votes-cell', () => {
@@ -120,11 +121,14 @@ suite('gr-submit-requirements tests', () => {
     });
     test('with vote', () => {
       const votesCell = element.shadowRoot?.querySelectorAll('.votes-cell');
-      expect(votesCell?.[0]).dom.equal(/* HTML */ `
-        <div class="votes-cell">
-          <gr-vote-chip> </gr-vote-chip>
-        </div>
-      `);
+      assert.dom.equal(
+        votesCell?.[0],
+        /* HTML */ `
+          <div class="votes-cell">
+            <gr-vote-chip> </gr-vote-chip>
+          </div>
+        `
+      );
     });
 
     test('no votes', async () => {
@@ -137,9 +141,10 @@ suite('gr-submit-requirements tests', () => {
       element.change = modifiedChange;
       await element.updateComplete;
       const votesCell = element.shadowRoot?.querySelectorAll('.votes-cell');
-      expect(votesCell?.[0]).dom.equal(/* HTML */ `
-        <div class="votes-cell">No votes</div>
-      `);
+      assert.dom.equal(
+        votesCell?.[0],
+        /* HTML */ ' <div class="votes-cell">No votes</div> '
+      );
     });
 
     test('without label to vote on', async () => {
@@ -149,15 +154,139 @@ suite('gr-submit-requirements tests', () => {
       element.change = modifiedChange;
       await element.updateComplete;
       const votesCell = element.shadowRoot?.querySelectorAll('.votes-cell');
-      expect(votesCell?.[0]).dom.equal(/* HTML */ `
-        <div class="votes-cell">Satisfied</div>
-      `);
+      assert.dom.equal(
+        votesCell?.[0],
+        /* HTML */ ' <div class="votes-cell">Satisfied</div> '
+      );
+    });
+
+    test('checks', async () => {
+      element.runs = [
+        {
+          ...createRunResult(),
+          labelName: 'Verified',
+          results: [createCheckResult()],
+        },
+      ];
+      await element.updateComplete;
+      const votesCell = element.shadowRoot?.querySelectorAll('.votes-cell');
+      assert.dom.equal(
+        votesCell?.[0],
+        /* HTML */ `
+          <div class="votes-cell">
+            <gr-vote-chip></gr-vote-chip>
+            <gr-checks-chip></gr-checks-chip>
+          </div>
+        `
+      );
+    });
+
+    test('running checks', async () => {
+      element.runs = [
+        {
+          ...createRunResult(),
+          status: RunStatus.RUNNING,
+          labelName: 'Verified',
+          results: [createCheckResult()],
+        },
+      ];
+      await element.updateComplete;
+      const votesCell = element.shadowRoot?.querySelectorAll('.votes-cell');
+      assert.dom.equal(
+        votesCell?.[0],
+        /* HTML */ `
+          <div class="votes-cell">
+            <gr-vote-chip></gr-vote-chip>
+            <gr-checks-chip></gr-checks-chip>
+          </div>
+        `
+      );
+    });
+
+    test('with override label', async () => {
+      const modifiedChange = {...change};
+      modifiedChange.labels = {
+        Override: {
+          ...createDetailedLabelInfo(),
+          all: [
+            {
+              ...createApproval(),
+              value: 2,
+            },
+          ],
+        },
+      };
+      modifiedChange.submit_requirements = [
+        {
+          ...createSubmitRequirementResultInfo(),
+          status: SubmitRequirementStatus.OVERRIDDEN,
+          override_expression_result: createSubmitRequirementExpressionInfo(
+            'label:Override=MAX -label:Override=MIN'
+          ),
+        },
+      ];
+      element.change = modifiedChange;
+      await element.updateComplete;
+      const votesCell = element.shadowRoot?.querySelectorAll('.votes-cell');
+      assert.dom.equal(
+        votesCell?.[0],
+        /* HTML */ `<div class="votes-cell">
+          <gr-vote-chip> </gr-vote-chip>
+          <span class="overrideLabel"> Override </span>
+        </div>`
+      );
+    });
+
+    test('with override with 2 labels', async () => {
+      const modifiedChange = {...change};
+      modifiedChange.labels = {
+        Override: {
+          ...createDetailedLabelInfo(),
+          all: [
+            {
+              ...createApproval(),
+              value: 2,
+            },
+          ],
+        },
+        Override2: {
+          ...createDetailedLabelInfo(),
+          all: [
+            {
+              ...createApproval(),
+              value: 2,
+            },
+          ],
+        },
+      };
+      modifiedChange.submit_requirements = [
+        {
+          ...createSubmitRequirementResultInfo(),
+          status: SubmitRequirementStatus.OVERRIDDEN,
+          override_expression_result: createSubmitRequirementExpressionInfo(
+            'label:Override=MAX label:Override2=MAX'
+          ),
+        },
+      ];
+      element.change = modifiedChange;
+      await element.updateComplete;
+      const votesCell = element.shadowRoot?.querySelectorAll('.votes-cell');
+      assert.dom.equal(
+        votesCell?.[0],
+        /* HTML */ `<div class="votes-cell">
+          <gr-vote-chip> </gr-vote-chip>
+          <span class="overrideLabel"> Override </span>
+          <span class="separator"></span>
+          <gr-vote-chip> </gr-vote-chip>
+          <span class="overrideLabel"> Override2 </span>
+        </div>`
+      );
     });
   });
 
   test('calculateEndpointName()', () => {
     assert.equal(
-      element.calculateEndpointName('code-owners~CodeOwnerSub'),
+      element.computeEndpointName('code-owners~CodeOwnerSub'),
       'submit-requirement-codeowners'
     );
   });

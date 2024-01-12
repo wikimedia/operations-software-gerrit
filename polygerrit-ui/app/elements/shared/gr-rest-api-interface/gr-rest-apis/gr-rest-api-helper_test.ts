@@ -1,33 +1,22 @@
 /**
  * @license
- * Copyright (C) 2019 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2019 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../../test/common-test-setup-karma';
+import '../../../../test/common-test-setup';
 import {
   SiteBasedCache,
   FetchPromisesCache,
   GrRestApiHelper,
 } from './gr-rest-api-helper';
 import {getAppContext} from '../../../../services/app-context';
-import {stubAuth} from '../../../../test/test-utils';
+import {stubAuth, waitEventLoop} from '../../../../test/test-utils';
 import {FakeScheduler} from '../../../../services/scheduler/fake-scheduler';
 import {RetryScheduler} from '../../../../services/scheduler/retry-scheduler';
 import {ParsedJSON} from '../../../../types/common';
 import {HttpMethod} from '../../../../api/rest-api';
 import {SinonFakeTimers} from 'sinon';
+import {assert} from '@open-wc/testing';
 
 function makeParsedJSON<T>(val: T): ParsedJSON {
   return val as unknown as ParsedJSON;
@@ -82,13 +71,13 @@ suite('gr-rest-api-helper tests', () => {
   async function assertReadRequest() {
     assert.equal(readScheduler.scheduled.length, 1);
     await readScheduler.resolve();
-    await flush();
+    await waitEventLoop();
   }
 
   async function assertWriteRequest() {
     assert.equal(writeScheduler.scheduled.length, 1);
     await writeScheduler.resolve();
-    await flush();
+    await waitEventLoop();
   }
 
   suite('send()', () => {
@@ -303,7 +292,7 @@ suite('gr-rest-api-helper tests', () => {
       );
       // Flush the retry scheduler
       clock.tick(50);
-      await flush();
+      await waitEventLoop();
       // We expect a retry.
       await assertReadRequest();
       const res: Response = await promise;

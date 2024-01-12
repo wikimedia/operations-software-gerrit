@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '../gr-account-chip/gr-account-chip';
 import '../gr-account-entry/gr-account-entry';
@@ -24,94 +13,48 @@ import {
   GroupInfo,
   EmailAddress,
   SuggestedReviewerGroupInfo,
-  SuggestedReviewerAccountInfo,
+  SuggestedReviewerInfo,
+  isGroup,
 } from '../../../types/common';
 import {ReviewerSuggestionsProvider} from '../../../scripts/gr-reviewer-suggestions-provider/gr-reviewer-suggestions-provider';
 import {GrAccountEntry} from '../gr-account-entry/gr-account-entry';
 import {GrAccountChip} from '../gr-account-chip/gr-account-chip';
-import {PaperInputElementExt} from '../../../types/types';
 import {fire, fireAlert} from '../../../utils/event-util';
-import {accountOrGroupKey} from '../../../utils/account-util';
+import {
+  AccountInput,
+  getUserId,
+  isAccountNewlyAdded,
+  isAccountObject,
+  isSuggestedReviewerGroupInfo,
+  RawAccountInput,
+} from '../../../utils/account-util';
 import {LitElement, css, html, PropertyValues} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
+import {customElement, property, query, state} from 'lit/decorators.js';
 import {sharedStyles} from '../../../styles/shared-styles';
-import {classMap} from 'lit/directives/class-map';
+import {classMap} from 'lit/directives/class-map.js';
 import {
   AutocompleteQuery,
   AutocompleteSuggestion,
   GrAutocomplete,
 } from '../gr-autocomplete/gr-autocomplete';
 import {ValueChangedEvent} from '../../../types/events';
-import {queryAndAssert} from '../../../utils/common-util';
+import {difference, queryAndAssert} from '../../../utils/common-util';
+import {PaperInputElement} from '@polymer/paper-input/paper-input';
+import {IronInputElement} from '@polymer/iron-input';
+import {ReviewerState} from '../../../api/rest-api';
 
 const VALID_EMAIL_ALERT = 'Please input a valid email.';
+const VALID_USER_GROUP_ALERT = 'Please input a valid user or group.';
 
 declare global {
   interface HTMLElementEventMap {
     'accounts-changed': ValueChangedEvent<(AccountInfo | GroupInfo)[]>;
     'pending-confirmation-changed': ValueChangedEvent<SuggestedReviewerGroupInfo | null>;
+    'account-added': CustomEvent<{account: AccountInfo | GroupInfo}>;
   }
   interface HTMLElementTagNameMap {
     'gr-account-list': GrAccountList;
   }
-  interface HTMLElementEventMap {
-    'account-added': CustomEvent<AccountInputDetail>;
-  }
-}
-export interface AccountInputDetail {
-  account: AccountInput;
-}
-
-/** Supported input to be added */
-export type RawAccountInput =
-  | string
-  | SuggestedReviewerAccountInfo
-  | SuggestedReviewerGroupInfo;
-
-// type guards for SuggestedReviewerAccountInfo and SuggestedReviewerGroupInfo
-function isAccountObject(
-  x: RawAccountInput
-): x is SuggestedReviewerAccountInfo {
-  return !!(x as SuggestedReviewerAccountInfo).account;
-}
-
-function isSuggestedReviewerGroupInfo(
-  x: RawAccountInput
-): x is SuggestedReviewerGroupInfo {
-  return !!(x as SuggestedReviewerGroupInfo).group;
-}
-
-// Internal input type with account info
-export interface AccountInfoInput extends AccountInfo {
-  _group?: boolean;
-  _account?: boolean;
-  _pendingAdd?: boolean;
-  confirmed?: boolean;
-}
-
-// Internal input type with group info
-export interface GroupInfoInput extends GroupInfo {
-  _group?: boolean;
-  _account?: boolean;
-  _pendingAdd?: boolean;
-  confirmed?: boolean;
-}
-
-function isAccountInfoInput(x: AccountInput): x is AccountInfoInput {
-  const input = x as AccountInfoInput;
-  return !!input._account || !!input._account_id || !!input.email;
-}
-
-function isGroupInfoInput(x: AccountInput): x is GroupInfoInput {
-  const input = x as GroupInfoInput;
-  return !!input._group || !!input.id;
-}
-
-export type AccountInput = AccountInfoInput | GroupInfoInput;
-
-export interface AccountAddition {
-  account?: AccountInfoInput;
-  group?: GroupInfoInput;
 }
 
 @customElement('gr-account-list')
@@ -137,6 +80,9 @@ export class GrAccountList extends LitElement {
 
   @property({type: Boolean})
   disabled = false;
+
+  @property({type: String})
+  reviewerState?: ReviewerState;
 
   /**
    * Returns suggestions and convert them to list item
@@ -166,17 +112,12 @@ export class GrAccountList extends LitElement {
   @property({type: Array})
   removableValues?: AccountInput[];
 
-  @property({type: Number})
-  maxCount = 0;
-
   /**
    * Returns suggestion items
    */
-  @state() private querySuggestions: AutocompleteQuery;
+  @state() private querySuggestions: AutocompleteQuery<SuggestedReviewerInfo>;
 
   private readonly reporting = getAppContext().reportingService;
-
-  private pendingRemoval: Set<AccountInput> = new Set();
 
   constructor() {
     super();
@@ -202,7 +143,7 @@ export class GrAccountList extends LitElement {
       .group {
         --account-label-suffix: ' (group)';
       }
-      .pending-add {
+      .newlyAdded {
         font-style: italic;
       }
       .list {
@@ -219,9 +160,14 @@ export class GrAccountList extends LitElement {
           account => html`
             <gr-account-chip
               .account=${account}
+              .change=${this.change}
               class=${classMap({
-                group: !!account._group,
-                pendingAdd: !!account._pendingAdd,
+                group: isGroup(account),
+                newlyAdded: isAccountNewlyAdded(
+                  account,
+                  this.reviewerState,
+                  this.change
+                ),
               })}
               ?removable=${this.computeRemovable(account)}
               @keydown=${this.handleChipKeydown}
@@ -233,8 +179,7 @@ export class GrAccountList extends LitElement {
       </div>
       <gr-account-entry
         borderless=""
-        ?hidden=${(this.maxCount && this.maxCount <= this.accounts.length) ||
-        this.readonly}
+        ?hidden=${this.readonly}
         id="entry"
         .placeholder=${this.placeholder}
         @add=${this.handleAdd}
@@ -265,7 +210,9 @@ export class GrAccountList extends LitElement {
     return this.entry?.focusStart;
   }
 
-  getSuggestions(input: string): Promise<AutocompleteSuggestion[]> {
+  getSuggestions(
+    input: string
+  ): Promise<AutocompleteSuggestion<SuggestedReviewerInfo>[]> {
     const provider = this.suggestionsProvider;
     if (!provider) return Promise.resolve([]);
     return provider.getSuggestions(input).then(suggestions => {
@@ -286,26 +233,28 @@ export class GrAccountList extends LitElement {
     this.addAccountItem(item);
   }
 
-  addAccountItem(item: RawAccountInput) {
+  /**
+   * Check if account or group is valid and add it.
+   *
+   * @return true if account or group is added.
+   */
+  addAccountItem(item: RawAccountInput): boolean {
     // Append new account or group to the accounts property. We add our own
     // internal properties to the account/group here, so we clone the object
     // to avoid cluttering up the shared change object.
-    let account;
-    let group;
+    let accountOrGroup: AccountInfo | GroupInfo | undefined;
     let itemTypeAdded = 'unknown';
     if (isAccountObject(item)) {
-      account = {...item.account, _pendingAdd: true};
-      this.removeFromPendingRemoval(account);
-      this.accounts.push(account);
+      accountOrGroup = {...item.account};
+      this.accounts.push(accountOrGroup);
       itemTypeAdded = 'account';
     } else if (isSuggestedReviewerGroupInfo(item)) {
       if (item.confirm) {
         this.pendingConfirmation = item;
-        return;
+        return false;
       }
-      group = {...item.group, _pendingAdd: true, _group: true};
-      this.accounts.push(group);
-      this.removeFromPendingRemoval(group);
+      accountOrGroup = {...item.group};
+      this.accounts.push(accountOrGroup);
       itemTypeAdded = 'group';
     } else if (this.allowAnyInput) {
       if (!item.includes('@')) {
@@ -315,14 +264,17 @@ export class GrAccountList extends LitElement {
         fireAlert(this, VALID_EMAIL_ALERT);
         return false;
       } else {
-        account = {email: item as EmailAddress, _pendingAdd: true};
-        this.accounts.push(account);
-        this.removeFromPendingRemoval(account);
+        accountOrGroup = {email: item as EmailAddress};
+        this.accounts.push(accountOrGroup);
         itemTypeAdded = 'email';
       }
     }
+    if (!accountOrGroup) {
+      fireAlert(this, VALID_USER_GROUP_ALERT);
+      return false;
+    }
     fire(this, 'accounts-changed', {value: this.accounts.slice()});
-    fire(this, 'account-added', {account: (account ?? group)! as AccountInput});
+    fire(this, 'account-added', {account: accountOrGroup});
     this.reporting.reportInteraction(`Add to ${this.id}`, {itemTypeAdded});
     this.pendingConfirmation = null;
     this.requestUpdate();
@@ -333,24 +285,10 @@ export class GrAccountList extends LitElement {
     this.accounts.push({
       ...group,
       confirmed: true,
-      _pendingAdd: true,
-      _group: true,
     });
     this.pendingConfirmation = null;
     fire(this, 'accounts-changed', {value: this.accounts});
     this.requestUpdate();
-  }
-
-  // private but used in test
-  computeChipClass(account: AccountInput) {
-    const classes = [];
-    if (account._group) {
-      classes.push('group');
-    }
-    if (account._pendingAdd) {
-      classes.push('pendingAdd');
-    }
-    return classes.join(' ');
   }
 
   // private but used in test
@@ -360,14 +298,11 @@ export class GrAccountList extends LitElement {
     }
     if (this.removableValues) {
       for (let i = 0; i < this.removableValues.length; i++) {
-        if (
-          accountOrGroupKey(this.removableValues[i]) ===
-          accountOrGroupKey(account)
-        ) {
+        if (getUserId(this.removableValues[i]) === getUserId(account)) {
           return true;
         }
       }
-      return !!account._pendingAdd;
+      return isAccountNewlyAdded(account, this.reviewerState, this.change);
     }
     return true;
   }
@@ -380,28 +315,24 @@ export class GrAccountList extends LitElement {
 
   removeAccount(toRemove?: AccountInput) {
     if (!toRemove || !this.computeRemovable(toRemove)) {
-      return;
+      return false;
     }
     for (let i = 0; i < this.accounts.length; i++) {
-      if (accountOrGroupKey(toRemove) === accountOrGroupKey(this.accounts[i])) {
+      if (getUserId(toRemove) === getUserId(this.accounts[i])) {
         this.accounts.splice(i, 1);
-        this.pendingRemoval.add(toRemove);
         this.reporting.reportInteraction(`Remove from ${this.id}`);
         this.requestUpdate();
         fire(this, 'accounts-changed', {value: this.accounts.slice()});
-        return;
+        return true;
       }
     }
-    this.reporting.error(
-      new Error(`Received "remove" event for missing account: ${toRemove}`)
-    );
+    return false;
   }
 
   // private but used in test
-  getOwnNativeInput(paperInput: PaperInputElementExt) {
-    // In Polymer 2 inputElement isn't nativeInput anymore
-    return (paperInput.$.nativeInput ||
-      paperInput.inputElement) as HTMLTextAreaElement;
+  getOwnNativeInput(paperInput: PaperInputElement) {
+    return (paperInput.inputElement as IronInputElement)
+      .inputElement as HTMLInputElement;
   }
 
   private handleInputKeydown(e: KeyboardEvent) {
@@ -414,11 +345,11 @@ export class GrAccountList extends LitElement {
     ) {
       return;
     }
-    switch (e.keyCode) {
-      case 8: // Backspace
+    switch (e.key) {
+      case 'Backspace':
         this.removeAccount(this.accounts[this.accounts.length - 1]);
         break;
-      case 37: // Left arrow
+      case 'ArrowLeft':
         if (this.accountChips[this.accountChips.length - 1]) {
           this.accountChips[this.accountChips.length - 1].focus();
         }
@@ -430,11 +361,11 @@ export class GrAccountList extends LitElement {
     const chip = e.target as GrAccountChip;
     const chips = this.accountChips;
     const index = chips.indexOf(chip);
-    switch (e.keyCode) {
-      case 8: // Backspace
-      case 13: // Enter
-      case 32: // Spacebar
-      case 46: // Delete
+    switch (e.key) {
+      case 'Backspace':
+      case 'Enter':
+      case ' ':
+      case 'Delete':
         this.removeAccount(chip.account);
         // Splice from this array to avoid inconsistent ordering of
         // event handling.
@@ -447,13 +378,13 @@ export class GrAccountList extends LitElement {
           this.entry?.focus();
         }
         break;
-      case 37: // Left arrow
+      case 'ArrowLeft':
         if (index > 0) {
           chip.blur();
           chips[index - 1].focus();
         }
         break;
-      case 39: // Right arrow
+      case 'ArrowRight':
         chip.blur();
         if (index < chips.length - 1) {
           chips[index + 1].focus();
@@ -484,37 +415,19 @@ export class GrAccountList extends LitElement {
     return wasSubmitted;
   }
 
-  additions(): AccountAddition[] {
-    return this.accounts
-      .filter(account => account._pendingAdd)
-      .map(account => {
-        if (isGroupInfoInput(account)) {
-          return {group: account};
-        } else if (isAccountInfoInput(account)) {
-          return {account};
-        } else {
-          throw new Error('AccountInput must be either Account or Group.');
-        }
-      });
+  additions(): AccountInput[] {
+    if (!this.change) return [];
+    return this.accounts.filter(account =>
+      isAccountNewlyAdded(account, this.reviewerState, this.change)
+    );
   }
 
-  removals(): AccountAddition[] {
-    return Array.from(this.pendingRemoval).map(account => {
-      if (isGroupInfoInput(account)) {
-        return {group: account};
-      } else if (isAccountInfoInput(account)) {
-        return {account};
-      } else {
-        throw new Error('AccountInput must be either Account or Group.');
-      }
-    });
-  }
-
-  private removeFromPendingRemoval(account: AccountInput) {
-    this.pendingRemoval.delete(account);
-  }
-
-  clearPendingRemovals() {
-    this.pendingRemoval.clear();
+  removals(): AccountInfo[] {
+    if (!this.reviewerState) return [];
+    return difference(
+      this.change?.reviewers[this.reviewerState] ?? [],
+      this.accounts,
+      (a, b) => getUserId(a) === getUserId(b)
+    );
   }
 }

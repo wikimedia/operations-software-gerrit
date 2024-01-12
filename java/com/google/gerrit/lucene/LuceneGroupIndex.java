@@ -15,16 +15,16 @@
 package com.google.gerrit.lucene;
 
 import static com.google.common.collect.Iterables.getOnlyElement;
-import static com.google.gerrit.server.index.group.GroupField.UUID;
+import static com.google.gerrit.server.index.group.GroupField.UUID_FIELD_SPEC;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.entities.InternalGroup;
 import com.google.gerrit.exceptions.StorageException;
-import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.Schema.Values;
+import com.google.gerrit.index.SchemaFieldDefs.SchemaField;
 import com.google.gerrit.index.query.DataSource;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
@@ -46,9 +46,9 @@ import org.apache.lucene.index.Term;
 import org.apache.lucene.search.SearcherFactory;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
+import org.apache.lucene.store.ByteBuffersDirectory;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
-import org.apache.lucene.store.RAMDirectory;
 import org.apache.lucene.util.BytesRef;
 import org.eclipse.jgit.lib.Config;
 
@@ -57,14 +57,14 @@ public class LuceneGroupIndex extends AbstractLuceneIndex<AccountGroup.UUID, Int
 
   private static final String GROUPS = "groups";
 
-  private static final String UUID_SORT_FIELD = sortFieldName(UUID);
+  private static final String UUID_SORT_FIELD = sortFieldName(UUID_FIELD_SPEC);
 
   private static Term idTerm(InternalGroup group) {
     return idTerm(group.getGroupUUID());
   }
 
   private static Term idTerm(AccountGroup.UUID uuid) {
-    return QueryBuilder.stringTerm(UUID.getName(), uuid.get());
+    return QueryBuilder.stringTerm(UUID_FIELD_SPEC.getName(), uuid.get());
   }
 
   private final GerritIndexWriterConfig indexWriterConfig;
@@ -74,7 +74,7 @@ public class LuceneGroupIndex extends AbstractLuceneIndex<AccountGroup.UUID, Int
   private static Directory dir(Schema<?> schema, Config cfg, SitePaths sitePaths)
       throws IOException {
     if (LuceneIndexModule.isInMemoryTest(cfg)) {
-      return new RAMDirectory();
+      return new ByteBuffersDirectory();
     }
     Path indexDir = LuceneVersionManager.getDir(sitePaths, GROUPS, schema);
     return FSDirectory.open(indexDir);
@@ -107,8 +107,8 @@ public class LuceneGroupIndex extends AbstractLuceneIndex<AccountGroup.UUID, Int
   @Override
   void add(Document doc, Values<InternalGroup> values) {
     // Add separate DocValues field for the field that is needed for sorting.
-    FieldDef<InternalGroup, ?> f = values.getField();
-    if (f == UUID) {
+    SchemaField<InternalGroup, ?> f = values.getField();
+    if (f == UUID_FIELD_SPEC) {
       String value = (String) getOnlyElement(values.getValues());
       doc.add(new SortedDocValuesField(UUID_SORT_FIELD, new BytesRef(value)));
     }
@@ -153,7 +153,8 @@ public class LuceneGroupIndex extends AbstractLuceneIndex<AccountGroup.UUID, Int
 
   @Override
   protected InternalGroup fromDocument(Document doc) {
-    AccountGroup.UUID uuid = AccountGroup.uuid(doc.getField(UUID.getName()).stringValue());
+    AccountGroup.UUID uuid =
+        AccountGroup.uuid(doc.getField(UUID_FIELD_SPEC.getName()).stringValue());
     // Use the GroupCache rather than depending on any stored fields in the
     // document (of which there shouldn't be any).
     return groupCache.get().get(uuid).orElse(null);

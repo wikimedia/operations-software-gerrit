@@ -1,24 +1,12 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-repo-access';
 import {GrRepoAccess} from './gr-repo-access';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {toSortedPermissionsArray} from '../../../utils/access-util';
 import {
   addListenerForTest,
@@ -43,7 +31,8 @@ import {
 import {GrAccessSection} from '../gr-access-section/gr-access-section';
 import {GrPermission} from '../gr-permission/gr-permission';
 import {createChange} from '../../../test/test-data-generators';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
+import {testResolver} from '../../../test/common-test-setup';
 
 suite('gr-repo-access tests', () => {
   let element: GrRepoAccess;
@@ -125,6 +114,7 @@ suite('gr-repo-access tests', () => {
       name: 'Create Account',
     },
   };
+
   setup(async () => {
     element = await fixture<GrRepoAccess>(html`
       <gr-repo-access></gr-repo-access>
@@ -135,6 +125,65 @@ suite('gr-repo-access tests', () => {
     element.ownerOf = [];
     element.canUpload = false;
     await element.updateComplete;
+  });
+
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="main">
+          <div id="loading">Loading...</div>
+          <div id="loadedContent">
+            <h3 class="heading-3" id="inheritsFrom">
+              <span class="rightsText"> Rights Inherit From </span>
+              <a href="" id="inheritFromName" rel="noopener"> </a>
+              <gr-autocomplete id="editInheritFromInput"> </gr-autocomplete>
+            </h3>
+            <div class="weblinks">History:</div>
+            <div class="referenceContainer">
+              <gr-button
+                aria-disabled="false"
+                id="addReferenceBtn"
+                role="button"
+                tabindex="0"
+              >
+                Add Reference
+              </gr-button>
+            </div>
+            <div>
+              <gr-button
+                aria-disabled="false"
+                id="editBtn"
+                role="button"
+                tabindex="0"
+              >
+                Edit
+              </gr-button>
+              <gr-button
+                aria-disabled="false"
+                class="invisible"
+                id="saveBtn"
+                primary=""
+                role="button"
+                tabindex="0"
+              >
+                Save
+              </gr-button>
+              <gr-button
+                aria-disabled="false"
+                class="invisible"
+                id="saveReviewBtn"
+                primary=""
+                role="button"
+                tabindex="0"
+              >
+                Save for review
+              </gr-button>
+            </div>
+          </div>
+        </div>
+      `
+    );
   });
 
   test('_repoChanged called when repo name changes', async () => {
@@ -922,6 +971,22 @@ suite('gr-repo-access tests', () => {
       assert.deepEqual(element.computeAddAndRemove(), expectedInput);
     });
 
+    test('add and remove and re-add ref', async () => {
+      // refs/for/* is added
+      queryAndAssert<GrButton>(element, '#addReferenceBtn').click();
+      await element.updateComplete;
+
+      // refs/for/* is removed
+      element.handleAddedSectionRemoved(1);
+      await element.updateComplete;
+
+      // refs/for/* is re-added without extra starts
+      queryAndAssert<GrButton>(element, '#addReferenceBtn').click();
+      await element.updateComplete;
+
+      assert.equal(element.sections![1].id, 'refs/for/*');
+    });
+
     test('computeAddAndRemove new section', async () => {
       // Add a new permission to a section
       let expectedInput = {};
@@ -1376,7 +1441,7 @@ suite('gr-repo-access tests', () => {
       stubRestApi('getRepoAccessRights').returns(
         Promise.resolve(JSON.parse(JSON.stringify(accessRes)))
       );
-      const navigateToChangeStub = sinon.stub(GerritNav, 'navigateToChange');
+      const setUrlStub = sinon.stub(testResolver(navigationToken), 'setUrl');
       let resolver: (value: Response | PromiseLike<Response>) => void;
       const saveStub = stubRestApi('setRepoAccessRights').returns(
         new Promise(r => (resolver = r))
@@ -1395,7 +1460,7 @@ suite('gr-repo-access tests', () => {
       resolver!({status: 200} as Response);
       await element.updateComplete;
       assert.isTrue(saveStub.called);
-      assert.isTrue(navigateToChangeStub.notCalled);
+      assert.isTrue(setUrlStub.notCalled);
     });
 
     test('handleSaveForReview', async () => {
@@ -1426,7 +1491,7 @@ suite('gr-repo-access tests', () => {
       stubRestApi('getRepoAccessRights').returns(
         Promise.resolve(JSON.parse(JSON.stringify(accessRes)))
       );
-      const navigateToChangeStub = sinon.stub(GerritNav, 'navigateToChange');
+      const setUrlStub = sinon.stub(testResolver(navigationToken), 'setUrl');
       let resolver: (value: ChangeInfo | PromiseLike<ChangeInfo>) => void;
       const saveForReviewStub = stubRestApi(
         'setRepoAccessRightsForReview'
@@ -1447,8 +1512,9 @@ suite('gr-repo-access tests', () => {
       resolver!(createChange());
       await element.updateComplete;
       assert.isTrue(saveForReviewStub.called);
+      assert.isTrue(setUrlStub.called);
       assert.isTrue(
-        navigateToChangeStub.lastCall.calledWithExactly(createChange())
+        setUrlStub.lastCall.args?.[0]?.includes(`${createChange()._number}`)
       );
     });
   });

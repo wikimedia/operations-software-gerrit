@@ -1,24 +1,18 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
+import {assert} from '@open-wc/testing';
 import {ChangeStatus} from '../constants/constants';
 import {ChangeStates} from '../elements/shared/gr-change-status/gr-change-status';
-import '../test/common-test-setup-karma';
-import {createChange, createRevisions} from '../test/test-data-generators';
+import '../test/common-test-setup';
+import {
+  createAccountWithId,
+  createChange,
+  createRevisions,
+  createServiceUserWithId,
+} from '../test/test-data-generators';
 import {
   AccountId,
   CommitId,
@@ -33,6 +27,9 @@ import {
   changePath,
   changeStatuses,
   isRemovableReviewer,
+  ListChangesOption,
+  listChangesOptionsToHex,
+  hasHumanReviewer,
 } from './change-util';
 
 suite('change-util tests', () => {
@@ -125,8 +122,11 @@ suite('change-util tests', () => {
       current_revision: 'rev1' as CommitId,
       status: ChangeStatus.MERGED,
     };
-    const statuses = changeStatuses(change);
-    assert.deepEqual(statuses, [ChangeStates.MERGED]);
+    assert.deepEqual(changeStatuses(change), [ChangeStates.MERGED]);
+    change.is_private = true;
+    assert.deepEqual(changeStatuses(change), [ChangeStates.MERGED]);
+    change.work_in_progress = true;
+    assert.deepEqual(changeStatuses(change), [ChangeStates.MERGED]);
   });
 
   test('Abandoned status', () => {
@@ -137,8 +137,11 @@ suite('change-util tests', () => {
       status: ChangeStatus.ABANDONED,
       mergeable: false,
     };
-    const statuses = changeStatuses(change);
-    assert.deepEqual(statuses, [ChangeStates.ABANDONED]);
+    assert.deepEqual(changeStatuses(change), [ChangeStates.ABANDONED]);
+    change.is_private = true;
+    assert.deepEqual(changeStatuses(change), [ChangeStates.ABANDONED]);
+    change.work_in_progress = true;
+    assert.deepEqual(changeStatuses(change), [ChangeStates.ABANDONED]);
   });
 
   test('Open status with private and wip', () => {
@@ -173,6 +176,26 @@ suite('change-util tests', () => {
       ChangeStates.WIP,
       ChangeStates.PRIVATE,
     ]);
+  });
+
+  test('hasHumanReviewer', () => {
+    const owner = createAccountWithId(1);
+    const change = {
+      ...createChange(),
+      _number: 1 as NumericChangeId,
+      subject: 'Subject 1',
+      owner,
+      reviewers: {
+        REVIEWER: [owner],
+      },
+    };
+    assert.isFalse(hasHumanReviewer(change));
+
+    change.reviewers.REVIEWER.push(createServiceUserWithId(2));
+    assert.isFalse(hasHumanReviewer(change));
+
+    change.reviewers.REVIEWER.push(createAccountWithId(3));
+    assert.isTrue(hasHumanReviewer(change));
   });
 
   test('isRemovableReviewer', () => {
@@ -236,5 +259,19 @@ suite('change-util tests', () => {
     assert.isTrue(changeIsAbandoned(change));
     change.status = ChangeStatus.NEW;
     assert.isFalse(changeIsAbandoned(change));
+  });
+
+  test('listChangesOptionsToHex', () => {
+    const changeActionsHex = listChangesOptionsToHex(
+      ListChangesOption.MESSAGES,
+      ListChangesOption.ALL_REVISIONS
+    );
+    assert.equal(changeActionsHex, '204');
+    const dashboardHex = listChangesOptionsToHex(
+      ListChangesOption.LABELS,
+      ListChangesOption.DETAILED_ACCOUNTS,
+      ListChangesOption.SUBMIT_REQUIREMENTS
+    );
+    assert.equal(dashboardHex, '1000081');
   });
 });

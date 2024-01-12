@@ -49,10 +49,12 @@ import com.google.gerrit.server.git.ValidationError;
 import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
+import com.google.gerrit.server.patch.DiffOperations;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.permissions.RefPermission;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
+import com.google.gerrit.server.project.LabelConfigValidator;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectConfig;
 import com.google.gerrit.server.project.ProjectState;
@@ -105,6 +107,7 @@ public class CommitValidators {
     private final AccountValidator accountValidator;
     private final ProjectCache projectCache;
     private final ProjectConfig.Factory projectConfigFactory;
+    private final DiffOperations diffOperations;
     private final Config config;
 
     @Inject
@@ -119,7 +122,8 @@ public class CommitValidators {
         ExternalIdsConsistencyChecker externalIdsConsistencyChecker,
         AccountValidator accountValidator,
         ProjectCache projectCache,
-        ProjectConfig.Factory projectConfigFactory) {
+        ProjectConfig.Factory projectConfigFactory,
+        DiffOperations diffOperations) {
       this.gerritIdent = gerritIdent;
       this.urlFormatter = urlFormatter;
       this.config = config;
@@ -131,6 +135,7 @@ public class CommitValidators {
       this.accountValidator = accountValidator;
       this.projectCache = projectCache;
       this.projectConfigFactory = projectConfigFactory;
+      this.diffOperations = diffOperations;
     }
 
     public CommitValidators forReceiveCommits(
@@ -162,7 +167,8 @@ public class CommitValidators {
           .add(new PluginCommitValidationListener(pluginValidators, skipValidation))
           .add(new ExternalIdUpdateListener(allUsers, externalIdsConsistencyChecker))
           .add(new AccountCommitValidator(repoManager, allUsers, accountValidator))
-          .add(new GroupCommitValidator(allUsers));
+          .add(new GroupCommitValidator(allUsers))
+          .add(new LabelConfigValidator(diffOperations));
       return new CommitValidators(validators.build());
     }
 
@@ -191,7 +197,8 @@ public class CommitValidators {
           .add(new PluginCommitValidationListener(pluginValidators))
           .add(new ExternalIdUpdateListener(allUsers, externalIdsConsistencyChecker))
           .add(new AccountCommitValidator(repoManager, allUsers, accountValidator))
-          .add(new GroupCommitValidator(allUsers));
+          .add(new GroupCommitValidator(allUsers))
+          .add(new LabelConfigValidator(diffOperations));
       return new CommitValidators(validators.build());
     }
 
@@ -401,11 +408,17 @@ public class CommitValidators {
         sshPort = 22;
       }
 
+      // TODO(15944): Remove once both SFTP/SCP protocol are supported.
+      //
+      // In newer versions of OpenSSH, the default hook installation command will fail with a
+      // cryptic error because the scp binary defaults to a different protocol.
+      String scpFlagHint = "(for OpenSSH >= 9.0 you need to add the flag '-O' to the scp command)";
+
       String sshHook =
           String.format(
               "gitdir=$(git rev-parse --git-dir); scp -p -P %d %s@%s:hooks/commit-msg ${gitdir}/hooks/",
               sshPort, user.getUserName().orElse("<USERNAME>"), sshHost);
-      return String.format("  %s\nor, for http(s):\n  %s", sshHook, httpHook);
+      return String.format("  %s\n%s\nor, for http(s):\n  %s", sshHook, scpFlagHint, httpHook);
     }
   }
 
@@ -551,10 +564,10 @@ public class CommitValidators {
         return Collections.emptyList();
       }
       try {
-        perm.check(RefPermission.MERGE);
-        return Collections.emptyList();
-      } catch (AuthException e) {
-        throw new CommitValidationException("you are not allowed to upload merges", e);
+        if (perm.test(RefPermission.MERGE)) {
+          return Collections.emptyList();
+        }
+        throw new CommitValidationException("you are not allowed to upload merges");
       } catch (PermissionBackendException e) {
         logger.atSevere().withCause(e).log("cannot check MERGE");
         throw new CommitValidationException("internal auth error");

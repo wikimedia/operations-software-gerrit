@@ -1,44 +1,52 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
+import {fixture, html, assert} from '@open-wc/testing';
 import './gr-repo-header';
 import {GrRepoHeader} from './gr-repo-header';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {stubRestApi} from '../../../test/test-utils';
 import {RepoName, UrlEncodedRepoName} from '../../../types/common';
-
-const basicFixture = fixtureFromElement('gr-repo-header');
 
 suite('gr-repo-header tests', () => {
   let element: GrRepoHeader;
 
-  setup(() => {
-    element = basicFixture.instantiate();
+  setup(async () => {
+    element = await fixture(
+      html`<gr-repo-header .repo=${'test' as RepoName}></gr-repo-header>`
+    );
+  });
+
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="info">
+          <h1 class="heading-1">test</h1>
+          <hr />
+          <div>
+            <span> Detail: </span>
+            <a href="/admin/repos/test"> Repo settings </a>
+          </div>
+          <div>
+            <span class="browse"> Browse: </span>
+          </div>
+        </div>
+      `
+    );
   });
 
   test('repoUrl reset once repo changed', async () => {
-    sinon
-      .stub(GerritNav, 'getUrlForRepo')
-      .callsFake(repoName => `http://test.com/${repoName},general`);
+    element.repo = undefined;
+    await element.updateComplete;
     assert.equal(element._repoUrl, undefined);
+
     element.repo = 'test' as RepoName;
-    await flush();
-    assert.equal(element._repoUrl, 'http://test.com/test,general');
+    await element.updateComplete;
+
+    assert.equal(element._repoUrl, '/admin/repos/test');
   });
 
   test('webLinks set', async () => {
@@ -51,13 +59,15 @@ suite('gr-repo-header tests', () => {
         },
       ],
     };
-
     stubRestApi('getRepo').returns(Promise.resolve(repoRes));
+    element.repo = undefined;
+    await element.updateComplete;
 
     assert.deepEqual(element._webLinks, []);
 
     element.repo = 'test' as RepoName;
-    await flush();
+    await element.updateComplete;
+
     assert.deepEqual(element._webLinks, repoRes.web_links);
   });
 });

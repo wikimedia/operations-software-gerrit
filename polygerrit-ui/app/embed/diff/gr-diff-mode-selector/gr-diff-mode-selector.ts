@@ -1,25 +1,14 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {Subscription} from 'rxjs';
-import '@polymer/iron-icon/iron-icon';
 import '@polymer/iron-a11y-announcer/iron-a11y-announcer';
 import '../../../elements/shared/gr-button/gr-button';
+import '../../../elements/shared/gr-icon/gr-icon';
 import {DiffViewMode} from '../../../constants/constants';
-import {customElement, property, state} from 'lit/decorators';
+import {customElement, property, state} from 'lit/decorators.js';
 import {IronA11yAnnouncer} from '@polymer/iron-a11y-announcer/iron-a11y-announcer';
 import {FixIronA11yAnnouncer} from '../../../types/types';
 import {getAppContext} from '../../../services/app-context';
@@ -37,9 +26,11 @@ export class GrDiffModeSelector extends LitElement {
    */
   @property({type: Boolean}) saveOnChange = false;
 
-  @property({type: Boolean}) showTooltipBelow = false;
+  @property({type: Boolean, attribute: 'show-tooltip-below'})
+  showTooltipBelow = false;
 
-  @state() private mode: DiffViewMode = DiffViewMode.SIDE_BY_SIDE;
+  // visible for testing
+  @state() mode: DiffViewMode = DiffViewMode.SIDE_BY_SIDE;
 
   private readonly getBrowserModel = resolve(this, browserModelToken);
 
@@ -78,12 +69,11 @@ export class GrDiffModeSelector extends LitElement {
         /* Used to remove horizontal whitespace between the icons. */
         display: flex;
       }
-      gr-button.selected iron-icon {
+      gr-button.selected gr-icon {
         color: var(--link-color);
       }
-      iron-icon {
-        height: 1.3rem;
-        width: 1.3rem;
+      gr-icon {
+        font-size: 1.3rem;
       }
     `,
   ];
@@ -102,7 +92,7 @@ export class GrDiffModeSelector extends LitElement {
           aria-pressed=${this.isSideBySideSelected()}
           @click=${this.handleSideBySideTap}
         >
-          <iron-icon icon="gr-icons:side-by-side"></iron-icon>
+          <gr-icon icon="view_column_2" filled></gr-icon>
         </gr-button>
       </gr-tooltip-content>
       <gr-tooltip-content
@@ -117,7 +107,7 @@ export class GrDiffModeSelector extends LitElement {
           aria-pressed=${this.isUnifiedSelected()}
           @click=${this.handleUnifiedTap}
         >
-          <iron-icon icon="gr-icons:unified"></iron-icon>
+          <gr-icon icon="calendar_view_day" filled></gr-icon>
         </gr-button>
       </gr-tooltip-content>
     `;

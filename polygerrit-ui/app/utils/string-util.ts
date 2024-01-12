@@ -1,19 +1,10 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
+
+import {computeDisplayPath} from './path-list-util';
 
 /**
  * Returns a count plus string that is pluralized when necessary.
@@ -50,4 +41,64 @@ export function convertToString(key?: unknown) {
 
 export function capitalizeFirstLetter(str: string) {
   return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+/**
+ * Converts the items into a sentence-friendly format. Examples:
+ * listForSentence(["Foo", "Bar", "Baz"])
+ * => 'Foo, Bar, and Baz'
+ * listForSentence(["Foo", "Bar"])
+ * => 'Foo and Bar'
+ * listForSentence(["Foo"])
+ * => 'Foo'
+ */
+export function listForSentence(items: string[]): string {
+  if (items.length < 2) return items.join('');
+  if (items.length === 2) return items.join(' and ');
+
+  const firstItems = items.slice(0, items.length - 1);
+  const lastItem = items[items.length - 1];
+  return `${firstItems.join(', ')}, and ${lastItem}`;
+}
+
+/**
+ *  Separates a path into:
+ *  - The part that matches another path,
+ *  - The part that does not match the other path,
+ *  - The file name
+ *
+ *  For example:
+ *    diffFilePaths('same/part/new/part/foo.js', 'same/part/different/foo.js');
+ *  yields: {
+ *      matchingFolders: 'same/part/',
+ *      newFolders: 'new/part/',
+ *      fileName: 'foo.js',
+ *    }
+ */
+export function diffFilePaths(filePath: string, otherFilePath?: string) {
+  // Separate each string into an array of folder names + file name.
+  const displayPath = computeDisplayPath(filePath);
+  const previousFileDisplayPath = computeDisplayPath(otherFilePath);
+  const displayPathParts = displayPath.split('/');
+  const previousFileDisplayPathParts = previousFileDisplayPath.split('/');
+
+  // Construct separate strings for matching folders, new folders, and file
+  // name.
+  const firstDifferencePartIndex = displayPathParts.findIndex(
+    (part, index) => previousFileDisplayPathParts[index] !== part
+  );
+  const matchingSection = displayPathParts
+    .slice(0, firstDifferencePartIndex)
+    .join('/');
+  const newFolderSection = displayPathParts
+    .slice(firstDifferencePartIndex, -1)
+    .join('/');
+  const fileNameSection = displayPathParts[displayPathParts.length - 1];
+
+  // Note: folder sections need '/' appended back.
+  return {
+    matchingFolders: matchingSection.length > 0 ? `${matchingSection}/` : '',
+    newFolders: newFolderSection.length > 0 ? `${newFolderSection}/` : '',
+    fileName: fileNameSection,
+  };
 }

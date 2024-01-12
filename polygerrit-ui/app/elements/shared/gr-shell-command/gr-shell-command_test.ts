@@ -1,36 +1,38 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-shell-command';
 import {GrShellCommand} from './gr-shell-command';
 import {GrCopyClipboard} from '../gr-copy-clipboard/gr-copy-clipboard';
 import {queryAndAssert} from '../../../test/test-utils';
-
-const basicFixture = fixtureFromElement('gr-shell-command');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-shell-command tests', () => {
   let element: GrShellCommand;
 
   setup(async () => {
-    element = basicFixture.instantiate();
+    element = await fixture(html`<gr-shell-command></gr-shell-command>`);
     element.command = `git fetch http://gerrit@localhost:8080/a/test-project
         refs/changes/05/5/1 && git checkout FETCH_HEAD`;
-    await flush();
+    await element.updateComplete;
+  });
+
+  test('render', async () => {
+    element.label = 'label1';
+    await element.updateComplete;
+
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <label> label1 </label>
+        <div class="commandContainer">
+          <gr-copy-clipboard buttontitle="" hastooltip=""> </gr-copy-clipboard>
+        </div>
+      `
+    );
   });
 
   test('focusOnCopy', async () => {

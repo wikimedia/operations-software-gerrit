@@ -1,29 +1,15 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-edit-file-controls';
 import {GrEditFileControls} from './gr-edit-file-controls';
 import {GrEditConstants} from '../gr-edit-constants';
 import {queryAndAssert} from '../../../test/test-utils';
 import {GrDropdown} from '../../shared/gr-dropdown/gr-dropdown';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
-
-const basicFixture = fixtureFromElement('gr-edit-file-controls');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-edit-file-controls tests', () => {
   let element: GrEditFileControls;
@@ -31,20 +17,33 @@ suite('gr-edit-file-controls tests', () => {
   let fileActionHandler: sinon.SinonStub;
 
   setup(async () => {
-    element = basicFixture.instantiate();
+    element = await fixture(
+      html`<gr-edit-file-controls></gr-edit-file-controls>`
+    );
     fileActionHandler = sinon.stub();
     element.addEventListener('file-action-tap', fileActionHandler);
-    await flush();
+    await element.updateComplete;
   });
 
-  test('open tap emits event', () => {
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <gr-dropdown down-arrow="" id="actions" link="" vertical-offset="20">
+          Actions
+        </gr-dropdown>
+      `
+    );
+  });
+
+  test('open tap emits event', async () => {
     const actions = queryAndAssert<GrDropdown>(element, '#actions');
     element.filePath = 'foo';
-    actions._open();
-    flush();
+    actions.open();
+    await actions.updateComplete;
 
-    const row = queryAndAssert(actions, 'li [data-id="open"]');
-    MockInteractions.tap(row);
+    const row = queryAndAssert<HTMLSpanElement>(actions, 'li [data-id="open"]');
+    row.click();
     assert.isTrue(fileActionHandler.called);
     assert.deepEqual(fileActionHandler.lastCall.args[0].detail, {
       action: GrEditConstants.Actions.OPEN.id,
@@ -52,14 +51,17 @@ suite('gr-edit-file-controls tests', () => {
     });
   });
 
-  test('delete tap emits event', () => {
+  test('delete tap emits event', async () => {
     const actions = queryAndAssert<GrDropdown>(element, '#actions');
     element.filePath = 'foo';
-    actions._open();
-    flush();
+    actions.open();
+    await actions.updateComplete;
 
-    const row = queryAndAssert(actions, 'li [data-id="delete"]');
-    MockInteractions.tap(row);
+    const row = queryAndAssert<HTMLSpanElement>(
+      actions,
+      'li [data-id="delete"]'
+    );
+    row.click();
     assert.isTrue(fileActionHandler.called);
     assert.deepEqual(fileActionHandler.lastCall.args[0].detail, {
       action: GrEditConstants.Actions.DELETE.id,
@@ -67,14 +69,17 @@ suite('gr-edit-file-controls tests', () => {
     });
   });
 
-  test('restore tap emits event', () => {
+  test('restore tap emits event', async () => {
     const actions = queryAndAssert<GrDropdown>(element, '#actions');
     element.filePath = 'foo';
-    actions._open();
-    flush();
+    actions.open();
+    await actions.updateComplete;
 
-    const row = queryAndAssert(actions, 'li [data-id="restore"]');
-    MockInteractions.tap(row);
+    const row = queryAndAssert<HTMLSpanElement>(
+      actions,
+      'li [data-id="restore"]'
+    );
+    row.click();
     assert.isTrue(fileActionHandler.called);
     assert.deepEqual(fileActionHandler.lastCall.args[0].detail, {
       action: GrEditConstants.Actions.RESTORE.id,
@@ -82,14 +87,17 @@ suite('gr-edit-file-controls tests', () => {
     });
   });
 
-  test('rename tap emits event', () => {
+  test('rename tap emits event', async () => {
     const actions = queryAndAssert<GrDropdown>(element, '#actions');
     element.filePath = 'foo';
-    actions._open();
-    flush();
+    actions.open();
+    await actions.updateComplete;
 
-    const row = queryAndAssert(actions, 'li [data-id="rename"]');
-    MockInteractions.tap(row);
+    const row = queryAndAssert<HTMLSpanElement>(
+      actions,
+      'li [data-id="rename"]'
+    );
+    row.click();
     assert.isTrue(fileActionHandler.called);
     assert.deepEqual(fileActionHandler.lastCall.args[0].detail, {
       action: GrEditConstants.Actions.RENAME.id,

@@ -3,25 +3,32 @@
   "description": "Gerrit Code Review - Polygerrit dev dependencies",
   "browser": true,
   "dependencies": {
-    "@types/chai": "^4.2.16",
-    "@types/mocha": "^8.2.2",
     "@types/sinon": "^10.0.0"
   },
   "devDependencies": {
     "@open-wc/karma-esm": "^3.0.9",
     "@open-wc/semantic-dom-diff": "^0.19.5",
-    "@open-wc/testing-helpers": "^2.0.2",
-    "@polymer/iron-test-helpers": "^3.0.1",
-    "@polymer/test-fixture": "^4.0.2",
+    "@open-wc/testing": "^3.1.6",
+    "@web/dev-server-esbuild": "^0.3.2",
+    "@web/test-runner": "^0.14.0",
+    "@web/test-runner-visual-regression": "^0.6.6",
     "accessibility-developer-tools": "^2.12.0",
-    "chai": "^4.3.4",
-    "karma": "^6.3.6",
-    "karma-chrome-launcher": "^3.1.0",
+    "karma": "^6.3.20",
+    "karma-chrome-launcher": "^3.1.1",
     "karma-mocha": "^2.0.1",
     "karma-mocha-reporter": "^2.2.5",
-    "mocha": "8.3.2",
-    "sinon": "^10.0.0",
+    "mocha": "9.2.2",
+    "sinon": "^13.0.0",
     "source-map-support": "^0.5.19"
+  },
+  "scripts": {
+    "test": "web-test-runner",
+    "test:screenshot": "web-test-runner --run-screenshots",
+    "test:screenshot-update": "web-test-runner --update-screenshots --files",
+    "test:coverage": "web-test-runner --coverage",
+    "test:watch": "web-test-runner --watch",
+    "test:single": "web-test-runner --watch --files",
+    "test:single:coverage": "web-test-runner --watch --coverage --files"
   },
   "license": "Apache-2.0",
   "private": true

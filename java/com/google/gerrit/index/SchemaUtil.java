@@ -25,7 +25,6 @@ import com.google.common.collect.Iterables;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -49,7 +48,12 @@ public class SchemaUtil {
             @SuppressWarnings("unchecked")
             Schema<V> schema = (Schema<V>) f.get(null);
             checkArgument(f.getName().startsWith("V"));
-            schema.setVersion(Integer.parseInt(f.getName().substring(1)));
+            int versionName = Integer.parseInt(f.getName().substring(1));
+            checkArgument(
+                versionName == schema.getVersion(),
+                "Schema version %s does not match its name %s",
+                schema.getVersion(),
+                f.getName());
             schemas.put(schema.getVersion(), schema);
           } catch (IllegalAccessException e) {
             throw new IllegalArgumentException(e);
@@ -66,29 +70,56 @@ public class SchemaUtil {
     return ImmutableSortedMap.copyOf(schemas);
   }
 
-  public static <V> Schema<V> schema(Collection<FieldDef<V, ?>> fields) {
-    return new Schema<>(true, ImmutableList.copyOf(fields));
+  @SafeVarargs
+  public static <V> Schema<V> schema(FieldDef<V, ?>... fields) {
+    return new Schema.Builder<V>().version(0).add(fields).build();
   }
 
-  public static <V> Schema<V> schema(Schema<V> schema, boolean useLegacyNumericFields) {
-    return new Schema<>(
-        useLegacyNumericFields,
-        new ImmutableList.Builder<FieldDef<V, ?>>().addAll(schema.getFields().values()).build());
+  @SafeVarargs
+  public static <V> Schema<V> schema(int version, FieldDef<V, ?>... fields) {
+    return new Schema.Builder<V>().version(version).add(fields).build();
+  }
+
+  public static <V> Schema<V> schema(int version, ImmutableList<FieldDef<V, ?>> fields) {
+    return new Schema.Builder<V>().version(version).add(fields).build();
   }
 
   @SafeVarargs
   public static <V> Schema<V> schema(Schema<V> schema, FieldDef<V, ?>... moreFields) {
-    return new Schema<>(
-        true,
-        new ImmutableList.Builder<FieldDef<V, ?>>()
-            .addAll(schema.getFields().values())
-            .addAll(ImmutableList.copyOf(moreFields))
-            .build());
+    return new Schema.Builder<V>().add(schema).add(moreFields).build();
   }
 
-  @SafeVarargs
-  public static <V> Schema<V> schema(FieldDef<V, ?>... fields) {
-    return new Schema<>(true, ImmutableList.copyOf(fields));
+  public static <V> Schema<V> schema(
+      int version,
+      ImmutableList<FieldDef<V, ?>> fieldDefs,
+      ImmutableList<IndexedField<V, ?>> indexedFields,
+      ImmutableList<IndexedField<V, ?>.SearchSpec> searchSpecs) {
+    return new Schema.Builder<V>()
+        .version(version)
+        .add(fieldDefs)
+        .addIndexedFields(indexedFields)
+        .addSearchSpecs(searchSpecs)
+        .build();
+  }
+
+  public static <V> Schema<V> schema(
+      Schema<V> schema,
+      ImmutableList<FieldDef<V, ?>> fieldDefs,
+      ImmutableList<IndexedField<V, ?>> indexedFields,
+      ImmutableList<IndexedField<V, ?>.SearchSpec> searchSpecs) {
+    return new Schema.Builder<V>()
+        .add(schema)
+        .add(fieldDefs)
+        .addIndexedFields(indexedFields)
+        .addSearchSpecs(searchSpecs)
+        .build();
+  }
+
+  public static <V> Schema<V> schema(
+      ImmutableList<FieldDef<V, ?>> fieldDefs,
+      ImmutableList<IndexedField<V, ?>> indexFields,
+      ImmutableList<IndexedField<V, ?>.SearchSpec> searchSpecs) {
+    return schema(/* version= */ 0, fieldDefs, indexFields, searchSpecs);
   }
 
   public static Set<String> getPersonParts(PersonIdent person) {

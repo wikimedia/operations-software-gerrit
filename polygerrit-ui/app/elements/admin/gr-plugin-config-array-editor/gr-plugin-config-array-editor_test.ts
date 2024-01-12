@@ -1,28 +1,16 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import {ConfigParameterInfoType} from '../../../constants/constants.js';
-import '../../../test/common-test-setup-karma';
+import {ConfigParameterInfoType} from '../../../constants/constants';
+import '../../../test/common-test-setup';
 import './gr-plugin-config-array-editor';
 import {GrPluginConfigArrayEditor} from './gr-plugin-config-array-editor';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
-import {queryAll, queryAndAssert} from '../../../test/test-utils.js';
-import {GrButton} from '../../shared/gr-button/gr-button.js';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {queryAll, queryAndAssert, pressKey} from '../../../test/test-utils';
+import {GrButton} from '../../shared/gr-button/gr-button';
+import {fixture, html, assert} from '@open-wc/testing';
+import {Key} from '../../../utils/dom-util';
 
 suite('gr-plugin-config-array-editor tests', () => {
   let element: GrPluginConfigArrayEditor;
@@ -42,6 +30,32 @@ suite('gr-plugin-config-array-editor tests', () => {
     };
   });
 
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="gr-form-styles wrapper">
+          <div class="placeholder row">None configured.</div>
+          <div class="row">
+            <iron-input>
+              <input id="input" />
+            </iron-input>
+            <gr-button
+              aria-disabled="true"
+              disabled=""
+              id="addButton"
+              link=""
+              role="button"
+              tabindex="-1"
+            >
+              Add
+            </gr-button>
+          </div>
+        </div>
+      `
+    );
+  });
+
   suite('adding', () => {
     setup(() => {
       dispatchStub = sinon.stub(element, 'dispatchChanged');
@@ -50,10 +64,7 @@ suite('gr-plugin-config-array-editor tests', () => {
     test('with enter', async () => {
       element.newValue = '';
       await element.updateComplete;
-      MockInteractions.pressAndReleaseKeyOn(
-        queryAndAssert<HTMLInputElement>(element, '#input'),
-        13
-      ); // Enter
+      pressKey(queryAndAssert<HTMLInputElement>(element, '#input'), Key.ENTER);
       await element.updateComplete;
       assert.isFalse(
         queryAndAssert<HTMLInputElement>(element, '#input').hasAttribute(
@@ -66,10 +77,7 @@ suite('gr-plugin-config-array-editor tests', () => {
       element.newValue = 'test';
       await element.updateComplete;
 
-      MockInteractions.pressAndReleaseKeyOn(
-        queryAndAssert<HTMLInputElement>(element, '#input'),
-        13
-      ); // Enter
+      pressKey(queryAndAssert<HTMLInputElement>(element, '#input'), Key.ENTER);
       await element.updateComplete;
       assert.isFalse(
         queryAndAssert<HTMLInputElement>(element, '#input').hasAttribute(
@@ -115,7 +123,7 @@ suite('gr-plugin-config-array-editor tests', () => {
     assert.equal(rows.length, 2);
     const button = queryAndAssert<GrButton>(rows[0], 'gr-button');
 
-    MockInteractions.tap(button);
+    button.click();
     await element.updateComplete;
 
     assert.isFalse(dispatchStub.called);

@@ -1,26 +1,22 @@
 /**
  * @license
- * Copyright (C) 2015 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2015 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '../../../styles/gr-a11y-styles';
 import '../../../styles/shared-styles';
 import '../gr-comment/gr-comment';
+import '../gr-icon/gr-icon';
 import '../../../embed/diff/gr-diff/gr-diff';
 import '../gr-copy-clipboard/gr-copy-clipboard';
-import {css, html, LitElement, PropertyValues} from 'lit';
-import {customElement, property, query, queryAll, state} from 'lit/decorators';
+import {css, html, nothing, LitElement, PropertyValues} from 'lit';
+import {
+  customElement,
+  property,
+  query,
+  queryAll,
+  state,
+} from 'lit/decorators.js';
 import {
   computeDiffFromContext,
   isDraft,
@@ -34,9 +30,9 @@ import {
   getFirstComment,
   createUnsavedReply,
   isUnsaved,
+  NEWLINE_PATTERN,
 } from '../../../utils/comment-util';
 import {ChangeMessageId} from '../../../api/rest-api';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {getAppContext} from '../../../services/app-context';
 import {
   createDefaultDiffPrefs,
@@ -50,13 +46,13 @@ import {
   RepoName,
   UrlEncodedCommentId,
 } from '../../../types/common';
-import {GrComment} from '../gr-comment/gr-comment';
+import {CommentEditingChangedDetail, GrComment} from '../gr-comment/gr-comment';
 import {FILE} from '../../../embed/diff/gr-diff/gr-diff-line';
 import {GrButton} from '../gr-button/gr-button';
 import {DiffInfo, DiffPreferencesInfo} from '../../../types/diff';
 import {DiffLayer, RenderPreferences} from '../../../api/diff';
-import {assertIsDefined} from '../../../utils/common-util';
-import {fire, fireAlert} from '../../../utils/event-util';
+import {assertIsDefined, copyToClipbard} from '../../../utils/common-util';
+import {fire} from '../../../utils/event-util';
 import {GrSyntaxLayerWorker} from '../../../embed/diff/gr-syntax-layer/gr-syntax-layer-worker';
 import {TokenHighlightLayer} from '../../../embed/diff/gr-diff-builder/token-highlight-layer';
 import {anyLineTooLong} from '../../../embed/diff/gr-diff/gr-diff-utils';
@@ -65,17 +61,19 @@ import {generateAbsoluteUrl} from '../../../utils/url-util';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {a11yStyles} from '../../../styles/gr-a11y-styles';
 import {subscribe} from '../../lit/subscription-controller';
-import {repeat} from 'lit/directives/repeat';
-import {classMap} from 'lit/directives/class-map';
+import {repeat} from 'lit/directives/repeat.js';
+import {classMap} from 'lit/directives/class-map.js';
 import {ShortcutController} from '../../lit/shortcut-controller';
-import {ValueChangedEvent} from '../../../types/events';
+import {ReplyToCommentEvent, ValueChangedEvent} from '../../../types/events';
 import {notDeepEqual} from '../../../utils/deep-util';
 import {resolve} from '../../../models/dependency';
 import {commentsModelToken} from '../../../models/comments/comments-model';
 import {changeModelToken} from '../../../models/change/change-model';
 import {whenRendered} from '../../../utils/dom-util';
-
-const NEWLINE_PATTERN = /\n/g;
+import {Interaction} from '../../../constants/reporting';
+import {HtmlPatched} from '../../../utils/lit-util';
+import {createDiffUrl} from '../../../models/views/diff';
+import {createChangeUrl} from '../../../models/views/change';
 
 declare global {
   interface HTMLElementEventMap {
@@ -256,43 +254,78 @@ export class GrCommentThread extends LitElement {
 
   private readonly userModel = getAppContext().userModel;
 
+  private readonly reporting = getAppContext().reportingService;
+
   private readonly shortcuts = new ShortcutController(this);
 
   private readonly syntaxLayer = new GrSyntaxLayerWorker();
+
+  // for COMMENTS_AUTOCLOSE logging purposes only
+  readonly uid = performance.now().toString(36) + Math.random().toString(36);
+
+  private readonly patched = new HtmlPatched(key => {
+    this.reporting.reportInteraction(Interaction.AUTOCLOSE_HTML_PATCHED, {
+      component: this.tagName,
+      key: key.substring(0, 300),
+    });
+  });
 
   constructor() {
     super();
     this.shortcuts.addGlobal({key: 'e'}, () => this.handleExpandShortcut());
     this.shortcuts.addGlobal({key: 'E'}, () => this.handleCollapseShortcut());
-  }
-
-  override connectedCallback(): void {
-    super.connectedCallback();
     subscribe(
       this,
-      this.getChangeModel().changeNum$,
+      () => this.getChangeModel().changeNum$,
       x => (this.changeNum = x)
     );
-    subscribe(this, this.userModel.account$, x => (this.account = x));
-    subscribe(this, this.getChangeModel().repo$, x => (this.repoName = x));
-    subscribe(this, this.userModel.diffPreferences$, x =>
-      this.syntaxLayer.setEnabled(!!x.syntax_highlighting)
+    subscribe(
+      this,
+      () => this.userModel.account$,
+      x => (this.account = x)
     );
-    subscribe(this, this.userModel.preferences$, prefs => {
-      const layers: DiffLayer[] = [this.syntaxLayer];
-      if (!prefs.disable_token_highlighting) {
-        layers.push(new TokenHighlightLayer(this));
+    subscribe(
+      this,
+      () => this.getChangeModel().repo$,
+      x => (this.repoName = x)
+    );
+    subscribe(
+      this,
+      () => this.userModel.diffPreferences$,
+      x => this.syntaxLayer.setEnabled(!!x.syntax_highlighting)
+    );
+    subscribe(
+      this,
+      () => this.userModel.preferences$,
+      prefs => {
+        const layers: DiffLayer[] = [this.syntaxLayer];
+        if (!prefs.disable_token_highlighting) {
+          layers.push(new TokenHighlightLayer(this));
+        }
+        this.layers = layers;
       }
-      this.layers = layers;
-    });
-    subscribe(this, this.userModel.diffPreferences$, prefs => {
-      this.prefs = {
-        ...prefs,
-        // set line_wrapping to true so that the context can take all the
-        // remaining space after comment card has rendered
-        line_wrapping: true,
-      };
-    });
+    );
+    subscribe(
+      this,
+      () => this.userModel.diffPreferences$,
+      prefs => {
+        this.prefs = {
+          ...prefs,
+          // set line_wrapping to true so that the context can take all the
+          // remaining space after comment card has rendered
+          line_wrapping: true,
+        };
+      }
+    );
+  }
+
+  override disconnectedCallback() {
+    if (this.editing) {
+      this.reporting.reportInteraction(
+        Interaction.COMMENTS_AUTOCLOSE_EDITING_THREAD_DISCONNECTED
+      );
+    }
+    super.disconnectedCallback();
   }
 
   static override get styles() {
@@ -394,6 +427,7 @@ export class GrCommentThread extends LitElement {
          * height, so the link icon does not need a top:4px in gr-comment_html.
          */
         .link-icon {
+          margin-left: var(--spacing-m);
           position: relative;
           top: 4px;
           cursor: pointer;
@@ -462,42 +496,48 @@ export class GrCommentThread extends LitElement {
 
   renderComments() {
     assertIsDefined(this.thread, 'thread');
-    const robotButtonDisabled = !this.account || this.isDraftOrUnsaved();
-    const comments: Comment[] = [...this.thread.comments];
-    if (this.unsavedComment && !this.isDraft()) {
-      comments.push(this.unsavedComment);
-    }
-    return repeat(
-      comments,
-      // We want to reuse <gr-comment> when unsaved changes to draft.
-      comment => (isDraftOrUnsaved(comment) ? 'unsaved' : comment.id),
-      comment => {
-        const initiallyCollapsed =
-          !isDraftOrUnsaved(comment) &&
-          (this.messageId
-            ? comment.change_message_id !== this.messageId
-            : !this.unresolved);
-        return html`
-          <gr-comment
-            .comment=${comment}
-            .comments=${this.thread!.comments}
-            ?initially-collapsed=${initiallyCollapsed}
-            ?robot-button-disabled=${robotButtonDisabled}
-            ?show-patchset=${this.showPatchset}
-            ?show-ported-comment=${this.showPortedComment &&
-            comment.id === this.rootId}
-            @create-fix-comment=${this.handleCommentFix}
-            @copy-comment-link=${this.handleCopyLink}
-            @comment-editing-changed=${(e: CustomEvent) => {
-              if (isDraftOrUnsaved(comment)) this.editing = e.detail;
-            }}
-            @comment-unresolved-changed=${(e: CustomEvent) => {
-              if (isDraftOrUnsaved(comment)) this.unresolved = e.detail;
-            }}
-          ></gr-comment>
-        `;
-      }
+    const publishedComments = repeat(
+      this.thread.comments.filter(c => !isDraftOrUnsaved(c)),
+      comment => comment.id,
+      comment => this.renderComment(comment)
     );
+    // We are deliberately not including the draft in the repeat directive,
+    // because we ran into spurious issues with <gr-comment> being destroyed
+    // and re-created when an unsaved draft transitions to 'saved' state.
+    const draftComment = this.renderComment(this.getDraftOrUnsaved());
+    return html`${publishedComments}${draftComment}`;
+  }
+
+  private renderComment(comment?: Comment) {
+    if (!comment) return nothing;
+    const robotButtonDisabled = !this.account || this.isDraftOrUnsaved();
+    const initiallyCollapsed =
+      !isDraftOrUnsaved(comment) &&
+      (this.messageId
+        ? comment.change_message_id !== this.messageId
+        : !this.unresolved);
+    return this.patched.html`
+      <gr-comment
+        .comment=${comment}
+        .comments=${this.thread!.comments}
+        ?initially-collapsed=${initiallyCollapsed}
+        ?robot-button-disabled=${robotButtonDisabled}
+        ?show-patchset=${this.showPatchset}
+        ?show-ported-comment=${
+          this.showPortedComment && comment.id === this.rootId
+        }
+        @reply-to-comment=${this.handleReplyToComment}
+        @copy-comment-link=${this.handleCopyLink}
+        @comment-editing-changed=${(
+          e: CustomEvent<CommentEditingChangedDetail>
+        ) => {
+          if (isDraftOrUnsaved(comment)) this.editing = e.detail.editing;
+        }}
+        @comment-unresolved-changed=${(e: ValueChangedEvent<boolean>) => {
+          if (isDraftOrUnsaved(comment)) this.unresolved = e.detail.value;
+        }}
+      ></gr-comment>
+    `;
   }
 
   renderActions() {
@@ -509,15 +549,7 @@ export class GrCommentThread extends LitElement {
           this.unresolved ? 'Unresolved' : 'Resolved'
         }</span>
         <div id="actions">
-          <iron-icon
-              class="link-icon copy"
-              @click=${this.handleCopyLink}
-              title="Copy link to this comment"
-              icon="gr-icons:link"
-              role="button"
-              tabindex="0"
-          >
-          </iron-icon>
+
           <gr-button
               id="replyBtn"
               link
@@ -556,16 +588,24 @@ export class GrCommentThread extends LitElement {
                 `
               : ''
           }
+          <gr-icon
+            icon="link"
+            class="link-icon copy"
+            @click=${this.handleCopyLink}
+            title="Copy link to this comment"
+            role="button"
+            tabindex="0"
+          ></gr-icon>
         </div>
       </div>
-      </div>
+    </div>
     `;
   }
 
   renderContextualDiff() {
     if (!this.changeNum || !this.showCommentContext || !this.diff) return;
     if (!this.thread?.path) return;
-    const href = this.getUrlForFileComment();
+    const href = this.getUrlForFileComment() ?? '';
     return html`
       <div class="diff-container">
         <gr-diff
@@ -636,7 +676,13 @@ export class GrCommentThread extends LitElement {
       whenRendered(this, () => {
         this.expandCollapseComments(false);
         this.commentBox?.focus();
+        // The delay is a hack because we don't know exactly when to
+        // scroll the comment into center.
+        // TODO: Find a better solution without a setTimeout
         this.scrollIntoView({block: 'center'});
+        setTimeout(() => {
+          this.scrollIntoView({block: 'center'});
+        }, 500);
       });
     }
   }
@@ -647,6 +693,12 @@ export class GrCommentThread extends LitElement {
 
   private isDraftOrUnsaved(): boolean {
     return this.isDraft() || this.isUnsaved();
+  }
+
+  private getDraftOrUnsaved(): Comment | undefined {
+    if (this.unsavedComment) return this.unsavedComment;
+    if (this.isDraft()) return this.getLastComment();
+    return undefined;
   }
 
   private isNewThread(): boolean {
@@ -687,12 +739,12 @@ export class GrCommentThread extends LitElement {
       return undefined;
     }
     if (this.isNewThread()) return undefined;
-    return GerritNav.getUrlForDiffById(
-      this.changeNum,
-      this.repoName,
-      this.thread.path,
-      this.thread.patchNum
-    );
+    return createDiffUrl({
+      changeNum: this.changeNum,
+      project: this.repoName,
+      path: this.thread.path,
+      patchNum: this.thread.patchNum,
+    });
   }
 
   private computeHighlightRange() {
@@ -716,11 +768,11 @@ export class GrCommentThread extends LitElement {
       return undefined;
     }
     assertIsDefined(this.rootId, 'rootId of comment thread');
-    return GerritNav.getUrlForComment(
-      this.changeNum,
-      this.repoName,
-      this.rootId
-    );
+    return createDiffUrl({
+      changeNum: this.changeNum,
+      project: this.repoName,
+      commentId: this.rootId,
+    });
   }
 
   private handleCopyLink() {
@@ -728,13 +780,22 @@ export class GrCommentThread extends LitElement {
     if (!comment) return;
     assertIsDefined(this.changeNum, 'changeNum');
     assertIsDefined(this.repoName, 'repoName');
-    const url = generateAbsoluteUrl(
-      GerritNav.getUrlForCommentsTab(this.changeNum, this.repoName, comment.id)
-    );
+    let url: string;
+    if (this.isPatchsetLevel()) {
+      url = createChangeUrl({
+        changeNum: this.changeNum,
+        project: this.repoName,
+        commentId: comment.id,
+      });
+    } else {
+      url = createDiffUrl({
+        changeNum: this.changeNum,
+        project: this.repoName,
+        commentId: comment.id,
+      });
+    }
     assertIsDefined(url, 'url for comment');
-    navigator.clipboard.writeText(generateAbsoluteUrl(url)).then(() => {
-      fireAlert(this, 'Link copied to clipboard');
-    });
+    copyToClipbard(generateAbsoluteUrl(url), 'Link');
   }
 
   private getDisplayPath() {
@@ -826,13 +887,9 @@ export class GrCommentThread extends LitElement {
     this.createReplyComment('Done', false, false);
   }
 
-  private handleCommentFix(e: CustomEvent) {
-    const comment = e.detail.comment;
-    const msg = comment.message;
-    const quoted = msg.replace(NEWLINE_PATTERN, '\n> ') as string;
-    const quoteStr = '> ' + quoted + '\n\n';
-    const response = quoteStr + 'Please fix.';
-    this.createReplyComment(response, false, true);
+  private handleReplyToComment(e: ReplyToCommentEvent) {
+    const {content, userWantsToEdit, unresolved} = e.detail;
+    this.createReplyComment(content, userWantsToEdit, unresolved);
   }
 
   private computeAriaHeading() {

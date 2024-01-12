@@ -203,10 +203,12 @@ public class ChangeNotesParserTest extends AbstractChangeNotesTest {
             + "Branch: refs/heads/master\n"
             + "Change-id: I577fb248e474018276351785930358ec0450e9f7\n"
             + "Patch-set: 1\n"
-            + "Copied-Label: Label1=+1 Account <1@gerrit>,Other Account <2@Gerrit>\n"
+            + "Copied-Label: Label1=+1 Account <1@gerrit>,Other Account <2@gerrit>\n"
             + "Copied-Label: Label2=+1 Account <1@gerrit>\n"
-            + "Copied-Label: Label3=+1 Account <1@gerrit>,Other Account <2@Gerrit> :\"tag\"\n"
-            + "Copied-Label: Label4=+1 Account <1@Gerrit> :\"tag with characters %^#@^( *::!\"\n"
+            + "Copied-Label: Label3=+1 Account <1@gerrit>,Other Account <2@gerrit> :\"tag\"\n"
+            + "Copied-Label: Label4=+1 Account <1@gerrit> :\"tag with characters %^#@^( *::!\"\n"
+            + "Copied-Label: -Label1 Account <1@gerrit>,Other Account <2@gerrit>\\n"
+            + "Copied-Label: -Label1 Account <1@gerrit>\n"
             + "Copied-Label: Label1=+1 Gerrit User 1 (name,with, comma) <1@gerrit>\n"
             + "Copied-Label: Label2=+1 Gerrit User 1 (name,with, comma) <1@gerrit>,Gerrit User 2 (name,with, comma) <2@gerrit>\n"
             + "Subject: This is a test change\n");
@@ -224,6 +226,7 @@ public class ChangeNotesParserTest extends AbstractChangeNotesTest {
         "Update change\n\nPatch-set: 1\nCopied-Label: Label1 Other Account <2@gerrit>,Other "
             + "Account <2@gerrit>,Other Account <2@gerrit> \n");
     assertParseFails("Update change\n\nPatch-set: 1\nCopied-Label: Label1 non-user\n");
+    assertParseFails("Update change\n\nPatch-set: 1\nCopied-Label: -Label1\n");
   }
 
   @Test
@@ -269,6 +272,14 @@ public class ChangeNotesParserTest extends AbstractChangeNotesTest {
         "Update change\n\nPatch-set: 1\nCopied-Label: Label1=+1, 577fb248e474018276351785930358ec0450e9f7");
     assertParseFails(
         "Update change\n\nPatch-set: 1\nCopied-Label: Label1=+1, 577fb248e474018276351785930358ec0450e9f7 :\"tag\"\n");
+
+    // UUID for removals is not supported.
+    assertParseFails(
+        "Update change\n\nPatch-set: 1\nCopied-Label: -Label1,"
+            + " 577fb248e474018276351785930358ec0450e9f7\n");
+    assertParseFails(
+        "Update change\n\nPatch-set: 1\nCopied-Label: -Label1,"
+            + " 577fb248e474018276351785930358ec0450e9f7 Other Account <2@gerrit>\n");
   }
 
   @Test
@@ -633,8 +644,9 @@ public class ChangeNotesParserTest extends AbstractChangeNotesTest {
             "Update patch set 1\n"
                 + "\n"
                 + "Patch-set: 1\n"
-                + "Attention: {\"person_ident\":\"Gerrit User 1000000"
-                + " \\u003c1000000@adce0b11-8f2e-4ab6-ac69-e675f183d871\\u003e\",\"operation\":\"ADD\",\"reason\":\"Added"
+                + "Attention: {\"person_ident\":\""
+                + FQ_USER_IDENT
+                + "\\u003e\",\"operation\":\"ADD\",\"reason\":\"Added"
                 + " by Administrator using the hovercard menu\"}",
             false);
     ChangeNotesParser changeNotesParser = newParser(commit);
@@ -654,8 +666,9 @@ public class ChangeNotesParserTest extends AbstractChangeNotesTest {
                 + "\n"
                 + "Patch-set: 1\n"
                 + "Subject: Change subject\n"
-                + "Attention: {\"person_ident\":\"Gerrit User 1000000"
-                + " \\u003c1000000@adce0b11-8f2e-4ab6-ac69-e675f183d871\\u003e\",\"operation\":\"ADD\",\"reason\":\"Added"
+                + "Attention: {\"person_ident\":\""
+                + FQ_USER_IDENT
+                + "\\u003e\",\"operation\":\"ADD\",\"reason\":\"Added"
                 + " by Administrator using the hovercard menu\"}",
             false);
     ChangeNotesParser changeNotesParser = newParser(commit);
@@ -686,8 +699,9 @@ public class ChangeNotesParserTest extends AbstractChangeNotesTest {
             "Update patch set 1\n"
                 + "\n"
                 + "Patch-set: 1\n"
-                + "Attention: {\"person_ident\":\"Gerrit User 1000000"
-                + " \\u003c1000000@adce0b11-8f2e-4ab6-ac69-e675f183d871\\u003e\",\"operation\":\"ADD\",\"reason\":\"Added"
+                + "Attention: {\"person_ident\":\""
+                + FQ_USER_IDENT
+                + "\\u003e\",\"operation\":\"ADD\",\"reason\":\"Added"
                 + " by Administrator using the hovercard menu\"}",
             false);
     ChangeNotesParser changeNotesParser = newParser(commit);
@@ -776,6 +790,12 @@ public class ChangeNotesParserTest extends AbstractChangeNotesTest {
   private ChangeNotesParser newParser(ObjectId tip) throws Exception {
     walk.reset();
     ChangeNoteJson changeNoteJson = injector.getInstance(ChangeNoteJson.class);
-    return new ChangeNotesParser(newChange().getId(), tip, walk, changeNoteJson, args.metrics);
+    return new ChangeNotesParser(
+        newChange().getId(),
+        tip,
+        walk,
+        changeNoteJson,
+        args.metrics,
+        new NoteDbUtil(serverId, externalIdCache));
   }
 }

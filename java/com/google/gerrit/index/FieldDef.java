@@ -21,6 +21,9 @@ import static java.util.Objects.requireNonNull;
 import com.google.common.base.CharMatcher;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.exceptions.StorageException;
+import com.google.gerrit.index.SchemaFieldDefs.Getter;
+import com.google.gerrit.index.SchemaFieldDefs.SchemaField;
+import com.google.gerrit.index.SchemaFieldDefs.Setter;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.Optional;
@@ -28,11 +31,18 @@ import java.util.Optional;
 /**
  * Definition of a field stored in the secondary index.
  *
+ * <p>{@link FieldDef}-s must not be changed once introduced to the codebase. Instead, a new
+ * FieldDef must be added and the old one removed from the schema (in two upgrade steps, see {@code
+ * com.google.gerrit.index.IndexUpgradeValidator}).
+ *
+ * <p>Note that {@link FieldDef} does not override {@link Object#equals(Object)}. It relies on
+ * instances being singletons so that the default (i.e. reference) comparison works.
+ *
  * @param <I> input type from which documents are created and search results are returned.
  * @param <T> type that should be extracted from the input object when converting to an index
  *     document.
  */
-public final class FieldDef<I, T> {
+public final class FieldDef<I, T> implements SchemaField<I, T> {
   public static FieldDef.Builder<String> exact(String name) {
     return new FieldDef.Builder<>(FieldType.EXACT, name);
   }
@@ -59,17 +69,6 @@ public final class FieldDef<I, T> {
 
   public static FieldDef.Builder<Timestamp> timestamp(String name) {
     return new FieldDef.Builder<>(FieldType.TIMESTAMP, name);
-  }
-
-  @FunctionalInterface
-  public interface Getter<I, T> {
-    @Nullable
-    T get(I input) throws IOException;
-  }
-
-  @FunctionalInterface
-  public interface Setter<I, T> {
-    void set(I object, T value);
   }
 
   public static class Builder<T> {
@@ -139,16 +138,19 @@ public final class FieldDef<I, T> {
   }
 
   /** Returns name of the field. */
+  @Override
   public String getName() {
     return name;
   }
 
   /** Returns type of the field; for repeatable fields, the inner type, not the iterable type. */
+  @Override
   public FieldType<?> getType() {
     return type;
   }
 
   /** Returns whether the field should be stored in the index. */
+  @Override
   public boolean isStored() {
     return stored;
   }
@@ -159,6 +161,7 @@ public final class FieldDef<I, T> {
    * @param input input object.
    * @return the field value(s) to index.
    */
+  @Override
   @Nullable
   public T get(I input) {
     try {
@@ -177,6 +180,7 @@ public final class FieldDef<I, T> {
    * @return {@code true} if the field was set, {@code false} otherwise
    */
   @SuppressWarnings("unchecked")
+  @Override
   public boolean setIfPossible(I object, StoredValue doc) {
     if (!setter.isPresent()) {
       return false;
@@ -204,6 +208,7 @@ public final class FieldDef<I, T> {
   }
 
   /** Returns whether the field is repeatable. */
+  @Override
   public boolean isRepeatable() {
     return repeatable;
   }

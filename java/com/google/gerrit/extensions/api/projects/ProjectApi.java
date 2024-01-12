@@ -22,6 +22,7 @@ import com.google.gerrit.extensions.common.BatchLabelInput;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.LabelDefinitionInfo;
 import com.google.gerrit.extensions.common.ProjectInfo;
+import com.google.gerrit.extensions.common.SubmitRequirementInfo;
 import com.google.gerrit.extensions.restapi.NotImplementedException;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import java.util.Collection;
@@ -227,6 +228,21 @@ public interface ProjectApi {
 
   LabelApi label(String labelName) throws RestApiException;
 
+  ListSubmitRequirementsRequest submitRequirements() throws RestApiException;
+
+  abstract class ListSubmitRequirementsRequest {
+    protected boolean inherited;
+
+    public abstract List<SubmitRequirementInfo> get() throws RestApiException;
+
+    public ListSubmitRequirementsRequest withInherited(boolean inherited) {
+      this.inherited = inherited;
+      return this;
+    }
+  }
+
+  SubmitRequirementApi submitRequirement(String name) throws RestApiException;
+
   /**
    * Adds, updates and deletes label definitions in a batch.
    *
@@ -421,7 +437,17 @@ public interface ProjectApi {
     }
 
     @Override
+    public ListSubmitRequirementsRequest submitRequirements() throws RestApiException {
+      throw new NotImplementedException();
+    }
+
+    @Override
     public LabelApi label(String labelName) throws RestApiException {
+      throw new NotImplementedException();
+    }
+
+    @Override
+    public SubmitRequirementApi submitRequirement(String name) throws RestApiException {
       throw new NotImplementedException();
     }
 

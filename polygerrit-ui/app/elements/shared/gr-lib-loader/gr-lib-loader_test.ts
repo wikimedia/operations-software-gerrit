@@ -1,21 +1,11 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import {assert} from '@open-wc/testing';
+import '../../../test/common-test-setup';
+import {waitEventLoop} from '../../../test/test-utils';
 import './gr-lib-loader';
 import {GrLibLoader} from './gr-lib-loader';
 
@@ -47,12 +37,12 @@ suite('gr-lib-loader tests', () => {
     grLibLoader.getLibrary(libraryConfig).then(loaded2);
 
     resolveLoad();
-    await flush();
+    await waitEventLoop();
 
     const lateLoaded = sinon.stub();
     grLibLoader.getLibrary(libraryConfig).then(lateLoaded);
 
-    await flush();
+    await waitEventLoop();
 
     assert.isTrue(loaded1.calledOnce);
     assert.isTrue(loaded2.calledOnce);
@@ -69,12 +59,12 @@ suite('gr-lib-loader tests', () => {
     grLibLoader.getLibrary(libraryConfig).catch(failed2);
 
     rejectLoad();
-    await flush();
+    await waitEventLoop();
 
     const lateFailed = sinon.stub();
     grLibLoader.getLibrary(libraryConfig).catch(lateFailed);
 
-    await flush();
+    await waitEventLoop();
 
     assert.isTrue(failed1.calledOnce);
     assert.isTrue(failed2.calledOnce);
@@ -95,12 +85,12 @@ suite('gr-lib-loader tests', () => {
     grLibLoader.getLibrary(libraryConfig).then(loaded2);
 
     resolveLoad();
-    await flush();
+    await waitEventLoop();
 
     const lateLoaded = sinon.stub();
     grLibLoader.getLibrary(libraryConfig).then(lateLoaded);
 
-    await flush();
+    await waitEventLoop();
 
     assert.isTrue(configureCallback.calledOnce);
   });
@@ -121,7 +111,7 @@ suite('gr-lib-loader tests', () => {
 
     (window as any).library = library;
     resolveLoad();
-    await flush();
+    await waitEventLoop();
 
     assert.isTrue(loaded1.calledWith(library));
     assert.isTrue(loaded2.calledWith(library));
@@ -129,7 +119,7 @@ suite('gr-lib-loader tests', () => {
     const lateLoaded = sinon.stub();
     grLibLoader.getLibrary(libraryConfig).then(lateLoaded);
 
-    await flush();
+    await waitEventLoop();
 
     assert.isTrue(lateLoaded.calledWith(library));
   });
@@ -158,12 +148,12 @@ suite('gr-lib-loader tests', () => {
       grLibLoader.getLibrary(libraryConfig).then(loaded2);
 
       resolveLoad();
-      await flush();
+      await waitEventLoop();
 
       const lateLoaded = sinon.stub();
       grLibLoader.getLibrary(libraryConfig).then(lateLoaded);
 
-      await flush();
+      await waitEventLoop();
 
       assert.isFalse(loadStub.called);
       assert.isTrue(loaded1.called);
@@ -181,7 +171,7 @@ suite('gr-lib-loader tests', () => {
       grLibLoader.getLibrary(libraryConfig);
 
       resolveLoad();
-      await flush();
+      await waitEventLoop();
 
       assert.isTrue((window as any).library.initialize.calledOnce);
     });
@@ -196,7 +186,7 @@ suite('gr-lib-loader tests', () => {
       grLibLoader.getLibrary(libraryConfig);
 
       resolveLoad();
-      await flush();
+      await waitEventLoop();
 
       assert.isTrue(loadStub.called);
     });

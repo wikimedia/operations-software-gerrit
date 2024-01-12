@@ -1,46 +1,34 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 const runUnderBazel = !!process.env["RUNFILES_DIR"];
-const path = require('path');
+const path = require("path");
 
 function getModulesDir() {
-  if(runUnderBazel) {
+  if (runUnderBazel) {
     // Run under bazel
     return [
       `external/plugins_npm/node_modules`,
       `external/ui_npm/node_modules`,
-      `external/ui_dev_npm/node_modules`
+      `external/ui_dev_npm/node_modules`,
     ];
   }
 
   // Run from intellij or npm run test:kdebug
   return [
-    path.join(__dirname, 'app/node_modules'),
-    path.join(__dirname, 'node_modules'),
+    path.join(__dirname, "app/node_modules"),
+    path.join(__dirname, "node_modules"),
   ];
 }
 
 function getUiDevNpmFilePath(importPath) {
-  if(runUnderBazel) {
+  if (runUnderBazel) {
     return `external/ui_dev_npm/node_modules/${importPath}`;
-  }
-  else {
-    return `polygerrit-ui/node_modules/${importPath}`
+  } else {
+    return `polygerrit-ui/node_modules/${importPath}`;
   }
 }
 
@@ -54,15 +42,17 @@ function runInIde() {
   // We want to increase browserNoActivityTimeout when tests run in IDE.
   // Wd don't want to increase it in other cases, oterhise hanging tests
   // can slow down CI.
-  return !runUnderBazel &&
-      process.argv.some(arg => arg.toLowerCase().contains('intellij'));
+  return (
+    !runUnderBazel &&
+    process.argv.some((arg) => arg.toLowerCase().contains("intellij"))
+  );
 }
 
-module.exports = function(config) {
+module.exports = function (config) {
   let root = config.root;
   if (!root) {
-    console.warn(`--root argument not set. Falling back to __dirname.`)
-    root = path.resolve(__dirname) + '/';
+    console.warn(`--root argument not set. Falling back to __dirname.`);
+    root = path.resolve(__dirname) + "/";
   }
   // Use --test-files to specify pattern for a test files.
   // It can be just a file name, without a path:
@@ -74,47 +64,58 @@ module.exports = function(config) {
   // given.
   let filePattern;
   if (typeof config.testFiles === "string") {
-    if (config.testFiles.endsWith('.ts')) {
-      filePattern = config.testFiles.substr(0, config.testFiles.lastIndexOf(".")) + ".js";
-    } else if (config.testFiles.endsWith('.js')) {
+    if (config.testFiles.endsWith(".ts")) {
+      filePattern =
+        config.testFiles.substr(0, config.testFiles.lastIndexOf(".")) + ".js";
+    } else if (config.testFiles.endsWith(".js")) {
       filePattern = config.testFiles;
     } else {
-      filePattern = config.testFiles + '.js';
+      filePattern = config.testFiles + ".js";
     }
   } else {
-    filePattern = '*_test.js';
+    filePattern = "*_test.js";
   }
-  const testFilesPattern = root + '**/' + filePattern;
+  const testFilesPattern = root + "**/" + filePattern;
 
-  console.info(`Karma test file pattern: ${testFilesPattern}`)
+  console.info(`Karma test file pattern: ${testFilesPattern}`);
   // Special patch for grep parameters (see details in the grep-patch-karam.js)
-  const additionalFiles = runUnderBazel ? [] : ['polygerrit-ui/grep-patch-karma.js'];
+  const additionalFiles = runUnderBazel
+    ? []
+    : ["polygerrit-ui/grep-patch-karma.js"];
   config.set({
     browserNoActivityTimeout: runInIde ? 60 * 60 * 1000 : 30 * 1000,
     // base path that will be used to resolve all patterns (eg. files, exclude)
-    basePath: '../',
+    basePath: "../",
     plugins: [
       // Do not use karma-* to load all installed plugin
       // This can lead to unexpected behavior under bazel
       // if you forget to add a plugin in a bazel rule.
-      require.resolve('@open-wc/karma-esm'),
-      'karma-mocha',
-      'karma-chrome-launcher',
-      'karma-mocha-reporter',
+      require.resolve("@open-wc/karma-esm"),
+      "karma-mocha",
+      "karma-chrome-launcher",
+      "karma-mocha-reporter",
     ],
     // frameworks to use
     // available frameworks: https://npmjs.org/browse/keyword/karma-adapter
-    frameworks: ['mocha', 'esm'],
+    frameworks: ["mocha", "esm"],
 
     // list of files / patterns to load in the browser
     files: [
       ...additionalFiles,
-      getUiDevNpmFilePath('source-map-support/browser-source-map-support.js'),
-      getUiDevNpmFilePath('accessibility-developer-tools/dist/js/axs_testing.js'),
-      {pattern: getUiDevNpmFilePath('@open-wc/semantic-dom-diff/index.js'), type: 'module' },
-      {pattern: getUiDevNpmFilePath('@open-wc/testing-helpers/index.js'), type: 'module' },
-      getUiDevNpmFilePath('sinon/pkg/sinon.js'),
-      { pattern: testFilesPattern, type: 'module' },
+      getUiDevNpmFilePath("source-map-support/browser-source-map-support.js"),
+      getUiDevNpmFilePath(
+        "accessibility-developer-tools/dist/js/axs_testing.js"
+      ),
+      {
+        pattern: getUiDevNpmFilePath("@open-wc/semantic-dom-diff/index.js"),
+        type: "module",
+      },
+      {
+        pattern: getUiDevNpmFilePath("@open-wc/testing-helpers/index.js"),
+        type: "module",
+      },
+      getUiDevNpmFilePath("sinon/pkg/sinon.js"),
+      { pattern: testFilesPattern, type: "module" },
     ],
     esm: {
       nodeResolve: {
@@ -123,7 +124,7 @@ module.exports = function(config) {
         // in node resolve.
         // The .ts extension is required to display source code in browser
         // (otherwise esm plugin crashes)
-        extensions: ['.js', '.ts'],
+        extensions: [".js", ".ts"],
       },
       moduleDirs: getModulesDir(),
       // Bazel and yarn uses symlinks for files.
@@ -133,7 +134,7 @@ module.exports = function(config) {
       // In the 'auto' mode it incorrectly applies polyfills and
       // breaks tests in some browser versions
       // (for example, Chrome 69 on gerrit-ci).
-      compatibility: 'none',
+      compatibility: "none",
       plugins: [
         {
           resolveImport(importSpecifier) {
@@ -151,61 +152,68 @@ module.exports = function(config) {
               return importSpecifier.source;
             }
             return undefined;
-          }
+          },
         },
         {
           transform(context) {
-            if (context.path.endsWith('/node_modules/page/page.js')) {
+            if (context.path.endsWith("/node_modules/page/page.js")) {
               const orignalBody = context.body;
               // Can't import page.js directly, because this is undefined.
               // Replace it with window
               // The same replace exists in server.go
               // Rollup makes this replacement automatically
               const transformedBody = orignalBody.replace(
-                  '}(this, (function () { \'use strict\';',
-                  '}(window, (function () { \'use strict\';'
+                "}(this, (function () { 'use strict';",
+                "}(window, (function () { 'use strict';"
               );
-              if(orignalBody.length === transformedBody.length) {
-                console.error('The page.js was updated. Please update transform accordingly');
+              if (orignalBody.length === transformedBody.length) {
+                console.error(
+                  "The page.js was updated. Please update transform accordingly"
+                );
                 process.exit(1);
               }
-              return {body: transformedBody};
+              return { body: transformedBody };
             }
           },
-        }
-      ]
+        },
+      ],
     },
     // test results reporter to use
     // possible values: 'dots', 'progress'
     // available reporters: https://npmjs.org/browse/keyword/karma-reporter
-    reporters: ['mocha'],
+    reporters: ["mocha"],
 
     mochaReporter: {
-      showDiff: true
+      showDiff: true,
     },
+
+    // Listen on localhost so it either listens to ipv4
+    // or ipv6. Some OS's default to ipv6 for localhost
+    // and others ipv4.
+    // Nodejs 17 changed the behaviour from prefering ipv4 to
+    // using the OS settings.
+    // The default is 127.0.0.1 thus if localhost is on ipv6 only
+    // it'll fail to connect to the karma server.
+    // See https://github.com/karma-runner/karma/blob/e17698f950af83bf2b3edc540d2a3e1fb73cba59/lib/utils/dns-utils.js#L3
+    listenAddress: "localhost",
 
     // web server port
     port: 9876,
 
-
     // enable / disable colors in the output (reporters and logs)
     colors: true,
-
 
     // level of logging
     // possible values: config.LOG_DISABLE || config.LOG_ERROR || config.LOG_WARN || config.LOG_INFO || config.LOG_DEBUG
     logLevel: config.LOG_INFO,
 
-
     // enable / disable watching file and executing tests whenever any file changes
     autoWatch: false,
-
 
     // start these browsers
     // available browser launchers: https://npmjs.org/browse/keyword/karma-launcher
     browsers: ["CustomChromeHeadless"],
     browserForDebugging: "CustomChromeHeadlessWithDebugPort",
-
 
     // Continuous Integration mode
     // if true, Karma captures browsers, runs the tests and exits
@@ -217,25 +225,25 @@ module.exports = function(config) {
 
     client: {
       mocha: {
-        ui: 'tdd',
+        ui: "tdd",
         timeout: 5000,
-      }
+      },
     },
 
     customLaunchers: {
       // Based on https://developers.google.com/web/updates/2017/06/headless-karma-mocha-chai
-      "CustomChromeHeadless": {
-        base: 'ChromeHeadless',
-        flags: ['--disable-translate', '--disable-extensions'],
+      CustomChromeHeadless: {
+        base: "ChromeHeadless",
+        flags: ["--disable-translate", "--disable-extensions"],
       },
-      "ChromeDev": {
-        base: 'Chrome',
-        flags: ['--disable-extensions', ' --auto-open-devtools-for-tabs'],
+      ChromeDev: {
+        base: "Chrome",
+        flags: ["--disable-extensions", " --auto-open-devtools-for-tabs"],
       },
-      "CustomChromeHeadlessWithDebugPort": {
-        base: 'CustomChromeHeadless',
-        flags: ['--remote-debugging-port=9222'],
-      }
-    }
+      CustomChromeHeadlessWithDebugPort: {
+        base: "CustomChromeHeadless",
+        flags: ["--remote-debugging-port=9222"],
+      },
+    },
   });
 };

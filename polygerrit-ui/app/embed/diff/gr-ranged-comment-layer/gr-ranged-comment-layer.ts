@@ -55,10 +55,14 @@ type RangesMap = {
   [side in Side]: LinesMap;
 };
 
-const RANGE_BASE_ONLY = 'style-scope gr-diff range';
-const RANGE_HIGHLIGHT = 'style-scope gr-diff range rangeHighlight';
+const RANGE_BASE_ONLY = 'gr-diff range';
+const RANGE_HIGHLIGHT = 'gr-diff range rangeHighlight';
 // Note that there is also `rangeHoverHighlight` being set by GrDiffHighlight.
 
+/**
+ * This layer does not have a `reset` or `cleanup` method, so don't re-use it
+ * for rendering another diff. You should create a new layer then.
+ */
 export class GrRangedCommentLayer implements DiffLayer {
   private knownRanges: CommentRangeLayer[] = [];
 

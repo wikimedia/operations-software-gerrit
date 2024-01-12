@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {
   CommentBasics,
@@ -23,7 +12,7 @@ import {
   UrlEncodedCommentId,
   CommentRange,
   PatchRange,
-  ParentPatchSetNum,
+  PARENT,
   ContextLine,
   BasePatchSetNum,
   RevisionPatchSetNum,
@@ -31,6 +20,8 @@ import {
   AccountDetailInfo,
   ChangeMessageInfo,
   VotingRangeInfo,
+  FixSuggestionInfo,
+  FixId,
 } from '../types/common';
 import {CommentSide, SpecialFilePath} from '../constants/constants';
 import {parseDate} from './date-util';
@@ -39,6 +30,7 @@ import {isMergeParent, getParentIndex} from './patch-set-util';
 import {DiffInfo} from '../types/diff';
 import {LineNumber} from '../api/diff';
 import {FormattedReviewerUpdateInfo} from '../types/types';
+import {extractMentionedUsers} from './account-util';
 
 export interface DraftCommentProps {
   // This must be true for all drafts. Drafts received from the backend will be
@@ -61,6 +53,7 @@ export type UnsavedInfo = CommentBasics & UnsavedCommentProps;
 
 export type Comment = UnsavedInfo | DraftInfo | CommentInfo | RobotCommentInfo;
 
+// TODO: Replace the CommentMap type with just an array of paths.
 export type CommentMap = {[path: string]: boolean};
 
 export function isRobot<T extends CommentBasics>(
@@ -106,6 +99,8 @@ export function isFormattedReviewerUpdate(
 }
 
 export type LabelExtreme = {[labelName: string]: VotingRangeInfo};
+
+export const NEWLINE_PATTERN = /\n/g;
 
 export const PATCH_SET_PREFIX_PATTERN =
   /^(?:Uploaded\s*)?[Pp]atch [Ss]et \d+:\s*(.*)/;
@@ -221,7 +216,7 @@ export interface CommentThread {
      Same as `parent` in CommentInfo.
   */
   mergeParentNum?: number;
-  patchNum?: PatchSetNum;
+  patchNum?: RevisionPatchSetNum;
   /* Different from CommentInfo, which just keeps the line undefined for
      FILE comments. */
   line?: LineNumber;
@@ -294,6 +289,16 @@ export function isDraftThread(thread: CommentThread): boolean {
   return isDraft(getLastComment(thread));
 }
 
+export function isMentionedThread(
+  thread: CommentThread,
+  account?: AccountInfo
+) {
+  if (!account?.email) return false;
+  return getMentionedUsers(thread)
+    .map(v => v.email)
+    .includes(account.email);
+}
+
 export function isRobotThread(thread: CommentThread): boolean {
   return isRobot(getFirstComment(thread));
 }
@@ -333,7 +338,7 @@ export function isInBaseOfPatchRange(
 
   // If the base of the range is the parent of the patch:
   if (
-    range.basePatchNum === ParentPatchSetNum &&
+    range.basePatchNum === PARENT &&
     comment.side === CommentSide.PARENT &&
     comment.patch_set === range.patchNum
   ) {
@@ -341,7 +346,7 @@ export function isInBaseOfPatchRange(
   }
   // If the base of the range is not the parent of the patch:
   return (
-    range.basePatchNum !== ParentPatchSetNum &&
+    range.basePatchNum !== PARENT &&
     comment.side !== CommentSide.PARENT &&
     comment.patch_set === range.basePatchNum
   );
@@ -384,16 +389,14 @@ export function getPatchRangeForCommentUrl(
 
   // TODO(dhruvsri): Add handling for comment left on parents of merge commits
   if (comment.side === CommentSide.PARENT) {
-    if (comment.patch_set === ParentPatchSetNum)
-      throw new Error('comment.patch_set cannot be PARENT');
     return {
-      patchNum: comment.patch_set as RevisionPatchSetNum,
-      basePatchNum: ParentPatchSetNum,
+      patchNum: comment.patch_set,
+      basePatchNum: PARENT,
     };
   } else if (latestPatchNum === comment.patch_set) {
     return {
       patchNum: latestPatchNum,
-      basePatchNum: ParentPatchSetNum,
+      basePatchNum: PARENT,
     };
   } else {
     return {
@@ -503,4 +506,80 @@ export function reportingDetails(comment: CommentBasics) {
     line: comment?.range?.start_line ?? comment?.line,
     unsaved: isUnsaved(comment),
   };
+}
+
+export const USER_SUGGESTION_START_PATTERN = '```suggestion\n';
+
+// This can either mean a user or a checks provided fix.
+// "Provided" means that the fix is sent along with the request
+// when previewing and applying the fix. This is in contrast to
+// robot comment fixes, which are stored in the backend, and they
+// are referenced by a unique `FixId`;
+export const PROVIDED_FIX_ID = 'provided_fix' as FixId;
+
+export function hasUserSuggestion(comment: Comment) {
+  return comment.message?.includes(USER_SUGGESTION_START_PATTERN) ?? false;
+}
+
+export function getUserSuggestion(comment: Comment) {
+  if (!comment.message) return;
+  const start =
+    comment.message.indexOf(USER_SUGGESTION_START_PATTERN) +
+    USER_SUGGESTION_START_PATTERN.length;
+  const end = comment.message.indexOf('\n```', start);
+  return comment.message.substring(start, end);
+}
+
+export function getContentInCommentRange(
+  fileContent: string,
+  comment: Comment
+) {
+  const lines = fileContent.split('\n');
+  if (comment.range) {
+    const range = comment.range;
+    return lines.slice(range.start_line - 1, range.end_line).join('\n');
+  }
+  return lines[comment.line! - 1];
+}
+
+export function createUserFixSuggestion(
+  comment: Comment,
+  line: string,
+  replacement: string
+): FixSuggestionInfo[] {
+  const lastLine = line.split('\n').pop();
+  return [
+    {
+      fix_id: PROVIDED_FIX_ID,
+      description: 'User suggestion',
+      replacements: [
+        {
+          path: comment.path!,
+          range: {
+            start_line: comment.range?.start_line ?? comment.line!,
+            start_character: 0,
+            end_line: comment.range?.end_line ?? comment.line!,
+            end_character: lastLine!.length,
+          },
+          replacement,
+        },
+      ],
+    },
+  ];
+}
+
+function getMentionedUsers(thread: CommentThread) {
+  return thread.comments.map(c => extractMentionedUsers(c.message)).flat();
+}
+
+export function getMentionedThreads(
+  threads: CommentThread[],
+  account: AccountInfo
+) {
+  if (!account.email) return [];
+  return threads.filter(t =>
+    getMentionedUsers(t)
+      .map(v => v.email)
+      .includes(account.email)
+  );
 }

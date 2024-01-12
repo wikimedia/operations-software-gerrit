@@ -1,25 +1,15 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-change-table-editor';
 import {GrChangeTableEditor} from './gr-change-table-editor';
 import {queryAndAssert} from '../../../test/test-utils';
 import {createServerInfo} from '../../../test/test-data-generators';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
+import {ColumnNames} from '../../../constants/constants';
 
 suite('gr-change-table-editor tests', () => {
   let element: GrChangeTableEditor;
@@ -37,8 +27,8 @@ suite('gr-change-table-editor tests', () => {
       'Reviewers',
       'Comments',
       'Repo',
-      'Branch',
-      'Updated',
+      ColumnNames.BRANCH,
+      ColumnNames.UPDATED,
     ];
 
     element.displayedColumns = columns;
@@ -48,77 +38,80 @@ suite('gr-change-table-editor tests', () => {
   });
 
   test('renders', () => {
-    expect(element).shadowDom.to.equal(/* HTML */ ` <div class="gr-form-styles">
-      <table id="changeCols">
-        <thead>
-          <tr>
-            <th class="nameHeader">Column</th>
-            <th class="visibleHeader">Visible</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><label for="numberCheckbox"> Number </label></td>
-            <td class="checkboxContainer">
-              <input id="numberCheckbox" name="number" type="checkbox" />
-            </td>
-          </tr>
-          <tr>
-            <td><label for="Subject"> Subject </label></td>
-            <td class="checkboxContainer">
-              <input checked="" id="Subject" name="Subject" type="checkbox" />
-            </td>
-          </tr>
-          <tr>
-            <td><label for="Status"> Status </label></td>
-            <td class="checkboxContainer">
-              <input checked="" id="Status" name="Status" type="checkbox" />
-            </td>
-          </tr>
-          <tr>
-            <td><label for="Owner"> Owner </label></td>
-            <td class="checkboxContainer">
-              <input checked="" id="Owner" name="Owner" type="checkbox" />
-            </td>
-          </tr>
-          <tr>
-            <td><label for="Reviewers"> Reviewers </label></td>
-            <td class="checkboxContainer">
-              <input
-                checked=""
-                id="Reviewers"
-                name="Reviewers"
-                type="checkbox"
-              />
-            </td>
-          </tr>
-          <tr>
-            <td><label for="Repo"> Repo </label></td>
-            <td class="checkboxContainer">
-              <input checked="" id="Repo" name="Repo" type="checkbox" />
-            </td>
-          </tr>
-          <tr>
-            <td><label for="Branch"> Branch </label></td>
-            <td class="checkboxContainer">
-              <input checked="" id="Branch" name="Branch" type="checkbox" />
-            </td>
-          </tr>
-          <tr>
-            <td><label for="Updated"> Updated </label></td>
-            <td class="checkboxContainer">
-              <input checked="" id="Updated" name="Updated" type="checkbox" />
-            </td>
-          </tr>
-          <tr>
-            <td><label for="Size"> Size </label></td>
-            <td class="checkboxContainer">
-              <input id="Size" name="Size" type="checkbox" />
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>`);
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ ` <div class="gr-form-styles">
+        <table id="changeCols">
+          <thead>
+            <tr>
+              <th class="nameHeader">Column</th>
+              <th class="visibleHeader">Visible</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><label for="numberCheckbox"> Number </label></td>
+              <td class="checkboxContainer">
+                <input id="numberCheckbox" name="number" type="checkbox" />
+              </td>
+            </tr>
+            <tr>
+              <td><label for="Subject"> Subject </label></td>
+              <td class="checkboxContainer">
+                <input checked="" id="Subject" name="Subject" type="checkbox" />
+              </td>
+            </tr>
+            <tr>
+              <td><label for="Owner"> Owner </label></td>
+              <td class="checkboxContainer">
+                <input checked="" id="Owner" name="Owner" type="checkbox" />
+              </td>
+            </tr>
+            <tr>
+              <td><label for="Reviewers"> Reviewers </label></td>
+              <td class="checkboxContainer">
+                <input
+                  checked=""
+                  id="Reviewers"
+                  name="Reviewers"
+                  type="checkbox"
+                />
+              </td>
+            </tr>
+            <tr>
+              <td><label for="Repo"> Repo </label></td>
+              <td class="checkboxContainer">
+                <input checked="" id="Repo" name="Repo" type="checkbox" />
+              </td>
+            </tr>
+            <tr>
+              <td><label for="Branch"> Branch </label></td>
+              <td class="checkboxContainer">
+                <input checked="" id="Branch" name="Branch" type="checkbox" />
+              </td>
+            </tr>
+            <tr>
+              <td><label for="Updated"> Updated </label></td>
+              <td class="checkboxContainer">
+                <input checked="" id="Updated" name="Updated" type="checkbox" />
+              </td>
+            </tr>
+            <tr>
+              <td><label for="Size"> Size </label></td>
+              <td class="checkboxContainer">
+                <input id="Size" name="Size" type="checkbox" />
+              </td>
+            </tr>
+            <tr>
+              <td><label for=" Status "> Status </label></td>
+              <td class="checkboxContainer">
+                <input id=" Status " name=" Status " type="checkbox" />
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>`
+    );
   });
 
   test('renders', () => {
@@ -150,7 +143,13 @@ suite('gr-change-table-editor tests', () => {
   });
 
   test('show item', async () => {
-    element.displayedColumns = ['Status', 'Owner', 'Repo', 'Branch', 'Updated'];
+    element.displayedColumns = [
+      ColumnNames.STATUS,
+      ColumnNames.OWNER,
+      ColumnNames.REPO,
+      ColumnNames.BRANCH,
+      ColumnNames.UPDATED,
+    ];
     // trigger computation of enabled displayed columns
     element.serverConfig = createServerInfo();
     await element.updateComplete;

@@ -65,6 +65,7 @@ import com.google.gerrit.entities.Address;
 import com.google.gerrit.entities.AttentionSetUpdate;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.ChangeMessage;
+import com.google.gerrit.entities.Comment;
 import com.google.gerrit.entities.HumanComment;
 import com.google.gerrit.entities.LabelId;
 import com.google.gerrit.entities.LabelType;
@@ -199,18 +200,21 @@ class ChangeNotesParser {
   // the latest record unsets the field).
   private Optional<PatchSet.Id> cherryPickOf;
   private Instant mergedOn;
+  private final NoteDbUtil noteDbUtil;
 
   ChangeNotesParser(
       Change.Id changeId,
       ObjectId tip,
       ChangeNotesRevWalk walk,
       ChangeNoteJson changeNoteJson,
-      NoteDbMetrics metrics) {
+      NoteDbMetrics metrics,
+      NoteDbUtil noteDbUtil) {
     this.id = changeId;
     this.tip = tip;
     this.walk = walk;
     this.changeNoteJson = changeNoteJson;
     this.metrics = metrics;
+    this.noteDbUtil = noteDbUtil;
     approvals = new LinkedHashMap<>();
     bufferedApprovals = new ArrayList<>();
     reviewers = HashBasedTable.create();
@@ -720,7 +724,7 @@ class ChangeNotesParser {
 
       Optional<AttentionSetUpdate> attentionStatus =
           ChangeNoteUtil.attentionStatusFromJson(
-              Instant.ofEpochSecond(commit.getCommitTime()), attentionString);
+              Instant.ofEpochSecond(commit.getCommitTime()), attentionString, noteDbUtil);
       if (!attentionStatus.isPresent()) {
         throw invalidFooter(FOOTER_ATTENTION, attentionString);
       }
@@ -886,6 +890,11 @@ class ChangeNotesParser {
 
     for (Map.Entry<ObjectId, ChangeRevisionNote> e : rns.entrySet()) {
       for (HumanComment c : e.getValue().getEntities()) {
+
+        noteDbUtil
+            .parseIdent(String.format("%s@%s", c.author.getId(), c.serverId))
+            .ifPresent(id -> c.author = new Comment.Identity(id));
+
         humanComments.put(e.getKey(), c);
       }
     }
@@ -948,9 +957,15 @@ class ChangeNotesParser {
       realAccountId = parseIdent(realIdent);
     }
 
-    LabelVote l;
+    LabelVote labelVote;
     try {
-      l = LabelVote.parseWithEquals(parsedPatchSetApproval.labelVote());
+      if (!parsedPatchSetApproval.isRemoval()) {
+        labelVote = LabelVote.parseWithEquals(parsedPatchSetApproval.labelVote());
+      } else {
+        String labelName = parsedPatchSetApproval.labelVote();
+        LabelType.checkNameInternal(labelName);
+        labelVote = LabelVote.create(labelName, (short) 0);
+      }
     } catch (IllegalArgumentException e) {
       ConfigInvalidException pe =
           parseException(
@@ -961,9 +976,9 @@ class ChangeNotesParser {
 
     PatchSetApproval.Builder psa =
         PatchSetApproval.builder()
-            .key(PatchSetApproval.key(psId, accountId, LabelId.create(l.label())))
+            .key(PatchSetApproval.key(psId, accountId, LabelId.create(labelVote.label())))
             .uuid(parsedPatchSetApproval.uuid().map(PatchSetApproval::uuid))
-            .value(l.value())
+            .value(labelVote.value())
             .granted(ts)
             .tag(parsedPatchSetApproval.tag())
             .copied(true);
@@ -1400,7 +1415,8 @@ class ChangeNotesParser {
   }
 
   private Account.Id parseIdent(PersonIdent ident) throws ConfigInvalidException {
-    return NoteDbUtil.parseIdent(ident)
+    return noteDbUtil
+        .parseIdent(ident)
         .orElseThrow(
             () -> parseException("cannot retrieve account id: %s", ident.getEmailAddress()));
   }

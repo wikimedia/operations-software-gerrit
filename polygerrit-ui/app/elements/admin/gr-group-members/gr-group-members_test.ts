@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-group-members';
 import {GrGroupMembers, ItemType} from './gr-group-members';
 import {
@@ -37,10 +25,11 @@ import {
 } from '../../../types/common';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {GrAutocomplete} from '../../shared/gr-autocomplete/gr-autocomplete';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
-import {PageErrorEvent} from '../../../types/events.js';
-
-const basicFixture = fixtureFromElement('gr-group-members');
+import {EventType, PageErrorEvent} from '../../../types/events';
+import {getAccountSuggestions} from '../../../utils/account-util';
+import {getAppContext} from '../../../services/app-context';
+import {fixture, html, assert} from '@open-wc/testing';
+import {createServerInfo} from '../../../test/test-data-generators';
 
 suite('gr-group-members tests', () => {
   let element: GrGroupMembers;
@@ -114,6 +103,7 @@ suite('gr-group-members tests', () => {
             name: 'test-account',
             email: 'test.account@example.com' as EmailAddress,
             username: 'test123',
+            display_name: 'display-test-account',
           },
           {
             _account_id: 1001439 as AccountId,
@@ -148,12 +138,226 @@ suite('gr-group-members tests', () => {
     stubRestApi('getGroupMembers').returns(Promise.resolve(groupMembers));
     stubRestApi('getIsGroupOwner').returns(Promise.resolve(true));
     stubRestApi('getIncludedGroup').returns(Promise.resolve(includedGroups));
-    element = basicFixture.instantiate();
-    await element.updateComplete;
+    element = await fixture(html`<gr-group-members></gr-group-members>`);
     stubBaseUrl('https://test/site');
     element.groupId = 'testId1' as GroupId;
     groupStub = stubRestApi('getGroupConfig').returns(Promise.resolve(groups));
     return element.loadGroupDetails();
+  });
+
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="gr-form-styles main">
+          <div id="loading">Loading...</div>
+          <div id="loadedContent">
+            <h1 class="heading-1" id="Title">Administrators</h1>
+            <div id="form">
+              <h3 class="heading-3" id="members">Members</h3>
+              <fieldset>
+                <span class="value">
+                  <gr-autocomplete
+                    id="groupMemberSearchInput"
+                    placeholder="Name Or Email"
+                  >
+                  </gr-autocomplete>
+                </span>
+                <gr-button
+                  aria-disabled="true"
+                  disabled=""
+                  id="saveGroupMember"
+                  role="button"
+                  tabindex="-1"
+                >
+                  Add
+                </gr-button>
+                <table id="groupMembers">
+                  <tbody>
+                    <tr class="headerRow">
+                      <th class="nameHeader">Name</th>
+                      <th class="emailAddressHeader">Email Address</th>
+                      <th class="deleteHeader">Delete Member</th>
+                    </tr>
+                  </tbody>
+                  <tbody>
+                    <tr>
+                      <td class="nameColumn">
+                        <gr-account-label clickable="" deselected="">
+                        </gr-account-label>
+                      </td>
+                      <td>jane.roe@example.com</td>
+                      <td class="deleteColumn">
+                        <gr-button
+                          aria-disabled="false"
+                          class="deleteMembersButton"
+                          data-index="0"
+                          role="button"
+                          tabindex="0"
+                        >
+                          Delete
+                        </gr-button>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td class="nameColumn">
+                        <gr-account-label clickable="" deselected="">
+                        </gr-account-label>
+                      </td>
+                      <td>john.doe@example.com</td>
+                      <td class="deleteColumn">
+                        <gr-button
+                          aria-disabled="false"
+                          class="deleteMembersButton"
+                          data-index="1"
+                          role="button"
+                          tabindex="0"
+                        >
+                          Delete
+                        </gr-button>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td class="nameColumn">
+                        <gr-account-label clickable="" deselected="">
+                        </gr-account-label>
+                      </td>
+                      <td></td>
+                      <td class="deleteColumn">
+                        <gr-button
+                          aria-disabled="false"
+                          class="deleteMembersButton"
+                          data-index="2"
+                          role="button"
+                          tabindex="0"
+                        >
+                          Delete
+                        </gr-button>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td class="nameColumn">
+                        <gr-account-label clickable="" deselected="">
+                        </gr-account-label>
+                      </td>
+                      <td></td>
+                      <td class="deleteColumn">
+                        <gr-button
+                          aria-disabled="false"
+                          class="deleteMembersButton"
+                          data-index="3"
+                          role="button"
+                          tabindex="0"
+                        >
+                          Delete
+                        </gr-button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </fieldset>
+              <h3 class="heading-3" id="includedGroups">Included Groups</h3>
+              <fieldset>
+                <span class="value">
+                  <gr-autocomplete
+                    id="includedGroupSearchInput"
+                    placeholder="Group Name"
+                  >
+                  </gr-autocomplete>
+                </span>
+                <gr-button
+                  aria-disabled="true"
+                  disabled=""
+                  id="saveIncludedGroups"
+                  role="button"
+                  tabindex="-1"
+                >
+                  Add
+                </gr-button>
+                <table id="includedGroups">
+                  <tbody>
+                    <tr class="headerRow">
+                      <th class="groupNameHeader">Group Name</th>
+                      <th class="descriptionHeader">Description</th>
+                      <th class="deleteIncludedHeader">Delete Group</th>
+                    </tr>
+                  </tbody>
+                  <tbody>
+                    <tr>
+                      <td class="nameColumn">
+                        <a href="https://group/url" rel="noopener">
+                          testName
+                        </a>
+                      </td>
+                      <td></td>
+                      <td class="deleteColumn">
+                        <gr-button
+                          aria-disabled="false"
+                          class="deleteIncludedGroupButton"
+                          data-index="0"
+                          role="button"
+                          tabindex="0"
+                        >
+                          Delete
+                        </gr-button>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td class="nameColumn">
+                        <a href="https://test/site/group/url" rel="noopener">
+                          testName2
+                        </a>
+                      </td>
+                      <td></td>
+                      <td class="deleteColumn">
+                        <gr-button
+                          aria-disabled="false"
+                          class="deleteIncludedGroupButton"
+                          data-index="1"
+                          role="button"
+                          tabindex="0"
+                        >
+                          Delete
+                        </gr-button>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td class="nameColumn">
+                        <a href="https://test/site/group/url" rel="noopener">
+                          testName3
+                        </a>
+                      </td>
+                      <td></td>
+                      <td class="deleteColumn">
+                        <gr-button
+                          aria-disabled="false"
+                          class="deleteIncludedGroupButton"
+                          data-index="2"
+                          role="button"
+                          tabindex="0"
+                        >
+                          Delete
+                        </gr-button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </fieldset>
+            </div>
+          </div>
+        </div>
+        <gr-overlay
+          aria-hidden="true"
+          id="overlay"
+          style="outline: none; display: none;"
+          tabindex="-1"
+          with-backdrop=""
+        >
+          <gr-confirm-delete-item-dialog class="confirmDialog">
+          </gr-confirm-delete-item-dialog>
+        </gr-overlay>
+      `
+    );
   });
 
   test('includedGroups', () => {
@@ -248,7 +452,7 @@ suite('gr-group-members tests', () => {
 
     const memberName = 'bad-name';
     const alertStub = sinon.stub();
-    element.addEventListener('show-alert', alertStub);
+    element.addEventListener(EventType.SHOW_ALERT, alertStub);
     const errorResponse = {...new Response(), status: 404, ok: false};
     stubRestApi('saveIncludedGroup').callsFake((_, _non, errFn) => {
       if (errFn !== undefined) {
@@ -294,14 +498,25 @@ suite('gr-group-members tests', () => {
   });
 
   test('getAccountSuggestions empty', async () => {
-    const accounts = await element.getAccountSuggestions('nonexistent');
+    const accounts = await getAccountSuggestions(
+      'nonexistent',
+      getAppContext().restApiService,
+      createServerInfo()
+    );
     assert.equal(accounts.length, 0);
   });
 
   test('getAccountSuggestions non-empty', async () => {
-    const accounts = await element.getAccountSuggestions('test-');
+    const accounts = await getAccountSuggestions(
+      'test-',
+      getAppContext().restApiService,
+      createServerInfo()
+    );
     assert.equal(accounts.length, 3);
-    assert.equal(accounts[0].name, 'test-account <test.account@example.com>');
+    assert.equal(
+      accounts[0].name,
+      'display-test-account <test.account@example.com>'
+    );
     assert.equal(accounts[1].name, 'test-admin <test.admin@example.com>');
     assert.equal(accounts[2].name, 'test-git');
   });
@@ -322,16 +537,16 @@ suite('gr-group-members tests', () => {
 
   test('delete member', () => {
     const deleteBtns = queryAll<GrButton>(element, '.deleteMembersButton');
-    MockInteractions.tap(deleteBtns[0]);
+    deleteBtns[0].click();
     assert.equal(element.itemId, 1000097 as AccountId);
     assert.equal(element.itemName, 'jane');
-    MockInteractions.tap(deleteBtns[1]);
+    deleteBtns[1].click();
     assert.equal(element.itemId, 1000096 as AccountId);
     assert.equal(element.itemName, 'Test User');
-    MockInteractions.tap(deleteBtns[2]);
+    deleteBtns[2].click();
     assert.equal(element.itemId, 1000095 as AccountId);
     assert.equal(element.itemName, 'Gerrit');
-    MockInteractions.tap(deleteBtns[3]);
+    deleteBtns[3].click();
     assert.equal(element.itemId, 1000098 as AccountId);
     assert.equal(element.itemName, '1000098');
   });
@@ -341,13 +556,13 @@ suite('gr-group-members tests', () => {
       element,
       '.deleteIncludedGroupButton'
     );
-    MockInteractions.tap(deleteBtns[0]);
+    deleteBtns[0].click();
     assert.equal(element.itemId, 'testId' as GroupId);
     assert.equal(element.itemName, 'testName');
-    MockInteractions.tap(deleteBtns[1]);
+    deleteBtns[1].click();
     assert.equal(element.itemId, 'testId2' as GroupId);
     assert.equal(element.itemName, 'testName2');
-    MockInteractions.tap(deleteBtns[2]);
+    deleteBtns[2].click();
     assert.equal(element.itemId, 'testId3' as GroupId);
     assert.equal(element.itemName, 'testName3');
   });

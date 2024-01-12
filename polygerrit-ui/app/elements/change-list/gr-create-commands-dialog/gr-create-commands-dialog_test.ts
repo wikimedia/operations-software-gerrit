@@ -1,35 +1,78 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import {fixture, html, assert} from '@open-wc/testing';
+import '../../../test/common-test-setup';
 import './gr-create-commands-dialog';
 import {GrCreateCommandsDialog} from './gr-create-commands-dialog';
-
-const basicFixture = fixtureFromElement('gr-create-commands-dialog');
 
 suite('gr-create-commands-dialog tests', () => {
   let element: GrCreateCommandsDialog;
 
-  setup(() => {
-    element = basicFixture.instantiate();
+  setup(async () => {
+    element = await fixture(
+      html`<gr-create-commands-dialog></gr-create-commands-dialog>`
+    );
   });
 
   test('branch', () => {
     element.branch = 'master';
     assert.equal(element.branch, 'master');
+  });
+
+  test('render', () => {
+    // prettier and shadowDom assert don't agree about wrapping in the <p> tags
+    assert.shadowDom.equal(
+      element,
+      /* prettier-ignore */ /* HTML */ `
+      <gr-overlay
+        aria-hidden="true"
+        id="commandsOverlay"
+        style="outline: none; display: none;"
+        tabindex="-1"
+        with-backdrop=""
+      >
+        <gr-dialog
+          cancel-label=""
+          confirm-label="Done"
+          confirm-on-enter=""
+          id="commandsDialog"
+          role="dialog"
+        >
+          <div class="header" slot="header">Create change commands</div>
+          <div class="main" slot="main">
+            <ol>
+              <li>
+                <p>Make the changes to the files on your machine</p>
+              </li>
+              <li>
+                <p>If you are making a new commit use</p>
+                <gr-shell-command> </gr-shell-command>
+                <p>Or to amend an existing commit use</p>
+                <gr-shell-command> </gr-shell-command>
+                <p>
+                  Please make sure you add a commit message as it becomes the
+                description for your change.
+                </p>
+              </li>
+              <li>
+                <p>Push the change for code review</p>
+                <gr-shell-command> </gr-shell-command>
+              </li>
+              <li>
+                <p>
+                  Close this dialog and you should be able to see your recently
+                created change in the 'Outgoing changes' section on the 'Your
+                changes' page.
+                </p>
+              </li>
+            </ol>
+          </div>
+        </gr-dialog>
+      </gr-overlay>
+    `
+    );
   });
 });

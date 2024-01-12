@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../test/common-test-setup-karma';
+import '../../test/common-test-setup';
 import {
   GrReporting,
   DEFAULT_STARTUP_TIMERS,
@@ -24,6 +12,7 @@ import {
 import {getAppContext} from '../app-context';
 import {Deduping} from '../../api/reporting';
 import {SinonFakeTimers} from 'sinon';
+import {assert} from '@open-wc/testing';
 
 suite('gr-reporting tests', () => {
   // We have to type as any because we access
@@ -544,7 +533,14 @@ suite('gr-reporting tests', () => {
       const error = new Error('bar');
       error.stack = undefined;
       emulateThrow('bar', 'http://url', 4, 2, error);
-      assert.isTrue(reporter.calledWith('error', 'exception', 'onError: bar'));
+      assert.isTrue(reporter.calledWith('error', 'exception', 'onError'));
+    });
+
+    test('is reported with message', () => {
+      const error = new Error('bar');
+      emulateThrow('bar', 'http://url', 4, 2, error);
+      const eventDetails = reporter.lastCall.args[4];
+      assert.equal(eventDetails.errorMessage, 'onError: bar');
     });
 
     test('is reported with stack', () => {
@@ -562,7 +558,7 @@ suite('gr-reporting tests', () => {
       const newError = new Error('bar');
       fakeWindow.handlers['unhandledrejection']({reason: newError});
       assert.isTrue(
-        reporter.calledWith('error', 'exception', 'unhandledrejection: bar')
+        reporter.calledWith('error', 'exception', 'unhandledrejection')
       );
     });
   });

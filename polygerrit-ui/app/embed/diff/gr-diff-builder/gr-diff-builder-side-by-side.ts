@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the 'License');
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an 'AS IS' BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {GrDiffGroup, GrDiffGroupType} from '../gr-diff/gr-diff-group';
 import {DiffInfo, DiffPreferencesInfo} from '../../../types/diff';
@@ -44,7 +33,8 @@ export class GrDiffBuilderSideBySide extends GrDiffBuilderLegacy {
     };
   }
 
-  protected override buildSectionElement(group: GrDiffGroup) {
+  // visible for testing
+  override buildSectionElement(group: GrDiffGroup) {
     const sectionEl = createElementDiff('tbody', 'section');
     sectionEl.classList.add(group.type);
     if (group.isTotal()) {
@@ -109,6 +99,30 @@ export class GrDiffBuilderSideBySide extends GrDiffBuilderLegacy {
     row.setAttribute('right-type', rightLine.type);
     // TabIndex makes screen reader read a row when navigating with j/k
     row.tabIndex = -1;
+    // Before Chrome 102, Chrome was able to compute a11y label from children
+    // content. Now Chrome 102 and Firefox are not computing a11y label because
+    // tr is not expected to have aria label. Adding aria role button is
+    // pushing browser to compute aria even for tr. This can be removed, once
+    // browsers will again compute a11y label even for tr when it is focused.
+    // TODO: Remove when Chrome 102 is out of date for 1 year.
+    if (
+      leftLine.beforeNumber !== 'FILE' &&
+      leftLine.beforeNumber !== 'LOST' &&
+      rightLine.beforeNumber !== 'FILE' &&
+      rightLine.beforeNumber !== 'LOST'
+    ) {
+      row.setAttribute(
+        'aria-labelledby',
+        [
+          leftLine.beforeNumber ? `left-button-${leftLine.beforeNumber}` : '',
+          leftLine.beforeNumber ? `left-content-${leftLine.beforeNumber}` : '',
+          rightLine.afterNumber ? `right-button-${rightLine.afterNumber}` : '',
+          rightLine.afterNumber ? `right-content-${rightLine.afterNumber}` : '',
+        ]
+          .join(' ')
+          .trim()
+      );
+    }
 
     row.appendChild(this.createBlameCell(leftLine.beforeNumber));
 
@@ -147,7 +161,8 @@ export class GrDiffBuilderSideBySide extends GrDiffBuilderLegacy {
     return td;
   }
 
-  protected override getNextContentOnSide(
+  // visible for testing
+  override getNextContentOnSide(
     content: HTMLElement,
     side: Side
   ): HTMLElement | null {

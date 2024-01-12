@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import '../../change/gr-change-actions/gr-change-actions';
 import {
   query,
@@ -25,7 +13,7 @@ import {
 } from '../../../test/test-utils';
 import {getPluginLoader} from './gr-plugin-loader';
 import {GrChangeActions} from '../../change/gr-change-actions/gr-change-actions';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
 import {PluginApi} from '../../../api/plugin';
 import {
   ActionType,
@@ -33,9 +21,9 @@ import {
   PrimaryActionKey,
 } from '../../../api/change-actions';
 import {GrButton} from '../gr-button/gr-button';
-import {IronIconElement} from '@polymer/iron-icon';
 import {ChangeViewChangeInfo} from '../../../types/common';
 import {GrDropdown} from '../gr-dropdown/gr-dropdown';
+import {GrIcon} from '../gr-icon/gr-icon';
 
 suite('gr-change-actions-js-api-interface tests', () => {
   let element: GrChangeActions;
@@ -150,15 +138,12 @@ suite('gr-change-actions-js-api-interface tests', () => {
       changeActions.setLabel(key, 'Yo');
       changeActions.setTitle(key, 'Yo hint');
       changeActions.setEnabled(key, false);
-      changeActions.setIcon(key, 'pupper');
+      changeActions.setIcon(key, 'hive');
       await element.updateComplete;
       assert.equal(button.getAttribute('data-label'), 'Yo');
       assert.equal(button.parentElement!.getAttribute('title'), 'Yo hint');
       assert.isTrue(button.disabled);
-      assert.equal(
-        queryAndAssert<IronIconElement>(button, 'iron-icon').icon,
-        'gr-icons:pupper'
-      );
+      assert.equal(queryAndAssert<GrIcon>(button, 'gr-icon').icon, 'hive');
     });
 
     test('hide action buttons', async () => {

@@ -1,22 +1,11 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '../gr-account-label/gr-account-label';
 import '../gr-button/gr-button';
-import '../gr-icons/gr-icons';
+import '../gr-icon/gr-icon';
 import {
   AccountInfo,
   ApprovalInfo,
@@ -25,9 +14,8 @@ import {
 } from '../../../types/common';
 import {getAppContext} from '../../../services/app-context';
 import {LitElement, css, html} from 'lit';
-import {customElement, property} from 'lit/decorators';
-import {ClassInfo, classMap} from 'lit/directives/class-map';
-import {KnownExperimentId} from '../../../services/flags/flags';
+import {customElement, property} from 'lit/decorators.js';
+import {ClassInfo, classMap} from 'lit/directives/class-map.js';
 import {getLabelStatus, hasVoted, LabelStatus} from '../../../utils/label-util';
 
 @customElement('gr-account-chip')
@@ -63,9 +51,6 @@ export class GrAccountChip extends LitElement {
   @property({type: Boolean})
   forceAttention = false;
 
-  @property({type: String})
-  voteableText?: string;
-
   @property({type: Boolean, reflect: true})
   disabled = false;
 
@@ -83,9 +68,6 @@ export class GrAccountChip extends LitElement {
   @property({type: Boolean, reflect: true})
   showAvatar?: boolean;
 
-  @property({type: Boolean})
-  transparentBackground = false;
-
   @property({type: Object})
   vote?: ApprovalInfo;
 
@@ -93,8 +75,6 @@ export class GrAccountChip extends LitElement {
   label?: LabelInfo;
 
   private readonly restApiService = getAppContext().restApiService;
-
-  private readonly flagsService = getAppContext().flagsService;
 
   static override get styles() {
     return [
@@ -130,17 +110,12 @@ export class GrAccountChip extends LitElement {
         :host:focus gr-button {
           background: #ccc;
         }
-        .transparentBackground,
-        gr-button.transparentBackground {
-          background-color: transparent;
-        }
         :host([disabled]) {
           opacity: 0.6;
           pointer-events: none;
         }
-        iron-icon {
-          height: 1.2rem;
-          width: 1.2rem;
+        gr-icon {
+          font-size: 1.2rem;
         }
         .container gr-account-label::part(gr-account-label-text) {
           color: var(--deemphasized-text-color);
@@ -160,16 +135,6 @@ export class GrAccountChip extends LitElement {
           --account-label-padding-right: 3px;
           --account-label-circle-padding-right: 3px;
         }
-      `,
-    ];
-  }
-
-  override render() {
-    // To pass CSS mixins for @apply to Polymer components, they need to appear
-    // in <style> inside the template.
-    /* eslint-disable lit/prefer-static-styles */
-    const customStyle = html`
-      <style>
         gr-button.remove::part(paper-button),
         gr-button.remove:hover::part(paper-button),
         gr-button.remove:focus::part(paper-button) {
@@ -186,53 +151,50 @@ export class GrAccountChip extends LitElement {
           padding: 0 2px 0 1px;
           text-decoration: none;
         }
-      </style>
-    `;
-    return html`${customStyle}
-      <div
-        class=${classMap({
-          ...this.computeVoteClasses(),
-          container: true,
-          transparentBackground: this.transparentBackground,
-          closeShown: this.removable,
-        })}
-      >
-        <div>
-          <gr-account-label
-            .account=${this.account}
-            .change=${this.change}
-            ?forceAttention=${this.forceAttention}
-            ?highlightAttention=${this.highlightAttention}
-            .voteableText=${this.voteableText}
-            clickable
-          >
-          </gr-account-label>
-        </div>
-        <slot name="vote-chip"></slot>
-        <gr-button
-          id="remove"
-          link=""
-          ?hidden=${!this.removable}
-          aria-label="Remove"
-          class=${classMap({
-            remove: true,
-            transparentBackground: this.transparentBackground,
-          })}
-          @click=${this._handleRemoveTap}
+      `,
+    ];
+  }
+
+  override render() {
+    return html`<div
+      class=${classMap({
+        ...this.computeVoteClasses(),
+        container: true,
+        closeShown: this.removable,
+      })}
+    >
+      <div>
+        <gr-account-label
+          .account=${this.account}
+          .change=${this.change}
+          ?forceAttention=${this.forceAttention}
+          ?highlightAttention=${this.highlightAttention}
+          clickable
         >
-          <iron-icon icon="gr-icons:close"></iron-icon>
-        </gr-button>
-      </div>`;
+        </gr-account-label>
+      </div>
+      <slot name="vote-chip"></slot>
+      <gr-button
+        id="remove"
+        link=""
+        ?hidden=${!this.removable}
+        aria-label="Remove"
+        class="remove"
+        @click=${this.handleRemoveTap}
+      >
+        <gr-icon icon="close"></gr-icon>
+      </gr-button>
+    </div>`;
   }
 
   constructor() {
     super();
-    this._getHasAvatars().then(hasAvatars => {
+    this.getHasAvatars().then(hasAvatars => {
       this.showAvatar = hasAvatars;
     });
   }
 
-  _handleRemoveTap(e: MouseEvent) {
+  private handleRemoveTap(e: MouseEvent) {
     e.preventDefault();
     this.dispatchEvent(
       new CustomEvent('remove', {
@@ -243,7 +205,7 @@ export class GrAccountChip extends LitElement {
     );
   }
 
-  _getHasAvatars() {
+  private getHasAvatars() {
     return this.restApiService
       .getConfig()
       .then(cfg =>
@@ -252,12 +214,7 @@ export class GrAccountChip extends LitElement {
   }
 
   private computeVoteClasses(): ClassInfo {
-    if (
-      !this.flagsService.isEnabled(KnownExperimentId.SUBMIT_REQUIREMENTS_UI) ||
-      !this.label ||
-      !this.account ||
-      !hasVoted(this.label, this.account)
-    ) {
+    if (!this.label || !this.account || !hasVoted(this.label, this.account)) {
       return {};
     }
     const status = getLabelStatus(this.label, this.vote?.value);

@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {getPluginLoader} from './gr-plugin-loader';
 import {hasOwnProperty} from '../../../utils/common-util';
@@ -100,8 +89,8 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
         return callback(change, revision) === false;
       } catch (err: unknown) {
         this.reporting.error(
+          'GrJsApiInterface',
           new Error('canSubmitChange callback error'),
-          undefined,
           err
         );
       }
@@ -125,8 +114,8 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
         cb(detail.path);
       } catch (err: unknown) {
         this.reporting.error(
+          'GrJsApiInterface',
           new Error('handleHistory callback error'),
-          undefined,
           err
         );
       }
@@ -134,6 +123,7 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
   }
 
   _handleShowChange(detail: ShowChangeDetail) {
+    if (!detail.change) return;
     // Note (issue 8221) Shallow clone the change object and add a mergeable
     // getter with deprecation warning. This makes the change detail appear as
     // though SKIP_MERGEABLE was not set, so that plugins that expect it can
@@ -170,8 +160,8 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
         cb(change, revision, info);
       } catch (err: unknown) {
         this.reporting.error(
+          'GrJsApiInterface',
           new Error('showChange callback error'),
-          undefined,
           err
         );
       }
@@ -187,8 +177,8 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
         cb(detail.revisionActions, detail.change);
       } catch (err: unknown) {
         this.reporting.error(
+          'GrJsApiInterface',
           new Error('showRevisionActions callback error'),
-          undefined,
           err
         );
       }
@@ -201,8 +191,8 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
         cb(change, msg);
       } catch (err: unknown) {
         this.reporting.error(
+          'GrJsApiInterface',
           new Error('commitMessage callback error'),
-          undefined,
           err
         );
       }
@@ -216,8 +206,8 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
         cb(detail.node);
       } catch (err: unknown) {
         this.reporting.error(
+          'GrJsApiInterface',
           new Error('comment callback error'),
-          undefined,
           err
         );
       }
@@ -230,8 +220,8 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
         cb(detail.change);
       } catch (err: unknown) {
         this.reporting.error(
+          'GrJsApiInterface',
           new Error('labelChange callback error'),
-          undefined,
           err
         );
       }
@@ -244,8 +234,8 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
         cb(detail.hljs);
       } catch (err: unknown) {
         this.reporting.error(
+          'GrJsApiInterface',
           new Error('HighlightjsLoaded callback error'),
-          undefined,
           err
         );
       }
@@ -258,8 +248,8 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
         revertMsg = cb(change, revertMsg, origMsg) as string;
       } catch (err: unknown) {
         this.reporting.error(
+          'GrJsApiInterface',
           new Error('modifyRevertMsg callback error'),
-          undefined,
           err
         );
       }
@@ -281,8 +271,8 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
         ) as string;
       } catch (err: unknown) {
         this.reporting.error(
+          'GrJsApiInterface',
           new Error('modifyRevertSubmissionMsg callback error'),
-          undefined,
           err
         );
       }
@@ -299,8 +289,8 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
         if (layer) layers.push(layer);
       } catch (err: unknown) {
         this.reporting.error(
+          'GrJsApiInterface',
           new Error('getDiffLayers callback error'),
-          undefined,
           err
         );
       }
@@ -315,8 +305,8 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
         annotationApi.disposeLayer(path);
       } catch (err: unknown) {
         this.reporting.error(
+          'GrJsApiInterface',
           new Error('disposeDiffLayers callback error'),
-          undefined,
           err
         );
       }
@@ -365,8 +355,8 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
         }
       } catch (err: unknown) {
         this.reporting.error(
+          'GrJsApiInterface',
           new Error('getReviewPostRevert callback error'),
-          undefined,
           err
         );
       }

@@ -368,6 +368,10 @@ link:user-dashboards.html#project-dashboards[dashboards on
 project-level]. The project dashboards can be seen in the web UI under
 `Projects` > `List` > <project-name> > `Dashboards`.
 
+All dashboards and search pages allow an action to be applied to multiple
+changes at once. Select the changes with the checkboxes on the left side and
+choose the action from the action bar at the top of the change section.
+
 [[submit]]
 == Submit a Change
 
@@ -666,19 +670,6 @@ If private changes are used, be aware of the following pitfalls:
   private status and knowledge of its commit ID (e.g. through CI logs
   or build artifacts containing build numbers) can fetch the code
   using the commit ID.
-
-[[ignore]]
-== Ignoring Or Marking Changes As 'Reviewed'
-
-Changes can be ignored, which means they will not appear in the 'Incoming
-Reviews' dashboard and any related email notifications will be suppressed.
-This can be useful when you are added as a reviewer to a change on which
-you do not actively participate in the review, but do not want to completely
-remove yourself.
-
-Alternatively, rather than completely ignoring the change, it can be marked
-as 'Reviewed'. Marking a change as 'Reviewed' means it will not be highlighted
-in the dashboard, until a new patch set is uploaded.
 
 [[inline-edit]]
 == Inline Edit

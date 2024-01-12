@@ -744,7 +744,7 @@ public class ChangeEditModifier {
           ObjectId.zeroId(),
           newEditCommitId,
           timestamp);
-      reindex(change);
+      reindex(notes);
 
       RevCommit newEditCommit = lookupCommit(repository, newEditCommitId);
       return new ChangeEdit(change, editRefName, newEditCommit, basePatchset);
@@ -856,7 +856,11 @@ public class ChangeEditModifier {
     }
 
     private void reindex(Change change) {
-      indexer.index(change);
+      indexer.index(change.getProject(), change.getId());
+    }
+
+    private void reindex(ChangeNotes notes) {
+      indexer.index(notes);
     }
   }
 }

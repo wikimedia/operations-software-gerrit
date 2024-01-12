@@ -1,25 +1,14 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
+import {fixture, html, assert} from '@open-wc/testing';
 import {SinonStubbedMember} from 'sinon';
 import {PluginApi} from '../../../api/plugin';
 import {ChangeStatus} from '../../../constants/constants';
 import {RestApiService} from '../../../services/gr-rest-api/gr-rest-api';
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import {
   createChange,
   createCommitInfoWithRequiredCommit,
@@ -34,35 +23,37 @@ import {
   queryAndAssert,
   resetPlugins,
   stubRestApi,
+  waitEventLoop,
 } from '../../../test/test-utils';
 import {
   ChangeId,
   ChangeInfo,
   CommitId,
   NumericChangeId,
-  PatchSetNum,
+  PatchSetNumber,
   RelatedChangeAndCommitInfo,
   RelatedChangesInfo,
   SubmittedTogetherInfo,
 } from '../../../types/common';
 import {ParsedChangeInfo} from '../../../types/types';
+import {getChangeNumber} from '../../../utils/change-util';
 import {GrEndpointDecorator} from '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import './gr-related-changes-list';
 import {
   ChangeMarkersInList,
   GrRelatedChangesList,
-  GrRelatedCollapse,
   Section,
 } from './gr-related-changes-list';
-
-const basicFixture = fixtureFromElement('gr-related-changes-list');
+import {GrRelatedCollapse} from './gr-related-collapse';
 
 suite('gr-related-changes-list', () => {
   let element: GrRelatedChangesList;
 
-  setup(() => {
-    element = basicFixture.instantiate();
+  setup(async () => {
+    element = await fixture(
+      html`<gr-related-changes-list></gr-related-changes-list>`
+    );
   });
 
   suite('show when collapsed', () => {
@@ -201,7 +192,73 @@ suite('gr-related-changes-list', () => {
 
     setup(() => {
       element.change = createParsedChange();
-      element.patchNum = 1 as PatchSetNum;
+      element.latestPatchNum = 1 as PatchSetNumber;
+    });
+
+    test('render', async () => {
+      stubRestApi('getRelatedChanges').returns(
+        Promise.resolve(relatedChangeInfo)
+      );
+      stubRestApi('getChangesSubmittedTogether').returns(
+        Promise.resolve(submittedTogether)
+      );
+      stubRestApi('getChangeCherryPicks').returns(
+        Promise.resolve([createChange()])
+      );
+      await element.reload();
+
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `
+          <gr-endpoint-decorator name="related-changes-section">
+            <gr-endpoint-param name="change"> </gr-endpoint-param>
+            <gr-endpoint-slot name="top"> </gr-endpoint-slot>
+            <section id="relatedChanges">
+              <gr-related-collapse class="first" title="Relation chain">
+                <div class="relatedChangeLine show-when-collapsed">
+                  <span class="marker space"> </span>
+                  <gr-related-change
+                    show-change-status=""
+                    show-submittable-check=""
+                  >
+                    Test commit subject
+                  </gr-related-change>
+                </div>
+              </gr-related-collapse>
+            </section>
+            <section id="submittedTogether">
+              <gr-related-collapse title="Submitted together">
+                <div class="relatedChangeLine show-when-collapsed">
+                  <span
+                    aria-label="Arrow marking current change"
+                    class="arrowToCurrentChange marker"
+                    role="img"
+                  >
+                    ➔
+                  </span>
+                  <gr-related-change show-submittable-check="">
+                    Test subject
+                  </gr-related-change>
+                  <span class="repo" title="test-project">test-project</span>
+                  <span class="branch">&nbsp;|&nbsp;test-branch&nbsp;</span>
+                </div>
+              </gr-related-collapse>
+              <div class="note" hidden="">(+ )</div>
+            </section>
+            <section id="cherryPicks">
+              <gr-related-collapse title="Cherry picks">
+                <div class="relatedChangeLine show-when-collapsed">
+                  <span class="marker space"> </span>
+                  <gr-related-change>
+                    test-branch: Test subject
+                  </gr-related-change>
+                </div>
+              </gr-related-collapse>
+            </section>
+            <gr-endpoint-slot name="bottom"> </gr-endpoint-slot>
+          </gr-endpoint-decorator>
+        `
+      );
     });
 
     test('first list', async () => {
@@ -245,6 +302,7 @@ suite('gr-related-changes-list', () => {
         Promise.resolve([createChange()])
       );
       await element.reload();
+
       const relatedChanges = queryAndAssert<GrRelatedCollapse>(
         queryAndAssert<HTMLElement>(element, '#relatedChanges'),
         'gr-related-collapse'
@@ -302,23 +360,25 @@ suite('gr-related-changes-list', () => {
       change_id: '456' as ChangeId,
       _number: 1 as NumericChangeId,
     };
-    assert.equal(element._getChangeNumber(change1), 0);
-    assert.equal(element._getChangeNumber(change2), 1);
+    assert.equal(getChangeNumber(change1), 0);
+    assert.equal(getChangeNumber(change2), 1);
   });
 
   suite('get conflicts tests', () => {
     let element: GrRelatedChangesList;
     let conflictsStub: SinonStubbedMember<RestApiService['getChangeConflicts']>;
 
-    setup(() => {
-      element = basicFixture.instantiate();
+    setup(async () => {
+      element = await fixture(
+        html`<gr-related-changes-list></gr-related-changes-list>`
+      );
       conflictsStub = stubRestApi('getChangeConflicts').returns(
         Promise.resolve(undefined)
       );
     });
 
     test('request conflicts if open and mergeable', () => {
-      element.patchNum = 7 as PatchSetNum;
+      element.latestPatchNum = 7 as PatchSetNumber;
       element.change = {
         ...createParsedChange(),
         change_id: '123' as ChangeId,
@@ -330,7 +390,7 @@ suite('gr-related-changes-list', () => {
     });
 
     test('does not request conflicts if closed and mergeable', () => {
-      element.patchNum = 7 as PatchSetNum;
+      element.latestPatchNum = 7 as PatchSetNumber;
       element.change = {
         ...createParsedChange(),
         change_id: '123' as ChangeId,
@@ -341,7 +401,7 @@ suite('gr-related-changes-list', () => {
     });
 
     test('does not request conflicts if open and not mergeable', () => {
-      element.patchNum = 7 as PatchSetNum;
+      element.latestPatchNum = 7 as PatchSetNumber;
       element.change = {
         ...createParsedChange(),
         change_id: '123' as ChangeId,
@@ -353,7 +413,7 @@ suite('gr-related-changes-list', () => {
     });
 
     test('doesnt request conflicts if closed and not mergeable', () => {
-      element.patchNum = 7 as PatchSetNum;
+      element.latestPatchNum = 7 as PatchSetNumber;
       element.change = {
         ...createParsedChange(),
         change_id: '123' as ChangeId,
@@ -378,7 +438,7 @@ suite('gr-related-changes-list', () => {
         '9e593f6dcc2c0785a2ad2c895a34ad2aa9a0d8b6': createRevision(4),
       },
     };
-    let patchNum = 7 as PatchSetNum;
+    let latestPatchNum = 7 as PatchSetNumber;
     let relatedChanges: RelatedChangeAndCommitInfo[] = [
       {
         ...createRelatedChangeAndCommitInfo(),
@@ -468,7 +528,7 @@ suite('gr-related-changes-list', () => {
 
     let connectedChanges = element._computeConnectedRevisions(
       change,
-      patchNum,
+      latestPatchNum,
       relatedChanges
     );
     assert.deepEqual(connectedChanges, [
@@ -481,7 +541,7 @@ suite('gr-related-changes-list', () => {
       '2cebeedfb1e80f4b872d0a13ade529e70652c0c8',
     ]);
 
-    patchNum = 4 as PatchSetNum;
+    latestPatchNum = 4 as PatchSetNumber;
     relatedChanges = [
       {
         ...createRelatedChangeAndCommitInfo(),
@@ -571,7 +631,7 @@ suite('gr-related-changes-list', () => {
 
     connectedChanges = element._computeConnectedRevisions(
       change,
-      patchNum,
+      latestPatchNum,
       relatedChanges
     );
     assert.deepEqual(connectedChanges, [
@@ -585,9 +645,11 @@ suite('gr-related-changes-list', () => {
   suite('gr-related-changes-list plugin tests', () => {
     let element: GrRelatedChangesList;
 
-    setup(() => {
+    setup(async () => {
       resetPlugins();
-      element = basicFixture.instantiate();
+      element = await fixture(
+        html`<gr-related-changes-list></gr-related-changes-list>`
+      );
     });
 
     teardown(() => {
@@ -615,7 +677,7 @@ suite('gr-related-changes-list', () => {
         'http://some/plugins/url1.js'
       );
       getPluginLoader().loadPlugins([]);
-      await flush();
+      await waitEventLoop();
       assert.strictEqual(hookEl!.plugin, plugin!);
       assert.strictEqual(hookEl!.change, element.change);
     });

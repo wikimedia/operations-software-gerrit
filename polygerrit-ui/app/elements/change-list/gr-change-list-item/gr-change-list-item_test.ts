@@ -1,29 +1,18 @@
 /**
  * @license
- * Copyright (C) 2015 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2015 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import {fixture} from '@open-wc/testing-helpers';
+import {fixture, assert} from '@open-wc/testing';
 import {html} from 'lit';
 import {
   SubmitRequirementResultInfo,
   NumericChangeId,
+  Timestamp,
 } from '../../../api/rest-api';
-import {getAppContext} from '../../../services/app-context';
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import {
+  createAccountWithEmail,
   createAccountWithId,
   createChange,
   createSubmitRequirementExpressionInfo,
@@ -34,8 +23,6 @@ import {
 import {
   query,
   queryAndAssert,
-  stubRestApi,
-  stubFlags,
   waitUntilObserved,
 } from '../../../test/test-utils';
 import {
@@ -46,10 +33,9 @@ import {
   TopicName,
 } from '../../../types/common';
 import {StandardLabels} from '../../../utils/label-util';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
-import {columnNames} from '../gr-change-list/gr-change-list';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import './gr-change-list-item';
-import {GrChangeListItem, LabelCategory} from './gr-change-list-item';
+import {GrChangeListItem} from './gr-change-list-item';
 import {
   DIProviderElement,
   wrapInProvider,
@@ -59,13 +45,13 @@ import {
   BulkActionsModel,
 } from '../../../models/bulk-actions/bulk-actions-model';
 import {createTestAppContext} from '../../../test/test-app-context-init';
-import {tap} from '@polymer/iron-test-helpers/mock-interactions';
+import {ColumnNames} from '../../../constants/constants';
+import {testResolver} from '../../../test/common-test-setup';
 
 suite('gr-change-list-item tests', () => {
   const account = createAccountWithId();
   const change: ChangeInfo = {
     ...createChange(),
-    internalHost: 'host',
     project: 'a/test/repo' as RepoName,
     topic: 'test-topic' as TopicName,
     branch: 'test-branch' as BranchName,
@@ -75,8 +61,6 @@ suite('gr-change-list-item tests', () => {
   let bulkActionsModel: BulkActionsModel;
 
   setup(async () => {
-    stubRestApi('getLoggedIn').returns(Promise.resolve(false));
-
     bulkActionsModel = new BulkActionsModel(
       createTestAppContext().restApiService
     );
@@ -92,226 +76,23 @@ suite('gr-change-list-item tests', () => {
     await element.updateComplete;
   });
 
-  test('computeLabelCategory', () => {
-    element.change = {
-      ...change,
-      labels: {},
-    };
-    assert.equal(
-      element.computeLabelCategory('Verified'),
-      LabelCategory.NOT_APPLICABLE
-    );
-    element.change.labels = {Verified: {approved: account, value: 1}};
-    assert.equal(
-      element.computeLabelCategory('Verified'),
-      LabelCategory.APPROVED
-    );
-    element.change.labels = {Verified: {rejected: account, value: -1}};
-    assert.equal(
-      element.computeLabelCategory('Verified'),
-      LabelCategory.REJECTED
-    );
-    element.change.labels = {'Code-Review': {approved: account, value: 1}};
-    element.change.unresolved_comment_count = 1;
-    assert.equal(
-      element.computeLabelCategory('Code-Review'),
-      LabelCategory.UNRESOLVED_COMMENTS
-    );
-    element.change.labels = {'Code-Review': {value: 1}};
-    element.change.unresolved_comment_count = 0;
-    assert.equal(
-      element.computeLabelCategory('Code-Review'),
-      LabelCategory.POSITIVE
-    );
-    element.change.labels = {'Code-Review': {value: -1}};
-    assert.equal(
-      element.computeLabelCategory('Code-Review'),
-      LabelCategory.NEGATIVE
-    );
-    element.change.labels = {'Code-Review': {value: -1}};
-    assert.equal(
-      element.computeLabelCategory('Verified'),
-      LabelCategory.NOT_APPLICABLE
-    );
-  });
-
-  test('computeLabelClass', () => {
-    element.change = {
-      ...change,
-      labels: {},
-    };
-    assert.equal(
-      element.computeLabelClass('Verified'),
-      'cell label u-gray-background'
-    );
-    element.change.labels = {Verified: {approved: account, value: 1}};
-    assert.equal(element.computeLabelClass('Verified'), 'cell label u-green');
-    element.change.labels = {Verified: {rejected: account, value: -1}};
-    assert.equal(element.computeLabelClass('Verified'), 'cell label u-red');
-    element.change.labels = {'Code-Review': {value: 1}};
-    assert.equal(
-      element.computeLabelClass('Code-Review'),
-      'cell label u-green u-monospace'
-    );
-    element.change.labels = {'Code-Review': {value: -1}};
-    assert.equal(
-      element.computeLabelClass('Code-Review'),
-      'cell label u-monospace u-red'
-    );
-    element.change.labels = {'Code-Review': {value: -1}};
-    assert.equal(
-      element.computeLabelClass('Verified'),
-      'cell label u-gray-background'
-    );
-  });
-
-  test('computeLabelTitle', () => {
-    element.change = {
-      ...change,
-      labels: {},
-    };
-    assert.equal(element.computeLabelTitle('Verified'), 'Label not applicable');
-
-    element.change.labels = {Verified: {approved: {name: 'Diffy'}}};
-    assert.equal(element.computeLabelTitle('Verified'), 'Verified by Diffy');
-
-    element.change.labels = {Verified: {approved: {name: 'Diffy'}}};
-    assert.equal(
-      element.computeLabelTitle('Code-Review'),
-      'Label not applicable'
-    );
-
-    element.change.labels = {Verified: {rejected: {name: 'Diffy'}}};
-    assert.equal(element.computeLabelTitle('Verified'), 'Verified by Diffy');
-
-    element.change.labels = {
-      'Code-Review': {disliked: {name: 'Diffy'}, value: -1},
-    };
-    assert.equal(
-      element.computeLabelTitle('Code-Review'),
-      'Code-Review by Diffy'
-    );
-
-    element.change.labels = {
-      'Code-Review': {recommended: {name: 'Diffy'}, value: 1},
-    };
-    assert.equal(
-      element.computeLabelTitle('Code-Review'),
-      'Code-Review by Diffy'
-    );
-
-    element.change.labels = {
-      'Code-Review': {recommended: {name: 'Diffy'}, rejected: {name: 'Admin'}},
-    };
-    assert.equal(
-      element.computeLabelTitle('Code-Review'),
-      'Code-Review by Admin'
-    );
-
-    element.change.labels = {
-      'Code-Review': {approved: {name: 'Diffy'}, rejected: {name: 'Admin'}},
-    };
-    assert.equal(
-      element.computeLabelTitle('Code-Review'),
-      'Code-Review by Admin'
-    );
-
-    element.change.labels = {
-      'Code-Review': {
-        recommended: {name: 'Diffy'},
-        disliked: {name: 'Admin'},
-        value: -1,
-      },
-    };
-    assert.equal(
-      element.computeLabelTitle('Code-Review'),
-      'Code-Review by Admin'
-    );
-
-    element.change.labels = {
-      'Code-Review': {
-        approved: {name: 'Diffy'},
-        disliked: {name: 'Admin'},
-        value: -1,
-      },
-    };
-    assert.equal(
-      element.computeLabelTitle('Code-Review'),
-      'Code-Review by Diffy'
-    );
-
-    element.change.labels = {'Code-Review': {approved: account, value: 1}};
-    element.change.unresolved_comment_count = 1;
-    assert.equal(
-      element.computeLabelTitle('Code-Review'),
-      '1 unresolved comment'
-    );
-
-    element.change.labels = {
-      'Code-Review': {approved: {name: 'Diffy'}, value: 1},
-    };
-    element.change.unresolved_comment_count = 1;
-    assert.equal(
-      element.computeLabelTitle('Code-Review'),
-      '1 unresolved comment,\nCode-Review by Diffy'
-    );
-
-    element.change.labels = {'Code-Review': {approved: account, value: 1}};
-    element.change.unresolved_comment_count = 2;
-    assert.equal(
-      element.computeLabelTitle('Code-Review'),
-      '2 unresolved comments'
-    );
-  });
-
-  test('computeLabelIcon', () => {
-    element.change = {
-      ...change,
-      labels: {},
-    };
-    assert.equal(element.computeLabelIcon('missingLabel'), '');
-    element.change.labels = {Verified: {approved: account, value: 1}};
-    assert.equal(element.computeLabelIcon('Verified'), 'gr-icons:check');
-    element.change.labels = {'Code-Review': {approved: account, value: 1}};
-    element.change.unresolved_comment_count = 1;
-    assert.equal(element.computeLabelIcon('Code-Review'), 'gr-icons:comment');
-  });
-
-  test('computeLabelValue', () => {
-    element.change = {
-      ...change,
-      labels: {},
-    };
-    assert.equal(element.computeLabelValue('Verified'), '');
-    element.change.labels = {Verified: {approved: account, value: 1}};
-    assert.equal(element.computeLabelValue('Verified'), '✓');
-    element.change.labels = {Verified: {value: 1}};
-    assert.equal(element.computeLabelValue('Verified'), '+1');
-    element.change.labels = {Verified: {value: -1}};
-    assert.equal(element.computeLabelValue('Verified'), '-1');
-    element.change.labels = {Verified: {approved: account}};
-    assert.equal(element.computeLabelValue('Verified'), '✓');
-    element.change.labels = {Verified: {rejected: account}};
-    assert.equal(element.computeLabelValue('Verified'), '✕');
-  });
-
   test('no hidden columns', async () => {
     element.visibleChangeTableColumns = [
-      'Subject',
-      'Status',
-      'Owner',
-      'Reviewers',
-      'Comments',
-      'Repo',
-      'Branch',
-      'Updated',
-      'Size',
-      ' Status ',
+      ColumnNames.SUBJECT,
+      ColumnNames.STATUS,
+      ColumnNames.OWNER,
+      ColumnNames.REVIEWERS,
+      ColumnNames.COMMENTS,
+      ColumnNames.REPO,
+      ColumnNames.BRANCH,
+      ColumnNames.UPDATED,
+      ColumnNames.SIZE,
+      ColumnNames.STATUS2,
     ];
 
     await element.updateComplete;
 
-    for (const column of columnNames) {
+    for (const column of Object.values(ColumnNames)) {
       const elementClass = '.' + column.trim().toLowerCase();
       assert.isFalse(
         queryAndAssert(element, elementClass).hasAttribute('hidden')
@@ -320,25 +101,20 @@ suite('gr-change-list-item tests', () => {
   });
 
   suite('checkbox', () => {
-    test('selection checkbox is only shown if experiment is enabled', async () => {
-      assert.isNotOk(query(element, '.selection'));
-      stubFlags('isEnabled').returns(true);
-      element.requestUpdate();
-      await element.updateComplete;
-      assert.isOk(query(element, '.selection'));
-    });
-
     test('bulk actions checkboxes', async () => {
-      stubFlags('isEnabled').returns(true);
       element.change = {...createChange(), _number: 1 as NumericChangeId};
       bulkActionsModel.sync([element.change]);
+      element.userModel.setAccount({
+        ...createAccountWithEmail('abc@def.com'),
+        registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
+      });
       await element.updateComplete;
 
       const checkbox = queryAndAssert<HTMLInputElement>(
         element,
-        '.selection > input'
+        '.selection > .selectionLabel > input'
       );
-      tap(checkbox);
+      checkbox.click();
       let selectedChangeNums = await waitUntilObserved(
         bulkActionsModel.selectedChangeNums$,
         s => s.length === 1
@@ -346,7 +122,7 @@ suite('gr-change-list-item tests', () => {
 
       assert.deepEqual(selectedChangeNums, [1]);
 
-      tap(checkbox);
+      checkbox.click();
       selectedChangeNums = await waitUntilObserved(
         bulkActionsModel.selectedChangeNums$,
         s => s.length === 0
@@ -355,8 +131,33 @@ suite('gr-change-list-item tests', () => {
       assert.deepEqual(selectedChangeNums, []);
     });
 
+    test('checkbox click calls list selection callback', async () => {
+      const selectionCallback = sinon.stub();
+      element.triggerSelectionCallback = selectionCallback;
+      element.globalIndex = 5;
+      element.change = {...createChange(), _number: 1 as NumericChangeId};
+      bulkActionsModel.sync([element.change]);
+      element.userModel.setAccount({
+        ...createAccountWithEmail('abc@def.com'),
+        registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
+      });
+      await element.updateComplete;
+
+      const checkbox = queryAndAssert<HTMLInputElement>(
+        element,
+        '.selection > .selectionLabel > input'
+      );
+      checkbox.click();
+      await element.updateComplete;
+
+      assert.isTrue(selectionCallback.calledWith(5));
+    });
+
     test('checkbox state updates with model updates', async () => {
-      stubFlags('isEnabled').returns(true);
+      element.userModel.setAccount({
+        ...createAccountWithEmail('abc@def.com'),
+        registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
+      });
       element.requestUpdate();
       await element.updateComplete;
 
@@ -371,7 +172,7 @@ suite('gr-change-list-item tests', () => {
 
       const checkbox = queryAndAssert<HTMLInputElement>(
         element,
-        '.selection > input'
+        '.selection > .selectionLabel > input'
       );
       assert.isTrue(checkbox.checked);
 
@@ -388,20 +189,20 @@ suite('gr-change-list-item tests', () => {
 
   test('repo column hidden', async () => {
     element.visibleChangeTableColumns = [
-      'Subject',
-      'Status',
-      'Owner',
-      'Reviewers',
-      'Comments',
-      'Branch',
-      'Updated',
-      'Size',
-      ' Status ',
+      ColumnNames.SUBJECT,
+      ColumnNames.STATUS,
+      ColumnNames.OWNER,
+      ColumnNames.REVIEWERS,
+      ColumnNames.COMMENTS,
+      ColumnNames.BRANCH,
+      ColumnNames.UPDATED,
+      ColumnNames.SIZE,
+      ColumnNames.STATUS2,
     ];
 
     await element.updateComplete;
 
-    for (const column of columnNames) {
+    for (const column of Object.values(ColumnNames)) {
       const elementClass = '.' + column.trim().toLowerCase();
       if (column === 'Repo') {
         assert.isNotOk(query(element, elementClass));
@@ -537,81 +338,87 @@ suite('gr-change-list-item tests', () => {
     assert.equal(element.computeChangeSize(), 'XL');
   });
 
-  test('change params passed to gr-navigation', async () => {
-    const navStub = sinon.stub(GerritNav);
+  test('clicking item navigates to change', async () => {
+    const setUrlStub = sinon.stub(testResolver(navigationToken), 'setUrl');
+
     element.change = change;
     await element.updateComplete;
 
-    assert.deepEqual(navStub.getUrlForChange.lastCall.args, [change]);
-    assert.deepEqual(navStub.getUrlForProjectChanges.lastCall.args, [
-      change.project,
-      true,
-      change.internalHost,
-    ]);
-    assert.deepEqual(navStub.getUrlForBranch.lastCall.args, [
-      change.branch,
-      change.project,
-      undefined,
-      change.internalHost,
-    ]);
-    assert.deepEqual(navStub.getUrlForTopic.lastCall.args, [
-      change.topic,
-      change.internalHost,
-    ]);
-  });
+    element.click();
+    await element.updateComplete;
 
-  test('computeRepoDisplay', () => {
-    element.change = {...change};
-    assert.equal(element.computeRepoDisplay(), 'host/a/test/repo');
-    assert.equal(element.computeTruncatedRepoDisplay(), 'host/…/test/repo');
-    delete change.internalHost;
-    element.change = {...change};
-    assert.equal(element.computeRepoDisplay(), 'a/test/repo');
-    assert.equal(element.computeTruncatedRepoDisplay(), '…/test/repo');
+    assert.isTrue(setUrlStub.called);
+    assert.equal(setUrlStub.lastCall.firstArg, '/c/a/test/repo/+/42');
   });
 
   test('renders', async () => {
-    element.showStar = true;
+    element.userModel.setAccount({
+      ...createAccountWithEmail('abc@def.com'),
+      registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
+    });
     element.showNumber = true;
     element.account = createAccountWithId(1);
     element.config = createServerInfo();
     element.change = createChange();
+    element.checked = true;
     await element.updateComplete;
-    expect(element).shadowDom.to.equal(`
-      <gr-change-star></gr-change-star>
-      <a href="">42</a>
-      <a href="" title="Test subject">
-        <div class="container">
-          <div class="content"> Test subject </div>
-          <div class="spacer"> Test subject </div>
-          <span></span>
-        </div>
-      </a>
-      <span class="placeholder"> -- </span>
-      <gr-account-label
-        deselected=""
-        clickable=""
-        highlightattention=""
-      ></gr-account-label>
-      <div></div>
-      <span></span>
-      <a class="fullRepo" href=""> test-project </a>
-      <a class="truncatedRepo" href="" title="test-project"> test-project </a>
-      <a href=""> test-branch </a>
-      <gr-date-formatter withtooltip=""></gr-date-formatter>
-      <gr-date-formatter withtooltip=""></gr-date-formatter>
-      <gr-date-formatter forcerelative="" relativeoptionnoago="" withtooltip="">
-      </gr-date-formatter>
-      <gr-tooltip-content has-tooltip="" title="Size unknown">
+    assert.isTrue(element.hasAttribute('checked'));
+
+    // TODO: Check table elements. The shadowDom helper does not understand
+    // tables interacting with display: contents, even wrapping the element in a
+    // table, does not help.
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <label class="selectionLabel">
+          <input type="checkbox" />
+        </label>
+        <gr-change-star></gr-change-star>
+        <a href="/c/test-project/+/42">42</a>
+        <a href="/c/test-project/+/42" title="Test subject">
+          <div class="container">
+            <div class="content">Test subject</div>
+            <div class="spacer">Test subject</div>
+            <span></span>
+          </div>
+        </a>
         <span class="placeholder"> -- </span>
-      </gr-tooltip-content>
-      <gr-change-list-column-requirements-summary>
-      </gr-change-list-column-requirements-summary>
-    `);
+        <gr-account-label
+          deselected=""
+          clickable=""
+          highlightattention=""
+        ></gr-account-label>
+        <div></div>
+        <span></span>
+        <a class="fullRepo" href="/q/project:test-project+status:open">
+          test-project
+        </a>
+        <a
+          class="truncatedRepo"
+          href="/q/project:test-project+status:open"
+          title="test-project"
+        >
+          test-project
+        </a>
+        <a href="/q/project:test-project+branch:test-branch"> test-branch </a>
+        <gr-date-formatter withtooltip=""></gr-date-formatter>
+        <gr-date-formatter withtooltip=""></gr-date-formatter>
+        <gr-date-formatter
+          forcerelative=""
+          relativeoptionnoago=""
+          withtooltip=""
+        >
+        </gr-date-formatter>
+        <gr-tooltip-content has-tooltip="" title="Size unknown">
+          <span class="placeholder"> -- </span>
+        </gr-tooltip-content>
+        <gr-change-list-column-requirements-summary>
+        </gr-change-list-column-requirements-summary>
+      `
+    );
   });
 
   test('renders requirement with new submit requirements', async () => {
-    sinon.stub(getAppContext().flagsService, 'isEnabled').returns(true);
     const submitRequirement: SubmitRequirementResultInfo = {
       ...createSubmitRequirementResultInfo(),
       name: StandardLabels.CODE_REVIEW,
@@ -639,8 +446,10 @@ suite('gr-change-list-item tests', () => {
     ).element as GrChangeListItem;
 
     const requirement = queryAndAssert(element, '.requirement');
-    expect(requirement).dom.to
-      .equal(/* HTML */ ` <gr-change-list-column-requirement>
-    </gr-change-list-column-requirement>`);
+    assert.dom.equal(
+      requirement,
+      /* HTML */ ` <gr-change-list-column-requirement>
+      </gr-change-list-column-requirement>`
+    );
   });
 });

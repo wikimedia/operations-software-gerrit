@@ -17,7 +17,6 @@ package com.google.gerrit.server.query.change;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.gerrit.entities.Change.CHANGE_ID_PATTERN;
 import static com.google.gerrit.server.account.AccountResolver.isSelf;
-import static com.google.gerrit.server.experiments.ExperimentFeaturesConstants.GERRIT_BACKEND_REQUEST_FEATURE_COMPUTE_FROM_ALL_USERS_REPOSITORY;
 import static com.google.gerrit.server.query.change.ChangeData.asChanges;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
@@ -565,9 +564,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     if (PAT_LEGACY_ID.matcher(query).matches()) {
       Integer id = Ints.tryParse(query);
       if (id != null) {
-        return args.getSchema().useLegacyNumericFields()
-            ? ChangePredicates.id(Change.id(id))
-            : ChangePredicates.idStr(Change.id(id));
+        return ChangePredicates.idStr(Change.id(id));
       }
     } else if (PAT_CHANGE_ID.matcher(query).matches()) {
       return ChangePredicates.idPrefix(parseChangeId(query));
@@ -737,10 +734,6 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
       }
       checkFieldAvailable(ChangeField.IS_SUBMITTABLE, "is:submittable");
       return new IsSubmittablePredicate();
-    }
-
-    if ("ignored".equalsIgnoreCase(value)) {
-      return ignoredBySelf();
     }
 
     if ("started".equalsIgnoreCase(value)) {
@@ -1147,41 +1140,13 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     return ChangePredicates.message(text);
   }
 
-  @Operator
-  public Predicate<ChangeData> star(String label) throws QueryParseException {
-    if ("ignore".equalsIgnoreCase(label)) {
-      return ignoredBySelf();
-    }
-    if ("star".equalsIgnoreCase(label)) {
-      return starredBySelf();
-    }
-    throw new IllegalArgumentException();
-  }
-
-  private Predicate<ChangeData> ignoredBySelf() throws QueryParseException {
-    return ChangePredicates.starBy(
-        args.experimentFeatures.isFeatureEnabled(
-            GERRIT_BACKEND_REQUEST_FEATURE_COMPUTE_FROM_ALL_USERS_REPOSITORY),
-        args.starredChangesUtil,
-        self(),
-        StarredChangesUtil.IGNORE_LABEL);
-  }
-
   private Predicate<ChangeData> starredBySelf() throws QueryParseException {
     return ChangePredicates.starBy(
-        args.experimentFeatures.isFeatureEnabled(
-            GERRIT_BACKEND_REQUEST_FEATURE_COMPUTE_FROM_ALL_USERS_REPOSITORY),
-        args.starredChangesUtil,
-        self(),
-        StarredChangesUtil.DEFAULT_LABEL);
+        args.starredChangesUtil, self(), StarredChangesUtil.DEFAULT_LABEL);
   }
 
   private Predicate<ChangeData> draftBySelf() throws QueryParseException {
-    return ChangePredicates.draftBy(
-        args.experimentFeatures.isFeatureEnabled(
-            GERRIT_BACKEND_REQUEST_FEATURE_COMPUTE_FROM_ALL_USERS_REPOSITORY),
-        args.commentsUtil,
-        self());
+    return ChangePredicates.draftBy(args.commentsUtil, self());
   }
 
   @Operator

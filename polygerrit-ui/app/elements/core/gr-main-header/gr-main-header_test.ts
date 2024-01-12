@@ -1,22 +1,15 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
-import {isHidden, query, stubRestApi} from '../../../test/test-utils';
+import '../../../test/common-test-setup';
+import {
+  isHidden,
+  query,
+  stubElement,
+  stubRestApi,
+} from '../../../test/test-utils';
 import './gr-main-header';
 import {GrMainHeader} from './gr-main-header';
 import {
@@ -27,17 +20,84 @@ import {
 import {NavLink} from '../../../utils/admin-nav-util';
 import {ServerInfo, TopMenuItemInfo} from '../../../types/common';
 import {AuthType} from '../../../constants/constants';
-
-const basicFixture = fixtureFromElement('gr-main-header');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-main-header tests', () => {
   let element: GrMainHeader;
 
   setup(async () => {
     stubRestApi('probePath').returns(Promise.resolve(false));
-    stub('gr-main-header', 'loadAccount').callsFake(() => Promise.resolve());
-    element = basicFixture.instantiate();
-    await element.updateComplete;
+    stubElement('gr-main-header', 'loadAccount').callsFake(() =>
+      Promise.resolve()
+    );
+    element = await fixture(html`<gr-main-header></gr-main-header>`);
+  });
+
+  test('renders', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <nav>
+          <a class="bigTitle" href="//localhost:9876/">
+            <gr-endpoint-decorator name="header-title">
+              <span class="titleText"> </span>
+            </gr-endpoint-decorator>
+          </a>
+          <ul class="links">
+            <li>
+              <gr-dropdown down-arrow="" horizontal-align="left" link="">
+                <span class="linksTitle" id="Changes"> Changes </span>
+              </gr-dropdown>
+            </li>
+            <li>
+              <gr-dropdown down-arrow="" horizontal-align="left" link="">
+                <span class="linksTitle" id="Browse"> Browse </span>
+              </gr-dropdown>
+            </li>
+          </ul>
+          <div class="rightItems">
+            <gr-endpoint-decorator
+              class="hideOnMobile"
+              name="header-small-banner"
+            >
+            </gr-endpoint-decorator>
+            <gr-smart-search id="search" label="Search for changes">
+            </gr-smart-search>
+            <gr-endpoint-decorator
+              class="hideOnMobile"
+              name="header-browse-source"
+            >
+            </gr-endpoint-decorator>
+            <gr-endpoint-decorator
+              class="feedbackButton"
+              name="header-feedback"
+            >
+            </gr-endpoint-decorator>
+          </div>
+          <div class="accountContainer" id="accountContainer">
+            <div>
+              <gr-icon
+                aria-label="Hide Searchbar"
+                icon="search"
+                id="mobileSearch"
+                role="button"
+              >
+              </gr-icon>
+            </div>
+            <a class="loginButton" href="/login"> Sign in </a>
+            <a
+              aria-label="Settings"
+              class="settingsButton"
+              href="/settings/"
+              role="button"
+              title="Settings"
+            >
+              <gr-icon icon="settings" filled></gr-icon>
+            </a>
+          </div>
+        </nav>
+      `
+    );
   });
 
   test('link visibility', async () => {

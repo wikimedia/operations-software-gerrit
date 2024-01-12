@@ -1,25 +1,12 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-http-password';
 import {GrHttpPassword} from './gr-http-password';
-import {stubRestApi} from '../../../test/test-utils';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
+import {stubRestApi, waitEventLoop} from '../../../test/test-utils';
 import {
   createAccountDetailWithId,
   createServerInfo,
@@ -27,8 +14,7 @@ import {
 import {AccountDetailInfo, ServerInfo} from '../../../types/common';
 import {queryAndAssert} from '../../../test/test-utils';
 import {GrButton} from '../../shared/gr-button/gr-button';
-
-const basicFixture = fixtureFromElement('gr-http-password');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-http-password tests', () => {
   let element: GrHttpPassword;
@@ -42,9 +28,71 @@ suite('gr-http-password tests', () => {
     stubRestApi('getAccount').returns(Promise.resolve(account));
     stubRestApi('getConfig').returns(Promise.resolve(config));
 
-    element = basicFixture.instantiate();
+    element = await fixture(html`<gr-http-password></gr-http-password>`);
     await element.loadData();
-    await flush();
+    await waitEventLoop();
+  });
+
+  test('renders', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="gr-form-styles">
+          <div>
+            <section>
+              <span class="title"> Username </span>
+              <span class="value"> user name </span>
+            </section>
+            <gr-button
+              aria-disabled="false"
+              id="generateButton"
+              role="button"
+              tabindex="0"
+            >
+              Generate new password
+            </gr-button>
+          </div>
+          <span hidden="">
+            <a href="" rel="noopener" target="_blank"> Obtain password </a>
+            (opens in a new tab)
+          </span>
+        </div>
+        <gr-overlay
+          aria-hidden="true"
+          id="generatedPasswordOverlay"
+          style="outline: none; display: none;"
+          tabindex="-1"
+          with-backdrop=""
+        >
+          <div class="gr-form-styles">
+            <section id="generatedPasswordDisplay">
+              <span class="title"> New Password: </span>
+              <span class="value"> </span>
+              <gr-copy-clipboard
+                buttontitle="Copy password to clipboard"
+                hastooltip=""
+                hideinput=""
+              >
+              </gr-copy-clipboard>
+            </section>
+            <section id="passwordWarning">
+              This password will not be displayed again.
+              <br />
+              If you lose it, you will need to generate a new one.
+            </section>
+            <gr-button
+              aria-disabled="false"
+              class="closeButton"
+              link=""
+              role="button"
+              tabindex="0"
+            >
+              Close
+            </gr-button>
+          </div>
+        </gr-overlay>
+      `
+    );
   });
 
   test('generate password', () => {
@@ -60,7 +108,7 @@ suite('gr-http-password tests', () => {
 
     assert.isNotOk(element._generatedPassword);
 
-    MockInteractions.tap(button);
+    button.click();
 
     assert.isTrue(generateStub.called);
     assert.equal(element._generatedPassword, 'Generating...');

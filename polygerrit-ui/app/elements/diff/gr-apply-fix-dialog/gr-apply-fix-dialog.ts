@@ -3,33 +3,37 @@
  * Copyright 2019 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import '@polymer/iron-icon/iron-icon';
 import '../../../styles/shared-styles';
 import '../../shared/gr-dialog/gr-dialog';
+import '../../shared/gr-icon/gr-icon';
 import '../../shared/gr-overlay/gr-overlay';
 import '../../../embed/diff/gr-diff/gr-diff';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {
   NumericChangeId,
-  EditPatchSetNum,
-  FixId,
+  EDIT,
   FixSuggestionInfo,
   PatchSetNum,
-  RobotId,
   BasePatchSetNum,
+  FilePathToDiffInfoMap,
 } from '../../../types/common';
 import {DiffInfo, DiffPreferencesInfo} from '../../../types/diff';
 import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
-import {isRobot} from '../../../utils/comment-util';
+import {PROVIDED_FIX_ID} from '../../../utils/comment-util';
 import {OpenFixPreviewEvent} from '../../../types/events';
 import {getAppContext} from '../../../services/app-context';
-import {fireCloseFixPreview, fireEvent} from '../../../utils/event-util';
+import {fireCloseFixPreview} from '../../../utils/event-util';
 import {DiffLayer, ParsedChangeInfo} from '../../../types/types';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {TokenHighlightLayer} from '../../../embed/diff/gr-diff-builder/token-highlight-layer';
 import {css, html, LitElement} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
+import {customElement, property, query, state} from 'lit/decorators.js';
 import {sharedStyles} from '../../../styles/shared-styles';
+import {subscribe} from '../../lit/subscription-controller';
+import {assert} from '../../../utils/common-util';
+import {resolve} from '../../../models/dependency';
+import {createChangeUrl} from '../../../models/views/change';
+import {GrDialog} from '../../shared/gr-dialog/gr-dialog';
 
 interface FilePreview {
   filepath: string;
@@ -41,11 +45,17 @@ export class GrApplyFixDialog extends LitElement {
   @query('#applyFixOverlay')
   applyFixOverlay?: GrOverlay;
 
+  @query('#applyFixDialog')
+  applyFixDialog?: GrDialog;
+
+  /** The currently observed dialog by `dialogOberserver`. */
+  observedDialog?: GrDialog;
+
+  /** The current observer observing the `observedDialog`. */
+  dialogObserver?: ResizeObserver;
+
   @query('#nextFix')
   nextFix?: GrButton;
-
-  @property({type: Object})
-  prefs?: DiffPreferencesInfo;
 
   @property({type: Object})
   change?: ParsedChangeInfo;
@@ -55,9 +65,6 @@ export class GrApplyFixDialog extends LitElement {
 
   @state()
   patchNum?: PatchSetNum;
-
-  @state()
-  robotId?: RobotId;
 
   @state()
   currentFix?: FixSuggestionInfo;
@@ -77,27 +84,39 @@ export class GrApplyFixDialog extends LitElement {
   @state()
   layers: DiffLayer[] = [];
 
+  @state()
+  diffPrefs?: DiffPreferencesInfo;
+
   private readonly restApiService = getAppContext().restApiService;
+
+  private readonly userModel = getAppContext().userModel;
+
+  private readonly getNavigation = resolve(this, navigationToken);
 
   constructor() {
     super();
-    // TODO Get preferences from model.
-    this.restApiService.getPreferences().then(prefs => {
-      if (!prefs?.disable_token_highlighting) {
-        this.layers = [new TokenHighlightLayer(this)];
+    subscribe(
+      this,
+      () => this.userModel.preferences$,
+      preferences => {
+        if (!preferences?.disable_token_highlighting) {
+          this.layers = [new TokenHighlightLayer(this)];
+        }
       }
-    });
-    this.addEventListener('diff-context-expanded', () => {
-      if (this.applyFixOverlay) fireEvent(this.applyFixOverlay, 'iron-resize');
-    });
+    );
+    subscribe(
+      this,
+      () => this.userModel.diffPreferences$,
+      diffPreferences => {
+        if (!diffPreferences) return;
+        this.diffPrefs = diffPreferences;
+      }
+    );
   }
 
   static override styles = [
     sharedStyles,
     css`
-      gr-diff {
-        --content-width: 90vw;
-      }
       .diffContainer {
         padding: var(--spacing-l) 0;
         border-bottom: 1px solid var(--border-color);
@@ -136,11 +155,42 @@ export class GrApplyFixDialog extends LitElement {
     `;
   }
 
+  override updated() {
+    this.updateDialogObserver();
+  }
+
+  override disconnectedCallback() {
+    this.removeDialogObserver();
+    super.disconnectedCallback();
+  }
+
+  private removeDialogObserver() {
+    this.dialogObserver?.disconnect();
+    this.dialogObserver = undefined;
+    this.observedDialog = undefined;
+  }
+
+  private updateDialogObserver() {
+    if (
+      this.applyFixDialog === this.observedDialog &&
+      this.dialogObserver !== undefined
+    ) {
+      return;
+    }
+
+    this.removeDialogObserver();
+    if (!this.applyFixDialog) return;
+
+    this.observedDialog = this.applyFixDialog;
+    this.dialogObserver = new ResizeObserver(() => {
+      this.applyFixOverlay?.refit();
+    });
+    this.dialogObserver.observe(this.observedDialog);
+  }
+
   private renderHeader() {
     return html`
-      <div slot="header">
-        ${this.robotId ?? ''} - ${this.currentFix?.description ?? ''}
-      </div>
+      <div slot="header">${this.currentFix?.description ?? ''}</div>
     `;
   }
 
@@ -152,7 +202,7 @@ export class GrApplyFixDialog extends LitElement {
         </div>
         <div class="diffContainer">
           <gr-diff
-            .prefs=${this.overridePartialPrefs()}
+            .prefs=${this.overridePartialDiffPrefs()}
             .path=${item.filepath}
             .diff=${item.preview}
             .layers=${this.layers}
@@ -175,80 +225,80 @@ export class GrApplyFixDialog extends LitElement {
           @click=${this.onPrevFixClick}
           ?disabled=${id === 0}
         >
-          <iron-icon icon="gr-icons:chevron-left"></iron-icon>
+          <gr-icon icon="chevron_left"></gr-icon>
         </gr-button>
         <gr-button
           id="nextFix"
           @click=${this.onNextFixClick}
           ?disabled=${id === fixCount - 1}
         >
-          <iron-icon icon="gr-icons:chevron-right"></iron-icon>
+          <gr-icon icon="chevron_right"></gr-icon>
         </gr-button>
       </div>
     `;
   }
 
   /**
-   * Given robot comment CustomEvent object, fetch diffs associated
-   * with first robot comment suggested fix and open dialog.
-   *
-   * @param e to be passed from gr-comment with robot comment detail.
-   * @return Promise that resolves either when all
-   * preview diffs are fetched or no fix suggestions in custom event detail.
+   * Given event with fixSuggestions, fetch diffs associated with first
+   * suggested fix and open dialog.
    */
   open(e: OpenFixPreviewEvent) {
-    const detail = e.detail;
-    const comment = detail.comment;
-    if (!detail.patchNum || !comment || !isRobot(comment)) {
-      return Promise.resolve();
-    }
-    this.patchNum = detail.patchNum;
-    this.fixSuggestions = comment.fix_suggestions;
-    this.robotId = comment.robot_id;
-    if (!this.fixSuggestions || !this.fixSuggestions.length) {
-      return Promise.resolve();
-    }
+    this.patchNum = e.detail.patchNum;
+    this.fixSuggestions = e.detail.fixSuggestions;
+    assert(this.fixSuggestions.length > 0, 'no fix in the event');
     this.selectedFixIdx = 0;
     const promises = [];
     promises.push(
       this.showSelectedFixSuggestion(this.fixSuggestions[0]),
       this.applyFixOverlay?.open()
     );
-    return Promise.all(promises).then(() => {
-      if (this.applyFixOverlay) fireEvent(this.applyFixOverlay, 'iron-resize');
-    });
   }
 
-  private showSelectedFixSuggestion(fixSuggestion: FixSuggestionInfo) {
+  private async showSelectedFixSuggestion(fixSuggestion: FixSuggestionInfo) {
     this.currentFix = fixSuggestion;
-    return this.fetchFixPreview(fixSuggestion.fix_id);
+    await this.fetchFixPreview(fixSuggestion);
   }
 
-  private fetchFixPreview(fixId: FixId) {
+  private async fetchFixPreview(fixSuggestion: FixSuggestionInfo) {
     if (!this.changeNum || !this.patchNum) {
       return Promise.reject(
         new Error('Both patchNum and changeNum must be set')
       );
     }
-    return this.restApiService
-      .getRobotCommentFixPreview(this.changeNum, this.patchNum, fixId)
-      .then(res => {
-        if (res) {
-          this.currentPreviews = Object.keys(res).map(key => {
-            return {filepath: key, preview: res[key]};
-          });
-        }
-      })
-      .catch(err => {
-        this.close(false);
-        throw err;
-      });
+    let res: FilePathToDiffInfoMap | undefined;
+    try {
+      if (fixSuggestion.fix_id === PROVIDED_FIX_ID) {
+        res = await this.restApiService.getFixPreview(
+          this.changeNum,
+          this.patchNum,
+          fixSuggestion.replacements
+        );
+      } else {
+        res = await this.restApiService.getRobotCommentFixPreview(
+          this.changeNum,
+          this.patchNum,
+          fixSuggestion.fix_id
+        );
+      }
+      if (res) {
+        this.currentPreviews = Object.keys(res).map(key => {
+          return {filepath: key, preview: res![key]};
+        });
+      }
+    } catch (e) {
+      this.close(false);
+      throw e;
+    }
+    return res;
   }
 
-  private overridePartialPrefs() {
-    if (!this.prefs) return undefined;
+  private overridePartialDiffPrefs() {
+    if (!this.diffPrefs) return undefined;
     // generate a smaller gr-diff than fullscreen for dialog
-    return {...this.prefs, line_length: 50};
+    return {
+      ...this.diffPrefs,
+      line_length: Math.min(this.diffPrefs.line_length, 100),
+    };
   }
 
   // visible for testing
@@ -289,18 +339,18 @@ export class GrApplyFixDialog extends LitElement {
 
   private computeTooltip() {
     if (!this.change || !this.patchNum) return '';
-    const currentPatchNum =
+    const latestPatchNum =
       this.change.revisions[this.change.current_revision]._number;
-    return currentPatchNum !== this.patchNum
+    return latestPatchNum !== this.patchNum
       ? 'Fix can only be applied to the latest patchset'
       : '';
   }
 
   private computeDisableApplyFixButton() {
     if (!this.change || !this.patchNum) return true;
-    const currentPatchNum =
+    const latestPatchNum =
       this.change.revisions[this.change.current_revision]._number;
-    return this.patchNum !== currentPatchNum || this.isApplyFixLoading;
+    return this.patchNum !== latestPatchNum || this.isApplyFixLoading;
   }
 
   // visible for testing
@@ -314,16 +364,28 @@ export class GrApplyFixDialog extends LitElement {
       throw new Error('Not all required properties are set.');
     }
     this.isApplyFixLoading = true;
-    const res = await this.restApiService.applyFixSuggestion(
-      changeNum,
-      patchNum,
-      this.currentFix.fix_id
-    );
+    let res;
+    if (this.fixSuggestions?.[0].fix_id === PROVIDED_FIX_ID) {
+      res = await this.restApiService.applyFixSuggestion(
+        changeNum,
+        patchNum,
+        this.fixSuggestions[0].replacements
+      );
+    } else {
+      res = await this.restApiService.applyRobotFixSuggestion(
+        changeNum,
+        patchNum,
+        this.currentFix.fix_id
+      );
+    }
     if (res && res.ok) {
-      GerritNav.navigateToChange(change, {
-        patchNum: EditPatchSetNum,
-        basePatchNum: patchNum as BasePatchSetNum,
-      });
+      this.getNavigation().setUrl(
+        createChangeUrl({
+          change,
+          patchNum: EDIT,
+          basePatchNum: patchNum as BasePatchSetNum,
+        })
+      );
       this.close(true);
     }
     this.isApplyFixLoading = false;

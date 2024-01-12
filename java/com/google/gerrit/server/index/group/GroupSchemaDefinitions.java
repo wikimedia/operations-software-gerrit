@@ -16,29 +16,48 @@ package com.google.gerrit.server.index.group;
 
 import static com.google.gerrit.index.SchemaUtil.schema;
 
+import com.google.common.collect.ImmutableList;
 import com.google.gerrit.entities.InternalGroup;
+import com.google.gerrit.index.IndexedField;
 import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.SchemaDefinitions;
 
-/** Definition of group index versions (schemata). See {@link SchemaDefinitions}. */
+/**
+ * Definition of group index versions (schemata). See {@link SchemaDefinitions}.
+ *
+ * <p>Upgrades are subject to constraints, see {@code
+ * com.google.gerrit.index.IndexUpgradeValidator}.
+ */
 public class GroupSchemaDefinitions extends SchemaDefinitions<InternalGroup> {
   @Deprecated
-  static final Schema<InternalGroup> V2 =
+  static final Schema<InternalGroup> V5 =
       schema(
-          GroupField.DESCRIPTION,
-          GroupField.ID,
-          GroupField.IS_VISIBLE_TO_ALL,
-          GroupField.NAME,
-          GroupField.NAME_PART,
-          GroupField.OWNER_UUID,
-          GroupField.UUID);
-
-  @Deprecated static final Schema<InternalGroup> V3 = schema(V2, GroupField.CREATED_ON);
-
-  @Deprecated
-  static final Schema<InternalGroup> V4 = schema(V3, GroupField.MEMBER, GroupField.SUBGROUP);
-
-  @Deprecated static final Schema<InternalGroup> V5 = schema(V4, GroupField.REF_STATE);
+          /* version= */ 5,
+          ImmutableList.of(),
+          ImmutableList.of(
+              GroupField.CREATED_ON_FIELD,
+              GroupField.DESCRIPTION_FIELD,
+              GroupField.ID_FIELD,
+              GroupField.IS_VISIBLE_TO_ALL_FIELD,
+              GroupField.MEMBER_FIELD,
+              GroupField.NAME_FIELD,
+              GroupField.NAME_PART_FIELD,
+              GroupField.OWNER_UUID_FIELD,
+              GroupField.REF_STATE_FIELD,
+              GroupField.SUBGROUP_FIELD,
+              GroupField.UUID_FIELD),
+          ImmutableList.<IndexedField<InternalGroup, ?>.SearchSpec>of(
+              GroupField.CREATED_ON_SPEC,
+              GroupField.DESCRIPTION_SPEC,
+              GroupField.ID_FIELD_SPEC,
+              GroupField.IS_VISIBLE_TO_ALL_SPEC,
+              GroupField.MEMBER_SPEC,
+              GroupField.NAME_SPEC,
+              GroupField.NAME_PART_SPEC,
+              GroupField.OWNER_UUID_SPEC,
+              GroupField.REF_STATE_SPEC,
+              GroupField.SUBGROUP_SPEC,
+              GroupField.UUID_FIELD_SPEC));
 
   // Bump Lucene version requires reindexing
   @Deprecated static final Schema<InternalGroup> V6 = schema(V5);
@@ -48,7 +67,10 @@ public class GroupSchemaDefinitions extends SchemaDefinitions<InternalGroup> {
 
   // New numeric types: use dimensional points using the k-d tree geo-spatial data structure
   // to offer fast single- and multi-dimensional numeric range.
-  static final Schema<InternalGroup> V8 = schema(V7, false);
+  @Deprecated static final Schema<InternalGroup> V8 = schema(V7);
+
+  // Upgrade Lucene to 7.x requires reindexing.
+  static final Schema<InternalGroup> V9 = schema(V8);
 
   /** Singleton instance of the schema definitions. This is one per JVM. */
   public static final GroupSchemaDefinitions INSTANCE = new GroupSchemaDefinitions();

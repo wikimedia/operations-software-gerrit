@@ -1,28 +1,21 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '@polymer/iron-icon/iron-icon';
 import '../gr-avatar/gr-avatar';
 import '../gr-button/gr-button';
+import '../gr-icon/gr-icon';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../plugins/gr-endpoint-param/gr-endpoint-param';
 import {getAppContext} from '../../../services/app-context';
-import {accountKey, isSelf} from '../../../utils/account-util';
-import {customElement, property, state} from 'lit/decorators';
+import {
+  accountKey,
+  computeVoteableText,
+  isAccountEmailOnly,
+  isSelf,
+} from '../../../utils/account-util';
+import {customElement, property, state} from 'lit/decorators.js';
 import {
   AccountInfo,
   ChangeInfo,
@@ -42,10 +35,15 @@ import {CURRENT} from '../../../utils/patch-set-util';
 import {isInvolved, isRemovableReviewer} from '../../../utils/change-util';
 import {assertIsDefined} from '../../../utils/common-util';
 import {fontStyles} from '../../../styles/gr-font-styles';
-import {css, html, LitElement} from 'lit';
-import {ifDefined} from 'lit/directives/if-defined';
+import {css, html, LitElement, nothing} from 'lit';
+import {ifDefined} from 'lit/directives/if-defined.js';
 import {HovercardMixin} from '../../../mixins/hovercard-mixin/hovercard-mixin';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
+import {EventType} from '../../../types/events';
+import {subscribe} from '../../lit/subscription-controller';
+import {resolve} from '../../../models/dependency';
+import {configModelToken} from '../../../models/config/config-model';
+import {createSearchUrl} from '../../../models/views/search';
+import {createDashboardUrl} from '../../../models/views/dashboard';
 
 // This avoids JSC_DYNAMIC_EXTENDS_WITHOUT_JSDOC closure compiler error.
 const base = HovercardMixin(LitElement);
@@ -56,7 +54,7 @@ export class GrHovercardAccount extends base {
   account!: AccountInfo;
 
   @state()
-  _selfAccount?: AccountInfo;
+  selfAccount?: AccountInfo;
 
   /**
    * Optional ChangeInfo object, typically comes from the change page or
@@ -67,13 +65,6 @@ export class GrHovercardAccount extends base {
   change?: ChangeInfo;
 
   /**
-   * Explains which labels the user can vote on and which score they can
-   * give.
-   */
-  @property({type: String})
-  voteableText?: string;
-
-  /**
    * Should attention set related features be shown in the component? Note
    * that the information whether the user is in the attention set or not is
    * part of the ChangeInfo object in the change property.
@@ -81,21 +72,32 @@ export class GrHovercardAccount extends base {
   @property({type: Boolean})
   highlightAttention = false;
 
-  @property({type: Object})
-  _config?: ServerInfo;
+  @state()
+  serverConfig?: ServerInfo;
 
   private readonly restApiService = getAppContext().restApiService;
 
   private readonly reporting = getAppContext().reportingService;
 
-  override connectedCallback() {
-    super.connectedCallback();
-    this.restApiService.getConfig().then(config => {
-      this._config = config;
-    });
-    this.restApiService.getAccount().then(account => {
-      this._selfAccount = account;
-    });
+  // private but used in tests
+  readonly userModel = getAppContext().userModel;
+
+  private readonly getConfigModel = resolve(this, configModelToken);
+
+  constructor() {
+    super();
+    subscribe(
+      this,
+      () => this.userModel.account$,
+      x => (this.selfAccount = x)
+    );
+    subscribe(
+      this,
+      () => this.getConfigModel().serverConfig$,
+      config => {
+        this.serverConfig = config;
+      }
+    );
   }
 
   static override get styles() {
@@ -137,25 +139,16 @@ export class GrHovercardAccount extends base {
         .attention a {
           text-decoration: none;
         }
-        iron-icon {
-          vertical-align: top;
-        }
-        .status iron-icon {
-          width: 14px;
-          height: 14px;
+        .status gr-icon {
+          font-size: 14px;
           position: relative;
           top: 2px;
         }
-        iron-icon.attentionIcon {
-          width: 14px;
-          height: 14px;
-          position: relative;
-          top: 3px;
+        gr-icon.attentionIcon {
+          transform: scaleX(0.8);
         }
-        iron-icon.linkIcon {
-          width: var(--line-height-normal, 20px);
-          height: var(--line-height-normal, 20px);
-          vertical-align: top;
+        gr-icon.linkIcon {
+          font-size: var(--line-height-normal, 20px);
           color: var(--deemphasized-text-color);
           padding-right: 12px;
         }
@@ -191,12 +184,21 @@ export class GrHovercardAccount extends base {
         </div>
       </div>
       ${this.renderAccountStatusPlugins()} ${this.renderAccountStatus()}
-      ${this.renderLinks()}
-      ${this.voteableText
+      ${this.renderLinks()} ${this.renderChangeRelatedInfoAndActions()}
+    `;
+  }
+
+  private renderChangeRelatedInfoAndActions() {
+    if (this.change === undefined) {
+      return;
+    }
+    const voteableText = computeVoteableText(this.change, this.account);
+    return html`
+      ${voteableText
         ? html`
             <div class="voteable">
               <span class="title">Voteable:</span>
-              <span class="value">${this.voteableText}</span>
+              <span class="value">${voteableText}</span>
             </div>
           `
         : ''}
@@ -206,7 +208,7 @@ export class GrHovercardAccount extends base {
   }
 
   private renderReviewerOrCcActions() {
-    if (!this._selfAccount || !isRemovableReviewer(this.change, this.account))
+    if (!this.selfAccount || !isRemovableReviewer(this.change, this.account))
       return;
     return html`
       <div class="action">
@@ -244,8 +246,9 @@ export class GrHovercardAccount extends base {
   }
 
   private renderLinks() {
+    if (!this.account || isAccountEmailOnly(this.account)) return nothing;
     return html` <div class="links">
-      <iron-icon class="linkIcon" icon="gr-icons:link"></iron-icon
+      <gr-icon icon="link" class="linkIcon"></gr-icon
       ><a
         href=${ifDefined(this.computeOwnerChangesLink())}
         @click=${() => {
@@ -288,25 +291,24 @@ export class GrHovercardAccount extends base {
     return html`
       <div class="attention">
         <div>
-          <iron-icon
+          <gr-icon
+            icon="label_important"
+            filled
+            small
             class="attentionIcon"
-            icon="gr-icons:attention"
-          ></iron-icon>
-          <span> ${this.computePronoun()} turn to take this action. </span>
+          ></gr-icon>
+          <span> ${this.computePronoun()} turn to take action. </span>
           <a
             href="https://gerrit-review.googlesource.com/Documentation/user-attention-set.html"
             target="_blank"
           >
-            <iron-icon
-              icon="gr-icons:help-outline"
-              title="read documentation"
-            ></iron-icon>
+            <gr-icon icon="help" title="read documentation"></gr-icon>
           </a>
         </div>
         <div class="reason">
           <span class="title">Reason:</span>
           <span class="value">
-            ${getReason(this._config, this.account, this.change)}
+            ${getReason(this.serverConfig, this.account, this.change)}
           </span>
           ${lastUpdate
             ? html` (<gr-date-formatter
@@ -354,26 +356,27 @@ export class GrHovercardAccount extends base {
 
   // private but used by tests
   computePronoun() {
-    if (!this.account || !this._selfAccount) return '';
-    return isSelf(this.account, this._selfAccount) ? 'Your' : 'Their';
+    if (!this.account || !this.selfAccount) return '';
+    return isSelf(this.account, this.selfAccount) ? 'Your' : 'Their';
   }
 
   computeOwnerChangesLink() {
     if (!this.account) return undefined;
-    return GerritNav.getUrlForOwner(
-      this.account.email ||
+    return createSearchUrl({
+      owner:
+        this.account.email ||
         this.account.username ||
         this.account.name ||
-        `${this.account._account_id}`
-    );
+        `${this.account._account_id}`,
+    });
   }
 
   computeOwnerDashboardLink() {
     if (!this.account) return undefined;
     if (this.account._account_id)
-      return GerritNav.getUrlForUserDashboard(`${this.account._account_id}`);
+      return createDashboardUrl({user: `${this.account._account_id}`});
     if (this.account.email)
-      return GerritNav.getUrlForUserDashboard(this.account.email);
+      return createDashboardUrl({user: this.account.email});
     return undefined;
   }
 
@@ -420,7 +423,7 @@ export class GrHovercardAccount extends base {
     // accountKey() throws an error if _account_id & email is not found, which
     // we want to check before showing reloading toast
     const _accountKey = accountKey(this.account);
-    this.dispatchEventThroughTarget('show-alert', {
+    this.dispatchEventThroughTarget(EventType.SHOW_ALERT, {
       message: 'Reloading page...',
     });
     const reviewInput: Partial<ReviewInput> = {};
@@ -449,7 +452,7 @@ export class GrHovercardAccount extends base {
   private handleRemoveReviewerOrCC() {
     if (!this.change || !(this.account?._account_id || this.account?.email))
       throw new Error('Missing change or account.');
-    this.dispatchEventThroughTarget('show-alert', {
+    this.dispatchEventThroughTarget(EventType.SHOW_ALERT, {
       message: 'Reloading page...',
     });
     this.restApiService
@@ -468,34 +471,34 @@ export class GrHovercardAccount extends base {
 
   private computeShowActionAddToAttentionSet() {
     const involvedOrSelf =
-      isInvolved(this.change, this._selfAccount) ||
-      isSelf(this.account, this._selfAccount);
+      isInvolved(this.change, this.selfAccount) ||
+      isSelf(this.account, this.selfAccount);
     return involvedOrSelf && this.isAttentionEnabled && !this.hasUserAttention;
   }
 
   private computeShowActionRemoveFromAttentionSet() {
     const involvedOrSelf =
-      isInvolved(this.change, this._selfAccount) ||
-      isSelf(this.account, this._selfAccount);
+      isInvolved(this.change, this.selfAccount) ||
+      isSelf(this.account, this.selfAccount);
     return involvedOrSelf && this.isAttentionEnabled && this.hasUserAttention;
   }
 
   private handleClickAddToAttentionSet(e: MouseEvent) {
     if (!this.change || !this.account._account_id) return;
-    this.dispatchEventThroughTarget('show-alert', {
+    this.dispatchEventThroughTarget(EventType.SHOW_ALERT, {
       message: 'Saving attention set update ...',
       dismissOnNavigation: true,
     });
 
     // We are deliberately updating the UI before making the API call. It is a
     // risk that we are taking to achieve a better UX for 99.9% of the cases.
-    const reason = getAddedByReason(this._selfAccount, this._config);
+    const reason = getAddedByReason(this.selfAccount, this.serverConfig);
 
     if (!this.change.attention_set) this.change.attention_set = {};
     this.change.attention_set[this.account._account_id] = {
       account: this.account,
       reason,
-      reason_account: this._selfAccount,
+      reason_account: this.selfAccount,
     };
     this.dispatchEventThroughTarget('attention-set-updated');
 
@@ -513,7 +516,7 @@ export class GrHovercardAccount extends base {
 
   private handleClickRemoveFromAttentionSet(e: MouseEvent) {
     if (!this.change || !this.account._account_id) return;
-    this.dispatchEventThroughTarget('show-alert', {
+    this.dispatchEventThroughTarget(EventType.SHOW_ALERT, {
       message: 'Saving attention set update ...',
       dismissOnNavigation: true,
     });
@@ -521,7 +524,7 @@ export class GrHovercardAccount extends base {
     // We are deliberately updating the UI before making the API call. It is a
     // risk that we are taking to achieve a better UX for 99.9% of the cases.
 
-    const reason = getRemovedByReason(this._selfAccount, this._config);
+    const reason = getRemovedByReason(this.selfAccount, this.serverConfig);
     if (this.change.attention_set)
       delete this.change.attention_set[this.account._account_id];
     this.dispatchEventThroughTarget('attention-set-updated');
@@ -546,7 +549,7 @@ export class GrHovercardAccount extends base {
     const targetId = this.account._account_id;
     const ownerId =
       (this.change && this.change.owner && this.change.owner._account_id) || -1;
-    const selfId = (this._selfAccount && this._selfAccount._account_id) || -1;
+    const selfId = (this.selfAccount && this.selfAccount._account_id) || -1;
     const reviewers =
       this.change && this.change.reviewers && this.change.reviewers.REVIEWER
         ? [...this.change.reviewers.REVIEWER]

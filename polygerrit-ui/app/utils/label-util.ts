@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {
   ChangeInfo,
@@ -21,7 +10,6 @@ import {
   SubmitRequirementStatus,
   LabelNameToValuesMap,
 } from '../api/rest-api';
-import {FlagsService, KnownExperimentId} from '../services/flags/flags';
 import {
   AccountInfo,
   ApprovalInfo,
@@ -130,7 +118,10 @@ export function classForLabelStatus(status: LabelStatus) {
   }
 }
 
-export function valueString(value?: number) {
+/**
+ * Returns string representation of QuickLabelInfo value or ApprovalInfo value
+ */
+export function valueString(value?: number): string {
   if (!value) return ' 0';
   let s = `${value}`;
   if (value > 0) s = `+${s}`;
@@ -250,21 +241,38 @@ export function extractAssociatedLabels(
   }
   return labels.filter(unique);
 }
+export interface SubmitRequirementsIcon {
+  // The material icon name.
+  icon: string;
+  // Whether the gr-icon need to be filled.
+  filled?: boolean;
+}
 
-export function iconForStatus(status: SubmitRequirementStatus) {
+export function iconForRequirement(
+  requirement: SubmitRequirementResultInfo
+): SubmitRequirementsIcon {
+  if (isBlockingCondition(requirement)) {
+    return {icon: 'cancel', filled: true};
+  }
+  return iconForStatus(requirement.status);
+}
+
+export function iconForStatus(
+  status: SubmitRequirementStatus
+): SubmitRequirementsIcon {
   switch (status) {
     case SubmitRequirementStatus.SATISFIED:
-      return 'check-circle-filled';
+      return {icon: 'check_circle', filled: true};
     case SubmitRequirementStatus.UNSATISFIED:
-      return 'block';
+      return {icon: 'block'};
     case SubmitRequirementStatus.OVERRIDDEN:
-      return 'overridden';
+      return {icon: 'published_with_changes'};
     case SubmitRequirementStatus.NOT_APPLICABLE:
-      return 'info';
+      return {icon: 'info', filled: true};
     case SubmitRequirementStatus.ERROR:
-      return 'error';
+      return {icon: 'error', filled: true};
     case SubmitRequirementStatus.FORCED:
-      return 'check-circle-filled';
+      return {icon: 'check_circle', filled: true};
     default:
       assertNever(status, `Unsupported status: ${status}`);
   }
@@ -422,15 +430,33 @@ export function getTriggerVotes(change?: ParsedChangeInfo | ChangeInfo) {
   );
 }
 
-export function showNewSubmitRequirements(
-  flagsService: FlagsService,
-  change?: ParsedChangeInfo | ChangeInfo
-) {
-  const isSubmitRequirementsUiEnabled = flagsService.isEnabled(
-    KnownExperimentId.SUBMIT_REQUIREMENTS_UI
-  );
-  if (!isSubmitRequirementsUiEnabled) return false;
-  if ((getRequirements(change) ?? []).length === 0) return false;
+export function getApplicableLabels(change?: ParsedChangeInfo | ChangeInfo) {
+  const submitReqs = change?.submit_requirements ?? [];
+  const notApplicableLabels = submitReqs
+    .filter(sr => sr.status === SubmitRequirementStatus.NOT_APPLICABLE)
+    .flatMap(req => extractAssociatedLabels(req))
+    .filter(unique);
 
-  return true;
+  const applicableLabels = submitReqs
+    .filter(sr => sr.status !== SubmitRequirementStatus.NOT_APPLICABLE)
+    .flatMap(req => extractAssociatedLabels(req))
+    .filter(unique);
+
+  const onlyInNotApplicableLabels = notApplicableLabels.filter(
+    label => !applicableLabels.includes(label)
+  );
+
+  return applicableLabels.filter(
+    label => !onlyInNotApplicableLabels.includes(label)
+  );
+}
+
+export function isBlockingCondition(
+  requirement: SubmitRequirementResultInfo
+): boolean {
+  if (requirement.status !== SubmitRequirementStatus.UNSATISFIED) return false;
+
+  return !!requirement.submittability_expression_result.passing_atoms?.some(
+    atom => atom.match(/^label[0-9]*:[\w-]+=MIN$/)
+  );
 }

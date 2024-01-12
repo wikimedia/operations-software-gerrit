@@ -1,26 +1,14 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-agreements-list';
-import {queryAll, stubRestApi} from '../../../test/test-utils';
+import {stubRestApi, waitEventLoop} from '../../../test/test-utils';
 import {GrAgreementsList} from './gr-agreements-list';
 import {ContributorAgreementInfo} from '../../../types/common';
-
-const basicFixture = fixtureFromElement('gr-agreements-list');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-agreements-list tests', () => {
   let element: GrAgreementsList;
@@ -36,20 +24,36 @@ suite('gr-agreements-list tests', () => {
 
     stubRestApi('getAccountAgreements').returns(Promise.resolve(agreements));
 
-    element = basicFixture.instantiate();
+    element = await fixture(html`<gr-agreements-list></gr-agreements-list>`);
 
     await element.loadData();
-    await flush();
+    await waitEventLoop();
   });
 
   test('renders', () => {
-    const rows = queryAll<HTMLTableRowElement>(element, 'tbody tr') ?? [];
-    assert.equal(rows.length, 1);
-
-    const nameCells = Array.from(rows).map(row =>
-      queryAll<HTMLTableElement>(row, 'td')[0].textContent?.trim()
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="gr-form-styles">
+          <table id="agreements">
+            <thead>
+              <tr>
+                <th class="nameColumn">Name</th>
+                <th class="descriptionColumn">Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="nameColumn">
+                  <a href="/some url" rel="external"> Agreements 1 </a>
+                </td>
+                <td class="descriptionColumn">Agreements 1 description</td>
+              </tr>
+            </tbody>
+          </table>
+          <a href="/settings/new-agreement"> New Contributor Agreement </a>
+        </div>
+      `
     );
-
-    assert.equal(nameCells[0], 'Agreements 1');
   });
 });

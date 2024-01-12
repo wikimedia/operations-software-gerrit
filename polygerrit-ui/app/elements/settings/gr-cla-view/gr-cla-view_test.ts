@@ -1,22 +1,11 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-cla-view';
-import {queryAll, queryAndAssert, stubRestApi} from '../../../test/test-utils';
+import {stubRestApi} from '../../../test/test-utils';
 import {GrClaView} from './gr-cla-view';
 import {
   ContributorAgreementInfo,
@@ -27,7 +16,7 @@ import {
 } from '../../../types/common';
 import {AuthType} from '../../../constants/constants';
 import {createServerInfo} from '../../../test/test-data-generators';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-cla-view tests', () => {
   let element: GrClaView;
@@ -135,18 +124,40 @@ suite('gr-cla-view tests', () => {
     await element.updateComplete;
   });
 
-  test('renders as expected with signed agreement', () => {
-    const agreementSections = queryAll(element, '.contributorAgreementButton');
-    const agreementSubmittedTexts = queryAll(element, '.alreadySubmittedText');
-    assert.equal(agreementSections.length, 2);
-    assert.isFalse(
-      queryAndAssert<HTMLInputElement>(agreementSections[0], 'input').disabled
+  test('renders', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <main>
+          <h1 class="heading-1">New Contributor Agreement</h1>
+          <h3 class="heading-3">Select an agreement type:</h3>
+          <span class="contributorAgreementButton">
+            <input
+              data-name="Individual"
+              data-url="static/cla_individual.html"
+              id="claNewAgreementsInputIndividual"
+              name="claNewAgreementsRadio"
+              type="radio"
+            />
+            <label id="claNewAgreementsLabel"> Individual </label>
+          </span>
+          <div class="agreementsUrl">test-description</div>
+          <span class="contributorAgreementButton">
+            <input
+              data-name="CLA"
+              data-url="static/cla.html"
+              disabled=""
+              id="claNewAgreementsInputCLA"
+              name="claNewAgreementsRadio"
+              type="radio"
+            />
+            <label id="claNewAgreementsLabel"> CLA </label>
+          </span>
+          <div class="alreadySubmittedText">Agreement already submitted.</div>
+          <div class="agreementsUrl">Contributor License Agreement</div>
+        </main>
+      `
     );
-    assert.isOk(agreementSubmittedTexts[0]);
-    assert.isTrue(
-      queryAndAssert<HTMLInputElement>(agreementSections[1], 'input').disabled
-    );
-    assert.isNotOk(agreementSubmittedTexts[1]);
   });
 
   test('disableAgreements', () => {

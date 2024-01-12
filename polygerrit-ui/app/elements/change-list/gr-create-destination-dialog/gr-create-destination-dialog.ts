@@ -1,20 +1,8 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import '../../shared/gr-dialog/gr-dialog';
 import '../../shared/gr-overlay/gr-overlay';
 import '../../shared/gr-repo-branch-picker/gr-repo-branch-picker';
@@ -22,7 +10,7 @@ import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
 import {RepoName, BranchName} from '../../../types/common';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, html} from 'lit';
-import {customElement, state, query} from 'lit/decorators';
+import {customElement, state, query} from 'lit/decorators.js';
 import {assertIsDefined} from '../../../utils/common-util';
 import {BindValueChangeEvent} from '../../../types/events';
 

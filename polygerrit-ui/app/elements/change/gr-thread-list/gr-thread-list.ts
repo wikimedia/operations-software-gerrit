@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '../../../styles/shared-styles';
 import '../../shared/gr-comment-thread/gr-comment-thread';
@@ -28,8 +17,11 @@ import {ChangeMessageId} from '../../../api/rest-api';
 import {
   CommentThread,
   getCommentAuthors,
+  getMentionedThreads,
   hasHumanReply,
+  isDraft,
   isDraftThread,
+  isMentionedThread,
   isRobotThread,
   isUnresolved,
   lastUpdated,
@@ -40,15 +32,18 @@ import {CommentTabState, TabState} from '../../../types/events';
 import {DropdownItem} from '../../shared/gr-dropdown-list/gr-dropdown-list';
 import {GrAccountChip} from '../../shared/gr-account-chip/gr-account-chip';
 import {css, html, LitElement, PropertyValues} from 'lit';
-import {customElement, property, queryAll, state} from 'lit/decorators';
+import {customElement, property, queryAll, state} from 'lit/decorators.js';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {subscribe} from '../../lit/subscription-controller';
 import {ParsedChangeInfo} from '../../../types/types';
-import {repeat} from 'lit/directives/repeat';
+import {repeat} from 'lit/directives/repeat.js';
 import {GrCommentThread} from '../../shared/gr-comment-thread/gr-comment-thread';
 import {getAppContext} from '../../../services/app-context';
 import {resolve} from '../../../models/dependency';
 import {changeModelToken} from '../../../models/change/change-model';
+import {Interaction} from '../../../constants/reporting';
+import {KnownExperimentId} from '../../../services/flags/flags';
+import {HtmlPatched} from '../../../utils/lit-util';
 
 enum SortDropdownState {
   TIMESTAMP = 'Latest timestamp',
@@ -135,7 +130,7 @@ export function compareThreads(
 @customElement('gr-thread-list')
 export class GrThreadList extends LitElement {
   @queryAll('gr-comment-thread')
-  threadElements?: NodeList;
+  threadElements?: NodeListOf<GrCommentThread>;
 
   /**
    * Raw list of threads for the component to show.
@@ -201,19 +196,45 @@ export class GrThreadList extends LitElement {
   @state()
   draftsOnly = false;
 
+  @state()
+  mentionsOnly = false;
+
   private readonly getChangeModel = resolve(this, changeModelToken);
+
+  private readonly reporting = getAppContext().reportingService;
+
+  private readonly flagsService = getAppContext().flagsService;
 
   private readonly userModel = getAppContext().userModel;
 
-  override connectedCallback(): void {
-    super.connectedCallback();
+  private readonly patched = new HtmlPatched(key => {
+    this.reporting.reportInteraction(Interaction.AUTOCLOSE_HTML_PATCHED, {
+      component: this.tagName,
+      key: key.substring(0, 300),
+    });
+  });
+
+  constructor() {
+    super();
     subscribe(
       this,
-      this.getChangeModel().changeNum$,
+      () => this.getChangeModel().changeNum$,
       x => (this.changeNum = x)
     );
-    subscribe(this, this.getChangeModel().change$, x => (this.change = x));
-    subscribe(this, this.userModel.account$, x => (this.account = x));
+    subscribe(
+      this,
+      () => this.getChangeModel().change$,
+      x => (this.change = x)
+    );
+    subscribe(
+      this,
+      () => this.userModel.account$,
+      x => (this.account = x)
+    );
+    // for COMMENTS_AUTOCLOSE logging purposes only
+    this.reporting.reportInteraction(
+      Interaction.COMMENTS_AUTOCLOSE_THREAD_LIST_CREATED
+    );
   }
 
   override willUpdate(changed: PropertyValues) {
@@ -223,6 +244,9 @@ export class GrThreadList extends LitElement {
 
   private onCommentTabStateUpdate() {
     switch (this.commentTabState?.commentTab) {
+      case CommentTabState.MENTIONS:
+        this.handleOnlyMentions();
+        break;
       case CommentTabState.UNRESOLVED:
         this.handleOnlyUnresolved();
         break;
@@ -314,6 +338,17 @@ export class GrThreadList extends LitElement {
     ];
   }
 
+  override updated(): void {
+    // for COMMENTS_AUTOCLOSE logging purposes only
+    const threads = this.shadowRoot!.querySelectorAll('gr-comment-thread');
+    if (threads.length > 0) {
+      this.reporting.reportInteraction(
+        Interaction.COMMENTS_AUTOCLOSE_THREAD_LIST_UPDATED,
+        {uid: threads[0].uid}
+      );
+    }
+  }
+
   override render() {
     return html`
       ${this.renderDropdown()}
@@ -387,16 +422,16 @@ export class GrThreadList extends LitElement {
           index === 0 || threads[index - 1].path !== threads[index].path;
         const separator =
           index !== 0 && isFirst
-            ? html`<div class="thread-separator"></div>`
+            ? this.patched.html`<div class="thread-separator"></div>`
             : undefined;
         const commentThread = this.renderCommentThread(thread, isFirst);
-        return html`${separator}${commentThread}`;
+        return this.patched.html`${separator}${commentThread}`;
       }
     );
   }
 
   private renderCommentThread(thread: CommentThread, isFirst: boolean) {
-    return html`
+    return this.patched.html`
       <gr-comment-thread
         .thread=${thread}
         show-file-path
@@ -436,6 +471,7 @@ export class GrThreadList extends LitElement {
   }
 
   private getCommentsDropdownValue() {
+    if (this.mentionsOnly) return CommentTabState.MENTIONS;
     if (this.draftsOnly) return CommentTabState.DRAFTS;
     if (this.unresolvedOnly) return CommentTabState.UNRESOLVED;
     return CommentTabState.SHOW_ALL;
@@ -457,6 +493,14 @@ export class GrThreadList extends LitElement {
       value: CommentTabState.UNRESOLVED,
     });
     if (this.account) {
+      if (this.flagsService.isEnabled(KnownExperimentId.MENTION_USERS)) {
+        items.push({
+          text: `Mentions (${
+            getMentionedThreads(threads, this.account).length
+          })`,
+          value: CommentTabState.MENTIONS,
+        });
+      }
       items.push({
         text: `Drafts (${threads.filter(isDraftThread).length})`,
         value: CommentTabState.DRAFTS,
@@ -487,6 +531,9 @@ export class GrThreadList extends LitElement {
     switch (value) {
       case CommentTabState.UNRESOLVED:
         this.handleOnlyUnresolved();
+        break;
+      case CommentTabState.MENTIONS:
+        this.handleOnlyMentions();
         break;
       case CommentTabState.DRAFTS:
         this.handleOnlyDrafts();
@@ -537,8 +584,10 @@ export class GrThreadList extends LitElement {
     if (el?.editing) return true;
 
     if (this.selectedAuthors.length > 0) {
-      const hasACommentFromASelectedAuthor = thread.comments.some(c =>
-        this.isASelectedAuthor(c.author)
+      const hasACommentFromASelectedAuthor = thread.comments.some(
+        c =>
+          (isDraft(c) && this.isASelectedAuthor(this.account)) ||
+          this.isASelectedAuthor(c.author)
       );
       if (!hasACommentFromASelectedAuthor) return false;
     }
@@ -547,6 +596,9 @@ export class GrThreadList extends LitElement {
     if (this.onlyShowRobotCommentsWithHumanReply) {
       if (isRobotThread(thread) && !hasHumanReply(thread)) return false;
     }
+
+    if (this.mentionsOnly && !isMentionedThread(thread, this.account))
+      return false;
 
     if (this.draftsOnly && !isDraftThread(thread)) return false;
     if (this.unresolvedOnly && !isUnresolved(thread)) return false;
@@ -557,16 +609,25 @@ export class GrThreadList extends LitElement {
   private handleOnlyUnresolved() {
     this.unresolvedOnly = true;
     this.draftsOnly = false;
+    this.mentionsOnly = false;
+  }
+
+  private handleOnlyMentions() {
+    this.mentionsOnly = true;
+    this.unresolvedOnly = true;
+    this.draftsOnly = false;
   }
 
   private handleOnlyDrafts() {
     this.draftsOnly = true;
     this.unresolvedOnly = false;
+    this.mentionsOnly = false;
   }
 
   private handleAllComments() {
     this.draftsOnly = false;
     this.unresolvedOnly = false;
+    this.mentionsOnly = false;
   }
 
   private queryThreadElement(rootId: string): GrCommentThread | undefined {

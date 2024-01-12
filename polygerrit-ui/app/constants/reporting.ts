@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http =//www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 export enum LifeCycle {
@@ -33,6 +22,8 @@ export enum Execution {
   METHOD_USED = 'method used',
   CHECKS_API_NOT_LOGGED_IN = 'checks-api not-logged-in',
   CHECKS_API_ERROR = 'checks-api error',
+  USER_PREFERENCES_COLUMNS = 'user-preferences-columns',
+  PREFER_MERGE_FIRST_PARENT = 'prefer-merge-first-parent',
 }
 
 export enum Timing {
@@ -94,12 +85,19 @@ export enum Timing {
   DRAFT_DISCARD = 'DiscardDraftComment',
   // Time to load checks from all providers for the first time.
   CHECKS_LOAD = 'ChecksLoad',
+  // Webvitals - Cumulative Layout Shift (CLS): measures visual stability
+  CLS = 'CLS',
+  // WebVitals - First Input Delay (FID): measures interactivity
+  FID = 'FID',
+  // WebVitals - Largest Contentful Paint (LCP): measures loading performance.
+  LCP = 'LCP',
 }
 
 export enum Interaction {
   TOGGLE_SHOW_ALL_BUTTON = 'toggle show all button',
   SHOW_TAB = 'show-tab',
   ATTENTION_SET_CHIP = 'attention-set-chip',
+  BULK_ACTION = 'bulk-action',
   SAVE_COMMENT = 'save-comment',
   COMMENT_SAVED = 'comment-saved',
   DISCARD_COMMENT = 'discard-comment',
@@ -122,4 +120,32 @@ export enum Interaction {
   CHECKS_RUNS_PANEL_TOGGLE = 'checks-runs-panel-toggle',
   CHECKS_RUNS_SELECTED_TRIGGERED = 'checks-runs-selected-triggered',
   CHECKS_STATS = 'checks-stats',
+  // The following interactions are logged for investigating a spurious bug of
+  // auto-closing draft comments.
+  COMMENTS_AUTOCLOSE_FIRST_UPDATE = 'comments-autoclose-first-update',
+  COMMENTS_AUTOCLOSE_EDITING_FALSE_SAVE = 'comments-autoclose-editing-false-save',
+  COMMENTS_AUTOCLOSE_EDITING_DISCONNECTED = 'comments-autoclose-editing-disconnected',
+  COMMENTS_AUTOCLOSE_EDITING_THREAD_DISCONNECTED = 'comments-autoclose-editing-thread-disconnected',
+  COMMENTS_AUTOCLOSE_CHECKS_UPDATED = 'comments-autoclose-checks-updated',
+  COMMENTS_AUTOCLOSE_THREADS_UPDATED = 'comments-autoclose-threads-updated',
+  COMMENTS_AUTOCLOSE_COMMENT_REMOVED = 'comments-autoclose-comment-removed',
+  COMMENTS_AUTOCLOSE_MESSAGES_LIST_CREATED = 'comments-autoclose-messages-list-created',
+  COMMENTS_AUTOCLOSE_MESSAGES_LIST_UPDATED = 'comments-autoclose-messages-list-updated',
+  COMMENTS_AUTOCLOSE_THREAD_LIST_CREATED = 'comments-autoclose-thread-list-created',
+  COMMENTS_AUTOCLOSE_THREAD_LIST_UPDATED = 'comments-autoclose-thread-list-updated',
+  // The following interactions are logged for investigating a spurious bug of
+  // auto-closing diffs.
+  DIFF_AUTOCLOSE_DIFF_UNDEFINED = 'diff-autoclose-diff-undefined',
+  DIFF_AUTOCLOSE_DIFF_ONGOING = 'diff-autoclose-diff-ongoing',
+  DIFF_AUTOCLOSE_RELOAD_ON_WHITESPACE = 'diff-autoclose-reload-on-whitespace',
+  DIFF_AUTOCLOSE_RELOAD_ON_SYNTAX = 'diff-autoclose-reload-on-syntax',
+  DIFF_AUTOCLOSE_RELOAD_FILELIST_PREFS = 'diff-autoclose-reload-filelist-prefs',
+  DIFF_AUTOCLOSE_DIFF_HOST_CREATED = 'diff-autoclose-diff-host-created',
+  DIFF_AUTOCLOSE_DIFF_HOST_NOT_RENDERING = 'diff-autoclose-diff-not-rendering',
+  DIFF_AUTOCLOSE_FILE_LIST_UPDATED = 'diff-autoclose-file-list-updated',
+  DIFF_AUTOCLOSE_SHOWN_FILES_CHANGED = 'diff-autoclose-shown-files-changed',
+  // The following interaction is logged for reporting and counting a suspected
+  // Chrome bug that leads to html`` misbehavior.
+  AUTOCLOSE_HTML_PATCHED = 'autoclose-html-patched',
+  CHANGE_ACTION_FIRED = 'change-action-fired',
 }

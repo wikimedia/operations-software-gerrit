@@ -1,26 +1,11 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-account-list';
-import {
-  AccountInfoInput,
-  GrAccountList,
-  RawAccountInput,
-} from './gr-account-list';
+import {GrAccountList} from './gr-account-list';
 import {
   AccountId,
   AccountInfo,
@@ -28,15 +13,26 @@ import {
   GroupBaseInfo,
   GroupId,
   GroupName,
+  SuggestedReviewerInfo,
   Suggestion,
 } from '../../../types/common';
-import {queryAll, queryAndAssert, waitUntil} from '../../../test/test-utils';
+import {
+  pressKey,
+  queryAll,
+  queryAndAssert,
+  waitUntil,
+} from '../../../test/test-utils';
 import {ReviewerSuggestionsProvider} from '../../../scripts/gr-reviewer-suggestions-provider/gr-reviewer-suggestions-provider';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
-import {GrAutocomplete} from '../gr-autocomplete/gr-autocomplete';
+import {
+  AutocompleteSuggestion,
+  GrAutocomplete,
+} from '../gr-autocomplete/gr-autocomplete';
 import {GrAccountEntry} from '../gr-account-entry/gr-account-entry';
-
-const basicFixture = fixtureFromElement('gr-account-list');
+import {createChange} from '../../../test/test-data-generators';
+import {ReviewerState} from '../../../api/rest-api';
+import {fixture, html, assert} from '@open-wc/testing';
+import {EventType} from '../../../types/events';
+import {AccountInfoInput, RawAccountInput} from '../../../utils/account-util';
 
 class MockSuggestionsProvider implements ReviewerSuggestionsProvider {
   init() {}
@@ -45,7 +41,9 @@ class MockSuggestionsProvider implements ReviewerSuggestionsProvider {
     return Promise.resolve([]);
   }
 
-  makeSuggestionItem(_: Suggestion) {
+  makeSuggestionItem(
+    _: Suggestion
+  ): AutocompleteSuggestion<SuggestedReviewerInfo> {
     return {
       name: 'test',
       value: {
@@ -53,7 +51,7 @@ class MockSuggestionsProvider implements ReviewerSuggestionsProvider {
           _account_id: 1 as AccountId,
         } as AccountInfo,
         count: 1,
-      } as unknown as string,
+      },
     };
   }
 }
@@ -70,7 +68,6 @@ suite('gr-account-list tests', () => {
     const groupId = `group${++_nextAccountId}`;
     return {
       id: groupId as GroupId,
-      _group: true,
       name: 'abcd' as GroupName,
     };
   };
@@ -97,15 +94,19 @@ suite('gr-account-list tests', () => {
     existingAccount1 = makeAccount();
     existingAccount2 = makeAccount();
 
-    element = basicFixture.instantiate();
+    element = await fixture(html`<gr-account-list></gr-account-list>`);
     element.accounts = [existingAccount1, existingAccount2];
+    element.reviewerState = ReviewerState.REVIEWER;
+    element.change = {...createChange()};
+    element.change.reviewers[ReviewerState.REVIEWER] = [...element.accounts];
     suggestionsProvider = new MockSuggestionsProvider();
     element.suggestionsProvider = suggestionsProvider;
     await element.updateComplete;
   });
 
   test('renders', () => {
-    expect(element).shadowDom.to.equal(
+    assert.shadowDom.equal(
+      element,
       /* HTML */
       `<div class="list">
           <gr-account-chip removable="" tabindex="-1"> </gr-account-chip>
@@ -135,18 +136,18 @@ suite('gr-account-list tests', () => {
     // Existing accounts are listed.
     let chips = getChips();
     assert.equal(chips.length, 2);
-    assert.isFalse(chips[0].classList.contains('pendingAdd'));
-    assert.isFalse(chips[1].classList.contains('pendingAdd'));
+    assert.isFalse(chips[0].classList.contains('newlyAdded'));
+    assert.isFalse(chips[1].classList.contains('newlyAdded'));
 
-    // New accounts are added to end with pendingAdd class.
+    // New accounts are added to end with newlyAdded class.
     const newAccount = makeAccount();
     handleAdd({account: newAccount, count: 1});
     await element.updateComplete;
     chips = getChips();
     assert.equal(chips.length, 3);
-    assert.isFalse(chips[0].classList.contains('pendingAdd'));
-    assert.isFalse(chips[1].classList.contains('pendingAdd'));
-    assert.isTrue(chips[2].classList.contains('pendingAdd'));
+    assert.isFalse(chips[0].classList.contains('newlyAdded'));
+    assert.isFalse(chips[1].classList.contains('newlyAdded'));
+    assert.isTrue(chips[2].classList.contains('newlyAdded'));
 
     // Removed accounts are taken out of the list.
     element.dispatchEvent(
@@ -159,8 +160,8 @@ suite('gr-account-list tests', () => {
     await element.updateComplete;
     chips = getChips();
     assert.equal(chips.length, 2);
-    assert.isFalse(chips[0].classList.contains('pendingAdd'));
-    assert.isTrue(chips[1].classList.contains('pendingAdd'));
+    assert.isFalse(chips[0].classList.contains('newlyAdded'));
+    assert.isTrue(chips[1].classList.contains('newlyAdded'));
 
     // Invalid remove is ignored.
     element.dispatchEvent(
@@ -180,16 +181,16 @@ suite('gr-account-list tests', () => {
     await element.updateComplete;
     chips = getChips();
     assert.equal(chips.length, 1);
-    assert.isFalse(chips[0].classList.contains('pendingAdd'));
+    assert.isFalse(chips[0].classList.contains('newlyAdded'));
 
-    // New groups are added to end with pendingAdd and group classes.
+    // New groups are added to end with newlyAdded and group classes.
     const newGroup = makeGroup();
     handleAdd({group: newGroup, confirm: false, count: 1});
     await element.updateComplete;
     chips = getChips();
     assert.equal(chips.length, 2);
     assert.isTrue(chips[1].classList.contains('group'));
-    assert.isTrue(chips[1].classList.contains('pendingAdd'));
+    assert.isTrue(chips[1].classList.contains('newlyAdded'));
 
     // Removed groups are taken out of the list.
     element.dispatchEvent(
@@ -202,7 +203,7 @@ suite('gr-account-list tests', () => {
     await element.updateComplete;
     chips = getChips();
     assert.equal(chips.length, 1);
-    assert.isFalse(chips[0].classList.contains('pendingAdd'));
+    assert.isFalse(chips[0].classList.contains('newlyAdded'));
   });
 
   test('getSuggestions uses filter correctly', () => {
@@ -234,7 +235,7 @@ suite('gr-account-list tests', () => {
           value: {
             account: suggestion as AccountInfo,
             count: 1,
-          } as unknown as string,
+          },
         };
       });
 
@@ -259,26 +260,14 @@ suite('gr-account-list tests', () => {
             value: {
               account: originalSuggestions[0] as AccountInfo,
               count: 1,
-            } as unknown as string,
+            },
           },
         ]);
       });
   });
 
-  test('computeChipClass', () => {
-    const account = makeAccount() as AccountInfoInput;
-    assert.equal(element.computeChipClass(account), '');
-    account._pendingAdd = true;
-    assert.equal(element.computeChipClass(account), 'pendingAdd');
-    account._group = true;
-    assert.equal(element.computeChipClass(account), 'group pendingAdd');
-    account._pendingAdd = false;
-    assert.equal(element.computeChipClass(account), 'group');
-  });
-
   test('computeRemovable', async () => {
     const newAccount = makeAccount() as AccountInfoInput;
-    newAccount._pendingAdd = true;
     element.readonly = false;
     element.removableValues = [];
     element.updateComplete;
@@ -295,6 +284,15 @@ suite('gr-account-list tests', () => {
     element.updateComplete;
     assert.isFalse(element.computeRemovable(existingAccount1));
     assert.isFalse(element.computeRemovable(newAccount));
+  });
+
+  test('addAccountItem with invalid item', () => {
+    const toastHandler = sinon.stub();
+    element.allowAnyInput = false;
+    element.addEventListener(EventType.SHOW_ALERT, toastHandler);
+    const result = element.addAccountItem('test');
+    assert.isFalse(result);
+    assert.isTrue(toastHandler.called);
   });
 
   test('submitEntryText', async () => {
@@ -325,7 +323,7 @@ suite('gr-account-list tests', () => {
     assert.isTrue(element.submitEntryText());
     assert.isTrue(clearStub.called);
     assert.equal(
-      element.additions()[0].account?.email,
+      (element.additions()[0] as AccountInfo)?.email,
       'test@test' as EmailAddress
     );
   });
@@ -340,18 +338,11 @@ suite('gr-account-list tests', () => {
 
     assert.deepEqual(element.additions(), [
       {
-        account: {
-          _account_id: newAccount._account_id,
-          _pendingAdd: true,
-        },
+        _account_id: newAccount._account_id,
       },
       {
-        group: {
-          id: newGroup.id,
-          _group: true,
-          _pendingAdd: true,
-          name: 'abcd' as GroupName,
-        },
+        id: newGroup.id,
+        name: 'abcd' as GroupName,
       },
     ]);
   });
@@ -361,7 +352,7 @@ suite('gr-account-list tests', () => {
     assert.deepEqual(element.additions(), []);
 
     const group = makeGroup();
-    const reviewer = {
+    const reviewer: RawAccountInput = {
       group,
       count: 10,
       confirm: true,
@@ -375,13 +366,9 @@ suite('gr-account-list tests', () => {
     assert.isNull(element.pendingConfirmation);
     assert.deepEqual(element.additions(), [
       {
-        group: {
-          id: group.id,
-          _group: true,
-          _pendingAdd: true,
-          confirmed: true,
-          name: 'abcd' as GroupName,
-        },
+        id: group.id,
+        name: 'abcd' as GroupName,
+        confirmed: true,
       },
     ]);
   });
@@ -392,16 +379,6 @@ suite('gr-account-list tests', () => {
     element.accounts = [acct];
     element.removeAccount(acct);
     assert.equal(element.accounts.length, 1);
-  });
-
-  test('max-count', async () => {
-    element.maxCount = 1;
-    const acct = makeAccount();
-    handleAdd({account: acct, count: 1});
-    await element.updateComplete;
-    assert.isTrue(
-      queryAndAssert<GrAccountEntry>(element, '#entry').hasAttribute('hidden')
-    );
   });
 
   test('enter text calls suggestions provider', async () => {
@@ -429,7 +406,7 @@ suite('gr-account-list tests', () => {
       '#input'
     );
     input.text = 'newTest';
-    MockInteractions.focus(input.input!);
+    input.input!.focus();
     input.noDebounce = true;
     await element.updateComplete;
     assert.isTrue(getSuggestionsStub.calledOnce);
@@ -454,7 +431,7 @@ suite('gr-account-list tests', () => {
 
     test('toasts on invalid email', () => {
       const toastHandler = sinon.stub();
-      element.addEventListener('show-alert', toastHandler);
+      element.addEventListener(EventType.SHOW_ALERT, toastHandler);
       handleAdd('test');
       assert.isTrue(toastHandler.called);
     });
@@ -473,20 +450,14 @@ suite('gr-account-list tests', () => {
       // on input field update
       assert.equal(element.getOwnNativeInput(input.input!).selectionStart, 0);
       input.text = 'test';
-      MockInteractions.focus(input.input!);
+      input.input!.focus();
       await element.updateComplete;
       assert.equal(element.accounts.length, 2);
-      MockInteractions.pressAndReleaseKeyOn(
-        element.getOwnNativeInput(input.input!),
-        8
-      ); // Backspace
+      pressKey(element.getOwnNativeInput(input.input!), 'Backspace');
       await waitUntil(() => element.accounts.length === 2);
       input.text = '';
       await input.updateComplete;
-      MockInteractions.pressAndReleaseKeyOn(
-        element.getOwnNativeInput(input.input!),
-        8
-      ); // Backspace
+      pressKey(element.getOwnNativeInput(input.input!), 'Backspace');
       await waitUntil(() => element.accounts.length === 1);
     });
 
@@ -498,18 +469,18 @@ suite('gr-account-list tests', () => {
       input.text = '';
       element.accounts = [makeAccount(), makeAccount()];
       await element.updateComplete;
-      MockInteractions.focus(input.input!);
+      input.input!.focus();
       await element.updateComplete;
       const chips = element.accountChips;
       const chipsOneSpy = sinon.spy(chips[1], 'focus');
-      MockInteractions.pressAndReleaseKeyOn(input.input!, 37); // Left
+      pressKey(input.input!, 'ArrowLeft');
       assert.isTrue(chipsOneSpy.called);
       const chipsZeroSpy = sinon.spy(chips[0], 'focus');
-      MockInteractions.pressAndReleaseKeyOn(chips[1], 37); // Left
+      pressKey(chips[1], 'ArrowLeft');
       assert.isTrue(chipsZeroSpy.called);
-      MockInteractions.pressAndReleaseKeyOn(chips[0], 37); // Left
+      pressKey(chips[0], 'ArrowLeft');
       assert.isTrue(chipsZeroSpy.calledOnce);
-      MockInteractions.pressAndReleaseKeyOn(chips[0], 39); // Right
+      pressKey(chips[0], 'ArrowRight');
       assert.isTrue(chipsOneSpy.calledTwice);
     });
 
@@ -518,11 +489,11 @@ suite('gr-account-list tests', () => {
       await element.updateComplete;
       const focusSpy = sinon.spy(element.accountChips[1], 'focus');
       const removeSpy = sinon.spy(element, 'removeAccount');
-      MockInteractions.pressAndReleaseKeyOn(element.accountChips[0], 8); // Backspace
+      pressKey(element.accountChips[0], 'Backspace');
       assert.isTrue(focusSpy.called);
       assert.isTrue(removeSpy.calledOnce);
 
-      MockInteractions.pressAndReleaseKeyOn(element.accountChips[1], 46); // Delete
+      pressKey(element.accountChips[0], 'Delete');
       assert.isTrue(removeSpy.calledTwice);
     });
   });

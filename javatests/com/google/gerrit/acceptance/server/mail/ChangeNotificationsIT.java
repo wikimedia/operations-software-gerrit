@@ -33,6 +33,7 @@ import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS
 import com.google.common.collect.ImmutableList;
 import com.google.common.truth.Truth;
 import com.google.gerrit.acceptance.AbstractNotificationTest;
+import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.TestAccount;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
@@ -56,8 +57,9 @@ import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.client.SubmitType;
 import com.google.gerrit.extensions.common.CommitInfo;
 import com.google.gerrit.extensions.common.CommitMessageInput;
-import com.google.gerrit.server.restapi.change.PostReview;
+import com.google.gerrit.server.restapi.change.PostReviewOp;
 import com.google.inject.Inject;
+import java.util.UUID;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.Repository;
 import org.junit.Before;
@@ -300,32 +302,6 @@ public class ChangeNotificationsIT extends AbstractNotificationTest {
   @Test
   public void addReviewerToReviewableChangeBatch() throws Exception {
     addReviewerToReviewableChange(batch());
-  }
-
-  private void addReviewerToIgnoredChange(Adder adder) throws Exception {
-    StagedChange sc = stageReviewableChange();
-    requestScopeOperations.setApiUser(sc.reviewer.id());
-    gApi.changes().id(sc.changeId).ignore(true);
-    TestAccount addedReviewer = accountCreator.create("added", "added@example.com", "added", null);
-    addReviewer(adder, sc.changeId, sc.owner, addedReviewer.email(), CC_ON_OWN_COMMENTS, null);
-
-    assertThat(sender)
-        .sent("newchange", sc)
-        .to(addedReviewer)
-        .cc(sc.owner)
-        .cc(StagedUsers.REVIEWER_BY_EMAIL, StagedUsers.CC_BY_EMAIL)
-        .noOneElse();
-    assertThat(sender).didNotSend();
-  }
-
-  @Test
-  public void addReviewerToIgnoredChangeSingly() throws Exception {
-    addReviewerToIgnoredChange(singly());
-  }
-
-  @Test
-  public void addReviewerToIgnoredChangeBatch() throws Exception {
-    addReviewerToIgnoredChange(batch());
   }
 
   private void addReviewerToReviewableChangeByOwnerCcingSelf(Adder adder) throws Exception {
@@ -952,13 +928,13 @@ public class ChangeNotificationsIT extends AbstractNotificationTest {
     // TODO(logan): Remove this test check once PolyGerrit workaround is rolled back.
     StagedChange sc = stageWipChange();
     ReviewInput in =
-        ReviewInput.noScore().message(PostReview.START_REVIEW_MESSAGE).setWorkInProgress(false);
+        ReviewInput.noScore().message(PostReviewOp.START_REVIEW_MESSAGE).setWorkInProgress(false);
     gApi.changes().id(sc.changeId).current().review(in);
     Truth.assertThat(sender.getMessages()).isNotEmpty();
     String body = sender.getMessages().get(0).body();
-    int idx = body.indexOf(PostReview.START_REVIEW_MESSAGE);
+    int idx = body.indexOf(PostReviewOp.START_REVIEW_MESSAGE);
     Truth.assertThat(idx).isAtLeast(0);
-    Truth.assertThat(body.indexOf(PostReview.START_REVIEW_MESSAGE, idx + 1)).isEqualTo(-1);
+    Truth.assertThat(body.indexOf(PostReviewOp.START_REVIEW_MESSAGE, idx + 1)).isEqualTo(-1);
   }
 
   private void review(TestAccount account, String changeId, EmailStrategy strategy)
@@ -2004,7 +1980,19 @@ public class ChangeNotificationsIT extends AbstractNotificationTest {
   private void pushTo(StagedChange sc, String ref, TestAccount by, EmailStrategy emailStrategy)
       throws Exception {
     setEmailStrategy(by, emailStrategy);
-    pushFactory.create(by.newIdent(), sc.repo, sc.changeId).to(ref).assertOkStatus();
+
+    // Use random file content to avoid that change kind is NO_CHANGE.
+    String randomContent = UUID.randomUUID().toString();
+    pushFactory
+        .create(
+            by.newIdent(),
+            sc.repo,
+            "New Patch Set",
+            PushOneCommit.FILE_NAME,
+            randomContent,
+            sc.changeId)
+        .to(ref)
+        .assertOkStatus();
   }
 
   @Test

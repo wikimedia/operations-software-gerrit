@@ -14,6 +14,7 @@
 
 package com.google.gerrit.common;
 
+import static java.lang.annotation.ElementType.CONSTRUCTOR;
 import static java.lang.annotation.ElementType.FIELD;
 import static java.lang.annotation.ElementType.METHOD;
 import static java.lang.annotation.ElementType.TYPE;
@@ -25,26 +26,27 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.Target;
 
 /**
- * A marker to say a method/type/field is added or is increased to public solely because it is
- * called from inside a project or an organisation using Gerrit.
+ * A marker to say a method/type/field/constructor is added or is increased to public solely because
+ * it is called from inside a project or an organisation using Gerrit.
  */
-@Target({METHOD, TYPE, FIELD})
+@Target({METHOD, TYPE, FIELD, CONSTRUCTOR})
 @Retention(RUNTIME)
 @Repeatable(UsedAt.Uses.class)
 public @interface UsedAt {
   /** Enumeration of projects that call a method/type/field. */
   enum Project {
-    GOOGLE,
     COLLABNET,
+    GOOGLE,
+    PLUGINS_ALL, // Use this project if a method/type is generally made available to all plugins.
     PLUGIN_CHECKS,
     PLUGIN_CODE_OWNERS,
     PLUGIN_DELETE_PROJECT,
-    PLUGIN_SERVICEUSER,
     PLUGIN_HIGH_AVAILABILITY,
     PLUGIN_MULTI_SITE,
+    PLUGIN_SERVICEUSER,
     PLUGIN_PULL_REPLICATION,
     PLUGIN_WEBSESSION_FLATFILE,
-    PLUGINS_ALL, // Use this project if a method/type is generally made available to all plugins.
+    MODULE_GIT_REFS_FILTER
   }
 
   /** Reference to the project that uses the method annotated with this annotation. */

@@ -1,24 +1,13 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '../../admin/gr-create-change-dialog/gr-create-change-dialog';
 import '../../shared/gr-button/gr-button';
 import '../../shared/gr-dialog/gr-dialog';
 import '../../shared/gr-dropdown/gr-dropdown';
-import '../../shared/gr-icons/gr-icons';
+import '../../shared/gr-icon/gr-icon';
 import '../../shared/gr-overlay/gr-overlay';
 import '../gr-confirm-abandon-dialog/gr-confirm-abandon-dialog';
 import '../gr-confirm-cherrypick-dialog/gr-confirm-cherrypick-dialog';
@@ -28,11 +17,13 @@ import '../gr-confirm-rebase-dialog/gr-confirm-rebase-dialog';
 import '../gr-confirm-revert-dialog/gr-confirm-revert-dialog';
 import '../gr-confirm-submit-dialog/gr-confirm-submit-dialog';
 import '../../../styles/shared-styles';
-import {dom, EventApi} from '@polymer/polymer/lib/legacy/polymer.dom';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {getAppContext} from '../../../services/app-context';
-import {CURRENT} from '../../../utils/patch-set-util';
+import {
+  CURRENT,
+  hasEditBasedOnCurrentPatchSet,
+} from '../../../utils/patch-set-util';
 import {
   changeIsOpen,
   isOwner,
@@ -60,7 +51,7 @@ import {
   isQuickLabelInfo,
   LabelInfo,
   NumericChangeId,
-  PatchSetNum,
+  PatchSetNumber,
   RequestPayload,
   RevertSubmissionInfo,
   ReviewInput,
@@ -98,7 +89,7 @@ import {
   getVotingRange,
   StandardLabels,
 } from '../../../utils/label-util';
-import {ShowAlertEventDetail} from '../../../types/events';
+import {EventType, ShowAlertEventDetail} from '../../../types/events';
 import {
   ActionPriority,
   ActionType,
@@ -112,9 +103,14 @@ import {resolve} from '../../../models/dependency';
 import {changeModelToken} from '../../../models/change/change-model';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, css, html, nothing} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
-import {ifDefined} from 'lit/directives/if-defined';
+import {customElement, property, query, state} from 'lit/decorators.js';
+import {ifDefined} from 'lit/directives/if-defined.js';
 import {assertIsDefined, queryAll} from '../../../utils/common-util';
+import {Interaction} from '../../../constants/reporting';
+import {rootUrl} from '../../../utils/url-util';
+import {createSearchUrl} from '../../../models/views/search';
+import {createChangeUrl} from '../../../models/views/change';
+import {subscribe} from '../../lit/subscription-controller';
 
 const ERR_BRANCH_EMPTY = 'The destination branch can’t be empty.';
 const ERR_COMMIT_EMPTY = 'The commit message can’t be empty.';
@@ -246,21 +242,23 @@ const STOP_EDIT: UIActionInfo = {
   __type: ActionType.CHANGE,
 };
 
-// Set of keys that have icons. As more icons are added to gr-icons.html, this
-// set should be expanded.
-const ACTIONS_WITH_ICONS = new Set([
-  ChangeActions.ABANDON,
-  ChangeActions.DELETE_EDIT,
-  ChangeActions.EDIT,
-  ChangeActions.PUBLISH_EDIT,
-  ChangeActions.READY,
-  ChangeActions.REBASE_EDIT,
-  ChangeActions.RESTORE,
-  ChangeActions.REVERT,
-  ChangeActions.STOP_EDIT,
-  QUICK_APPROVE_ACTION.key,
-  RevisionActions.REBASE,
-  RevisionActions.SUBMIT,
+// Set of keys that have icons.
+const ACTIONS_WITH_ICONS = new Map<
+  string,
+  Pick<UIActionInfo, 'filled' | 'icon'>
+>([
+  [ChangeActions.ABANDON, {icon: 'block'}],
+  [ChangeActions.DELETE_EDIT, {icon: 'delete', filled: true}],
+  [ChangeActions.EDIT, {icon: 'edit', filled: true}],
+  [ChangeActions.PUBLISH_EDIT, {icon: 'publish', filled: true}],
+  [ChangeActions.READY, {icon: 'visibility', filled: true}],
+  [ChangeActions.REBASE_EDIT, {icon: 'rebase_edit'}],
+  [RevisionActions.REBASE, {icon: 'rebase'}],
+  [ChangeActions.RESTORE, {icon: 'history'}],
+  [ChangeActions.REVERT, {icon: 'undo'}],
+  [ChangeActions.STOP_EDIT, {icon: 'stop', filled: true}],
+  [QUICK_APPROVE_ACTION.key, {icon: 'check'}],
+  [RevisionActions.SUBMIT, {icon: 'done_all'}],
 ]);
 
 const EDIT_ACTIONS: Set<string> = new Set([
@@ -404,7 +402,7 @@ export class GrChangeActions
   @property({type: Object})
   change?: ChangeViewChangeInfo;
 
-  @property({type: Object})
+  @state()
   actions: ActionNameToActionInfoMap = {};
 
   @property({type: Array})
@@ -437,8 +435,7 @@ export class GrChangeActions
   @property({type: Boolean})
   hasParent?: boolean;
 
-  @property({type: String})
-  latestPatchNum?: PatchSetNum;
+  @state() latestPatchNum?: PatchSetNumber;
 
   @property({type: String})
   commitMessage = '';
@@ -532,13 +529,15 @@ export class GrChangeActions
   // private but used in test
   @state() disabledMenuActions: string[] = [];
 
-  @property({type: Boolean})
+  // private but used in test
+  @state()
   editPatchsetLoaded = false;
 
   @property({type: Boolean})
   editMode = false;
 
-  @property({type: Boolean})
+  // private but used in test
+  @state()
   editBasedOnCurrentPatchSet = true;
 
   @property({type: Boolean})
@@ -548,6 +547,8 @@ export class GrChangeActions
 
   private readonly storage = getAppContext().storageService;
 
+  private readonly getNavigation = resolve(this, navigationToken);
+
   constructor() {
     super();
     this.addEventListener('fullscreen-overlay-opened', () =>
@@ -555,6 +556,21 @@ export class GrChangeActions
     );
     this.addEventListener('fullscreen-overlay-closed', () =>
       this.handleShowBackgroundContent()
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().latestPatchNum$,
+      x => (this.latestPatchNum = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().patchsets$,
+      x => (this.editBasedOnCurrentPatchSet = hasEditBasedOnCurrentPatchSet(x))
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().patchNum$,
+      x => (this.editPatchsetLoaded = x === 'edit')
     );
   }
 
@@ -594,11 +610,11 @@ export class GrChangeActions
           margin: var(--spacing-l);
           text-align: center;
         }
-        iron-icon {
+        gr-icon {
           color: inherit;
           margin-right: var(--spacing-xs);
         }
-        #moreActions iron-icon {
+        #moreActions gr-icon {
           margin: 0;
         }
         #moreMessage,
@@ -643,7 +659,7 @@ export class GrChangeActions
           !this.topLevelActions.length}
         >
           ${this.topLevelPrimaryActions?.map(action =>
-            this.renderTopPrimaryActions(action)
+            this.renderUIAction(action)
           )}
         </section>
         <section
@@ -653,7 +669,7 @@ export class GrChangeActions
           !this.topLevelActions.length}
         >
           ${this.topLevelSecondaryActions?.map(action =>
-            this.renderTopSecondaryActions(action)
+            this.renderUIAction(action)
           )}
         </section>
         <gr-button ?hidden=${!this.loading}>Loading actions...</gr-button>
@@ -669,8 +685,7 @@ export class GrChangeActions
           .disabledIds=${this.disabledMenuActions}
           .items=${this.menuActions}
         >
-          <iron-icon icon="gr-icons:more-vert" aria-labelledby="moreMessage">
-          </iron-icon>
+          <gr-icon icon="more_vert" aria-labelledby="moreMessage"></gr-icon>
           <span id="moreMessage">More</span>
         </gr-dropdown>
       </div>
@@ -777,7 +792,7 @@ export class GrChangeActions
     `;
   }
 
-  private renderTopPrimaryActions(action: UIActionInfo) {
+  private renderUIAction(action: UIActionInfo) {
     return html`
       <gr-tooltip-content
         title=${ifDefined(action.title)}
@@ -793,39 +808,16 @@ export class GrChangeActions
           @click=${(e: MouseEvent) =>
             this.handleActionTap(e, action.__key, action.__type)}
         >
-          <iron-icon
-            class=${action.icon ? '' : 'hidden'}
-            .icon="gr-icons:${action.icon}"
-          ></iron-icon>
-          ${action.label}
+          ${this.renderUIActionIcon(action)} ${action.label}
         </gr-button>
       </gr-tooltip-content>
     `;
   }
 
-  private renderTopSecondaryActions(action: UIActionInfo) {
+  private renderUIActionIcon(action: UIActionInfo) {
+    if (!action.icon) return nothing;
     return html`
-      <gr-tooltip-content
-        title=${ifDefined(action.title)}
-        .hasTooltip=${!!action.title}
-        ?position-below=${true}
-      >
-        <gr-button
-          link
-          class=${action.__key}
-          data-action-key=${action.__key}
-          data-label=${action.label}
-          ?disabled=${this.calculateDisabled(action)}
-          @click=${(e: MouseEvent) =>
-            this.handleActionTap(e, action.__key, action.__type)}
-        >
-          <iron-icon
-            class=${action.icon ? '' : 'hidden'}
-            icon="gr-icons:${action.icon}"
-          ></iron-icon>
-          ${action.label}
-        </gr-button>
-      </gr-tooltip-content>
+      <gr-icon icon=${action.icon} ?filled=${action.filled}></gr-icon>
     `;
   }
 
@@ -875,7 +867,7 @@ export class GrChangeActions
       return undefined;
     }
     if (revisionActions[actionName] === undefined) {
-      // Return null to fire an event when reveisionActions was loaded
+      // Return null to fire an event when revisionActions was loaded
       // but doesn't contain actionName. undefined doesn't fire an event
       return null;
     }
@@ -1343,7 +1335,7 @@ export class GrChangeActions
   }
 
   /**
-   * Capitalize the first letter and lowecase all others.
+   * Capitalize the first letter and lowercase all others.
    *
    * private but used in test
    */
@@ -1370,7 +1362,7 @@ export class GrChangeActions
   }
 
   // private but used in test
-  getRevision(change: ChangeViewChangeInfo, patchNum?: PatchSetNum) {
+  getRevision(change: ChangeViewChangeInfo, patchNum?: PatchSetNumber) {
     for (const rev of Object.values(change.revisions)) {
       if (rev._number === patchNum) {
         return rev;
@@ -1389,7 +1381,10 @@ export class GrChangeActions
     revert dialog after revert button is pressed. */
     this.restApiService.getChanges(0, query).then(changes => {
       if (!changes) {
-        this.reporting.error(new Error('changes is undefined'));
+        this.reporting.error(
+          'Change Actions',
+          new Error('getChanges returns undefined')
+        );
         return;
       }
       assertIsDefined(this.confirmRevertDialog, 'confirmRevertDialog');
@@ -1434,7 +1429,7 @@ export class GrChangeActions
 
   private handleOverflowItemTap(e: CustomEvent<MenuAction>) {
     e.preventDefault();
-    const el = (dom(e) as EventApi).localTarget as Element;
+    const el = e.target as Element;
     const key = e.detail.action.__key;
     if (
       key.startsWith(ADDITIONAL_ACTION_KEY_PREFIX) ||
@@ -1599,14 +1594,18 @@ export class GrChangeActions
     assertIsDefined(this.confirmRebase, 'confirmRebase');
     assertIsDefined(this.overlay, 'overlay');
     const el = this.confirmRebase;
-    const payload = {base: e.detail.base};
+    const payload = {
+      base: e.detail.base,
+      allow_conflicts: e.detail.allowConflicts,
+    };
     this.overlay.close();
     el.hidden = true;
     this.fireAction(
       '/rebase',
       assertUIActionInfo(this.revisionActions.rebase),
       true,
-      payload
+      payload,
+      {allow_conflicts: payload.allow_conflicts}
     );
   }
 
@@ -1692,7 +1691,10 @@ export class GrChangeActions
         );
         break;
       default:
-        this.reporting.error(new Error('invalid revert type'));
+        this.reporting.error(
+          'Change Actions',
+          new Error('invalid revert type')
+        );
     }
   }
 
@@ -1808,12 +1810,17 @@ export class GrChangeActions
     endpoint: string,
     action: UIActionInfo,
     revAction: boolean,
-    payload?: RequestPayload
+    payload?: RequestPayload,
+    toReport?: Object
   ) {
     const cleanupFn = this.setLoadingOnButtonWithKey(
       action.__type,
       action.__key
     );
+    this.reporting.reportInteraction(Interaction.CHANGE_ACTION_FIRED, {
+      endpoint,
+      toReport,
+    });
 
     this.send(
       action.method,
@@ -1861,20 +1868,24 @@ export class GrChangeActions
           this.waitForChangeReachable(revertChangeInfo._number)
             .then(() => this.setReviewOnRevert(revertChangeInfo._number))
             .then(() => {
-              GerritNav.navigateToChange(revertChangeInfo);
+              this.getNavigation().setUrl(
+                createChangeUrl({change: revertChangeInfo})
+              );
             });
           break;
         }
         case RevisionActions.CHERRYPICK: {
           const cherrypickChangeInfo: ChangeInfo = obj as unknown as ChangeInfo;
           this.waitForChangeReachable(cherrypickChangeInfo._number).then(() => {
-            GerritNav.navigateToChange(cherrypickChangeInfo);
+            this.getNavigation().setUrl(
+              createChangeUrl({change: cherrypickChangeInfo})
+            );
           });
           break;
         }
         case ChangeActions.DELETE:
           if (action.__type === ActionType.CHANGE) {
-            GerritNav.navigateToRelativeUrl(GerritNav.getUrlForRoot());
+            this.getNavigation().setUrl(rootUrl());
           }
           break;
         case ChangeActions.WIP:
@@ -1894,9 +1905,9 @@ export class GrChangeActions
             return;
           /* If there is only 1 change then gerrit will automatically
             redirect to that change */
-          GerritNav.navigateToSearchQuery(
-            `topic: ${revertSubmistionInfo.revert_changes[0].topic}`
-          );
+          const topic = revertSubmistionInfo.revert_changes[0].topic;
+          const query = `topic:${topic}`;
+          if (topic) this.getNavigation().setUrl(createSearchUrl({query}));
           break;
         }
         default:
@@ -1976,7 +1987,7 @@ export class GrChangeActions
       .then(result => {
         if (!result.isLatest) {
           this.dispatchEvent(
-            new CustomEvent<ShowAlertEventDetail>('show-alert', {
+            new CustomEvent<ShowAlertEventDetail>(EventType.SHOW_ALERT, {
               detail: {
                 message:
                   'Cannot set label: a newer patch has been ' +
@@ -2028,7 +2039,10 @@ export class GrChangeActions
       .getChanges(0, query, undefined, options)
       .then(changes => {
         if (!changes) {
-          this.reporting.error(new Error('getChanges returns undefined'));
+          this.reporting.error(
+            'Change Actions',
+            new Error('getChanges returns undefined')
+          );
           return;
         }
         this.confirmCherrypick!.updateChanges(changes);
@@ -2121,7 +2135,6 @@ export class GrChangeActions
    * values.
    */
   private computeAllActions(): UIActionInfo[] {
-    // Polymer 2: check for undefined
     if (this.change === undefined) {
       return [];
     }
@@ -2147,10 +2160,10 @@ export class GrChangeActions
       .concat(changeActionValues)
       .sort((a, b) => this.actionComparator(a, b))
       .map(action => {
-        if (ACTIONS_WITH_ICONS.has(action.__key)) {
-          action.icon = action.__key;
-        }
-        return action;
+        return {
+          ...action,
+          ...(ACTIONS_WITH_ICONS.get(action.__key) ?? {}),
+        };
       })
       .filter(action => !this.shouldSkipAction(action));
   }

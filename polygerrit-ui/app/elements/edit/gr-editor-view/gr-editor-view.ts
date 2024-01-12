@@ -1,50 +1,42 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../plugins/gr-endpoint-param/gr-endpoint-param';
 import '../../shared/gr-button/gr-button';
 import '../../shared/gr-editable-label/gr-editable-label';
 import '../gr-default-editor/gr-default-editor';
-import {
-  GerritNav,
-  GenerateUrlEditViewParameters,
-} from '../../core/gr-navigation/gr-navigation';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {computeTruncatedPath} from '../../../utils/path-list-util';
 import {
-  PatchSetNum,
   EditPreferencesInfo,
   Base64FileContent,
-  NumericChangeId,
-  EditPatchSetNum,
+  RevisionPatchSetNum,
 } from '../../../types/common';
 import {ParsedChangeInfo} from '../../../types/types';
 import {HttpMethod, NotifyType} from '../../../constants/constants';
-import {fireAlert, fireTitleChange} from '../../../utils/event-util';
+import {
+  fireAlert,
+  fireTitleChange,
+  fireReload,
+} from '../../../utils/event-util';
 import {getAppContext} from '../../../services/app-context';
 import {ErrorCallback} from '../../../api/rest';
 import {assertIsDefined} from '../../../utils/common-util';
 import {debounce, DelayedTask} from '../../../utils/async-util';
 import {changeIsMerged, changeIsAbandoned} from '../../../utils/change-util';
-import {addShortcut, Modifier} from '../../../utils/dom-util';
+import {Modifier} from '../../../utils/dom-util';
 import {sharedStyles} from '../../../styles/shared-styles';
-import {LitElement, PropertyValues, html, css} from 'lit';
-import {customElement, property, state} from 'lit/decorators';
+import {LitElement, PropertyValues, html, css, nothing} from 'lit';
+import {customElement, state} from 'lit/decorators.js';
 import {subscribe} from '../../lit/subscription-controller';
+import {resolve} from '../../../models/dependency';
+import {changeModelToken} from '../../../models/change/change-model';
+import {ShortcutController} from '../../lit/shortcut-controller';
+import {editViewModelToken, EditViewState} from '../../../models/views/edit';
+import {createChangeUrl} from '../../../models/views/change';
 
 const RESTORED_MESSAGE = 'Content restored from a previous edit.';
 const SAVING_MESSAGE = 'Saving changes...';
@@ -69,20 +61,10 @@ export class GrEditorView extends LitElement {
    * @event show-alert
    */
 
-  @property({type: Object})
-  params?: GenerateUrlEditViewParameters;
+  @state() viewState?: EditViewState;
 
   // private but used in test
   @state() change?: ParsedChangeInfo;
-
-  // private but used in test
-  @state() changeNum?: NumericChangeId;
-
-  // private but used in test
-  @state() patchNum?: PatchSetNum;
-
-  // private but used in test
-  @state() path?: string;
 
   // private but used in test
   @state() type?: string;
@@ -101,7 +83,8 @@ export class GrEditorView extends LitElement {
 
   @state() private editPrefs?: EditPreferencesInfo;
 
-  @state() private lineNum?: number;
+  // private but used in test
+  @state() latestPatchsetNumber?: RevisionPatchSetNum;
 
   private readonly restApiService = getAppContext().restApiService;
 
@@ -111,40 +94,54 @@ export class GrEditorView extends LitElement {
 
   private readonly userModel = getAppContext().userModel;
 
+  private readonly getChangeModel = resolve(this, changeModelToken);
+
+  private readonly getEditViewModel = resolve(this, editViewModelToken);
+
+  private readonly getNavigation = resolve(this, navigationToken);
+
+  private readonly shortcuts = new ShortcutController(this);
+
   // Tests use this so needs to be non private
   storeTask?: DelayedTask;
-
-  /** Called in disconnectedCallback. */
-  private cleanups: (() => void)[] = [];
 
   constructor() {
     super();
     this.addEventListener('content-change', e => {
       this.handleContentChange(e as CustomEvent<{value: string}>);
     });
+    subscribe(
+      this,
+      () => this.userModel.editPreferences$,
+      editPreferences => (this.editPrefs = editPreferences)
+    );
+    subscribe(
+      this,
+      () => this.getEditViewModel().state$,
+      state => {
+        this.viewState = state;
+        this.viewStateChanged();
+      }
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().latestPatchNumWithEdit$,
+      x => (this.latestPatchsetNumber = x)
+    );
+    this.shortcuts.addLocal({key: 's', modifiers: [Modifier.CTRL_KEY]}, () =>
+      this.handleSaveShortcut()
+    );
+    this.shortcuts.addLocal({key: 's', modifiers: [Modifier.META_KEY]}, () =>
+      this.handleSaveShortcut()
+    );
   }
 
   override connectedCallback() {
     super.connectedCallback();
-    subscribe(this, this.userModel.editPreferences$, editPreferences => {
-      this.editPrefs = editPreferences;
-    });
-    this.cleanups.push(
-      addShortcut(this, {key: 's', modifiers: [Modifier.CTRL_KEY]}, () =>
-        this.handleSaveShortcut()
-      )
-    );
-    this.cleanups.push(
-      addShortcut(this, {key: 's', modifiers: [Modifier.META_KEY]}, () =>
-        this.handleSaveShortcut()
-      )
-    );
   }
 
   override disconnectedCallback() {
-    this.storeTask?.cancel();
-    for (const cleanup of this.cleanups) cleanup();
-    this.cleanups = [];
+    this.storeTask?.flush();
     super.disconnectedCallback();
   }
 
@@ -202,11 +199,15 @@ export class GrEditorView extends LitElement {
         .rightControls {
           justify-content: flex-end;
         }
+        .warning {
+          color: var(--error-text-color);
+        }
       `,
     ];
   }
 
   override render() {
+    if (!this.viewState) return;
     return html` ${this.renderHeader()} ${this.renderEndpoint()} `;
   }
 
@@ -216,10 +217,11 @@ export class GrEditorView extends LitElement {
         <header>
           <span class="controlGroup">
             <span>Edit mode</span>
+            ${this.renderEditingOldPatchsetWarning()}
             <span class="separator"></span>
             <gr-editable-label
               labelText="File path"
-              .value=${this.path}
+              .value=${this.viewState?.path}
               placeholder="File path..."
               @changed=${this.handlePathChanged}
             ></gr-editable-label>
@@ -252,6 +254,12 @@ export class GrEditorView extends LitElement {
     `;
   }
 
+  private renderEditingOldPatchsetWarning() {
+    const patchset = this.viewState?.patchNum;
+    if (patchset === this.latestPatchsetNumber) return nothing;
+    return html`<span class="warning">&nbsp;(Old Patchset)</span>`;
+  }
+
   private renderEndpoint() {
     return html`
       <div class="textareaWrapper">
@@ -270,7 +278,7 @@ export class GrEditorView extends LitElement {
           ></gr-endpoint-param>
           <gr-endpoint-param
             name="lineNum"
-            .value=${this.lineNum}
+            .value=${this.viewState?.lineNum}
           ></gr-endpoint-param>
           <gr-default-editor
             id="file"
@@ -282,56 +290,40 @@ export class GrEditorView extends LitElement {
   }
 
   override willUpdate(changedProperties: PropertyValues) {
-    if (changedProperties.has('params')) {
-      this.paramsChanged();
-    }
-
     if (changedProperties.has('change')) {
       this.navigateToChangeIfEdit();
     }
-
     if (changedProperties.has('change') || changedProperties.has('type')) {
       this.navigateToChangeIfEditType();
     }
   }
 
   get storageKey() {
-    return `c${this.changeNum}_ps${this.patchNum}_${this.path}`;
+    return `c${this.viewState?.changeNum}_ps${this.viewState?.patchNum}_${this.viewState?.path}`;
   }
 
   // private but used in test
-  paramsChanged() {
-    if (!this.params) return;
-
-    if (this.params.view !== GerritNav.View.EDIT) {
-      return;
-    }
-
-    this.changeNum = this.params.changeNum;
-    this.path = this.params.path;
-    this.patchNum = this.params.patchNum || (EditPatchSetNum as PatchSetNum);
-    this.lineNum =
-      typeof this.params.lineNum === 'string'
-        ? Number(this.params.lineNum)
-        : this.params.lineNum;
+  viewStateChanged() {
+    if (!this.viewState) return;
 
     // NOTE: This may be called before attachment (e.g. while parentElement is
     // null). Fire title-change in an async so that, if attachment to the DOM
     // has been queued, the event can bubble up to the handler in gr-app.
     setTimeout(() => {
-      if (!this.params) return;
-      const title = `Editing ${computeTruncatedPath(this.params.path)}`;
+      if (!this.viewState) return;
+      const title = `Editing ${computeTruncatedPath(this.viewState.path)}`;
       fireTitleChange(this, title);
     });
 
     const promises = [];
-
-    promises.push(this.getChangeDetail(this.changeNum));
-    promises.push(this.getFileData(this.changeNum, this.path, this.patchNum));
+    promises.push(this.getChangeDetail());
+    promises.push(this.getFileData());
     return Promise.all(promises);
   }
 
-  private async getChangeDetail(changeNum: NumericChangeId) {
+  private async getChangeDetail() {
+    const changeNum = this.viewState?.changeNum;
+    assertIsDefined(changeNum, 'change number');
     this.change = await this.restApiService.getChangeDetail(changeNum);
   }
 
@@ -342,7 +334,7 @@ export class GrEditorView extends LitElement {
       this,
       'Change edits cannot be created if change is merged or abandoned. Redirected to non edit mode.'
     );
-    GerritNav.navigateToChange(this.change);
+    this.getNavigation().setUrl(createChangeUrl({change: this.change}));
   }
 
   private navigateToChangeIfEditType() {
@@ -350,21 +342,22 @@ export class GrEditorView extends LitElement {
 
     // Prevent editing binary files
     fireAlert(this, 'You cannot edit binary files within the inline editor.');
-    GerritNav.navigateToChange(this.change);
+    this.getNavigation().setUrl(createChangeUrl({change: this.change}));
   }
 
   // private but used in test
   async handlePathChanged(e: CustomEvent<string>): Promise<void> {
-    // TODO(TS) could be cleaned up, it was added for type requirements
-    if (this.changeNum === undefined || !this.path) {
-      throw new Error('changeNum or path undefined');
-    }
-    const path = e.detail;
-    if (path === this.path) return;
+    const changeNum = this.viewState?.changeNum;
+    const currentPath = this.viewState?.path;
+    assertIsDefined(changeNum, 'change number');
+    assertIsDefined(currentPath, 'path');
+
+    const newPath = e.detail;
+    if (newPath === currentPath) return;
     const res = await this.restApiService.renameFileInChangeEdit(
-      this.changeNum,
-      this.path,
-      path
+      changeNum,
+      currentPath,
+      newPath
     );
     if (!res?.ok) return;
 
@@ -374,22 +367,21 @@ export class GrEditorView extends LitElement {
 
   // private but used in test
   viewEditInChangeView() {
-    if (this.change)
-      GerritNav.navigateToChange(this.change, {
-        isEdit: true,
-        forceReload: true,
-      });
+    if (!this.change) return;
+    this.getNavigation().setUrl(
+      createChangeUrl({change: this.change, edit: true, forceReload: true})
+    );
   }
 
   // private but used in test
-  getFileData(
-    changeNum: NumericChangeId,
-    path: string,
-    patchNum?: PatchSetNum
-  ) {
-    if (patchNum === undefined) {
-      return Promise.reject(new Error('patchNum undefined'));
-    }
+  getFileData() {
+    const changeNum = this.viewState?.changeNum;
+    const patchNum = this.viewState?.patchNum;
+    const path = this.viewState?.path;
+    assertIsDefined(changeNum, 'change number');
+    assertIsDefined(patchNum, 'patchset number');
+    assertIsDefined(path, 'path');
+
     const storedContent = this.storage.getEditableContentItem(this.storageKey);
 
     return this.restApiService
@@ -422,16 +414,18 @@ export class GrEditorView extends LitElement {
 
   // private but used in test
   saveEdit() {
-    if (this.changeNum === undefined || !this.path) {
-      return Promise.reject(new Error('changeNum or path undefined'));
-    }
+    const changeNum = this.viewState?.changeNum;
+    const path = this.viewState?.path;
+    assertIsDefined(changeNum, 'change number');
+    assertIsDefined(path, 'path');
+
     this.saving = true;
     this.showAlert(SAVING_MESSAGE);
     this.storage.eraseEditableContentItem(this.storageKey);
     if (!this.newContent)
       return Promise.reject(new Error('new content undefined'));
     return this.restApiService
-      .saveChangeEdit(this.changeNum, this.path, this.newContent)
+      .saveChangeEdit(changeNum, path, this.newContent)
       .then(res => {
         this.saving = false;
         this.showAlert(res.ok ? SAVED_MESSAGE : SAVE_FAILED_MSG);
@@ -455,9 +449,7 @@ export class GrEditorView extends LitElement {
       return true;
     }
 
-    if (this.saving) {
-      return true;
-    }
+    if (this.saving) return true;
     return this.content === this.newContent;
   }
 
@@ -474,13 +466,13 @@ export class GrEditorView extends LitElement {
   };
 
   private handlePublishTap = () => {
-    assertIsDefined(this.changeNum, 'changeNum');
+    const changeNum = this.viewState?.changeNum;
+    assertIsDefined(changeNum, 'change number');
 
-    const changeNum = this.changeNum;
     this.saveEdit().then(() => {
       const handleError: ErrorCallback = response => {
         this.showAlert(PUBLISH_FAILED_MSG);
-        this.reporting.error(new Error(response?.statusText));
+        this.reporting.error('/edit:publish', new Error(response?.statusText));
       };
 
       this.showAlert(PUBLISHING_EDIT_MSG);
@@ -496,7 +488,15 @@ export class GrEditorView extends LitElement {
         )
         .then(() => {
           assertIsDefined(this.change, 'change');
-          GerritNav.navigateToChange(this.change, {forceReload: true});
+          // TODO: `forceReload: true` does not seem to work as expected:
+          // The patchset is not updated.
+          // Thus we are also calling `fireReload()` here.
+          // That can probably be cleaned up once the change-view was migrated
+          // to fully relying on the change model.
+          fireReload(this);
+          this.getNavigation().setUrl(
+            createChangeUrl({change: this.change, forceReload: true})
+          );
         });
     });
   };
@@ -519,9 +519,7 @@ export class GrEditorView extends LitElement {
 
   // private but used in test
   handleSaveShortcut() {
-    if (!this.computeSaveDisabled()) {
-      this.saveEdit();
-    }
+    if (!this.computeSaveDisabled()) this.saveEdit();
   }
 }
 

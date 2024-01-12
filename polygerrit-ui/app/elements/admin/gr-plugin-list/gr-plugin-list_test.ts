@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-plugin-list';
 import {GrPluginList, PluginInfoWithName} from './gr-plugin-list';
 import {
@@ -27,12 +15,11 @@ import {
   stubRestApi,
 } from '../../../test/test-utils';
 import {PluginInfo} from '../../../types/common';
-import {AppElementAdminParams} from '../../gr-app-types';
 import {GerritView} from '../../../services/router/router-model';
 import {PageErrorEvent} from '../../../types/events';
 import {SHOWN_ITEMS_COUNT} from '../../../constants/constants';
-
-const basicFixture = fixtureFromElement('gr-plugin-list');
+import {fixture, html, assert} from '@open-wc/testing';
+import {AdminChildView, AdminViewState} from '../../../models/views/admin';
 
 function pluginGenerator(counter: number) {
   const plugin: PluginInfo = {
@@ -72,11 +59,13 @@ suite('gr-plugin-list tests', () => {
   let element: GrPluginList;
   let plugins: {[pluginName: string]: PluginInfo} | undefined;
 
-  const value: AppElementAdminParams = {view: GerritView.ADMIN, adminView: ''};
+  const value: AdminViewState = {
+    view: GerritView.ADMIN,
+    adminView: AdminChildView.PLUGINS,
+  };
 
   setup(async () => {
-    element = basicFixture.instantiate();
-    await element.updateComplete;
+    element = await fixture(html`<gr-plugin-list></gr-plugin-list>`);
   });
 
   suite('list with plugins', async () => {
@@ -86,6 +75,228 @@ suite('gr-plugin-list tests', () => {
       element.params = value;
       await element.paramsChanged();
       await element.updateComplete;
+    });
+
+    test('render', () => {
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `
+          <gr-list-view>
+            <table class="genericList" id="list">
+              <tbody>
+                <tr class="headerRow">
+                  <th class="name topHeader">Plugin Name</th>
+                  <th class="topHeader version">Version</th>
+                  <th class="apiVersion topHeader">API Version</th>
+                  <th class="status topHeader">Status</th>
+                </tr>
+              </tbody>
+              <tbody>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test0/"> test0 </a>
+                  </td>
+                  <td class="version">version-0</td>
+                  <td class="apiVersion">api-version-0</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test1/"> test1 </a>
+                  </td>
+                  <td class="version">version-1</td>
+                  <td class="apiVersion">api-version-1</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">test2</td>
+                  <td class="version">version-2</td>
+                  <td class="apiVersion">api-version-2</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test3/"> test3 </a>
+                  </td>
+                  <td class="version">version-3</td>
+                  <td class="apiVersion">api-version-3</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test4/"> test4 </a>
+                  </td>
+                  <td class="version">version-4</td>
+                  <td class="apiVersion">
+                    <span class="placeholder"> -- </span>
+                  </td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test5/"> test5 </a>
+                  </td>
+                  <td class="version">version-5</td>
+                  <td class="apiVersion">api-version-5</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test6/"> test6 </a>
+                  </td>
+                  <td class="version">version-6</td>
+                  <td class="apiVersion">api-version-6</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test7/"> test7 </a>
+                  </td>
+                  <td class="version">version-7</td>
+                  <td class="apiVersion">api-version-7</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test8/"> test8 </a>
+                  </td>
+                  <td class="version">version-8</td>
+                  <td class="apiVersion">api-version-8</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test9/"> test9 </a>
+                  </td>
+                  <td class="version">version-9</td>
+                  <td class="apiVersion">api-version-9</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test10/"> test10 </a>
+                  </td>
+                  <td class="version">version-10</td>
+                  <td class="apiVersion">api-version-10</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test11/"> test11 </a>
+                  </td>
+                  <td class="version">version-11</td>
+                  <td class="apiVersion">api-version-11</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test12/"> test12 </a>
+                  </td>
+                  <td class="version">version-12</td>
+                  <td class="apiVersion">api-version-12</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test13/"> test13 </a>
+                  </td>
+                  <td class="version">version-13</td>
+                  <td class="apiVersion">api-version-13</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test14/"> test14 </a>
+                  </td>
+                  <td class="version">version-14</td>
+                  <td class="apiVersion">api-version-14</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test15/"> test15 </a>
+                  </td>
+                  <td class="version">version-15</td>
+                  <td class="apiVersion">api-version-15</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test16/"> test16 </a>
+                  </td>
+                  <td class="version">version-16</td>
+                  <td class="apiVersion">api-version-16</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test17/"> test17 </a>
+                  </td>
+                  <td class="version">version-17</td>
+                  <td class="apiVersion">api-version-17</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test18/"> test18 </a>
+                  </td>
+                  <td class="version">version-18</td>
+                  <td class="apiVersion">api-version-18</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test19/"> test19 </a>
+                  </td>
+                  <td class="version">version-19</td>
+                  <td class="apiVersion">api-version-19</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test20/"> test20 </a>
+                  </td>
+                  <td class="version">version-20</td>
+                  <td class="apiVersion">api-version-20</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test21/"> test21 </a>
+                  </td>
+                  <td class="version">version-21</td>
+                  <td class="apiVersion">api-version-21</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test22/"> test22 </a>
+                  </td>
+                  <td class="version">version-22</td>
+                  <td class="apiVersion">api-version-22</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test23/"> test23 </a>
+                  </td>
+                  <td class="version">version-23</td>
+                  <td class="apiVersion">api-version-23</td>
+                  <td class="status">Enabled</td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/plugins/test24/"> test24 </a>
+                  </td>
+                  <td class="version">version-24</td>
+                  <td class="apiVersion">api-version-24</td>
+                  <td class="status">Enabled</td>
+                </tr>
+              </tbody>
+            </table>
+          </gr-list-view>
+        `
+      );
     });
 
     test('plugin in the list is formatted correctly', async () => {

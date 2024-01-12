@@ -1,36 +1,22 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import '../../../test/common-test-setup-karma';
-import {resetPlugins} from '../../../test/test-utils';
-import './gr-external-style.js';
-import {GrExternalStyle} from './gr-external-style.js';
+import '../../../test/common-test-setup';
+import {mockPromise, MockPromise, resetPlugins} from '../../../test/test-utils';
+import './gr-external-style';
+import {GrExternalStyle} from './gr-external-style';
 import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
-import {html} from '@polymer/polymer/lib/utils/html-tag';
 import {PluginApi} from '../../../api/plugin';
-
-const basicFixture = fixtureFromTemplate(
-  html`<gr-external-style name="foo"></gr-external-style>`
-);
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-external-style integration tests', () => {
   const TEST_URL = 'http://some.com/plugins/url.js';
 
   let element: GrExternalStyle;
   let plugin: PluginApi;
+  let pluginsLoaded: MockPromise<void>;
   let applyStyleSpy: sinon.SinonSpy;
 
   const installPlugin = () => {
@@ -47,33 +33,34 @@ suite('gr-external-style integration tests', () => {
   };
 
   const createElement = async () => {
-    element = basicFixture.instantiate() as GrExternalStyle;
-    applyStyleSpy = sinon.spy(element, 'applyStyle');
+    applyStyleSpy = sinon.spy(GrExternalStyle.prototype, 'applyStyle');
+    element = await fixture(
+      html`<gr-external-style .name=${'foo'}></gr-external-style>`
+    );
     await element.updateComplete;
   };
 
   /**
    * Installs the plugin, creates the element, registers style module.
    */
-  const lateRegister = () => {
+  const lateRegister = async () => {
     installPlugin();
-    createElement();
+    await createElement();
     plugin.registerStyleModule('foo', 'some-module');
   };
 
   /**
    * Installs the plugin, registers style module, creates the element.
    */
-  const earlyRegister = () => {
+  const earlyRegister = async () => {
     installPlugin();
     plugin.registerStyleModule('foo', 'some-module');
-    createElement();
+    await createElement();
   };
 
   setup(() => {
-    sinon
-      .stub(getPluginLoader(), 'awaitPluginsLoaded')
-      .returns(Promise.resolve());
+    pluginsLoaded = mockPromise();
+    sinon.stub(getPluginLoader(), 'awaitPluginsLoaded').returns(pluginsLoaded);
   });
 
   teardown(() => {
@@ -84,13 +71,14 @@ suite('gr-external-style integration tests', () => {
   });
 
   test('applies plugin-provided styles', async () => {
-    lateRegister();
+    await lateRegister();
+    pluginsLoaded.resolve();
     await element.updateComplete;
     assert.isTrue(applyStyleSpy.calledWith('some-module'));
   });
 
   test('does not double apply', async () => {
-    earlyRegister();
+    await earlyRegister();
     await element.updateComplete;
     plugin.registerStyleModule('foo', 'some-module');
     await element.updateComplete;
@@ -101,8 +89,36 @@ suite('gr-external-style integration tests', () => {
   });
 
   test('loads and applies preloaded modules', async () => {
-    earlyRegister();
+    await earlyRegister();
     await element.updateComplete;
     assert.isTrue(applyStyleSpy.calledWith('some-module'));
+  });
+
+  test('removes old custom-style if name is changed', async () => {
+    installPlugin();
+    plugin.registerStyleModule('bar', 'some-module');
+    await earlyRegister();
+    await element.updateComplete;
+    let customStyles = document.body.querySelectorAll('custom-style');
+    assert.strictEqual(customStyles.length, 1);
+    element.name = 'bar';
+    await element.updateComplete;
+    customStyles = document.body.querySelectorAll('custom-style');
+    assert.strictEqual(customStyles.length, 1);
+    element.name = 'baz';
+    await element.updateComplete;
+    customStyles = document.body.querySelectorAll('custom-style');
+    assert.strictEqual(customStyles.length, 0);
+  });
+
+  test('can apply more than one style', async () => {
+    await earlyRegister();
+    await element.updateComplete;
+    plugin.registerStyleModule('foo', 'some-module2');
+    pluginsLoaded.resolve();
+    await element.updateComplete;
+    assert.strictEqual(element.stylesApplied.length, 2);
+    const customStyles = document.body.querySelectorAll('custom-style');
+    assert.strictEqual(customStyles.length, 2);
   });
 });

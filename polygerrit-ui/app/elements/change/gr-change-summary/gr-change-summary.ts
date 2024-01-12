@@ -1,21 +1,15 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the 'License');
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an 'AS IS' BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import {LitElement, css, html} from 'lit';
-import {customElement, property, state} from 'lit/decorators';
+import './gr-checks-chip';
+import './gr-summary-chip';
+import '../../shared/gr-avatar/gr-avatar-stack';
+import '../../shared/gr-icon/gr-icon';
+import '../../checks/gr-checks-action';
+import {LitElement, css, html, nothing} from 'lit';
+import {customElement, state} from 'lit/decorators.js';
 import {subscribe} from '../../lit/subscription-controller';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {getAppContext} from '../../../services/app-context';
@@ -25,25 +19,20 @@ import {
   ErrorMessages,
 } from '../../../models/checks/checks-model';
 import {Action, Category, RunStatus} from '../../../api/checks';
-import {fireShowPrimaryTab} from '../../../utils/event-util';
-import '../../shared/gr-avatar/gr-avatar';
-import '../../checks/gr-checks-action';
+import {fireShowTab} from '../../../utils/event-util';
 import {
   compareByWorstCategory,
   getResultsOf,
   hasCompletedWithoutResults,
   hasResults,
   hasResultsOf,
-  iconFor,
   isRunningOrScheduled,
   isRunningScheduledOrCompleted,
-  isStatus,
-  labelFor,
 } from '../../../models/checks/checks-util';
-import {ChangeComments} from '../../diff/gr-comment-api/gr-comment-api';
 import {
   CommentThread,
   getFirstComment,
+  getMentionedThreads,
   hasHumanReply,
   isResolved,
   isRobotThread,
@@ -52,13 +41,11 @@ import {
 import {pluralize} from '../../../utils/string-util';
 import {AccountInfo} from '../../../types/common';
 import {notUndefined} from '../../../types/types';
-import {uniqueDefinedAvatar} from '../../../utils/account-util';
-import {PrimaryTab} from '../../../constants/constants';
+import {Tab} from '../../../constants/constants';
 import {ChecksTabState, CommentTabState} from '../../../types/events';
 import {spinnerStyles} from '../../../styles/gr-spinner-styles';
 import {modifierPressed} from '../../../utils/dom-util';
 import {DropdownLink} from '../../shared/gr-dropdown/gr-dropdown';
-import {fontStyles} from '../../../styles/gr-font-styles';
 import {commentsModelToken} from '../../../models/comments/comments-model';
 import {resolve} from '../../../models/dependency';
 import {checksModelToken} from '../../../models/checks/checks-model';
@@ -66,318 +53,17 @@ import {changeModelToken} from '../../../models/change/change-model';
 import {Interaction} from '../../../constants/reporting';
 import {roleDetails} from '../../../utils/change-util';
 
-export enum SummaryChipStyles {
-  INFO = 'info',
-  WARNING = 'warning',
-  CHECK = 'check',
-  UNDEFINED = '',
-}
+import {SummaryChipStyles} from './gr-summary-chip';
+import {when} from 'lit/directives/when.js';
+import {KnownExperimentId} from '../../../services/flags/flags';
+import {combineLatest} from 'rxjs';
 
 function handleSpaceOrEnter(e: KeyboardEvent, handler: () => void) {
   if (modifierPressed(e)) return;
-  // Only react to `return` and `space`.
-  if (e.keyCode !== 13 && e.keyCode !== 32) return;
+  if (e.key !== 'Enter' && e.key !== ' ') return;
   e.preventDefault();
   e.stopPropagation();
   handler();
-}
-
-@customElement('gr-summary-chip')
-export class GrSummaryChip extends LitElement {
-  @property()
-  icon = '';
-
-  @property()
-  styleType = SummaryChipStyles.UNDEFINED;
-
-  @property()
-  category?: CommentTabState;
-
-  private readonly reporting = getAppContext().reportingService;
-
-  static override get styles() {
-    return [
-      sharedStyles,
-      fontStyles,
-      css`
-        .summaryChip {
-          color: var(--chip-color);
-          cursor: pointer;
-          display: inline-block;
-          padding: var(--spacing-xxs) var(--spacing-m) var(--spacing-xxs)
-            var(--spacing-s);
-          margin-right: var(--spacing-s);
-          border-radius: 12px;
-          border: 1px solid gray;
-          vertical-align: top;
-          /* centered position of 20px chips in 24px line-height inline flow */
-          vertical-align: top;
-          position: relative;
-          top: 2px;
-        }
-        iron-icon {
-          width: var(--line-height-small);
-          height: var(--line-height-small);
-          vertical-align: top;
-        }
-        .summaryChip.warning {
-          border-color: var(--warning-foreground);
-          background: var(--warning-background);
-        }
-        .summaryChip.warning:hover {
-          background: var(--warning-background-hover);
-          box-shadow: var(--elevation-level-1);
-        }
-        .summaryChip.warning:focus-within {
-          background: var(--warning-background-focus);
-        }
-        .summaryChip.warning iron-icon {
-          color: var(--warning-foreground);
-        }
-        .summaryChip.check {
-          border-color: var(--gray-foreground);
-          background: var(--gray-background);
-        }
-        .summaryChip.check:hover {
-          background: var(--gray-background-hover);
-          box-shadow: var(--elevation-level-1);
-        }
-        .summaryChip.check:focus-within {
-          background: var(--gray-background-focus);
-        }
-        .summaryChip.check iron-icon {
-          color: var(--gray-foreground);
-        }
-      `,
-    ];
-  }
-
-  override render() {
-    const chipClass = `summaryChip font-small ${this.styleType}`;
-    const grIcon = this.icon ? `gr-icons:${this.icon}` : '';
-    return html`<button class=${chipClass} @click=${this.handleClick}>
-      ${this.icon && html`<iron-icon icon=${grIcon}></iron-icon>`}
-      <slot></slot>
-    </button>`;
-  }
-
-  private handleClick(e: MouseEvent) {
-    e.stopPropagation();
-    e.preventDefault();
-    this.reporting.reportInteraction('comment chip click', {
-      category: this.category,
-    });
-    fireShowPrimaryTab(this, PrimaryTab.COMMENT_THREADS, true, {
-      commentTab: this.category,
-    });
-  }
-}
-
-@customElement('gr-checks-chip')
-export class GrChecksChip extends LitElement {
-  @property()
-  statusOrCategory?: Category | RunStatus;
-
-  @property()
-  text = '';
-
-  @property()
-  links: string[] = [];
-
-  private readonly reporting = getAppContext().reportingService;
-
-  static override get styles() {
-    return [
-      fontStyles,
-      sharedStyles,
-      css`
-        :host {
-          display: inline-block;
-          position: relative;
-          white-space: nowrap;
-        }
-        .checksChip {
-          color: var(--chip-color);
-          cursor: pointer;
-          display: inline-block;
-          margin-right: var(--spacing-s);
-          padding: var(--spacing-xxs) var(--spacing-m) var(--spacing-xxs)
-            var(--spacing-s);
-          border-radius: 12px;
-          border: 1px solid gray;
-          /* centered position of 20px chips in 24px line-height inline flow */
-          vertical-align: top;
-          position: relative;
-          top: 2px;
-        }
-        .checksChip.hoverFullLength {
-          position: absolute;
-          z-index: 1;
-          display: none;
-        }
-        .checksChip.hoverFullLength .text {
-          max-width: 500px;
-        }
-        :host(:hover) .checksChip.hoverFullLength {
-          display: inline-block;
-        }
-        .checksChip .text {
-          display: inline-block;
-          max-width: 120px;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          vertical-align: top;
-        }
-        iron-icon {
-          width: var(--line-height-small);
-          height: var(--line-height-small);
-          vertical-align: top;
-        }
-        .checksChip a iron-icon.launch {
-          color: var(--link-color);
-        }
-        .checksChip.error {
-          color: var(--error-foreground);
-          border-color: var(--error-foreground);
-          background: var(--error-background);
-        }
-        .checksChip.error:hover {
-          background: var(--error-background-hover);
-          box-shadow: var(--elevation-level-1);
-        }
-        .checksChip.error:focus-within {
-          background: var(--error-background-focus);
-        }
-        .checksChip.error iron-icon {
-          color: var(--error-foreground);
-        }
-        .checksChip.warning {
-          border-color: var(--warning-foreground);
-          background: var(--warning-background);
-        }
-        .checksChip.warning:hover {
-          background: var(--warning-background-hover);
-          box-shadow: var(--elevation-level-1);
-        }
-        .checksChip.warning:focus-within {
-          background: var(--warning-background-focus);
-        }
-        .checksChip.warning iron-icon {
-          color: var(--warning-foreground);
-        }
-        .checksChip.info-outline {
-          border-color: var(--info-foreground);
-          background: var(--info-background);
-        }
-        .checksChip.info-outline:hover {
-          background: var(--info-background-hover);
-          box-shadow: var(--elevation-level-1);
-        }
-        .checksChip.info-outline:focus-within {
-          background: var(--info-background-focus);
-        }
-        .checksChip.info-outline iron-icon {
-          color: var(--info-foreground);
-        }
-        .checksChip.check-circle-outline {
-          border-color: var(--success-foreground);
-          background: var(--success-background);
-        }
-        .checksChip.check-circle-outline:hover {
-          background: var(--success-background-hover);
-          box-shadow: var(--elevation-level-1);
-        }
-        .checksChip.check-circle-outline:focus-within {
-          background: var(--success-background-focus);
-        }
-        .checksChip.check-circle-outline iron-icon {
-          color: var(--success-foreground);
-        }
-        .checksChip.timelapse,
-        .checksChip.scheduled {
-          border-color: var(--gray-foreground);
-          background: var(--gray-background);
-        }
-        .checksChip.timelapse:hover,
-        .checksChip.scheduled:hover {
-          background: var(--gray-background-hover);
-          box-shadow: var(--elevation-level-1);
-        }
-        .checksChip.timelapse:focus-within,
-        .checksChip.scheduled:focus-within {
-          background: var(--gray-background-focus);
-        }
-        .checksChip.timelapse iron-icon,
-        .checksChip.scheduled iron-icon {
-          color: var(--gray-foreground);
-        }
-      `,
-    ];
-  }
-
-  override render() {
-    if (!this.text) return;
-    if (!this.statusOrCategory) return;
-    const icon = iconFor(this.statusOrCategory);
-    const label = labelFor(this.statusOrCategory);
-    const count = Number(this.text);
-    let ariaLabel = label;
-    if (!isNaN(count)) {
-      const type = isStatus(this.statusOrCategory) ? 'run' : 'result';
-      const plural = count > 1 ? 's' : '';
-      ariaLabel = `${this.text} ${label} ${type}${plural}`;
-    }
-    const chipClass = `checksChip font-small ${icon}`;
-    const chipClassFullLength = `${chipClass} hoverFullLength`;
-    const grIcon = `gr-icons:${icon}`;
-    // 15 is roughly the number of chars for the chip exceeding its 120px width.
-    return html`
-      ${this.text.length > 15
-        ? html` ${this.renderChip(chipClassFullLength, ariaLabel, grIcon)}`
-        : ''}
-      ${this.renderChip(chipClass, ariaLabel, grIcon)}
-    `;
-  }
-
-  private renderChip(clazz: string, ariaLabel: string, icon: string) {
-    return html`
-      <div class=${clazz} role="link" tabindex="0" aria-label=${ariaLabel}>
-        <iron-icon icon=${icon}></iron-icon>
-        ${this.renderLinks()}
-        <div class="text">${this.text}</div>
-      </div>
-    `;
-  }
-
-  private renderLinks() {
-    return this.links.map(
-      link => html`
-        <a
-          href=${link}
-          target="_blank"
-          @click=${this.onLinkClick}
-          @keydown=${this.onLinkKeyDown}
-          aria-label="Link to check details"
-          ><iron-icon class="launch" icon="gr-icons:launch"></iron-icon
-        ></a>
-      `
-    );
-  }
-
-  private onLinkKeyDown(e: KeyboardEvent) {
-    // Prevents onChipKeyDown() from reacting to <a> link keyboard events.
-    e.stopPropagation();
-  }
-
-  private onLinkClick(e: MouseEvent) {
-    // Prevents onChipClick() from reacting to <a> link clicks.
-    e.stopPropagation();
-    this.reporting.reportInteraction(Interaction.CHECKS_CHIP_LINK_CLICKED, {
-      text: this.text,
-      status: this.statusOrCategory,
-    });
-  }
 }
 
 /** What is the maximum number of detailed checks chips? */
@@ -389,10 +75,10 @@ DETAILS_QUOTA.set(RunStatus.RUNNING, 2);
 @customElement('gr-change-summary')
 export class GrChangeSummary extends LitElement {
   @state()
-  changeComments?: ChangeComments;
+  commentThreads?: CommentThread[];
 
   @state()
-  commentThreads?: CommentThread[];
+  mentionCount = 0;
 
   @state()
   selfAccount?: AccountInfo;
@@ -418,11 +104,16 @@ export class GrChangeSummary extends LitElement {
   @state()
   messages: string[] = [];
 
+  @state()
+  draftCount = 0;
+
   private readonly showAllChips = new Map<RunStatus | Category, boolean>();
 
-  private readonly getCommentsModel = resolve(this, commentsModelToken);
+  // private but used in tests
+  readonly getCommentsModel = resolve(this, commentsModelToken);
 
-  private readonly userModel = getAppContext().userModel;
+  // private but used in tests
+  readonly userModel = getAppContext().userModel;
 
   private readonly getChecksModel = resolve(this, checksModelToken);
 
@@ -430,54 +121,78 @@ export class GrChangeSummary extends LitElement {
 
   private readonly reporting = getAppContext().reportingService;
 
-  override connectedCallback() {
-    super.connectedCallback();
+  private readonly flagsService = getAppContext().flagsService;
+
+  constructor() {
+    super();
     subscribe(
       this,
-      this.getChecksModel().allRunsLatestPatchsetLatestAttempt$,
+      () => this.getChecksModel().allRunsLatestPatchsetLatestAttempt$,
       x => (this.runs = x)
     );
     subscribe(
       this,
-      this.getChecksModel().aPluginHasRegistered$,
+      () => this.getChecksModel().aPluginHasRegistered$,
       x => (this.showChecksSummary = x)
     );
     subscribe(
       this,
-      this.getChecksModel().someProvidersAreLoadingFirstTime$,
+      () => this.getChecksModel().someProvidersAreLoadingFirstTime$,
       x => (this.someProvidersAreLoading = x)
     );
     subscribe(
       this,
-      this.getChecksModel().errorMessagesLatest$,
+      () => this.getChecksModel().errorMessagesLatest$,
       x => (this.errorMessages = x)
     );
     subscribe(
       this,
-      this.getChecksModel().loginCallbackLatest$,
+      () => this.getChecksModel().loginCallbackLatest$,
       x => (this.loginCallback = x)
     );
     subscribe(
       this,
-      this.getChecksModel().topLevelActionsLatest$,
+      () => this.getChecksModel().topLevelActionsLatest$,
       x => (this.actions = x)
     );
     subscribe(
       this,
-      this.getChecksModel().topLevelMessagesLatest$,
+      () => this.getChecksModel().topLevelMessagesLatest$,
       x => (this.messages = x)
     );
     subscribe(
       this,
-      this.getCommentsModel().changeComments$,
-      x => (this.changeComments = x)
+      () => this.getCommentsModel().draftsCount$,
+      x => (this.draftCount = x)
     );
     subscribe(
       this,
-      this.getCommentsModel().threads$,
+      () => this.getCommentsModel().threads$,
       x => (this.commentThreads = x)
     );
-    subscribe(this, this.userModel.account$, x => (this.selfAccount = x));
+    subscribe(
+      this,
+      () => this.userModel.account$,
+      x => (this.selfAccount = x)
+    );
+    if (this.flagsService.isEnabled(KnownExperimentId.MENTION_USERS)) {
+      subscribe(
+        this,
+        () =>
+          combineLatest([
+            this.userModel.account$,
+            this.getCommentsModel().threads$,
+          ]),
+        ([selfAccount, threads]) => {
+          if (!selfAccount || !selfAccount.email) return;
+          const unresolvedThreadsMentioningSelf = getMentionedThreads(
+            threads,
+            selfAccount
+          ).filter(isUnresolved);
+          this.mentionCount = unresolvedThreadsMentioningSelf.length;
+        }
+      );
+    }
   }
 
   static override get styles() {
@@ -497,6 +212,7 @@ export class GrChangeSummary extends LitElement {
         .loading.zeroState {
           margin-right: var(--spacing-m);
         }
+        div.info,
         div.error,
         .login {
           display: flex;
@@ -505,20 +221,30 @@ export class GrChangeSummary extends LitElement {
           margin: var(--spacing-xs) 0;
           width: 490px;
         }
+        div.info {
+          background-color: var(--info-background);
+        }
         div.error {
           background-color: var(--error-background);
         }
-        div.error iron-icon {
-          color: var(--error-foreground);
-          width: 16px;
-          height: 16px;
+        div.info gr-icon,
+        div.error gr-icon {
+          font-size: 16px;
           position: relative;
           top: 4px;
           margin-right: var(--spacing-s);
         }
+        div.info gr-icon {
+          color: var(--info-foreground);
+        }
+        div.error gr-icon {
+          color: var(--error-foreground);
+        }
+        div.info .right,
         div.error .right {
           overflow: hidden;
         }
+        div.info .right .message,
         div.error .right .message {
           overflow: hidden;
           text-overflow: ellipsis;
@@ -528,7 +254,7 @@ export class GrChangeSummary extends LitElement {
           justify-content: space-between;
           background: var(--info-background);
         }
-        .login iron-icon {
+        .login gr-icon {
           color: var(--info-foreground);
         }
         .login gr-button {
@@ -544,17 +270,13 @@ export class GrChangeSummary extends LitElement {
           padding-bottom: var(--spacing-s);
           line-height: calc(var(--line-height-normal) + var(--spacing-s));
         }
-        iron-icon.launch {
-          color: var(--gray-foreground);
-          width: var(--line-height-small);
-          height: var(--line-height-small);
-          vertical-align: top;
+        gr-avatar-stack {
+          --avatar-size: var(--line-height-small, 16px);
+          --stack-border-color: var(--warning-background);
         }
-        gr-avatar {
-          height: var(--line-height-small, 16px);
-          width: var(--line-height-small, 16px);
-          vertical-align: top;
-          margin-right: var(--spacing-xs);
+        .unresolvedIcon {
+          font-size: var(--line-height-small);
+          color: var(--warning-foreground);
         }
         /* The basics of .loadingSpin are defined in shared styles. */
         .loadingSpin {
@@ -584,10 +306,6 @@ export class GrChangeSummary extends LitElement {
         }
       `,
     ];
-  }
-
-  private renderSummaryMessage() {
-    return this.messages.map(m => html`<div class="summaryMessage">${m}</div>`);
   }
 
   private renderActions() {
@@ -638,11 +356,25 @@ export class GrChangeSummary extends LitElement {
         .items=${items}
         .disabledIds=${disabledIds}
       >
-        <iron-icon icon="gr-icons:more-vert" aria-labelledby="moreMessage">
-        </iron-icon>
+        <gr-icon icon="more_vert" aria-labelledby="moreMessage"></gr-icon>
         <span id="moreMessage">More</span>
       </gr-dropdown>
     `;
+  }
+
+  private renderSummaryMessage() {
+    return this.messages.map(
+      m => html`
+        <div class="info">
+          <div class="left">
+            <gr-icon icon="info" filled></gr-icon>
+          </div>
+          <div class="right">
+            <div class="message" title=${m}>${m}</div>
+          </div>
+        </div>
+      `
+    );
   }
 
   renderErrorMessages() {
@@ -651,7 +383,7 @@ export class GrChangeSummary extends LitElement {
         html`
           <div class="error zeroState">
             <div class="left">
-              <iron-icon icon="gr-icons:error"></iron-icon>
+              <gr-icon icon="error" filled></gr-icon>
             </div>
             <div class="right">
               <div class="message" title=${message}>
@@ -668,10 +400,7 @@ export class GrChangeSummary extends LitElement {
     return html`
       <div class="login">
         <div class="left">
-          <iron-icon
-            class="info-outline"
-            icon="gr-icons:info-outline"
-          ></iron-icon>
+          <gr-icon icon="info"></gr-icon>
           Not logged in
         </div>
         <div class="right">
@@ -796,7 +525,7 @@ export class GrChangeSummary extends LitElement {
       checkName: state.checkName,
       ...roleDetails(this.getChangeModel().getChange(), this.selfAccount),
     });
-    fireShowPrimaryTab(this, PrimaryTab.CHECKS, false, {
+    fireShowTab(this, Tab.CHECKS, false, {
       checksTab: state,
     });
   }
@@ -809,101 +538,144 @@ export class GrChangeSummary extends LitElement {
     const unresolvedThreads = commentThreads.filter(isUnresolved);
     const countUnresolvedComments = unresolvedThreads.length;
     const unresolvedAuthors = this.getAccounts(unresolvedThreads);
-    const draftCount = this.changeComments?.computeDraftCount() ?? 0;
-    const hasNonRunningChip = this.runs.some(
-      run => hasCompletedWithoutResults(run) || hasResults(run)
-    );
-    const hasRunningChip = this.runs.some(isRunningOrScheduled);
     return html`
       <div>
         <table>
-          <tr ?hidden=${!this.showChecksSummary}>
-            <td class="key">Checks</td>
-            <td class="value">
-              <div class="checksSummary">
-                ${this.renderChecksZeroState()}${this.renderChecksChipForCategory(
-                  Category.ERROR
-                )}${this.renderChecksChipForCategory(
-                  Category.WARNING
-                )}${this.renderChecksChipForCategory(
-                  Category.INFO
-                )}${this.renderChecksChipForCategory(
-                  Category.SUCCESS
-                )}${hasNonRunningChip && hasRunningChip
-                  ? html`<br />`
-                  : ''}${this.renderChecksChipRunning()}
-                <span
-                  class="loadingSpin"
-                  ?hidden=${!this.someProvidersAreLoading}
-                ></span>
-                ${this.renderErrorMessages()} ${this.renderChecksLogin()}
-                ${this.renderSummaryMessage()} ${this.renderActions()}
-              </div>
-            </td>
-          </tr>
           <tr>
             <td class="key">Comments</td>
             <td class="value">
-              <span
-                class="zeroState"
-                ?hidden=${!!countResolvedComments ||
-                !!draftCount ||
-                !!countUnresolvedComments}
-              >
-                No comments</span
-              ><gr-summary-chip
-                styleType=${SummaryChipStyles.WARNING}
-                category=${CommentTabState.DRAFTS}
-                icon="edit"
-                ?hidden=${!draftCount}
-              >
-                ${pluralize(draftCount, 'draft')}</gr-summary-chip
-              ><gr-summary-chip
-                styleType=${SummaryChipStyles.WARNING}
-                category=${CommentTabState.UNRESOLVED}
-                ?hidden=${!countUnresolvedComments}
-              >
-                ${unresolvedAuthors.map(
-                  account =>
-                    html`<gr-avatar
-                      .account=${account}
-                      imageSize="32"
-                    ></gr-avatar>`
-                )}
-                ${countUnresolvedComments} unresolved</gr-summary-chip
-              ><gr-summary-chip
-                styleType=${SummaryChipStyles.CHECK}
-                category=${CommentTabState.SHOW_ALL}
-                icon="markChatRead"
-                ?hidden=${!countResolvedComments}
-                >${countResolvedComments} resolved</gr-summary-chip
-              >
+              ${this.renderZeroState(
+                countResolvedComments,
+                countUnresolvedComments
+              )}
+              ${this.renderDraftChip()} ${this.renderMentionChip()}
+              ${this.renderUnresolvedCommentsChip(
+                countUnresolvedComments,
+                unresolvedAuthors
+              )}
+              ${this.renderResolvedCommentsChip(countResolvedComments)}
             </td>
           </tr>
-          <tr hidden>
-            <td class="key">Findings</td>
-            <td class="value"></td>
-          </tr>
+          ${this.renderChecksSummary()}
         </table>
       </div>
     `;
   }
 
+  private renderZeroState(
+    countResolvedComments: number,
+    countUnresolvedComments: number
+  ) {
+    if (
+      !!countResolvedComments ||
+      !!this.draftCount ||
+      !!countUnresolvedComments
+    )
+      return nothing;
+    return html`<span class="zeroState"> No comments</span>`;
+  }
+
+  private renderMentionChip() {
+    if (!this.flagsService.isEnabled(KnownExperimentId.MENTION_USERS))
+      return nothing;
+    if (!this.mentionCount) return nothing;
+    return html` <gr-summary-chip
+      class="mentionSummary"
+      styleType=${SummaryChipStyles.WARNING}
+      category=${CommentTabState.MENTIONS}
+      icon="alternate_email"
+    >
+      ${pluralize(this.mentionCount, 'mention')}</gr-summary-chip
+    >`;
+  }
+
+  private renderDraftChip() {
+    if (!this.draftCount) return nothing;
+    return html` <gr-summary-chip
+      styleType=${SummaryChipStyles.INFO}
+      category=${CommentTabState.DRAFTS}
+      icon="rate_review"
+      iconFilled
+    >
+      ${pluralize(this.draftCount, 'draft')}</gr-summary-chip
+    >`;
+  }
+
+  private renderUnresolvedCommentsChip(
+    countUnresolvedComments: number,
+    unresolvedAuthors: AccountInfo[]
+  ) {
+    if (!countUnresolvedComments) return nothing;
+    return html` <gr-summary-chip
+      styleType=${SummaryChipStyles.WARNING}
+      category=${CommentTabState.UNRESOLVED}
+      ?hidden=${!countUnresolvedComments}
+    >
+      <gr-avatar-stack .accounts=${unresolvedAuthors} imageSize="32">
+        <gr-icon
+          slot="fallback"
+          icon="chat_bubble"
+          filled
+          class="unresolvedIcon"
+        >
+        </gr-icon>
+      </gr-avatar-stack>
+      ${countUnresolvedComments} unresolved</gr-summary-chip
+    >`;
+  }
+
+  private renderResolvedCommentsChip(countResolvedComments: number) {
+    if (!countResolvedComments) return nothing;
+    return html` <gr-summary-chip
+      styleType=${SummaryChipStyles.CHECK}
+      category=${CommentTabState.SHOW_ALL}
+      icon="mark_chat_read"
+      >${countResolvedComments} resolved</gr-summary-chip
+    >`;
+  }
+
+  private renderChecksSummary() {
+    const hasNonRunningChip = this.runs.some(
+      run => hasCompletedWithoutResults(run) || hasResults(run)
+    );
+    const hasRunningChip = this.runs.some(isRunningOrScheduled);
+    if (!this.showChecksSummary) return nothing;
+    return html` <tr>
+      <td class="key">Checks</td>
+      <td class="value">
+        <div class="checksSummary">
+          ${this.renderChecksZeroState()}${this.renderChecksChipForCategory(
+            Category.ERROR
+          )}${this.renderChecksChipForCategory(
+            Category.WARNING
+          )}${this.renderChecksChipForCategory(
+            Category.INFO
+          )}${this.renderChecksChipForCategory(
+            Category.SUCCESS
+          )}${hasNonRunningChip && hasRunningChip
+            ? html`<br />`
+            : ''}${this.renderChecksChipRunning()}
+          ${when(
+            this.someProvidersAreLoading,
+            () => html`<span class="loadingSpin"></span>`
+          )}
+          ${this.renderErrorMessages()} ${this.renderChecksLogin()}
+          ${this.renderSummaryMessage()} ${this.renderActions()}
+        </div>
+      </td>
+    </tr>`;
+  }
+
   getAccounts(commentThreads: CommentThread[]): AccountInfo[] {
-    const uniqueAuthors = commentThreads
+    return commentThreads
       .map(getFirstComment)
       .map(comment => comment?.author ?? this.selfAccount)
-      .filter(notUndefined)
-      .filter(account => !!account?.avatars?.[0]?.url)
-      .filter(uniqueDefinedAvatar);
-    return uniqueAuthors.slice(0, 3);
+      .filter(notUndefined);
   }
 }
 
 declare global {
   interface HTMLElementTagNameMap {
     'gr-change-summary': GrChangeSummary;
-    'gr-checks-chip': GrChecksChip;
-    'gr-summary-chip': GrSummaryChip;
   }
 }

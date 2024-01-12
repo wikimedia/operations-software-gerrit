@@ -1,21 +1,10 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import {from, of, Observable, Subscription} from 'rxjs';
-import {switchMap} from 'rxjs/operators';
+import {from, of, Observable} from 'rxjs';
+import {filter, switchMap} from 'rxjs/operators';
 import {
   DiffPreferencesInfo as DiffPreferencesInfoAPI,
   DiffViewMode,
@@ -30,27 +19,66 @@ import {
   createDefaultPreferences,
   createDefaultDiffPrefs,
   createDefaultEditPrefs,
+  AppTheme,
 } from '../../constants/constants';
 import {RestApiService} from '../../services/gr-rest-api/gr-rest-api';
 import {DiffPreferencesInfo} from '../../types/diff';
 import {Finalizable} from '../../services/registry';
 import {select} from '../../utils/observable-util';
 import {Model} from '../model';
+import {notUndefined} from '../../types/types';
 
 export interface UserState {
   /**
    * Keeps being defined even when credentials have expired.
+   *
+   * `undefined` can mean that the app is still starting up and we have not
+   * tried loading an account object yet. If you want to wait until the
+   * `account` is known, then use `accountLoaded` below.
    */
   account?: AccountDetailInfo;
-  preferences: PreferencesInfo;
-  diffPreferences: DiffPreferencesInfo;
-  editPreferences: EditPreferencesInfo;
+  /**
+   * Starts as `false` and switches to `true` after the first `getAccount` call.
+   * A common use case for this is to wait with loading or doing something until
+   * we know whether the user is logged in or not, see `loadedAccount$` below.
+   *
+   * This value cannot change back to `false` once it has become `true`.
+   *
+   * This value does *not* indicate whether the user is logged in or whether an
+   * `account` object is available. If the first `getAccount()` call returns
+   * `undefined`, then `accountLoaded` still becomes true, even if `account`
+   * stays `undefined`.
+   */
+  accountLoaded: boolean;
+  preferences?: PreferencesInfo;
+  diffPreferences?: DiffPreferencesInfo;
+  editPreferences?: EditPreferencesInfo;
   capabilities?: AccountCapabilityInfo;
 }
 
 export class UserModel extends Model<UserState> implements Finalizable {
+  /**
+   * Note that the initially emitted `undefined` value can mean "not loaded
+   * the account into object yet" or "user is not logged in". Consider using
+   * `loadedAccount$` below.
+   *
+   * TODO: Maybe consider changing all usages to `loadedAccount$`.
+   */
   readonly account$: Observable<AccountDetailInfo | undefined> = select(
     this.state$,
+    userState => userState.account
+  );
+
+  /**
+   * Only emits once we have tried to actually load the account. Note that
+   * this does not initially emit a value.
+   *
+   * So if this emits `undefined`, then you actually know that the user is not
+   * logged in. And for logged in users you will never get an initial
+   * `undefined` emission.
+   */
+  readonly loadedAccount$: Observable<AccountDetailInfo | undefined> = select(
+    this.state$.pipe(filter(s => s.accountLoaded)),
     userState => userState.account
   );
 
@@ -71,30 +99,36 @@ export class UserModel extends Model<UserState> implements Finalizable {
   readonly preferences$: Observable<PreferencesInfo> = select(
     this.state$,
     userState => userState.preferences
-  );
+  ).pipe(filter(notUndefined));
 
   readonly diffPreferences$: Observable<DiffPreferencesInfo> = select(
     this.state$,
     userState => userState.diffPreferences
-  );
+  ).pipe(filter(notUndefined));
 
   readonly editPreferences$: Observable<EditPreferencesInfo> = select(
     this.state$,
     userState => userState.editPreferences
-  );
+  ).pipe(filter(notUndefined));
 
   readonly preferenceDiffViewMode$: Observable<DiffViewMode> = select(
     this.preferences$,
     preference => preference.diff_view ?? DiffViewMode.SIDE_BY_SIDE
   );
 
-  private subscriptions: Subscription[] = [];
+  readonly preferenceTheme$: Observable<AppTheme> = select(
+    this.preferences$,
+    preference => preference.theme
+  );
+
+  readonly preferenceChangesPerPage$: Observable<number> = select(
+    this.preferences$,
+    preference => preference.changes_per_page
+  );
 
   constructor(readonly restApiService: RestApiService) {
     super({
-      preferences: createDefaultPreferences(),
-      diffPreferences: createDefaultDiffPrefs(),
-      editPreferences: createDefaultEditPrefs(),
+      accountLoaded: false,
     });
     this.subscriptions = [
       from(this.restApiService.getAccount()).subscribe(
@@ -102,7 +136,7 @@ export class UserModel extends Model<UserState> implements Finalizable {
           this.setAccount(account);
         }
       ),
-      this.account$
+      this.loadedAccount$
         .pipe(
           switchMap(account => {
             if (!account) return of(createDefaultPreferences());
@@ -112,7 +146,7 @@ export class UserModel extends Model<UserState> implements Finalizable {
         .subscribe((preferences?: PreferencesInfo) => {
           this.setPreferences(preferences ?? createDefaultPreferences());
         }),
-      this.account$
+      this.loadedAccount$
         .pipe(
           switchMap(account => {
             if (!account) return of(createDefaultDiffPrefs());
@@ -122,7 +156,7 @@ export class UserModel extends Model<UserState> implements Finalizable {
         .subscribe((diffPrefs?: DiffPreferencesInfoAPI) => {
           this.setDiffPreferences(diffPrefs ?? createDefaultDiffPrefs());
         }),
-      this.account$
+      this.loadedAccount$
         .pipe(
           switchMap(account => {
             if (!account) return of(createDefaultEditPrefs());
@@ -132,7 +166,7 @@ export class UserModel extends Model<UserState> implements Finalizable {
         .subscribe((editPrefs?: EditPreferencesInfo) => {
           this.setEditPreferences(editPrefs ?? createDefaultEditPrefs());
         }),
-      this.account$
+      this.loadedAccount$
         .pipe(
           switchMap(account => {
             if (!account) return of(undefined);
@@ -145,19 +179,13 @@ export class UserModel extends Model<UserState> implements Finalizable {
     ];
   }
 
-  finalize() {
-    for (const s of this.subscriptions) {
-      s.unsubscribe();
-    }
-    this.subscriptions = [];
-  }
-
   updatePreferences(prefs: Partial<PreferencesInfo>) {
-    this.restApiService
+    return this.restApiService
       .savePreferences(prefs)
       .then((newPrefs: PreferencesInfo | undefined) => {
         if (!newPrefs) return;
         this.setPreferences(newPrefs);
+        return newPrefs;
       });
   }
 
@@ -193,27 +221,22 @@ export class UserModel extends Model<UserState> implements Finalizable {
   }
 
   setPreferences(preferences: PreferencesInfo) {
-    const current = this.subject$.getValue();
-    this.subject$.next({...current, preferences});
+    this.updateState({preferences});
   }
 
   setDiffPreferences(diffPreferences: DiffPreferencesInfo) {
-    const current = this.subject$.getValue();
-    this.subject$.next({...current, diffPreferences});
+    this.updateState({diffPreferences});
   }
 
   setEditPreferences(editPreferences: EditPreferencesInfo) {
-    const current = this.subject$.getValue();
-    this.subject$.next({...current, editPreferences});
+    this.updateState({editPreferences});
   }
 
   setCapabilities(capabilities?: AccountCapabilityInfo) {
-    const current = this.subject$.getValue();
-    this.subject$.next({...current, capabilities});
+    this.updateState({capabilities});
   }
 
-  private setAccount(account?: AccountDetailInfo) {
-    const current = this.subject$.getValue();
-    this.subject$.next({...current, account});
+  setAccount(account?: AccountDetailInfo) {
+    this.updateState({account, accountLoaded: true});
   }
 }

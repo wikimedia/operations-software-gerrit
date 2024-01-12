@@ -46,6 +46,7 @@ import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
@@ -1062,6 +1063,9 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
     assertThat(Iterables.getLast(ci.messages).message)
         .isEqualTo("Uploaded patch set 1: Code-Review+1.");
 
+    // Check that the user who pushed the change was added as a reviewer since they added a vote.
+    assertThatUserIsOnlyReviewer(ci, admin);
+
     PushOneCommit push =
         pushFactory.create(
             admin.newIdent(),
@@ -1071,12 +1075,18 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
             "anotherContent",
             r.getChangeId());
     r = push.to("refs/for/master%l=Code-Review+2");
+    r.assertOkStatus();
 
     ci = get(r.getChangeId(), DETAILED_LABELS, MESSAGES, DETAILED_ACCOUNTS);
     cr = ci.labels.get(LabelId.CODE_REVIEW);
     assertThat(Iterables.getLast(ci.messages).message)
-        .isEqualTo("Uploaded patch set 2: Code-Review+2.");
-    // Check that the user who pushed the change was added as a reviewer since they added a vote
+        .isEqualTo(
+            "Uploaded patch set 2: Code-Review+2.\n"
+                + "\n"
+                + "Outdated Votes:\n"
+                + "* Code-Review+1 (copy condition: \"changekind:NO_CHANGE"
+                + " OR changekind:TRIVIAL_REBASE OR is:MIN\")\n");
+    // Check that the user who pushed the change was added as a reviewer since they added a vote.
     assertThatUserIsOnlyReviewer(ci, admin);
 
     assertThat(cr.all).hasSize(1);
@@ -1092,8 +1102,15 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
             "moreContent",
             r.getChangeId());
     r = push.to("refs/for/master%l=Code-Review+2");
+    r.assertOkStatus();
     ci = get(r.getChangeId(), MESSAGES);
-    assertThat(Iterables.getLast(ci.messages).message).isEqualTo("Uploaded patch set 3.");
+    assertThat(Iterables.getLast(ci.messages).message)
+        .isEqualTo(
+            "Uploaded patch set 3.\n"
+                + "\n"
+                + "Outdated Votes:\n"
+                + "* Code-Review+2 (copy condition: \"changekind:NO_CHANGE"
+                + " OR changekind:TRIVIAL_REBASE OR is:MIN\")\n");
   }
 
   @Test
@@ -1110,6 +1127,7 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
             "anotherContent",
             r.getChangeId());
     r = push.to("refs/for/master%l=Code-Review+2");
+    r.assertOkStatus();
 
     ChangeInfo ci = get(r.getChangeId(), DETAILED_LABELS, MESSAGES, DETAILED_ACCOUNTS);
     LabelInfo cr = ci.labels.get(LabelId.CODE_REVIEW);
@@ -1117,7 +1135,7 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
         .isEqualTo("Uploaded patch set 2: Code-Review+2.");
 
     // Check that the user who pushed the new patch set was added as a reviewer since they added
-    // a vote
+    // a vote.
     assertThatUserIsOnlyReviewer(ci, admin);
 
     assertThat(cr.all).hasSize(1);
@@ -1244,7 +1262,7 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
     assertThat(cr.all).hasSize(1);
     cr = ci.labels.get("Custom-Label");
     assertThat(cr.all).hasSize(1);
-    // Check that the user who pushed the change was added as a reviewer since they added a vote
+    // Check that the user who pushed the change was added as a reviewer since they added a vote.
     assertThatUserIsOnlyReviewer(ci, admin);
   }
 
@@ -1936,7 +1954,7 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
   @Test
   public void pushNewPatchsetOverridingStickyLabel() throws Exception {
     try (ProjectConfigUpdate u = updateProject(project)) {
-      LabelType codeReview = TestLabels.codeReview().toBuilder().setCopyMaxScore(true).build();
+      LabelType codeReview = TestLabels.codeReview().toBuilder().setCopyCondition("is:MAX").build();
       u.getConfig().upsertLabelType(codeReview);
       u.save();
     }
@@ -2423,8 +2441,8 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
     }
 
     @Nullable
-    public CommitReceivedEvent getReceivedEvent() {
-      return receivedEvent;
+    public ImmutableListMultimap<String, String> pushOptions() {
+      return receivedEvent != null ? receivedEvent.pushOptions : null;
     }
   }
 
@@ -2520,7 +2538,7 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
       push.setPushOptions(ImmutableList.of("trace=123", "gerrit~foo", "gerrit~bar=456"));
       PushOneCommit.Result r = push.to("refs/for/master");
       r.assertOkStatus();
-      assertThat(validator.getReceivedEvent().pushOptions)
+      assertThat(validator.pushOptions())
           .containsExactly("trace", "123", "gerrit~foo", "", "gerrit~bar", "456");
     }
   }

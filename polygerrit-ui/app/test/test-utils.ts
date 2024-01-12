@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '../types/globals';
 import {_testOnly_resetPluginLoader} from '../elements/shared/gr-js-api-interface/gr-plugin-loader';
@@ -24,13 +13,13 @@ import {StorageService} from '../services/storage/gr-storage';
 import {AuthService} from '../services/gr-auth/gr-auth';
 import {ReportingService} from '../services/gr-reporting/gr-reporting';
 import {UserModel} from '../models/user/user-model';
-import {ShortcutsService} from '../services/shortcuts/shortcuts-service';
 import {queryAndAssert, query} from '../utils/common-util';
 import {FlagsService} from '../services/flags/flags';
 import {Key, Modifier} from '../utils/dom-util';
 import {Observable} from 'rxjs';
 import {filter, take, timeout} from 'rxjs/operators';
 import {HighlightService} from '../services/highlight/highlight-service';
+import {assert} from '@open-wc/testing';
 export {query, queryAll, queryAndAssert} from '../utils/common-util';
 
 export interface MockPromise<T> extends Promise<T> {
@@ -124,10 +113,6 @@ export function stubUsers<K extends keyof UserModel>(method: K) {
   return sinon.stub(getAppContext().userModel, method);
 }
 
-export function stubShortcuts<K extends keyof ShortcutsService>(method: K) {
-  return sinon.stub(getAppContext().shortcutsService, method);
-}
-
 export function stubHighlightService<K extends keyof HighlightService>(
   method: K
 ) {
@@ -152,6 +137,20 @@ export function stubReporting<K extends keyof ReportingService>(method: K) {
 
 export function stubFlags<K extends keyof FlagsService>(method: K) {
   return sinon.stub(getAppContext().flagsService, method);
+}
+
+export function stubElement<
+  T extends keyof HTMLElementTagNameMap,
+  K extends keyof HTMLElementTagNameMap[T]
+>(tagName: T, method: K) {
+  // This method is inspired by web-component-tester method
+  const proto = document.createElement(tagName).constructor
+    .prototype as HTMLElementTagNameMap[T];
+  const stub = sinon.stub(proto, method);
+  registerTestCleanup(() => {
+    stub.restore();
+  });
+  return stub;
 }
 
 export type SinonSpyMember<F extends (...args: any) => any> = SinonSpy<
@@ -195,21 +194,22 @@ export async function waitQueryAndAssert<E extends Element = Element>(
   return queryAndAssert<E>(el, selector);
 }
 
-export function waitUntil(
-  predicate: () => boolean,
-  message = 'The waitUntil() predicate is still false after 1000 ms.'
+export async function waitUntil(
+  predicate: (() => boolean) | (() => Promise<boolean>),
+  message = 'The waitUntil() predicate is still false after 1000 ms.',
+  timeout_ms = 1000
 ): Promise<void> {
   const start = Date.now();
   let sleep = 0;
-  if (predicate()) return Promise.resolve();
+  if (await predicate()) return Promise.resolve();
   const error = new Error(message);
   return new Promise((resolve, reject) => {
-    const waiter = () => {
-      if (predicate()) {
+    const waiter = async () => {
+      if (await predicate()) {
         resolve();
         return;
       }
-      if (Date.now() - start >= 1000) {
+      if (Date.now() - start >= timeout_ms) {
         reject(error);
         return;
       }
@@ -245,6 +245,20 @@ export async function waitUntilObserved<T>(
   });
 }
 
+/**
+ * sinon.useFakeTimers() overwrites window.setTimeout with a controlled,
+ * synchronous version for tests to use. Keep the original one for use in
+ * waitEventLoop
+ */
+const nativeSetTimeout = window.setTimeout;
+/**
+ * Wait for the current event loop's tasks to complete by scheduling a promise
+ * to resolve during the next loop. Prefer other wait methods over this one to
+ * wait for specific work to be done or for specific states to exist.
+ */
+export function waitEventLoop(): Promise<void> {
+  return new Promise(resolve => nativeSetTimeout(resolve, 0));
+}
 /**
  * Promisify an event callback to simplify async...await tests.
  *
@@ -287,6 +301,7 @@ export function pressKey(
   const eventOptions = {
     key,
     bubbles: true,
+    cancelable: true,
     composed: true,
     altKey: modifiers.includes(Modifier.ALT_KEY),
     ctrlKey: modifiers.includes(Modifier.CTRL_KEY),
@@ -310,7 +325,7 @@ export function mouseDown(element: HTMLElement) {
 }
 
 export function assertFails(promise: Promise<unknown>, error?: unknown) {
-  promise
+  return promise
     .then((_v: unknown) => {
       assert.fail('Promise resolved but should have failed');
     })
@@ -318,5 +333,22 @@ export function assertFails(promise: Promise<unknown>, error?: unknown) {
       if (error) {
         assert.equal(e, error);
       }
+      return e;
     });
+}
+
+export function logProxy<T extends object>(obj: T, name?: string): T {
+  const handler = {
+    get(target: object, prop: PropertyKey, receiver: any) {
+      const result = Reflect.get(target, prop, receiver);
+      if (result instanceof Function) {
+        return (...rest: unknown[]) => {
+          console.error(`${name}.${String(prop)}(${rest})`);
+          return result.apply(target, rest);
+        };
+      }
+      return result;
+    },
+  };
+  return new Proxy(obj, handler) as unknown as T;
 }

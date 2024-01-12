@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2015 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2015 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
 import '../../../styles/shared-styles';
@@ -21,22 +10,20 @@ import '../../plugins/gr-endpoint-param/gr-endpoint-param';
 import '../gr-button/gr-button';
 import '../gr-dialog/gr-dialog';
 import '../gr-formatted-text/gr-formatted-text';
-import '../gr-icons/gr-icons';
+import '../gr-icon/gr-icon';
 import '../gr-overlay/gr-overlay';
 import '../gr-textarea/gr-textarea';
 import '../gr-tooltip-content/gr-tooltip-content';
 import '../gr-confirm-delete-comment-dialog/gr-confirm-delete-comment-dialog';
 import '../gr-account-label/gr-account-label';
 import {getAppContext} from '../../../services/app-context';
-import {css, html, LitElement, PropertyValues} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
+import {css, html, LitElement, nothing, PropertyValues} from 'lit';
+import {customElement, property, query, state} from 'lit/decorators.js';
 import {resolve} from '../../../models/dependency';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {GrTextarea} from '../gr-textarea/gr-textarea';
 import {GrOverlay} from '../gr-overlay/gr-overlay';
 import {
   AccountDetailInfo,
-  CommentLinks,
   NumericChangeId,
   RepoName,
   RobotCommentInfo,
@@ -44,30 +31,39 @@ import {
 import {GrConfirmDeleteCommentDialog} from '../gr-confirm-delete-comment-dialog/gr-confirm-delete-comment-dialog';
 import {
   Comment,
+  createUserFixSuggestion,
   DraftInfo,
+  getContentInCommentRange,
+  getUserSuggestion,
+  hasUserSuggestion,
   isDraftOrUnsaved,
   isRobot,
   isUnsaved,
+  NEWLINE_PATTERN,
+  USER_SUGGESTION_START_PATTERN,
 } from '../../../utils/comment-util';
 import {
   OpenFixPreviewEventDetail,
+  ReplyToCommentEventDetail,
   ValueChangedEvent,
 } from '../../../types/events';
 import {fire, fireEvent} from '../../../utils/event-util';
-import {assertIsDefined} from '../../../utils/common-util';
+import {assertIsDefined, assert} from '../../../utils/common-util';
 import {Key, Modifier} from '../../../utils/dom-util';
 import {commentsModelToken} from '../../../models/comments/comments-model';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {subscribe} from '../../lit/subscription-controller';
 import {ShortcutController} from '../../lit/shortcut-controller';
-import {classMap} from 'lit/directives/class-map';
+import {classMap} from 'lit/directives/class-map.js';
 import {LineNumber} from '../../../api/diff';
-import {CommentSide} from '../../../constants/constants';
-import {getRandomInt} from '../../../utils/math-util';
+import {CommentSide, SpecialFilePath} from '../../../constants/constants';
 import {Subject} from 'rxjs';
 import {debounceTime} from 'rxjs/operators';
-import {configModelToken} from '../../../models/config/config-model';
 import {changeModelToken} from '../../../models/change/change-model';
+import {Interaction} from '../../../constants/reporting';
+import {KnownExperimentId} from '../../../services/flags/flags';
+import {isBase64FileContent} from '../../../api/rest-api';
+import {createDiffUrl} from '../../../models/views/diff';
 
 const UNSAVED_MESSAGE = 'Unable to save draft';
 
@@ -80,8 +76,9 @@ export const __testOnly_UNSAVED_MESSAGE = UNSAVED_MESSAGE;
 
 declare global {
   interface HTMLElementEventMap {
-    'comment-editing-changed': CustomEvent<boolean>;
-    'comment-unresolved-changed': CustomEvent<boolean>;
+    'comment-editing-changed': CustomEvent<CommentEditingChangedDetail>;
+    'comment-unresolved-changed': ValueChangedEvent<boolean>;
+    'comment-text-changed': ValueChangedEvent<string>;
     'comment-anchor-tap': CustomEvent<CommentAnchorTapEventDetail>;
   }
 }
@@ -91,16 +88,21 @@ export interface CommentAnchorTapEventDetail {
   side?: CommentSide;
 }
 
+export interface CommentEditingChangedDetail {
+  editing: boolean;
+  path: string;
+}
+
 @customElement('gr-comment')
 export class GrComment extends LitElement {
   /**
-   * Fired when the create fix comment action is triggered.
+   * Fired when the parent thread component should create a reply.
    *
-   * @event create-fix-comment
+   * @event reply-to-comment
    */
 
   /**
-   * Fired when the show fix preview action is triggered.
+   * Fired when the open fix preview action is triggered.
    *
    * @event open-fix-preview
    */
@@ -144,6 +146,12 @@ export class GrComment extends LitElement {
   initiallyCollapsed?: boolean;
 
   /**
+   * Hide the header for patchset level comments used in GrReplyDialog.
+   */
+  @property({type: Boolean, attribute: 'hide-header'})
+  hideHeader = false;
+
+  /**
    * This is the *current* (internal) collapsed state of the comment. Do not set
    * from the outside. Use `initiallyCollapsed` instead. This is just a
    * reflected property such that css rules can be based on it.
@@ -154,9 +162,17 @@ export class GrComment extends LitElement {
   @property({type: Boolean, attribute: 'robot-button-disabled'})
   robotButtonDisabled = false;
 
+  @property({type: String})
+  messagePlaceholder?: string;
+
   /* private, but used in css rules */
   @property({type: Boolean, reflect: true})
   saving = false;
+
+  // GrReplyDialog requires the patchset level comment to always remain
+  // editable.
+  @property({type: Boolean, attribute: 'permanent-editing-mode'})
+  permanentEditingMode = false;
 
   /**
    * `saving` and `autoSaving` are separate and cannot be set at the same time.
@@ -172,9 +188,6 @@ export class GrComment extends LitElement {
 
   @state()
   editing = false;
-
-  @state()
-  commentLinks: CommentLinks = {};
 
   @state()
   repoName?: RepoName;
@@ -205,9 +218,14 @@ export class GrComment extends LitElement {
   @state()
   isAdmin = false;
 
+  @state()
+  isOwner = false;
+
   private readonly restApiService = getAppContext().restApiService;
 
   private readonly reporting = getAppContext().reportingService;
+
+  private readonly flagsService = getAppContext().flagsService;
 
   private readonly getChangeModel = resolve(this, changeModelToken);
 
@@ -215,8 +233,6 @@ export class GrComment extends LitElement {
   readonly getCommentsModel = resolve(this, commentsModelToken);
 
   private readonly userModel = getAppContext().userModel;
-
-  private readonly configModel = resolve(this, configModelToken);
 
   private readonly shortcuts = new ShortcutController(this);
 
@@ -240,35 +256,60 @@ export class GrComment extends LitElement {
 
   constructor() {
     super();
-    this.shortcuts.addLocal({key: Key.ESC}, () => this.handleEsc());
-    for (const key of ['s', Key.ENTER]) {
-      for (const modifier of [Modifier.CTRL_KEY, Modifier.META_KEY]) {
-        this.shortcuts.addLocal({key, modifiers: [modifier]}, () => {
+    // Allow the shortcuts to bubble up so that GrReplyDialog can respond to
+    // them as well.
+    this.shortcuts.addLocal({key: Key.ESC}, () => this.handleEsc(), {
+      preventDefault: false,
+    });
+    for (const modifier of [Modifier.CTRL_KEY, Modifier.META_KEY]) {
+      this.shortcuts.addLocal(
+        {key: Key.ENTER, modifiers: [modifier]},
+        () => {
           this.save();
-        });
-      }
+        },
+        {preventDefault: false}
+      );
     }
-  }
-
-  override connectedCallback() {
-    super.connectedCallback();
+    // For Ctrl+s add shorctut with preventDefault so that it does
+    // not bubble up to the browser
+    for (const modifier of [Modifier.CTRL_KEY, Modifier.META_KEY]) {
+      this.shortcuts.addLocal({key: 's', modifiers: [modifier]}, () => {
+        this.save();
+      });
+    }
+    if (this.flagsService.isEnabled(KnownExperimentId.MENTION_USERS)) {
+      this.messagePlaceholder = 'Mention others with @';
+    }
     subscribe(
       this,
-      this.configModel().repoCommentLinks$,
-      x => (this.commentLinks = x)
+      () => this.userModel.account$,
+      x => (this.account = x)
     );
-    subscribe(this, this.userModel.account$, x => (this.account = x));
-    subscribe(this, this.userModel.isAdmin$, x => (this.isAdmin = x));
-
-    subscribe(this, this.getChangeModel().repo$, x => (this.repoName = x));
     subscribe(
       this,
-      this.getChangeModel().changeNum$,
+      () => this.userModel.isAdmin$,
+      x => (this.isAdmin = x)
+    );
+
+    subscribe(
+      this,
+      () => this.getChangeModel().repo$,
+      x => (this.repoName = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().changeNum$,
       x => (this.changeNum = x)
     );
     subscribe(
       this,
-      this.autoSaveTrigger$.pipe(debounceTime(AUTO_SAVE_DEBOUNCE_DELAY_MS)),
+      () => this.getChangeModel().isOwner$,
+      x => (this.isOwner = x)
+    );
+    subscribe(
+      this,
+      () =>
+        this.autoSaveTrigger$.pipe(debounceTime(AUTO_SAVE_DEBOUNCE_DELAY_MS)),
       () => {
         this.autoSave();
       }
@@ -278,6 +319,11 @@ export class GrComment extends LitElement {
   override disconnectedCallback() {
     // Clean up emoji dropdown.
     if (this.textarea) this.textarea.closeDropdown();
+    if (this.editing) {
+      this.reporting.reportInteraction(
+        Interaction.COMMENTS_AUTOCLOSE_EDITING_DISCONNECTED
+      );
+    }
     super.disconnectedCallback();
   }
 
@@ -301,13 +347,14 @@ export class GrComment extends LitElement {
         :host([saving]) .date {
           opacity: 0.5;
         }
-        .body {
-          padding-top: var(--spacing-m);
-        }
         .header {
           align-items: center;
           cursor: pointer;
           display: flex;
+          padding-bottom: var(--spacing-m);
+        }
+        :host([collapsed]) .header {
+          padding-bottom: 0px;
         }
         .headerLeft > span {
           font-weight: var(--font-weight-bold);
@@ -317,10 +364,12 @@ export class GrComment extends LitElement {
           flex: 1;
           overflow: hidden;
         }
-        .draftLabel,
         .draftTooltip {
-          color: var(--deemphasized-text-color);
+          font-weight: var(--font-weight-bold);
           display: inline;
+        }
+        .draftTooltip gr-icon {
+          color: var(--info-foreground);
         }
         .date {
           justify-content: flex-end;
@@ -357,7 +406,7 @@ export class GrComment extends LitElement {
         }
         .editMessage {
           display: block;
-          margin: var(--spacing-m) 0;
+          margin-bottom: var(--spacing-m);
           width: 100%;
         }
         .show-hide {
@@ -381,7 +430,7 @@ export class GrComment extends LitElement {
           cursor: pointer;
           display: block;
         }
-        label.show-hide iron-icon {
+        label.show-hide gr-icon {
           vertical-align: top;
         }
         :host([collapsed]) #container .body {
@@ -440,10 +489,15 @@ export class GrComment extends LitElement {
         .draft gr-account-label {
           width: unset;
         }
+        .draft gr-formatted-text.message {
+          display: block;
+          margin-bottom: var(--spacing-m);
+        }
         .portedMessage {
           margin: 0 var(--spacing-m);
         }
         .link-icon {
+          margin-left: var(--spacing-m);
           cursor: pointer;
         }
       `,
@@ -454,31 +508,47 @@ export class GrComment extends LitElement {
     if (isUnsaved(this.comment) && !this.editing) return;
     const classes = {container: true, draft: isDraftOrUnsaved(this.comment)};
     return html`
-      <div id="container" class=${classMap(classes)}>
-        <div
-          class="header"
-          id="header"
-          @click=${() => (this.collapsed = !this.collapsed)}
-        >
-          <div class="headerLeft">
-            ${this.renderAuthor()} ${this.renderPortedCommentMessage()}
-            ${this.renderDraftLabel()}
+      <gr-endpoint-decorator name="comment">
+        <gr-endpoint-param name="comment" .value=${this.comment}>
+        </gr-endpoint-param>
+        <gr-endpoint-param name="editing" .value=${this.editing}>
+        </gr-endpoint-param>
+        <div id="container" class=${classMap(classes)}>
+          ${this.renderHeader()}
+          <div class="body">
+            ${this.renderRobotAuthor()} ${this.renderEditingTextarea()}
+            ${this.renderCommentMessage()}
+            <gr-endpoint-slot name="above-actions"></gr-endpoint-slot>
+            ${this.renderHumanActions()} ${this.renderRobotActions()}
+            ${this.renderSuggestEditActions()}
           </div>
-          <div class="headerMiddle">${this.renderCollapsedContent()}</div>
-          ${this.renderRunDetails()} ${this.renderDeleteButton()}
-          ${this.renderPatchset()} ${this.renderDate()} ${this.renderToggle()}
         </div>
-        <div class="body">
-          ${this.renderRobotAuthor()} ${this.renderEditingTextarea()}
-          ${this.renderCommentMessage()} ${this.renderHumanActions()}
-          ${this.renderRobotActions()}
-        </div>
-      </div>
+      </gr-endpoint-decorator>
       ${this.renderConfirmDialog()}
     `;
   }
 
+  private renderHeader() {
+    if (this.hideHeader) return nothing;
+    return html`
+      <div
+        class="header"
+        id="header"
+        @click=${() => (this.collapsed = !this.collapsed)}
+      >
+        <div class="headerLeft">
+          ${this.renderAuthor()} ${this.renderPortedCommentMessage()}
+          ${this.renderDraftLabel()}
+        </div>
+        <div class="headerMiddle">${this.renderCollapsedContent()}</div>
+        ${this.renderRunDetails()} ${this.renderDeleteButton()}
+        ${this.renderPatchset()} ${this.renderDate()} ${this.renderToggle()}
+      </div>
+    `;
+  }
+
   private renderAuthor() {
+    if (isDraftOrUnsaved(this.comment)) return;
     if (isRobot(this.comment)) {
       const id = this.comment.robot_id;
       return html`<span class="robotName">${id}</span>`;
@@ -507,7 +577,7 @@ export class GrComment extends LitElement {
 
   private renderDraftLabel() {
     if (!isDraftOrUnsaved(this.comment)) return;
-    let label = 'DRAFT';
+    let label = 'Draft';
     let tooltip =
       'This draft is only visible to you. ' +
       "To publish drafts, click the 'Reply' or 'Start review' button " +
@@ -522,8 +592,8 @@ export class GrComment extends LitElement {
         has-tooltip
         title=${tooltip}
         max-width="20em"
-        show-icon
       >
+        <gr-icon filled icon="rate_review"></gr-icon>
         <span class="draftLabel">${label}</span>
       </gr-tooltip-content>
     `;
@@ -570,7 +640,7 @@ export class GrComment extends LitElement {
         class="action delete"
         @click=${this.openDeleteCommentOverlay}
       >
-        <iron-icon id="icon" icon="gr-icons:delete"></iron-icon>
+        <gr-icon id="icon" icon="delete" filled></gr-icon>
       </gr-button>
     `;
   }
@@ -597,9 +667,7 @@ export class GrComment extends LitElement {
   }
 
   private renderToggle() {
-    const icon = this.collapsed
-      ? 'gr-icons:expand-more'
-      : 'gr-icons:expand-less';
+    const icon = this.collapsed ? 'expand_more' : 'expand_less';
     const ariaLabel = this.collapsed ? 'Expand' : 'Collapse';
     return html`
       <div class="show-hide" tabindex="0">
@@ -610,7 +678,7 @@ export class GrComment extends LitElement {
             ?checked=${this.collapsed}
             @change=${() => (this.collapsed = !this.collapsed)}
           />
-          <iron-icon id="icon" icon=${icon}></iron-icon>
+          <gr-icon icon=${icon} id="icon"></gr-icon>
         </label>
       </div>
     `;
@@ -631,6 +699,7 @@ export class GrComment extends LitElement {
         code=""
         ?disabled=${this.saving}
         rows="4"
+        .placeholder=${this.messagePlaceholder}
         text=${this.messageText}
         @text-changed=${(e: ValueChangedEvent) => {
           // TODO: This is causing a re-render of <gr-comment> on every key
@@ -646,14 +715,14 @@ export class GrComment extends LitElement {
 
   private renderCommentMessage() {
     if (this.collapsed || this.editing) return;
+
     return html`
       <!--The "message" class is needed to ensure selectability from
           gr-diff-selection.-->
       <gr-formatted-text
         class="message"
-        .content=${this.comment?.message}
-        .config=${this.commentLinks}
-        ?noTrailingMargin=${!isDraftOrUnsaved(this.comment)}
+        .markdown=${true}
+        .content=${this.comment?.message ?? ''}
       ></gr-formatted-text>
     `;
   }
@@ -662,15 +731,14 @@ export class GrComment extends LitElement {
     // Only show the icon when the thread contains a published comment.
     if (!this.comment?.in_reply_to && isDraftOrUnsaved(this.comment)) return;
     return html`
-      <iron-icon
+      <gr-icon
+        icon="link"
         class="copy link-icon"
         @click=${this.handleCopyLink}
         title="Copy link to this comment"
-        icon="gr-icons:link"
         role="button"
         tabindex="0"
-      >
-      </iron-icon>
+      ></gr-icon>
     `;
   }
 
@@ -700,15 +768,60 @@ export class GrComment extends LitElement {
     return html`
       <div class="rightActions">
         ${this.autoSaving ? html`.&nbsp;&nbsp;` : ''}
-        ${this.renderCopyLinkIcon()} ${this.renderDiscardButton()}
-        ${this.renderEditButton()} ${this.renderCancelButton()}
-        ${this.renderSaveButton()}
+        ${this.renderDiscardButton()} ${this.renderSuggestEditButton()}
+        ${this.renderPreviewSuggestEditButton()} ${this.renderEditButton()}
+        ${this.renderCancelButton()} ${this.renderSaveButton()}
+        ${this.renderCopyLinkIcon()}
       </div>
     `;
   }
 
+  private renderPreviewSuggestEditButton() {
+    if (!this.flagsService.isEnabled(KnownExperimentId.SUGGEST_EDIT)) {
+      return nothing;
+    }
+    assertIsDefined(this.comment, 'comment');
+    if (!hasUserSuggestion(this.comment)) return nothing;
+    return html`
+      <gr-button
+        link
+        secondary
+        class="action show-fix"
+        ?disabled=${this.saving}
+        @click=${this.handleShowFix}
+      >
+        Preview Fix
+      </gr-button>
+    `;
+  }
+
+  private renderSuggestEditButton() {
+    if (!this.flagsService.isEnabled(KnownExperimentId.SUGGEST_EDIT)) {
+      return nothing;
+    }
+    if (
+      this.permanentEditingMode ||
+      this.comment?.path === SpecialFilePath.PATCHSET_LEVEL_COMMENTS
+    ) {
+      return nothing;
+    }
+    assertIsDefined(this.comment, 'comment');
+    if (hasUserSuggestion(this.comment)) return nothing;
+    // TODO(milutin): remove this check once suggesting on commit message is
+    // fixed. Currently diff line doesn't match commit message line, because
+    // of metadata in diff, which aren't in content api request.
+    if (this.comment.path === SpecialFilePath.COMMIT_MESSAGE) return nothing;
+    if (this.isOwner) return nothing;
+    return html`<gr-button
+      link
+      class="action suggestEdit"
+      @click=${this.createSuggestEdit}
+      >Suggest Fix</gr-button
+    >`;
+  }
+
   private renderDiscardButton() {
-    if (this.editing) return;
+    if (this.editing || this.permanentEditingMode) return;
     return html`<gr-button
       link
       ?disabled=${this.saving}
@@ -730,7 +843,7 @@ export class GrComment extends LitElement {
   }
 
   private renderCancelButton() {
-    if (!this.editing) return;
+    if (!this.editing || this.permanentEditingMode) return;
     return html`
       <gr-button
         link
@@ -749,8 +862,8 @@ export class GrComment extends LitElement {
         link
         ?disabled=${this.isSaveDisabled()}
         class="action save"
-        @click=${this.save}
-        >Save</gr-button
+        @click=${this.handleSaveButtonClicked}
+        >${this.permanentEditingMode ? 'Preview' : 'Save'}</gr-button
       >
     `;
   }
@@ -768,6 +881,22 @@ export class GrComment extends LitElement {
         ${this.renderCopyLinkIcon()} ${endpoint} ${this.renderShowFixButton()}
         ${this.renderPleaseFixButton()}
       </div>
+    `;
+  }
+
+  private renderSuggestEditActions() {
+    if (!this.flagsService.isEnabled(KnownExperimentId.SUGGEST_EDIT)) {
+      return nothing;
+    }
+    if (
+      !this.account ||
+      isRobot(this.comment) ||
+      isDraftOrUnsaved(this.comment)
+    ) {
+      return nothing;
+    }
+    return html`
+      <div class="robotActions">${this.renderPreviewSuggestEditButton()}</div>
     `;
   }
 
@@ -793,7 +922,7 @@ export class GrComment extends LitElement {
         link
         ?disabled=${this.robotButtonDisabled}
         class="action fix"
-        @click=${this.handleFix}
+        @click=${this.handlePleaseFix}
       >
         Please Fix
       </gr-button>
@@ -818,11 +947,11 @@ export class GrComment extends LitElement {
     const comment = this.comment;
     if (!comment || !this.changeNum || !this.repoName) return '';
     if (!comment.id) throw new Error('comment must have an id');
-    return GerritNav.getUrlForComment(
-      this.changeNum,
-      this.repoName,
-      comment.id
-    );
+    return createDiffUrl({
+      changeNum: this.changeNum,
+      project: this.repoName,
+      commentId: comment.id,
+    });
   }
 
   private firstWillUpdateDone = false;
@@ -830,11 +959,15 @@ export class GrComment extends LitElement {
   firstWillUpdate() {
     if (this.firstWillUpdateDone) return;
     this.firstWillUpdateDone = true;
-
+    if (this.permanentEditingMode) this.editing = true;
     assertIsDefined(this.comment, 'comment');
     this.unresolved = this.comment.unresolved ?? true;
     if (isUnsaved(this.comment)) this.editing = true;
     if (isDraftOrUnsaved(this.comment)) {
+      this.reporting.reportInteraction(
+        Interaction.COMMENTS_AUTOCLOSE_FIRST_UPDATE,
+        {editing: this.editing, unsaved: isUnsaved(this.comment)}
+      );
       this.collapsed = false;
     } else {
       this.collapsed = !!this.initiallyCollapsed;
@@ -849,7 +982,12 @@ export class GrComment extends LitElement {
     if (changed.has('unresolved')) {
       // The <gr-comment-thread> component wants to change its color based on
       // the (dirty) unresolved state, so let's notify it about changes.
-      fire(this, 'comment-unresolved-changed', this.unresolved);
+      fire(this, 'comment-unresolved-changed', {value: this.unresolved});
+    }
+    if (changed.has('messageText')) {
+      // GrReplyDialog updates it's state when text inside patchset level
+      // comment changes.
+      fire(this, 'comment-text-changed', {value: this.messageText});
     }
   }
 
@@ -859,11 +997,6 @@ export class GrComment extends LitElement {
       line: this.comment.line,
       range: this.comment.range,
     });
-  }
-
-  // private, but visible for testing
-  getRandomInt(from: number, to: number) {
-    return getRandomInt(from, to);
   }
 
   private handleCopyLink() {
@@ -889,9 +1022,37 @@ export class GrComment extends LitElement {
   }
 
   // private, but visible for testing
-  getEventPayload(): OpenFixPreviewEventDetail {
+  async createFixPreview(): Promise<OpenFixPreviewEventDetail> {
     assertIsDefined(this.comment?.patch_set, 'comment.patch_set');
-    return {comment: this.comment, patchNum: this.comment.patch_set};
+    assertIsDefined(this.comment?.path, 'comment.path');
+
+    if (hasUserSuggestion(this.comment)) {
+      const replacement = getUserSuggestion(this.comment);
+      assert(!!replacement, 'malformed user suggestion');
+      const line = await this.getCommentedCode();
+
+      return {
+        fixSuggestions: createUserFixSuggestion(
+          this.comment,
+          line,
+          replacement
+        ),
+        patchNum: this.comment.patch_set,
+      };
+    }
+    if (isRobot(this.comment) && this.comment.fix_suggestions.length > 0) {
+      const id = this.comment.robot_id;
+      return {
+        fixSuggestions: this.comment.fix_suggestions.map(s => {
+          return {
+            ...s,
+            description: `${id ?? ''} - ${s.description ?? ''}`,
+          };
+        }),
+        patchNum: this.comment.patch_set,
+      };
+    }
+    throw new Error('unable to create preview fix event');
   }
 
   private onEditingChanged() {
@@ -906,14 +1067,16 @@ export class GrComment extends LitElement {
 
     // Parent components such as the reply dialog might be interested in whether
     // come of their child components are in editing mode.
-    fire(this, 'comment-editing-changed', this.editing);
+    fire(this, 'comment-editing-changed', {
+      editing: this.editing,
+      path: this.comment?.path ?? '',
+    });
   }
 
   // private, but visible for testing
   isSaveDisabled() {
     assertIsDefined(this.comment, 'comment');
     if (this.saving) return true;
-    if (this.comment.unresolved !== this.unresolved) return false;
     return !this.messageText?.trimEnd();
   }
 
@@ -931,14 +1094,53 @@ export class GrComment extends LitElement {
     });
   }
 
-  private handleFix() {
-    // Handled by <gr-comment-thread>.
-    fire(this, 'create-fix-comment', this.getEventPayload());
+  private async handleSaveButtonClicked() {
+    await this.save();
+    if (this.permanentEditingMode) {
+      this.editing = !this.editing;
+    }
   }
 
-  private handleShowFix() {
+  private handlePleaseFix() {
+    const message = this.comment?.message;
+    assert(!!message, 'empty message');
+    const quoted = message.replace(NEWLINE_PATTERN, '\n> ');
+    const eventDetail: ReplyToCommentEventDetail = {
+      content: `> ${quoted}\n\nPlease fix.`,
+      userWantsToEdit: false,
+      unresolved: true,
+    };
+    // Handled by <gr-comment-thread>.
+    fire(this, 'reply-to-comment', eventDetail);
+  }
+
+  private async handleShowFix() {
     // Handled top-level in the diff and change view components.
-    fire(this, 'open-fix-preview', this.getEventPayload());
+    fire(this, 'open-fix-preview', await this.createFixPreview());
+  }
+
+  async createSuggestEdit() {
+    const line = await this.getCommentedCode();
+    this.messageText += `${USER_SUGGESTION_START_PATTERN}${line}${'\n```'}`;
+  }
+
+  async getCommentedCode() {
+    assertIsDefined(this.comment, 'comment');
+    assertIsDefined(this.changeNum, 'changeNum');
+    // TODO(milutin): Show a toast while the file is being loaded.
+    // TODO(milutin): This should be moved into a service/model.
+    const file = await this.restApiService.getFileContent(
+      this.changeNum,
+      this.comment.path!,
+      this.comment.patch_set!
+    );
+    assert(
+      !!file && isBase64FileContent(file) && !!file.content,
+      'file content for comment not found'
+    );
+    const line = getContentInCommentRange(file.content, this.comment);
+    assert(!!line, 'file content for comment not found');
+    return line;
   }
 
   // private, but visible for testing
@@ -975,6 +1177,9 @@ export class GrComment extends LitElement {
 
   async save() {
     if (!isDraftOrUnsaved(this.comment)) throw new Error('not a draft');
+    // If it's an unsaved comment then it does not have a draftID yet which
+    // means sending another save() request will create a new draft
+    if (isUnsaved(this.comment) && this.saving) return;
 
     try {
       this.saving = true;
@@ -999,7 +1204,12 @@ export class GrComment extends LitElement {
           await this.rawSave(messageToSave, {showToast: true});
         }
       }
-      this.editing = false;
+      this.reporting.reportInteraction(
+        Interaction.COMMENTS_AUTOCLOSE_EDITING_FALSE_SAVE
+      );
+      if (!this.permanentEditingMode) {
+        this.editing = false;
+      }
     } catch (e) {
       this.unableToSave = true;
       throw e;

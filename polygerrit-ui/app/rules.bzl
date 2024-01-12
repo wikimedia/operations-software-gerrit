@@ -29,6 +29,7 @@ def polygerrit_bundle(name, srcs, outs, entry_point, app_name):
         silent = True,
         sourcemap = "hidden",
         deps = [
+            "@tools_npm//rollup-plugin-define",
             "@tools_npm//rollup-plugin-node-resolve",
         ],
     )
@@ -42,6 +43,21 @@ def polygerrit_bundle(name, srcs, outs, entry_point, app_name):
         silent = True,
         sourcemap = "hidden",
         deps = [
+            "@tools_npm//rollup-plugin-define",
+            "@tools_npm//rollup-plugin-node-resolve",
+        ],
+    )
+
+    rollup_bundle(
+        name = "service-worker",
+        srcs = [app_name + "-full-src"],
+        config_file = ":rollup.config.js",
+        entry_point = "_pg_ts_out/workers/service-worker.js",
+        rollup_bin = "//tools/node_tools:rollup-bin",
+        silent = True,
+        sourcemap = "hidden",
+        deps = [
+            "@tools_npm//rollup-plugin-define",
             "@tools_npm//rollup-plugin-node-resolve",
         ],
     )
@@ -62,6 +78,7 @@ def polygerrit_bundle(name, srcs, outs, entry_point, app_name):
         name = name + "_worker_sources",
         srcs = [
             "syntax-worker.js",
+            "service-worker.js",
         ],
     )
 
@@ -81,6 +98,7 @@ def polygerrit_bundle(name, srcs, outs, entry_point, app_name):
             name + "_css_sources",
             name + "_top_sources",
             name + "_worker_sources",
+            "//lib/fonts:material-icons",
             "//lib/fonts:robotofonts",
             "//lib/js:highlightjs__files",
             "@ui_npm//:node_modules/@webcomponents/webcomponentsjs/webcomponents-lite.js",
@@ -95,6 +113,7 @@ def polygerrit_bundle(name, srcs, outs, entry_point, app_name):
             "mkdir -p $$TMP/polygerrit_ui/{workers,styles/themes,fonts/{roboto,robotomono},bower_components/{highlightjs,webcomponentsjs,resemblejs},elements}",
             "for f in $(locations " + name + "_app_sources); do ext=$${f##*.}; cp -p $$f $$TMP/polygerrit_ui/elements/" + app_name + ".$$ext; done",
             "cp $(locations //lib/fonts:robotofonts) $$TMP/polygerrit_ui/fonts/",
+            "cp $(locations //lib/fonts:material-icons) $$TMP/polygerrit_ui/fonts/",
             "for f in $(locations " + name + "_top_sources); do cp $$f $$TMP/polygerrit_ui/; done",
             "for f in $(locations " + name + "_css_sources); do cp $$f $$TMP/polygerrit_ui/styles; done",
             "for f in $(locations " + name + "_worker_sources); do cp $$f $$TMP/polygerrit_ui/workers; done",

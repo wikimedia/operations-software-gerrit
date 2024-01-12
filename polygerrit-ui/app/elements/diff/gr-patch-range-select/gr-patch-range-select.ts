@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2015 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2015 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '../../shared/gr-dropdown-list/gr-dropdown-list';
 import '../../shared/gr-select/gr-select';
@@ -29,31 +18,34 @@ import {
   convertToPatchSetNum,
 } from '../../../utils/patch-set-util';
 import {ReportingService} from '../../../services/gr-reporting/gr-reporting';
-import {hasOwnProperty} from '../../../utils/common-util';
 import {
   BasePatchSetNum,
-  ParentPatchSetNum,
+  EDIT,
+  NumericChangeId,
+  PARENT,
   PatchSetNum,
   RevisionInfo,
+  RevisionPatchSetNum,
   Timestamp,
 } from '../../../types/common';
 import {RevisionInfo as RevisionInfoClass} from '../../shared/revision-info/revision-info';
 import {ChangeComments} from '../gr-comment-api/gr-comment-api';
 import {
   DropdownItem,
-  DropDownValueChangeEvent,
   GrDropdownList,
 } from '../../shared/gr-dropdown-list/gr-dropdown-list';
-import {GeneratedWebLink} from '../../core/gr-navigation/gr-navigation';
 import {EditRevisionInfo} from '../../../types/types';
 import {a11yStyles} from '../../../styles/gr-a11y-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
-import {LitElement, PropertyValues, css, html} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
+import {LitElement, css, html, nothing} from 'lit';
+import {customElement, property, query, state} from 'lit/decorators.js';
 import {subscribe} from '../../lit/subscription-controller';
 import {commentsModelToken} from '../../../models/comments/comments-model';
 import {resolve} from '../../../models/dependency';
-import {ifDefined} from 'lit/directives/if-defined';
+import {ifDefined} from 'lit/directives/if-defined.js';
+import {ValueChangedEvent} from '../../../types/events';
+import {GeneratedWebLink} from '../../../utils/weblink-util';
+import {changeModelToken} from '../../../models/change/change-model';
 
 // Maximum length for patch set descriptions.
 const PATCH_DESC_MAX_LENGTH = 500;
@@ -75,9 +67,6 @@ export interface FilesWebLinks {
 }
 
 declare global {
-  interface HTMLElementEventMap {
-    'value-change': DropDownValueChangeEvent;
-  }
   interface HTMLElementTagNameMap {
     'gr-patch-range-select': GrPatchRangeSelect;
   }
@@ -96,33 +85,27 @@ export class GrPatchRangeSelect extends LitElement {
   @query('#patchNumDropdown')
   patchNumDropdown?: GrDropdownList;
 
-  @property({type: Array})
-  availablePatches?: PatchSet[];
+  @state()
+  availablePatches: PatchSet[] = [];
 
-  @property({type: String})
-  changeNum?: string;
+  @state()
+  changeNum?: NumericChangeId;
 
   @property({type: Object})
   filesWeblinks?: FilesWebLinks;
 
-  @property({type: String})
-  patchNum?: PatchSetNum;
+  @state()
+  patchNum?: RevisionPatchSetNum;
 
-  @property({type: String})
+  @state()
   basePatchNum?: BasePatchSetNum;
 
-  /** Not used directly. Translated into `sortedRevisions` in willUpdate(). */
-  @property({type: Object})
-  revisions: (RevisionInfo | EditRevisionInfo)[] = [];
-
-  @property({type: Object})
+  @state()
   revisionInfo?: RevisionInfoClass;
 
-  /** Private internal state, derived from `revisions` in willUpdate(). */
   @state()
-  private sortedRevisions: (RevisionInfo | EditRevisionInfo)[] = [];
+  sortedRevisions: (RevisionInfo | EditRevisionInfo)[] = [];
 
-  /** Private internal state, visible for testing. */
   @state()
   changeComments?: ChangeComments;
 
@@ -131,11 +114,46 @@ export class GrPatchRangeSelect extends LitElement {
 
   private readonly getCommentsModel = resolve(this, commentsModelToken);
 
-  override connectedCallback() {
-    super.connectedCallback();
+  private readonly getChangeModel = resolve(this, changeModelToken);
+
+  // Private but used in tests.
+  readonly routerModel = getAppContext().routerModel;
+
+  constructor() {
+    super();
     subscribe(
       this,
-      this.getCommentsModel().changeComments$,
+      () => this.routerModel.routerChangeNum$,
+      x => (this.changeNum = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().change$,
+      x => (this.revisionInfo = x ? new RevisionInfoClass(x) : undefined)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().patchNum$,
+      x => (this.patchNum = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().basePatchNum$,
+      x => (this.basePatchNum = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().patchsets$,
+      x => (this.availablePatches = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().revisions$,
+      x => (this.sortedRevisions = sortRevisions(Object.values(x || {})))
+    );
+    subscribe(
+      this,
+      () => this.getCommentsModel().changeComments$,
       x => (this.changeComments = x)
     );
   }
@@ -164,10 +182,12 @@ export class GrPatchRangeSelect extends LitElement {
           .filesWeblinks {
             display: none;
           }
+          /* prettier formatter removes semi-colons after css mixins. */
+          /* prettier-ignore */
           gr-dropdown-list {
             --native-select-style: {
               max-width: 5.25em;
-            }
+            };
           }
         }
       `,
@@ -175,6 +195,9 @@ export class GrPatchRangeSelect extends LitElement {
   }
 
   override render() {
+    if (!this.changeNum || !this.patchNum || !this.basePatchNum) {
+      return nothing;
+    }
     return html`
       <h3 class="assistive-tech-only">Patchset Range Selection</h3>
       <span class="patchRange" aria-label="patch range starts with">
@@ -214,16 +237,9 @@ export class GrPatchRangeSelect extends LitElement {
     > `;
   }
 
-  override willUpdate(changedProperties: PropertyValues) {
-    if (changedProperties.has('revisions')) {
-      this.sortedRevisions = sortRevisions(Object.values(this.revisions || {}));
-    }
-  }
-
   // Private method, but visible for testing.
   computeBaseDropdownContent(): DropdownItem[] {
     if (
-      this.availablePatches === undefined ||
       this.patchNum === undefined ||
       this.changeComments === undefined ||
       this.revisionInfo === undefined
@@ -231,12 +247,9 @@ export class GrPatchRangeSelect extends LitElement {
       return [];
     }
 
-    const parentCounts = this.revisionInfo.getParentCountMap();
-    const currentParentCount = hasOwnProperty(parentCounts, this.patchNum)
-      ? parentCounts[this.patchNum as number]
-      : 1;
     const maxParents = this.revisionInfo.getMaxParents();
-    const isMerge = currentParentCount > 1;
+    const isMerge = this.revisionInfo.isMergeCommit(this.patchNum);
+    const parentCount = this.revisionInfo.getParentCount(this.patchNum);
 
     const dropdownContent: DropdownItem[] = [];
     for (const basePatch of this.availablePatches) {
@@ -254,12 +267,12 @@ export class GrPatchRangeSelect extends LitElement {
 
     dropdownContent.push({
       text: isMerge ? 'Auto Merge' : 'Base',
-      value: 'PARENT',
+      value: PARENT,
     });
 
     for (let idx = 0; isMerge && idx < maxParents; idx++) {
       dropdownContent.push({
-        disabled: idx >= currentParentCount,
+        disabled: idx >= parentCount,
         triggerText: `Parent ${idx + 1}`,
         text: `Parent ${idx + 1}`,
         mobileText: `Parent ${idx + 1}`,
@@ -293,7 +306,7 @@ export class GrPatchRangeSelect extends LitElement {
       const patchNum = patch.num;
       const entry = this.createDropdownEntry(
         patchNum,
-        patchNum === 'edit' ? '' : 'Patchset ',
+        patchNum === EDIT ? '' : 'Patchset ',
         getShaForPatch(patch)
       );
       dropdownContent.push({
@@ -356,7 +369,7 @@ export class GrPatchRangeSelect extends LitElement {
    * is sorted in reverse order (higher patchset nums first), invalid patch
    * nums have an index greater than the index of basePatchNum.
    *
-   * In addition, if the current basePatchNum is 'PARENT', all patchNums are
+   * In addition, if the current basePatchNum is PARENT, all patchNums are
    * valid.
    *
    * If the current basePatchNum is a parent index, then only patches that have
@@ -368,10 +381,10 @@ export class GrPatchRangeSelect extends LitElement {
    * @param patchNum The possible patch num.
    */
   computeRightDisabled(
-    basePatchNum: PatchSetNum,
-    patchNum: PatchSetNum
+    basePatchNum: BasePatchSetNum,
+    patchNum: RevisionPatchSetNum
   ): boolean {
-    if (basePatchNum === ParentPatchSetNum) {
+    if (basePatchNum === PARENT) {
       return false;
     }
 
@@ -444,7 +457,7 @@ export class GrPatchRangeSelect extends LitElement {
    * Catches value-change events from the patchset dropdowns and determines
    * whether or not a patch change event should be fired.
    */
-  private handlePatchChange(e: DropDownValueChangeEvent) {
+  private handlePatchChange(e: ValueChangedEvent<string>) {
     const detail: PatchRangeChangeDetail = {
       patchNum: this.patchNum,
       basePatchNum: this.basePatchNum,

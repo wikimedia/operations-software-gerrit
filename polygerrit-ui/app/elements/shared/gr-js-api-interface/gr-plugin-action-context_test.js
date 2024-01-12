@@ -1,24 +1,14 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma.js';
-import './gr-js-api-interface.js';
-import {GrPluginActionContext} from './gr-plugin-action-context.js';
-import {addListenerForTest} from '../../../test/test-utils.js';
+import '../../../test/common-test-setup';
+import './gr-js-api-interface';
+import {GrPluginActionContext} from './gr-plugin-action-context';
+import {addListenerForTest, waitEventLoop} from '../../../test/test-utils';
+import {EventType} from '../../../types/events';
+import {assert} from '@open-wc/testing';
 
 suite('gr-plugin-action-context tests', () => {
   let instance;
@@ -39,7 +29,7 @@ suite('gr-plugin-action-context tests', () => {
     sinon.stub(plugin, 'popup').returns(Promise.resolve(popupApiStub));
     const el = document.createElement('span');
     instance.popup(el);
-    await flush();
+    await waitEventLoop();
     assert.isTrue(popupApiStub._getElement.called);
     instance.hide();
     assert.isTrue(popupApiStub.close.called);
@@ -80,9 +70,9 @@ suite('gr-plugin-action-context tests', () => {
       document.body.appendChild(button);
     });
 
-    test('click', () => {
-      MockInteractions.tap(button);
-      flush();
+    test('click', async () => {
+      button.click();
+      await waitEventLoop();
       assert.isTrue(clickStub.called);
       assert.equal(button.textContent, 'foo');
     });
@@ -135,9 +125,9 @@ suite('gr-plugin-action-context tests', () => {
       send: sendStub,
     });
     const errorStub = sinon.stub();
-    addListenerForTest(document, 'show-alert', errorStub);
+    addListenerForTest(document, EventType.SHOW_ALERT, errorStub);
     instance.call();
-    await flush();
+    await waitEventLoop();
     assert.isTrue(errorStub.calledOnce);
     assert.equal(errorStub.args[0][0].detail.message,
         'Plugin network error: Error: boom');

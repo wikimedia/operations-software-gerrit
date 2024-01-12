@@ -1,23 +1,11 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import {Subject} from 'rxjs';
 import {ChangeStatus} from '../../constants/constants';
-import '../../test/common-test-setup-karma';
+import '../../test/common-test-setup';
 import {
   createChange,
   createChangeMessageInfo,
@@ -32,15 +20,18 @@ import {
 } from '../../test/test-utils';
 import {
   CommitId,
-  EditPatchSetNum,
+  EDIT,
   NumericChangeId,
+  PARENT,
   PatchSetNum,
+  PatchSetNumber,
 } from '../../types/common';
 import {ParsedChangeInfo} from '../../types/types';
 import {getAppContext} from '../../services/app-context';
 import {GerritView} from '../../services/router/router-model';
 import {ChangeState, LoadingStatus, updateChangeWithEdit} from './change-model';
 import {ChangeModel} from './change-model';
+import {assert} from '@open-wc/testing';
 
 suite('updateChangeWithEdit() tests', () => {
   test('undefined change', async () => {
@@ -58,7 +49,7 @@ suite('updateChangeWithEdit() tests', () => {
     change = updateChangeWithEdit(change, edit);
     const editRev = change?.revisions[`${edit.commit.commit}`];
     assert.isDefined(editRev);
-    assert.equal(editRev?._number, EditPatchSetNum);
+    assert.equal(editRev?._number, EDIT);
     assert.equal(editRev?.basePatchNum, edit.base_patch_set_number);
     assert.equal(change?.current_revision, edit.commit.commit);
   });
@@ -73,7 +64,7 @@ suite('updateChangeWithEdit() tests', () => {
   });
 });
 
-suite('change service tests', () => {
+suite('change model tests', () => {
   let changeModel: ChangeModel;
   let knownChange: ParsedChangeInfo;
   const testCompleted = new Subject<void>();
@@ -100,12 +91,12 @@ suite('change service tests', () => {
         sha1: {
           ...createRevision(1),
           description: 'patch 1',
-          _number: 1 as PatchSetNum,
+          _number: 1 as PatchSetNumber,
         },
         sha2: {
           ...createRevision(2),
           description: 'patch 2',
-          _number: 2 as PatchSetNum,
+          _number: 2 as PatchSetNumber,
         },
       },
       status: ChangeStatus.NEW,
@@ -252,7 +243,7 @@ suite('change service tests', () => {
         sha3: {
           ...createRevision(3),
           description: 'patch 3',
-          _number: 3 as PatchSetNum,
+          _number: 3 as PatchSetNumber,
         },
       },
     };
@@ -288,5 +279,30 @@ suite('change service tests', () => {
       ...createChangeMessageInfo(),
       message: 'blah blah',
     });
+  });
+
+  // At some point we had forgotten the `select()` wrapper for this selector.
+  // And the missing `replay` led to a bug that was hard to find. That is why
+  // we are testing this explicitly here.
+  test('basePatchNum$ selector', async () => {
+    // Let's first wait for the selector to emit. Then we can test the replay
+    // below.
+    await waitUntilObserved(changeModel.basePatchNum$, x => x === PARENT);
+
+    const spy = sinon.spy();
+    changeModel.basePatchNum$.subscribe(spy);
+
+    // test replay
+    assert.equal(spy.callCount, 1);
+    assert.equal(spy.lastCall.firstArg, PARENT);
+
+    // test update
+    changeModel.routerModel.updateState({basePatchNum: 1 as PatchSetNumber});
+    assert.equal(spy.callCount, 2);
+    assert.equal(spy.lastCall.firstArg, 1 as PatchSetNumber);
+
+    // test distinctUntilChanged
+    changeModel.updateStateChange(createParsedChange());
+    assert.equal(spy.callCount, 2);
   });
 });

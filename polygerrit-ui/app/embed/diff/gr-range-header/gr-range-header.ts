@@ -1,22 +1,11 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
+import '../../../elements/shared/gr-icon/gr-icon';
 import {LitElement, css, html} from 'lit';
-import {customElement, property} from 'lit/decorators';
-import '@polymer/iron-icon/iron-icon';
+import {customElement, property} from 'lit/decorators.js';
 
 /**
  * Represents a header (label) for a code chunk whenever showing
@@ -28,6 +17,9 @@ import '@polymer/iron-icon/iron-icon';
 export class GrRangeHeader extends LitElement {
   @property({type: String})
   icon?: string;
+
+  @property({type: Boolean})
+  filled?: boolean;
 
   static override get styles() {
     return [
@@ -44,8 +36,7 @@ export class GrRangeHeader extends LitElement {
         }
         .icon {
           color: var(--gr-range-header-color);
-          height: var(--line-height-small, 16px);
-          width: var(--line-height-small, 16px);
+          font-size: var(--line-height-small, 16px);
           margin-right: var(--spacing-s);
         }
       `,
@@ -55,7 +46,12 @@ export class GrRangeHeader extends LitElement {
   override render() {
     const icon = this.icon ?? '';
     return html` <div class="row">
-      <iron-icon class="icon" .icon=${icon} aria-hidden="true"></iron-icon>
+      <gr-icon
+        class="icon"
+        icon=${icon}
+        ?filled=${this.filled}
+        aria-hidden="true"
+      ></gr-icon>
       <slot></slot>
     </div>`;
   }

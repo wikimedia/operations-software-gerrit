@@ -3,7 +3,7 @@
  * Copyright 2016 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import '../gr-diff/gr-diff-line';
 import './gr-ranged-comment-layer';
 import {
@@ -14,6 +14,7 @@ import {GrAnnotation} from '../gr-diff-highlight/gr-annotation';
 import {GrDiffLine, GrDiffLineType} from '../gr-diff/gr-diff-line';
 import {Side} from '../../../api/diff';
 import {SinonStub} from 'sinon';
+import {assert} from '@open-wc/testing';
 
 const rangeA: CommentRangeLayer = {
   side: Side.LEFT,
@@ -149,7 +150,7 @@ suite('gr-ranged-comment-layer', () => {
       assert.equal(lastCall.args[2], expectedLength);
       assert.equal(
         lastCall.args[3],
-        'style-scope gr-diff range rangeHighlight generated_a'
+        'gr-diff range rangeHighlight generated_a'
       );
     });
 
@@ -169,7 +170,7 @@ suite('gr-ranged-comment-layer', () => {
       assert.equal(lastCall.args[2], expectedLength);
       assert.equal(
         lastCall.args[3],
-        'style-scope gr-diff range rangeHighlight generated_a'
+        'gr-diff range rangeHighlight generated_a'
       );
     });
 
@@ -200,7 +201,7 @@ suite('gr-ranged-comment-layer', () => {
       assert.equal(lastCall.args[2], expectedLength);
       assert.equal(
         lastCall.args[3],
-        'style-scope gr-diff range rangeHighlight generated_b'
+        'gr-diff range rangeHighlight generated_b'
       );
     });
 
@@ -214,7 +215,7 @@ suite('gr-ranged-comment-layer', () => {
       assert.isTrue(annotateElementStub.called);
       assert.equal(
         annotateElementStub.lastCall.args[3],
-        'style-scope gr-diff range generated_right-60-1-71-1'
+        'gr-diff range generated_right-60-1-71-1'
       );
     });
 

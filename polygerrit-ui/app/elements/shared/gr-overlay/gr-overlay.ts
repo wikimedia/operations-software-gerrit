@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '../../../styles/shared-styles';
 import {PolymerElement} from '@polymer/polymer/polymer-element';
@@ -23,6 +12,7 @@ import {IronOverlayBehavior} from '@polymer/iron-overlay-behavior/iron-overlay-b
 import {findActiveElement} from '../../../utils/dom-util';
 import {fireEvent} from '../../../utils/event-util';
 import {getHovercardContainer} from '../../../mixins/hovercard-mixin/hovercard-mixin';
+import {getFocusableElements} from '../../../utils/focusable';
 
 const AWAIT_MAX_ITERS = 10;
 const AWAIT_STEP = 5;
@@ -45,6 +35,7 @@ const base = IronOverlayMixin(
  * @attr {Boolean} always-on-top - inherited from IronOverlay
  * @attr {Boolean} no-cancel-on-esc-key - inherited from IronOverlay
  * @attr {Boolean} no-cancel-on-outside-click - inherited from IronOverlay
+ * @attr {String} scroll-action - inherited from IronOverlay
  */
 @customElement('gr-overlay')
 export class GrOverlay extends base {
@@ -78,18 +69,7 @@ export class GrOverlay extends base {
     if (this.focusableNodes) {
       return this.focusableNodes;
     }
-    // TODO(TS): to avoid ts error for:
-    // Only public and protected methods of the base class are accessible
-    // via the 'super' keyword.
-    // we call IronFocsablesHelper directly here
-    // Currently IronFocsablesHelper is not exported from iron-focusables-helper
-    // as it should so we use Polymer.IronFocsablesHelper here instead
-    // (can not use the IronFocsablesHelperClass
-    // in case different behavior due to singleton)
-    // once the type contains the exported member,
-    // should replace with:
-    // import {IronFocusablesHelper} from '@polymer/iron-overlay-behavior/iron-focusables-helper';
-    return window.Polymer.IronFocusablesHelper.getTabbableNodes(this);
+    return Array.from(getFocusableElements(this));
   }
 
   constructor() {

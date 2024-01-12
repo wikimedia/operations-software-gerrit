@@ -1,26 +1,13 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import {define, provide, resolve, DIPolymerElement} from './dependency';
+import {define, provide, resolve} from './dependency';
 import {html, LitElement} from 'lit';
-import {customElement as polyCustomElement} from '@polymer/decorators';
-import {html as polyHtml} from '@polymer/polymer/lib/utils/html-tag';
-import {customElement, property, query} from 'lit/decorators';
-import '../test/common-test-setup-karma.js';
+import {customElement, property, query} from 'lit/decorators.js';
+import '../test/common-test-setup';
+import {fixture, assert} from '@open-wc/testing';
 
 interface FooService {
   value: string;
@@ -67,32 +54,10 @@ export class LitFooProviderElement extends LitElement {
   }
 }
 
-@polyCustomElement('polymer-foo-provider')
-export class PolymerFooProviderElement extends DIPolymerElement {
-  bar() {
-    return this.$.bar as BarProviderElement;
-  }
-
-  override connectedCallback() {
-    provide(this, fooToken, () => new FooImpl('foo'));
-    super.connectedCallback();
-  }
-
-  static get template() {
-    return polyHtml`<bar-provider id="bar"></bar-provider>`;
-  }
-}
-
 @customElement('bar-provider')
 export class BarProviderElement extends LitElement {
   @query('leaf-lit-element')
   litChild?: LeafLitElement;
-
-  @query('leaf-polymer-element')
-  polymerChild?: LeafPolymerElement;
-
-  @property({type: Boolean})
-  public showLit = true;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -106,11 +71,7 @@ export class BarProviderElement extends LitElement {
   }
 
   override render() {
-    if (this.showLit) {
-      return html`<leaf-lit-element></leaf-lit-element>`;
-    } else {
-      return html`<leaf-polymer-element></leaf-polymer-element>`;
-    }
+    return html`<leaf-lit-element></leaf-lit-element>`;
   }
 }
 
@@ -128,39 +89,18 @@ export class LeafLitElement extends LitElement {
   }
 }
 
-@polyCustomElement('leaf-polymer-element')
-export class LeafPolymerElement extends DIPolymerElement {
-  readonly barRef = resolve(this, barToken);
-
-  override connectedCallback() {
-    super.connectedCallback();
-    assert.isDefined(this.barRef());
-  }
-
-  static get template() {
-    return polyHtml`Hello`;
-  }
-}
-
 suite('Dependency', () => {
-  test('It instantiates', async () => {
-    const fixture = fixtureFromElement('lit-foo-provider');
-    const element = fixture.instantiate();
-    await element.updateComplete;
+  let element: LitFooProviderElement;
+
+  setup(async () => {
+    element = await fixture(html`<lit-foo-provider></lit-foo-provider>`);
+  });
+
+  test('It instantiates', () => {
     assert.isDefined(element.bar?.litChild?.barRef());
   });
 
-  test('It instantiates in polymer', async () => {
-    const fixture = fixtureFromElement('polymer-foo-provider');
-    const element = fixture.instantiate();
-    await element.bar().updateComplete;
-    assert.isDefined(element.bar().litChild?.barRef());
-  });
-
   test('It works by connecting and reconnecting', async () => {
-    const fixture = fixtureFromElement('lit-foo-provider');
-    const element = fixture.instantiate();
-    await element.updateComplete;
     assert.isDefined(element.bar?.litChild?.barRef());
 
     element.showBarProvider = false;
@@ -171,29 +111,12 @@ suite('Dependency', () => {
     await element.updateComplete;
     assert.isDefined(element.bar?.litChild?.barRef());
   });
-
-  test('It works by connecting and reconnecting Polymer', async () => {
-    const fixture = fixtureFromElement('lit-foo-provider');
-    const element = fixture.instantiate();
-    await element.updateComplete;
-
-    const beta = element.bar;
-    assert.isDefined(beta);
-    assert.isNotNull(beta);
-    assert.isDefined(element.bar?.litChild?.barRef());
-
-    beta!.showLit = false;
-    await element.updateComplete;
-    assert.isDefined(element.bar?.polymerChild?.barRef());
-  });
 });
 
 declare global {
   interface HTMLElementTagNameMap {
     'lit-foo-provider': LitFooProviderElement;
-    'polymer-foo-provider': PolymerFooProviderElement;
     'bar-provider': BarProviderElement;
     'leaf-lit-element': LeafLitElement;
-    'leaf-polymer-element': LeafPolymerElement;
   }
 }

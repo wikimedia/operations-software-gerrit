@@ -1,38 +1,31 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-error-manager';
 import {
   constructServerErrorMsg,
   GrErrorManager,
   __testOnly_ErrorType,
 } from './gr-error-manager';
-import {stubAuth, stubReporting, stubRestApi} from '../../../test/test-utils';
+import {
+  stubAuth,
+  stubReporting,
+  stubRestApi,
+  waitEventLoop,
+} from '../../../test/test-utils';
 import {AppContext, getAppContext} from '../../../services/app-context';
 import {
   createAccountDetailWithId,
   createPreferences,
 } from '../../../test/test-data-generators';
-import {tap} from '@polymer/iron-test-helpers/mock-interactions';
 import {AccountId} from '../../../types/common';
 import {waitUntil} from '../../../test/test-utils';
-import {fixture} from '@open-wc/testing-helpers';
+import {fixture, assert} from '@open-wc/testing';
 import {html} from 'lit';
+import {EventType} from '../../../types/events';
 
 suite('gr-error-manager tests', () => {
   let element: GrErrorManager;
@@ -68,6 +61,34 @@ suite('gr-error-manager tests', () => {
       });
     });
 
+    test('renders', () => {
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `
+          <gr-overlay
+            aria-hidden="true"
+            id="errorOverlay"
+            style="outline: none; display: none;"
+            tabindex="-1"
+            with-backdrop=""
+          >
+            <gr-error-dialog id="errorDialog"> </gr-error-dialog>
+          </gr-overlay>
+          <gr-overlay
+            always-on-top=""
+            aria-hidden="true"
+            id="noInteractionOverlay"
+            no-cancel-on-esc-key=""
+            no-cancel-on-outside-click=""
+            style="outline: none; display: none;"
+            tabindex="-1"
+            with-backdrop=""
+          >
+          </gr-overlay>
+        `
+      );
+    });
+
     test('does not show auth error on 403 by default', async () => {
       const showAuthErrorStub = sinon.stub(element, 'showAuthErrorAlert');
       const responseText = Promise.resolve('server says no.');
@@ -85,7 +106,7 @@ suite('gr-error-manager tests', () => {
           bubbles: true,
         })
       );
-      await flush();
+      await waitEventLoop();
       assert.isFalse(showAuthErrorStub.calledOnce);
     });
 
@@ -107,7 +128,7 @@ suite('gr-error-manager tests', () => {
           bubbles: true,
         })
       );
-      await flush();
+      await waitEventLoop();
       assert.isTrue(showAuthErrorStub.calledOnce);
     });
 
@@ -130,7 +151,7 @@ suite('gr-error-manager tests', () => {
           bubbles: true,
         })
       );
-      await flush();
+      await waitEventLoop();
       assert.isTrue(getLoggedInStub.calledOnce);
     });
 
@@ -162,7 +183,7 @@ suite('gr-error-manager tests', () => {
       );
 
       assert.isTrue(textSpy.called);
-      await flush();
+      await waitEventLoop();
       assert.isTrue(showErrorSpy.calledOnce);
       assert.isTrue(showErrorSpy.lastCall.calledWithExactly('Error 500: ZOMG'));
     });
@@ -221,7 +242,7 @@ suite('gr-error-manager tests', () => {
           bubbles: true,
         })
       );
-      await flush();
+      await waitEventLoop();
       assert.equal(element.errorDialog.text, 'Error 500: 500\nTrace Id: xxxx');
     });
 
@@ -239,7 +260,7 @@ suite('gr-error-manager tests', () => {
       );
 
       assert.isTrue(textSpy.called);
-      await flush();
+      await waitEventLoop();
       assert.isFalse(showAlertStub.called);
     });
 
@@ -252,7 +273,7 @@ suite('gr-error-manager tests', () => {
           bubbles: true,
         })
       );
-      await flush();
+      await waitEventLoop();
       assert.isTrue(showAlertStub.calledOnce);
       assert.isTrue(
         showAlertStub.lastCall.calledWithExactly('Server unavailable')
@@ -315,15 +336,15 @@ suite('gr-error-manager tests', () => {
         })
       );
       assert.equal(fetchStub.callCount, 1);
-      await flush();
+      await waitEventLoop();
 
-      // here needs two flush as there are two chanined
-      // promises on server-error handler and flush only flushes one
+      // here needs two waitEventLoop() as there are two chained promises on
+      // server-error handler and waitEventLoop() only flushes one
       assert.equal(fetchStub.callCount, 2);
-      await flush();
+      await waitEventLoop();
       // Sometime overlay opens with delay, waiting while open is complete
       clock.tick(1000);
-      await flush();
+      await waitEventLoop();
       // auth-error fired
       assert.isTrue(toastSpy.called);
 
@@ -345,7 +366,7 @@ suite('gr-error-manager tests', () => {
         ''
       );
       assert.isFalse(windowOpen.called);
-      tap(toast.shadowRoot.querySelector('gr-button.action'));
+      toast.shadowRoot.querySelector('gr-button.action')!.click();
       assert.isTrue(windowOpen.called);
 
       // @see Issue 5822: noopener breaks closeAfterLogin
@@ -359,7 +380,7 @@ suite('gr-error-manager tests', () => {
       clock.tick(1000);
       element.knownAccountId = 5 as AccountId;
       element.checkSignedIn();
-      await flush();
+      await waitEventLoop();
 
       assert.isTrue(refreshStub.called);
       assert.isTrue(hideToastSpy.called);
@@ -382,13 +403,13 @@ suite('gr-error-manager tests', () => {
 
       // fake an alert
       element.dispatchEvent(
-        new CustomEvent('show-alert', {
+        new CustomEvent(EventType.SHOW_ALERT, {
           detail: {message: 'test reload', action: 'reload'},
           composed: true,
           bubbles: true,
         })
       );
-      await flush();
+      await waitEventLoop();
       let toast = toastSpy.lastCall.returnValue;
       assert.isOk(toast);
       assert.include(toast.shadowRoot.textContent, 'test reload');
@@ -409,15 +430,15 @@ suite('gr-error-manager tests', () => {
           bubbles: true,
         })
       );
-      await flush();
-      await flush();
-      // here needs two flush as there are two chained
-      // promises on server-error handler and flush only flushes one
+      await waitEventLoop();
+      await waitEventLoop();
+      // here needs two waitEventLoop() as there are two chained promises on
+      // server-error handler and waitEventLoop() only flushes one
       assert.equal(fetchStub.callCount, 2);
-      await flush();
+      await waitEventLoop();
       // Sometime overlay opens with delay, waiting while open is complete
       clock.tick(1000);
-      await flush();
+      await waitEventLoop();
       // toast
       toast = toastSpy.lastCall.returnValue;
       assert.include(toast.shadowRoot.textContent, 'Credentials expired.');
@@ -430,26 +451,26 @@ suite('gr-error-manager tests', () => {
 
       // fake an alert
       element.dispatchEvent(
-        new CustomEvent('show-alert', {
+        new CustomEvent(EventType.SHOW_ALERT, {
           detail: {message: 'test reload', action: 'reload'},
           composed: true,
           bubbles: true,
         })
       );
-      await flush();
+      await waitEventLoop();
       let toast = toastSpy.lastCall.returnValue;
       assert.isOk(toast);
       assert.include(toast.shadowRoot.textContent, 'test reload');
 
       // new alert
       element.dispatchEvent(
-        new CustomEvent('show-alert', {
+        new CustomEvent(EventType.SHOW_ALERT, {
           detail: {message: 'second-test', action: 'reload'},
           composed: true,
           bubbles: true,
         })
       );
-      await flush();
+      await waitEventLoop();
       toast = toastSpy.lastCall.returnValue;
       assert.include(toast.shadowRoot.textContent, 'second-test');
     });
@@ -476,12 +497,12 @@ suite('gr-error-manager tests', () => {
         })
       );
       assert.equal(fetchStub.callCount, 1);
-      await flush();
+      await waitEventLoop();
 
-      // here needs two flush as there are two chained
-      // promises on server-error handler and flush only flushes one
+      // here needs two waitEventLoop() as there are two chained promises on
+      // server-error handler and waitEventLoop() only flushes one
       assert.equal(fetchStub.callCount, 2);
-      await flush();
+      await waitEventLoop();
       await waitUntil(() => toastSpy.calledOnce);
       let toast = toastSpy.lastCall.returnValue;
       assert.include(toast.shadowRoot.textContent, 'Credentials expired.');
@@ -489,7 +510,7 @@ suite('gr-error-manager tests', () => {
 
       // fake an alert
       element.dispatchEvent(
-        new CustomEvent('show-alert', {
+        new CustomEvent(EventType.SHOW_ALERT, {
           detail: {
             message: 'test-alert',
             action: 'reload',
@@ -499,7 +520,7 @@ suite('gr-error-manager tests', () => {
         })
       );
 
-      await flush();
+      await waitEventLoop();
       assert.isTrue(toastSpy.calledOnce);
       toast = toastSpy.lastCall.returnValue;
       assert.isOk(toast);
@@ -510,7 +531,7 @@ suite('gr-error-manager tests', () => {
       const alertObj = {message: 'foo'};
       const showAlertStub = sinon.stub(element, '_showAlert');
       element.dispatchEvent(
-        new CustomEvent('show-alert', {
+        new CustomEvent(EventType.SHOW_ALERT, {
           detail: alertObj,
           composed: true,
           bubbles: true,
@@ -558,7 +579,7 @@ suite('gr-error-manager tests', () => {
       element.refreshingCredentials = true;
       element.checkSignedIn();
 
-      await flush();
+      await waitEventLoop();
       assert.isFalse(requestCheckStub.called);
       assert.isTrue(handleRefreshStub.called);
       assert.isFalse(reloadStub.called);
@@ -584,7 +605,7 @@ suite('gr-error-manager tests', () => {
           bubbles: true,
         })
       );
-      await flush();
+      await waitEventLoop();
 
       assert.isTrue(openStub.called);
       assert.isTrue(reportStub.called);
@@ -596,7 +617,7 @@ suite('gr-error-manager tests', () => {
           bubbles: true,
         })
       );
-      await flush();
+      await waitEventLoop();
 
       assert.isTrue(closeStub.called);
     });
@@ -617,7 +638,7 @@ suite('gr-error-manager tests', () => {
       element.refreshingCredentials = true;
       element.checkSignedIn();
 
-      await flush();
+      await waitEventLoop();
 
       assert.isFalse(requestCheckStub.called);
       assert.isFalse(handleRefreshStub.called);
@@ -653,7 +674,7 @@ suite('gr-error-manager tests', () => {
       element.refreshingCredentials = true;
       element.checkSignedIn();
 
-      await flush();
+      await waitEventLoop();
       assert.isTrue(requestCheckStub.called);
       assert.isFalse(handleRefreshStub.called);
       assert.isFalse(reloadStub.called);

@@ -1,22 +1,10 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
-import {fixture} from '@open-wc/testing-helpers';
+import '../../../test/common-test-setup';
+import {fixture, assert} from '@open-wc/testing';
 import {html} from 'lit';
 import {getAppContext} from '../../../services/app-context';
 import './gr-vote-chip';
@@ -35,26 +23,44 @@ suite('gr-vote-chip tests', () => {
   });
 
   suite('with QuickLabelInfo', () => {
-    let element: GrVoteChip;
-
-    setup(async () => {
+    test('renders positive', async () => {
       const labelInfo = {
         ...createQuickLabelInfo(),
         approved: createAccountWithIdNameAndEmail(),
       };
-      element = await fixture<GrVoteChip>(
+      const element = await fixture<GrVoteChip>(
         html`<gr-vote-chip .label=${labelInfo}></gr-vote-chip>`
+      );
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ ` <gr-tooltip-content
+          class="container"
+          has-tooltip=""
+          title=""
+        >
+          <div class="max vote-chip">&#x2713;</div>
+        </gr-tooltip-content>`
       );
     });
 
-    test('renders', () => {
-      expect(element).shadowDom.to.equal(/* HTML */ ` <gr-tooltip-content
-        class="container"
-        has-tooltip=""
-        title=""
-      >
-        <div class="max vote-chip">👍</div>
-      </gr-tooltip-content>`);
+    test('renders negative', async () => {
+      const labelInfo = {
+        ...createQuickLabelInfo(),
+        rejected: createAccountWithIdNameAndEmail(),
+      };
+      const element = await fixture<GrVoteChip>(
+        html`<gr-vote-chip .label=${labelInfo}></gr-vote-chip>`
+      );
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ ` <gr-tooltip-content
+          class="container"
+          has-tooltip=""
+          title=""
+        >
+          <div class="min vote-chip">&#x2717;</div>
+        </gr-tooltip-content>`
+      );
     });
   });
 
@@ -73,13 +79,16 @@ suite('gr-vote-chip tests', () => {
     });
 
     test('renders', () => {
-      expect(element).shadowDom.to.equal(/* HTML */ ` <gr-tooltip-content
-        class="container"
-        has-tooltip=""
-        title=""
-      >
-        <div class="positive vote-chip">+2</div>
-      </gr-tooltip-content>`);
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ ` <gr-tooltip-content
+          class="container"
+          has-tooltip=""
+          title=""
+        >
+          <div class="positive vote-chip">+2</div>
+        </gr-tooltip-content>`
+      );
     });
 
     test('renders negative vote', async () => {
@@ -90,13 +99,16 @@ suite('gr-vote-chip tests', () => {
       element = await fixture<GrVoteChip>(
         html`<gr-vote-chip .label=${labelInfo} .vote=${vote}></gr-vote-chip>`
       );
-      expect(element).shadowDom.to.equal(/* HTML */ ` <gr-tooltip-content
-        class="container"
-        has-tooltip=""
-        title="Wrong Style or Formatting"
-      >
-        <div class="min vote-chip">-1</div>
-      </gr-tooltip-content>`);
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ ` <gr-tooltip-content
+          class="container"
+          has-tooltip=""
+          title="Wrong Style or Formatting"
+        >
+          <div class="min vote-chip">-1</div>
+        </gr-tooltip-content>`
+      );
     });
 
     test('renders for more than 1 vote', async () => {
@@ -107,14 +119,62 @@ suite('gr-vote-chip tests', () => {
           more
         ></gr-vote-chip>`
       );
-      expect(element).shadowDom.to.equal(/* HTML */ ` <gr-tooltip-content
-        class="container more"
-        has-tooltip=""
-        title=""
-      >
-        <div class="positive vote-chip">+2</div>
-        <div class="chip-angle positive">+2</div>
-      </gr-tooltip-content>`);
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ ` <gr-tooltip-content
+          class="container more"
+          has-tooltip=""
+          title=""
+        >
+          <div class="positive vote-chip">+2</div>
+          <div class="chip-angle positive">+2</div>
+        </gr-tooltip-content>`
+      );
+    });
+
+    test('renders with tooltip who voted', async () => {
+      vote.name = 'Tester';
+      const labelInfo = {
+        all: [{value: 2}, {value: 1}],
+        values: {'+2': 'Great'},
+      };
+      element = await fixture<GrVoteChip>(
+        html`<gr-vote-chip
+          .label=${labelInfo}
+          .vote=${vote}
+          tooltip-with-who-voted
+        ></gr-vote-chip>`
+      );
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ ` <gr-tooltip-content
+          class="container"
+          has-tooltip=""
+          title="Tester: Great"
+        >
+          <div class="max vote-chip">+2</div>
+        </gr-tooltip-content>`
+      );
+    });
+
+    test('renders with display value instead of latest vote', async () => {
+      element = await fixture<GrVoteChip>(
+        html`<gr-vote-chip
+          .displayValue=${-1}
+          .label=${labelInfo}
+          .vote=${vote}
+        ></gr-vote-chip>`
+      );
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ ` <gr-tooltip-content
+          class="container"
+          has-tooltip=""
+          title=""
+        >
+          <div class="min vote-chip">-1</div>
+        </gr-tooltip-content>`
+      );
     });
   });
 });

@@ -1,34 +1,20 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-ssh-editor';
 import {
   mockPromise,
   query,
-  queryAll,
   stubRestApi,
+  waitEventLoop,
 } from '../../../test/test-utils';
 import {GrSshEditor} from './gr-ssh-editor';
 import {SshKeyInfo} from '../../../types/common';
 import {GrButton} from '../../shared/gr-button/gr-button';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
-
-const basicFixture = fixtureFromElement('gr-ssh-editor');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-ssh-editor tests', () => {
   let element: GrSshEditor;
@@ -56,22 +42,157 @@ suite('gr-ssh-editor tests', () => {
 
     stubRestApi('getAccountSSHKeys').returns(Promise.resolve(keys));
 
-    element = basicFixture.instantiate();
+    element = await fixture(html`<gr-ssh-editor></gr-ssh-editor>`);
 
     await element.loadData();
-    await flush();
+    await waitEventLoop();
   });
 
   test('renders', () => {
-    const rows = queryAll<HTMLTableElement>(element, 'tbody tr');
-
-    assert.equal(rows.length, 2);
-
-    let cells = queryAll<HTMLTableElement>(rows[0], 'td');
-    assert.equal(cells[0].textContent, keys[0].comment);
-
-    cells = queryAll<HTMLTableElement>(rows[1], 'td');
-    assert.equal(cells[0].textContent, keys[1].comment);
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="gr-form-styles">
+          <fieldset id="existing">
+            <table>
+              <thead>
+                <tr>
+                  <th class="commentColumn">Comment</th>
+                  <th class="statusHeader">Status</th>
+                  <th class="keyHeader">Public key</th>
+                  <th></th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="commentColumn">comment-one@machine-one</td>
+                  <td>Valid</td>
+                  <td>
+                    <gr-button
+                      aria-disabled="false"
+                      data-index="0"
+                      link=""
+                      role="button"
+                      tabindex="0"
+                    >
+                      Click to View
+                    </gr-button>
+                  </td>
+                  <td>
+                    <gr-copy-clipboard hastooltip="" hideinput="">
+                    </gr-copy-clipboard>
+                  </td>
+                  <td>
+                    <gr-button
+                      aria-disabled="false"
+                      data-index="0"
+                      link=""
+                      role="button"
+                      tabindex="0"
+                    >
+                      Delete
+                    </gr-button>
+                  </td>
+                </tr>
+                <tr>
+                  <td class="commentColumn">comment-two@machine-two</td>
+                  <td>Valid</td>
+                  <td>
+                    <gr-button
+                      aria-disabled="false"
+                      data-index="1"
+                      link=""
+                      role="button"
+                      tabindex="0"
+                    >
+                      Click to View
+                    </gr-button>
+                  </td>
+                  <td>
+                    <gr-copy-clipboard hastooltip="" hideinput="">
+                    </gr-copy-clipboard>
+                  </td>
+                  <td>
+                    <gr-button
+                      aria-disabled="false"
+                      data-index="1"
+                      link=""
+                      role="button"
+                      tabindex="0"
+                    >
+                      Delete
+                    </gr-button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <gr-overlay
+              aria-hidden="true"
+              id="viewKeyOverlay"
+              style="outline: none; display: none;"
+              tabindex="-1"
+              with-backdrop=""
+            >
+              <fieldset>
+                <section>
+                  <span class="title"> Algorithm </span>
+                  <span class="value"> </span>
+                </section>
+                <section>
+                  <span class="title"> Public key </span>
+                  <span class="publicKey value"> </span>
+                </section>
+                <section>
+                  <span class="title"> Comment </span>
+                  <span class="value"> </span>
+                </section>
+              </fieldset>
+              <gr-button
+                aria-disabled="false"
+                class="closeButton"
+                role="button"
+                tabindex="0"
+              >
+                Close
+              </gr-button>
+            </gr-overlay>
+            <gr-button
+              aria-disabled="true"
+              disabled=""
+              role="button"
+              tabindex="-1"
+            >
+              Save changes
+            </gr-button>
+          </fieldset>
+          <fieldset>
+            <section>
+              <span class="title"> New SSH key </span>
+              <span class="value">
+                <iron-autogrow-textarea
+                  aria-disabled="false"
+                  autocomplete="on"
+                  id="newKey"
+                  placeholder="New SSH Key"
+                >
+                </iron-autogrow-textarea>
+              </span>
+            </section>
+            <gr-button
+              aria-disabled="true"
+              disabled=""
+              id="addButton"
+              link=""
+              role="button"
+              tabindex="-1"
+            >
+              Add new SSH key
+            </gr-button>
+          </fieldset>
+        </div>
+      `
+    );
   });
 
   test('remove key', async () => {
@@ -90,7 +211,7 @@ suite('gr-ssh-editor tests', () => {
       'tbody tr:last-of-type td:nth-child(5) gr-button'
     );
 
-    MockInteractions.tap(button!);
+    button!.click();
 
     assert.equal(element.keys.length, 1);
     assert.equal(element.keysToRemove.length, 1);
@@ -114,7 +235,7 @@ suite('gr-ssh-editor tests', () => {
       'tbody tr:last-of-type td:nth-child(3) gr-button'
     );
 
-    MockInteractions.tap(button!);
+    button!.click();
 
     assert.equal(element.keyToView, keys[1]);
     assert.isTrue(openSpy.called);

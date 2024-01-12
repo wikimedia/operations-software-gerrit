@@ -45,7 +45,6 @@ import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.IndexConfig;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.Schema;
@@ -269,19 +268,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     AccountInfo user2 = newAccount("user");
     requestContext.setContext(newRequestContext(Account.id(user2._accountId)));
 
-    if (getSchemaVersion() < 5) {
-      assertMissingField(AccountField.PREFERRED_EMAIL);
-      assertFailingQuery("email:foo", "'email' operator is not supported by account index version");
-      return;
-    }
-
-    // This at least needs the PREFERRED_EMAIL field which is available from schema version 5.
-    if (getSchemaVersion() >= 5) {
-      assertQuery(preferredEmail, user1);
-    } else {
-      assertQuery(preferredEmail);
-    }
-
+    assertQuery(preferredEmail, user1);
     assertQuery(secondaryEmail);
 
     assertQuery("email:" + preferredEmail, user1);
@@ -368,14 +355,6 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     // by self/me works with any index version
     assertQuery("self", user3);
     assertQuery("me", user3);
-
-    if (getSchemaVersion() < 8) {
-      assertMissingField(AccountField.NAME_PART_NO_SECONDARY_EMAIL);
-
-      // prefix queries only work if the NAME_PART_NO_SECONDARY_EMAIL field is available
-      assertQuery("john");
-      return;
-    }
 
     assertQuery("John", user1);
     assertQuery("john", user1);
@@ -465,6 +444,12 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
 
     List<AccountInfo> result = assertQuery(domain, user1, user2, user3);
     assertQuery(newQuery(domain).withStart(1), result.subList(1, 3));
+  }
+
+  @Test
+  public void withStartCannotBeLessThanZero() throws Exception {
+    assertFailingQuery(
+        newQuery("self").withStart(-1), "'start' parameter cannot be less than zero");
   }
 
   @Test
@@ -646,22 +631,15 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
             .getRaw(
                 Account.id(userInfo._accountId),
                 QueryOptions.create(
-                    IndexConfig.fromConfig(config).build(),
-                    0,
-                    1,
-                    schema.getStoredFields().keySet()));
+                    IndexConfig.fromConfig(config).build(), 0, 1, schema.getStoredFields()));
 
     assertThat(rawFields).isPresent();
-    if (schema.useLegacyNumericFields()) {
-      assertThat(rawFields.get().getValue(AccountField.ID)).isEqualTo(userInfo._accountId);
-    } else {
-      assertThat(Integer.valueOf(rawFields.get().getValue(AccountField.ID_STR)))
+    if (schema.hasField(AccountField.ID_FIELD_SPEC)) {
+      assertThat(rawFields.get().getValue(AccountField.ID_FIELD_SPEC))
           .isEqualTo(userInfo._accountId);
-    }
-
-    // The field EXTERNAL_ID_STATE is only supported from schema version 6.
-    if (getSchemaVersion() < 6) {
-      return;
+    } else {
+      assertThat(Integer.valueOf(rawFields.get().<String>getValue(AccountField.ID_STR_FIELD_SPEC)))
+          .isEqualTo(userInfo._accountId);
     }
 
     List<AccountExternalIdInfo> externalIdInfos = gApi.accounts().self().getExternalIds();
@@ -671,11 +649,10 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
       assertThat(extId).isPresent();
       blobs.add(new ByteArrayWrapper(extId.get().toByteArray()));
     }
-    assertThat(rawFields.get().getValue(AccountField.EXTERNAL_ID_STATE)).hasSize(blobs.size());
-    assertThat(
-            Streams.stream(rawFields.get().getValue(AccountField.EXTERNAL_ID_STATE))
-                .map(ByteArrayWrapper::new)
-                .collect(toList()))
+    Iterable<byte[]> externalIdStates =
+        rawFields.get().<Iterable<byte[]>>getValue(AccountField.EXTERNAL_ID_STATE_SPEC);
+    assertThat(externalIdStates).hasSize(blobs.size());
+    assertThat(Streams.stream(externalIdStates).map(b -> new ByteArrayWrapper(b)).collect(toList()))
         .containsExactlyElementsIn(blobs);
   }
 
@@ -879,27 +856,13 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     return accounts.stream().map(a -> a._accountId).collect(toList());
   }
 
-  protected void assertMissingField(FieldDef<AccountState, ?> field) {
-    assertWithMessage("schema %s has field %s", getSchemaVersion(), field.getName())
-        .that(getSchema().hasField(field))
-        .isFalse();
-  }
-
-  protected void assertFailingQuery(String query, String expectedMessage) throws Exception {
+  protected void assertFailingQuery(QueryRequest query, String expectedMessage) throws Exception {
     try {
       assertQuery(query);
       fail("expected BadRequestException for query '" + query + "'");
     } catch (BadRequestException e) {
       assertThat(e.getMessage()).isEqualTo(expectedMessage);
     }
-  }
-
-  protected int getSchemaVersion() {
-    return getSchema().getVersion();
-  }
-
-  protected Schema<AccountState> getSchema() {
-    return indexes.getSearchIndex().getSchema();
   }
 
   /** Boiler plate code to check two byte arrays for equality */

@@ -1,23 +1,10 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-change-metadata';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {ChangeRole, GrChangeMetadata} from './gr-change-metadata';
 import {
@@ -48,13 +35,12 @@ import {
   RevisionInfo,
   ParentCommitInfo,
   TopicName,
-  PatchSetNum,
+  RevisionPatchSetNum,
   NumericChangeId,
   LabelValueToDescriptionMap,
   Hashtag,
   CommitInfo,
 } from '../../../types/common';
-import {tap} from '@polymer/iron-test-helpers/mock-interactions';
 import {GrEditableLabel} from '../../shared/gr-editable-label/gr-editable-label';
 import {PluginApi} from '../../../api/plugin';
 import {GrEndpointDecorator} from '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
@@ -62,14 +48,14 @@ import {
   queryAndAssert,
   resetPlugins,
   stubRestApi,
+  waitUntilCalled,
 } from '../../../test/test-utils';
 import {ParsedChangeInfo} from '../../../types/types';
 import {GrLinkedChip} from '../../shared/gr-linked-chip/gr-linked-chip';
 import {GrButton} from '../../shared/gr-button/gr-button';
-import {GrRouter} from '../../core/gr-router/gr-router';
 import {nothing} from 'lit';
-
-const basicFixture = fixtureFromElement('gr-change-metadata');
+import {fixture, html, assert} from '@open-wc/testing';
+import {EventType} from '../../../types/events';
 
 suite('gr-change-metadata tests', () => {
   let element: GrChangeMetadata;
@@ -85,14 +71,16 @@ suite('gr-change-metadata tests', () => {
         },
       })
     );
-    element = basicFixture.instantiate();
+    element = await fixture(html`<gr-change-metadata></gr-change-metadata>`);
     element.change = createParsedChange();
     await element.updateComplete;
   });
 
   test('renders', async () => {
     await element.updateComplete;
-    expect(element).shadowDom.to.equal(/* HTML */ `<div>
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `<div>
       <div class="metadata-header">
         <h3 class="heading-3 metadata-title">Change Info</h3>
         <gr-button
@@ -102,8 +90,8 @@ suite('gr-change-metadata tests', () => {
           tabindex="0"
           aria-disabled="false"
         >
-          Show all <iron-icon icon="gr-icons:expand-more"> </iron-icon>
-          <iron-icon hidden="" icon="gr-icons:expand-less"> </iron-icon>
+          Show all <gr-icon icon="expand_more"></gr-icon>
+          <gr-icon hidden="" icon="expand_less"></gr-icon>
         </gr-button>
       </div>
       <section class="hideDisplay">
@@ -179,11 +167,11 @@ suite('gr-change-metadata tests', () => {
             Repo | Branch
           </span>
           <span class="value">
-            <a href="">
+            <a href="/q/project:test-project">
               test-project
             </a>
             |
-            <a href="">
+            <a href="/q/project:test-project+branch:test-branch+status:open">
               test-branch
             </a>
           </span>
@@ -201,15 +189,16 @@ suite('gr-change-metadata tests', () => {
         <span class="title"> Hashtags </span>
         <span class="value"> </span>
       </section>
-      <div class="oldSeparatedSection">
-      <gr-change-requirements></gr-change-requirements>
+      <div class="separatedSection">
+      <gr-submit-requirements></gr-submit-requirements>
       </div>
       <gr-endpoint-decorator name="change-metadata-item">
         <gr-endpoint-param name="labels"> </gr-endpoint-param>
         <gr-endpoint-param name="change"> </gr-endpoint-param>
         <gr-endpoint-param name="revision"> </gr-endpoint-param>
       </gr-endpoint-decorator>
-    </div>`);
+    </div>`
+    );
   });
 
   test('computeMergedCommitInfo', () => {
@@ -256,19 +245,6 @@ suite('gr-change-metadata tests', () => {
     assert.isNull(element.shadowRoot?.querySelector('.strategy'));
   });
 
-  test('weblinks use GerritNav interface', async () => {
-    const weblinksStub = sinon
-      .stub(GerritNav, '_generateWeblinks')
-      .returns([{name: 'stubb', url: '#s'}]);
-    element.commitInfo = createCommitInfoWithRequiredCommit();
-    element.serverConfig = createServerInfo();
-    await element.updateComplete;
-    const webLinks = element.webLinks!;
-    assert.isTrue(weblinksStub.called);
-    assert.isNotNull(webLinks);
-    assert.equal(element.computeWebLinks().length, 1);
-  });
-
   test('weblinks hidden when no weblinks', async () => {
     element.commitInfo = createCommitInfoWithRequiredCommit();
     element.serverConfig = createServerInfo();
@@ -305,11 +281,6 @@ suite('gr-change-metadata tests', () => {
   });
 
   test('weblinks are visible when other weblinks', async () => {
-    const router = new GrRouter();
-    sinon
-      .stub(GerritNav, '_generateWeblinks')
-      .callsFake(router.generateWeblinks.bind(router));
-
     element.commitInfo = {
       ...createCommitInfoWithRequiredCommit(),
       web_links: [{...createWebLinkInfo(), name: 'test', url: '#'}],
@@ -318,23 +289,9 @@ suite('gr-change-metadata tests', () => {
     const webLinks = element.webLinks!;
     assert.isFalse(webLinks.hasAttribute('hidden'));
     assert.equal(element.computeWebLinks().length, 1);
-    // With two non-gitiles weblinks, there are two returned.
-    element.commitInfo = {
-      ...createCommitInfoWithRequiredCommit(),
-      web_links: [
-        {...createWebLinkInfo(), name: 'test', url: '#'},
-        {...createWebLinkInfo(), name: 'test2', url: '#'},
-      ],
-    };
-    assert.equal(element.computeWebLinks().length, 2);
   });
 
   test('weblinks are visible when gitiles and other weblinks', async () => {
-    const router = new GrRouter();
-    sinon
-      .stub(GerritNav, '_generateWeblinks')
-      .callsFake(router.generateWeblinks.bind(router));
-
     element.commitInfo = {
       ...createCommitInfoWithRequiredCommit(),
       web_links: [
@@ -521,7 +478,7 @@ suite('gr-change-metadata tests', () => {
         'Push certificate is invalid:\n' +
           'No public keys found for key ID E5E20E52'
       );
-      assert.equal(result?.icon, 'gr-icons:close');
+      assert.equal(result?.icon, 'close');
       assert.equal(result?.class, 'invalid');
     });
 
@@ -539,7 +496,7 @@ suite('gr-change-metadata tests', () => {
         result?.message,
         'Push certificate is valid and key is trusted'
       );
-      assert.equal(result?.icon, 'gr-icons:check');
+      assert.equal(result?.icon, 'check');
       assert.equal(result?.class, 'trusted');
     });
 
@@ -552,8 +509,8 @@ suite('gr-change-metadata tests', () => {
         result?.message,
         'This patch set was created without a push certificate'
       );
-      assert.equal(result?.icon, 'gr-icons:help');
-      assert.equal(result?.class, 'help');
+      assert.equal(result?.icon, 'help');
+      assert.equal(result?.class, 'help filled');
     });
 
     test('computePushCertificateValidation returns undefined', () => {
@@ -748,7 +705,7 @@ suite('gr-change-metadata tests', () => {
     await element.updateComplete;
     assert.isFalse(element.showCherryPickOf());
     change.cherry_pick_of_change = 123 as NumericChangeId;
-    change.cherry_pick_of_patch_set = 1 as PatchSetNum;
+    change.cherry_pick_of_patch_set = 1 as RevisionPatchSetNum;
     element.change = change;
     await element.updateComplete;
     assert.isTrue(element.showCherryPickOf());
@@ -784,7 +741,7 @@ suite('gr-change-metadata tests', () => {
       mutable = true;
       element.mutable = mutable;
       assert.isTrue(element.computeTopicReadOnly());
-      change!.actions!.topic!.enabled = true;
+      change.actions!.topic!.enabled = true;
       element.mutable = mutable;
       element.change = change;
       assert.isFalse(element.computeTopicReadOnly());
@@ -796,7 +753,6 @@ suite('gr-change-metadata tests', () => {
     test('topic read only hides delete button', async () => {
       element.account = createAccountDetailWithId();
       element.change = change;
-      sinon.stub(GerritNav, 'getUrlForTopic').returns('/q/topic:test');
       await element.updateComplete;
       const chip = queryAndAssert<GrLinkedChip>(element, 'gr-linked-chip');
       const button = queryAndAssert<GrButton>(chip, 'gr-button');
@@ -807,7 +763,6 @@ suite('gr-change-metadata tests', () => {
       element.account = createAccountDetailWithId();
       change.actions!.topic!.enabled = true;
       element.change = change;
-      sinon.stub(GerritNav, 'getUrlForTopic').returns('/q/topic:test');
       await element.updateComplete;
       const chip = queryAndAssert<GrLinkedChip>(element, 'gr-linked-chip');
       const button = queryAndAssert<GrButton>(chip, 'gr-button');
@@ -847,7 +802,7 @@ suite('gr-change-metadata tests', () => {
       element.mutable = mutable;
       await element.updateComplete;
       assert.isTrue(element.computeHashtagReadOnly());
-      change!.actions!.hashtags!.enabled = true;
+      change.actions!.hashtags!.enabled = true;
       element.change = change;
       element.mutable = mutable;
       await element.updateComplete;
@@ -862,9 +817,6 @@ suite('gr-change-metadata tests', () => {
     test('hashtag read only hides delete button', async () => {
       element.account = createAccountDetailWithId();
       element.change = change;
-      sinon
-        .stub(GerritNav, 'getUrlForHashtag')
-        .returns('/q/hashtag:test+(status:open%20OR%20status:merged)');
       await element.updateComplete;
       assert.isTrue(element.mutable, 'Mutable');
       assert.isFalse(
@@ -880,11 +832,8 @@ suite('gr-change-metadata tests', () => {
     test('hashtag not read only does not hide delete button', async () => {
       await element.updateComplete;
       element.account = createAccountDetailWithId();
-      change!.actions!.hashtags!.enabled = true;
+      change.actions!.hashtags!.enabled = true;
       element.change = change;
-      sinon
-        .stub(GerritNav, 'getUrlForHashtag')
-        .returns('/q/hashtag:test+(status:open%20OR%20status:merged)');
       await element.updateComplete;
       const chip = queryAndAssert<GrLinkedChip>(element, 'gr-linked-chip');
       const button = queryAndAssert<GrButton>(chip, 'gr-button');
@@ -910,20 +859,24 @@ suite('gr-change-metadata tests', () => {
       await element.updateComplete;
     });
 
-    test('changing topic', () => {
+    test('changing topic', async () => {
       const newTopic = 'the new topic' as TopicName;
       const setChangeTopicStub = stubRestApi('setChangeTopic').returns(
         Promise.resolve(newTopic)
       );
+      const alertStub = sinon.stub();
+      element.addEventListener(EventType.SHOW_ALERT, alertStub);
+
       element.handleTopicChanged(new CustomEvent('test', {detail: newTopic}));
-      const topicChangedSpy = sinon.spy();
-      element.addEventListener('topic-changed', topicChangedSpy);
+
       assert.isTrue(
         setChangeTopicStub.calledWith(42 as NumericChangeId, newTopic)
       );
-      return setChangeTopicStub.lastCall.returnValue.then(() => {
-        assert.equal(element.change!.topic, newTopic);
-        assert.isTrue(topicChangedSpy.called);
+      await setChangeTopicStub.lastCall.returnValue;
+      await waitUntilCalled(alertStub, 'alertStub');
+      assert.deepEqual(alertStub.lastCall.args[0].detail, {
+        message: 'Saving topic and reloading ...',
+        showDismiss: true,
       });
     });
 
@@ -932,19 +885,21 @@ suite('gr-change-metadata tests', () => {
       const setChangeTopicStub = stubRestApi('setChangeTopic').returns(
         Promise.resolve(newTopic)
       );
-      sinon.stub(GerritNav, 'getUrlForTopic').returns('/q/topic:the+new+topic');
+      const alertStub = sinon.stub();
+      element.addEventListener(EventType.SHOW_ALERT, alertStub);
       await element.updateComplete;
       const chip = queryAndAssert<GrLinkedChip>(element, 'gr-linked-chip');
-      const remove = queryAndAssert(chip, '#remove');
-      const topicChangedSpy = sinon.spy();
-      element.addEventListener('topic-changed', topicChangedSpy);
-      tap(remove);
+      const remove = queryAndAssert<GrButton>(chip, '#remove');
+
+      remove.click();
+
       assert.isTrue(chip?.disabled);
       assert.isTrue(setChangeTopicStub.calledWith(42 as NumericChangeId));
-      return setChangeTopicStub.lastCall.returnValue.then(() => {
-        assert.isFalse(chip?.disabled);
-        assert.equal(element.change!.topic, '' as TopicName);
-        assert.isTrue(topicChangedSpy.called);
+      await setChangeTopicStub.lastCall.returnValue;
+      await waitUntilCalled(alertStub, 'alertStub');
+      assert.deepEqual(alertStub.lastCall.args[0].detail, {
+        message: 'Removing topic and reloading ...',
+        showDismiss: true,
       });
     });
 
@@ -954,6 +909,8 @@ suite('gr-change-metadata tests', () => {
       const setChangeHashtagStub = stubRestApi('setChangeHashtag').returns(
         Promise.resolve(newHashtag)
       );
+      const alertStub = sinon.stub();
+      element.addEventListener(EventType.SHOW_ALERT, alertStub);
       element.handleHashtagChanged(
         new CustomEvent('test', {detail: 'new hashtag'})
       );
@@ -962,8 +919,11 @@ suite('gr-change-metadata tests', () => {
           add: ['new hashtag' as Hashtag],
         })
       );
-      return setChangeHashtagStub.lastCall.returnValue.then(() => {
-        assert.equal(element.change!.hashtags, newHashtag);
+      await setChangeHashtagStub.lastCall.returnValue;
+      await waitUntilCalled(alertStub, 'alertStub');
+      assert.deepEqual(alertStub.lastCall.args[0].detail, {
+        message: 'Saving hashtag and reloading ...',
+        showDismiss: true,
       });
     });
   });
@@ -990,7 +950,7 @@ suite('gr-change-metadata tests', () => {
   suite('plugin endpoints', () => {
     setup(async () => {
       resetPlugins();
-      element = basicFixture.instantiate();
+      element = await fixture(html`<gr-change-metadata></gr-change-metadata>`);
       element.change = createParsedChange();
       element.revision = createRevision();
       await element.updateComplete;

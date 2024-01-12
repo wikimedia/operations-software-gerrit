@@ -1,25 +1,13 @@
 /**
  * @license
- * Copyright (C) 2015 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2015 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import '../../shared/gr-account-label/gr-account-label';
 import '../../shared/gr-change-star/gr-change-star';
 import '../../shared/gr-change-status/gr-change-status';
 import '../../shared/gr-date-formatter/gr-date-formatter';
-import '../../shared/gr-icons/gr-icons';
+import '../../shared/gr-icon/gr-icon';
 import '../../shared/gr-limited-text/gr-limited-text';
 import '../../shared/gr-tooltip-content/gr-tooltip-content';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
@@ -27,7 +15,7 @@ import '../../plugins/gr-endpoint-param/gr-endpoint-param';
 import '../gr-change-list-column-requirements-summary/gr-change-list-column-requirements-summary';
 import '../gr-change-list-column-requirement/gr-change-list-column-requirement';
 import '../../shared/gr-tooltip-content/gr-tooltip-content';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {getDisplayName} from '../../../utils/display-name-util';
 import {getPluginEndpoints} from '../../shared/gr-js-api-interface/gr-plugin-endpoints';
 import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
@@ -40,23 +28,22 @@ import {
   ChangeInfo,
   ServerInfo,
   AccountInfo,
-  QuickLabelInfo,
   Timestamp,
 } from '../../../types/common';
 import {hasOwnProperty, assertIsDefined} from '../../../utils/common-util';
-import {pluralize} from '../../../utils/string-util';
-import {showNewSubmitRequirements} from '../../../utils/label-util';
 import {changeListStyles} from '../../../styles/gr-change-list-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
-import {LitElement, css, html} from 'lit';
-import {customElement, property, state} from 'lit/decorators';
+import {LitElement, css, html, PropertyValues} from 'lit';
+import {customElement, property, state} from 'lit/decorators.js';
 import {submitRequirementsStyles} from '../../../styles/gr-submit-requirements-styles';
-import {ifDefined} from 'lit/directives/if-defined';
-import {KnownExperimentId} from '../../../services/flags/flags';
-import {WAITING} from '../../../constants/constants';
+import {ifDefined} from 'lit/directives/if-defined.js';
+import {ChangeStatus, ColumnNames, WAITING} from '../../../constants/constants';
 import {bulkActionsModelToken} from '../../../models/bulk-actions/bulk-actions-model';
 import {resolve} from '../../../models/dependency';
 import {subscribe} from '../../lit/subscription-controller';
+import {classMap} from 'lit/directives/class-map.js';
+import {createSearchUrl} from '../../../models/views/search';
+import {createChangeUrl} from '../../../models/views/change';
 
 enum ChangeSize {
   XS = 10,
@@ -84,9 +71,7 @@ declare global {
     'gr-change-list-item': GrChangeListItem;
   }
 }
-/**
- * @attr {Boolean} selected - change list item is selected by cursor
- */
+
 @customElement('gr-change-list-item')
 export class GrChangeListItem extends LitElement {
   /** The logged-in user's account, or null if no user is logged in. */
@@ -110,20 +95,54 @@ export class GrChangeListItem extends LitElement {
   sectionName?: string;
 
   @property({type: Boolean})
-  showStar = false;
-
-  @property({type: Boolean})
   showNumber = false;
+
+  @property({type: String})
+  usp?: string;
+
+  /** Index of the item in the overall list. */
+  @property({type: Number})
+  globalIndex = 0;
+
+  /** Callback to call to request the item to be selected in the list. */
+  @property({type: Function})
+  triggerSelectionCallback?: (globalIndex: number) => void;
+
+  @property({type: Boolean, reflect: true}) selected = false;
+
+  // private but used in tests
+  @property({type: Boolean, reflect: true}) checked = false;
 
   @state() private dynamicCellEndpoints?: string[];
 
+  // Private but used in test.
   reporting: ReportingService = getAppContext().reportingService;
 
-  private readonly flagsService = getAppContext().flagsService;
-
-  @state() private checked = false;
+  // Private but used in test.
+  userModel = getAppContext().userModel;
 
   private readonly getBulkActionsModel = resolve(this, bulkActionsModelToken);
+
+  private readonly getNavigation = resolve(this, navigationToken);
+
+  @state() private isLoggedIn = false;
+
+  constructor() {
+    super();
+    subscribe(
+      this,
+      () => this.getBulkActionsModel().selectedChangeNums$,
+      selectedChangeNums => {
+        if (!this.change) return;
+        this.checked = selectedChangeNums.includes(this.change._number);
+      }
+    );
+    subscribe(
+      this,
+      () => this.userModel.loggedIn$,
+      isLoggedIn => (this.isLoggedIn = isLoggedIn)
+    );
+  }
 
   override connectedCallback() {
     super.connectedCallback();
@@ -134,14 +153,19 @@ export class GrChangeListItem extends LitElement {
           'change-list-item-cell'
         );
       });
-    subscribe(
-      this,
-      this.getBulkActionsModel().selectedChangeNums$,
-      selectedChangeNums => {
-        if (!this.change) return;
-        this.checked = selectedChangeNums.includes(this.change._number);
-      }
-    );
+    this.addEventListener('click', this.onItemClick);
+  }
+
+  override disconnectedCallback() {
+    this.removeEventListener('click', this.onItemClick);
+  }
+
+  override willUpdate(changedProperties: PropertyValues<this>) {
+    // When the cursor selects this item, give it focus so that the item is read
+    // out by screen readers and lets users start tabbing through the item
+    if (this.selected && changedProperties.has('selected')) {
+      this.focus();
+    }
   }
 
   static override get styles() {
@@ -157,11 +181,16 @@ export class GrChangeListItem extends LitElement {
         :host(:focus) {
           outline: none;
         }
+        :host([checked]),
         :host(:hover) {
           background-color: var(--hover-background-color);
         }
         .container {
           position: relative;
+        }
+        .strikethrough {
+          color: var(--deemphasized-text-color);
+          text-decoration: line-through;
         }
         .content {
           overflow: hidden;
@@ -244,22 +273,6 @@ export class GrChangeListItem extends LitElement {
         .subject:hover .content {
           text-decoration: underline;
         }
-        .u-monospace {
-          font-family: var(--monospace-font-family);
-          font-size: var(--font-size-mono);
-          line-height: var(--line-height-mono);
-        }
-        .u-green,
-        .u-green iron-icon {
-          color: var(--positive-green-text-color);
-        }
-        .u-red,
-        .u-red iron-icon {
-          color: var(--negative-red-text-color);
-        }
-        .u-gray-background {
-          background-color: var(--table-header-background-color);
-        }
         .comma,
         .placeholder {
           color: var(--deemphasized-text-color);
@@ -267,10 +280,15 @@ export class GrChangeListItem extends LitElement {
         .cell.selection input {
           vertical-align: middle;
         }
+        .selectionLabel {
+          padding: 10px;
+          margin: -10px;
+          display: block;
+        }
         .cell.label {
           font-weight: var(--font-weight-normal);
         }
-        .cell.label iron-icon {
+        .cell.label gr-icon {
           vertical-align: top;
         }
         /* Requirement child needs whole area */
@@ -307,7 +325,8 @@ export class GrChangeListItem extends LitElement {
   }
 
   private renderCellSelectionBox() {
-    if (!this.flagsService.isEnabled(KnownExperimentId.BULK_ACTIONS)) return;
+    if (!this.isLoggedIn) return;
+
     return html`
       <td class="cell selection">
         <!--
@@ -316,17 +335,19 @@ export class GrChangeListItem extends LitElement {
           update the current checked state.
           See: https://developer.mozilla.org/en-US/docs/Web/HTML/Element/input/checkbox#attr-checked
         -->
-        <input
-          type="checkbox"
-          .checked=${this.checked}
-          @click=${() => this.handleChangeSelectionClick()}
-        />
+        <label class="selectionLabel">
+          <input
+            type="checkbox"
+            .checked=${this.checked}
+            @click=${this.toggleCheckbox}
+          />
+        </label>
       </td>
     `;
   }
 
   private renderCellStar() {
-    if (!this.showStar) return;
+    if (!this.isLoggedIn) return;
 
     return html`
       <td class="cell star">
@@ -346,7 +367,12 @@ export class GrChangeListItem extends LitElement {
   }
 
   private renderCellSubject(changeUrl: string) {
-    if (this.computeIsColumnHidden('Subject', this.visibleChangeTableColumns))
+    if (
+      this.computeIsColumnHidden(
+        ColumnNames.SUBJECT,
+        this.visibleChangeTableColumns
+      )
+    )
       return;
 
     return html`
@@ -354,10 +380,17 @@ export class GrChangeListItem extends LitElement {
         <a
           title=${ifDefined(this.change?.subject)}
           href=${changeUrl}
-          @click=${() => this.handleChangeClick()}
+          @click=${this.handleChangeClick}
         >
           <div class="container">
-            <div class="content">${this.change?.subject}</div>
+            <div
+              class=${classMap({
+                content: true,
+                strikethrough: this.change?.status === ChangeStatus.ABANDONED,
+              })}
+            >
+              ${this.change?.subject}
+            </div>
             <div class="spacer">${this.change?.subject}</div>
             <span>&nbsp;</span>
           </div>
@@ -367,7 +400,12 @@ export class GrChangeListItem extends LitElement {
   }
 
   private renderCellStatus() {
-    if (this.computeIsColumnHidden('Status', this.visibleChangeTableColumns))
+    if (
+      this.computeIsColumnHidden(
+        ColumnNames.STATUS,
+        this.visibleChangeTableColumns
+      )
+    )
       return;
 
     return html` <td class="cell status">${this.renderChangeStatus()}</td> `;
@@ -387,7 +425,12 @@ export class GrChangeListItem extends LitElement {
   }
 
   private renderCellOwner() {
-    if (this.computeIsColumnHidden('Owner', this.visibleChangeTableColumns))
+    if (
+      this.computeIsColumnHidden(
+        ColumnNames.OWNER,
+        this.visibleChangeTableColumns
+      )
+    )
       return;
 
     return html`
@@ -403,7 +446,12 @@ export class GrChangeListItem extends LitElement {
   }
 
   private renderCellReviewers() {
-    if (this.computeIsColumnHidden('Reviewers', this.visibleChangeTableColumns))
+    if (
+      this.computeIsColumnHidden(
+        ColumnNames.REVIEWERS,
+        this.visibleChangeTableColumns
+      )
+    )
       return;
 
     return html`
@@ -445,7 +493,7 @@ export class GrChangeListItem extends LitElement {
     return html`
       <td class="cell comments">
         ${this.change?.unresolved_comment_count
-          ? html`<iron-icon icon="gr-icons:comment"></iron-icon>`
+          ? html`<gr-icon icon="mode_comment" filled></gr-icon>`
           : ''}
         <span
           >${this.computeComments(this.change?.unresolved_comment_count)}</span
@@ -455,27 +503,33 @@ export class GrChangeListItem extends LitElement {
   }
 
   private renderCellRepo() {
-    if (this.computeIsColumnHidden('Repo', this.visibleChangeTableColumns))
+    if (
+      this.computeIsColumnHidden(
+        ColumnNames.REPO,
+        this.visibleChangeTableColumns
+      )
+    ) {
       return;
+    }
 
+    const repo = this.change?.project ?? '';
     return html`
       <td class="cell repo">
-        <a class="fullRepo" href=${this.computeRepoUrl()}>
-          ${this.computeRepoDisplay()}
-        </a>
-        <a
-          class="truncatedRepo"
-          href=${this.computeRepoUrl()}
-          title=${this.computeRepoDisplay()}
-        >
-          ${this.computeTruncatedRepoDisplay()}
+        <a class="fullRepo" href=${this.computeRepoUrl()}> ${repo} </a>
+        <a class="truncatedRepo" href=${this.computeRepoUrl()} title=${repo}>
+          ${truncatePath(repo, 2)}
         </a>
       </td>
     `;
   }
 
   private renderCellBranch() {
-    if (this.computeIsColumnHidden('Branch', this.visibleChangeTableColumns))
+    if (
+      this.computeIsColumnHidden(
+        ColumnNames.BRANCH,
+        this.visibleChangeTableColumns
+      )
+    )
       return;
 
     return html`
@@ -567,7 +621,12 @@ export class GrChangeListItem extends LitElement {
   }
 
   private renderCellRequirements() {
-    if (this.computeIsColumnHidden(' Status ', this.visibleChangeTableColumns))
+    if (
+      this.computeIsColumnHidden(
+        ColumnNames.STATUS2,
+        this.visibleChangeTableColumns
+      )
+    )
       return;
 
     return html`
@@ -579,32 +638,13 @@ export class GrChangeListItem extends LitElement {
   }
 
   private renderChangeLabels(labelName: string) {
-    if (showNewSubmitRequirements(this.flagsService, this.change)) {
-      return html` <td class="cell label requirement">
-        <gr-change-list-column-requirement
-          .change=${this.change}
-          .labelName=${labelName}
-        >
-        </gr-change-list-column-requirement>
-      </td>`;
-    }
-    return html`
-      <td
-        title=${this.computeLabelTitle(labelName)}
-        class=${this.computeLabelClass(labelName)}
+    return html` <td class="cell label requirement">
+      <gr-change-list-column-requirement
+        .change=${this.change}
+        .labelName=${labelName}
       >
-        ${this.renderChangeHasLabelIcon(labelName)}
-      </td>
-    `;
-  }
-
-  private renderChangeHasLabelIcon(labelName: string) {
-    if (this.computeLabelIcon(labelName) === '')
-      return html`<span>${this.computeLabelValue(labelName)}</span>`;
-
-    return html`
-      <iron-icon icon=${this.computeLabelIcon(labelName)}></iron-icon>
-    `;
+      </gr-change-list-column-requirement>
+    </td>`;
   }
 
   private renderChangePluginEndpoint(pluginEndpointName: string) {
@@ -618,14 +658,17 @@ export class GrChangeListItem extends LitElement {
     `;
   }
 
-  private handleChangeSelectionClick() {
-    assertIsDefined(this.change, 'change');
-    this.checked = !this.checked;
-    if (this.checked)
-      this.getBulkActionsModel().addSelectedChangeNum(this.change._number);
-    else
-      this.getBulkActionsModel().removeSelectedChangeNum(this.change._number);
-  }
+  private readonly onItemClick = (e: Event) => {
+    // Check the path to verify that the item row itself was directly clicked.
+    // This will allow users using screen readers like VoiceOver to select an
+    // item with j/k and go to the selected change with Ctrl+Option+Space, but
+    // not interfere with clicks on interactive elements within the
+    // gr-change-list-item such as account links, which will bubble through
+    // without triggering this extra navigation.
+    if (this.change && e.composedPath()[0] === this) {
+      this.getNavigation().setUrl(createChangeUrl({change: this.change}));
+    }
+  };
 
   private changeStatuses() {
     if (!this.change) return [];
@@ -634,178 +677,32 @@ export class GrChangeListItem extends LitElement {
 
   private computeChangeURL() {
     if (!this.change) return '';
-    return GerritNav.getUrlForChange(this.change);
-  }
-
-  // private but used in test
-  computeLabelTitle(labelName: string) {
-    const label: QuickLabelInfo | undefined = this.change?.labels?.[labelName];
-    const category = this.computeLabelCategory(labelName);
-    if (!label || category === LabelCategory.NOT_APPLICABLE) {
-      return 'Label not applicable';
-    }
-    const titleParts: string[] = [];
-    if (category === LabelCategory.UNRESOLVED_COMMENTS) {
-      const num = this.change?.unresolved_comment_count ?? 0;
-      titleParts.push(pluralize(num, 'unresolved comment'));
-    }
-    const significantLabel =
-      label.rejected || label.approved || label.disliked || label.recommended;
-    if (significantLabel?.name) {
-      titleParts.push(`${labelName} by ${significantLabel.name}`);
-    }
-    if (titleParts.length > 0) {
-      return titleParts.join(',\n');
-    }
-    return labelName;
-  }
-
-  // private but used in test
-  computeLabelClass(labelName: string) {
-    const classes = ['cell', 'label'];
-    const category = this.computeLabelCategory(labelName);
-    switch (category) {
-      case LabelCategory.NOT_APPLICABLE:
-        classes.push('u-gray-background');
-        break;
-      case LabelCategory.APPROVED:
-        classes.push('u-green');
-        break;
-      case LabelCategory.POSITIVE:
-        classes.push('u-monospace');
-        classes.push('u-green');
-        break;
-      case LabelCategory.NEGATIVE:
-        classes.push('u-monospace');
-        classes.push('u-red');
-        break;
-      case LabelCategory.REJECTED:
-        classes.push('u-red');
-        break;
-    }
-    return classes.sort().join(' ');
-  }
-
-  // private but used in test
-  computeLabelIcon(labelName: string): string {
-    const category = this.computeLabelCategory(labelName);
-    switch (category) {
-      case LabelCategory.APPROVED:
-        return 'gr-icons:check';
-      case LabelCategory.UNRESOLVED_COMMENTS:
-        return 'gr-icons:comment';
-      case LabelCategory.REJECTED:
-        return 'gr-icons:close';
-      default:
-        return '';
-    }
-  }
-
-  // private but used in test
-  computeLabelCategory(labelName: string) {
-    const label: QuickLabelInfo | undefined = this.change?.labels?.[labelName];
-    if (!label) {
-      return LabelCategory.NOT_APPLICABLE;
-    }
-    if (label.rejected) {
-      return LabelCategory.REJECTED;
-    }
-    if (label.value && label.value < 0) {
-      return LabelCategory.NEGATIVE;
-    }
-    if (this.change?.unresolved_comment_count && labelName === 'Code-Review') {
-      return LabelCategory.UNRESOLVED_COMMENTS;
-    }
-    if (label.approved) {
-      return LabelCategory.APPROVED;
-    }
-    if (label.value && label.value > 0) {
-      return LabelCategory.POSITIVE;
-    }
-    return LabelCategory.NEUTRAL;
-  }
-
-  // private but used in test
-  computeLabelValue(labelName: string) {
-    const label: QuickLabelInfo | undefined = this.change?.labels?.[labelName];
-    const category = this.computeLabelCategory(labelName);
-    switch (category) {
-      case LabelCategory.NOT_APPLICABLE:
-        return '';
-      case LabelCategory.APPROVED:
-        return '\u2713'; // ✓
-      case LabelCategory.POSITIVE:
-        return `+${label?.value}`;
-      case LabelCategory.NEUTRAL:
-        return '';
-      case LabelCategory.UNRESOLVED_COMMENTS:
-        return 'u';
-      case LabelCategory.NEGATIVE:
-        return `${label?.value}`;
-      case LabelCategory.REJECTED:
-        return '\u2715'; // ✕
-      default:
-        return '';
-    }
+    return createChangeUrl({change: this.change, usp: this.usp});
   }
 
   private computeRepoUrl() {
     if (!this.change) return '';
-    return GerritNav.getUrlForProjectChanges(
-      this.change.project,
-      true,
-      this.change.internalHost
-    );
+    return createSearchUrl({project: this.change.project, statuses: ['open']});
   }
 
   private computeRepoBranchURL() {
     if (!this.change) return '';
-    return GerritNav.getUrlForBranch(
-      this.change.branch,
-      this.change.project,
-      undefined,
-      this.change.internalHost
-    );
+    return createSearchUrl({
+      branch: this.change.branch,
+      project: this.change.project,
+    });
   }
 
   private computeTopicURL() {
     if (!this.change?.topic) return '';
-    return GerritNav.getUrlForTopic(
-      this.change.topic,
-      this.change.internalHost
-    );
+    return createSearchUrl({topic: this.change.topic});
   }
 
-  /**
-   * Computes the display string for the project column. If there is a host
-   * specified in the change detail, the string will be prefixed with it.
-   *
-   * @param truncate whether or not the project name should be
-   * truncated. If this value is truthy, the name will be truncated.
-   *
-   * private but used in test
-   */
-  computeRepoDisplay() {
-    if (!this.change?.project) return '';
-    let str = '';
-    if (this.change.internalHost) {
-      str += this.change.internalHost + '/';
-    }
-    str += this.change.project;
-    return str;
-  }
-
-  // private but used in test
-  computeTruncatedRepoDisplay() {
-    if (!this.change?.project) {
-      return '';
-    }
-    let str = '';
-    if (this.change.internalHost) {
-      str += this.change.internalHost + '/';
-    }
-    str += truncatePath(this.change.project, 2);
-    return str;
+  private toggleCheckbox() {
+    assertIsDefined(this.change, 'change');
+    this.checked = !this.checked;
+    this.triggerSelectionCallback?.(this.globalIndex);
+    this.getBulkActionsModel().toggleSelectedChangeNum(this.change._number);
   }
 
   // private but used in test

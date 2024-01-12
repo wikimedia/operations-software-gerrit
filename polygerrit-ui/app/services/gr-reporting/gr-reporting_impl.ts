@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {FlagsService} from '../flags/flags';
 import {EventValue, ReportingService, Timer} from './gr-reporting';
@@ -27,6 +16,7 @@ import {
   LifeCycle,
   Timing,
 } from '../../constants/reporting';
+import {getCLS, getFID, getLCP, Metric} from 'web-vitals';
 
 // Latency reporting constants.
 
@@ -130,7 +120,7 @@ export function initErrorReporter(reportingService: ReportingService) {
       line = line ?? error.lineNumber;
       column = column ?? error.columnNumber;
     }
-    reportingService.error(normalizeError(error), 'onError', {
+    reportingService.error('onError', normalizeError(error), {
       line,
       column,
       url,
@@ -153,7 +143,7 @@ export function initErrorReporter(reportingService: ReportingService) {
     context.addEventListener(
       'unhandledrejection',
       (e: PromiseRejectionEvent) => {
-        reportingService.error(normalizeError(e.reason), 'unhandledrejection');
+        reportingService.error('unhandledrejection', normalizeError(e.reason));
       }
     );
   };
@@ -172,8 +162,8 @@ export function initPerformanceReporter(reportingService: ReportingService) {
     if (supportedEntryTypes.includes('longtask')) {
       const catchLongJsTasks = new PerformanceObserver(list => {
         for (const task of list.getEntries()) {
-          // We are interested in longtask longer than 200 ms (default is 50 ms)
-          if (task.duration > 200) {
+          // We are interested in longtask longer than 400 ms (default is 50 ms)
+          if (task.duration > 400) {
             reportingService.reporter(
               TIMING.TYPE,
               TIMING.CATEGORY.UI_LATENCY,
@@ -194,6 +184,23 @@ export function initVisibilityReporter(reportingService: ReportingService) {
   document.addEventListener('visibilitychange', () => {
     reportingService.onVisibilityChange();
   });
+}
+
+export function initWebVitals(reportingService: ReportingService) {
+  function reportWebVitalMetric(name: Timing, metric: Metric) {
+    reportingService.reporter(
+      TIMING.TYPE,
+      TIMING.CATEGORY.UI_LATENCY,
+      name,
+      metric.value,
+      JSON.stringify(metric),
+      false
+    );
+  }
+
+  getCLS(metric => reportWebVitalMetric(Timing.CLS, metric));
+  getFID(metric => reportWebVitalMetric(Timing.FID, metric));
+  getLCP(metric => reportWebVitalMetric(Timing.LCP, metric));
 }
 
 // Calculates the time of Gerrit being in a background tab. When Gerrit reports
@@ -369,11 +376,15 @@ export class GrReporting implements ReportingService, Finalizable {
     }
     if (type !== ERROR.TYPE) {
       if (value !== undefined) {
-        console.debug(`Reporting: ${name}: ${value}`);
+        console.debug(
+          `Reporting(${new Date().toISOString()}): ${name}: ${value}`
+        );
       } else if (eventDetails !== undefined) {
-        console.debug(`Reporting: ${name}: ${eventDetails}`);
+        console.debug(
+          `Reporting(${new Date().toISOString()}): ${name}: ${eventDetails}`
+        );
       } else {
-        console.debug(`Reporting: ${name}`);
+        console.debug(`Reporting(${new Date().toISOString()}): ${name}`);
       }
     }
   }
@@ -851,16 +862,20 @@ export class GrReporting implements ReportingService, Finalizable {
     this.reportExecution(Execution.PLUGIN_API, {plugin, object, method});
   }
 
-  error(error: Error, errorSource?: string, details?: EventDetails) {
-    const eventDetails = details ?? {};
-    const message = `${errorSource ? errorSource + ': ' : ''}${error.message}`;
+  error(errorSource: string, error: Error, details?: EventDetails) {
+    const message = `${errorSource}: ${error.message}`;
+    const eventDetails = {
+      errorMessage: message,
+      ...details,
+      stack: error.stack,
+    };
 
     this.reporter(
       ERROR.TYPE,
       ERROR.CATEGORY.EXCEPTION,
-      message,
+      errorSource,
       {error},
-      {...eventDetails, stack: error.stack}
+      eventDetails
     );
   }
 
@@ -868,8 +883,9 @@ export class GrReporting implements ReportingService, Finalizable {
     this.reporter(
       ERROR.TYPE,
       ERROR.CATEGORY.ERROR_DIALOG,
-      'ErrorDialog: ' + message,
-      {error: new Error(message)}
+      'ErrorDialog',
+      {error: new Error(message)},
+      {errorMessage: message}
     );
   }
 

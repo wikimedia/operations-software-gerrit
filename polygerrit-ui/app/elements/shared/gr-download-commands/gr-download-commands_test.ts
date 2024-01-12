@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-download-commands';
 import {GrDownloadCommands} from './gr-download-commands';
 import {
@@ -25,12 +13,11 @@ import {
   stubRestApi,
 } from '../../../test/test-utils';
 import {createPreferences} from '../../../test/test-data-generators';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
 import {GrShellCommand} from '../gr-shell-command/gr-shell-command';
 import {createDefaultPreferences} from '../../../constants/constants';
 import {PaperTabsElement} from '@polymer/paper-tabs/paper-tabs';
-
-const basicFixture = fixtureFromElement('gr-download-commands');
+import {fixture, html, assert} from '@open-wc/testing';
+import {PaperTabElement} from '@polymer/paper-tabs/paper-tab';
 
 suite('gr-download-commands', () => {
   let element: GrDownloadCommands;
@@ -60,16 +47,66 @@ suite('gr-download-commands', () => {
   ];
   const SELECTED_SCHEME = 'http';
 
-  setup(() => {});
-
   suite('unauthenticated', () => {
     setup(async () => {
       stubRestApi('getLoggedIn').returns(Promise.resolve(false));
-      element = basicFixture.instantiate();
+      element = await fixture(
+        html`<gr-download-commands></gr-download-commands>`
+      );
       element.schemes = SCHEMES;
       element.commands = COMMANDS;
       element.selectedScheme = SELECTED_SCHEME;
       await element.updateComplete;
+    });
+
+    test('render', () => {
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `
+          <div class="schemes">
+            <paper-tabs
+              dir="null"
+              id="downloadTabs"
+              role="tablist"
+              tabindex="0"
+            >
+              <paper-tab
+                aria-disabled="false"
+                aria-selected="true"
+                class="iron-selected"
+                data-scheme="http"
+                role="tab"
+                tabindex="0"
+              >
+                http
+              </paper-tab>
+              <paper-tab
+                aria-disabled="false"
+                aria-selected="false"
+                data-scheme="repo"
+                role="tab"
+                tabindex="-1"
+              >
+                repo
+              </paper-tab>
+              <paper-tab
+                aria-disabled="false"
+                aria-selected="false"
+                data-scheme="ssh"
+                role="tab"
+                tabindex="-1"
+              >
+                ssh
+              </paper-tab>
+            </paper-tabs>
+          </div>
+          <div class="commands"></div>
+          <gr-shell-command class="_label_checkout"> </gr-shell-command>
+          <gr-shell-command class="_label_cherrypick"> </gr-shell-command>
+          <gr-shell-command class="_label_formatpatch"> </gr-shell-command>
+          <gr-shell-command class="_label_pull"> </gr-shell-command>
+        `
+      );
     });
 
     test('focusOnCopy', async () => {
@@ -101,7 +138,7 @@ suite('gr-download-commands', () => {
         queryAndAssert<PaperTabsElement>(element, '#downloadTabs').selected,
         '0'
       );
-      MockInteractions.tap(queryAndAssert(element, '[data-scheme="ssh"]'));
+      queryAndAssert<PaperTabElement>(element, '[data-scheme="ssh"]').click();
       await element.updateComplete;
       assert.equal(element.selectedScheme, 'ssh');
       assert.equal(
@@ -118,9 +155,12 @@ suite('gr-download-commands', () => {
 
       await element.updateComplete;
 
-      const repoTab = queryAndAssert(element, 'paper-tab[data-scheme="repo"]');
+      const repoTab = queryAndAssert<PaperTabElement>(
+        element,
+        'paper-tab[data-scheme="repo"]'
+      );
 
-      MockInteractions.tap(repoTab);
+      repoTab.click();
 
       assert.isTrue(savePrefsStub.called);
       assert.equal(
@@ -131,8 +171,9 @@ suite('gr-download-commands', () => {
   });
   suite('authenticated', () => {
     test('loads scheme from preferences', async () => {
-      const element = basicFixture.instantiate();
-      await element.updateComplete;
+      const element: GrDownloadCommands = await fixture(
+        html`<gr-download-commands></gr-download-commands>`
+      );
       element.userModel.setPreferences({
         ...createPreferences(),
         download_scheme: 'repo',
@@ -141,8 +182,9 @@ suite('gr-download-commands', () => {
     });
 
     test('normalize scheme from preferences', async () => {
-      const element = basicFixture.instantiate();
-      await element.updateComplete;
+      const element: GrDownloadCommands = await fixture(
+        html`<gr-download-commands></gr-download-commands>`
+      );
       element.userModel.setPreferences({
         ...createPreferences(),
         download_scheme: 'REPO',

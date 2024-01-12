@@ -1,26 +1,20 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../test/common-test-setup-karma.js';
-import {HovercardMixin} from './hovercard-mixin.js';
-import {html, LitElement} from 'lit';
-import {customElement} from 'lit/decorators';
-import {MockPromise, mockPromise, pressKey} from '../../test/test-utils.js';
-import {findActiveElement, Key} from '../../utils/dom-util.js';
+import '../../test/common-test-setup';
+import {HovercardMixin} from './hovercard-mixin';
+import {LitElement} from 'lit';
+import {customElement} from 'lit/decorators.js';
+import {
+  MockPromise,
+  mockPromise,
+  pressKey,
+  waitEventLoop,
+} from '../../test/test-utils';
+import {findActiveElement, Key} from '../../utils/dom-util';
+import {fixture, html, assert} from '@open-wc/testing';
 
 const base = HovercardMixin(LitElement);
 
@@ -45,22 +39,22 @@ class HovercardMixinTest extends base {
   }
 }
 
-const basicFixture = fixtureFromElement('hovercard-mixin-test');
-
 suite('gr-hovercard tests', () => {
   let element: HovercardMixinTest;
 
   let button: HTMLElement;
   let testPromise: MockPromise<void>;
 
-  setup(() => {
+  setup(async () => {
     testPromise = mockPromise();
     button = document.createElement('button');
     button.innerHTML = 'Hello';
     button.setAttribute('id', 'foo');
     document.body.appendChild(button);
 
-    element = basicFixture.instantiate();
+    element = await fixture(
+      html`<hovercard-mixin-test></hovercard-mixin-test>`
+    );
   });
 
   teardown(() => {
@@ -80,7 +74,7 @@ suite('gr-hovercard tests', () => {
     assert.typeOf(element.style.getPropertyValue('marginTop'), 'string');
 
     const parentRect = document.documentElement.getBoundingClientRect();
-    const targetRect = element!._target!.getBoundingClientRect();
+    const targetRect = element._target!.getBoundingClientRect();
     const thisRect = element.getBoundingClientRect();
 
     const targetLeft = targetRect.left - parentRect.left;
@@ -143,9 +137,9 @@ suite('gr-hovercard tests', () => {
     button!.dispatchEvent(new CustomEvent('mousemove'));
 
     await enterPromise;
-    await flush();
+    await waitEventLoop();
     assert.isTrue(element.isScheduledToShow);
-    element!.showTask!.flush();
+    element.showTask!.flush();
     assert.isTrue(element._isShowing);
     assert.isFalse(element.isScheduledToShow);
 
@@ -154,7 +148,7 @@ suite('gr-hovercard tests', () => {
     await leavePromise;
     assert.isTrue(element.isScheduledToHide);
     assert.isTrue(element._isShowing);
-    element!.hideTask!.flush();
+    element.hideTask!.flush();
     assert.isFalse(element.isScheduledToShow);
     assert.isFalse(element._isShowing);
   });
@@ -171,7 +165,7 @@ suite('gr-hovercard tests', () => {
     button!.dispatchEvent(new CustomEvent('mousemove'));
 
     await enterPromise;
-    await flush();
+    await waitEventLoop();
     assert.isTrue(element.isScheduledToShow);
     button!.click();
 

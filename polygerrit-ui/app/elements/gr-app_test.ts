@@ -1,35 +1,40 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../test/common-test-setup-karma';
+import '../test/common-test-setup';
 import './gr-app';
 import {getAppContext} from '../services/app-context';
-import {fixture, html} from '@open-wc/testing-helpers';
-import {queryAndAssert, stubRestApi} from '../test/test-utils';
+import {fixture, html, assert} from '@open-wc/testing';
+import {queryAndAssert, stubElement, stubRestApi} from '../test/test-utils';
 import {GrApp} from './gr-app';
 import {
-  createAppElementChangeViewParams,
+  createChangeViewState,
   createAppElementSearchViewParams,
   createPreferences,
   createServerInfo,
 } from '../test/test-data-generators';
 import {GrAppElement} from './gr-app-element';
-import {GrPluginHost} from './plugins/gr-plugin-host/gr-plugin-host';
 import {GrRouter} from './core/gr-router/gr-router';
+import {ReactiveElement} from 'lit';
+suite('gr-app callback tests', () => {
+  const requestUpdateStub = sinon.stub(
+    ReactiveElement.prototype,
+    'requestUpdate'
+  );
+  const dispatchLocationChangeEventSpy = sinon.spy(
+    GrRouter.prototype,
+    <any>'dispatchLocationChangeEvent'
+  );
+  setup(async () => {
+    await fixture<GrApp>(html`<gr-app id="app"></gr-app>`);
+  });
+  test("requestUpdate in reactive-element is called after dispatching 'location-change' event in gr-router", () => {
+    dispatchLocationChangeEventSpy();
+    assert.isTrue(requestUpdateStub.calledOnce);
+  });
+});
 
 suite('gr-app tests', () => {
   let grApp: GrApp;
@@ -39,7 +44,7 @@ suite('gr-app tests', () => {
 
   setup(async () => {
     appStartedStub = sinon.stub(getAppContext().reportingService, 'appStarted');
-    stub('gr-account-dropdown', '_getTopContent');
+    stubElement('gr-account-dropdown', '_getTopContent');
     routerStartStub = sinon.stub(GrRouter.prototype, 'start');
     stubRestApi('getAccount').returns(Promise.resolve(undefined));
     stubRestApi('getAccountCapabilities').returns(Promise.resolve({}));
@@ -60,16 +65,10 @@ suite('gr-app tests', () => {
     sinon.assert.callOrder(appStartedStub, routerStartStub);
   });
 
-  test('passes config to gr-plugin-host', () => {
-    const grAppElement = queryAndAssert<GrAppElement>(grApp, '#app-element');
-    const pluginHost = queryAndAssert<GrPluginHost>(grAppElement, '#plugins');
-    assert.deepEqual(pluginHost.config, config);
-  });
-
   test('_paramsChanged sets search page', () => {
     const grAppElement = queryAndAssert<GrAppElement>(grApp, '#app-element');
 
-    grAppElement.params = createAppElementChangeViewParams();
+    grAppElement.params = createChangeViewState();
     grAppElement.paramsChanged();
     assert.notOk(grAppElement.lastSearchPage);
 

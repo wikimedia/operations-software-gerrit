@@ -3,7 +3,8 @@
  * Copyright 2022 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import '../../test/common-test-setup-karma';
+import {assert} from '@open-wc/testing';
+import '../../test/common-test-setup';
 import {waitUntil} from '../../test/test-utils';
 import {grReportingMock} from '../gr-reporting/gr-reporting_mock';
 import {MockHighlightServiceManual} from './highlight-service-mock';

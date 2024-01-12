@@ -1,20 +1,9 @@
 /**
  * @license
- * Copyright (C) 2015 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2015 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-comment';
 import {AUTO_SAVE_DEBOUNCE_DELAY_MS, GrComment} from './gr-comment';
 import {
@@ -27,6 +16,7 @@ import {
   waitUntilCalled,
   dispatch,
   MockPromise,
+  stubFlags,
 } from '../../../test/test-utils';
 import {
   AccountId,
@@ -36,7 +26,6 @@ import {
   Timestamp,
   UrlEncodedCommentId,
 } from '../../../types/common';
-import {tap} from '@polymer/iron-test-helpers/mock-interactions';
 import {
   createComment,
   createDraft,
@@ -45,253 +34,295 @@ import {
   createUnsaved,
 } from '../../../test/test-data-generators';
 import {
-  CreateFixCommentEvent,
+  ReplyToCommentEvent,
   OpenFixPreviewEventDetail,
 } from '../../../types/events';
 import {GrConfirmDeleteCommentDialog} from '../gr-confirm-delete-comment-dialog/gr-confirm-delete-comment-dialog';
-import {DraftInfo} from '../../../utils/comment-util';
+import {
+  DraftInfo,
+  USER_SUGGESTION_START_PATTERN,
+} from '../../../utils/comment-util';
 import {assertIsDefined} from '../../../utils/common-util';
 import {Modifier} from '../../../utils/dom-util';
 import {SinonStub} from 'sinon';
+import {fixture, html, assert} from '@open-wc/testing';
+import {GrButton} from '../gr-button/gr-button';
 
 suite('gr-comment tests', () => {
   let element: GrComment;
+  const account = {
+    email: 'dhruvsri@google.com' as EmailAddress,
+    name: 'Dhruv Srivastava',
+    _account_id: 1083225 as AccountId,
+    avatars: [{url: 'abc', height: 32, width: 32}],
+    registered_on: '123' as Timestamp,
+  };
+  const comment = {
+    ...createComment(),
+    author: {
+      name: 'Mr. Peanutbutter',
+      email: 'tenn1sballchaser@aol.com' as EmailAddress,
+    },
+    id: 'baf0414d_60047215' as UrlEncodedCommentId,
+    line: 5,
+    message: 'This is the test comment message.',
+    updated: '2015-12-08 19:48:33.843000000' as Timestamp,
+  };
 
-  setup(() => {
-    element = fixtureFromElement('gr-comment').instantiate();
-    element.account = {
-      email: 'dhruvsri@google.com' as EmailAddress,
-      name: 'Dhruv Srivastava',
-      _account_id: 1083225 as AccountId,
-      avatars: [{url: 'abc', height: 32, width: 32}],
-      registered_on: '123' as Timestamp,
-    };
-    element.showPatchset = true;
-    element.getRandomInt = () => 1;
-    element.comment = {
-      ...createComment(),
-      author: {
-        name: 'Mr. Peanutbutter',
-        email: 'tenn1sballchaser@aol.com' as EmailAddress,
-      },
-      id: 'baf0414d_60047215' as UrlEncodedCommentId,
-      line: 5,
-      message: 'This is the test comment message.',
-      updated: '2015-12-08 19:48:33.843000000' as Timestamp,
-    };
+  setup(async () => {
+    element = await fixture(
+      html`<gr-comment
+        .account=${account}
+        .showPatchset=${true}
+        .comment=${comment}
+      ></gr-comment>`
+    );
   });
 
   suite('DOM rendering', () => {
     test('renders collapsed', async () => {
-      element.initiallyCollapsed = true;
-      await element.updateComplete;
-      expect(element).shadowDom.to.equal(/* HTML */ `
-        <div class="container" id="container">
-          <div class="header" id="header">
-            <div class="headerLeft">
-              <gr-account-label deselected=""></gr-account-label>
+      const initiallyCollapsedElement = await fixture(
+        html`<gr-comment
+          .account=${account}
+          .showPatchset=${true}
+          .comment=${comment}
+          .initiallyCollapsed=${true}
+        ></gr-comment>`
+      );
+      assert.shadowDom.equal(
+        initiallyCollapsedElement,
+        /* HTML */ `
+          <gr-endpoint-decorator name="comment">
+            <gr-endpoint-param name="comment"></gr-endpoint-param>
+            <gr-endpoint-param name="editing"></gr-endpoint-param>
+            <div class="container" id="container">
+              <div class="header" id="header">
+                <div class="headerLeft">
+                  <gr-account-label deselected=""></gr-account-label>
+                </div>
+                <div class="headerMiddle">
+                  <span class="collapsedContent">
+                    This is the test comment message.
+                  </span>
+                </div>
+                <span class="patchset-text">Patchset 1</span>
+                <div class="show-hide" tabindex="0">
+                  <label aria-label="Expand" class="show-hide">
+                    <input checked="" class="show-hide" type="checkbox" />
+                    <gr-icon id="icon" icon="expand_more"></gr-icon>
+                  </label>
+                </div>
+              </div>
+              <div class="body">
+                <gr-endpoint-slot name="above-actions"></gr-endpoint-slot>
+              </div>
             </div>
-            <div class="headerMiddle">
-              <span class="collapsedContent">
-                This is the test comment message.
-              </span>
-            </div>
-            <span class="patchset-text">Patchset 1</span>
-            <div class="show-hide" tabindex="0">
-              <label aria-label="Expand" class="show-hide">
-                <input checked="" class="show-hide" type="checkbox" />
-                <iron-icon id="icon" icon="gr-icons:expand-more"></iron-icon>
-              </label>
-            </div>
-          </div>
-          <div class="body"></div>
-        </div>
-      `);
+          </gr-endpoint-decorator>
+        `
+      );
     });
 
     test('renders expanded', async () => {
       element.initiallyCollapsed = false;
       await element.updateComplete;
-      expect(element).shadowDom.to.equal(/* HTML */ `
-        <div class="container" id="container">
-          <div class="header" id="header">
-            <div class="headerLeft">
-              <gr-account-label deselected=""></gr-account-label>
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `
+          <gr-endpoint-decorator name="comment">
+            <gr-endpoint-param name="comment"></gr-endpoint-param>
+            <gr-endpoint-param name="editing"></gr-endpoint-param>
+            <div class="container" id="container">
+              <div class="header" id="header">
+                <div class="headerLeft">
+                  <gr-account-label deselected=""></gr-account-label>
+                </div>
+                <div class="headerMiddle"></div>
+                <span class="patchset-text">Patchset 1</span>
+                <span class="separator"></span>
+                <span class="date" tabindex="0">
+                  <gr-date-formatter withtooltip=""></gr-date-formatter>
+                </span>
+                <div class="show-hide" tabindex="0">
+                  <label aria-label="Collapse" class="show-hide">
+                    <input class="show-hide" type="checkbox" />
+                    <gr-icon id="icon" icon="expand_less"></gr-icon>
+                  </label>
+                </div>
+              </div>
+              <div class="body">
+                <gr-formatted-text class="message"></gr-formatted-text>
+                <gr-endpoint-slot name="above-actions"></gr-endpoint-slot>
+              </div>
             </div>
-            <div class="headerMiddle"></div>
-            <span class="patchset-text">Patchset 1</span>
-            <span class="separator"></span>
-            <span class="date" tabindex="0">
-              <gr-date-formatter withtooltip=""></gr-date-formatter>
-            </span>
-            <div class="show-hide" tabindex="0">
-              <label aria-label="Collapse" class="show-hide">
-                <input class="show-hide" type="checkbox" />
-                <iron-icon id="icon" icon="gr-icons:expand-less"></iron-icon>
-              </label>
-            </div>
-          </div>
-          <div class="body">
-            <gr-formatted-text
-              class="message"
-              notrailingmargin=""
-            ></gr-formatted-text>
-          </div>
-        </div>
-      `);
+          </gr-endpoint-decorator>
+        `
+      );
     });
 
     test('renders expanded robot', async () => {
       element.initiallyCollapsed = false;
       element.comment = createRobotComment();
       await element.updateComplete;
-      expect(element).shadowDom.to.equal(/* HTML */ `
-        <div class="container" id="container">
-          <div class="header" id="header">
-            <div class="headerLeft">
-              <span class="robotName">robot-id-123</span>
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `
+          <gr-endpoint-decorator name="comment">
+            <gr-endpoint-param name="comment"></gr-endpoint-param>
+            <gr-endpoint-param name="editing"></gr-endpoint-param>
+            <div class="container" id="container">
+              <div class="header" id="header">
+                <div class="headerLeft">
+                  <span class="robotName">robot-id-123</span>
+                </div>
+                <div class="headerMiddle"></div>
+                <span class="patchset-text">Patchset 1</span>
+                <span class="separator"></span>
+                <span class="date" tabindex="0">
+                  <gr-date-formatter withtooltip=""></gr-date-formatter>
+                </span>
+                <div class="show-hide" tabindex="0">
+                  <label aria-label="Collapse" class="show-hide">
+                    <input class="show-hide" type="checkbox" />
+                    <gr-icon id="icon" icon="expand_less"></gr-icon>
+                  </label>
+                </div>
+              </div>
+              <div class="body">
+                <div class="robotId"></div>
+                <gr-formatted-text class="message"></gr-formatted-text>
+                <gr-endpoint-slot name="above-actions"></gr-endpoint-slot>
+                <div class="robotActions">
+                  <gr-icon
+                    icon="link"
+                    class="copy link-icon"
+                    role="button"
+                    tabindex="0"
+                    title="Copy link to this comment"
+                  ></gr-icon>
+                  <gr-endpoint-decorator name="robot-comment-controls">
+                    <gr-endpoint-param name="comment"></gr-endpoint-param>
+                  </gr-endpoint-decorator>
+                  <gr-button
+                    aria-disabled="false"
+                    class="action show-fix"
+                    link=""
+                    role="button"
+                    secondary=""
+                    tabindex="0"
+                  >
+                    Show Fix
+                  </gr-button>
+                  <gr-button
+                    aria-disabled="false"
+                    class="action fix"
+                    link=""
+                    role="button"
+                    tabindex="0"
+                  >
+                    Please Fix
+                  </gr-button>
+                </div>
+              </div>
             </div>
-            <div class="headerMiddle"></div>
-            <span class="patchset-text">Patchset 1</span>
-            <span class="separator"></span>
-            <span class="date" tabindex="0">
-              <gr-date-formatter withtooltip=""></gr-date-formatter>
-            </span>
-            <div class="show-hide" tabindex="0">
-              <label aria-label="Collapse" class="show-hide">
-                <input class="show-hide" type="checkbox" />
-                <iron-icon id="icon" icon="gr-icons:expand-less"></iron-icon>
-              </label>
-            </div>
-          </div>
-          <div class="body">
-            <div class="robotId"></div>
-            <gr-formatted-text
-              class="message"
-              notrailingmargin=""
-            ></gr-formatted-text>
-            <div class="robotActions">
-              <iron-icon
-                class="copy link-icon"
-                icon="gr-icons:link"
-                role="button"
-                tabindex="0"
-                title="Copy link to this comment"
-              >
-              </iron-icon>
-              <gr-endpoint-decorator name="robot-comment-controls">
-                <gr-endpoint-param name="comment"></gr-endpoint-param>
-              </gr-endpoint-decorator>
-              <gr-button
-                aria-disabled="false"
-                class="action show-fix"
-                link=""
-                role="button"
-                secondary=""
-                tabindex="0"
-              >
-                Show Fix
-              </gr-button>
-              <gr-button
-                aria-disabled="false"
-                class="action fix"
-                link=""
-                role="button"
-                tabindex="0"
-              >
-                Please Fix
-              </gr-button>
-            </div>
-          </div>
-        </div>
-      `);
+          </gr-endpoint-decorator>
+        `
+      );
     });
 
     test('renders expanded admin', async () => {
       element.initiallyCollapsed = false;
       element.isAdmin = true;
       await element.updateComplete;
-      expect(queryAndAssert(element, 'gr-button.delete')).dom.to
-        .equal(/* HTML */ `
-        <gr-button
-          aria-disabled="false"
-          class="action delete"
-          id="deleteBtn"
-          link=""
-          role="button"
-          tabindex="0"
-          title="Delete Comment"
-        >
-          <iron-icon icon="gr-icons:delete" id="icon"></iron-icon>
-        </gr-button>
-      `);
+      assert.dom.equal(
+        queryAndAssert(element, 'gr-button.delete'),
+        /* HTML */ `
+          <gr-button
+            aria-disabled="false"
+            class="action delete"
+            id="deleteBtn"
+            link=""
+            role="button"
+            tabindex="0"
+            title="Delete Comment"
+          >
+            <gr-icon id="icon" icon="delete" filled></gr-icon>
+          </gr-button>
+        `
+      );
     });
 
     test('renders draft', async () => {
       element.initiallyCollapsed = false;
       (element.comment as DraftInfo).__draft = true;
       await element.updateComplete;
-      expect(element).shadowDom.to.equal(/* HTML */ `
-        <div class="container draft" id="container">
-          <div class="header" id="header">
-            <div class="headerLeft">
-              <gr-account-label class="draft" deselected=""></gr-account-label>
-              <gr-tooltip-content
-                class="draftTooltip"
-                has-tooltip=""
-                max-width="20em"
-                show-icon=""
-                title="This draft is only visible to you. To publish drafts, click the 'Reply' or 'Start review' button at the top of the change or press the 'a' key."
-              >
-                <span class="draftLabel">DRAFT</span>
-              </gr-tooltip-content>
-            </div>
-            <div class="headerMiddle"></div>
-            <span class="patchset-text">Patchset 1</span>
-            <span class="separator"></span>
-            <span class="date" tabindex="0">
-              <gr-date-formatter withtooltip=""></gr-date-formatter>
-            </span>
-            <div class="show-hide" tabindex="0">
-              <label aria-label="Collapse" class="show-hide">
-                <input class="show-hide" type="checkbox" />
-                <iron-icon id="icon" icon="gr-icons:expand-less"></iron-icon>
-              </label>
-            </div>
-          </div>
-          <div class="body">
-            <gr-formatted-text class="message"></gr-formatted-text>
-            <div class="actions">
-              <div class="action resolve">
-                <label>
-                  <input checked="" id="resolvedCheckbox" type="checkbox" />
-                  Resolved
-                </label>
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `
+          <gr-endpoint-decorator name="comment">
+            <gr-endpoint-param name="comment"></gr-endpoint-param>
+            <gr-endpoint-param name="editing"></gr-endpoint-param>
+            <div class="container draft" id="container">
+              <div class="header" id="header">
+                <div class="headerLeft">
+                  <gr-tooltip-content
+                    class="draftTooltip"
+                    has-tooltip=""
+                    max-width="20em"
+                    title="This draft is only visible to you. To publish drafts, click the 'Reply' or 'Start review' button at the top of the change or press the 'a' key."
+                  >
+                    <gr-icon filled icon="rate_review"></gr-icon>
+                    <span class="draftLabel">Draft</span>
+                  </gr-tooltip-content>
+                </div>
+                <div class="headerMiddle"></div>
+                <span class="patchset-text">Patchset 1</span>
+                <span class="separator"></span>
+                <span class="date" tabindex="0">
+                  <gr-date-formatter withtooltip=""></gr-date-formatter>
+                </span>
+                <div class="show-hide" tabindex="0">
+                  <label aria-label="Collapse" class="show-hide">
+                    <input class="show-hide" type="checkbox" />
+                    <gr-icon id="icon" icon="expand_less"></gr-icon>
+                  </label>
+                </div>
               </div>
-              <div class="rightActions">
-                <gr-button
-                  aria-disabled="false"
-                  class="action discard"
-                  link=""
-                  role="button"
-                  tabindex="0"
-                >
-                  Discard
-                </gr-button>
-                <gr-button
-                  aria-disabled="false"
-                  class="action edit"
-                  link=""
-                  role="button"
-                  tabindex="0"
-                >
-                  Edit
-                </gr-button>
+              <div class="body">
+                <gr-formatted-text class="message"></gr-formatted-text>
+                <gr-endpoint-slot name="above-actions"></gr-endpoint-slot>
+                <div class="actions">
+                  <div class="action resolve">
+                    <label>
+                      <input checked="" id="resolvedCheckbox" type="checkbox" />
+                      Resolved
+                    </label>
+                  </div>
+                  <div class="rightActions">
+                    <gr-button
+                      aria-disabled="false"
+                      class="action discard"
+                      link=""
+                      role="button"
+                      tabindex="0"
+                    >
+                      Discard
+                    </gr-button>
+                    <gr-button
+                      aria-disabled="false"
+                      class="action edit"
+                      link=""
+                      role="button"
+                      tabindex="0"
+                    >
+                      Edit
+                    </gr-button>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
-      `);
+          </gr-endpoint-decorator>
+        `
+      );
     });
 
     test('renders draft in editing mode', async () => {
@@ -299,75 +330,82 @@ suite('gr-comment tests', () => {
       (element.comment as DraftInfo).__draft = true;
       element.editing = true;
       await element.updateComplete;
-      expect(element).shadowDom.to.equal(/* HTML */ `
-        <div class="container draft" id="container">
-          <div class="header" id="header">
-            <div class="headerLeft">
-              <gr-account-label class="draft" deselected=""></gr-account-label>
-              <gr-tooltip-content
-                class="draftTooltip"
-                has-tooltip=""
-                max-width="20em"
-                show-icon=""
-                title="This draft is only visible to you. To publish drafts, click the 'Reply' or 'Start review' button at the top of the change or press the 'a' key."
-              >
-                <span class="draftLabel">DRAFT</span>
-              </gr-tooltip-content>
-            </div>
-            <div class="headerMiddle"></div>
-            <span class="patchset-text">Patchset 1</span>
-            <span class="separator"></span>
-            <span class="date" tabindex="0">
-              <gr-date-formatter withtooltip=""></gr-date-formatter>
-            </span>
-            <div class="show-hide" tabindex="0">
-              <label aria-label="Collapse" class="show-hide">
-                <input class="show-hide" type="checkbox" />
-                <iron-icon id="icon" icon="gr-icons:expand-less"></iron-icon>
-              </label>
-            </div>
-          </div>
-          <div class="body">
-            <gr-textarea
-              autocomplete="on"
-              class="code editMessage"
-              code=""
-              id="editTextarea"
-              rows="4"
-              text="This is the test comment message."
-            >
-            </gr-textarea>
-            <div class="actions">
-              <div class="action resolve">
-                <label>
-                  <input checked="" id="resolvedCheckbox" type="checkbox" />
-                  Resolved
-                </label>
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `
+          <gr-endpoint-decorator name="comment">
+            <gr-endpoint-param name="comment"></gr-endpoint-param>
+            <gr-endpoint-param name="editing"></gr-endpoint-param>
+            <div class="container draft" id="container">
+              <div class="header" id="header">
+                <div class="headerLeft">
+                  <gr-tooltip-content
+                    class="draftTooltip"
+                    has-tooltip=""
+                    max-width="20em"
+                    title="This draft is only visible to you. To publish drafts, click the 'Reply' or 'Start review' button at the top of the change or press the 'a' key."
+                  >
+                    <gr-icon filled icon="rate_review"></gr-icon>
+                    <span class="draftLabel">Draft</span>
+                  </gr-tooltip-content>
+                </div>
+                <div class="headerMiddle"></div>
+                <span class="patchset-text">Patchset 1</span>
+                <span class="separator"></span>
+                <span class="date" tabindex="0">
+                  <gr-date-formatter withtooltip=""></gr-date-formatter>
+                </span>
+                <div class="show-hide" tabindex="0">
+                  <label aria-label="Collapse" class="show-hide">
+                    <input class="show-hide" type="checkbox" />
+                    <gr-icon id="icon" icon="expand_less"></gr-icon>
+                  </label>
+                </div>
               </div>
-              <div class="rightActions">
-                <gr-button
-                  aria-disabled="false"
-                  class="action cancel"
-                  link=""
-                  role="button"
-                  tabindex="0"
+              <div class="body">
+                <gr-textarea
+                  autocomplete="on"
+                  class="code editMessage"
+                  code=""
+                  id="editTextarea"
+                  rows="4"
+                  text="This is the test comment message."
                 >
-                  Cancel
-                </gr-button>
-                <gr-button
-                  aria-disabled="false"
-                  class="action save"
-                  link=""
-                  role="button"
-                  tabindex="0"
-                >
-                  Save
-                </gr-button>
+                </gr-textarea>
+                <gr-endpoint-slot name="above-actions"></gr-endpoint-slot>
+                <div class="actions">
+                  <div class="action resolve">
+                    <label>
+                      <input checked="" id="resolvedCheckbox" type="checkbox" />
+                      Resolved
+                    </label>
+                  </div>
+                  <div class="rightActions">
+                    <gr-button
+                      aria-disabled="false"
+                      class="action cancel"
+                      link=""
+                      role="button"
+                      tabindex="0"
+                    >
+                      Cancel
+                    </gr-button>
+                    <gr-button
+                      aria-disabled="false"
+                      class="action save"
+                      link=""
+                      role="button"
+                      tabindex="0"
+                    >
+                      Save
+                    </gr-button>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
-      `);
+          </gr-endpoint-decorator>
+        `
+      );
     });
   });
 
@@ -376,8 +414,8 @@ suite('gr-comment tests', () => {
     element.addEventListener('comment-anchor-tap', stub);
     await element.updateComplete;
 
-    const dateEl = queryAndAssert(element, '.date');
-    tap(dateEl);
+    const dateEl = queryAndAssert<HTMLSpanElement>(element, '.date');
+    dateEl.click();
 
     assert.isTrue(stub.called);
     assert.deepEqual(stub.lastCall.args[0].detail, {
@@ -441,8 +479,8 @@ suite('gr-comment tests', () => {
     element.isAdmin = true;
     await element.updateComplete;
 
-    const deleteButton = queryAndAssert(element, '.action.delete');
-    tap(deleteButton);
+    const deleteButton = queryAndAssert<GrButton>(element, '.action.delete');
+    deleteButton.click();
     await element.updateComplete;
 
     assertIsDefined(element.confirmDeleteOverlay, 'confirmDeleteOverlay');
@@ -490,9 +528,11 @@ suite('gr-comment tests', () => {
       await element.updateComplete;
       assert.isTrue(element.isSaveDisabled());
 
+      // After changing the 'resolved' state of the comment the 'Save' button
+      // should stay disabled, if the message is empty.
       element.unresolved = false;
       await element.updateComplete;
-      assert.isFalse(element.isSaveDisabled());
+      assert.isTrue(element.isSaveDisabled());
 
       element.saving = true;
       await element.updateComplete;
@@ -536,6 +576,23 @@ suite('gr-comment tests', () => {
 
       assert.isFalse(element.editing);
       assert.isFalse(element.saving);
+    });
+
+    test('previewing formatting triggers save', async () => {
+      element.permanentEditingMode = true;
+
+      const saveStub = sinon.stub(element, 'save').returns(Promise.resolve());
+
+      element.comment = createDraft();
+      element.editing = true;
+      element.messageText = 'something, not important';
+      await element.updateComplete;
+
+      assert.isFalse(saveStub.called);
+
+      queryAndAssert<GrButton>(element, '.save').click();
+
+      assert.isTrue(saveStub.called);
     });
 
     test('save failed', async () => {
@@ -597,7 +654,7 @@ suite('gr-comment tests', () => {
       );
       assert.isTrue(checkbox.checked);
 
-      tap(checkbox);
+      checkbox.click();
       await element.updateComplete;
 
       checkbox = queryAndAssert<HTMLInputElement>(element, '#resolvedCheckbox');
@@ -624,19 +681,21 @@ suite('gr-comment tests', () => {
       assert.isFalse(saveStub.called);
     });
 
-    test('handleFix fires create-fix event', async () => {
-      const listener = listenOnce<CreateFixCommentEvent>(
+    test('handlePleaseFix fires reply-to-comment event', async () => {
+      const listener = listenOnce<ReplyToCommentEvent>(
         element,
-        'create-fix-comment'
+        'reply-to-comment'
       );
       element.comment = createRobotComment();
       element.comments = [element.comment];
       await element.updateComplete;
 
-      tap(queryAndAssert(element, '.fix'));
+      queryAndAssert<GrButton>(element, '.fix').click();
 
       const e = await listener;
-      assert.deepEqual(e.detail, element.getEventPayload());
+      assert.equal(e.detail.unresolved, true);
+      assert.equal(e.detail.userWantsToEdit, false);
+      assert.isTrue(e.detail.content.includes('Please fix.'));
     });
 
     test('do not show Please Fix button if human reply exists', async () => {
@@ -668,10 +727,10 @@ suite('gr-comment tests', () => {
       };
       await element.updateComplete;
 
-      tap(queryAndAssert(element, '.show-fix'));
+      queryAndAssert<GrButton>(element, '.show-fix').click();
 
       const e = await listener;
-      assert.deepEqual(e.detail, element.getEventPayload());
+      assert.deepEqual(e.detail, await element.createFixPreview());
     });
   });
 
@@ -739,6 +798,74 @@ suite('gr-comment tests', () => {
       assert.isTrue(saveStub.called);
       assert.equal(saveStub.firstCall.firstArg.message, 'actual save text');
       assert.equal(saveStub.firstCall.firstArg.id, 'exp123');
+    });
+  });
+
+  suite('suggest edit', () => {
+    let element: GrComment;
+    setup(async () => {
+      stubFlags('isEnabled').returns(true);
+      const comment = {
+        ...createComment(),
+        author: {
+          name: 'Mr. Peanutbutter',
+          email: 'tenn1sballchaser@aol.com' as EmailAddress,
+        },
+        line: 5,
+        path: 'test',
+        __draft: true,
+        message: 'hello world',
+      };
+      element = await fixture(
+        html`<gr-comment
+          .account=${account}
+          .showPatchset=${true}
+          .comment=${comment}
+          .initiallyCollapsed=${false}
+        ></gr-comment>`
+      );
+    });
+    test('renders suggest fix button', () => {
+      assert.dom.equal(
+        queryAndAssert(element, 'gr-button.suggestEdit'),
+        /* HTML */ `<gr-button
+          aria-disabled="false"
+          class="action suggestEdit"
+          link=""
+          role="button"
+          tabindex="0"
+        >
+          Suggest Fix
+        </gr-button> `
+      );
+    });
+
+    test('renders preview suggest fix', async () => {
+      element.comment = {
+        ...createComment(),
+        author: {
+          name: 'Mr. Peanutbutter',
+          email: 'tenn1sballchaser@aol.com' as EmailAddress,
+        },
+        line: 5,
+        path: 'test',
+        message: `${USER_SUGGESTION_START_PATTERN}afterSuggestion${'\n```'}`,
+      };
+      await element.updateComplete;
+
+      assert.dom.equal(
+        queryAndAssert(element, 'gr-button.show-fix'),
+        /* HTML */ `<gr-button
+          aria-disabled="false"
+          class="action show-fix"
+          link=""
+          role="button"
+          secondary
+          tabindex="0"
+        >
+          Preview Fix
+        </gr-button> `
+      );
     });
   });
 });

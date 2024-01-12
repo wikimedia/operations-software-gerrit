@@ -1,28 +1,21 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the 'License');
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an 'AS IS' BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import '@polymer/iron-icon/iron-icon';
-import {classMap} from 'lit/directives/class-map';
+import '../shared/gr-icon/gr-icon';
+import {classMap} from 'lit/directives/class-map.js';
 import './gr-hovercard-run';
 import {css, html, LitElement, nothing, PropertyValues} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
+import {customElement, property, query, state} from 'lit/decorators.js';
 import './gr-checks-attempt';
 import {Action, Link, RunStatus} from '../../api/checks';
 import {sharedStyles} from '../../styles/shared-styles';
 import {
+  ALL_ATTEMPTS,
+  AttemptChoice,
+  attemptChoiceLabel,
+  LATEST_ATTEMPT,
   AttemptDetail,
   compareByWorstCategory,
   headerForStatus,
@@ -51,11 +44,7 @@ import {
 } from '../../models/checks/checks-fakes';
 import {assertIsDefined} from '../../utils/common-util';
 import {modifierPressed, whenVisible} from '../../utils/dom-util';
-import {
-  fireAttemptSelected,
-  fireRunSelected,
-  fireRunSelectionReset,
-} from './gr-checks-util';
+import {fireRunSelected, RunSelectedEvent} from './gr-checks-util';
 import {ChecksTabState} from '../../types/events';
 import {charsOnly} from '../../utils/string-util';
 import {getAppContext} from '../../services/app-context';
@@ -67,6 +56,8 @@ import {resolve} from '../../models/dependency';
 import {checksModelToken} from '../../models/checks/checks-model';
 import {Interaction} from '../../constants/reporting';
 import {Deduping} from '../../api/reporting';
+import {when} from 'lit/directives/when.js';
+import {changeViewModelToken} from '../../models/views/change';
 
 @customElement('gr-checks-run')
 export class GrChecksRun extends LitElement {
@@ -77,6 +68,14 @@ export class GrChecksRun extends LitElement {
         :host {
           display: block;
           --thick-border: 6px;
+        }
+        :host([condensed]) .eta,
+        :host([condensed]) .middle,
+        :host([condensed]) .right {
+          display: none;
+        }
+        :host([condensed]) * {
+          pointer-events: none;
         }
         .chip {
           display: flex;
@@ -114,35 +113,35 @@ export class GrChecksRun extends LitElement {
         .chip.warning {
           border-left: var(--thick-border) solid var(--warning-foreground);
         }
-        .chip.info-outline {
+        .chip.info {
           border-left: var(--thick-border) solid var(--info-foreground);
         }
-        .chip.check-circle-outline {
+        .chip.check_circle {
           border-left: var(--thick-border) solid var(--success-foreground);
         }
         .chip.timelapse,
-        .chip.scheduled {
+        .chip.pending_actions {
           border-left: var(--thick-border) solid var(--border-color);
         }
         .chip.placeholder {
           border-left: var(--thick-border) solid var(--border-color);
         }
-        .chip.placeholder iron-icon {
+        .chip.placeholder gr-icon {
           display: none;
         }
-        iron-icon.error {
+        gr-icon.error {
           color: var(--error-foreground);
         }
-        iron-icon.warning {
+        gr-icon.warning {
           color: var(--warning-foreground);
         }
-        iron-icon.info-outline {
+        gr-icon.info {
           color: var(--info-foreground);
         }
-        iron-icon.check-circle-outline {
+        gr-icon.check_circle {
           color: var(--success-foreground);
         }
-        div.chip:hover {
+        :host(:not([condensed])) div.chip:hover {
           background-color: var(--hover-background-color);
         }
         div.chip:focus-within {
@@ -155,7 +154,7 @@ export class GrChecksRun extends LitElement {
           padding-left: calc(var(--spacing-m) + var(--thick-border) - 1px);
         }
         div.chip.selected .name,
-        div.chip.selected iron-icon.filter {
+        div.chip.selected gr-icon.filter {
           color: var(--selected-foreground);
         }
         gr-checks-action {
@@ -200,35 +199,34 @@ export class GrChecksRun extends LitElement {
   @property({attribute: false})
   selected = false;
 
-  @property({attribute: false})
-  selectedAttempt?: number;
+  @state()
+  selectedAttempt: AttemptChoice = LATEST_ATTEMPT;
 
   @property({attribute: false})
   deselected = false;
+
+  @property({type: Boolean})
+  condensed = false;
 
   @state()
   shouldRender = false;
 
   private readonly reporting = getAppContext().reportingService;
 
+  private getChecksModel = resolve(this, checksModelToken);
+
+  constructor() {
+    super();
+    subscribe(
+      this,
+      () => this.getChecksModel().checksSelectedAttemptNumber$,
+      x => (this.selectedAttempt = x)
+    );
+  }
+
   override firstUpdated() {
     assertIsDefined(this.chipElement, 'chip element');
     whenVisible(this.chipElement, () => (this.shouldRender = true), 200);
-  }
-
-  protected override updated(changedProperties: PropertyValues) {
-    super.updated(changedProperties);
-
-    // For some reason the browser does not pick up the correct `checked` state
-    // that is set in renderAttempt(). So we have to set it programmatically
-    // here.
-    const selectedAttempt = this.selectedAttempt ?? this.run.attempt;
-    const inputToBeSelected = this.shadowRoot?.querySelector(
-      `.attemptDetails input#attempt-${selectedAttempt}`
-    ) as HTMLInputElement | undefined;
-    if (inputToBeSelected) {
-      inputToBeSelected.checked = true;
-    }
   }
 
   override render() {
@@ -237,7 +235,7 @@ export class GrChecksRun extends LitElement {
     const icon = iconForRun(this.run);
     const classes = {
       chip: true,
-      [icon]: true,
+      [icon.name]: true,
       selected: this.selected,
       deselected: this.deselected,
     };
@@ -250,10 +248,14 @@ export class GrChecksRun extends LitElement {
         class=${classMap(classes)}
         tabindex="0"
       >
-        <div class="left">
+        <div class="left" tabindex="0">
           <gr-hovercard-run .run=${this.run}></gr-hovercard-run>
           ${this.renderFilterIcon()}
-          <iron-icon class=${icon} icon="gr-icons:${icon}"></iron-icon>
+          <gr-icon
+            class=${icon.name}
+            icon=${icon.name}
+            ?filled=${icon.filled}
+          ></gr-icon>
           ${this.renderAdditionalIcon()}
           <span class="name">${this.run.checkName}</span>
           ${this.renderETA()}
@@ -275,43 +277,45 @@ export class GrChecksRun extends LitElement {
         class="attemptDetails"
         ?hidden=${this.run.isSingleAttempt || !this.selected}
       >
+        ${this.renderAttempt({attempt: LATEST_ATTEMPT})}
+        ${this.renderAttempt({attempt: ALL_ATTEMPTS})}
         ${this.run.attemptDetails.map(a => this.renderAttempt(a))}
       </div>
     `;
   }
 
-  isSelected(detail: AttemptDetail) {
-    // this.selectedAttempt may be undefined, then choose the latest attempt,
-    // which is what this.run has.
-    const selectedAttempt = this.selectedAttempt ?? this.run.attempt;
-    return detail.attempt === selectedAttempt;
-  }
-
   renderAttempt(detail: AttemptDetail) {
+    const attempt = detail.attempt ?? 0;
     const checkNameId = charsOnly(this.run.checkName).toLowerCase();
     const id = `attempt-${detail.attempt}`;
-    const icon = detail.icon;
-    const wasNotRun = icon === iconFor(RunStatus.RUNNABLE);
+    const icon = detail.icon ?? {name: ''};
+    const wasNotRun =
+      icon?.name === iconFor(RunStatus.RUNNABLE)?.name &&
+      attempt !== LATEST_ATTEMPT &&
+      attempt !== ALL_ATTEMPTS;
+    const selected = this.selectedAttempt === attempt;
     return html`<div class="attemptDetail">
       <input
         type="radio"
         id=${id}
         name=${`${checkNameId}-attempt-choice`}
-        ?checked=${this.isSelected(detail)}
-        ?disabled=${!this.isSelected(detail) && wasNotRun}
-        @change=${() => this.handleAttemptChange(detail)}
+        .checked=${selected}
+        ?disabled=${!selected && wasNotRun}
+        @change=${() => this.handleAttemptChange(attempt)}
       />
-      <iron-icon class=${icon} icon="gr-icons:${icon}"></iron-icon>
+      <gr-icon
+        icon=${icon.name}
+        class=${icon.name}
+        ?filled=${icon.filled}
+      ></gr-icon>
       <label for=${id}>
-        Attempt ${detail.attempt}${wasNotRun ? ' (not run)' : ''}
+        ${attemptChoiceLabel(attempt)}${wasNotRun ? ' (not run)' : ''}
       </label>
     </div>`;
   }
 
-  handleAttemptChange(detail: AttemptDetail) {
-    if (!this.isSelected(detail)) {
-      fireAttemptSelected(this, this.run.checkName, detail.attempt);
-    }
+  handleAttemptChange(attempt: AttemptChoice) {
+    this.getChecksModel().updateStateSetAttempt(attempt);
   }
 
   renderETA() {
@@ -328,11 +332,11 @@ export class GrChecksRun extends LitElement {
     if (!link) return;
     return html`
       <a href=${link} target="_blank" @click=${this.onLinkClick}
-        ><iron-icon
+        ><gr-icon
+          icon="open_in_new"
           class="statusLinkIcon"
-          icon="gr-icons:launch"
           aria-label="external link to run status details"
-        ></iron-icon>
+        ></gr-icon>
         <paper-tooltip offset="5">Link to run status details</paper-tooltip>
       </a>
     `;
@@ -349,9 +353,7 @@ export class GrChecksRun extends LitElement {
 
   renderFilterIcon() {
     if (!this.selected) return;
-    return html`
-      <iron-icon class="filter" icon="gr-icons:filter"></iron-icon>
-    `;
+    return html`<gr-icon icon="filter_alt" filled class="filter"></gr-icon>`;
   }
 
   /**
@@ -364,7 +366,11 @@ export class GrChecksRun extends LitElement {
     if (!category) return nothing;
     const icon = iconFor(category);
     return html`
-      <iron-icon class=${icon} icon="gr-icons:${icon}"></iron-icon>
+      <gr-icon
+        icon=${icon.name}
+        class=${icon.name}
+        ?filled=${icon.filled}
+      ></gr-icon>
     `;
   }
 
@@ -377,7 +383,7 @@ export class GrChecksRun extends LitElement {
   private handleChipKey(e: KeyboardEvent) {
     if (modifierPressed(e)) return;
     // Only react to `return` and `space`.
-    if (e.keyCode !== 13 && e.keyCode !== 32) return;
+    if (e.key !== 'Enter' && e.key !== ' ') return;
     e.preventDefault();
     e.stopPropagation();
     fireRunSelected(this, this.run.checkName);
@@ -389,12 +395,8 @@ export class GrChecksRuns extends LitElement {
   @query('#filterInput')
   filterInput?: HTMLInputElement;
 
-  /**
-   * We prefer `undefined` over a RegExp with '', because `.source` yields
-   * a strange '(?:)' for ''.
-   */
   @state()
-  filterRegExp?: RegExp;
+  filterRegExp = '';
 
   @property({attribute: false})
   runs: CheckRun[] = [];
@@ -402,15 +404,11 @@ export class GrChecksRuns extends LitElement {
   @property({type: Boolean, reflect: true})
   collapsed = false;
 
-  @property({attribute: false})
-  selectedRuns: string[] = [];
+  @state()
+  selectedRuns: Set<string> = new Set();
 
-  /** Maps checkName to selected attempt number. `undefined` means `latest`. */
-  @property({attribute: false})
-  selectedAttempts: Map<string, number | undefined> = new Map<
-    string,
-    number | undefined
-  >();
+  @state()
+  selectedAttempt: AttemptChoice = LATEST_ATTEMPT;
 
   @property({attribute: false})
   tabState?: ChecksTabState;
@@ -427,25 +425,45 @@ export class GrChecksRuns extends LitElement {
 
   private getChecksModel = resolve(this, checksModelToken);
 
+  private readonly getViewModel = resolve(this, changeViewModelToken);
+
   private readonly reporting = getAppContext().reportingService;
 
-  override connectedCallback(): void {
-    super.connectedCallback();
+  constructor() {
+    super();
     subscribe(
       this,
-      this.getChecksModel().allRunsSelectedPatchset$,
+      () => this.getChecksModel().allRunsSelectedPatchset$,
       x => (this.runs = x)
     );
     subscribe(
       this,
-      this.getChecksModel().errorMessagesLatest$,
+      () => this.getChecksModel().errorMessagesLatest$,
       x => (this.errorMessages = x)
     );
     subscribe(
       this,
-      this.getChecksModel().loginCallbackLatest$,
+      () => this.getChecksModel().loginCallbackLatest$,
       x => (this.loginCallback = x)
     );
+    subscribe(
+      this,
+      () => this.getChecksModel().checksSelectedAttemptNumber$,
+      x => (this.selectedAttempt = x)
+    );
+    subscribe(
+      this,
+      () => this.getChecksModel().runFilterRegexp$,
+      x => (this.filterRegExp = x)
+    );
+    subscribe(
+      this,
+      () => this.getViewModel().checksRunsSelected$,
+      x => (this.selectedRuns = x)
+    );
+    this.addEventListener('click', () => {
+      if (this.collapsed) this.toggleCollapsed();
+    });
   }
 
   static override get styles() {
@@ -457,12 +475,22 @@ export class GrChecksRuns extends LitElement {
           display: block;
         }
         :host(:not([collapsed])) {
-          min-width: 320px;
+          width: 20%;
           padding: var(--spacing-l) var(--spacing-xl) var(--spacing-xl)
             var(--spacing-xl);
         }
         :host([collapsed]) {
-          padding: var(--spacing-l) 0;
+          width: 90px;
+          padding: var(--spacing-l) var(--spacing-l) var(--spacing-xl)
+            var(--spacing-l);
+          max-height: 600px;
+          overflow: hidden;
+        }
+        :host([collapsed]) * {
+          pointer-events: none;
+        }
+        :host([collapsed]:hover) {
+          cursor: pointer;
         }
         .title {
           display: flex;
@@ -477,25 +505,28 @@ export class GrChecksRuns extends LitElement {
         .title gr-button.expandButton {
           --gr-button-padding: var(--spacing-xs) var(--spacing-s);
         }
-        :host(:not([collapsed])) .expandButton {
+        :host .expandButton {
           margin-right: calc(0px - var(--spacing-m));
         }
-        .expandIcon {
-          width: var(--line-height-h3);
-          height: var(--line-height-h3);
+        :host([collapsed]:hover) .expandButton {
+          background: var(--gray-background-hover);
+          border-radius: var(--border-radius);
         }
         .sectionHeader {
           padding-top: var(--spacing-l);
           text-transform: capitalize;
           cursor: default;
         }
+        :host([collapsed]) .sectionHeader {
+          cursor: pointer;
+        }
         .sectionHeader h3 {
           display: inline-block;
         }
-        .collapsed .sectionRuns {
+        :host(:not([collapsed])) .collapsed .sectionRuns {
           display: none;
         }
-        .collapsed {
+        :host(:not([collapsed])) .collapsed {
           border-bottom: 1px solid var(--border-color);
           padding-bottom: var(--spacing-m);
         }
@@ -533,14 +564,14 @@ export class GrChecksRuns extends LitElement {
           display: flex;
           background-color: var(--error-background);
         }
-        .error iron-icon {
+        .error gr-icon {
           color: var(--error-foreground);
           margin-right: var(--spacing-m);
         }
         .login {
           background: var(--info-background);
         }
-        .login iron-icon {
+        .login gr-icon {
           color: var(--info-foreground);
         }
         .login .buttonRow {
@@ -556,20 +587,7 @@ export class GrChecksRuns extends LitElement {
 
   protected override updated(changedProperties: PropertyValues) {
     super.updated(changedProperties);
-    // This update is done is response to setting this.filterRegExp below, but
-    // this.filterInput not yet being available at that point.
-    if (this.filterInput && !this.filterInput.value && this.filterRegExp) {
-      this.filterInput.value = this.filterRegExp.source;
-    }
     if (changedProperties.has('tabState') && this.tabState) {
-      // Note that tabState.select and tabState.attempt are processed by
-      // <gr-checks-tab>.
-      if (
-        this.tabState.filter &&
-        this.tabState.filter !== this.filterRegExp?.source
-      ) {
-        this.filterRegExp = new RegExp(this.tabState.filter, 'i');
-      }
       const {statusOrCategory} = this.tabState;
       if (
         statusOrCategory === RunStatus.RUNNING ||
@@ -585,9 +603,6 @@ export class GrChecksRuns extends LitElement {
   }
 
   override render() {
-    if (this.collapsed) {
-      return html`${this.renderCollapseButton()}`;
-    }
     return html`
       <h2 class="title">
         <div class="heading-2">Runs</div>
@@ -600,6 +615,7 @@ export class GrChecksRuns extends LitElement {
         type="text"
         placeholder="Filter runs by regular expression"
         ?hidden=${!this.showFilter()}
+        .value=${this.filterRegExp}
         @input=${this.onInput}
       />
       ${this.renderSection(RunStatus.RUNNING)}
@@ -609,38 +625,39 @@ export class GrChecksRuns extends LitElement {
   }
 
   private renderZeroState() {
+    if (this.collapsed) return;
     if (this.runs.length > 0) return;
     return html`<div class="zero">No Check Run to show</div>`;
   }
 
   private renderErrors() {
-    return Object.entries(this.errorMessages).map(
-      ([plugin, message]) =>
-        html`
-          <div class="error">
-            <div class="left">
-              <iron-icon icon="gr-icons:error"></iron-icon>
-            </div>
-            <div class="right">
-              <div class="message">
-                Error while fetching results for ${plugin}:<br />${message}
-              </div>
-            </div>
+    return Object.entries(this.errorMessages).map(([plugin, message]) => {
+      const msg = this.collapsed
+        ? 'Error'
+        : `Error while fetching results for ${plugin}:<br />${message}`;
+      return html`
+        <div class="error">
+          <div class="left">
+            <gr-icon icon="error" filled></gr-icon>
           </div>
-        `
-    );
+          <div class="right">
+            <div class="message">${msg}</div>
+          </div>
+        </div>
+      `;
+    });
   }
 
   private renderSignIn() {
     if (!this.loginCallback) return;
+    const message = this.collapsed
+      ? 'Sign in'
+      : 'Sign in to Checks Plugin to see runs and results';
     return html`
       <div class="login">
         <div>
-          <iron-icon
-            class="info-outline"
-            icon="gr-icons:info-outline"
-          ></iron-icon>
-          Sign in to Checks Plugin to see runs and results
+          <gr-icon icon="info"></gr-icon>
+          ${message}
         </div>
         <div class="buttonRow">
           <gr-button @click=${this.loginCallback} link>Sign in</gr-button>
@@ -650,8 +667,9 @@ export class GrChecksRuns extends LitElement {
   }
 
   private renderTitleButtons() {
-    if (this.selectedRuns.length < 2) return;
-    const actions = this.selectedRuns.map(selected => {
+    if (this.collapsed) return;
+    if (this.selectedRuns.size < 2) return;
+    const actions = [...this.selectedRuns].map(selected => {
       const run = this.runs.find(
         run => run.isLatestAttempt && run.checkName === selected
       );
@@ -666,7 +684,8 @@ export class GrChecksRuns extends LitElement {
       <gr-button
         class="font-normal"
         link
-        @click=${() => fireRunSelectionReset(this)}
+        @click=${() =>
+          this.getViewModel().updateState({checksRunsSelected: undefined})}
         >Unselect All</gr-button
       >
       <gr-tooltip-content
@@ -706,25 +725,28 @@ export class GrChecksRuns extends LitElement {
       >
         <gr-button
           link
-          class="expandButton"
+          class="expandButton font-normal"
           role="switch"
           aria-checked=${this.collapsed ? 'true' : 'false'}
           aria-label=${this.collapsed
             ? 'Expand runs panel'
             : 'Collapse runs panel'}
           @click=${this.toggleCollapsed}
-          ><iron-icon
-            class="expandIcon"
-            icon=${this.collapsed
-              ? 'gr-icons:chevron-right'
-              : 'gr-icons:chevron-left'}
-          ></iron-icon>
+        >
+          <div>
+            <gr-icon
+              icon=${this.collapsed ? 'chevron_right' : 'chevron_left'}
+              class="expandIcon"
+            >
+            </gr-icon>
+          </div>
         </gr-button>
       </gr-tooltip-content>
     `;
   }
 
-  private toggleCollapsed() {
+  private toggleCollapsed(event?: Event) {
+    if (event) event.stopPropagation();
     this.collapsed = !this.collapsed;
     this.reporting.reportInteraction(Interaction.CHECKS_RUNS_PANEL_TOGGLE, {
       collapsed: this.collapsed,
@@ -738,11 +760,8 @@ export class GrChecksRuns extends LitElement {
       {},
       {deduping: Deduping.EVENT_ONCE_PER_CHANGE}
     );
-    if (this.filterInput.value) {
-      this.filterRegExp = new RegExp(this.filterInput.value, 'i');
-    } else {
-      this.filterRegExp = undefined;
-    }
+    const value = this.filterInput.value;
+    this.getChecksModel().updateStateSetRunFilter(value ?? '');
   }
 
   toggle(
@@ -764,6 +783,7 @@ export class GrChecksRuns extends LitElement {
   }
 
   renderSection(status: RunStatus) {
+    const regExp = new RegExp(this.filterRegExp, 'i');
     const runs = this.runs
       .filter(r => r.isLatestAttempt)
       .filter(
@@ -771,21 +791,26 @@ export class GrChecksRuns extends LitElement {
           r.status === status ||
           (status === RunStatus.RUNNING && r.status === RunStatus.SCHEDULED)
       )
-      .filter(r => !this.filterRegExp || this.filterRegExp.test(r.checkName))
+      .filter(r => regExp.test(r.checkName))
       .sort(compareByWorstCategory);
     if (runs.length === 0) return;
     const expanded = this.isSectionExpanded.get(status) ?? true;
     const expandedClass = expanded ? 'expanded' : 'collapsed';
-    const icon = expanded ? 'gr-icons:expand-less' : 'gr-icons:expand-more';
+    const icon = expanded ? 'expand_less' : 'expand_more';
     let header = headerForStatus(status);
     if (runs.some(r => r.status === RunStatus.SCHEDULED)) {
       header = `${header} / ${headerForStatus(RunStatus.SCHEDULED)}`;
     }
+    const count = when(!this.collapsed, () => html` (${runs.length})`);
+    const grIcon = when(
+      !this.collapsed,
+      () => html`<gr-icon icon=${icon} class="expandIcon"></gr-icon>`
+    );
     return html`
       <div class="${status.toLowerCase()} ${expandedClass}">
         <div class="sectionHeader" @click=${() => this.toggleExpanded(status)}>
-          <iron-icon class="expandIcon" icon=${icon}></iron-icon>
-          <h3 class="heading-3">${header}</h3>
+          ${grIcon}
+          <h3 class="heading-3">${header}${count}</h3>
         </div>
         <div class="sectionRuns">${runs.map(run => this.renderRun(run))}</div>
       </div>
@@ -793,6 +818,7 @@ export class GrChecksRuns extends LitElement {
   }
 
   toggleExpanded(status: RunStatus) {
+    if (this.collapsed) return;
     const expanded = this.isSectionExpanded.get(status) ?? true;
     this.isSectionExpanded.set(status, !expanded);
     this.reporting.reportInteraction(Interaction.CHECKS_RUN_SECTION_TOGGLE, {
@@ -803,23 +829,31 @@ export class GrChecksRuns extends LitElement {
   }
 
   renderRun(run: CheckRun) {
-    const selectedRun = this.selectedRuns.includes(run.checkName);
-    const selectedAttempt = this.selectedAttempts.get(run.checkName);
-    const deselected = !selectedRun && this.selectedRuns.length > 0;
+    const selectedRun = this.selectedRuns.has(run.checkName);
+    const deselected = !selectedRun && this.selectedRuns.size > 0;
     return html`<gr-checks-run
       .run=${run}
+      ?condensed=${this.collapsed}
       .selected=${selectedRun}
-      .selectedAttempt=${selectedAttempt}
       .deselected=${deselected}
+      @run-selected=${this.handleRunSelected}
     ></gr-checks-run>`;
   }
 
+  handleRunSelected(e: RunSelectedEvent) {
+    if (e.detail.checkName) {
+      this.getViewModel().toggleSelectedCheckRun(e.detail.checkName);
+    }
+  }
+
   showFilter(): boolean {
+    if (this.collapsed) return false;
     return this.runs.length > 10 || !!this.filterRegExp;
   }
 
   renderFakeControls() {
     if (!this.flagService.isEnabled(KnownExperimentId.CHECKS_DEVELOPER)) return;
+    if (this.collapsed) return;
     return html`
       <div class="testing">
         <div>Toggle fake runs by clicking buttons:</div>

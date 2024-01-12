@@ -1,33 +1,53 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
+import {fixture, html, assert} from '@open-wc/testing';
 import './gr-user-header';
 import {GrUserHeader} from './gr-user-header';
-import {stubRestApi} from '../../../test/test-utils';
+import {stubRestApi, waitEventLoop} from '../../../test/test-utils';
 import {AccountId, EmailAddress, Timestamp} from '../../../types/common';
-
-const basicFixture = fixtureFromElement('gr-user-header');
 
 suite('gr-user-header tests', () => {
   let element: GrUserHeader;
 
-  setup(() => {
-    element = basicFixture.instantiate();
+  setup(async () => {
+    element = await fixture(html`<gr-user-header></gr-user-header>`);
+  });
+
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <gr-avatar aria-label="Account avatar" hidden=""> </gr-avatar>
+        <div class="info">
+          <h1 class="heading-1"></h1>
+          <hr />
+          <div class="hide status">
+            <span> Status: </span>
+          </div>
+          <div>
+            <span> Email: </span>
+            <a href="mailto:"> </a>
+          </div>
+          <div>
+            <span> Joined: </span>
+            <gr-date-formatter datestr=""> </gr-date-formatter>
+          </div>
+          <gr-endpoint-decorator name="user-header">
+            <gr-endpoint-param name="accountDetails"> </gr-endpoint-param>
+            <gr-endpoint-param name="loggedIn"> </gr-endpoint-param>
+          </gr-endpoint-decorator>
+        </div>
+        <div class="info">
+          <div class="dashboardLink hide">
+            <a href=""> View dashboard </a>
+          </div>
+        </div>
+      `
+    );
   });
 
   test('loads and clears account info', async () => {
@@ -41,13 +61,13 @@ suite('gr-user-header tests', () => {
     );
 
     element.userId = 10 as AccountId;
-    await flush();
+    await waitEventLoop();
 
     assert.isOk(element._accountDetails);
     assert.isOk(element._status);
 
     element.userId = undefined;
-    await flush();
+    await waitEventLoop();
 
     assert.isUndefined(element._accountDetails);
     assert.equal(element._status, '');

@@ -1,20 +1,8 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import '@polymer/iron-input/iron-input';
 import '../../../styles/shared-styles';
 import '../gr-button/gr-button';
@@ -25,7 +13,7 @@ import {subscribe} from '../../lit/subscription-controller';
 import {formStyles} from '../../../styles/gr-form-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, html} from 'lit';
-import {customElement, query, state} from 'lit/decorators';
+import {customElement, query, state} from 'lit/decorators.js';
 import {convertToString} from '../../../utils/string-util';
 import {fire} from '../../../utils/event-util';
 import {ValueChangedEvent} from '../../../types/events';
@@ -65,13 +53,17 @@ export class GrDiffPreferences extends LitElement {
 
   private readonly userModel = getAppContext().userModel;
 
-  override connectedCallback() {
-    super.connectedCallback();
-    subscribe(this, this.userModel.diffPreferences$, diffPreferences => {
-      if (!diffPreferences) return;
-      this.originalDiffPrefs = diffPreferences;
-      this.diffPrefs = {...diffPreferences};
-    });
+  constructor() {
+    super();
+    subscribe(
+      this,
+      () => this.userModel.diffPreferences$,
+      diffPreferences => {
+        if (!diffPreferences) return;
+        this.originalDiffPrefs = diffPreferences;
+        this.diffPrefs = {...diffPreferences};
+      }
+    );
   }
 
   static override get styles() {

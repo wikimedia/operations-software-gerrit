@@ -1,26 +1,16 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '@polymer/iron-input/iron-input';
+import '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
 import '../../../styles/gr-form-styles';
 import '../../../styles/shared-styles';
 import '../../shared/gr-autocomplete/gr-autocomplete';
 import '../../shared/gr-button/gr-button';
 import '../../shared/gr-select/gr-select';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {
   RepoName,
   BranchName,
@@ -32,12 +22,13 @@ import {getAppContext} from '../../../services/app-context';
 import {formStyles} from '../../../styles/gr-form-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, css, html} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
+import {customElement, property, query, state} from 'lit/decorators.js';
 import {BindValueChangeEvent} from '../../../types/events';
 import {fireEvent} from '../../../utils/event-util';
 import {subscribe} from '../../lit/subscription-controller';
 import {configModelToken} from '../../../models/config/config-model';
 import {resolve} from '../../../models/dependency';
+import {createChangeUrl} from '../../../models/views/change';
 
 const SUGGESTIONS_LIMIT = 15;
 const REF_PREFIX = 'refs/heads/';
@@ -81,19 +72,20 @@ export class GrCreateChangeDialog extends LitElement {
 
   private readonly configModel = resolve(this, configModelToken);
 
+  private readonly getNavigation = resolve(this, navigationToken);
+
   constructor() {
     super();
     this.query = (input: string) => this.getRepoBranchesSuggestions(input);
-  }
 
-  override connectedCallback() {
-    super.connectedCallback();
-    if (!this.repoName) return;
-
-    subscribe(this, this.configModel().serverConfig$, config => {
-      this.privateChangesEnabled =
-        config?.change?.disable_private_changes ?? false;
-    });
+    subscribe(
+      this,
+      () => this.configModel().serverConfig$,
+      config => {
+        this.privateChangesEnabled =
+          config?.change?.disable_private_changes ?? false;
+      }
+    );
   }
 
   static override get styles() {
@@ -185,7 +177,7 @@ export class GrCreateChangeDialog extends LitElement {
               .bindValue=${this.subject}
               placeholder="Insert the description of the change."
               @bind-value-changed=${(e: BindValueChangeEvent) => {
-                this.subject = e.detail.value;
+                this.subject = e.detail.value ?? '';
               }}
             >
             </iron-autogrow-textarea>
@@ -234,9 +226,9 @@ export class GrCreateChangeDialog extends LitElement {
         this.baseChange,
         this.baseCommit || undefined
       )
-      .then(changeCreated => {
-        if (!changeCreated) return;
-        GerritNav.navigateToChange(changeCreated);
+      .then(change => {
+        if (!change) return;
+        this.getNavigation().setUrl(createChangeUrl({change}));
       });
   }
 

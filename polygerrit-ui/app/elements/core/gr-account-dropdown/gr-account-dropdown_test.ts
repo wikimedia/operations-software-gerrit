@@ -1,33 +1,35 @@
 /**
  * @license
- * Copyright (C) 2015 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2015 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-account-dropdown';
+import {fixture, html, assert} from '@open-wc/testing';
 import {GrAccountDropdown} from './gr-account-dropdown';
 import {AccountInfo} from '../../../types/common';
 import {createServerInfo} from '../../../test/test-data-generators';
 
-const basicFixture = fixtureFromElement('gr-account-dropdown');
-
 suite('gr-account-dropdown tests', () => {
   let element: GrAccountDropdown;
 
-  setup(() => {
-    element = basicFixture.instantiate();
+  setup(async () => {
+    element = await fixture(html`<gr-account-dropdown></gr-account-dropdown>`);
+  });
+
+  test('renders', async () => {
+    element.account = {name: 'John Doe', email: 'john@doe.com'} as AccountInfo;
+    await element.updateComplete;
+
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <gr-dropdown link="">
+          <span>John Doe</span>
+          <gr-avatar aria-label="Account avatar" hidden=""> </gr-avatar>
+        </gr-dropdown>
+      `
+    );
   });
 
   test('account information', () => {
@@ -41,7 +43,7 @@ suite('gr-account-dropdown tests', () => {
   test('test for account without a name', () => {
     element.account = {id: '0001'} as AccountInfo;
     assert.deepEqual(element.topContent, [
-      {text: 'Anonymous', bold: true},
+      {text: 'Name of user not set', bold: true},
       {text: ''},
     ]);
   });

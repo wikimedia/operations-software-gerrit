@@ -20,10 +20,10 @@ import static com.google.gerrit.index.project.ProjectField.NAME;
 import com.google.common.collect.ImmutableSet;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.exceptions.StorageException;
-import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.Schema.Values;
+import com.google.gerrit.index.SchemaFieldDefs.SchemaField;
 import com.google.gerrit.index.project.ProjectData;
 import com.google.gerrit.index.project.ProjectIndex;
 import com.google.gerrit.index.query.DataSource;
@@ -47,9 +47,9 @@ import org.apache.lucene.index.Term;
 import org.apache.lucene.search.SearcherFactory;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
+import org.apache.lucene.store.ByteBuffersDirectory;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
-import org.apache.lucene.store.RAMDirectory;
 import org.apache.lucene.util.BytesRef;
 import org.eclipse.jgit.lib.Config;
 
@@ -74,7 +74,7 @@ public class LuceneProjectIndex extends AbstractLuceneIndex<Project.NameKey, Pro
   private static Directory dir(Schema<ProjectData> schema, Config cfg, SitePaths sitePaths)
       throws IOException {
     if (LuceneIndexModule.isInMemoryTest(cfg)) {
-      return new RAMDirectory();
+      return new ByteBuffersDirectory();
     }
     Path indexDir = LuceneVersionManager.getDir(sitePaths, PROJECTS, schema);
     return FSDirectory.open(indexDir);
@@ -107,7 +107,7 @@ public class LuceneProjectIndex extends AbstractLuceneIndex<Project.NameKey, Pro
   @Override
   void add(Document doc, Values<ProjectData> values) {
     // Add separate DocValues field for the field that is needed for sorting.
-    FieldDef<ProjectData, ?> f = values.getField();
+    SchemaField<ProjectData, ?> f = values.getField();
     if (f == NAME) {
       String value = (String) getOnlyElement(values.getValues());
       doc.add(new SortedDocValuesField(NAME_SORT_FIELD, new BytesRef(value)));

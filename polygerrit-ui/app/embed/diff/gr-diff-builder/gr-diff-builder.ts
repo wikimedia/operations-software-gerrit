@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the 'License');
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an 'AS IS' BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {
   ContentLoadNeededEventDetail,
@@ -21,7 +10,7 @@ import {
 } from '../../../api/diff';
 import {GrDiffLine, GrDiffLineType, LineNumber} from '../gr-diff/gr-diff-line';
 import {GrDiffGroup} from '../gr-diff/gr-diff-group';
-
+import {assert} from '../../../utils/common-util';
 import '../gr-context-controls/gr-context-controls';
 import {BlameInfo} from '../../../types/common';
 import {DiffInfo, DiffPreferencesInfo} from '../../../types/diff';
@@ -89,7 +78,8 @@ export abstract class GrDiffBuilder implements DiffBuilder {
 
   protected readonly numLinesLeft: number;
 
-  protected readonly _prefs: DiffPreferencesInfo;
+  // visible for testing
+  readonly _prefs: DiffPreferencesInfo;
 
   protected readonly renderPrefs?: RenderPreferences;
 
@@ -194,7 +184,8 @@ export abstract class GrDiffBuilder implements DiffBuilder {
     group.element = element;
   }
 
-  private getGroupsByLineRange(
+  // visible for testing
+  getGroupsByLineRange(
     startLine: LineNumber,
     endLine: LineNumber,
     side: Side
@@ -249,20 +240,18 @@ export abstract class GrDiffBuilder implements DiffBuilder {
    * @param start The first line number
    * @param end The last line number
    * @param side The side of the range. Either 'left' or 'right'.
-   * @param out_lines The output list of line objects. Use null if not desired.
-   *        TODO: Change `null` to `undefined` in paramete type. Also: Do we
-   *        really need to support null/undefined? Also change to camelCase.
-   * @param out_elements The output list of line elements. Use null if not
-   *        desired.
-   *        TODO: Change `null` to `undefined` in paramete type. Also: Do we
-   *        really need to support null/undefined? Also change to camelCase.
+   * @param out_lines The output list of line objects.
+   *        TODO: Change to camelCase.
+   * @param out_elements The output list of line elements.
+   *        TODO: Change to camelCase.
    */
-  protected findLinesByRange(
+  // visible for testing
+  findLinesByRange(
     start: LineNumber,
     end: LineNumber,
     side: Side,
-    out_lines: GrDiffLine[] | null,
-    out_elements: HTMLElement[] | null
+    out_lines: GrDiffLine[],
+    out_elements: HTMLElement[]
   ) {
     const groups = this.getGroupsByLineRange(start, end, side);
     for (const group of groups) {
@@ -280,21 +269,23 @@ export abstract class GrDiffBuilder implements DiffBuilder {
           continue;
         }
 
-        if (out_lines) {
-          out_lines.push(line);
+        if (content) {
+          content = this.getNextContentOnSide(content, side);
+        } else {
+          content = this.getContentByLine(lineNumber, side, group.element);
         }
-        if (out_elements) {
-          if (content) {
-            content = this.getNextContentOnSide(content, side);
-          } else {
-            content = this.getContentByLine(lineNumber, side, group.element);
-          }
-          if (content) {
-            out_elements.push(content);
-          }
+        if (content) {
+          // out_lines and out_elements must match. So if we don't have an
+          // element to push, then also don't push a line.
+          out_lines.push(line);
+          out_elements.push(content);
         }
       }
     }
+    assert(
+      out_lines.length === out_elements.length,
+      'findLinesByRange: lines and elements arrays must have same length'
+    );
   }
 
   protected abstract renderContentByRange(
@@ -352,9 +343,8 @@ export abstract class GrDiffBuilder implements DiffBuilder {
    *
    * @return The commit information.
    */
-  protected getBlameCommitForBaseLine(
-    lineNum: LineNumber
-  ): BlameInfo | undefined {
+  // visible for testing
+  getBlameCommitForBaseLine(lineNum: LineNumber): BlameInfo | undefined {
     for (const blameCommit of this.blameInfo) {
       for (const range of blameCommit.ranges) {
         if (range.start <= lineNum && range.end >= lineNum) {

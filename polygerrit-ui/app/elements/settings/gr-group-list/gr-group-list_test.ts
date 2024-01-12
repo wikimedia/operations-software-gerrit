@@ -1,28 +1,14 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-group-list';
 import {GrGroupList} from './gr-group-list';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {GroupId, GroupInfo, GroupName} from '../../../types/common';
-import {queryAll, stubRestApi} from '../../../test/test-utils';
-
-const basicFixture = fixtureFromElement('gr-group-list');
+import {stubRestApi, waitEventLoop} from '../../../test/test-utils';
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-group-list tests', () => {
   let element: GrGroupList;
@@ -56,52 +42,51 @@ suite('gr-group-list tests', () => {
 
     stubRestApi('getAccountGroups').returns(Promise.resolve(groups));
 
-    element = basicFixture.instantiate();
+    element = await fixture(html`<gr-group-list></gr-group-list>`);
 
     await element.loadData();
-    await flush();
+    await waitEventLoop();
   });
 
-  test('renders', async () => {
-    await flush();
-
-    const rows = Array.from(queryAll(element, 'tbody tr'));
-
-    assert.equal(rows.length, 3);
-
-    const nameCells = rows.map(row =>
-      queryAll(row, 'td a')[0].textContent!.trim()
+  test('renders', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="gr-form-styles">
+          <table id="groups">
+            <thead>
+              <tr>
+                <th class="nameHeader">Name</th>
+                <th class="descriptionHeader">Description</th>
+                <th class="visibleCell">Visible to all</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="nameColumn">
+                  <a href="/admin/groups/abc"> Group 1 </a>
+                </td>
+                <td>Group 1 description</td>
+                <td class="visibleCell">No</td>
+              </tr>
+              <tr>
+                <td class="nameColumn">
+                  <a href="/admin/groups/456"> Group 2 </a>
+                </td>
+                <td></td>
+                <td class="visibleCell">Yes</td>
+              </tr>
+              <tr>
+                <td class="nameColumn">
+                  <a href="/admin/groups/789"> Group 3 </a>
+                </td>
+                <td></td>
+                <td class="visibleCell">No</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      `
     );
-
-    assert.equal(nameCells[0], 'Group 1');
-    assert.equal(nameCells[1], 'Group 2');
-    assert.equal(nameCells[2], 'Group 3');
-  });
-
-  test('_computeGroupPath', () => {
-    let urlStub = sinon
-      .stub(GerritNav, 'getUrlForGroup')
-      .callsFake(
-        () => '/admin/groups/e2cd66f88a2db4d391ac068a92d987effbe872f5'
-      );
-
-    let group = {
-      id: 'e2cd66f88a2db4d391ac068a92d987effbe872f5' as GroupId,
-    };
-    assert.equal(
-      element._computeGroupPath(group),
-      '/admin/groups/e2cd66f88a2db4d391ac068a92d987effbe872f5'
-    );
-
-    urlStub.restore();
-
-    urlStub = sinon
-      .stub(GerritNav, 'getUrlForGroup')
-      .callsFake(() => '/admin/groups/user/test');
-
-    group = {
-      id: 'user%2Ftest' as GroupId,
-    };
-    assert.equal(element._computeGroupPath(group), '/admin/groups/user/test');
   });
 });

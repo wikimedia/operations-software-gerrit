@@ -1,27 +1,14 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-permission';
 import {GrPermission} from './gr-permission';
-import {query, stubRestApi} from '../../../test/test-utils';
+import {query, stubRestApi, waitEventLoop} from '../../../test/test-utils';
 import {GitRef, GroupId, GroupName} from '../../../types/common';
 import {PermissionAction} from '../../../constants/constants';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
 import {
   AutocompleteCommitEventDetail,
   GrAutocomplete,
@@ -29,14 +16,14 @@ import {
 import {queryAndAssert} from '../../../test/test-utils';
 import {GrRuleEditor} from '../gr-rule-editor/gr-rule-editor';
 import {GrButton} from '../../shared/gr-button/gr-button';
-
-const basicFixture = fixtureFromElement('gr-permission');
+import {fixture, html, assert} from '@open-wc/testing';
+import {PaperToggleButtonElement} from '@polymer/paper-toggle-button';
 
 suite('gr-permission tests', () => {
   let element: GrPermission;
 
-  setup(() => {
-    element = basicFixture.instantiate();
+  setup(async () => {
+    element = await fixture(html`<gr-permission></gr-permission>`);
     stubRestApi('getSuggestedGroups').returns(
       Promise.resolve({
         Administrators: {
@@ -326,7 +313,74 @@ suite('gr-permission tests', () => {
       };
       element.setupValues();
       await element.updateComplete;
-      flush();
+      await waitEventLoop();
+    });
+
+    test('render', () => {
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `
+          <section class="gr-form-styles" id="permission">
+            <div id="mainContainer">
+              <div class="header">
+                <span class="title"> Priority </span>
+                <div class="right">
+                  <paper-toggle-button
+                    aria-disabled="true"
+                    aria-pressed="false"
+                    disabled=""
+                    id="exclusiveToggle"
+                    role="button"
+                    style="pointer-events: none; touch-action: none;"
+                    tabindex="-1"
+                    toggles=""
+                  >
+                  </paper-toggle-button>
+                  Not Exclusive
+                  <gr-button
+                    aria-disabled="false"
+                    id="removeBtn"
+                    link=""
+                    role="button"
+                    tabindex="0"
+                  >
+                    Remove
+                  </gr-button>
+                </div>
+              </div>
+              <div class="rules">
+                <gr-rule-editor> </gr-rule-editor>
+                <gr-rule-editor> </gr-rule-editor>
+                <div id="addRule">
+                  <gr-autocomplete
+                    id="groupAutocomplete"
+                    placeholder="Add group"
+                  >
+                  </gr-autocomplete>
+                </div>
+              </div>
+            </div>
+            <div id="deletedContainer">
+              <span> Priority was deleted </span>
+              <gr-button
+                aria-disabled="false"
+                id="undoRemoveBtn"
+                link=""
+                role="button"
+                tabindex="0"
+              >
+                Undo
+              </gr-button>
+            </div>
+          </section>
+        `,
+        // touch-action varies on paper-toggle-button between local and CI
+        {
+          ignoreAttributes: [
+            {tags: ['paper-toggle-button'], attributes: ['style']},
+          ],
+        }
+      );
     });
 
     test('adding a rule', async () => {
@@ -384,7 +438,7 @@ suite('gr-permission tests', () => {
           bubbles: true,
         })
       );
-      await flush();
+      await waitEventLoop();
       assert.equal(element.rules!.length, 1);
     });
 
@@ -396,7 +450,7 @@ suite('gr-permission tests', () => {
       element.section = 'refs/*' as GitRef;
       element.permission!.value.added = true;
       await element.updateComplete;
-      MockInteractions.tap(queryAndAssert<GrButton>(element, '#removeBtn'));
+      queryAndAssert<GrButton>(element, '#removeBtn').click();
       await element.updateComplete;
       assert.isTrue(removeStub.called);
     });
@@ -414,13 +468,14 @@ suite('gr-permission tests', () => {
         queryAndAssert(element, '#permission').classList.contains('deleted')
       );
       assert.isFalse(element.deleted);
-      MockInteractions.tap(queryAndAssert<GrButton>(element, '#removeBtn'));
+      queryAndAssert<GrButton>(element, '#removeBtn').click();
       await element.updateComplete;
       assert.isTrue(
         queryAndAssert(element, '#permission').classList.contains('deleted')
       );
       assert.isTrue(element.deleted);
-      MockInteractions.tap(queryAndAssert<GrButton>(element, '#undoRemoveBtn'));
+      queryAndAssert<GrButton>(element, '#undoRemoveBtn').click();
+
       await element.updateComplete;
       assert.isFalse(
         queryAndAssert(element, '#permission').classList.contains('deleted')
@@ -437,7 +492,10 @@ suite('gr-permission tests', () => {
 
       assert.isFalse(element.originalExclusiveValue);
       assert.isNotOk(element.permission!.value.modified);
-      MockInteractions.tap(queryAndAssert(element, '#exclusiveToggle'));
+      queryAndAssert<PaperToggleButtonElement>(
+        element,
+        '#exclusiveToggle'
+      ).click();
       await element.updateComplete;
       assert.isTrue(element.permission!.value.exclusive);
       assert.isTrue(element.permission!.value.modified);
@@ -456,7 +514,10 @@ suite('gr-permission tests', () => {
       element.addEventListener('access-modified', modifiedHandler);
       await element.updateComplete;
       assert.isNotOk(element.permission.value.modified);
-      MockInteractions.tap(queryAndAssert(element, '#exclusiveToggle'));
+      queryAndAssert<PaperToggleButtonElement>(
+        element,
+        '#exclusiveToggle'
+      ).click();
       await element.updateComplete;
       assert.isTrue(element.permission.value.modified);
       assert.isTrue(modifiedHandler.called);

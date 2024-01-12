@@ -1,21 +1,10 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {ConfigInfo, RepoName, ServerInfo} from '../../types/common';
-import {from, of, Subscription} from 'rxjs';
+import {from, of} from 'rxjs';
 import {switchMap} from 'rxjs/operators';
 import {Finalizable} from '../../services/registry';
 import {RestApiService} from '../../services/gr-rest-api/gr-rest-api';
@@ -23,6 +12,7 @@ import {ChangeModel} from '../change/change-model';
 import {select} from '../../utils/observable-util';
 import {Model} from '../model';
 import {define} from '../dependency';
+import {getDocsBaseUrl} from '../../utils/url-util';
 
 export interface ConfigState {
   repoConfig?: ConfigInfo;
@@ -46,7 +36,19 @@ export class ConfigModel extends Model<ConfigState> implements Finalizable {
     configState => configState.serverConfig
   );
 
-  private subscriptions: Subscription[];
+  public mergeabilityComputationBehavior$ = select(
+    this.serverConfig$,
+    serverConfig => serverConfig?.change?.mergeability_computation_behavior
+  );
+
+  public docsBaseUrl$ = select(
+    this.serverConfig$.pipe(
+      switchMap(serverConfig =>
+        from(getDocsBaseUrl(serverConfig, this.restApiService))
+      )
+    ),
+    url => url
+  );
 
   constructor(
     readonly changeModel: ChangeModel,
@@ -70,20 +72,13 @@ export class ConfigModel extends Model<ConfigState> implements Finalizable {
     ];
   }
 
+  // visible for testing
   updateRepoConfig(repoConfig?: ConfigInfo) {
-    const current = this.subject$.getValue();
-    this.subject$.next({...current, repoConfig});
+    this.updateState({repoConfig});
   }
 
+  // visible for testing
   updateServerConfig(serverConfig?: ServerInfo) {
-    const current = this.subject$.getValue();
-    this.subject$.next({...current, serverConfig});
-  }
-
-  finalize() {
-    for (const s of this.subscriptions) {
-      s.unsubscribe();
-    }
-    this.subscriptions = [];
+    this.updateState({serverConfig});
   }
 }

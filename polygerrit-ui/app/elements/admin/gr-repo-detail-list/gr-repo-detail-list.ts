@@ -1,20 +1,8 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import '@polymer/iron-input/iron-input';
 import '../../shared/gr-account-label/gr-account-label';
 import '../../shared/gr-button/gr-button';
@@ -36,8 +24,6 @@ import {
   TagInfo,
   WebLinkInfo,
 } from '../../../types/common';
-import {AppElementRepoParams} from '../../gr-app-types';
-import {RepoDetailView} from '../../core/gr-navigation/gr-navigation';
 import {firePageError} from '../../../utils/event-util';
 import {getAppContext} from '../../../services/app-context';
 import {ErrorCallback} from '../../../api/rest';
@@ -46,10 +32,11 @@ import {formStyles} from '../../../styles/gr-form-styles';
 import {tableStyles} from '../../../styles/gr-table-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, css, html} from 'lit';
-import {customElement, query, property, state} from 'lit/decorators';
+import {customElement, query, property, state} from 'lit/decorators.js';
 import {BindValueChangeEvent} from '../../../types/events';
 import {assertIsDefined} from '../../../utils/common-util';
-import {ifDefined} from 'lit/directives/if-defined';
+import {ifDefined} from 'lit/directives/if-defined.js';
+import {RepoDetailView, RepoViewState} from '../../../models/views/repo';
 
 const PGP_START = '-----BEGIN PGP SIGNATURE-----';
 
@@ -63,7 +50,7 @@ export class GrRepoDetailList extends LitElement {
   private readonly createNewModal?: GrCreatePointerDialog;
 
   @property({type: Object})
-  params?: AppElementRepoParams;
+  params?: RepoViewState;
 
   // private but used in test
   @state() detailType?: RepoDetailView.BRANCHES | RepoDetailView.TAGS;
@@ -419,7 +406,7 @@ export class GrRepoDetailList extends LitElement {
     repo: RepoName | undefined,
     itemsPerPage: number,
     offset: number | undefined,
-    detailType: string
+    detailType?: string
   ) {
     if (filter === undefined || !repo || offset === undefined) {
       return Promise.reject(new Error('filter or repo or offset undefined'));
@@ -526,7 +513,7 @@ export class GrRepoDetailList extends LitElement {
           this.repo,
           this.itemsPerPage,
           this.offset,
-          this.detailType!
+          this.detailType
         );
       }
     });
@@ -559,7 +546,7 @@ export class GrRepoDetailList extends LitElement {
               this.repo,
               this.itemsPerPage,
               this.offset,
-              this.detailType!
+              this.detailType
             );
           }
         });
@@ -573,7 +560,7 @@ export class GrRepoDetailList extends LitElement {
               this.repo,
               this.itemsPerPage,
               this.offset,
-              this.detailType!
+              this.detailType
             );
           }
         });

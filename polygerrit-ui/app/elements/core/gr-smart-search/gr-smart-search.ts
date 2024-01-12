@@ -1,21 +1,10 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '../gr-search-bar/gr-search-bar';
-import {GerritNav} from '../gr-navigation/gr-navigation';
+import {navigationToken} from '../gr-navigation/gr-navigation';
 import {getUserName} from '../../../utils/display-name-util';
 import {AccountInfo, ServerInfo} from '../../../types/common';
 import {
@@ -25,7 +14,11 @@ import {
 import {AutocompleteSuggestion} from '../../shared/gr-autocomplete/gr-autocomplete';
 import {getAppContext} from '../../../services/app-context';
 import {LitElement, html} from 'lit';
-import {customElement, property} from 'lit/decorators';
+import {customElement, property, state} from 'lit/decorators.js';
+import {subscribe} from '../../lit/subscription-controller';
+import {resolve} from '../../../models/dependency';
+import {configModelToken} from '../../../models/config/config-model';
+import {createSearchUrl} from '../../../models/views/search';
 
 const MAX_AUTOCOMPLETE_RESULTS = 10;
 const SELF_EXPRESSION = 'self';
@@ -45,13 +38,28 @@ export class GrSmartSearch extends LitElement {
   @property({type: String})
   searchQuery = '';
 
-  @property({type: Object})
+  @state()
   serverConfig?: ServerInfo;
 
   @property({type: String})
   label = '';
 
   private readonly restApiService = getAppContext().restApiService;
+
+  private readonly getConfigModel = resolve(this, configModelToken);
+
+  private readonly getNavigation = resolve(this, navigationToken);
+
+  constructor() {
+    super();
+    subscribe(
+      this,
+      () => this.getConfigModel().serverConfig$,
+      config => {
+        this.serverConfig = config;
+      }
+    );
+  }
 
   override render() {
     const accountSuggestions: SuggestionProvider = (predicate, expression) =>
@@ -68,7 +76,6 @@ export class GrSmartSearch extends LitElement {
         .projectSuggestions=${projectSuggestions}
         .groupSuggestions=${groupSuggestions}
         .accountSuggestions=${accountSuggestions}
-        .serverConfig=${this.serverConfig}
         @handle-search=${(e: CustomEvent<SearchBarHandleSearchDetail>) => {
           this.handleSearch(e);
         }}
@@ -187,9 +194,8 @@ export class GrSmartSearch extends LitElement {
   }
 
   private handleSearch(e: CustomEvent<SearchBarHandleSearchDetail>) {
-    const input = e.detail.inputVal;
-    if (input) {
-      GerritNav.navigateToSearchQuery(input);
-    }
+    const query = e.detail.inputVal;
+    if (!query) return;
+    this.getNavigation().setUrl(createSearchUrl({query}));
   }
 }

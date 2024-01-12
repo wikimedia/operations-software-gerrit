@@ -1,34 +1,23 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '@polymer/paper-input/paper-input';
 import '../gr-autocomplete-dropdown/gr-autocomplete-dropdown';
 import '../gr-cursor-manager/gr-cursor-manager';
-import '../gr-icons/gr-icons';
+import '../gr-icon/gr-icon';
 import '../../../styles/shared-styles';
 import {GrAutocompleteDropdown} from '../gr-autocomplete-dropdown/gr-autocomplete-dropdown';
-import {PaperInputElementExt} from '../../../types/types';
 import {fire, fireEvent} from '../../../utils/event-util';
 import {debounce, DelayedTask} from '../../../utils/async-util';
 import {PropertyType} from '../../../types/common';
 import {modifierPressed} from '../../../utils/dom-util';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, html, css, PropertyValues} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
+import {customElement, property, query, state} from 'lit/decorators.js';
 import {ValueChangedEvent} from '../../../types/events';
+import {PaperInputElement} from '@polymer/paper-input/paper-input';
 import {IronInputElement} from '@polymer/iron-input';
 
 const TOKENIZE_REGEX = /(?:[^\s"]+|"[^"]*")+/g;
@@ -96,7 +85,7 @@ export class GrAutocomplete extends LitElement {
   @property({type: Object})
   query?: AutocompleteQuery = () => Promise.resolve([]);
 
-  @query('#input') input?: PaperInputElementExt;
+  @query('#input') input?: PaperInputElement;
 
   @query('#suggestions') suggestionsDropdown?: GrAutocompleteDropdown;
 
@@ -182,7 +171,9 @@ export class GrAutocomplete extends LitElement {
 
   @state() index: number | null = null;
 
-  @state() disableSuggestions = false;
+  // Enabled to suppress showing/updating suggestions when changing properties
+  // that would normally trigger the update.
+  disableDisplayingSuggestions = false;
 
   // private but used in tests
   focused = false;
@@ -205,9 +196,8 @@ export class GrAutocomplete extends LitElement {
       .searchIcon.showSearchIcon {
         display: inline-block;
       }
-      iron-icon {
+      gr-icon {
         margin: 0 var(--spacing-xs);
-        vertical-align: top;
       }
       paper-input.borderless {
         border: none;
@@ -216,7 +206,7 @@ export class GrAutocomplete extends LitElement {
       paper-input {
         background-color: var(--view-background-color);
         color: var(--primary-text-color);
-        border: 1px solid var(--border-color);
+        border: 1px solid var(--prominent-border-color, var(--border-color));
         border-radius: var(--border-radius);
         padding: var(--spacing-s);
         --paper-input-container_-_padding: 0;
@@ -279,11 +269,8 @@ export class GrAutocomplete extends LitElement {
     ) {
       this.updateSuggestions();
     }
-    if (
-      changedProperties.has('suggestions') ||
-      changedProperties.has('focused')
-    ) {
-      this.maybeOpenDropdown();
+    if (changedProperties.has('suggestions')) {
+      this.updateDropdownVisibility();
     }
     if (changedProperties.has('text')) {
       fire(this, 'text-changed', {value: this.text});
@@ -312,13 +299,12 @@ export class GrAutocomplete extends LitElement {
         .label=${this.label}
       >
         <div slot="prefix">
-          <iron-icon
-            icon="gr-icons:search"
+          <gr-icon
+            icon="search"
             class="searchIcon ${this.computeShowSearchIconClass(
               this.showSearchIcon
             )}"
-          >
-          </iron-icon>
+          ></gr-icon>
         </div>
 
         <div slot="suffix">
@@ -326,11 +312,10 @@ export class GrAutocomplete extends LitElement {
         </div>
       </paper-input>
       <gr-autocomplete-dropdown
-        vertical-align="top"
         .verticalOffset=${this.verticalOffset}
-        horizontal-align="left"
         id="suggestions"
         @item-selected=${this.handleItemSelect}
+        @dropdown-closed=${this.focusWithoutDisplayingSuggestions}
         .suggestions=${this.suggestions}
         role="listbox"
         .index=${this.index}
@@ -347,6 +332,15 @@ export class GrAutocomplete extends LitElement {
     this.nativeInput.focus();
   }
 
+  private focusWithoutDisplayingSuggestions() {
+    this.disableDisplayingSuggestions = true;
+    this.focus();
+
+    this.updateComplete.then(() => {
+      this.disableDisplayingSuggestions = false;
+    });
+  }
+
   selectAll() {
     const nativeInputElement = this.nativeInput;
     if (!this.input?.value) {
@@ -359,16 +353,22 @@ export class GrAutocomplete extends LitElement {
     this.text = '';
   }
 
+  private handleItemSelectEnter(e: CustomEvent | KeyboardEvent) {
+    this.handleInputCommit();
+    e.stopPropagation();
+    e.preventDefault();
+    this.focusWithoutDisplayingSuggestions();
+  }
+
   handleItemSelect(e: CustomEvent) {
     if (e.detail.trigger === 'click') {
       this.selected = e.detail.selected;
       this._commit();
       e.stopPropagation();
       e.preventDefault();
+      this.focusWithoutDisplayingSuggestions();
     } else if (e.detail.trigger === 'enter') {
-      this.handleInputCommit();
-      e.stopPropagation();
-      e.preventDefault();
+      this.handleItemSelectEnter(e);
     } else if (e.detail.trigger === 'tab') {
       if (this.tabComplete) {
         this.handleInputCommit(true);
@@ -386,13 +386,13 @@ export class GrAutocomplete extends LitElement {
    *
    * @param text The new text for the input.
    */
-  async setText(text: string) {
-    this.disableSuggestions = true;
+  setText(text: string) {
+    this.disableDisplayingSuggestions = true;
     this.text = text;
-    // if we disableSuggestions immediately then suggestions are requested in
-    // updateSuggestions
-    await this.updateComplete;
-    this.disableSuggestions = false;
+
+    this.updateComplete.then(() => {
+      this.disableDisplayingSuggestions = false;
+    });
   }
 
   onInputFocus() {
@@ -427,7 +427,7 @@ export class GrAutocomplete extends LitElement {
 
     // TODO(taoalpha): Also skip if text has not changed
 
-    if (this.disableSuggestions) {
+    if (this.disableDisplayingSuggestions) {
       return;
     }
 
@@ -445,9 +445,10 @@ export class GrAutocomplete extends LitElement {
       return;
     }
 
+    const requestText = this.text;
     const update = () => {
       query(this.text).then(suggestions => {
-        if (this.text !== this.text) {
+        if (requestText !== this.text) {
           // Late response.
           return;
         }
@@ -475,10 +476,10 @@ export class GrAutocomplete extends LitElement {
   setFocus(focused: boolean) {
     if (focused === this.focused) return;
     this.focused = focused;
-    this.maybeOpenDropdown();
+    this.updateDropdownVisibility();
   }
 
-  maybeOpenDropdown() {
+  updateDropdownVisibility() {
     if (this.suggestions.length > 0 && this.focused) {
       this.suggestionsDropdown?.open();
       return;
@@ -498,20 +499,20 @@ export class GrAutocomplete extends LitElement {
    */
   handleKeydown(e: KeyboardEvent) {
     this.setFocus(true);
-    switch (e.keyCode) {
-      case 38: // Up
+    switch (e.key) {
+      case 'ArrowUp':
         e.preventDefault();
         this.suggestionsDropdown?.cursorUp();
         break;
-      case 40: // Down
+      case 'ArrowDown':
         e.preventDefault();
         this.suggestionsDropdown?.cursorDown();
         break;
-      case 27: // Escape
+      case 'Escape':
         e.preventDefault();
         this.cancel();
         break;
-      case 9: // Tab
+      case 'Tab':
         if (this.suggestions.length > 0 && this.tabComplete) {
           e.preventDefault();
           this.focus();
@@ -520,12 +521,17 @@ export class GrAutocomplete extends LitElement {
           this.setFocus(false);
         }
         break;
-      case 13: // Enter
+      case 'Enter':
         if (modifierPressed(e)) {
           break;
         }
-        e.preventDefault();
-        this.handleInputCommit();
+        if (this.suggestions.length > 0) {
+          // If suggestions are shown, act as if the keypress is in dropdown.
+          this.handleItemSelectEnter(e);
+        } else {
+          e.preventDefault();
+          this.handleInputCommit();
+        }
         break;
       default:
         // For any normal keypress, return focus to the input to allow for
@@ -540,7 +546,7 @@ export class GrAutocomplete extends LitElement {
     }
     this.dispatchEvent(
       new CustomEvent('input-keydown', {
-        detail: {keyCode: e.keyCode, input: this.input},
+        detail: {key: e.key, input: this.input},
         composed: true,
         bubbles: true,
       })

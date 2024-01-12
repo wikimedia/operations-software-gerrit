@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-thread-list';
 import {CommentSide, SpecialFilePath} from '../../../constants/constants';
 import {CommentTabState} from '../../../types/events';
@@ -24,32 +12,38 @@ import {
   GrThreadList,
   __testOnly_SortDropdownState,
 } from './gr-thread-list';
-import {queryAll} from '../../../test/test-utils';
-import {accountOrGroupKey} from '../../../utils/account-util';
-import {tap} from '@polymer/iron-test-helpers/mock-interactions';
+import {queryAll, stubFlags} from '../../../test/test-utils';
+import {getUserId} from '../../../utils/account-util';
 import {
   createAccountDetailWithId,
+  createComment,
+  createCommentThread,
+  createDraft,
   createParsedChange,
   createThread,
 } from '../../../test/test-data-generators';
 import {
   AccountId,
+  EmailAddress,
   NumericChangeId,
-  PatchSetNum,
   Timestamp,
 } from '../../../api/rest-api';
-import {RobotId, UrlEncodedCommentId} from '../../../types/common';
-import {CommentThread} from '../../../utils/comment-util';
+import {
+  RobotId,
+  UrlEncodedCommentId,
+  RevisionPatchSetNum,
+} from '../../../types/common';
+import {CommentThread, isDraft} from '../../../utils/comment-util';
 import {query, queryAndAssert} from '../../../utils/common-util';
 import {GrAccountLabel} from '../../shared/gr-account-label/gr-account-label';
-
-const basicFixture = fixtureFromElement('gr-thread-list');
+import {GrDropdownList} from '../../shared/gr-dropdown-list/gr-dropdown-list';
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-thread-list tests', () => {
   let element: GrThreadList;
 
   setup(async () => {
-    element = basicFixture.instantiate();
+    element = await fixture(html`<gr-thread-list></gr-thread-list>`);
     element.changeNum = 123 as NumericChangeId;
     element.change = createParsedChange();
     element.account = createAccountDetailWithId();
@@ -62,8 +56,9 @@ suite('gr-thread-list tests', () => {
               _account_id: 1000001 as AccountId,
               name: 'user',
               username: 'user',
+              email: 'abcd' as EmailAddress,
             },
-            patch_set: 4 as PatchSetNum,
+            patch_set: 4 as RevisionPatchSetNum,
             id: 'ecf0b9fa_fe1a5f62' as UrlEncodedCommentId,
             line: 5,
             updated: '2015-12-01 15:15:15.000000000' as Timestamp,
@@ -79,10 +74,10 @@ suite('gr-thread-list tests', () => {
             message: 'draft',
             unresolved: true,
             __draft: true,
-            patch_set: '2' as PatchSetNum,
+            patch_set: '2' as RevisionPatchSetNum,
           },
         ],
-        patchNum: 4 as PatchSetNum,
+        patchNum: 4 as RevisionPatchSetNum,
         path: '/COMMIT_MSG',
         line: 5,
         rootId: 'ecf0b9fa_fe1a5f62' as UrlEncodedCommentId,
@@ -96,15 +91,16 @@ suite('gr-thread-list tests', () => {
               _account_id: 1000002 as AccountId,
               name: 'user',
               username: 'user',
+              email: 'abcd' as EmailAddress,
             },
-            patch_set: 3 as PatchSetNum,
+            patch_set: 3 as RevisionPatchSetNum,
             id: '09a9fb0a_1484e6cf' as UrlEncodedCommentId,
             updated: '2015-12-02 15:16:15.000000000' as Timestamp,
             message: 'Some comment on another patchset.',
             unresolved: false,
           },
         ],
-        patchNum: 3 as PatchSetNum,
+        patchNum: 3 as RevisionPatchSetNum,
         path: 'test.txt',
         rootId: '09a9fb0a_1484e6cf' as UrlEncodedCommentId,
         commentSide: CommentSide.REVISION,
@@ -117,15 +113,16 @@ suite('gr-thread-list tests', () => {
               _account_id: 1000002 as AccountId,
               name: 'user',
               username: 'user',
+              email: 'abcd' as EmailAddress,
             },
-            patch_set: 2 as PatchSetNum,
+            patch_set: 2 as RevisionPatchSetNum,
             id: '8caddf38_44770ec1' as UrlEncodedCommentId,
             updated: '2015-12-03 15:16:15.000000000' as Timestamp,
             message: 'Another unresolved comment',
             unresolved: false,
           },
         ],
-        patchNum: 2 as PatchSetNum,
+        patchNum: 2 as RevisionPatchSetNum,
         path: '/COMMIT_MSG',
         rootId: '8caddf38_44770ec1' as UrlEncodedCommentId,
         commentSide: CommentSide.REVISION,
@@ -138,8 +135,9 @@ suite('gr-thread-list tests', () => {
               _account_id: 1000003 as AccountId,
               name: 'user',
               username: 'user',
+              email: 'abcd' as EmailAddress,
             },
-            patch_set: 2 as PatchSetNum,
+            patch_set: 2 as RevisionPatchSetNum,
             id: 'scaddf38_44770ec1' as UrlEncodedCommentId,
             line: 4,
             updated: '2015-12-04 15:16:15.000000000' as Timestamp,
@@ -147,7 +145,7 @@ suite('gr-thread-list tests', () => {
             unresolved: true,
           },
         ],
-        patchNum: 2 as PatchSetNum,
+        patchNum: 2 as RevisionPatchSetNum,
         path: '/COMMIT_MSG',
         line: 4,
         rootId: 'scaddf38_44770ec1' as UrlEncodedCommentId,
@@ -163,10 +161,10 @@ suite('gr-thread-list tests', () => {
             message: 'resolved draft',
             unresolved: false,
             __draft: true,
-            patch_set: '2' as PatchSetNum,
+            patch_set: '2' as RevisionPatchSetNum,
           },
         ],
-        patchNum: 4 as PatchSetNum,
+        patchNum: 4 as RevisionPatchSetNum,
         path: '/COMMIT_MSG',
         line: 6,
         rootId: 'zcf0b9fa_fe1a5f62' as UrlEncodedCommentId,
@@ -180,10 +178,10 @@ suite('gr-thread-list tests', () => {
             updated: '2015-12-06 15:16:15.000000000' as Timestamp,
             message: 'patchset comment 1',
             unresolved: false,
-            patch_set: '2' as PatchSetNum,
+            patch_set: '2' as RevisionPatchSetNum,
           },
         ],
-        patchNum: 2 as PatchSetNum,
+        patchNum: 2 as RevisionPatchSetNum,
         path: SpecialFilePath.PATCHSET_LEVEL_COMMENTS,
         rootId: 'patchset_level_1' as UrlEncodedCommentId,
         commentSide: CommentSide.REVISION,
@@ -196,10 +194,10 @@ suite('gr-thread-list tests', () => {
             updated: '2015-12-07 15:16:15.000000000' as Timestamp,
             message: 'patchset comment 2',
             unresolved: false,
-            patch_set: '3' as PatchSetNum,
+            patch_set: '3' as RevisionPatchSetNum,
           },
         ],
-        patchNum: 3 as PatchSetNum,
+        patchNum: 3 as RevisionPatchSetNum,
         path: SpecialFilePath.PATCHSET_LEVEL_COMMENTS,
         rootId: 'patchset_level_2' as UrlEncodedCommentId,
         commentSide: CommentSide.REVISION,
@@ -212,8 +210,9 @@ suite('gr-thread-list tests', () => {
               _account_id: 1000000 as AccountId,
               name: 'user',
               username: 'user',
+              email: 'abcd' as EmailAddress,
             },
-            patch_set: 4 as PatchSetNum,
+            patch_set: 4 as RevisionPatchSetNum,
             id: 'rc1' as UrlEncodedCommentId,
             line: 5,
             updated: '2015-12-08 15:16:15.000000000' as Timestamp,
@@ -222,7 +221,7 @@ suite('gr-thread-list tests', () => {
             robot_id: 'rc1' as RobotId,
           },
         ],
-        patchNum: 4 as PatchSetNum,
+        patchNum: 4 as RevisionPatchSetNum,
         path: '/COMMIT_MSG',
         line: 5,
         rootId: 'rc1' as UrlEncodedCommentId,
@@ -236,8 +235,9 @@ suite('gr-thread-list tests', () => {
               _account_id: 1000000 as AccountId,
               name: 'user',
               username: 'user',
+              email: 'abcd' as EmailAddress,
             },
-            patch_set: 4 as PatchSetNum,
+            patch_set: 4 as RevisionPatchSetNum,
             id: 'rc2' as UrlEncodedCommentId,
             line: 7,
             updated: '2015-12-09 15:16:15.000000000' as Timestamp,
@@ -251,8 +251,9 @@ suite('gr-thread-list tests', () => {
               _account_id: 1000000 as AccountId,
               name: 'user',
               username: 'user',
+              email: 'abcd' as EmailAddress,
             },
-            patch_set: 4 as PatchSetNum,
+            patch_set: 4 as RevisionPatchSetNum,
             id: 'c2_1' as UrlEncodedCommentId,
             line: 5,
             updated: '2015-12-10 15:16:15.000000000' as Timestamp,
@@ -260,7 +261,7 @@ suite('gr-thread-list tests', () => {
             unresolved: true,
           },
         ],
-        patchNum: 4 as PatchSetNum,
+        patchNum: 4 as RevisionPatchSetNum,
         path: '/COMMIT_MSG',
         line: 7,
         rootId: 'rc2' as UrlEncodedCommentId,
@@ -310,83 +311,89 @@ suite('gr-thread-list tests', () => {
 
   test('renders', async () => {
     await element.updateComplete;
-    expect(element).shadowDom.to.equal(/* HTML */ `
-      <div class="header">
-        <span class="sort-text">Sort By:</span>
-        <gr-dropdown-list id="sortDropdown"></gr-dropdown-list>
-        <span class="separator"></span>
-        <span class="filter-text">Filter By:</span>
-        <gr-dropdown-list id="filterDropdown"></gr-dropdown-list>
-        <span class="author-text">From:</span>
-        <gr-account-label
-          deselected=""
-          selectionchipstyle=""
-          nostatusicons=""
-        ></gr-account-label>
-        <gr-account-label
-          deselected=""
-          selectionchipstyle=""
-          nostatusicons=""
-        ></gr-account-label>
-        <gr-account-label
-          deselected=""
-          selectionchipstyle=""
-          nostatusicons=""
-        ></gr-account-label>
-        <gr-account-label
-          deselected=""
-          selectionchipstyle=""
-          nostatusicons=""
-        ></gr-account-label>
-        <gr-account-label
-          deselected=""
-          selectionchipstyle=""
-          nostatusicons=""
-        ></gr-account-label>
-      </div>
-      <div id="threads" part="threads">
-        <gr-comment-thread
-          show-file-name=""
-          show-file-path=""
-        ></gr-comment-thread>
-        <gr-comment-thread show-file-path=""></gr-comment-thread>
-        <div class="thread-separator"></div>
-        <gr-comment-thread
-          show-file-name=""
-          show-file-path=""
-        ></gr-comment-thread>
-        <gr-comment-thread show-file-path=""></gr-comment-thread>
-        <div class="thread-separator"></div>
-        <gr-comment-thread
-          has-draft=""
-          show-file-name=""
-          show-file-path=""
-        ></gr-comment-thread>
-        <gr-comment-thread show-file-path=""></gr-comment-thread>
-        <gr-comment-thread show-file-path=""></gr-comment-thread>
-        <div class="thread-separator"></div>
-        <gr-comment-thread
-          show-file-name=""
-          show-file-path=""
-        ></gr-comment-thread>
-        <div class="thread-separator"></div>
-        <gr-comment-thread
-          has-draft=""
-          show-file-name=""
-          show-file-path=""
-        ></gr-comment-thread>
-      </div>
-    `);
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="header">
+          <span class="sort-text">Sort By:</span>
+          <gr-dropdown-list id="sortDropdown"></gr-dropdown-list>
+          <span class="separator"></span>
+          <span class="filter-text">Filter By:</span>
+          <gr-dropdown-list id="filterDropdown"></gr-dropdown-list>
+          <span class="author-text">From:</span>
+          <gr-account-label
+            deselected=""
+            selectionchipstyle=""
+            nostatusicons=""
+          ></gr-account-label>
+          <gr-account-label
+            deselected=""
+            selectionchipstyle=""
+            nostatusicons=""
+          ></gr-account-label>
+          <gr-account-label
+            deselected=""
+            selectionchipstyle=""
+            nostatusicons=""
+          ></gr-account-label>
+          <gr-account-label
+            deselected=""
+            selectionchipstyle=""
+            nostatusicons=""
+          ></gr-account-label>
+          <gr-account-label
+            deselected=""
+            selectionchipstyle=""
+            nostatusicons=""
+          ></gr-account-label>
+        </div>
+        <div id="threads" part="threads">
+          <gr-comment-thread
+            show-file-name=""
+            show-file-path=""
+          ></gr-comment-thread>
+          <gr-comment-thread show-file-path=""></gr-comment-thread>
+          <div class="thread-separator"></div>
+          <gr-comment-thread
+            show-file-name=""
+            show-file-path=""
+          ></gr-comment-thread>
+          <gr-comment-thread show-file-path=""></gr-comment-thread>
+          <div class="thread-separator"></div>
+          <gr-comment-thread
+            has-draft=""
+            show-file-name=""
+            show-file-path=""
+          ></gr-comment-thread>
+          <gr-comment-thread show-file-path=""></gr-comment-thread>
+          <gr-comment-thread show-file-path=""></gr-comment-thread>
+          <div class="thread-separator"></div>
+          <gr-comment-thread
+            show-file-name=""
+            show-file-path=""
+          ></gr-comment-thread>
+          <div class="thread-separator"></div>
+          <gr-comment-thread
+            has-draft=""
+            show-file-name=""
+            show-file-path=""
+          ></gr-comment-thread>
+        </div>
+      `
+    );
   });
 
   test('renders empty', async () => {
     element.threads = [];
     await element.updateComplete;
-    expect(queryAndAssert(element, 'div#threads')).dom.to.equal(/* HTML */ `
-      <div id="threads" part="threads">
-        <div><span>No comments</span></div>
-      </div>
-    `);
+    assert.dom.equal(
+      queryAndAssert(element, 'div#threads'),
+      /* HTML */ `
+        <div id="threads" part="threads">
+          <div><span>No comments</span></div>
+        </div>
+      `
+    );
   });
 
   test('tapping single author chips', async () => {
@@ -395,7 +402,7 @@ suite('gr-thread-list tests', () => {
     const chips = Array.from(
       queryAll<GrAccountLabel>(element, 'gr-account-label')
     );
-    const authors = chips.map(chip => accountOrGroupKey(chip.account!)).sort();
+    const authors = chips.map(chip => getUserId(chip.account!)).sort();
     assert.deepEqual(authors, [
       1 as AccountId,
       1000000 as AccountId,
@@ -407,7 +414,7 @@ suite('gr-thread-list tests', () => {
     assert.equal(element.getDisplayedThreads().length, 9);
 
     const chip = chips.find(chip => chip.account!._account_id === 1000001);
-    tap(chip!);
+    chip!.click();
     await element.updateComplete;
 
     assert.equal(element.threads.length, 9);
@@ -417,10 +424,36 @@ suite('gr-thread-list tests', () => {
       1000001 as AccountId
     );
 
-    tap(chip!);
+    chip!.click();
     await element.updateComplete;
     assert.equal(element.threads.length, 9);
     assert.equal(element.getDisplayedThreads().length, 9);
+  });
+
+  test('tapping single author with only drafts', async () => {
+    element.account = createAccountDetailWithId(1);
+    element.threads = [createThread(createDraft())];
+    await element.updateComplete;
+    const chips = Array.from(
+      queryAll<GrAccountLabel>(element, 'gr-account-label')
+    );
+    const authors = chips.map(chip => getUserId(chip.account!)).sort();
+    assert.deepEqual(authors, [1 as AccountId]);
+    assert.equal(element.threads.length, 1);
+    assert.equal(element.getDisplayedThreads().length, 1);
+
+    const chip = chips.find(chip => chip.account!._account_id === 1);
+    chip!.click();
+    await element.updateComplete;
+
+    assert.equal(element.threads.length, 1);
+    assert.equal(element.getDisplayedThreads().length, 1);
+    assert.isTrue(isDraft(element.getDisplayedThreads()[0].comments[0]));
+
+    chip!.click();
+    await element.updateComplete;
+    assert.equal(element.threads.length, 1);
+    assert.equal(element.getDisplayedThreads().length, 1);
   });
 
   test('tapping multiple author chips', async () => {
@@ -430,8 +463,8 @@ suite('gr-thread-list tests', () => {
       queryAll<GrAccountLabel>(element, 'gr-account-label')
     );
 
-    tap(chips.find(chip => chip.account?._account_id === 1000001)!);
-    tap(chips.find(chip => chip.account?._account_id === 1000002)!);
+    chips.find(chip => chip.account?._account_id === 1000001)!.click();
+    chips.find(chip => chip.account?._account_id === 1000002)!.click();
     await element.updateComplete;
 
     assert.equal(element.threads.length, 9);
@@ -451,30 +484,84 @@ suite('gr-thread-list tests', () => {
   });
 
   test('show all comments', async () => {
-    const event = new CustomEvent('value-changed', {
-      detail: {value: CommentTabState.SHOW_ALL},
-    });
-    element.handleCommentsDropdownValueChange(event);
+    const filterDropdown = queryAndAssert<GrDropdownList>(
+      element,
+      '#filterDropdown'
+    );
+    filterDropdown.value = CommentTabState.SHOW_ALL;
+    await filterDropdown.updateComplete;
     await element.updateComplete;
     assert.equal(element.getDisplayedThreads().length, 9);
   });
 
   test('unresolved shows all unresolved comments', async () => {
-    const event = new CustomEvent('value-changed', {
-      detail: {value: CommentTabState.UNRESOLVED},
-    });
-    element.handleCommentsDropdownValueChange(event);
+    const filterDropdown = queryAndAssert<GrDropdownList>(
+      element,
+      '#filterDropdown'
+    );
+    filterDropdown.value = CommentTabState.UNRESOLVED;
+    await filterDropdown.updateComplete;
     await element.updateComplete;
     assert.equal(element.getDisplayedThreads().length, 4);
   });
 
   test('toggle drafts only shows threads with draft comments', async () => {
-    const event = new CustomEvent('value-changed', {
-      detail: {value: CommentTabState.DRAFTS},
-    });
-    element.handleCommentsDropdownValueChange(event);
+    const filterDropdown = queryAndAssert<GrDropdownList>(
+      element,
+      '#filterDropdown'
+    );
+    filterDropdown.value = CommentTabState.DRAFTS;
+    await filterDropdown.updateComplete;
     await element.updateComplete;
     assert.equal(element.getDisplayedThreads().length, 2);
+  });
+
+  suite('mention threads', () => {
+    let mentionedThreads: CommentThread[];
+    setup(async () => {
+      stubFlags('isEnabled').returns(true);
+      mentionedThreads = [
+        createCommentThread([
+          {
+            ...createComment(),
+            message: 'random text with no emails',
+          },
+        ]),
+        // Resolved thread does not contribute to the count
+        createCommentThread([
+          {
+            ...createComment(),
+            message: '@abcd@def.com please take a look',
+          },
+          {
+            ...createComment(),
+            message: '@abcd@def.com please take a look again at this',
+          },
+        ]),
+        createCommentThread([
+          {
+            ...createComment(),
+            message: '@abcd@def.com this is important',
+            unresolved: true,
+          },
+        ]),
+      ];
+      element.account!.email = 'abcd@def.com' as EmailAddress;
+      element.threads.push(...mentionedThreads);
+      element.requestUpdate();
+      await element.updateComplete;
+    });
+
+    test('mentions filter', async () => {
+      const filterDropdown = queryAndAssert<GrDropdownList>(
+        element,
+        '#filterDropdown'
+      );
+      filterDropdown.value = CommentTabState.MENTIONS;
+      await filterDropdown.updateComplete;
+      await element.updateComplete;
+      assert.deepEqual(element.getDisplayedThreads(), [mentionedThreads[2]]);
+    });
   });
 
   suite('hideDropdown', () => {
@@ -534,8 +621,8 @@ suite('compareThreads', () => {
   });
 
   test('patchsets in reverse order', () => {
-    t1.patchNum = 2 as PatchSetNum;
-    t2.patchNum = 3 as PatchSetNum;
+    t1.patchNum = 2 as RevisionPatchSetNum;
+    t2.patchNum = 3 as RevisionPatchSetNum;
     checkOrder([t2, t1]);
   });
 

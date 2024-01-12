@@ -1,29 +1,19 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {css, html, LitElement} from 'lit';
-import {customElement, property} from 'lit/decorators';
+import {customElement, property} from 'lit/decorators.js';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {BranchName, RepoName} from '../../../types/common';
 import {getAppContext} from '../../../services/app-context';
 import '../../shared/gr-autocomplete/gr-autocomplete';
 import '../../shared/gr-dialog/gr-dialog';
 import '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
-import {addShortcut, Key, Modifier} from '../../../utils/dom-util';
+import {Key, Modifier} from '../../../utils/dom-util';
 import {ValueChangedEvent} from '../../../types/events';
+import {ShortcutController} from '../../lit/shortcut-controller';
 
 const SUGGESTIONS_LIMIT = 15;
 
@@ -50,27 +40,26 @@ export class GrConfirmMoveDialog extends LitElement {
   @property({type: String})
   project?: RepoName;
 
-  /** Called in disconnectedCallback. */
-  private cleanups: (() => void)[] = [];
+  private readonly shortcuts = new ShortcutController(this);
+
+  constructor() {
+    super();
+    this.shortcuts.addLocal(
+      {key: Key.ENTER, modifiers: [Modifier.CTRL_KEY]},
+      e => this.handleConfirmTap(e)
+    );
+    this.shortcuts.addLocal(
+      {key: Key.ENTER, modifiers: [Modifier.META_KEY]},
+      e => this.handleConfirmTap(e)
+    );
+  }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
-    for (const cleanup of this.cleanups) cleanup();
-    this.cleanups = [];
   }
 
   override connectedCallback() {
     super.connectedCallback();
-    this.cleanups.push(
-      addShortcut(this, {key: Key.ENTER, modifiers: [Modifier.CTRL_KEY]}, e =>
-        this.handleConfirmTap(e)
-      )
-    );
-    this.cleanups.push(
-      addShortcut(this, {key: Key.ENTER, modifiers: [Modifier.META_KEY]}, e =>
-        this.handleConfirmTap(e)
-      )
-    );
   }
 
   private readonly restApiService = getAppContext().restApiService;

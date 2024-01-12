@@ -1,25 +1,16 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
+import '../shared/gr-icon/gr-icon';
 import {fontStyles} from '../../styles/gr-font-styles';
-import {customElement, property} from 'lit/decorators';
+import {customElement, property} from 'lit/decorators.js';
 import './gr-checks-action';
 import {CheckRun} from '../../models/checks/checks-model';
 import {
   AttemptDetail,
+  ChecksIcon,
   iconFor,
   runActions,
   worstCategory,
@@ -79,38 +70,34 @@ export class GrHovercardRun extends base {
         div.sectionIcon {
           flex: 0 0 30px;
         }
-        div.chip iron-icon {
-          width: 16px;
-          height: 16px;
+        div.chip gr-icon {
+          font-size: 16px;
           /* Positioning of a 16px icon in the middle of a 20px line. */
           position: relative;
           top: 2px;
         }
-        div.sectionIcon iron-icon {
+        div.sectionIcon gr-icon {
           position: relative;
           top: 2px;
-          width: 20px;
-          height: 20px;
+          font-size: 20px;
         }
-        div.sectionIcon iron-icon.small {
+        div.sectionIcon gr-icon.small {
           position: relative;
           top: 6px;
-          width: 16px;
-          height: 16px;
+          font-size: 16px;
         }
-        div.sectionContent iron-icon.link {
+        div.sectionContent gr-icon.link {
           color: var(--link-color);
         }
-        div.sectionContent .attemptIcon iron-icon,
-        div.sectionContent iron-icon.small {
-          width: 16px;
-          height: 16px;
+        div.sectionContent .attemptIcon gr-icon,
+        div.sectionContent gr-icon.small {
+          font-size: 16px;
           margin-right: var(--spacing-s);
           /* Positioning of a 16px icon in the middle of a 20px line. */
           position: relative;
           top: 2px;
         }
-        div.sectionContent .attemptIcon iron-icon {
+        div.sectionContent .attemptIcon gr-icon {
           margin-right: 0;
         }
         .attemptIcon,
@@ -133,6 +120,7 @@ export class GrHovercardRun extends base {
   override render() {
     if (!this.run) return '';
     const icon = this.computeIcon();
+    const chipIcon = this.computeChipIcon();
     return html`
       <div id="container" role="tooltip" tabindex="-1">
         <div class="section">
@@ -141,14 +129,21 @@ export class GrHovercardRun extends base {
             class="chipRow"
           >
             <div class="chip">
-              <iron-icon icon="gr-icons:${this.computeChipIcon()}"></iron-icon>
+              <gr-icon
+                icon=${chipIcon.name}
+                ?filled=${chipIcon.filled}
+              ></gr-icon>
               <span>${this.run.status}</span>
             </div>
           </div>
         </div>
         <div class="section">
-          <div class="sectionIcon" ?hidden=${icon.length === 0}>
-            <iron-icon class=${icon} icon="gr-icons:${icon}"></iron-icon>
+          <div class="sectionIcon" ?hidden=${icon.name.length === 0}>
+            <gr-icon
+              icon=${icon.name}
+              class=${icon.name}
+              ?filled=${icon.filled}
+            ></gr-icon>
           </div>
           <div class="sectionContent">
             <h3 class="name heading-3">
@@ -170,7 +165,7 @@ export class GrHovercardRun extends base {
     return html`
       <div class="section">
         <div class="sectionIcon">
-          <iron-icon class="small" icon="gr-icons:info-outline"></iron-icon>
+          <gr-icon icon="info" class="small"></gr-icon>
         </div>
         <div class="sectionContent">
           ${this.run.statusLink
@@ -178,11 +173,11 @@ export class GrHovercardRun extends base {
                 <div class="title">Status</div>
                 <div>
                   <a href=${this.run.statusLink} target="_blank"
-                    ><iron-icon
+                    ><gr-icon
+                      icon="open_in_new"
                       aria-label="external link to check status"
                       class="small link"
-                      icon="gr-icons:launch"
-                    ></iron-icon
+                    ></gr-icon
                     >${this.computeHostName(this.run.statusLink)}
                   </a>
                 </div>
@@ -205,7 +200,7 @@ export class GrHovercardRun extends base {
     return html`
       <div class="section">
         <div class="sectionIcon">
-          <iron-icon class="small" icon="gr-icons:arrow-forward"></iron-icon>
+          <gr-icon icon="arrow_forward" class="small"></gr-icon>
         </div>
         <div class="sectionContent">
           <div class="attempts row">
@@ -218,15 +213,18 @@ export class GrHovercardRun extends base {
   }
 
   private renderAttempt(attempt: AttemptDetail) {
+    const attemptNumber = attempt.attempt;
+    const icon = attempt.icon ?? {name: ''};
+    if (attemptNumber !== undefined && typeof attemptNumber !== 'number') {
+      return;
+    }
     return html`
       <div>
         <div class="attemptIcon">
-          <iron-icon
-            class=${attempt.icon}
-            icon="gr-icons:${attempt.icon}"
-          ></iron-icon>
+          <gr-icon class=${icon.name} icon=${icon.name} ?filled=${icon.filled}>
+          </gr-icon>
         </div>
-        <div class="attemptNumber">${ordinal(attempt.attempt)}</div>
+        <div class="attemptNumber">${ordinal(attemptNumber)}</div>
       </div>
     `;
   }
@@ -292,7 +290,7 @@ export class GrHovercardRun extends base {
     return html`
       <div class="section">
         <div class="sectionIcon">
-          <iron-icon class="small" icon="gr-icons:schedule"></iron-icon>
+          <gr-icon icon="schedule" class="small"></gr-icon>
         </div>
         <div class="sectionContent">
           ${scheduled} ${started} ${finished} ${completed} ${eta}
@@ -307,7 +305,7 @@ export class GrHovercardRun extends base {
     return html`
       <div class="section">
         <div class="sectionIcon">
-          <iron-icon class="small" icon="gr-icons:link"></iron-icon>
+          <gr-icon icon="link" class="small"></gr-icon>
         </div>
         <div class="sectionContent">
           ${this.run.checkDescription
@@ -321,11 +319,11 @@ export class GrHovercardRun extends base {
                 <div class="title">Documentation</div>
                 <div>
                   <a href=${this.run.checkLink} target="_blank"
-                    ><iron-icon
+                    ><gr-icon
+                      icon="open_in_new"
                       aria-label="external link to check documentation"
                       class="small link"
-                      icon="gr-icons:launch"
-                    ></iron-icon
+                    ></gr-icon
                     >${this.computeHostName(this.run.checkLink)}
                   </a>
                 </div>
@@ -352,25 +350,27 @@ export class GrHovercardRun extends base {
     );
   }
 
-  computeIcon() {
-    if (!this.run) return '';
+  computeIcon(): ChecksIcon {
+    if (!this.run) return {name: ''};
     const category = worstCategory(this.run);
     if (category) return iconFor(category);
     return this.run.status === RunStatus.COMPLETED
       ? iconFor(RunStatus.COMPLETED)
-      : '';
+      : {name: ''};
   }
 
   computeAttempts(): AttemptDetail[] {
-    const details = this.run?.attemptDetails ?? [];
-    const more =
-      details.length > 7 ? [{icon: 'more-horiz', attempt: undefined}] : [];
+    const details: AttemptDetail[] = this.run?.attemptDetails ?? [];
+    const more: AttemptDetail[] =
+      details.length > 7
+        ? [{icon: {name: 'more_horiz'}, attempt: undefined}]
+        : [];
     return [...more, ...details.slice(-7)];
   }
 
-  private computeChipIcon() {
+  private computeChipIcon(): ChecksIcon {
     if (this.run?.status === RunStatus.COMPLETED) {
-      return 'check';
+      return {name: 'check'};
     }
     if (this.run?.status === RunStatus.RUNNING) {
       return iconFor(RunStatus.RUNNING);
@@ -378,7 +378,7 @@ export class GrHovercardRun extends base {
     if (this.run?.status === RunStatus.SCHEDULED) {
       return iconFor(RunStatus.SCHEDULED);
     }
-    return '';
+    return {name: ''};
   }
 
   private computeHostName(link?: string) {

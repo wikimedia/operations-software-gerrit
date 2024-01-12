@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 /**
@@ -99,8 +88,9 @@ export enum FileInfoStatus {
   RENAMED = 'R',
   COPIED = 'C',
   REWRITTEN = 'W',
-  // Modifed = 'M', // but API not set it if the file was modified
+  MODIFIED = 'M', // Not returned by BE, M is the default
   UNMODIFIED = 'U', // Not returned by BE, but added by UI for certain files
+  REVERTED = 'X', // Not returned by BE, but added by UI for certain files
 }
 
 /**
@@ -209,8 +199,9 @@ export enum SubmitType {
 
 // This is a "meta type", so it comes first and is not sored alphabetically with
 // the other types.
-export type BrandType<T, BrandName extends string> = T &
-  {[__brand in BrandName]: never};
+export type BrandType<T, BrandName extends string> = T & {
+  [__brand in BrandName]: never;
+};
 
 export type AccountId = BrandType<number, '_accountId'>;
 
@@ -345,9 +336,7 @@ export declare interface AvatarInfo {
   width: number;
 }
 
-export type BasePatchSetNum = BrandType<'PARENT' | number, '_patchSet'>;
 // The refs/heads/ prefix is omitted in Branch name
-
 export type BranchName = BrandType<string, '_branchName'>;
 
 /**
@@ -417,9 +406,8 @@ export declare interface ChangeInfo {
   revert_of?: NumericChangeId;
   submission_id?: ChangeSubmissionId;
   cherry_pick_of_change?: NumericChangeId;
-  cherry_pick_of_patch_set?: PatchSetNum;
+  cherry_pick_of_patch_set?: RevisionPatchSetNum;
   contains_git_conflicts?: boolean;
-  internalHost?: string; // TODO(TS): provide an explanation what is its
   submit_requirements?: SubmitRequirementResultInfo[];
   submit_records?: SubmitRecordInfo[];
 }
@@ -465,6 +453,9 @@ export type CloneCommandMap = {[name: string]: string};
 export declare interface CommentLinkInfo {
   match: string;
   link?: string;
+  prefix?: string;
+  suffix?: string;
+  text?: string;
   enabled?: boolean;
   html?: string;
 }
@@ -626,8 +617,8 @@ export declare interface FileInfo {
   old_path?: string;
   lines_inserted?: number;
   lines_deleted?: number;
-  size_delta: number; // in bytes
-  size: number; // in bytes
+  size_delta?: number; // in bytes
+  size?: number; // in bytes
 }
 
 /**
@@ -789,7 +780,23 @@ export declare interface ParentCommitInfo {
   subject: string;
 }
 
-export type PatchSetNum = BrandType<'PARENT' | 'edit' | number, '_patchSet'>;
+export type PatchSetNumber = BrandType<number, '_patchSet'>;
+
+export type EditPatchSet = BrandType<'edit', '_patchSet'>;
+
+export const EDIT = 'edit' as EditPatchSet;
+
+export type ParentPatchSet = BrandType<'PARENT', '_patchSet'>;
+
+export const PARENT = 'PARENT' as ParentPatchSet;
+
+export type PatchSetNum = PatchSetNumber | ParentPatchSet | EditPatchSet;
+
+// for the "left" side of a diff or the base of a patch range
+export type BasePatchSetNum = PatchSetNumber | ParentPatchSet;
+
+// for the "right" side of a diff or the revision of a patch range
+export type RevisionPatchSetNum = PatchSetNumber | EditPatchSet;
 
 /**
  * The PluginConfigInfo entity contains information about Gerrit extensions by
@@ -945,7 +952,7 @@ export type ReviewInputTag = BrandType<string, '_reviewInputTag'>;
  */
 export declare interface RevisionInfo {
   kind: RevisionKind;
-  _number: PatchSetNum;
+  _number: RevisionPatchSetNum;
   created: Timestamp;
   uploader: AccountInfo;
   ref: GitRef;
@@ -1175,4 +1182,20 @@ export declare interface SubmitRecordInfoLabel {
   label: string;
   status: LabelStatus;
   appliedBy: AccountInfo;
+}
+
+/**
+ * Represent a file in a base64 encoding; GrRestApiInterface returns
+ * it from some methods
+ */
+export declare interface Base64FileContent {
+  content: string | null;
+  type: string | null;
+  ok: true;
+}
+
+export function isBase64FileContent(
+  res: Response | Base64FileContent
+): res is Base64FileContent {
+  return (res as Base64FileContent).ok;
 }

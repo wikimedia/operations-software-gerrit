@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 /* Import to get Gerrit interface */
 /* TODO(taoalpha): decouple gr-gerrit from gr-js-api-interface */
@@ -38,7 +27,7 @@ import {windowLocationReload} from '../../../utils/dom-util';
 import {debounce, DelayedTask} from '../../../utils/async-util';
 import {fireIronAnnounce} from '../../../utils/event-util';
 import {LitElement, html} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
+import {customElement, property, query, state} from 'lit/decorators.js';
 
 const HIDE_ALERT_TIMEOUT_MS = 10 * 1000;
 const CHECK_SIGN_IN_INTERVAL_MS = 60 * 1000;
@@ -274,7 +263,7 @@ export class GrErrorManager extends LitElement {
           );
         }
       }
-      this.reporting.error(new Error(`Server error: ${errorText}`));
+      this.reporting.error('Server error', new Error(errorText));
     });
   };
 
@@ -331,10 +320,10 @@ export class GrErrorManager extends LitElement {
 
   private readonly handleNetworkError = (e: NetworkErrorEvent) => {
     this._showAlert('Server unavailable');
-    this.reporting.error(new Error(`network error: ${e.detail.error.message}`));
+    this.reporting.error('Network error', new Error(e.detail.error.message));
   };
 
-  // TODO(dhruvsr): allow less priority alerts to override high priority alerts
+  // TODO(dhruvsri): allow less priority alerts to override high priority alerts
   // In some use cases we may want generic alerts to show along/over errors
   // private but used in tests
   canOverride(incoming = ErrorType.GENERIC, existing = ErrorType.GENERIC) {
@@ -369,7 +358,7 @@ export class GrErrorManager extends LitElement {
     el.show(text, actionText, actionCallback);
     this.alertElement = el;
     fireIronAnnounce(this, `Alert: ${text}`);
-    this.reporting.reportInteraction('show-alert', {text});
+    this.reporting.reportInteraction(EventType.SHOW_ALERT, {text});
   }
 
   private readonly hideAlert = () => {
@@ -416,6 +405,7 @@ export class GrErrorManager extends LitElement {
   // private but used in tests
   createToastAlert(showDismiss?: boolean) {
     const el = document.createElement('gr-alert');
+    el.owner = this;
     el.toast = true;
     el.showDismiss = !!showDismiss;
     return el;

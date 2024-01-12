@@ -1,27 +1,15 @@
 /**
  * @license
- * Copyright (C) 2015 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2015 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import '../../shared/gr-cursor-manager/gr-cursor-manager';
 import '../gr-change-list-item/gr-change-list-item';
 import '../gr-change-list-section/gr-change-list-section';
 import {GrChangeListItem} from '../gr-change-list-item/gr-change-list-item';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import {getAppContext} from '../../../services/app-context';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {getPluginEndpoints} from '../../shared/gr-js-api-interface/gr-plugin-endpoints';
 import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {GrCursorManager} from '../../shared/gr-cursor-manager/gr-cursor-manager';
@@ -32,35 +20,22 @@ import {
   PreferencesInput,
 } from '../../../types/common';
 import {fire, fireEvent, fireReload} from '../../../utils/event-util';
-import {ScrollMode} from '../../../constants/constants';
+import {ColumnNames, ScrollMode} from '../../../constants/constants';
 import {getRequirements} from '../../../utils/label-util';
-import {addGlobalShortcut, Key} from '../../../utils/dom-util';
-import {unique} from '../../../utils/common-util';
+import {Key} from '../../../utils/dom-util';
+import {assertIsDefined, unique} from '../../../utils/common-util';
 import {changeListStyles} from '../../../styles/gr-change-list-styles';
 import {fontStyles} from '../../../styles/gr-font-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, html, css, nothing} from 'lit';
-import {customElement, property, state} from 'lit/decorators';
-import {ShortcutController} from '../../lit/shortcut-controller';
-import {Shortcut} from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
+import {customElement, property, state} from 'lit/decorators.js';
+import {Shortcut, ShortcutController} from '../../lit/shortcut-controller';
 import {queryAll} from '../../../utils/common-util';
-import {ValueChangedEvent} from '../../../types/events';
-import {KnownExperimentId} from '../../../services/flags/flags';
 import {GrChangeListSection} from '../gr-change-list-section/gr-change-list-section';
-
-export const columnNames = [
-  'Subject',
-  // TODO(milutin) - remove once Submit Requirements are rolled out.
-  'Status',
-  'Owner',
-  'Reviewers',
-  'Comments',
-  'Repo',
-  'Branch',
-  'Updated',
-  'Size',
-  ' Status ', // spaces to differentiate from old 'Status'
-];
+import {Execution} from '../../../constants/reporting';
+import {ValueChangedEvent} from '../../../types/events';
+import {resolve} from '../../../models/dependency';
+import {createChangeUrl} from '../../../models/views/change';
 
 export interface ChangeListSection {
   countLabel?: string;
@@ -133,20 +108,19 @@ export class GrChangeList extends LitElement {
 
   @state() private dynamicHeaderEndpoints?: string[];
 
-  @property({type: Number, attribute: 'selected-index'})
-  selectedIndex?: number;
+  @property({type: Number}) selectedIndex = 0;
 
   @property({type: Boolean})
   showNumber?: boolean; // No default value to prevent flickering.
-
-  @property({type: Boolean})
-  showStar = false;
 
   @property({type: Boolean})
   showReviewedState = false;
 
   @property({type: Array})
   changeTableColumns?: string[];
+
+  @property({type: String})
+  usp?: string;
 
   @property({type: Array})
   visibleChangeTableColumns?: string[];
@@ -160,11 +134,18 @@ export class GrChangeList extends LitElement {
   // private but used in test
   @state() config?: ServerInfo;
 
+  // Private but used in test.
+  userModel = getAppContext().userModel;
+
   private readonly flagsService = getAppContext().flagsService;
 
   private readonly restApiService = getAppContext().restApiService;
 
+  private readonly reporting = getAppContext().reportingService;
+
   private readonly shortcuts = new ShortcutController(this);
+
+  private readonly getNavigation = resolve(this, navigationToken);
 
   private cursor = new GrCursorManager();
 
@@ -187,7 +168,10 @@ export class GrChangeList extends LitElement {
     this.shortcuts.addAbstract(Shortcut.REFRESH_CHANGE_LIST, () =>
       this.refreshChangeList()
     );
-    addGlobalShortcut({key: Key.ENTER}, () => this.openChange());
+    this.shortcuts.addAbstract(Shortcut.TOGGLE_CHECKBOX, () =>
+      this.toggleCheckbox()
+    );
+    this.shortcuts.addGlobal({key: Key.ENTER}, () => this.openChange());
   }
 
   override connectedCallback() {
@@ -241,19 +225,34 @@ export class GrChangeList extends LitElement {
   override render() {
     if (!this.sections) return;
     const labelNames = this.computeLabelNames(this.sections);
+    const startIndices = this.calculateStartIndices(this.sections);
     return html`
       <table id="changeList">
         ${this.sections.map((changeSection, sectionIndex) =>
-          this.renderSection(changeSection, sectionIndex, labelNames)
+          this.renderSection(
+            changeSection,
+            sectionIndex,
+            labelNames,
+            startIndices[sectionIndex]
+          )
         )}
       </table>
     `;
   }
 
+  private calculateStartIndices(sections: ChangeListSection[]): number[] {
+    const startIndices: number[] = new Array(sections.length).fill(0);
+    for (let i = 1; i < sections.length; ++i) {
+      startIndices[i] = startIndices[i - 1] + sections[i - 1].results.length;
+    }
+    return startIndices;
+  }
+
   private renderSection(
     changeSection: ChangeListSection,
     sectionIndex: number,
-    labelNames: string[]
+    labelNames: string[],
+    startIndex: number
   ) {
     return html`
       <gr-change-list-section
@@ -268,9 +267,14 @@ export class GrChangeList extends LitElement {
           sectionIndex,
           this.sections
         )}
-        ?showStar=${this.showStar}
         .showNumber=${this.showNumber}
         .visibleChangeTableColumns=${this.visibleChangeTableColumns}
+        .usp=${this.usp}
+        .startIndex=${startIndex}
+        .triggerSelectionCallback=${(index: number) => {
+          this.selectedIndex = index;
+          this.cursor.setCursorAtIndex(this.selectedIndex);
+        }}
       >
         ${changeSection.emptyStateSlotName
           ? html`<slot
@@ -289,7 +293,7 @@ export class GrChangeList extends LitElement {
       changedProperties.has('config') ||
       changedProperties.has('sections')
     ) {
-      this.computePreferences();
+      this.computeVisibleChangeTableColumns();
     }
 
     if (changedProperties.has('changes')) {
@@ -301,15 +305,39 @@ export class GrChangeList extends LitElement {
     if (changedProperties.has('sections')) {
       this.sectionsChanged();
     }
+    if (changedProperties.has('selectedIndex')) {
+      fire(this, 'selected-index-changed', {
+        value: this.selectedIndex ?? 0,
+      });
+    }
   }
 
-  private computePreferences() {
+  private toggleCheckbox() {
+    assertIsDefined(this.selectedIndex, 'selectedIndex');
+    let selectedIndex = this.selectedIndex;
+    assertIsDefined(this.sections, 'sections');
+    const changeSections = queryAll<GrChangeListSection>(
+      this,
+      'gr-change-list-section'
+    );
+    for (let i = 0; i < this.sections.length; i++) {
+      if (selectedIndex >= this.sections[i].results.length) {
+        selectedIndex -= this.sections[i].results.length;
+        continue;
+      }
+      changeSections[i].toggleChange(selectedIndex);
+      return;
+    }
+    throw new Error('invalid selected index');
+  }
+
+  private computeVisibleChangeTableColumns() {
     if (!this.config) return;
 
-    this.changeTableColumns = columnNames;
+    this.changeTableColumns = Object.values(ColumnNames);
     this.showNumber = false;
     this.visibleChangeTableColumns = this.changeTableColumns.filter(col =>
-      this._isColumnEnabled(col, this.config)
+      this.isColumnEnabled(col, this.config)
     );
     if (this.account && this.preferences) {
       this.showNumber = !!this.preferences?.legacycid_in_change_table;
@@ -317,12 +345,19 @@ export class GrChangeList extends LitElement {
         this.preferences?.change_table &&
         this.preferences.change_table.length > 0
       ) {
-        const prefColumns = this.preferences.change_table.map(column =>
-          column === 'Project' ? 'Repo' : column
-        );
-        this.visibleChangeTableColumns = prefColumns.filter(col =>
-          this._isColumnEnabled(col, this.config)
-        );
+        const prefColumns = this.preferences.change_table
+          .map(column => (column === 'Project' ? ColumnNames.REPO : column))
+          .map(column =>
+            column === ColumnNames.STATUS ? ColumnNames.STATUS2 : column
+          );
+        this.reporting.reportExecution(Execution.USER_PREFERENCES_COLUMNS, {
+          statusColumn: prefColumns.includes(ColumnNames.STATUS2),
+        });
+        // Order visible column names by columnNames, filter only one that
+        // are in prefColumns and enabled by config
+        this.visibleChangeTableColumns = Object.values(ColumnNames)
+          .filter(col => prefColumns.includes(col))
+          .filter(col => this.isColumnEnabled(col, this.config));
       }
     }
   }
@@ -330,55 +365,29 @@ export class GrChangeList extends LitElement {
   /**
    * Is the column disabled by a server config or experiment?
    */
-  _isColumnEnabled(column: string, config?: ServerInfo) {
-    if (!columnNames.includes(column)) return false;
+  isColumnEnabled(column: string, config?: ServerInfo) {
+    if (!Object.values(ColumnNames).includes(column as unknown as ColumnNames))
+      return false;
     if (!config || !config.change) return true;
     if (column === 'Comments')
       return this.flagsService.isEnabled('comments-column');
-    if (column === 'Status') {
-      return !this.flagsService.isEnabled(
-        KnownExperimentId.SUBMIT_REQUIREMENTS_UI
-      );
-    }
-    if (column === ' Status ')
-      return this.flagsService.isEnabled(
-        KnownExperimentId.SUBMIT_REQUIREMENTS_UI
-      );
+    if (column === 'Status') return false;
+    if (column === ColumnNames.STATUS2) return true;
     return true;
   }
 
   // private but used in test
   computeLabelNames(sections: ChangeListSection[]) {
     if (!sections) return [];
-    let labels: string[] = [];
-    const nonExistingLabel = function (item: string) {
-      return !labels.includes(item);
-    };
-    for (const section of sections) {
-      if (!section.results) {
-        continue;
-      }
-      for (const change of section.results) {
-        if (!change.labels) {
-          continue;
-        }
-        const currentLabels = Object.keys(change.labels);
-        labels = labels.concat(currentLabels.filter(nonExistingLabel));
-      }
+    if (this.config?.submit_requirement_dashboard_columns?.length) {
+      return this.config?.submit_requirement_dashboard_columns;
     }
-
-    if (this.flagsService.isEnabled(KnownExperimentId.SUBMIT_REQUIREMENTS_UI)) {
-      if (this.config?.submit_requirement_dashboard_columns?.length) {
-        return this.config?.submit_requirement_dashboard_columns;
-      } else {
-        const changes = sections.map(section => section.results).flat();
-        labels = (changes ?? [])
-          .map(change => getRequirements(change))
-          .flat()
-          .map(requirement => requirement.name)
-          .filter(unique);
-      }
-    }
+    const changes = sections.map(section => section.results).flat();
+    const labels = (changes ?? [])
+      .map(change => getRequirements(change))
+      .flat()
+      .map(requirement => requirement.name)
+      .filter(unique);
     return labels.sort();
   }
 
@@ -391,7 +400,6 @@ export class GrChangeList extends LitElement {
     this.cursor.next();
     this.isCursorMoving = false;
     this.selectedIndex = this.cursor.index;
-    fire(this, 'selected-index-changed', {value: this.cursor.index});
   }
 
   private prevChange() {
@@ -399,12 +407,11 @@ export class GrChangeList extends LitElement {
     this.cursor.previous();
     this.isCursorMoving = false;
     this.selectedIndex = this.cursor.index;
-    fire(this, 'selected-index-changed', {value: this.cursor.index});
   }
 
   private async openChange() {
     const change = await this.changeForIndex(this.selectedIndex);
-    if (change) GerritNav.navigateToChange(change);
+    if (change) this.getNavigation().setUrl(createChangeUrl({change}));
   }
 
   private nextPage() {
@@ -472,10 +479,10 @@ export class GrChangeList extends LitElement {
 }
 
 declare global {
-  interface HTMLElementEventMap {
-    'selected-index-changed': ValueChangedEvent<number>;
-  }
   interface HTMLElementTagNameMap {
     'gr-change-list': GrChangeList;
+  }
+  interface HTMLElementEventMap {
+    'selected-index-changed': ValueChangedEvent<number>;
   }
 }

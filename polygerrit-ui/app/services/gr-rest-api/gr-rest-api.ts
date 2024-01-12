@@ -1,20 +1,8 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import {HttpMethod} from '../../constants/constants';
 import {Finalizable} from '../registry';
 import {
@@ -53,6 +41,7 @@ import {
   FileNameToFileInfoMap,
   FilePathToDiffInfoMap,
   FixId,
+  FixReplacementInfo,
   GitRef,
   GpgKeyId,
   GpgKeyInfo,
@@ -101,6 +90,7 @@ import {
   TagInput,
   TopMenuEntryInfo,
   UrlEncodedCommentId,
+  UserId,
 } from '../../types/common';
 import {
   DiffInfo,
@@ -168,15 +158,24 @@ export interface RestApiService extends Finalizable {
     changeNum: NumericChangeId,
     input: string
   ): Promise<SuggestedReviewerInfo[] | undefined>;
+  /**
+   * Request list of accounts via https://gerrit-review.googlesource.com/Documentation/rest-api-accounts.html#query-account
+   * Operators defined here https://gerrit-review.googlesource.com/Documentation/user-search-accounts.html#_search_operators
+   */
   getSuggestedAccounts(
     input: string,
-    n?: number
+    n?: number,
+    canSee?: NumericChangeId,
+    filterActive?: boolean
   ): Promise<AccountInfo[] | undefined>;
   getSuggestedGroups(
     input: string,
     project?: RepoName,
     n?: number
   ): Promise<GroupNameToGroupInfoMap | undefined>;
+  /**
+   * Execute a change action or revision action on a change.
+   */
   executeChangeAction(
     changeNum: NumericChangeId,
     method: HttpMethod | undefined,
@@ -199,6 +198,9 @@ export interface RestApiService extends Finalizable {
     opt_cancelCondition?: Function
   ): Promise<ParsedChangeInfo | undefined>;
 
+  /**
+   * Given a changeNum, gets the change.
+   */
   getChange(
     changeNum: ChangeId | NumericChangeId,
     errFn?: ErrorCallback
@@ -382,6 +384,12 @@ export interface RestApiService extends Finalizable {
     changeNum: NumericChangeId
   ): Promise<IncludedInInfo | undefined>;
 
+  /**
+   * Checks in projectLookup map shared across instances for the changeNum.
+   * If it exists, returns the project. If not, calls the restAPI to get the
+   * change, populates projectLookup with the project for that change, and
+   * returns the project.
+   */
   getFromProjectLookup(
     changeNum: NumericChangeId
   ): Promise<RepoName | undefined>;
@@ -438,6 +446,11 @@ export interface RestApiService extends Finalizable {
     | Promise<GetDiffRobotCommentsOutput>
     | Promise<PathToRobotCommentsInfoMap | undefined>;
 
+  /**
+   * If the user is logged in, fetch the user's draft diff comments. If there
+   * is no logged in user, the request is not made and the promise yields an
+   * empty object.
+   */
   getDiffDrafts(
     changeNum: NumericChangeId
   ): Promise<{[path: string]: DraftInfo[]} | undefined>;
@@ -472,9 +485,15 @@ export interface RestApiService extends Finalizable {
 
   getAccountAgreements(): Promise<ContributorAgreementInfo[] | undefined>;
 
+  /**
+   * https://gerrit-review.googlesource.com/Documentation/rest-api-accounts.html#list-groups
+   */
   getAccountGroups(): Promise<GroupInfo[] | undefined>;
 
-  getAccountDetails(userId: AccountId): Promise<AccountDetailInfo | undefined>;
+  getAccountDetails(
+    userId: UserId,
+    errFn?: ErrorCallback
+  ): Promise<AccountDetailInfo | undefined>;
 
   getAccountStatus(userId: AccountId): Promise<string | undefined>;
 
@@ -623,7 +642,7 @@ export interface RestApiService extends Finalizable {
   getChangeCherryPicks(
     project: RepoName,
     changeID: ChangeId,
-    changeNum: NumericChangeId
+    branch: BranchName
   ): Promise<ChangeInfo[] | undefined>;
 
   getChangesWithSameTopic(
@@ -634,22 +653,68 @@ export interface RestApiService extends Finalizable {
     }
   ): Promise<ChangeInfo[] | undefined>;
   getChangesWithSimilarTopic(topic: string): Promise<ChangeInfo[] | undefined>;
+  getChangesWithSimilarHashtag(
+    hashtag: string
+  ): Promise<ChangeInfo[] | undefined>;
 
+  /**
+   * @return Whether there are pending diff draft sends.
+   */
   hasPendingDiffDrafts(): number;
+  /**
+   * @return A promise that resolves when all pending
+   * diff draft sends have resolved.
+   */
   awaitPendingDiffDrafts(): Promise<void>;
 
+  /**
+   * Preview Stored Fix
+   * Gets the diffs of all files for a certain {fix-id} associated with apply fix.
+   * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#preview-stored-fix
+   */
   getRobotCommentFixPreview(
     changeNum: NumericChangeId,
     patchNum: PatchSetNum,
     fixId: FixId
   ): Promise<FilePathToDiffInfoMap | undefined>;
 
+  /**
+   * Preview Provided fix
+   * Gets the diffs of all files for a provided fix replacements infos
+   * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#preview-provided-fix
+   */
+  getFixPreview(
+    changeNum: NumericChangeId,
+    patchNum: PatchSetNum,
+    fixReplacementInfos: FixReplacementInfo[]
+  ): Promise<FilePathToDiffInfoMap | undefined>;
+
+  /**
+   * Apply Provided Fix
+   * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#apply-provided-fix
+   */
   applyFixSuggestion(
+    changeNum: NumericChangeId,
+    patchNum: PatchSetNum,
+    fixReplacementInfos: FixReplacementInfo[]
+  ): Promise<Response>;
+
+  /**
+   * Apply Stored Fix
+   * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#apply-stored-fix
+   */
+  applyRobotFixSuggestion(
     changeNum: NumericChangeId,
     patchNum: PatchSetNum,
     fixId: string
   ): Promise<Response>;
 
+  /**
+   * @param basePatchNum Negative values specify merge parent
+   * index.
+   * @param whitespace the ignore-whitespace level for the diff
+   * algorithm.
+   */
   getDiff(
     changeNum: NumericChangeId,
     basePatchNum: PatchSetNum,
@@ -659,6 +724,12 @@ export interface RestApiService extends Finalizable {
     errFn?: ErrorCallback
   ): Promise<DiffInfo | undefined>;
 
+  /**
+   * Get blame information for the given diff.
+   *
+   * @param base If true, requests blame for the base of the
+   *     diff, rather than the revision.
+   */
   getBlame(
     changeNum: NumericChangeId,
     patchNum: PatchSetNum,
@@ -688,6 +759,10 @@ export interface RestApiService extends Finalizable {
     starred: boolean
   ): Promise<Response>;
 
+  /**
+   * Fetch a project dashboard definition.
+   * https://gerrit-review.googlesource.com/Documentation/rest-api-projects.html#get-dashboard
+   */
   getDashboard(
     project: RepoName,
     dashboard: DashboardId,

@@ -39,6 +39,8 @@ const appThemeCss = safeStyleSheet`
     --blue-700-16: #1967d229;
     --blue-700-24: #1967d23d;
     --blue-400: #669df6;
+    --blue-300: #8ab4f8;
+    --blue-300-24: #8ab4f83D;
     --blue-200: #aecbfa;
     --blue-200-16: #aecbfa29;
     --blue-200-24: #aecbfa3d;
@@ -46,10 +48,13 @@ const appThemeCss = safeStyleSheet`
     --blue-50: #e8f0fe;
     --blue-tonal: #314972;
     --orange-900: #b06000;
+    --orange-800: #c26401;
     --orange-700: #d56e0c;
     --orange-700-04: #d56e0c0a;
     --orange-700-10: #d56e0c1a;
     --orange-700-12: #d56e0c1f;
+    --orange-400: #fa903e;
+    --orange-300: #fcad70;
     --orange-200: #fdc69c;
     --orange-50: #feefe3;
     --orange-tonal: #714625;
@@ -94,6 +99,8 @@ const appThemeCss = safeStyleSheet`
     --purple-100: #e9d2fd;
     --purple-50: #f3e8fd;
     --purple-tonal: #523272;
+    --deep-purple-800: #4527a0;
+    --deep-purple-600: #5e35b1;
     --pink-800: #b80672;
     --pink-500: #f538a0;
     --pink-50: #fde7f3;
@@ -119,6 +126,8 @@ const appThemeCss = safeStyleSheet`
       ),
       var(--red-50);
     --error-ripple: var(--red-700-10);
+
+    --code-review-warning-background: var(--blue-50);
 
     --warning-foreground: var(--orange-700);
     --warning-background: var(--orange-50);
@@ -155,6 +164,7 @@ const appThemeCss = safeStyleSheet`
 
     --selected-foreground: var(--blue-800);
     --selected-background: var(--blue-50);
+    --selected-chip-background: var(--blue-50);
 
     --success-foreground: var(--green-700);
     --success-background: var(--green-50);
@@ -287,6 +297,7 @@ const appThemeCss = safeStyleSheet`
     --border-color: var(--gray-300);
     --input-focus-border-color: var(--blue-800);
     --comment-separator-color: var(--gray-300);
+    --comment-quote-marker-color: var(--gray-500);
 
     /* checks tag colors */
     --tag-gray: var(--gray-200);
@@ -308,9 +319,13 @@ const appThemeCss = safeStyleSheet`
     --status-custom: var(--purple-900);
 
     /* file status colors */
+    --file-status-font-color: black;
     --file-status-added: var(--green-300);
-    --file-status-changed: var(--red-200);
+    --file-status-deleted: var(--red-200);
+    --file-status-modified: var(--gray-300);
+    --file-status-renamed: var(--orange-300);
     --file-status-unchanged: var(--gray-300);
+    --file-status-reverted: var(--gray-300);
 
     /* fonts */
     --font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI',
@@ -338,7 +353,8 @@ const appThemeCss = safeStyleSheet`
     --font-weight-bold: 500;
     --font-weight-h1: 400;
     --font-weight-h2: 400;
-    --font-weight-h3: var(--font-weight-bold, 500);
+    --font-weight-h3: 400;
+    --font-weight-h4: 600;
     --context-control-button-font: var(--font-weight-normal)
       var(--font-size-normal) var(--font-family);
     --code-hint-font-weight: 500;
@@ -370,9 +386,20 @@ const appThemeCss = safeStyleSheet`
 
     /* diff colors */
     --dark-add-highlight-color: #aaf2aa;
-    --dark-rebased-add-highlight-color: #d7d7f9;
-    --dark-rebased-remove-highlight-color: #f7e8b7;
+    --light-add-highlight-color: #d8fed8;
     --dark-remove-highlight-color: #ffcdd2;
+    --light-remove-highlight-color: #ffebee;
+
+    --dark-rebased-add-highlight-color: #d7d7f9;
+    --light-rebased-add-highlight-color: #eef;
+    --dark-rebased-remove-highlight-color: #f7e8b7;
+    --light-rebased-remove-highlight-color: #fff8dc;
+
+    --diff-moved-in-background: var(--cyan-50);
+    --diff-moved-in-label-color: var(--cyan-900);
+    --diff-moved-out-background: var(--purple-50);
+    --diff-moved-out-label-color: var(--purple-900);
+
     --diff-blank-background-color: var(--background-color-secondary);
     --diff-context-control-background-color: #fff7d4;
     --diff-context-control-border-color: #f6e6a5;
@@ -383,14 +410,7 @@ const appThemeCss = safeStyleSheet`
     --diff-tab-indicator-color: var(--deemphasized-text-color);
     --diff-trailing-whitespace-indicator: #ff9ad2;
     --focused-line-outline-color: var(--blue-700);
-    --light-add-highlight-color: #d8fed8;
-    --light-rebased-add-highlight-color: #eef;
-    --diff-moved-in-background: var(--cyan-50);
-    --diff-moved-out-background: var(--purple-50);
-    --diff-moved-in-label-color: var(--cyan-900);
-    --diff-moved-out-label-color: var(--purple-900);
-    --light-remove-add-highlight-color: #fff8dc;
-    --light-remove-highlight-color: #ffebee;
+    --coverage-covered-line-num-color: var(--deemphasized-text-color);
     --coverage-covered: #e0f2f1;
     --coverage-not-covered: #ffd1a4;
     --ranged-comment-hint-text-color: var(--orange-900);
@@ -491,13 +511,15 @@ document.head.appendChild(styleEl);
 // removed from Gerrit.
 
 const appThemeCssPolymerLegacy = safeStyleSheet`
+  /* prettier formatter removes semi-colons after css mixins. */
+  /* prettier-ignore */
   html {
     --paper-tooltip: {
       font-size: var(--font-size-small);
-    }
+    };
     --iron-overlay-backdrop: {
       transition: none;
-    }
+    };
   }
 `;
 

@@ -760,9 +760,9 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
                 .build());
     ChangeNotes notesAfterRewrite = newNotes(c);
 
-    assertThat(notesBeforeRewrite.getApprovals().get(c.currentPatchSetId()))
+    assertThat(notesBeforeRewrite.getApprovals().all().get(c.currentPatchSetId()))
         .containsExactlyElementsIn(expectedApprovals);
-    assertThat(notesAfterRewrite.getApprovals().get(c.currentPatchSetId()))
+    assertThat(notesAfterRewrite.getApprovals().all().get(c.currentPatchSetId()))
         .containsExactlyElementsIn(expectedApprovals);
 
     Ref metaRefAfterRewrite = repo.exactRef(RefNames.changeMetaRef(c.getId()));
@@ -879,14 +879,14 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
             "Removed Custom-Label-1 by Other Account <other@account.com>",
             "Removed Verified+2 by Change Owner <change@owner.com>");
 
-    assertThat(notesBeforeRewrite.getApprovals().get(c.currentPatchSetId()))
+    assertThat(notesBeforeRewrite.getApprovals().all().get(c.currentPatchSetId()))
         .containsExactlyElementsIn(expectedApprovals);
     assertThat(changeMessages(notesAfterRewrite))
         .containsExactly(
             "Removed Code-Review+2 by <GERRIT_ACCOUNT_2>",
             "Removed Custom-Label-1 by <GERRIT_ACCOUNT_2>",
             "Removed Verified+2 by <GERRIT_ACCOUNT_1>");
-    assertThat(notesAfterRewrite.getApprovals().get(c.currentPatchSetId()))
+    assertThat(notesAfterRewrite.getApprovals().all().get(c.currentPatchSetId()))
         .containsExactlyElementsIn(expectedApprovals);
 
     Ref metaRefAfterRewrite = repo.exactRef(RefNames.changeMetaRef(c.getId()));

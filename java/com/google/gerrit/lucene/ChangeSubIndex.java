@@ -15,18 +15,17 @@
 package com.google.gerrit.lucene;
 
 import static com.google.common.collect.Iterables.getOnlyElement;
-import static com.google.gerrit.lucene.LuceneChangeIndex.ID2_SORT_FIELD;
-import static com.google.gerrit.lucene.LuceneChangeIndex.ID_SORT_FIELD;
+import static com.google.gerrit.lucene.LuceneChangeIndex.ID_STR_SORT_FIELD;
 import static com.google.gerrit.lucene.LuceneChangeIndex.MERGED_ON_SORT_FIELD;
 import static com.google.gerrit.lucene.LuceneChangeIndex.UPDATED_SORT_FIELD;
 import static com.google.gerrit.server.index.change.ChangeSchemaDefinitions.NAME;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.Schema.Values;
+import com.google.gerrit.index.SchemaFieldDefs.SchemaField;
 import com.google.gerrit.index.query.DataSource;
 import com.google.gerrit.index.query.FieldBundle;
 import com.google.gerrit.index.query.Predicate;
@@ -119,13 +118,10 @@ public class ChangeSubIndex extends AbstractLuceneIndex<Change.Id, ChangeData>
   @Override
   void add(Document doc, Values<ChangeData> values) {
     // Add separate DocValues fields for those fields needed for sorting.
-    FieldDef<ChangeData, ?> f = values.getField();
-    if (f == ChangeField.LEGACY_ID) {
-      int v = (Integer) getOnlyElement(values.getValues());
-      doc.add(new NumericDocValuesField(ID_SORT_FIELD, v));
-    } else if (f == ChangeField.LEGACY_ID_STR) {
+    SchemaField<ChangeData, ?> f = values.getField();
+    if (f == ChangeField.LEGACY_ID_STR) {
       String v = (String) getOnlyElement(values.getValues());
-      doc.add(new NumericDocValuesField(ID2_SORT_FIELD, Integer.valueOf(v)));
+      doc.add(new NumericDocValuesField(ID_STR_SORT_FIELD, Integer.valueOf(v)));
     } else if (f == ChangeField.UPDATED) {
       long t = ((Timestamp) getOnlyElement(values.getValues())).getTime();
       doc.add(new NumericDocValuesField(UPDATED_SORT_FIELD, t));

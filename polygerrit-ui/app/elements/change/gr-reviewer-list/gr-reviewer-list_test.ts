@@ -1,41 +1,63 @@
 /**
  * @license
- * Copyright (C) 2015 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2015 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-reviewer-list';
 import {mockPromise, queryAndAssert} from '../../../test/test-utils';
 import {GrReviewerList} from './gr-reviewer-list';
 import {
   createAccountDetailWithId,
   createChange,
-  createDetailedLabelInfo,
 } from '../../../test/test-data-generators';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {AccountId, EmailAddress} from '../../../types/common';
 import './gr-reviewer-list';
-
-const basicFixture = fixtureFromElement('gr-reviewer-list');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-reviewer-list tests', () => {
   let element: GrReviewerList;
 
   setup(async () => {
-    element = basicFixture.instantiate();
-    await element.updateComplete;
+    element = await fixture(html`<gr-reviewer-list></gr-reviewer-list>`);
+  });
+
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="container">
+          <div>
+            <div class="controlsContainer" hidden="">
+              <gr-button
+                aria-disabled="false"
+                class="addReviewer"
+                id="addReviewer"
+                link=""
+                role="button"
+                tabindex="0"
+                title="Add reviewer"
+              >
+                <div>
+                  <gr-icon icon="edit" filled small></gr-icon>
+                </div>
+              </gr-button>
+            </div>
+          </div>
+          <gr-button
+            aria-disabled="false"
+            class="hiddenReviewers"
+            hidden=""
+            link=""
+            role="button"
+            tabindex="0"
+          >
+            and 0 more
+          </gr-button>
+        </div>
+      `
+    );
   });
 
   test('controls hidden on immutable element', async () => {
@@ -264,72 +286,5 @@ suite('gr-reviewer-list tests', () => {
     assert.equal(element.displayedReviewers.length, 100);
     assert.equal(element.reviewers.length, 100);
     assert.isTrue(queryAndAssert<GrButton>(element, '.hiddenReviewers').hidden);
-  });
-
-  test('votable labels', async () => {
-    element.change = {
-      ...createChange(),
-      labels: {
-        Foo: {
-          ...createDetailedLabelInfo(),
-          all: [
-            {
-              _account_id: 7 as AccountId,
-              permitted_voting_range: {max: 2, min: 0},
-            },
-          ],
-        },
-        Bar: {
-          ...createDetailedLabelInfo(),
-          all: [
-            {
-              ...createAccountDetailWithId(1),
-              permitted_voting_range: {max: 1, min: 0},
-            },
-            {
-              _account_id: 7 as AccountId,
-              permitted_voting_range: {max: 1, min: 0},
-            },
-          ],
-        },
-        FooBar: {
-          ...createDetailedLabelInfo(),
-          all: [{_account_id: 7 as AccountId, value: 0}],
-        },
-      },
-      permitted_labels: {
-        Foo: ['-1', ' 0', '+1', '+2'],
-        FooBar: ['-1', ' 0'],
-      },
-    };
-    await element.updateComplete;
-
-    assert.strictEqual(
-      element.computeVoteableText({...createAccountDetailWithId(1)}),
-      'Bar: +1'
-    );
-    assert.strictEqual(
-      element.computeVoteableText({...createAccountDetailWithId(7)}),
-      'Foo: +2, Bar: +1, FooBar: 0'
-    );
-    assert.strictEqual(
-      element.computeVoteableText({...createAccountDetailWithId(2)}),
-      ''
-    );
-  });
-
-  test('fails gracefully when all is not included', async () => {
-    element.change = {
-      ...createChange(),
-      labels: {Foo: {}},
-      permitted_labels: {
-        Foo: ['-1', ' 0', '+1', '+2'],
-      },
-    };
-    await element.updateComplete;
-    assert.strictEqual(
-      element.computeVoteableText({...createAccountDetailWithId(1)}),
-      ''
-    );
   });
 });

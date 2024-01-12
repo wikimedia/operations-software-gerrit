@@ -1,24 +1,12 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-tooltip-content';
 import {GrTooltipContent} from './gr-tooltip-content';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
 import {GrTooltip} from '../gr-tooltip/gr-tooltip';
 import {query} from '../../../test/test-utils';
 
@@ -48,14 +36,27 @@ suite('gr-tooltip-content tests', () => {
     await element.updateComplete;
   });
 
+  test('render', async () => {
+    element.showIcon = true;
+    await element.updateComplete;
+
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <slot> </slot>
+        <gr-icon icon="info" filled></gr-icon>
+      `
+    );
+  });
+
   test('icon is not visible by default', () => {
-    assert.isNotOk(query(element, 'iron-icon'));
+    assert.isNotOk(query(element, 'gr-icon'));
   });
 
   test('icon is visible with showIcon property', async () => {
     element.showIcon = true;
     await element.updateComplete;
-    assert.isOk(query(element, 'iron-icon'));
+    assert.isOk(query(element, 'gr-icon'));
   });
 
   test('position-below attribute is reflected', async () => {

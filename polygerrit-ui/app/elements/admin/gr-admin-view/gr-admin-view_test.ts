@@ -1,34 +1,25 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-admin-view';
 import {AdminSubsectionLink, GrAdminView} from './gr-admin-view';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
-import {mockPromise, stubBaseUrl, stubRestApi} from '../../../test/test-utils';
+import {stubBaseUrl, stubElement, stubRestApi} from '../../../test/test-utils';
 import {GerritView} from '../../../services/router/router-model';
 import {query, queryAll, queryAndAssert} from '../../../test/test-utils';
 import {GrRepoList} from '../gr-repo-list/gr-repo-list';
 import {GroupId, GroupName, RepoName, Timestamp} from '../../../types/common';
 import {GrDropdownList} from '../../shared/gr-dropdown-list/gr-dropdown-list';
 import {GrGroup} from '../gr-group/gr-group';
-
-const basicFixture = fixtureFromElement('gr-admin-view');
+import {fixture, html, assert} from '@open-wc/testing';
+import {AdminChildView} from '../../../models/views/admin';
+import {GroupDetailView} from '../../../models/views/group';
+import {RepoDetailView} from '../../../models/views/repo';
+import {testResolver} from '../../../test/common-test-setup';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 
 function createAdminCapabilities() {
   return {
@@ -42,7 +33,7 @@ suite('gr-admin-view tests', () => {
   let element: GrAdminView;
 
   setup(async () => {
-    element = basicFixture.instantiate();
+    element = await fixture(html`<gr-admin-view></gr-admin-view>`);
     stubRestApi('getProjectConfig').returns(Promise.resolve(undefined));
     const pluginsLoaded = Promise.resolve();
     sinon.stub(getPluginLoader(), 'awaitPluginsLoaded').returns(pluginsLoaded);
@@ -86,9 +77,10 @@ suite('gr-admin-view tests', () => {
       },
     ];
 
-    element.params = {
+    element.view = GerritView.ADMIN;
+    element.adminViewState = {
       view: GerritView.ADMIN,
-      adminView: 'gr-repo-list',
+      adminView: AdminChildView.REPOS,
     };
 
     await element.updateComplete;
@@ -171,6 +163,7 @@ suite('gr-admin-view tests', () => {
   });
 
   test('Repo shows up in nav', async () => {
+    element.view = GerritView.REPO;
     element.repoName = 'Test Repo' as RepoName;
     stubRestApi('getAccount').returns(
       Promise.resolve({
@@ -220,7 +213,7 @@ suite('gr-admin-view tests', () => {
     assert.isNotOk(element.filteredLinks![2].subsection);
   });
 
-  test('Nav is reloaded when repo changes', async () => {
+  test('Needs reload when repo changes', async () => {
     stubRestApi('getAccountCapabilities').returns(
       Promise.resolve(createAdminCapabilities())
     );
@@ -230,16 +223,19 @@ suite('gr-admin-view tests', () => {
         registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
       })
     );
-    const reloadStub = sinon.stub(element, 'reload');
-    element.params = {repo: 'Test Repo' as RepoName, view: GerritView.REPO};
+
+    element.view = GerritView.REPO;
+    element.repoViewState = {repo: 'Repo 1' as RepoName, view: GerritView.REPO};
+    assert.isTrue(element.needsReload());
+    await element.reload();
     await element.updateComplete;
-    assert.equal(reloadStub.callCount, 1);
-    element.params = {repo: 'Test Repo 2' as RepoName, view: GerritView.REPO};
+
+    element.repoViewState = {repo: 'Repo 2' as RepoName, view: GerritView.REPO};
+    assert.isTrue(element.needsReload());
     await element.updateComplete;
-    assert.equal(reloadStub.callCount, 2);
   });
 
-  test('Nav is reloaded when group changes', async () => {
+  test('Needs reload when group changes', async () => {
     sinon.stub(element, 'computeGroupName');
     stubRestApi('getAccountCapabilities').returns(
       Promise.resolve(createAdminCapabilities())
@@ -250,13 +246,12 @@ suite('gr-admin-view tests', () => {
         registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
       })
     );
-    const reloadStub = sinon.stub(element, 'reload');
-    element.params = {groupId: '1' as GroupId, view: GerritView.GROUP};
-    await element.updateComplete;
-    assert.equal(reloadStub.callCount, 1);
+    element.view = GerritView.GROUP;
+    element.groupViewState = {groupId: '1' as GroupId, view: GerritView.GROUP};
+    assert.isTrue(element.needsReload());
   });
 
-  test('Nav is reloaded when changing from repo to group', async () => {
+  test('Needs reload when changing from repo to group', async () => {
     element.repoName = 'Test Repo' as RepoName;
     stubRestApi('getAccount').returns(
       Promise.resolve({
@@ -271,26 +266,25 @@ suite('gr-admin-view tests', () => {
     await element.updateComplete;
 
     sinon.stub(element, 'computeGroupName');
-    const reloadStub = sinon.stub(element, 'reload');
     const groupId = '1' as GroupId;
-    element.params = {groupId, view: GerritView.GROUP};
+    element.view = GerritView.GROUP;
+    element.groupViewState = {groupId, view: GerritView.GROUP};
     await element.updateComplete;
 
-    assert.equal(reloadStub.callCount, 1);
+    assert.isTrue(element.needsReload());
     assert.equal(element.groupId, groupId);
   });
 
-  test('Nav is reloaded when group name changes', async () => {
+  test('Needs reload when group name changes', async () => {
     const newName = 'newName' as GroupName;
-    const reloadCalled = mockPromise();
     sinon.stub(element, 'computeGroupName');
-    sinon.stub(element, 'reload').callsFake(() => {
-      reloadCalled.resolve();
-      return Promise.resolve();
-    });
-    element.params = {groupId: '1' as GroupId, view: GerritView.GROUP};
+    element.view = GerritView.GROUP;
+    element.groupViewState = {groupId: '1' as GroupId, view: GerritView.GROUP};
     element.groupName = 'oldName' as GroupName;
+    assert.isTrue(element.needsReload());
+    await element.reload();
     await element.updateComplete;
+
     queryAndAssert<GrGroup>(element, 'gr-group').dispatchEvent(
       new CustomEvent('name-changed', {
         detail: {name: newName},
@@ -298,11 +292,11 @@ suite('gr-admin-view tests', () => {
         bubbles: true,
       })
     );
-    await reloadCalled;
     assert.equal(element.groupName, newName);
   });
 
   test('dropdown displays if there is a subsection', async () => {
+    element.view = GerritView.REPO;
     assert.isNotOk(query(element, '.mainHeader'));
     element.subsectionLinks = [
       {
@@ -322,10 +316,11 @@ suite('gr-admin-view tests', () => {
 
   test('Dropdown only triggers navigation on explicit select', async () => {
     element.repoName = 'my-repo' as RepoName;
-    element.params = {
+    element.view = GerritView.REPO;
+    element.repoViewState = {
       repo: 'my-repo' as RepoName,
-      view: GerritNav.View.REPO,
-      detail: GerritNav.RepoDetailView.ACCESS,
+      view: GerritView.REPO,
+      detail: RepoDetailView.ACCESS,
     };
     stubRestApi('getAccountCapabilities').returns(
       Promise.resolve(createAdminCapabilities())
@@ -337,6 +332,7 @@ suite('gr-admin-view tests', () => {
       })
     );
     await element.updateComplete;
+
     const expectedFilteredLinks = [
       {
         name: 'Repositories',
@@ -351,38 +347,38 @@ suite('gr-admin-view tests', () => {
             {
               name: 'General',
               view: GerritView.REPO,
-              url: '',
-              detailType: GerritNav.RepoDetailView.GENERAL,
+              url: '/admin/repos/my-repo,general',
+              detailType: RepoDetailView.GENERAL,
             },
             {
               name: 'Access',
               view: GerritView.REPO,
-              detailType: GerritNav.RepoDetailView.ACCESS,
-              url: '',
+              detailType: RepoDetailView.ACCESS,
+              url: '/admin/repos/my-repo,access',
             },
             {
               name: 'Commands',
               view: GerritView.REPO,
-              detailType: GerritNav.RepoDetailView.COMMANDS,
-              url: '',
+              detailType: RepoDetailView.COMMANDS,
+              url: '/admin/repos/my-repo,commands',
             },
             {
               name: 'Branches',
               view: GerritView.REPO,
-              detailType: GerritNav.RepoDetailView.BRANCHES,
-              url: '',
+              detailType: RepoDetailView.BRANCHES,
+              url: '/admin/repos/my-repo,branches',
             },
             {
               name: 'Tags',
               view: GerritView.REPO,
-              detailType: GerritNav.RepoDetailView.TAGS,
-              url: '',
+              detailType: RepoDetailView.TAGS,
+              url: '/admin/repos/my-repo,tags',
             },
             {
               name: 'Dashboards',
               view: GerritView.REPO,
-              detailType: GerritNav.RepoDetailView.DASHBOARDS,
-              url: '',
+              detailType: RepoDetailView.DASHBOARDS,
+              url: '/admin/repos/my-repo,dashboards',
             },
           ],
         },
@@ -416,81 +412,84 @@ suite('gr-admin-view tests', () => {
         text: 'General',
         value: 'repogeneral',
         view: GerritView.REPO,
-        url: '',
-        detailType: GerritNav.RepoDetailView.GENERAL,
+        url: '/admin/repos/my-repo,general',
+        detailType: RepoDetailView.GENERAL,
         parent: 'my-repo' as RepoName,
       },
       {
         text: 'Access',
         value: 'repoaccess',
         view: GerritView.REPO,
-        url: '',
-        detailType: GerritNav.RepoDetailView.ACCESS,
+        url: '/admin/repos/my-repo,access',
+        detailType: RepoDetailView.ACCESS,
         parent: 'my-repo' as RepoName,
       },
       {
         text: 'Commands',
         value: 'repocommands',
         view: GerritView.REPO,
-        url: '',
-        detailType: GerritNav.RepoDetailView.COMMANDS,
+        url: '/admin/repos/my-repo,commands',
+        detailType: RepoDetailView.COMMANDS,
         parent: 'my-repo' as RepoName,
       },
       {
         text: 'Branches',
         value: 'repobranches',
         view: GerritView.REPO,
-        url: '',
-        detailType: GerritNav.RepoDetailView.BRANCHES,
+        url: '/admin/repos/my-repo,branches',
+        detailType: RepoDetailView.BRANCHES,
         parent: 'my-repo' as RepoName,
       },
       {
         text: 'Tags',
         value: 'repotags',
         view: GerritView.REPO,
-        url: '',
-        detailType: GerritNav.RepoDetailView.TAGS,
+        url: '/admin/repos/my-repo,tags',
+        detailType: RepoDetailView.TAGS,
         parent: 'my-repo' as RepoName,
       },
       {
         text: 'Dashboards',
         value: 'repodashboards',
         view: GerritView.REPO,
-        url: '',
-        detailType: GerritNav.RepoDetailView.DASHBOARDS,
+        url: '/admin/repos/my-repo,dashboards',
+        detailType: RepoDetailView.DASHBOARDS,
         parent: 'my-repo' as RepoName,
       },
     ];
-    const navigateToRelativeUrlStub = sinon.stub(
-      GerritNav,
-      'navigateToRelativeUrl'
-    );
+    const setUrlStub = sinon.stub(testResolver(navigationToken), 'setUrl');
     const selectedIsCurrentPageSpy = sinon.spy(
       element,
       'selectedIsCurrentPage'
     );
     sinon.spy(element, 'handleSubsectionChange');
     await element.reload();
+    await element.updateComplete;
     assert.deepEqual(element.filteredLinks, expectedFilteredLinks);
     assert.deepEqual(element.subsectionLinks, expectedSubsectionLinks);
     assert.equal(
       queryAndAssert<GrDropdownList>(element, '#pageSelect').value,
       'repoaccess'
     );
-    assert.isTrue(selectedIsCurrentPageSpy.calledOnce);
+    assert.equal(selectedIsCurrentPageSpy.callCount, 1);
     // Doesn't trigger navigation from the page select menu.
-    assert.isFalse(navigateToRelativeUrlStub.called);
+    assert.isFalse(setUrlStub.called);
 
     // When explicitly changed, navigation is called
     queryAndAssert<GrDropdownList>(element, '#pageSelect').value =
       'repogeneral';
-    assert.isTrue(selectedIsCurrentPageSpy.calledTwice);
-    assert.isTrue(navigateToRelativeUrlStub.calledOnce);
+    await queryAndAssert<GrDropdownList>(element, '#pageSelect').updateComplete;
+    assert.equal(selectedIsCurrentPageSpy.callCount, 2);
+    assert.isTrue(setUrlStub.calledOnce);
   });
 
   test('selectedIsCurrentPage', () => {
     element.repoName = 'my-repo' as RepoName;
-    element.params = {view: GerritView.REPO, repo: 'my-repo' as RepoName};
+    element.view = GerritView.REPO;
+    element.repoViewState = {
+      view: GerritView.REPO,
+      repo: 'my-repo' as RepoName,
+    };
     const selected = {
       view: GerritView.REPO,
       parent: 'my-repo' as RepoName,
@@ -500,7 +499,7 @@ suite('gr-admin-view tests', () => {
     assert.isTrue(element.selectedIsCurrentPage(selected));
     selected.parent = 'my-second-repo' as RepoName;
     assert.isFalse(element.selectedIsCurrentPage(selected));
-    selected.detailType = GerritNav.RepoDetailView.GENERAL;
+    selected.detailType = RepoDetailView.GENERAL;
     assert.isFalse(element.selectedIsCurrentPage(selected));
   });
 
@@ -518,17 +517,67 @@ suite('gr-admin-view tests', () => {
       await element.reload();
     });
 
+    test('render', async () => {
+      element.view = GerritView.ADMIN;
+      element.adminViewState = {
+        view: GerritView.ADMIN,
+        adminView: AdminChildView.REPOS,
+        openCreateModal: false,
+      };
+      await element.updateComplete;
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `
+          <gr-page-nav class="navStyles">
+            <ul class="sectionContent">
+              <li class="sectionTitle selected">
+                <a
+                  class="title"
+                  href="//localhost:9876/admin/repos"
+                  rel="noopener"
+                >
+                  Repositories
+                </a>
+              </li>
+              <li class="sectionTitle">
+                <a
+                  class="title"
+                  href="//localhost:9876/admin/groups"
+                  rel="noopener"
+                >
+                  Groups
+                </a>
+              </li>
+              <li class="sectionTitle">
+                <a
+                  class="title"
+                  href="//localhost:9876/admin/plugins"
+                  rel="noopener"
+                >
+                  Plugins
+                </a>
+              </li>
+            </ul>
+          </gr-page-nav>
+          <div class="main table">
+            <gr-repo-list class="table"></gr-repo-list>
+          </div>
+        `
+      );
+    });
+
     suite('repos', () => {
       setup(() => {
-        stub('gr-repo-access', '_repoChanged').callsFake(() =>
+        stubElement('gr-repo-access', '_repoChanged').callsFake(() =>
           Promise.resolve()
         );
       });
 
       test('repo list', async () => {
-        element.params = {
-          view: GerritNav.View.ADMIN,
-          adminView: 'gr-repo-list',
+        element.view = GerritView.ADMIN;
+        element.adminViewState = {
+          view: GerritView.ADMIN,
+          adminView: AdminChildView.REPOS,
           openCreateModal: false,
         };
         await element.updateComplete;
@@ -538,8 +587,9 @@ suite('gr-admin-view tests', () => {
       });
 
       test('repo', async () => {
-        element.params = {
-          view: GerritNav.View.REPO,
+        element.view = GerritView.REPO;
+        element.repoViewState = {
+          view: GerritView.REPO,
           repo: 'foo' as RepoName,
         };
         element.repoName = 'foo' as RepoName;
@@ -551,9 +601,10 @@ suite('gr-admin-view tests', () => {
       });
 
       test('repo access', async () => {
-        element.params = {
-          view: GerritNav.View.REPO,
-          detail: GerritNav.RepoDetailView.ACCESS,
+        element.view = GerritView.REPO;
+        element.repoViewState = {
+          view: GerritView.REPO,
+          detail: RepoDetailView.ACCESS,
           repo: 'foo' as RepoName,
         };
         element.repoName = 'foo' as RepoName;
@@ -565,9 +616,10 @@ suite('gr-admin-view tests', () => {
       });
 
       test('repo dashboards', async () => {
-        element.params = {
-          view: GerritNav.View.REPO,
-          detail: GerritNav.RepoDetailView.DASHBOARDS,
+        element.view = GerritView.REPO;
+        element.repoViewState = {
+          view: GerritView.REPO,
+          detail: RepoDetailView.DASHBOARDS,
           repo: 'foo' as RepoName,
         };
         element.repoName = 'foo' as RepoName;
@@ -583,8 +635,8 @@ suite('gr-admin-view tests', () => {
       let getGroupConfigStub: sinon.SinonStub;
 
       setup(async () => {
-        stub('gr-group', 'loadGroup').callsFake(() => Promise.resolve());
-        stub('gr-group-members', 'loadGroupDetails').callsFake(() =>
+        stubElement('gr-group', 'loadGroup').callsFake(() => Promise.resolve());
+        stubElement('gr-group-members', 'loadGroupDetails').callsFake(() =>
           Promise.resolve()
         );
 
@@ -600,9 +652,10 @@ suite('gr-admin-view tests', () => {
       });
 
       test('group list', async () => {
-        element.params = {
-          view: GerritNav.View.ADMIN,
-          adminView: 'gr-admin-group-list',
+        element.view = GerritView.ADMIN;
+        element.adminViewState = {
+          view: GerritView.ADMIN,
+          adminView: AdminChildView.GROUPS,
           openCreateModal: false,
         };
         await element.updateComplete;
@@ -612,12 +665,13 @@ suite('gr-admin-view tests', () => {
       });
 
       test('internal group', async () => {
-        element.params = {
-          view: GerritNav.View.GROUP,
+        element.view = GerritView.GROUP;
+        element.groupViewState = {
+          view: GerritView.GROUP,
           groupId: '1234' as GroupId,
         };
         element.groupName = 'foo' as GroupName;
-        await element.reload();
+        if (element.needsReload()) await element.reload();
         await element.updateComplete;
         const subsectionItems = queryAll<HTMLLIElement>(
           element,
@@ -637,12 +691,13 @@ suite('gr-admin-view tests', () => {
             id: 'external-id',
           })
         );
-        element.params = {
-          view: GerritNav.View.GROUP,
+        element.view = GerritView.GROUP;
+        element.groupViewState = {
+          view: GerritView.GROUP,
           groupId: '1234' as GroupId,
         };
         element.groupName = 'foo' as GroupName;
-        await element.reload();
+        if (element.needsReload()) await element.reload();
         await element.updateComplete;
         const subsectionItems = queryAll<HTMLLIElement>(
           element,
@@ -656,13 +711,14 @@ suite('gr-admin-view tests', () => {
       });
 
       test('group members', async () => {
-        element.params = {
-          view: GerritNav.View.GROUP,
-          detail: GerritNav.GroupDetailView.MEMBERS,
+        element.view = GerritView.GROUP;
+        element.groupViewState = {
+          view: GerritView.GROUP,
+          detail: GroupDetailView.MEMBERS,
           groupId: '1234' as GroupId,
         };
         element.groupName = 'foo' as GroupName;
-        await element.reload();
+        if (element.needsReload()) await element.reload();
         await element.updateComplete;
         const selected = queryAndAssert(element, 'gr-page-nav .selected');
         assert.isOk(selected);

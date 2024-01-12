@@ -118,8 +118,6 @@ public class ChangeRestApiModule extends RestApiModule {
     post(CHANGE_KIND, "private").to(PostPrivate.class);
     post(CHANGE_KIND, "private.delete").to(DeletePrivateByPost.class);
     delete(CHANGE_KIND, "private").to(DeletePrivate.class);
-    put(CHANGE_KIND, "ignore").to(Ignore.class);
-    put(CHANGE_KIND, "unignore").to(Unignore.class);
     post(CHANGE_KIND, "wip").to(SetWorkInProgress.class);
     post(CHANGE_KIND, "ready").to(SetReadyForReview.class);
     put(CHANGE_KIND, "message").to(PutMessage.class);
@@ -170,8 +168,10 @@ public class ChangeRestApiModule extends RestApiModule {
     child(REVISION_KIND, "robotcomments").to(RobotComments.class);
     get(ROBOT_COMMENT_KIND).to(GetRobotComment.class);
     child(REVISION_KIND, "fixes").to(Fixes.class);
-    post(FIX_KIND, "apply").to(ApplyFix.class);
-    get(FIX_KIND, "preview").to(GetFixPreview.class);
+    post(FIX_KIND, "apply").to(ApplyStoredFix.class);
+    get(FIX_KIND, "preview").to(PreviewFix.Stored.class);
+    post(REVISION_KIND, "fix:apply").to(ApplyProvidedFix.class);
+    post(REVISION_KIND, "fix:preview").to(PreviewFix.Provided.class);
 
     get(REVISION_KIND, "ported_comments").to(ListPortedComments.class);
     get(REVISION_KIND, "ported_drafts").to(ListPortedDrafts.class);
@@ -210,9 +210,12 @@ public class ChangeRestApiModule extends RestApiModule {
     factory(DeleteChangeOp.Factory.class);
     factory(DeleteReviewerByEmailOp.Factory.class);
     factory(DeleteReviewerOp.Factory.class);
+    factory(DeleteVoteOp.Factory.class);
     factory(EmailReviewComments.Factory.class);
     factory(PatchSetInserter.Factory.class);
     factory(AddReviewersOp.Factory.class);
+    factory(PostReviewOp.Factory.class);
+    factory(PreviewFix.Factory.class);
     factory(RebaseChangeOp.Factory.class);
     factory(ReviewerResource.Factory.class);
     factory(SetAssigneeOp.Factory.class);

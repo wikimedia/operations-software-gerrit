@@ -1,46 +1,32 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-reply-dialog';
 import {
   queryAndAssert,
   resetPlugins,
   stubRestApi,
+  waitEventLoop,
 } from '../../../test/test-utils';
 import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {GrReplyDialog} from './gr-reply-dialog';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
 import {
   AccountId,
   NumericChangeId,
-  PatchSetNum,
+  PatchSetNumber,
   Timestamp,
 } from '../../../types/common';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
 import {createChange} from '../../../test/test-data-generators';
-import {GrTextarea} from '../../shared/gr-textarea/gr-textarea';
-
-const basicFixture = fixtureFromElement('gr-reply-dialog');
+import {GrButton} from '../../shared/gr-button/gr-button';
 
 suite('gr-reply-dialog-it tests', () => {
   let element: GrReplyDialog;
   let changeNum: NumericChangeId;
-  let patchNum: PatchSetNum;
+  let latestPatchNum: PatchSetNumber;
 
   const setupElement = (element: GrReplyDialog) => {
     element.change = {
@@ -68,7 +54,7 @@ suite('gr-reply-dialog-it tests', () => {
         },
       },
     };
-    element.patchNum = patchNum;
+    element.latestPatchNum = latestPatchNum;
     element.permittedLabels = {
       'Code-Review': ['-1', ' 0', '+1'],
       Verified: ['-1', ' 0', '+1'],
@@ -77,7 +63,7 @@ suite('gr-reply-dialog-it tests', () => {
 
   setup(async () => {
     changeNum = 42 as NumericChangeId;
-    patchNum = 1 as PatchSetNum;
+    latestPatchNum = 1 as PatchSetNumber;
 
     stubRestApi('getAccount').returns(
       Promise.resolve({
@@ -98,17 +84,17 @@ suite('gr-reply-dialog-it tests', () => {
     resetPlugins();
   });
 
-  test('submit blocked when invalid email is supplied to ccs', () => {
+  test('submit blocked when invalid email is supplied to ccs', async () => {
     const sendStub = sinon.stub(element, 'send').returns(Promise.resolve());
 
     element.ccsList!.entry!.setText('test');
-    MockInteractions.tap(queryAndAssert(element, 'gr-button.send'));
+    queryAndAssert<GrButton>(element, 'gr-button.send').click();
     assert.isFalse(element.ccsList!.submitEntryText());
     assert.isFalse(sendStub.called);
-    flush();
+    await waitEventLoop();
 
     element.ccsList!.entry!.setText('test@test.test');
-    MockInteractions.tap(queryAndAssert(element, 'gr-button.send'));
+    queryAndAssert<GrButton>(element, 'gr-button.send').click();
     assert.isTrue(sendStub.called);
   });
 
@@ -128,20 +114,12 @@ suite('gr-reply-dialog-it tests', () => {
       undefined,
       'http://test.com/plugins/lgtm.js'
     );
-    element = basicFixture.instantiate();
+    element = await fixture(html`<gr-reply-dialog></gr-reply-dialog>`);
     setupElement(element);
     getPluginLoader().loadPlugins([]);
     await getPluginLoader().awaitPluginsLoaded();
-    await flush();
-    const textarea = queryAndAssert<GrTextarea>(
-      element,
-      'gr-textarea'
-    ).getNativeTextarea();
-    textarea.value = 'LGTM';
-    textarea.dispatchEvent(
-      new CustomEvent('input', {bubbles: true, composed: true})
-    );
-    await flush();
+    await waitEventLoop();
+    await waitEventLoop();
     const labelScoreRows = queryAndAssert(
       element.getLabelScores(),
       'gr-label-score-row[name="Code-Review"]'

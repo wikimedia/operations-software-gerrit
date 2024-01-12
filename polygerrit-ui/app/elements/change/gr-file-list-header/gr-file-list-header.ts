@@ -1,53 +1,46 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '../../../embed/diff/gr-diff-mode-selector/gr-diff-mode-selector';
 import '../../diff/gr-patch-range-select/gr-patch-range-select';
 import '../../edit/gr-edit-controls/gr-edit-controls';
 import '../../shared/gr-select/gr-select';
 import '../../shared/gr-button/gr-button';
-import '../../shared/gr-icons/gr-icons';
+import '../../shared/gr-icon/gr-icon';
 import '../gr-commit-info/gr-commit-info';
 import {FilesExpandedState} from '../gr-file-list-constants';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
-import {computeLatestPatchNum, PatchSet} from '../../../utils/patch-set-util';
-import {property, customElement, query} from 'lit/decorators';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
+import {property, customElement, query, state} from 'lit/decorators.js';
 import {
   AccountInfo,
   ChangeInfo,
   PatchSetNum,
   CommitInfo,
   ServerInfo,
-  RevisionInfo,
-  NumericChangeId,
   BasePatchSetNum,
+  PatchSetNumber,
 } from '../../../types/common';
 import {DiffPreferencesInfo} from '../../../types/diff';
 import {GrDiffModeSelector} from '../../../embed/diff/gr-diff-mode-selector/gr-diff-mode-selector';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {fireEvent} from '../../../utils/event-util';
+import {css, html, LitElement} from 'lit';
+import {sharedStyles} from '../../../styles/shared-styles';
+import {when} from 'lit/directives/when.js';
+import {ifDefined} from 'lit/directives/if-defined.js';
 import {
   Shortcut,
   ShortcutSection,
-} from '../../../mixins/keyboard-shortcut-mixin/keyboard-shortcut-mixin';
+  shortcutsServiceToken,
+} from '../../../services/shortcuts/shortcuts-service';
+import {resolve} from '../../../models/dependency';
 import {getAppContext} from '../../../services/app-context';
-import {css, html, LitElement} from 'lit';
-import {sharedStyles} from '../../../styles/shared-styles';
-import {when} from 'lit/directives/when';
-import {ifDefined} from 'lit/directives/if-defined';
+import {subscribe} from '../../lit/subscription-controller';
+import {configModelToken} from '../../../models/config/config-model';
+import {createChangeUrl} from '../../../models/views/change';
+import {changeModelToken} from '../../../models/change/change-model';
 
 @customElement('gr-file-list-header')
 export class GrFileListHeader extends LitElement {
@@ -70,14 +63,8 @@ export class GrFileListHeader extends LitElement {
   @property({type: Object})
   account: AccountInfo | undefined;
 
-  @property({type: Array})
-  allPatchSets?: PatchSet[];
-
   @property({type: Object})
   change: ChangeInfo | undefined;
-
-  @property({type: String})
-  changeNum?: NumericChangeId;
 
   @property({type: String})
   changeUrl?: string;
@@ -91,26 +78,23 @@ export class GrFileListHeader extends LitElement {
   @property({type: Boolean})
   loggedIn: boolean | undefined;
 
-  @property({type: Object})
-  serverConfig?: ServerInfo;
-
   @property({type: Number})
   shownFileCount = 0;
-
-  @property({type: Object})
-  diffPrefs?: DiffPreferencesInfo;
-
-  @property({type: String})
-  patchNum?: PatchSetNum;
-
-  @property({type: String})
-  basePatchNum?: BasePatchSetNum;
 
   @property({type: String})
   filesExpanded?: FilesExpandedState;
 
-  @property({type: Object})
-  revisionInfo?: RevisionInfo;
+  @state() latestPatchNum?: PatchSetNumber;
+
+  @state() patchNum?: PatchSetNum;
+
+  @state() basePatchNum?: BasePatchSetNum;
+
+  @state()
+  diffPrefs?: DiffPreferencesInfo;
+
+  @state()
+  serverConfig?: ServerInfo;
 
   @query('#modeSelect')
   modeSelect?: GrDiffModeSelector;
@@ -121,11 +105,53 @@ export class GrFileListHeader extends LitElement {
   @query('#collapseBtn')
   collapseBtn?: GrButton;
 
-  private readonly shortcuts = getAppContext().shortcutsService;
+  private readonly getShortcutsService = resolve(this, shortcutsServiceToken);
+
+  private readonly getConfigModel = resolve(this, configModelToken);
 
   // Caps the number of files that can be shown and have the 'show diffs' /
   // 'hide diffs' buttons still be functional.
   private readonly maxFilesForBulkActions = 225;
+
+  private readonly userModel = getAppContext().userModel;
+
+  private readonly getNavigation = resolve(this, navigationToken);
+
+  private readonly getChangeModel = resolve(this, changeModelToken);
+
+  constructor() {
+    super();
+    subscribe(
+      this,
+      () => this.userModel.diffPreferences$,
+      diffPreferences => {
+        if (!diffPreferences) return;
+        this.diffPrefs = diffPreferences;
+      }
+    );
+    subscribe(
+      this,
+      () => this.getConfigModel().serverConfig$,
+      config => {
+        this.serverConfig = config;
+      }
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().patchNum$,
+      x => (this.patchNum = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().basePatchNum$,
+      x => (this.basePatchNum = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().latestPatchNum$,
+      x => (this.latestPatchNum = x)
+    );
+  }
 
   static override styles = [
     sharedStyles,
@@ -244,10 +270,7 @@ export class GrFileListHeader extends LitElement {
       return;
     }
     const editModeClass = this.computeEditModeClass(this.editMode);
-    const patchInfoClass = this.computePatchInfoClass(
-      this.patchNum,
-      this.allPatchSets
-    );
+    const patchInfoClass = this.computePatchInfoClass();
     const expandedClass = this.computeExpandedClass(this.filesExpanded);
     const prefsButtonHidden = this.computePrefsButtonHidden(
       this.diffPrefs,
@@ -259,21 +282,11 @@ export class GrFileListHeader extends LitElement {
           <div class="patchInfoContent">
             <gr-patch-range-select
               id="rangeSelect"
-              .changeNum=${this.changeNum}
-              .patchNum=${this.patchNum}
-              .basePatchNum=${this.basePatchNum}
-              .availablePatches=${this.allPatchSets}
-              .revisions=${this.change.revisions}
-              .revisionInfo=${this.revisionInfo}
               @patch-range-change=${this.handlePatchChange}
             >
             </gr-patch-range-select>
             <span class="separator"></span>
-            <gr-commit-info
-              .change=${this.change}
-              .serverConfig=${this.serverConfig}
-              .commitInfo=${this.commitInfo}
-            ></gr-commit-info>
+            <gr-commit-info .commitInfo=${this.commitInfo}></gr-commit-info>
             <span class="container latestPatchContainer">
               <span class="separator"></span>
               <a href=${ifDefined(this.changeUrl)}>Go to latest patch set</a>
@@ -310,7 +323,7 @@ export class GrFileListHeader extends LitElement {
                   link
                   class="prefsButton desktop"
                   @click=${this.handlePrefsTap}
-                  ><iron-icon icon="gr-icons:settings"></iron-icon
+                  ><gr-icon icon="settings" filled></gr-icon
                 ></gr-button>
               </gr-tooltip-content>
             </span>
@@ -409,7 +422,9 @@ export class GrFileListHeader extends LitElement {
     ) {
       return;
     }
-    GerritNav.navigateToChange(this.change, {patchNum, basePatchNum});
+    this.getNavigation().setUrl(
+      createChangeUrl({change: this.change, patchNum, basePatchNum})
+    );
   }
 
   private handlePrefsTap(e: Event) {
@@ -429,16 +444,15 @@ export class GrFileListHeader extends LitElement {
     return editMode ? 'editMode' : '';
   }
 
-  computePatchInfoClass(patchNum?: PatchSetNum, allPatchSets?: PatchSet[]) {
-    const latestNum = computeLatestPatchNum(allPatchSets);
-    if (patchNum === latestNum) {
+  computePatchInfoClass() {
+    if (this.patchNum === this.latestPatchNum) {
       return '';
     }
     return 'patchInfoOldPatchSet';
   }
 
   private createTitle(shortcutName: Shortcut, section: ShortcutSection) {
-    return this.shortcuts.createTitle(shortcutName, section);
+    return this.getShortcutsService().createTitle(shortcutName, section);
   }
 }
 

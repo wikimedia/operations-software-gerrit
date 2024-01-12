@@ -1,32 +1,20 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import '@polymer/iron-icon/iron-icon';
-import '../../shared/gr-icons/gr-icons';
 import '../../shared/gr-dialog/gr-dialog';
+import '../../shared/gr-icon/gr-icon';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../plugins/gr-endpoint-param/gr-endpoint-param';
 import '../gr-thread-list/gr-thread-list';
-import {ActionInfo} from '../../../types/common';
+import {ActionInfo, EDIT} from '../../../types/common';
 import {GrDialog} from '../../shared/gr-dialog/gr-dialog';
 import {pluralize} from '../../../utils/string-util';
 import {CommentThread, isUnresolved} from '../../../utils/comment-util';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, css, html} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
+import {customElement, property, query, state} from 'lit/decorators.js';
 import {fontStyles} from '../../../styles/gr-font-styles';
 import {subscribe} from '../../lit/subscription-controller';
 import {ParsedChangeInfo} from '../../../types/types';
@@ -93,12 +81,16 @@ export class GrConfirmSubmitDialog extends LitElement {
     ];
   }
 
-  override connectedCallback() {
-    super.connectedCallback();
-    subscribe(this, this.getChangeModel().change$, x => (this.change = x));
+  constructor() {
+    super();
     subscribe(
       this,
-      this.getCommentsModel().threads$,
+      () => this.getChangeModel().change$,
+      x => (this.change = x)
+    );
+    subscribe(
+      this,
+      () => this.getCommentsModel().threads$,
       x => (this.unresolvedThreads = x.filter(isUnresolved))
     );
   }
@@ -107,10 +99,7 @@ export class GrConfirmSubmitDialog extends LitElement {
     if (!this.change?.is_private) return '';
     return html`
       <p>
-        <iron-icon
-          icon="gr-icons:warning"
-          class="warningBeforeSubmit"
-        ></iron-icon>
+        <gr-icon icon="warning" filled class="warningBeforeSubmit"></gr-icon>
         <strong>Heads Up!</strong>
         Submitting this private change will also make it public.
       </p>
@@ -121,10 +110,7 @@ export class GrConfirmSubmitDialog extends LitElement {
     if (!this.unresolvedThreads?.length) return '';
     return html`
       <p>
-        <iron-icon
-          icon="gr-icons:warning"
-          class="warningBeforeSubmit"
-        ></iron-icon>
+        <gr-icon icon="warning" filled class="warningBeforeSubmit"></gr-icon>
         ${this.computeUnresolvedCommentsWarning()}
       </p>
       <gr-thread-list
@@ -139,10 +125,7 @@ export class GrConfirmSubmitDialog extends LitElement {
   private renderChangeEdit() {
     if (!this.computeHasChangeEdit()) return '';
     return html`
-      <iron-icon
-        icon="gr-icons:warning"
-        class="warningBeforeSubmit"
-      ></iron-icon>
+      <gr-icon icon="warning" filled class="warningBeforeSubmit"></gr-icon>
       Your unpublished edit will not be submitted. Did you forget to click
       <b>PUBLISH</b>
     `;
@@ -193,7 +176,7 @@ export class GrConfirmSubmitDialog extends LitElement {
   // Private method, but visible for testing.
   computeHasChangeEdit() {
     return Object.values(this.change?.revisions ?? {}).some(
-      rev => rev._number === 'edit'
+      rev => rev._number === EDIT
     );
   }
 

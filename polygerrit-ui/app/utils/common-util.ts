@@ -1,19 +1,10 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
+
+import {fireAlert} from './event-util';
 
 /**
  * @fileoverview Functions in this file contains some widely used
@@ -49,33 +40,11 @@ export function assertNever(obj: never, msg: string): never {
 /**
  * Throws an error with the provided error message if the condition is false.
  */
-export function check(
+export function assert(
   condition: boolean,
   errorMessage: string
 ): asserts condition {
   if (!condition) throw new Error(errorMessage);
-}
-
-/**
- * Throws an error if the property is not defined.
- */
-export function checkProperty(
-  condition: boolean,
-  propertyName: string
-): asserts condition {
-  check(condition, `missing required property '${propertyName}'`);
-}
-
-/**
- * Throws an error if the property is not defined.
- */
-export function checkRequiredProperty<T>(
-  property: T,
-  propertyName: string
-): asserts property is NonNullable<T> {
-  if (property === undefined || property === null) {
-    throw new Error(`Required property '${propertyName}' not set.`);
-  }
 }
 
 /**
@@ -95,8 +64,11 @@ export function queryAll<E extends Element = Element>(
   selector: string
 ): NodeListOf<E> {
   if (!el) throw new Error('element not defined');
-  const root = el.shadowRoot ?? el;
-  return root.querySelectorAll<E>(selector);
+  if (el.shadowRoot) {
+    const r = el.shadowRoot.querySelectorAll<E>(selector);
+    if (r.length > 0) return r;
+  }
+  return el.querySelectorAll<E>(selector);
 }
 
 export function query<E extends Element = Element>(
@@ -145,7 +117,7 @@ export function containsAll<T>(set: Set<T>, subSet: Set<T>): boolean {
 /**
  * Add value, if the set does not contain it. Otherwise remove it.
  */
-export function toggleSetMembership<T>(set: Set<T>, value: T): void {
+export function toggleSet<T>(set: Set<T>, value: T): void {
   if (set.has(value)) {
     set.delete(value);
   } else {
@@ -153,6 +125,53 @@ export function toggleSetMembership<T>(set: Set<T>, value: T): void {
   }
 }
 
+export function toggle<T>(array: T[], item: T): T[] {
+  if (array.includes(item)) {
+    return array.filter(r => r !== item);
+  } else {
+    return array.concat([item]);
+  }
+}
+
 export function unique<T>(item: T, index: number, array: T[]) {
   return array.indexOf(item) === index;
+}
+
+/**
+ * Returns the elements that are present in every sub-array. If a compareBy
+ * predicate is passed in, it will be used instead of strict equality. A new
+ * array is always returned even if there is already just a single array.
+ */
+export function intersection<T>(
+  arrays: T[][],
+  compareBy: (t: T, u: T) => boolean = (t, u) => t === u
+): T[] {
+  // Array.prototype.reduce needs either an initialValue or a non-empty array.
+  // Since there is no good initialValue for intersecting (∅ ∩ X = ∅), the
+  // empty array must be checked separately.
+  if (arrays.length === 0) {
+    return [];
+  }
+  if (arrays.length === 1) {
+    return [...arrays[0]];
+  }
+  return arrays.reduce((result, array) =>
+    result.filter(t => array.find(u => compareBy(t, u)))
+  );
+}
+
+/**
+ * Returns the elements that are present in A but not present in B.
+ */
+export function difference<T>(
+  a: T[],
+  b: T[],
+  compareBy: (t: T, u: T) => boolean = (t, u) => t === u
+): T[] {
+  return a.filter(aVal => !b.some(bVal => compareBy(aVal, bVal)));
+}
+
+export async function copyToClipbard(text: string, copyTargetName?: string) {
+  await navigator.clipboard.writeText(text);
+  fireAlert(document, `${copyTargetName ?? text} was copied to clipboard`);
 }

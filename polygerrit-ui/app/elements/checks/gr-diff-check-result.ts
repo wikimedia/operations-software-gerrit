@@ -1,29 +1,20 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the 'License');
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an 'AS IS' BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '@polymer/paper-tooltip/paper-tooltip';
-import '@polymer/iron-icon/iron-icon';
+import '../shared/gr-icon/gr-icon';
 import {LitElement, css, html, PropertyValues, nothing} from 'lit';
-import {customElement, property, state} from 'lit/decorators';
+import {customElement, property, state} from 'lit/decorators.js';
 import {RunResult} from '../../models/checks/checks-model';
-import {iconFor} from '../../models/checks/checks-util';
+import {createFixAction, iconFor} from '../../models/checks/checks-util';
 import {modifierPressed} from '../../utils/dom-util';
 import './gr-checks-results';
 import './gr-hovercard-run';
 import {fontStyles} from '../../styles/gr-font-styles';
+import {KnownExperimentId} from '../../services/flags/flags';
+import {getAppContext} from '../../services/app-context';
 
 @customElement('gr-diff-check-result')
 export class GrDiffCheckResult extends LitElement {
@@ -43,6 +34,8 @@ export class GrDiffCheckResult extends LitElement {
   @state()
   isExpandable = false;
 
+  private readonly flags = getAppContext().flagsService;
+
   static override get styles() {
     return [
       fontStyles,
@@ -60,21 +53,21 @@ export class GrDiffCheckResult extends LitElement {
           border-color: var(--info-foreground);
           background-color: var(--info-background);
         }
-        .container.info .icon {
+        .container.info gr-icon {
           color: var(--info-foreground);
         }
         .container.warning {
           border-color: var(--warning-foreground);
           background-color: var(--warning-background);
         }
-        .container.warning .icon {
+        .container.warning gr-icon {
           color: var(--warning-foreground);
         }
         .container.error {
           border-color: var(--error-foreground);
           background-color: var(--error-background);
         }
-        .container.error .icon {
+        .container.error gr-icon {
           color: var(--error-foreground);
         }
         .header {
@@ -109,16 +102,17 @@ export class GrDiffCheckResult extends LitElement {
           display: block;
           margin-top: var(--spacing-m);
         }
-        iron-icon {
-          width: var(--line-height-normal);
-          height: var(--line-height-normal);
-          vertical-align: top;
+        gr-icon {
+          font-size: var(--line-height-normal);
         }
-        .icon iron-icon {
-          width: calc(var(--line-height-normal) - 4px);
-          height: calc(var(--line-height-normal) - 4px);
+        .icon gr-icon {
+          font-size: calc(var(--line-height-normal) - 4px);
           position: relative;
           top: 2px;
+        }
+        div.actions {
+          display: flex;
+          justify-content: flex-end;
         }
       `,
     ];
@@ -127,13 +121,12 @@ export class GrDiffCheckResult extends LitElement {
   override render() {
     if (!this.result) return;
     const cat = this.result.category.toLowerCase();
+    const icon = iconFor(this.result.category);
     return html`
       <div class="${cat} container font-normal">
         <div class="header" @click=${this.toggleExpandedClick}>
           <div class="icon">
-            <iron-icon
-              icon="gr-icons:${iconFor(this.result.category)}"
-            ></iron-icon>
+            <gr-icon icon=${icon.name} ?filled=${icon.filled}></gr-icon>
           </div>
           <div class="name">
             <gr-hovercard-run .run=${this.result}></gr-hovercard-run>
@@ -154,7 +147,9 @@ export class GrDiffCheckResult extends LitElement {
           </div>
           ${this.renderToggle()}
         </div>
-        <div class="details">${this.renderExpanded()}</div>
+        <div class="details">
+          ${this.renderExpanded()}${this.renderActions()}
+        </div>
       </div>
     `;
   }
@@ -172,11 +167,9 @@ export class GrDiffCheckResult extends LitElement {
           : 'Expand result row'}
         @keydown=${this.toggleExpandedPress}
       >
-        <iron-icon
-          icon=${this.isExpanded
-            ? 'gr-icons:expand-less'
-            : 'gr-icons:expand-more'}
-        ></iron-icon>
+        <gr-icon
+          icon=${this.isExpanded ? 'expand_less' : 'expand_more'}
+        ></gr-icon>
       </div>
     `;
   }
@@ -188,6 +181,20 @@ export class GrDiffCheckResult extends LitElement {
         hidecodepointers
         .result=${this.result}
       ></gr-result-expanded>
+    `;
+  }
+
+  private renderActions() {
+    if (!this.isExpanded) return nothing;
+    return html`<div class="actions">${this.renderFixButton()}</div>`;
+  }
+
+  private renderFixButton() {
+    if (!this.flags.isEnabled(KnownExperimentId.CHECKS_FIXES)) return nothing;
+    const action = createFixAction(this, this.result);
+    if (!action) return nothing;
+    return html`
+      <gr-checks-action context="diff-fix" .action=${action}></gr-checks-action>
     `;
   }
 
@@ -208,7 +215,7 @@ export class GrDiffCheckResult extends LitElement {
     if (!this.isExpandable) return;
     if (modifierPressed(e)) return;
     // Only react to `return` and `space`.
-    if (e.keyCode !== 13 && e.keyCode !== 32) return;
+    if (e.key !== 'Enter' && e.key !== ' ') return;
     e.preventDefault();
     e.stopPropagation();
     this.toggleExpanded();

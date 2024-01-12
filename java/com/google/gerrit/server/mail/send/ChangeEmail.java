@@ -14,7 +14,7 @@
 
 package com.google.gerrit.server.mail.send;
 
-import static com.google.common.collect.ImmutableSet.toImmutableSet;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.gerrit.server.util.AttentionSetUtil.additionsOnly;
 
 import com.google.common.base.Splitter;
@@ -54,6 +54,8 @@ import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.query.change.ChangeData;
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.text.MessageFormat;
 import java.time.Instant;
 import java.util.Collection;
@@ -65,6 +67,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
+import org.apache.http.client.utils.URIBuilder;
 import org.apache.james.mime4j.dom.field.FieldName;
 import org.eclipse.jgit.diff.DiffFormatter;
 import org.eclipse.jgit.internal.JGitText;
@@ -81,6 +84,11 @@ public abstract class ChangeEmail extends NotificationEmail {
   protected static ChangeData newChangeData(
       EmailArguments ea, Project.NameKey project, Change.Id id) {
     return ea.changeDataFactory.create(project, id);
+  }
+
+  protected static ChangeData newChangeData(
+      EmailArguments ea, Project.NameKey project, Change.Id id, ObjectId metaId) {
+    return ea.changeDataFactory.create(ea.changeNotesFactory.createChecked(project, id, metaId));
   }
 
   private final Set<Account.Id> currentAttentionSet;
@@ -245,13 +253,22 @@ public abstract class ChangeEmail extends NotificationEmail {
         .reduce(0, Integer::sum);
   }
 
-  /** Get a link to the change; null if the server doesn't know its own address. */
+  /**
+   * Get a link to the change; null if the server doesn't know its own address or if the address is
+   * malformed. The link will contain a usp parameter set to "email" to inform the frontend on
+   * clickthroughs where the link came from.
+   */
   @Nullable
   public String getChangeUrl() {
-    return args.urlFormatter
-        .get()
-        .getChangeViewUrl(change.getProject(), change.getId())
-        .orElse(null);
+    Optional<String> changeUrl =
+        args.urlFormatter.get().getChangeViewUrl(change.getProject(), change.getId());
+    if (!changeUrl.isPresent()) return null;
+    try {
+      URI uri = new URIBuilder(changeUrl.get()).addParameter("usp", "email").build();
+      return uri.toString();
+    } catch (URISyntaxException e) {
+      return null;
+    }
   }
 
   public String getChangeMessageThreadId() {
@@ -375,14 +392,6 @@ public abstract class ChangeEmail extends NotificationEmail {
     }
   }
 
-  protected void removeUsersThatIgnoredTheChange() {
-    for (Map.Entry<Account.Id, Collection<String>> e : stars.asMap().entrySet()) {
-      if (e.getValue().contains(StarredChangesUtil.IGNORE_LABEL)) {
-        args.accountCache.get(e.getKey()).ifPresent(a -> removeUser(a.account()));
-      }
-    }
-  }
-
   @Override
   protected final Watchers getWatchers(NotifyType type, boolean includeWatchersFromNotifyConfig) {
     if (!NotifyHandling.ALL.equals(notify.handling())) {
@@ -458,12 +467,7 @@ public abstract class ChangeEmail extends NotificationEmail {
     if (!projectState.statePermitsRead()) {
       return false;
     }
-    try {
-      args.permissionBackend.absentUser(to).change(changeData).check(ChangePermission.READ);
-      return true;
-    } catch (AuthException e) {
-      return false;
-    }
+    return args.permissionBackend.absentUser(to).change(changeData).test(ChangePermission.READ);
   }
 
   /** Find all users who are authors of any part of this change. */
@@ -559,7 +563,7 @@ public abstract class ChangeEmail extends NotificationEmail {
       // We need names rather than account ids / emails to make it user readable.
       soyContext.put(
           "attentionSet",
-          currentAttentionSet.stream().map(this::getNameFor).collect(toImmutableSet()));
+          currentAttentionSet.stream().map(this::getNameFor).sorted().collect(toImmutableList()));
     }
   }
 

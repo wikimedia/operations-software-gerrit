@@ -169,7 +169,9 @@ public class AutoMerger {
       return Optional.empty();
     }
 
-    if (repoView.getRef(RefNames.refsCacheAutomerge(maybeMergeCommit.name())).isPresent()) {
+    String automergeRef = RefNames.refsCacheAutomerge(maybeMergeCommit.name());
+    logger.atFine().log("AutoMerge ref=%s, mergeCommit=%s", automergeRef, maybeMergeCommit.name());
+    if (repoView.getRef(automergeRef).isPresent()) {
       logger.atFine().log("AutoMerge alredy exists");
       return Optional.empty();
     }
@@ -178,7 +180,7 @@ public class AutoMerger {
         new ReceiveCommand(
             ObjectId.zeroId(),
             createAutoMergeCommit(repoView, rw, ins, maybeMergeCommit),
-            RefNames.refsCacheAutomerge(maybeMergeCommit.name())));
+            automergeRef));
   }
 
   /**
@@ -250,6 +252,7 @@ public class AutoMerger {
               merge.getParent(1),
               m.getMergeResults());
     }
+    logger.atFine().log("AutoMerge treeId=%s", treeId.name());
 
     rw.parseHeaders(merge);
     // For maximum stability, choose a single ident using the committer time of
@@ -268,16 +271,20 @@ public class AutoMerger {
       cb.addParentId(p);
     }
 
+    ObjectId commitId = ins.insert(cb);
+    logger.atFine().log("AutoMerge commitId=%s", commitId.name());
+    ins.flush();
+
     if (ins instanceof InMemoryInserter) {
       // When using an InMemoryInserter we need to read back the values from that inserter because
       // they are not available.
       try (ObjectReader tmpReader = ins.newReader();
           RevWalk tmpRw = new RevWalk(tmpReader)) {
-        return tmpRw.parseCommit(ins.insert(cb));
+        return tmpRw.parseCommit(commitId);
       }
     }
 
-    return rw.parseCommit(ins.insert(cb));
+    return rw.parseCommit(commitId);
   }
 
   private static class NonFlushingWrapper extends ObjectInserter.Filter {

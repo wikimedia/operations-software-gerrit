@@ -62,6 +62,7 @@ public class GeneralPreferencesIT extends AbstractDaemonTest {
             new MenuItem("Edits", "#/q/has:edit", null),
             new MenuItem("Watched Changes", "#/q/is:watched+is:open", null),
             new MenuItem("Starred Changes", "#/q/is:starred", null),
+            new MenuItem("All Visible Changes", "#/q/is:visible", null),
             new MenuItem("Groups", "#/settings/#Groups", null));
     assertThat(o.changeTable).isEmpty();
 
@@ -83,6 +84,7 @@ public class GeneralPreferencesIT extends AbstractDaemonTest {
     i.legacycidInChangeTable ^= true;
     i.muteCommonPathPrefixes ^= true;
     i.signedOffBy ^= true;
+    i.allowBrowserNotifications ^= false;
     i.diffView = DiffView.UNIFIED_DIFF;
     i.my = new ArrayList<>();
     i.my.add(new MenuItem("name", "url"));
@@ -94,6 +96,7 @@ public class GeneralPreferencesIT extends AbstractDaemonTest {
     assertThat(o.my).containsExactlyElementsIn(i.my);
     assertThat(o.changeTable).containsExactlyElementsIn(i.changeTable);
     assertThat(o.theme).isEqualTo(i.theme);
+    assertThat(o.allowBrowserNotifications).isEqualTo(i.allowBrowserNotifications);
     assertThat(o.disableKeyboardShortcuts).isEqualTo(i.disableKeyboardShortcuts);
   }
 

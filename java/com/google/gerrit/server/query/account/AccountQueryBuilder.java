@@ -20,7 +20,6 @@ import com.google.common.primitives.Ints;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.exceptions.NotSignedInException;
 import com.google.gerrit.exceptions.StorageException;
-import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.index.Index;
 import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.query.LimitPredicate;
@@ -121,15 +120,12 @@ public class AccountQueryBuilder extends QueryBuilder<AccountState, AccountQuery
       throw error(String.format("change %s not found", change));
     }
 
-    try {
-      args.permissionBackend
-          .user(args.getUser())
-          .change(changeNotes.get())
-          .check(ChangePermission.READ);
-    } catch (AuthException e) {
-      throw error(String.format("change %s not found", change), e);
+    if (!args.permissionBackend
+        .user(args.getUser())
+        .change(changeNotes.get())
+        .test(ChangePermission.READ)) {
+      throw error(String.format("change %s not found", change));
     }
-
     return AccountPredicates.cansee(args, changeNotes.get());
   }
 
@@ -140,7 +136,7 @@ public class AccountQueryBuilder extends QueryBuilder<AccountState, AccountQuery
       return AccountPredicates.emailIncludingSecondaryEmails(email);
     }
 
-    if (args.schema().hasField(AccountField.PREFERRED_EMAIL)) {
+    if (args.schema().hasField(AccountField.PREFERRED_EMAIL_LOWER_CASE_SPEC)) {
       return AccountPredicates.preferredEmail(email);
     }
 
@@ -174,7 +170,7 @@ public class AccountQueryBuilder extends QueryBuilder<AccountState, AccountQuery
       return AccountPredicates.equalsNameIncludingSecondaryEmails(name);
     }
 
-    if (args.schema().hasField(AccountField.NAME_PART_NO_SECONDARY_EMAIL)) {
+    if (args.schema().hasField(AccountField.NAME_PART_NO_SECONDARY_EMAIL_SPEC)) {
       return AccountPredicates.equalsName(name);
     }
 
@@ -219,12 +215,7 @@ public class AccountQueryBuilder extends QueryBuilder<AccountState, AccountQuery
   }
 
   private boolean canSeeSecondaryEmails() throws PermissionBackendException, QueryParseException {
-    try {
-      args.permissionBackend.user(args.getUser()).check(GlobalPermission.MODIFY_ACCOUNT);
-      return true;
-    } catch (AuthException e) {
-      return false;
-    }
+    return args.permissionBackend.user(args.getUser()).test(GlobalPermission.MODIFY_ACCOUNT);
   }
 
   private boolean checkedCanSeeSecondaryEmails() {

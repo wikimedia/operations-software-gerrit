@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import '../gr-diff/gr-diff-group';
 import './gr-context-controls';
 import {GrContextControls} from './gr-context-controls';
@@ -23,8 +11,8 @@ import {GrContextControls} from './gr-context-controls';
 import {GrDiffLine, GrDiffLineType} from '../gr-diff/gr-diff-line';
 import {GrDiffGroup, GrDiffGroupType} from '../gr-diff/gr-diff-group';
 import {DiffFileMetaInfo, DiffInfo, SyntaxBlock} from '../../../api/diff';
-
-const blankFixture = fixtureFromElement('div');
+import {fixture, html, assert} from '@open-wc/testing';
+import {waitEventLoop} from '../../../test/test-utils';
 
 suite('gr-context-control tests', () => {
   let element: GrContextControls;
@@ -33,8 +21,9 @@ suite('gr-context-control tests', () => {
     element = document.createElement('gr-context-controls');
     element.diff = {content: []} as any as DiffInfo;
     element.renderPreferences = {};
-    blankFixture.instantiate().appendChild(element);
-    await flush();
+    const div = await fixture(html`<div></div>`);
+    div.appendChild(element);
+    await waitEventLoop();
   });
 
   function createContextGroup(options: {offset?: number; count?: number}) {
@@ -57,7 +46,7 @@ suite('gr-context-control tests', () => {
   test('no +10 buttons for 10 or less lines', async () => {
     element.group = createContextGroup({count: 10});
 
-    await flush();
+    await waitEventLoop();
 
     const buttons = element.shadowRoot!.querySelectorAll(
       'paper-button.showContext'
@@ -70,7 +59,7 @@ suite('gr-context-control tests', () => {
     element.group = createContextGroup({offset: 0, count: 20});
     element.showConfig = 'below';
 
-    await flush();
+    await waitEventLoop();
 
     const buttons = element.shadowRoot!.querySelectorAll(
       'paper-button.showContext'
@@ -88,7 +77,7 @@ suite('gr-context-control tests', () => {
     element.group = createContextGroup({offset: 10, count: 20});
     element.showConfig = 'both';
 
-    await flush();
+    await waitEventLoop();
 
     const buttons = element.shadowRoot!.querySelectorAll(
       'paper-button.showContext'
@@ -108,7 +97,7 @@ suite('gr-context-control tests', () => {
     element.group = createContextGroup({offset: 30, count: 20});
     element.showConfig = 'above';
 
-    await flush();
+    await waitEventLoop();
 
     const buttons = element.shadowRoot!.querySelectorAll(
       'paper-button.showContext'
@@ -134,7 +123,7 @@ suite('gr-context-control tests', () => {
     element.group = createContextGroup({offset: 0, count: 20});
     element.showConfig = 'below';
 
-    await flush();
+    await waitEventLoop();
 
     const fullExpansionButtons = element.shadowRoot!.querySelectorAll(
       '.fullExpansion paper-button'
@@ -163,7 +152,7 @@ suite('gr-context-control tests', () => {
     element.group = createContextGroup({offset: 10, count: 20});
     element.showConfig = 'both';
 
-    await flush();
+    await waitEventLoop();
 
     const fullExpansionButtons = element.shadowRoot!.querySelectorAll(
       '.fullExpansion paper-button'
@@ -200,7 +189,7 @@ suite('gr-context-control tests', () => {
     element.group = createContextGroup({offset: 30, count: 20});
     element.showConfig = 'above';
 
-    await flush();
+    await waitEventLoop();
 
     const fullExpansionButtons = element.shadowRoot!.querySelectorAll(
       '.fullExpansion paper-button'
@@ -240,7 +229,7 @@ suite('gr-context-control tests', () => {
     element.group = createContextGroup({offset: 10, count: 20});
     element.showConfig = 'both';
 
-    await flush();
+    await waitEventLoop();
 
     const blockExpansionButtons = element.shadowRoot!.querySelectorAll(
       '.blockExpansion paper-button'
@@ -292,7 +281,7 @@ suite('gr-context-control tests', () => {
     element.group = createContextGroup({offset: 10, count: 20});
     element.showConfig = 'both';
 
-    await flush();
+    await waitEventLoop();
 
     const blockExpansionButtons = element.shadowRoot!.querySelectorAll(
       '.blockExpansion paper-button'
@@ -337,7 +326,7 @@ suite('gr-context-control tests', () => {
     ]);
     element.group = createContextGroup({offset: 10, count: 20});
     element.showConfig = 'both';
-    await flush();
+    await waitEventLoop();
 
     const blockExpansionButtons = element.shadowRoot!.querySelectorAll(
       '.blockExpansion paper-button'
@@ -355,7 +344,7 @@ suite('gr-context-control tests', () => {
 
     element.group = createContextGroup({offset: 10, count: 20});
     element.showConfig = 'both';
-    await flush();
+    await waitEventLoop();
 
     const blockExpansionButtons = element.shadowRoot!.querySelectorAll(
       '.blockExpansion paper-button'

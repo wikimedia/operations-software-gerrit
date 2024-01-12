@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {BlameInfo, CommentRange} from '../../../types/common';
 import {FILE, LineNumber} from './gr-diff-line';
@@ -197,9 +186,6 @@ export function anyLineTooLong(diff?: DiffInfo) {
 /**
  * Simple helper method for creating elements in the context of gr-diff.
  *
- * We are adding 'style-scope', 'gr-diff' classes for compatibility with
- * Shady DOM. TODO: Is that still required??
- *
  * Otherwise this is just a super simple convenience function.
  */
 export function createElementDiff(
@@ -207,13 +193,8 @@ export function createElementDiff(
   classStr?: string
 ): HTMLElement {
   const el = document.createElement(tagName);
-  // When Shady DOM is being used, these classes are added to account for
-  // Polymer's polyfill behavior. In order to guarantee sufficient
-  // specificity within the CSS rules, these are added to every element.
-  // Since the Polymer DOM utility functions (which would do this
-  // automatically) are not being used for performance reasons, this is
-  // done manually.
-  el.classList.add('style-scope', 'gr-diff');
+
+  el.classList.add('gr-diff');
   if (classStr) {
     for (const className of classStr.split(' ')) {
       el.classList.add(className);
@@ -269,10 +250,11 @@ export function formatText(
   text: string,
   responsiveMode: DiffResponsiveMode,
   tabSize: number,
-  lineLimit: number
+  lineLimit: number,
+  elementId: string
 ): HTMLElement {
   const contentText = createElementDiff('div', 'contentText');
-  contentText.ariaLabel = text;
+  contentText.id = elementId;
   let columnPos = 0;
   let textOffset = 0;
   for (const segment of text.split(REGEX_TAB_OR_SURROGATE_PAIR)) {
@@ -365,4 +347,19 @@ ${commit.commit_msg}`;
   blameNode.appendChild(hovercard);
 
   return blameNode;
+}
+
+/**
+ * Get the approximate length of the diff as the sum of the maximum
+ * length of the chunks.
+ */
+export function getDiffLength(diff?: DiffInfo) {
+  if (!diff) return 0;
+  return diff.content.reduce((sum, sec) => {
+    if (sec.ab) {
+      return sum + sec.ab.length;
+    } else {
+      return sum + Math.max(sec.a?.length ?? 0, sec.b?.length ?? 0);
+    }
+  }, 0);
 }

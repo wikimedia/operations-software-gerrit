@@ -1,50 +1,41 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import './gr-related-change';
+import './gr-related-collapse';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../plugins/gr-endpoint-param/gr-endpoint-param';
 import '../../plugins/gr-endpoint-slot/gr-endpoint-slot';
-import {classMap} from 'lit/directives/class-map';
-import {LitElement, css, html, nothing, TemplateResult} from 'lit';
-import {customElement, property, state} from 'lit/decorators';
+import '../../shared/gr-icon/gr-icon';
+import {classMap} from 'lit/directives/class-map.js';
+import {LitElement, css, html, TemplateResult} from 'lit';
+import {customElement, property, state} from 'lit/decorators.js';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {
-  SubmittedTogetherInfo,
   ChangeInfo,
+  CommitId,
+  PatchSetNumber,
   RelatedChangeAndCommitInfo,
   RelatedChangesInfo,
-  PatchSetNum,
-  CommitId,
+  RevisionPatchSetNum,
+  SubmittedTogetherInfo,
 } from '../../../types/common';
 import {getAppContext} from '../../../services/app-context';
 import {ParsedChangeInfo} from '../../../types/types';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {truncatePath} from '../../../utils/path-list-util';
 import {pluralize} from '../../../utils/string-util';
 import {
   changeIsOpen,
+  getChangeNumber,
   getRevisionKey,
-  isChangeInfo,
 } from '../../../utils/change-util';
-import {Interaction} from '../../../constants/reporting';
-import {fontStyles} from '../../../styles/gr-font-styles';
-
-/** What is the maximum number of shown changes in collapsed list? */
-const DEFALT_NUM_CHANGES_WHEN_COLLAPSED = 3;
+import {DEFALT_NUM_CHANGES_WHEN_COLLAPSED} from './gr-related-collapse';
+import {createChangeUrl} from '../../../models/views/change';
+import {subscribe} from '../../lit/subscription-controller';
+import {resolve} from '../../../models/dependency';
+import {changeModelToken} from '../../../models/change/change-model';
 
 export interface ChangeMarkersInList {
   showCurrentChangeArrow: boolean;
@@ -63,14 +54,14 @@ export enum Section {
 
 @customElement('gr-related-changes-list')
 export class GrRelatedChangesList extends LitElement {
-  @property()
+  @property({type: Object})
   change?: ParsedChangeInfo;
 
-  @property({type: String})
-  patchNum?: PatchSetNum;
-
-  @property()
+  @property({type: Boolean})
   mergeable?: boolean;
+
+  @state()
+  latestPatchNum?: PatchSetNumber;
 
   @state()
   submittedTogether?: SubmittedTogetherInfo = {
@@ -91,6 +82,17 @@ export class GrRelatedChangesList extends LitElement {
   sameTopicChanges: ChangeInfo[] = [];
 
   private readonly restApiService = getAppContext().restApiService;
+
+  private readonly getChangeModel = resolve(this, changeModelToken);
+
+  constructor() {
+    super();
+    subscribe(
+      this,
+      () => this.getChangeModel().latestPatchNum$,
+      x => (this.latestPatchNum = x)
+    );
+  }
 
   static override get styles() {
     return [
@@ -120,6 +122,20 @@ export class GrRelatedChangesList extends LitElement {
           height: 1px;
           min-width: 20px;
         }
+        .repo {
+          margin-left: var(--spacing-m);
+        }
+        .repo,
+        .branch {
+          color: var(--primary-text-color);
+        }
+        @media screen and (max-width: 1400px) {
+          .repo,
+          .branch {
+            display: none;
+          }
+        }
+
         gr-related-collapse[collapsed] .marker.arrow {
           visibility: visible;
           min-width: auto;
@@ -195,7 +211,7 @@ export class GrRelatedChangesList extends LitElement {
     );
     const connectedRevisions = this._computeConnectedRevisions(
       this.change,
-      this.patchNum,
+      this.latestPatchNum,
       this.relatedChanges
     );
 
@@ -221,13 +237,15 @@ export class GrRelatedChangesList extends LitElement {
                 .change=${change}
                 .connectedRevisions=${connectedRevisions}
                 .href=${change?._change_number
-                  ? GerritNav.getUrlForChangeById(
-                      change._change_number,
-                      change.project,
-                      change._revision_number as PatchSetNum
-                    )
+                  ? createChangeUrl({
+                      changeNum: change._change_number,
+                      project: change.project,
+                      usp: 'related-change',
+                      patchNum: change._revision_number as RevisionPatchSetNum,
+                    })
                   : ''}
-                .showChangeStatus=${true}
+                show-change-status
+                show-submittable-check
                 >${change.commit.subject}</gr-related-change
               >
             </div>`
@@ -274,16 +292,7 @@ export class GrRelatedChangesList extends LitElement {
             >
               ${this.renderMarkers(
                 submittedTogetherMarkersPredicate(index)
-              )}<gr-related-change
-                .label=${this.renderChangeTitle(change)}
-                .change=${change}
-                .href=${GerritNav.getUrlForChangeById(
-                  change._number,
-                  change.project
-                )}
-                .showSubmittableCheck=${true}
-                >${this.renderChangeLine(change)}</gr-related-change
-              >
+              )}${this.renderSubmittedTogetherLine(change, true)}
             </div>`
         )}
       </gr-related-collapse>
@@ -291,6 +300,24 @@ export class GrRelatedChangesList extends LitElement {
         (+ ${pluralize(countNonVisibleChanges, 'non-visible change')})
       </div>
     </section>`;
+  }
+
+  private renderSubmittedTogetherLine(
+    change: ChangeInfo,
+    showSubmittabilityCheck: boolean
+  ) {
+    const truncatedRepo = truncatePath(change.project, 2);
+    return html`
+      <gr-related-change
+        .label=${this.renderChangeTitle(change)}
+        .change=${change}
+        .href=${createChangeUrl({change, usp: 'submitted-together'})}
+        ?show-submittable-check=${showSubmittabilityCheck}
+        >${change.subject}</gr-related-change
+      >
+      <span class="repo" .title=${change.project}>${truncatedRepo}</span
+      ><span class="branch">&nbsp;|&nbsp;${change.branch}&nbsp;</span>
+    `;
   }
 
   private renderSameTopic(
@@ -324,15 +351,7 @@ export class GrRelatedChangesList extends LitElement {
             >
               ${this.renderMarkers(
                 sameTopicMarkersPredicate(index)
-              )}<gr-related-change
-                .change=${change}
-                .label=${this.renderChangeTitle(change)}
-                .href=${GerritNav.getUrlForChangeById(
-                  change._number,
-                  change.project
-                )}
-                >${this.renderChangeLine(change)}</gr-related-change
-              >
+              )}${this.renderSubmittedTogetherLine(change, false)}
             </div>`
         )}
       </gr-related-collapse>
@@ -371,10 +390,7 @@ export class GrRelatedChangesList extends LitElement {
                 mergeConflictsMarkersPredicate(index)
               )}<gr-related-change
                 .change=${change}
-                .href=${GerritNav.getUrlForChangeById(
-                  change._number,
-                  change.project
-                )}
+                .href=${createChangeUrl({change, usp: 'merge-conflict'})}
                 >${change.subject}</gr-related-change
               >
             </div>`
@@ -415,10 +431,7 @@ export class GrRelatedChangesList extends LitElement {
                 cherryPicksMarkersPredicate(index)
               )}<gr-related-change
                 .change=${change}
-                .href=${GerritNav.getUrlForChangeById(
-                  change._number,
-                  change.project
-                )}
+                .href=${createChangeUrl({change, usp: 'cherry-pick'})}
                 >${change.branch}: ${change.subject}</gr-related-change
               >
             </div>`
@@ -429,13 +442,6 @@ export class GrRelatedChangesList extends LitElement {
 
   private renderChangeTitle(change: ChangeInfo) {
     return `${change.project}: ${change.branch}: ${change.subject}`;
-  }
-
-  private renderChangeLine(change: ChangeInfo) {
-    const truncatedRepo = truncatePath(change.project, 2);
-    return html`<span class="truncatedRepo" .title=${change.project}
-        >${truncatedRepo}</span
-      >: ${change.branch}: ${change.subject}`;
   }
 
   sectionSizeFactory(
@@ -560,7 +566,7 @@ export class GrRelatedChangesList extends LitElement {
         role="img"
         class="marker arrow"
         aria-label="Arrow marking change has collapsed ancestors"
-        ><iron-icon icon="gr-icons:arrowDropUp"></iron-icon
+        ><gr-icon icon="arrow_drop_up"></gr-icon
       ></span> `;
     }
     if (changeMarkers.showBottomArrow) {
@@ -568,7 +574,7 @@ export class GrRelatedChangesList extends LitElement {
         role="img"
         class="marker arrow"
         aria-label="Arrow marking change has collapsed descendants"
-        ><iron-icon icon="gr-icons:arrowDropDown"></iron-icon
+        ><gr-icon icon="arrow_drop_down"></gr-icon
       ></span> `;
     }
     return html`<span class="marker space"></span>`;
@@ -577,11 +583,12 @@ export class GrRelatedChangesList extends LitElement {
   reload(getRelatedChanges?: Promise<RelatedChangesInfo | undefined>) {
     const change = this.change;
     if (!change) return Promise.reject(new Error('change missing'));
-    if (!this.patchNum) return Promise.reject(new Error('patchNum missing'));
+    if (!this.latestPatchNum)
+      return Promise.reject(new Error('latestPatchNum missing'));
     if (!getRelatedChanges) {
       getRelatedChanges = this.restApiService.getRelatedChanges(
         change._number,
-        this.patchNum
+        this.latestPatchNum
       );
     }
     const promises: Array<Promise<void>> = [
@@ -597,7 +604,7 @@ export class GrRelatedChangesList extends LitElement {
           this.submittedTogether = response;
         }),
       this.restApiService
-        .getChangeCherryPicks(change.project, change.change_id, change._number)
+        .getChangeCherryPicks(change.project, change.change_id, change.branch)
         .then(response => {
           this.cherryPickChanges = response || [];
         }),
@@ -647,27 +654,10 @@ export class GrRelatedChangesList extends LitElement {
     a?: ChangeInfo | RelatedChangeAndCommitInfo,
     b?: ChangeInfo | ParsedChangeInfo | RelatedChangeAndCommitInfo
   ) {
-    const aNum = this._getChangeNumber(a);
-    const bNum = this._getChangeNumber(b);
+    if (!a || !b) return false;
+    const aNum = getChangeNumber(a);
+    const bNum = getChangeNumber(b);
     return aNum === bNum;
-  }
-
-  /**
-   * Get the change number from either a ChangeInfo (such as those included in
-   * SubmittedTogetherInfo responses) or get the change number from a
-   * RelatedChangeAndCommitInfo (such as those included in a
-   * RelatedChangesInfo response).
-   */
-  _getChangeNumber(
-    change?: ChangeInfo | ParsedChangeInfo | RelatedChangeAndCommitInfo
-  ) {
-    // Default to 0 if change property is not defined.
-    if (!change) return 0;
-
-    if (isChangeInfo(change)) {
-      return change._number;
-    }
-    return change._change_number;
   }
 
   /*
@@ -676,15 +666,15 @@ export class GrRelatedChangesList extends LitElement {
    */
   _computeConnectedRevisions(
     change?: ParsedChangeInfo,
-    patchNum?: PatchSetNum,
+    latestPatchNum?: PatchSetNumber,
     relatedChanges?: RelatedChangeAndCommitInfo[]
   ) {
-    if (!patchNum || !relatedChanges || !change) {
+    if (!latestPatchNum || !relatedChanges || !change) {
       return [];
     }
 
     const connected: CommitId[] = [];
-    const changeRevision = getRevisionKey(change, patchNum);
+    const changeRevision = getRevisionKey(change, latestPatchNum);
     const commits = relatedChanges.map(c => c.commit);
     let pos = commits.length - 1;
 
@@ -711,92 +701,8 @@ export class GrRelatedChangesList extends LitElement {
   }
 }
 
-@customElement('gr-related-collapse')
-export class GrRelatedCollapse extends LitElement {
-  @property()
-  override title = '';
-
-  @property({type: Boolean})
-  showAll = false;
-
-  @property({type: Boolean, reflect: true})
-  collapsed = true;
-
-  @property()
-  length = 0;
-
-  @property()
-  numChangesWhenCollapsed = DEFALT_NUM_CHANGES_WHEN_COLLAPSED;
-
-  private readonly reporting = getAppContext().reportingService;
-
-  static override get styles() {
-    return [
-      sharedStyles,
-      fontStyles,
-      css`
-        .title {
-          color: var(--deemphasized-text-color);
-          display: flex;
-          align-self: flex-end;
-          margin-left: 20px;
-        }
-        gr-button {
-          display: flex;
-        }
-        gr-button iron-icon {
-          color: inherit;
-          --iron-icon-height: 18px;
-          --iron-icon-width: 18px;
-        }
-        .container {
-          justify-content: space-between;
-          display: flex;
-          margin-bottom: var(--spacing-s);
-        }
-        :host(.first) .container {
-          margin-bottom: var(--spacing-m);
-        }
-      `,
-    ];
-  }
-
-  override render() {
-    const title = html`<h3 class="title heading-3">${this.title}</h3>`;
-
-    const collapsible = this.length > this.numChangesWhenCollapsed;
-    this.collapsed = !this.showAll && collapsible;
-
-    let button: TemplateResult | typeof nothing = nothing;
-    if (collapsible) {
-      let buttonText = 'Show less';
-      let buttonIcon = 'expand-less';
-      if (!this.showAll) {
-        buttonText = `Show all (${this.length})`;
-        buttonIcon = 'expand-more';
-      }
-      button = html`<gr-button link="" @click=${this.toggle}
-        >${buttonText}<iron-icon icon="gr-icons:${buttonIcon}"></iron-icon
-      ></gr-button>`;
-    }
-
-    return html`<div class="container">${title}${button}</div>
-      <div><slot></slot></div>`;
-  }
-
-  private toggle(e: MouseEvent) {
-    e.stopPropagation();
-    this.showAll = !this.showAll;
-    this.reporting.reportInteraction(Interaction.TOGGLE_SHOW_ALL_BUTTON, {
-      sectionName: this.title,
-      toState: this.showAll ? 'Show all' : 'Show less',
-    });
-  }
-}
-
 declare global {
   interface HTMLElementTagNameMap {
     'gr-related-changes-list': GrRelatedChangesList;
-    'gr-related-collapse': GrRelatedCollapse;
   }
 }

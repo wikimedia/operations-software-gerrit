@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../test/common-test-setup-karma';
+import '../test/common-test-setup';
 import {
   extractAssociatedLabels,
   getApprovalInfo,
@@ -33,6 +21,11 @@ import {
   mergeLabelMaps,
   computeOrderedLabelValues,
   mergeLabelInfoMaps,
+  getApplicableLabels,
+  isBlockingCondition,
+  valueString,
+  hasVotes,
+  hasVoted,
 } from './label-util';
 import {
   AccountId,
@@ -50,12 +43,16 @@ import {
   createNonApplicableSubmitRequirementResultInfo,
   createDetailedLabelInfo,
   createAccountWithId,
+  createQuickLabelInfo,
+  createApproval,
 } from '../test/test-data-generators';
 import {
   SubmitRequirementResultInfo,
   SubmitRequirementStatus,
   LabelNameToInfoMap,
+  SubmitRequirementExpressionInfoStatus,
 } from '../api/rest-api';
+import {assert} from '@open-wc/testing';
 
 const VALUES_0 = {
   '0': 'neutral',
@@ -597,6 +594,285 @@ suite('label-util', () => {
         },
       };
       assert.deepEqual(getTriggerVotes(change), []);
+    });
+  });
+
+  suite('getApplicableLabels()', () => {
+    test('1 not applicable', () => {
+      const notApplicableLabel = 'Not-Applicable-Label';
+      const change = {
+        ...createChange(),
+        submit_requirements: [
+          {
+            ...createSubmitRequirementResultInfo(),
+            status: SubmitRequirementStatus.NOT_APPLICABLE,
+            submittability_expression_result: {
+              ...createSubmitRequirementExpressionInfo(),
+              expression: `label:${notApplicableLabel}=MAX`,
+            },
+            is_legacy: false,
+          },
+        ],
+        labels: {
+          [notApplicableLabel]: createDetailedLabelInfo(),
+        },
+      };
+      assert.deepEqual(getApplicableLabels(change), []);
+    });
+    test('1 applicable, 1 not applicable', () => {
+      const applicableLabel = 'Applicable-Label';
+      const notApplicableLabel = 'Not-Applicable-Label';
+      const change = {
+        ...createChange(),
+        submit_requirements: [
+          {
+            ...createSubmitRequirementResultInfo(),
+            status: SubmitRequirementStatus.NOT_APPLICABLE,
+            submittability_expression_result: {
+              ...createSubmitRequirementExpressionInfo(),
+              expression: `label:${notApplicableLabel}=MAX`,
+            },
+            is_legacy: false,
+          },
+          {
+            ...createSubmitRequirementResultInfo(),
+            status: SubmitRequirementStatus.UNSATISFIED,
+            submittability_expression_result: {
+              ...createSubmitRequirementExpressionInfo(),
+              expression: `label:${applicableLabel}=MAX`,
+            },
+            is_legacy: false,
+          },
+        ],
+        labels: {
+          [notApplicableLabel]: createDetailedLabelInfo(),
+          [applicableLabel]: createDetailedLabelInfo(),
+        },
+      };
+      assert.deepEqual(getApplicableLabels(change), [applicableLabel]);
+    });
+
+    test('same label in applicable and not applicable requirement', () => {
+      const label = 'label';
+      const change = {
+        ...createChange(),
+        submit_requirements: [
+          {
+            ...createSubmitRequirementResultInfo(),
+            status: SubmitRequirementStatus.NOT_APPLICABLE,
+            submittability_expression_result: {
+              ...createSubmitRequirementExpressionInfo(),
+              expression: `label:${label}=MAX`,
+            },
+            is_legacy: false,
+          },
+          {
+            ...createSubmitRequirementResultInfo(),
+            status: SubmitRequirementStatus.UNSATISFIED,
+            submittability_expression_result: {
+              ...createSubmitRequirementExpressionInfo(),
+              expression: `label:${label}=MAX`,
+            },
+            is_legacy: false,
+          },
+        ],
+        labels: {
+          [label]: createDetailedLabelInfo(),
+        },
+      };
+      assert.deepEqual(getApplicableLabels(change), [label]);
+    });
+  });
+
+  suite('getApplicableLabels()', () => {
+    test('1 not applicable', () => {
+      const notApplicableLabel = 'Not-Applicable-Label';
+      const change = {
+        ...createChange(),
+        submit_requirements: [
+          {
+            ...createSubmitRequirementResultInfo(),
+            status: SubmitRequirementStatus.NOT_APPLICABLE,
+            submittability_expression_result: {
+              ...createSubmitRequirementExpressionInfo(),
+              expression: `label:${notApplicableLabel}=MAX`,
+            },
+            is_legacy: false,
+          },
+        ],
+        labels: {
+          [notApplicableLabel]: createDetailedLabelInfo(),
+        },
+      };
+      assert.deepEqual(getApplicableLabels(change), []);
+    });
+    test('1 applicable, 1 not applicable', () => {
+      const applicableLabel = 'Applicable-Label';
+      const notApplicableLabel = 'Not-Applicable-Label';
+      const change = {
+        ...createChange(),
+        submit_requirements: [
+          {
+            ...createSubmitRequirementResultInfo(),
+            status: SubmitRequirementStatus.NOT_APPLICABLE,
+            submittability_expression_result: {
+              ...createSubmitRequirementExpressionInfo(),
+              expression: `label:${notApplicableLabel}=MAX`,
+            },
+            is_legacy: false,
+          },
+          {
+            ...createSubmitRequirementResultInfo(),
+            status: SubmitRequirementStatus.UNSATISFIED,
+            submittability_expression_result: {
+              ...createSubmitRequirementExpressionInfo(),
+              expression: `label:${applicableLabel}=MAX`,
+            },
+            is_legacy: false,
+          },
+        ],
+        labels: {
+          [notApplicableLabel]: createDetailedLabelInfo(),
+          [applicableLabel]: createDetailedLabelInfo(),
+        },
+      };
+      assert.deepEqual(getApplicableLabels(change), [applicableLabel]);
+    });
+
+    test('same label in applicable and not applicable requirement', () => {
+      const label = 'label';
+      const change = {
+        ...createChange(),
+        submit_requirements: [
+          {
+            ...createSubmitRequirementResultInfo(),
+            status: SubmitRequirementStatus.NOT_APPLICABLE,
+            submittability_expression_result: {
+              ...createSubmitRequirementExpressionInfo(),
+              expression: `label:${label}=MAX`,
+            },
+            is_legacy: false,
+          },
+          {
+            ...createSubmitRequirementResultInfo(),
+            status: SubmitRequirementStatus.UNSATISFIED,
+            submittability_expression_result: {
+              ...createSubmitRequirementExpressionInfo(),
+              expression: `label:${label}=MAX`,
+            },
+            is_legacy: false,
+          },
+        ],
+        labels: {
+          [label]: createDetailedLabelInfo(),
+        },
+      };
+      assert.deepEqual(getApplicableLabels(change), [label]);
+    });
+  });
+
+  suite('isBlockingCondition', () => {
+    test('true', () => {
+      const requirement: SubmitRequirementResultInfo = {
+        name: 'Code-Review',
+        description:
+          "At least one maximum vote for label 'Code-Review' is required",
+        status: SubmitRequirementStatus.UNSATISFIED,
+        is_legacy: false,
+        submittability_expression_result: {
+          expression:
+            'label:Code-Review=MAX,user=non_uploader AND -label:Code-Review=MIN',
+          fulfilled: false,
+          status: SubmitRequirementExpressionInfoStatus.FAIL,
+          passing_atoms: ['label:Code-Review=MIN'],
+          failing_atoms: ['label:Code-Review=MAX,user=non_uploader'],
+        },
+      };
+      assert.isTrue(isBlockingCondition(requirement));
+    });
+
+    test('false', () => {
+      const requirement: SubmitRequirementResultInfo = {
+        name: 'Code-Review',
+        description:
+          "At least one maximum vote for label 'Code-Review' is required",
+        status: SubmitRequirementStatus.UNSATISFIED,
+        is_legacy: false,
+        submittability_expression_result: {
+          expression:
+            'label:Code-Review=MAX,user=non_uploader AND -label:Code-Review=MIN',
+          fulfilled: false,
+          status: SubmitRequirementExpressionInfoStatus.FAIL,
+          passing_atoms: [],
+          failing_atoms: [
+            'label:Code-Review=MAX,user=non_uploader',
+            'label:Code-Review=MIN',
+          ],
+        },
+      };
+      assert.isFalse(isBlockingCondition(requirement));
+    });
+  });
+
+  suite('valueString', () => {
+    const approvalInfo = createApproval();
+    test('0', () => {
+      approvalInfo.value = 0;
+      assert.equal(valueString(approvalInfo.value), ' 0');
+    });
+    test('-1', () => {
+      approvalInfo.value = -1;
+      assert.equal(valueString(approvalInfo.value), '-1');
+    });
+    test('2', () => {
+      approvalInfo.value = 2;
+      assert.equal(valueString(approvalInfo.value), '+2');
+    });
+  });
+
+  suite('hasVotes', () => {
+    const detailedLabelInfo = createDetailedLabelInfo();
+    const quickLabelInfo = createQuickLabelInfo();
+    test('detailedLabelInfo - neutral vote => false', () => {
+      const neutralApproval = createApproval();
+      neutralApproval.value = 0;
+      detailedLabelInfo.all = [neutralApproval];
+      assert.isFalse(hasVotes(detailedLabelInfo));
+    });
+    test('detailedLabelInfo - positive vote => true', () => {
+      const positiveApproval = createApproval();
+      positiveApproval.value = 2;
+      detailedLabelInfo.all = [positiveApproval];
+      assert.isTrue(hasVotes(detailedLabelInfo));
+    });
+    test('quickLabelInfo - neutral => false', () => {
+      assert.isFalse(hasVotes(quickLabelInfo));
+    });
+    test('quickLabelInfo - negative => false', () => {
+      quickLabelInfo.rejected = createAccountWithId();
+      assert.isTrue(hasVotes(quickLabelInfo));
+    });
+  });
+
+  suite('hasVoted', () => {
+    const detailedLabelInfo = createDetailedLabelInfo();
+    const quickLabelInfo = createQuickLabelInfo();
+    const account = createAccountWithId(23);
+    test('detailedLabelInfo - positive vote => true', () => {
+      const positiveApproval = createApproval(account);
+      positiveApproval.value = 2;
+      detailedLabelInfo.all = [positiveApproval];
+      assert.isTrue(hasVoted(detailedLabelInfo, account));
+    });
+    test('detailedLabelInfo - different account vote => true', () => {
+      const differentPositiveApproval = createApproval();
+      differentPositiveApproval.value = 2;
+      detailedLabelInfo.all = [differentPositiveApproval];
+      assert.isFalse(hasVoted(detailedLabelInfo, account));
+    });
+    test('quickLabelInfo - negative => false', () => {
+      quickLabelInfo.rejected = account;
+      assert.isTrue(hasVoted(quickLabelInfo, account));
     });
   });
 });

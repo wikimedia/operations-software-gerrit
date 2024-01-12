@@ -1,27 +1,15 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-editable-content';
 import {GrEditableContent} from './gr-editable-content';
 import {query, queryAndAssert, stubStorage} from '../../../test/test-utils';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
 import {GrButton} from '../gr-button/gr-button';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
+import {EventType} from '../../../types/events';
 
 suite('gr-editable-content tests', () => {
   let element: GrEditableContent;
@@ -32,38 +20,44 @@ suite('gr-editable-content tests', () => {
   });
 
   test('renders', () => {
-    expect(element).shadowDom.to.equal(/* HTML */ `<gr-endpoint-decorator
-      name="commit-message"
-    >
-      <gr-endpoint-param name="editing"> </gr-endpoint-param>
-      <div class="collapsed viewer">
-        <slot> </slot>
-      </div>
-      <div class="show-all-container">
-        <gr-button
-          aria-disabled="false"
-          class="show-all-button"
-          link=""
-          role="button"
-          tabindex="0"
-        >
-          <iron-icon icon="gr-icons:expand-more"> </iron-icon>
-          Show all
-        </gr-button>
-        <gr-button
-          aria-disabled="false"
-          class="edit-commit-message"
-          link=""
-          role="button"
-          tabindex="0"
-          title="Edit commit message"
-        >
-          <iron-icon icon="gr-icons:edit"> </iron-icon>
-          Edit
-        </gr-button>
-      </div>
-      <gr-endpoint-slot name="above-actions"> </gr-endpoint-slot>
-    </gr-endpoint-decorator> `);
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `<gr-endpoint-decorator name="commit-message">
+        <gr-endpoint-param name="editing"> </gr-endpoint-param>
+        <div class="collapsed viewer">
+          <slot> </slot>
+        </div>
+        <div class="show-all-container font-normal">
+          <gr-button
+            aria-disabled="false"
+            class="show-all-button"
+            link=""
+            role="button"
+            tabindex="0"
+          >
+            <div>
+              <gr-icon icon="expand_more" small></gr-icon>
+              <span>Show all</span>
+            </div>
+          </gr-button>
+          <div class="flex-space"></div>
+          <gr-button
+            aria-disabled="false"
+            class="edit-commit-message"
+            link=""
+            role="button"
+            tabindex="0"
+            title="Edit commit message"
+          >
+            <div>
+              <gr-icon icon="edit" filled small></gr-icon>
+              <span>Edit</span>
+            </div>
+          </gr-button>
+        </div>
+        <gr-endpoint-slot name="above-actions"> </gr-endpoint-slot>
+      </gr-endpoint-decorator> `
+    );
   });
 
   test('show-all-container visibility', async () => {
@@ -117,7 +111,7 @@ suite('gr-editable-content tests', () => {
     await element.updateComplete;
     element.addEventListener('editable-content-cancel', handler);
 
-    MockInteractions.tap(queryAndAssert(element, 'gr-button.cancel-button'));
+    queryAndAssert<GrButton>(element, 'gr-button.cancel-button').click();
 
     assert.isTrue(handler.called);
   });
@@ -144,25 +138,6 @@ suite('gr-editable-content tests', () => {
     element.newContent = 'stale content';
     element.editing = false;
     assert.equal(element.newContent, 'stale content');
-  });
-
-  test('zero width spaces are removed properly', async () => {
-    element.removeZeroWidthSpace = true;
-    element.content = 'R=\u200Btest@google.com';
-
-    // Needed because contentChanged resets newContent
-    // We want contentChanged observer to finish before editingChanged is
-    // called
-
-    await element.updateComplete;
-
-    element.editing = true;
-
-    // editingChanged updates newContent so wait for it's observer
-    // to finish
-    await element.updateComplete;
-
-    assert.equal(element.newContent, 'R=test@google.com');
   });
 
   suite('editing', () => {
@@ -210,7 +185,7 @@ suite('gr-editable-content tests', () => {
       await element.updateComplete;
       assert.equal(element.newContent, 'stored content');
       assert.isTrue(dispatchSpy.called);
-      assert.equal(dispatchSpy.lastCall.args[0].type, 'show-alert');
+      assert.equal(dispatchSpy.lastCall.args[0].type, EventType.SHOW_ALERT);
     });
 
     test('editing toggled to true, has no stored data', async () => {
@@ -229,7 +204,7 @@ suite('gr-editable-content tests', () => {
       element.editing = true;
 
       // Needed because editingChanged resets newContent
-      // We want ediingChanged() to finish before triggering newContentChanged
+      // We want editingChanged() to finish before triggering newContentChanged
       await element.updateComplete;
 
       element.newContent = 'new content';

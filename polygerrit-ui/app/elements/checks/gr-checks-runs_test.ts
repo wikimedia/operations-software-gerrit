@@ -1,27 +1,17 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import '../../test/common-test-setup-karma';
+import '../../test/common-test-setup';
 import './gr-checks-runs';
-import {GrChecksRuns} from './gr-checks-runs';
+import {GrChecksRun, GrChecksRuns} from './gr-checks-runs';
 import {html} from 'lit';
-import {fixture} from '@open-wc/testing-helpers';
+import {fixture, assert} from '@open-wc/testing';
 import {checksModelToken} from '../../models/checks/checks-model';
-import {setAllFakeRuns} from '../../models/checks/checks-fakes';
+import {fakeRun0, setAllFakeRuns} from '../../models/checks/checks-fakes';
 import {resolve} from '../../models/dependency';
+import {queryAll} from '../../utils/common-util';
 
 suite('gr-checks-runs test', () => {
   let element: GrChecksRuns;
@@ -32,18 +22,23 @@ suite('gr-checks-runs test', () => {
     );
     const getChecksModel = resolve(element, checksModelToken);
     setAllFakeRuns(getChecksModel());
+    await element.updateComplete;
   });
 
-  test('tabState filter', async () => {
-    element.tabState = {filter: 'fff'};
+  test('filterRegExp', async () => {
+    // Without a filter all 6 fake runs (0-5) will be rendered.
+    assert.equal(queryAll(element, 'gr-checks-run').length, 6);
+
+    // This filter will only match fakeRun2 (checkName: 'FAKE Mega Analysis').
+    element.filterRegExp = 'Mega';
     await element.updateComplete;
-    assert.equal(element.filterRegExp?.source, 'fff');
+    assert.equal(queryAll(element, 'gr-checks-run').length, 1);
   });
 
   test('renders', async () => {
-    await element.updateComplete;
     assert.equal(element.runs.length, 44);
-    expect(element).shadowDom.to.equal(
+    assert.shadowDom.equal(
+      element,
       /* HTML */ `
         <h2 class="title">
           <div class="heading-2">Runs</div>
@@ -52,14 +47,13 @@ suite('gr-checks-runs test', () => {
             <gr-button
               aria-checked="false"
               aria-label="Collapse runs panel"
-              class="expandButton"
+              class="expandButton font-normal"
               link=""
               role="switch"
             >
-              <iron-icon
-                class="expandIcon"
-                icon="gr-icons:chevron-left"
-              ></iron-icon>
+              <div>
+                <gr-icon icon="chevron_left" class="expandIcon"></gr-icon>
+              </div>
             </gr-button>
           </gr-tooltip-content>
         </h2>
@@ -70,11 +64,8 @@ suite('gr-checks-runs test', () => {
         />
         <div class="expanded running">
           <div class="sectionHeader">
-            <iron-icon
-              class="expandIcon"
-              icon="gr-icons:expand-less"
-            ></iron-icon>
-            <h3 class="heading-3">Running / Scheduled</h3>
+            <gr-icon icon="expand_less" class="expandIcon"></gr-icon>
+            <h3 class="heading-3">Running / Scheduled (2)</h3>
           </div>
           <div class="sectionRuns">
             <gr-checks-run></gr-checks-run>
@@ -83,11 +74,8 @@ suite('gr-checks-runs test', () => {
         </div>
         <div class="completed expanded">
           <div class="sectionHeader">
-            <iron-icon
-              class="expandIcon"
-              icon="gr-icons:expand-less"
-            ></iron-icon>
-            <h3 class="heading-3">Completed</h3>
+            <gr-icon icon="expand_less" class="expandIcon"></gr-icon>
+            <h3 class="heading-3">Completed (3)</h3>
           </div>
           <div class="sectionRuns">
             <gr-checks-run></gr-checks-run>
@@ -97,11 +85,8 @@ suite('gr-checks-runs test', () => {
         </div>
         <div class="expanded runnable">
           <div class="sectionHeader">
-            <iron-icon
-              class="expandIcon"
-              icon="gr-icons:expand-less"
-            ></iron-icon>
-            <h3 class="heading-3">Not run</h3>
+            <gr-icon icon="expand_less" class="expandIcon"></gr-icon>
+            <h3 class="heading-3">Not run (1)</h3>
           </div>
           <div class="sectionRuns">
             <gr-checks-run></gr-checks-run>
@@ -109,6 +94,131 @@ suite('gr-checks-runs test', () => {
         </div>
       `,
       {ignoreAttributes: ['tabindex', 'aria-disabled']}
+    );
+  });
+
+  test('renders collapsed', async () => {
+    element.collapsed = true;
+    await element.updateComplete;
+    assert.equal(element.runs.length, 44);
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <h2 class="title">
+          <div class="heading-2">Runs</div>
+          <div class="flex-space"></div>
+          <gr-tooltip-content has-tooltip="" title="Expand runs panel">
+            <gr-button
+              aria-checked="true"
+              aria-label="Expand runs panel"
+              class="expandButton font-normal"
+              link=""
+              role="switch"
+            >
+              <div>
+                <gr-icon icon="chevron_right" class="expandIcon"></gr-icon>
+              </div>
+            </gr-button>
+          </gr-tooltip-content>
+        </h2>
+        <input
+          hidden
+          id="filterInput"
+          placeholder="Filter runs by regular expression"
+          type="text"
+        />
+        <div class="expanded running">
+          <div class="sectionHeader">
+            <h3 class="heading-3">Running / Scheduled</h3>
+          </div>
+          <div class="sectionRuns">
+            <gr-checks-run condensed></gr-checks-run>
+            <gr-checks-run condensed></gr-checks-run>
+          </div>
+        </div>
+        <div class="completed expanded">
+          <div class="sectionHeader">
+            <h3 class="heading-3">Completed</h3>
+          </div>
+          <div class="sectionRuns">
+            <gr-checks-run condensed></gr-checks-run>
+            <gr-checks-run condensed></gr-checks-run>
+            <gr-checks-run condensed></gr-checks-run>
+          </div>
+        </div>
+        <div class="expanded runnable">
+          <div class="sectionHeader">
+            <h3 class="heading-3">Not run</h3>
+          </div>
+          <div class="sectionRuns">
+            <gr-checks-run condensed></gr-checks-run>
+          </div>
+        </div>
+      `,
+      {ignoreAttributes: ['tabindex', 'aria-disabled']}
+    );
+  });
+});
+
+suite('gr-checks-run test', () => {
+  let element: GrChecksRun;
+
+  setup(async () => {
+    element = await fixture<GrChecksRun>(html`<gr-checks-run></gr-checks-run>`);
+    const getChecksModel = resolve(element, checksModelToken);
+    setAllFakeRuns(getChecksModel());
+    await element.updateComplete;
+  });
+
+  test('renders loading', async () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ ' <div class="chip">Loading ...</div> '
+    );
+  });
+
+  test('renders fakeRun0', async () => {
+    element.shouldRender = true;
+    element.run = fakeRun0;
+    await element.updateComplete;
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="chip error" tabindex="0">
+          <div class="left" tabindex="0">
+            <gr-hovercard-run> </gr-hovercard-run>
+            <gr-icon class="error" filled="" icon="error"> </gr-icon>
+            <span class="name">
+              FAKE Error Finder Finder Finder Finder Finder Finder Finder
+            </span>
+          </div>
+          <div class="middle">
+            <gr-checks-attempt> </gr-checks-attempt>
+          </div>
+          <div class="right"></div>
+          </div>
+          <div class="attemptDetails" hidden="">
+            <div class="attemptDetail">
+              <input
+                id="attempt-latest"
+                name="fakeerrorfinderfinderfinderfinderfinderfinderfinder-attempt-choice"
+                type="radio"
+              />
+              <gr-icon icon=""> </gr-icon>
+              <label for="attempt-latest"> Latest Attempt </label>
+            </div>
+            <div class="attemptDetail">
+              <input
+                id="attempt-all"
+                name="fakeerrorfinderfinderfinderfinderfinderfinderfinder-attempt-choice"
+                type="radio"
+              />
+              <gr-icon icon=""> </gr-icon>
+              <label for="attempt-all"> All Attempts </label>
+            </div>
+          </div>
+        </div>
+      `
     );
   });
 });

@@ -3,12 +3,13 @@
  * Copyright 2016 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-diff-processor';
 import {GrDiffLineType, FILE, GrDiffLine} from '../gr-diff/gr-diff-line';
 import {GrDiffGroup, GrDiffGroupType} from '../gr-diff/gr-diff-group';
 import {GrDiffProcessor, State} from './gr-diff-processor';
 import {DiffContent} from '../../../types/diff';
+import {assert} from '@open-wc/testing';
 
 suite('gr-diff-processor tests', () => {
   const WHOLE_FILE = -1;
@@ -488,6 +489,26 @@ suite('gr-diff-processor tests', () => {
       // group[4] is the displayed part of the second ab
     });
 
+    test('works with skip === 0', async () => {
+      element.context = 3;
+      const content = [
+        {
+          skip: 0,
+        },
+        {
+          b: [
+            '/**',
+            ' * @license',
+            ' * Copyright 2015 Google LLC',
+            ' * SPDX-License-Identifier: Apache-2.0',
+            ' */',
+            "import '../../../test/common-test-setup';",
+          ],
+        },
+      ];
+      await element.process(content, false);
+    });
+
     test('break up common diff chunks', () => {
       element.keyLocations = {
         left: {1: true},
@@ -497,55 +518,38 @@ suite('gr-diff-processor tests', () => {
       const content = [
         {
           ab: [
-            'Copyright (C) 2015 The Android Open Source Project',
+            'copy',
             '',
-            'Licensed under the Apache License, Version 2.0 (the "License");',
-            'you may not use this file except in compliance with the ' +
-              'License.',
-            'You may obtain a copy of the License at',
+            'asdf',
+            'qwer',
+            'zxcv',
             '',
-            'http://www.apache.org/licenses/LICENSE-2.0',
+            'http',
             '',
-            'Unless required by applicable law or agreed to in writing, ',
-            'software distributed under the License is distributed on an ',
-            '"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, ',
-            'either express or implied. See the License for the specific ',
-            'language governing permissions and limitations under the ' +
-              'License.',
+            'vbnm',
+            'dfgh',
+            'yuio',
+            'sdfg',
+            '1234',
           ],
         },
       ];
       const result = element.splitCommonChunksWithKeyLocations(content);
       assert.deepEqual(result, [
         {
-          ab: ['Copyright (C) 2015 The Android Open Source Project'],
+          ab: ['copy'],
           keyLocation: true,
         },
         {
-          ab: [
-            '',
-            'Licensed under the Apache License, Version 2.0 (the "License");',
-            'you may not use this file except in compliance with the ' +
-              'License.',
-            'You may obtain a copy of the License at',
-            '',
-            'http://www.apache.org/licenses/LICENSE-2.0',
-            '',
-            'Unless required by applicable law or agreed to in writing, ',
-          ],
+          ab: ['', 'asdf', 'qwer', 'zxcv', '', 'http', '', 'vbnm'],
           keyLocation: false,
         },
         {
-          ab: ['software distributed under the License is distributed on an '],
+          ab: ['dfgh'],
           keyLocation: true,
         },
         {
-          ab: [
-            '"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, ',
-            'either express or implied. See the License for the specific ',
-            'language governing permissions and limitations under the ' +
-              'License.',
-          ],
+          ab: ['yuio', 'sdfg', '1234'],
           keyLocation: false,
         },
       ]);
@@ -633,8 +637,8 @@ suite('gr-diff-processor tests', () => {
       // REST API.
       let content = [
         '      <section class="summary">',
-        '        <gr-linked-text content="' +
-          '[[_computeCurrentRevisionMessage(change)]]"></gr-linked-text>',
+        '        <gr-formatted-text content="' +
+          '[[_computeCurrentRevisionMessage(change)]]"></gr-formatted-text>',
         '      </section>',
       ];
       let highlights = [
@@ -655,12 +659,8 @@ suite('gr-diff-processor tests', () => {
         },
         {
           contentIndex: 1,
+          endIndex: 101,
           startIndex: 75,
-        },
-        {
-          contentIndex: 2,
-          startIndex: 0,
-          endIndex: 6,
         },
       ]);
       const lines = element.linesFromRows(
@@ -675,7 +675,7 @@ suite('gr-diff-processor tests', () => {
       assert.isTrue(lines[1].hasIntralineInfo);
       assert.equal(lines[1].highlights.length, 2);
       assert.isTrue(lines[2].hasIntralineInfo);
-      assert.equal(lines[2].highlights.length, 1);
+      assert.equal(lines[2].highlights.length, 0);
 
       content = [
         '        this._path = value.path;',

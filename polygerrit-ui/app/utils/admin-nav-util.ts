@@ -1,24 +1,8 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import {
-  GerritNav,
-  RepoDetailView,
-  GroupDetailView,
-} from '../elements/core/gr-navigation/gr-navigation';
 import {
   RepoName,
   GroupId,
@@ -28,6 +12,9 @@ import {
 import {hasOwnProperty} from './common-util';
 import {GerritView} from '../services/router/router-model';
 import {MenuLink} from '../api/admin';
+import {AdminChildView} from '../models/views/admin';
+import {createGroupUrl, GroupDetailView} from '../models/views/group';
+import {createRepoUrl, RepoDetailView} from '../models/views/repo';
 
 const ADMIN_LINKS: NavLink[] = [
   {
@@ -163,69 +150,69 @@ export function getGroupSubsections(
   const children: SubsectionInterface[] = [];
   const subsection: SubsectionInterface = {
     name: groupName,
-    view: GerritNav.View.GROUP,
-    url: GerritNav.getUrlForGroup(groupId),
+    view: GerritView.GROUP,
+    url: createGroupUrl({groupId}),
     children,
   };
   if (groupIsInternal) {
     children.push({
       name: 'Members',
-      detailType: GerritNav.GroupDetailView.MEMBERS,
-      view: GerritNav.View.GROUP,
-      url: GerritNav.getUrlForGroupMembers(groupId),
+      detailType: GroupDetailView.MEMBERS,
+      view: GerritView.GROUP,
+      url: createGroupUrl({groupId, detail: GroupDetailView.MEMBERS}),
     });
   }
   if (groupIsInternal && (isAdmin || groupOwner)) {
     children.push({
       name: 'Audit Log',
-      detailType: GerritNav.GroupDetailView.LOG,
-      view: GerritNav.View.GROUP,
-      url: GerritNav.getUrlForGroupLog(groupId),
+      detailType: GroupDetailView.LOG,
+      view: GerritView.GROUP,
+      url: createGroupUrl({groupId, detail: GroupDetailView.LOG}),
     });
   }
   return subsection;
 }
 
-export function getRepoSubsections(repoName: RepoName) {
+export function getRepoSubsections(repo: RepoName) {
   return {
-    name: repoName,
-    view: GerritNav.View.REPO,
+    name: repo,
+    view: GerritView.REPO,
     children: [
       {
         name: 'General',
-        view: GerritNav.View.REPO,
-        detailType: GerritNav.RepoDetailView.GENERAL,
-        url: GerritNav.getUrlForRepo(repoName),
+        view: GerritView.REPO,
+        detailType: RepoDetailView.GENERAL,
+        url: createRepoUrl({repo, detail: RepoDetailView.GENERAL}),
       },
       {
         name: 'Access',
-        view: GerritNav.View.REPO,
-        detailType: GerritNav.RepoDetailView.ACCESS,
-        url: GerritNav.getUrlForRepoAccess(repoName),
+        view: GerritView.REPO,
+        detailType: RepoDetailView.ACCESS,
+        url: createRepoUrl({repo, detail: RepoDetailView.ACCESS}),
       },
       {
         name: 'Commands',
-        view: GerritNav.View.REPO,
-        detailType: GerritNav.RepoDetailView.COMMANDS,
-        url: GerritNav.getUrlForRepoCommands(repoName),
+        view: GerritView.REPO,
+        detailType: RepoDetailView.COMMANDS,
+        url: createRepoUrl({repo, detail: RepoDetailView.COMMANDS}),
       },
       {
         name: 'Branches',
-        view: GerritNav.View.REPO,
-        detailType: GerritNav.RepoDetailView.BRANCHES,
-        url: GerritNav.getUrlForRepoBranches(repoName),
+        view: GerritView.REPO,
+        detailType: RepoDetailView.BRANCHES,
+        url: createRepoUrl({repo, detail: RepoDetailView.BRANCHES}),
       },
       {
         name: 'Tags',
-        view: GerritNav.View.REPO,
-        detailType: GerritNav.RepoDetailView.TAGS,
-        url: GerritNav.getUrlForRepoTags(repoName),
+        view: GerritView.REPO,
+        detailType: RepoDetailView.TAGS,
+        url: createRepoUrl({repo, detail: RepoDetailView.TAGS}),
       },
       {
         name: 'Dashboards',
-        view: GerritNav.View.REPO,
-        detailType: GerritNav.RepoDetailView.DASHBOARDS,
-        url: GerritNav.getUrlForRepoDashboards(repoName),
+        view: GerritView.REPO,
+        detailType: RepoDetailView.DASHBOARDS,
+        url: createRepoUrl({repo, detail: RepoDetailView.DASHBOARDS}),
       },
     ],
   };
@@ -252,7 +239,7 @@ export interface NavLink {
   name: string;
   noBaseUrl: boolean;
   url: string;
-  view?: GerritView;
+  view?: GerritView | AdminChildView;
   viewableToAll?: boolean;
   section?: string;
   capability?: string;

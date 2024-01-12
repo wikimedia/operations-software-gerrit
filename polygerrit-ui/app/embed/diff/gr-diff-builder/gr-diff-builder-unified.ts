@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the 'License');
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an 'AS IS' BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {GrDiffLine, GrDiffLineType} from '../gr-diff/gr-diff-line';
 import {GrDiffGroup, GrDiffGroupType} from '../gr-diff/gr-diff-group';
@@ -43,7 +32,8 @@ export class GrDiffBuilderUnified extends GrDiffBuilderLegacy {
     };
   }
 
-  protected override buildSectionElement(group: GrDiffGroup): HTMLElement {
+  // visible for testing
+  override buildSectionElement(group: GrDiffGroup): HTMLElement {
     const sectionEl = createElementDiff('tbody', 'section');
     sectionEl.classList.add(group.type);
     if (group.isTotal()) {
@@ -126,6 +116,30 @@ export class GrDiffBuilderUnified extends GrDiffBuilderLegacy {
     if (line.type === GrDiffLineType.REMOVE) {
       side = Side.LEFT;
     }
+
+    // Before Chrome 102, Chrome was able to compute a11y label from children
+    // content. Now Chrome 102 and Firefox are not computing a11y label because
+    // tr is not expected to have aria label. Adding aria role button is
+    // pushing browser to compute aria even for tr. This can be removed, once
+    // browsers will again compute a11y label even for tr when it is focused.
+    // TODO: Remove when Chrome 102 is out of date for 1 year.
+    if (line.beforeNumber !== 'FILE' && line.beforeNumber !== 'LOST') {
+      row.setAttribute(
+        'aria-labelledby',
+        [
+          line.beforeNumber ? `left-button-${line.beforeNumber}` : '',
+          line.afterNumber ? `right-button-${line.afterNumber}` : '',
+          side === Side.LEFT && line.beforeNumber
+            ? `left-content-${line.beforeNumber}`
+            : '',
+          side === Side.RIGHT && line.afterNumber
+            ? `right-content-${line.afterNumber}`
+            : '',
+        ]
+          .join(' ')
+          .trim()
+      );
+    }
     row.appendChild(this.createTextEl(lineNumberEl, line, side));
     return row;
   }
@@ -133,6 +147,11 @@ export class GrDiffBuilderUnified extends GrDiffBuilderLegacy {
   getNextContentOnSide(content: HTMLElement, side: Side): HTMLElement | null {
     let tr: HTMLElement = content.parentElement!.parentElement!;
     while ((tr = tr.nextSibling as HTMLElement)) {
+      // Note that this does not work when there is a "common" chunk in the
+      // diff (different content only because of whitespace). Such chunks are
+      // rendered with class "add", so these rows will be skipped for the
+      // 'left' side.
+      // TODO: Fix this when writing a Lit component for unified diff.
       if (
         tr.classList.contains('both') ||
         (side === 'left' && tr.classList.contains('remove')) ||

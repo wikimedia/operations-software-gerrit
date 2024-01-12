@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-create-change-dialog';
 import {GrCreateChangeDialog} from './gr-create-change-dialog';
 import {BranchName, GitRef, RepoName} from '../../../types/common';
@@ -23,8 +11,7 @@ import {InheritedBooleanInfoConfiguredValue} from '../../../constants/constants'
 import {createChange} from '../../../test/test-data-generators';
 import {queryAndAssert, stubRestApi} from '../../../test/test-utils';
 import {IronAutogrowTextareaElement} from '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
-
-const basicFixture = fixtureFromElement('gr-create-change-dialog');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-create-change-dialog tests', () => {
   let element: GrCreateChangeDialog;
@@ -43,9 +30,77 @@ suite('gr-create-change-dialog tests', () => {
         return Promise.resolve([]);
       }
     });
-    element = basicFixture.instantiate();
-    await element.updateComplete;
+    element = await fixture(
+      html`<gr-create-change-dialog></gr-create-change-dialog>`
+    );
     element.repoName = 'test-repo' as RepoName;
+  });
+
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="gr-form-styles">
+          <section>
+            <span class="title"> Select branch for new change </span>
+            <span class="value">
+              <gr-autocomplete
+                id="branchInput"
+                placeholder="Destination branch"
+              >
+              </gr-autocomplete>
+            </span>
+          </section>
+          <section>
+            <span class="title"> Provide base commit sha1 for change </span>
+            <span class="value">
+              <iron-input>
+                <input
+                  id="baseCommitInput"
+                  maxlength="40"
+                  placeholder="(optional)"
+                />
+              </iron-input>
+            </span>
+          </section>
+          <section>
+            <span class="title"> Enter topic for new change </span>
+            <span class="value">
+              <iron-input>
+                <input
+                  id="tagNameInput"
+                  maxlength="1024"
+                  placeholder="(optional)"
+                />
+              </iron-input>
+            </span>
+          </section>
+          <section id="description">
+            <span class="title"> Description </span>
+            <span class="value">
+              <iron-autogrow-textarea
+                aria-disabled="false"
+                autocomplete="on"
+                class="message"
+                id="messageInput"
+                maxrows="15"
+                placeholder="Insert the description of the change."
+                rows="4"
+              >
+              </iron-autogrow-textarea>
+            </span>
+          </section>
+          <section>
+            <label class="title" for="privateChangeCheckBox">
+              Private change
+            </label>
+            <span class="value">
+              <input id="privateChangeCheckBox" type="checkbox" />
+            </span>
+          </section>
+        </div>
+      `
+    );
   });
 
   test('new change created with default', async () => {

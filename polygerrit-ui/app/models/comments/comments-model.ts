@@ -1,20 +1,8 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import {ChangeComments} from '../../elements/diff/gr-comment-api/gr-comment-api';
 import {
   CommentBasics,
@@ -26,11 +14,13 @@ import {
   PathToCommentsInfoMap,
   RobotCommentInfo,
   PathToRobotCommentsInfoMap,
+  AccountInfo,
 } from '../../types/common';
 import {
   addPath,
   DraftInfo,
   isDraft,
+  isDraftThread,
   isUnsaved,
   reportingDetails,
   UnsavedInfo,
@@ -40,7 +30,7 @@ import {select} from '../../utils/observable-util';
 import {RouterModel} from '../../services/router/router-model';
 import {Finalizable} from '../../services/registry';
 import {define} from '../dependency';
-import {combineLatest, Subscription} from 'rxjs';
+import {combineLatest, forkJoin, from, Observable, of} from 'rxjs';
 import {fire, fireAlert, fireEvent} from '../../utils/event-util';
 import {CURRENT} from '../../utils/patch-set-util';
 import {RestApiService} from '../../services/gr-rest-api/gr-rest-api';
@@ -52,6 +42,17 @@ import {pluralize} from '../../utils/string-util';
 import {ReportingService} from '../../services/gr-reporting/gr-reporting';
 import {Model} from '../model';
 import {Deduping} from '../../api/reporting';
+import {extractMentionedUsers, getUserId} from '../../utils/account-util';
+import {EventType} from '../../types/events';
+import {SpecialFilePath} from '../../constants/constants';
+import {AccountsModel} from '../accounts-model/accounts-model';
+import {
+  distinctUntilChanged,
+  map,
+  shareReplay,
+  switchMap,
+} from 'rxjs/operators';
+import {notUndefined} from '../../types/types';
 
 export interface CommentState {
   /** undefined means 'still loading' */
@@ -238,9 +239,24 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
     commentState => commentState.comments
   );
 
+  public readonly robotComments$ = select(
+    this.state$,
+    commentState => commentState.robotComments
+  );
+
+  public readonly robotCommentCount$ = select(
+    this.robotComments$,
+    robotComments => Object.values(robotComments ?? {}).flat().length
+  );
+
   public readonly drafts$ = select(
     this.state$,
     commentState => commentState.drafts
+  );
+
+  public readonly draftsCount$ = select(
+    this.drafts$,
+    drafts => Object.values(drafts ?? {}).flat().length
   );
 
   public readonly portedComments$ = select(
@@ -252,6 +268,68 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
     this.state$,
     commentState => commentState.discardedDrafts
   );
+
+  public readonly patchsetLevelDrafts$ = select(this.drafts$, drafts =>
+    Object.values(drafts ?? {})
+      .flat()
+      .filter(
+        draft =>
+          draft.path === SpecialFilePath.PATCHSET_LEVEL_COMMENTS &&
+          !draft.in_reply_to
+      )
+  );
+
+  public readonly mentionedUsersInDrafts$: Observable<AccountInfo[]> =
+    this.drafts$.pipe(
+      switchMap(drafts => {
+        const users: AccountInfo[] = [];
+        const comments = Object.values(drafts ?? {}).flat();
+        for (const comment of comments) {
+          users.push(...extractMentionedUsers(comment.message));
+        }
+        const uniqueUsers = users.filter(
+          (user, index) =>
+            index === users.findIndex(u => getUserId(u) === getUserId(user))
+        );
+        // forkJoin only emits value when the array is non-empty
+        if (uniqueUsers.length === 0) {
+          return of(uniqueUsers);
+        }
+        const filledUsers$: Observable<AccountInfo | undefined>[] =
+          uniqueUsers.map(user => from(this.accountsModel.fillDetails(user)));
+        return forkJoin(filledUsers$);
+      }),
+      map(users => users.filter(notUndefined)),
+      distinctUntilChanged(deepEqual),
+      shareReplay(1)
+    );
+
+  public readonly mentionedUsersInUnresolvedDrafts$: Observable<AccountInfo[]> =
+    this.drafts$.pipe(
+      switchMap(drafts => {
+        const users: AccountInfo[] = [];
+        const comments = Object.values(drafts ?? {})
+          .flat()
+          .filter(c => c.unresolved);
+        for (const comment of comments) {
+          users.push(...extractMentionedUsers(comment.message));
+        }
+        const uniqueUsers = users.filter(
+          (user, index) =>
+            index === users.findIndex(u => getUserId(u) === getUserId(user))
+        );
+        // forkJoin only emits value when the array is non-empty
+        if (uniqueUsers.length === 0) {
+          return of(uniqueUsers);
+        }
+        const filledUsers$: Observable<AccountInfo | undefined>[] =
+          uniqueUsers.map(user => from(this.accountsModel.fillDetails(user)));
+        return forkJoin(filledUsers$);
+      }),
+      map(users => users.filter(notUndefined)),
+      distinctUntilChanged(deepEqual),
+      shareReplay(1)
+    );
 
   // Emits a new value even if only a single draft is changed. Components should
   // aim to subsribe to something more specific.
@@ -271,6 +349,23 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
     changeComments.getAllThreadsForChange()
   );
 
+  public readonly draftThreads$ = select(this.threads$, threads =>
+    threads.filter(isDraftThread)
+  );
+
+  public readonly commentedPaths$ = select(
+    combineLatest([
+      this.changeComments$,
+      this.changeModel.basePatchNum$,
+      this.changeModel.patchNum$,
+    ]),
+    ([changeComments, basePatchNum, patchNum]) => {
+      if (!patchNum) return [];
+      const pathsMap = changeComments.getPaths({basePatchNum, patchNum});
+      return Object.keys(pathsMap);
+    }
+  );
+
   public thread$(id: UrlEncodedCommentId) {
     return select(this.threads$, threads => threads.find(t => t.rootId === id));
   }
@@ -283,8 +378,6 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
 
   private readonly reloadListener: () => void;
 
-  private readonly subscriptions: Subscription[] = [];
-
   private drafts: {[path: string]: DraftInfo[]} = {};
 
   private draftToastTask?: DelayedTask;
@@ -294,6 +387,7 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
   constructor(
     readonly routerModel: RouterModel,
     readonly changeModel: ChangeModel,
+    readonly accountsModel: AccountsModel,
     readonly restApiService: RestApiService,
     readonly reporting: ReportingService
   ) {
@@ -305,7 +399,7 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
       this.drafts$.subscribe(x => (this.drafts = x ?? {}))
     );
     this.subscriptions.push(
-      this.changeModel.currentPatchNum$.subscribe(x => (this.patchNum = x))
+      this.changeModel.patchNum$.subscribe(x => (this.patchNum = x))
     );
     this.subscriptions.push(
       this.routerModel.routerChangeNum$.subscribe(changeNum => {
@@ -317,7 +411,7 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
     this.subscriptions.push(
       combineLatest([
         this.changeModel.changeNum$,
-        this.changeModel.currentPatchNum$,
+        this.changeModel.patchNum$,
       ]).subscribe(([changeNum, patchNum]) => {
         this.changeNum = changeNum;
         this.patchNum = patchNum;
@@ -331,12 +425,9 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
     document.addEventListener('reload', this.reloadListener);
   }
 
-  finalize() {
+  override finalize() {
     document.removeEventListener('reload', this.reloadListener);
-    for (const s of this.subscriptions) {
-      s.unsubscribe();
-    }
-    this.subscriptions.splice(0, this.subscriptions.length);
+    super.finalize();
   }
 
   // Note that this does *not* reload ported comments.
@@ -359,19 +450,13 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
   }
 
   // visible for testing
-  updateState(reducer: (state: CommentState) => CommentState) {
-    const current = this.subject$.getValue();
-    this.setState(reducer({...current}));
-  }
-
-  // visible for testing
-  setState(state: CommentState) {
-    this.subject$.next(state);
+  modifyState(reducer: (state: CommentState) => CommentState) {
+    this.setState(reducer({...this.getState()}));
   }
 
   async reloadComments(changeNum: NumericChangeId): Promise<void> {
     const comments = await this.restApiService.getDiffComments(changeNum);
-    this.updateState(s => setComments(s, comments));
+    this.modifyState(s => setComments(s, comments));
   }
 
   async reloadRobotComments(changeNum: NumericChangeId): Promise<void> {
@@ -379,7 +464,7 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
       changeNum
     );
     this.reportRobotCommentStats(robotComments);
-    this.updateState(s => setRobotComments(s, robotComments));
+    this.modifyState(s => setRobotComments(s, robotComments));
   }
 
   private reportRobotCommentStats(obj?: PathToRobotCommentsInfoMap) {
@@ -412,7 +497,7 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
 
   async reloadDrafts(changeNum: NumericChangeId): Promise<void> {
     const drafts = await this.restApiService.getDiffDrafts(changeNum);
-    this.updateState(s => setDrafts(s, drafts));
+    this.modifyState(s => setDrafts(s, drafts));
   }
 
   async reloadPortedComments(
@@ -423,7 +508,7 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
       changeNum,
       patchNum
     );
-    this.updateState(s => setPortedComments(s, portedComments));
+    this.modifyState(s => setPortedComments(s, portedComments));
   }
 
   async reloadPortedDrafts(
@@ -434,7 +519,7 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
       changeNum,
       patchNum
     );
-    this.updateState(s => setPortedDrafts(s, portedDrafts));
+    this.modifyState(s => setPortedDrafts(s, portedDrafts));
   }
 
   async restoreDraft(id: UrlEncodedCommentId) {
@@ -448,7 +533,7 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
       __unsaved: true,
     };
     await this.saveDraft(newDraft);
-    this.updateState(s => deleteDiscardedDraft(s, id));
+    this.modifyState(s => deleteDiscardedDraft(s, id));
   }
 
   /**
@@ -493,7 +578,7 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
     };
     timer.end({id: updatedDraft.id});
     if (showToast) this.showEndRequest();
-    this.updateState(s => setDraft(s, updatedDraft));
+    this.modifyState(s => setDraft(s, updatedDraft));
     this.report(Interaction.COMMENT_SAVED, updatedDraft);
     return updatedDraft;
   }
@@ -525,10 +610,10 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
       );
     }
     this.showEndRequest();
-    this.updateState(s => deleteDraft(s, draft));
+    this.modifyState(s => deleteDraft(s, draft));
     // We don't store empty discarded drafts and don't need an UNDO then.
     if (draft.message?.trim()) {
-      fire(document, 'show-alert', {
+      fire(document, EventType.SHOW_ALERT, {
         message: 'Draft Discarded',
         action: 'Undo',
         callback: () => this.restoreDraft(draft.id),

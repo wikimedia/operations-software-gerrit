@@ -1,28 +1,50 @@
-import {AuthInfo, ServerInfo} from '../types/common';
+/**
+ * @license
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+import {
+  AuthInfo,
+  BasePatchSetNum,
+  PARENT,
+  RevisionPatchSetNum,
+  ServerInfo,
+} from '../types/common';
 import {RestApiService} from '../services/gr-rest-api/gr-rest-api';
 import {AuthType} from '../api/rest-api';
 
-/**
- * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 const PROBE_PATH = '/Documentation/index.html';
 const DOCS_BASE_PATH = '/Documentation';
 
 export function getBaseUrl(): string {
-  return window.CANONICAL_PATH || '';
+  // window is not defined in service worker, therefore no CANONICAL_PATH
+  if (typeof window === 'undefined') return '';
+  return self.CANONICAL_PATH || '';
+}
+
+export interface PatchRangeParams {
+  patchNum?: RevisionPatchSetNum;
+  basePatchNum?: BasePatchSetNum;
+}
+
+export function rootUrl() {
+  return `${getBaseUrl()}/`;
+}
+
+/**
+ * Given an object of parameters, potentially including a `patchNum` or a
+ * `basePatchNum` or both, return a string representation of that range. If
+ * no range is indicated in the params, the empty string is returned.
+ */
+export function getPatchRangeExpression(params: PatchRangeParams) {
+  let range = '';
+  if (params.patchNum) {
+    range = `${params.patchNum}`;
+  }
+  if (params.basePatchNum && params.basePatchNum !== PARENT) {
+    range = `${params.basePatchNum}..${range}`;
+  }
+  return range;
 }
 
 /**

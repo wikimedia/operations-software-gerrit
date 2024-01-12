@@ -93,7 +93,6 @@ import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.httpd.raw.IndexPreloadingUtil;
-import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.IndexConfig;
 import com.google.gerrit.index.PaginationType;
 import com.google.gerrit.index.Schema;
@@ -106,7 +105,6 @@ import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.ServerInitiated;
-import com.google.gerrit.server.StarredChangesUtil;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountManager;
 import com.google.gerrit.server.account.Accounts;
@@ -121,7 +119,6 @@ import com.google.gerrit.server.change.NotifyResolver;
 import com.google.gerrit.server.change.PatchSetInserter;
 import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.server.config.AllUsersName;
-import com.google.gerrit.server.experiments.ExperimentFeaturesConstants;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.group.testing.TestGroupBackend;
 import com.google.gerrit.server.index.change.ChangeField;
@@ -183,7 +180,7 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
   @Inject protected BatchUpdate.Factory updateFactory;
   @Inject protected AllProjectsName allProjectsName;
   @Inject protected ChangeInserter.Factory changeFactory;
-  @Inject protected Provider<ChangeQueryBuilder> queryBuilderProvider;
+  @Inject protected ChangeQueryBuilder queryBuilder;
   @Inject protected GerritApi gApi;
   @Inject protected IdentifiedUser.GenericFactory userFactory;
   @Inject protected ChangeIndexCollection indexes;
@@ -205,7 +202,6 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
   @Inject protected TestGroupBackend testGroupBackend;
   @Inject protected ProjectCache projectCache;
   @Inject protected MetaDataUpdate.Server metaDataUpdateFactory;
-  @Inject protected IdentifiedUser.GenericFactory identifiedUserFactory;
   @Inject protected AuthRequest.Factory authRequestFactory;
   @Inject protected ExternalIdFactory externalIdFactory;
   @Inject protected ProjectOperations projectOperations;
@@ -360,6 +356,18 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     assertThat(thrown).hasMessageThat().isEqualTo("Unrecognized value: draft");
     thrown = assertThrows(BadRequestException.class, () -> assertQuery("status:draft"));
     assertThat(thrown).hasMessageThat().isEqualTo("Unrecognized value: draft");
+  }
+
+  @Test
+  public void byStatusOr() throws Exception {
+    TestRepository<Repo> repo = createProject("repo");
+    ChangeInserter ins1 = newChangeWithStatus(repo, Change.Status.NEW);
+    Change change1 = insert(repo, ins1);
+    ChangeInserter ins2 = newChangeWithStatus(repo, Change.Status.MERGED);
+    Change change2 = insert(repo, ins2);
+
+    assertQuery("status:new OR status:merged", change2, change1);
+    assertQuery("status:new or status:merged", change2, change1);
   }
 
   @Test
@@ -647,7 +655,6 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
 
   @Test
   public void byAuthorExact() throws Exception {
-    assume().that(getSchema().hasField(ChangeField.EXACT_AUTHOR)).isTrue();
     byAuthorOrCommitterExact("author:");
   }
 
@@ -658,7 +665,6 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
 
   @Test
   public void byCommitterExact() throws Exception {
-    assume().that(getSchema().hasField(ChangeField.EXACT_COMMITTER)).isTrue();
     byAuthorOrCommitterExact("committer:");
   }
 
@@ -1569,6 +1575,12 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
   }
 
   @Test
+  public void startCannotBeLessThanZero() throws Exception {
+    assertFailingQuery(
+        newQuery("owner:self").withStart(-1), "'start' parameter cannot be less than zero");
+  }
+
+  @Test
   public void startWithLimit() throws Exception {
     TestRepository<Repo> repo = createProject("repo");
     List<Change> changes = new ArrayList<>();
@@ -1734,11 +1746,9 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     assertQuery("ext:.jAvA", change4);
     assertQuery("ext:cc", change3, change2, change1);
 
-    if (getSchemaVersion() >= 56) {
-      // matching changes with files that have no extension is possible
-      assertQuery("ext:\"\"", change5, change4);
-      assertFailingQuery("ext:");
-    }
+    // matching changes with files that have no extension is possible
+    assertQuery("ext:\"\"", change5, change4);
+    assertFailingQuery("ext:");
   }
 
   @Test
@@ -2098,21 +2108,6 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
           change1);
       assertQuery(
           makeIndexedPredicateFilterQuery(predicate + "\"2009-10-02 03:00:00 -0000\""), change2);
-    }
-  }
-
-  @Test
-  public void mergedOperatorSupportedByIndexVersion() throws Exception {
-    if (getSchemaVersion() < 61) {
-      assertMissingField(ChangeField.MERGED_ON);
-      assertFailingQuery(
-          "mergedbefore:2009-10-01",
-          "'mergedbefore' operator is not supported by change index version");
-      assertFailingQuery(
-          "mergedafter:2009-10-01",
-          "'mergedafter' operator is not supported by change index version");
-    } else {
-      assertThat(getSchema().hasField(ChangeField.MERGED_ON)).isTrue();
     }
   }
 
@@ -2600,10 +2595,6 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
 
   @Test
   public void bySubmitRuleResult() throws Exception {
-    if (getSchemaVersion() < 68) {
-      assertMissingField(ChangeField.SUBMIT_RULE_RESULT);
-      return;
-    }
     try (Registration registration =
         extensionRegistry.newRegistration().add(new FakeSubmitRule())) {
       TestRepository<Repo> repo = createProject("repo");
@@ -2624,13 +2615,6 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
 
   @Test
   public void byNonExistingSubmitRule_returnsEmpty() throws Exception {
-    // Some submit rules could be removed from the gerrit.config but there can be records for
-    // merged changes in NoteDb for these rules. We allow querying for non-existent rules to handle
-    // this case.
-    if (getSchemaVersion() < 68) {
-      assertMissingField(ChangeField.SUBMIT_RULE_RESULT);
-      return;
-    }
     try (Registration registration =
         extensionRegistry.newRegistration().add(new FakeSubmitRule())) {
       TestRepository<Repo> repo = createProject("repo");
@@ -2640,21 +2624,7 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
   }
 
   @Test
-  public void byHasDraft_draftsComputedFromIndex() throws Exception {
-    byHasDraft();
-  }
-
-  @Test
-  @GerritConfig(
-      name = "experiments.enabled",
-      value =
-          ExperimentFeaturesConstants
-              .GERRIT_BACKEND_REQUEST_FEATURE_COMPUTE_FROM_ALL_USERS_REPOSITORY)
-  public void byHasDraft_draftsComputedFromAllUsersRepository() throws Exception {
-    byHasDraft();
-  }
-
-  private void byHasDraft() throws Exception {
+  public void byHasDraft() throws Exception {
     TestRepository<Repo> repo = createProject("repo");
     Change change1 = insert(repo, newChange(repo));
     Change change2 = insert(repo, newChange(repo));
@@ -2724,20 +2694,8 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     assertQuery("has:draft");
   }
 
-  public void byHasDraftWithManyDrafts_draftsComputedFromIndex() throws Exception {
-    byHasDraftWithManyDrafts();
-  }
-
-  @GerritConfig(
-      name = "experiments.enabled",
-      value =
-          ExperimentFeaturesConstants
-              .GERRIT_BACKEND_REQUEST_FEATURE_COMPUTE_FROM_ALL_USERS_REPOSITORY)
-  public void byHasDraftWithManyDrafts_draftsComputedFromAllUsersRepository() throws Exception {
-    byHasDraftWithManyDrafts();
-  }
-
-  private void byHasDraftWithManyDrafts() throws Exception {
+  @Test
+  public void byHasDraftWithManyDrafts() throws Exception {
     TestRepository<Repo> repo = createProject("repo");
     Change[] changesWithDrafts = new Change[30];
 
@@ -2765,21 +2723,7 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
   }
 
   @Test
-  public void byStarredBy_starsComputedFromIndex() throws Exception {
-    byStarredBy();
-  }
-
-  @GerritConfig(
-      name = "experiments.enabled",
-      value =
-          ExperimentFeaturesConstants
-              .GERRIT_BACKEND_REQUEST_FEATURE_COMPUTE_FROM_ALL_USERS_REPOSITORY)
-  @Test
-  public void byStarredBy_starsComputedFromAllUsersRepository() throws Exception {
-    byStarredBy();
-  }
-
-  private void byStarredBy() throws Exception {
+  public void byStarredBy() throws Exception {
     TestRepository<Repo> repo = createProject("repo");
     Change change1 = insert(repo, newChange(repo));
     Change change2 = insert(repo, newChange(repo));
@@ -2792,102 +2736,29 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
         accountManager.authenticate(authRequestFactory.createForUser("anotheruser")).getAccountId();
 
     assertQuery("has:star", change2, change1);
-    assertQuery("star:star", change2, change1);
 
     requestContext.setContext(newRequestContext(user2));
     assertQuery("has:star");
-    assertQuery("star:star");
   }
 
   @Test
-  public void byStar_starsComputedFromIndex() throws Exception {
-    byStar();
-  }
-
-  @GerritConfig(
-      name = "experiments.enabled",
-      value =
-          ExperimentFeaturesConstants
-              .GERRIT_BACKEND_REQUEST_FEATURE_COMPUTE_FROM_ALL_USERS_REPOSITORY)
-  @Test
-  public void byStar_starsComputedFromAllUsersRepository() throws Exception {
-    byStar();
-  }
-
-  private void byStar() throws Exception {
+  public void byStar() throws Exception {
     TestRepository<Repo> repo = createProject("repo");
     Change change1 = insert(repo, newChangeWithStatus(repo, Change.Status.MERGED));
-    Change change2 = insert(repo, newChangeWithStatus(repo, Change.Status.MERGED));
-    Change change3 = insert(repo, newChange(repo));
 
     Account.Id user2 =
         accountManager.authenticate(authRequestFactory.createForUser("anotheruser")).getAccountId();
     requestContext.setContext(newRequestContext(user2));
 
     gApi.accounts().self().starChange(change1.getId().toString());
-    gApi.changes().id(change3.getChangeId()).ignore(true);
 
     // check default star
     assertQuery("has:star", change1);
     assertQuery("is:starred", change1);
-    assertQuery("star:" + StarredChangesUtil.DEFAULT_LABEL, change1);
-
-    // check ignored
-    assertQuery("is:ignored", change3);
-    assertQuery("-is:ignored", change2, change1);
-    assertQuery("star:ignore", change3);
-    assertQuery("-star:ignore", change2, change1);
   }
 
   @Test
-  public void byIgnore_starsComputedFromIndex() throws Exception {
-    byIgnore();
-  }
-
-  @Test
-  @GerritConfig(
-      name = "experiments.enabled",
-      value =
-          ExperimentFeaturesConstants
-              .GERRIT_BACKEND_REQUEST_FEATURE_COMPUTE_FROM_ALL_USERS_REPOSITORY)
-  public void byIgnore_starsComputedFromAllUsersRepository() throws Exception {
-    byIgnore();
-  }
-
-  private void byIgnore() throws Exception {
-    TestRepository<Repo> repo = createProject("repo");
-    Account.Id user2 =
-        accountManager.authenticate(authRequestFactory.createForUser("anotheruser")).getAccountId();
-    Change change1 = insert(repo, newChange(repo), user2);
-    Change change2 = insert(repo, newChange(repo), user2);
-
-    gApi.changes().id(change1.getId().toString()).ignore(true);
-    assertQuery("is:ignored", change1);
-    assertQuery("-is:ignored", change2);
-    assertQuery("star:ignore", change1);
-    assertQuery("-star:ignore", change2);
-
-    gApi.changes().id(change1.getId().toString()).ignore(false);
-    assertQuery("is:ignored");
-    assertQuery("-is:ignored", change2, change1);
-    assertQuery("star:ignore");
-    assertQuery("-star:ignore", change2, change1);
-  }
-
-  public void byStarWithManyStars_starsComputedFromIndex() throws Exception {
-    byStarWithManyStars();
-  }
-
-  @GerritConfig(
-      name = "experiments.enabled",
-      value =
-          ExperimentFeaturesConstants
-              .GERRIT_BACKEND_REQUEST_FEATURE_COMPUTE_FROM_ALL_USERS_REPOSITORY)
-  public void byStarWithManyStars_starsComputedFromAllUsersRepository() throws Exception {
-    byStarWithManyStars();
-  }
-
-  private void byStarWithManyStars() throws Exception {
+  public void byStarWithManyStars() throws Exception {
     TestRepository<Repo> repo = createProject("repo");
     Change[] changesWithDrafts = new Change[30];
     for (int i = 0; i < changesWithDrafts.length; i++) {
@@ -2898,15 +2769,9 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
       gApi.accounts()
           .self()
           .starChange(changesWithDrafts[changesWithDrafts.length - 1 - i].getId().toString());
-
-      // ignore the change
-      gApi.changes()
-          .id(changesWithDrafts[changesWithDrafts.length - 1 - i].getId().toString())
-          .ignore(true);
     }
 
     // all changes are both starred and ignored.
-    assertQuery("is:ignored", changesWithDrafts);
     assertQuery("is:starred", changesWithDrafts);
   }
 
@@ -3422,13 +3287,19 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
         repo.parseBody(repo.commit().message("Change one\n\nBug:QUERY123").create());
     Change change1 = insert(repo, newChangeForCommit(repo, commit1));
     RevCommit commit2 =
-        repo.parseBody(repo.commit().message("Change two\n\nFeature:QUERY456").create());
+        repo.parseBody(repo.commit().message("Change two\n\nIssue: Issue 16038\n").create());
     Change change2 = insert(repo, newChangeForCommit(repo, commit2));
+
+    RevCommit commit3 =
+        repo.parseBody(repo.commit().message("Change two\n\nGoogle-Bug-Id: b/16039\n").create());
+    Change change3 = insert(repo, newChangeForCommit(repo, commit3));
 
     assertQuery("tr:QUERY123", change1);
     assertQuery("bug:QUERY123", change1);
-    assertQuery("tr:QUERY456", change2);
-    assertQuery("bug:QUERY456", change2);
+    assertQuery("tr:16038", change2);
+    assertQuery("bug:16038", change2);
+    assertQuery("tr:16039", change3);
+    assertQuery("bug:16039", change3);
     assertQuery("tr:QUERY-123");
     assertQuery("bug:QUERY-123");
     assertQuery("tr:QUERY12");
@@ -3480,7 +3351,6 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     private final Account.Id ownerId;
     private final List<Account.Id> reviewedBy;
     private final List<Account.Id> cced;
-    private final List<Account.Id> ignoredBy;
     private final List<Account.Id> draftCommentBy;
     private final List<Account.Id> deleteDraftCommentBy;
     private boolean wip;
@@ -3494,7 +3364,6 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
       this.ownerId = ownerId;
       reviewedBy = new ArrayList<>();
       cced = new ArrayList<>();
-      ignoredBy = new ArrayList<>();
       draftCommentBy = new ArrayList<>();
       deleteDraftCommentBy = new ArrayList<>();
     }
@@ -3516,11 +3385,6 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
 
     DashboardChangeState mergeBy(Account.Id mergedBy) {
       this.mergedBy = mergedBy;
-      return this;
-    }
-
-    DashboardChangeState ignoreBy(Account.Id ignorerId) {
-      ignoredBy.add(ignorerId);
       return this;
     }
 
@@ -3568,10 +3432,6 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
         in.reviewer = reviewerId.toString();
         in.state = ReviewerState.CC;
         cApi.addReviewer(in);
-      }
-      for (Account.Id ignorerId : ignoredBy) {
-        requestContext.setContext(newRequestContext(ignorerId));
-        gApi.changes().id(change.getChangeId()).ignore(true);
       }
       DraftInput in = new DraftInput();
       in.path = Patch.COMMIT_MSG;
@@ -3650,9 +3510,6 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     new DashboardChangeState(user.getAccountId()).assignTo(user.getAccountId()).abandon();
     new DashboardChangeState(user.getAccountId())
         .assignTo(user.getAccountId())
-        .ignoreBy(user.getAccountId());
-    new DashboardChangeState(user.getAccountId())
-        .assignTo(user.getAccountId())
         .mergeBy(user.getAccountId());
 
     assertDashboardQuery(
@@ -3685,19 +3542,13 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     Account.Id otherAccountId = createAccount("other");
     DashboardChangeState ownedOpenReviewable =
         new DashboardChangeState(user.getAccountId()).create(repo);
-    DashboardChangeState ownedOpenReviewableIgnoredByOther =
-        new DashboardChangeState(user.getAccountId()).ignoreBy(otherAccountId).create(repo);
 
     // Create changes that should not be returned by any queries in this test.
     new DashboardChangeState(user.getAccountId()).wip().create(repo);
     new DashboardChangeState(otherAccountId).create(repo);
 
     // Viewing one's own dashboard.
-    assertDashboardQuery(
-        "self",
-        IndexPreloadingUtil.DASHBOARD_OUTGOING_QUERY,
-        ownedOpenReviewableIgnoredByOther,
-        ownedOpenReviewable);
+    assertDashboardQuery("self", IndexPreloadingUtil.DASHBOARD_OUTGOING_QUERY, ownedOpenReviewable);
 
     // Viewing another user's dashboard.
     requestContext.setContext(newRequestContext(otherAccountId));
@@ -3713,18 +3564,8 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     Account.Id otherAccountId = createAccount("other");
     DashboardChangeState reviewingReviewable =
         new DashboardChangeState(otherAccountId).addReviewer(user.getAccountId()).create(repo);
-    DashboardChangeState reviewingReviewableIgnoredByReviewer =
-        new DashboardChangeState(otherAccountId)
-            .addReviewer(user.getAccountId())
-            .ignoreBy(user.getAccountId())
-            .create(repo);
     DashboardChangeState assignedReviewable =
         new DashboardChangeState(otherAccountId).assignTo(user.getAccountId()).create(repo);
-    DashboardChangeState assignedReviewableIgnoredByAssignee =
-        new DashboardChangeState(otherAccountId)
-            .assignTo(user.getAccountId())
-            .ignoreBy(user.getAccountId())
-            .create(repo);
 
     // Create changes that should not be returned by any queries in this test.
     new DashboardChangeState(otherAccountId).wip().addReviewer(user.getAccountId()).create(repo);
@@ -3747,9 +3588,7 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     assertDashboardQuery(
         user.getUserName().get(),
         IndexPreloadingUtil.DASHBOARD_INCOMING_QUERY,
-        assignedReviewableIgnoredByAssignee,
         assignedReviewable,
-        reviewingReviewableIgnoredByReviewer,
         reviewingReviewable);
   }
 
@@ -3759,20 +3598,9 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     Account.Id otherAccountId = createAccount("other");
     DashboardChangeState mergedOwned =
         new DashboardChangeState(user.getAccountId()).mergeBy(user.getAccountId()).create(repo);
-    DashboardChangeState mergedOwnedIgnoredByOther =
-        new DashboardChangeState(user.getAccountId())
-            .ignoreBy(otherAccountId)
-            .mergeBy(user.getAccountId())
-            .create(repo);
     DashboardChangeState mergedReviewing =
         new DashboardChangeState(otherAccountId)
             .addReviewer(user.getAccountId())
-            .mergeBy(user.getAccountId())
-            .create(repo);
-    DashboardChangeState mergedReviewingIgnoredByUser =
-        new DashboardChangeState(otherAccountId)
-            .addReviewer(user.getAccountId())
-            .ignoreBy(user.getAccountId())
             .mergeBy(user.getAccountId())
             .create(repo);
     DashboardChangeState mergedCced =
@@ -3785,36 +3613,13 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
             .assignTo(user.getAccountId())
             .mergeBy(user.getAccountId())
             .create(repo);
-    DashboardChangeState mergedAssignedIgnoredByUser =
-        new DashboardChangeState(otherAccountId)
-            .assignTo(user.getAccountId())
-            .ignoreBy(user.getAccountId())
-            .mergeBy(user.getAccountId())
-            .create(repo);
     DashboardChangeState abandonedOwned =
         new DashboardChangeState(user.getAccountId()).abandon().create(repo);
-    DashboardChangeState abandonedOwnedIgnoredByOther =
-        new DashboardChangeState(user.getAccountId())
-            .ignoreBy(otherAccountId)
-            .abandon()
-            .create(repo);
     DashboardChangeState abandonedOwnedWip =
         new DashboardChangeState(user.getAccountId()).wip().abandon().create(repo);
-    DashboardChangeState abandonedOwnedWipIgnoredByOther =
-        new DashboardChangeState(user.getAccountId())
-            .ignoreBy(otherAccountId)
-            .wip()
-            .abandon()
-            .create(repo);
     DashboardChangeState abandonedReviewing =
         new DashboardChangeState(otherAccountId)
             .addReviewer(user.getAccountId())
-            .abandon()
-            .create(repo);
-    DashboardChangeState abandonedReviewingIgnoredByUser =
-        new DashboardChangeState(otherAccountId)
-            .addReviewer(user.getAccountId())
-            .ignoreBy(user.getAccountId())
             .abandon()
             .create(repo);
     DashboardChangeState abandonedAssigned =
@@ -3822,22 +3627,9 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
             .assignTo(user.getAccountId())
             .abandon()
             .create(repo);
-    DashboardChangeState abandonedAssignedIgnoredByUser =
-        new DashboardChangeState(otherAccountId)
-            .assignTo(user.getAccountId())
-            .ignoreBy(user.getAccountId())
-            .abandon()
-            .create(repo);
     DashboardChangeState abandonedAssignedWip =
         new DashboardChangeState(otherAccountId)
             .assignTo(user.getAccountId())
-            .wip()
-            .abandon()
-            .create(repo);
-    DashboardChangeState abandonedAssignedWipIgnoredByUser =
-        new DashboardChangeState(otherAccountId)
-            .assignTo(user.getAccountId())
-            .ignoreBy(user.getAccountId())
             .wip()
             .abandon()
             .create(repo);
@@ -3848,12 +3640,6 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
         .wip()
         .abandon()
         .create(repo);
-    new DashboardChangeState(otherAccountId)
-        .addReviewer(user.getAccountId())
-        .ignoreBy(user.getAccountId())
-        .wip()
-        .abandon()
-        .create(repo);
 
     // Viewing one's own dashboard.
     assertDashboardQuery(
@@ -3861,39 +3647,24 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
         IndexPreloadingUtil.DASHBOARD_RECENTLY_CLOSED_QUERY,
         abandonedAssigned,
         abandonedReviewing,
-        abandonedOwnedWipIgnoredByOther,
         abandonedOwnedWip,
-        abandonedOwnedIgnoredByOther,
         abandonedOwned,
         mergedAssigned,
         mergedCced,
         mergedReviewing,
-        mergedOwnedIgnoredByOther);
-
-    assertDashboardQueryWithStart(
-        "self", IndexPreloadingUtil.DASHBOARD_RECENTLY_CLOSED_QUERY, 10, mergedOwned);
+        mergedOwned);
 
     // Viewing another user's dashboard.
     requestContext.setContext(newRequestContext(otherAccountId));
     assertDashboardQuery(
         user.getUserName().get(),
         IndexPreloadingUtil.DASHBOARD_RECENTLY_CLOSED_QUERY,
-        abandonedAssignedWipIgnoredByUser,
         abandonedAssignedWip,
-        abandonedAssignedIgnoredByUser,
         abandonedAssigned,
-        abandonedReviewingIgnoredByUser,
         abandonedReviewing,
         abandonedOwned,
-        mergedAssignedIgnoredByUser,
         mergedAssigned,
-        mergedCced);
-
-    assertDashboardQueryWithStart(
-        user.getUserName().get(),
-        IndexPreloadingUtil.DASHBOARD_RECENTLY_CLOSED_QUERY,
-        10,
-        mergedReviewingIgnoredByUser,
+        mergedCced,
         mergedReviewing,
         mergedOwned);
   }
@@ -4198,7 +3969,7 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
 
   @Test
   public void selfFailsForAnonymousUser() throws Exception {
-    for (String query : ImmutableList.of("assignee:self", "has:star", "is:starred", "star:star")) {
+    for (String query : ImmutableList.of("assignee:self", "has:star", "is:starred")) {
       assertQuery(query);
       RequestContext oldContext = requestContext.setContext(anonymousUserProvider::get);
 
@@ -4239,7 +4010,6 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
 
     assertQuery(ChangeIndexPredicate.none());
 
-    ChangeQueryBuilder queryBuilder = queryBuilderProvider.get();
     for (Predicate<ChangeData> matchingOneChange :
         ImmutableList.of(
             // One index query, one post-filtering query.
@@ -4609,14 +4379,17 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     }
   }
 
-  protected void assertMissingField(FieldDef<ChangeData, ?> field) {
-    assertWithMessage("schema %s has field %s", getSchemaVersion(), field.getName())
-        .that(getSchema().hasField(field))
-        .isFalse();
-  }
-
   protected void assertFailingQuery(String query) throws Exception {
     assertFailingQuery(query, null);
+  }
+
+  protected void assertFailingQuery(QueryRequest query, String expectedMessage) throws Exception {
+    try {
+      assertQuery(query);
+      fail("expected BadRequestException for query '" + query + "'");
+    } catch (BadRequestException e) {
+      assertThat(e.getMessage()).isEqualTo(expectedMessage);
+    }
   }
 
   protected void assertFailingQuery(String query, @Nullable String expectedMessage)
@@ -4629,10 +4402,6 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
         assertThat(e.getMessage()).isEqualTo(expectedMessage);
       }
     }
-  }
-
-  protected int getSchemaVersion() {
-    return getSchema().getVersion();
   }
 
   protected Schema<ChangeData> getSchema() {

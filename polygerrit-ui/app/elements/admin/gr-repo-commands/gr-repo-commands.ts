@@ -1,20 +1,8 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../plugins/gr-endpoint-param/gr-endpoint-param';
@@ -22,11 +10,11 @@ import '../../shared/gr-button/gr-button';
 import '../../shared/gr-dialog/gr-dialog';
 import '../../shared/gr-overlay/gr-overlay';
 import '../gr-create-change-dialog/gr-create-change-dialog';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {
   BranchName,
   ConfigInfo,
-  PatchSetNum,
+  RevisionPatchSetNum,
   RepoName,
 } from '../../../types/common';
 import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
@@ -43,14 +31,16 @@ import {formStyles} from '../../../styles/gr-form-styles';
 import {subpageStyles} from '../../../styles/gr-subpage-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, css, html} from 'lit';
-import {customElement, query, property, state} from 'lit/decorators';
+import {customElement, query, property, state} from 'lit/decorators.js';
 import {assertIsDefined} from '../../../utils/common-util';
+import {createEditUrl} from '../../../models/views/edit';
+import {resolve} from '../../../models/dependency';
 
 const GC_MESSAGE = 'Garbage collection completed successfully.';
 const CONFIG_BRANCH = 'refs/meta/config' as BranchName;
 const CONFIG_PATH = 'project.config';
 const EDIT_CONFIG_SUBJECT = 'Edit Repo Config';
-const INITIAL_PATCHSET = 1 as PatchSetNum;
+const INITIAL_PATCHSET = 1 as RevisionPatchSetNum;
 const CREATE_CHANGE_FAILED_MESSAGE = 'Failed to create change.';
 const CREATE_CHANGE_SUCCEEDED_MESSAGE = 'Navigating to change';
 
@@ -85,6 +75,8 @@ export class GrRepoCommands extends LitElement {
 
   private readonly restApiService = getAppContext().restApiService;
 
+  private readonly getNavigation = resolve(this, navigationToken);
+
   override connectedCallback() {
     super.connectedCallback();
     fireTitleChange(this, 'Repo Commands');
@@ -97,8 +89,12 @@ export class GrRepoCommands extends LitElement {
       subpageStyles,
       sharedStyles,
       css`
-        #form gr-button {
-          margin-bottom: var(--spacing-xxl);
+        #form h2,
+        h3 {
+          margin-top: var(--spacing-xxl);
+        }
+        p {
+          padding: var(--spacing-m) 0;
         }
       `,
     ];
@@ -112,27 +108,44 @@ export class GrRepoCommands extends LitElement {
           Loading...
         </div>
         <div id="loadedContent" class=${this.loading ? 'loading' : ''}>
-          <h2 id="options" class="heading-2">Command</h2>
           <div id="form">
-            <h3 class="heading-3">Create change</h3>
-            <gr-button
-              ?loading=${this.creatingChange}
-              @click=${() => {
-                this.createNewChange();
-              }}
-            >
-              Create change
-            </gr-button>
-            <h3 class="heading-3">Edit repo config</h3>
-            <gr-button
-              id="editRepoConfig"
-              ?loading=${this.editingConfig}
-              @click=${() => {
-                this.handleEditRepoConfig();
-              }}
-            >
-              Edit repo config
-            </gr-button>
+            <h2 class="heading-2">Create change</h2>
+            <div>
+              <p>
+                Creates an empty work-in-progress change that can be used to
+                edit files online and send the modifications for review.
+              </p>
+            </div>
+            <div>
+              <gr-button
+                ?loading=${this.creatingChange}
+                @click=${() => {
+                  this.createNewChange();
+                }}
+              >
+                Create change
+              </gr-button>
+            </div>
+            <h2 class="heading-2">Edit repo config</h2>
+            <div>
+              <p>
+                Creates a work-in-progress change that allows to edit the
+                <code>project.config</code> file in the
+                <code>refs/meta/config</code> branch and send the modifications
+                for review.
+              </p>
+            </div>
+            <div>
+              <gr-button
+                id="editRepoConfig"
+                ?loading=${this.editingConfig}
+                @click=${() => {
+                  this.handleEditRepoConfig();
+                }}
+              >
+                Edit repo config
+              </gr-button>
+            </div>
             ${this.renderRepoGarbageCollector()}
             <gr-endpoint-decorator name="repo-command">
               <gr-endpoint-param name="config" .value=${this.repoConfig}>
@@ -275,8 +288,13 @@ export class GrRepoCommands extends LitElement {
           return;
         }
 
-        GerritNav.navigateToRelativeUrl(
-          GerritNav.getEditUrlForDiff(change, CONFIG_PATH, INITIAL_PATCHSET)
+        this.getNavigation().setUrl(
+          createEditUrl({
+            changeNum: change._number,
+            project: change.project,
+            path: CONFIG_PATH,
+            patchNum: INITIAL_PATCHSET,
+          })
         );
       })
       .finally(() => {

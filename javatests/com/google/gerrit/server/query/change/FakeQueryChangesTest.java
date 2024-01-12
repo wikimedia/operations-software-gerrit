@@ -201,7 +201,7 @@ public abstract class FakeQueryChangesTest extends AbstractQueryChangesTest {
     // 2 index searches are expected. The first index search will run with size 3 (i.e.
     // the configured query-limit+1), and then we will paginate to get the remaining
     // changes with the second index search.
-    queryProvider.get().query(queryBuilderProvider.get().parse("status:new"));
+    queryProvider.get().query(queryBuilder.parse("status:new"));
     assertThat(idx.getQueryCount()).isEqualTo(LIMIT);
   }
 
@@ -218,7 +218,7 @@ public abstract class FakeQueryChangesTest extends AbstractQueryChangesTest {
   }
 
   private void executeQuery(String query) throws QueryParseException {
-    queryProvider.get().query(queryBuilderProvider.get().parse(query));
+    queryProvider.get().query(queryBuilder.parse(query));
   }
 
   private void assertThatSearchQueryWasNotPaginated(int queryCount) {

@@ -1,24 +1,13 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {getRootElement} from '../../scripts/rootElement';
 import {Constructor} from '../../utils/common-util';
 import {LitElement, PropertyValues} from 'lit';
-import {property, query} from 'lit/decorators';
-import {ShowAlertEventDetail} from '../../types/events';
+import {property, query} from 'lit/decorators.js';
+import {EventType, ShowAlertEventDetail} from '../../types/events';
 import {debounce, DelayedTask} from '../../utils/async-util';
 import {hovercardStyles} from '../../styles/gr-hovercard-styles';
 import {sharedStyles} from '../../styles/shared-styles';
@@ -35,6 +24,11 @@ import {
   getFocusableElements,
   getFocusableElementsReverse,
 } from '../../utils/focusable';
+import {getAppContext} from '../../services/app-context';
+import {
+  ReportingService,
+  Timer,
+} from '../../services/gr-reporting/gr-reporting';
 
 interface ReloadEventDetail {
   clearPatchset?: boolean;
@@ -147,6 +141,10 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
 
     openedByKeyboard = false;
 
+    reporting: ReportingService = getAppContext().reportingService;
+
+    reportingTimer?: Timer;
+
     private targetCleanups: Array<() => void> = [];
 
     /** Called in disconnectedCallback. */
@@ -188,7 +186,7 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
             this.pressTab(e);
           },
           {
-            doNotPrevent: true,
+            preventDefault: false,
           }
         )
       );
@@ -200,7 +198,7 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
             this.pressShiftTab(e);
           },
           {
-            doNotPrevent: true,
+            preventDefault: false,
           }
         )
       );
@@ -315,7 +313,7 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
     dispatchEventThroughTarget(eventName: string): void;
 
     dispatchEventThroughTarget(
-      eventName: 'show-alert',
+      eventName: EventType.SHOW_ALERT,
       detail: ShowAlertEventDetail
     ): void;
 
@@ -426,6 +424,10 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
         this.container.removeChild(this);
       }
       document.removeEventListener('click', this.documentClickListener);
+      this.reportingTimer?.end({
+        targetId: this._target?.id,
+        tagName: this.tagName,
+      });
     };
 
     /**
@@ -520,6 +522,7 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
         this.focus();
       }
       document.addEventListener('click', this.documentClickListener);
+      this.reportingTimer = this.reporting.getTimer('Show Hovercard');
     };
 
     updatePosition() {

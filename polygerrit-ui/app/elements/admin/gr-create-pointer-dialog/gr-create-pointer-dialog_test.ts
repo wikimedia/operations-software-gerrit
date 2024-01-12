@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-create-pointer-dialog';
 import {GrCreatePointerDialog} from './gr-create-pointer-dialog';
 import {
@@ -24,10 +12,9 @@ import {
   stubRestApi,
 } from '../../../test/test-utils';
 import {BranchName} from '../../../types/common';
-import {RepoDetailView} from '../../core/gr-navigation/gr-navigation';
 import {IronInputElement} from '@polymer/iron-input';
-
-const basicFixture = fixtureFromElement('gr-create-pointer-dialog');
+import {fixture, html, assert} from '@open-wc/testing';
+import {RepoDetailView} from '../../../models/views/repo';
 
 suite('gr-create-pointer-dialog tests', () => {
   let element: GrCreatePointerDialog;
@@ -36,8 +23,39 @@ suite('gr-create-pointer-dialog tests', () => {
     queryAndAssert<IronInputElement>(element, 'iron-input');
 
   setup(async () => {
-    element = basicFixture.instantiate();
-    await element.updateComplete;
+    element = await fixture(
+      html`<gr-create-pointer-dialog></gr-create-pointer-dialog>`
+    );
+  });
+
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="gr-form-styles">
+          <div id="form">
+            <section id="itemNameSection">
+              <span class="title"> name </span>
+              <iron-input>
+                <input placeholder=" Name" />
+              </iron-input>
+            </section>
+            <section id="itemRevisionSection">
+              <span class="title"> Initial Revision </span>
+              <iron-input>
+                <input placeholder="Revision (Branch or SHA-1)" />
+              </iron-input>
+            </section>
+            <section id="itemAnnotationSection">
+              <span class="title"> Annotation </span>
+              <iron-input>
+                <input placeholder="Annotation (Optional)" />
+              </iron-input>
+            </section>
+          </div>
+        </div>
+      `
+    );
   });
 
   test('branch created', async () => {

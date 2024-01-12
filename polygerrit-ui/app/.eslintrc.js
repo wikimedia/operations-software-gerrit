@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 // Do not add any bazel-specific properties in this file to keep it clean.
@@ -238,9 +227,13 @@ module.exports = {
     'import/no-unused-modules': 2,
     // https://github.com/benmosher/eslint-plugin-import/blob/master/docs/rules/no-default-export.md
     'import/no-default-export': 2,
-    // Prevents certain identifiers being used.
-    // Prefer flush() over flushAsynchronousOperations().
-    'id-blacklist': ['error', 'flushAsynchronousOperations'],
+    'regex/invalid': [
+      'error', [{
+        // eslint-disable-next-line regex/invalid
+        regex: 'Licensed under',
+        message: 'Please use SPDX license headers.',
+      }],
+    ],
   },
 
   // List of allowed globals in all files
@@ -273,9 +266,6 @@ module.exports = {
         'jsdoc/require-param-type': 2,
         // https://github.com/gajus/eslint-plugin-jsdoc#eslint-plugin-jsdoc-rules-require-returns-type
         'jsdoc/require-returns-type': 2,
-        // The rule is required for .js files only, because typescript compiler
-        // always checks import.
-        'import/no-unresolved': 2,
         'import/named': 2,
       },
       globals: {
@@ -298,6 +288,19 @@ module.exports = {
       files: ['**/*.ts'],
       extends: [require.resolve('gts/.eslintrc.json')],
       rules: {
+        'regex/invalid': [
+          'error', [{
+            regex: '\'lit/decorators\'',
+            message: 'use \'lit/decorators.js\' instead',
+            replacement: '\'lit/decorators.js\'',
+          }, {
+            regex: '\'lit/directives/([^.\']*)\'',
+            message: 'use \'lit/directives/foo.js\' instead',
+            replacement: {
+              function: 'return "\'lit/directives/" + $[1] + ".js\'"',
+            },
+          }],
+        ],
         'no-restricted-imports': ['error', {
           name: 'lit-html/static',
           message: 'Use lit instead',
@@ -314,6 +317,8 @@ module.exports = {
         // The following rules is required to match internal google rules
         '@typescript-eslint/restrict-plus-operands': 'error',
         '@typescript-eslint/no-unnecessary-type-assertion': 'error',
+        'require-await': 'off',
+        '@typescript-eslint/require-await': 'error',
         '@typescript-eslint/no-confusing-void-expression': [
           'error',
           {ignoreArrowShorthand: true},
@@ -326,7 +331,7 @@ module.exports = {
         'node/no-unsupported-features/node-builtins': 'off',
         // Disable no-invalid-this for ts files, because it incorrectly reports
         // errors in some cases (see https://github.com/typescript-eslint/typescript-eslint/issues/491)
-        // At the same time, we are using typescript in a strict mode and
+        // At the same tigit llme, we are using typescript in a strict mode and
         // it catches almost all errors related to invalid usage of this.
         'no-invalid-this': 'off',
 
@@ -348,6 +353,7 @@ module.exports = {
       ],
       rules: {
         '@typescript-eslint/no-explicit-any': 'off',
+        '@typescript-eslint/require-await': 'off',
       },
     },
     {
@@ -367,13 +373,6 @@ module.exports = {
         // Global variables from 3rd party test libraries/frameworks.
         // You can extend this list if you want to use other global
         // variables from these libraries and import is not possible
-        MockInteractions: 'readonly',
-        _: 'readonly',
-        axs: 'readonly',
-        a11ySuite: 'readonly',
-        assert: 'readonly',
-        expect: 'readonly',
-        fixture: 'readonly',
         flush: 'readonly',
         setup: 'readonly',
         sinon: 'readonly',
@@ -383,8 +382,6 @@ module.exports = {
         suiteTeardown: 'readonly',
         teardown: 'readonly',
         test: 'readonly',
-        fixtureFromElement: 'readonly',
-        fixtureFromTemplate: 'readonly',
       },
     },
     {

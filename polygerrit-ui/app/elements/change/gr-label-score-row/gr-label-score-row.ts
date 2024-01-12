@@ -1,25 +1,14 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '@polymer/iron-selector/iron-selector';
 import '../../shared/gr-button/gr-button';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {css, html, LitElement} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
-import {ifDefined} from 'lit/directives/if-defined';
+import {customElement, property, query, state} from 'lit/decorators.js';
+import {ifDefined} from 'lit/directives/if-defined.js';
 import {IronSelectorElement} from '@polymer/iron-selector/iron-selector';
 import {
   LabelNameToInfoMap,
@@ -27,9 +16,6 @@ import {
   DetailedLabelInfo,
 } from '../../../types/common';
 import {assertIsDefined, hasOwnProperty} from '../../../utils/common-util';
-import {getAppContext} from '../../../services/app-context';
-import {KnownExperimentId} from '../../../services/flags/flags';
-import {classMap} from 'lit/directives/class-map';
 import {Label} from '../../../utils/label-util';
 import {LabelNameToValuesMap} from '../../../api/rest-api';
 
@@ -68,12 +54,6 @@ export class GrLabelScoreRow extends LitElement {
   @state()
   private selectedValueText = 'No value selected';
 
-  private readonly flagsService = getAppContext().flagsService;
-
-  private readonly isSubmitRequirementsUiEnabled = this.flagsService.isEnabled(
-    KnownExperimentId.SUBMIT_REQUIREMENTS_UI
-  );
-
   static override get styles() {
     return [
       sharedStyles,
@@ -86,9 +66,7 @@ export class GrLabelScoreRow extends LitElement {
         }
         /* We want the :hover highlight to extend to the border of the dialog. */
         .labelNameCell {
-          padding-left: var(--spacing-xl);
-        }
-        .labelNameCell.newSubmitRequirements {
+          padding-left: var(--label-score-padding-left, 0);
           width: 160px;
         }
         .selectedValueCell {
@@ -100,9 +78,6 @@ export class GrLabelScoreRow extends LitElement {
           white-space: nowrap;
         }
         .selectedValueCell {
-          width: 75%;
-        }
-        .selectedValueCell.newSubmitRequirements {
           width: 52%;
         }
         .labelMessage {
@@ -175,13 +150,7 @@ export class GrLabelScoreRow extends LitElement {
 
   override render() {
     return html`
-      <span
-        class=${classMap({
-          labelNameCell: true,
-          newSubmitRequirements: this.isSubmitRequirementsUiEnabled,
-        })}
-        id="labelName"
-        aria-hidden="true"
+      <span class="labelNameCell" id="labelName" aria-hidden="true"
         >${this.label?.name ?? ''}</span
       >
       ${this.renderButtonsCell()} ${this.renderSelectedValue()}
@@ -230,7 +199,7 @@ export class GrLabelScoreRow extends LitElement {
     return items.map(
       (value, index) => html`
         <gr-button
-          role="radio"
+          role="button"
           title=${ifDefined(this.computeLabelValueTitle(value))}
           data-vote=${this._computeVoteAttribute(
             Number(value),
@@ -257,12 +226,7 @@ export class GrLabelScoreRow extends LitElement {
 
   private renderSelectedValue() {
     return html`
-      <div
-        class=${classMap({
-          selectedValueCell: true,
-          newSubmitRequirements: this.isSubmitRequirementsUiEnabled,
-        })}
-      >
+      <div class="selectedValueCell">
         <span id="selectedValueLabel">${this.selectedValueText}</span>
       </div>
     `;
@@ -361,7 +325,6 @@ export class GrLabelScoreRow extends LitElement {
 
   // Private but used in tests.
   _computeLabelValue() {
-    // Polymer 2+ undefined check
     if (!this.labels || !this.permittedLabels || !this.label) {
       return undefined;
     }
@@ -419,13 +382,23 @@ export class GrLabelScoreRow extends LitElement {
     return this.permittedLabels[this.label.name] || [];
   }
 
-  private computeLabelValueTitle(value: string) {
+  // private but used in tests
+  computeLabelValueTitle(value: string) {
     if (!this.labels || !this.label) return '';
-    const label = this.labels[this.label.name];
-    if (label && (label as DetailedLabelInfo).values) {
+    const label = this.labels[this.label.name] as DetailedLabelInfo;
+    if (label && label.values) {
+      // In case the user already voted a certain value and then selects 0
+      // we should show "Reset Vote" instead of "No Value selected"
+      if (
+        Number(value) === 0 &&
+        this.label.value &&
+        Number(this.label.value) !== 0
+      ) {
+        return 'Reset Vote';
+      }
       // TODO(TS): maybe add a type guard for DetailedLabelInfo and
       // QuickLabelInfo
-      return (label as DetailedLabelInfo).values![value];
+      return label.values[value];
     } else {
       return '';
     }

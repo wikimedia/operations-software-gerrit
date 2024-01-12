@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '../../../styles/shared-styles';
 import '../../../styles/gr-font-styles';
@@ -24,16 +13,13 @@ import '../../plugins/gr-external-style/gr-external-style';
 import '../../shared/gr-account-chip/gr-account-chip';
 import '../../shared/gr-date-formatter/gr-date-formatter';
 import '../../shared/gr-editable-label/gr-editable-label';
-import '../../shared/gr-icons/gr-icons';
+import '../../shared/gr-icon/gr-icon';
 import '../../shared/gr-limited-text/gr-limited-text';
 import '../../shared/gr-linked-chip/gr-linked-chip';
 import '../../shared/gr-tooltip-content/gr-tooltip-content';
 import '../gr-submit-requirements/gr-submit-requirements';
-import '../gr-change-requirements/gr-change-requirements';
 import '../gr-commit-info/gr-commit-info';
 import '../gr-reviewer-list/gr-reviewer-list';
-import '../../shared/gr-account-list/gr-account-list';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {
   ChangeStatus,
   GpgKeyInfoStatus,
@@ -58,13 +44,12 @@ import {
   LabelNameToInfoMap,
   NumericChangeId,
   ParentCommitInfo,
-  PatchSetNum,
+  RevisionPatchSetNum,
   RepoName,
   RevisionInfo,
   ServerInfo,
-  TopicName,
 } from '../../../types/common';
-import {assertNever, unique} from '../../../utils/common-util';
+import {assertIsDefined, assertNever, unique} from '../../../utils/common-util';
 import {GrEditableLabel} from '../../shared/gr-editable-label/gr-editable-label';
 import {GrLinkedChip} from '../../shared/gr-linked-chip/gr-linked-chip';
 import {getAppContext} from '../../../services/app-context';
@@ -73,7 +58,7 @@ import {
   isSectionSet,
   DisplayRules,
 } from '../../../utils/change-metadata-util';
-import {fireEvent} from '../../../utils/event-util';
+import {fireAlert, fireEvent, fireReload} from '../../../utils/event-util';
 import {
   EditRevisionInfo,
   notUndefined,
@@ -85,18 +70,17 @@ import {
 } from '../../shared/gr-autocomplete/gr-autocomplete';
 import {getRevertCreatedChangeIds} from '../../../utils/message-util';
 import {Interaction} from '../../../constants/reporting';
-import {
-  getApprovalInfo,
-  getCodeReviewLabel,
-  showNewSubmitRequirements,
-} from '../../../utils/label-util';
+import {getApprovalInfo, getCodeReviewLabel} from '../../../utils/label-util';
 import {LitElement, css, html, nothing, PropertyValues} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
+import {customElement, property, query, state} from 'lit/decorators.js';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {fontStyles} from '../../../styles/gr-font-styles';
 import {changeMetadataStyles} from '../../../styles/gr-change-metadata-shared-styles';
-import {when} from 'lit/directives/when';
-import {ifDefined} from 'lit/directives/if-defined';
+import {when} from 'lit/directives/when.js';
+import {ifDefined} from 'lit/directives/if-defined.js';
+import {createSearchUrl} from '../../../models/views/search';
+import {createChangeUrl} from '../../../models/views/change';
+import {GeneratedWebLink, getChangeWeblinks} from '../../../utils/weblink-util';
 
 const HASHTAG_ADD_MESSAGE = 'Add Hashtag';
 
@@ -131,11 +115,6 @@ interface PushCertificateValidationInfo {
 
 @customElement('gr-change-metadata')
 export class GrChangeMetadata extends LitElement {
-  /**
-   * Fired when the change topic is changed.
-   *
-   * @event topic-changed
-   */
   @query('#webLinks') webLinks?: HTMLElement;
 
   @property({type: Object}) change?: ParsedChangeInfo;
@@ -177,15 +156,16 @@ export class GrChangeMetadata extends LitElement {
 
   @state() private queryTopic?: AutocompleteQuery;
 
+  @state() private queryHashtag?: AutocompleteQuery;
+
   private restApiService = getAppContext().restApiService;
 
   private readonly reporting = getAppContext().reportingService;
 
-  private readonly flagsService = getAppContext().flagsService;
-
   constructor() {
     super();
     this.queryTopic = (input: string) => this.getTopicSuggestions(input);
+    this.queryHashtag = (input: string) => this.getHashtagSuggestions(input);
   }
 
   static override styles = [
@@ -196,7 +176,6 @@ export class GrChangeMetadata extends LitElement {
       :host {
         display: table;
       }
-      gr-change-requirements,
       gr-submit-requirements {
         --requirements-horizontal-padding: var(--metadata-horizontal-padding);
       }
@@ -277,10 +256,9 @@ export class GrChangeMetadata extends LitElement {
          commit message box. Their top border should be on the same line. */
         margin-bottom: var(--spacing-s);
       }
-      .show-all-button iron-icon {
+      .show-all-button gr-icon {
         color: inherit;
-        --iron-icon-height: 18px;
-        --iron-icon-width: 18px;
+        font-size: 18px;
       }
       gr-vote-chip {
         --gr-vote-chip-width: 14px;
@@ -328,14 +306,8 @@ export class GrChangeMetadata extends LitElement {
       class="show-all-button"
       @click=${this.onShowAllClick}
       >${this.showAllSections ? 'Show less' : 'Show all'}
-      <iron-icon
-        icon="gr-icons:expand-more"
-        ?hidden=${this.showAllSections}
-      ></iron-icon
-      ><iron-icon
-        icon="gr-icons:expand-less"
-        ?hidden=${!this.showAllSections}
-      ></iron-icon>
+      <gr-icon icon="expand_more" ?hidden=${this.showAllSections}></gr-icon>
+      <gr-icon icon="expand_less" ?hidden=${!this.showAllSections}></gr-icon>
     </gr-button>`;
   }
 
@@ -405,11 +377,10 @@ export class GrChangeMetadata extends LitElement {
             has-tooltip
             title=${this.pushCertificateValidation!.message}
           >
-            <iron-icon
-              class="icon ${this.pushCertificateValidation!.class}"
+            <gr-icon
               icon=${this.pushCertificateValidation!.icon}
-            >
-            </iron-icon>
+              class="icon ${this.pushCertificateValidation!.class}"
+            ></gr-icon>
           </gr-tooltip-content>`
         )}
       </span>
@@ -539,11 +510,7 @@ export class GrChangeMetadata extends LitElement {
         <ol class=${this.computeParentListClass()}>
           ${this.currentParents.map(
             parent => html` <li>
-              <gr-commit-info
-                .change=${this.change}
-                .commitInfo=${parent}
-                .serverConfig=${this.serverConfig}
-              ></gr-commit-info>
+              <gr-commit-info .commitInfo=${parent}></gr-commit-info>
               <gr-tooltip-content
                 id="parentNotCurrentMessage"
                 has-tooltip
@@ -564,12 +531,10 @@ export class GrChangeMetadata extends LitElement {
       <span class="title">Merged As</span>
       <span class="value">
         <gr-commit-info
-          .change=${this.change}
           .commitInfo=${this.computeMergedCommitInfo(
             this.change?.current_revision,
             this.change?.revisions
           )}
-          .serverConfig=${this.serverConfig}
         ></gr-commit-info>
       </span>
     </section>`;
@@ -584,9 +549,7 @@ export class GrChangeMetadata extends LitElement {
       <span class="title">${this.getRevertSectionTitle()}</span>
       <span class="value">
         <gr-commit-info
-          .change=${this.change}
           .commitInfo=${this.computeRevertCommit()}
-          .serverConfig=${this.serverConfig}
         ></gr-commit-info>
       </span>
     </section>`;
@@ -606,7 +569,7 @@ export class GrChangeMetadata extends LitElement {
           () => html` <gr-linked-chip
             .text=${this.change?.topic}
             limit="40"
-            href=${GerritNav.getUrlForTopic(this.change!.topic!)}
+            href=${createSearchUrl({topic: this.change!.topic!})}
             ?removable=${!this.topicReadOnly}
             @remove=${this.handleTopicRemoved}
           ></gr-linked-chip>`
@@ -616,7 +579,8 @@ export class GrChangeMetadata extends LitElement {
           () =>
             html` <gr-editable-label
               class="topicEditableLabel"
-              labelText="Add a topic"
+              labelText="Set topic"
+              .confirmLabel=${'Set Topic'}
               .value=${this.change?.topic}
               maxLength="1024"
               .placeholder=${this.computeTopicPlaceholder()}
@@ -693,6 +657,8 @@ export class GrChangeMetadata extends LitElement {
               .readOnly=${this.hashtagReadOnly}
               @changed=${this.handleHashtagChanged}
               showAsEditPencil
+              autocomplete
+              .query=${this.queryHashtag}
             ></gr-editable-label>
           `
         )}
@@ -701,23 +667,13 @@ export class GrChangeMetadata extends LitElement {
   }
 
   private renderSubmitRequirements() {
-    if (this.showNewSubmitRequirements()) {
-      return html`<div class="separatedSection">
-        <gr-submit-requirements
-          .change=${this.change}
-          .account=${this.account}
-          .mutable=${this.mutable}
-        ></gr-submit-requirements>
-      </div>`;
-    } else {
-      return html` <div class="oldSeparatedSection">
-        <gr-change-requirements
-          .change=${this.change}
-          .account=${this.account}
-          .mutable=${this.mutable}
-        ></gr-change-requirements>
-      </div>`;
-    }
+    return html`<div class="separatedSection">
+      <gr-submit-requirements
+        .change=${this.change}
+        .account=${this.account}
+        .mutable=${this.mutable}
+      ></gr-submit-requirements>
+    </div>`;
   }
 
   private renderWeblinks() {
@@ -763,23 +719,9 @@ export class GrChangeMetadata extends LitElement {
     }
   }
 
-  /**
-   * @return If array is empty, returns undefined instead so
-   * an existential check can be used to hide or show the webLinks
-   * section.
-   * private but used in test
-   */
-  computeWebLinks() {
-    if (!this.commitInfo) return [];
-    const weblinks = GerritNav.getChangeWeblinks(
-      this.change ? this.change.project : ('' as RepoName),
-      this.commitInfo.commit,
-      {
-        weblinks: this.commitInfo.web_links,
-        config: this.serverConfig,
-      }
-    );
-    return weblinks.length ? weblinks : [];
+  // private but used in test
+  computeWebLinks(): GeneratedWebLink[] {
+    return getChangeWeblinks(this.commitInfo?.web_links, this.serverConfig);
   }
 
   private computeStrategy() {
@@ -796,28 +738,18 @@ export class GrChangeMetadata extends LitElement {
   }
 
   // private but used in test
-  handleTopicChanged(e: CustomEvent<string>) {
-    if (!this.change) {
-      throw new Error('change must be set');
-    }
-    const lastTopic = this.change.topic;
+  async handleTopicChanged(e: CustomEvent<string>) {
+    assertIsDefined(this.change, 'change');
     const topic = e.detail.length ? e.detail : undefined;
     this.settingTopic = true;
-    const topicChangedForChangeNumber = this.change._number;
-    const change = this.change;
-    this.restApiService
-      .setChangeTopic(topicChangedForChangeNumber, topic)
-      .then(newTopic => {
-        if (this.change?._number !== topicChangedForChangeNumber) return;
-        this.settingTopic = false;
-        if (this.change === change) {
-          this.change.topic = newTopic as TopicName;
-          this.requestUpdate();
-        }
-        if (newTopic !== lastTopic) {
-          fireEvent(this, 'topic-changed');
-        }
-      });
+    try {
+      fireAlert(this, 'Saving topic and reloading ...');
+      await this.restApiService.setChangeTopic(this.change._number, topic);
+    } finally {
+      this.settingTopic = false;
+    }
+    fireEvent(this, 'hide-alert');
+    fireReload(this);
   }
 
   // private but used in test
@@ -841,24 +773,16 @@ export class GrChangeMetadata extends LitElement {
   }
 
   // private but used in test
-  handleHashtagChanged(e: CustomEvent<string>) {
-    if (!this.change) {
-      throw new Error('change must be set');
-    }
+  async handleHashtagChanged(e: CustomEvent<string>) {
+    assertIsDefined(this.change, 'change');
     const newHashtag = e.detail.length ? e.detail : undefined;
-    if (!newHashtag?.length) {
-      return;
-    }
-    const change = this.change;
-    this.restApiService
-      .setChangeHashtag(this.change._number, {add: [newHashtag as Hashtag]})
-      .then(newHashtag => {
-        if (this.change === change) {
-          this.change.hashtags = newHashtag;
-          this.requestUpdate();
-          fireEvent(this, 'hashtag-changed');
-        }
-      });
+    if (!newHashtag?.length) return;
+    fireAlert(this, 'Saving hashtag and reloading ...');
+    await this.restApiService.setChangeHashtag(this.change._number, {
+      add: [newHashtag as Hashtag],
+    });
+    fireEvent(this, 'hide-alert');
+    fireReload(this);
   }
 
   // private but used in test
@@ -874,7 +798,7 @@ export class GrChangeMetadata extends LitElement {
   private computeTopicPlaceholder() {
     // Action items in Material Design are uppercase -- placeholder label text
     // is sentence case.
-    return this.topicReadOnly ? 'No topic' : 'ADD TOPIC';
+    return this.topicReadOnly ? 'No topic' : 'Set Topic';
   }
 
   private computeHashtagPlaceholder() {
@@ -898,8 +822,8 @@ export class GrChangeMetadata extends LitElement {
     const rev = this.change.revisions[this.change.current_revision];
     if (!rev.push_certificate?.key) {
       return {
-        class: 'help',
-        icon: 'gr-icons:help',
+        class: 'help filled',
+        icon: 'help',
         message: 'This patch set was created without a push certificate',
       };
     }
@@ -909,13 +833,13 @@ export class GrChangeMetadata extends LitElement {
       case GpgKeyInfoStatus.BAD:
         return {
           class: 'invalid',
-          icon: 'gr-icons:close',
+          icon: 'close',
           message: this.problems('Push certificate is invalid', key),
         };
       case GpgKeyInfoStatus.OK:
         return {
-          class: 'notTrusted',
-          icon: 'gr-icons:info',
+          class: 'notTrusted filled',
+          icon: 'info',
           message: this.problems(
             'Push certificate is valid, but key is not trusted',
             key
@@ -924,7 +848,7 @@ export class GrChangeMetadata extends LitElement {
       case GpgKeyInfoStatus.TRUSTED:
         return {
           class: 'trusted',
-          icon: 'gr-icons:check',
+          icon: 'check',
           message: this.problems(
             'Push certificate is valid and key is trusted',
             key
@@ -967,78 +891,71 @@ export class GrChangeMetadata extends LitElement {
 
   private computeProjectUrl(project?: RepoName) {
     if (!project) return '';
-    return GerritNav.getUrlForProjectChanges(project);
+    return createSearchUrl({project});
   }
 
   private computeBranchUrl(project?: RepoName, branch?: BranchName) {
     if (!project || !branch || !this.change || !this.change.status) return '';
-    return GerritNav.getUrlForBranch(
+    return createSearchUrl({
       branch,
       project,
-      this.change.status === ChangeStatus.NEW
-        ? 'open'
-        : this.change.status.toLowerCase()
-    );
+      statuses:
+        this.change.status === ChangeStatus.NEW
+          ? ['open']
+          : [this.change.status.toLowerCase()],
+    });
   }
 
   private computeCherryPickOfUrl(
     change?: NumericChangeId,
-    patchset?: PatchSetNum,
+    patchset?: RevisionPatchSetNum,
     project?: RepoName
   ) {
     if (!change || !project) {
       return '';
     }
-    return GerritNav.getUrlForChangeById(change, project, patchset);
+    return createChangeUrl({
+      changeNum: change,
+      project,
+      usp: 'metadata',
+      patchNum: patchset,
+    });
   }
 
   private computeHashtagUrl(hashtag: Hashtag) {
-    return GerritNav.getUrlForHashtag(hashtag);
+    return createSearchUrl({hashtag, statuses: ['open', 'merged']});
   }
 
-  private handleTopicRemoved(e: CustomEvent) {
-    if (!this.change) {
-      throw new Error('change must be set');
-    }
+  private async handleTopicRemoved(e: CustomEvent) {
+    assertIsDefined(this.change, 'change');
     const target = e.composedPath()[0] as GrLinkedChip;
     target.disabled = true;
-    const change = this.change;
-    this.restApiService
-      .setChangeTopic(this.change._number)
-      .then(() => {
-        target.disabled = false;
-        if (this.change === change) {
-          this.change.topic = '' as TopicName;
-          this.requestUpdate();
-          fireEvent(this, 'topic-changed');
-        }
-      })
-      .catch(() => {
-        target.disabled = false;
-      });
+    try {
+      fireAlert(this, 'Removing topic and reloading ...');
+      await this.restApiService.setChangeTopic(this.change._number);
+    } finally {
+      target.disabled = false;
+    }
+    fireEvent(this, 'hide-alert');
+    fireReload(this);
   }
 
   // private but used in test
-  handleHashtagRemoved(e: CustomEvent) {
+  async handleHashtagRemoved(e: CustomEvent) {
     e.preventDefault();
-    if (!this.change) {
-      throw new Error('change must be set');
-    }
+    assertIsDefined(this.change, 'change');
     const target = e.target as GrLinkedChip;
     target.disabled = true;
-    const change = this.change;
-    this.restApiService
-      .setChangeHashtag(change._number, {remove: [target.text as Hashtag]})
-      .then(newHashtags => {
-        target.disabled = false;
-        if (this.change === change) {
-          this.change.hashtags = newHashtags;
-          this.requestUpdate();
-        }
-      })
-      .catch(() => {
-        target.disabled = false;
+    try {
+      fireAlert(this, 'Removing hashtag and reloading ...');
+      await this.restApiService.setChangeHashtag(this.change._number, {
+        remove: [target.text as Hashtag],
       });
+    } finally {
+      target.disabled = false;
+    }
+    fireEvent(this, 'hide-alert');
+    fireReload(this);
   }
 
   private computeDisplayState(section: Metadata, account?: AccountDetailInfo) {
@@ -1191,11 +1108,12 @@ export class GrChangeMetadata extends LitElement {
     if (this.topicReadOnly || !this.change || this.change.topic) {
       return;
     }
-    // Cannot use `this.$.ID` syntax because the element exists inside of a
-    // dom-if.
-    (
-      this.shadowRoot!.querySelector('.topicEditableLabel') as GrEditableLabel
-    ).open();
+    const topicEditableLabel = this.shadowRoot!.querySelector<GrEditableLabel>(
+      '.topicEditableLabel'
+    );
+    if (topicEditableLabel) {
+      topicEditableLabel.open();
+    }
   }
 
   private getTopicSuggestions(
@@ -1214,8 +1132,20 @@ export class GrChangeMetadata extends LitElement {
       );
   }
 
-  private showNewSubmitRequirements() {
-    return showNewSubmitRequirements(this.flagsService, this.change);
+  private getHashtagSuggestions(
+    input: string
+  ): Promise<AutocompleteSuggestion[]> {
+    return this.restApiService
+      .getChangesWithSimilarHashtag(input)
+      .then(response =>
+        (response ?? [])
+          .flatMap(change => change.hashtags ?? [])
+          .filter(notUndefined)
+          .filter(unique)
+          .map(hashtag => {
+            return {name: hashtag, value: hashtag};
+          })
+      );
   }
 
   private computeVoteForRole(role: ChangeRole) {

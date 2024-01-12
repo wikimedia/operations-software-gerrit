@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-repo-plugin-config';
 import {GrRepoPluginConfig} from './gr-repo-plugin-config';
 import {PluginParameterToConfigParameterInfoMap} from '../../../types/common';
@@ -23,15 +11,46 @@ import {ConfigParameterInfoType} from '../../../constants/constants';
 import {queryAndAssert} from '../../../test/test-utils';
 import {GrPluginConfigArrayEditor} from '../gr-plugin-config-array-editor/gr-plugin-config-array-editor';
 import {PaperToggleButtonElement} from '@polymer/paper-toggle-button/paper-toggle-button';
-
-const basicFixture = fixtureFromElement('gr-repo-plugin-config');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-repo-plugin-config tests', () => {
   let element: GrRepoPluginConfig;
 
   setup(async () => {
-    element = basicFixture.instantiate();
+    element = await fixture(
+      html`<gr-repo-plugin-config></gr-repo-plugin-config>`
+    );
+  });
+
+  test('render', async () => {
+    element.pluginData = {
+      name: 'testName',
+      config: {
+        plugin: {type: 'STRING' as ConfigParameterInfoType, value: 'test'},
+      },
+    };
     await element.updateComplete;
+
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="gr-form-styles">
+          <fieldset>
+            <h4>testName</h4>
+            <section class="STRING section">
+              <span class="title">
+                <span> </span>
+              </span>
+              <span class="value">
+                <iron-input data-option-key="plugin">
+                  <input data-option-key="plugin" disabled="" is="iron-input" />
+                </iron-input>
+              </span>
+            </section>
+          </fieldset>
+        </div>
+      `
+    );
   });
 
   test('_computePluginConfigOptions', () => {

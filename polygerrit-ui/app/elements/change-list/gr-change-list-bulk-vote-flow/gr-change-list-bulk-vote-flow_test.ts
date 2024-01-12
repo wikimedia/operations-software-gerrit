@@ -3,8 +3,7 @@
  * Copyright 2022 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import {GrChangeListBulkVoteFlow} from './gr-change-list-bulk-vote-flow';
 import {
   BulkActionsModel,
@@ -18,22 +17,26 @@ import {
   query,
   mockPromise,
   queryAll,
+  stubReporting,
+  waitEventLoop,
 } from '../../../test/test-utils';
 import {ChangeInfo, NumericChangeId, LabelInfo} from '../../../api/rest-api';
 import {getAppContext} from '../../../services/app-context';
-import {fixture, waitUntil} from '@open-wc/testing-helpers';
+import {fixture, waitUntil, assert} from '@open-wc/testing';
 import {wrapInProvider} from '../../../models/di-provider-element';
 import {html} from 'lit';
 import {SinonStubbedMember} from 'sinon';
 import {RestApiService} from '../../../services/gr-rest-api/gr-rest-api';
 import {
   createChange,
+  createDetailedLabelInfo,
   createSubmitRequirementResultInfo,
 } from '../../../test/test-data-generators';
 import './gr-change-list-bulk-vote-flow';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {ProgressStatus} from '../../../constants/constants';
 import {StandardLabels} from '../../../utils/label-util';
+import {ReportingService} from '../../../services/gr-reporting/gr-reporting';
 
 const change1: ChangeInfo = {
   ...createChange(),
@@ -92,9 +95,11 @@ const change2: ChangeInfo = {
 suite('gr-change-list-bulk-vote-flow tests', () => {
   let element: GrChangeListBulkVoteFlow;
   let model: BulkActionsModel;
+  let dispatchEventStub: sinon.SinonStub;
   let getChangesStub: SinonStubbedMember<
     RestApiService['getDetailedChangesWithActions']
   >;
+  let reportingStub: SinonStubbedMember<ReportingService['reportInteraction']>;
 
   async function selectChange(change: ChangeInfo) {
     model.addSelectedChangeNum(change._number);
@@ -107,7 +112,7 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
   setup(async () => {
     model = new BulkActionsModel(getAppContext().restApiService);
     getChangesStub = stubRestApi('getDetailedChangesWithActions');
-
+    reportingStub = stubReporting('reportInteraction');
     element = (
       await fixture(
         wrapInProvider(
@@ -118,6 +123,7 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
       )
     ).querySelector('gr-change-list-bulk-vote-flow')!;
     await element.updateComplete;
+    dispatchEventStub = sinon.stub(element, 'dispatchEvent');
   });
 
   test('renders', async () => {
@@ -130,7 +136,9 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
     );
     await selectChange(change1);
     await element.updateComplete;
-    expect(element).shadowDom.to.equal(/* HTML */ `<gr-button
+    assert.shadowDom.equal(
+      element,
+      `<gr-button
         aria-disabled="false"
         flatten=""
         id="voteFlowButton"
@@ -147,9 +155,35 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
         with-backdrop=""
       >
         <gr-dialog role="dialog">
+          <div slot="header">
+            <span class="main-heading"> Vote on selected changes </span>
+          </div>
           <div slot="main">
             <div class="newSubmitRequirements scoresTable">
-              <h3 class="heading-3">Submit requirements votes</h3>
+              <h3 class="heading-4 vote-type">Submit requirements votes</h3>
+              <div class="code-review-message-container">
+                <div class="code-review-message-layout-container">
+                <div>
+                  <gr-icon icon="info" aria-label="Information" role="img"></gr-icon>
+                  <span class="warning-text">
+                    Code Review vote is only available on the individual change page
+                  </span>
+                </div>
+                <div class="flex-space"></div>
+                <div>
+                  <gr-button
+                    aria-disabled="false"
+                    flatten=""
+                    link=""
+                    role="button"
+                    aria-label="Open 1 change in different tabs"
+                    tabindex="0"
+                  >
+                    Open 1 change
+                  </gr-button>
+                </div>
+                </div>
+              </div>
               <gr-label-score-row name="A"> </gr-label-score-row>
               <gr-label-score-row name="B"> </gr-label-score-row>
               <gr-label-score-row name="C"> </gr-label-score-row>
@@ -157,13 +191,109 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
               </gr-label-score-row>
             </div>
             <div class="newSubmitRequirements scoresTable">
-              <h3 class="heading-3">Trigger Votes</h3>
+              <h3 class="heading-4 vote-type">Trigger Votes</h3>
               <gr-label-score-row name="change1OnlyTriggerLabelE">
               </gr-label-score-row>
             </div>
           </div>
         </gr-dialog>
-      </gr-overlay> `);
+      </gr-overlay> `
+    );
+  });
+
+  test('renders with errors', async () => {
+    const changes: ChangeInfo[] = [change1];
+    getChangesStub.returns(Promise.resolve(changes));
+    model.sync(changes);
+    await waitUntilObserved(
+      model.loadingState$,
+      state => state === LoadingState.LOADED
+    );
+    stubRestApi('saveChangeReview').callsFake(
+      (_changeNum, _patchNum, _review, errFn) =>
+        Promise.resolve(new Response()).then(res => {
+          errFn && errFn();
+          return res;
+        })
+    );
+    await selectChange(change1);
+    await element.updateComplete;
+
+    queryAndAssert<GrButton>(query(element, 'gr-dialog'), '#confirm').click();
+
+    await waitUntil(
+      () =>
+        element.progressByChange.get(1 as NumericChangeId) ===
+        ProgressStatus.FAILED
+    );
+
+    assert.shadowDom.equal(
+      element,
+      `<gr-button
+        aria-disabled="false"
+        flatten=""
+        id="voteFlowButton"
+        role="button"
+        tabindex="0"
+      >
+        Vote
+      </gr-button>
+      <gr-overlay
+        aria-hidden="true"
+        id="actionOverlay"
+        style="outline: none; display: none;"
+        tabindex="-1"
+        with-backdrop=""
+      >
+        <gr-dialog role="dialog">
+          <div slot="header">
+            <span class="main-heading"> Vote on selected changes </span>
+          </div>
+          <div slot="main">
+            <div class="newSubmitRequirements scoresTable">
+              <h3 class="heading-4 vote-type">Submit requirements votes</h3>
+              <div class="code-review-message-container">
+                <div class="code-review-message-layout-container">
+                <div>
+                  <gr-icon icon="info" aria-label="Information" role="img"></gr-icon>
+                  <span class="warning-text">
+                    Code Review vote is only available on the individual change page
+                  </span>
+                </div>
+                <div class="flex-space"></div>
+                <div>
+                  <gr-button
+                    aria-disabled="false"
+                    flatten=""
+                    link=""
+                    role="button"
+                    aria-label="Open 1 change in different tabs"
+                    tabindex="0"
+                  >
+                    Open 1 change
+                  </gr-button>
+                </div>
+                </div>
+              </div>
+              <gr-label-score-row name="A"> </gr-label-score-row>
+              <gr-label-score-row name="B"> </gr-label-score-row>
+              <gr-label-score-row name="C"> </gr-label-score-row>
+              <gr-label-score-row name="change1OnlyLabelD">
+              </gr-label-score-row>
+            </div>
+            <div class="newSubmitRequirements scoresTable">
+              <h3 class="heading-4 vote-type">Trigger Votes</h3>
+              <gr-label-score-row name="change1OnlyTriggerLabelE">
+              </gr-label-score-row>
+            </div>
+            <div class="error-container">
+              <gr-icon icon="error" filled role="img" aria-label="Error"></gr-icon>
+              <span class="error-text"> Failed to vote on 1 change </span>
+            </div>
+          </div>
+        </gr-dialog>
+      </gr-overlay> `
+    );
   });
 
   test('button state updates as changes are updated', async () => {
@@ -176,9 +306,9 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
     );
     await selectChange(change1);
     await element.updateComplete;
-    await flush();
+    await waitEventLoop();
 
-    assert.isFalse(
+    assert.isNotOk(
       queryAndAssert<GrButton>(element, '#voteFlowButton').disabled
     );
 
@@ -204,23 +334,45 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
     await selectChange(change2);
     await element.updateComplete;
 
-    assert.isTrue(
+    assert.isNotOk(
       queryAndAssert<GrButton>(element, '#voteFlowButton').disabled
     );
   });
 
   test('progress updates as request is resolved', async () => {
-    const changes: ChangeInfo[] = [{...change1}];
+    const change = {
+      ...change1,
+      labels: {
+        ...change1.labels,
+        C: {
+          ...createDetailedLabelInfo(),
+          all: [
+            {
+              ...element.account!,
+              value: -1,
+            },
+          ],
+        },
+      },
+    };
+    const changes: ChangeInfo[] = [{...change}];
     getChangesStub.returns(Promise.resolve(changes));
     model.sync(changes);
     await waitUntilObserved(
       model.loadingState$,
       state => state === LoadingState.LOADED
     );
-    await selectChange(change1);
+    await selectChange(change);
     await element.updateComplete;
     const saveChangeReview = mockPromise<Response>();
     stubRestApi('saveChangeReview').returns(saveChangeReview);
+
+    const stopsStub = sinon.stub(element.actionOverlay, 'setFocusStops');
+
+    queryAndAssert<GrButton>(element, '#voteFlowButton').click();
+    await waitUntil(() => stopsStub.called);
+
+    await element.updateComplete;
 
     assert.isNotOk(
       queryAndAssert<GrButton>(query(element, 'gr-dialog'), '#confirm').disabled
@@ -232,6 +384,7 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
     const scores = queryAll(element, 'gr-label-score-row');
     queryAndAssert<GrButton>(scores[0], 'gr-button[data-value="+1"]').click();
     queryAndAssert<GrButton>(scores[1], 'gr-button[data-value="-1"]').click();
+    queryAndAssert<GrButton>(scores[2], 'gr-button[data-value="0"]').click();
 
     await element.updateComplete;
 
@@ -242,6 +395,7 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
       {
         A: 1,
         B: -1,
+        C: 0,
       }
     );
 
@@ -254,6 +408,11 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
     assert.isTrue(
       queryAndAssert<GrButton>(query(element, 'gr-dialog'), '#cancel').disabled
     );
+
+    assert.deepEqual(reportingStub.lastCall.args[1], {
+      type: 'vote',
+      selectedChangeCount: 1,
+    });
 
     assert.equal(
       element.progressByChange.get(1 as NumericChangeId),
@@ -278,14 +437,19 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
       element.progressByChange.get(1 as NumericChangeId),
       ProgressStatus.SUCCESSFUL
     );
+
+    // reload event is fired automatically when all requests succeed
+    assert.equal(dispatchEventStub.lastCall.args[0].type, 'reload');
+    assert.equal(
+      dispatchEventStub.firstCall.args[0].detail.message,
+      'Votes added'
+    );
   });
 
   suite('closing dialog triggers reloads', () => {
     test('closing dialog triggers a reload', async () => {
       const changes: ChangeInfo[] = [change1, change2];
       getChangesStub.returns(Promise.resolve(changes));
-
-      const fireStub = sinon.stub(element, 'dispatchEvent');
 
       stubRestApi('saveChangeReview').callsFake(
         (_changeNum, _patchNum, _review, errFn) =>
@@ -312,19 +476,26 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
           ProgressStatus.FAILED
       );
 
-      assert.isFalse(fireStub.called);
+      // Dialog does not autoclose and fire reload event if some request fails
+      assert.isFalse(dispatchEventStub.called);
+
+      assert.deepEqual(reportingStub.lastCall.args, [
+        'bulk-action-failure',
+        {
+          type: 'vote',
+          count: 2,
+        },
+      ]);
 
       queryAndAssert<GrButton>(query(element, 'gr-dialog'), '#cancel').click();
 
-      await waitUntil(() => fireStub.called);
-      assert.equal(fireStub.lastCall.args[0].type, 'reload');
+      await waitUntil(() => dispatchEventStub.called);
+      assert.equal(dispatchEventStub.lastCall.args[0].type, 'reload');
     });
 
     test('closing dialog does not trigger reload if no request made', async () => {
       const changes: ChangeInfo[] = [change1, change2];
       getChangesStub.returns(Promise.resolve(changes));
-
-      const fireStub = sinon.stub(element, 'dispatchEvent');
 
       model.sync(changes);
       await waitUntilObserved(
@@ -337,7 +508,7 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
 
       queryAndAssert<GrButton>(query(element, 'gr-dialog'), '#cancel').click();
 
-      assert.isFalse(fireStub.called);
+      assert.isFalse(dispatchEventStub.called);
     });
   });
 

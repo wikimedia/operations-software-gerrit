@@ -11,6 +11,43 @@ labels to be voted before a change can be submittable. See the
 link:config-submit-requirements.html[submit requirements] documentation to
 configure such rules.
 
+[[sticky_votes]]
+== Sticky Votes
+
+Whether votes are sticky when a new patch set is created depends on the
+link:#label_copyCondition[copyCondition] of the label. If an approval
+matches the configured condition it is copied from the old current
+patch set to the new current patch set. Votes that are not copied to
+the new patch set, are called `outdated`.
+
+If votes get outdated due to pushing a new patch set the uploader is
+informed about this by a message in the git output. In addition,
+outdated votes are also listed in the email notification that is sent
+for the new patch set (unless this is disabled by a custom email
+template). Note, that the uploader only get this email notification if
+they have configured `Every Comment` for `Email notifications` in their
+user preferences. With any other email preference the email sender, the
+uploader in this case, is not included in the email recipients.
+
+If votes get outdated due to creating a new patch set the user of the
+removed vote is added to the attention set of the change, as they need
+to re-review the change and renew their vote.
+
+If a vote is applied on an outdated patch set (i.e. a patch set that is
+not the current patch set) the vote is copied forward to follow-up
+patch sets if possible. A newly added or updated vote on an outdated
+patch set is copied to follow-up patch sets if:
+
+* the vote is copyable (i.e. it matches the
+link:#label_copyCondition[copyCondition] of the label)
+* neither the follow-up patch set nor an intermediate patch set has a
+  non-copied vote or a deletion vote (vote with value `0`) that
+  overrides the copy vote
+
+If an approval on an outdated patch set is removed or updated to a
+value that is not copyable, existing copies of that approval on
+follow-up patch sets are removed.
+
 [[label_Code-Review]]
 == Label: Code-Review
 
@@ -211,9 +248,18 @@ box will be either the lowest or highest score in the permissible range.
 === `label.Label-Name.function (deprecated)`
 
 Label functions dictate the rules for requiring certain label votes before a
-change is allowed for submission. Label functions are **deprecated**, favour
-using link:config-submit-requirements.html[submit requirements] instead,
-except if it's needed to set the value to `PatchSetLock`.
+change is allowed for submission. Label functions are **deprecated** and updates
+that set `function` to a blocking value {`MaxWithBlock`, `MaxNoBlock`,
+`AnyWithBlock`} will be rejected. Existing label function definitions can only
+be updated to {`NoBlock`, `NoOp`, `PatchSetLock`}. New label defintions should
+also explicitly set the `function` attribute to a non-blocking value since the
+default is `MaxWithBlock`.
+
+If your project has a
+blocking label function, we highly encourage you to change it to `NoBlock` and
+add a submit-requirement for the same label. See the
+link:config-submit-requirements.html#code-review-example[submit-requirements
+documentation] for more details.
 
 The name of a function for evaluating multiple votes for a label.  This
 function is only applied if the default submit rule is used for a label.
@@ -275,15 +321,6 @@ the past and affect submission somehow.
 
 Defaults to true.
 
-[[label_copyAnyScore]]
-=== `label.Label-Name.copyAnyScore`
-
-*DEPRECATED: use `is:ANY` predicate in
-link:config-labels.html#label_copyCondition[copyCondition] instead*
-
-If true, any score for the label is copied forward when a new patch
-set is uploaded. Defaults to false.
-
 [[label_copyCondition]]
 === `label.Label-Name.copyCondition`
 
@@ -296,24 +333,104 @@ This logic is triggered whenever a new patch set is uploaded.
 
 Gerrit currently supports the following predicates:
 
-==== changekind:{REWORK,TRIVIAL_REBASE,MERGE_FIRST_PARENT_UPDATE,NO_CODE_CHANGE,NO_CHANGE}
+[[changekind]]
+==== changekind:{NO_CHANGE,NO_CODE_CHANGE,MERGE_FIRST_PARENT_UPDATE,REWORK,TRIVIAL_REBASE}
 
-Matches if the diff between two patch sets was of a certain change kind.
+Matches if the diff between two patch sets was of a certain change kind:
 
-`REWORK` matches all kind of change kinds because any other change kind
+* [[no_change]]`NO_CHANGE`:
++
+Matches when a new patch set is uploaded that has the same parent tree,
+code delta, and commit message as the previous patch set. This means
+that only the patch set SHA-1 is different. This can be used to enable
+sticky approvals, reducing turn-around for this special case.
++
+It is recommended to leave this enabled for both, the Code-Review and
+the Verified labels.
++
+`NO_CHANGE` is more trivial than a trivial rebase, no code change and
+a first parent update, hence this change kind is also matched by
+`changekind:TRIVIAL_REBASE`, `changekind:NO_CODE_CHANGE` and if it's
+a merge commit by `changekind:MERGE_FIRST_PARENT_UPDATE`.
+
+
+* [[no_code_change]]`NO_CODE_CHANGE`:
++
+Matches when a new patch set is uploaded that has the same parent tree
+as the previous patch set and the same code diff (including context
+lines) as the previous patch set. This means only the commit message
+may be different; the change hasn't even been rebased. Also matches if
+the commit message is not different, which means this includes matching
+patch sets that have `NO_CHANGE` as the change kind.
++
+This predicate can be used to enable sticky approvals on labels that
+only depend on the code, reducing turn-around if only the commit
+message is changed prior to submitting a change.
++
+For the Verified label that is optionally installed by the
+link:pgm-init.html[init] site program this predicate is used by
+default.
+
+* [[merge_first_parent_update]]`MERGE_FIRST_PARENT_UPDATE`:
++
+Matches when a new patch set is uploaded that is a new merge commit
+which only differs from the merge commit in the previous patch set in
+its first parent, or has identical parents (aka the change kind of the
+merge commit is `NO_CHANGE`).
++
+The first parent of the merge commit is part of the change's target
+branch, whereas the other parent(s) refer to the feature branch(es) to
+be merged.
++
+Matching this change kind is useful if you don't want to trigger CI or
+human verification again if your target branch moved on but the feature
+branch(es) being merged into the target branch did not change.
++
+This predicate does not match if the patch set is not a merge commit.
+
+* [[trivial_rebase]]`TRIVIAL_REBASE`:
++
+Matches when a new patch set is uploaded that is a trivial rebase. A
+new patch set is considered to be trivial rebase if the commit message
+is the same as in the previous patch set and if it has the same diff
+(including context lines) as the previous patch set. This is the case
+if the change was rebased onto a different parent and that rebase did
+not require git to perform any conflict resolution, or if the parent
+did not change at all (aka the change kind of the commit is
+`NO_CHANGE`).
++
+This predicate can be used to enable sticky approvals, reducing
+turn-around for trivial rebases prior to submitting a change.
++
+For the pre-installed Code-Review label this predicate is used by
+default.
+
+* [[rework]]`REWORK`:
++
+Matches all kind of change kinds because any other change kind
 is just a more trivial version of a rework. This means setting
 `changekind:REWORK` is equivalent to setting `is:ANY`.
 
-`NO_CHANGE` is more trivial than a trivial rebase, no code change and
-a first parent update, hence this change kind is also matched by
-`changekind:TRIVIAL_REBASE`, `changekind:NO_CODE_CHANGE` and
-`changekind:MERGE_FIRST_PARENT_UPDATE` (only if the change is for a
-merge commit).
-
+[[is_magic]]
 ==== is:{MIN,MAX,ANY}
 
-Matches votes that are equal to the minimal or maximal voting range. Or any votes.
+Matches approvals that have a minimal, maximal or any score:
 
+* [[is_min]]`MIN`:
++
+Matches approvals that have a minimal score, i.e. the lowest possible
+(negative) value for this label.
+
+* [[is_max]]`MAX`:
++
+Matches approvals that a maximal score, i.e. the highest possible
+(positive) value for this label.
+
+* [[is_any]]`ANY`:
++
+Matches any approval when a new patch set is uploaded.
+
+[[is_value]]
 ==== is:'VALUE'
 
 Matches approvals that have a voting value that is equal to 'VALUE'.
@@ -332,11 +449,25 @@ link:#group-id[\{group-id\}].
 Matches all votes if the new patch set was uploaded by a member of
 link:#group-id[\{group-id\}].
 
+[[has_unchanged_files]]
 ==== has:unchanged-files
 
-Matches when the new patch-set includes the same files as the old patch-set.
+Matches when the new patch-set has the same list of files as the
+previous patch-set.
 
-Only 'unchanged-files' is supported for 'has'.
+Votes are not copied in the following cases:
+
+  * If one more files are renamed in the new patch set. These files are counted
+  as a deletion of the file at the old path and an addition of the file at the
+  new path. This means the list of files did change.
+  * If one or more files are reverted to their original content, that is files
+  that become same as in the base revision.
+
+This predicate is useful if you don't want to trigger CI or human
+verification again if the list of files didn't change.
+
+Note, "unchanged-files" is the only value that is supported for the
+"has" operator.
 
 [[group-id]]
 ==== Group ID
@@ -366,129 +497,6 @@ less human-readable.
 ----
 copyCondition = is:MIN OR -change-kind:REWORK OR uploaderin:dead...beef
 ----
-
-[[label_copyMinScore]]
-=== `label.Label-Name.copyMinScore`
-
-*DEPRECATED: use `is:MIN` predicate in
-link:config-labels.html#label_copyCondition[copyCondition] instead*
-
-If true, the lowest possible negative value for the label is copied
-forward when a new patch set is uploaded. Defaults to false, except
-for All-Projects which has it true by default.
-
-[[label_copyMaxScore]]
-=== `label.Label-Name.copyMaxScore`
-
-*DEPRECATED: use `is:MAX` predicate in
-link:config-labels.html#label_copyCondition[copyCondition] instead*
-
-If true, the highest possible positive value for the label is copied
-forward when a new patch set is uploaded. This can be used to enable
-sticky approvals, reducing turn-around for trivial cleanups prior to
-submitting a change. Defaults to false.
-
-[[label_copyAllScoresIfListOfFilesDidNotChange]]
-=== `label.Label-Name.copyAllScoresIfListOfFilesDidNotChange`
-
-*DEPRECATED: use `is:ANY AND has:unchanged-files` predicates in
-link:config-labels.html#label_copyCondition[copyCondition] instead*
-
-This policy is useful if you don't want to trigger CI or human
-verification again if the list of files didn't change.
-
-If true, all scores for the label are copied forward when a new
-patch-set is uploaded that has the same list of files as the previous
-patch-set.
-
-Renames are considered different files when computing whether new files
-were added or old files were deleted. Hence, if there are renames, scores will
-*NOT* be copied over.
-
-Defaults to false.
-
-[[label_copyAllScoresOnMergeFirstParentUpdate]]
-=== `label.Label-Name.copyAllScoresOnMergeFirstParentUpdate`
-
-*DEPRECATED: use `is:ANY AND changekind:MERGE_FIRST_PARENT_UPDATE` predicates
-in link:config-labels.html#label_copyCondition[copyCondition] instead*
-
-This policy is useful if you don't want to trigger CI or human
-verification again if your target branch moved on but the feature
-branch being merged into the target branch did not change. It only
-applies if the patch set is a merge commit.
-
-If true, all scores for the label are copied forward when a new
-patch set is uploaded that is a new merge commit which only
-differs from the previous patch set in its first parent, or has
-identical parents. The first parent would be the parent of the merge
-commit that is part of the change's target branch, whereas the other
-parent(s) refer to the feature branch(es) to be merged.
-
-Defaults to false.
-
-[[label_copyAllScoresOnTrivialRebase]]
-=== `label.Label-Name.copyAllScoresOnTrivialRebase`
-
-*DEPRECATED: use `is:ANY AND changekind:TRIVIAL_REBASE` predicates
-in link:config-labels.html#label_copyCondition[copyCondition] instead*
-
-If true, all scores for the label are copied forward when a new patch set is
-uploaded that is a trivial rebase. A new patch set is considered to be trivial
-rebase if the commit message is the same as in the previous patch set and if it
-has the same diff (including context lines) as the previous patch set. This is
-the case if the change was rebased onto a different parent and that rebase did
-not require git to perform any conflict resolution, or if the parent did not
-change at all.
-
-This can be used to enable sticky approvals, reducing turn-around for
-trivial rebases prior to submitting a change.
-For the pre-installed Code-Review label this is enabled by default.
-
-Defaults to false.
-
-[[label_copyAllScoresIfNoCodeChange]]
-=== `label.Label-Name.copyAllScoresIfNoCodeChange`
-
-*DEPRECATED: use `is:ANY AND changekind:NO_CODE_CHANGE` predicates in
-link:config-labels.html#label_copyCondition[copyCondition] instead*
-
-If true, all scores for the label are copied forward when a new patch set is
-uploaded that has the same parent tree as the previous patch set and the same
-code diff (including context lines) as the previous patch set. This means only
-the commit message is different; the change hasn't even been rebased. This can
-be used to enable sticky approvals on labels that only depend on the code,
-reducing turn-around if only the commit message is changed prior to submitting a
-change. For the Verified label that is optionally installed by the
-link:pgm-init.html[init] site program this is enabled by default.
-
-Defaults to false.
-
-[[label_copyAllScoresIfNoChange]]
-=== `label.Label-Name.copyAllScoresIfNoChange`
-
-*DEPRECATED: use `is:ANY AND changekind:NO_CHANGE` predicates in
-link:config-labels.html#label_copyCondition[copyCondition] instead*
-
-If true, all scores for the label are copied forward when a new patch
-set is uploaded that has the same parent tree, code delta, and commit
-message as the previous patch set. This means that only the patch
-set SHA-1 is different. This can be used to enable sticky
-approvals, reducing turn-around for this special case.
-It is recommended to leave this enabled for both Verified and
-Code-Review labels.
-
-Defaults to true.
-
-[[label_copyValue]]
-=== `label.Label-Name.copyValue`
-
-*DEPRECATED: use `is:<value>` predicate in
-link:config-labels.html#label_copyCondition[copyCondition] instead*
-
-Value that should be copied forward when a new patch set is uploaded.
-This can be used to enable sticky votes. Can be specified multiple
-times. By default not set.
 
 [[label_canOverride]]
 === `label.Label-Name.canOverride`

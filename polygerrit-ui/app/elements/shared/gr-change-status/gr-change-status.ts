@@ -1,36 +1,24 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
+import '../gr-icon/gr-icon';
 import '../gr-tooltip-content/gr-tooltip-content';
-import '../gr-icons/gr-icons';
 import '../../../styles/shared-styles';
-import {
-  GeneratedWebLink,
-  GerritNav,
-} from '../../core/gr-navigation/gr-navigation';
 import {ChangeInfo} from '../../../types/common';
 import {ParsedChangeInfo} from '../../../types/types';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, html, css} from 'lit';
-import {customElement, property} from 'lit/decorators';
+import {customElement, property, state} from 'lit/decorators.js';
+import {createSearchUrl} from '../../../models/views/search';
+import {GeneratedWebLink} from '../../../utils/weblink-util';
 
 export enum ChangeStates {
   ABANDONED = 'Abandoned',
   ACTIVE = 'Active',
   MERGE_CONFLICT = 'Merge Conflict',
+  GIT_CONFLICT = 'Git Conflict',
   MERGED = 'Merged',
   PRIVATE = 'Private',
   READY_TO_SUBMIT = 'Ready to submit',
@@ -41,13 +29,17 @@ export enum ChangeStates {
 
 export const WIP_TOOLTIP =
   "This change isn't ready to be reviewed or submitted. " +
-  "It will not appear on dashboards unless you are CC'ed, " +
+  'It will not appear on dashboards unless you are in the attention set, ' +
   'and email notifications will be silenced until the review is started.';
 
 export const MERGE_CONFLICT_TOOLTIP =
   'This change has merge conflicts. ' +
-  'Download the patch and run "git rebase". ' +
+  'Rebase on the upstream branch (e.g. "git pull --rebase"). ' +
   'Upload a new patchset after resolving all merge conflicts.';
+
+export const GIT_CONFLICT_TOOLTIP =
+  'A file contents of the change contain git conflict markers' +
+  'to indicate the conflicts.';
 
 const PRIVATE_TOOLTIP =
   'This change is only visible to its owner and ' +
@@ -64,7 +56,8 @@ export class GrChangeStatus extends LitElement {
   @property({type: String})
   status?: ChangeStates;
 
-  @property({type: String})
+  // Private but used in tests.
+  @state()
   tooltipText = '';
 
   @property({type: Object})
@@ -99,7 +92,8 @@ export class GrChangeStatus extends LitElement {
           background-color: var(--status-private);
           color: var(--status-private);
         }
-        :host(.merge-conflict) .chip {
+        :host(.merge-conflict) .chip,
+        :host(.git-conflict) .chip {
           background-color: var(--status-conflict);
           color: var(--status-conflict);
         }
@@ -131,12 +125,8 @@ export class GrChangeStatus extends LitElement {
           padding: 0;
         }
         :host(:not([flat])) .chip,
-        .icon {
+        :host(:not([flat])) .chip gr-icon {
           color: var(--status-text-color);
-        }
-        .icon {
-          --iron-icon-height: 18px;
-          --iron-icon-width: 18px;
         }
       `,
     ];
@@ -169,7 +159,7 @@ export class GrChangeStatus extends LitElement {
         <div class="chip" aria-label="Label: ${this.status}">
           ${this.computeStatusString()}
           ${this.showResolveIcon()
-            ? html`<iron-icon class="icon" icon="gr-icons:edit"></iron-icon>`
+            ? html`<gr-icon icon="edit" filled small></gr-icon>`
             : ''}
         </div>
       </a>
@@ -211,7 +201,7 @@ export class GrChangeStatus extends LitElement {
   // private but used in test
   getStatusLink(): string {
     if (this.revertedChange) {
-      return GerritNav.getUrlForSearchQuery(`${this.revertedChange._number}`);
+      return createSearchUrl({query: `${this.revertedChange._number}`});
     }
     if (
       this.status === ChangeStates.MERGE_CONFLICT &&
@@ -245,6 +235,9 @@ export class GrChangeStatus extends LitElement {
         break;
       case ChangeStates.MERGE_CONFLICT:
         this.tooltipText = MERGE_CONFLICT_TOOLTIP;
+        break;
+      case ChangeStates.GIT_CONFLICT:
+        this.tooltipText = GIT_CONFLICT_TOOLTIP;
         break;
       default:
         this.tooltipText = '';

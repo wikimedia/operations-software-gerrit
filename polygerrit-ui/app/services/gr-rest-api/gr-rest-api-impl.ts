@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 /* NB: Order is important, because of namespaced classes. */
 
@@ -74,7 +63,7 @@ import {
   DiffPreferenceInput,
   DocResult,
   EditInfo,
-  EditPatchSetNum,
+  EDIT,
   EditPreferencesInfo,
   EmailAddress,
   EmailInfo,
@@ -97,11 +86,10 @@ import {
   HashtagsInput,
   ImagesForDiff,
   IncludedInInfo,
-  LabelNameToLabelTypeInfoMap,
   MergeableInfo,
   NameToProjectInfoMap,
   NumericChangeId,
-  ParentPatchSetNum,
+  PARENT,
   ParsedJSON,
   Password,
   PatchRange,
@@ -131,13 +119,12 @@ import {
   TagInput,
   TopMenuEntryInfo,
   UrlEncodedCommentId,
-  UrlEncodedRepoName,
+  FixReplacementInfo,
 } from '../../types/common';
 import {
   DiffInfo,
   DiffPreferencesInfo,
   IgnoreWhitespaceType,
-  WebLinkInfo,
 } from '../../types/diff';
 import {
   CancelConditionCallback,
@@ -151,7 +138,6 @@ import {
   createDefaultEditPrefs,
   createDefaultPreferences,
   HttpMethod,
-  ProjectState,
   ReviewerState,
 } from '../../constants/constants';
 import {firePageError, fireServerError} from '../../utils/event-util';
@@ -160,6 +146,7 @@ import {ErrorCallback} from '../../api/rest';
 import {addDraftProp, DraftInfo} from '../../utils/comment-util';
 import {BaseScheduler} from '../scheduler/scheduler';
 import {MaxInFlightScheduler} from '../scheduler/max-in-flight-scheduler';
+import {FlagsService} from '../flags/flags';
 
 const MAX_PROJECT_RESULTS = 25;
 
@@ -239,9 +226,9 @@ interface QueryChangesParams {
 
 interface QueryAccountsParams {
   [paramName: string]: string | undefined | null | number;
-  suggest: null;
   q: string;
   n?: number;
+  o?: string;
 }
 
 interface QueryGroupsParams {
@@ -296,15 +283,13 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   readonly _projectLookup = projectLookup; // Shared across instances.
 
   // The value is set in created, before any other actions
-  private authService: AuthService;
-
-  // The value is set in created, before any other actions
   private readonly _restApiHelper: GrRestApiHelper;
 
-  constructor(authService?: AuthService) {
-    // TODO: Make the authService constructor parameter required when we have
-    // changed all usages of this class to not instantiate via createElement().
-    this.authService = authService ?? getAppContext().authService;
+  constructor(
+    private readonly authService: AuthService,
+    // @ts-ignore: it's ok.
+    private readonly _flagsService: FlagsService
+  ) {
     this._restApiHelper = new GrRestApiHelper(
       this._cache,
       this.authService,
@@ -774,10 +759,14 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     }) as Promise<unknown>;
   }
 
-  getAccountDetails(userId: AccountId): Promise<AccountDetailInfo | undefined> {
+  getAccountDetails(
+    userId: AccountId | EmailAddress,
+    errFn?: ErrorCallback
+  ): Promise<AccountDetailInfo | undefined> {
     return this._restApiHelper.fetchJSON({
       url: `/accounts/${encodeURIComponent(userId)}/detail`,
       anonymizedUrl: '/accounts/*/detail',
+      errFn,
     }) as Promise<AccountDetailInfo | undefined>;
   }
 
@@ -910,7 +899,6 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     }) as Promise<string | undefined>;
   }
 
-  // https://gerrit-review.googlesource.com/Documentation/rest-api-accounts.html#list-groups
   getAccountGroups() {
     return this._restApiHelper.fetchJSON({
       url: '/accounts/self/groups',
@@ -1129,7 +1117,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
         ListChangesOption.CURRENT_ACTIONS,
         ListChangesOption.CURRENT_REVISION,
         ListChangesOption.DETAILED_LABELS,
-        // TODO: remove this option and merge requirements from dashbaord req
+        // TODO: remove this option and merge requirements from dashboard req
         ListChangesOption.SUBMIT_REQUIREMENTS
       )
     );
@@ -1295,7 +1283,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     let params = undefined;
     if (isMergeParent(patchRange.basePatchNum)) {
       params = {parent: getParentIndex(patchRange.basePatchNum)};
-    } else if (patchRange.basePatchNum !== ParentPatchSetNum) {
+    } else if (patchRange.basePatchNum !== PARENT) {
       params = {base: patchRange.basePatchNum};
     }
     return this._getChangeURLAndFetch({
@@ -1314,7 +1302,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   ): Promise<{files: FileNameToFileInfoMap} | undefined> {
     let endpoint = '/edit?list';
     let anonymizedEndpoint = endpoint;
-    if (patchRange.basePatchNum !== ParentPatchSetNum) {
+    if (patchRange.basePatchNum !== PARENT) {
       endpoint += '&base=' + encodeURIComponent(`${patchRange.basePatchNum}`);
       anonymizedEndpoint += '&base=*';
     }
@@ -1342,7 +1330,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     changeNum: NumericChangeId,
     patchRange: PatchRange
   ): Promise<FileNameToFileInfoMap | undefined> {
-    if (patchRange.patchNum === EditPatchSetNum) {
+    if (patchRange.patchNum === EDIT) {
       return this.getChangeEditFiles(changeNum, patchRange).then(
         res => res && res.files
       );
@@ -1480,7 +1468,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     }) as Promise<GroupNameToGroupInfoMap | undefined>;
   }
 
-  getRepos(
+  async getRepos(
     filter: string | undefined,
     reposPerPage: number,
     offset?: number
@@ -1489,43 +1477,28 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
 
     // TODO(kaspern): Rename rest api from /projects/ to /repos/ once backend
     // supports it.
-    // If query then return directly as the result will be expected to be an array
+
+    // If the request is a query then return the response directly as the result
+    // will already be the expected array. If it is not a query, transform the
+    // map to an array.
     if (isQuery) {
       return this._fetchSharedCacheURL({
-        url, // The url contains query,so the response is an array, not map
+        url,
         anonymizedUrl: '/projects/?*',
       }) as Promise<ProjectInfoWithName[] | undefined>;
-    }
-    const result: Promise<NameToProjectInfoMap[] | undefined> =
-      this._fetchSharedCacheURL({
-        url, // The url contains query,so the response is an array, not map
+    } else {
+      const result = await (this._fetchSharedCacheURL({
+        url,
         anonymizedUrl: '/projects/?*',
-      }) as Promise<NameToProjectInfoMap[] | undefined>;
-    return this._transformToArray(result);
-  }
-
-  _transformToArray(
-    res: Promise<NameToProjectInfoMap[] | undefined>
-  ): Promise<ProjectInfoWithName[] | undefined> {
-    return res.then(response => {
-      const reposList: ProjectInfoWithName[] = [];
-      for (const [name, project] of Object.entries(response ?? {})) {
-        const projectInfo: ProjectInfoWithName = {
-          id: project.id as unknown as UrlEncodedRepoName,
+      }) as Promise<NameToProjectInfoMap | undefined>);
+      if (result === undefined) return [];
+      return Object.entries(result).map(([name, project]) => {
+        return {
+          ...project,
           name: name as RepoName,
-          parent: project.parent as unknown as RepoName,
-          description: project.description as unknown as string,
-          state: project.state as unknown as ProjectState,
-          branches: project.branches as unknown as {
-            [branchName: string]: CommitId;
-          },
-          labels: project.labels as unknown as LabelNameToLabelTypeInfoMap,
-          web_links: project.web_links as unknown as WebLinkInfo[],
         };
-        reposList.push(projectInfo);
-      }
-      return reposList;
-    });
+      });
+    }
   }
 
   setRepoHead(repo: RepoName, ref: GitRef) {
@@ -1679,12 +1652,24 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
 
   getSuggestedAccounts(
     inputVal: string,
-    n?: number
+    n?: number,
+    canSee?: NumericChangeId,
+    filterActive?: boolean
   ): Promise<AccountInfo[] | undefined> {
-    if (!inputVal) {
-      return Promise.resolve([]);
+    const params: QueryAccountsParams = {o: 'DETAILS', q: ''};
+    const queryParams = [];
+    inputVal = inputVal?.trim() ?? '';
+    if (inputVal.length > 0) {
+      queryParams.push(inputVal);
     }
-    const params: QueryAccountsParams = {suggest: null, q: inputVal};
+    if (canSee) {
+      queryParams.push(`cansee:${canSee}`);
+    }
+    if (filterActive) {
+      queryParams.push('is:active');
+    }
+    params.q = queryParams.join(' and ');
+    if (!params.q) return Promise.resolve([]);
     if (n) {
       params.n = n;
     }
@@ -1745,9 +1730,10 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     changeNum: NumericChangeId,
     patchNum: PatchSetNum
   ): Promise<RelatedChangesInfo | undefined> {
+    const options = '?o=SUBMITTABLE';
     return this._getChangeURLAndFetch({
       changeNum,
-      endpoint: '/related',
+      endpoint: `/related${options}`,
       revision: patchNum,
       reportEndpointAsIs: true,
     }) as Promise<RelatedChangesInfo | undefined>;
@@ -1789,7 +1775,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   getChangeCherryPicks(
     project: RepoName,
     changeID: ChangeId,
-    changeNum: NumericChangeId
+    branch: BranchName
   ): Promise<ChangeInfo[] | undefined> {
     const options = listChangesOptionsToHex(
       ListChangesOption.CURRENT_REVISION,
@@ -1798,7 +1784,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     const query = [
       `project:${project}`,
       `change:${changeID}`,
-      `-change:${changeNum}`,
+      `-branch:${branch}`,
       '-is:abandoned',
     ].join(' ');
     const params = {
@@ -1844,11 +1830,22 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   }
 
   getChangesWithSimilarTopic(topic: string): Promise<ChangeInfo[] | undefined> {
-    const query = [`intopic:"${topic}"`].join(' ');
+    const query = `intopic:"${topic}"`;
     return this._restApiHelper.fetchJSON({
       url: '/changes/',
       params: {q: query},
       anonymizedUrl: '/changes/intopic:*',
+    }) as Promise<ChangeInfo[] | undefined>;
+  }
+
+  getChangesWithSimilarHashtag(
+    hashtag: string
+  ): Promise<ChangeInfo[] | undefined> {
+    const query = `inhashtag:"${hashtag}"`;
+    return this._restApiHelper.fetchJSON({
+      url: '/changes/',
+      params: {q: query},
+      anonymizedUrl: '/changes/inhashtag:*',
     }) as Promise<ChangeInfo[] | undefined>;
   }
 
@@ -1967,7 +1964,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     // 404s indicate the file does not exist yet in the revision, so suppress
     // them.
     const promise =
-      patchNum === EditPatchSetNum
+      patchNum === EDIT
         ? this._getFileInChangeEdit(changeNum, path)
         : this._getFileInRevision(changeNum, path, patchNum, suppress404s);
 
@@ -2095,6 +2092,23 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     });
   }
 
+  getFixPreview(
+    changeNum: NumericChangeId,
+    patchNum: PatchSetNum,
+    fixReplacementInfos: FixReplacementInfo[]
+  ): Promise<FilePathToDiffInfoMap | undefined> {
+    return this._getChangeURLAndSend({
+      method: HttpMethod.POST,
+      changeNum,
+      patchNum,
+      endpoint: '/fix:preview',
+      reportEndpointAsId: true,
+      headers: {Accept: 'application/json'},
+      parseResponse: true,
+      body: {fix_replacement_infos: fixReplacementInfos},
+    }) as Promise<FilePathToDiffInfoMap | undefined>;
+  }
+
   getRobotCommentFixPreview(
     changeNum: NumericChangeId,
     patchNum: PatchSetNum,
@@ -2111,6 +2125,22 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   applyFixSuggestion(
     changeNum: NumericChangeId,
     patchNum: PatchSetNum,
+    fixReplacementInfos: FixReplacementInfo[]
+  ): Promise<Response> {
+    return this._getChangeURLAndSend({
+      method: HttpMethod.POST,
+      changeNum,
+      patchNum,
+      endpoint: '/fix:apply',
+      reportEndpointAsId: true,
+      headers: {Accept: 'application/json'},
+      body: {fix_replacement_infos: fixReplacementInfos},
+    });
+  }
+
+  applyRobotFixSuggestion(
+    changeNum: NumericChangeId,
+    patchNum: PatchSetNum,
     fixId: string
   ): Promise<Response> {
     return this._getChangeURLAndSend({
@@ -2119,17 +2149,6 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
       patchNum,
       endpoint: `/fixes/${encodeURIComponent(fixId)}/apply`,
       reportEndpointAsId: true,
-    });
-  }
-
-  // Deprecated, prefer to use putChangeCommitMessage instead.
-  saveChangeCommitMessageEdit(changeNum: NumericChangeId, message: string) {
-    return this._getChangeURLAndSend({
-      changeNum,
-      method: HttpMethod.PUT,
-      endpoint: '/edit:message',
-      body: {message},
-      reportEndpointAsIs: true,
     });
   }
 
@@ -2225,12 +2244,6 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     });
   }
 
-  /**
-   * @param basePatchNum Negative values specify merge parent
-   * index.
-   * @param whitespace the ignore-whitespace level for the diff
-   * algorithm.
-   */
   getDiff(
     changeNum: NumericChangeId,
     basePatchNum: PatchSetNum,
@@ -2245,7 +2258,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     };
     if (isMergeParent(basePatchNum)) {
       params.parent = getParentIndex(basePatchNum);
-    } else if (basePatchNum !== ParentPatchSetNum) {
+    } else if (basePatchNum !== PARENT) {
       params.base = basePatchNum;
     }
     const endpoint = `/files/${encodeURIComponent(path)}/diff`;
@@ -2259,7 +2272,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     };
 
     // Invalidate the cache if its edit patch to make sure we always get latest.
-    if (patchNum === EditPatchSetNum) {
+    if (patchNum === EDIT) {
       if (!req.fetchOptions) req.fetchOptions = {};
       if (!req.fetchOptions.headers) req.fetchOptions.headers = new Headers();
       req.fetchOptions.headers.append('Cache-Control', 'no-cache');
@@ -2332,11 +2345,6 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     );
   }
 
-  /**
-   * If the user is logged in, fetch the user's draft diff comments. If there
-   * is no logged in user, the request is not made and the promise yields an
-   * empty object.
-   */
   async getDiffDrafts(
     changeNum: NumericChangeId
   ): Promise<{[path: string]: DraftInfo[]} | undefined> {
@@ -2461,7 +2469,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
       // in a single pass.
       comments = this._setRanges(comments);
 
-      if (basePatchNum === ParentPatchSetNum) {
+      if (basePatchNum === PARENT) {
         baseComments = comments.filter(onlyParent);
         baseComments.forEach(setPath);
       }
@@ -2471,7 +2479,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     });
     promises.push(fetchPromise);
 
-    if (basePatchNum !== ParentPatchSetNum) {
+    if (basePatchNum !== PARENT) {
       fetchPromise = fetchComments(basePatchNum).then(response => {
         baseComments = ((response && path && response[path]) || []).filter(
           withoutParent
@@ -2561,18 +2569,11 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     );
   }
 
-  /**
-   * @return Whether there are pending diff draft sends.
-   */
   hasPendingDiffDrafts(): number {
     const promises = this._pendingRequests[Requests.SEND_DIFF_DRAFT];
     return promises && promises.length;
   }
 
-  /**
-   * @return A promise that resolves when all pending
-   * diff draft sends have resolved.
-   */
   awaitPendingDiffDrafts(): Promise<void> {
     return Promise.all(
       this._pendingRequests[Requests.SEND_DIFF_DRAFT] || []
@@ -2687,7 +2688,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     let promiseB;
 
     if (diff.meta_a?.content_type.startsWith('image/')) {
-      if (patchRange.basePatchNum === ParentPatchSetNum) {
+      if (patchRange.basePatchNum === PARENT) {
         // Note: we only attempt to get the image from the first parent.
         promiseA = this.getB64FileContents(
           changeNum,
@@ -2718,20 +2719,22 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
 
     return Promise.all([promiseA, promiseB]).then(results => {
       // Sometimes the server doesn't send back the content type.
-      const baseImage: Base64ImageFile | null = results[0]
-        ? {
-            ...results[0],
-            _expectedType: diff.meta_a.content_type,
-            _name: diff.meta_a.name,
-          }
-        : null;
-      const revisionImage: Base64ImageFile | null = results[1]
-        ? {
-            ...results[1],
-            _expectedType: diff.meta_b.content_type,
-            _name: diff.meta_b.name,
-          }
-        : null;
+      const baseImage: Base64ImageFile | null =
+        results[0] && diff.meta_a
+          ? {
+              ...results[0],
+              _expectedType: diff.meta_a.content_type,
+              _name: diff.meta_a.name,
+            }
+          : null;
+      const revisionImage: Base64ImageFile | null =
+        results[1] && diff.meta_b
+          ? {
+              ...results[1],
+              _expectedType: diff.meta_b.content_type,
+              _name: diff.meta_b.name,
+            }
+          : null;
       const imagesForDiff: ImagesForDiff = {baseImage, revisionImage};
       return imagesForDiff;
     });
@@ -3008,20 +3011,20 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     }) as unknown as Promise<CommentInfo>;
   }
 
-  /**
-   * Given a changeNum, gets the change.
-   */
   getChange(
     changeNum: ChangeId | NumericChangeId,
     errFn: ErrorCallback
   ): Promise<ChangeInfo | null> {
     // Cannot use _changeBaseURL, as this function is used by _projectLookup.
     return this._restApiHelper
-      .fetchJSON({
-        url: `/changes/?q=change:${changeNum}`,
-        errFn,
-        anonymizedUrl: '/changes/?q=change:*',
-      })
+      .fetchJSON(
+        {
+          url: `/changes/?q=change:${changeNum}`,
+          errFn,
+          anonymizedUrl: '/changes/?q=change:*',
+        },
+        /* noAcceptHeader */ true
+      )
       .then(res => {
         const changeInfos = res as ChangeInfo[] | undefined;
         if (!changeInfos || !changeInfos.length) {
@@ -3042,11 +3045,6 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     this._projectLookup[changeNum] = Promise.resolve(project);
   }
 
-  /**
-   * Checks in _projectLookup for the changeNum. If it exists, returns the
-   * project. If not, calls the restAPI to get the change, populates
-   * _projectLookup with the project for that change, and returns the project.
-   */
   getFromProjectLookup(
     changeNum: NumericChangeId
   ): Promise<RepoName | undefined> {
@@ -3157,9 +3155,6 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     errFn: ErrorCallback
   ): Promise<Response | undefined>;
 
-  /**
-   * Execute a change action or revision action on a change.
-   */
   executeChangeAction(
     changeNum: NumericChangeId,
     method: HttpMethod | undefined,
@@ -3178,12 +3173,6 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     });
   }
 
-  /**
-   * Get blame information for the given diff.
-   *
-   * @param base If true, requests blame for the base of the
-   *     diff, rather than the revision.
-   */
   getBlame(
     changeNum: NumericChangeId,
     patchNum: PatchSetNum,
@@ -3234,10 +3223,6 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     });
   }
 
-  /**
-   * Fetch a project dashboard definition.
-   * https://gerrit-review.googlesource.com/Documentation/rest-api-projects.html#get-dashboard
-   */
   getDashboard(
     project: RepoName,
     dashboard: DashboardId,

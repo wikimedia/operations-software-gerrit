@@ -1462,7 +1462,7 @@ By default 100,000.
 Maximum number of patch sets allowed per change. If this is insufficient,
 recreate the change with a new Change-Id, then abandon the old change.
 +
-By default 1,500.
+By default 1000.
 
 [[change.maxUpdates]]change.maxUpdates::
 +
@@ -1770,8 +1770,11 @@ commentlinks to be immediately available in the UI.
   link = "#/q/$1"
 
 [commentlink "bugzilla"]
-  match = "(bug\\s+#?)(\\d+)"
-  link = http://bugs.example.com/show_bug.cgi?id=$2
+  match = "(^|\\s)(bug\\s+#?)(\\d+)($|\\s)"
+  link = http://bugs.example.com/show_bug.cgi?id=$3
+  prefix = $1
+  suffix = $4
+  text = $2$3
 
 [commentlink "tracker"]
   match = ([Bb]ug:\\s+)(\\d+)
@@ -1806,11 +1809,36 @@ supported. Comment link patterns that are written in this style should
 be updated to match text formats.
 +
 A common pattern to match is `bug\\s+(\\d+)`.
++
+In order to better control the visual presentation of the link `prefix`,
+`suffix` and `text` is used. With the generated link html looking like:
+`prefix<a ...>text</a>suffix`.
 
 [[commentlink.name.link]]commentlink.<name>.link::
 +
 The URL to direct the user to whenever the regular expression is
 matched.  Groups in the match expression may be accessed as `$'n'`.
++
+The link property is used only when the html property is not present.
+
+[[commentlink.name.prefix]]commentlink.<name>.prefix::
++
+The text inserted before the link. Groups in the match expression may be
+accessed as `$'n'`.
++
+The link property is used only when the html property is not present.
+
+[[commentlink.name.suffix]]commentlink.<name>.suffix::
++
+The text inserted after the link. Groups in the match expression may be
+accessed as `$'n'`.
++
+The link property is used only when the html property is not present.
+
+[[commentlink.name.text]]commentlink.<name>.text::
++
+The text content of the link. Groups in the match expression may be
+accessed as `$'n'`.
 +
 The link property is used only when the html property is not present.
 
@@ -2522,6 +2550,10 @@ Used to identify a specific instance within a group of Gerrit instances with the
 same `serverId` (i.e.: a Gerrit cluster).
 Unlike `instanceName` this value is not available in the email templates.
 
+The instance ID can also be configured by setting the Java system property
+`gerrit.instanceId` on startup. This will override the configuration in the
+gerrit.config.
+
 [[gerrit.instanceName]]gerrit.instanceName::
 +
 Short identifier for this Gerrit instance.
@@ -2559,6 +2591,31 @@ of the following steps:
 Rolling upgrade may or may not be possible depending on the changes introduced
 by the target version of the upgrade. Refer to the release notes and check whether
 the rolling upgrade is possible or not and the associated constraints.
+
+[[gerrit.importedServerId]]gerrit.importedServerId::
++
+ServerId of the repositories imported from other Gerrit servers. Changes coming
+associated with the imported serverIds are indexed and displayed in the UI
+but they are not searchable by `changeNumber` therefore the
+`index.cacheQueryResultsByChangeNum` must also be set to false.
+Imported changes are still discoverable in any other ways, for example:
+
+  project:someproject branch:main changeId:I78a7add1fe2597cad788c833d8f771f09b54cf33
++
+Specify multiple `gerrit.importedServerId` for allowing the import from multiple
+Gerrit servers with different serverIds.
++
+[NOTE]
+The account-ids referenced in the imported changes are used for looking up the
+associated account-id locally, using the `imported:` external-id.
+Example: the account-id 1000 from the imported server-id 59a4964e-6376-4ed9-beef
+will be looked up in the local accounts using the `imported:1000@59a4964e-6376-4ed9-beef`
+external-id.
++
+If this value is not set, all changes imported from other Gerrit servers will be
+ignored.
++
+By default empty.
 
 [[gerrit.serverId]]gerrit.serverId::
 +
@@ -3248,6 +3305,15 @@ online schema upgrades, and also the default for offline reindexing.
 +
 If not set or set to a zero, defaults to the number of logical CPUs as returned
 by the JVM. If set to a negative value, defaults to a direct executor.
+
+[[index.cacheQueryResultsByChangeNum]]index.cacheQueryResultsByChangeNum::
++
+Allow to cache and reuse the change JSON elements by their Change number.
+This improves the performance of queries that are returning Changes duplicates.
+It needs to be turned off when having Changes imported from other servers
+because of the potential conflicts of change numbers.
++
+Defaults to true.
 
 [[index.onlineUpgrade]]index.onlineUpgrade::
 +
@@ -5665,7 +5731,7 @@ expression containing # must be wrapped in double quotes.
 
 [[trackingid.name.system]]trackingid.<name>.system::
 +
-The name of the external tracking system (maximum 10 characters).
+The name of the external tracking system (maximum 20 characters).
 It is possible to have several trackingid entries for the same
 tracking system.
 

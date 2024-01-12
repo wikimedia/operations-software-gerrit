@@ -1,29 +1,23 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-editable-label';
 import {GrEditableLabel} from './gr-editable-label';
 import {queryAndAssert} from '../../../utils/common-util';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
 import {PaperInputElement} from '@polymer/paper-input/paper-input';
 import {GrButton} from '../gr-button/gr-button';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
 import {IronDropdownElement} from '@polymer/iron-dropdown';
+import {
+  AutocompleteSuggestion,
+  GrAutocomplete,
+} from '../gr-autocomplete/gr-autocomplete';
+import {Key} from '../../../utils/dom-util';
+import {pressKey, waitEventLoop, waitUntil} from '../../../test/test-utils';
+import {IronInputElement} from '@polymer/iron-input';
 
 suite('gr-editable-label tests', () => {
   let element: GrEditableLabel;
@@ -38,19 +32,20 @@ suite('gr-editable-label tests', () => {
         placeholder="label text"
       ></gr-editable-label>
     `);
+    label = queryAndAssert<HTMLLabelElement>(element, 'label');
     elementNoPlaceholder = await fixture<GrEditableLabel>(html`
       <gr-editable-label value=""></gr-editable-label>
     `);
-    label = queryAndAssert<HTMLLabelElement>(element, 'label');
 
-    // In Polymer 2 inputElement isn't nativeInput anymore
     const paperInput = queryAndAssert<PaperInputElement>(element, '#input');
-    input = (paperInput.$.nativeInput ||
-      paperInput.inputElement) as HTMLInputElement;
+    input = (paperInput.inputElement as IronInputElement)
+      .inputElement as HTMLInputElement;
   });
 
   test('renders', () => {
-    expect(element).shadowDom.to.equal(`<label
+    assert.shadowDom.equal(
+      element,
+      `<label
       aria-label="value text"
       class="editable"
       part="label"
@@ -59,7 +54,6 @@ suite('gr-editable-label tests', () => {
       value text
     </label>
     <iron-dropdown
-      allowoutsidescroll=""
       aria-disabled="false"
       aria-hidden="true"
       horizontal-align="auto"
@@ -75,28 +69,28 @@ suite('gr-editable-label tests', () => {
             tabindex="0"
           ></paper-input>
           <div class="buttons">
+          <gr-button
+              aria-disabled="false"
+              id="saveBtn"
+              primary
+              role="button"
+              tabindex="0"
+            >
+              Save
+            </gr-button>
             <gr-button
               aria-disabled="false"
               id="cancelBtn"
-              link=""
               role="button"
               tabindex="0"
             >
               cancel
             </gr-button>
-            <gr-button
-              aria-disabled="false"
-              id="saveBtn"
-              link=""
-              role="button"
-              tabindex="0"
-            >
-              save
-            </gr-button>
           </div>
         </div>
       </div>
-    </iron-dropdown>`);
+    </iron-dropdown>`
+    );
   });
 
   test('element render', async () => {
@@ -125,7 +119,7 @@ suite('gr-editable-label tests', () => {
     assert.equal(elementNoPlaceholder.title, '');
     element.value = 'value text';
 
-    await flush();
+    await waitEventLoop();
     assert.equal(element.title, 'value text');
   });
 
@@ -134,16 +128,15 @@ suite('gr-editable-label tests', () => {
     element.addEventListener('changed', editedSpy);
     assert.isFalse(element.editing);
 
-    MockInteractions.tap(label);
-    await flush();
+    label.click();
+    await waitEventLoop();
 
     assert.isTrue(element.editing);
     assert.isFalse(editedSpy.called);
 
     element.inputText = 'new text';
-    // Press enter:
-    MockInteractions.keyDownOn(input, 13, null, 'Enter');
-    await flush();
+    pressKey(input, Key.ENTER);
+    await waitEventLoop();
 
     assert.isTrue(editedSpy.called);
     assert.equal(input.value, 'new text');
@@ -155,21 +148,15 @@ suite('gr-editable-label tests', () => {
     element.addEventListener('changed', editedSpy);
     assert.isFalse(element.editing);
 
-    MockInteractions.tap(label);
-    await flush();
+    label.click();
+    await waitEventLoop();
 
     assert.isTrue(element.editing);
     assert.isFalse(editedSpy.called);
 
     element.inputText = 'new text';
-    // Press enter:
-    MockInteractions.pressAndReleaseKeyOn(
-      queryAndAssert<GrButton>(element, '#saveBtn'),
-      13,
-      null,
-      'Enter'
-    );
-    await flush();
+    pressKey(queryAndAssert<GrButton>(element, '#saveBtn'), Key.ENTER);
+    await waitEventLoop();
 
     assert.isTrue(editedSpy.called);
     assert.equal(input.value, 'new text');
@@ -181,16 +168,15 @@ suite('gr-editable-label tests', () => {
     element.addEventListener('changed', editedSpy);
     assert.isFalse(element.editing);
 
-    MockInteractions.tap(label);
-    await flush();
+    label.click();
+    await waitEventLoop();
 
     assert.isTrue(element.editing);
     assert.isFalse(editedSpy.called);
 
     element.inputText = 'new text';
-    // Press escape:
-    MockInteractions.keyDownOn(input, 27, null, 'Escape');
-    await flush();
+    pressKey(input, Key.ESC);
+    await waitEventLoop();
 
     assert.isFalse(editedSpy.called);
     // Text changes should be discarded.
@@ -203,16 +189,16 @@ suite('gr-editable-label tests', () => {
     element.addEventListener('changed', editedSpy);
     assert.isFalse(element.editing);
 
-    MockInteractions.tap(label);
-    await flush();
+    label.click();
+    await waitEventLoop();
 
     assert.isTrue(element.editing);
     assert.isFalse(editedSpy.called);
 
     element.inputText = 'new text';
     // Press escape:
-    MockInteractions.tap(queryAndAssert<GrButton>(element, '#cancelBtn'));
-    await flush();
+    queryAndAssert<GrButton>(element, '#cancelBtn').click();
+    await waitEventLoop();
 
     assert.isFalse(editedSpy.called);
     // Text changes should be discarded.
@@ -252,6 +238,93 @@ suite('gr-editable-label tests', () => {
 
     test('label is not marked as editable', () => {
       assert.isFalse(label.classList.contains('editable'));
+    });
+  });
+
+  suite('autocomplete tests', () => {
+    let element: GrEditableLabel;
+    let autocomplete: GrAutocomplete;
+    let suggestions: Array<AutocompleteSuggestion>;
+    let labelSaved = false;
+
+    setup(async () => {
+      element = await fixture<GrEditableLabel>(html`
+        <gr-editable-label
+          autocomplete
+          value="value text"
+          .query=${() => Promise.resolve(suggestions)}
+          @changed=${() => {
+            labelSaved = true;
+          }}
+        ></gr-editable-label>
+      `);
+
+      autocomplete = element.grAutocomplete!;
+    });
+
+    test('autocomplete suggestions shown esc closes suggestions', async () => {
+      suggestions = [{name: 'value text 1'}, {name: 'value text 2'}];
+      await element.open();
+
+      await waitUntil(() => !autocomplete.suggestionsDropdown!.isHidden);
+
+      pressKey(autocomplete.input!, Key.ESC);
+
+      await waitUntil(() => autocomplete.suggestionsDropdown!.isHidden);
+      assert.isTrue(element.dropdown?.opened);
+    });
+
+    test('autocomplete suggestions closed esc closes dialogue', async () => {
+      suggestions = [{name: 'value text 1'}, {name: 'value text 2'}];
+      await element.open();
+      await waitUntil(() => !autocomplete.suggestionsDropdown!.isHidden);
+      // Press esc to close suggestions.
+      pressKey(autocomplete.input!, Key.ESC);
+      await waitUntil(() => autocomplete.suggestionsDropdown!.isHidden);
+
+      pressKey(autocomplete.input!, Key.ESC);
+
+      await element.updateComplete;
+      // Dialogue is closed, save not triggered.
+      assert.isTrue(autocomplete.suggestionsDropdown?.isHidden);
+      assert.isFalse(element.dropdown?.opened);
+      assert.isFalse(labelSaved);
+    });
+
+    test('autocomplete suggestions shown enter chooses suggestions', async () => {
+      suggestions = [{name: 'value text 1'}, {name: 'value text 2'}];
+      await element.open();
+
+      await waitUntil(() => !autocomplete.suggestionsDropdown!.isHidden);
+
+      pressKey(autocomplete.input!, Key.ENTER);
+
+      await waitUntil(() => autocomplete.suggestionsDropdown!.isHidden);
+      await element.updateComplete;
+      // The value was picked from suggestions, suggestions are hidden, dialogue
+      // is shown, save has not been triggered.
+      assert.strictEqual(element.inputText, 'value text 1');
+      assert.isTrue(autocomplete.suggestionsDropdown?.isHidden);
+      assert.isTrue(element.dropdown?.opened);
+      assert.isFalse(labelSaved);
+    });
+
+    test('autocomplete suggestions closed enter saves suggestion', async () => {
+      suggestions = [{name: 'value text 1'}, {name: 'value text 2'}];
+      await element.open();
+      await waitUntil(() => !autocomplete.suggestionsDropdown!.isHidden);
+      // Press enter to close suggestions.
+      pressKey(autocomplete.input!, Key.ENTER);
+
+      await waitUntil(() => autocomplete.suggestionsDropdown!.isHidden);
+
+      pressKey(autocomplete.input!, Key.ENTER);
+
+      await element.updateComplete;
+      // Dialogue is closed, save triggered.
+      assert.isTrue(autocomplete.suggestionsDropdown?.isHidden);
+      assert.isFalse(element.dropdown?.opened);
+      assert.isTrue(labelSaved);
     });
   });
 });

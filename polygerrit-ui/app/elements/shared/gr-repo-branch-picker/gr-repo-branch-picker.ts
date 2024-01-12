@@ -1,22 +1,10 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import '@polymer/iron-icon/iron-icon';
-import '../gr-icons/gr-icons';
 import '../gr-labeled-autocomplete/gr-labeled-autocomplete';
+import '../gr-icon/gr-icon';
 import {singleDecodeURL} from '../../../utils/url-util';
 import {AutocompleteQuery} from '../gr-autocomplete/gr-autocomplete';
 import {
@@ -29,7 +17,7 @@ import {GrLabeledAutocomplete} from '../gr-labeled-autocomplete/gr-labeled-autoc
 import {getAppContext} from '../../../services/app-context';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, html, css} from 'lit';
-import {customElement, property, state, query} from 'lit/decorators';
+import {customElement, property, state, query} from 'lit/decorators.js';
 import {assertIsDefined} from '../../../utils/common-util';
 import {fire} from '../../../utils/event-util';
 import {BindValueChangeEvent} from '../../../types/events';
@@ -79,11 +67,10 @@ export class GrRepoBranchPicker extends LitElement {
         :host {
           display: block;
         }
-        gr-labeled-autocomplete,
-        iron-icon {
+        gr-labeled-autocomplete {
           display: inline-block;
         }
-        iron-icon {
+        gr-icon {
           margin-bottom: var(--spacing-l);
         }
       `,
@@ -103,7 +90,7 @@ export class GrRepoBranchPicker extends LitElement {
           }}
         >
         </gr-labeled-autocomplete>
-        <iron-icon icon="gr-icons:chevron-right"></iron-icon>
+        <gr-icon icon="chevron_right"></gr-icon>
         <gr-labeled-autocomplete
           id="branchInput"
           label="Branch"

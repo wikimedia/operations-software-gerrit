@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2019 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2019 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 /**
@@ -32,7 +21,6 @@ import {
   EventCallback,
   EventEmitterService,
 } from '../../../services/gr-event-interface/gr-event-interface';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {Gerrit} from '../../../api/gerrit';
 import {fontStyles} from '../../../styles/gr-font-styles';
 import {formStyles} from '../../../styles/gr-form-styles';
@@ -41,6 +29,7 @@ import {spinnerStyles} from '../../../styles/gr-spinner-styles';
 import {subpageStyles} from '../../../styles/gr-subpage-styles';
 import {tableStyles} from '../../../styles/gr-table-styles';
 import {assertIsDefined} from '../../../utils/common-util';
+import {iconStyles} from '../../../styles/gr-icon-styles';
 
 /**
  * These are the methods and properties that are exposed explicitly in the
@@ -77,7 +66,6 @@ export interface GerritInternal extends EventEmitterService, Gerrit {
   _customStyleSheet?: CSSStyleSheet;
 
   // exposed methods
-  Nav: typeof GerritNav;
   Auth: AuthService;
 }
 
@@ -122,8 +110,6 @@ const fakeApi = {
 class GerritImpl implements GerritInternal {
   _customStyleSheet?: CSSStyleSheet;
 
-  public readonly Nav = GerritNav;
-
   public readonly Auth: AuthService;
 
   private readonly reportingService: ReportingService;
@@ -135,6 +121,7 @@ class GerritImpl implements GerritInternal {
   public readonly styles = {
     font: fontStyles,
     form: formStyles,
+    icon: iconStyles,
     menuPage: menuPageStyles,
     spinner: spinnerStyles,
     subPage: subpageStyles,

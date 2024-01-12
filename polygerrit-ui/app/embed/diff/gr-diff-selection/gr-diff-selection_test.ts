@@ -3,13 +3,13 @@
  * Copyright 2016 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-diff-selection';
 import {GrDiffSelection} from './gr-diff-selection';
 import {createDiff} from '../../../test/test-data-generators';
 import {DiffInfo, Side} from '../../../api/diff';
 import {GrFormattedText} from '../../../elements/shared/gr-formatted-text/gr-formatted-text';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
 import {mouseDown} from '../../../test/test-utils';
 
 const diffTableTemplate = html`
@@ -22,7 +22,9 @@ const diffTableTemplate = html`
         <div data-side="left">
           <div class="comment-thread">
             <div class="gr-formatted-text message">
-              <span id="output" class="gr-linked-text">This is a comment</span>
+              <span id="output" class="gr-formatted-text"
+                >This is a comment</span
+              >
             </div>
           </div>
         </div>
@@ -44,7 +46,7 @@ const diffTableTemplate = html`
         <div data-side="right">
           <div class="comment-thread">
             <div class="gr-formatted-text message">
-              <span id="output" class="gr-linked-text"
+              <span id="output" class="gr-formatted-text"
                 >This is a comment on the right</span
               >
             </div>
@@ -60,7 +62,7 @@ const diffTableTemplate = html`
         <div data-side="left">
           <div class="comment-thread">
             <div class="gr-formatted-text message">
-              <span id="output" class="gr-linked-text"
+              <span id="output" class="gr-formatted-text"
                 >This is <a>a</a> different comment 💩 unicode is fun</span
               >
             </div>

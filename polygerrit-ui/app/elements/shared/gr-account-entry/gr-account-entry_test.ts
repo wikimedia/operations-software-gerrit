@@ -1,27 +1,15 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-account-entry';
 import {GrAccountEntry} from './gr-account-entry';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
 import {queryAndAssert, waitUntil} from '../../../test/test-utils';
 import {GrAutocomplete} from '../gr-autocomplete/gr-autocomplete';
-import {PaperInputElementExt} from '../../../types/types';
+import {PaperInputElement} from '@polymer/paper-input/paper-input';
 
 suite('gr-account-entry tests', () => {
   let element: GrAccountEntry;
@@ -31,6 +19,21 @@ suite('gr-account-entry tests', () => {
       <gr-account-entry></gr-account-entry>
     `);
     await element.updateComplete;
+  });
+
+  test('renders', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <gr-autocomplete
+          allow-non-suggested-values="false"
+          clear-on-commit=""
+          id="input"
+          warn-uncommitted=""
+        >
+        </gr-autocomplete>
+      `
+    );
   });
 
   test('account-text-changed fired when input text changed and allowAnyInput', async () => {
@@ -68,7 +71,7 @@ suite('gr-account-entry tests', () => {
 
     const input = queryAndAssert<GrAutocomplete>(element, '#input');
     assert.equal(
-      queryAndAssert<PaperInputElementExt>(input, '#input').value,
+      queryAndAssert<PaperInputElement>(input, '#input').value,
       'test text'
     );
     assert.isFalse(suggestStub.called);

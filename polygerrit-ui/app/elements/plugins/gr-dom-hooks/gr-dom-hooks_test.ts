@@ -3,9 +3,10 @@
  * Copyright 2017 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import {assert} from '@open-wc/testing';
 import {HookApi, PluginElement} from '../../../api/hook';
 import {PluginApi} from '../../../api/plugin';
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import '../../shared/gr-js-api-interface/gr-js-api-interface';
 import {GrDomHook, GrDomHooksManager} from './gr-dom-hooks';
 

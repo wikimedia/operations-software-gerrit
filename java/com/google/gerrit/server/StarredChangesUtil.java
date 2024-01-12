@@ -37,12 +37,10 @@ import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.git.GitUpdateFailureException;
 import com.google.gerrit.git.LockFailureException;
-import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.index.change.ChangeField;
-import com.google.gerrit.server.index.change.ChangeIndexer;
 import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
@@ -110,6 +108,11 @@ public class StarredChangesUtil {
     }
   }
 
+  public enum Operation {
+    ADD,
+    REMOVE
+  }
+
   @AutoValue
   public abstract static class StarRef {
     private static final StarRef MISSING =
@@ -158,15 +161,11 @@ public class StarredChangesUtil {
   }
 
   public static final String DEFAULT_LABEL = "star";
-  public static final String IGNORE_LABEL = "ignore";
-  public static final ImmutableSortedSet<String> DEFAULT_LABELS =
-      ImmutableSortedSet.of(DEFAULT_LABEL);
 
   private final GitRepositoryManager repoManager;
   private final GitReferenceUpdated gitRefUpdated;
   private final AllUsersName allUsers;
   private final Provider<PersonIdent> serverIdent;
-  private final ChangeIndexer indexer;
   private final Provider<InternalChangeQuery> queryProvider;
 
   @Inject
@@ -175,13 +174,11 @@ public class StarredChangesUtil {
       GitReferenceUpdated gitRefUpdated,
       AllUsersName allUsers,
       @GerritPersonIdent Provider<PersonIdent> serverIdent,
-      ChangeIndexer indexer,
       Provider<InternalChangeQuery> queryProvider) {
     this.repoManager = repoManager;
     this.gitRefUpdated = gitRefUpdated;
     this.allUsers = allUsers;
     this.serverIdent = serverIdent;
-    this.indexer = indexer;
     this.queryProvider = queryProvider;
   }
 
@@ -197,34 +194,27 @@ public class StarredChangesUtil {
     }
   }
 
-  public NavigableSet<String> star(
-      Account.Id accountId,
-      Project.NameKey project,
-      Change.Id changeId,
-      Set<String> labelsToAdd,
-      Set<String> labelsToRemove)
+  public void star(Account.Id accountId, Project.NameKey project, Change.Id changeId, Operation op)
       throws IllegalLabelException {
     try (Repository repo = repoManager.openRepository(allUsers)) {
       String refName = RefNames.refsStarredChanges(changeId, accountId);
       StarRef old = readLabels(repo, refName);
 
       NavigableSet<String> labels = new TreeSet<>(old.labels());
-      if (labelsToAdd != null) {
-        labels.addAll(labelsToAdd);
-      }
-      if (labelsToRemove != null) {
-        labels.removeAll(labelsToRemove);
+      switch (op) {
+        case ADD:
+          labels.add(DEFAULT_LABEL);
+          break;
+        case REMOVE:
+          labels.remove(DEFAULT_LABEL);
+          break;
       }
 
       if (labels.isEmpty()) {
         deleteRef(repo, refName, old.objectId());
       } else {
-        checkMutuallyExclusiveLabels(labels);
         updateLabels(repo, refName, old.objectId(), labels);
       }
-
-      indexer.index(project, changeId);
-      return Collections.unmodifiableNavigableSet(labels);
     } catch (IOException e) {
       throw new StorageException(
           String.format("Star change %d for account %d failed", changeId.get(), accountId.get()),
@@ -349,32 +339,6 @@ public class StarredChangesUtil {
     }
   }
 
-  public void ignore(ChangeResource rsrc) throws IllegalLabelException {
-    star(
-        rsrc.getUser().asIdentifiedUser().getAccountId(),
-        rsrc.getProject(),
-        rsrc.getChange().getId(),
-        ImmutableSet.of(IGNORE_LABEL),
-        ImmutableSet.of());
-  }
-
-  public void unignore(ChangeResource rsrc) throws IllegalLabelException {
-    star(
-        rsrc.getUser().asIdentifiedUser().getAccountId(),
-        rsrc.getProject(),
-        rsrc.getChange().getId(),
-        ImmutableSet.of(),
-        ImmutableSet.of(IGNORE_LABEL));
-  }
-
-  public boolean isIgnoredBy(Change.Id changeId, Account.Id accountId) {
-    return getLabels(accountId, changeId).contains(IGNORE_LABEL);
-  }
-
-  public boolean isIgnored(ChangeResource rsrc) {
-    return isIgnoredBy(rsrc.getChange().getId(), rsrc.getUser().asIdentifiedUser().getAccountId());
-  }
-
   public static StarRef readLabels(Repository repo, String refName) throws IOException {
     try (TraceTimer traceTimer =
         TraceContext.newTimer(
@@ -411,13 +375,6 @@ public class StarredChangesUtil {
               labels.stream().sorted().distinct().collect(joining("\n")).getBytes(UTF_8));
       oi.flush();
       return id;
-    }
-  }
-
-  private static void checkMutuallyExclusiveLabels(Set<String> labels)
-      throws MutuallyExclusiveLabelsException {
-    if (labels.containsAll(ImmutableSet.of(DEFAULT_LABEL, IGNORE_LABEL))) {
-      throw new MutuallyExclusiveLabelsException(DEFAULT_LABEL, IGNORE_LABEL);
     }
   }
 

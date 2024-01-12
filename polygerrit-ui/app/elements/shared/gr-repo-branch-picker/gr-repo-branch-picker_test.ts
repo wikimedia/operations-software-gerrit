@@ -1,34 +1,46 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-repo-branch-picker';
 import {GrRepoBranchPicker} from './gr-repo-branch-picker';
 import {stubRestApi} from '../../../test/test-utils';
 import {GitRef, ProjectInfoWithName, RepoName} from '../../../types/common';
-
-const basicFixture = fixtureFromElement('gr-repo-branch-picker');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-repo-branch-picker tests', () => {
   let element: GrRepoBranchPicker;
 
   setup(async () => {
-    element = basicFixture.instantiate();
-    await element.updateComplete;
+    element = await fixture(
+      html`<gr-repo-branch-picker></gr-repo-branch-picker>`
+    );
+  });
+
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div>
+          <gr-labeled-autocomplete
+            id="repoInput"
+            label="Repository"
+            placeholder="Select repo"
+          >
+          </gr-labeled-autocomplete>
+          <gr-icon icon="chevron_right"></gr-icon>
+          <gr-labeled-autocomplete
+            disabled=""
+            id="branchInput"
+            label="Branch"
+            placeholder="Select branch"
+          >
+          </gr-labeled-autocomplete>
+        </div>
+      `
+    );
   });
 
   suite('getRepoSuggestions', () => {
@@ -121,9 +133,8 @@ suite('gr-repo-branch-picker tests', () => {
       const repo = 'gerrit' as RepoName;
       const branchInput = 'refs/heads/stable-2.1';
       element.repo = repo;
-      return element.getRepoBranchesSuggestions(branchInput).then(() => {
-        assert.isTrue(getRepoBranchesStub.calledWith('stable-2.1', repo, 15));
-      });
+      await element.getRepoBranchesSuggestions(branchInput);
+      assert.isTrue(getRepoBranchesStub.calledWith('stable-2.1', repo, 15));
     });
 
     test('does not query when repo is unset', async () => {

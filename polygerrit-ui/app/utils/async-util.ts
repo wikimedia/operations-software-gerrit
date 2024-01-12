@@ -1,22 +1,11 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import {Observable} from 'rxjs';
 import {filter, take} from 'rxjs/operators';
+import {assertIsDefined} from './common-util';
 
 /**
  * @param fn An iteratee function to be passed each element of
@@ -114,6 +103,92 @@ export function debounce(
   return new DelayedTask(callback, waitMs);
 }
 
+export const DELAYED_CANCELLATION = Symbol('Delayed Cancellation');
+
+export class DelayedPromise<T> extends Promise<T> {
+  private resolve: (value: PromiseLike<T> | T) => void;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private reject: (reason?: any) => void;
+
+  private timer: number | undefined;
+
+  constructor(private readonly callback: () => Promise<T>, waitMs = 0) {
+    let resolve: ((value: PromiseLike<T> | T) => void) | undefined;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let reject: ((reason?: any) => void) | undefined;
+    super((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    assertIsDefined(resolve);
+    assertIsDefined(reject);
+    this.resolve = resolve;
+    this.reject = reject;
+    this.timer = window.setTimeout(async () => {
+      await this.flush();
+    }, waitMs);
+  }
+
+  private stop() {
+    if (this.timer === undefined) return false;
+    window.clearTimeout(this.timer);
+    this.timer = undefined;
+    return true;
+  }
+
+  async flush() {
+    if (!this.stop()) return;
+    try {
+      this.resolve(await this.callback());
+    } catch (e) {
+      this.reject(e);
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  cancel(reason?: any) {
+    if (!this.stop()) return;
+    this.reject(reason ?? DELAYED_CANCELLATION);
+  }
+
+  delegate(other: Promise<T>) {
+    if (!this.stop()) return;
+    other
+      .then((value: T) => this.resolve(value))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .catch((reason?: any) => this.reject(reason));
+  }
+
+  // From ECMAScript specification:
+  // https://tc39.es/ecma262/#sec-get-promise-@@species
+  //    Promise prototype methods normally use their this value's constructor to
+  //    create a derived object. However, a subclass constructor may over-ride
+  //    that default behaviour by redefining its @@species property.
+  // NOTE: This is required otherwise .then and .catch on a DelayedPromise
+  // will try to instantiate a DelayedPromise with 'resolve, reject' arguments.
+  static override get [Symbol.species]() {
+    return Promise;
+  }
+
+  override get [Symbol.toStringTag]() {
+    return 'DelayedPromise';
+  }
+}
+
+/**
+ * The usage pattern is
+ * this.aDebouncedPromise = debounceP(this.aDebouncedPromise, () => {...}, 123)
+ */
+export function debounceP<T>(
+  existingPromise: DelayedPromise<T> | undefined,
+  callback: () => Promise<T>,
+  waitMs = 0
+): DelayedPromise<T> {
+  const promise = new DelayedPromise<T>(callback, waitMs);
+  if (existingPromise) existingPromise.delegate(promise);
+  return promise;
+}
 const THROTTLE_INTERVAL_MS = 500;
 
 /**
@@ -146,3 +221,27 @@ export function until<T>(obs$: Observable<T>, predicate: (t: T) => boolean) {
 }
 
 export const isFalse = (b: boolean) => b === false;
+
+export type PromiseResult<T> =
+  | {status: 'fulfilled'; value: T}
+  | {status: 'rejected'; reason: string};
+export function isFulfilled<T>(
+  promiseResult?: PromiseResult<T>
+): promiseResult is PromiseResult<T> & {status: 'fulfilled'} {
+  return promiseResult?.status === 'fulfilled';
+}
+
+// An equivalent to Promise.allSettled from ES2020.
+// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/allSettled
+// TODO: Migrate our tooling to ES2020 and remove this method.
+export function allSettled<T>(
+  promises: Promise<T>[]
+): Promise<PromiseResult<T>[]> {
+  return Promise.all(
+    promises.map(promise =>
+      promise
+        .then(value => ({status: 'fulfilled', value} as const))
+        .catch(reason => ({status: 'rejected', reason} as const))
+    )
+  );
+}

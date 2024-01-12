@@ -1,35 +1,26 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '@polymer/iron-dropdown/iron-dropdown';
 import '@polymer/paper-input/paper-input';
-import '../../../styles/shared-styles';
 import '../gr-button/gr-button';
+import '../gr-icon/gr-icon';
 import '../../shared/gr-autocomplete/gr-autocomplete';
 import {IronDropdownElement} from '@polymer/iron-dropdown/iron-dropdown';
-import {PaperInputElementExt} from '../../../types/types';
 import {
   AutocompleteQuery,
   GrAutocomplete,
 } from '../gr-autocomplete/gr-autocomplete';
-import {addShortcut, Key} from '../../../utils/dom-util';
+import {Key} from '../../../utils/dom-util';
 import {queryAndAssert} from '../../../utils/common-util';
 import {LitElement, css, html} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators';
+import {customElement, property, query, state} from 'lit/decorators.js';
 import {sharedStyles} from '../../../styles/shared-styles';
+import {PaperInputElement} from '@polymer/paper-input/paper-input';
+import {IronInputElement} from '@polymer/iron-input';
+import {ShortcutController} from '../../lit/shortcut-controller';
 
 const AWAIT_MAX_ITERS = 10;
 const AWAIT_STEP = 5;
@@ -72,13 +63,11 @@ export class GrEditableLabel extends LitElement {
   @property({type: Number})
   maxLength?: number;
 
+  @property({type: String})
+  confirmLabel = 'Save';
+
   /* private but used in test */
   @state() inputText = '';
-
-  // This is used to push the iron-input element up on the page, so
-  // the input is placed in approximately the same position as the
-  // trigger.
-  @state() readonly verticalOffset = -30;
 
   @property({type: Boolean})
   showAsEditPencil = false;
@@ -88,6 +77,14 @@ export class GrEditableLabel extends LitElement {
 
   @property({type: Object})
   query: AutocompleteQuery = () => Promise.resolve([]);
+
+  @query('#input')
+  input?: PaperInputElement;
+
+  @query('#autocomplete')
+  grAutocomplete?: GrAutocomplete;
+
+  private readonly shortcuts = new ShortcutController(this);
 
   static override get styles() {
     return [
@@ -122,32 +119,32 @@ export class GrEditableLabel extends LitElement {
           background-color: var(--dialog-background-color);
           padding: var(--spacing-m);
         }
-        .buttons {
-          display: flex;
-          justify-content: flex-end;
-          padding-top: var(--spacing-l);
-          width: 100%;
+        /* This makes inputContainer on one line. */
+        .inputContainer gr-autocomplete,
+        .inputContainer .buttons {
+          display: inline-block;
         }
         .buttons gr-button {
           margin-left: var(--spacing-m);
         }
+        /* prettier formatter removes semi-colons after css mixins. */
+        /* prettier-ignore */
         paper-input {
           --paper-input-container: {
             padding: 0;
             min-width: 15em;
-          }
+          };
           --paper-input-container-input: {
             font-size: inherit;
-          }
+          };
           --paper-input-container-focus-color: var(--link-color);
         }
-        gr-button iron-icon {
+        gr-button gr-icon {
           color: inherit;
-          --iron-icon-height: 18px;
-          --iron-icon-width: 18px;
         }
         gr-button.pencil {
-          --gr-button-padding: 0px 0px;
+          --gr-button-padding: var(--spacing-s);
+          --margin: calc(0px - var(--spacing-s));
         }
       `,
     ];
@@ -160,20 +157,18 @@ export class GrEditableLabel extends LitElement {
         id="dropdown"
         .verticalAlign=${'auto'}
         .horizontalAlign=${'auto'}
-        .verticalOffset=${this.verticalOffset}
-        allowOutsideScroll
-        @iron-overlay-canceled=${this.cancel}
+        .allowOutsideScroll=${true}
+        .noCancelOnEscKey=${true}
+        .noCancelOnOutsideClick=${true}
       >
         <div class="dropdown-content" slot="dropdown-content">
           <div class="inputContainer" part="input-container">
             ${this.renderInputBox()}
             <div class="buttons">
-              <gr-button link="" id="cancelBtn" @click=${this.cancel}
-                >cancel</gr-button
+              <gr-button primary id="saveBtn" @click=${this.save}
+                >${this.confirmLabel}</gr-button
               >
-              <gr-button link="" id="saveBtn" @click=${this.save}
-                >save</gr-button
-              >
+              <gr-button id="cancelBtn" @click=${this.cancel}>cancel</gr-button>
             </div>
           </div>
         </div>
@@ -187,8 +182,11 @@ export class GrEditableLabel extends LitElement {
         class="pencil ${this.computeLabelClass()}"
         @click=${this.showDropdown}
         title=${this.computeLabel()}
-        ><iron-icon icon="gr-icons:edit"></iron-icon
-      ></gr-button>`;
+      >
+        <div>
+          <gr-icon icon="edit" filled small></gr-icon>
+        </div>
+      </gr-button>`;
     } else {
       return html`<label
         class=${this.computeLabelClass()}
@@ -208,7 +206,7 @@ export class GrEditableLabel extends LitElement {
         id="autocomplete"
         .text=${this.inputText}
         .query=${this.query}
-        @commit=${this.handleCommit}
+        @cancel=${this.cancel}
         @text-changed=${(e: CustomEvent) => {
           this.inputText = e.detail.value;
         }}
@@ -224,13 +222,14 @@ export class GrEditableLabel extends LitElement {
     }
   }
 
-  /** Called in disconnectedCallback. */
-  private cleanups: (() => void)[] = [];
+  constructor() {
+    super();
+    this.shortcuts.addLocal({key: Key.ENTER}, e => this.handleEnter(e));
+    this.shortcuts.addLocal({key: Key.ESC}, e => this.handleEsc(e));
+  }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
-    for (const cleanup of this.cleanups) cleanup();
-    this.cleanups = [];
   }
 
   override connectedCallback() {
@@ -241,12 +240,6 @@ export class GrEditableLabel extends LitElement {
     if (!this.getAttribute('id')) {
       this.setAttribute('id', 'global');
     }
-    this.cleanups.push(
-      addShortcut(this, {key: Key.ENTER}, e => this.handleEnter(e))
-    );
-    this.cleanups.push(
-      addShortcut(this, {key: Key.ESC}, e => this.handleEsc(e))
-    );
   }
 
   private usePlaceholder(value?: string, placeholder?: string) {
@@ -265,9 +258,8 @@ export class GrEditableLabel extends LitElement {
     if (this.readOnly || this.editing) return;
     return this.openDropdown().then(() => {
       this.nativeInput.focus();
-      const input = this.getInput();
-      if (!input?.value) return;
-      this.nativeInput.setSelectionRange(0, input.value.length);
+      if (!this.input?.value) return;
+      this.nativeInput.setSelectionRange(0, this.input.value.length);
     });
   }
 
@@ -310,9 +302,8 @@ export class GrEditableLabel extends LitElement {
       return;
     }
     this.dropdown?.close();
-    const input = this.getInput();
-    if (input) {
-      this.value = input.value ?? undefined;
+    if (this.input) {
+      this.value = this.input.value ?? undefined;
     } else {
       this.value = this.inputText || '';
     }
@@ -336,16 +327,15 @@ export class GrEditableLabel extends LitElement {
   }
 
   private get nativeInput(): HTMLInputElement {
-    return (this.getInput()?.$.nativeInput ||
-      this.getInput()?.inputElement ||
-      this.getGrAutocomplete()) as HTMLInputElement;
+    if (this.autocomplete) {
+      return this.grAutocomplete!.nativeInput;
+    } else {
+      return (this.input!.inputElement as IronInputElement)
+        .inputElement as HTMLInputElement;
+    }
   }
 
   private handleEnter(event: KeyboardEvent) {
-    const grAutocomplete = this.getGrAutocomplete();
-    if (event.composedPath().some(el => el === grAutocomplete)) {
-      return;
-    }
     const inputContainer = queryAndAssert(this, '.inputContainer');
     const isEventFromInput = event
       .composedPath()
@@ -356,6 +346,10 @@ export class GrEditableLabel extends LitElement {
   }
 
   private handleEsc(event: KeyboardEvent) {
+    // If autocomplete is used, it's handling the ESC instead.
+    if (this.autocomplete) {
+      return;
+    }
     const inputContainer = queryAndAssert(this, '.inputContainer');
     const isEventFromInput = event
       .composedPath()
@@ -363,10 +357,6 @@ export class GrEditableLabel extends LitElement {
     if (isEventFromInput) {
       this.cancel();
     }
-  }
-
-  private handleCommit() {
-    this.getInput()?.focus();
   }
 
   private computeLabelClass() {
@@ -379,13 +369,5 @@ export class GrEditableLabel extends LitElement {
       classes.push('placeholder');
     }
     return classes.join(' ');
-  }
-
-  getInput(): PaperInputElementExt | null {
-    return this.shadowRoot!.querySelector<PaperInputElementExt>('#input');
-  }
-
-  getGrAutocomplete(): GrAutocomplete | null {
-    return this.shadowRoot!.querySelector<GrAutocomplete>('#autocomplete');
   }
 }

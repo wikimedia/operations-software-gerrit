@@ -1,25 +1,15 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '../gr-button/gr-button';
-import {customElement, property, query} from 'lit/decorators';
+import {customElement, property, query} from 'lit/decorators.js';
 import {GrButton} from '../gr-button/gr-button';
 import {css, html, LitElement, PropertyValues} from 'lit';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {fontStyles} from '../../../styles/gr-font-styles';
+import {when} from 'lit/directives/when.js';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -50,6 +40,12 @@ export class GrDialog extends LitElement {
   // Supplying an empty cancel label will hide the button completely.
   @property({type: String, attribute: 'cancel-label'})
   cancelLabel = 'Cancel';
+
+  @property({type: Boolean, attribute: 'loading'})
+  loading = false;
+
+  @property({type: String, attribute: 'loading-label'})
+  loadingLabel = 'Loading...';
 
   // TODO: Add consistent naming after Lit conversion of the codebase
   @property({type: Boolean})
@@ -105,14 +101,20 @@ export class GrDialog extends LitElement {
         footer {
           display: flex;
           flex-shrink: 0;
-          justify-content: flex-end;
           padding-top: var(--spacing-xl);
+        }
+        .flex-space {
+          flex-grow: 1;
         }
         gr-button {
           margin-left: var(--spacing-l);
         }
         .hidden {
           display: none;
+        }
+        .loadingSpin {
+          width: 18px;
+          height: 18px;
         }
       `,
     ];
@@ -134,6 +136,18 @@ export class GrDialog extends LitElement {
           </div>
         </main>
         <footer>
+          ${when(
+            this.loading,
+            () => html`
+              <span
+                class="loadingSpin"
+                role="progressbar"
+                aria-label=${this.loadingLabel}
+              ></span>
+              <span class="loadingLabel"> ${this.loadingLabel} </span>
+            `
+          )}
+          <div class="flex-space"></div>
           <gr-button
             id="cancel"
             class=${this.cancelLabel.length ? '' : 'hidden'}
@@ -201,7 +215,7 @@ export class GrDialog extends LitElement {
   }
 
   _handleKeydown(e: KeyboardEvent) {
-    if (this.confirmOnEnter && e.keyCode === 13) {
+    if (this.confirmOnEnter && e.key === 'Enter') {
       this._handleConfirm(e);
     }
   }

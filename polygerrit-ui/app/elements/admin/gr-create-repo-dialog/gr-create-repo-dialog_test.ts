@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-create-repo-dialog';
 import {GrCreateRepoDialog} from './gr-create-repo-dialog';
 import {
@@ -26,15 +14,75 @@ import {
 import {BranchName, GroupId, RepoName} from '../../../types/common';
 import {GrAutocomplete} from '../../shared/gr-autocomplete/gr-autocomplete';
 import {GrSelect} from '../../shared/gr-select/gr-select';
-
-const basicFixture = fixtureFromElement('gr-create-repo-dialog');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-create-repo-dialog tests', () => {
   let element: GrCreateRepoDialog;
 
   setup(async () => {
-    element = basicFixture.instantiate();
-    await element.updateComplete;
+    element = await fixture(
+      html`<gr-create-repo-dialog></gr-create-repo-dialog>`
+    );
+  });
+
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="gr-form-styles">
+          <div id="form">
+            <section>
+              <span class="title"> Repository name </span>
+              <iron-input>
+                <input autocomplete="on" id="repoNameInput" />
+              </iron-input>
+            </section>
+            <section>
+              <span class="title"> Default Branch </span>
+              <iron-input>
+                <input autocomplete="off" id="defaultBranchNameInput" />
+              </iron-input>
+            </section>
+            <section>
+              <span class="title"> Rights inherit from </span>
+              <span class="value">
+                <gr-autocomplete id="rightsInheritFromInput"> </gr-autocomplete>
+              </span>
+            </section>
+            <section>
+              <span class="title"> Owner </span>
+              <span class="value">
+                <gr-autocomplete id="ownerInput"> </gr-autocomplete>
+              </span>
+            </section>
+            <section>
+              <span class="title"> Create initial empty commit </span>
+              <span class="value">
+                <gr-select id="initialCommit">
+                  <select>
+                    <option value="false">False</option>
+                    <option value="true">True</option>
+                  </select>
+                </gr-select>
+              </span>
+            </section>
+            <section>
+              <span class="title">
+                Only serve as parent for other repositories
+              </span>
+              <span class="value">
+                <gr-select id="parentRepo">
+                  <select>
+                    <option value="false">False</option>
+                    <option value="true">True</option>
+                  </select>
+                </gr-select>
+              </span>
+            </section>
+          </div>
+        </div>
+      `
+    );
   });
 
   test('default values are populated', () => {

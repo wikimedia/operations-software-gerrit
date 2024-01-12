@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 // Init app context before any other imports
@@ -27,6 +16,7 @@ import {GrAuthMock} from '../services/gr-auth/gr-auth_mock';
 import {FlagsServiceImplementation} from '../services/flags/flags_impl';
 import {EventEmitter} from '../services/gr-event-interface/gr-event-interface_impl';
 import {ChangeModel, changeModelToken} from '../models/change/change-model';
+import {FilesModel, filesModelToken} from '../models/change/files-model';
 import {ChecksModel, checksModelToken} from '../models/checks/checks-model';
 import {GrJsApiInterface} from '../elements/shared/gr-js-api-interface/gr-js-api-interface-element';
 import {UserModel} from '../models/user/user-model';
@@ -35,11 +25,44 @@ import {
   commentsModelToken,
 } from '../models/comments/comments-model';
 import {RouterModel} from '../services/router/router-model';
-import {ShortcutsService} from '../services/shortcuts/shortcuts-service';
+import {
+  ShortcutsService,
+  shortcutsServiceToken,
+} from '../services/shortcuts/shortcuts-service';
 import {ConfigModel, configModelToken} from '../models/config/config-model';
 import {BrowserModel, browserModelToken} from '../models/browser/browser-model';
 import {PluginsModel} from '../models/plugins/plugins-model';
 import {MockHighlightService} from '../services/highlight/highlight-service-mock';
+import {
+  AccountsModel,
+  accountsModelToken,
+} from '../models/accounts-model/accounts-model';
+import {
+  DashboardViewModel,
+  dashboardViewModelToken,
+} from '../models/views/dashboard';
+import {
+  SettingsViewModel,
+  settingsViewModelToken,
+} from '../models/views/settings';
+import {GrRouter, routerToken} from '../elements/core/gr-router/gr-router';
+import {AdminViewModel, adminViewModelToken} from '../models/views/admin';
+import {
+  AgreementViewModel,
+  agreementViewModelToken,
+} from '../models/views/agreement';
+import {ChangeViewModel, changeViewModelToken} from '../models/views/change';
+import {DiffViewModel, diffViewModelToken} from '../models/views/diff';
+import {
+  DocumentationViewModel,
+  documentationViewModelToken,
+} from '../models/views/documentation';
+import {EditViewModel, editViewModelToken} from '../models/views/edit';
+import {GroupViewModel, groupViewModelToken} from '../models/views/group';
+import {PluginViewModel, pluginViewModelToken} from '../models/views/plugin';
+import {RepoViewModel, repoViewModelToken} from '../models/views/repo';
+import {SearchViewModel, searchViewModelToken} from '../models/views/search';
+import {navigationToken} from '../elements/core/gr-navigation/gr-navigation';
 
 export function createTestAppContext(): AppContext & Finalizable {
   const appRegistry: Registry<AppContext> = {
@@ -62,8 +85,13 @@ export function createTestAppContext(): AppContext & Finalizable {
       assertIsDefined(ctx.restApiService, 'restApiService');
       return new UserModel(ctx.restApiService);
     },
+    accountsModel: (ctx: Partial<AppContext>) => {
+      assertIsDefined(ctx.restApiService, 'restApiService');
+      return new AccountsModel(ctx.restApiService);
+    },
     shortcutsService: (ctx: Partial<AppContext>) => {
       assertIsDefined(ctx.userModel, 'userModel');
+      assertIsDefined(ctx.flagsService, 'flagsService');
       assertIsDefined(ctx.reportingService, 'reportingService');
       return new ShortcutsService(ctx.userModel, ctx.reportingService);
     },
@@ -86,9 +114,64 @@ export function createTestDependencies(
   appContext: AppContext,
   resolver: <T>(token: DependencyToken<T>) => T
 ): Map<DependencyToken<unknown>, Creator<unknown>> {
-  const dependencies = new Map();
+  const dependencies = new Map<DependencyToken<unknown>, Creator<unknown>>();
   const browserModel = () => new BrowserModel(appContext.userModel);
   dependencies.set(browserModelToken, browserModel);
+
+  const adminViewModelCreator = () => new AdminViewModel();
+  dependencies.set(adminViewModelToken, adminViewModelCreator);
+  const agreementViewModelCreator = () => new AgreementViewModel();
+  dependencies.set(agreementViewModelToken, agreementViewModelCreator);
+  const changeViewModelCreator = () => new ChangeViewModel();
+  dependencies.set(changeViewModelToken, changeViewModelCreator);
+  const dashboardViewModelCreator = () => new DashboardViewModel();
+  dependencies.set(dashboardViewModelToken, dashboardViewModelCreator);
+  const diffViewModelCreator = () => new DiffViewModel();
+  dependencies.set(diffViewModelToken, diffViewModelCreator);
+  const documentationViewModelCreator = () => new DocumentationViewModel();
+  dependencies.set(documentationViewModelToken, documentationViewModelCreator);
+  const editViewModelCreator = () => new EditViewModel();
+  dependencies.set(editViewModelToken, editViewModelCreator);
+  const groupViewModelCreator = () => new GroupViewModel();
+  dependencies.set(groupViewModelToken, groupViewModelCreator);
+  const pluginViewModelCreator = () => new PluginViewModel();
+  dependencies.set(pluginViewModelToken, pluginViewModelCreator);
+  const repoViewModelCreator = () => new RepoViewModel();
+  dependencies.set(repoViewModelToken, repoViewModelCreator);
+  const searchViewModelCreator = () =>
+    new SearchViewModel(appContext.restApiService, appContext.userModel, () =>
+      resolver(navigationToken)
+    );
+  dependencies.set(searchViewModelToken, searchViewModelCreator);
+  const settingsViewModelCreator = () => new SettingsViewModel();
+  dependencies.set(settingsViewModelToken, settingsViewModelCreator);
+
+  const routerCreator = () =>
+    new GrRouter(
+      appContext.reportingService,
+      appContext.routerModel,
+      appContext.restApiService,
+      resolver(adminViewModelToken),
+      resolver(agreementViewModelToken),
+      resolver(changeViewModelToken),
+      resolver(dashboardViewModelToken),
+      resolver(diffViewModelToken),
+      resolver(documentationViewModelToken),
+      resolver(editViewModelToken),
+      resolver(groupViewModelToken),
+      resolver(pluginViewModelToken),
+      resolver(repoViewModelToken),
+      resolver(searchViewModelToken),
+      resolver(settingsViewModelToken)
+    );
+  dependencies.set(routerToken, routerCreator);
+  dependencies.set(navigationToken, () => {
+    return {
+      setUrl: () => {},
+      replaceUrl: () => {},
+      finalize: () => {},
+    };
+  });
 
   const changeModelCreator = () =>
     new ChangeModel(
@@ -98,14 +181,27 @@ export function createTestDependencies(
     );
   dependencies.set(changeModelToken, changeModelCreator);
 
+  const accountsModelCreator = () =>
+    new AccountsModel(appContext.restApiService);
+  dependencies.set(accountsModelToken, accountsModelCreator);
+
   const commentsModelCreator = () =>
     new CommentsModel(
       appContext.routerModel,
       resolver(changeModelToken),
+      resolver(accountsModelToken),
       appContext.restApiService,
       appContext.reportingService
     );
   dependencies.set(commentsModelToken, commentsModelCreator);
+
+  const filesModelCreator = () =>
+    new FilesModel(
+      resolver(changeModelToken),
+      resolver(commentsModelToken),
+      appContext.restApiService
+    );
+  dependencies.set(filesModelToken, filesModelCreator);
 
   const configModelCreator = () =>
     new ConfigModel(resolver(changeModelToken), appContext.restApiService);
@@ -114,12 +210,17 @@ export function createTestDependencies(
   const checksModelCreator = () =>
     new ChecksModel(
       appContext.routerModel,
+      resolver(changeViewModelToken),
       resolver(changeModelToken),
       appContext.reportingService,
       appContext.pluginsModel
     );
 
   dependencies.set(checksModelToken, checksModelCreator);
+
+  const shortcutServiceCreator = () =>
+    new ShortcutsService(appContext.userModel, appContext.reportingService);
+  dependencies.set(shortcutsServiceToken, shortcutServiceCreator);
 
   return dependencies;
 }

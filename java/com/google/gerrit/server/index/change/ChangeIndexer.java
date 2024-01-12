@@ -43,10 +43,8 @@ import com.google.gerrit.server.util.ThreadLocalRequestContext;
 import com.google.inject.OutOfScopeException;
 import com.google.inject.assistedinject.Assisted;
 import com.google.inject.assistedinject.AssistedInject;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -184,22 +182,8 @@ public class ChangeIndexer {
   }
 
   /**
-   * Start indexing multiple changes in parallel.
-   *
-   * @param ids changes to index.
-   * @return future for completing indexing of all changes.
-   */
-  public ListenableFuture<List<ChangeData>> indexAsync(
-      Project.NameKey project, Collection<Change.Id> ids) {
-    List<ListenableFuture<ChangeData>> futures = new ArrayList<>(ids.size());
-    for (Change.Id id : ids) {
-      futures.add(indexAsync(project, id));
-    }
-    return Futures.allAsList(futures);
-  }
-
-  /**
-   * Synchronously index a change, then check if the index is stale due to a race condition.
+   * Synchronously index a local or imported change, then check if the index is stale due to a race
+   * condition.
    *
    * @param cd change to index.
    */
@@ -276,16 +260,31 @@ public class ChangeIndexer {
   }
 
   /**
-   * Synchronously index a change.
+   * Synchronously index local a change.
    *
    * @param change change to index.
+   * @deprecated callers should use {@link #index(com.google.gerrit.entities.Project.NameKey,
+   *     com.google.gerrit.entities.Change.Id)} which reloads the full change details, including the
+   *     associated serverId.
    */
+  @Deprecated
   public void index(Change change) {
     index(changeDataFactory.create(change));
   }
 
   /**
-   * Synchronously index a change.
+   * Synchronously index a local or imported change with associated notes.
+   *
+   * @param notes change notes associated with the change to index.
+   */
+  public void index(ChangeNotes notes) {
+    index(changeDataFactory.create(notes));
+  }
+
+  /**
+   * Synchronously index a local or imported change.
+   *
+   * <p>Load the change full details from NoteDb and update the corresponding entry in the index.
    *
    * @param project the project to which the change belongs.
    * @param changeId ID of the change to index.
@@ -373,6 +372,7 @@ public class ChangeIndexer {
 
     protected abstract T callImpl() throws Exception;
 
+    @SuppressWarnings("unused")
     protected abstract void remove();
 
     @Override

@@ -3,11 +3,11 @@
  * Copyright 2016 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-selection-action-box';
 import {GrSelectionActionBox} from './gr-selection-action-box';
 import {queryAndAssert} from '../../../test/test-utils';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-selection-action-box', () => {
   let container: HTMLDivElement;
@@ -31,9 +31,16 @@ suite('gr-selection-action-box', () => {
   });
 
   test('renders', () => {
-    expect(element).shadowDom.to.equal(/* HTML */ `
-      <gr-tooltip invisible id="tooltip" text="Press c to comment"></gr-tooltip>
-    `);
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <gr-tooltip
+          invisible
+          id="tooltip"
+          text="Press c to comment"
+        ></gr-tooltip>
+      `
+    );
   });
 
   test('ignores regular keys', () => {
@@ -103,9 +110,12 @@ suite('gr-selection-action-box', () => {
     test('renders visible', async () => {
       await element.placeAbove(target);
       await element.updateComplete;
-      expect(element).shadowDom.to.equal(/* HTML */ `
-        <gr-tooltip id="tooltip" text="Press c to comment"></gr-tooltip>
-      `);
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `
+          <gr-tooltip id="tooltip" text="Press c to comment"></gr-tooltip>
+        `
+      );
     });
 
     test('placeAbove for Element argument', async () => {

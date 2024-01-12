@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-create-group-dialog';
 import {GrCreateGroupDialog} from './gr-create-group-dialog';
 import {page} from '../../../utils/page-wrapper-utils';
@@ -26,8 +14,7 @@ import {
 } from '../../../test/test-utils';
 import {IronInputElement} from '@polymer/iron-input';
 import {GroupId} from '../../../types/common';
-
-const basicFixture = fixtureFromElement('gr-create-group-dialog');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-create-group-dialog tests', () => {
   let element: GrCreateGroupDialog;
@@ -35,8 +22,27 @@ suite('gr-create-group-dialog tests', () => {
   const GROUP_NAME = 'test-group';
 
   setup(async () => {
-    element = basicFixture.instantiate();
-    await element.updateComplete;
+    element = await fixture(
+      html`<gr-create-group-dialog></gr-create-group-dialog>`
+    );
+  });
+
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="gr-form-styles">
+          <div id="form">
+            <section>
+              <span class="title"> Group name </span>
+              <iron-input>
+                <input />
+              </iron-input>
+            </section>
+          </div>
+        </div>
+      `
+    );
   });
 
   test('name is updated correctly', async () => {

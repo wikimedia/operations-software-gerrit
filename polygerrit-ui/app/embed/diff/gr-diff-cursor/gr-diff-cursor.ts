@@ -1,21 +1,8 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import {dom} from '@polymer/polymer/lib/legacy/polymer.dom';
 import {Subscription} from 'rxjs';
 import {AbortStop, CursorMoveResult, Stop} from '../../../api/core';
 import {
@@ -24,7 +11,6 @@ import {
   LineNumberEventDetail,
 } from '../../../api/diff';
 import {ScrollMode, Side} from '../../../constants/constants';
-import {PolymerDomWrapper} from '../../../types/types';
 import {toggleClass} from '../../../utils/dom-util';
 import {
   GrCursorManager,
@@ -38,6 +24,11 @@ type GrDiffRowType = GrDiffLineType | GrDiffGroupType;
 
 const LEFT_SIDE_CLASS = 'target-side-left';
 const RIGHT_SIDE_CLASS = 'target-side-right';
+
+interface Address {
+  leftSide: boolean;
+  number: number;
+}
 
 /** A subset of the GrDiff API that the cursor is using. */
 export interface GrDiffCursorable extends HTMLElement {
@@ -109,7 +100,8 @@ export class GrDiffCursor implements GrDiffCursorApi {
    */
   initialLineNumber: number | null = null;
 
-  private cursorManager = new GrCursorManager();
+  // visible for testing
+  cursorManager = new GrCursorManager();
 
   private targetSubscription?: Subscription;
 
@@ -255,7 +247,7 @@ export class GrDiffCursor implements GrDiffCursorApi {
   getTargetDiffElement(): GrDiff | null {
     if (!this.diffRow) return null;
 
-    const hostOwner = (dom(this.diffRow) as PolymerDomWrapper).getOwnerRoot();
+    const hostOwner = this.diffRow.getRootNode() as ShadowRoot;
     if (hostOwner?.host?.tagName === 'GR-DIFF') {
       return hostOwner.host as GrDiff;
     }
@@ -287,7 +279,7 @@ export class GrDiffCursor implements GrDiffCursorApi {
    * This may grab the focus from the app.
    *
    * If you do not want to move the cursor or grab focus, and just want to
-   * reset the scroll behavior, use reInit() instead.
+   * reset the scroll behavior, use reInitAndUpdateStops() instead.
    */
   reInitCursor() {
     this._updateStops();
@@ -323,20 +315,12 @@ export class GrDiffCursor implements GrDiffCursorApi {
     this._updateStops();
   }
 
-  handleDiffUpdate() {
-    this.reInitCursor();
-  }
-
   private boundHandleDiffLoadingChanged = () => {
     this._updateStops();
   };
 
   private _boundHandleDiffRenderStart = () => {
     this.preventAutoScrollOnManualScroll = true;
-  };
-
-  private _boundHandleDiffRenderProgress = () => {
-    this._updateStops();
   };
 
   private _boundHandleDiffRenderContent = () => {
@@ -376,7 +360,7 @@ export class GrDiffCursor implements GrDiffCursorApi {
    * {leftSide: true, number: 321} for line 321 of the base patch.
    * Returns null if an address is not available.
    */
-  getAddress() {
+  getAddress(): Address | null {
     if (!this.diffRow) {
       return null;
     }
@@ -385,7 +369,7 @@ export class GrDiffCursor implements GrDiffCursorApi {
     return this.getAddressFor(this.diffRow, this.side);
   }
 
-  private getAddressFor(diffRow: HTMLElement, side: Side) {
+  private getAddressFor(diffRow: HTMLElement, side: Side): Address | null {
     let cell;
     if (this._getViewMode() === DiffViewMode.UNIFIED) {
       cell = diffRow.querySelector('.lineNum.right');
@@ -550,10 +534,6 @@ export class GrDiffCursor implements GrDiffCursorApi {
     );
     diff.removeEventListener('render-start', this._boundHandleDiffRenderStart);
     diff.removeEventListener(
-      'render-progress',
-      this._boundHandleDiffRenderProgress
-    );
-    diff.removeEventListener(
       'render-content',
       this._boundHandleDiffRenderContent
     );
@@ -569,10 +549,6 @@ export class GrDiffCursor implements GrDiffCursorApi {
       this.boundHandleDiffLoadingChanged
     );
     diff.addEventListener('render-start', this._boundHandleDiffRenderStart);
-    diff.addEventListener(
-      'render-progress',
-      this._boundHandleDiffRenderProgress
-    );
     diff.addEventListener('render-content', this._boundHandleDiffRenderContent);
     diff.addEventListener('line-selected', this._boundHandleDiffLineSelected);
   }

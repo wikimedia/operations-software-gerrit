@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {CommentRange} from '../api/core';
 import {
@@ -68,6 +57,8 @@ import {
   DetailedLabelInfo,
   DownloadInfo,
   DownloadSchemeInfo,
+  EDIT,
+  EditPatchSet,
   EmailAddress,
   FetchInfo,
   FileInfo,
@@ -92,7 +83,9 @@ import {
   MaxObjectSizeLimitInfo,
   NumericChangeId,
   ParentCommitInfo,
+  PARENT,
   PatchSetNum,
+  PatchSetNumber,
   PluginConfigInfo,
   PluginNameToPluginParametersMap,
   PluginParameterToConfigParameterInfoMap,
@@ -108,6 +101,7 @@ import {
   ReviewerUpdateInfo,
   Reviewers,
   RevisionInfo,
+  RevisionPatchSetNum,
   SchemesInfoMap,
   ServerInfo,
   SubmitTypeInfo,
@@ -121,10 +115,11 @@ import {
   WebLinkInfo,
   isDetailedLabelInfo,
   isQuickLabelInfo,
+  Base64FileContent,
 } from '../api/rest-api';
 import {DiffInfo, IgnoreWhitespaceType} from './diff';
 
-export {
+export type {
   AccountId,
   AccountDetailInfo,
   AccountInfo,
@@ -134,6 +129,7 @@ export {
   ApprovalInfo,
   AuthInfo,
   AvatarInfo,
+  Base64FileContent,
   BasePatchSetNum,
   BranchName,
   BrandType,
@@ -158,6 +154,7 @@ export {
   DetailedLabelInfo,
   DownloadInfo,
   DownloadSchemeInfo,
+  EditPatchSet,
   EmailAddress,
   FileInfo,
   GerritInfo,
@@ -182,6 +179,7 @@ export {
   NumericChangeId,
   ParentCommitInfo,
   PatchSetNum,
+  PatchSetNumber,
   PluginConfigInfo,
   PluginNameToPluginParametersMap,
   PluginParameterToConfigParameterInfoMap,
@@ -196,6 +194,7 @@ export {
   ReviewerUpdateInfo,
   Reviewers,
   RevisionInfo,
+  RevisionPatchSetNum,
   SchemesInfoMap,
   ServerInfo,
   SubmitTypeInfo,
@@ -207,9 +206,8 @@ export {
   UserConfigInfo,
   VotingRangeInfo,
   WebLinkInfo,
-  isDetailedLabelInfo,
-  isQuickLabelInfo,
 };
+export {EDIT, PARENT, isDetailedLabelInfo, isQuickLabelInfo};
 
 /*
  * In T, make a set of properties whose keys are in the union K required
@@ -228,16 +226,6 @@ export type ElementPropertyDeepChange<
  * Type alias for parsed json object to make code cleaner
  */
 export type ParsedJSON = BrandType<unknown, '_parsedJSON'>;
-
-export type RevisionPatchSetNum = BrandType<'edit' | number, '_patchSet'>;
-
-export type PatchSetNumber = BrandType<number, '_patchSet'>;
-
-export const EditPatchSetNum = 'edit' as RevisionPatchSetNum;
-
-// TODO(TS): This is not correct, it is better to have a separate ApiPatchSetNum
-// without 'parent'.
-export const ParentPatchSetNum = 'PARENT' as BasePatchSetNum;
 
 export type RobotId = BrandType<string, '_robotId'>;
 
@@ -263,6 +251,8 @@ export type LabelName = BrandType<string, '_labelName'>;
 
 // The Encoded UUID of the group
 export type EncodedGroupId = BrandType<string, '_encodedGroupId'>;
+
+export type UserId = AccountId | GroupId | EmailAddress;
 
 // https://gerrit-review.googlesource.com/Documentation/rest-api-accounts.html#contributor-agreement-input
 export interface ContributorAgreementInput {
@@ -697,7 +687,7 @@ export interface CommentInfo {
   id: UrlEncodedCommentId;
   updated: Timestamp;
   // TODO(TS): Make this required. Every comment must have patch_set set.
-  patch_set?: PatchSetNum;
+  patch_set?: RevisionPatchSetNum;
   path?: string;
   side?: CommentSide;
   parent?: number;
@@ -934,16 +924,6 @@ export interface Base64File {
 }
 
 /**
- * Represent a file in a base64 encoding; GrRestApiInterface returns it from some
- * methods
- */
-export interface Base64FileContent {
-  content: string | null;
-  type: string | null;
-  ok: true;
-}
-
-/**
  * The WatchedProjectsInfo entity contains information about a project watch for a user
  * https://gerrit-review.googlesource.com/Documentation/rest-api-accounts.html#project-watch-info
  */
@@ -1142,6 +1122,7 @@ export interface PreferencesInfo {
   work_in_progress_by_default?: boolean;
   // The email_format doesn't mentioned in doc, but exists in Java class GeneralPreferencesInfo
   email_format?: EmailFormat;
+  allow_browser_notifications?: boolean;
 }
 
 /**
@@ -1192,8 +1173,7 @@ export interface ReviewInput {
  */
 export interface ReviewResult {
   labels?: unknown;
-  // type of key is (AccountId | GroupId | EmailAddress)
-  reviewers?: {[key: string]: AddReviewerResult};
+  reviewers?: {[key: UserId]: AddReviewerResult};
   ready?: boolean;
 }
 
@@ -1204,7 +1184,7 @@ export interface ReviewResult {
  * TODO(paiking): update this to ReviewerResult while considering removals.
  */
 export interface AddReviewerResult {
-  input: AccountId | GroupId | EmailAddress;
+  input: UserId;
   reviewers?: AccountInfo[];
   ccs?: AccountInfo[];
   error?: string;
@@ -1265,6 +1245,15 @@ export interface FixSuggestionInfo extends FixSuggestionInfoInput {
 }
 
 /**
+ * The ApplyProvidedFixInput entity contains information for applying fixes, provided in the
+ * request body, to a revision.
+ * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#apply-provided-fix
+ */
+export interface ApplyProvidedFixInput {
+  fix_replacement_infos: FixReplacementInfo[];
+}
+
+/**
  * The FixReplacementInfo entity describes how the content of a file should be replaced by another content
  * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#fix-replacement-info
  */
@@ -1287,7 +1276,7 @@ export interface NotifyInfo {
  * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#reviewer-input
  */
 export interface ReviewerInput {
-  reviewer: AccountId | GroupId | EmailAddress;
+  reviewer: UserId;
   state?: ReviewerState;
   confirmed?: boolean;
   notify?: NotifyType;
@@ -1299,7 +1288,7 @@ export interface ReviewerInput {
  * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#attention-set-input
  */
 export interface AttentionSetInput {
-  user: AccountId;
+  user: UserId;
   reason: string;
   notify?: NotifyType;
   notify_details?: RecipientTypeToNotifyInfoMap;

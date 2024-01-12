@@ -1,46 +1,36 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-editor-view';
 import {GrEditorView} from './gr-editor-view';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {HttpMethod} from '../../../constants/constants';
 import {
   mockPromise,
+  pressKey,
   query,
   stubRestApi,
   stubStorage,
 } from '../../../test/test-utils';
 import {
-  EditPatchSetNum,
+  EDIT,
   NumericChangeId,
-  PatchSetNum,
+  RevisionPatchSetNum,
 } from '../../../types/common';
 import {
   createChangeViewChange,
-  createGenerateUrlEditViewParameters,
+  createEditViewState,
 } from '../../../test/test-data-generators';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
 import {GrEndpointDecorator} from '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import {GrDefaultEditor} from '../gr-default-editor/gr-default-editor';
 import {GrButton} from '../../shared/gr-button/gr-button';
-
-const basicFixture = fixtureFromElement('gr-editor-view');
+import {fixture, html, assert} from '@open-wc/testing';
+import {EventType} from '../../../types/events';
+import {Modifier} from '../../../utils/dom-util';
+import {testResolver} from '../../../test/common-test-setup';
 
 suite('gr-editor-view tests', () => {
   let element: GrEditorView;
@@ -51,16 +41,89 @@ suite('gr-editor-view tests', () => {
   let navigateStub: sinon.SinonStub;
 
   setup(async () => {
-    element = basicFixture.instantiate();
+    element = await fixture(html`<gr-editor-view></gr-editor-view>`);
     savePathStub = stubRestApi('renameFileInChangeEdit');
     saveFileStub = stubRestApi('saveChangeEdit');
     changeDetailStub = stubRestApi('getChangeDetail');
     navigateStub = sinon.stub(element, 'viewEditInChangeView');
+    element.viewState = {
+      ...createEditViewState(),
+      patchNum: 1 as RevisionPatchSetNum,
+    };
+    element.latestPatchsetNumber = 1 as RevisionPatchSetNum;
     await element.updateComplete;
   });
 
-  suite('paramsChanged', () => {
-    test('good params proceed', async () => {
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="stickyHeader">
+          <header>
+            <span class="controlGroup">
+              <span> Edit mode </span>
+              <span class="separator"> </span>
+              <gr-editable-label
+                id="global"
+                labeltext="File path"
+                placeholder="File path..."
+                tabindex="0"
+                title="${element.viewState?.path}"
+              >
+              </gr-editable-label>
+            </span>
+            <span class="controlGroup rightControls">
+              <gr-button
+                aria-disabled="false"
+                id="close"
+                link=""
+                role="button"
+                tabindex="0"
+              >
+                Cancel
+              </gr-button>
+              <gr-button
+                aria-disabled="true"
+                disabled=""
+                id="save"
+                link=""
+                primary=""
+                role="button"
+                tabindex="-1"
+                title="Save and Close the file"
+              >
+                Save
+              </gr-button>
+              <gr-button
+                aria-disabled="true"
+                disabled=""
+                id="publish"
+                link=""
+                primary=""
+                role="button"
+                tabindex="-1"
+                title="Publish your edit. A new patchset will be created."
+              >
+                Save & Publish
+              </gr-button>
+            </span>
+          </header>
+        </div>
+        <div class="textareaWrapper">
+          <gr-endpoint-decorator id="editorEndpoint" name="editor">
+            <gr-endpoint-param name="fileContent"> </gr-endpoint-param>
+            <gr-endpoint-param name="prefs"> </gr-endpoint-param>
+            <gr-endpoint-param name="fileType"> </gr-endpoint-param>
+            <gr-endpoint-param name="lineNum"> </gr-endpoint-param>
+            <gr-default-editor id="file"> </gr-default-editor>
+          </gr-endpoint-decorator>
+        </div>
+      `
+    );
+  });
+
+  suite('viewStateChanged', () => {
+    test('good view state proceed', async () => {
       changeDetailStub.returns(Promise.resolve({}));
       const fileStub = sinon.stub(element, 'getFileData').callsFake(() => {
         element.content = 'text';
@@ -69,20 +132,14 @@ suite('gr-editor-view tests', () => {
         return Promise.resolve();
       });
 
-      element.params = {...createGenerateUrlEditViewParameters()};
-      const promises = element.paramsChanged();
+      element.viewState = {...createEditViewState()};
+      const promises = element.viewStateChanged();
 
       await element.updateComplete;
 
       const changeNum = 42 as NumericChangeId;
-      assert.equal(element.changeNum, changeNum);
-      assert.equal(element.path, 'foo/bar.baz');
       assert.deepEqual(changeDetailStub.lastCall.args[0], changeNum);
-      assert.deepEqual(fileStub.lastCall.args, [
-        changeNum,
-        'foo/bar.baz',
-        EditPatchSetNum as PatchSetNum,
-      ]);
+      assert.isTrue(fileStub.called);
 
       return promises?.then(() => {
         assert.equal(element.content, 'text');
@@ -93,8 +150,7 @@ suite('gr-editor-view tests', () => {
   });
 
   test('edit file path', () => {
-    element.changeNum = 42 as NumericChangeId;
-    element.path = 'foo/bar.baz';
+    element.viewState = {...createEditViewState()};
     savePathStub.onFirstCall().returns(Promise.resolve({}));
     savePathStub.onSecondCall().returns(Promise.resolve({ok: true}));
 
@@ -144,8 +200,7 @@ suite('gr-editor-view tests', () => {
     const newText = 'file text changed';
 
     setup(async () => {
-      element.changeNum = 42 as NumericChangeId;
-      element.path = 'foo/bar.baz';
+      element.viewState = {...createEditViewState()};
       element.content = originalText;
       element.newContent = originalText;
       await element.updateComplete;
@@ -174,7 +229,7 @@ suite('gr-editor-view tests', () => {
       );
       assert.isFalse(element.saving);
 
-      MockInteractions.tap(query<GrButton>(element, '#save')!);
+      query<GrButton>(element, '#save')!.click();
       assert.isTrue(saveSpy.called);
       assert.equal(alertStub.lastCall.args[0], 'Saving changes...');
       assert.isTrue(element.saving);
@@ -213,7 +268,7 @@ suite('gr-editor-view tests', () => {
         query<GrButton>(element, '#save')!.hasAttribute('disabled')
       );
 
-      MockInteractions.tap(query<GrButton>(element, '#save')!);
+      query<GrButton>(element, '#save')!.click();
       assert.isTrue(saveSpy.called);
       assert.equal(alertStub.lastCall.args[0], 'Saving changes...');
       assert.isTrue(element.saving);
@@ -248,7 +303,7 @@ suite('gr-editor-view tests', () => {
         query<GrButton>(element, '#save')!.hasAttribute('disabled')
       );
 
-      MockInteractions.tap(query<GrButton>(element, '#publish')!);
+      query<GrButton>(element, '#publish')!.click();
       assert.isTrue(saveSpy.called);
       assert.equal(alertStub.getCall(0).args[0], 'Saving changes...');
       assert.isTrue(element.saving);
@@ -287,7 +342,7 @@ suite('gr-editor-view tests', () => {
         query<GrButton>(element, '#save')!.hasAttribute('disabled')
       );
 
-      MockInteractions.tap(query<GrButton>(element, '#close')!);
+      query<GrButton>(element, '#close')!.click();
       assert.isTrue(closeSpy.called);
       assert.isFalse(saveFileStub.called);
       assert.isTrue(navigateStub.called);
@@ -310,38 +365,38 @@ suite('gr-editor-view tests', () => {
           content: 'new content',
         })
       );
+      element.viewState = {
+        ...createEditViewState(),
+        changeNum: 1 as NumericChangeId,
+        patchNum: EDIT,
+        path: 'test/path',
+      };
 
       // Ensure no data is set with a bad response.
-      return element
-        .getFileData(
-          1 as NumericChangeId,
-          'test/path',
-          EditPatchSetNum as PatchSetNum
-        )
-        .then(() => {
-          assert.equal(element.newContent, 'new content');
-          assert.equal(element.content, 'new content');
-          assert.equal(element.type, 'text/javascript');
-        });
+      return element.getFileData().then(() => {
+        assert.equal(element.newContent, 'new content');
+        assert.equal(element.content, 'new content');
+        assert.equal(element.type, 'text/javascript');
+      });
     });
 
     test('!res.ok', () => {
       stubRestApi('getFileContent').returns(
         Promise.resolve(new Response(null, {status: 500}))
       );
+      element.viewState = {
+        ...createEditViewState(),
+        changeNum: 1 as NumericChangeId,
+        patchNum: EDIT,
+        path: 'test/path',
+      };
 
       // Ensure no data is set with a bad response.
-      return element
-        .getFileData(
-          1 as NumericChangeId,
-          'test/path',
-          EditPatchSetNum as PatchSetNum
-        )
-        .then(() => {
-          assert.equal(element.newContent, '');
-          assert.equal(element.content, '');
-          assert.equal(element.type, '');
-        });
+      return element.getFileData().then(() => {
+        assert.equal(element.newContent, '');
+        assert.equal(element.content, '');
+        assert.equal(element.type, '');
+      });
     });
 
     test('content is undefined', () => {
@@ -352,42 +407,42 @@ suite('gr-editor-view tests', () => {
           type: 'text/javascript' as ResponseType,
         })
       );
+      element.viewState = {
+        ...createEditViewState(),
+        changeNum: 1 as NumericChangeId,
+        patchNum: EDIT,
+        path: 'test/path',
+      };
 
-      return element
-        .getFileData(
-          1 as NumericChangeId,
-          'test/path',
-          EditPatchSetNum as PatchSetNum
-        )
-        .then(() => {
-          assert.equal(element.newContent, '');
-          assert.equal(element.content, '');
-          assert.equal(element.type, 'text/javascript');
-        });
+      return element.getFileData().then(() => {
+        assert.equal(element.newContent, '');
+        assert.equal(element.content, '');
+        assert.equal(element.type, 'text/javascript');
+      });
     });
 
     test('content and type is undefined', () => {
       stubRestApi('getFileContent').returns(
         Promise.resolve({...new Response(), ok: true})
       );
+      element.viewState = {
+        ...createEditViewState(),
+        changeNum: 1 as NumericChangeId,
+        patchNum: EDIT,
+        path: 'test/path',
+      };
 
-      return element
-        .getFileData(
-          1 as NumericChangeId,
-          'test/path',
-          EditPatchSetNum as PatchSetNum
-        )
-        .then(() => {
-          assert.equal(element.newContent, '');
-          assert.equal(element.content, '');
-          assert.equal(element.type, '');
-        });
+      return element.getFileData().then(() => {
+        assert.equal(element.newContent, '');
+        assert.equal(element.content, '');
+        assert.equal(element.type, '');
+      });
     });
   });
 
   test('showAlert', async () => {
     const promise = mockPromise();
-    element.addEventListener('show-alert', e => {
+    element.addEventListener(EventType.SHOW_ALERT, e => {
       assert.deepEqual(e.detail, {message: 'test message', showDismiss: true});
       assert.isTrue(e.bubbles);
       promise.resolve();
@@ -400,11 +455,15 @@ suite('gr-editor-view tests', () => {
   test('viewEditInChangeView', () => {
     element.change = createChangeViewChange();
     navigateStub.restore();
-    const navStub = sinon.stub(GerritNav, 'navigateToChange');
-    element.patchNum = EditPatchSetNum;
+    const setUrlStub = sinon.stub(testResolver(navigationToken), 'setUrl');
+
     element.viewEditInChangeView();
-    assert.equal(navStub.lastCall.args[1]!.patchNum, undefined);
-    assert.equal(navStub.lastCall.args[1]!.isEdit, true);
+
+    assert.isTrue(setUrlStub.called);
+    assert.equal(
+      setUrlStub.lastCall.firstArg,
+      '/c/test-project/+/42,edit?forceReload=true'
+    );
   });
 
   suite('keyboard shortcuts', () => {
@@ -421,13 +480,13 @@ suite('gr-editor-view tests', () => {
       test('save enabled', async () => {
         element.content = '';
         element.newContent = '_test';
-        MockInteractions.pressAndReleaseKeyOn(element, 83, 'ctrl', 's');
+        pressKey(element, 's', Modifier.CTRL_KEY);
         await element.updateComplete;
 
         assert.isTrue(handleSpy.calledOnce);
         assert.isTrue(saveStub.calledOnce);
 
-        MockInteractions.pressAndReleaseKeyOn(element, 83, 'meta', 's');
+        pressKey(element, 's', Modifier.META_KEY);
         await element.updateComplete;
 
         assert.equal(handleSpy.callCount, 2);
@@ -435,13 +494,13 @@ suite('gr-editor-view tests', () => {
       });
 
       test('save disabled', async () => {
-        MockInteractions.pressAndReleaseKeyOn(element, 83, 'ctrl', 's');
+        pressKey(element, 's', Modifier.CTRL_KEY);
         await element.updateComplete;
 
         assert.isTrue(handleSpy.calledOnce);
         assert.isFalse(saveStub.called);
 
-        MockInteractions.pressAndReleaseKeyOn(element, 83, 'meta', 's');
+        pressKey(element, 's', Modifier.META_KEY);
         await element.updateComplete;
 
         assert.equal(handleSpy.callCount, 2);
@@ -463,20 +522,24 @@ suite('gr-editor-view tests', () => {
           content: 'old content',
         })
       );
+      element.viewState = {
+        ...createEditViewState(),
+        changeNum: 1 as NumericChangeId,
+        patchNum: 1 as RevisionPatchSetNum,
+        path: 'test',
+      };
 
       const alertStub = sinon.stub();
-      element.addEventListener('show-alert', alertStub);
+      element.addEventListener(EventType.SHOW_ALERT, alertStub);
 
-      return element
-        .getFileData(1 as NumericChangeId, 'test', 1 as PatchSetNum)
-        .then(async () => {
-          await element.updateComplete;
+      return element.getFileData().then(async () => {
+        await element.updateComplete;
 
-          assert.isTrue(alertStub.called);
-          assert.equal(element.newContent, 'pending edit');
-          assert.equal(element.content, 'old content');
-          assert.equal(element.type, 'text/javascript');
-        });
+        assert.isTrue(alertStub.called);
+        assert.equal(element.newContent, 'pending edit');
+        assert.equal(element.content, 'old content');
+        assert.equal(element.type, 'text/javascript');
+      });
     });
 
     test('local edit exists, is same as remote edit', () => {
@@ -491,26 +554,33 @@ suite('gr-editor-view tests', () => {
           content: 'pending edit',
         })
       );
+      element.viewState = {
+        ...createEditViewState(),
+        changeNum: 1 as NumericChangeId,
+        patchNum: 1 as RevisionPatchSetNum,
+        path: 'test',
+      };
 
       const alertStub = sinon.stub();
-      element.addEventListener('show-alert', alertStub);
+      element.addEventListener(EventType.SHOW_ALERT, alertStub);
 
-      return element
-        .getFileData(1 as NumericChangeId, 'test', 1 as PatchSetNum)
-        .then(async () => {
-          await element.updateComplete;
+      return element.getFileData().then(async () => {
+        await element.updateComplete;
 
-          assert.isFalse(alertStub.called);
-          assert.equal(element.newContent, 'pending edit');
-          assert.equal(element.content, 'pending edit');
-          assert.equal(element.type, 'text/javascript');
-        });
+        assert.isFalse(alertStub.called);
+        assert.equal(element.newContent, 'pending edit');
+        assert.equal(element.content, 'pending edit');
+        assert.equal(element.type, 'text/javascript');
+      });
     });
 
     test('storage key computation', () => {
-      element.changeNum = 1 as NumericChangeId;
-      element.patchNum = 1 as PatchSetNum;
-      element.path = 'test';
+      element.viewState = {
+        ...createEditViewState(),
+        changeNum: 1 as NumericChangeId,
+        patchNum: 1 as RevisionPatchSetNum,
+        path: 'test',
+      };
       assert.equal(element.storageKey, 'c1_ps1_test');
     });
   });

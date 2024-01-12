@@ -1,29 +1,27 @@
-# npm packages are split into different node_modules directories based on their usage.
-# 1. /node_modules (referenced as @npm) - contains packages to run tests, check code, etc...
-#    It is expected that @npm is used ONLY to run tools. No packages from @npm are used by
-#    other code in gerrit.
-# 2. @tools_npm (tools/node_tools/node_modules) - the tools/node_tools folder contains self-written tools
-#    which are run for building and/or testing. The @tools_npm directory contains all the packages needed to
-#    run this tools.
-# 3. @ui_npm (polygerrit-ui/app/node_modules) - packages with source code which are necessary to run polygerrit
-#    and to bundle it. Only code from these packages can be included in the final bundle for polygerrit.
-#    @ui_npm folder must not have devDependencies. All dev dependencies must be placed in @ui_dev_npm
-# 4. @ui_dev_npm (polygerrit-ui/node_modules) - devDependencies for polygerrit. The packages from these
-#    folder can be used for testing, but must not be included in the final bundle.
-# 5. @plugins_npm (plugins/node_modules) - plugin dependencies for polygerrit plugins.
-#    The packages here are expected to be used in plugins.
-# Note: separation between @ui_npm and @ui_dev_npm is necessary because with bazel we can't generate
-#    two managed directories from the same package.json. At the same time we want to avoid accidental
-#    usages of code from devDependencies in polygerrit bundle.
+# npm packages are split into different node_modules directories based on their
+# usage.
+# 1. @npm (node_modules) - contains packages to run tests, check code, etc...
+#    It is expected that @npm is used ONLY to run tools. No packages from @npm
+#    are used by other code in gerrit.
+# 2. @tools_npm (tools/node_tools/node_modules) - the tools/node_tools folder
+#    contains self-written tools which are run for building and/or testing. The
+#    @tools_npm directory contains all the packages needed to run this tools.
+# 3. @ui_npm (polygerrit-ui/app/node_modules) - packages with source code which
+#    are necessary to run polygerrit and to bundle it. Only code from these
+#    packages can be included in the final bundle for polygerrit. @ui_npm folder
+#    must not have devDependencies. All devDependencies must be placed in
+#    @ui_dev_npm.
+# 4. @ui_dev_npm (polygerrit-ui/node_modules) - devDependencies for polygerrit.
+#    The packages from these folder can be used for testing, but must not be
+#    included in the final bundle.
+# 5. @plugins_npm (plugins/node_modules) - plugin dependencies for polygerrit
+#    plugins. The packages here are expected to be used in plugins.
+# Note: separation between @ui_npm and @ui_dev_npm is necessary because with
+#    rules_nodejs we can't generate two external repositories from the same
+#    package.json. At the same time we want to avoid accidental usages of code
+#    from devDependencies in polygerrit bundle.
 workspace(
     name = "gerrit",
-    managed_directories = {
-        "@npm": ["node_modules"],
-        "@ui_npm": ["polygerrit-ui/app/node_modules"],
-        "@ui_dev_npm": ["polygerrit-ui/node_modules"],
-        "@tools_npm": ["tools/node_tools/node_modules"],
-        "@plugins_npm": ["plugins/node_modules"],
-    },
 )
 
 load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
@@ -44,11 +42,11 @@ http_archive(
 
 http_archive(
     name = "rbe_jdk11",
-    sha256 = "5939e2a4e56d1fc53b6c44c6db97ee068c9f4bd18e86c762f6ab8b4fff5e294b",
-    strip_prefix = "rbe_autoconfig-3.0.0",
+    sha256 = "dbcfd6f26589ef506b91fe03a12dc559ca9c84699e4cf6381150522287f0e6f6",
+    strip_prefix = "rbe_autoconfig-3.1.0",
     urls = [
-        "https://gerrit-bazel.storage.googleapis.com/rbe_autoconfig/v3.0.0.tar.gz",
-        "https://github.com/davido/rbe_autoconfig/archive/v3.0.0.tar.gz",
+        "https://gerrit-bazel.storage.googleapis.com/rbe_autoconfig/v3.1.0.tar.gz",
+        "https://github.com/davido/rbe_autoconfig/archive/v3.1.0.tar.gz",
     ],
 )
 
@@ -67,8 +65,8 @@ protobuf_deps()
 
 http_archive(
     name = "build_bazel_rules_nodejs",
-    sha256 = "c077680a307eb88f3e62b0b662c2e9c6315319385bc8c637a861ffdbed8ca247",
-    urls = ["https://github.com/bazelbuild/rules_nodejs/releases/download/5.1.0/rules_nodejs-5.1.0.tar.gz"],
+    sha256 = "0fad45a9bda7dc1990c47b002fd64f55041ea751fafc00cd34efb96107675778",
+    urls = ["https://github.com/bazelbuild/rules_nodejs/releases/download/5.5.0/rules_nodejs-5.5.0.tar.gz"],
 )
 
 load("@build_bazel_rules_nodejs//:repositories.bzl", "build_bazel_rules_nodejs_dependencies")
@@ -99,55 +97,6 @@ load("@io_bazel_rules_webtesting//web/versioned:browsers-0.3.3.bzl", "browser_re
 browser_repositories(
     chromium = True,
     firefox = True,
-)
-
-http_archive(
-    name = "rules_pkg",
-    sha256 = "038f1caa773a7e35b3663865ffb003169c6a71dc995e39bf4815792f385d837d",
-    urls = [
-        "https://mirror.bazel.build/github.com/bazelbuild/rules_pkg/releases/download/0.4.0/rules_pkg-0.4.0.tar.gz",
-        "https://github.com/bazelbuild/rules_pkg/releases/download/0.4.0/rules_pkg-0.4.0.tar.gz",
-    ],
-)
-
-load("@rules_pkg//:deps.bzl", "rules_pkg_dependencies")
-
-rules_pkg_dependencies()
-
-# Golang support for PolyGerrit local dev server.
-http_archive(
-    name = "io_bazel_rules_go",
-    sha256 = "d6b2513456fe2229811da7eb67a444be7785f5323c6708b38d851d2b51e54d83",
-    urls = [
-        "https://mirror.bazel.build/github.com/bazelbuild/rules_go/releases/download/v0.30.0/rules_go-v0.30.0.zip",
-        "https://github.com/bazelbuild/rules_go/releases/download/v0.30.0/rules_go-v0.30.0.zip",
-    ],
-)
-
-load("@io_bazel_rules_go//go:deps.bzl", "go_register_toolchains", "go_rules_dependencies")
-
-go_rules_dependencies()
-
-go_register_toolchains(version = "1.17.6")
-
-http_archive(
-    name = "bazel_gazelle",
-    sha256 = "de69a09dc70417580aabf20a28619bb3ef60d038470c7cf8442fafcf627c21cb",
-    urls = [
-        "https://mirror.bazel.build/github.com/bazelbuild/bazel-gazelle/releases/download/v0.24.0/bazel-gazelle-v0.24.0.tar.gz",
-        "https://github.com/bazelbuild/bazel-gazelle/releases/download/v0.24.0/bazel-gazelle-v0.24.0.tar.gz",
-    ],
-)
-
-load("@bazel_gazelle//:deps.bzl", "gazelle_dependencies", "go_repository")
-
-gazelle_dependencies()
-
-# Dependencies for PolyGerrit local dev server.
-go_repository(
-    name = "com_github_howeyc_fsnotify",
-    commit = "441bbc86b167f3c1f4786afae9931403b99fdacf",
-    importpath = "github.com/howeyc/fsnotify",
 )
 
 register_toolchains("//tools:error_prone_warnings_toolchain_java11_definition")
@@ -187,8 +136,8 @@ declare_nongoogle_deps()
 load("@build_bazel_rules_nodejs//:index.bzl", "node_repositories", "yarn_install")
 
 node_repositories(
-    node_version = "16.13.2",
-    yarn_version = "1.22.17",
+    node_version = "16.15.0",
+    yarn_version = "1.22.18",
 )
 
 yarn_install(

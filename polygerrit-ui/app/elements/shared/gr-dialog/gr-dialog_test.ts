@@ -1,34 +1,110 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-dialog';
 import {GrDialog} from './gr-dialog';
-import {isHidden, queryAndAssert} from '../../../test/test-utils';
-
-const basicFixture = fixtureFromElement('gr-dialog');
+import {
+  isHidden,
+  pressKey,
+  queryAndAssert,
+  waitEventLoop,
+} from '../../../test/test-utils';
+import {fixture, html, assert} from '@open-wc/testing';
+import {GrButton} from '../gr-button/gr-button';
 
 suite('gr-dialog tests', () => {
   let element: GrDialog;
 
   setup(async () => {
-    element = basicFixture.instantiate();
+    element = await fixture<GrDialog>(html` <gr-dialog></gr-dialog> `);
     await element.updateComplete;
+  });
+
+  test('renders', async () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `<div class="container">
+        <header class="heading-3">
+          <slot name="header"> </slot>
+        </header>
+        <main>
+          <div class="overflow-container">
+            <slot name="main"> </slot>
+          </div>
+        </main>
+        <footer>
+          <div class="flex-space"></div>
+          <gr-button
+            aria-disabled="false"
+            id="cancel"
+            link=""
+            role="button"
+            tabindex="0"
+          >
+            Cancel
+          </gr-button>
+          <gr-button
+            aria-disabled="false"
+            id="confirm"
+            link=""
+            primary=""
+            role="button"
+            tabindex="0"
+            title=""
+          >
+            Confirm
+          </gr-button>
+        </footer>
+      </div> `
+    );
+  });
+
+  test('renders with loading state', async () => {
+    element.loading = true;
+    element.loadingLabel = 'Loading!!';
+    await element.updateComplete;
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `<div class="container">
+        <header class="heading-3">
+          <slot name="header"> </slot>
+        </header>
+        <main>
+          <div class="overflow-container">
+            <slot name="main"> </slot>
+          </div>
+        </main>
+        <footer>
+          <span class="loadingSpin" aria-label="Loading!!" role="progressbar">
+          </span>
+          <span class="loadingLabel"> Loading!! </span>
+          <div class="flex-space"></div>
+          <gr-button
+            aria-disabled="false"
+            id="cancel"
+            link=""
+            role="button"
+            tabindex="0"
+          >
+            Cancel
+          </gr-button>
+          <gr-button
+            aria-disabled="false"
+            id="confirm"
+            link=""
+            primary=""
+            role="button"
+            tabindex="0"
+            title=""
+          >
+            Confirm
+          </gr-button>
+        </footer>
+      </div> `
+    );
   });
 
   test('events', () => {
@@ -37,10 +113,10 @@ suite('gr-dialog tests', () => {
     element.addEventListener('confirm', confirm);
     element.addEventListener('cancel', cancel);
 
-    MockInteractions.tap(queryAndAssert(element, 'gr-button[primary]'));
+    queryAndAssert<GrButton>(element, 'gr-button[primary]').click();
     assert.equal(confirm.callCount, 1);
 
-    MockInteractions.tap(queryAndAssert(element, 'gr-button:not([primary])'));
+    queryAndAssert<GrButton>(element, 'gr-button:not([primary])').click();
     assert.equal(cancel.callCount, 1);
   });
 
@@ -49,13 +125,8 @@ suite('gr-dialog tests', () => {
     await element.updateComplete;
     const handleConfirmStub = sinon.stub(element, '_handleConfirm');
     const handleKeydownSpy = sinon.spy(element, '_handleKeydown');
-    MockInteractions.keyDownOn(
-      queryAndAssert(element, 'main'),
-      13,
-      null,
-      'enter'
-    );
-    await flush();
+    pressKey(queryAndAssert(element, 'main'), 'Enter');
+    await waitEventLoop();
 
     assert.isTrue(handleKeydownSpy.called);
     assert.isFalse(handleConfirmStub.called);
@@ -63,13 +134,8 @@ suite('gr-dialog tests', () => {
     element.confirmOnEnter = true;
     await element.updateComplete;
 
-    MockInteractions.keyDownOn(
-      queryAndAssert(element, 'main'),
-      13,
-      null,
-      'enter'
-    );
-    await flush();
+    pressKey(queryAndAssert(element, 'main'), 'Enter');
+    await waitEventLoop();
 
     assert.isTrue(handleConfirmStub.called);
   });

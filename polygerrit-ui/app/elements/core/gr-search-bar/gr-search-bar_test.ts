@@ -1,45 +1,107 @@
 /**
  * @license
- * Copyright (C) 2015 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2015 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-search-bar';
 import {GrSearchBar} from './gr-search-bar';
 import '../../../scripts/util';
-import {mockPromise, waitUntil} from '../../../test/test-utils';
-import {_testOnly_clearDocsBaseUrlCache} from '../../../utils/url-util';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
+import {
+  mockPromise,
+  pressKey,
+  waitUntil,
+  waitUntilObserved,
+} from '../../../test/test-utils';
 import {
   createChangeConfig,
-  createGerritInfo,
   createServerInfo,
 } from '../../../test/test-data-generators';
 import {MergeabilityComputationBehavior} from '../../../constants/constants';
 import {queryAndAssert} from '../../../test/test-utils';
 import {GrAutocomplete} from '../../shared/gr-autocomplete/gr-autocomplete';
 import {PaperInputElement} from '@polymer/paper-input/paper-input';
-
-const basicFixture = fixtureFromElement('gr-search-bar');
+import {fixture, html, assert} from '@open-wc/testing';
+import {Key} from '../../../utils/dom-util';
+import {getAppContext} from '../../../services/app-context';
+import {changeModelToken} from '../../../models/change/change-model';
+import {
+  ConfigModel,
+  configModelToken,
+} from '../../../models/config/config-model';
+import {wrapInProvider} from '../../../models/di-provider-element';
+import {testResolver} from '../../../test/common-test-setup';
 
 suite('gr-search-bar tests', () => {
   let element: GrSearchBar;
+  let configModel: ConfigModel;
 
   setup(async () => {
-    element = basicFixture.instantiate();
+    configModel = new ConfigModel(
+      testResolver(changeModelToken),
+      getAppContext().restApiService
+    );
+    const serverConfig = createServerInfo();
+    serverConfig.gerrit.doc_url = 'https://mydocumentationurl.google.com/';
+    configModel.updateServerConfig(serverConfig);
+    await waitUntilObserved(
+      configModel.docsBaseUrl$,
+      docsBaseUrl => docsBaseUrl === 'https://mydocumentationurl.google.com/'
+    );
+
+    element = (
+      await fixture(
+        wrapInProvider(
+          html`<gr-search-bar></gr-search-bar>`,
+          configModelToken,
+          configModel
+        )
+      )
+    ).querySelector('gr-search-bar')!;
+  });
+
+  test('renders', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <form>
+          <gr-autocomplete
+            allow-non-suggested-values=""
+            id="searchInput"
+            multi=""
+            show-search-icon=""
+            tab-complete=""
+          >
+            <a
+              class="help"
+              href="https://mydocumentationurl.google.com/user-search.html"
+              slot="suffix"
+              tabindex="-1"
+              target="_blank"
+            >
+              <gr-icon icon="help" title="read documentation"></gr-icon>
+            </a>
+          </gr-autocomplete>
+        </form>
+      `
+    );
+  });
+
+  test('falls back to gerrit docs url', async () => {
+    const configWithoutDocsUrl = createServerInfo();
+    configWithoutDocsUrl.gerrit.doc_url = undefined;
+
+    configModel.updateServerConfig(configWithoutDocsUrl);
+    await waitUntilObserved(
+      configModel.docsBaseUrl$,
+      docsBaseUrl => docsBaseUrl === 'https://mydocumentationurl.google.com/'
+    );
     await element.updateComplete;
+
+    assert.equal(
+      queryAndAssert<HTMLAnchorElement>(element, 'a')!.href,
+      'https://mydocumentationurl.google.com/user-search.html'
+    );
   });
 
   test('value is propagated to inputVal', async () => {
@@ -65,35 +127,11 @@ suite('gr-search-bar tests', () => {
     element.value = 'test';
     await element.updateComplete;
     const searchInput = queryAndAssert<GrAutocomplete>(element, '#searchInput');
-    MockInteractions.pressAndReleaseKeyOn(
-      queryAndAssert<HTMLInputElement>(searchInput, '#input'),
-      13,
-      null,
-      'enter'
+    pressKey(
+      queryAndAssert<PaperInputElement>(searchInput, '#input'),
+      Key.ENTER
     );
     await promise;
-  });
-
-  test('input blurred after commit', async () => {
-    const blurSpy = sinon.spy(
-      queryAndAssert<PaperInputElement>(
-        queryAndAssert<GrAutocomplete>(element, '#searchInput'),
-        '#input'
-      ),
-      'blur'
-    );
-    queryAndAssert<GrAutocomplete>(element, '#searchInput').text = 'fate/stay';
-    await element.updateComplete;
-    MockInteractions.pressAndReleaseKeyOn(
-      queryAndAssert<PaperInputElement>(
-        queryAndAssert<GrAutocomplete>(element, '#searchInput'),
-        '#input'
-      ),
-      13,
-      null,
-      'enter'
-    );
-    await waitUntil(() => blurSpy.called);
   });
 
   test('empty search query does not trigger nav', async () => {
@@ -102,11 +140,9 @@ suite('gr-search-bar tests', () => {
     element.value = '';
     await element.updateComplete;
     const searchInput = queryAndAssert<GrAutocomplete>(element, '#searchInput');
-    MockInteractions.pressAndReleaseKeyOn(
-      queryAndAssert<HTMLInputElement>(searchInput, '#input'),
-      13,
-      null,
-      'enter'
+    pressKey(
+      queryAndAssert<PaperInputElement>(searchInput, '#input'),
+      Key.ENTER
     );
     assert.isFalse(searchSpy.called);
   });
@@ -117,11 +153,9 @@ suite('gr-search-bar tests', () => {
     element.value = 'added:';
     await element.updateComplete;
     const searchInput = queryAndAssert<GrAutocomplete>(element, '#searchInput');
-    MockInteractions.pressAndReleaseKeyOn(
-      queryAndAssert<HTMLInputElement>(searchInput, '#input'),
-      13,
-      null,
-      'enter'
+    pressKey(
+      queryAndAssert<PaperInputElement>(searchInput, '#input'),
+      Key.ENTER
     );
     assert.isFalse(searchSpy.called);
   });
@@ -132,11 +166,9 @@ suite('gr-search-bar tests', () => {
     element.value = 'age:1week';
     await element.updateComplete;
     const searchInput = queryAndAssert<GrAutocomplete>(element, '#searchInput');
-    MockInteractions.pressAndReleaseKeyOn(
-      queryAndAssert<HTMLInputElement>(searchInput, '#input'),
-      13,
-      null,
-      'enter'
+    pressKey(
+      queryAndAssert<PaperInputElement>(searchInput, '#input'),
+      Key.ENTER
     );
     await waitUntil(() => searchSpy.called);
   });
@@ -147,11 +179,9 @@ suite('gr-search-bar tests', () => {
     element.value = 'random:1week';
     await element.updateComplete;
     const searchInput = queryAndAssert<GrAutocomplete>(element, '#searchInput');
-    MockInteractions.pressAndReleaseKeyOn(
-      queryAndAssert<HTMLInputElement>(searchInput, '#input'),
-      13,
-      null,
-      'enter'
+    pressKey(
+      queryAndAssert<PaperInputElement>(searchInput, '#input'),
+      Key.ENTER
     );
     await waitUntil(() => searchSpy.called);
   });
@@ -162,11 +192,9 @@ suite('gr-search-bar tests', () => {
     element.value = 'random:';
     await element.updateComplete;
     const searchInput = queryAndAssert<GrAutocomplete>(element, '#searchInput');
-    MockInteractions.pressAndReleaseKeyOn(
-      queryAndAssert<HTMLInputElement>(searchInput, '#input'),
-      13,
-      null,
-      'enter'
+    pressKey(
+      queryAndAssert<PaperInputElement>(searchInput, '#input'),
+      Key.ENTER
     );
     await waitUntil(() => searchSpy.called);
   });
@@ -180,22 +208,16 @@ suite('gr-search-bar tests', () => {
       queryAndAssert<GrAutocomplete>(element, '#searchInput'),
       'selectAll'
     );
-    MockInteractions.pressAndReleaseKeyOn(document.body, 191, null, '/');
+    pressKey(document.body, '/');
     assert.isTrue(focusSpy.called);
     assert.isTrue(selectAllSpy.called);
   });
 
   suite('getSearchSuggestions', () => {
     setup(async () => {
-      element = basicFixture.instantiate();
-      element.serverConfig = {
-        ...createServerInfo(),
-        change: {
-          ...createChangeConfig(),
-          mergeability_computation_behavior:
-            'NEVER' as MergeabilityComputationBehavior,
-        },
-      };
+      element = await fixture(html`<gr-search-bar></gr-search-bar>`);
+      element.mergeabilityComputationBehavior =
+        MergeabilityComputationBehavior.NEVER;
       await element.updateComplete;
     });
 
@@ -255,7 +277,7 @@ suite('gr-search-bar tests', () => {
   ].forEach(mergeability => {
     suite(`mergeability as ${mergeability}`, () => {
       setup(async () => {
-        element = basicFixture.instantiate();
+        element = await fixture(html`<gr-search-bar></gr-search-bar>`);
         element.serverConfig = {
           ...createServerInfo(),
           change: {
@@ -280,28 +302,21 @@ suite('gr-search-bar tests', () => {
 
   suite('doc url', () => {
     setup(async () => {
-      _testOnly_clearDocsBaseUrlCache();
-      element = basicFixture.instantiate();
-      element.serverConfig = {
-        ...createServerInfo(),
-        gerrit: {
-          ...createGerritInfo(),
-          doc_url: 'https://doc.com/',
-        },
-      };
-      await element.updateComplete;
+      element = await fixture(html`<gr-search-bar></gr-search-bar>`);
     });
 
-    test('compute help doc url with correct path', () => {
-      assert.equal(element.docBaseUrl, 'https://doc.com/');
+    test('compute help doc url with correct path', async () => {
+      element.docsBaseUrl = 'https://doc.com/';
+      await element.updateComplete;
       assert.equal(
         element.computeHelpDocLink(),
         'https://doc.com/user-search.html'
       );
     });
 
-    test('compute help doc url fallback to gerrit url', () => {
-      element.docBaseUrl = null;
+    test('compute help doc url fallback to gerrit url', async () => {
+      element.docsBaseUrl = null;
+      await element.updateComplete;
       assert.equal(
         element.computeHelpDocLink(),
         'https://gerrit-review.googlesource.com/documentation/' +

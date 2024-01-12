@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import {html, LitElement} from 'lit';
-import {customElement, property} from 'lit/decorators';
+import {customElement, property} from 'lit/decorators.js';
 import {
   getPluginEndpoints,
   ModuleInfo,
@@ -130,12 +130,12 @@ export class GrEndpointDecorator extends LitElement {
     }
     const expectProperties = this.getEndpointParams().map(paramEl => {
       const helper = plugin.attributeHelper(paramEl);
-      // TODO: this should be replaced by accessing the property directly
-      const paramName = paramEl.getAttribute('name');
+      const paramName = paramEl.name;
       if (!paramName) {
         this.reporting.error(
+          `Plugin '${pluginName}', endpoint '${this.name}'`,
           new Error(
-            `plugin '${pluginName}' endpoint '${this.name}': param is missing a name.`
+            `Plugin '${pluginName}', endpoint '${this.name}': param is missing a name.`
           )
         );
         return;
@@ -156,9 +156,10 @@ export class GrEndpointDecorator extends LitElement {
         // and the return type is NodeJS.Timeout object
         (timeoutId = window.setTimeout(() => {
           this.reporting.error(
+            `Plugin '${pluginName}', endpoint '${this.name}'`,
             new Error(
-              'Timeout waiting for endpoint properties initialization: ' +
-                `plugin ${pluginName}, endpoint ${this.name}`
+              `Plugin ${pluginName}, endpoint ${this.name}: ` +
+                'Timeout waiting for endpoint properties initialization'
             )
           );
         }, INIT_PROPERTIES_TIMEOUT_MS))

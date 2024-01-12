@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-repo-list';
 import {GrRepoList} from './gr-repo-list';
 import {page} from '../../../utils/page-wrapper-utils';
@@ -29,14 +17,13 @@ import {
   ProjectInfoWithName,
   RepoName,
 } from '../../../types/common';
-import {AppElementAdminParams} from '../../gr-app-types';
 import {ProjectState, SHOWN_ITEMS_COUNT} from '../../../constants/constants';
 import {GerritView} from '../../../services/router/router-model';
 import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
 import {GrDialog} from '../../shared/gr-dialog/gr-dialog';
 import {GrListView} from '../../shared/gr-list-view/gr-list-view';
-
-const basicFixture = fixtureFromElement('gr-repo-list');
+import {fixture, html, assert} from '@open-wc/testing';
+import {AdminChildView, AdminViewState} from '../../../models/views/admin';
 
 function createRepo(name: string, counter: number) {
   return {
@@ -66,8 +53,7 @@ suite('gr-repo-list tests', () => {
 
   setup(async () => {
     sinon.stub(page, 'show');
-    element = basicFixture.instantiate();
-    await element.updateComplete;
+    element = await fixture(html`<gr-repo-list></gr-repo-list>`);
   });
 
   suite('list with repos', () => {
@@ -76,6 +62,555 @@ suite('gr-repo-list tests', () => {
       stubRestApi('getRepos').returns(Promise.resolve(repos));
       await element._paramsChanged();
       await element.updateComplete;
+    });
+
+    test('render', () => {
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `
+          <gr-list-view>
+            <table class="genericList" id="list">
+              <tbody>
+                <tr class="headerRow">
+                  <th class="name topHeader">Repository Name</th>
+                  <th class="repositoryBrowser topHeader">
+                    Repository Browser
+                  </th>
+                  <th class="changesLink topHeader">Changes</th>
+                  <th class="readOnly topHeader">Read only</th>
+                  <th class="description topHeader">Repository Description</th>
+                </tr>
+                <tr class="loadingMsg" id="loading">
+                  <td>Loading...</td>
+                </tr>
+              </tbody>
+              <tbody>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test0"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test1"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test2"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test3"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test4"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test5"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test6"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test7"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test8"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test9"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test10"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test11"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test12"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test13"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test14"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test15"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test16"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test17"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test18"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test19"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test20"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test21"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test22"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test23"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+                <tr class="table">
+                  <td class="name">
+                    <a href="/admin/repos/test"> test </a>
+                  </td>
+                  <td class="repositoryBrowser">
+                    <a
+                      class="webLink"
+                      href="https://phabricator.example.org/r/project/test24"
+                      rel="noopener"
+                      target="_blank"
+                    >
+                      diffusion
+                    </a>
+                  </td>
+                  <td class="changesLink">
+                    <a href="/q/project:test"> view all </a>
+                  </td>
+                  <td class="readOnly"></td>
+                  <td class="description"></td>
+                </tr>
+              </tbody>
+            </table>
+          </gr-list-view>
+          <gr-overlay
+            aria-hidden="true"
+            id="createOverlay"
+            style="outline: none; display: none;"
+            tabindex="-1"
+            with-backdrop=""
+          >
+            <gr-dialog
+              class="confirmDialog"
+              confirm-label="Create"
+              disabled=""
+              id="createDialog"
+              role="dialog"
+            >
+              <div class="header" slot="header">Create Repository</div>
+              <div class="main" slot="main">
+                <gr-create-repo-dialog id="createNewModal">
+                </gr-create-repo-dialog>
+              </div>
+            </gr-dialog>
+          </gr-overlay>
+        `
+      );
     });
 
     test('test for test repo in the list', async () => {
@@ -98,9 +633,9 @@ suite('gr-repo-list tests', () => {
       assert.isFalse(overlayOpen.called);
       element.maybeOpenCreateOverlay(undefined);
       assert.isFalse(overlayOpen.called);
-      const params: AppElementAdminParams = {
+      const params: AdminViewState = {
         view: GerritView.ADMIN,
-        adminView: '',
+        adminView: AdminChildView.REPOS,
         openCreateModal: true,
       };
       element.maybeOpenCreateOverlay(params);
@@ -134,10 +669,10 @@ suite('gr-repo-list tests', () => {
       repoStub.returns(Promise.resolve(repos));
       element.params = {
         view: GerritView.ADMIN,
-        adminView: '',
+        adminView: AdminChildView.REPOS,
         filter: 'test',
         offset: 25,
-      } as AppElementAdminParams;
+      } as AdminViewState;
       await element._paramsChanged();
       assert.isTrue(repoStub.lastCall.calledWithExactly('test', 25, 25));
     });

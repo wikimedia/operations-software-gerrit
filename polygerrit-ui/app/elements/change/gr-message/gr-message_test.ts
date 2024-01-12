@@ -1,23 +1,11 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-message';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {
   createAccountWithIdNameAndEmail,
   createChange,
@@ -25,35 +13,36 @@ import {
   createComment,
   createRevisions,
   createLabelInfo,
+  createCommentThread,
 } from '../../../test/test-data-generators';
 import {
   mockPromise,
   query,
   queryAndAssert,
   stubRestApi,
+  waitEventLoop,
 } from '../../../test/test-utils';
 import {GrMessage} from './gr-message';
 import {
   AccountId,
-  BasePatchSetNum,
   ChangeMessageId,
   EmailAddress,
   NumericChangeId,
-  PatchSetNum,
+  RevisionPatchSetNum,
   ReviewInputTag,
   Timestamp,
   UrlEncodedCommentId,
 } from '../../../types/common';
-import {tap} from '@polymer/iron-test-helpers/mock-interactions';
 import {
   ChangeMessageDeletedEventDetail,
   ReplyEventDetail,
 } from '../../../types/events';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {CommentSide} from '../../../constants/constants';
-import {SinonStubbedMember} from 'sinon';
+import {SinonStub} from 'sinon';
 import {html} from 'lit';
-import {fixture} from '@open-wc/testing-helpers';
+import {fixture, assert} from '@open-wc/testing';
+import {testResolver} from '../../../test/common-test-setup';
 
 suite('gr-message tests', () => {
   let element: GrMessage;
@@ -75,7 +64,7 @@ suite('gr-message tests', () => {
         },
         date: '2016-01-12 20:24:49.448000000' as Timestamp,
         message: 'Uploaded patch set 1.',
-        _revision_number: 1 as PatchSetNum,
+        _revision_number: 1 as RevisionPatchSetNum,
         expanded: true,
       };
 
@@ -84,9 +73,9 @@ suite('gr-message tests', () => {
         assert.deepEqual(e.detail.message, element.message);
         promise.resolve();
       });
-      await flush();
+      await waitEventLoop();
       assert.isOk(query<HTMLElement>(element, '.replyActionContainer'));
-      tap(queryAndAssert(element, '.replyBtn'));
+      queryAndAssert<GrButton>(element, '.replyBtn').click();
       await promise;
     });
 
@@ -101,7 +90,7 @@ suite('gr-message tests', () => {
         },
         date: '2016-01-12 20:24:49.448000000' as Timestamp,
         message: 'Uploaded patch set 1.',
-        _revision_number: 1 as PatchSetNum,
+        _revision_number: 1 as RevisionPatchSetNum,
         expanded: true,
       };
       await element.updateComplete;
@@ -121,7 +110,7 @@ suite('gr-message tests', () => {
         },
         date: '2016-01-12 20:24:49.448000000' as Timestamp,
         message: 'Uploaded patch set 1.',
-        _revision_number: 1 as PatchSetNum,
+        _revision_number: 1 as RevisionPatchSetNum,
         expanded: true,
       };
       await element.updateComplete;
@@ -138,7 +127,7 @@ suite('gr-message tests', () => {
           promise.resolve();
         }
       );
-      tap(queryAndAssert(element, '.deleteBtn'));
+      queryAndAssert<GrButton>(element, '.deleteBtn').click();
       await element.updateComplete;
       assert.isTrue(queryAndAssert<GrButton>(element, '.deleteBtn').disabled);
       await promise;
@@ -153,36 +142,38 @@ suite('gr-message tests', () => {
       await element.updateComplete;
 
       assert.isTrue(element.computeIsAutomated());
-      expect(element).shadowDom.to.equal(/* HTML */ `<div class="collapsed">
-        <div class="contentContainer">
-          <div class="author">
-            <gr-account-label class="authorLabel"> </gr-account-label>
-            <gr-message-scores> </gr-message-scores>
-          </div>
-          <div class="content messageContent">
-            <div class="hideOnOpen message">
-              This is a message with id cm_id_1
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `<div class="collapsed">
+          <div class="contentContainer">
+            <div class="author">
+              <gr-account-label class="authorLabel"> </gr-account-label>
+              <gr-message-scores> </gr-message-scores>
             </div>
-          </div>
-          <span class="dateContainer">
-            <span class="date">
-              <gr-date-formatter showdateandtime="" withtooltip="">
-              </gr-date-formatter>
+            <div class="content messageContent">
+              <div class="hideOnOpen message">
+                This is a message with id cm_id_1
+              </div>
+            </div>
+            <span class="dateContainer">
+              <span class="date">
+                <gr-date-formatter showdateandtime="" withtooltip="">
+                </gr-date-formatter>
+              </span>
+              <gr-icon
+                icon="expand_more"
+                id="expandToggle"
+                title="Toggle expanded state"
+              ></gr-icon>
             </span>
-            <iron-icon
-              icon="gr-icons:expand-more"
-              id="expandToggle"
-              title="Toggle expanded state"
-            >
-            </iron-icon>
-          </span>
-        </div>
-      </div>`);
+          </div>
+        </div>`
+      );
 
       element.hideAutomated = true;
       await element.updateComplete;
 
-      expect(element).shadowDom.to.equal(/* HTML */ '');
+      assert.shadowDom.equal(element, /* HTML */ '');
     });
 
     test('reviewer message treated as autogenerated', async () => {
@@ -195,36 +186,38 @@ suite('gr-message tests', () => {
       await element.updateComplete;
 
       assert.isTrue(element.computeIsAutomated());
-      expect(element).shadowDom.to.equal(/* HTML */ `<div class="collapsed">
-        <div class="contentContainer">
-          <div class="author">
-            <gr-account-label class="authorLabel"> </gr-account-label>
-            <gr-message-scores> </gr-message-scores>
-          </div>
-          <div class="content messageContent">
-            <div class="hideOnOpen message">
-              This is a message with id cm_id_1
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `<div class="collapsed">
+          <div class="contentContainer">
+            <div class="author">
+              <gr-account-label class="authorLabel"> </gr-account-label>
+              <gr-message-scores> </gr-message-scores>
             </div>
-          </div>
-          <span class="dateContainer">
-            <span class="date">
-              <gr-date-formatter showdateandtime="" withtooltip="">
-              </gr-date-formatter>
+            <div class="content messageContent">
+              <div class="hideOnOpen message">
+                This is a message with id cm_id_1
+              </div>
+            </div>
+            <span class="dateContainer">
+              <span class="date">
+                <gr-date-formatter showdateandtime="" withtooltip="">
+                </gr-date-formatter>
+              </span>
+              <gr-icon
+                icon="expand_more"
+                id="expandToggle"
+                title="Toggle expanded state"
+              ></gr-icon>
             </span>
-            <iron-icon
-              icon="gr-icons:expand-more"
-              id="expandToggle"
-              title="Toggle expanded state"
-            >
-            </iron-icon>
-          </span>
-        </div>
-      </div>`);
+          </div>
+        </div>`
+      );
 
       element.hideAutomated = true;
       await element.updateComplete;
 
-      expect(element).shadowDom.to.equal(/* HTML */ '');
+      assert.shadowDom.equal(element, /* HTML */ '');
     });
 
     test('batch reviewer message treated as autogenerated', async () => {
@@ -238,37 +231,39 @@ suite('gr-message tests', () => {
       await element.updateComplete;
 
       assert.isTrue(element.computeIsAutomated());
-      expect(element).shadowDom.to.equal(/* HTML */ `<div class="collapsed">
-        <div class="contentContainer">
-          <div class="author">
-            <gr-account-label class="authorLabel"> </gr-account-label>
-            <gr-message-scores> </gr-message-scores>
-          </div>
-          <div class="content messageContent">
-            <div class="hideOnOpen message">
-              This is a message with id cm_id_1
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `<div class="collapsed">
+          <div class="contentContainer">
+            <div class="author">
+              <gr-account-label class="authorLabel"> </gr-account-label>
+              <gr-message-scores> </gr-message-scores>
             </div>
-          </div>
-          <div class="content"></div>
-          <span class="dateContainer">
-            <span class="date">
-              <gr-date-formatter showdateandtime="" withtooltip="">
-              </gr-date-formatter>
+            <div class="content messageContent">
+              <div class="hideOnOpen message">
+                This is a message with id cm_id_1
+              </div>
+            </div>
+            <div class="content"></div>
+            <span class="dateContainer">
+              <span class="date">
+                <gr-date-formatter showdateandtime="" withtooltip="">
+                </gr-date-formatter>
+              </span>
+              <gr-icon
+                icon="expand_more"
+                id="expandToggle"
+                title="Toggle expanded state"
+              ></gr-icon>
             </span>
-            <iron-icon
-              icon="gr-icons:expand-more"
-              id="expandToggle"
-              title="Toggle expanded state"
-            >
-            </iron-icon>
-          </span>
-        </div>
-      </div>`);
+          </div>
+        </div>`
+      );
 
       element.hideAutomated = true;
       await element.updateComplete;
 
-      expect(element).shadowDom.to.equal(/* HTML */ '');
+      assert.shadowDom.equal(element, /* HTML */ '');
     });
 
     test('tag that is not autogenerated prefix does not hide', async () => {
@@ -296,22 +291,81 @@ suite('gr-message tests', () => {
               <gr-date-formatter showdateandtime="" withtooltip="">
               </gr-date-formatter>
             </span>
-            <iron-icon
-              icon="gr-icons:expand-more"
+            <gr-icon
+              icon="expand_more"
               id="expandToggle"
               title="Toggle expanded state"
-            >
-            </iron-icon>
+            ></gr-icon>
           </span>
         </div>
       </div>`;
-      expect(element).shadowDom.to.equal(rendered);
+      assert.shadowDom.equal(element, rendered);
 
       element.hideAutomated = true;
       await element.updateComplete;
       console.error(element.computeIsAutomated());
 
-      expect(element).shadowDom.to.equal(rendered);
+      assert.shadowDom.equal(element, rendered);
+    });
+
+    test('renders comment message', async () => {
+      element.commentThreads = [
+        createCommentThread([
+          createComment({message: 'hello 1', unresolved: true}),
+        ]),
+        createCommentThread([createComment({message: 'hello 2'})]),
+      ];
+      element.message = {
+        ...createChangeMessage(),
+        commentThreads: element.commentThreads,
+      };
+      await element.updateComplete;
+
+      const rendered = /* HTML */ `<div class="collapsed">
+        <div class="contentContainer">
+          <div class="author">
+            <gr-account-label class="authorLabel"> </gr-account-label>
+            <gr-message-scores> </gr-message-scores>
+          </div>
+          <div class="commentsSummary">
+            <span class="numberOfComments" title="1 unresolved comment">
+              <gr-icon
+                class="commentsIcon unresolved"
+                small
+                filled
+                icon="chat_bubble"
+              >
+              </gr-icon>
+              1
+            </span>
+            <span class="numberOfComments" title="1 resolved comment">
+              <gr-icon
+                class="commentsIcon"
+                small
+                icon="mark_chat_read"
+              ></gr-icon>
+              1
+            </span>
+          </div>
+          <div class="content messageContent">
+            <div class="hideOnOpen message">
+              This is a message with id cm_id_1
+            </div>
+          </div>
+          <span class="dateContainer">
+            <span class="date">
+              <gr-date-formatter showdateandtime="" withtooltip="">
+              </gr-date-formatter>
+            </span>
+            <gr-icon
+              icon="expand_more"
+              id="expandToggle"
+              title="Toggle expanded state"
+            ></gr-icon>
+          </span>
+        </div>
+      </div>`;
+      assert.shadowDom.equal(element, rendered);
     });
 
     test('reply button hidden unless logged in', () => {
@@ -360,19 +414,19 @@ suite('gr-message tests', () => {
 
       const stub = sinon.stub();
       element.addEventListener('message-anchor-tap', stub);
-      const dateEl = queryAndAssert(element, '.date');
+      const dateEl = queryAndAssert<HTMLSpanElement>(element, '.date');
       assert.ok(dateEl);
-      tap(dateEl);
+      dateEl.click();
 
       assert.isTrue(stub.called);
       assert.deepEqual(stub.lastCall.args[0].detail, {id: element.message?.id});
     });
 
     suite('uploaded patchset X message navigates to X - 1 vs  X', () => {
-      let navStub: SinonStubbedMember<typeof GerritNav.navigateToChange>;
+      let setUrlStub: SinonStub;
       setup(() => {
         element.change = {...createChange(), revisions: createRevisions(4)};
-        navStub = sinon.stub(GerritNav, 'navigateToChange');
+        setUrlStub = sinon.stub(testResolver(navigationToken), 'setUrl');
       });
 
       test('Patchset 1 navigates to Base', () => {
@@ -381,12 +435,9 @@ suite('gr-message tests', () => {
           message: 'Uploaded patch set 1.',
         };
         element.handleViewPatchsetDiff(new MouseEvent('click'));
-        assert.isTrue(
-          navStub.calledWithExactly(element.change!, {
-            patchNum: 1 as PatchSetNum,
-            basePatchNum: 'PARENT' as BasePatchSetNum,
-          })
-        );
+
+        assert.isTrue(setUrlStub.calledOnce);
+        assert.equal(setUrlStub.lastCall.firstArg, '/c/test-project/+/42/1');
       });
 
       test('Patchset X navigates to X vs X - 1', () => {
@@ -395,23 +446,20 @@ suite('gr-message tests', () => {
           message: 'Uploaded patch set 2.',
         };
         element.handleViewPatchsetDiff(new MouseEvent('click'));
-        assert.isTrue(
-          navStub.calledWithExactly(element.change!, {
-            patchNum: 2 as PatchSetNum,
-            basePatchNum: 1 as BasePatchSetNum,
-          })
-        );
+
+        assert.isTrue(setUrlStub.calledOnce);
+        assert.equal(setUrlStub.lastCall.firstArg, '/c/test-project/+/42/1..2');
 
         element.message = {
           ...createChangeMessage(),
           message: 'Uploaded patch set 200.',
         };
         element.handleViewPatchsetDiff(new MouseEvent('click'));
-        assert.isTrue(
-          navStub.calledWithExactly(element.change!, {
-            patchNum: 200 as PatchSetNum,
-            basePatchNum: 199 as BasePatchSetNum,
-          })
+
+        assert.isTrue(setUrlStub.calledTwice);
+        assert.equal(
+          setUrlStub.lastCall.firstArg,
+          '/c/test-project/+/42/199..200'
         );
       });
 
@@ -421,12 +469,9 @@ suite('gr-message tests', () => {
           message: 'Commit message updated.',
         };
         element.handleViewPatchsetDiff(new MouseEvent('click'));
-        assert.isTrue(
-          navStub.calledWithExactly(element.change!, {
-            patchNum: 4 as PatchSetNum,
-            basePatchNum: 3 as BasePatchSetNum,
-          })
-        );
+
+        assert.isTrue(setUrlStub.calledOnce);
+        assert.equal(setUrlStub.lastCall.firstArg, '/c/test-project/+/42/3..4');
       });
 
       test('Merged patchset change message', () => {
@@ -435,12 +480,9 @@ suite('gr-message tests', () => {
           message: 'abcd↵3 is the latest approved patch-set.↵abc',
         };
         element.handleViewPatchsetDiff(new MouseEvent('click'));
-        assert.isTrue(
-          navStub.calledWithExactly(element.change!, {
-            patchNum: 4 as PatchSetNum,
-            basePatchNum: 3 as BasePatchSetNum,
-          })
-        );
+
+        assert.isTrue(setUrlStub.calledOnce);
+        assert.equal(setUrlStub.lastCall.firstArg, '/c/test-project/+/42/3..4');
       });
     });
 
@@ -701,7 +743,7 @@ suite('gr-message tests', () => {
         },
         date: '2016-01-12 20:24:49.448000000' as Timestamp,
         message: 'Uploaded patch set 1.',
-        _revision_number: 1 as PatchSetNum,
+        _revision_number: 1 as RevisionPatchSetNum,
         expanded: true,
       };
 
@@ -729,7 +771,7 @@ suite('gr-message tests', () => {
               ...createComment(),
               change_message_id:
                 '6a07f64a82f96e7337ca5f7f84cfc73abf8ac2a3' as ChangeMessageId,
-              patch_set: 1 as PatchSetNum,
+              patch_set: 1 as RevisionPatchSetNum,
               id: 'e365b138_bed65caa' as UrlEncodedCommentId,
               updated: '2020-05-15 13:35:56.000000000' as Timestamp,
               message: 'testing the load',
@@ -737,7 +779,7 @@ suite('gr-message tests', () => {
               path: '/PATCHSET_LEVEL',
             },
           ],
-          patchNum: 1 as PatchSetNum,
+          patchNum: 1 as RevisionPatchSetNum,
           path: '/PATCHSET_LEVEL',
           rootId: 'e365b138_bed65caa' as UrlEncodedCommentId,
           commentSide: CommentSide.REVISION,
@@ -756,7 +798,7 @@ suite('gr-message tests', () => {
           comments: [
             {
               ...createComment(),
-              patch_set: 1 as PatchSetNum,
+              patch_set: 1 as RevisionPatchSetNum,
               id: 'e365b138_bed65caa' as UrlEncodedCommentId,
               updated: '2020-05-15 13:35:56.000000000' as Timestamp,
               message: 'testing the load',
@@ -765,7 +807,7 @@ suite('gr-message tests', () => {
             },
             {
               change_message_id: '6a07f64a82f96e7337ca5f7f84cfc73abf8ac2a3',
-              patch_set: 1 as PatchSetNum,
+              patch_set: 1 as RevisionPatchSetNum,
               id: 'd6efcc85_4cbbb6f4' as UrlEncodedCommentId,
               in_reply_to: 'e365b138_bed65caa' as UrlEncodedCommentId,
               updated: '2020-05-15 16:55:28.000000000' as Timestamp,
@@ -775,7 +817,7 @@ suite('gr-message tests', () => {
               __draft: true,
             },
           ],
-          patchNum: 1 as PatchSetNum,
+          patchNum: 1 as RevisionPatchSetNum,
           path: '/PATCHSET_LEVEL',
           rootId: 'e365b138_bed65caa' as UrlEncodedCommentId,
           commentSide: CommentSide.REVISION,
@@ -806,7 +848,7 @@ suite('gr-message tests', () => {
         },
         date: '2016-01-12 20:24:49.448000000' as Timestamp,
         message: 'Uploaded patch set 1.',
-        _revision_number: 1 as PatchSetNum,
+        _revision_number: 1 as RevisionPatchSetNum,
         expanded: true,
       };
       await element.updateComplete;
@@ -834,7 +876,7 @@ suite('gr-message tests', () => {
         },
         date: '2016-01-12 20:24:49.448000000' as Timestamp,
         message: 'not empty',
-        _revision_number: 1 as PatchSetNum,
+        _revision_number: 1 as RevisionPatchSetNum,
         expanded: true,
       };
       await element.updateComplete;

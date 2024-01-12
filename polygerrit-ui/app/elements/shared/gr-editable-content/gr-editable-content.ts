@@ -1,22 +1,12 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
 import '../../../styles/shared-styles';
 import '../gr-button/gr-button';
+import '../gr-icon/gr-icon';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../plugins/gr-endpoint-param/gr-endpoint-param';
 import '../../plugins/gr-endpoint-slot/gr-endpoint-slot';
@@ -27,14 +17,15 @@ import {queryAndAssert} from '../../../utils/common-util';
 import {IronAutogrowTextareaElement} from '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
 import {Interaction} from '../../../constants/reporting';
 import {LitElement, html} from 'lit';
-import {customElement, property, state} from 'lit/decorators';
+import {customElement, property, state} from 'lit/decorators.js';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {css} from 'lit';
 import {PropertyValues} from 'lit';
 import {BindValueChangeEvent, ValueChangedEvent} from '../../../types/events';
 import {nothing} from 'lit';
-import {classMap} from 'lit/directives/class-map';
-import {when} from 'lit/directives/when';
+import {classMap} from 'lit/directives/class-map.js';
+import {when} from 'lit/directives/when.js';
+import {fontStyles} from '../../../styles/gr-font-styles';
 
 const RESTORED_MESSAGE = 'Content restored from a previous edit.';
 const STORAGE_DEBOUNCE_INTERVAL_MS = 400;
@@ -107,7 +98,7 @@ export class GrEditableContent extends LitElement {
   storeTask?: DelayedTask;
 
   override disconnectedCallback() {
-    this.storeTask?.cancel();
+    this.storeTask?.flush();
     super.disconnectedCallback();
   }
 
@@ -120,6 +111,7 @@ export class GrEditableContent extends LitElement {
   static override get styles() {
     return [
       sharedStyles,
+      fontStyles,
       css`
         :host {
           display: block;
@@ -171,13 +163,11 @@ export class GrEditableContent extends LitElement {
           box-shadow: none;
           border: 1px solid var(--border-color);
         }
-        .show-all-container .show-all-button {
-          margin-right: auto;
+        .flex-space {
+          flex-grow: 1;
         }
-        .show-all-container iron-icon {
+        .show-all-container gr-icon {
           color: inherit;
-          --iron-icon-height: 18px;
-          --iron-icon-width: 18px;
         }
         .cancel-button {
           margin-right: var(--spacing-l);
@@ -186,8 +176,6 @@ export class GrEditableContent extends LitElement {
           margin-right: var(--spacing-xs);
         }
         gr-button {
-          font-family: var(--font-family);
-          line-height: var(--line-height-normal);
           padding: var(--spacing-xs);
         }
       `,
@@ -231,7 +219,7 @@ export class GrEditableContent extends LitElement {
             .bindValue=${this.newContent}
             ?disabled=${this.disabled}
             @bind-value-changed=${(e: BindValueChangeEvent) => {
-              this.newContent = e.detail.value;
+              this.newContent = e.detail.value ?? '';
             }}
           ></iron-autogrow-textarea>
         </div>
@@ -244,7 +232,7 @@ export class GrEditableContent extends LitElement {
       return nothing;
 
     return html`
-      <div class="show-all-container">
+      <div class="show-all-container font-normal">
         ${when(
           this.commitCollapsible && !this.editing,
           () => html`
@@ -253,20 +241,19 @@ export class GrEditableContent extends LitElement {
               class="show-all-button"
               @click=${this.toggleCommitCollapsed}
             >
-              ${when(
-                !this.commitCollapsed,
-                () => html`
-                  <iron-icon icon="gr-icons:expand-less"></iron-icon>
-                `
-              )}
-              ${when(
-                this.commitCollapsed,
-                () => html`
-                  <iron-icon icon="gr-icons:expand-more"></iron-icon>
-                `
-              )}
-              ${this.commitCollapsed ? 'Show all' : 'Show less'}
+              <div>
+                ${when(
+                  !this.commitCollapsed,
+                  () => html`<gr-icon icon="expand_less" small></gr-icon>`
+                )}
+                ${when(
+                  this.commitCollapsed,
+                  () => html`<gr-icon icon="expand_more" small></gr-icon>`
+                )}
+                <span>${this.commitCollapsed ? 'Show all' : 'Show less'}</span>
+              </div>
             </gr-button>
+            <div class="flex-space"></div>
           `
         )}
         ${when(
@@ -277,7 +264,10 @@ export class GrEditableContent extends LitElement {
               class="edit-commit-message"
               title="Edit commit message"
               @click=${this.handleEditCommitMessage}
-              ><iron-icon icon="gr-icons:edit"></iron-icon> Edit</gr-button
+              ><div>
+                <gr-icon icon="edit" filled small></gr-icon>
+                <span>Edit</span>
+              </div></gr-button
             >
           `
         )}

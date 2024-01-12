@@ -1,52 +1,63 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import {fixture, html, assert} from '@open-wc/testing';
+import '../../../test/common-test-setup';
 import './gr-key-binding-display';
 import {GrKeyBindingDisplay} from './gr-key-binding-display';
 
-const basicFixture = fixtureFromElement('gr-key-binding-display');
+const x = ['x'];
+const ctrlX = ['Ctrl', 'x'];
+const shiftMetaX = ['Shift', 'Meta', 'x'];
 
 suite('gr-key-binding-display tests', () => {
   let element: GrKeyBindingDisplay;
 
-  setup(() => {
-    element = basicFixture.instantiate();
+  setup(async () => {
+    element = await fixture(
+      html`<gr-key-binding-display
+        .binding=${[x, ctrlX, shiftMetaX]}
+      ></gr-key-binding-display>`
+    );
+  });
+
+  test('renders', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <span class="key"> x </span>
+        or
+        <span class="key modifier"> Ctrl </span>
+        <span class="key"> x </span>
+        or
+        <span class="key modifier"> Shift </span>
+        <span class="key modifier"> Meta </span>
+        <span class="key"> x </span>
+      `
+    );
   });
 
   suite('_computeKey', () => {
     test('unmodified key', () => {
-      assert.strictEqual(element._computeKey(['x']), 'x');
+      assert.strictEqual(element._computeKey(x), 'x');
     });
 
     test('key with modifiers', () => {
-      assert.strictEqual(element._computeKey(['Ctrl', 'x']), 'x');
-      assert.strictEqual(element._computeKey(['Shift', 'Meta', 'x']), 'x');
+      assert.strictEqual(element._computeKey(ctrlX), 'x');
+      assert.strictEqual(element._computeKey(shiftMetaX), 'x');
     });
   });
 
   suite('_computeModifiers', () => {
     test('single unmodified key', () => {
-      assert.deepEqual(element._computeModifiers(['x']), []);
+      assert.deepEqual(element._computeModifiers(x), []);
     });
 
     test('key with modifiers', () => {
-      assert.deepEqual(element._computeModifiers(['Ctrl', 'x']), ['Ctrl']);
-      assert.deepEqual(element._computeModifiers(['Shift', 'Meta', 'x']), [
+      assert.deepEqual(element._computeModifiers(ctrlX), ['Ctrl']);
+      assert.deepEqual(element._computeModifiers(shiftMetaX), [
         'Shift',
         'Meta',
       ]);

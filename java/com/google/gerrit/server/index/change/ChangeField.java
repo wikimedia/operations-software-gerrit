@@ -63,6 +63,7 @@ import com.google.gerrit.entities.converter.PatchSetProtoConverter;
 import com.google.gerrit.entities.converter.ProtoConverter;
 import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.RefState;
+import com.google.gerrit.index.SchemaFieldDefs;
 import com.google.gerrit.index.SchemaUtil;
 import com.google.gerrit.json.OutputFormat;
 import com.google.gerrit.proto.Protos;
@@ -107,6 +108,9 @@ import org.eclipse.jgit.lib.PersonIdent;
  *
  * <p>Field names are all lowercase alphanumeric plus underscore; index implementations may create
  * unambiguous derived field names containing other characters.
+ *
+ * <p>Note that this class does not override {@link Object#equals(Object)}. It relies on instances
+ * being singletons so that the default (i.e. reference) comparison works.
  */
 public class ChangeField {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -123,11 +127,8 @@ public class ChangeField {
 
   // TODO: Rename LEGACY_ID to NUMERIC_ID
   /** Legacy change ID. */
-  public static final FieldDef<ChangeData, Integer> LEGACY_ID =
-      integer("legacy_id").stored().build(cd -> cd.getId().get());
-
   public static final FieldDef<ChangeData, String> LEGACY_ID_STR =
-      exact("legacy_id_str").stored().build(cd -> String.valueOf(cd.getId().get()));
+      exact("legacy_id_str").stored().build(cd -> String.valueOf(cd.getVirtualId().get()));
 
   /** Newer style Change-Id key. */
   public static final FieldDef<ChangeData, String> ID =
@@ -1399,7 +1400,7 @@ public class ChangeField {
     return converter.fromProto(message);
   }
 
-  private static <T> FieldDef.Getter<ChangeData, T> changeGetter(Function<Change, T> func) {
+  private static <T> SchemaFieldDefs.Getter<ChangeData, T> changeGetter(Function<Change, T> func) {
     return in -> in.change() != null ? func.apply(in.change()) : null;
   }
 

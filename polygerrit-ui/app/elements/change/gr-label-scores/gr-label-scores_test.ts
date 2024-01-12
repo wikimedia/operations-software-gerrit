@@ -1,23 +1,16 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-label-scores';
-import {isHidden, queryAndAssert, stubRestApi} from '../../../test/test-utils';
+import {
+  isHidden,
+  queryAndAssert,
+  stubRestApi,
+  waitEventLoop,
+} from '../../../test/test-utils';
 import {GrLabelScores} from './gr-label-scores';
 import {AccountId} from '../../../types/common';
 import {GrLabelScoreRow} from '../gr-label-score-row/gr-label-score-row';
@@ -27,8 +20,7 @@ import {
 } from '../../../test/test-data-generators';
 import {ChangeStatus} from '../../../constants/constants';
 import {getVoteForAccount} from '../../../utils/label-util';
-
-const basicFixture = fixtureFromElement('gr-label-scores');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-label-scores tests', () => {
   const accountId = 123 as AccountId;
@@ -36,7 +28,7 @@ suite('gr-label-scores tests', () => {
 
   setup(async () => {
     stubRestApi('getLoggedIn').resolves(false);
-    element = basicFixture.instantiate();
+    element = await fixture(html`<gr-label-scores></gr-label-scores>`);
     element.change = {
       ...createChange(),
       labels: {
@@ -86,6 +78,25 @@ suite('gr-label-scores tests', () => {
     await element.updateComplete;
   });
 
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <h3 class="heading-4">Trigger Votes</h3>
+        <div class="scoresTable">
+          <gr-label-score-row name="Code-Review"> </gr-label-score-row>
+          <gr-label-score-row name="Verified"> </gr-label-score-row>
+        </div>
+        <div class="mergedMessage" hidden="">
+          Because this change has been merged, votes may not be decreased.
+        </div>
+        <div class="abandonedMessage" hidden="">
+          Because this change has been abandoned, you cannot vote.
+        </div>
+      `
+    );
+  });
+
   test('get and set label scores', async () => {
     for (const label of Object.keys(element.permittedLabels!)) {
       const row = queryAndAssert<GrLabelScoreRow>(
@@ -131,7 +142,7 @@ suite('gr-label-scores tests', () => {
         ...createChange(),
         status: ChangeStatus.ABANDONED,
       };
-      await flush();
+      await waitEventLoop();
       assert.isFalse(isHidden(queryAndAssert(element, '.abandonedMessage')));
       assert.isTrue(isHidden(queryAndAssert(element, '.mergedMessage')));
     });
@@ -140,7 +151,7 @@ suite('gr-label-scores tests', () => {
         ...createChange(),
         status: ChangeStatus.MERGED,
       };
-      await flush();
+      await waitEventLoop();
       assert.isFalse(isHidden(queryAndAssert(element, '.mergedMessage')));
       assert.isTrue(isHidden(queryAndAssert(element, '.abandonedMessage')));
     });
@@ -149,7 +160,7 @@ suite('gr-label-scores tests', () => {
         ...createChange(),
         status: ChangeStatus.NEW,
       };
-      await flush();
+      await waitEventLoop();
       assert.isTrue(isHidden(queryAndAssert(element, '.mergedMessage')));
       assert.isTrue(isHidden(queryAndAssert(element, '.abandonedMessage')));
     });

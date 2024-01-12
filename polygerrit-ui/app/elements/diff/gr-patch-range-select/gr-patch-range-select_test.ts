@@ -1,33 +1,22 @@
 /**
  * @license
- * Copyright (C) 2015 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2015 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
-import '../gr-comment-api/gr-comment-api';
+import '../../../test/common-test-setup';
 import '../../shared/revision-info/revision-info';
 import './gr-patch-range-select';
 import {GrPatchRangeSelect} from './gr-patch-range-select';
-import '../../../test/mocks/comment-api';
 import {RevisionInfo as RevisionInfoClass} from '../../shared/revision-info/revision-info';
 import {ChangeComments} from '../gr-comment-api/gr-comment-api';
-import {stubReporting, stubRestApi} from '../../../test/test-utils';
+import {stubReporting} from '../../../test/test-utils';
 import {
   BasePatchSetNum,
-  EditPatchSetNum,
+  EDIT,
+  RevisionPatchSetNum,
+  PARENT,
   PatchSetNum,
+  PatchSetNumber,
   RevisionInfo,
   Timestamp,
   UrlEncodedCommentId,
@@ -36,8 +25,12 @@ import {
 import {EditRevisionInfo, ParsedChangeInfo} from '../../../types/types';
 import {SpecialFilePath} from '../../../constants/constants';
 import {
+  createChangeViewState,
   createEditRevision,
+  createParsedChange,
   createRevision,
+  createRevisions,
+  TEST_NUMERIC_CHANGE_ID,
 } from '../../../test/test-data-generators';
 import {PatchSet} from '../../../utils/patch-set-util';
 import {
@@ -46,8 +39,11 @@ import {
 } from '../../shared/gr-dropdown-list/gr-dropdown-list';
 import {queryAndAssert} from '../../../test/test-utils';
 import {fire} from '../../../utils/event-util';
-
-const basicFixture = fixtureFromElement('gr-patch-range-select');
+import {fixture, html, assert} from '@open-wc/testing';
+import {testResolver} from '../../../test/common-test-setup';
+import {changeViewModelToken} from '../../../models/views/change';
+import {changeModelToken} from '../../../models/change/change-model';
+import {GerritView} from '../../../services/router/router-model';
 
 type RevIdToRevisionInfo = {
   [revisionId: string]: RevisionInfo | EditRevisionInfo;
@@ -65,22 +61,52 @@ suite('gr-patch-range-select tests', () => {
   }
 
   setup(async () => {
-    stubRestApi('getDiffComments').returns(Promise.resolve({}));
-    stubRestApi('getDiffRobotComments').returns(Promise.resolve({}));
-    stubRestApi('getDiffDrafts').returns(Promise.resolve({}));
-
     // Element must be wrapped in an element with direct access to the
     // comment API.
-    element = basicFixture.instantiate();
+    element = await fixture(
+      html`<gr-patch-range-select></gr-patch-range-select>`
+    );
 
+    element.routerModel.setState({
+      changeNum: TEST_NUMERIC_CHANGE_ID,
+      view: GerritView.CHANGE,
+      patchNum: 1 as RevisionPatchSetNum,
+    });
+    const viewModel = testResolver(changeViewModelToken);
+    viewModel.setState({
+      ...createChangeViewState(),
+      patchNum: 1 as RevisionPatchSetNum,
+      basePatchNum: PARENT,
+    });
+    const changeModel = testResolver(changeModelToken);
+    changeModel.updateStateChange({
+      ...createParsedChange(),
+      revisions: createRevisions(5),
+    });
     // Stub methods on the changeComments object after changeComments has
     // been initialized.
     element.changeComments = new ChangeComments();
     await element.updateComplete;
   });
 
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <h3 class="assistive-tech-only">Patchset Range Selection</h3>
+        <span aria-label="patch range starts with" class="patchRange">
+          <gr-dropdown-list id="basePatchDropdown"> </gr-dropdown-list>
+        </span>
+        <span aria-hidden="true" class="arrow"> → </span>
+        <span aria-label="patch range ends with" class="patchRange">
+          <gr-dropdown-list id="patchNumDropdown"> </gr-dropdown-list>
+        </span>
+      `
+    );
+  });
+
   test('enabled/disabled options', async () => {
-    element.revisions = [
+    element.sortedRevisions = [
       createRevision(3),
       createEditRevision(2),
       createRevision(2),
@@ -88,12 +114,9 @@ suite('gr-patch-range-select tests', () => {
     ];
     await element.updateComplete;
 
-    const parent = 'PARENT' as PatchSetNum;
-    const edit = EditPatchSetNum;
-
     for (const patchNum of [1, 2, 3]) {
       assert.isFalse(
-        element.computeRightDisabled(parent, patchNum as PatchSetNum)
+        element.computeRightDisabled(PARENT, patchNum as PatchSetNumber)
       );
     }
     for (const basePatchNum of [1, 2]) {
@@ -107,34 +130,30 @@ suite('gr-patch-range-select tests', () => {
     assert.isTrue(
       element.computeLeftDisabled(3 as PatchSetNum, 3 as PatchSetNum)
     );
-    assert.isTrue(element.computeRightDisabled(edit, 1 as PatchSetNum));
-    assert.isTrue(element.computeRightDisabled(edit, 2 as PatchSetNum));
-    assert.isFalse(element.computeRightDisabled(edit, 3 as PatchSetNum));
-    assert.isTrue(element.computeRightDisabled(edit, edit));
   });
 
   test('computeBaseDropdownContent', async () => {
     element.availablePatches = [
-      {num: 'edit', sha: '1'} as PatchSet,
+      {num: EDIT, sha: '1'} as PatchSet,
       {num: 3, sha: '2'} as PatchSet,
       {num: 2, sha: '3'} as PatchSet,
       {num: 1, sha: '4'} as PatchSet,
     ];
-    element.revisions = [
-      createRevision(2),
-      createRevision(3),
-      createRevision(1),
+    element.sortedRevisions = [
       createRevision(4),
+      createRevision(3),
+      createRevision(2),
+      createRevision(1),
     ];
-    element.revisionInfo = getInfo(element.revisions);
+    element.revisionInfo = getInfo(element.sortedRevisions);
     const expectedResult: DropdownItem[] = [
       {
         disabled: true,
         triggerText: 'Patchset edit',
         text: 'Patchset edit | 1',
-        mobileText: 'edit',
+        mobileText: EDIT,
         bottomText: '',
-        value: 'edit',
+        value: EDIT,
       },
       {
         disabled: true,
@@ -165,57 +184,57 @@ suite('gr-patch-range-select tests', () => {
       } as DropdownItem,
       {
         text: 'Base',
-        value: 'PARENT',
+        value: PARENT,
       } as DropdownItem,
     ];
-    element.patchNum = 1 as PatchSetNum;
-    element.basePatchNum = 'PARENT' as BasePatchSetNum;
+    element.patchNum = 1 as PatchSetNumber;
+    element.basePatchNum = PARENT;
     await element.updateComplete;
 
     assert.deepEqual(element.computeBaseDropdownContent(), expectedResult);
   });
 
   test('computeBaseDropdownContent called when patchNum updates', async () => {
-    element.revisions = [
-      createRevision(2),
-      createRevision(3),
-      createRevision(1),
+    element.sortedRevisions = [
       createRevision(4),
+      createRevision(3),
+      createRevision(2),
+      createRevision(1),
     ];
-    element.revisionInfo = getInfo(element.revisions);
+    element.revisionInfo = getInfo(element.sortedRevisions);
     element.availablePatches = [
       {num: 1, sha: '1'} as PatchSet,
       {num: 2, sha: '2'} as PatchSet,
       {num: 3, sha: '3'} as PatchSet,
-      {num: 'edit', sha: '4'} as PatchSet,
+      {num: EDIT, sha: '4'} as PatchSet,
     ];
-    element.patchNum = 2 as PatchSetNum;
-    element.basePatchNum = 'PARENT' as BasePatchSetNum;
+    element.patchNum = 2 as PatchSetNumber;
+    element.basePatchNum = PARENT as BasePatchSetNum;
     await element.updateComplete;
 
     const baseDropDownStub = sinon.stub(element, 'computeBaseDropdownContent');
 
     // Should be recomputed for each available patch
-    element.patchNum = 1 as PatchSetNum;
+    element.patchNum = 1 as PatchSetNumber;
     await element.updateComplete;
     assert.equal(baseDropDownStub.callCount, 1);
   });
 
   test('computeBaseDropdownContent called when changeComments update', async () => {
-    element.revisions = [
-      createRevision(2),
-      createRevision(3),
-      createRevision(1),
+    element.sortedRevisions = [
       createRevision(4),
+      createRevision(3),
+      createRevision(2),
+      createRevision(1),
     ];
-    element.revisionInfo = getInfo(element.revisions);
+    element.revisionInfo = getInfo(element.sortedRevisions);
     element.availablePatches = [
       {num: 3, sha: '2'} as PatchSet,
       {num: 2, sha: '3'} as PatchSet,
       {num: 1, sha: '4'} as PatchSet,
     ];
-    element.patchNum = 2 as PatchSetNum;
-    element.basePatchNum = 'PARENT' as BasePatchSetNum;
+    element.patchNum = 2 as PatchSetNumber;
+    element.basePatchNum = PARENT as BasePatchSetNum;
     await element.updateComplete;
 
     // Should be recomputed for each available patch
@@ -227,21 +246,21 @@ suite('gr-patch-range-select tests', () => {
   });
 
   test('computePatchDropdownContent called when basePatchNum updates', async () => {
-    element.revisions = [
+    element.sortedRevisions = [
       createRevision(2),
       createRevision(3),
       createRevision(1),
       createRevision(4),
     ];
-    element.revisionInfo = getInfo(element.revisions);
+    element.revisionInfo = getInfo(element.sortedRevisions);
     element.availablePatches = [
       {num: 1, sha: '1'} as PatchSet,
       {num: 2, sha: '2'} as PatchSet,
       {num: 3, sha: '3'} as PatchSet,
-      {num: 'edit', sha: '4'} as PatchSet,
+      {num: EDIT, sha: '4'} as PatchSet,
     ];
-    element.patchNum = 2 as PatchSetNum;
-    element.basePatchNum = 'PARENT' as BasePatchSetNum;
+    element.patchNum = 2 as PatchSetNumber;
+    element.basePatchNum = PARENT as BasePatchSetNum;
     await element.updateComplete;
 
     // Should be recomputed for each available patch
@@ -253,13 +272,13 @@ suite('gr-patch-range-select tests', () => {
 
   test('computePatchDropdownContent', async () => {
     element.availablePatches = [
-      {num: 'edit', sha: '1'} as PatchSet,
+      {num: EDIT, sha: '1'} as PatchSet,
       {num: 3, sha: '2'} as PatchSet,
       {num: 2, sha: '3'} as PatchSet,
       {num: 1, sha: '4'} as PatchSet,
     ];
     element.basePatchNum = 1 as BasePatchSetNum;
-    element.revisions = [
+    element.sortedRevisions = [
       createRevision(3),
       createEditRevision(2),
       createRevision(2, 'description'),
@@ -270,11 +289,11 @@ suite('gr-patch-range-select tests', () => {
     const expectedResult: DropdownItem[] = [
       {
         disabled: false,
-        triggerText: 'edit',
+        triggerText: EDIT,
         text: 'edit | 1',
-        mobileText: 'edit',
+        mobileText: EDIT,
         bottomText: '',
-        value: 'edit',
+        value: EDIT,
       },
       {
         disabled: false,
@@ -341,7 +360,7 @@ suite('gr-patch-range-select tests', () => {
         {
           id: '27dcee4d_f7b77cfa' as UrlEncodedCommentId,
           message: 'test',
-          patch_set: 1 as PatchSetNum,
+          patch_set: 1 as RevisionPatchSetNum,
           unresolved: true,
           updated: '2017-10-11 20:48:40.000000000' as Timestamp,
         },
@@ -350,13 +369,13 @@ suite('gr-patch-range-select tests', () => {
         {
           id: '27dcee4d_f7b77cfa' as UrlEncodedCommentId,
           message: 'test',
-          patch_set: 1 as PatchSetNum,
+          patch_set: 1 as RevisionPatchSetNum,
           updated: '2017-10-12 20:48:40.000000000' as Timestamp,
         },
         {
           id: '27dcee4d_f7b77cfa' as UrlEncodedCommentId,
           message: 'test',
-          patch_set: 1 as PatchSetNum,
+          patch_set: 1 as RevisionPatchSetNum,
           updated: '2017-10-13 20:48:40.000000000' as Timestamp,
         },
       ],
@@ -366,7 +385,7 @@ suite('gr-patch-range-select tests', () => {
         {
           id: '27dcee4d_f7b77cfa' as UrlEncodedCommentId,
           message: 'test',
-          patch_set: 1 as PatchSetNum,
+          patch_set: 1 as RevisionPatchSetNum,
           unresolved: true,
           updated: '2017-10-11 20:48:40.000000000' as Timestamp,
         },
@@ -393,49 +412,67 @@ suite('gr-patch-range-select tests', () => {
     assert.equal(element.computePatchSetCommentsString(1 as PatchSetNum), '');
   });
 
-  test('patch-range-change fires', () => {
+  test('patch-range-change fires', async () => {
     const handler = sinon.stub();
     element.basePatchNum = 1 as BasePatchSetNum;
-    element.patchNum = 3 as PatchSetNum;
-    element.addEventListener('patch-range-change', handler);
+    element.patchNum = 3 as PatchSetNumber;
+    element.availablePatches = [
+      {num: EDIT, sha: '1'} as PatchSet,
+      {num: 3, sha: '2'} as PatchSet,
+      {num: 2, sha: '3'} as PatchSet,
+      {num: 1, sha: '4'} as PatchSet,
+    ];
+    element.sortedRevisions = [
+      createRevision(2),
+      createRevision(3),
+      createRevision(1),
+      createRevision(4),
+    ];
+    element.revisionInfo = getInfo(element.sortedRevisions);
+    await element.updateComplete;
 
-    queryAndAssert<GrDropdownList>(
+    element.addEventListener('patch-range-change', handler);
+    const basePatchDropdown = queryAndAssert<GrDropdownList>(
       element,
       '#basePatchDropdown'
-    )._handleValueChange('2', [{text: '', value: '2'}]);
-    assert.isTrue(handler.calledOnce);
+    );
+    basePatchDropdown.value = '2';
+    await basePatchDropdown.updateComplete;
+    assert.equal(handler.callCount, 1);
     assert.deepEqual(handler.lastCall.args[0].detail, {
       basePatchNum: 2,
       patchNum: 3,
     });
 
     // BasePatchNum should not have changed, due to one-way data binding.
-    queryAndAssert<GrDropdownList>(
+    const patchNumDropdown = queryAndAssert<GrDropdownList>(
       element,
       '#patchNumDropdown'
-    )._handleValueChange('edit', [{text: '', value: 'edit'}]);
+    );
+    patchNumDropdown.value = EDIT;
+    await patchNumDropdown.updateComplete;
     assert.deepEqual(handler.lastCall.args[0].detail, {
       basePatchNum: 1,
-      patchNum: 'edit',
+      patchNum: EDIT,
     });
   });
 
   test('handlePatchChange', async () => {
     element.availablePatches = [
-      {num: 'edit', sha: '1'} as PatchSet,
+      {num: EDIT, sha: '1'} as PatchSet,
       {num: 3, sha: '2'} as PatchSet,
       {num: 2, sha: '3'} as PatchSet,
       {num: 1, sha: '4'} as PatchSet,
     ];
-    element.revisions = [
+    element.sortedRevisions = [
       createRevision(2),
       createRevision(3),
       createRevision(1),
       createRevision(4),
     ];
-    element.revisionInfo = getInfo(element.revisions);
-    element.patchNum = 1 as PatchSetNum;
-    element.basePatchNum = 'PARENT' as BasePatchSetNum;
+    element.revisionInfo = getInfo(element.sortedRevisions);
+    element.patchNum = 1 as PatchSetNumber;
+    element.basePatchNum = PARENT;
     await element.updateComplete;
 
     const stub = stubReporting('reportInteraction');

@@ -1,57 +1,59 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {
   Action,
   Category,
   CheckResult as CheckResultApi,
   CheckRun as CheckRunApi,
+  Fix,
   Link,
   LinkIcon,
+  Replacement,
   RunStatus,
 } from '../../api/checks';
-import {assertNever} from '../../utils/common-util';
-import {CheckResult, CheckRun} from './checks-model';
+import {PatchSetNumber} from '../../api/rest-api';
+import {FixSuggestionInfo, FixReplacementInfo} from '../../types/common';
+import {OpenFixPreviewEventDetail} from '../../types/events';
+import {notUndefined} from '../../types/types';
+import {PROVIDED_FIX_ID} from '../../utils/comment-util';
+import {assert, assertNever} from '../../utils/common-util';
+import {fire} from '../../utils/event-util';
+import {CheckResult, CheckRun, RunResult} from './checks-model';
 
-export function iconForLink(linkIcon?: LinkIcon) {
-  if (linkIcon === undefined) return 'launch';
+export interface ChecksIcon {
+  name: string;
+  filled?: boolean;
+}
+
+export function iconForLink(linkIcon?: LinkIcon): ChecksIcon {
+  if (linkIcon === undefined) return {name: 'open_in_new'};
   switch (linkIcon) {
     case LinkIcon.EXTERNAL:
-      return 'launch';
+      return {name: 'open_in_new'};
     case LinkIcon.IMAGE:
-      return 'insert-photo';
+      return {name: 'image', filled: true};
     case LinkIcon.HISTORY:
-      return 'restore';
+      return {name: 'history'};
     case LinkIcon.DOWNLOAD:
-      return 'download';
+      return {name: 'download'};
     case LinkIcon.DOWNLOAD_MOBILE:
-      return 'system-update';
+      return {name: 'system_update'};
     case LinkIcon.HELP_PAGE:
-      return 'help-outline';
+      return {name: 'help'};
     case LinkIcon.REPORT_BUG:
-      return 'bug';
+      return {name: 'bug_report', filled: true};
     case LinkIcon.CODE:
-      return 'code';
+      return {name: 'code'};
     case LinkIcon.FILE_PRESENT:
-      return 'file-present';
+      return {name: 'file_present'};
     default:
       // We don't throw an assertion error here, because plugins don't have to
       // be written in TypeScript, so we may encounter arbitrary strings for
       // linkIcon.
-      return 'launch';
+      return {name: 'open_in_new'};
   }
 }
 
@@ -82,6 +84,59 @@ export function tooltipForLink(linkIcon?: LinkIcon) {
       // linkIcon.
       return 'Link to details';
   }
+}
+
+export function createFixAction(
+  target: EventTarget,
+  result?: RunResult
+): Action | undefined {
+  if (!result?.patchset) return;
+  if (!result?.fixes) return;
+  const fixSuggestions = result.fixes
+    .map(f => rectifyFix(f, result?.checkName))
+    .filter(notUndefined);
+  if (fixSuggestions.length === 0) return;
+  const eventDetail: OpenFixPreviewEventDetail = {
+    patchNum: result.patchset as PatchSetNumber,
+    fixSuggestions,
+  };
+  return {
+    name: 'Show Fix',
+    callback: () => {
+      fire(target, 'open-fix-preview', eventDetail);
+      return undefined;
+    },
+  };
+}
+
+export function rectifyFix(
+  fix: Fix | undefined,
+  checkName: string
+): FixSuggestionInfo | undefined {
+  if (!fix?.replacements) return undefined;
+  const replacements = fix.replacements
+    .map(rectifyReplacement)
+    .filter(notUndefined);
+  if (replacements.length === 0) return undefined;
+
+  return {
+    description: fix.description ?? `Fix provided by ${checkName}`,
+    fix_id: PROVIDED_FIX_ID,
+    replacements,
+  };
+}
+
+export function rectifyReplacement(
+  r: Replacement | undefined
+): FixReplacementInfo | undefined {
+  if (!r?.path) return undefined;
+  if (!r?.range) return undefined;
+  if (r?.replacement === undefined) return undefined;
+  if (!Number.isInteger(r.range.start_line)) return undefined;
+  if (!Number.isInteger(r.range.end_line)) return undefined;
+  if (!Number.isInteger(r.range.start_character)) return undefined;
+  if (!Number.isInteger(r.range.end_character)) return undefined;
+  return r;
 }
 
 export function worstCategory(run: CheckRun) {
@@ -135,25 +190,25 @@ export function labelFor(catStat: Category | RunStatus) {
   }
 }
 
-export function iconFor(catStat: Category | RunStatus) {
+export function iconFor(catStat: Category | RunStatus): ChecksIcon {
   switch (catStat) {
     case Category.ERROR:
-      return 'error';
+      return {name: 'error', filled: true};
     case Category.INFO:
-      return 'info-outline';
+      return {name: 'info'};
     case Category.WARNING:
-      return 'warning';
+      return {name: 'warning', filled: true};
     case Category.SUCCESS:
-      return 'check-circle-outline';
+      return {name: 'check_circle'};
     // Note that this is only for COMPLETED without results!
     case RunStatus.COMPLETED:
-      return 'check-circle-outline';
+      return {name: 'check_circle'};
     case RunStatus.RUNNABLE:
-      return 'placeholder';
+      return {name: ''};
     case RunStatus.RUNNING:
-      return 'timelapse';
+      return {name: 'timelapse'};
     case RunStatus.SCHEDULED:
-      return 'scheduled';
+      return {name: 'pending_actions'};
     default:
       assertNever(catStat, `Unsupported category/status: ${catStat}`);
   }
@@ -305,27 +360,79 @@ function runLevel(status: RunStatus) {
 }
 
 export interface AttemptDetail {
-  attempt: number | undefined;
-  icon: string;
+  attempt?: AttemptChoice;
+  icon?: ChecksIcon;
 }
 
 export interface AttemptInfo {
-  latestAttempt: number | undefined;
+  latestAttempt: AttemptChoice;
   isSingleAttempt: boolean;
   attempts: AttemptDetail[];
+}
+
+export type AttemptChoice = number | 'latest' | 'all';
+export const ALL_ATTEMPTS = 'all' as AttemptChoice;
+export const LATEST_ATTEMPT = 'latest' as AttemptChoice;
+
+export function isAttemptChoice(x: number | string): x is AttemptChoice {
+  if (typeof x === 'string') {
+    return x === ALL_ATTEMPTS || x === LATEST_ATTEMPT;
+  }
+  if (typeof x === 'number') {
+    return x >= 0;
+  }
+  return false;
+}
+
+export function stringToAttemptChoice(
+  s?: string | null
+): AttemptChoice | undefined {
+  if (s === undefined) return undefined;
+  if (s === null) return undefined;
+  if (s === '') return undefined;
+  if (isAttemptChoice(s)) return s;
+  const n = Number(s);
+  if (isAttemptChoice(n)) return n;
+  return undefined;
+}
+
+export function attemptChoiceLabel(attempt: AttemptChoice): string {
+  if (attempt === LATEST_ATTEMPT) return 'Latest Attempt';
+  if (attempt === ALL_ATTEMPTS) return 'All Attempts';
+  return `Attempt ${attempt}`;
+}
+
+export function sortAttemptDetails(a: AttemptDetail, b: AttemptDetail): number {
+  return sortAttemptChoices(a.attempt, b.attempt);
+}
+
+export function sortAttemptChoices(
+  a?: AttemptChoice,
+  b?: AttemptChoice
+): number {
+  if (a === b) return 0;
+  if (a === undefined) return -1;
+  if (b === undefined) return 1;
+  if (a === LATEST_ATTEMPT) return -1;
+  if (b === LATEST_ATTEMPT) return 1;
+  if (a === ALL_ATTEMPTS) return -1;
+  if (b === ALL_ATTEMPTS) return 1;
+  assert(typeof a === 'number', `unexpected attempt ${a}`);
+  assert(typeof b === 'number', `unexpected attempt ${b}`);
+  return a - b;
 }
 
 export function createAttemptMap(runs: CheckRunApi[]) {
   const map = new Map<string, AttemptInfo>();
   for (const run of runs) {
     const value = map.get(run.checkName);
-    const detail = {
-      attempt: run.attempt,
+    const detail: AttemptDetail = {
+      attempt: run.attempt ?? 0,
       icon: iconForRun(fromApiToInternalRun(run)),
     };
     if (value === undefined) {
       map.set(run.checkName, {
-        latestAttempt: run.attempt,
+        latestAttempt: run.attempt ?? 0,
         isSingleAttempt: true,
         attempts: [detail],
       });

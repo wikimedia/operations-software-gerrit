@@ -84,7 +84,9 @@ import com.google.gerrit.acceptance.TestProjectInput;
 import com.google.gerrit.acceptance.UseClockStep;
 import com.google.gerrit.acceptance.UseTimezone;
 import com.google.gerrit.acceptance.VerifyNoPiiInChangeNotes;
+import com.google.gerrit.acceptance.api.change.ChangeIT.TestAttentionSetListenerModule.TestAttentionSetListener;
 import com.google.gerrit.acceptance.config.GerritConfig;
+import com.google.gerrit.acceptance.server.change.CommentsUtil;
 import com.google.gerrit.acceptance.testsuite.account.AccountOperations;
 import com.google.gerrit.acceptance.testsuite.change.IndexOperations;
 import com.google.gerrit.acceptance.testsuite.group.GroupOperations;
@@ -96,6 +98,7 @@ import com.google.gerrit.common.data.GlobalCapability;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.entities.Address;
+import com.google.gerrit.entities.BooleanProjectConfig;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.LabelFunction;
@@ -148,7 +151,9 @@ import com.google.gerrit.extensions.common.GitPerson;
 import com.google.gerrit.extensions.common.LabelInfo;
 import com.google.gerrit.extensions.common.RevisionInfo;
 import com.google.gerrit.extensions.common.TrackingIdInfo;
+import com.google.gerrit.extensions.events.AttentionSetListener;
 import com.google.gerrit.extensions.events.WorkInProgressStateChangedListener;
+import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.BinaryResult;
@@ -161,7 +166,6 @@ import com.google.gerrit.httpd.raw.IndexPreloadingUtil;
 import com.google.gerrit.index.IndexConfig;
 import com.google.gerrit.index.query.PostFilterPredicate;
 import com.google.gerrit.server.ChangeMessagesUtil;
-import com.google.gerrit.server.StarredChangesUtil;
 import com.google.gerrit.server.change.ChangeMessages;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.change.testing.TestChangeETagComputation;
@@ -1537,6 +1541,38 @@ public class ChangeIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void attentionSetListener_firesOnChange() throws Exception {
+    PushOneCommit.Result r1 = createChange();
+    AttentionSetInput addUser = new AttentionSetInput(user.email(), "some reason");
+    TestAttentionSetListener attentionSetListener = new TestAttentionSetListener();
+
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(attentionSetListener)) {
+
+      gApi.changes().id(r1.getChangeId()).addReviewer(user.email());
+      assertThat(attentionSetListener.firedCount).isEqualTo(1);
+      assertThat(attentionSetListener.lastEvent.usersAdded().size()).isEqualTo(1);
+      attentionSetListener
+          .lastEvent
+          .usersAdded()
+          .forEach(u -> assertThat(u).isEqualTo(user.id().get()));
+
+      gApi.changes().id(r1.getChangeId()).addToAttentionSet(addUser);
+      assertThat(attentionSetListener.firedCount).isEqualTo(1);
+
+      gApi.changes().id(r1.getChangeId()).attention(user.username()).remove(addUser);
+
+      assertThat(attentionSetListener.firedCount).isEqualTo(2);
+      assertThat(attentionSetListener.lastEvent.usersAdded()).isEmpty();
+      assertThat(attentionSetListener.lastEvent.usersRemoved().size()).isEqualTo(1);
+      attentionSetListener
+          .lastEvent
+          .usersRemoved()
+          .forEach(u -> assertThat(u).isEqualTo(user.id().get()));
+    }
+  }
+
+  @Test
   public void rebaseChangeBase() throws Exception {
     PushOneCommit.Result r1 = createChange();
     PushOneCommit.Result r2 = createChange();
@@ -2506,6 +2542,36 @@ public class ChangeIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void removeChangeOwnerAsReviewerByDelete() throws Exception {
+    PushOneCommit.Result r = createChange();
+    String changeId = r.getChangeId();
+
+    // vote on the change so that the change owner becomes a reviewer
+    approve(changeId);
+    assertThat(getReviewers(gApi.changes().id(changeId).get().reviewers.get(REVIEWER)))
+        .containsExactly(admin.id());
+
+    gApi.changes().id(changeId).reviewer(admin.id().toString()).remove();
+    assertThat(getReviewers(gApi.changes().id(changeId).get().reviewers.get(REVIEWER))).isEmpty();
+  }
+
+  @Test
+  public void removeChangeOwnerAsReviewerByPostReview() throws Exception {
+    PushOneCommit.Result r = createChange();
+    String changeId = r.getChangeId();
+
+    // vote on the change so that the change owner becomes a reviewer
+    approve(changeId);
+    assertThat(getReviewers(gApi.changes().id(changeId).get().reviewers.get(REVIEWER)))
+        .containsExactly(admin.id());
+
+    ReviewInput reviewInput = new ReviewInput();
+    reviewInput.reviewer(admin.id().toString(), ReviewerState.REMOVED, /* confirmed= */ false);
+    gApi.changes().id(changeId).current().review(reviewInput);
+    assertThat(getReviewers(gApi.changes().id(changeId).get().reviewers.get(REVIEWER))).isEmpty();
+  }
+
+  @Test
   public void removeCC() throws Exception {
     PushOneCommit.Result result = createChange();
     String changeId = result.getChangeId();
@@ -2729,6 +2795,27 @@ public class ChangeIT extends AbstractDaemonTest {
     in.notify = NotifyHandling.NONE;
     gApi.changes().id(r.getChangeId()).reviewer(user.id().toString()).deleteVote(in);
     assertThat(sender.getMessages()).isEmpty();
+  }
+
+  @Test
+  public void deleteVoteWithReason() throws Exception {
+    PushOneCommit.Result r = createChange();
+    gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).review(ReviewInput.approve());
+
+    requestScopeOperations.setApiUser(user.id());
+    recommend(r.getChangeId());
+
+    requestScopeOperations.setApiUser(admin.id());
+    sender.clear();
+    DeleteVoteInput in = new DeleteVoteInput();
+    in.label = LabelId.CODE_REVIEW;
+    in.reason = "Internal conflict resolved";
+    gApi.changes().id(r.getChangeId()).reviewer(user.id().toString()).deleteVote(in);
+    assertThat(Iterables.getLast(gApi.changes().id(r.getChangeId()).messages()).message)
+        .isEqualTo(
+            "Removed Code-Review+1 by User1 <user1@example.com>\n"
+                + "\n"
+                + "Internal conflict resolved\n");
   }
 
   @Test
@@ -4636,118 +4723,41 @@ public class ChangeIT extends AbstractDaemonTest {
       ChangeInfo change = info(triplet);
       assertThat(change.starred).isTrue();
       assertThat(change.stars).contains(DEFAULT_LABEL);
-      changeIndexedCounter.assertReindexOf(change);
+      // change was not re-indexed
+      changeIndexedCounter.assertReindexOf(change, 0);
 
       gApi.accounts().self().unstarChange(triplet);
       change = info(triplet);
       assertThat(change.starred).isNull();
       assertThat(change.stars).isNull();
-      changeIndexedCounter.assertReindexOf(change);
+      // change was not re-indexed
+      changeIndexedCounter.assertReindexOf(change, 0);
     }
   }
 
   @Test
-  public void ignore() throws Exception {
-    String email = "user2@example.com";
-    String fullname = "User2";
-    accountOperations
-        .newAccount()
-        .username("user2")
-        .preferredEmail(email)
-        .fullname(fullname)
-        .create();
+  public void createAndDeleteDraftCommentDoesNotTriggerChangeReindex() throws Exception {
+    ChangeIndexedCounter changeIndexedCounter = new ChangeIndexedCounter();
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(changeIndexedCounter)) {
+      PushOneCommit.Result r = createChange();
+      String changeId = r.getChangeId();
+      String revId = r.getCommit().getName();
+      String triplet = project.get() + "~master~" + r.getChangeId();
+      changeIndexedCounter.clear();
 
-    PushOneCommit.Result r = createChange();
+      // Create the draft. Change is not re-indexed
+      DraftInput draftInput =
+          CommentsUtil.newDraft("file1", Side.REVISION, /* line= */ 1, "comment 1");
+      CommentInfo draftInfo =
+          gApi.changes().id(changeId).revision(revId).createDraft(draftInput).get();
+      ChangeInfo change = info(triplet);
+      changeIndexedCounter.assertReindexOf(change, 0);
 
-    ReviewerInput in = new ReviewerInput();
-    in.reviewer = user.email();
-    gApi.changes().id(r.getChangeId()).addReviewer(in);
-
-    in = new ReviewerInput();
-    in.reviewer = email;
-    gApi.changes().id(r.getChangeId()).addReviewer(in);
-
-    requestScopeOperations.setApiUser(user.id());
-    gApi.changes().id(r.getChangeId()).ignore(true);
-    assertThat(gApi.changes().id(r.getChangeId()).ignored()).isTrue();
-
-    // New patch set notification is not sent to users ignoring the change
-    sender.clear();
-    requestScopeOperations.setApiUser(admin.id());
-    amendChange(r.getChangeId());
-    List<Message> messages = sender.getMessages();
-    assertThat(messages).hasSize(1);
-    Address address = Address.create(fullname, email);
-    assertThat(messages.get(0).rcpt()).containsExactly(address);
-
-    // Review notification is not sent to users ignoring the change
-    sender.clear();
-    gApi.changes().id(r.getChangeId()).current().review(ReviewInput.approve());
-    messages = sender.getMessages();
-    assertThat(messages).hasSize(1);
-    assertThat(messages.get(0).rcpt()).containsExactly(address);
-
-    // Abandoned notification is not sent to users ignoring the change
-    sender.clear();
-    gApi.changes().id(r.getChangeId()).abandon();
-    messages = sender.getMessages();
-    assertThat(messages).hasSize(1);
-    assertThat(messages.get(0).rcpt()).containsExactly(address);
-
-    requestScopeOperations.setApiUser(user.id());
-    gApi.changes().id(r.getChangeId()).ignore(false);
-    assertThat(gApi.changes().id(r.getChangeId()).ignored()).isFalse();
-  }
-
-  @Test
-  public void cannotIgnoreOwnChange() throws Exception {
-    String changeId = createChange().getChangeId();
-
-    BadRequestException thrown =
-        assertThrows(BadRequestException.class, () -> gApi.changes().id(changeId).ignore(true));
-    assertThat(thrown).hasMessageThat().contains("cannot ignore own change");
-  }
-
-  @Test
-  public void cannotIgnoreStarredChange() throws Exception {
-    String changeId = createChange().getChangeId();
-
-    requestScopeOperations.setApiUser(user.id());
-    gApi.accounts().self().starChange(changeId);
-    assertThat(gApi.changes().id(changeId).get().starred).isTrue();
-
-    ResourceConflictException thrown =
-        assertThrows(
-            ResourceConflictException.class, () -> gApi.changes().id(changeId).ignore(true));
-    assertThat(thrown)
-        .hasMessageThat()
-        .contains(
-            "The labels "
-                + StarredChangesUtil.DEFAULT_LABEL
-                + " and "
-                + StarredChangesUtil.IGNORE_LABEL
-                + " are mutually exclusive. Only one of them can be set.");
-  }
-
-  @Test
-  public void cannotStarIgnoredChange() throws Exception {
-    String changeId = createChange().getChangeId();
-
-    requestScopeOperations.setApiUser(user.id());
-    gApi.changes().id(changeId).ignore(true);
-    assertThat(gApi.changes().id(changeId).ignored()).isTrue();
-
-    ResourceConflictException thrown =
-        assertThrows(
-            ResourceConflictException.class, () -> gApi.accounts().self().starChange(changeId));
-    assertThat(thrown)
-        .hasMessageThat()
-        .contains(
-            "The labels "
-                + StarredChangesUtil.DEFAULT_LABEL
-                + " and "
-                + StarredChangesUtil.IGNORE_LABEL
-                + " are mutually exclusive. Only one of them can be set.");
+      // Delete the draft comment. Change is not re-indexed
+      gApi.changes().id(changeId).revision(revId).draft(draftInfo.id).delete();
+      changeIndexedCounter.assertReindexOf(change, 0);
+    }
   }
 
   @Test
@@ -4790,6 +4800,137 @@ public class ChangeIT extends AbstractDaemonTest {
     assertThat(gApi.changes().query(changeId).get().get(0).mergeable).isNull();
   }
 
+  @Test
+  public void ccUserThatCannotSeeTheChange() throws Exception {
+    // Create a project that is only visible to admin users.
+    Project.NameKey project = projectOperations.newProject().create();
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.READ).ref("refs/*").group(adminGroupUuid()))
+        .add(block(Permission.READ).ref("refs/*").group(REGISTERED_USERS))
+        .update();
+
+    // Create a change
+    TestRepository<?> adminTestRepo = cloneProject(project, admin);
+    PushOneCommit push = pushFactory.create(admin.newIdent(), adminTestRepo);
+    PushOneCommit.Result r = push.to("refs/for/master");
+    r.assertOkStatus();
+
+    // Check that the change is not visible to user.
+    requestScopeOperations.setApiUser(user.id());
+    assertThrows(ResourceNotFoundException.class, () -> gApi.changes().id(r.getChangeId()).get());
+
+    // Add user as a CC.
+    requestScopeOperations.setApiUser(admin.id());
+    ReviewerInput reviewerInput = new ReviewerInput();
+    reviewerInput.state = CC;
+    reviewerInput.reviewer = user.id().toString();
+    gApi.changes().id(r.getChangeId()).addReviewer(reviewerInput);
+
+    // Check that user was not added as a CC since they cannot see the change. Note,
+    // ChangeInfo#reviewers is a map that also contains CCs (if any are present).
+    assertThat(gApi.changes().id(r.getChangeId()).get().reviewers).isEmpty();
+
+    // Check that the change is still not visible to user.
+    requestScopeOperations.setApiUser(user.id());
+    assertThrows(ResourceNotFoundException.class, () -> gApi.changes().id(r.getChangeId()).get());
+  }
+
+  @Test
+  public void ccNonExistentAccountByEmailThenRemoveByDelete() throws Exception {
+    // Create a project that allows reviewers by email.
+    Project.NameKey project = projectOperations.newProject().create();
+    try (ProjectConfigUpdate u = updateProject(project)) {
+      u.getConfig()
+          .updateProject(
+              b ->
+                  b.setBooleanConfig(
+                      BooleanProjectConfig.ENABLE_REVIEWER_BY_EMAIL, InheritableBoolean.TRUE));
+      u.save();
+    }
+
+    // Create a change
+    TestRepository<?> testRepo = cloneProject(project, admin);
+    PushOneCommit push = pushFactory.create(admin.newIdent(), testRepo);
+    PushOneCommit.Result r = push.to("refs/for/master");
+    r.assertOkStatus();
+
+    // Add an email as a CC for which no Gerrit account exists.
+    sender.clear();
+    ReviewerInput reviewerInput = new ReviewerInput();
+    reviewerInput.state = CC;
+    reviewerInput.reviewer = "email-without-account@example.com";
+    gApi.changes().id(r.getChangeId()).addReviewer(reviewerInput);
+
+    // Check that the email was added as a CC and an email was sent.
+    AccountInfo ccedAccountInfo =
+        Iterables.getOnlyElement(
+            gApi.changes().id(r.getChangeId()).get().reviewers.get(ReviewerState.CC));
+    assertThat(ccedAccountInfo.email).isEqualTo(reviewerInput.reviewer);
+    assertThat(ccedAccountInfo._accountId).isNull();
+    assertThat(ccedAccountInfo.name).isNull();
+    assertThat(Iterables.getOnlyElement(sender.getMessages()).body())
+        .contains(String.format("%s has uploaded this change for review", admin.fullName()));
+
+    // Remove the CC.
+    sender.clear();
+    gApi.changes().id(r.getChangeId()).reviewer(reviewerInput.reviewer).remove();
+
+    // Check that the email was removed as a CC and an email was sent.
+    assertThat(gApi.changes().id(r.getChangeId()).get().reviewers).isEmpty();
+    assertThat(Iterables.getOnlyElement(sender.getMessages()).body())
+        .contains(String.format("%s has removed %s", admin.fullName(), reviewerInput.reviewer));
+  }
+
+  @Test
+  public void ccNonExistentAccountByEmailThenRemoveByPostReview() throws Exception {
+    // Create a project that allows reviewers by email.
+    Project.NameKey project = projectOperations.newProject().create();
+    try (ProjectConfigUpdate u = updateProject(project)) {
+      u.getConfig()
+          .updateProject(
+              b ->
+                  b.setBooleanConfig(
+                      BooleanProjectConfig.ENABLE_REVIEWER_BY_EMAIL, InheritableBoolean.TRUE));
+      u.save();
+    }
+
+    // Create a change
+    TestRepository<?> testRepo = cloneProject(project, admin);
+    PushOneCommit push = pushFactory.create(admin.newIdent(), testRepo);
+    PushOneCommit.Result r = push.to("refs/for/master");
+    r.assertOkStatus();
+
+    // Add an email as a CC for which no Gerrit account exists.
+    sender.clear();
+    ReviewerInput reviewerInput = new ReviewerInput();
+    reviewerInput.state = CC;
+    reviewerInput.reviewer = "email-without-account@example.com";
+    gApi.changes().id(r.getChangeId()).addReviewer(reviewerInput);
+
+    // Check that the email was added as a CC and an email was sent.
+    AccountInfo ccedAccountInfo =
+        Iterables.getOnlyElement(
+            gApi.changes().id(r.getChangeId()).get().reviewers.get(ReviewerState.CC));
+    assertThat(ccedAccountInfo.email).isEqualTo(reviewerInput.reviewer);
+    assertThat(ccedAccountInfo._accountId).isNull();
+    assertThat(ccedAccountInfo.name).isNull();
+    assertThat(Iterables.getOnlyElement(sender.getMessages()).body())
+        .contains(String.format("%s has uploaded this change for review", admin.fullName()));
+
+    // Remove the CC.
+    sender.clear();
+    ReviewInput reviewInput = new ReviewInput();
+    reviewInput.reviewer(reviewerInput.reviewer, ReviewerState.REMOVED, /* confirmed= */ false);
+    gApi.changes().id(r.getChangeId()).current().review(reviewInput);
+
+    // Check that the email was removed as a CC and an email was sent.
+    assertThat(gApi.changes().id(r.getChangeId()).get().reviewers).isEmpty();
+    assertThat(Iterables.getOnlyElement(sender.getMessages()).body())
+        .contains(String.format("%s has removed %s", admin.fullName(), reviewerInput.reviewer));
+  }
+
   private PushOneCommit.Result createWorkInProgressChange() throws Exception {
     return pushTo("refs/for/master%wip");
   }
@@ -4814,10 +4955,31 @@ public class ChangeIT extends AbstractDaemonTest {
     Boolean wip;
 
     @Override
-    public void onWorkInProgressStateChanged(Event event) {
+    public void onWorkInProgressStateChanged(WorkInProgressStateChangedListener.Event event) {
       this.invoked = true;
       this.wip =
           event.getChange().workInProgress != null ? event.getChange().workInProgress : false;
+    }
+  }
+
+  public static class TestAttentionSetListenerModule extends AbstractModule {
+    @Override
+    public void configure() {
+      DynamicSet.bind(binder(), AttentionSetListener.class).to(TestAttentionSetListener.class);
+    }
+
+    public static class TestAttentionSetListener implements AttentionSetListener {
+      AttentionSetListener.Event lastEvent;
+      int firedCount;
+
+      @Inject
+      public TestAttentionSetListener() {}
+
+      @Override
+      public void onAttentionSetChanged(AttentionSetListener.Event event) {
+        firedCount++;
+        lastEvent = event;
+      }
     }
   }
 

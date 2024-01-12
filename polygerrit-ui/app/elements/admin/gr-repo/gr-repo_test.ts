@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-repo';
 import {GrRepo} from './gr-repo';
 import {mockPromise} from '../../../test/test-utils';
@@ -51,13 +39,12 @@ import {
   createConfig,
   createDownloadSchemes,
 } from '../../../test/test-data-generators';
-import {PageErrorEvent} from '../../../types/events.js';
+import {PageErrorEvent} from '../../../types/events';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {GrSelect} from '../../shared/gr-select/gr-select';
 import {GrTextarea} from '../../shared/gr-textarea/gr-textarea';
 import {IronInputElement} from '@polymer/iron-input/iron-input';
-
-const basicFixture = fixtureFromElement('gr-repo');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-repo tests', () => {
   let element: GrRepo;
@@ -167,8 +154,288 @@ suite('gr-repo tests', () => {
     repoStub = stubRestApi('getProjectConfig').returns(
       Promise.resolve(repoConf)
     );
-    element = basicFixture.instantiate();
+    element = await fixture(html`<gr-repo></gr-repo>`);
+  });
+
+  test('render', async () => {
+    element.repo = REPO as RepoName;
+    await element.loadRepo();
     await element.updateComplete;
+    // prettier and shadowDom assert do not agree about span.title wrapping
+    assert.shadowDom.equal(
+      element,
+      /* prettier-ignore */ /* HTML */ `
+      <div class="gr-form-styles main read-only">
+        <div class="info">
+          <h1 class="heading-1" id="Title">test-repo</h1>
+          <hr />
+          <div>
+            <a href="">
+              <gr-button
+                aria-disabled="true"
+                disabled=""
+                link=""
+                role="button"
+                tabindex="-1"
+              >
+                Browse
+              </gr-button>
+            </a>
+            <a href="/q/project:test-repo">
+              <gr-button
+                aria-disabled="false"
+                link=""
+                role="button"
+                tabindex="0"
+              >
+                View Changes
+              </gr-button>
+            </a>
+          </div>
+        </div>
+        <div id="loadedContent">
+          <h2 class="heading-2" id="configurations">Configurations</h2>
+          <div id="form">
+            <fieldset>
+              <h3 class="heading-3" id="Description">Description</h3>
+              <fieldset>
+                <gr-textarea
+                  autocomplete="on"
+                  class="description monospace"
+                  disabled=""
+                  id="descriptionInput"
+                  monospace=""
+                  placeholder="<Insert repo description here>"
+                  rows="4"
+                >
+                </gr-textarea>
+              </fieldset>
+              <h3 class="heading-3" id="Options">Repository Options</h3>
+              <fieldset id="options">
+                <section>
+                  <span class="title"> State </span>
+                  <span class="value">
+                    <gr-select id="stateSelect">
+                      <select disabled="">
+                        <option value="ACTIVE">Active</option>
+                        <option value="READ_ONLY">Read Only</option>
+                        <option value="HIDDEN">Hidden</option>
+                      </select>
+                    </gr-select>
+                  </span>
+                </section>
+                <section>
+                  <span class="title"> Submit type </span>
+                  <span class="value">
+                    <gr-select id="submitTypeSelect">
+                      <select disabled=""></select>
+                    </gr-select>
+                  </span>
+                </section>
+                <section>
+                  <span class="title"> Allow content merges </span>
+                  <span class="value">
+                    <gr-select id="contentMergeSelect">
+                      <select disabled=""></select>
+                    </gr-select>
+                  </span>
+                </section>
+                <section>
+                  <span class="title">
+                    Create a new change for every commit not in the target branch
+                  </span>
+                  <span class="value">
+                    <gr-select id="newChangeSelect">
+                      <select disabled=""></select>
+                    </gr-select>
+                  </span>
+                </section>
+                <section>
+                  <span class="title">
+                    Require Change-Id in commit message
+                  </span>
+                  <span class="value">
+                    <gr-select id="requireChangeIdSelect">
+                      <select disabled=""></select>
+                    </gr-select>
+                  </span>
+                </section>
+                <section
+                  class="repositorySettings showConfig"
+                  id="enableSignedPushSettings"
+                >
+                  <span class="title"> Enable signed push </span>
+                  <span class="value">
+                    <gr-select id="enableSignedPush">
+                      <select disabled=""></select>
+                    </gr-select>
+                  </span>
+                </section>
+                <section
+                  class="repositorySettings showConfig"
+                  id="requireSignedPushSettings"
+                >
+                  <span class="title"> Require signed push </span>
+                  <span class="value">
+                    <gr-select id="requireSignedPush">
+                      <select disabled=""></select>
+                    </gr-select>
+                  </span>
+                </section>
+                <section>
+                  <span class="title">
+                    Reject implicit merges when changes are pushed for review
+                  </span>
+                  <span class="value">
+                    <gr-select id="rejectImplicitMergesSelect">
+                      <select disabled=""></select>
+                    </gr-select>
+                  </span>
+                </section>
+                <section>
+                  <span class="title">
+                    Enable adding unregistered users as reviewers and CCs on changes
+                  </span>
+                  <span class="value">
+                    <gr-select id="unRegisteredCcSelect">
+                      <select disabled=""></select>
+                    </gr-select>
+                  </span>
+                </section>
+                <section>
+                  <span class="title">
+                    Set all new changes private by default
+                  </span>
+                  <span class="value">
+                    <gr-select id="setAllnewChangesPrivateByDefaultSelect">
+                      <select disabled=""></select>
+                    </gr-select>
+                  </span>
+                </section>
+                <section>
+                  <span class="title">
+                    Set new changes to "work in progress" by default
+                  </span>
+                  <span class="value">
+                    <gr-select
+                      id="setAllNewChangesWorkInProgressByDefaultSelect"
+                    >
+                      <select disabled=""></select>
+                    </gr-select>
+                  </span>
+                </section>
+                <section>
+                  <span class="title"> Maximum Git object size limit </span>
+                  <span class="value">
+                    <iron-input id="maxGitObjSizeIronInput">
+                      <input disabled="" id="maxGitObjSizeInput" type="text" />
+                    </iron-input>
+                  </span>
+                </section>
+                <section>
+                  <span class="title">
+                    Match authored date with committer date upon submit
+                  </span>
+                  <span class="value">
+                    <gr-select id="matchAuthoredDateWithCommitterDateSelect">
+                      <select disabled=""></select>
+                    </gr-select>
+                  </span>
+                </section>
+                <section>
+                  <span class="title"> Reject empty commit upon submit </span>
+                  <span class="value">
+                    <gr-select id="rejectEmptyCommitSelect">
+                      <select disabled=""></select>
+                    </gr-select>
+                  </span>
+                </section>
+              </fieldset>
+              <h3 class="heading-3" id="Options">Contributor Agreements</h3>
+              <fieldset id="agreements">
+                <section>
+                  <span class="title">
+                    Require a valid contributor agreement to upload
+                  </span>
+                  <span class="value">
+                    <gr-select id="contributorAgreementSelect">
+                      <select disabled=""></select>
+                    </gr-select>
+                  </span>
+                </section>
+                <section>
+                  <span class="title">
+                    Require Signed-off-by in commit message
+                  </span>
+                  <span class="value">
+                    <gr-select id="useSignedOffBySelect">
+                      <select disabled=""></select>
+                    </gr-select>
+                  </span>
+                </section>
+              </fieldset>
+              <gr-button
+                aria-disabled="true"
+                disabled=""
+                role="button"
+                tabindex="-1"
+              >
+                Save changes
+              </gr-button>
+            </fieldset>
+            <gr-endpoint-decorator name="repo-config">
+              <gr-endpoint-param name="repoName"> </gr-endpoint-param>
+              <gr-endpoint-param name="readOnly"> </gr-endpoint-param>
+            </gr-endpoint-decorator>
+          </div>
+        </div>
+      </div>
+    `,
+      {ignoreTags: ['option']}
+    );
+  });
+
+  test('render loading', async () => {
+    element.repo = REPO as RepoName;
+    element.loading = true;
+    await element.updateComplete;
+    // prettier and shadowDom assert do not agree about span.title wrapping
+    assert.shadowDom.equal(
+      element,
+      /* prettier-ignore */ /* HTML */ `
+      <div class="gr-form-styles main read-only">
+        <div class="info">
+          <h1 class="heading-1" id="Title">test-repo</h1>
+          <hr />
+          <div>
+            <a href="">
+              <gr-button
+                aria-disabled="true"
+                disabled=""
+                link=""
+                role="button"
+                tabindex="-1"
+              >
+                Browse
+              </gr-button>
+            </a>
+            <a href="/q/project:test-repo">
+              <gr-button
+                aria-disabled="false"
+                link=""
+                role="button"
+                tabindex="0"
+              >
+                View Changes
+              </gr-button>
+            </a>
+          </div>
+        </div>
+        <div id="loading">Loading...</div>
+      </div>
+    `,
+      {ignoreTags: ['option']}
+    );
   });
 
   test('_computePluginData', async () => {
@@ -220,55 +487,22 @@ suite('gr-repo tests', () => {
     assert.isTrue(requestUpdateStub.called);
   });
 
-  test('loading displays before repo config is loaded', () => {
-    assert.isTrue(
-      queryAndAssert<HTMLDivElement>(element, '#loading').classList.contains(
-        'loading'
-      )
-    );
-    assert.isFalse(
-      getComputedStyle(queryAndAssert<HTMLDivElement>(element, '#loading'))
-        .display === 'none'
-    );
-    assert.isTrue(
-      queryAndAssert<HTMLDivElement>(
-        element,
-        '#loadedContent'
-      ).classList.contains('loading')
-    );
-    assert.isTrue(
-      getComputedStyle(
-        queryAndAssert<HTMLDivElement>(element, '#loadedContent')
-      ).display === 'none'
-    );
-  });
-
-  test('download commands visibility', async () => {
-    element.loading = false;
-    await element.updateComplete;
-    assert.isTrue(
-      queryAndAssert<HTMLDivElement>(
-        element,
-        '#downloadContent'
-      ).classList.contains('hide')
-    );
-    assert.isTrue(
-      getComputedStyle(
-        queryAndAssert<HTMLDivElement>(element, '#downloadContent')
-      ).display === 'none'
-    );
+  test('render download commands', async () => {
+    element.repo = REPO as RepoName;
+    await element.loadRepo();
     element.schemesObj = SCHEMES;
     await element.updateComplete;
-    assert.isFalse(
-      queryAndAssert<HTMLDivElement>(
-        element,
-        '#downloadContent'
-      ).classList.contains('hide')
-    );
-    assert.isFalse(
-      getComputedStyle(
-        queryAndAssert<HTMLDivElement>(element, '#downloadContent')
-      ).display === 'none'
+    const content = queryAndAssert<HTMLDivElement>(element, '#downloadContent');
+    assert.dom.equal(
+      content,
+      /* HTML */ `
+        <div id="downloadContent">
+          <h2 class="heading-2" id="download">Download</h2>
+          <fieldset>
+            <gr-download-commands id="downloadCommands"></gr-download-commands>
+          </fieldset>
+        </div>
+      `
     );
   });
 
@@ -484,9 +718,9 @@ suite('gr-repo tests', () => {
         Promise.resolve(new Response())
       );
 
-      const button = queryAll<GrButton>(element, 'gr-button')[2];
-
       await element.loadRepo();
+
+      const button = queryAll<GrButton>(element, 'gr-button')[2];
       assert.isTrue(button.hasAttribute('disabled'));
       assert.isFalse(
         queryAndAssert<HTMLHeadingElement>(

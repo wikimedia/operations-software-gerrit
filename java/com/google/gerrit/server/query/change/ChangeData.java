@@ -75,10 +75,11 @@ import com.google.gerrit.server.change.CommentThreads;
 import com.google.gerrit.server.change.MergeabilityCache;
 import com.google.gerrit.server.change.PureRevert;
 import com.google.gerrit.server.config.AllUsersName;
+import com.google.gerrit.server.config.GerritServerId;
 import com.google.gerrit.server.config.SkipCurrentRulesEvaluationOnClosedChanges;
 import com.google.gerrit.server.config.TrackingFooters;
 import com.google.gerrit.server.git.GitRepositoryManager;
-import com.google.gerrit.server.git.MergeUtil;
+import com.google.gerrit.server.git.MergeUtilFactory;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.RobotCommentNotes;
 import com.google.gerrit.server.patch.DiffSummary;
@@ -277,15 +278,66 @@ public class ChangeData {
    * <p>Attempting to lazy load data will fail with NPEs. Callers may consider manually setting
    * fields that can be set.
    *
+   * @param project project name
    * @param id change ID
+   * @param currentPatchSetId current patchset number
+   * @param commitId commit SHA1 of the current patchset
    * @return instance for testing.
    */
   public static ChangeData createForTest(
       Project.NameKey project, Change.Id id, int currentPatchSetId, ObjectId commitId) {
+    return createForTest(project, id, currentPatchSetId, commitId, null, null, null);
+  }
+
+  /**
+   * Create an instance for testing only.
+   *
+   * <p>Attempting to lazy load data will fail with NPEs. Callers may consider manually setting
+   * fields that can be set.
+   *
+   * @param project project name
+   * @param id change ID
+   * @param currentPatchSetId current patchset number
+   * @param commitId commit SHA1 of the current patchset
+   * @param serverId Gerrit server id
+   * @param virtualIdAlgo algorithm for virtualising the Change number
+   * @param changeNotes notes associated with the Change
+   * @return instance for testing.
+   */
+  public static ChangeData createForTest(
+      Project.NameKey project,
+      Change.Id id,
+      int currentPatchSetId,
+      ObjectId commitId,
+      @Nullable String serverId,
+      @Nullable ChangeNumberVirtualIdAlgorithm virtualIdAlgo,
+      @Nullable ChangeNotes changeNotes) {
     ChangeData cd =
         new ChangeData(
-            null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-            null, null, null, false, project, id, null, null);
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            serverId,
+            virtualIdAlgo,
+            false,
+            project,
+            id,
+            null,
+            changeNotes);
     cd.currentPatchSet =
         PatchSet.builder()
             .id(PatchSet.id(id, currentPatchSetId))
@@ -304,7 +356,7 @@ public class ChangeData {
   private final ChangeNotes.Factory notesFactory;
   private final CommentsUtil commentsUtil;
   private final GitRepositoryManager repoManager;
-  private final MergeUtil.Factory mergeUtilFactory;
+  private final MergeUtilFactory mergeUtilFactory;
   private final MergeabilityCache mergeabilityCache;
   private final PatchListCache patchListCache;
   private final PatchSetUtil psUtil;
@@ -382,6 +434,9 @@ public class ChangeData {
   private Optional<Instant> mergedOn;
   private ImmutableSetMultimap<NameKey, RefState> refStates;
   private ImmutableList<byte[]> refStatePatterns;
+  private String gerritServerId;
+  private String changeServerId;
+  private ChangeNumberVirtualIdAlgorithm virtualIdFunc;
 
   @Inject
   private ChangeData(
@@ -392,7 +447,7 @@ public class ChangeData {
       ChangeNotes.Factory notesFactory,
       CommentsUtil commentsUtil,
       GitRepositoryManager repoManager,
-      MergeUtil.Factory mergeUtilFactory,
+      MergeUtilFactory mergeUtilFactory,
       MergeabilityCache mergeabilityCache,
       PatchListCache patchListCache,
       PatchSetUtil psUtil,
@@ -402,6 +457,8 @@ public class ChangeData {
       SubmitRequirementsEvaluator submitRequirementsEvaluator,
       SubmitRequirementsUtil submitRequirementsUtil,
       SubmitRuleEvaluator.Factory submitRuleEvaluatorFactory,
+      @GerritServerId String gerritServerId,
+      ChangeNumberVirtualIdAlgorithm virtualIdFunc,
       @SkipCurrentRulesEvaluationOnClosedChanges Boolean skipCurrentRulesEvaluationOnClosedChange,
       @Assisted Project.NameKey project,
       @Assisted Change.Id id,
@@ -431,6 +488,10 @@ public class ChangeData {
 
     this.change = change;
     this.notes = notes;
+
+    this.changeServerId = notes == null ? null : notes.getServerId();
+    this.gerritServerId = gerritServerId;
+    this.virtualIdFunc = virtualIdFunc;
   }
 
   /**
@@ -551,6 +612,14 @@ public class ChangeData {
     return legacyId;
   }
 
+  public Change.Id getVirtualId() {
+    if (virtualIdFunc == null || changeServerId == null || changeServerId.equals(gerritServerId)) {
+      return legacyId;
+    }
+
+    return Change.id(virtualIdFunc.apply(changeServerId, legacyId.get()));
+  }
+
   public Project.NameKey project() {
     return project;
   }
@@ -635,6 +704,7 @@ public class ChangeData {
       throw new StorageException("Unable to load change " + legacyId, e);
     }
     change = notes.getChange();
+    changeServerId = notes.getServerId();
     metaRevision = null;
     setPatchSets(null);
     return change;
@@ -861,7 +931,7 @@ public class ChangeData {
       if (!lazyload()) {
         return ImmutableListMultimap.of();
       }
-      allApprovalsWithCopied = approvalsUtil.byChangeWithCopied(notes());
+      allApprovalsWithCopied = approvalsUtil.byChangeIncludingCopiedApprovals(notes());
     }
     return allApprovalsWithCopied;
   }
@@ -1027,7 +1097,7 @@ public class ChangeData {
   }
 
   /**
-   * Similar to {@link #submitRequirements}, except that it also converts submit records resulting
+   * Similar to {@link #submitRequirements()}, except that it also converts submit records resulting
    * from the evaluation of legacy submit rules to submit requirements.
    */
   public Map<SubmitRequirement, SubmitRequirementResult> submitRequirementsIncludingLegacy() {
@@ -1054,8 +1124,7 @@ public class ChangeData {
       Change c = change();
       if (c == null || !c.isClosed()) {
         // Open changes: Evaluate submit requirements online.
-        submitRequirements =
-            submitRequirementsEvaluator.evaluateAllRequirements(this, /* includeLegacy= */ false);
+        submitRequirements = submitRequirementsEvaluator.evaluateAllRequirements(this);
         return submitRequirements;
       }
       // Closed changes: Load submit requirement results from NoteDb.
@@ -1282,7 +1351,7 @@ public class ChangeData {
     this.stars = ImmutableListMultimap.copyOf(stars);
   }
 
-  public ImmutableMap<Account.Id, StarRef> starRefs() {
+  private ImmutableMap<Account.Id, StarRef> starRefs() {
     if (starRefs == null) {
       if (!lazyload()) {
         return ImmutableMap.of();
@@ -1363,7 +1432,6 @@ public class ChangeData {
                     edit.getRowKey(), edit.getColumnKey().changeId(), edit.getColumnKey()),
                 edit.getValue()));
       }
-      starRefs().values().forEach(r -> result.put(allUsersName, RefState.of(r.ref())));
 
       // TODO: instantiating the notes is too much. We don't want to parse NoteDb, we just want the
       // refs.
@@ -1371,14 +1439,6 @@ public class ChangeData {
       notes().getRobotComments(); // Force loading robot comments.
       RobotCommentNotes robotNotes = notes().getRobotCommentNotes();
       result.put(project, RefState.create(robotNotes.getRefName(), robotNotes.getMetaId()));
-      draftRefs()
-          .entrySet()
-          .forEach(
-              r ->
-                  result.put(
-                      allUsersName,
-                      RefState.create(
-                          RefNames.refsDraftComments(getId(), r.getKey()), r.getValue())));
 
       refStates = result.build();
     }

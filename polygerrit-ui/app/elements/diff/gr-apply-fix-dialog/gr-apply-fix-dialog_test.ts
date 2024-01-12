@@ -3,22 +3,12 @@
  * Copyright 2019 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-apply-fix-dialog';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {queryAndAssert, stubRestApi} from '../../../test/test-utils';
 import {GrApplyFixDialog} from './gr-apply-fix-dialog';
-import {
-  BasePatchSetNum,
-  EditPatchSetNum,
-  PatchSetNum,
-  RobotCommentInfo,
-  RobotId,
-  RobotRunId,
-  Timestamp,
-  UrlEncodedCommentId,
-} from '../../../types/common';
-import {Comment} from '../../../utils/comment-util';
+import {PatchSetNum} from '../../../types/common';
 import {
   createFixSuggestionInfo,
   createParsedChange,
@@ -33,30 +23,25 @@ import {
   OpenFixPreviewEventDetail,
 } from '../../../types/events';
 import {GrButton} from '../../shared/gr-button/gr-button';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
+import {SinonStub} from 'sinon';
+import {testResolver} from '../../../test/common-test-setup';
 
 suite('gr-apply-fix-dialog tests', () => {
   let element: GrApplyFixDialog;
+  let setUrlStub: SinonStub;
 
-  const ROBOT_COMMENT_WITH_TWO_FIXES: RobotCommentInfo = {
-    id: '1' as UrlEncodedCommentId,
-    updated: '2018-02-08 18:49:18.000000000' as Timestamp,
-    robot_id: 'robot_1' as RobotId,
-    robot_run_id: 'run_1' as RobotRunId,
-    properties: {},
-    fix_suggestions: [
+  const TWO_FIXES: OpenFixPreviewEventDetail = {
+    patchNum: 2 as PatchSetNum,
+    fixSuggestions: [
       createFixSuggestionInfo('fix_1'),
       createFixSuggestionInfo('fix_2'),
     ],
   };
 
-  const ROBOT_COMMENT_WITH_ONE_FIX: RobotCommentInfo = {
-    id: '2' as UrlEncodedCommentId,
-    updated: '2018-02-08 18:49:18.000000000' as Timestamp,
-    robot_id: 'robot_1' as RobotId,
-    robot_run_id: 'run_1' as RobotRunId,
-    properties: {},
-    fix_suggestions: [createFixSuggestionInfo('fix_1')],
+  const ONE_FIX: OpenFixPreviewEventDetail = {
+    patchNum: 2 as PatchSetNum,
+    fixSuggestions: [createFixSuggestionInfo('fix_1')],
   };
 
   function getConfirmButton(): GrButton {
@@ -66,19 +51,17 @@ suite('gr-apply-fix-dialog tests', () => {
     );
   }
 
-  async function open(comment: Comment) {
-    await element.open(
+  async function open(detail: OpenFixPreviewEventDetail) {
+    element.open(
       new CustomEvent<OpenFixPreviewEventDetail>(EventType.OPEN_FIX_PREVIEW, {
-        detail: {
-          patchNum: 2 as PatchSetNum,
-          comment,
-        },
+        detail,
       })
     );
     await element.updateComplete;
   }
 
   setup(async () => {
+    setUrlStub = sinon.stub(testResolver(navigationToken), 'setUrl');
     element = await fixture<GrApplyFixDialog>(
       html`<gr-apply-fix-dialog></gr-apply-fix-dialog>`
     );
@@ -90,7 +73,7 @@ suite('gr-apply-fix-dialog tests', () => {
     element.changeNum = change._number;
     element.patchNum = change.revisions[change.current_revision]._number;
     element.change = change;
-    element.prefs = {
+    element.diffPrefs = {
       ...createDefaultDiffPrefs(),
       font_size: 12,
       line_length: 100,
@@ -163,10 +146,9 @@ suite('gr-apply-fix-dialog tests', () => {
     });
 
     test('dialog opens fetch and sets previews', async () => {
-      await open(ROBOT_COMMENT_WITH_TWO_FIXES);
+      await open(TWO_FIXES);
       assert.equal(element.currentFix!.fix_id, 'fix_1');
       assert.equal(element.currentPreviews.length, 2);
-      assert.equal(element.robotId, 'robot_1' as RobotId);
       const button = getConfirmButton();
       assert.isFalse(button.hasAttribute('disabled'));
       assert.equal(button.getAttribute('title'), '');
@@ -174,7 +156,7 @@ suite('gr-apply-fix-dialog tests', () => {
 
     test('tooltip is hidden if apply fix is loading', async () => {
       element.isApplyFixLoading = true;
-      await open(ROBOT_COMMENT_WITH_TWO_FIXES);
+      await open(TWO_FIXES);
       const button = getConfirmButton();
       assert.isTrue(button.hasAttribute('disabled'));
       assert.equal(button.getAttribute('title'), '');
@@ -186,7 +168,7 @@ suite('gr-apply-fix-dialog tests', () => {
         revisions: createRevisions(2),
         current_revision: getCurrentRevision(0),
       };
-      await open(ROBOT_COMMENT_WITH_TWO_FIXES);
+      await open(TWO_FIXES);
       const button = getConfirmButton();
       assert.isTrue(button.hasAttribute('disabled'));
       assert.equal(
@@ -197,12 +179,13 @@ suite('gr-apply-fix-dialog tests', () => {
   });
 
   test('renders', async () => {
-    await open(ROBOT_COMMENT_WITH_TWO_FIXES);
-    expect(element).shadowDom.to.equal(
+    await open(TWO_FIXES);
+    assert.shadowDom.equal(
+      element,
       /* HTML */ `
         <gr-overlay id="applyFixOverlay" tabindex="-1" with-backdrop="">
           <gr-dialog id="applyFixDialog" role="dialog">
-            <div slot="header">robot_1 - Fix fix_1</div>
+            <div slot="header">Fix fix_1</div>
             <div slot="main"></div>
             <div class="fix-picker" slot="footer">
               <span>Suggested fix 1 of 2</span>
@@ -213,7 +196,7 @@ suite('gr-apply-fix-dialog tests', () => {
                 role="button"
                 tabindex="-1"
               >
-                <iron-icon icon="gr-icons:chevron-left"> </iron-icon>
+                <gr-icon icon="chevron_left"></gr-icon>
               </gr-button>
               <gr-button
                 aria-disabled="false"
@@ -221,7 +204,7 @@ suite('gr-apply-fix-dialog tests', () => {
                 role="button"
                 tabindex="0"
               >
-                <iron-icon icon="gr-icons:chevron-right"> </iron-icon>
+                <gr-icon icon="chevron_right"></gr-icon>
               </gr-button>
             </div>
           </gr-dialog>
@@ -235,10 +218,10 @@ suite('gr-apply-fix-dialog tests', () => {
     stubRestApi('getRobotCommentFixPreview').returns(Promise.resolve({}));
     sinon.stub(element.applyFixOverlay!, 'open').returns(Promise.resolve());
 
-    await open(ROBOT_COMMENT_WITH_ONE_FIX);
+    await open(ONE_FIX);
     await element.updateComplete;
     assert.notOk(element.nextFix);
-    await open(ROBOT_COMMENT_WITH_TWO_FIXES);
+    await open(TWO_FIXES);
     assert.ok(element.nextFix);
     assert.notOk(element.nextFix!.disabled);
   });
@@ -248,7 +231,7 @@ suite('gr-apply-fix-dialog tests', () => {
       Promise.reject(new Error('backend error'))
     );
     try {
-      await open(ROBOT_COMMENT_WITH_TWO_FIXES);
+      await open(TWO_FIXES);
     } catch (error) {
       // expected
     }
@@ -256,10 +239,9 @@ suite('gr-apply-fix-dialog tests', () => {
   });
 
   test('apply fix button should call apply, navigate to change view and fire close', async () => {
-    const applyFixSuggestionStub = stubRestApi('applyFixSuggestion').returns(
-      Promise.resolve(new Response(null, {status: 200}))
-    );
-    const navigateToChangeStub = sinon.stub(GerritNav, 'navigateToChange');
+    const applyRobotFixSuggestionStub = stubRestApi(
+      'applyRobotFixSuggestion'
+    ).returns(Promise.resolve(new Response(null, {status: 200})));
     element.currentFix = createFixSuggestionInfo('123');
 
     const closeFixPreviewEventSpy = sinon.spy();
@@ -268,18 +250,17 @@ suite('gr-apply-fix-dialog tests', () => {
       EventType.CLOSE_FIX_PREVIEW,
       closeFixPreviewEventSpy
     );
+
     await element.handleApplyFix(new CustomEvent('confirm'));
 
     sinon.assert.calledOnceWithExactly(
-      applyFixSuggestionStub,
+      applyRobotFixSuggestionStub,
       element.change!._number,
       2 as PatchSetNum,
       '123'
     );
-    sinon.assert.calledWithExactly(navigateToChangeStub, element.change!, {
-      patchNum: EditPatchSetNum,
-      basePatchNum: element.change!.revisions[2]._number as BasePatchSetNum,
-    });
+    assert.isTrue(setUrlStub.called);
+    assert.equal(setUrlStub.lastCall.firstArg, '/c/test-project/+/42/2..edit');
 
     sinon.assert.calledOnceWithExactly(
       closeFixPreviewEventSpy,
@@ -289,35 +270,33 @@ suite('gr-apply-fix-dialog tests', () => {
         },
       })
     );
-
     // reset gr-apply-fix-dialog and close
     assert.equal(element.currentFix, undefined);
     assert.equal(element.currentPreviews.length, 0);
   });
 
   test('should not navigate to change view if incorect reponse', async () => {
-    const applyFixSuggestionStub = stubRestApi('applyFixSuggestion').returns(
-      Promise.resolve(new Response(null, {status: 500}))
-    );
-    const navigateToChangeStub = sinon.stub(GerritNav, 'navigateToChange');
+    const applyRobotFixSuggestionStub = stubRestApi(
+      'applyRobotFixSuggestion'
+    ).returns(Promise.resolve(new Response(null, {status: 500})));
     element.currentFix = createFixSuggestionInfo('fix_123');
 
     await element.handleApplyFix(new CustomEvent('confirm'));
+
     sinon.assert.calledWithExactly(
-      applyFixSuggestionStub,
+      applyRobotFixSuggestionStub,
       element.change!._number,
       2 as PatchSetNum,
       'fix_123'
     );
-    assert.isTrue(navigateToChangeStub.notCalled);
-
+    assert.isFalse(setUrlStub.called);
     assert.equal(element.isApplyFixLoading, false);
   });
 
   test('select fix forward and back of multiple suggested fixes', async () => {
     sinon.stub(element.applyFixOverlay!, 'open').returns(Promise.resolve());
 
-    await open(ROBOT_COMMENT_WITH_TWO_FIXES);
+    await open(TWO_FIXES);
     element.onNextFixClick(new CustomEvent('click'));
     assert.equal(element.currentFix!.fix_id, 'fix_2');
     element.onPrevFixClick(new CustomEvent('click'));
@@ -325,10 +304,9 @@ suite('gr-apply-fix-dialog tests', () => {
   });
 
   test('server-error should throw for failed apply call', async () => {
-    stubRestApi('applyFixSuggestion').returns(
+    stubRestApi('applyRobotFixSuggestion').returns(
       Promise.reject(new Error('backend error'))
     );
-    const navigateToChangeStub = sinon.stub(GerritNav, 'navigateToChange');
     element.currentFix = createFixSuggestionInfo('fix_123');
 
     const closeFixPreviewEventSpy = sinon.spy();
@@ -343,7 +321,7 @@ suite('gr-apply-fix-dialog tests', () => {
       expectedError = e;
     });
     assert.isOk(expectedError);
-    assert.isFalse(navigateToChangeStub.called);
+    assert.isFalse(setUrlStub.called);
     sinon.assert.notCalled(closeFixPreviewEventSpy);
   });
 

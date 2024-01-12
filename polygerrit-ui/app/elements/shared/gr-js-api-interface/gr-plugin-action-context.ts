@@ -1,22 +1,10 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import {RevisionInfo, ChangeInfo, RequestPayload} from '../../../types/common';
-import {ShowAlertEventDetail} from '../../../types/events';
+import {EventType, ShowAlertEventDetail} from '../../../types/events';
 import {PluginApi} from '../../../api/plugin';
 import {UIActionInfo} from './gr-change-actions-js-api';
 import {windowLocationReload} from '../../../utils/dom-util';
@@ -112,6 +100,7 @@ export class GrPluginActionContext {
     if (!this.action.method) return;
     if (!this.action.__url) {
       this.reporting.error(
+        'GrPluginActionContext',
         new Error(`Unable to ${this.action.method} to ${this.action.__key}!`)
       );
       return;
@@ -122,7 +111,7 @@ export class GrPluginActionContext {
       .then(onSuccess)
       .catch((error: unknown) => {
         document.dispatchEvent(
-          new CustomEvent<ShowAlertEventDetail>('show-alert', {
+          new CustomEvent<ShowAlertEventDetail>(EventType.SHOW_ALERT, {
             detail: {
               message: `Plugin network error: ${error}`,
             },

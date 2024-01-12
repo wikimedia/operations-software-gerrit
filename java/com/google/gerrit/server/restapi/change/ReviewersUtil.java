@@ -28,13 +28,14 @@ import com.google.gerrit.entities.GroupReference;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.client.ReviewerState;
+import com.google.gerrit.extensions.common.AccountVisibility;
 import com.google.gerrit.extensions.common.GroupBaseInfo;
 import com.google.gerrit.extensions.common.SuggestedReviewerInfo;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.Url;
-import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.IndexConfig;
 import com.google.gerrit.index.QueryOptions;
+import com.google.gerrit.index.SchemaFieldDefs.SchemaField;
 import com.google.gerrit.index.query.FieldBundle;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
@@ -57,6 +58,7 @@ import com.google.gerrit.server.index.account.AccountField;
 import com.google.gerrit.server.index.account.AccountIndexCollection;
 import com.google.gerrit.server.index.account.AccountIndexRewriter;
 import com.google.gerrit.server.notedb.ChangeNotes;
+import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.NoSuchProjectException;
 import com.google.gerrit.server.project.ProjectState;
@@ -120,6 +122,7 @@ public class ReviewersUtil {
     }
   }
 
+  private final AccountVisibility accountVisibility;
   private final AccountLoader.Factory accountLoaderFactory;
   private final AccountQueryBuilder accountQueryBuilder;
   private final AccountIndexRewriter accountIndexRewriter;
@@ -135,6 +138,7 @@ public class ReviewersUtil {
 
   @Inject
   ReviewersUtil(
+      AccountVisibility accountVisibility,
       AccountLoader.Factory accountLoaderFactory,
       AccountQueryBuilder accountQueryBuilder,
       AccountIndexRewriter accountIndexRewriter,
@@ -147,6 +151,7 @@ public class ReviewersUtil {
       AccountControl.Factory accountControlFactory,
       Provider<CurrentUser> self,
       ServiceUserClassifier serviceUserClassifier) {
+    this.accountVisibility = accountVisibility;
     this.accountLoaderFactory = accountLoaderFactory;
     this.accountQueryBuilder = accountQueryBuilder;
     this.accountIndexRewriter = accountIndexRewriter;
@@ -192,13 +197,20 @@ public class ReviewersUtil {
       logger.atFine().log("Reviewer suggestion is disabled.");
       return Collections.emptyList();
     }
+    AccountControl accountControl = accountControlFactory.get();
+
+    if (accountVisibility == AccountVisibility.NONE && !accountControl.canViewAll()) {
+      logger.atFine().log(
+          "Not suggesting reviewers: accountVisibility = %s and the user does not have %s capability",
+          AccountVisibility.NONE, GlobalPermission.VIEW_ALL_ACCOUNTS);
+      return Collections.emptyList();
+    }
 
     List<Account.Id> candidateList = new ArrayList<>();
     if (!Strings.isNullOrEmpty(query)) {
       candidateList = suggestAccounts(suggestReviewers);
       logger.atFine().log("Candidate list: %s", candidateList);
     }
-
     List<Account.Id> sortedRecommendations =
         recommendAccounts(
             reviewerState, changeNotes, suggestReviewers, projectState, candidateList);
@@ -216,8 +228,7 @@ public class ReviewersUtil {
           continue;
         }
         // Check if change is visible to reviewer and if the current user can see reviewer
-        if (visibilityControl.isVisibleTo(reviewer)
-            && accountControlFactory.get().canSee(reviewer)) {
+        if (visibilityControl.isVisibleTo(reviewer) && accountControl.canSee(reviewer)) {
           filteredRecommendations.add(reviewer);
         }
       }
@@ -238,9 +249,9 @@ public class ReviewersUtil {
 
   private static Account.Id fromIdField(FieldBundle f, boolean useLegacyNumericFields) {
     if (useLegacyNumericFields) {
-      return Account.id(f.getValue(AccountField.ID).intValue());
+      return Account.id(f.<Integer>getValue(AccountField.ID_FIELD_SPEC).intValue());
     }
-    return Account.id(Integer.valueOf(f.getValue(AccountField.ID_STR)));
+    return Account.id(Integer.valueOf(f.<String>getValue(AccountField.ID_STR_FIELD_SPEC)));
   }
 
   private List<Account.Id> suggestAccounts(SuggestReviewers suggestReviewers)
@@ -256,9 +267,9 @@ public class ReviewersUtil {
       logger.atFine().log("accounts index query: %s", pred);
       accountIndexRewriter.validateMaxTermsInQuery(pred);
       boolean useLegacyNumericFields =
-          accountIndexes.getSearchIndex().getSchema().useLegacyNumericFields();
-      FieldDef<AccountState, ?> idField =
-          useLegacyNumericFields ? AccountField.ID : AccountField.ID_STR;
+          accountIndexes.getSearchIndex().getSchema().hasField(AccountField.ID_FIELD_SPEC);
+      SchemaField<AccountState, ?> idField =
+          useLegacyNumericFields ? AccountField.ID_FIELD_SPEC : AccountField.ID_STR_FIELD_SPEC;
       ResultSet<FieldBundle> result =
           accountIndexes
               .getSearchIndex()

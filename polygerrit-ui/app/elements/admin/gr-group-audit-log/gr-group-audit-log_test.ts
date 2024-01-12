@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-group-audit-log';
 import {
   addListenerForTest,
@@ -35,15 +23,34 @@ import {
   createGroupInfo,
 } from '../../../test/test-data-generators';
 import {PageErrorEvent} from '../../../types/events';
-
-const basicFixture = fixtureFromElement('gr-group-audit-log');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-group-audit-log tests', () => {
   let element: GrGroupAuditLog;
 
   setup(async () => {
-    element = basicFixture.instantiate();
-    await element.updateComplete;
+    element = await fixture(html`<gr-group-audit-log></gr-group-audit-log>`);
+  });
+
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <table class="genericList" id="list">
+          <tbody>
+            <tr class="headerRow">
+              <th class="date topHeader">Date</th>
+              <th class="topHeader type">Type</th>
+              <th class="member topHeader">Member</th>
+              <th class="by-user topHeader">By User</th>
+            </tr>
+            <tr class="loading loadingMsg" id="loading">
+              <td>Loading...</td>
+            </tr>
+          </tbody>
+        </table>
+      `
+    );
   });
 
   suite('members', () => {

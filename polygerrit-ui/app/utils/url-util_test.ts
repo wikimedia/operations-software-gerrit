@@ -1,22 +1,15 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import {AuthType, ServerInfo} from '../api/rest-api';
-import '../test/common-test-setup-karma';
+import {
+  AuthType,
+  BasePatchSetNum,
+  RevisionPatchSetNum,
+  ServerInfo,
+} from '../api/rest-api';
+import '../test/common-test-setup';
 import {
   createAuth,
   createGerritInfo,
@@ -31,10 +24,13 @@ import {
   toPath,
   toPathname,
   toSearchParams,
+  getPatchRangeExpression,
+  PatchRangeParams,
   loginUrl,
 } from './url-util';
 import {getAppContext, AppContext} from '../services/app-context';
 import {stubRestApi} from '../test/test-utils';
+import {assert} from '@open-wc/testing';
 
 suite('url-util tests', () => {
   let appContext: AppContext;
@@ -211,5 +207,23 @@ suite('url-util tests', () => {
       toPath(toPathname('asdf?qwer=zxcv'), toSearchParams('asdf?qwer=zxcv')),
       'asdf?qwer=zxcv'
     );
+  });
+
+  test('getPatchRangeExpression', () => {
+    const params: PatchRangeParams = {};
+    let actual = getPatchRangeExpression(params);
+    assert.equal(actual, '');
+
+    params.patchNum = 4 as RevisionPatchSetNum;
+    actual = getPatchRangeExpression(params);
+    assert.equal(actual, '4');
+
+    params.basePatchNum = 2 as BasePatchSetNum;
+    actual = getPatchRangeExpression(params);
+    assert.equal(actual, '2..4');
+
+    delete params.patchNum;
+    actual = getPatchRangeExpression(params);
+    assert.equal(actual, '2..');
   });
 });

@@ -28,24 +28,7 @@ to get and install Bazel.
 
 ## Installing [Node.js](https://nodejs.org/en/download/) and npm packages
 
-**Note**: Switch between an old branch with bower_components and a new branch with ui-npm
-packages (or vice versa) can lead to some build errors. To avoid such errors clean up the build
-repository:
-```sh
-rm -rf node_modules/ \
-    polygerrit-ui/node_modules/ \
-    polygerrit-ui/app/node_modules \
-    tools/node_tools/node_modules
-
-bazel clean
-```
-
-If it doesn't help also try to run
-```sh
-bazel clean --expunge
-```
-
-The minimum nodejs version supported is 8.x+
+The minimum nodejs version supported is 10.x+.
 
 ```sh
 # Debian experimental
@@ -53,7 +36,7 @@ sudo apt-get install nodejs
 sudo apt-get install npm
 
 # OS X with Homebrew
-brew install node
+brew install node@16
 brew install npm
 ```
 
@@ -66,9 +49,12 @@ or use [nvm - Node Version Manager](https://github.com/nvm-sh/nvm).
 
 We have several bazel commands to install packages we may need for FE development.
 
-For first time users to get the local server up, `npm start` should be enough and will take care of all of them for you.
+For first time users to get the local server up, `bazel build gerrit` should be enough and will take care of all of them for you.
 
 ```sh
+# Install yarn package manager
+npm install -g yarn
+
 # Install packages from root-level packages.json
 bazel fetch @npm//:node_modules
 
@@ -94,8 +80,8 @@ yarn remove @bazel/...
 
 ## Setup typescript support in the IDE
 
-Modern IDE should automatically handle typescript settings from the 
-`pollygerrit-ui/app/tsconfig.json` files. IDE places compiled files in the
+Modern IDE should automatically handle typescript settings from the
+`polygerrit-ui/app/tsconfig.json` files. IDE places compiled files in the
 `.ts-out/pg` directory at the root of gerrit workspace and you can configure IDE
 to exclude the whole .ts-out directory. To do it in the IntelliJ IDEA click on
 this directory and select "Mark Directory As > Excluded" in the context menu.
@@ -108,39 +94,22 @@ options `--project polygerrit-ui/app/tsconfig.json` in the IDE settings.
 
 ## Serving files locally
 
-#### Go server
+#### Web Dev Server
 
-To test the local Polymer frontend against production data or a local test site execute:
-
-```sh
-./polygerrit-ui/run-server.sh
-
-// or
-npm run start
-```
-
-These commands start the [simple hand-written Go webserver](https://gerrit.googlesource.com/gerrit/+/master/polygerrit-ui/server.go).
-Mostly it just switches between serving files locally and proxying the real
-server based on the file name. It also does some basic response rewriting, e.g.
-it patches the `config/server/info` response with plugin information provided on
-the command line:
+To test the local frontend against production data or a local test site execute:
 
 ```sh
-./polygerrit-ui/run-server.sh --plugins=plugins/my_plugin/static/my_plugin.js
+yarn start
 ```
+
+This command starts the [Web Dev Server](https://modern-web.dev/docs/dev-server/overview/).
+To inject plugins or other files, we use the [Gerrit FE Dev Helper](https://chrome.google.com/webstore/detail/gerrit-fe-dev-helper/jimgomcnodkialnpmienbomamgomglkd) Chrome extension.
 
 If any issues occured, please refer to the Troubleshooting section at the bottom or contact the team!
 
 ## Running locally against production data
 
-### Local website
-
-Start [Go server](#go-server) and then visit http://localhost:8081
-
-The biggest draw back of this method is that you cannot log in, so cannot test
-scenarios that require it.
-
-#### Chrome extension: Gerrit FE Dev Helper
+### Chrome extension: Gerrit FE Dev Helper
 
 To be able to bypass the auth and also help improve the productivity of Gerrit FE developers,
 we created this chrome extension: [Gerrit FE Dev Helper](https://chrome.google.com/webstore/detail/gerrit-fe-dev-helper/jimgomcnodkialnpmienbomamgomglkd).
@@ -163,7 +132,7 @@ For running a locally built Gerrit war against your test instance use
 [this command](https://gerrit-review.googlesource.com/Documentation/dev-readme.html#run_daemon).
 
 If you want to serve the Polymer frontend directly from the sources in `polygerrit_ui/app/` instead of from the war:
-1. Start [Go server](#go-server)
+1. Start [Web Dev Server](#web-dev-server)
 2. Add the `--dev-cdn` option:
 
 ```sh
@@ -182,89 +151,32 @@ $(bazel info output_base)/external/local_jdk/bin/java \
 For daily development you typically only want to run and debug individual tests.
 There are several ways to run tests.
 
-* Run all tests in headless mode (exactly like CI does):
+* Run all tests:
 ```sh
-npm run test
+yarn test
 ```
-This command uses bazel rules for running frontend tests. Bazel fetches
-all nessecary dependencies and runs all required rules.
 
-* Run all tests in debug mode (the command opens Chrome browser with
-the default Karma page; you should click the "Debug" button to start testing):
+* Run all tests under bazel:
 ```sh
-# The following command doesn't compile code before tests
-npm run test:debug
+./polygerrit-ui/app/run_test.sh
 ```
 
 * Run a single test file:
 ```
-# Headless mode (doesn't compile code before run)
-npm run test:single async-foreach-behavior_test.js
-
-# Debug mode (doesn't compile code before run)
-npm run test:debug async-foreach-behavior_test.js
+yarn test:single "**/async-foreach-behavior_test.js"
 ```
 
-When converting a test file to typescript, the command for running tests is
-still using the .js suffix and not the new .ts suffix.
-
-Commands `test:debug` and `test:single` assumes that compiled code is located
-in the `./ts-out/polygerrit-ui/app` directory. It's up to you how to achieve it.
-For example, the following options are possible:
-* You can configure IDE for recompiling source code on changes
-* You can use `compile:local` command for running compiler once and
-`compile:watch` for running compiler in watch mode (`compile:...` places
-compile code exactly in the `./ts-out/polygerrit-ui/app` directory)
-
+Compiling code:
 ```sh
-# Compile frontend once and run tests from a file:
-npm run compile:local && npm run test:single async-foreach-behavior_test.js
+# Compile frontend once to check for type errors:
+yarn compile:local
 
 # Watch mode:
 ## Terminal 1:
-npm run compile:watch
-## Terminal 2:
-npm run test:debug async-foreach-behavior_test.js
+yarn compile:watch
+## Terminal 2, test & watch a file for example:
+yarn test:single "**/async-foreach-behavior_test.js"
 ```
-
-* You can run tests in IDE. :
-  - [IntelliJ: running unit tests on Karma](https://www.jetbrains.com/help/idea/running-unit-tests-on-karma.html#ws_karma_running)
-  - You should configure IDE to compile typescript before running tests.
-
-**NOTE**: Bazel plugin for IntelliJ has a bug - it recompiles typescript
-project only if .ts and/or .d.ts files have been changed. If only .js files
-were changed, the plugin doesn't run compiler. As a workaround, setup
-"Run npm script 'compile:local" action instead of the "Compile Typescript" in
-the "Before launch" section for IntelliJ. This is a temporary problem until
-typescript migration is complete.
-
-## Running Templates Test
-The templates test validates polymer templates. The test convert polymer
-templates into a plain typescript code and then run TS compiler. The test fails
-if TS compiler reports errors; in this case you will see TS errors in
-the log/output. Gerrit-CI automatically runs templates test.
-
-**Note**: Files defined in `ignore_templates_list` (`polygerrit-ui/app/BUILD`)
-are excluded from code generation and checking. If you don't know how to fix
-a problem, you can add a problematic template in the list.
-
-* To run test locally, use npm command:
-``` sh
-npm run polytest
-```
-
-* Often, the output from the previous command is not clear (cryptic TS errors).
-In this case, run the command
-```sh
-npm run polytest:dev
-```
-This command (re)creates the `polygerrit-ui/app/tmpl_out` directory and put
-generated files into it. For each polygerrit .ts file there is a generated file
-in the `tmpl_out` directory. If an original file doesn't contain a polymer
-template, the generated file is empty.
-
-You can open a problematic file in IDE and fix the problem. Ensure, that IDE
-uses `polygerrit-ui/app/tsconfig.json` as a project (usually, this is default).
 
 ### Generated file overview
 
@@ -286,7 +198,7 @@ The converted template usually quite straightforward, but in some cases
 additional functions are added. For example, `<element x=[[y.a]]>` converts into
 `el.x = y!.a` if y is a simple type. However, if y has a union type, like - `y:A|B`,
 then the generated code looks like `el.x=__f(y)!.a` (`y!.a` may result in a TS error
-if `a` is defined only in one type of a union). 
+if `a` is defined only in one type of a union).
 
 ## Style guide
 
@@ -313,7 +225,7 @@ Some useful commands:
 * To run ESLint on the whole app, less some dependency code:
 
 ```sh
-npm run eslint
+yarn eslint
 ```
 
 * To run ESLint on just the subdirectory you modified:
@@ -328,21 +240,6 @@ node_modules/eslint/bin/eslint.js --ext .html,.js polygerrit-ui/app/$YOUR_DIR_HE
 git diff --name-only HEAD | xargs node_modules/eslint/bin/eslint.js --ext .html,.js
 ```
 
-We also use the `polylint` tool to lint use of Polymer. To install polylint,
-execute the following command.
-
-To run polylint, execute the following command.
-
-```sh
-bazel test //polygerrit-ui/app:polylint_test
-```
-
-or
-
-```sh
-npm run polylint
-```
-
 ## Migrating tests to Typescript
 
 You can use the following steps for migrating tests to Typescript:
@@ -352,7 +249,7 @@ You can use the following steps for migrating tests to Typescript:
    ```
    // Before:
    import ... from 'x/y/z.js`
- 
+
    // After
    import .. from 'x/y/z'
    ```
@@ -421,16 +318,16 @@ const rows = element
 ...
 // The _robotCommentThreads declared as _robotCommentThreads?: CommentThread
 assert.equal(element._robotCommentThreads.length, 2);
-  
+
 // Fix with non-null assertion operator:
 const rows = element
   .shadowRoot!.querySelector('table')! // '!' after shadowRoot and querySelector
   .querySelectorAll('tbody tr');
 
-assert.equal(element._robotCommentThreads!.length, 2); 
+assert.equal(element._robotCommentThreads!.length, 2);
 
 // Fix with nullish coalescing operator:
- assert.equal(element._robotCommentThreads?.length, 2); 
+ assert.equal(element._robotCommentThreads?.length, 2);
 ```
 Usually the fix with `!` is preferable, because it gives more clear error
 when an intermediate property is `null/undefined`. If the _robotComments is
@@ -527,7 +424,7 @@ handle automatically.
 
 * If a test imports a library from `polygerrit_ui/node_modules` - update
 `paths` in `polygerrit-ui/app/tsconfig_bazel_test.json`.
- 
+
 ## Contributing
 
 Our users report bugs / feature requests related to the UI through the Gerrit
@@ -558,7 +455,7 @@ To fix that, run:
 git submodule update --init --recursive
 
 // reset the workspace (please save your local changes before running this command)
-npm run clean
+yarn clean
 
 // install all dependencies and start the server
 npm start

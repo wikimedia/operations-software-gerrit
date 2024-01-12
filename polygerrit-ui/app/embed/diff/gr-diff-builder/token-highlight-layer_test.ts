@@ -1,42 +1,25 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
+import '../../../test/common-test-setup';
 import {Side, TokenHighlightEventDetails} from '../../../api/diff';
-import {GrDiffLine, GrDiffLineType} from '../gr-diff/gr-diff-line.js';
+import {GrDiffLine, GrDiffLineType} from '../gr-diff/gr-diff-line';
 import {HOVER_DELAY_MS, TokenHighlightLayer} from './token-highlight-layer';
 import {GrAnnotation} from '../gr-diff-highlight/gr-annotation';
 import {html, render} from 'lit';
 import {_testOnly_allTasks} from '../../../utils/async-util';
 import {queryAndAssert} from '../../../test/test-utils';
+import {assert} from '@open-wc/testing';
 
-// MockInteractions.makeMouseEvent always sets buttons to 1.
-function dispatchMouseEvent(
-  type: string,
-  xy: {x: number; y: number},
-  node: Element
-) {
+function dispatchMouseEvent(type: string, node: Element) {
   const props = {
     bubbles: true,
     cancellable: true,
     composed: true,
-    clientX: xy.x,
-    clientY: xy.y,
+    clientX: 100,
+    clientY: 100,
     buttons: 0,
   };
   node.dispatchEvent(new MouseEvent(type, props));
@@ -72,6 +55,7 @@ suite('token-highlight-layer', () => {
     highlightDetails?: TokenHighlightEventDetails
   ) {
     tokenHighlightingCalls.push({details: highlightDetails});
+    listener.notify({details: highlightDetails});
   }
 
   setup(async () => {
@@ -80,7 +64,6 @@ suite('token-highlight-layer', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     highlighter = new TokenHighlightLayer(container, tokenHighlightListener);
-    highlighter.addListener((...args) => listener.notify(...args));
   });
 
   teardown(() => {
@@ -143,21 +126,21 @@ suite('token-highlight-layer', () => {
         el,
         0,
         5,
-        'tk-text-these tk-index-0 token'
+        'tk-text-these tk-index-0 token '
       );
       assertAnnotation(
         annotateElementStub.args[1],
         el,
         6,
         3,
-        'tk-text-are tk-index-6 token'
+        'tk-text-are tk-index-6 token '
       );
       assertAnnotation(
         annotateElementStub.args[2],
         el,
         10,
         5,
-        'tk-text-words tk-index-10 token'
+        'tk-text-words tk-index-10 token '
       );
     });
 
@@ -201,11 +184,7 @@ suite('token-highlight-layer', () => {
       annotate(line2, Side.RIGHT, 2);
       const words1 = queryAndAssert(line1, '.tk-text-words');
       assert.isTrue(words1.classList.contains('token'));
-      dispatchMouseEvent(
-        'mouseover',
-        MockInteractions.middleOfNode(words1),
-        words1
-      );
+      dispatchMouseEvent('mouseover', words1);
 
       assert.equal(listener.pending, 0);
       assert.equal(_testOnly_allTasks.size, 1);
@@ -217,10 +196,8 @@ suite('token-highlight-layer', () => {
 
       // After a total of HOVER_DELAY_MS ms the hover behavior should trigger.
       clock.tick(HOVER_DELAY_MS - 100);
-      assert.equal(listener.pending, 2);
+      assert.equal(listener.pending, 1);
       assert.equal(_testOnly_allTasks.size, 0);
-      assert.deepEqual(listener.shift(), [1, 1, Side.LEFT]);
-      assert.deepEqual(listener.shift(), [2, 2, Side.RIGHT]);
     });
 
     test('highlighting spans many lines', async () => {
@@ -231,20 +208,20 @@ suite('token-highlight-layer', () => {
       annotate(line2, Side.RIGHT, 1000);
       const words1 = queryAndAssert(line1, '.tk-text-words');
       assert.isTrue(words1.classList.contains('token'));
-      dispatchMouseEvent(
-        'mouseover',
-        MockInteractions.middleOfNode(words1),
-        words1
-      );
+      dispatchMouseEvent('mouseover', words1);
 
       assert.equal(listener.pending, 0);
 
       // After a total of HOVER_DELAY_MS ms the hover behavior should trigger.
       clock.tick(HOVER_DELAY_MS);
-      assert.equal(listener.pending, 2);
+      assert.equal(listener.pending, 1);
       assert.equal(_testOnly_allTasks.size, 0);
-      assert.deepEqual(listener.shift(), [1, 1, Side.LEFT]);
-      assert.deepEqual(listener.shift(), [1000, 1000, Side.RIGHT]);
+      assert.deepEqual(tokenHighlightingCalls[0].details, {
+        token: 'words',
+        side: Side.RIGHT,
+        element: words1,
+        range: {start_line: 1, start_column: 5, end_line: 1, end_column: 9},
+      });
     });
 
     test('highlighting mouse out before delay', async () => {
@@ -255,19 +232,11 @@ suite('token-highlight-layer', () => {
       annotate(line2, Side.RIGHT, 2);
       const words1 = queryAndAssert(line1, '.tk-text-words');
       assert.isTrue(words1.classList.contains('token'));
-      dispatchMouseEvent(
-        'mouseover',
-        MockInteractions.middleOfNode(words1),
-        words1
-      );
+      dispatchMouseEvent('mouseover', words1);
       assert.equal(listener.pending, 0);
       clock.tick(100);
       // Mouse out after 100ms but before hover delay.
-      dispatchMouseEvent(
-        'mouseout',
-        MockInteractions.middleOfNode(words1),
-        words1
-      );
+      dispatchMouseEvent('mouseout', words1);
       assert.equal(listener.pending, 0);
       clock.tick(HOVER_DELAY_MS - 100);
       assert.equal(listener.pending, 0);
@@ -282,11 +251,7 @@ suite('token-highlight-layer', () => {
       annotate(line2, Side.RIGHT, 2);
       const words1 = queryAndAssert(line1, '.tk-text-words');
       assert.isTrue(words1.classList.contains('token'));
-      dispatchMouseEvent(
-        'mouseover',
-        MockInteractions.middleOfNode(words1),
-        words1
-      );
+      dispatchMouseEvent('mouseover', words1);
       assert.equal(tokenHighlightingCalls.length, 0);
       clock.tick(HOVER_DELAY_MS);
       assert.equal(tokenHighlightingCalls.length, 1);
@@ -296,10 +261,12 @@ suite('token-highlight-layer', () => {
         element: words1,
         range: {start_line: 1, start_column: 5, end_line: 1, end_column: 9},
       });
+      assert.isTrue(words1.classList.contains('token-highlight'));
 
-      MockInteractions.click(container);
+      container.click();
       assert.equal(tokenHighlightingCalls.length, 2);
       assert.deepEqual(tokenHighlightingCalls[1].details, undefined);
+      assert.isFalse(words1.classList.contains('token-highlight'));
     });
 
     test('triggers listener on token with single occurrence', async () => {
@@ -313,11 +280,7 @@ suite('token-highlight-layer', () => {
         '.tk-text-tokenWithSingleOccurence'
       );
       assert.isTrue(tokenNode.classList.contains('token'));
-      dispatchMouseEvent(
-        'mouseover',
-        MockInteractions.middleOfNode(tokenNode),
-        tokenNode
-      );
+      dispatchMouseEvent('mouseover', tokenNode);
       assert.equal(tokenHighlightingCalls.length, 0);
       clock.tick(HOVER_DELAY_MS);
       assert.equal(tokenHighlightingCalls.length, 1);
@@ -328,7 +291,7 @@ suite('token-highlight-layer', () => {
         range: {start_line: 1, start_column: 3, end_line: 1, end_column: 26},
       });
 
-      MockInteractions.click(container);
+      container.click();
       assert.equal(tokenHighlightingCalls.length, 2);
       assert.deepEqual(tokenHighlightingCalls[1].details, undefined);
     });
@@ -341,20 +304,16 @@ suite('token-highlight-layer', () => {
       annotate(line2, Side.RIGHT, 2);
       const words1 = queryAndAssert(line1, '.tk-text-words');
       assert.isTrue(words1.classList.contains('token'));
-      dispatchMouseEvent(
-        'mouseover',
-        MockInteractions.middleOfNode(words1),
-        words1
-      );
+      dispatchMouseEvent('mouseover', words1);
       assert.equal(listener.pending, 0);
       clock.tick(HOVER_DELAY_MS);
-      assert.equal(listener.pending, 2);
+      assert.equal(listener.pending, 1);
       listener.flush();
       assert.equal(listener.pending, 0);
-      MockInteractions.click(container);
-      assert.equal(listener.pending, 2);
-      assert.deepEqual(listener.shift(), [1, 1, Side.LEFT]);
-      assert.deepEqual(listener.shift(), [2, 2, Side.RIGHT]);
+      assert.isTrue(words1.classList.contains('token-highlight'));
+      container.click();
+      assert.equal(listener.pending, 1);
+      assert.isFalse(words1.classList.contains('token-highlight'));
     });
 
     test('clicking on word does not clear highlight', async () => {
@@ -363,20 +322,18 @@ suite('token-highlight-layer', () => {
       annotate(line1);
       const line2 = createLine('three words', 2);
       annotate(line2, Side.RIGHT, 2);
-      const words1 = queryAndAssert(line1, '.tk-text-words');
+      const words1 = queryAndAssert<HTMLDivElement>(line1, '.tk-text-words');
       assert.isTrue(words1.classList.contains('token'));
-      dispatchMouseEvent(
-        'mouseover',
-        MockInteractions.middleOfNode(words1),
-        words1
-      );
+      dispatchMouseEvent('mouseover', words1);
       assert.equal(listener.pending, 0);
       clock.tick(HOVER_DELAY_MS);
-      assert.equal(listener.pending, 2);
+      assert.equal(listener.pending, 1);
       listener.flush();
       assert.equal(listener.pending, 0);
-      MockInteractions.click(words1);
+      assert.isTrue(words1.classList.contains('token-highlight'));
+      words1.click();
       assert.equal(listener.pending, 0);
+      assert.isTrue(words1.classList.contains('token-highlight'));
     });
   });
 });

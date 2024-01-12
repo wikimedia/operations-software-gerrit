@@ -1,41 +1,27 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-repo-dashboards';
 import {GrRepoDashboards} from './gr-repo-dashboards';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {
   addListenerForTest,
   mockPromise,
   queryAndAssert,
   stubRestApi,
+  waitEventLoop,
 } from '../../../test/test-utils';
-import {DashboardId, DashboardInfo, RepoName} from '../../../types/common';
-import {PageErrorEvent} from '../../../types/events.js';
-
-const basicFixture = fixtureFromElement('gr-repo-dashboards');
+import {DashboardInfo, RepoName} from '../../../types/common';
+import {PageErrorEvent} from '../../../types/events';
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-repo-dashboards tests', () => {
   let element: GrRepoDashboards;
 
   setup(async () => {
-    element = basicFixture.instantiate();
-    await flush();
+    element = await fixture(html`<gr-repo-dashboards></gr-repo-dashboards>`);
   });
 
   suite('dashboard table', () => {
@@ -93,6 +79,29 @@ suite('gr-repo-dashboards tests', () => {
       );
     });
 
+    test('render', () => {
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `
+          <table class="genericList loading" id="list">
+            <tbody>
+              <tr class="headerRow">
+                <th class="topHeader">Dashboard name</th>
+                <th class="topHeader">Dashboard title</th>
+                <th class="topHeader">Dashboard description</th>
+                <th class="topHeader">Inherited from</th>
+                <th class="topHeader">Default</th>
+              </tr>
+              <tr id="loadingContainer">
+                <td>Loading...</td>
+              </tr>
+            </tbody>
+            <tbody id="dashboards"></tbody>
+          </table>
+        `
+      );
+    });
+
     test('loading, sections, and ordering', async () => {
       assert.isTrue(element._loading);
       assert.notEqual(
@@ -104,7 +113,7 @@ suite('gr-repo-dashboards tests', () => {
         'none'
       );
       element.repo = 'test' as RepoName;
-      await flush();
+      await waitEventLoop();
       assert.equal(
         getComputedStyle(queryAndAssert(element, '#loadingContainer')).display,
         'none'
@@ -123,24 +132,6 @@ suite('gr-repo-dashboards tests', () => {
       assert.equal(dashboards.length, 2);
       assert.equal(dashboards[0].id, 'custom:custom1');
       assert.equal(dashboards[1].id, 'custom:custom2');
-    });
-  });
-
-  suite('test url', () => {
-    test('_getUrl', () => {
-      sinon
-        .stub(GerritNav, 'getUrlForRepoDashboard')
-        .callsFake(() => '/r/p/test/+/dashboard/default:contributor');
-
-      assert.equal(
-        element._getUrl(
-          'test' as RepoName,
-          'default:contributor' as DashboardId
-        ),
-        '/r/p/test/+/dashboard/default:contributor'
-      );
-
-      assert.equal(element._getUrl(undefined, undefined), '');
     });
   });
 

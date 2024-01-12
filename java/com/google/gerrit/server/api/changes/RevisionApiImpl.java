@@ -29,6 +29,7 @@ import com.google.gerrit.extensions.api.changes.CommentApi;
 import com.google.gerrit.extensions.api.changes.DraftApi;
 import com.google.gerrit.extensions.api.changes.DraftInput;
 import com.google.gerrit.extensions.api.changes.FileApi;
+import com.google.gerrit.extensions.api.changes.GetRelatedOption;
 import com.google.gerrit.extensions.api.changes.RebaseInput;
 import com.google.gerrit.extensions.api.changes.RelatedChangesInfo;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
@@ -40,6 +41,7 @@ import com.google.gerrit.extensions.api.changes.SubmitInput;
 import com.google.gerrit.extensions.client.ArchiveFormat;
 import com.google.gerrit.extensions.client.SubmitType;
 import com.google.gerrit.extensions.common.ActionInfo;
+import com.google.gerrit.extensions.common.ApplyProvidedFixInput;
 import com.google.gerrit.extensions.common.ApprovalInfo;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.CommentInfo;
@@ -64,7 +66,8 @@ import com.google.gerrit.server.change.FileResource;
 import com.google.gerrit.server.change.RebaseUtil;
 import com.google.gerrit.server.change.RevisionResource;
 import com.google.gerrit.server.git.GitRepositoryManager;
-import com.google.gerrit.server.restapi.change.ApplyFix;
+import com.google.gerrit.server.restapi.change.ApplyProvidedFix;
+import com.google.gerrit.server.restapi.change.ApplyStoredFix;
 import com.google.gerrit.server.restapi.change.CherryPick;
 import com.google.gerrit.server.restapi.change.Comments;
 import com.google.gerrit.server.restapi.change.CreateDraftComment;
@@ -74,7 +77,6 @@ import com.google.gerrit.server.restapi.change.Fixes;
 import com.google.gerrit.server.restapi.change.GetArchive;
 import com.google.gerrit.server.restapi.change.GetCommit;
 import com.google.gerrit.server.restapi.change.GetDescription;
-import com.google.gerrit.server.restapi.change.GetFixPreview;
 import com.google.gerrit.server.restapi.change.GetMergeList;
 import com.google.gerrit.server.restapi.change.GetPatch;
 import com.google.gerrit.server.restapi.change.GetRelated;
@@ -86,6 +88,7 @@ import com.google.gerrit.server.restapi.change.ListRevisionDrafts;
 import com.google.gerrit.server.restapi.change.ListRobotComments;
 import com.google.gerrit.server.restapi.change.Mergeable;
 import com.google.gerrit.server.restapi.change.PostReview;
+import com.google.gerrit.server.restapi.change.PreviewFix;
 import com.google.gerrit.server.restapi.change.PutDescription;
 import com.google.gerrit.server.restapi.change.Rebase;
 import com.google.gerrit.server.restapi.change.Reviewed;
@@ -132,8 +135,10 @@ class RevisionApiImpl extends RevisionApi.NotImplemented {
   private final ListRobotComments listRobotComments;
   private final ListPortedComments listPortedComments;
   private final ListPortedDrafts listPortedDrafts;
-  private final ApplyFix applyFix;
-  private final GetFixPreview getFixPreview;
+  private final ApplyStoredFix applyStoredFix;
+  private final PreviewFix.Stored previewStoredFix;
+  private final ApplyProvidedFix applyProvidedFix;
+  private final PreviewFix.Provided previewProvidedFix;
   private final Fixes fixes;
   private final ListRevisionDrafts listDrafts;
   private final CreateDraftComment createDraft;
@@ -178,8 +183,10 @@ class RevisionApiImpl extends RevisionApi.NotImplemented {
       ListRobotComments listRobotComments,
       ListPortedComments listPortedComments,
       ListPortedDrafts listPortedDrafts,
-      ApplyFix applyFix,
-      GetFixPreview getFixPreview,
+      ApplyStoredFix applyStoredFix,
+      PreviewFix.Stored previewStoredFix,
+      ApplyProvidedFix applyProvidedFix,
+      PreviewFix.Provided previewProvidedFix,
       Fixes fixes,
       ListRevisionDrafts listDrafts,
       CreateDraftComment createDraft,
@@ -223,8 +230,10 @@ class RevisionApiImpl extends RevisionApi.NotImplemented {
     this.listRobotComments = listRobotComments;
     this.listPortedComments = listPortedComments;
     this.listPortedDrafts = listPortedDrafts;
-    this.applyFix = applyFix;
-    this.getFixPreview = getFixPreview;
+    this.applyStoredFix = applyStoredFix;
+    this.previewStoredFix = previewStoredFix;
+    this.applyProvidedFix = applyProvidedFix;
+    this.previewProvidedFix = previewProvidedFix;
     this.fixes = fixes;
     this.listDrafts = listDrafts;
     this.createDraft = createDraft;
@@ -477,7 +486,16 @@ class RevisionApiImpl extends RevisionApi.NotImplemented {
   @Override
   public EditInfo applyFix(String fixId) throws RestApiException {
     try {
-      return applyFix.apply(fixes.parse(revision, IdString.fromDecoded(fixId)), null).value();
+      return applyStoredFix.apply(fixes.parse(revision, IdString.fromDecoded(fixId)), null).value();
+    } catch (Exception e) {
+      throw asRestApiException("Cannot apply stored fix", e);
+    }
+  }
+
+  @Override
+  public EditInfo applyFix(ApplyProvidedFixInput applyProvidedFixInput) throws RestApiException {
+    try {
+      return applyProvidedFix.apply(revision, applyProvidedFixInput).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot apply fix", e);
     }
@@ -486,9 +504,19 @@ class RevisionApiImpl extends RevisionApi.NotImplemented {
   @Override
   public Map<String, DiffInfo> getFixPreview(String fixId) throws RestApiException {
     try {
-      return getFixPreview.apply(fixes.parse(revision, IdString.fromDecoded(fixId))).value();
+      return previewStoredFix.apply(fixes.parse(revision, IdString.fromDecoded(fixId))).value();
     } catch (Exception e) {
-      throw asRestApiException("Cannot get fix preview", e);
+      throw asRestApiException("Cannot preview stored fix", e);
+    }
+  }
+
+  @Override
+  public Map<String, DiffInfo> getFixPreview(ApplyProvidedFixInput applyProvidedFixInput)
+      throws RestApiException {
+    try {
+      return previewProvidedFix.apply(revision, applyProvidedFixInput).value();
+    } catch (Exception e) {
+      throw asRestApiException("Cannot preview provided fix", e);
     }
   }
 
@@ -615,7 +643,13 @@ class RevisionApiImpl extends RevisionApi.NotImplemented {
 
   @Override
   public RelatedChangesInfo related() throws RestApiException {
+    return related(EnumSet.noneOf(GetRelatedOption.class));
+  }
+
+  @Override
+  public RelatedChangesInfo related(EnumSet<GetRelatedOption> options) throws RestApiException {
     try {
+      options.forEach(getRelated::addOption);
       return getRelated.apply(revision).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot get related changes", e);

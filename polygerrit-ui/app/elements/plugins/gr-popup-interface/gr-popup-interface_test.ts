@@ -3,14 +3,15 @@
  * Copyright 2017 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import '../../shared/gr-js-api-interface/gr-js-api-interface';
 import {GrPopupInterface} from './gr-popup-interface';
 import {PluginApi} from '../../../api/plugin';
 import {HookApi, PluginElement} from '../../../api/hook';
-import {queryAndAssert} from '../../../test/test-utils';
+import {queryAndAssert, waitEventLoop} from '../../../test/test-utils';
 import {LitElement, html} from 'lit';
-import {customElement} from 'lit/decorators';
+import {customElement} from 'lit/decorators.js';
+import {fixture, assert} from '@open-wc/testing';
 
 @customElement('gr-user-test-popup')
 class GrUserTestPopupElement extends LitElement {
@@ -24,14 +25,12 @@ declare global {
   }
 }
 
-const containerFixture = fixtureFromElement('div');
-
 suite('gr-popup-interface tests', () => {
   let container: HTMLElement;
   let instance: GrPopupInterface;
   let plugin: PluginApi;
 
-  setup(() => {
+  setup(async () => {
     window.Gerrit.install(
       p => {
         plugin = p;
@@ -39,7 +38,7 @@ suite('gr-popup-interface tests', () => {
       '0.1',
       'http://test.com/plugins/testplugin/static/test.js'
     );
-    container = containerFixture.instantiate();
+    container = await fixture(html`<div></div>`);
     sinon.stub(plugin, 'hook').returns({
       getLastAttached() {
         return Promise.resolve(container);
@@ -60,7 +59,7 @@ suite('gr-popup-interface tests', () => {
       const popup = instance._getElement();
       assert.isOk(popup);
       popup!.appendChild(manual);
-      await flush();
+      await waitEventLoop();
       assert.equal(
         queryAndAssert(container, '#foobar').textContent,
         'manual content'

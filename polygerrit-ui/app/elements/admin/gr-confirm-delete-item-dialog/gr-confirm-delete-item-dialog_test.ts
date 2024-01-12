@@ -1,34 +1,43 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-confirm-delete-item-dialog';
 import {GrConfirmDeleteItemDialog} from './gr-confirm-delete-item-dialog';
 import {queryAndAssert} from '../../../test/test-utils';
 import {GrDialog} from '../../shared/gr-dialog/gr-dialog';
-
-const basicFixture = fixtureFromElement('gr-confirm-delete-item-dialog');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-confirm-delete-item-dialog tests', () => {
   let element: GrConfirmDeleteItemDialog;
 
   setup(async () => {
-    element = basicFixture.instantiate();
-    await flush();
+    element = await fixture(
+      html`<gr-confirm-delete-item-dialog></gr-confirm-delete-item-dialog>`
+    );
+  });
+
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <gr-dialog
+          confirm-label="Delete UNKNOWN ITEM TYPE"
+          confirm-on-enter=""
+          role="dialog"
+        >
+          <div class="header" slot="header">UNKNOWN ITEM TYPE Deletion</div>
+          <div class="main" slot="main">
+            <label for="branchInput">
+              Do you really want to delete the following UNKNOWN ITEM TYPE?
+            </label>
+            <div>UNKNOWN ITEM</div>
+          </div>
+        </gr-dialog>
+      `
+    );
   });
 
   test('_handleConfirmTap', () => {

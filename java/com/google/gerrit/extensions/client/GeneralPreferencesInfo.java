@@ -102,6 +102,7 @@ public class GeneralPreferencesInfo {
   }
 
   public enum Theme {
+    AUTO,
     DARK,
     LIGHT
   }
@@ -149,6 +150,7 @@ public class GeneralPreferencesInfo {
   public Boolean workInProgressByDefault;
   public List<MenuItem> my;
   public List<String> changeTable;
+  public Boolean allowBrowserNotifications;
 
   public DateFormat getDateFormat() {
     if (dateFormat == null) {
@@ -189,7 +191,7 @@ public class GeneralPreferencesInfo {
     GeneralPreferencesInfo p = new GeneralPreferencesInfo();
     p.changesPerPage = DEFAULT_PAGESIZE;
     p.downloadScheme = null;
-    p.theme = Theme.LIGHT;
+    p.theme = Theme.AUTO;
     p.dateFormat = DateFormat.STD;
     p.timeFormat = TimeFormat.HHMM_12;
     p.expandInlineDiffs = false;
@@ -207,6 +209,7 @@ public class GeneralPreferencesInfo {
     p.disableKeyboardShortcuts = false;
     p.disableTokenHighlighting = false;
     p.workInProgressByDefault = false;
+    p.allowBrowserNotifications = true;
     return p;
   }
 }

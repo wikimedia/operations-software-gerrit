@@ -9,14 +9,14 @@ import {PreferencesInfo, TopMenuItemInfo} from '../../../types/common';
 import {css, html, LitElement} from 'lit';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {formStyles} from '../../../styles/gr-form-styles';
-import {state, customElement} from 'lit/decorators';
+import {state, customElement} from 'lit/decorators.js';
 import {BindValueChangeEvent} from '../../../types/events';
 import {subscribe} from '../../lit/subscription-controller';
 import {getAppContext} from '../../../services/app-context';
 import {deepEqual} from '../../../utils/deep-util';
 import {createDefaultPreferences} from '../../../constants/constants';
 import {fontStyles} from '../../../styles/gr-font-styles';
-import {classMap} from 'lit/directives/class-map';
+import {classMap} from 'lit/directives/class-map.js';
 import {menuPageStyles} from '../../../styles/gr-menu-page-styles';
 
 @customElement('gr-menu-editor')
@@ -35,12 +35,16 @@ export class GrMenuEditor extends LitElement {
 
   private readonly userModel = getAppContext().userModel;
 
-  override connectedCallback() {
-    super.connectedCallback();
-    subscribe(this, this.userModel.preferences$, prefs => {
-      this.originalPrefs = prefs;
-      this.menuItems = [...prefs.my];
-    });
+  constructor() {
+    super();
+    subscribe(
+      this,
+      () => this.userModel.preferences$,
+      prefs => {
+        this.originalPrefs = prefs;
+        this.menuItems = [...prefs.my];
+      }
+    );
   }
 
   static override styles = [
@@ -227,7 +231,7 @@ export class GrMenuEditor extends LitElement {
   }
 
   private handleInputKeydown(e: KeyboardEvent) {
-    if (e.keyCode === 13) {
+    if (e.key === 'Enter') {
       e.stopPropagation();
       this.handleAddButton();
     }

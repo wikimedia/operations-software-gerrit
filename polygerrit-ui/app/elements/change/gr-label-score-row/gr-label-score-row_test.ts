@@ -1,33 +1,21 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-label-score-row';
 import {GrLabelScoreRow} from './gr-label-score-row';
 import {AccountId} from '../../../api/rest-api';
 import {GrButton} from '../../shared/gr-button/gr-button';
-
-const basicFixture = fixtureFromElement('gr-label-score-row');
+import {fixture, html, assert} from '@open-wc/testing';
+import {waitEventLoop} from '../../../test/test-utils';
 
 suite('gr-label-row-score tests', () => {
   let element: GrLabelScoreRow;
 
   setup(async () => {
-    element = basicFixture.instantiate();
+    element = await fixture(html`<gr-label-score-row></gr-label-score-row>`);
     element.labels = {
       'Code-Review': {
         values: {
@@ -79,7 +67,7 @@ suite('gr-label-row-score tests', () => {
     };
 
     await element.updateComplete;
-    await flush();
+    await waitEventLoop();
   });
 
   function checkAriaCheckedValid() {
@@ -117,6 +105,17 @@ suite('gr-label-row-score tests', () => {
     assert.equal(detail.name, 'Verified');
     assert.equal(detail.value, '-1');
     checkAriaCheckedValid();
+  });
+
+  test('Reset Vote title', () => {
+    // User already voted +1 so we show reset vote
+    assert.equal(element.computeLabelValueTitle('0'), 'Reset Vote');
+    element.label = {
+      name: 'Verified',
+      value: '0',
+    };
+    // User voted 0 and selected 0 hence no score
+    assert.equal(element.computeLabelValueTitle('0'), 'No score');
   });
 
   test('_computeVoteAttribute', () => {
@@ -227,14 +226,14 @@ suite('gr-label-row-score tests', () => {
     element.label = {name: 'Verified', value: ' 0'};
     await element.updateComplete;
     // Wait for @selected-item-changed to fire
-    await flush();
+    await waitEventLoop();
 
     const selector = element.labelSelector;
     assert.strictEqual(selector!.selected, ' 0');
     const selectedValueLabel = element.shadowRoot!.querySelector(
       '#selectedValueLabel'
     );
-    assert.strictEqual(selectedValueLabel!.textContent!.trim(), 'No score');
+    assert.strictEqual(selectedValueLabel!.textContent!.trim(), 'Reset Vote');
     checkAriaCheckedValid();
   });
 
@@ -312,73 +311,81 @@ suite('gr-label-row-score tests', () => {
   });
 
   test('shadowDom test', () => {
-    expect(element).shadowDom.to.equal(/* HTML */ `
-      <span class="labelNameCell" id="labelName" aria-hidden="true">
-        Verified
-      </span>
-      <div class="buttonsCell">
-        <span class="placeholder" data-label="Verified"></span>
-        <iron-selector
-          aria-labelledby="labelName"
-          id="labelSelector"
-          role="radiogroup"
-          selected="+1"
-        >
-          <gr-button
-            aria-disabled="false"
-            aria-label="-1"
-            data-name="Verified"
-            data-value="-1"
-            role="radio"
-            tabindex="0"
-            title="bad"
-            data-vote="min"
-            votechip=""
-            flatten=""
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <span class="labelNameCell" id="labelName" aria-hidden="true">
+          Verified
+        </span>
+        <div class="buttonsCell">
+          <span class="placeholder" data-label="Verified"></span>
+          <iron-selector
+            aria-labelledby="labelName"
+            id="labelSelector"
+            role="radiogroup"
+            selected="+1"
           >
-            <gr-tooltip-content light-tooltip="" has-tooltip="" title="bad">
-              -1
-            </gr-tooltip-content>
-          </gr-button>
-          <gr-button
-            aria-disabled="false"
-            aria-label=" 0"
-            data-name="Verified"
-            data-value=" 0"
-            role="radio"
-            tabindex="0"
-            data-vote="neutral"
-            votechip=""
-            flatten=""
-          >
-            <gr-tooltip-content light-tooltip="" has-tooltip="">
-              0
-            </gr-tooltip-content>
-          </gr-button>
-          <gr-button
-            aria-checked="true"
-            aria-disabled="false"
-            aria-label="+1"
-            class="iron-selected"
-            data-name="Verified"
-            data-value="+1"
-            role="radio"
-            tabindex="0"
-            title="good"
-            data-vote="max"
-            votechip=""
-            flatten=""
-          >
-            <gr-tooltip-content light-tooltip="" has-tooltip="" title="good">
-              +1
-            </gr-tooltip-content>
-          </gr-button>
-        </iron-selector>
-        <span class="placeholder" data-label="Verified"></span>
-      </div>
-      <div class="selectedValueCell ">
-        <span id="selectedValueLabel">good</span>
-      </div>
-    `);
+            <gr-button
+              aria-disabled="false"
+              aria-label="-1"
+              data-name="Verified"
+              data-value="-1"
+              role="button"
+              tabindex="0"
+              title="bad"
+              data-vote="min"
+              votechip=""
+              flatten=""
+            >
+              <gr-tooltip-content light-tooltip="" has-tooltip="" title="bad">
+                -1
+              </gr-tooltip-content>
+            </gr-button>
+            <gr-button
+              aria-disabled="false"
+              aria-label=" 0"
+              data-name="Verified"
+              data-value=" 0"
+              role="button"
+              tabindex="0"
+              data-vote="neutral"
+              title="Reset Vote"
+              votechip=""
+              flatten=""
+            >
+              <gr-tooltip-content
+                light-tooltip=""
+                title="Reset Vote"
+                has-tooltip=""
+              >
+                0
+              </gr-tooltip-content>
+            </gr-button>
+            <gr-button
+              aria-checked="true"
+              aria-disabled="false"
+              aria-label="+1"
+              class="iron-selected"
+              data-name="Verified"
+              data-value="+1"
+              role="button"
+              tabindex="0"
+              title="good"
+              data-vote="max"
+              votechip=""
+              flatten=""
+            >
+              <gr-tooltip-content light-tooltip="" has-tooltip="" title="good">
+                +1
+              </gr-tooltip-content>
+            </gr-button>
+          </iron-selector>
+          <span class="placeholder" data-label="Verified"></span>
+        </div>
+        <div class="selectedValueCell ">
+          <span id="selectedValueLabel">good</span>
+        </div>
+      `
+    );
   });
 });

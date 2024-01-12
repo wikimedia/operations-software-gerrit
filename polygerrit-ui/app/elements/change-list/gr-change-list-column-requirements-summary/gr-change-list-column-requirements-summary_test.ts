@@ -1,22 +1,10 @@
 /**
  * @license
- * Copyright (C) 2022 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2022 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
-import {fixture} from '@open-wc/testing-helpers';
+import '../../../test/common-test-setup';
+import {fixture, assert} from '@open-wc/testing';
 import {html} from 'lit';
 import './gr-change-list-column-requirements-summary';
 import {GrChangeListColumnRequirementsSummary} from './gr-change-list-column-requirements-summary';
@@ -69,19 +57,15 @@ suite('gr-change-list-column-requirements-summary tests', () => {
       html`<gr-change-list-column-requirements-summary .change=${change}>
       </gr-change-list-column-requirements-summary>`
     );
-    expect(element).shadowDom.to.equal(/* HTML */ ` <span
-      class="block"
-      role="button"
-      tabindex="0"
-    >
-      <gr-submit-requirement-dashboard-hovercard>
-      </gr-submit-requirement-dashboard-hovercard>
-      <iron-icon class="block" icon="gr-icons:block" role="img"></iron-icon>
-      <span>
-        <span class="unsatisfied">1</span>
-        <span class="total">(of 1)</span>
-      </span>
-    </span>`);
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ ` <span class="block" role="button" tabindex="0">
+        <gr-submit-requirement-dashboard-hovercard>
+        </gr-submit-requirement-dashboard-hovercard>
+        <gr-icon class="block" role="img" icon="block"></gr-icon>
+        <span class="unsatisfied">1 missing</span>
+      </span>`
+    );
   });
 
   test('renders comment count', async () => {
@@ -93,23 +77,21 @@ suite('gr-change-list-column-requirements-summary tests', () => {
       html`<gr-change-list-column-requirements-summary .change=${change}>
       </gr-change-list-column-requirements-summary>`
     );
-    expect(element).shadowDom.to.equal(/* HTML */ ` <span
-        class="block"
-        role="button"
-        tabindex="0"
-      >
-        <gr-submit-requirement-dashboard-hovercard>
-        </gr-submit-requirement-dashboard-hovercard>
-        <iron-icon class="block" icon="gr-icons:block" role="img"></iron-icon>
-        <span>
-          <span class="unsatisfied">1</span>
-          <span class="total">(of 1)</span>
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ ` <span class="block" role="button" tabindex="0">
+          <gr-submit-requirement-dashboard-hovercard>
+          </gr-submit-requirement-dashboard-hovercard>
+          <gr-icon class="block" role="img" icon="block"></gr-icon>
+          <span class="unsatisfied">1 missing</span>
         </span>
-      </span>
-      <iron-icon
-        class="commentIcon"
-        icon="gr-icons:comment"
-        title="5 unresolved comments"
-      ></iron-icon>`);
+        <gr-icon
+          class="commentIcon"
+          small
+          filled
+          icon="chat_bubble"
+          title="5 unresolved comments"
+        ></gr-icon>`
+    );
   });
 });

@@ -1,23 +1,13 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import '../../test/common-test-setup-karma';
+import '../../test/common-test-setup';
 import './checks-model';
 import {ChecksModel, ChecksPatchset, ChecksProviderState} from './checks-model';
 import {
+  Action,
   Category,
   CheckRun,
   ChecksApiConfig,
@@ -30,6 +20,10 @@ import {createParsedChange} from '../../test/test-data-generators';
 import {waitUntil, waitUntilCalled} from '../../test/test-utils';
 import {ParsedChangeInfo} from '../../types/types';
 import {changeModelToken} from '../change/change-model';
+import {assert} from '@open-wc/testing';
+import {testResolver} from '../../test/common-test-setup';
+import {changeViewModelToken} from '../views/change';
+import {NumericChangeId, PatchSetNumber} from '../../api/rest-api';
 
 const PLUGIN_NAME = 'test-plugin';
 
@@ -50,8 +44,12 @@ const RUNS: CheckRun[] = [
   },
 ];
 
-const CONFIG: ChecksApiConfig = {
-  fetchPollingIntervalSeconds: 1000,
+const CONFIG_POLLING_5S: ChecksApiConfig = {
+  fetchPollingIntervalSeconds: 5,
+};
+
+const CONFIG_POLLING_NONE: ChecksApiConfig = {
+  fetchPollingIntervalSeconds: 0,
 };
 
 function createProvider(): ChecksProvider {
@@ -72,6 +70,7 @@ suite('checks-model tests', () => {
   setup(() => {
     model = new ChecksModel(
       getAppContext().routerModel,
+      testResolver(changeViewModelToken),
       testResolver(changeModelToken),
       getAppContext().reportingService,
       getAppContext().pluginsModel
@@ -89,13 +88,67 @@ suite('checks-model tests', () => {
     const provider = createProvider();
     const fetchSpy = sinon.spy(provider, 'fetch');
 
-    model.register({pluginName: 'test-plugin', provider, config: CONFIG});
+    model.register({
+      pluginName: 'test-plugin',
+      provider,
+      config: CONFIG_POLLING_NONE,
+    });
     await waitUntil(() => change === undefined);
 
     const testChange = createParsedChange();
     model.changeModel.updateStateChange(testChange);
     await waitUntil(() => change === testChange);
     await waitUntilCalled(fetchSpy, 'fetch');
+
+    assert.equal(
+      model.latestPatchNum,
+      testChange.revisions[testChange.current_revision]
+        ._number as PatchSetNumber
+    );
+    assert.equal(model.changeNum, testChange._number);
+  });
+
+  test('reload throttle', async () => {
+    const clock = sinon.useFakeTimers();
+    let change: ParsedChangeInfo | undefined = undefined;
+    model.changeModel.change$.subscribe(c => (change = c));
+    const provider = createProvider();
+    const fetchSpy = sinon.spy(provider, 'fetch');
+
+    model.register({
+      pluginName: 'test-plugin',
+      provider,
+      config: CONFIG_POLLING_NONE,
+    });
+    await waitUntil(() => change === undefined);
+
+    const testChange = createParsedChange();
+    model.changeModel.updateStateChange(testChange);
+    await waitUntil(() => change === testChange);
+    clock.tick(1);
+    assert.equal(fetchSpy.callCount, 1);
+
+    // The second reload call will be processed, but only after a 1s throttle.
+    model.reload('test-plugin');
+    clock.tick(100);
+    assert.equal(fetchSpy.callCount, 1);
+    // 2000 ms is greater than the 1000 ms throttle time.
+    clock.tick(2000);
+    assert.equal(fetchSpy.callCount, 2);
+  });
+
+  test('triggerAction', async () => {
+    model.changeNum = 314 as NumericChangeId;
+    model.latestPatchNum = 13 as PatchSetNumber;
+    const action: Action = {
+      name: 'test action',
+      callback: () => undefined,
+    };
+    const spy = sinon.spy(action, 'callback');
+    model.triggerAction(action, undefined, 'none');
+    assert.isTrue(spy.calledOnce);
+    assert.equal(spy.lastCall.args[0], 314);
+    assert.equal(spy.lastCall.args[1], 13);
   });
 
   test('model.updateStateSetProvider', () => {
@@ -156,6 +209,35 @@ suite('checks-model tests', () => {
     assert.lengthOf(current.runs[0].results!, 1);
   });
 
+  test('model.updateStateSetResults ignore empty name or status', () => {
+    model.updateStateSetProvider(PLUGIN_NAME, ChecksPatchset.LATEST);
+    model.updateStateSetResults(
+      PLUGIN_NAME,
+      [
+        {
+          checkName: 'test-check-name',
+          status: RunStatus.COMPLETED,
+        },
+        // Will be ignored, because the checkName is empty.
+        {
+          checkName: undefined as unknown as string,
+          status: RunStatus.COMPLETED,
+        },
+        // Will be ignored, because the status is empty.
+        {
+          checkName: 'test-check-name',
+          status: undefined as unknown as RunStatus,
+        },
+      ],
+      [],
+      [],
+      undefined,
+      ChecksPatchset.LATEST
+    );
+    // 2 out of 3 runs are ignored.
+    assert.lengthOf(current.runs, 1);
+  });
+
   test('model.updateStateUpdateResult', () => {
     model.updateStateSetProvider(PLUGIN_NAME, ChecksPatchset.LATEST);
     model.updateStateSetResults(
@@ -181,5 +263,59 @@ suite('checks-model tests', () => {
     assert.lengthOf(current.runs, 1);
     assert.lengthOf(current.runs[0].results!, 1);
     assert.equal(current.runs[0].results![0].summary, 'new');
+  });
+
+  test('polls for changes', async () => {
+    const clock = sinon.useFakeTimers();
+    let change: ParsedChangeInfo | undefined = undefined;
+    model.changeModel.change$.subscribe(c => (change = c));
+    const provider = createProvider();
+    const fetchSpy = sinon.spy(provider, 'fetch');
+
+    model.register({
+      pluginName: 'test-plugin',
+      provider,
+      config: CONFIG_POLLING_5S,
+    });
+    await waitUntil(() => change === undefined);
+    clock.tick(1);
+    const testChange = createParsedChange();
+    model.changeModel.updateStateChange(testChange);
+    await waitUntil(() => change === testChange);
+    await waitUntilCalled(fetchSpy, 'fetch');
+    clock.tick(1);
+    const pollCount = fetchSpy.callCount;
+
+    // polling should continue while we wait
+    clock.tick(CONFIG_POLLING_5S.fetchPollingIntervalSeconds * 1000 * 2);
+
+    assert.isTrue(fetchSpy.callCount > pollCount);
+  });
+
+  test('does not poll when config specifies 0 seconds', async () => {
+    const clock = sinon.useFakeTimers();
+    let change: ParsedChangeInfo | undefined = undefined;
+    model.changeModel.change$.subscribe(c => (change = c));
+    const provider = createProvider();
+    const fetchSpy = sinon.spy(provider, 'fetch');
+
+    model.register({
+      pluginName: 'test-plugin',
+      provider,
+      config: CONFIG_POLLING_NONE,
+    });
+    await waitUntil(() => change === undefined);
+    clock.tick(1);
+    const testChange = createParsedChange();
+    model.changeModel.updateStateChange(testChange);
+    await waitUntil(() => change === testChange);
+    await waitUntilCalled(fetchSpy, 'fetch');
+    clock.tick(1);
+    const pollCount = fetchSpy.callCount;
+
+    // polling should not happen
+    clock.tick(60 * 1000);
+
+    assert.equal(fetchSpy.callCount, pollCount);
   });
 });

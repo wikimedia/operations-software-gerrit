@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-confirm-cherrypick-dialog';
 import {queryAll, queryAndAssert, stubRestApi} from '../../../test/test-utils';
 import {GrConfirmCherrypickDialog} from './gr-confirm-cherrypick-dialog';
@@ -33,10 +21,9 @@ import {
   TopicName,
 } from '../../../api/rest-api';
 import {createChange, createRevision} from '../../../test/test-data-generators';
-import {GrDialog} from '../../shared/gr-dialog/gr-dialog.js';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
+import {GrDialog} from '../../shared/gr-dialog/gr-dialog';
 import {ProgressStatus} from '../../../constants/constants';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
 
 const CHERRY_PICK_TYPES = {
   SINGLE_CHANGE: 1,
@@ -63,6 +50,52 @@ suite('gr-confirm-cherrypick-dialog tests', () => {
       html`<gr-confirm-cherrypick-dialog></gr-confirm-cherrypick-dialog>`
     );
     element.project = 'test-project' as RepoName;
+  });
+
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <gr-dialog confirm-label="Cherry Pick" disabled="" role="dialog">
+          <div class="header title" slot="header">
+            Cherry Pick Change to Another Branch
+          </div>
+          <div class="main" slot="main">
+            <gr-endpoint-decorator name="cherrypick-main">
+              <gr-endpoint-param name="changes"> </gr-endpoint-param>
+              <gr-endpoint-slot name="top"> </gr-endpoint-slot>
+              <label for="branchInput"> Cherry Pick to branch </label>
+              <gr-autocomplete
+                id="branchInput"
+                placeholder="Destination branch"
+              >
+              </gr-autocomplete>
+              <label for="baseInput">
+                Provide base commit sha1 for cherry-pick
+              </label>
+              <iron-input>
+                <input
+                  id="baseCommitInput"
+                  is="iron-input"
+                  maxlength="40"
+                  placeholder="(optional)"
+                />
+              </iron-input>
+              <label for="messageInput"> Cherry Pick Commit Message </label>
+              <iron-autogrow-textarea
+                aria-disabled="false"
+                autocomplete="on"
+                class="message"
+                id="messageInput"
+                rows="4"
+              >
+              </iron-autogrow-textarea>
+              <gr-endpoint-slot name="bottom"></gr-endpoint-slot>
+            </gr-endpoint-decorator>
+          </div>
+        </gr-dialog>
+      `
+    );
   });
 
   test('with message missing newline', async () => {
@@ -183,7 +216,7 @@ suite('gr-confirm-cherrypick-dialog tests', () => {
       );
       assert.equal(checkboxes.length, 2);
       assert.isTrue(checkboxes[0].checked);
-      MockInteractions.tap(checkboxes[0]);
+      checkboxes[0].click();
       queryAndAssert<GrDialog>(element, 'gr-dialog').confirmButton!.click();
       await element.updateComplete;
       assert.equal(executeChangeActionStub.callCount, 1);
@@ -201,11 +234,9 @@ suite('gr-confirm-cherrypick-dialog tests', () => {
         'input[type="checkbox"]'
       );
       assert.equal(checkboxes.length, 2);
-      MockInteractions.tap(checkboxes[0]);
-      MockInteractions.tap(checkboxes[1]);
-      MockInteractions.tap(
-        queryAndAssert<GrDialog>(element, 'gr-dialog').confirmButton!
-      );
+      checkboxes[0].click();
+      checkboxes[1].click();
+      queryAndAssert<GrDialog>(element, 'gr-dialog').confirmButton!.click();
       await element.updateComplete;
       assert.equal(executeChangeActionStub.callCount, 0);
       assert.equal(

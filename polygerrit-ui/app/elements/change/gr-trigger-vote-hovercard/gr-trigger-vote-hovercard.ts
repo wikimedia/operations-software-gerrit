@@ -1,20 +1,10 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-import {customElement, property} from 'lit/decorators';
+import '../../shared/gr-icon/gr-icon';
+import {customElement, property} from 'lit/decorators.js';
 import {css, html, LitElement} from 'lit';
 import {HovercardMixin} from '../../../mixins/hovercard-mixin/hovercard-mixin';
 import {fontStyles} from '../../../styles/gr-font-styles';
@@ -56,10 +46,9 @@ export class GrTriggerVoteHovercard extends base {
         div.sectionIcon {
           flex: 0 0 30px;
         }
-        div.sectionIcon iron-icon {
+        div.sectionIcon gr-icon {
           position: relative;
-          width: 20px;
-          height: 20px;
+          font-size: 20px;
         }
       `,
     ];
@@ -76,7 +65,7 @@ export class GrTriggerVoteHovercard extends base {
       </div>
       <div class="section">
         <div class="sectionIcon">
-          <iron-icon class="small" icon="gr-icons:info-outline"></iron-icon>
+          <gr-icon icon="info" class="small"></gr-icon></span>
         </div>
         <div class="sectionContent">
           <div class="row">
@@ -96,9 +85,14 @@ export class GrTriggerVoteHovercard extends base {
     if (!description) return;
     return html`<div class="section description">
       <div class="sectionIcon">
-        <iron-icon icon="gr-icons:description"></iron-icon>
+        <gr-icon icon="description"></gr-icon>
       </div>
-      <div class="sectionContent">${description}</div>
+      <div class="sectionContent">
+        <gr-formatted-text
+          .markdown=${true}
+          .content=${description}
+        ></gr-formatted-text>
+      </div>
     </div>`;
   }
 }

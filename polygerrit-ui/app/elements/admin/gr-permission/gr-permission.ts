@@ -1,20 +1,8 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import '@polymer/paper-toggle-button/paper-toggle-button';
 import '../../shared/gr-autocomplete/gr-autocomplete';
 import '../../shared/gr-button/gr-button';
@@ -26,7 +14,7 @@ import {
   PermissionArray,
   AccessPermissionId,
 } from '../../../utils/access-util';
-import {customElement, property, query, state} from 'lit/decorators';
+import {customElement, property, query, state} from 'lit/decorators.js';
 import {
   LabelNameToLabelTypeInfoMap,
   LabelTypeInfoValues,
@@ -51,7 +39,7 @@ import {sharedStyles} from '../../../styles/shared-styles';
 import {paperStyles} from '../../../styles/gr-paper-styles';
 import {formStyles} from '../../../styles/gr-form-styles';
 import {menuPageStyles} from '../../../styles/gr-menu-page-styles';
-import {when} from 'lit/directives/when';
+import {when} from 'lit/directives/when.js';
 import {ValueChangedEvent} from '../../../types/events';
 
 const MAX_AUTOCOMPLETE_RESULTS = 20;

@@ -1,34 +1,28 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-edit-controls';
 import {GrEditControls} from './gr-edit-controls';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {queryAll, stubRestApi, waitUntil} from '../../../test/test-utils';
 import {createChange, createRevision} from '../../../test/test-data-generators';
 import {GrAutocomplete} from '../../shared/gr-autocomplete/gr-autocomplete';
-import {CommitId, NumericChangeId, PatchSetNum} from '../../../types/common';
+import {
+  CommitId,
+  NumericChangeId,
+  PatchSetNumber,
+  RevisionPatchSetNum,
+} from '../../../types/common';
 import {RepoName} from '../../../api/rest-api';
 import {queryAndAssert} from '../../../test/test-utils';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import '../../shared/gr-dialog/gr-dialog';
+import {waitForEventOnce} from '../../../utils/event-util';
+import {testResolver} from '../../../test/common-test-setup';
 
 suite('gr-edit-controls tests', () => {
   let element: GrEditControls;
@@ -43,12 +37,152 @@ suite('gr-edit-controls tests', () => {
       <gr-edit-controls></gr-edit-controls>
     `);
     element.change = createChange();
-    element.patchNum = 1 as PatchSetNum;
+    element.patchNum = 1 as RevisionPatchSetNum;
     showDialogSpy = sinon.spy(element, 'showDialog');
     closeDialogSpy = sinon.spy(element, 'closeDialog');
     hideDialogStub = sinon.stub(element, 'hideAllDialogs');
     queryStub = stubRestApi('queryChangeFiles').returns(Promise.resolve([]));
     await element.updateComplete;
+  });
+
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <gr-button
+          aria-disabled="false"
+          id="open"
+          link=""
+          role="button"
+          tabindex="0"
+        >
+          Add/Open/Upload
+        </gr-button>
+        <gr-button
+          aria-disabled="false"
+          id="delete"
+          link=""
+          role="button"
+          tabindex="0"
+        >
+          Delete
+        </gr-button>
+        <gr-button
+          aria-disabled="false"
+          id="rename"
+          link=""
+          role="button"
+          tabindex="0"
+        >
+          Rename
+        </gr-button>
+        <gr-button
+          aria-disabled="false"
+          class="invisible"
+          id="restore"
+          link=""
+          role="button"
+          tabindex="0"
+        >
+          Restore
+        </gr-button>
+        <gr-overlay
+          aria-hidden="true"
+          id="overlay"
+          style="outline: none; display: none;"
+          tabindex="-1"
+          with-backdrop=""
+        >
+          <gr-dialog
+            class="dialog invisible"
+            confirm-label="Confirm"
+            confirm-on-enter=""
+            disabled=""
+            id="openDialog"
+            role="dialog"
+          >
+            <div class="header" slot="header">
+              Add a new file or open an existing file
+            </div>
+            <div class="main" slot="main">
+              <gr-autocomplete
+                placeholder="Enter an existing or new full file path."
+              >
+              </gr-autocomplete>
+              <div contenteditable="true" id="dragDropArea">
+                <p>Drag and drop a file here</p>
+                <p>or</p>
+                <p>
+                  <iron-input>
+                    <input
+                      hidden=""
+                      id="fileUploadInput"
+                      multiple=""
+                      type="file"
+                    />
+                  </iron-input>
+                  <label for="fileUploadInput">
+                    <gr-button
+                      aria-disabled="false"
+                      id="fileUploadBrowse"
+                      role="button"
+                      tabindex="0"
+                    >
+                      Browse
+                    </gr-button>
+                  </label>
+                </p>
+              </div>
+            </div>
+          </gr-dialog>
+          <gr-dialog
+            class="dialog invisible"
+            confirm-label="Delete"
+            confirm-on-enter=""
+            disabled=""
+            id="deleteDialog"
+            role="dialog"
+          >
+            <div class="header" slot="header">Delete a file from the repo</div>
+            <div class="main" slot="main">
+              <gr-autocomplete placeholder="Enter an existing full file path.">
+              </gr-autocomplete>
+            </div>
+          </gr-dialog>
+          <gr-dialog
+            class="dialog invisible"
+            confirm-label="Rename"
+            confirm-on-enter=""
+            disabled=""
+            id="renameDialog"
+            role="dialog"
+          >
+            <div class="header" slot="header">Rename a file in the repo</div>
+            <div class="main" slot="main">
+              <gr-autocomplete placeholder="Enter an existing full file path.">
+              </gr-autocomplete>
+              <iron-input id="newPathIronInput">
+                <input id="newPathInput" placeholder="Enter the new path." />
+              </iron-input>
+            </div>
+          </gr-dialog>
+          <gr-dialog
+            class="dialog invisible"
+            confirm-label="Restore"
+            confirm-on-enter=""
+            id="restoreDialog"
+            role="dialog"
+          >
+            <div class="header" slot="header">Restore this file?</div>
+            <div class="main" slot="main">
+              <iron-input>
+                <input />
+              </iron-input>
+            </div>
+          </gr-dialog>
+        </gr-overlay>
+      `
+    );
   });
 
   test('all actions exist', () => {
@@ -61,13 +195,11 @@ suite('gr-edit-controls tests', () => {
   });
 
   suite('edit button CUJ', () => {
-    let editDiffStub: sinon.SinonStub;
-    let navStub: sinon.SinonStub;
+    let setUrlStub: sinon.SinonStub;
     let openAutoComplete: GrAutocomplete;
 
     setup(() => {
-      editDiffStub = sinon.stub(GerritNav, 'getEditUrlForDiff');
-      navStub = sinon.stub(GerritNav, 'navigateToRelativeUrl');
+      setUrlStub = sinon.stub(testResolver(navigationToken), 'setUrl');
       openAutoComplete = queryAndAssert<GrAutocomplete>(
         element.openDialog,
         'gr-autocomplete'
@@ -84,14 +216,14 @@ suite('gr-edit-controls tests', () => {
 
     test('open', async () => {
       assert.isFalse(hideDialogStub.called);
-      MockInteractions.tap(queryAndAssert(element, '#open'));
-      element.patchNum = 1 as PatchSetNum;
+      queryAndAssert<GrButton>(element, '#open').click();
+      element.patchNum = 1 as RevisionPatchSetNum;
       await showDialogSpy.lastCall.returnValue;
       assert.isTrue(hideDialogStub.called);
       assert.isTrue(element.openDialog!.disabled);
       assert.isFalse(queryStub.called);
-      // Setup focused manually - in headless mode Chrome sometimes don't
-      // setup focus. flush and/or flushAsynchronousOperations don't help
+      // Setup focused manually - in headless mode Chrome sometimes doesn't
+      // setup focus. waitEventLoop() doesn't help.
       openAutoComplete.focused = true;
       openAutoComplete.noDebounce = true;
       openAutoComplete.text = 'src/test.cpp';
@@ -102,30 +234,21 @@ suite('gr-edit-controls tests', () => {
         element.openDialog,
         'gr-button[primary]'
       ).click();
-      await waitUntil(() => editDiffStub.called);
 
-      assert.isTrue(navStub.called);
-      assert.deepEqual(editDiffStub.lastCall.args, [
-        element.change,
-        'src/test.cpp',
-        element.patchNum,
-      ]);
+      assert.isTrue(setUrlStub.called);
       assert.isTrue(closeDialogSpy.called);
     });
 
     test('cancel', async () => {
-      MockInteractions.tap(queryAndAssert(element, '#open'));
+      queryAndAssert<GrButton>(element, '#open').click();
       return showDialogSpy.lastCall.returnValue.then(async () => {
         assert.isTrue(element.openDialog!.disabled);
         openAutoComplete.noDebounce = true;
         openAutoComplete.text = 'src/test.cpp';
         await element.updateComplete;
         await waitUntil(() => !element.openDialog!.disabled);
-        MockInteractions.tap(
-          queryAndAssert<GrButton>(element.openDialog, 'gr-button')
-        );
-        assert.isFalse(editDiffStub.called);
-        assert.isFalse(navStub.called);
+        queryAndAssert<GrButton>(element.openDialog, 'gr-button').click();
+        assert.isFalse(setUrlStub.called);
         await waitUntil(() => closeDialogSpy.called);
         assert.equal(element.path, '');
       });
@@ -149,21 +272,22 @@ suite('gr-edit-controls tests', () => {
 
     test('delete', async () => {
       deleteStub.returns(Promise.resolve({ok: true}));
-      MockInteractions.tap(queryAndAssert(element, '#delete'));
+      queryAndAssert<GrButton>(element, '#delete').click();
       await showDialogSpy.lastCall.returnValue;
       assert.isTrue(element.deleteDialog!.disabled);
       assert.isFalse(queryStub.called);
-      // Setup focused manually - in headless mode Chrome sometimes don't
-      // setup focus. flush and/or flushAsynchronousOperations don't help
+      // Setup focused manually - in headless mode Chrome sometimes doesn't
+      // setup focus. waitEventLoop() doesn't help.
       deleteAutocomplete.focused = true;
       deleteAutocomplete.noDebounce = true;
       deleteAutocomplete.text = 'src/test.cpp';
       await element.updateComplete;
       assert.isTrue(queryStub.called);
       await waitUntil(() => !element.deleteDialog!.disabled);
-      MockInteractions.tap(
-        queryAndAssert(element.deleteDialog, 'gr-button[primary]')
-      );
+      queryAndAssert<GrButton>(
+        element.deleteDialog,
+        'gr-button[primary]'
+      ).click();
       await element.updateComplete;
 
       assert.isTrue(deleteStub.called);
@@ -175,21 +299,22 @@ suite('gr-edit-controls tests', () => {
 
     test('delete fails', async () => {
       deleteStub.returns(Promise.resolve({ok: false}));
-      MockInteractions.tap(queryAndAssert(element, '#delete'));
+      queryAndAssert<GrButton>(element, '#delete').click();
       await showDialogSpy.lastCall.returnValue;
       assert.isTrue(element.deleteDialog!.disabled);
       assert.isFalse(queryStub.called);
-      // Setup focused manually - in headless mode Chrome sometimes don't
-      // setup focus. flush and/or flushAsynchronousOperations don't help
+      // Setup focused manually - in headless mode Chrome sometimes doesn't
+      // setup focus. waitEventLoop() doesn't help.
       deleteAutocomplete.focused = true;
       deleteAutocomplete.noDebounce = true;
       deleteAutocomplete.text = 'src/test.cpp';
       await element.updateComplete;
       assert.isTrue(queryStub.called);
       await waitUntil(() => !element.deleteDialog!.disabled);
-      MockInteractions.tap(
-        queryAndAssert(element.deleteDialog, 'gr-button[primary]')
-      );
+      queryAndAssert<GrButton>(
+        element.deleteDialog,
+        'gr-button[primary]'
+      ).click();
       await element.updateComplete;
 
       assert.isTrue(deleteStub.called);
@@ -200,7 +325,7 @@ suite('gr-edit-controls tests', () => {
     });
 
     test('cancel', () => {
-      MockInteractions.tap(queryAndAssert(element, '#delete'));
+      queryAndAssert<GrButton>(element, '#delete').click();
       return showDialogSpy.lastCall.returnValue.then(async () => {
         assert.isTrue(element.deleteDialog!.disabled);
         queryAndAssert<GrAutocomplete>(
@@ -209,7 +334,7 @@ suite('gr-edit-controls tests', () => {
         ).text = 'src/test.cpp';
         await element.updateComplete;
         await waitUntil(() => !element.deleteDialog!.disabled);
-        MockInteractions.tap(queryAndAssert(element.deleteDialog, 'gr-button'));
+        queryAndAssert<GrButton>(element.deleteDialog, 'gr-button').click();
         assert.isFalse(eventStub.called);
         assert.isTrue(closeDialogSpy.called);
         await waitUntil(() => element.path === '');
@@ -234,12 +359,12 @@ suite('gr-edit-controls tests', () => {
 
     test('rename', async () => {
       renameStub.returns(Promise.resolve({ok: true}));
-      MockInteractions.tap(queryAndAssert(element, '#rename'));
+      queryAndAssert<GrButton>(element, '#rename').click();
       await showDialogSpy.lastCall.returnValue;
       assert.isTrue(element.renameDialog!.disabled);
       assert.isFalse(queryStub.called);
-      // Setup focused manually - in headless mode Chrome sometimes don't
-      // setup focus. flush and/or flushAsynchronousOperations don't help
+      // Setup focused manually - in headless mode Chrome sometimes doesn't
+      // setup focus. waitEventLoop() doesn't help.
       renameAutocomplete.focused = true;
       renameAutocomplete.noDebounce = true;
       renameAutocomplete.text = 'src/test.cpp';
@@ -251,9 +376,10 @@ suite('gr-edit-controls tests', () => {
       await element.updateComplete;
 
       assert.isFalse(element.renameDialog!.disabled);
-      MockInteractions.tap(
-        queryAndAssert(element.renameDialog, 'gr-button[primary]')
-      );
+      queryAndAssert<GrButton>(
+        element.renameDialog,
+        'gr-button[primary]'
+      ).click();
       await element.updateComplete;
       assert.isTrue(renameStub.called);
 
@@ -265,12 +391,12 @@ suite('gr-edit-controls tests', () => {
 
     test('rename fails', async () => {
       renameStub.returns(Promise.resolve({ok: false}));
-      MockInteractions.tap(queryAndAssert(element, '#rename'));
+      queryAndAssert<GrButton>(element, '#rename').click();
       await showDialogSpy.lastCall.returnValue;
       assert.isTrue(element.renameDialog!.disabled);
       assert.isFalse(queryStub.called);
-      // Setup focused manually - in headless mode Chrome sometimes don't
-      // setup focus. flush and/or flushAsynchronousOperations don't help
+      // Setup focused manually - in headless mode Chrome sometimes doesn't
+      // setup focus. waitEventLoop() doesn't help.
       renameAutocomplete.focused = true;
       renameAutocomplete.noDebounce = true;
       renameAutocomplete.text = 'src/test.cpp';
@@ -282,9 +408,10 @@ suite('gr-edit-controls tests', () => {
       await element.updateComplete;
 
       assert.isFalse(element.renameDialog!.disabled);
-      MockInteractions.tap(
-        queryAndAssert(element.renameDialog, 'gr-button[primary]')
-      );
+      queryAndAssert<GrButton>(
+        element.renameDialog,
+        'gr-button[primary]'
+      ).click();
       await element.updateComplete;
 
       assert.isTrue(renameStub.called);
@@ -295,7 +422,7 @@ suite('gr-edit-controls tests', () => {
     });
 
     test('cancel', () => {
-      MockInteractions.tap(queryAndAssert(element, '#rename'));
+      queryAndAssert<GrButton>(element, '#rename').click();
       return showDialogSpy.lastCall.returnValue.then(async () => {
         assert.isTrue(element.renameDialog!.disabled);
         queryAndAssert<GrAutocomplete>(
@@ -305,7 +432,7 @@ suite('gr-edit-controls tests', () => {
         element.newPathIronInput!.bindValue = 'src/test.newPath';
         await element.updateComplete;
         assert.isFalse(element.renameDialog!.disabled);
-        MockInteractions.tap(queryAndAssert(element.renameDialog, 'gr-button'));
+        queryAndAssert<GrButton>(element.renameDialog, 'gr-button').click();
         assert.isFalse(eventStub.called);
         assert.isTrue(closeDialogSpy.called);
         await waitUntil(() => element.path === '');
@@ -331,11 +458,12 @@ suite('gr-edit-controls tests', () => {
     test('restore', () => {
       restoreStub.returns(Promise.resolve({ok: true}));
       element.path = 'src/test.cpp';
-      MockInteractions.tap(queryAndAssert(element, '#restore'));
+      queryAndAssert<GrButton>(element, '#restore').click();
       return showDialogSpy.lastCall.returnValue.then(async () => {
-        MockInteractions.tap(
-          queryAndAssert(element.restoreDialog, 'gr-button[primary]')
-        );
+        queryAndAssert<GrButton>(
+          element.restoreDialog,
+          'gr-button[primary]'
+        ).click();
         await element.updateComplete;
 
         assert.isTrue(restoreStub.called);
@@ -351,11 +479,12 @@ suite('gr-edit-controls tests', () => {
     test('restore fails', () => {
       restoreStub.returns(Promise.resolve({ok: false}));
       element.path = 'src/test.cpp';
-      MockInteractions.tap(queryAndAssert(element, '#restore'));
+      queryAndAssert<GrButton>(element, '#restore').click();
       return showDialogSpy.lastCall.returnValue.then(async () => {
-        MockInteractions.tap(
-          queryAndAssert(element.restoreDialog, 'gr-button[primary]')
-        );
+        queryAndAssert<GrButton>(
+          element.restoreDialog,
+          'gr-button[primary]'
+        ).click();
         await element.updateComplete;
 
         assert.isTrue(restoreStub.called);
@@ -369,11 +498,9 @@ suite('gr-edit-controls tests', () => {
 
     test('cancel', () => {
       element.path = 'src/test.cpp';
-      MockInteractions.tap(queryAndAssert(element, '#restore'));
+      queryAndAssert<GrButton>(element, '#restore').click();
       return showDialogSpy.lastCall.returnValue.then(() => {
-        MockInteractions.tap(
-          queryAndAssert(element.restoreDialog, 'gr-button')
-        );
+        queryAndAssert<GrButton>(element.restoreDialog, 'gr-button').click();
         assert.isFalse(eventStub.called);
         assert.isTrue(closeDialogSpy.called);
         assert.equal(element.path, '');
@@ -382,15 +509,13 @@ suite('gr-edit-controls tests', () => {
   });
 
   suite('save file upload', () => {
-    let navStub: sinon.SinonStub;
     let fileStub: sinon.SinonStub;
 
     setup(() => {
-      navStub = sinon.stub(GerritNav, 'navigateToChange');
       fileStub = stubRestApi('saveFileUploadChangeEdit');
     });
 
-    test('handleUploadConfirm', () => {
+    test('handleUploadConfirm', async () => {
       fileStub.returns(Promise.resolve({ok: true}));
 
       element.change = {
@@ -400,19 +525,23 @@ suite('gr-edit-controls tests', () => {
         revisions: {
           abcd: {
             ...createRevision(1),
-            _number: 1 as PatchSetNum,
+            _number: 1 as PatchSetNumber,
           },
           efgh: {
             ...createRevision(2),
-            _number: 2 as PatchSetNum,
+            _number: 2 as PatchSetNumber,
           },
         },
         current_revision: 'efgh' as CommitId,
       };
 
-      element.handleUploadConfirm('test.php', 'base64').then(() => {
-        assert.isTrue(navStub.calledWithExactly(1 as NumericChangeId));
-      });
+      element.handleUploadConfirm('test.php', 'base64');
+
+      assert.isTrue(fileStub.calledOnce);
+      assert.equal(fileStub.lastCall.args[0], 1);
+      assert.equal(fileStub.lastCall.args[1], 'test.php');
+      assert.equal(fileStub.lastCall.args[2], 'base64');
+      await waitForEventOnce(element, 'reload');
     });
   });
 
@@ -430,21 +559,23 @@ suite('gr-edit-controls tests', () => {
     const spy = sinon.spy(element, 'getDialogFromEvent');
     element.addEventListener('tap', element.getDialogFromEvent);
 
-    MockInteractions.tap(element.openDialog!);
+    element.openDialog!.click();
     await element.updateComplete;
     assert.equal(spy.lastCall.returnValue!.id, 'openDialog');
 
-    MockInteractions.tap(element.deleteDialog!);
+    element.deleteDialog!.click();
     await element.updateComplete;
     assert.equal(spy.lastCall.returnValue!.id, 'deleteDialog');
 
-    MockInteractions.tap(
-      queryAndAssert<GrAutocomplete>(element.deleteDialog, 'gr-autocomplete')
-    );
+    queryAndAssert<GrAutocomplete>(
+      element.deleteDialog,
+      'gr-autocomplete'
+    ).click();
+
     await element.updateComplete;
     assert.equal(spy.lastCall.returnValue!.id, 'deleteDialog');
 
-    MockInteractions.tap(element);
+    element.click();
     await element.updateComplete;
     assert.notOk(spy.lastCall.returnValue);
   });

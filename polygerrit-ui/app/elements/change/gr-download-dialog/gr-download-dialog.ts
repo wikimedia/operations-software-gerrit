@@ -1,35 +1,31 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '../../shared/gr-download-commands/gr-download-commands';
 import {changeBaseURL, getRevisionKey} from '../../../utils/change-util';
 import {ChangeInfo, DownloadInfo, PatchSetNum} from '../../../types/common';
 import {GrDownloadCommands} from '../../shared/gr-download-commands/gr-download-commands';
 import {GrButton} from '../../shared/gr-button/gr-button';
-import {hasOwnProperty, queryAndAssert} from '../../../utils/common-util';
+import {
+  copyToClipbard,
+  hasOwnProperty,
+  queryAndAssert,
+} from '../../../utils/common-util';
 import {GrOverlayStops} from '../../shared/gr-overlay/gr-overlay';
-import {fireAlert, fireEvent} from '../../../utils/event-util';
-import {addShortcut} from '../../../utils/dom-util';
+import {fireEvent} from '../../../utils/event-util';
 import {fontStyles} from '../../../styles/gr-font-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, html, css} from 'lit';
-import {customElement, property, state, query} from 'lit/decorators';
+import {customElement, property, state, query} from 'lit/decorators.js';
 import {assertIsDefined} from '../../../utils/common-util';
 import {PaperTabsElement} from '@polymer/paper-tabs/paper-tabs';
 import {BindValueChangeEvent} from '../../../types/events';
+import {ShortcutController} from '../../lit/shortcut-controller';
+import {subscribe} from '../../lit/subscription-controller';
+import {resolve} from '../../../models/dependency';
+import {changeModelToken} from '../../../models/change/change-model';
 
 @customElement('gr-download-dialog')
 export class GrDownloadDialog extends LitElement {
@@ -51,26 +47,23 @@ export class GrDownloadDialog extends LitElement {
   @property({type: Object})
   config?: DownloadInfo;
 
-  @property({type: String})
-  patchNum: PatchSetNum | undefined;
+  @state() patchNum?: PatchSetNum;
 
   @state() private selectedScheme?: string;
 
-  /** Called in disconnectedCallback. */
-  private cleanups: (() => void)[] = [];
+  private readonly shortcuts = new ShortcutController(this);
 
-  override disconnectedCallback() {
-    super.disconnectedCallback();
-    for (const cleanup of this.cleanups) cleanup();
-    this.cleanups = [];
-  }
+  private readonly getChangeModel = resolve(this, changeModelToken);
 
-  override connectedCallback() {
-    super.connectedCallback();
+  constructor() {
+    super();
+    subscribe(
+      this,
+      () => this.getChangeModel().patchNum$,
+      x => (this.patchNum = x)
+    );
     for (const key of ['1', '2', '3', '4', '5']) {
-      this.cleanups.push(
-        addShortcut(this, {key}, e => this.handleNumberKey(e))
-      );
+      this.shortcuts.addLocal({key}, e => this.handleNumberKey(e));
     }
   }
 
@@ -238,14 +231,15 @@ export class GrDownloadDialog extends LitElement {
     return [];
   }
 
-  private handleNumberKey(e: KeyboardEvent) {
+  private async handleNumberKey(e: KeyboardEvent) {
     const index = Number(e.key) - 1;
     const commands = this.computeDownloadCommands();
     if (index > commands.length) return;
-    navigator.clipboard.writeText(commands[index].command).then(() => {
-      fireAlert(this, `${commands[index].title} command copied to clipboard`);
-      fireEvent(this, 'close');
-    });
+    await copyToClipbard(
+      commands[index].command,
+      `${commands[index].title} command`
+    );
+    fireEvent(this, 'close');
   }
 
   override focus() {

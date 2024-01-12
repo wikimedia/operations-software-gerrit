@@ -1,27 +1,15 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {GroupInfo, GroupId} from '../../../types/common';
 import {getAppContext} from '../../../services/app-context';
 import {formStyles} from '../../../styles/gr-form-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, css, html} from 'lit';
-import {customElement, state} from 'lit/decorators';
+import {customElement, state} from 'lit/decorators.js';
+import {createGroupUrl} from '../../../models/views/group';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -76,7 +64,7 @@ export class GrGroupList extends LitElement {
         </thead>
         <tbody>
           ${(this._groups ?? []).map(group => {
-            const href = this._computeGroupPath(group);
+            const href = this._computeGroupPath(group) ?? '';
             return html`
               <tr>
                 <td class="nameColumn">
@@ -94,13 +82,12 @@ export class GrGroupList extends LitElement {
     </div>`;
   }
 
-  _computeGroupPath(group: GroupInfo) {
-    if (!group || !group.id) {
-      return;
-    }
+  _computeGroupPath(group?: GroupInfo) {
+    if (!group?.id) return;
 
     // Group ID is already encoded from the API
     // Decode it here to match with our router encoding behavior
-    return GerritNav.getUrlForGroup(decodeURIComponent(group.id) as GroupId);
+    const decodedGroupId = decodeURIComponent(group.id) as GroupId;
+    return createGroupUrl({groupId: decodedGroupId});
   }
 }

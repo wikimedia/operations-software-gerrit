@@ -1,134 +1,67 @@
 /**
  * @license
- * Copyright (C) 2015 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2015 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-commit-info';
 import {GrCommitInfo} from './gr-commit-info';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {
-  createChange,
   createCommit,
   createServerInfo,
 } from '../../../test/test-data-generators';
-import {CommitId, RepoName} from '../../../types/common';
-import {GrRouter} from '../../core/gr-router/gr-router';
-
-const basicFixture = fixtureFromElement('gr-commit-info');
+import {CommitId} from '../../../types/common';
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-commit-info tests', () => {
   let element: GrCommitInfo;
 
-  setup(() => {
-    element = basicFixture.instantiate();
-  });
-
-  test('weblinks use GerritNav interface', async () => {
-    const weblinksStub = sinon
-      .stub(GerritNav, '_generateWeblinks')
-      .returns([{name: 'stubb', url: '#s'}]);
-    element.change = createChange();
-    element.commitInfo = createCommit();
+  setup(async () => {
+    element = await fixture(html`<gr-commit-info></gr-commit-info>`);
     element.serverConfig = createServerInfo();
-    await flush();
-    assert.isTrue(weblinksStub.called);
   });
 
-  test('no web link when unavailable', () => {
+  test('render nothing', async () => {
     element.commitInfo = createCommit();
-    element.serverConfig = createServerInfo();
-    element.change = {...createChange(), labels: {}, project: '' as RepoName};
+    await element.updateComplete;
 
-    assert.isNotOk(element._showWebLink);
+    assert.shadowDom.equal(element, '');
   });
 
-  test('use web link when available', () => {
-    const router = new GrRouter();
-    sinon
-      .stub(GerritNav, '_generateWeblinks')
-      .callsFake(router.generateWeblinks.bind(router));
-
-    element.change = {...createChange(), labels: {}, project: '' as RepoName};
+  test('web link from commit info', async () => {
     element.commitInfo = {
       ...createCommit(),
-      commit: 'commitsha' as CommitId,
+      commit: 'sha45678901234567890' as CommitId,
       web_links: [{name: 'gitweb', url: 'link-url'}],
     };
-    element.serverConfig = createServerInfo();
+    await element.updateComplete;
 
-    assert.isOk(element._showWebLink);
-    assert.equal(element._webLink, 'link-url');
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="container">
+          <a href="link-url" rel="noopener" target="_blank">sha4567</a>
+          <gr-copy-clipboard hastooltip="" hideinput=""> </gr-copy-clipboard>
+        </div>
+      `
+    );
   });
 
-  test('does not relativize web links that begin with scheme', () => {
-    const router = new GrRouter();
-    sinon
-      .stub(GerritNav, '_generateWeblinks')
-      .callsFake(router.generateWeblinks.bind(router));
-
-    element.change = {...createChange(), labels: {}, project: '' as RepoName};
+  test('web link fall back to search query', async () => {
     element.commitInfo = {
       ...createCommit(),
-      commit: 'commitsha' as CommitId,
-      web_links: [{name: 'gitweb', url: 'https://link-url'}],
+      commit: 'sha45678901234567890' as CommitId,
     };
-    element.serverConfig = createServerInfo();
+    await element.updateComplete;
 
-    assert.isOk(element._showWebLink);
-    assert.equal(element._webLink, 'https://link-url');
-  });
-
-  test('ignore web links that are neither gitweb nor gitiles', () => {
-    const router = new GrRouter();
-    sinon
-      .stub(GerritNav, '_generateWeblinks')
-      .callsFake(router.generateWeblinks.bind(router));
-
-    element.change = {...createChange(), project: 'project-name' as RepoName};
-    element.commitInfo = {
-      ...createCommit(),
-      commit: 'commit-sha' as CommitId,
-      web_links: [
-        {
-          name: 'ignore',
-          url: 'ignore',
-        },
-        {
-          name: 'gitiles',
-          url: 'https://link-url',
-        },
-      ],
-    };
-    element.serverConfig = createServerInfo();
-
-    assert.isOk(element._showWebLink);
-    assert.equal(element._webLink, 'https://link-url');
-
-    // Remove gitiles link.
-    element.commitInfo = {
-      ...createCommit(),
-      commit: 'commit-sha' as CommitId,
-      web_links: [
-        {
-          name: 'ignore',
-          url: 'ignore',
-        },
-      ],
-    };
-    assert.isNotOk(element._showWebLink);
-    assert.isNotOk(element._webLink);
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div class="container">
+          <a href="/q/sha4567" rel="noopener" target="_blank">sha4567</a>
+          <gr-copy-clipboard hastooltip="" hideinput=""> </gr-copy-clipboard>
+        </div>
+      `
+    );
   });
 });

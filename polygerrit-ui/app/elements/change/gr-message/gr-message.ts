@@ -1,40 +1,26 @@
 /**
  * @license
- * Copyright (C) 2015 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2015 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '@polymer/iron-icon/iron-icon';
 import '../../shared/gr-account-label/gr-account-label';
 import '../../shared/gr-account-chip/gr-account-chip';
 import '../../shared/gr-button/gr-button';
+import '../../shared/gr-icon/gr-icon';
 import '../../shared/gr-date-formatter/gr-date-formatter';
 import '../../shared/gr-formatted-text/gr-formatted-text';
 import '../gr-message-scores/gr-message-scores';
-import {css, html, LitElement, nothing, PropertyValues} from 'lit';
+import {css, html, LitElement, nothing} from 'lit';
 import {MessageTag, SpecialFilePath} from '../../../constants/constants';
-import {customElement, property, state} from 'lit/decorators';
+import {customElement, property, state} from 'lit/decorators.js';
 import {hasOwnProperty} from '../../../utils/common-util';
 import {
   ChangeInfo,
   ServerInfo,
-  ConfigInfo,
-  RepoName,
   ReviewInputTag,
   NumericChangeId,
   ChangeMessageId,
-  PatchSetNum,
+  RevisionPatchSetNum,
   AccountInfo,
   BasePatchSetNum,
   LabelNameToInfoMap,
@@ -45,11 +31,12 @@ import {
   isFormattedReviewerUpdate,
   LabelExtreme,
   PATCH_SET_PREFIX_PATTERN,
+  isUnresolved,
 } from '../../../utils/comment-util';
 import {LABEL_TITLE_SCORE_PATTERN} from '../gr-message-scores/gr-message-scores';
 import {getAppContext} from '../../../services/app-context';
 import {pluralize} from '../../../utils/string-util';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {
   computeAllPatchSets,
   computeLatestPatchNum,
@@ -57,8 +44,10 @@ import {
 } from '../../../utils/patch-set-util';
 import {isServiceUser, replaceTemplates} from '../../../utils/account-util';
 import {assertIsDefined} from '../../../utils/common-util';
-import {when} from 'lit/directives/when';
+import {when} from 'lit/directives/when.js';
 import {FormattedReviewerUpdateInfo} from '../../../types/types';
+import {resolve} from '../../../models/dependency';
+import {createChangeUrl} from '../../../models/views/change';
 
 const UPLOADED_NEW_PATCHSET_PATTERN = /Uploaded patch set (\d+)./;
 const MERGED_PATCHSET_PATTERN = /(\d+) is the latest approved patch-set/;
@@ -114,18 +103,12 @@ export class GrMessage extends LitElement {
   @property({type: Boolean})
   hideAutomated = false;
 
-  @property({type: String})
-  projectName?: RepoName;
-
   /**
    * A mapping from label names to objects representing the minimum and
    * maximum possible values for that label.
    */
   @property({type: Object})
   labelExtremes?: LabelExtreme;
-
-  @state()
-  private projectConfig?: ConfigInfo;
 
   @property({type: Boolean})
   loggedIn = false;
@@ -137,6 +120,11 @@ export class GrMessage extends LitElement {
   private isDeletingChangeMsg = false;
 
   private readonly restApiService = getAppContext().restApiService;
+
+  private readonly getNavigation = resolve(this, navigationToken);
+
+  // for COMMENTS_AUTOCLOSE logging purposes only
+  readonly uid = performance.now().toString(36) + Math.random().toString(36);
 
   constructor() {
     super();
@@ -157,171 +145,168 @@ export class GrMessage extends LitElement {
   }
 
   static override get styles() {
-    return css`
-      :host {
-        display: block;
-        position: relative;
-        cursor: pointer;
-        overflow-y: hidden;
-      }
-      :host(.expanded) {
-        cursor: auto;
-      }
-      .collapsed .contentContainer {
-        align-items: center;
-        color: var(--deemphasized-text-color);
-        display: flex;
-        white-space: nowrap;
-      }
-      .contentContainer {
-        padding: var(--spacing-m) var(--spacing-l);
-      }
-      .expanded .contentContainer {
-        background-color: var(--background-color-secondary);
-      }
-      .collapsed .contentContainer {
-        background-color: var(--background-color-primary);
-      }
-      div.serviceUser.expanded div.contentContainer {
-        background-color: var(
-          --background-color-service-user,
-          var(--background-color-secondary)
-        );
-      }
-      div.serviceUser.collapsed div.contentContainer {
-        background-color: var(
-          --background-color-service-user,
-          var(--background-color-primary)
-        );
-      }
-      .name {
-        font-weight: var(--font-weight-bold);
-      }
-      .message {
-        --gr-formatted-text-prose-max-width: 120ch;
-      }
-      .collapsed .message {
-        max-width: none;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .collapsed .author,
-      .collapsed .content,
-      .collapsed .message,
-      .collapsed .updateCategory,
-      gr-account-chip {
-        display: inline;
-      }
-      gr-button {
-        margin: 0 -4px;
-      }
-      .collapsed gr-thread-list,
-      .collapsed .replyBtn,
-      .collapsed .deleteBtn,
-      .collapsed .hideOnCollapsed,
-      .hideOnOpen {
-        display: none;
-      }
-      .replyBtn {
-        margin-right: var(--spacing-m);
-      }
-      .collapsed .hideOnOpen {
-        display: block;
-      }
-      .collapsed .content {
-        flex: 1;
-        margin-right: var(--spacing-m);
-        min-width: 0;
-        overflow: hidden;
-      }
-      .collapsed .content.messageContent {
-        text-overflow: ellipsis;
-      }
-      .collapsed .dateContainer {
-        position: static;
-      }
-      .collapsed .author {
-        overflow: hidden;
-        color: var(--primary-text-color);
-        margin-right: var(--spacing-s);
-      }
-      .authorLabel {
-        min-width: 130px;
-        --account-max-length: 120px;
-        margin-right: var(--spacing-s);
-      }
-      .expanded .author {
-        cursor: pointer;
-        margin-bottom: var(--spacing-m);
-      }
-      .expanded .content {
-        padding-left: 40px;
-      }
-      .dateContainer {
-        position: absolute;
-        /* right and top values should match .contentContainer padding */
-        right: var(--spacing-l);
-        top: var(--spacing-m);
-      }
-      .dateContainer gr-button {
-        margin-right: var(--spacing-m);
-        color: var(--deemphasized-text-color);
-      }
-      .dateContainer .patchset:before {
-        content: 'Patchset ';
-      }
-      .dateContainer .patchsetDiffButton {
-        margin-right: var(--spacing-m);
-        --gr-button-padding: 0 var(--spacing-m);
-      }
-      span.date {
-        color: var(--deemphasized-text-color);
-      }
-      span.date:hover {
-        text-decoration: underline;
-      }
-      .dateContainer iron-icon {
-        cursor: pointer;
-        vertical-align: top;
-      }
-      .commentsSummary {
-        margin-right: var(--spacing-s);
-        min-width: 115px;
-      }
-      .expanded .commentsSummary {
-        display: none;
-      }
-      .commentsIcon {
-        vertical-align: top;
-      }
-      gr-account-label::part(gr-account-label-text) {
-        font-weight: var(--font-weight-bold);
-      }
-      iron-icon {
-        --iron-icon-height: 20px;
-        --iron-icon-width: 20px;
-      }
-      @media screen and (max-width: 50em) {
-        .expanded .content {
-          padding-left: 0;
+    return [
+      css`
+        :host {
+          display: block;
+          position: relative;
+          cursor: pointer;
+          overflow-y: hidden;
         }
-        .commentsSummary {
-          min-width: 0px;
+        :host(.expanded) {
+          cursor: auto;
+        }
+        .collapsed .contentContainer {
+          align-items: center;
+          color: var(--deemphasized-text-color);
+          display: flex;
+          white-space: nowrap;
+        }
+        .contentContainer {
+          padding: var(--spacing-m) var(--spacing-l);
+        }
+        .expanded .contentContainer {
+          background-color: var(--background-color-secondary);
+        }
+        .collapsed .contentContainer {
+          background-color: var(--background-color-primary);
+        }
+        div.serviceUser.expanded div.contentContainer {
+          background-color: var(
+            --background-color-service-user,
+            var(--background-color-secondary)
+          );
+        }
+        div.serviceUser.collapsed div.contentContainer {
+          background-color: var(
+            --background-color-service-user,
+            var(--background-color-primary)
+          );
+        }
+        .name {
+          font-weight: var(--font-weight-bold);
+        }
+        .message {
+          --gr-formatted-text-prose-max-width: 120ch;
+        }
+        .collapsed .message {
+          max-width: none;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .collapsed .author,
+        .collapsed .content,
+        .collapsed .message,
+        .collapsed .updateCategory,
+        gr-account-chip {
+          display: inline;
+        }
+        gr-button {
+          margin: 0 -4px;
+        }
+        .collapsed gr-thread-list,
+        .collapsed .replyBtn,
+        .collapsed .deleteBtn,
+        .collapsed .hideOnCollapsed,
+        .hideOnOpen {
+          display: none;
+        }
+        .replyBtn {
+          margin-right: var(--spacing-m);
+        }
+        .collapsed .hideOnOpen {
+          display: block;
+        }
+        .collapsed .content {
+          flex: 1;
+          margin-right: var(--spacing-m);
+          min-width: 0;
+          overflow: hidden;
+        }
+        .collapsed .content.messageContent {
+          text-overflow: ellipsis;
+        }
+        .collapsed .dateContainer {
+          position: static;
+        }
+        .collapsed .author {
+          overflow: hidden;
+          color: var(--primary-text-color);
+          margin-right: var(--spacing-s);
         }
         .authorLabel {
-          width: 100px;
+          min-width: 130px;
+          --account-max-length: 120px;
+          margin-right: var(--spacing-s);
+        }
+        .expanded .author {
+          cursor: pointer;
+          margin-bottom: var(--spacing-m);
+        }
+        .expanded .content {
+          padding-left: 40px;
+        }
+        .dateContainer {
+          position: absolute;
+          /* right and top values should match .contentContainer padding */
+          right: var(--spacing-l);
+          top: var(--spacing-m);
+        }
+        .dateContainer gr-icon {
+          margin-right: var(--spacing-m);
+          color: var(--deemphasized-text-color);
         }
         .dateContainer .patchset:before {
-          content: 'PS ';
+          content: 'Patchset ';
         }
-      }
-    `;
-  }
-
-  override willUpdate(changedProperties: PropertyValues) {
-    if (changedProperties.has('projectName')) {
-      this.projectNameChanged();
-    }
+        .dateContainer .patchsetDiffButton {
+          margin-right: var(--spacing-m);
+          --gr-button-padding: 0 var(--spacing-m);
+        }
+        span.date {
+          color: var(--deemphasized-text-color);
+        }
+        span.date:hover {
+          text-decoration: underline;
+        }
+        .dateContainer gr-icon {
+          cursor: pointer;
+          vertical-align: top;
+        }
+        .commentsSummary {
+          margin-right: var(--spacing-s);
+        }
+        .expanded .commentsSummary {
+          display: none;
+        }
+        gr-icon.commentsIcon {
+          vertical-align: top;
+        }
+        gr-icon.unresolved.commentsIcon {
+          color: var(--warning-foreground);
+        }
+        .numberOfComments {
+          padding-right: var(--spacing-m);
+        }
+        gr-account-label::part(gr-account-label-text) {
+          font-weight: var(--font-weight-bold);
+        }
+        @media screen and (max-width: 50em) {
+          .expanded .content {
+            padding-left: 0;
+          }
+          .commentsSummary {
+            min-width: 0px;
+          }
+          .authorLabel {
+            width: 100px;
+          }
+          .dateContainer .patchset:before {
+            content: 'PS ';
+          }
+        }
+      `,
+    ];
   }
 
   override render() {
@@ -351,6 +336,7 @@ export class GrMessage extends LitElement {
       )}
       <gr-account-label
         .account=${this.author}
+        .change=${this.change}
         class="authorLabel"
       ></gr-account-label>
       <gr-message-scores
@@ -361,14 +347,51 @@ export class GrMessage extends LitElement {
     </div>`;
   }
 
+  private renderCommentIcon({
+    commentThreadsCount,
+    unresolved,
+  }: {
+    commentThreadsCount: number;
+    unresolved: boolean;
+  }) {
+    if (commentThreadsCount === 0) {
+      return nothing;
+    }
+    return html` <span
+      class="numberOfComments"
+      title=${pluralize(
+        commentThreadsCount,
+        (unresolved ? 'unresolved' : 'resolved') + ' comment'
+      )}
+    >
+      <gr-icon
+        small
+        icon=${unresolved ? 'chat_bubble' : 'mark_chat_read'}
+        ?filled=${unresolved}
+        class="${unresolved ? 'unresolved ' : ''}commentsIcon"
+      ></gr-icon>
+      ${commentThreadsCount}</span
+    >`;
+  }
+
   private renderCommentsSummary() {
     if (!this.commentThreads?.length) return nothing;
 
-    const commentCountText = pluralize(this.commentThreads.length, 'comment');
+    const unresolvedThreadsCount =
+      this.commentThreads.filter(isUnresolved).length;
+    const resolvedThreadsCount =
+      this.commentThreads.length - unresolvedThreadsCount;
+
     return html`
       <div class="commentsSummary">
-        <iron-icon icon="gr-icons:comment" class="commentsIcon"></iron-icon>
-        <span class="numberOfComments">${commentCountText}</span>
+        ${this.renderCommentIcon({
+          commentThreadsCount: unresolvedThreadsCount,
+          unresolved: true,
+        })}
+        ${this.renderCommentIcon({
+          commentThreadsCount: resolvedThreadsCount,
+          unresolved: false,
+        })}
       </div>
     `;
   }
@@ -400,10 +423,9 @@ export class GrMessage extends LitElement {
     );
     return html`
       <gr-formatted-text
-        noTrailingMargin
         class="message hideOnCollapsed"
+        .markdown=${true}
         .content=${messageContentExpanded}
-        .config=${this.projectConfig?.commentlinks}
       ></gr-formatted-text>
       ${when(messageContentExpanded, () => this.renderActionContainer())}
       <gr-thread-list
@@ -492,12 +514,12 @@ export class GrMessage extends LitElement {
           </span>
         `
       )}
-      <iron-icon
+      <gr-icon
         id="expandToggle"
         @click=${this.toggleExpanded}
         title="Toggle expanded state"
         icon=${this.computeExpandToggleIcon()}
-      ></iron-icon>
+      ></gr-icon>
     </span>`;
   }
 
@@ -562,20 +584,21 @@ export class GrMessage extends LitElement {
   private isNewPatchsetTag(tag?: ReviewInputTag) {
     return (
       tag === MessageTag.TAG_NEW_PATCHSET ||
-      tag === MessageTag.TAG_NEW_WIP_PATCHSET
+      tag === MessageTag.TAG_NEW_WIP_PATCHSET ||
+      tag === MessageTag.TAG_NEW_PATCHSET_OUTDATED_VOTES
     );
   }
 
   // Private but used in tests
   handleViewPatchsetDiff(e: Event) {
     if (!this.message || !this.change) return;
-    let patchNum: PatchSetNum;
-    let basePatchNum: PatchSetNum;
+    let patchNum: RevisionPatchSetNum;
+    let basePatchNum: BasePatchSetNum;
     if (this.message.message.match(UPLOADED_NEW_PATCHSET_PATTERN)) {
       const match = this.message.message.match(UPLOADED_NEW_PATCHSET_PATTERN)!;
       if (isNaN(Number(match[1])))
         throw new Error('invalid patchnum in message');
-      patchNum = Number(match[1]) as PatchSetNum;
+      patchNum = Number(match[1]) as RevisionPatchSetNum;
       basePatchNum = computePredecessor(patchNum)!;
     } else if (this.message.message.match(MERGED_PATCHSET_PATTERN)) {
       const match = this.message.message.match(MERGED_PATCHSET_PATTERN)!;
@@ -589,7 +612,9 @@ export class GrMessage extends LitElement {
       patchNum = computeLatestPatchNum(computeAllPatchSets(this.change))!;
       basePatchNum = computePredecessor(patchNum)!;
     }
-    GerritNav.navigateToChange(this.change, {patchNum, basePatchNum});
+    this.getNavigation().setUrl(
+      createChangeUrl({change: this.change, patchNum, basePatchNum})
+    );
     // stop propagation to stop message expansion
     e.stopPropagation();
   }
@@ -764,20 +789,8 @@ export class GrMessage extends LitElement {
       });
   }
 
-  private projectNameChanged() {
-    if (!this.projectName) {
-      this.projectConfig = undefined;
-      return;
-    }
-    this.restApiService.getProjectConfig(this.projectName).then(config => {
-      this.projectConfig = config;
-    });
-  }
-
   private computeExpandToggleIcon() {
-    return this.message?.expanded
-      ? 'gr-icons:expand-less'
-      : 'gr-icons:expand-more';
+    return this.message?.expanded ? 'expand_less' : 'expand_more';
   }
 
   private toggleExpanded(e: Event) {

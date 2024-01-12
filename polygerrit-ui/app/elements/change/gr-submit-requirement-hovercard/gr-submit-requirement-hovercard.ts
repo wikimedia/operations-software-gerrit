@@ -1,22 +1,12 @@
 /**
  * @license
- * Copyright (C) 2021 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2021 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import '../../shared/gr-button/gr-button';
+import '../../shared/gr-icon/gr-icon';
 import '../../shared/gr-label-info/gr-label-info';
-import {customElement, property} from 'lit/decorators';
+import {customElement, property} from 'lit/decorators.js';
 import {
   AccountInfo,
   ChangeStatus,
@@ -30,7 +20,7 @@ import {
   extractAssociatedLabels,
   getApprovalInfo,
   hasVotes,
-  iconForStatus,
+  iconForRequirement,
 } from '../../../utils/label-util';
 import {ParsedChangeInfo} from '../../../types/types';
 import {css, html, LitElement} from 'lit';
@@ -40,9 +30,12 @@ import {DraftsAction} from '../../../constants/constants';
 import {ReviewInput} from '../../../types/common';
 import {getAppContext} from '../../../services/app-context';
 import {assertIsDefined} from '../../../utils/common-util';
-import {CURRENT} from '../../../utils/patch-set-util';
 import {fireReload} from '../../../utils/event-util';
 import {submitRequirementsStyles} from '../../../styles/gr-submit-requirements-styles';
+import {
+  atomizeExpression,
+  SubmitRequirementExpressionAtomStatus,
+} from '../../../utils/submit-requirement-util';
 
 // This avoids JSC_DYNAMIC_EXTENDS_WITHOUT_JSDOC closure compiler error.
 const base = HovercardMixin(LitElement);
@@ -107,10 +100,8 @@ export class GrSubmitRequirementHovercard extends base {
         div.sectionIcon {
           flex: 0 0 30px;
         }
-        div.sectionIcon iron-icon {
+        div.sectionIcon gr-icon {
           position: relative;
-          width: 20px;
-          height: 20px;
         }
         .section.condition > .sectionContent {
           background-color: var(--gray-background);
@@ -123,7 +114,13 @@ export class GrSubmitRequirementHovercard extends base {
         .expression {
           color: var(--gray-foreground);
         }
-        .button iron-icon {
+        .expression .failing.atom {
+          border-bottom: 2px solid var(--error-foreground);
+        }
+        .expression .passing.atom {
+          border-bottom: 2px solid var(--success-foreground);
+        }
+        .button gr-icon {
           color: inherit;
         }
         div.button {
@@ -131,21 +128,15 @@ export class GrSubmitRequirementHovercard extends base {
           margin-top: var(--spacing-m);
           padding: var(--spacing-m) var(--spacing-xl) 0;
         }
-        .section.description > .sectionContent {
-          white-space: pre-wrap;
-        }
       `,
     ];
   }
 
   override render() {
     if (!this.requirement) return;
-    const icon = iconForStatus(this.requirement.status);
     return html` <div id="container" role="tooltip" tabindex="-1">
       <div class="section">
-        <div class="sectionIcon">
-          <iron-icon class=${icon} icon="gr-icons:${icon}"></iron-icon>
-        </div>
+        <div class="sectionIcon">${this.renderStatus(this.requirement)}</div>
         <div class="sectionContent">
           <h3 class="name heading-3">
             <span>${this.requirement.name}</span>
@@ -154,7 +145,7 @@ export class GrSubmitRequirementHovercard extends base {
       </div>
       <div class="section">
         <div class="sectionIcon">
-          <iron-icon class="small" icon="gr-icons:info-outline"></iron-icon>
+          <gr-icon class="small" icon="info"></gr-icon>
         </div>
         <div class="sectionContent">
           <div class="row">
@@ -167,6 +158,17 @@ export class GrSubmitRequirementHovercard extends base {
       ${this.renderShowHideConditionButton()}${this.renderConditionSection()}
       ${this.renderVotingButtons()}
     </div>`;
+  }
+
+  private renderStatus(requirement: SubmitRequirementResultInfo) {
+    const icon = iconForRequirement(requirement);
+    return html`<gr-icon
+      class=${icon.icon}
+      icon=${icon.icon}
+      ?filled=${icon.filled}
+      role="img"
+      aria-label=${requirement.status.toLowerCase()}
+    ></gr-icon>`;
   }
 
   private renderDescription() {
@@ -182,9 +184,14 @@ export class GrSubmitRequirementHovercard extends base {
     if (!description) return;
     return html`<div class="section description">
       <div class="sectionIcon">
-        <iron-icon icon="gr-icons:description"></iron-icon>
+        <gr-icon icon="description"></gr-icon>
       </div>
-      <div class="sectionContent">${description}</div>
+      <div class="sectionContent">
+        <gr-formatted-text
+          .markdown=${true}
+          .content=${description}
+        ></gr-formatted-text>
+      </div>
     </div>`;
   }
 
@@ -231,7 +238,7 @@ export class GrSubmitRequirementHovercard extends base {
 
   private renderShowHideConditionButton() {
     const buttonText = this.expanded ? 'Hide conditions' : 'View conditions';
-    const icon = this.expanded ? 'expand-less' : 'expand-more';
+    const icon = this.expanded ? 'expand_less' : 'expand_more';
 
     return html` <div class="button">
       <gr-button
@@ -240,8 +247,8 @@ export class GrSubmitRequirementHovercard extends base {
         @click=${(_: MouseEvent) => this.toggleConditionsVisibility()}
       >
         ${buttonText}
-        <iron-icon icon="gr-icons:${icon}"></iron-icon
-      ></gr-button>
+        <gr-icon .icon=${icon}></gr-icon>
+      </gr-button>
     </div>`;
   }
 
@@ -313,7 +320,11 @@ export class GrSubmitRequirementHovercard extends base {
       },
     };
     return this.restApiService
-      .saveChangeReview(this.change._number, CURRENT, review)
+      .saveChangeReview(
+        this.change._number,
+        this.change.current_revision,
+        review
+      )
       .then(() => {
         fireReload(this, true);
       });
@@ -337,6 +348,32 @@ export class GrSubmitRequirementHovercard extends base {
     `;
   }
 
+  private getClassFromAtomStatus(
+    status: SubmitRequirementExpressionAtomStatus
+  ) {
+    switch (status) {
+      case SubmitRequirementExpressionAtomStatus.PASSING:
+        return 'passing atom';
+      case SubmitRequirementExpressionAtomStatus.FAILING:
+        return 'failing atom';
+      default:
+        return 'atom';
+    }
+  }
+
+  private getTitleFromAtomStatus(
+    status: SubmitRequirementExpressionAtomStatus
+  ) {
+    switch (status) {
+      case SubmitRequirementExpressionAtomStatus.PASSING:
+        return 'Atom evaluates to True';
+      case SubmitRequirementExpressionAtomStatus.FAILING:
+        return 'Atom evaluates to False';
+      default:
+        return 'Atom value is unknown';
+    }
+  }
+
   private renderCondition(
     name: string,
     expression?: SubmitRequirementExpressionInfo
@@ -346,7 +383,17 @@ export class GrSubmitRequirementHovercard extends base {
       <div class="section condition">
         <div class="sectionContent">
           ${name}:<br />
-          <span class="expression"> ${expression.expression} </span>
+          <span class="expression">
+            ${atomizeExpression(expression).map(part =>
+              part.isAtom
+                ? html`<span
+                    class=${this.getClassFromAtomStatus(part.atomStatus!)}
+                    title=${this.getTitleFromAtomStatus(part.atomStatus!)}
+                    >${part.value}</span
+                  >`
+                : part.value
+            )}
+          </span>
         </div>
       </div>
     `;

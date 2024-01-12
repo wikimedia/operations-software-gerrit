@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {
   PatchRange,
@@ -21,7 +10,7 @@ import {
   UrlEncodedCommentId,
   PathToCommentsInfoMap,
   FileInfo,
-  ParentPatchSetNum,
+  PARENT,
   CommentInfo,
 } from '../../../types/common';
 import {
@@ -45,6 +34,7 @@ export type CommentIdToCommentThreadMap = {
   [urlEncodedCommentId: string]: CommentThread;
 };
 
+// TODO: Move file out of elements/ directory
 export class ChangeComments {
   private readonly _comments: PathToCommentsInfoMap;
 
@@ -56,10 +46,6 @@ export class ChangeComments {
 
   private readonly _portedDrafts: PathToCommentsInfoMap;
 
-  /**
-   * Construct a change comments object, which can be data-bound to child
-   * elements of that which uses the gr-comment-api.
-   */
   constructor(
     comments?: PathToCommentsInfoMap,
     robotComments?: {[path: string]: RobotCommentInfo[]},
@@ -120,6 +106,8 @@ export class ChangeComments {
       for (const [path, comments] of Object.entries(response)) {
         // If don't care about patch range, we know that the path exists.
         if (comments.some(c => !patchRange || isInPatchRange(c, patchRange))) {
+          // TODO: Replace the CommentMap type with just an array or set. We
+          // never set the value to false.
           commentMap[path] = true;
         }
       }
@@ -324,7 +312,7 @@ export class ChangeComments {
 
     return createCommentThreads(allComments).filter(thread => {
       // Robot comments and drafts are not ported over. A human reply to
-      // the robot comment will be ported over, thefore it's possible to
+      // the robot comment will be ported over, therefore it's possible to
       // have the root comment of the thread not be ported, hence loop over
       // entire thread
       const portedComment = portedComments.find(portedComment =>
@@ -341,10 +329,7 @@ export class ChangeComments {
 
       if (thread.commentSide === CommentSide.PARENT) {
         // TODO(dhruvsri): Add handling for merge parents
-        if (
-          patchRange.basePatchNum !== ParentPatchSetNum ||
-          !!thread.mergeParentNum
-        )
+        if (patchRange.basePatchNum !== PARENT || !!thread.mergeParentNum)
           return false;
       }
 

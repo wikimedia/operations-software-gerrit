@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2022 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2022 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {Finalizable} from '../../services/registry';
 import {Observable, Subject} from 'rxjs';
@@ -71,12 +60,8 @@ export class PluginsModel extends Model<PluginsState> implements Finalizable {
     });
   }
 
-  finalize() {
-    this.subject$.complete();
-  }
-
   checksRegister(plugin: ChecksPlugin) {
-    const nextState = {...this.subject$.getValue()};
+    const nextState = {...this.getState()};
     nextState.checksPlugins = [...nextState.checksPlugins];
     const alreadysRegistered = nextState.checksPlugins.some(
       p => p.pluginName === plugin.pluginName
@@ -88,11 +73,11 @@ export class PluginsModel extends Model<PluginsState> implements Finalizable {
       return;
     }
     nextState.checksPlugins.push(plugin);
-    this.subject$.next(nextState);
+    this.setState(nextState);
   }
 
   checksUpdate(update: ChecksUpdate) {
-    const plugins = this.subject$.getValue().checksPlugins;
+    const plugins = this.getState().checksPlugins;
     const plugin = plugins.find(p => p.pluginName === update.pluginName);
     if (!plugin) {
       console.warn(
@@ -104,7 +89,7 @@ export class PluginsModel extends Model<PluginsState> implements Finalizable {
   }
 
   checksAnnounce(pluginName: string) {
-    const plugins = this.subject$.getValue().checksPlugins;
+    const plugins = this.getState().checksPlugins;
     const plugin = plugins.find(p => p.pluginName === pluginName);
     if (!plugin) {
       console.warn(

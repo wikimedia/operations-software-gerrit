@@ -168,7 +168,7 @@ public class SubmitRequirementsEvaluatorIT extends AbstractDaemonTest {
               false);
       configSubmitRequirement(project, projectSubmitRequirement);
       Map<SubmitRequirement, SubmitRequirementResult> results =
-          evaluator.evaluateAllRequirements(changeData, /* includeLegacy= */ false);
+          evaluator.evaluateAllRequirements(changeData);
       assertThat(results).hasSize(2);
       assertThat(results.get(globalSubmitRequirement).status())
           .isEqualTo(SubmitRequirementResult.Status.SATISFIED);
@@ -199,7 +199,7 @@ public class SubmitRequirementsEvaluatorIT extends AbstractDaemonTest {
               false);
       configSubmitRequirement(project, projectSubmitRequirement);
       Map<SubmitRequirement, SubmitRequirementResult> results =
-          evaluator.evaluateAllRequirements(changeData, /* includeLegacy= */ false);
+          evaluator.evaluateAllRequirements(changeData);
       assertThat(results).hasSize(1);
       assertThat(results.get(projectSubmitRequirement).status())
           .isEqualTo(SubmitRequirementResult.Status.SATISFIED);
@@ -228,7 +228,7 @@ public class SubmitRequirementsEvaluatorIT extends AbstractDaemonTest {
               false);
       configSubmitRequirement(project, projectSubmitRequirement);
       Map<SubmitRequirement, SubmitRequirementResult> results =
-          evaluator.evaluateAllRequirements(changeData, /* includeLegacy= */ false);
+          evaluator.evaluateAllRequirements(changeData);
       assertThat(results).hasSize(1);
       assertThat(results.get(globalSubmitRequirement).status())
           .isEqualTo(SubmitRequirementResult.Status.SATISFIED);
@@ -283,7 +283,10 @@ public class SubmitRequirementsEvaluatorIT extends AbstractDaemonTest {
     SubmitRequirementResult result = evaluator.evaluateRequirement(sr, changeData);
     assertThat(result.status()).isEqualTo(SubmitRequirementResult.Status.NOT_APPLICABLE);
     assertThat(result.applicabilityExpressionResult().get().status()).isEqualTo(Status.FAIL);
-    assertThat(result.submittabilityExpressionResult().isPresent()).isFalse();
+    assertThat(result.submittabilityExpressionResult().get().status())
+        .isEqualTo(Status.NOT_EVALUATED);
+    assertThat(result.submittabilityExpressionResult().get().expression().expressionString())
+        .isEqualTo("message:\"Fix bug\"");
     assertThat(result.overrideExpressionResult().isPresent()).isFalse();
   }
 

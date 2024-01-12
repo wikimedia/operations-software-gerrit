@@ -1,27 +1,17 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
-import {createChange} from '../../../test/test-data-generators';
+import '../../../test/common-test-setup';
+import {
+  createChange,
+  TEST_NUMERIC_CHANGE_ID,
+} from '../../../test/test-data-generators';
 import './gr-change-status';
 import {ChangeStates, GrChangeStatus, WIP_TOOLTIP} from './gr-change-status';
-import {GerritNav} from '../../core/gr-navigation/gr-navigation';
 import {MERGE_CONFLICT_TOOLTIP} from './gr-change-status';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
 import {queryAndAssert} from '../../../test/test-utils';
 
 const PRIVATE_TOOLTIP =
@@ -35,6 +25,25 @@ suite('gr-change-status tests', () => {
     element = await fixture<GrChangeStatus>(html`
       <gr-change-status></gr-change-status>
     `);
+  });
+
+  test('render', async () => {
+    element.status = ChangeStates.WIP;
+    await element.updateComplete;
+
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <gr-tooltip-content
+          has-tooltip=""
+          max-width="40em"
+          position-below=""
+          title="This change isn't ready to be reviewed or submitted. It will not appear on dashboards unless you are in the attention set, and email notifications will be silenced until the review is started."
+        >
+          <div aria-label="Label: WIP" class="chip">Work in Progress</div>
+        </gr-tooltip-content>
+      `
+    );
   });
 
   test('WIP', async () => {
@@ -118,16 +127,14 @@ suite('gr-change-status tests', () => {
   });
 
   test('reverted change', () => {
-    const url = 'http://google.com';
     const status = ChangeStates.REVERT_SUBMITTED;
     const revertedChange = createChange();
-    sinon.stub(GerritNav, 'getUrlForSearchQuery').returns(url);
 
     element.revertedChange = revertedChange;
     element.resolveWeblinks = [];
     element.status = status;
     assert.isTrue(element.hasStatusLink());
-    assert.equal(element.getStatusLink(), url);
+    assert.equal(element.getStatusLink(), `/q/${TEST_NUMERIC_CHANGE_ID}`);
   });
 
   test('private', async () => {

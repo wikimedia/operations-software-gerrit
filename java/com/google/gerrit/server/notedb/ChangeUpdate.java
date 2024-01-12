@@ -52,10 +52,12 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableTable;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Table;
 import com.google.common.collect.Table.Cell;
 import com.google.common.collect.TreeBasedTable;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Address;
 import com.google.gerrit.entities.AttentionSetUpdate;
@@ -141,7 +143,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   private final ServiceUserClassifier serviceUserClassifier;
   private final PatchSetApprovalUuidGenerator patchSetApprovalUuidGenerator;
 
-  private final Table<String, Account.Id, Optional<Short>> approvals;
+  private final Table<String, Account.Id, Optional<PatchSetApproval>> approvals;
   private final List<PatchSetApproval> copiedApprovals = new ArrayList<>();
   private final Map<Account.Id, ReviewerStateInternal> reviewers = new LinkedHashMap<>();
   private final Map<Address, ReviewerStateInternal> reviewersByEmail = new LinkedHashMap<>();
@@ -181,6 +183,9 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   private DeleteChangeMessageRewriter deleteChangeMessageRewriter;
   private List<SubmitRequirementResult> submitRequirementResults;
 
+  private ImmutableList.Builder<AttentionSetUpdate> attentionSetUpdatesBuilder =
+      ImmutableList.builder();
+
   @SuppressWarnings("UnusedMethod")
   @AssistedInject
   private ChangeUpdate(
@@ -215,7 +220,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
         noteUtil);
   }
 
-  private static Table<String, Account.Id, Optional<Short>> approvals(
+  private static Table<String, Account.Id, Optional<PatchSetApproval>> approvals(
       Comparator<String> nameComparator) {
     return TreeBasedTable.create(nameComparator, naturalOrder());
   }
@@ -282,7 +287,18 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   }
 
   public void putApprovalFor(Account.Id reviewer, String label, short value) {
-    approvals.put(label, reviewer, Optional.of(value));
+    PatchSetApproval psa =
+        PatchSetApproval.builder()
+            .key(PatchSetApproval.key(getPatchSetId(), reviewer, LabelId.create(label)))
+            .value(value)
+            .granted(when)
+            .uuid(patchSetApprovalUuidGenerator.get(getPatchSetId(), reviewer, label, value, when))
+            .build();
+    approvals.put(label, reviewer, Optional.of(psa));
+  }
+
+  public ImmutableTable<String, Account.Id, Optional<PatchSetApproval>> getApprovals() {
+    return ImmutableTable.copyOf(approvals);
   }
 
   void removeApproval(String label) {
@@ -300,6 +316,23 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   public void putCopiedApproval(PatchSetApproval copiedPatchSetApproval) {
     checkArgument(copiedPatchSetApproval.copied(), "Approval that should be copied is not copied.");
     copiedApprovals.add(copiedPatchSetApproval);
+  }
+
+  public void removeCopiedApprovalFor(
+      @Nullable Account.Id realUserId, Account.Id reviewerId, String label) {
+    PatchSetApproval.Builder psaBuilder =
+        PatchSetApproval.builder()
+            .copied(true)
+            .key(PatchSetApproval.key(getPatchSetId(), reviewerId, LabelId.create(label)))
+            .value(0)
+            .uuid(Optional.empty())
+            .granted(when);
+
+    if (realUserId != null) {
+      psaBuilder.realAccountId(realUserId);
+    }
+
+    copiedApprovals.add(psaBuilder.build());
   }
 
   public void merge(SubmissionId submissionId, Iterable<SubmitRecord> submitRecords) {
@@ -427,12 +460,21 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   }
 
   /**
-   * All updates must have a timestamp of null since we use the commit's timestamp. There also must
-   * not be multiple updates for a single user. Only the first update takes place because of the
-   * different priorities: e.g, if we want to add someone to the attention set but also want to
-   * remove someone from the attention set, we should ensure to add/remove that user based on the
-   * priority of the addition and removal. If most importantly we want to remove the user, then we
-   * must first create the removal, and the addition will not take effect.
+   * Adds attention set updates that should be stored in NoteDb.
+   *
+   * <p>If invoked multiple times with attention set updates for the same user, only the attention
+   * set update of the first invocation is stored for this user and further attention set updates
+   * for this user are silently ignored. This means if callers invoke this method multiple times
+   * with attention set updates for the same user, they must ensure that the first call is being
+   * done with the attention set update that should take precedence.
+   *
+   * @param updates Attention set updates that should be performed. The updates must not have any
+   *     timestamp set ({@link AttentionSetUpdate#timestamp()} must return {@code null}). This is
+   *     because the timestamp of all performed updates is always the timestamp of when the NoteDb
+   *     commit is created. Each of the provided updates must be for a different user, if there are
+   *     multiple updates for the same user the update is rejected.
+   * @throws IllegalArgumentException thrown if any of the provided updates has a timestamp set, or
+   *     if the provided set of updates contains multiple updates for the same user
    */
   public void addToPlannedAttentionSetUpdates(Set<AttentionSetUpdate> updates) {
     if (updates == null || updates.isEmpty() || ignoreFurtherAttentionSetUpdates) {
@@ -462,6 +504,10 @@ public class ChangeUpdate extends AbstractChangeUpdate {
 
   public void addToPlannedAttentionSetUpdates(AttentionSetUpdate update) {
     addToPlannedAttentionSetUpdates(ImmutableSet.of(update));
+  }
+
+  public ImmutableList<AttentionSetUpdate> getAttentionSetUpdates() {
+    return attentionSetUpdatesBuilder.build();
   }
 
   public void setAssignee(Account.Id assignee) {
@@ -751,8 +797,8 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       addFooter(msg, e.getValue().getByEmailFooterKey(), e.getKey().toString());
     }
 
-    for (Table.Cell<String, Account.Id, Optional<Short>> c : approvals.cellSet()) {
-      addLabelFooter(msg, c, patchSetId);
+    for (Table.Cell<String, Account.Id, Optional<PatchSetApproval>> c : approvals.cellSet()) {
+      addLabelFooter(msg, c);
     }
     for (PatchSetApproval patchSetApproval : copiedApprovals) {
       addCopiedLabelFooter(msg, patchSetApproval);
@@ -840,7 +886,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   }
 
   private void addLabelFooter(
-      StringBuilder msg, Cell<String, Account.Id, Optional<Short>> c, PatchSet.Id patchSetId) {
+      StringBuilder msg, Cell<String, Account.Id, Optional<PatchSetApproval>> c) {
     addFooter(msg, FOOTER_LABEL);
     String label = c.getRowKey();
     Account.Id reviewerId = c.getColumnKey();
@@ -851,10 +897,10 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       // Since vote removals do not need to be referenced, e.g. by the copy approvals, they do not
       // require a UUID.
     } else {
-      short value = c.getValue().get();
-      msg.append(LabelVote.create(label, c.getValue().get()).formatWithEquals());
+      short value = c.getValue().get().value();
+      msg.append(LabelVote.create(label, value).formatWithEquals());
       msg.append(", ");
-      msg.append(patchSetApprovalUuidGenerator.get(patchSetId, reviewerId, label, value, when));
+      msg.append(c.getValue().get().uuid().get());
     }
     if (!reviewerId.equals(getAccountId())) {
       noteUtil.appendAccountIdIdentString(msg.append(' '), reviewerId);
@@ -864,7 +910,20 @@ public class ChangeUpdate extends AbstractChangeUpdate {
 
   private void addCopiedLabelFooter(StringBuilder msg, PatchSetApproval patchSetApproval) {
     if (patchSetApproval.value() == 0) {
-      // Can only happen if we removed a vote. There is no need to persist removed votes.
+      addFooter(msg, FOOTER_COPIED_LABEL);
+
+      // Mark the copied approval as deleted.
+      msg.append('-').append(patchSetApproval.label());
+
+      noteUtil.appendAccountIdIdentString(msg.append(' '), patchSetApproval.accountId());
+
+      // In the non-copied labels, we don't need to pass the real account id since it's already
+      // in FOOTER_REAL_USER. Here, we want to retain the original real account id.
+      if (!patchSetApproval.realAccountId().equals(patchSetApproval.accountId())) {
+        noteUtil.appendAccountIdIdentString(msg.append(","), patchSetApproval.realAccountId());
+      }
+
+      msg.append('\n');
       return;
     }
     addFooter(msg, FOOTER_COPIED_LABEL);
@@ -881,7 +940,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
 
     // In the non-copied labels, we don't need to pass the real account id since it's already
     // in FOOTER_REAL_USER. Here, we want to retain the original real account id.
-    if (patchSetApproval.realAccountId() != null) {
+    if (!patchSetApproval.realAccountId().equals(patchSetApproval.accountId())) {
       noteUtil.appendAccountIdIdentString(msg.append(","), patchSetApproval.realAccountId());
     }
 
@@ -914,11 +973,13 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       // be submitted or when the caller is a robot.
       return;
     }
+
+    Set<AttentionSetUpdate> updates = new HashSet<>();
     Set<Account.Id> currentReviewers =
         getNotes().getReviewers().byState(ReviewerStateInternal.REVIEWER);
-    Set<AttentionSetUpdate> updates = new HashSet<>();
     for (Map.Entry<Account.Id, ReviewerStateInternal> reviewer : reviewers.entrySet()) {
       Account.Id reviewerId = reviewer.getKey();
+
       ReviewerStateInternal reviewerState = reviewer.getValue();
       // Only add new reviewers to the attention set. Also, don't add the owner because the owner
       // can only be a "dummy" reviewer for legacy reasons.
@@ -1024,6 +1085,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       }
 
       addFooter(msg, FOOTER_ATTENTION, noteUtil.attentionSetUpdateToJson(attentionSetUpdate));
+      attentionSetUpdatesBuilder.add(attentionSetUpdate);
       hasUpdates = true;
     }
     return hasUpdates;

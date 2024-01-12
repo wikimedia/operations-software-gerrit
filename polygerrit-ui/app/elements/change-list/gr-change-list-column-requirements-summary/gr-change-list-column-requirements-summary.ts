@@ -1,27 +1,20 @@
 /**
  * @license
- * Copyright (C) 2015 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2015 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import '../../change/gr-submit-requirement-dashboard-hovercard/gr-submit-requirement-dashboard-hovercard';
 import '../../shared/gr-change-status/gr-change-status';
+import '../../shared/gr-icon/gr-icon';
 import {LitElement, css, html, TemplateResult} from 'lit';
-import {customElement, property} from 'lit/decorators';
+import {customElement, property} from 'lit/decorators.js';
 import {ChangeInfo, SubmitRequirementStatus} from '../../../api/rest-api';
 import {changeStatuses} from '../../../utils/change-util';
-import {getRequirements, iconForStatus} from '../../../utils/label-util';
+import {
+  getRequirements,
+  iconForStatus,
+  SubmitRequirementsIcon,
+} from '../../../utils/label-util';
 import {submitRequirementsStyles} from '../../../styles/gr-submit-requirements-styles';
 import {pluralize} from '../../../utils/string-util';
 
@@ -34,38 +27,17 @@ export class GrChangeListColumnRequirementsSummary extends LitElement {
     return [
       submitRequirementsStyles,
       css`
-        iron-icon {
-          width: var(--line-height-normal, 20px);
-          height: var(--line-height-normal, 20px);
-          vertical-align: top;
+        :host {
+          display: inline-block;
         }
-        iron-icon.block,
-        iron-icon.check-circle-filled {
-          margin-right: var(--spacing-xs);
+        gr-change-status {
+          display: inline-block;
         }
-        iron-icon.commentIcon {
-          color: var(--deemphasized-text-color);
-          margin-left: var(--spacing-s);
-        }
-        span {
-          line-height: var(--line-height-normal);
-        }
-        span.check-circle-filled {
-          color: var(--success-foreground);
+        gr-icon.commentIcon {
+          color: var(--warning-foreground);
         }
         .unsatisfied {
           color: var(--primary-text-color);
-        }
-        .total {
-          margin-left: var(--spacing-xs);
-          color: var(--deemphasized-text-color);
-        }
-        :host {
-          align-items: center;
-          display: inline-flex;
-        }
-        .comma {
-          padding-right: var(--spacing-xs);
         }
         /* Used to hide the leading separator comma for statuses. */
         .comma:first-of-type {
@@ -85,10 +57,9 @@ export class GrChangeListColumnRequirementsSummary extends LitElement {
     const statuses = changeStatuses(this.change);
     if (statuses.length > 0) {
       return statuses.map(
-        status => html`
-          <div class="comma">,</div>
-          <gr-change-status flat .status=${status}></gr-change-status>
-        `
+        status =>
+          html`<span class="comma">, </span
+            ><gr-change-status flat .status=${status}></gr-change-status>`
       );
     }
     return this.renderActiveStatus();
@@ -117,36 +88,43 @@ export class GrChangeListColumnRequirementsSummary extends LitElement {
 
     return this.renderState(
       iconForStatus(SubmitRequirementStatus.UNSATISFIED),
-      this.renderSummary(numUnsatisfied, numRequirements)
+      this.renderSummary(numUnsatisfied)
     );
   }
 
-  renderState(icon: string, aggregation: string | TemplateResult) {
-    return html`<span class=${icon} role="button" tabindex="0">
+  renderState(
+    icon: SubmitRequirementsIcon,
+    aggregation: string | TemplateResult
+  ) {
+    return html`<span class=${icon.icon} role="button" tabindex="0">
       <gr-submit-requirement-dashboard-hovercard .change=${this.change}>
       </gr-submit-requirement-dashboard-hovercard>
-      <iron-icon class=${icon} icon="gr-icons:${icon}" role="img"></iron-icon
-      >${aggregation}</span
+      <gr-icon
+        class=${icon.icon}
+        icon=${icon.icon}
+        ?filled=${icon.filled}
+        role="img"
+      ></gr-icon>
+      ${aggregation}</span
     >`;
   }
 
-  renderSummary(numUnsatisfied: number, numRequirements: number) {
-    return html`<span
-      ><span class="unsatisfied">${numUnsatisfied}</span
-      ><span class="total">(of ${numRequirements})</span></span
-    >`;
+  renderSummary(numUnsatisfied: number) {
+    return html`<span class="unsatisfied">${numUnsatisfied} missing</span>`;
   }
 
   renderCommentIcon() {
     if (!this.change?.unresolved_comment_count) return;
-    return html`<iron-icon
-      icon="gr-icons:comment"
+    return html`<gr-icon
       class="commentIcon"
+      icon="chat_bubble"
+      small
+      filled
       .title=${pluralize(
         this.change?.unresolved_comment_count,
         'unresolved comment'
       )}
-    ></iron-icon>`;
+    ></gr-icon>`;
   }
 }
 

@@ -1,36 +1,59 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-list-view';
 import {GrListView} from './gr-list-view';
 import {page} from '../../../utils/page-wrapper-utils';
 import {queryAndAssert, stubBaseUrl} from '../../../test/test-utils';
 import {GrButton} from '../gr-button/gr-button';
-import * as MockInteractions from '@polymer/iron-test-helpers/mock-interactions';
-
-const basicFixture = fixtureFromElement('gr-list-view');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-list-view tests', () => {
   let element: GrListView;
 
   setup(async () => {
-    element = basicFixture.instantiate();
-    await element.updateComplete;
+    element = await fixture(html`<gr-list-view></gr-list-view>`);
+  });
+
+  test('render', () => {
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <div id="topContainer">
+          <div class="filterContainer">
+            <label> Filter: </label>
+            <iron-input>
+              <input id="filter" type="text" />
+            </iron-input>
+          </div>
+          <div id="createNewContainer">
+            <gr-button
+              aria-disabled="false"
+              id="createNew"
+              link=""
+              primary=""
+              role="button"
+              tabindex="0"
+            >
+              Create New
+            </gr-button>
+          </div>
+        </div>
+        <slot> </slot>
+        <nav>
+          Page 1
+          <a hidden="" href="" id="prevArrow">
+            <gr-icon icon="chevron_left"></gr-icon>
+          </a>
+          <a hidden="" href=",25" id="nextArrow">
+            <gr-icon icon="chevron_right"></gr-icon>
+          </a>
+        </nav>
+      `
+    );
   });
 
   test('computeNavLink', () => {
@@ -156,7 +179,7 @@ suite('gr-list-view tests', () => {
     element.addEventListener('create-clicked', clickHandler);
     element.createNew = true;
     await element.updateComplete;
-    MockInteractions.tap(queryAndAssert<GrButton>(element, '#createNew'));
+    queryAndAssert<GrButton>(element, '#createNew').click();
     assert.isTrue(clickHandler.called);
   });
 

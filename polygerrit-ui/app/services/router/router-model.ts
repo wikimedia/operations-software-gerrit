@@ -1,25 +1,17 @@
 /**
  * @license
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import {Observable} from 'rxjs';
-import {distinctUntilChanged, map} from 'rxjs/operators';
 import {Finalizable} from '../registry';
-import {NumericChangeId, PatchSetNum} from '../../types/common';
+import {
+  NumericChangeId,
+  RevisionPatchSetNum,
+  BasePatchSetNum,
+} from '../../types/common';
 import {Model} from '../../models/model';
+import {select} from '../../utils/observable-util';
 
 export enum GerritView {
   ADMIN = 'admin',
@@ -32,51 +24,36 @@ export enum GerritView {
   GROUP = 'group',
   PLUGIN_SCREEN = 'plugin-screen',
   REPO = 'repo',
-  ROOT = 'root',
   SEARCH = 'search',
   SETTINGS = 'settings',
 }
 
 export interface RouterState {
+  // Note that this router model view must be updated before view model state.
   view?: GerritView;
   changeNum?: NumericChangeId;
-  patchNum?: PatchSetNum;
+  patchNum?: RevisionPatchSetNum;
+  basePatchNum?: BasePatchSetNum;
 }
 
 export class RouterModel extends Model<RouterState> implements Finalizable {
-  readonly routerView$: Observable<GerritView | undefined>;
+  readonly routerView$: Observable<GerritView | undefined> = select(
+    this.state$,
+    state => state.view
+  );
 
-  readonly routerChangeNum$: Observable<NumericChangeId | undefined>;
+  readonly routerChangeNum$: Observable<NumericChangeId | undefined> = select(
+    this.state$,
+    state => state.changeNum
+  );
 
-  readonly routerPatchNum$: Observable<PatchSetNum | undefined>;
+  readonly routerPatchNum$: Observable<RevisionPatchSetNum | undefined> =
+    select(this.state$, state => state.patchNum);
+
+  readonly routerBasePatchNum$: Observable<BasePatchSetNum | undefined> =
+    select(this.state$, state => state.basePatchNum);
 
   constructor() {
     super({});
-    this.routerView$ = this.state$.pipe(
-      map(state => state.view),
-      distinctUntilChanged()
-    );
-    this.routerChangeNum$ = this.state$.pipe(
-      map(state => state.changeNum),
-      distinctUntilChanged()
-    );
-    this.routerPatchNum$ = this.state$.pipe(
-      map(state => state.patchNum),
-      distinctUntilChanged()
-    );
-  }
-
-  finalize() {}
-
-  // Private but used in tests
-  setState(state: RouterState) {
-    this.subject$.next(state);
-  }
-
-  updateState(partial: Partial<RouterState>) {
-    this.subject$.next({
-      ...this.subject$.getValue(),
-      ...partial,
-    });
   }
 }

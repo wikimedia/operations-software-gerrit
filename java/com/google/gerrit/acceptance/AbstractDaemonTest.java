@@ -45,11 +45,12 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
-import com.google.common.jimfs.Jimfs;
 import com.google.common.primitives.Chars;
 import com.google.common.testing.FakeTicker;
 import com.google.gerrit.acceptance.AcceptanceTestRequestScope.Context;
 import com.google.gerrit.acceptance.PushOneCommit.Result;
+import com.google.gerrit.acceptance.config.ConfigAnnotationParser;
+import com.google.gerrit.acceptance.config.GerritSystemProperty;
 import com.google.gerrit.acceptance.testsuite.account.TestSshKeys;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
@@ -154,14 +155,7 @@ import com.google.inject.Provider;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.lang.reflect.Modifier;
-import java.nio.file.DirectoryStream;
-import java.nio.file.FileSystem;
-import java.nio.file.FileSystems;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -175,6 +169,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -183,7 +178,6 @@ import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.Constants;
-import org.eclipse.jgit.lib.NullProgressMonitor;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
@@ -193,11 +187,7 @@ import org.eclipse.jgit.revwalk.RevSort;
 import org.eclipse.jgit.revwalk.RevTree;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileBasedConfig;
-import org.eclipse.jgit.transport.FetchResult;
-import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.Transport;
-import org.eclipse.jgit.transport.TransportBundleStream;
-import org.eclipse.jgit.transport.URIish;
 import org.eclipse.jgit.util.FS;
 import org.eclipse.jgit.util.SystemReader;
 import org.junit.After;
@@ -443,6 +433,14 @@ public abstract class AbstractDaemonTest {
     GerritServer.Description methodDesc =
         GerritServer.Description.forTestMethod(description, configName);
     testMethodDescription = methodDesc;
+
+    if (methodDesc.systemProperties() != null) {
+      ConfigAnnotationParser.parse(methodDesc.systemProperties());
+    }
+
+    if (methodDesc.systemProperty() != null) {
+      ConfigAnnotationParser.parse(methodDesc.systemProperty());
+    }
 
     testRequiresSsh = classDesc.useSshAnnotation() || methodDesc.useSshAnnotation();
     if (!testRequiresSsh) {
@@ -698,6 +696,19 @@ public abstract class AbstractDaemonTest {
       server.close();
       server = null;
     }
+
+    GerritServer.Description methodDesc =
+        GerritServer.Description.forTestMethod(description, configName);
+    if (methodDesc.systemProperties() != null) {
+      for (GerritSystemProperty sysProp : methodDesc.systemProperties().value()) {
+        System.clearProperty(sysProp.name());
+      }
+    }
+
+    if (methodDesc.systemProperty() != null) {
+      System.clearProperty(methodDesc.systemProperty().name());
+    }
+
     SystemReader.setInstance(oldSystemReader);
     oldSystemReader = null;
     // Set useDefaultTicker in afterTest, so the next beforeTest will use the default ticker
@@ -966,7 +977,7 @@ public abstract class AbstractDaemonTest {
             repo,
             "new subject",
             "new file",
-            "new content");
+            "new content " + UUID.randomUUID());
     return result;
   }
 
@@ -1201,58 +1212,6 @@ public abstract class AbstractDaemonTest {
     assertThat(message.headers()).containsKey("Reply-To");
     StringEmailHeader replyTo = (StringEmailHeader) message.headers().get("Reply-To");
     assertThat(replyTo.getString()).doesNotContain(email);
-  }
-
-  /**
-   * Fetches each bundle into a newly cloned repository, then it applies the bundle, and returns the
-   * resulting tree id.
-   *
-   * <p>Omits NoteDb meta refs.
-   */
-  protected Map<BranchNameKey, ObjectId> fetchFromBundles(BinaryResult bundles) throws Exception {
-    assertThat(bundles.getContentType()).isEqualTo("application/x-zip");
-
-    FileSystem fs = Jimfs.newFileSystem();
-    Path previewPath = fs.getPath("preview.zip");
-    try (OutputStream out = Files.newOutputStream(previewPath)) {
-      bundles.writeTo(out);
-    }
-    Map<BranchNameKey, ObjectId> ret = new HashMap<>();
-    try (FileSystem zipFs = FileSystems.newFileSystem(previewPath, (ClassLoader) null);
-        DirectoryStream<Path> dirStream =
-            Files.newDirectoryStream(Iterables.getOnlyElement(zipFs.getRootDirectories()))) {
-      for (Path p : dirStream) {
-        if (!Files.isRegularFile(p)) {
-          continue;
-        }
-        String bundleName = p.getFileName().toString();
-        int len = bundleName.length();
-        assertThat(bundleName).endsWith(".git");
-        String repoName = bundleName.substring(0, len - 4);
-        Project.NameKey proj = Project.nameKey(repoName);
-        TestRepository<?> localRepo = cloneProject(proj);
-
-        try (InputStream bundleStream = Files.newInputStream(p);
-            TransportBundleStream tbs =
-                new TransportBundleStream(
-                    localRepo.getRepository(), new URIish(bundleName), bundleStream)) {
-          FetchResult fr =
-              tbs.fetch(
-                  NullProgressMonitor.INSTANCE,
-                  Arrays.asList(new RefSpec("refs/*:refs/preview/*")));
-          for (Ref r : fr.getAdvertisedRefs()) {
-            String refName = r.getName();
-            if (RefNames.isNoteDbMetaRef(refName)) {
-              continue;
-            }
-            RevCommit c = localRepo.getRevWalk().parseCommit(r.getObjectId());
-            ret.put(BranchNameKey.create(proj, refName), c.getTree().copy());
-          }
-        }
-      }
-    }
-    assertThat(ret).isNotEmpty();
-    return ret;
   }
 
   /** Assert that the given branches have the given tree ids. */

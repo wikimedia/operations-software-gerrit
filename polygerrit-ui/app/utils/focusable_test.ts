@@ -3,11 +3,10 @@
  * Copyright 2022 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../test/common-test-setup-karma';
+import '../test/common-test-setup';
 import {getFocusableElements, getFocusableElementsReverse} from './focusable';
 import {html, render} from 'lit';
-import {fixture} from '@open-wc/testing-helpers';
+import {fixture, assert} from '@open-wc/testing';
 
 async function createDom() {
   const container = await fixture<HTMLDivElement>(html`<div></div>`);
@@ -56,26 +55,18 @@ suite('focusable', () => {
   test('Finds all focusables in-order', async () => {
     const container = await createDom();
     const results = [...getFocusableElements(container)];
-    expect(results.map(e => e.id)).to.have.ordered.members([
-      'first',
-      'second',
-      'third',
-      'fourth',
-      'fifth',
-      'sixth',
-    ]);
+    assert.includeOrderedMembers(
+      results.map(e => e.id),
+      ['first', 'second', 'third', 'fourth', 'fifth', 'sixth']
+    );
   });
 
   test('Finds all focusables in reverse order', async () => {
     const container = await createDom();
     const results = [...getFocusableElementsReverse(container)];
-    expect(results.map(e => e.id)).to.have.ordered.members([
-      'sixth',
-      'fifth',
-      'fourth',
-      'third',
-      'second',
-      'first',
-    ]);
+    assert.includeOrderedMembers(
+      results.map(e => e.id),
+      ['sixth', 'fifth', 'fourth', 'third', 'second', 'first']
+    );
   });
 });

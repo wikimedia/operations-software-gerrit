@@ -47,6 +47,7 @@ import com.google.gerrit.server.cache.h2.H2CacheModule;
 import com.google.gerrit.server.cache.mem.DefaultMemoryCacheModule;
 import com.google.gerrit.server.change.ChangeJson;
 import com.google.gerrit.server.change.ChangeKindCacheImpl;
+import com.google.gerrit.server.change.EmailNewPatchSet;
 import com.google.gerrit.server.change.MergeabilityCacheImpl;
 import com.google.gerrit.server.change.PatchSetInserter;
 import com.google.gerrit.server.change.RebaseChangeOp;
@@ -62,15 +63,14 @@ import com.google.gerrit.server.config.GitReceivePackGroups;
 import com.google.gerrit.server.config.GitUploadPackGroups;
 import com.google.gerrit.server.config.SkipCurrentRulesEvaluationOnClosedChangesModule;
 import com.google.gerrit.server.config.SysExecutorModule;
+import com.google.gerrit.server.extensions.events.AttentionSetObserver;
 import com.google.gerrit.server.extensions.events.EventUtil;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.extensions.events.RevisionCreated;
 import com.google.gerrit.server.extensions.events.WorkInProgressStateChanged;
 import com.google.gerrit.server.git.ChangesByProjectCache;
-import com.google.gerrit.server.git.MergeUtil;
 import com.google.gerrit.server.git.PureRevertCache;
 import com.google.gerrit.server.git.TagCache;
-import com.google.gerrit.server.mail.send.ReplacePatchSetSender;
 import com.google.gerrit.server.notedb.NoteDbModule;
 import com.google.gerrit.server.patch.DiffExecutorModule;
 import com.google.gerrit.server.patch.DiffOperationsImpl;
@@ -155,9 +155,8 @@ public class BatchProgramModule extends FactoryModule {
         .in(SINGLETON);
     bind(Realm.class).to(FakeRealm.class);
     bind(IdentifiedUser.class).toProvider(Providers.of(null));
-    bind(ReplacePatchSetSender.Factory.class).toProvider(Providers.of(null));
+    bind(EmailNewPatchSet.Factory.class).toProvider(Providers.of(null));
     bind(CurrentUser.class).to(InternalUser.class);
-    factory(MergeUtil.Factory.class);
     factory(PatchSetInserter.Factory.class);
     factory(RebaseChangeOp.Factory.class);
 
@@ -223,6 +222,7 @@ public class BatchProgramModule extends FactoryModule {
     bind(RevisionCreated.class).toInstance(RevisionCreated.DISABLED);
     bind(WorkInProgressStateChanged.class).toInstance(WorkInProgressStateChanged.DISABLED);
     bind(AccountVisibility.class).toProvider(AccountVisibilityProvider.class).in(SINGLETON);
+    bind(AttentionSetObserver.class).toInstance(AttentionSetObserver.DISABLED);
 
     ModuleOverloader.override(
             modules,

@@ -1,27 +1,15 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import '../gr-button/gr-button';
-import '../gr-icons/gr-icons';
+import '../gr-icon/gr-icon';
 import '../gr-limited-text/gr-limited-text';
 import {fireEvent} from '../../../utils/event-util';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, css, html} from 'lit';
-import {customElement, property} from 'lit/decorators';
+import {customElement, property} from 'lit/decorators.js';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -43,9 +31,6 @@ export class GrLinkedChip extends LitElement {
   @property({type: String})
   text = '';
 
-  @property({type: Boolean})
-  transparentBackground = false;
-
   /**  If provided, sets the maximum length of the content. */
   @property({type: Number})
   limit?: number;
@@ -65,10 +50,6 @@ export class GrLinkedChip extends LitElement {
           display: inline-flex;
           padding: 0 var(--spacing-m);
         }
-        .transparentBackground,
-        gr-button.transparentBackground {
-          background-color: transparent;
-        }
         :host([disabled]) {
           opacity: 0.6;
           pointer-events: none;
@@ -76,20 +57,9 @@ export class GrLinkedChip extends LitElement {
         a {
           color: var(--linked-chip-text-color);
         }
-        iron-icon {
-          height: 1.2rem;
-          width: 1.2rem;
+        gr-icon {
+          font-size: 1.2rem;
         }
-      `,
-    ];
-  }
-
-  override render() {
-    // To pass CSS mixins for @apply to Polymer components, they need to appear
-    // in <style> inside the template.
-    /* eslint-disable lit/prefer-static-styles */
-    const customStyle = html`
-      <style>
         gr-button::part(paper-button),
         gr-button.remove:hover::part(paper-button),
         gr-button.remove:focus::part(paper-button) {
@@ -105,37 +75,31 @@ export class GrLinkedChip extends LitElement {
           padding: 0;
           text-decoration: none;
         }
-      </style>
-    `;
-    return html`${customStyle}
-      <div
-        class="container ${this._getBackgroundClass(
-          this.transparentBackground
-        )}"
+      `,
+    ];
+  }
+
+  override render() {
+    return html`<div class="container">
+      <a href=${this.href}>
+        <gr-limited-text
+          .limit=${this.limit}
+          .text=${this.text}
+        ></gr-limited-text>
+      </a>
+      <gr-button
+        id="remove"
+        link=""
+        ?hidden=${!this.removable}
+        class="remove"
+        @click=${this.handleRemoveTap}
       >
-        <a href=${this.href}>
-          <gr-limited-text
-            .limit=${this.limit}
-            .text=${this.text}
-          ></gr-limited-text>
-        </a>
-        <gr-button
-          id="remove"
-          link=""
-          ?hidden=${!this.removable}
-          class="remove ${this._getBackgroundClass(this.transparentBackground)}"
-          @click=${this._handleRemoveTap}
-        >
-          <iron-icon icon="gr-icons:close"></iron-icon>
-        </gr-button>
-      </div>`;
+        <gr-icon icon="close"></gr-icon>
+      </gr-button>
+    </div>`;
   }
 
-  _getBackgroundClass(transparent: boolean) {
-    return transparent ? 'transparentBackground' : '';
-  }
-
-  _handleRemoveTap(e: Event) {
+  private handleRemoveTap(e: Event) {
     e.preventDefault();
     fireEvent(this, 'remove');
   }

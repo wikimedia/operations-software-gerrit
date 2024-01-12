@@ -1,20 +1,8 @@
 /**
  * @license
- * Copyright (C) 2015 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2015 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 import {safeTypesBridge} from '../utils/safe-types-util';
 import './font-roboto-local-loader';
 // Sets up global Polymer variable, because plugins requires it.
@@ -47,16 +35,19 @@ import {
   initVisibilityReporter,
   initPerformanceReporter,
   initErrorReporter,
+  initWebVitals,
 } from '../services/gr-reporting/gr-reporting_impl';
 import {injectAppContext} from '../services/app-context';
 import {html, LitElement} from 'lit';
-import {customElement} from 'lit/decorators';
+import {customElement} from 'lit/decorators.js';
+import {ServiceWorkerInstaller} from '../services/service-worker-installer';
 
 const appContext = createAppContext();
 injectAppContext(appContext);
 const reportingService = appContext.reportingService;
 initVisibilityReporter(reportingService);
 initPerformanceReporter(reportingService);
+initWebVitals(reportingService);
 initErrorReporter(reportingService);
 
 installPolymerResin(safeTypesBridge);
@@ -65,12 +56,20 @@ installPolymerResin(safeTypesBridge);
 export class GrApp extends LitElement {
   private finalizables: Finalizable[] = [];
 
+  private serviceWorkerInstaller?: ServiceWorkerInstaller;
+
   override connectedCallback() {
     super.connectedCallback();
     const dependencies = createAppDependencies(appContext);
     for (const [token, service] of dependencies) {
       this.finalizables.push(service);
       provide(this, token, () => service);
+    }
+    if (!this.serviceWorkerInstaller) {
+      this.serviceWorkerInstaller = new ServiceWorkerInstaller(
+        appContext.flagsService,
+        appContext.userModel
+      );
     }
   }
 

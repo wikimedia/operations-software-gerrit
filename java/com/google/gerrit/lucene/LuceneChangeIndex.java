@@ -17,7 +17,6 @@ package com.google.gerrit.lucene;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.gerrit.lucene.AbstractLuceneIndex.sortFieldName;
 import static com.google.gerrit.server.git.QueueProvider.QueueType.INTERACTIVE;
-import static com.google.gerrit.server.index.change.ChangeField.LEGACY_ID;
 import static com.google.gerrit.server.index.change.ChangeField.LEGACY_ID_STR;
 import static com.google.gerrit.server.index.change.ChangeField.PROJECT;
 import static com.google.gerrit.server.index.change.ChangeIndexRewriter.CLOSED_STATUSES;
@@ -39,10 +38,10 @@ import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.converter.ChangeProtoConverter;
 import com.google.gerrit.entities.converter.ProtoConverter;
 import com.google.gerrit.exceptions.StorageException;
-import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.PaginationType;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.Schema;
+import com.google.gerrit.index.SchemaFieldDefs.SchemaField;
 import com.google.gerrit.index.query.FieldBundle;
 import com.google.gerrit.index.query.HasCardinality;
 import com.google.gerrit.index.query.Predicate;
@@ -89,7 +88,7 @@ import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.TopFieldDocs;
-import org.apache.lucene.store.RAMDirectory;
+import org.apache.lucene.store.ByteBuffersDirectory;
 import org.apache.lucene.util.BytesRef;
 import org.eclipse.jgit.lib.Config;
 
@@ -105,30 +104,19 @@ public class LuceneChangeIndex implements ChangeIndex {
 
   static final String UPDATED_SORT_FIELD = sortFieldName(ChangeField.UPDATED);
   static final String MERGED_ON_SORT_FIELD = sortFieldName(ChangeField.MERGED_ON);
-  static final String ID_SORT_FIELD = sortFieldName(ChangeField.LEGACY_ID);
-  static final String ID2_SORT_FIELD = sortFieldName(ChangeField.LEGACY_ID_STR);
+  static final String ID_STR_SORT_FIELD = sortFieldName(ChangeField.LEGACY_ID_STR);
 
   private static final String CHANGES = "changes";
   private static final String CHANGES_OPEN = "open";
   private static final String CHANGES_CLOSED = "closed";
   private static final String CHANGE_FIELD = ChangeField.CHANGE.getName();
 
-  @FunctionalInterface
-  interface IdTerm {
-    Term get(String name, int id);
+  static Term idTerm(ChangeData cd) {
+    return idTerm(cd.getVirtualId());
   }
 
-  static Term idTerm(IdTerm idTerm, FieldDef<ChangeData, ?> idField, ChangeData cd) {
-    return idTerm(idTerm, idField, cd.getId());
-  }
-
-  static Term idTerm(IdTerm idTerm, FieldDef<ChangeData, ?> idField, Change.Id id) {
-    return idTerm.get(idField.getName(), id.get());
-  }
-
-  @FunctionalInterface
-  interface ChangeIdExtractor {
-    Change.Id extract(IndexableField f);
+  static Term idTerm(Change.Id id) {
+    return QueryBuilder.stringTerm(LEGACY_ID_STR.getName(), Integer.toString(id.get()));
   }
 
   private final ListeningExecutorService executor;
@@ -137,12 +125,6 @@ public class LuceneChangeIndex implements ChangeIndex {
   private final QueryBuilder<ChangeData> queryBuilder;
   private final ChangeSubIndex openIndex;
   private final ChangeSubIndex closedIndex;
-
-  // TODO(davido): Remove the below fields when support for legacy numeric fields is removed.
-  private final FieldDef<ChangeData, ?> idField;
-  private final String idSortFieldName;
-  private final IdTerm idTerm;
-  private final ChangeIdExtractor extractor;
   private final ImmutableSet<String> skipFields;
 
   @Inject
@@ -173,7 +155,7 @@ public class LuceneChangeIndex implements ChangeIndex {
           new ChangeSubIndex(
               schema,
               sitePaths,
-              new RAMDirectory(),
+              new ByteBuffersDirectory(),
               "ramOpen",
               skipFields,
               openConfig,
@@ -183,7 +165,7 @@ public class LuceneChangeIndex implements ChangeIndex {
           new ChangeSubIndex(
               schema,
               sitePaths,
-              new RAMDirectory(),
+              new ByteBuffersDirectory(),
               "ramClosed",
               skipFields,
               closedConfig,
@@ -210,20 +192,6 @@ public class LuceneChangeIndex implements ChangeIndex {
               searcherFactory,
               autoFlush);
     }
-
-    idField = this.schema.useLegacyNumericFields() ? LEGACY_ID : LEGACY_ID_STR;
-    idSortFieldName = schema.useLegacyNumericFields() ? ID_SORT_FIELD : ID2_SORT_FIELD;
-    idTerm =
-        (name, id) ->
-            this.schema.useLegacyNumericFields()
-                ? QueryBuilder.intTerm(name, id)
-                : QueryBuilder.stringTerm(name, Integer.toString(id));
-    extractor =
-        (f) ->
-            Change.id(
-                this.schema.useLegacyNumericFields()
-                    ? f.numericValue().intValue()
-                    : Integer.valueOf(f.stringValue()));
   }
 
   @Override
@@ -242,7 +210,7 @@ public class LuceneChangeIndex implements ChangeIndex {
 
   @Override
   public void replace(ChangeData cd) {
-    Term id = LuceneChangeIndex.idTerm(idTerm, idField, cd);
+    Term id = LuceneChangeIndex.idTerm(cd);
     // toDocument is essentially static and doesn't depend on the specific
     // sub-index, so just pick one.
     Document doc = openIndex.toDocument(cd);
@@ -275,9 +243,9 @@ public class LuceneChangeIndex implements ChangeIndex {
 
   @Override
   public void delete(Change.Id changeId) {
-    Term id = LuceneChangeIndex.idTerm(idTerm, idField, changeId);
+    Term idTerm = LuceneChangeIndex.idTerm(changeId);
     try {
-      Futures.allAsList(openIndex.delete(id), closedIndex.delete(id)).get();
+      Futures.allAsList(openIndex.delete(idTerm), closedIndex.delete(idTerm)).get();
     } catch (ExecutionException | InterruptedException e) {
       throw new StorageException(e);
     }
@@ -314,7 +282,7 @@ public class LuceneChangeIndex implements ChangeIndex {
     return new Sort(
         new SortField(UPDATED_SORT_FIELD, SortField.Type.LONG, true),
         new SortField(MERGED_ON_SORT_FIELD, SortField.Type.LONG, true),
-        new SortField(idSortFieldName, SortField.Type.LONG, true));
+        new SortField(ID_STR_SORT_FIELD, SortField.Type.LONG, true));
   }
 
   private class QuerySource implements ChangeDataSource {
@@ -368,7 +336,7 @@ public class LuceneChangeIndex implements ChangeIndex {
         throw new StorageException("interrupted");
       }
 
-      final Set<String> fields = IndexUtils.changeFields(opts, schema.useLegacyNumericFields());
+      final Set<String> fields = IndexUtils.changeFields(opts);
       return new ChangeDataResults(
           executor.submit(
               new Callable<Results>() {
@@ -391,7 +359,7 @@ public class LuceneChangeIndex implements ChangeIndex {
       Map<ChangeSubIndex, ScoreDoc> searchAfterBySubIndex;
 
       try {
-        Results r = doRead(IndexUtils.changeFields(opts, schema.useLegacyNumericFields()));
+        Results r = doRead(IndexUtils.changeFields(opts));
         documents = r.docs;
         searchAfterBySubIndex = r.searchAfterBySubIndex;
       } catch (IOException e) {
@@ -530,7 +498,7 @@ public class LuceneChangeIndex implements ChangeIndex {
         ImmutableList.Builder<ChangeData> result =
             ImmutableList.builderWithExpectedSize(docs.size());
         for (Document doc : docs) {
-          result.add(toChangeData(fields(doc, fields), fields, idField.getName()));
+          result.add(toChangeData(fields(doc, fields), fields, LEGACY_ID_STR.getName()));
         }
         return result.build();
       } catch (InterruptedException e) {
@@ -577,12 +545,13 @@ public class LuceneChangeIndex implements ChangeIndex {
     } else {
       IndexableField f = Iterables.getFirst(doc.get(idFieldName), null);
 
+      Change.Id id = Change.id(Integer.valueOf(f.stringValue()));
       // IndexUtils#changeFields ensures either CHANGE or PROJECT is always present.
       IndexableField project = doc.get(PROJECT.getName()).iterator().next();
-      cd = changeDataFactory.create(Project.nameKey(project.stringValue()), extractor.extract(f));
+      cd = changeDataFactory.create(Project.nameKey(project.stringValue()), id);
     }
 
-    for (FieldDef<ChangeData, ?> field : getSchema().getFields().values()) {
+    for (SchemaField<ChangeData, ?> field : getSchema().getSchemaFields().values()) {
       if (fields.contains(field.getName()) && doc.get(field.getName()) != null) {
         field.setIfPossible(cd, new LuceneStoredValue(doc.get(field.getName())));
       }

@@ -1,21 +1,9 @@
 /**
  * @license
- * Copyright (C) 2016 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2016 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import './gr-message-scores';
 import {
   createChange,
@@ -24,15 +12,37 @@ import {
 } from '../../../test/test-data-generators';
 import {queryAll, stubFlags} from '../../../test/test-utils';
 import {GrMessageScores} from './gr-message-scores';
-
-const basicFixture = fixtureFromElement('gr-message-scores');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-message-score tests', () => {
   let element: GrMessageScores;
 
   setup(async () => {
-    element = basicFixture.instantiate();
+    element = await fixture(html`<gr-message-scores></gr-message-scores>`);
+  });
+
+  test('render', async () => {
+    element.message = {
+      ...createChangeMessage(),
+      author: {},
+      expanded: false,
+      message: 'Patch Set 1: Verified+1 Code-Review-2 Trybot-Label3+1 Blub+1',
+    };
+    element.labelExtremes = {
+      Verified: {max: 1, min: -1},
+      'Code-Review': {max: 2, min: -2},
+      'Trybot-Label3': {max: 3, min: 0},
+    };
     await element.updateComplete;
+
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <span class="max positive score"> Verified +1 </span>
+        <span class="min negative score"> Code-Review -2 </span>
+        <span class="positive score"> Trybot-Label3 +1 </span>
+      `
+    );
   });
 
   test('votes', async () => {
@@ -140,7 +150,7 @@ suite('gr-message-score tests', () => {
 
   test('reset vote', async () => {
     stubFlags('isEnabled').returns(true);
-    element = basicFixture.instantiate();
+    element = await fixture(html`<gr-message-scores></gr-message-scores>`);
     element.change = {
       ...createChange(),
       labels: {
@@ -163,17 +173,23 @@ suite('gr-message-score tests', () => {
       element.shadowRoot?.querySelectorAll('gr-trigger-vote');
     assert.equal(triggerChips?.length, 1);
     const triggerChip = triggerChips?.[0];
-    expect(triggerChip).shadowDom.equal(`<div class="container">
+    assert.shadowDom.equal(
+      triggerChip,
+      `<div class="container">
       <span class="label">Auto-Submit</span>
       <gr-vote-chip></gr-vote-chip>
-    </div>`);
+    </div>`
+    );
     const voteChips = triggerChip?.shadowRoot?.querySelectorAll('gr-vote-chip');
     assert.equal(voteChips?.length, 1);
-    expect(voteChips?.[0]).shadowDom.equal('');
+    assert.shadowDom.equal(voteChips?.[0], '');
     const scoreChips = element.shadowRoot?.querySelectorAll('.score');
     assert.equal(scoreChips?.length, 1);
-    expect(scoreChips?.[0]).dom.equal(`<span class="removed score">
-    Commit-Queue 0 (vote reset)
-    </span>`);
+    assert.dom.equal(
+      scoreChips?.[0],
+      /* HTML */ `
+        <span class="removed score"> Commit-Queue 0 (vote reset) </span>
+      `
+    );
   });
 });

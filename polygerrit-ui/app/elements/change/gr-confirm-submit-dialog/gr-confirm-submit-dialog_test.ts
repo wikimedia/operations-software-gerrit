@@ -1,42 +1,30 @@
 /**
  * @license
- * Copyright (C) 2018 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2018 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import {
   createParsedChange,
   createRevision,
   createThread,
 } from '../../../test/test-data-generators';
-import {queryAndAssert} from '../../../test/test-utils';
-import {PatchSetNum} from '../../../types/common';
+import {EDIT} from '../../../types/common';
 import {GrConfirmSubmitDialog} from './gr-confirm-submit-dialog';
 import './gr-confirm-submit-dialog';
-
-const basicFixture = fixtureFromElement('gr-confirm-submit-dialog');
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-confirm-submit-dialog tests', () => {
   let element: GrConfirmSubmitDialog;
 
-  setup(() => {
-    element = basicFixture.instantiate();
+  setup(async () => {
+    element = await fixture(
+      html`<gr-confirm-submit-dialog></gr-confirm-submit-dialog>`
+    );
     element.initialised = true;
   });
 
-  test('display', async () => {
+  test('render', async () => {
     element.action = {label: 'my-label'};
     element.change = {
       ...createParsedChange(),
@@ -44,12 +32,31 @@ suite('gr-confirm-submit-dialog tests', () => {
       revisions: {},
     };
     await element.updateComplete;
-    const header = queryAndAssert(element, '.header');
-    assert.equal(header.textContent!.trim(), 'my-label');
 
-    const message = queryAndAssert(element, '.main p');
-    assert.isNotEmpty(message.textContent);
-    assert.notEqual(message.textContent!.indexOf('my-subject'), -1);
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <gr-dialog
+          confirm-label="Continue"
+          confirm-on-enter=""
+          id="dialog"
+          role="dialog"
+        >
+          <div class="header" slot="header">my-label</div>
+          <div class="main" slot="main">
+            <gr-endpoint-decorator name="confirm-submit-change">
+              <p>
+                Ready to submit “
+                <strong> my-subject </strong>
+                ”?
+              </p>
+              <gr-endpoint-param name="change"> </gr-endpoint-param>
+              <gr-endpoint-param name="action"> </gr-endpoint-param>
+            </gr-endpoint-decorator>
+          </div>
+        </gr-dialog>
+      `
+    );
   });
 
   test('computeUnresolvedCommentsWarning', () => {
@@ -71,10 +78,7 @@ suite('gr-confirm-submit-dialog tests', () => {
     element.change = {
       ...createParsedChange(),
       revisions: {
-        d442ff05d6c4f2a3af0eeca1f67374b39f9dc3d8: {
-          ...createRevision(),
-          _number: 'edit' as PatchSetNum,
-        },
+        d442ff05d6c4f2a3af0eeca1f67374b39f9dc3d8: createRevision(EDIT),
       },
       unresolved_comment_count: 0,
     };
@@ -84,10 +88,7 @@ suite('gr-confirm-submit-dialog tests', () => {
     element.change = {
       ...createParsedChange(),
       revisions: {
-        d442ff05d6c4f2a3af0eeca1f67374b39f9dc3d8: {
-          ...createRevision(),
-          _number: 2 as PatchSetNum,
-        },
+        d442ff05d6c4f2a3af0eeca1f67374b39f9dc3d8: createRevision(2),
       },
     };
     assert.isFalse(element.computeHasChangeEdit());

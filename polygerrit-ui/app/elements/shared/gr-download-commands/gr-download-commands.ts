@@ -1,18 +1,7 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {Subscription} from 'rxjs';
 import '@polymer/paper-tabs/paper-tab';
@@ -24,7 +13,7 @@ import {GrShellCommand} from '../gr-shell-command/gr-shell-command';
 import {paperStyles} from '../../../styles/gr-paper-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, html, css} from 'lit';
-import {customElement, property, state} from 'lit/decorators';
+import {customElement, property, state} from 'lit/decorators.js';
 import {fire} from '../../../utils/event-util';
 import {BindValueChangeEvent} from '../../../types/events';
 
@@ -106,6 +95,18 @@ export class GrDownloadCommands extends LitElement {
           max-width: 15rem;
           text-transform: uppercase;
           --paper-tab-ink: var(--link-color);
+          --paper-font-common-base_-_font-family: var(--header-font-family);
+          --paper-font-common-base_-_-webkit-font-smoothing: initial;
+          --paper-tab-content_-_margin-bottom: var(--spacing-s);
+          /* paper-tabs uses 700 here, which can look awkward */
+          --paper-tab-content-focused_-_font-weight: var(--font-weight-h3);
+          --paper-tab-content-focused_-_background: var(
+            --gray-background-focus
+          );
+          --paper-tab-content-unselected_-_opacity: 1;
+          --paper-tab-content-unselected_-_color: var(
+            --deemphasized-text-color
+          );
         }
         label,
         input {

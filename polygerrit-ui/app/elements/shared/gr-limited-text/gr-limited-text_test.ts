@@ -1,26 +1,14 @@
 /**
  * @license
- * Copyright (C) 2017 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
  */
-
-import '../../../test/common-test-setup-karma';
+import '../../../test/common-test-setup';
 import {query, queryAndAssert} from '../../../test/test-utils';
 import {GrTooltipContent} from '../gr-tooltip-content/gr-tooltip-content';
 import './gr-limited-text';
 import {GrLimitedText} from './gr-limited-text';
-import {fixture, html} from '@open-wc/testing-helpers';
+import {fixture, html, assert} from '@open-wc/testing';
 
 suite('gr-limited-text tests', () => {
   let element: GrLimitedText;
@@ -28,6 +16,22 @@ suite('gr-limited-text tests', () => {
   setup(async () => {
     element = await fixture<GrLimitedText>(
       html`<gr-limited-text></gr-limited-text>`
+    );
+  });
+
+  test('render', async () => {
+    element.text = 'abc 123';
+    element.limit = 5;
+    element.tooltip = 'tip';
+    await element.updateComplete;
+
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <gr-tooltip-content has-tooltip="" title="abc 123 (tip)">
+          abc …
+        </gr-tooltip-content>
+      `
     );
   });
 

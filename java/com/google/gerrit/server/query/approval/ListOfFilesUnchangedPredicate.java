@@ -52,9 +52,8 @@ public class ListOfFilesUnchangedPredicate extends ApprovalPredicate {
 
   @Override
   public boolean match(ApprovalContext ctx) {
-    PatchSet targetPatchSet = ctx.target();
-    PatchSet sourcePatchSet =
-        ctx.changeNotes().getPatchSets().get(ctx.patchSetApproval().patchSetId());
+    PatchSet targetPatchSet = ctx.targetPatchSet();
+    PatchSet sourcePatchSet = ctx.changeNotes().getPatchSets().get(ctx.sourcePatchSetId());
 
     Integer parentNum =
         isInitialCommit(ctx.changeNotes().getProjectName(), targetPatchSet.commitId()) ? 0 : 1;
@@ -87,8 +86,7 @@ public class ListOfFilesUnchangedPredicate extends ApprovalPredicate {
     } catch (DiffNotAvailableException ex) {
       throw new StorageException(
           "failed to compute difference in files, so won't copy"
-              + " votes on labels even if list of files is the same and "
-              + "copyAllIfListOfFilesDidNotChange",
+              + " votes on labels even if list of files is the same",
           ex);
     }
   }
