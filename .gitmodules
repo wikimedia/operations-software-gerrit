@@ -93,6 +93,7 @@
 [submodule "plugins/zuul"]
 	path = plugins/zuul
 	url = https://gerrit.googlesource.com/plugins/zuul
+	branch = stable-3.7
 [submodule "plugins/its-base"]
 	path = plugins/its-base
 	url = https://gerrit.googlesource.com/plugins/its-base
