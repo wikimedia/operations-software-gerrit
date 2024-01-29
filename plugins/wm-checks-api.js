@@ -610,6 +610,17 @@ class WikimediaChecksAnalyzer {
       });
     }
 
+    const nonSuccessLinks = checkResults
+      .filter( check => check.category !== 'SUCCESS' && 'links' in check)
+      .map( check =>
+        check.links.find(
+          link => link.primary && link.icon === 'external'
+        ).url
+      );
+
+    const statusLink = (nonSuccessLinks.length === 1) ?
+      nonSuccessLinks[0] : undefined;
+
     /** @type {CheckRun} */
     const checkRun = {
       checkName: checkName,
@@ -626,6 +637,10 @@ class WikimediaChecksAnalyzer {
     if ( labelName ) {
       checkRun.labelName = labelName;
     }
+    if ( statusLink ) {
+      checkRun.statusLink = statusLink;
+    }
+
     return checkRun;
   }
 
