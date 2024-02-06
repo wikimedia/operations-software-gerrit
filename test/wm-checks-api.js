@@ -555,6 +555,27 @@ QUnit.module( '[wm-checks-api]', () => {
         } );
       } );
 
+      QUnit.test( 'Merge failed messages', assert => {
+        const zuulMergerMessage = 'This change or one of its cross-repo dependencies was unable to be automatically merged with the current state of its repository. Please rebase the change and upload a new patchset.';
+        const result = zuul.parse( [
+          'Patch Set 2: Verified-1',
+          '',
+          'Merge Failed.',
+          '',
+          zuulMergerMessage,
+        ].join('\n')
+        );
+
+        assert.deepEqual(result, [
+          {
+            category: 'ERROR',
+            summary: 'CI could not merge change or one of its dependencies',
+            message: zuulMergerMessage,
+          }
+        ] );
+
+      } );
+
     } );
 
   } );
