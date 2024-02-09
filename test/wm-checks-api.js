@@ -5,6 +5,53 @@ const wmChecksApi = require('../plugins/wm-checks-api.js');
 
 QUnit.module( '[wm-checks-api]', () => {
 
+  const getRealAccountTestCases = {
+    'Gerrit system': [ {}, null ],
+    'An author': [
+      { author: 'accountinfo' },
+      'accountinfo'
+    ],
+    'Real author': [
+      // eslint-disable-next-line camelcase
+      { author: 'impersonated', real_author: 'performer' },
+      'performer'
+    ],
+  };
+
+  QUnit.test.each( 'getRealAccount()', getRealAccountTestCases,
+    ( assert, [ changeMessage, expected ] ) => {
+      assert.strictEqual(
+        wmChecksApi.getRealAccount( changeMessage ),
+        expected,
+      );
+    }
+  );
+
+  const getUsernameTestCases = {
+    'Gerrit system': [ {}, null ],
+    'An author': [
+      { author: { username: 'janedoe' } },
+      'janedoe'
+    ],
+    'Real author takes precedence': [
+      {
+        author: { username: 'janedoe' },
+        // eslint-disable-next-line camelcase
+        real_author: { username: 'rebase-performer' },
+      },
+      'rebase-performer'
+    ],
+  };
+
+  QUnit.test.each( 'getUsername()', getUsernameTestCases,
+    ( assert, [ changeMessage, expected ] ) => {
+      assert.strictEqual(
+        wmChecksApi.getUsername( changeMessage ),
+        expected
+      );
+    }
+  );
+
   QUnit.module('BotProcessor', hooks => {
     let iBotProcessor;
     hooks.before( () => {
