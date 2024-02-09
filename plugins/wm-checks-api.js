@@ -341,7 +341,7 @@ class SonarQubeProcessor extends BotProcessor {
 
       // Extracting the checks themselves
       re = /^(?:[*] )?(SUCCESS|FAILURE) (Quality gate)(?: (?:failed|passed!))?$/gm;
-      while (check = re.exec(message)) {
+      for (check of message.matchAll( re ) ) {
         checkResults.push(
           /** @type {CheckResult} */
           ({
@@ -397,7 +397,6 @@ class ZuulProcessor extends BotProcessor {
     /** @type {CheckResult[]} */
     const checkResults = [];
     const re = /(?:Build (Started) )?(?<joburl>http[^ ]+\/job\/(?<jobname>[^\/ ]+)\/[^ ]+)(?: : (?<result>[A-Z_]+)(?<jobmessage>.*?)(?: in (?<spent>.*?))?(?<nonvoting> \(non-voting\))?$)?/gm;
-    let check;
     const pipelineMessage = message.split('\n')[2];
 
     if ( pipelineMessage === 'Merge Failed.' ) {
@@ -410,7 +409,7 @@ class ZuulProcessor extends BotProcessor {
       ];
     }
 
-    while (check = re.exec(message)) {
+    for (const check of message.matchAll( re ) ) {
       /** @type {Category} */
       const category = this.resultToCategory(
         check[1] || check.groups.result,

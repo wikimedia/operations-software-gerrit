@@ -221,8 +221,7 @@ class PCCProvider {
     //
     const reBuildUrl = /(PCC (?<pccResult>SUCCESS|FAIL).*)?(?<consoleUrl>https:\/\/integration.wikimedia.org\/ci\/job\/(?<jobName>[^\/]+)\/(label=(?<label>[^\/]+)\/)?(?<buildNumber>\d+)\/console)(?: : (?<result>[A-Z_]+))?(?: in (?<spent>.*?))?(?<nonvoting> \(non-voting\))?$/gm;
     const builds = [];
-    let match;
-    while ( (match = reBuildUrl.exec( message )) !== null) {
+    for (const match of message.matchAll( reBuildUrl ) ) {
       /** @type {JenkinsBuild } */
       const build = {
         consoleUrl: match.groups.consoleUrl,

@@ -3,7 +3,7 @@
   "extends": [
     "plugin:jsdoc/recommended",
     "wikimedia/client-common",
-    "wikimedia/language/es2018",
+    "wikimedia/language/es2020",
     "../.eslintrc.json"
   ],
   "globals": {

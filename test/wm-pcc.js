@@ -69,6 +69,17 @@ QUnit.module( '[wm-pcc]', () => {
         );
       });
 
+      QUnit.test( 'multiple jobs', assert => {
+        const builds = wmPcc.PCCProvider.buildsFromMessage(
+          'Patch Set 2:\n\nExperimental build failed.\n\n' +
+          '- https://integration.wikimedia.org/ci/job/job1/3118/console : SUCCESS in 36s\n' +
+          '- https://integration.wikimedia.org/ci/job/job2/604/console : FAILURE in 23s (non-voting)\n'
+        );
+        assert.strictEqual( builds.length, 2, 'Found two jobs' );
+        assert.propContains( builds[0], { buildNumber: 3118 } );
+        assert.propContains( builds[1], { buildNumber: 604 } );
+      });
+
       QUnit.test( 'message with user comment', assert => {
         // Seen on https://gerrit.wikimedia.org/r/c/operations/puppet/+/901612
         // which had a draft comment submitted by the pcc.py script.
