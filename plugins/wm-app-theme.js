@@ -15,34 +15,19 @@
 
 Gerrit.install(plugin => {
 
-  const lightStyle = document.createElement('dom-module');
-  lightStyle.innerHTML = `
-<template>
-  <style>
+  const lightRules = `
     html.lightTheme {
       --header-background: white;
       --header-text-color: #001133;
     }
-  </style>
-</template>`;
-  lightStyle.register('wm-light-style');
-
-  const darkStyle = document.createElement('dom-module');
-  darkStyle.innerHTML = `
-<template>
-  <style>
+  `;
+  const darkRules = `
     html.darkTheme {
       --header-background: #3b3d3f;
       --header-text-color: #e8eaed;
     }
-  </style>
-</template>`;
-  darkStyle.register('wm-dark-style');
-
-  const commonStyle = document.createElement('dom-module');
-  commonStyle.innerHTML = `
-<template>
-  <style>
+  `;
+  const commonRules = `
     html {
       --header-title-content: "Wikimedia Code Review";
       --header-icon: url("/r/static/wikimedia-codereview-logo.cache.svg");
@@ -54,11 +39,44 @@ Gerrit.install(plugin => {
       --header-border-bottom: 4px solid;
       --header-border-image: linear-gradient(to right, #990000 15%, #006699 15%, #006699 85%, #339966 85%) 1;
     }
+  `;
+
+  const lightStyle = document.createElement('dom-module');
+  lightStyle.innerHTML = `
+<template>
+  <style>
+    ${lightRules}
+  </style>
+</template>`;
+  lightStyle.register('wm-light-style');
+
+  const darkStyle = document.createElement('dom-module');
+  darkStyle.innerHTML = `
+<template>
+  <style>
+    ${darkRules}
+  </style>
+</template>`;
+  darkStyle.register('wm-dark-style');
+
+  const commonStyle = document.createElement('dom-module');
+  commonStyle.innerHTML = `
+<template>
+  <style>
+    ${commonRules}
   </style>
 </template>`;
   commonStyle.register('wm-common-style');
 
-  plugin.registerStyleModule('app-theme', 'wm-dark-style');
-  plugin.registerStyleModule('app-theme', 'wm-light-style');
-  plugin.registerStyleModule('app-theme', 'wm-common-style');
+  // Gerrit <3.8
+  if ( typeof ( plugin.registerStyleModule ) !== 'undefined' ) {
+    plugin.registerStyleModule('app-theme', 'wm-dark-style');
+    plugin.registerStyleModule('app-theme', 'wm-light-style');
+    plugin.registerStyleModule('app-theme', 'wm-common-style');
+  // Gerrit 3.8+
+  } else {
+    plugin.styleApi().insertCSSRule( darkRules );
+    plugin.styleApi().insertCSSRule( lightRules );
+    plugin.styleApi().insertCSSRule( commonRules );
+  }
 });
