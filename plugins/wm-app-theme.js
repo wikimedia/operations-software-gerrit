@@ -41,42 +41,7 @@ Gerrit.install(plugin => {
     }
   `;
 
-  const lightStyle = document.createElement('dom-module');
-  lightStyle.innerHTML = `
-<template>
-  <style>
-    ${lightRules}
-  </style>
-</template>`;
-  lightStyle.register('wm-light-style');
-
-  const darkStyle = document.createElement('dom-module');
-  darkStyle.innerHTML = `
-<template>
-  <style>
-    ${darkRules}
-  </style>
-</template>`;
-  darkStyle.register('wm-dark-style');
-
-  const commonStyle = document.createElement('dom-module');
-  commonStyle.innerHTML = `
-<template>
-  <style>
-    ${commonRules}
-  </style>
-</template>`;
-  commonStyle.register('wm-common-style');
-
-  // Gerrit <3.8
-  if ( typeof ( plugin.registerStyleModule ) !== 'undefined' ) {
-    plugin.registerStyleModule('app-theme', 'wm-dark-style');
-    plugin.registerStyleModule('app-theme', 'wm-light-style');
-    plugin.registerStyleModule('app-theme', 'wm-common-style');
-  // Gerrit 3.8+
-  } else {
-    plugin.styleApi().insertCSSRule( darkRules );
-    plugin.styleApi().insertCSSRule( lightRules );
-    plugin.styleApi().insertCSSRule( commonRules );
-  }
+  plugin.styleApi().insertCSSRule( darkRules );
+  plugin.styleApi().insertCSSRule( lightRules );
+  plugin.styleApi().insertCSSRule( commonRules );
 });
