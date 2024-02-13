@@ -19,7 +19,7 @@ Gerrit.install(plugin => {
   lightStyle.innerHTML = `
 <template>
   <style>
-    html {
+    html.lightTheme {
       --header-background: white;
       --header-text-color: #001133;
     }
@@ -31,7 +31,7 @@ Gerrit.install(plugin => {
   darkStyle.innerHTML = `
 <template>
   <style>
-    html {
+    html.darkTheme {
       --header-background: #3b3d3f;
       --header-text-color: #e8eaed;
     }
@@ -58,11 +58,7 @@ Gerrit.install(plugin => {
 </template>`;
   commonStyle.register('wm-common-style');
 
-  if (window.localStorage.getItem('dark-theme')) {
-    plugin.registerStyleModule('app-theme', 'wm-dark-style');
-  } else {
-    plugin.registerStyleModule('app-theme', 'wm-light-style');
-  }
+  plugin.registerStyleModule('app-theme', 'wm-dark-style');
+  plugin.registerStyleModule('app-theme', 'wm-light-style');
   plugin.registerStyleModule('app-theme', 'wm-common-style');
-
 });
