@@ -6,8 +6,17 @@
 import '../../../test/common-test-setup';
 import './gr-autocomplete';
 import {AutocompleteSuggestion, GrAutocomplete} from './gr-autocomplete';
-import {pressKey, queryAndAssert, waitUntil} from '../../../test/test-utils';
-import {GrAutocompleteDropdown} from '../gr-autocomplete-dropdown/gr-autocomplete-dropdown';
+import {
+  assertFails,
+  mockPromise,
+  pressKey,
+  queryAndAssert,
+  waitUntil,
+} from '../../../test/test-utils';
+import {
+  AutocompleteQueryStatusType,
+  GrAutocompleteDropdown,
+} from '../gr-autocomplete-dropdown/gr-autocomplete-dropdown';
 import {PaperInputElement} from '@polymer/paper-input/paper-input';
 import {fixture, html, assert} from '@open-wc/testing';
 import {Key, Modifier} from '../../../utils/dom-util';
@@ -25,9 +34,7 @@ suite('gr-autocomplete tests', () => {
   const inputEl = () => queryAndAssert<HTMLInputElement>(element, '#input');
 
   setup(async () => {
-    element = await fixture(
-      html`<gr-autocomplete no-debounce></gr-autocomplete>`
-    );
+    element = await fixture(html`<gr-autocomplete></gr-autocomplete>`);
   });
 
   test('renders', () => {
@@ -41,7 +48,7 @@ suite('gr-autocomplete tests', () => {
           tabindex="0"
         >
           <div slot="prefix">
-            <gr-icon icon="search" class="searchIcon"></gr-icon>
+            <slot name="prefix"> </slot>
           </div>
           <div slot="suffix">
             <slot name="suffix"> </slot>
@@ -91,7 +98,7 @@ suite('gr-autocomplete tests', () => {
           tabindex="0"
         >
           <div slot="prefix">
-            <gr-icon icon="search" class="searchIcon"></gr-icon>
+            <slot name="prefix"> </slot>
           </div>
           <div slot="suffix">
             <slot name="suffix"> </slot>
@@ -106,6 +113,49 @@ suite('gr-autocomplete tests', () => {
           {tags: ['gr-autocomplete-dropdown'], attributes: ['style']},
         ],
       }
+    );
+  });
+
+  test('renders with error', async () => {
+    const queryStub = sinon.spy((input: string) =>
+      Promise.reject(new Error(`${input} not allowed`))
+    );
+    element.query = queryStub;
+
+    focusOnInput();
+    element.text = 'blah';
+    await waitUntil(() => queryStub.called);
+    await element.updateComplete;
+
+    assert.shadowDom.equal(
+      element,
+      /* HTML */ `
+        <paper-input
+          aria-disabled="false"
+          autocomplete="off"
+          id="input"
+          tabindex="0"
+        >
+          <div slot="prefix">
+            <slot name="prefix"> </slot>
+          </div>
+          <div slot="suffix">
+            <slot name="suffix"> </slot>
+          </div>
+        </paper-input>
+        <gr-autocomplete-dropdown id="suggestions" role="listbox">
+        </gr-autocomplete-dropdown>
+      `,
+      {
+        // gr-autocomplete-dropdown sizing seems to vary between local & CI
+        ignoreAttributes: [
+          {tags: ['gr-autocomplete-dropdown'], attributes: ['style']},
+        ],
+      }
+    );
+    assert.equal(
+      element.suggestionsDropdown?.queryStatus?.message,
+      'blah not allowed'
     );
   });
 
@@ -181,17 +231,52 @@ suite('gr-autocomplete tests', () => {
     });
   });
 
-  test('emits commit and handles cursor movement', async () => {
+  test('esc key behavior on error', async () => {
     let promise: Promise<AutocompleteSuggestion[]> = Promise.resolve([]);
     const queryStub = sinon.spy(
-      (input: string) =>
-        (promise = Promise.resolve([
-          {name: input + ' 0', value: '0'},
-          {name: input + ' 1', value: '1'},
-          {name: input + ' 2', value: '2'},
-          {name: input + ' 3', value: '3'},
-          {name: input + ' 4', value: '4'},
-        ] as AutocompleteSuggestion[]))
+      (_: string) => (promise = Promise.reject(new Error('Test error')))
+    );
+    element.query = queryStub;
+
+    assert.isTrue(suggestionsEl().isHidden);
+
+    element.setFocus(true);
+    element.text = 'blah';
+    await element.updateComplete;
+
+    return assertFails(promise).then(async () => {
+      await element.latestSuggestionUpdateComplete;
+      await waitUntil(() => !suggestionsEl().isHidden);
+
+      const cancelHandler = sinon.spy();
+      element.addEventListener('cancel', cancelHandler);
+      assert.deepEqual(element.queryStatus, {
+        type: AutocompleteQueryStatusType.ERROR,
+        message: 'Test error',
+      });
+
+      pressKey(inputEl(), Key.ESC);
+      await waitUntil(() => suggestionsEl().isHidden);
+
+      assert.isFalse(cancelHandler.called);
+      assert.isUndefined(element.queryStatus);
+
+      pressKey(inputEl(), Key.ESC);
+      await element.updateComplete;
+
+      assert.isTrue(cancelHandler.called);
+    });
+  });
+
+  test('emits commit and handles cursor movement', async () => {
+    const queryStub = sinon.spy((input: string) =>
+      Promise.resolve([
+        {name: input + ' 0', value: '0'},
+        {name: input + ' 1', value: '1'},
+        {name: input + ' 2', value: '2'},
+        {name: input + ' 3', value: '3'},
+        {name: input + ' 4', value: '4'},
+      ] as AutocompleteSuggestion[])
     );
     element.query = queryStub;
     await element.updateComplete;
@@ -202,7 +287,7 @@ suite('gr-autocomplete tests', () => {
     element.text = 'blah';
     await element.updateComplete;
 
-    return promise.then(async () => {
+    return element.latestSuggestionUpdateComplete!.then(async () => {
       await waitUntil(() => !suggestionsEl().isHidden);
 
       const commitHandler = sinon.spy();
@@ -313,7 +398,6 @@ suite('gr-autocomplete tests', () => {
 
     element.query = queryStub;
     await element.updateComplete;
-    element.noDebounce = false;
     focusOnInput();
     element.text = 'a';
 
@@ -335,7 +419,6 @@ suite('gr-autocomplete tests', () => {
   test('empty text results in no suggestions', async () => {
     element.text = '';
     element.threshold = 0;
-    element.noDebounce = false;
     await element.updateComplete;
     assert.equal(element.suggestions.length, 0);
   });
@@ -380,26 +463,45 @@ suite('gr-autocomplete tests', () => {
   });
 
   test('suggestions should not carry over', async () => {
-    let promise: Promise<AutocompleteSuggestion[]> = Promise.resolve([]);
     const queryStub = sinon
       .stub()
-      .returns(
-        (promise = Promise.resolve([
-          {name: 'suggestion', value: '0'},
-        ] as AutocompleteSuggestion[]))
-      );
+      .resolves([{name: 'suggestion', value: '0'}] as AutocompleteSuggestion[]);
     element.query = queryStub;
     focusOnInput();
     element.text = 'bla';
     await element.updateComplete;
-    return promise.then(async () => {
+    return element.latestSuggestionUpdateComplete!.then(async () => {
       await waitUntil(() => element.suggestions.length > 0);
       assert.equal(element.suggestions.length, 1);
+
+      queryStub.resolves([] as AutocompleteSuggestion[]);
       element.text = '';
       element.threshold = 0;
-      element.noDebounce = false;
       await element.updateComplete;
+      await element.latestSuggestionUpdateComplete;
       assert.equal(element.suggestions.length, 0);
+    });
+  });
+
+  test('error should not carry over', async () => {
+    let promise: Promise<AutocompleteSuggestion[]> = Promise.resolve([]);
+    const queryStub = sinon
+      .stub()
+      .returns((promise = Promise.reject(new Error('Test error'))));
+    element.query = queryStub;
+    focusOnInput();
+    element.text = 'bla';
+    await element.updateComplete;
+    return assertFails(promise).then(async () => {
+      await element.latestSuggestionUpdateComplete;
+      await waitUntil(() => element.queryStatus?.message === 'Test error');
+
+      queryStub.resolves([] as AutocompleteSuggestion[]);
+      element.text = '';
+      element.threshold = 0;
+      await element.updateComplete;
+      await element.latestSuggestionUpdateComplete;
+      assert.isUndefined(element.queryStatus);
     });
   });
 
@@ -421,6 +523,7 @@ suite('gr-autocomplete tests', () => {
     return promise.then(async () => {
       const commitHandler = sinon.spy();
       element.addEventListener('commit', commitHandler);
+      await element.latestSuggestionUpdateComplete;
       await waitUntil(() => element.suggestionsDropdown?.isHidden === false);
 
       pressKey(inputEl(), Key.ENTER);
@@ -431,15 +534,24 @@ suite('gr-autocomplete tests', () => {
   });
 
   test('tabComplete flag functions', async () => {
+    element.query = sinon
+      .stub()
+      .resolves([
+        {name: 'tunnel snakes rule!', value: 'snakes'},
+      ] as AutocompleteSuggestion[]);
+
     // commitHandler checks for the commit event, whereas commitSpy checks for
     // the _commit function of the element.
     const commitHandler = sinon.spy();
     element.addEventListener('commit', commitHandler);
     const commitSpy = sinon.spy(element, '_commit');
     element.setFocus(true);
-
-    element.suggestions = [{text: 'tunnel snakes rule!', name: ''}];
     element.tabComplete = false;
+    element.text = 'text1';
+    await element.updateComplete;
+
+    await element.latestSuggestionUpdateComplete;
+    await element.updateComplete;
     pressKey(inputEl(), Key.TAB);
     await element.updateComplete;
 
@@ -447,9 +559,12 @@ suite('gr-autocomplete tests', () => {
     assert.isFalse(commitSpy.called);
     assert.isFalse(element.focused);
 
-    element.tabComplete = true;
-    await element.updateComplete;
     element.setFocus(true);
+    element.tabComplete = true;
+    element.text = 'text2';
+    await element.updateComplete;
+
+    await element.latestSuggestionUpdateComplete;
     await element.updateComplete;
     pressKey(inputEl(), Key.TAB);
 
@@ -464,20 +579,6 @@ suite('gr-autocomplete tests', () => {
     const input = queryAndAssert<PaperInputElement>(element, 'paper-input');
     input.focus();
     assert.isTrue(element.focused);
-  });
-
-  test('search icon shows with showSearchIcon property', async () => {
-    assert.equal(
-      getComputedStyle(queryAndAssert(element, 'gr-icon')).display,
-      'none'
-    );
-    element.showSearchIcon = true;
-    await element.updateComplete;
-
-    assert.notEqual(
-      getComputedStyle(queryAndAssert(element, 'gr-icon')).display,
-      'none'
-    );
   });
 
   test('vertical offset overridden by param if it exists', async () => {
@@ -504,10 +605,25 @@ suite('gr-autocomplete tests', () => {
 
   test(
     'handleInputCommit with autocomplete hidden does nothing without' +
-      'without allowNonSuggestedValues',
+      ' allowNonSuggestedValues',
     () => {
       const commitStub = sinon.stub(element, '_commit');
       suggestionsEl().isHidden = true;
+      element.handleInputCommit();
+      assert.isFalse(commitStub.called);
+    }
+  );
+
+  test(
+    'handleInputCommit with query error does nothing without' +
+      ' allowNonSuggestedValues',
+    () => {
+      const commitStub = sinon.stub(element, '_commit');
+      element.queryStatus = {
+        type: AutocompleteQueryStatusType.ERROR,
+        message: 'Error',
+      };
+      element.suggestions = [];
       element.handleInputCommit();
       assert.isFalse(commitStub.called);
     }
@@ -525,9 +641,25 @@ suite('gr-autocomplete tests', () => {
     }
   );
 
+  test(
+    'handleInputCommit with query error with' + 'allowNonSuggestedValues',
+    () => {
+      const commitStub = sinon.stub(element, '_commit');
+      element.allowNonSuggestedValues = true;
+      element.queryStatus = {
+        type: AutocompleteQueryStatusType.ERROR,
+        message: 'Error',
+      };
+      element.suggestions = [];
+      element.handleInputCommit();
+      assert.isTrue(commitStub.called);
+    }
+  );
+
   test('handleInputCommit with autocomplete open calls commit', () => {
     const commitStub = sinon.stub(element, '_commit');
     suggestionsEl().isHidden = false;
+    element.suggestions = [{name: 'first suggestion'}];
     element.handleInputCommit();
     assert.isTrue(commitStub.calledOnce);
   });
@@ -570,6 +702,215 @@ suite('gr-autocomplete tests', () => {
     assert.equal(element.text, 'file:x');
   });
 
+  test('render loading replace with suggestions when done', async () => {
+    const queryPromise = mockPromise<AutocompleteSuggestion[]>();
+    element.query = (_: string) => queryPromise;
+
+    element.setFocus(true);
+    element.text = 'blah';
+    await element.updateComplete;
+    await waitUntil(() => !suggestionsEl().isHidden);
+    assert.deepEqual(element.queryStatus, {
+      type: AutocompleteQueryStatusType.LOADING,
+      message: 'Loading...',
+    });
+
+    queryPromise.resolve([{name: 'suggestion 1'}] as AutocompleteSuggestion[]);
+    await element.latestSuggestionUpdateComplete;
+    await element.updateComplete;
+
+    assert.equal(element.suggestions.length, 1);
+    assert.isUndefined(element.queryStatus);
+  });
+
+  test('render loading replace with error when done', async () => {
+    const queryPromise = mockPromise<AutocompleteSuggestion[]>();
+    element.query = (_: string) => queryPromise;
+
+    element.setFocus(true);
+    element.text = 'blah';
+    await element.updateComplete;
+    await waitUntil(() => !suggestionsEl().isHidden);
+    assert.deepEqual(element.queryStatus, {
+      type: AutocompleteQueryStatusType.LOADING,
+      message: 'Loading...',
+    });
+
+    queryPromise.reject(new Error('Test error'));
+    await assertFails(queryPromise);
+    await element.latestSuggestionUpdateComplete;
+    await element.updateComplete;
+
+    assert.equal(element.suggestions.length, 0);
+    assert.deepEqual(element.queryStatus, {
+      type: AutocompleteQueryStatusType.ERROR,
+      message: 'Test error',
+    });
+  });
+
+  test('render loading esc cancels', async () => {
+    const queryPromise = mockPromise<AutocompleteSuggestion[]>();
+    element.query = (_: string) => queryPromise;
+
+    element.setFocus(true);
+    element.text = 'blah';
+    await element.updateComplete;
+    await waitUntil(() => !suggestionsEl().isHidden);
+    assert.deepEqual(element.queryStatus, {
+      type: AutocompleteQueryStatusType.LOADING,
+      message: 'Loading...',
+    });
+
+    const cancelHandler = sinon.spy();
+    element.addEventListener('cancel', cancelHandler);
+    pressKey(inputEl(), Key.ESC);
+    await waitUntil(() => suggestionsEl().isHidden);
+
+    assert.isFalse(cancelHandler.called);
+    assert.isUndefined(element.queryStatus);
+
+    pressKey(inputEl(), Key.ESC);
+    await element.updateComplete;
+
+    assert.isTrue(cancelHandler.called);
+  });
+
+  test('while loading queue enter commits', async () => {
+    const commitHandler = sinon.stub();
+    element.addEventListener('commit', commitHandler);
+    let resolvePromise: (value: AutocompleteSuggestion[]) => void;
+    const blockingPromise = new Promise<AutocompleteSuggestion[]>(resolve => {
+      resolvePromise = resolve;
+    });
+    element.query = (_: string) => blockingPromise;
+
+    element.setFocus(true);
+    element.text = 'blah';
+    await element.updateComplete;
+    await waitUntil(() => !suggestionsEl().isHidden);
+    assert.deepEqual(element.queryStatus, {
+      type: AutocompleteQueryStatusType.LOADING,
+      message: 'Loading...',
+    });
+
+    pressKey(inputEl(), Key.ENTER);
+    await element.updateComplete;
+    assert.deepEqual(element.queryStatus, {
+      type: AutocompleteQueryStatusType.LOADING,
+      message: 'Loading... (Handle Enter on load)',
+    });
+
+    resolvePromise!([{name: 'suggestion 1'}] as AutocompleteSuggestion[]);
+    await element.latestSuggestionUpdateComplete;
+    await element.updateComplete;
+
+    assert.equal(element.suggestions.length, 0);
+    assert.isUndefined(element.queryStatus);
+    assert.isTrue(commitHandler.called);
+  });
+
+  test('while loading queue tab completes', async () => {
+    element.tabComplete = true;
+    const commitHandler = sinon.stub();
+    element.addEventListener('commit', commitHandler);
+    const queryPromise = mockPromise<AutocompleteSuggestion[]>();
+    element.query = (_: string) => queryPromise;
+
+    element.setFocus(true);
+    element.text = 'blah';
+    await element.updateComplete;
+    await waitUntil(() => !suggestionsEl().isHidden);
+    assert.deepEqual(element.queryStatus, {
+      type: AutocompleteQueryStatusType.LOADING,
+      message: 'Loading...',
+    });
+
+    pressKey(inputEl(), Key.TAB);
+    await element.updateComplete;
+    assert.deepEqual(element.queryStatus, {
+      type: AutocompleteQueryStatusType.LOADING,
+      message: 'Loading... (Handle Tab on load)',
+    });
+
+    queryPromise.resolve([{name: 'suggestion 1'}] as AutocompleteSuggestion[]);
+    await element.latestSuggestionUpdateComplete;
+    await element.updateComplete;
+
+    assert.equal(element.suggestions.length, 0);
+    assert.isUndefined(element.queryStatus);
+    assert.isFalse(commitHandler.called);
+    assert.equal(element.text, 'suggestion 1');
+  });
+
+  test('while loading and queued update text cancels', async () => {
+    const commitHandler = sinon.stub();
+    element.addEventListener('commit', commitHandler);
+    const queryPromise = mockPromise<AutocompleteSuggestion[]>();
+    element.query = (_: string) => queryPromise;
+
+    element.setFocus(true);
+    element.text = 'blah';
+    await element.updateComplete;
+    await waitUntil(() => !suggestionsEl().isHidden);
+    assert.deepEqual(element.queryStatus, {
+      type: AutocompleteQueryStatusType.LOADING,
+      message: 'Loading...',
+    });
+
+    pressKey(inputEl(), Key.ENTER);
+    await element.updateComplete;
+    assert.deepEqual(element.queryStatus, {
+      type: AutocompleteQueryStatusType.LOADING,
+      message: 'Loading... (Handle Enter on load)',
+    });
+
+    element.text = 'more blah';
+    await element.updateComplete;
+
+    queryPromise.resolve([{name: 'suggestion 1'}] as AutocompleteSuggestion[]);
+    await element.latestSuggestionUpdateComplete;
+    await element.updateComplete;
+
+    // Commit for stale request is not called.
+    assert.isFalse(commitHandler.called);
+  });
+
+  test('while loading and queued esc cancels', async () => {
+    const commitHandler = sinon.stub();
+    element.addEventListener('commit', commitHandler);
+    const queryPromise = mockPromise<AutocompleteSuggestion[]>();
+    element.query = (_: string) => queryPromise;
+
+    element.setFocus(true);
+    element.text = 'blah';
+    await element.updateComplete;
+    await waitUntil(() => !suggestionsEl().isHidden);
+    assert.deepEqual(element.queryStatus, {
+      type: AutocompleteQueryStatusType.LOADING,
+      message: 'Loading...',
+    });
+
+    pressKey(inputEl(), Key.ENTER);
+    await element.updateComplete;
+    assert.deepEqual(element.queryStatus, {
+      type: AutocompleteQueryStatusType.LOADING,
+      message: 'Loading... (Handle Enter on load)',
+    });
+
+    pressKey(inputEl(), Key.ESC);
+    await element.updateComplete;
+
+    queryPromise.resolve([{name: 'suggestion 1'}] as AutocompleteSuggestion[]);
+    await element.latestSuggestionUpdateComplete;
+    await element.updateComplete;
+
+    // Commit for stale request is not called.
+    assert.isFalse(commitHandler.called);
+    // Query results and status are cleared
+    assert.equal(element.suggestions.length, 0);
+    assert.isUndefined(element.queryStatus);
+  });
+
   suite('focus', () => {
     let commitSpy: sinon.SinonSpy;
     let focusSpy: sinon.SinonSpy;
@@ -587,6 +928,24 @@ suite('gr-autocomplete tests', () => {
       await element.updateComplete;
 
       assert.equal(element.suggestions.length, 0);
+      assert.isUndefined(element.queryStatus);
+      assert.isTrue(suggestionsEl().isHidden);
+    });
+
+    test('enter in input does not re-render error', async () => {
+      element.allowNonSuggestedValues = true;
+      element.queryStatus = {
+        type: AutocompleteQueryStatusType.ERROR,
+        message: 'Error message',
+      };
+
+      pressKey(inputEl(), Key.ENTER);
+
+      await waitUntil(() => commitSpy.called);
+      await element.updateComplete;
+
+      assert.equal(element.suggestions.length, 0);
+      assert.isUndefined(element.queryStatus);
       assert.isTrue(suggestionsEl().isHidden);
     });
 
@@ -704,27 +1063,14 @@ suite('gr-autocomplete tests', () => {
     });
   });
 
-  test('input-keydown event fired', async () => {
-    const listener = sinon.spy();
-    element.addEventListener('input-keydown', listener);
-    pressKey(inputEl(), Key.TAB);
-    await element.updateComplete;
-    assert.isTrue(listener.called);
-  });
-
   test('enter with modifier does not complete', async () => {
-    const dispatchEventStub = sinon.stub(element, 'dispatchEvent');
     const commitStub = sinon.stub(element, 'handleInputCommit');
+
     pressKey(inputEl(), Key.ENTER, Modifier.CTRL_KEY);
     await element.updateComplete;
 
-    assert.equal(dispatchEventStub.lastCall.args[0].type, 'input-keydown');
-    assert.equal(
-      (dispatchEventStub.lastCall.args[0] as CustomEvent).detail.key,
-      Key.ENTER
-    );
-
     assert.isFalse(commitStub.called);
+
     pressKey(inputEl(), Key.ENTER);
     await element.updateComplete;
 

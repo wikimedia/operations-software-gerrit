@@ -23,21 +23,20 @@ import './edit/gr-editor-view/gr-editor-view';
 import './plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import './plugins/gr-endpoint-param/gr-endpoint-param';
 import './plugins/gr-endpoint-slot/gr-endpoint-slot';
-import './plugins/gr-external-style/gr-external-style';
 import './plugins/gr-plugin-host/gr-plugin-host';
 import './settings/gr-cla-view/gr-cla-view';
 import './settings/gr-registration-dialog/gr-registration-dialog';
 import './settings/gr-settings-view/gr-settings-view';
-import {navigationToken} from './core/gr-navigation/gr-navigation';
+import './core/gr-notifications-prompt/gr-notifications-prompt';
 import {loginUrl} from '../utils/url-util';
+import {navigationToken} from './core/gr-navigation/gr-navigation';
 import {getAppContext} from '../services/app-context';
 import {routerToken} from './core/gr-router/gr-router';
-import {AccountDetailInfo, ServerInfo} from '../types/common';
+import {AccountDetailInfo, NumericChangeId, ServerInfo} from '../types/common';
 import {
   constructServerErrorMsg,
   GrErrorManager,
 } from './core/gr-error-manager/gr-error-manager';
-import {GrOverlay} from './shared/gr-overlay/gr-overlay';
 import {GrRegistrationDialog} from './settings/gr-registration-dialog/gr-registration-dialog';
 import {
   AppElementJustRegisteredParams,
@@ -48,17 +47,15 @@ import {GrMainHeader} from './core/gr-main-header/gr-main-header';
 import {GrSettingsView} from './settings/gr-settings-view/gr-settings-view';
 import {
   DialogChangeEventDetail,
-  EventType,
   PageErrorEventDetail,
   RpcLogEvent,
   TitleChangeEventDetail,
 } from '../types/events';
-import {GerritView} from '../services/router/router-model';
+import {GerritView, routerModelToken} from '../services/router/router-model';
 import {LifeCycle} from '../constants/reporting';
 import {fireIronAnnounce} from '../utils/event-util';
 import {resolve} from '../models/dependency';
 import {browserModelToken} from '../models/browser/browser-model';
-import {configModelToken} from '../models/config/config-model';
 import {sharedStyles} from '../styles/shared-styles';
 import {LitElement, PropertyValues, html, css, nothing} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
@@ -71,15 +68,26 @@ import {isDarkTheme, prefersDarkColorScheme} from '../utils/theme-util';
 import {AppTheme} from '../constants/constants';
 import {subscribe} from './lit/subscription-controller';
 import {PluginViewState} from '../models/views/plugin';
-import {createSearchUrl, SearchViewState} from '../models/views/search';
+import {createSearchUrl} from '../models/views/search';
 import {createSettingsUrl} from '../models/views/settings';
 import {createDashboardUrl} from '../models/views/dashboard';
+import {userModelToken} from '../models/user/user-model';
+import {modalStyles} from '../styles/gr-modal-styles';
+import {AdminChildView, createAdminUrl} from '../models/views/admin';
+import {ChangeChildView, changeViewModelToken} from '../models/views/change';
+import {configModelToken} from '../models/config/config-model';
 
 interface ErrorInfo {
   text: string;
   emoji?: string;
   moreInfo?: string;
 }
+
+/**
+ * This is simple hacky way for allowing certain plugin screens to hide the
+ * header and the footer of the Gerrit page.
+ */
+const WHITE_LISTED_FULL_SCREEN_PLUGINS = ['git_source_editor/screen/edit'];
 
 // TODO(TS): implement AppElement interface from gr-app-types.ts
 @customElement('gr-app-element')
@@ -96,11 +104,11 @@ export class GrAppElement extends LitElement {
 
   @query('#mainHeader') mainHeader?: GrMainHeader;
 
-  @query('#registrationOverlay') registrationOverlay?: GrOverlay;
+  @query('#registrationModal') registrationModal?: HTMLDialogElement;
 
   @query('#registrationDialog') registrationDialog?: GrRegistrationDialog;
 
-  @query('#keyboardShortcuts') keyboardShortcuts?: GrOverlay;
+  @query('#keyboardShortcuts') keyboardShortcuts?: HTMLDialogElement;
 
   @query('gr-settings-view') settingsView?: GrSettingsView;
 
@@ -109,11 +117,15 @@ export class GrAppElement extends LitElement {
 
   @state() private account?: AccountDetailInfo;
 
-  @state() private serverConfig?: ServerInfo;
-
   @state() private version?: string;
 
   @state() private view?: GerritView;
+
+  // TODO: Introduce a wrapper element for CHANGE, DIFF, EDIT view.
+  @state() private childView?: ChangeChildView;
+
+  // Used as a key for caching the CHANGE, DIFF, EDIT view.
+  @state() private changeNum?: NumericChangeId;
 
   @state() private lastError?: ErrorInfo;
 
@@ -138,15 +150,10 @@ export class GrAppElement extends LitElement {
   // (e.g. shortcut dialog) is open
   @state() private mainAriaHidden = false;
 
-  // Triggers dom-if unsetting/setting restamp behaviour in lit
-  @state() private invalidateChangeViewCache = false;
-
-  // Triggers dom-if unsetting/setting restamp behaviour in lit
-  @state() private invalidateDiffViewCache = false;
-
   @state() private theme = AppTheme.AUTO;
 
-  @state() private themeEndpoint = 'app-theme-light';
+  @state()
+  serverConfig?: ServerInfo;
 
   readonly getRouter = resolve(this, routerToken);
 
@@ -160,34 +167,28 @@ export class GrAppElement extends LitElement {
 
   private readonly shortcuts = new ShortcutController(this);
 
-  private readonly userModel = getAppContext().userModel;
+  private readonly getUserModel = resolve(this, userModelToken);
 
-  private readonly routerModel = getAppContext().routerModel;
+  private readonly getRouterModel = resolve(this, routerModelToken);
+
+  private readonly getChangeViewModel = resolve(this, changeViewModelToken);
 
   private readonly getConfigModel = resolve(this, configModelToken);
 
   constructor() {
     super();
 
-    document.addEventListener(EventType.PAGE_ERROR, e => {
+    document.addEventListener('page-error', e => {
       this.handlePageError(e);
     });
-    this.addEventListener(EventType.TITLE_CHANGE, e => {
+    document.addEventListener('title-change', e => {
       this.handleTitleChange(e);
     });
-    this.addEventListener(EventType.DIALOG_CHANGE, e => {
+    this.addEventListener('dialog-change', e => {
       this.handleDialogChange(e as CustomEvent<DialogChangeEventDetail>);
     });
-    document.addEventListener(EventType.LOCATION_CHANGE, () =>
-      this.requestUpdate()
-    );
-    this.addEventListener(EventType.RECREATE_CHANGE_VIEW, () =>
-      this.handleRecreateView()
-    );
-    this.addEventListener(EventType.RECREATE_DIFF_VIEW, () =>
-      this.handleRecreateView()
-    );
-    document.addEventListener(EventType.GR_RPC_LOG, e => this.handleRpcLog(e));
+    document.addEventListener('location-change', () => this.requestUpdate());
+    document.addEventListener('gr-rpc-log', e => this.handleRpcLog(e));
     this.shortcuts.addAbstract(Shortcut.OPEN_SHORTCUT_HELP_DIALOG, () =>
       this.showKeyboardShortcuts()
     );
@@ -208,6 +209,16 @@ export class GrAppElement extends LitElement {
         createSearchUrl({query: 'is:watched is:open'})
       )
     );
+    this.shortcuts.addAbstract(Shortcut.GO_TO_REPOS, () =>
+      this.getNavigation().setUrl(
+        createAdminUrl({adminView: AdminChildView.REPOS})
+      )
+    );
+    this.shortcuts.addAbstract(Shortcut.GO_TO_GROUPS, () =>
+      this.getNavigation().setUrl(
+        createAdminUrl({adminView: AdminChildView.GROUPS})
+      )
+    );
 
     subscribe(
       this,
@@ -219,7 +230,7 @@ export class GrAppElement extends LitElement {
 
     subscribe(
       this,
-      () => this.userModel.preferenceTheme$,
+      () => this.getUserModel().preferenceTheme$,
       theme => {
         this.theme = theme;
         this.applyTheme();
@@ -227,10 +238,22 @@ export class GrAppElement extends LitElement {
     );
     subscribe(
       this,
-      () => this.routerModel.routerView$,
+      () => this.getRouterModel().routerView$,
       view => {
         this.view = view;
         if (view) this.errorView?.classList.remove('show');
+      }
+    );
+    subscribe(
+      this,
+      () => this.getChangeViewModel().childView$,
+      childView => (this.childView = childView)
+    );
+    subscribe(
+      this,
+      () => this.getChangeViewModel().changeNum$,
+      changeNum => {
+        this.changeNum = changeNum;
       }
     );
 
@@ -270,6 +293,7 @@ export class GrAppElement extends LitElement {
   static override get styles() {
     return [
       sharedStyles,
+      modalStyles,
       css`
         :host {
           background-color: var(--background-color-tertiary);
@@ -353,21 +377,22 @@ export class GrAppElement extends LitElement {
     return html`
       <gr-css-mixins></gr-css-mixins>
       <gr-endpoint-decorator name="banner"></gr-endpoint-decorator>
-      <gr-main-header
-        id="mainHeader"
-        .searchQuery=${(this.params as SearchViewState)?.query}
-        @mobile-search=${this.mobileSearchToggle}
-        @show-keyboard-shortcuts=${this.showKeyboardShortcuts}
-        .mobileSearchHidden=${!this.mobileSearch}
-        .loginUrl=${loginUrl(this.serverConfig?.auth)}
-        .loginText=${this.serverConfig?.auth.login_text ?? 'Sign in'}
-        ?aria-hidden=${this.footerHeaderAriaHidden}
-      >
-      </gr-main-header>
+      ${this.renderHeader()}
       <main ?aria-hidden=${this.mainAriaHidden}>
         ${this.renderMobileSearch()} ${this.renderChangeListView()}
-        ${this.renderDashboardView()} ${this.renderChangeView()}
-        ${this.renderEditorView()} ${this.renderDiffView()}
+        ${this.renderDashboardView()}
+        ${
+          // `keyed(this.changeNum, ...)` makes sure that these views are not
+          // re-used across changes, which is a precaution, because we have run
+          // into issue with that. That could be re-considered at some point.
+          keyed(
+            this.changeNum,
+            html`
+              ${this.renderChangeView()} ${this.renderEditorView()}
+              ${this.renderDiffView()}
+            `
+          )
+        }
         ${this.renderSettingsView()} ${this.renderAdminView()}
         ${this.renderPluginScreen()} ${this.renderCLAView()}
         ${this.renderDocumentationSearch()}
@@ -377,6 +402,38 @@ export class GrAppElement extends LitElement {
           <div class="errorMoreInfo">${this.lastError?.moreInfo}</div>
         </div>
       </main>
+      ${this.renderFooter()} ${this.renderKeyboardShortcutsDialog()}
+      ${this.renderRegistrationDialog()}
+      <gr-notifications-prompt></gr-notifications-prompt>
+      <gr-endpoint-decorator name="plugin-overlay"></gr-endpoint-decorator>
+      <gr-error-manager
+        id="errorManager"
+        .loginUrl=${loginUrl(this.serverConfig?.auth)}
+        .loginText=${this.serverConfig?.auth.login_text ?? 'Sign in'}
+      ></gr-error-manager>
+      <gr-plugin-host id="plugins"></gr-plugin-host>
+    `;
+  }
+
+  private renderHeader() {
+    if (this.hideHeaderAndFooter()) return nothing;
+    return html`
+      <gr-main-header
+        id="mainHeader"
+        @mobile-search=${this.mobileSearchToggle}
+        @show-keyboard-shortcuts=${this.showKeyboardShortcuts}
+        .mobileSearchHidden=${!this.mobileSearch}
+        .loginUrl=${loginUrl(this.serverConfig?.auth)}
+        .loginText=${this.serverConfig?.auth.login_text ?? 'Sign in'}
+        ?aria-hidden=${this.footerHeaderAriaHidden}
+      >
+      </gr-main-header>
+    `;
+  }
+
+  private renderFooter() {
+    if (this.hideHeaderAndFooter()) return nothing;
+    return html`
       <footer ?aria-hidden=${this.footerHeaderAriaHidden}>
         <div>
           Powered by
@@ -394,35 +451,19 @@ export class GrAppElement extends LitElement {
           <gr-endpoint-decorator name="footer-right"></gr-endpoint-decorator>
         </div>
       </footer>
-      ${this.renderKeyboardShortcutsDialog()} ${this.renderRegistrationDialog()}
-      <gr-endpoint-decorator name="plugin-overlay"></gr-endpoint-decorator>
-      <gr-error-manager
-        id="errorManager"
-        .loginUrl=${loginUrl(this.serverConfig?.auth)}
-        .loginText=${this.serverConfig?.auth.login_text ?? 'Sign in'}
-      ></gr-error-manager>
-      <gr-plugin-host id="plugins"></gr-plugin-host>
-      <gr-external-style
-        id="externalStyleForAll"
-        name="app-theme"
-      ></gr-external-style>
-      <gr-external-style
-        id="externalStyleForTheme"
-        name=${this.themeEndpoint}
-      ></gr-external-style>
     `;
+  }
+
+  private hideHeaderAndFooter() {
+    return (
+      this.view === GerritView.PLUGIN_SCREEN &&
+      WHITE_LISTED_FULL_SCREEN_PLUGINS.includes(this.computePluginScreenName())
+    );
   }
 
   private renderMobileSearch() {
     if (!this.mobileSearch) return nothing;
-    return html`
-      <gr-smart-search
-        id="search"
-        label="Search for changes"
-        .searchQuery=${(this.params as SearchViewState)?.query}
-      >
-      </gr-smart-search>
-    `;
+    return html`<gr-smart-search id="search"></gr-smart-search>`;
   }
 
   private renderChangeListView() {
@@ -442,39 +483,51 @@ export class GrAppElement extends LitElement {
   }
 
   private renderChangeView() {
-    if (this.invalidateChangeViewCache) {
-      this.updateComplete.then(() => (this.invalidateChangeViewCache = false));
-      return nothing;
-    }
+    // The `cache()` is required for re-using the change view when switching
+    // back and forth between change, diff and editor views.
     return cache(
-      this.view === GerritView.CHANGE ? this.changeViewTemplate() : nothing
+      this.isChangeView()
+        ? html`<gr-change-view
+            .backPage=${this.lastSearchPage}
+          ></gr-change-view>`
+        : nothing
     );
   }
 
-  // Template as not to create duplicates, for renderChangeView() only.
-  private changeViewTemplate() {
-    return html`
-      <gr-change-view .backPage=${this.lastSearchPage}></gr-change-view>
-    `;
+  private isChangeView() {
+    return (
+      this.view === GerritView.CHANGE &&
+      this.childView === ChangeChildView.OVERVIEW
+    );
   }
 
   private renderEditorView() {
-    if (this.view !== GerritView.EDIT) return nothing;
-    return html`<gr-editor-view></gr-editor-view>`;
+    // For some reason caching the editor view caused an issue (b/269308770).
+    // We did not bother to root cause that issue, but instead let's forgo
+    // caching of the editor view. It does not help much anyway.
+    return this.isEditorView()
+      ? html`<gr-editor-view></gr-editor-view>`
+      : nothing;
   }
 
-  private renderDiffView() {
-    if (this.invalidateDiffViewCache) {
-      this.updateComplete.then(() => (this.invalidateDiffViewCache = false));
-      return nothing;
-    }
-    return cache(
-      this.view === GerritView.DIFF ? this.diffViewTemplate() : nothing
+  private isEditorView() {
+    return (
+      this.view === GerritView.CHANGE && this.childView === ChangeChildView.EDIT
     );
   }
 
-  private diffViewTemplate() {
-    return html`<gr-diff-view></gr-diff-view>`;
+  private renderDiffView() {
+    // The `cache()` is required for re-using the diff view when switching
+    // back and forth between change, diff and editor views.
+    return cache(
+      this.isDiffView() ? html`<gr-diff-view></gr-diff-view>` : nothing
+    );
+  }
+
+  private isDiffView() {
+    return (
+      this.view === GerritView.CHANGE && this.childView === ChangeChildView.DIFF
+    );
   }
 
   private renderSettingsView() {
@@ -527,22 +580,22 @@ export class GrAppElement extends LitElement {
   private renderKeyboardShortcutsDialog() {
     if (!this.loadKeyboardShortcutsDialog) return nothing;
     return html`
-      <gr-overlay
+      <dialog
         id="keyboardShortcuts"
-        with-backdrop=""
-        @iron-overlay-canceled=${this.onOverlayCanceled}
+        tabindex="-1"
+        @close=${this.onModalCanceled}
       >
         <gr-keyboard-shortcuts-dialog
           @close=${this.handleKeyboardShortcutDialogClose}
         ></gr-keyboard-shortcuts-dialog>
-      </gr-overlay>
+      </dialog>
     `;
   }
 
   private renderRegistrationDialog() {
     if (!this.loadRegistrationDialog) return nothing;
     return html`
-      <gr-overlay id="registrationOverlay" with-backdrop="">
+      <dialog id="registrationModal" tabindex="-1">
         <gr-registration-dialog
           id="registrationDialog"
           .settingsUrl=${this.settingsUrl}
@@ -550,7 +603,7 @@ export class GrAppElement extends LitElement {
           @close=${this.handleRegistrationDialogClose}
         >
         </gr-registration-dialog>
-      </gr-overlay>
+      </dialog>
     `;
   }
 
@@ -577,15 +630,6 @@ export class GrAppElement extends LitElement {
         (this.account && this.account._account_id) || null;
   }
 
-  /**
-   * Throws away the view and re-creates it. The view itself fires an event, if
-   * it wants to be re-created.
-   */
-  private handleRecreateView() {
-    this.invalidateChangeViewCache = true;
-    this.invalidateDiffViewCache = true;
-  }
-
   private async viewChanged() {
     if (
       this.params &&
@@ -594,12 +638,10 @@ export class GrAppElement extends LitElement {
     ) {
       this.loadRegistrationDialog = true;
       await this.updateComplete;
-      assertIsDefined(this.registrationOverlay, 'registrationOverlay');
+      assertIsDefined(this.registrationModal, 'registrationModal');
       assertIsDefined(this.registrationDialog, 'registrationDialog');
-      await this.registrationOverlay.open();
-      await this.registrationDialog.loadData().then(() => {
-        this.registrationOverlay!.refit();
-      });
+      this.registrationModal.showModal();
+      await this.registrationDialog.loadData();
     }
     // To fix bug announce read after each new view, we reset announce with
     // empty space
@@ -610,11 +652,12 @@ export class GrAppElement extends LitElement {
     const showDarkTheme = isDarkTheme(this.theme);
     document.documentElement.classList.toggle('darkTheme', showDarkTheme);
     document.documentElement.classList.toggle('lightTheme', !showDarkTheme);
+    // TODO: Remove this code for adding/removing dark theme style. We should
+    // be able to just always add them once we have changed its css selector
+    // from `html` to `html.darkTheme`.
     if (showDarkTheme) {
-      this.themeEndpoint = 'app-theme-dark';
       applyDarkTheme();
     } else {
-      this.themeEndpoint = 'app-theme-light';
       removeDarkTheme();
     }
   }
@@ -677,13 +720,13 @@ export class GrAppElement extends LitElement {
     await this.updateComplete;
     assertIsDefined(this.keyboardShortcuts, 'keyboardShortcuts');
 
-    if (this.keyboardShortcuts.opened) {
-      this.keyboardShortcuts.cancel();
+    if (this.keyboardShortcuts.hasAttribute('open')) {
+      this.keyboardShortcuts.close();
       return;
     }
     this.footerHeaderAriaHidden = true;
     this.mainAriaHidden = true;
-    await this.keyboardShortcuts.open();
+    this.keyboardShortcuts.showModal();
   }
 
   private handleKeyboardShortcutDialogClose() {
@@ -691,7 +734,7 @@ export class GrAppElement extends LitElement {
     this.keyboardShortcuts.close();
   }
 
-  onOverlayCanceled() {
+  onModalCanceled() {
     this.footerHeaderAriaHidden = false;
     this.mainAriaHidden = false;
   }
@@ -705,8 +748,8 @@ export class GrAppElement extends LitElement {
     // The registration dialog is visible only if this.params is
     // instanceof AppElementJustRegisteredParams
     (this.params as AppElementJustRegisteredParams).justRegistered = false;
-    assertIsDefined(this.registrationOverlay, 'registrationOverlay');
-    this.registrationOverlay.close();
+    assertIsDefined(this.registrationModal, 'registrationModal');
+    this.registrationModal.close();
   }
 
   private computePluginScreenName() {

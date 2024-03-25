@@ -33,6 +33,8 @@ import static com.google.gerrit.server.git.receive.ReceiveConstants.SAME_CHANGE_
 import static com.google.gerrit.server.git.validators.CommitValidators.NEW_PATCHSET_PATTERN;
 import static com.google.gerrit.server.mail.MailUtil.getRecipientsFromFooters;
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
+import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.CHANGE_MODIFICATION;
+import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.DIRECT_PUSH;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.joining;
@@ -192,6 +194,8 @@ import com.google.gerrit.server.update.SubmissionExecutor;
 import com.google.gerrit.server.update.SubmissionListener;
 import com.google.gerrit.server.update.SuperprojectUpdateOnSubmission;
 import com.google.gerrit.server.update.UpdateException;
+import com.google.gerrit.server.update.context.RefUpdateContext;
+import com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType;
 import com.google.gerrit.server.util.LabelVote;
 import com.google.gerrit.server.util.MagicBranch;
 import com.google.gerrit.server.util.RequestScopePropagator;
@@ -439,6 +443,7 @@ class ReceiveCommits {
   private MessageSender messageSender;
   private ReceiveCommitsResult.Builder result;
   private ImmutableMap<String, String> loggingTags;
+  private ImmutableList<String> transitionalPluginOptions;
 
   /** This object is for single use only. */
   private boolean used;
@@ -590,6 +595,8 @@ class ReceiveCommits {
         useRefCache
             ? ReceivePackRefCache.withAdvertisedRefs(() -> allRefsWatcher.getAllRefs())
             : ReceivePackRefCache.noCache(receivePack.getRepository().getRefDatabase());
+    this.transitionalPluginOptions =
+        ImmutableList.copyOf(config.getStringList("plugins", null, "transitionalPushOptions"));
   }
 
   void init() {
@@ -756,13 +763,15 @@ class ReceiveCommits {
         String pushKind = magicBranch != null && magicBranch.submit ? "direct_submit" : "magic";
         metrics.pushCount.increment(pushKind, project.getName(), getUpdateType(magicCommands));
       }
-      if (!regularCommands.isEmpty()) {
-        metrics.pushCount.increment("direct", project.getName(), getUpdateType(regularCommands));
-      }
+      try (RefUpdateContext ctx = RefUpdateContext.open(DIRECT_PUSH)) {
+        if (!regularCommands.isEmpty()) {
+          metrics.pushCount.increment("direct", project.getName(), getUpdateType(regularCommands));
+        }
 
-      if (!regularCommands.isEmpty()) {
-        handleRegularCommands(regularCommands, progress);
-        return;
+        if (!regularCommands.isEmpty()) {
+          handleRegularCommands(regularCommands, progress);
+          return;
+        }
       }
 
       boolean first = true;
@@ -883,7 +892,10 @@ class ReceiveCommits {
                   case UPDATE:
                   case UPDATE_NONFASTFORWARD:
                     Task closeProgress = progress.beginSubTask("closed", UNKNOWN);
-                    autoCloseChanges(c, closeProgress);
+                    try (RefUpdateContext ctx =
+                        RefUpdateContext.open(RefUpdateType.AUTO_CLOSE_CHANGES)) {
+                      autoCloseChanges(c, closeProgress);
+                    }
                     closeProgress.end();
                     break;
 
@@ -1012,59 +1024,61 @@ class ReceiveCommits {
 
   private void insertChangesAndPatchSets(
       ImmutableList<CreateRequest> newChanges, Task replaceProgress) {
-    try (TraceTimer traceTimer =
-        newTimer(
-            "insertChangesAndPatchSets", Metadata.builder().resourceCount(newChanges.size()))) {
-      ReceiveCommand magicBranchCmd = magicBranch != null ? magicBranch.cmd : null;
-      if (magicBranchCmd != null && magicBranchCmd.getResult() != NOT_ATTEMPTED) {
-        logger.atWarning().log(
-            "Skipping change updates on %s because ref update failed: %s %s",
-            project.getName(),
-            magicBranchCmd.getResult(),
-            Strings.nullToEmpty(magicBranchCmd.getMessage()));
-        return;
-      }
-      try {
-        if (!newChanges.isEmpty()) {
-          // TODO: Retry lock failures on new change insertions. The retry will
-          //  likely have to move to a higher layer to be able to achieve that
-          //  due to state that needs to be reset with each retry attempt.
-          insertChangesAndPatchSets(magicBranchCmd, newChanges, replaceProgress);
-        } else {
-          retryHelper
-              .changeUpdate(
-                  "insertPatchSets",
-                  updateFactory -> {
-                    insertChangesAndPatchSets(magicBranchCmd, newChanges, replaceProgress);
-                    return null;
-                  })
-              .defaultTimeoutMultiplier(5)
-              .call();
+    try (RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
+      try (TraceTimer traceTimer =
+          newTimer(
+              "insertChangesAndPatchSets", Metadata.builder().resourceCount(newChanges.size()))) {
+        ReceiveCommand magicBranchCmd = magicBranch != null ? magicBranch.cmd : null;
+        if (magicBranchCmd != null && magicBranchCmd.getResult() != NOT_ATTEMPTED) {
+          logger.atWarning().log(
+              "Skipping change updates on %s because ref update failed: %s %s",
+              project.getName(),
+              magicBranchCmd.getResult(),
+              Strings.nullToEmpty(magicBranchCmd.getMessage()));
+          return;
         }
-      } catch (ResourceConflictException e) {
-        addError(e.getMessage());
-        reject(magicBranchCmd, "conflict");
-      } catch (BadRequestException | UnprocessableEntityException | AuthException e) {
-        logger.atFine().withCause(e).log("Rejecting due to client error");
-        reject(magicBranchCmd, e.getMessage());
-      } catch (RestApiException | IOException | UpdateException e) {
-        throw new StorageException("Can't insert change/patch set for " + project.getName(), e);
-      }
-
-      if (magicBranch != null && magicBranch.submit) {
         try {
-          submit(newChanges, replaceByChange.values());
+          if (!newChanges.isEmpty()) {
+            // TODO: Retry lock failures on new change insertions. The retry will
+            //  likely have to move to a higher layer to be able to achieve that
+            //  due to state that needs to be reset with each retry attempt.
+            insertChangesAndPatchSets(magicBranchCmd, newChanges, replaceProgress);
+          } else {
+            retryHelper
+                .changeUpdate(
+                    "insertPatchSets",
+                    updateFactory -> {
+                      insertChangesAndPatchSets(magicBranchCmd, newChanges, replaceProgress);
+                      return null;
+                    })
+                .defaultTimeoutMultiplier(5)
+                .call();
+          }
         } catch (ResourceConflictException e) {
           addError(e.getMessage());
           reject(magicBranchCmd, "conflict");
-        } catch (RestApiException
-            | StorageException
-            | UpdateException
-            | IOException
-            | ConfigInvalidException
-            | PermissionBackendException e) {
-          logger.atSevere().withCause(e).log("Error submitting changes to %s", project.getName());
-          reject(magicBranchCmd, "error during submit");
+        } catch (BadRequestException | UnprocessableEntityException | AuthException e) {
+          logger.atFine().withCause(e).log("Rejecting due to client error");
+          reject(magicBranchCmd, e.getMessage());
+        } catch (RestApiException | IOException | UpdateException e) {
+          throw new StorageException("Can't insert change/patch set for " + project.getName(), e);
+        }
+
+        if (magicBranch != null && magicBranch.submit) {
+          try {
+            submit(newChanges, replaceByChange.values());
+          } catch (ResourceConflictException e) {
+            addError(e.getMessage());
+            reject(magicBranchCmd, "conflict");
+          } catch (RestApiException
+              | StorageException
+              | UpdateException
+              | IOException
+              | ConfigInvalidException
+              | PermissionBackendException e) {
+            logger.atSevere().withCause(e).log("Error submitting changes to %s", project.getName());
+            reject(magicBranchCmd, "error during submit");
+          }
         }
       }
     }
@@ -1096,15 +1110,15 @@ class ReceiveCommits {
                 publishCommentsOp.create(replace.psId, project.getNameKey()));
             Optional<ChangeNotes> changeNotes = getChangeNotes(replace.notes.getChangeId());
             if (!changeNotes.isPresent()) {
-              // If not present, no need to update attention set here since this is a
-              // new change.
+              // If not present, no need to update attention set here since this is
+              // a new change.
               continue;
             }
             List<HumanComment> drafts =
                 commentsUtil.draftByChangeAuthor(changeNotes.get(), user.getAccountId());
             if (drafts.isEmpty()) {
-              // If no comments, attention set shouldn't update since the user didn't
-              // reply.
+              // If no comments, attention set shouldn't update since the user
+              // didn't reply.
               continue;
             }
             replyAttentionSetUpdates.processAutomaticAttentionSetRulesOnReply(
@@ -2155,6 +2169,9 @@ class ReceiveCommits {
   }
 
   private boolean isPluginPushOption(String pushOptionName) {
+    if (transitionalPluginOptions.contains(pushOptionName)) {
+      return true;
+    }
     return StreamSupport.stream(pluginPushOptions.entries().spliterator(), /* parallel= */ false)
         .anyMatch(e -> pushOptionName.equals(e.getPluginName() + "~" + e.get().getName()));
   }

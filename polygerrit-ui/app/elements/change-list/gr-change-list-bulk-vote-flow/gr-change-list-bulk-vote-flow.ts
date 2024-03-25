@@ -5,7 +5,6 @@
  */
 import {customElement, query, state} from 'lit/decorators.js';
 import {LitElement, html, css, nothing} from 'lit';
-import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
 import {resolve} from '../../../models/dependency';
 import {bulkActionsModelToken} from '../../../models/bulk-actions/bulk-actions-model';
 import {subscribe} from '../../lit/subscription-controller';
@@ -39,12 +38,14 @@ import {pluralize} from '../../../utils/string-util';
 import {GrDialog} from '../../shared/gr-dialog/gr-dialog';
 import {Interaction} from '../../../constants/reporting';
 import {createChangeUrl} from '../../../models/views/change';
+import {userModelToken} from '../../../models/user/user-model';
+import {modalStyles} from '../../../styles/gr-modal-styles';
 
 @customElement('gr-change-list-bulk-vote-flow')
 export class GrChangeListBulkVoteFlow extends LitElement {
   private readonly getBulkActionsModel = resolve(this, bulkActionsModelToken);
 
-  private readonly userModel = getAppContext().userModel;
+  private readonly getUserModel = resolve(this, userModelToken);
 
   private readonly reportingService = getAppContext().reportingService;
 
@@ -52,7 +53,7 @@ export class GrChangeListBulkVoteFlow extends LitElement {
 
   @state() progressByChange: Map<NumericChangeId, ProgressStatus> = new Map();
 
-  @query('#actionOverlay') actionOverlay!: GrOverlay;
+  @query('#actionModal') actionModal!: HTMLDialogElement;
 
   @query('gr-dialog') dialog?: GrDialog;
 
@@ -61,6 +62,7 @@ export class GrChangeListBulkVoteFlow extends LitElement {
   static override get styles() {
     return [
       fontStyles,
+      modalStyles,
       css`
         gr-dialog {
           width: 840px;
@@ -141,7 +143,7 @@ export class GrChangeListBulkVoteFlow extends LitElement {
     );
     subscribe(
       this,
-      () => this.userModel.account$,
+      () => this.getUserModel().account$,
       account => (this.account = account)
     );
   }
@@ -153,13 +155,15 @@ export class GrChangeListBulkVoteFlow extends LitElement {
       permittedLabels
     ).filter(label => !triggerLabels.some(l => l.name === label.name));
     return html`
-      <gr-button id="voteFlowButton" flatten @click=${this.openOverlay}
+      <gr-button id="voteFlowButton" flatten @click=${this.openModal}
         >Vote</gr-button
       >
-      <gr-overlay id="actionOverlay" with-backdrop="">
+      <dialog id="actionModal" tabindex="-1">
         <gr-dialog
           .disableCancel=${!this.isCancelEnabled()}
-          .disabled=${!this.isConfirmEnabled()}
+          .disabled=${this.isDisabled(
+            triggerLabels.length + nonTriggerLabels.length
+          )}
           ?loading=${this.isLoading()}
           .loadingLabel=${'Voting in progress...'}
           @confirm=${() => this.handleConfirm()}
@@ -185,7 +189,7 @@ export class GrChangeListBulkVoteFlow extends LitElement {
             ${this.renderErrors()}
           </div>
         </gr-dialog>
-      </gr-overlay>
+      </dialog>
     `;
   }
 
@@ -223,12 +227,8 @@ export class GrChangeListBulkVoteFlow extends LitElement {
     }
   }
 
-  private async openOverlay() {
-    await this.actionOverlay.open();
-    this.actionOverlay.setFocusStops({
-      start: queryAndAssert(this.dialog, 'header'),
-      end: queryAndAssert(this.dialog, 'footer'),
-    });
+  private openModal() {
+    this.actionModal.showModal();
   }
 
   private renderErrors() {
@@ -291,11 +291,12 @@ export class GrChangeListBulkVoteFlow extends LitElement {
     return getOverallStatus(this.progressByChange) === ProgressStatus.RUNNING;
   }
 
-  private isConfirmEnabled() {
+  private isDisabled(permittedLabelsCount: number) {
     // Action is allowed if none of the changes have any bulk action performed
     // on them. In case an error happens then we keep the button disabled.
-    return (
-      getOverallStatus(this.progressByChange) === ProgressStatus.NOT_STARTED
+    return !(
+      getOverallStatus(this.progressByChange) === ProgressStatus.NOT_STARTED &&
+      permittedLabelsCount > 0
     );
   }
 
@@ -304,10 +305,10 @@ export class GrChangeListBulkVoteFlow extends LitElement {
   }
 
   private handleClose() {
-    this.actionOverlay.close();
+    this.actionModal.close();
     if (getOverallStatus(this.progressByChange) === ProgressStatus.NOT_STARTED)
       return;
-    fireReload(this, true);
+    fireReload(this);
   }
 
   private async handleConfirm() {

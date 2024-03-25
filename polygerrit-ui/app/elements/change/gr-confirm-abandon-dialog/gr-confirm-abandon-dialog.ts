@@ -13,6 +13,8 @@ import {customElement, property, query} from 'lit/decorators.js';
 import {assertIsDefined} from '../../../utils/common-util';
 import {BindValueChangeEvent} from '../../../types/events';
 import {ShortcutController} from '../../lit/shortcut-controller';
+import {ChangeActionDialog} from '../../../types/common';
+import {fireNoBubble} from '../../../utils/event-util';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -21,7 +23,10 @@ declare global {
 }
 
 @customElement('gr-confirm-abandon-dialog')
-export class GrConfirmAbandonDialog extends LitElement {
+export class GrConfirmAbandonDialog
+  extends LitElement
+  implements ChangeActionDialog
+{
   /**
    * Fired when the confirm button is pressed.
    *
@@ -128,25 +133,14 @@ export class GrConfirmAbandonDialog extends LitElement {
 
   // private but used in test
   confirm() {
-    this.dispatchEvent(
-      new CustomEvent('confirm', {
-        detail: {reason: this.message},
-        composed: true,
-        bubbles: false,
-      })
-    );
+    fireNoBubble(this, 'confirm', {});
   }
 
   // private but used in test
   handleCancelTap(e: Event) {
     e.preventDefault();
     e.stopPropagation();
-    this.dispatchEvent(
-      new CustomEvent('cancel', {
-        composed: true,
-        bubbles: false,
-      })
-    );
+    fireNoBubble(this, 'cancel', {});
   }
 
   private handleBindValueChanged(e: BindValueChangeEvent) {

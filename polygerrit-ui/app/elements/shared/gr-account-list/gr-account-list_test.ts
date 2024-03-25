@@ -22,7 +22,7 @@ import {
   queryAndAssert,
   waitUntil,
 } from '../../../test/test-utils';
-import {ReviewerSuggestionsProvider} from '../../../scripts/gr-reviewer-suggestions-provider/gr-reviewer-suggestions-provider';
+import {ReviewerSuggestionsProvider} from '../../../services/gr-reviewer-suggestions-provider/gr-reviewer-suggestions-provider';
 import {
   AutocompleteSuggestion,
   GrAutocomplete,
@@ -31,7 +31,6 @@ import {GrAccountEntry} from '../gr-account-entry/gr-account-entry';
 import {createChange} from '../../../test/test-data-generators';
 import {ReviewerState} from '../../../api/rest-api';
 import {fixture, html, assert} from '@open-wc/testing';
-import {EventType} from '../../../types/events';
 import {AccountInfoInput, RawAccountInput} from '../../../utils/account-util';
 
 class MockSuggestionsProvider implements ReviewerSuggestionsProvider {
@@ -151,7 +150,7 @@ suite('gr-account-list tests', () => {
 
     // Removed accounts are taken out of the list.
     element.dispatchEvent(
-      new CustomEvent('remove', {
+      new CustomEvent('remove-account', {
         detail: {account: existingAccount1},
         composed: true,
         bubbles: true,
@@ -165,14 +164,14 @@ suite('gr-account-list tests', () => {
 
     // Invalid remove is ignored.
     element.dispatchEvent(
-      new CustomEvent('remove', {
+      new CustomEvent('remove-account', {
         detail: {account: existingAccount1},
         composed: true,
         bubbles: true,
       })
     );
     element.dispatchEvent(
-      new CustomEvent('remove', {
+      new CustomEvent('remove-account', {
         detail: {account: newAccount},
         composed: true,
         bubbles: true,
@@ -194,7 +193,7 @@ suite('gr-account-list tests', () => {
 
     // Removed groups are taken out of the list.
     element.dispatchEvent(
-      new CustomEvent('remove', {
+      new CustomEvent('remove-account', {
         detail: {account: newGroup},
         composed: true,
         bubbles: true,
@@ -289,7 +288,7 @@ suite('gr-account-list tests', () => {
   test('addAccountItem with invalid item', () => {
     const toastHandler = sinon.stub();
     element.allowAnyInput = false;
-    element.addEventListener(EventType.SHOW_ALERT, toastHandler);
+    element.addEventListener('show-alert', toastHandler);
     const result = element.addAccountItem('test');
     assert.isFalse(result);
     assert.isTrue(toastHandler.called);
@@ -407,8 +406,8 @@ suite('gr-account-list tests', () => {
     );
     input.text = 'newTest';
     input.input!.focus();
-    input.noDebounce = true;
     await element.updateComplete;
+    await input.latestSuggestionUpdateComplete;
     assert.isTrue(getSuggestionsStub.calledOnce);
     assert.equal(getSuggestionsStub.lastCall.args[0], 'newTest');
     await waitUntil(() => makeSuggestionItemSpy.getCalls().length === 2);
@@ -431,7 +430,7 @@ suite('gr-account-list tests', () => {
 
     test('toasts on invalid email', () => {
       const toastHandler = sinon.stub();
-      element.addEventListener(EventType.SHOW_ALERT, toastHandler);
+      element.addEventListener('show-alert', toastHandler);
       handleAdd('test');
       assert.isTrue(toastHandler.called);
     });

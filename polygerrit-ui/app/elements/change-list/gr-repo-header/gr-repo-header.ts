@@ -12,6 +12,7 @@ import {dashboardHeaderStyles} from '../../../styles/dashboard-header-styles';
 import {LitElement, css, html, PropertyValues} from 'lit';
 import {customElement, property} from 'lit/decorators.js';
 import {createRepoUrl} from '../../../models/views/repo';
+import '../../shared/gr-weblink/gr-weblink';
 
 @customElement('gr-repo-header')
 export class GrRepoHeader extends LitElement {
@@ -50,7 +51,7 @@ export class GrRepoHeader extends LitElement {
     return html`<div>
       <span class="browse">Browse:</span>
       ${webLinks.map(
-        link => html`<a target="_blank" href=${link.url}>${link.name}</a> `
+        info => html`<gr-weblink imageAndText .info=${info}></gr-weblink>`
       )}
     </div> `;
   }

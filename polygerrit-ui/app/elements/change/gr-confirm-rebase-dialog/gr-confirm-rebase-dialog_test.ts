@@ -12,15 +12,31 @@ import {
   stubRestApi,
   waitUntil,
 } from '../../../test/test-utils';
-import {NumericChangeId, BranchName} from '../../../types/common';
-import {createChangeViewChange} from '../../../test/test-data-generators';
+import {NumericChangeId, BranchName, Timestamp} from '../../../types/common';
+import {
+  createAccountWithEmail,
+  createChangeViewChange,
+} from '../../../test/test-data-generators';
 import {fixture, html, assert} from '@open-wc/testing';
 import {Key} from '../../../utils/dom-util';
+import {GrDialog} from '../../shared/gr-dialog/gr-dialog';
+import {testResolver} from '../../../test/common-test-setup';
+import {userModelToken} from '../../../models/user/user-model';
+import {
+  changeModelToken,
+  LoadingStatus,
+} from '../../../models/change/change-model';
+import {GrAccountChip} from '../../shared/gr-account-chip/gr-account-chip';
 
 suite('gr-confirm-rebase-dialog tests', () => {
   let element: GrConfirmRebaseDialog;
 
   setup(async () => {
+    const userModel = testResolver(userModelToken);
+    userModel.setAccount({
+      ...createAccountWithEmail('abc@def.com'),
+      registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
+    });
     element = await fixture(
       html`<gr-confirm-rebase-dialog></gr-confirm-rebase-dialog>`
     );
@@ -28,6 +44,7 @@ suite('gr-confirm-rebase-dialog tests', () => {
 
   test('render', async () => {
     element.branch = 'test' as BranchName;
+    element.hasParent = false;
     await element.updateComplete;
     assert.shadowDom.equal(
       element,
@@ -43,6 +60,9 @@ suite('gr-confirm-rebase-dialog tests', () => {
             <label for="rebaseOnParentInput" id="rebaseOnParentLabel">
               Rebase on parent change
             </label>
+          </div>
+          <div class="message" hidden="">
+            Still loading parent information ...
           </div>
           <div class="message" hidden="" id="parentUpToDateMsg">
             This change is up to date with its parent.
@@ -73,12 +93,11 @@ suite('gr-confirm-rebase-dialog tests', () => {
             <gr-autocomplete
               allow-non-suggested-values=""
               id="parentInput"
-              no-debounce=""
               placeholder="Change number, ref, or commit hash"
             >
             </gr-autocomplete>
           </div>
-          <div class="rebaseAllowConflicts">
+          <div class="rebaseCheckbox">
             <input id="rebaseAllowConflicts" type="checkbox" />
             <label for="rebaseAllowConflicts">
               Allow rebase with conflicts
@@ -87,6 +106,70 @@ suite('gr-confirm-rebase-dialog tests', () => {
         </div>
       </gr-dialog> `
     );
+  });
+
+  suite('on behalf of uploader', () => {
+    let changeModel;
+    const change = {
+      ...createChangeViewChange(),
+    };
+    setup(async () => {
+      element.branch = 'test' as BranchName;
+      await element.updateComplete;
+      changeModel = testResolver(changeModelToken);
+      changeModel.setState({
+        loadingStatus: LoadingStatus.LOADED,
+        change,
+      });
+    });
+    test('for reviewer it shows message about on behalf', () => {
+      const rebaseOnBehalfMsg = queryAndAssert(element, '.rebaseOnBehalfMsg');
+      assert.dom.equal(
+        rebaseOnBehalfMsg,
+        /* HTML */ `<div class="rebaseOnBehalfMsg">
+          Rebase will be done on behalf of the uploader:
+          <gr-account-chip> </gr-account-chip> <span> </span>
+        </div>`
+      );
+      const accountChip: GrAccountChip = queryAndAssert(
+        rebaseOnBehalfMsg,
+        'gr-account-chip'
+      );
+      assert.equal(
+        accountChip.account!,
+        change?.revisions[change.current_revision]?.uploader
+      );
+    });
+    test('allowConflicts', async () => {
+      element.allowConflicts = true;
+      await element.updateComplete;
+      const rebaseOnBehalfMsg = queryAndAssert(element, '.rebaseOnBehalfMsg');
+      assert.dom.equal(
+        rebaseOnBehalfMsg,
+        /* HTML */ `<div class="rebaseOnBehalfMsg">
+          Rebase will be done on behalf of
+          <gr-account-chip> </gr-account-chip> <span> </span>
+        </div>`
+      );
+      const accountChip: GrAccountChip = queryAndAssert(
+        rebaseOnBehalfMsg,
+        'gr-account-chip'
+      );
+      assert.equal(accountChip.account, element.account);
+    });
+  });
+
+  test('disableActions property disables dialog confirm', async () => {
+    element.disableActions = false;
+    await element.updateComplete;
+
+    const dialog = queryAndAssert<GrDialog>(element, 'gr-dialog');
+    assert.isFalse(dialog.disabled);
+
+    element.disableActions = true;
+    await element.updateComplete;
+
+    assert.isTrue(dialog.disabled);
   });
 
   test('controls with parent and rebase on current available', async () => {
@@ -160,7 +243,7 @@ suite('gr-confirm-rebase-dialog tests', () => {
     element.hasParent = false;
     await element.updateComplete;
 
-    assert.isTrue(element.rebaseOnOtherInput.checked);
+    assert.isTrue(element.rebaseOnOtherInput?.checked);
     assert.isTrue(
       queryAndAssert(element, '#rebaseOnParent').hasAttribute('hidden')
     );
@@ -281,7 +364,7 @@ suite('gr-confirm-rebase-dialog tests', () => {
       assert.equal(element.filterChanges('awesome', recentChanges).length, 3);
       assert.equal(element.filterChanges('third', recentChanges).length, 1);
 
-      element.changeNumber = 123 as NumericChangeId;
+      element.changeNum = 123 as NumericChangeId;
       await element.updateComplete;
 
       assert.equal(element.filterChanges('123', recentChanges).length, 0);
@@ -291,7 +374,6 @@ suite('gr-confirm-rebase-dialog tests', () => {
 
     test('input text change triggers function', async () => {
       const recentChangesSpy = sinon.spy(element, 'getRecentChanges');
-      element.parentInput.noDebounce = true;
       pressKey(
         queryAndAssert(queryAndAssert(element, '#parentInput'), '#input'),
         Key.ENTER

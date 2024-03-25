@@ -55,6 +55,7 @@ import com.google.gerrit.pgm.util.ErrorLogFile;
 import com.google.gerrit.pgm.util.LogFileCompressor.LogFileCompressorModule;
 import com.google.gerrit.pgm.util.RuntimeShutdown;
 import com.google.gerrit.pgm.util.SiteProgram;
+import com.google.gerrit.server.DefaultRefLogIdentityProvider;
 import com.google.gerrit.server.LibModuleLoader;
 import com.google.gerrit.server.LibModuleType;
 import com.google.gerrit.server.ModuleOverloader;
@@ -64,6 +65,7 @@ import com.google.gerrit.server.account.InternalAccountDirectory.InternalAccount
 import com.google.gerrit.server.account.externalids.ExternalIdCaseSensitivityMigrator;
 import com.google.gerrit.server.api.GerritApiModule;
 import com.google.gerrit.server.api.PluginApiModule;
+import com.google.gerrit.server.api.projects.ProjectQueryBuilderModule;
 import com.google.gerrit.server.audit.AuditModule;
 import com.google.gerrit.server.cache.h2.H2CacheModule;
 import com.google.gerrit.server.cache.mem.DefaultMemoryCacheModule;
@@ -212,6 +214,7 @@ public class Daemon extends SiteProgram {
   private Path runFile;
   private boolean inMemoryTest;
   private AbstractModule indexModule;
+  private Module accountPatchReviewStoreModule;
   private Module emailModule;
   private List<Module> testSysModules = new ArrayList<>();
   private List<Module> testSshModules = new ArrayList<>();
@@ -334,6 +337,11 @@ public class Daemon extends SiteProgram {
   }
 
   @VisibleForTesting
+  public void setAccountPatchReviewStoreModuleForTesting(Module module) {
+    accountPatchReviewStoreModule = module;
+  }
+
+  @VisibleForTesting
   public void setEmailModuleForTesting(Module module) {
     emailModule = module;
   }
@@ -444,12 +452,18 @@ public class Daemon extends SiteProgram {
     modules.add(new WorkQueueModule());
     modules.add(new StreamEventsApiListenerModule());
     modules.add(new EventBrokerModule());
-    modules.add(new JdbcAccountPatchReviewStoreModule(config));
+    if (accountPatchReviewStoreModule != null) {
+      modules.add(accountPatchReviewStoreModule);
+    } else {
+      modules.add(new JdbcAccountPatchReviewStoreModule(config));
+    }
     modules.add(new SysExecutorModule());
     modules.add(new DiffExecutorModule());
     modules.add(new MimeUtil2Module());
     modules.add(cfgInjector.getInstance(GerritGlobalModule.class));
     modules.add(new GerritApiModule());
+    modules.add(new ProjectQueryBuilderModule());
+    modules.add(new DefaultRefLogIdentityProvider.Module());
     modules.add(new PluginApiModule());
 
     modules.add(

@@ -18,6 +18,7 @@ import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
 
 import com.google.common.collect.ImmutableMap;
+import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.SubmitRequirement;
 import com.google.gerrit.entities.SubmitRequirementExpression;
 import com.google.gerrit.entities.SubmitRequirementExpressionResult;
@@ -35,6 +36,7 @@ import com.google.inject.Inject;
 import com.google.inject.Module;
 import com.google.inject.Provider;
 import com.google.inject.Scopes;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
@@ -42,6 +44,7 @@ import java.util.stream.Stream;
 
 /** Evaluates submit requirements for different change data. */
 public class SubmitRequirementsEvaluatorImpl implements SubmitRequirementsEvaluator {
+  private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
   private final Provider<SubmitRequirementChangeQueryBuilder> queryBuilder;
   private final ProjectCache projectCache;
@@ -111,6 +114,29 @@ public class SubmitRequirementsEvaluatorImpl implements SubmitRequirementsEvalua
                 : Optional.empty();
       }
 
+      if (applicabilityResult.isPresent()) {
+        logger.atFine().log(
+            "Applicability expression result for SR name '%s':"
+                + " passing atoms: %s, failing atoms: %s",
+            sr.name(),
+            applicabilityResult.get().passingAtoms(),
+            applicabilityResult.get().failingAtoms());
+      }
+      if (submittabilityResult.isPresent()) {
+        logger.atFine().log(
+            "Submittability expression result for SR name '%s':"
+                + " passing atoms: %s, failing atoms: %s",
+            sr.name(),
+            submittabilityResult.get().passingAtoms(),
+            submittabilityResult.get().failingAtoms());
+      }
+      if (overrideResult.isPresent()) {
+        logger.atFine().log(
+            "Override expression result for SR name '%s':"
+                + " passing atoms: %s, failing atoms: %s",
+            sr.name(), overrideResult.get().passingAtoms(), overrideResult.get().failingAtoms());
+      }
+
       return SubmitRequirementResult.builder()
           .legacy(Optional.of(false))
           .submitRequirement(sr)
@@ -130,6 +156,8 @@ public class SubmitRequirementsEvaluatorImpl implements SubmitRequirementsEvalua
       PredicateResult predicateResult = evaluatePredicateTree(predicate, changeData);
       return SubmitRequirementExpressionResult.create(expression, predicateResult);
     } catch (QueryParseException | SubmitRequirementEvaluationException e) {
+      logger.atWarning().withCause(e).log(
+          "Failed to evaluate submit requirement expression: %s", expression.expressionString());
       return SubmitRequirementExpressionResult.error(expression, e.getMessage());
     }
   }
@@ -180,7 +208,8 @@ public class SubmitRequirementsEvaluatorImpl implements SubmitRequirementsEvalua
     return globalSubmitRequirements.stream()
         .collect(
             toImmutableMap(
-                globalRequirement -> globalRequirement.name().toLowerCase(), Function.identity()));
+                globalRequirement -> globalRequirement.name().toLowerCase(Locale.US),
+                Function.identity()));
   }
 
   /** Evaluate the predicate recursively using change data. */

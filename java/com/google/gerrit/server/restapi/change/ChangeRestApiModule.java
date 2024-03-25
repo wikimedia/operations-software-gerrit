@@ -42,7 +42,6 @@ import com.google.gerrit.server.change.PatchSetInserter;
 import com.google.gerrit.server.change.RebaseChangeOp;
 import com.google.gerrit.server.change.RemoveFromAttentionSetOp;
 import com.google.gerrit.server.change.ReviewerResource;
-import com.google.gerrit.server.change.SetAssigneeOp;
 import com.google.gerrit.server.change.SetCherryPickOp;
 import com.google.gerrit.server.change.SetHashtagsOp;
 import com.google.gerrit.server.change.SetPrivateOp;
@@ -91,10 +90,6 @@ public class ChangeRestApiModule extends RestApiModule {
     delete(ATTENTION_SET_ENTRY_KIND).to(RemoveFromAttentionSet.class);
     post(ATTENTION_SET_ENTRY_KIND, "delete").to(RemoveFromAttentionSet.class);
     postOnCollection(ATTENTION_SET_ENTRY_KIND).to(AddToAttentionSet.class);
-    get(CHANGE_KIND, "assignee").to(GetAssignee.class);
-    get(CHANGE_KIND, "past_assignees").to(GetPastAssignees.class);
-    put(CHANGE_KIND, "assignee").to(PutAssignee.class);
-    delete(CHANGE_KIND, "assignee").to(DeleteAssignee.class);
     get(CHANGE_KIND, "hashtags").to(GetHashtags.class);
     get(CHANGE_KIND, "comments").to(ListChangeComments.class);
     get(CHANGE_KIND, "robotcomments").to(ListChangeRobotComments.class);
@@ -113,6 +108,7 @@ public class ChangeRestApiModule extends RestApiModule {
     post(CHANGE_KIND, "submit").to(Submit.CurrentRevision.class);
     get(CHANGE_KIND, "submitted_together").to(SubmittedTogether.class);
     post(CHANGE_KIND, "rebase").to(Rebase.CurrentRevision.class);
+    post(CHANGE_KIND, "rebase:chain").to(RebaseChain.class);
     post(CHANGE_KIND, "index").to(Index.class);
     post(CHANGE_KIND, "move").to(Move.class);
     post(CHANGE_KIND, "private").to(PostPrivate.class);
@@ -122,6 +118,7 @@ public class ChangeRestApiModule extends RestApiModule {
     post(CHANGE_KIND, "ready").to(SetReadyForReview.class);
     put(CHANGE_KIND, "message").to(PutMessage.class);
     post(CHANGE_KIND, "check.submit_requirement").to(CheckSubmitRequirement.class);
+    post(CHANGE_KIND, "patch:apply").to(ApplyPatch.class);
 
     get(CHANGE_KIND, "suggest_reviewers").to(SuggestChangeReviewers.class);
     child(CHANGE_KIND, "reviewers").to(Reviewers.class);
@@ -218,7 +215,6 @@ public class ChangeRestApiModule extends RestApiModule {
     factory(PreviewFix.Factory.class);
     factory(RebaseChangeOp.Factory.class);
     factory(ReviewerResource.Factory.class);
-    factory(SetAssigneeOp.Factory.class);
     factory(SetCherryPickOp.Factory.class);
     factory(SetHashtagsOp.Factory.class);
     factory(SetTopicOp.Factory.class);

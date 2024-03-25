@@ -17,12 +17,10 @@ package com.google.gerrit.extensions.common;
 /** API response containing values from the {@code change} section of {@code gerrit.config}. */
 public class ChangeConfigInfo {
   public Boolean allowBlame;
-  public Boolean showAssigneeInChangesTable;
   public Boolean disablePrivateChanges;
   public int updateDelay;
   public Boolean submitWholeTopic;
   public String mergeabilityComputationBehavior;
-  public Boolean enableAttentionSet;
-  public Boolean enableAssignee;
+  public Boolean enableRobotComments;
   public Boolean conflictsPredicateEnabled;
 }

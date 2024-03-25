@@ -3,15 +3,14 @@
  * Copyright 2020 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {getPluginLoader} from './gr-plugin-loader';
 import {hasOwnProperty} from '../../../utils/common-util';
 import {
   ChangeInfo,
   LabelNameToValueMap,
+  PARENT,
   ReviewInput,
   RevisionInfo,
 } from '../../../types/common';
-import {GrAnnotationActionsInterface} from './gr-annotation-actions-js-api';
 import {GrAdminApi} from '../../plugins/gr-admin-api/gr-admin-api';
 import {
   JsApiService,
@@ -20,52 +19,22 @@ import {
   ShowRevisionActionsDetail,
 } from './gr-js-api-types';
 import {EventType, TargetElement} from '../../../api/plugin';
-import {DiffLayer, HighlightJS, ParsedChangeInfo} from '../../../types/types';
+import {ParsedChangeInfo} from '../../../types/types';
 import {MenuLink} from '../../../api/admin';
 import {Finalizable} from '../../../services/registry';
 import {ReportingService} from '../../../services/gr-reporting/gr-reporting';
+import {Provider} from '../../../models/dependency';
 
 const elements: {[key: string]: HTMLElement} = {};
 const eventCallbacks: {[key: string]: EventCallback[]} = {};
 
 export class GrJsApiInterface implements JsApiService, Finalizable {
-  constructor(readonly reporting: ReportingService) {}
+  constructor(
+    private waitForPluginsToLoad: Provider<Promise<void>>,
+    readonly reporting: ReportingService
+  ) {}
 
   finalize() {}
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  handleEvent(type: EventType, detail: any) {
-    getPluginLoader()
-      .awaitPluginsLoaded()
-      .then(() => {
-        switch (type) {
-          case EventType.HISTORY:
-            this._handleHistory(detail);
-            break;
-          case EventType.SHOW_CHANGE:
-            this._handleShowChange(detail);
-            break;
-          case EventType.COMMENT:
-            this._handleComment(detail);
-            break;
-          case EventType.LABEL_CHANGE:
-            this._handleLabelChange(detail);
-            break;
-          case EventType.SHOW_REVISION_ACTIONS:
-            this._handleShowRevisionActions(detail);
-            break;
-          case EventType.HIGHLIGHTJS_LOADED:
-            this._handleHighlightjsLoaded(detail);
-            break;
-          default:
-            console.warn(
-              'handleEvent called with unsupported event type:',
-              type
-            );
-            break;
-        }
-      });
-  }
 
   addElement(key: TargetElement, el: HTMLElement) {
     elements[key] = el;
@@ -107,23 +76,9 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
     }
   }
 
-  // TODO(TS): The HISTORY event and its handler seem unused.
-  _handleHistory(detail: {path: string}) {
-    for (const cb of this._getEventCallbacks(EventType.HISTORY)) {
-      try {
-        cb(detail.path);
-      } catch (err: unknown) {
-        this.reporting.error(
-          'GrJsApiInterface',
-          new Error('handleHistory callback error'),
-          err
-        );
-      }
-    }
-  }
-
-  _handleShowChange(detail: ShowChangeDetail) {
+  async handleShowChange(detail: ShowChangeDetail) {
     if (!detail.change) return;
+    await this.waitForPluginsToLoad();
     // Note (issue 8221) Shallow clone the change object and add a mergeable
     // getter with deprecation warning. This makes the change detail appear as
     // though SKIP_MERGEABLE was not set, so that plugins that expect it can
@@ -144,20 +99,22 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
         return detail.info && detail.info.mergeable;
       },
     };
-    const patchNum = detail.patchNum;
-    const info = detail.info;
+    const {patchNum, info, basePatchNum} = detail;
 
     let revision;
+    let baseRevision;
     for (const rev of Object.values(change.revisions || {})) {
       if (rev._number === patchNum) {
         revision = rev;
-        break;
+      }
+      if (rev._number === basePatchNum) {
+        baseRevision = rev;
       }
     }
 
     for (const cb of this._getEventCallbacks(EventType.SHOW_CHANGE)) {
       try {
-        cb(change, revision, info);
+        cb(change, revision, info, baseRevision ?? PARENT);
       } catch (err: unknown) {
         this.reporting.error(
           'GrJsApiInterface',
@@ -168,7 +125,8 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
     }
   }
 
-  _handleShowRevisionActions(detail: ShowRevisionActionsDetail) {
+  async handleShowRevisionActions(detail: ShowRevisionActionsDetail) {
+    await this.waitForPluginsToLoad();
     const registeredCallbacks = this._getEventCallbacks(
       EventType.SHOW_REVISION_ACTIONS
     );
@@ -199,22 +157,8 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
     }
   }
 
-  // TODO(TS): The COMMENT event and its handler seem unused.
-  _handleComment(detail: {node: Node}) {
-    for (const cb of this._getEventCallbacks(EventType.COMMENT)) {
-      try {
-        cb(detail.node);
-      } catch (err: unknown) {
-        this.reporting.error(
-          'GrJsApiInterface',
-          new Error('comment callback error'),
-          err
-        );
-      }
-    }
-  }
-
-  _handleLabelChange(detail: {change: ChangeInfo}) {
+  async handleLabelChange(detail: {change?: ParsedChangeInfo}) {
+    await this.waitForPluginsToLoad();
     for (const cb of this._getEventCallbacks(EventType.LABEL_CHANGE)) {
       try {
         cb(detail.change);
@@ -222,20 +166,6 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
         this.reporting.error(
           'GrJsApiInterface',
           new Error('labelChange callback error'),
-          err
-        );
-      }
-    }
-  }
-
-  _handleHighlightjsLoaded(detail: {hljs: HighlightJS}) {
-    for (const cb of this._getEventCallbacks(EventType.HIGHLIGHTJS_LOADED)) {
-      try {
-        cb(detail.hljs);
-      } catch (err: unknown) {
-        this.reporting.error(
-          'GrJsApiInterface',
-          new Error('HighlightjsLoaded callback error'),
           err
         );
       }
@@ -278,60 +208,6 @@ export class GrJsApiInterface implements JsApiService, Finalizable {
       }
     }
     return revertSubmissionMsg;
-  }
-
-  getDiffLayers(path: string) {
-    const layers: DiffLayer[] = [];
-    for (const cb of this._getEventCallbacks(EventType.ANNOTATE_DIFF)) {
-      const annotationApi = cb as unknown as GrAnnotationActionsInterface;
-      try {
-        const layer = annotationApi.createLayer(path);
-        if (layer) layers.push(layer);
-      } catch (err: unknown) {
-        this.reporting.error(
-          'GrJsApiInterface',
-          new Error('getDiffLayers callback error'),
-          err
-        );
-      }
-    }
-    return layers;
-  }
-
-  disposeDiffLayers(path: string) {
-    for (const cb of this._getEventCallbacks(EventType.ANNOTATE_DIFF)) {
-      try {
-        const annotationApi = cb as unknown as GrAnnotationActionsInterface;
-        annotationApi.disposeLayer(path);
-      } catch (err: unknown) {
-        this.reporting.error(
-          'GrJsApiInterface',
-          new Error('disposeDiffLayers callback error'),
-          err
-        );
-      }
-    }
-  }
-
-  /**
-   * Retrieves coverage data possibly provided by a plugin.
-   *
-   * Will wait for plugins to be loaded. If multiple plugins offer a coverage
-   * provider, the first one is returned. If no plugin offers a coverage provider,
-   * will resolve to null.
-   */
-  getCoverageAnnotationApis(): Promise<GrAnnotationActionsInterface[]> {
-    return getPluginLoader()
-      .awaitPluginsLoaded()
-      .then(() => {
-        const providers: GrAnnotationActionsInterface[] = [];
-        this._getEventCallbacks(EventType.ANNOTATE_DIFF).forEach(cb => {
-          const annotationApi = cb as unknown as GrAnnotationActionsInterface;
-          const provider = annotationApi.getCoverageProvider();
-          if (provider) providers.push(annotationApi);
-        });
-        return providers;
-      });
   }
 
   getAdminMenuLinks(): MenuLink[] {

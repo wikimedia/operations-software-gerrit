@@ -21,6 +21,7 @@ import static com.google.gerrit.server.group.SystemGroupBackend.PROJECT_OWNERS;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
 import static com.google.gerrit.server.schema.AclUtil.grant;
 import static com.google.gerrit.server.schema.AclUtil.rule;
+import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.INIT_REPO;
 
 import com.google.gerrit.common.Version;
 import com.google.gerrit.common.data.GlobalCapability;
@@ -39,6 +40,7 @@ import com.google.gerrit.server.group.SystemGroupBackend;
 import com.google.gerrit.server.notedb.RepoSequence;
 import com.google.gerrit.server.notedb.Sequences;
 import com.google.gerrit.server.project.ProjectConfig;
+import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.inject.Inject;
 import java.io.IOException;
 import org.eclipse.jgit.errors.ConfigInvalidException;
@@ -84,18 +86,20 @@ public class AllProjectsCreator {
   }
 
   public void create(AllProjectsInput input) throws IOException, ConfigInvalidException {
-    try (Repository git = repositoryManager.openRepository(allProjectsName)) {
-      initAllProjects(git, input);
-    } catch (RepositoryNotFoundException notFound) {
-      // A repository may be missing if this project existed only to store
-      // inheritable permissions. For example 'All-Projects'.
-      try (Repository git = repositoryManager.createRepository(allProjectsName)) {
+    try (RefUpdateContext updCtx = RefUpdateContext.open(INIT_REPO)) {
+      try (Repository git = repositoryManager.openRepository(allProjectsName)) {
         initAllProjects(git, input);
-        RefUpdate u = git.updateRef(Constants.HEAD);
-        u.link(RefNames.REFS_CONFIG);
-      } catch (RepositoryNotFoundException err) {
-        String name = allProjectsName.get();
-        throw new IOException("Cannot create repository " + name, err);
+      } catch (RepositoryNotFoundException notFound) {
+        // A repository may be missing if this project existed only to store
+        // inheritable permissions. For example 'All-Projects'.
+        try (Repository git = repositoryManager.createRepository(allProjectsName)) {
+          initAllProjects(git, input);
+          RefUpdate u = git.updateRef(Constants.HEAD);
+          u.link(RefNames.REFS_CONFIG);
+        } catch (RepositoryNotFoundException err) {
+          String name = allProjectsName.get();
+          throw new IOException("Cannot create repository " + name, err);
+        }
       }
     }
   }
@@ -149,19 +153,16 @@ public class AllProjectsCreator {
 
     config.upsertAccessSection(
         AccessSection.HEADS,
-        heads -> {
-          initDefaultAclsForRegisteredUsers(heads, codeReviewLabel, config);
-        });
+        heads -> initDefaultAclsForRegisteredUsers(heads, codeReviewLabel, config));
 
     config.upsertAccessSection(
         AccessSection.GLOBAL_CAPABILITIES,
-        capabilities -> {
-          input
-              .serviceUsersGroup()
-              .ifPresent(
-                  batchUsersGroup ->
-                      initDefaultAclsForBatchUsers(capabilities, config, batchUsersGroup));
-        });
+        capabilities ->
+            input
+                .serviceUsersGroup()
+                .ifPresent(
+                    batchUsersGroup ->
+                        initDefaultAclsForBatchUsers(capabilities, config, batchUsersGroup)));
 
     input
         .administratorsGroup()
@@ -171,16 +172,10 @@ public class AllProjectsCreator {
   private void initDefaultAclsForRegisteredUsers(
       AccessSection.Builder heads, LabelType codeReviewLabel, ProjectConfig config) {
     config.upsertAccessSection(
-        "refs/for/*",
-        refsFor -> {
-          grant(config, refsFor, Permission.ADD_PATCH_SET, registered);
-        });
+        "refs/for/*", refsFor -> grant(config, refsFor, Permission.ADD_PATCH_SET, registered));
 
     config.upsertAccessSection(
-        "refs/meta/version",
-        version -> {
-          grant(config, version, Permission.READ, anonymous);
-        });
+        "refs/meta/version", version -> grant(config, version, Permission.READ, anonymous));
 
     grant(config, heads, codeReviewLabel, -1, 1, registered);
     grant(config, heads, Permission.FORGE_AUTHOR, registered);
@@ -208,15 +203,11 @@ public class AllProjectsCreator {
       ProjectConfig config, LabelType codeReviewLabel, GroupReference adminsGroup) {
     config.upsertAccessSection(
         AccessSection.GLOBAL_CAPABILITIES,
-        capabilities -> {
-          grant(config, capabilities, GlobalCapability.ADMINISTRATE_SERVER, adminsGroup);
-        });
+        capabilities ->
+            grant(config, capabilities, GlobalCapability.ADMINISTRATE_SERVER, adminsGroup));
 
     config.upsertAccessSection(
-        AccessSection.ALL,
-        all -> {
-          grant(config, all, Permission.READ, adminsGroup);
-        });
+        AccessSection.ALL, all -> grant(config, all, Permission.READ, adminsGroup));
 
     config.upsertAccessSection(
         AccessSection.HEADS,

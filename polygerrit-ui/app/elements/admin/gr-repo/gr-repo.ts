@@ -22,7 +22,7 @@ import {
 } from '../../../types/common';
 import {
   InheritedBooleanInfoConfiguredValue,
-  ProjectState,
+  RepoState,
   SubmitType,
 } from '../../../constants/constants';
 import {assertIsDefined, hasOwnProperty} from '../../../utils/common-util';
@@ -41,11 +41,13 @@ import {customElement, property, state} from 'lit/decorators.js';
 import {when} from 'lit/directives/when.js';
 import {subscribe} from '../../lit/subscription-controller';
 import {createSearchUrl} from '../../../models/views/search';
+import {userModelToken} from '../../../models/user/user-model';
+import {resolve} from '../../../models/dependency';
 
 const STATES = {
-  active: {value: ProjectState.ACTIVE, label: 'Active'},
-  readOnly: {value: ProjectState.READ_ONLY, label: 'Read Only'},
-  hidden: {value: ProjectState.HIDDEN, label: 'Hidden'},
+  active: {value: RepoState.ACTIVE, label: 'Active'},
+  readOnly: {value: RepoState.READ_ONLY, label: 'Read Only'},
+  hidden: {value: RepoState.HIDDEN, label: 'Hidden'},
 };
 
 const SUBMIT_TYPES = {
@@ -111,7 +113,7 @@ export class GrRepo extends LitElement {
 
   @state() private pluginConfigChanged = false;
 
-  private readonly userModel = getAppContext().userModel;
+  private readonly getUserModel = resolve(this, userModelToken);
 
   private readonly restApiService = getAppContext().restApiService;
 
@@ -119,7 +121,7 @@ export class GrRepo extends LitElement {
     super();
     subscribe(
       this,
-      () => this.userModel.preferences$,
+      () => this.getUserModel().preferences$,
       prefs => {
         if (prefs?.download_scheme) {
           // Note (issue 5180): normalize the download scheme with lower-case.
@@ -132,7 +134,7 @@ export class GrRepo extends LitElement {
   override connectedCallback() {
     super.connectedCallback();
 
-    fireTitleChange(this, `${this.repo}`);
+    fireTitleChange(`${this.repo}`);
   }
 
   static override get styles() {
@@ -1096,7 +1098,7 @@ export class GrRepo extends LitElement {
 
   private computeChangesUrl(name?: RepoName) {
     if (!name) return '';
-    return createSearchUrl({project: name});
+    return createSearchUrl({repo: name});
   }
 
   // private but used in test
@@ -1130,7 +1132,7 @@ export class GrRepo extends LitElement {
     if (this.repoConfig.state === e.detail.value) return;
     this.repoConfig = {
       ...this.repoConfig,
-      state: e.detail.value as ProjectState,
+      state: e.detail.value as RepoState,
     };
     this.requestUpdate();
   }

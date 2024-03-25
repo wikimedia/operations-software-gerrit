@@ -405,7 +405,7 @@ public class ReplaceOp implements BatchUpdateOp {
 
     // Ignore failures for reasons like the reviewer being inactive or being unable to see the
     // change. See discussion in ChangeInserter.
-    input.otherFailureBehavior = ReviewerModifier.FailureBehavior.IGNORE;
+    input.otherFailureBehavior = ReviewerModifier.FailureBehavior.IGNORE_EXCEPT_NOT_FOUND;
 
     return input;
   }
@@ -441,6 +441,7 @@ public class ReplaceOp implements BatchUpdateOp {
         update, message.toString(), ChangeMessagesUtil.uploadedPatchSetTag(workInProgress));
   }
 
+  @Nullable
   private String changeKindMessage(ChangeKind changeKind) {
     switch (changeKind) {
       case MERGE_FIRST_PARENT_UPDATE:
@@ -509,7 +510,9 @@ public class ReplaceOp implements BatchUpdateOp {
             ctx,
             newPatchSet,
             mailMessage,
-            approvalCopierResult.outdatedApprovals(),
+            approvalCopierResult.outdatedApprovals().stream()
+                .map(ApprovalCopier.Result.PatchSetApprovalData::patchSetApproval)
+                .collect(toImmutableSet()),
             Streams.concat(
                     oldRecipients.getReviewers().stream(),
                     reviewerAdditions.flattenResults(ReviewerOp.Result::addedReviewers).stream()
@@ -594,6 +597,7 @@ public class ReplaceOp implements BatchUpdateOp {
     return Optional.of(
         "The following approvals got outdated and were removed:\n"
             + approvalCopierResult.outdatedApprovals().stream()
+                .map(ApprovalCopier.Result.PatchSetApprovalData::patchSetApproval)
                 .map(
                     outdatedApproval ->
                         String.format(
@@ -624,6 +628,7 @@ public class ReplaceOp implements BatchUpdateOp {
     return cmd;
   }
 
+  @Nullable
   private static String findMergedInto(Context ctx, String first, RevCommit commit) {
     try {
       RevWalk rw = ctx.getRevWalk();

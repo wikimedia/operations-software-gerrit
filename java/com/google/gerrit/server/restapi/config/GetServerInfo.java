@@ -56,8 +56,6 @@ import com.google.gerrit.server.config.GerritInstanceId;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.documentation.QueryDocumentationExecutor;
-import com.google.gerrit.server.index.change.ChangeField;
-import com.google.gerrit.server.index.change.ChangeIndexCollection;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.plugincontext.PluginItemContext;
 import com.google.gerrit.server.plugincontext.PluginMapContext;
@@ -94,7 +92,6 @@ public class GetServerInfo implements RestReadView<ConfigResource> {
   private final QueryDocumentationExecutor docSearcher;
   private final ProjectCache projectCache;
   private final AgreementJson agreementJson;
-  private final ChangeIndexCollection indexes;
   private final SitePaths sitePaths;
   private final @Nullable @GerritInstanceId String instanceId;
 
@@ -118,7 +115,6 @@ public class GetServerInfo implements RestReadView<ConfigResource> {
       QueryDocumentationExecutor docSearcher,
       ProjectCache projectCache,
       AgreementJson agreementJson,
-      ChangeIndexCollection indexes,
       SitePaths sitePaths,
       @Nullable @GerritInstanceId String instanceId) {
     this.config = config;
@@ -139,7 +135,6 @@ public class GetServerInfo implements RestReadView<ConfigResource> {
     this.docSearcher = docSearcher;
     this.projectCache = projectCache;
     this.agreementJson = agreementJson;
-    this.indexes = indexes;
     this.sitePaths = sitePaths;
     this.instanceId = instanceId;
   }
@@ -224,11 +219,6 @@ public class GetServerInfo implements RestReadView<ConfigResource> {
   private ChangeConfigInfo getChangeInfo() {
     ChangeConfigInfo info = new ChangeConfigInfo();
     info.allowBlame = toBoolean(config.getBoolean("change", "allowBlame", true));
-    boolean hasAssigneeInIndex =
-        indexes.getSearchIndex().getSchema().hasField(ChangeField.ASSIGNEE);
-    info.showAssigneeInChangesTable =
-        toBoolean(
-            config.getBoolean("change", "showAssigneeInChangesTable", false) && hasAssigneeInIndex);
     info.updateDelay =
         (int) ConfigUtil.getTimeUnit(config, "change", null, "updateDelay", 300, TimeUnit.SECONDS);
     info.submitWholeTopic = toBoolean(MergeSuperSet.wholeTopicEnabled(config));
@@ -236,10 +226,7 @@ public class GetServerInfo implements RestReadView<ConfigResource> {
         toBoolean(this.config.getBoolean("change", null, "disablePrivateChanges", false));
     info.mergeabilityComputationBehavior =
         MergeabilityComputationBehavior.fromConfig(config).name();
-    info.enableAttentionSet =
-        toBoolean(this.config.getBoolean("change", null, "enableAttentionSet", true));
-    info.enableAssignee =
-        toBoolean(this.config.getBoolean("change", null, "enableAssignee", false));
+    info.enableRobotComments = toBoolean(config.getBoolean("change", "enableRobotComments", true));
     info.conflictsPredicateEnabled =
         toBoolean(config.getBoolean("change", "conflictsPredicateEnabled", true));
     return info;
@@ -310,6 +297,7 @@ public class GetServerInfo implements RestReadView<ConfigResource> {
     return info;
   }
 
+  @Nullable
   private String getDocUrl() {
     String docUrl = config.getString("gerrit", null, "docUrl");
     if (Strings.isNullOrEmpty(docUrl)) {
@@ -332,15 +320,13 @@ public class GetServerInfo implements RestReadView<ConfigResource> {
     return info;
   }
 
-  private static final String DEFAULT_THEME = "/static/" + SitePaths.THEME_FILENAME;
   private static final String DEFAULT_THEME_JS = "/static/" + SitePaths.THEME_JS_FILENAME;
 
+  @Nullable
   private String getDefaultTheme() {
     if (config.getString("theme", null, "enableDefault") == null) {
       // If not explicitly enabled or disabled, check for the existence of the theme file.
-      return Files.exists(sitePaths.site_theme_js)
-          ? DEFAULT_THEME_JS
-          : Files.exists(sitePaths.site_theme) ? DEFAULT_THEME : null;
+      return Files.exists(sitePaths.site_theme_js) ? DEFAULT_THEME_JS : null;
     }
     if (config.getBoolean("theme", null, "enableDefault", true)) {
       // Return non-null theme path without checking for file existence. Even if the file doesn't
@@ -351,6 +337,7 @@ public class GetServerInfo implements RestReadView<ConfigResource> {
     return null;
   }
 
+  @Nullable
   private SshdInfo getSshdInfo() {
     String[] addr = config.getStringList("sshd", null, "listenAddress");
     if (addr.length == 1 && isOff(addr[0])) {
@@ -387,7 +374,8 @@ public class GetServerInfo implements RestReadView<ConfigResource> {
     return Arrays.asList(config.getStringList("dashboard", null, "submitRequirementColumns"));
   }
 
+  @Nullable
   private static Boolean toBoolean(boolean v) {
-    return v ? v : null;
+    return v ? Boolean.TRUE : null;
   }
 }

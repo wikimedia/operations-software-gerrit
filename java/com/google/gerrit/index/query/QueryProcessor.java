@@ -273,7 +273,9 @@ public abstract class QueryProcessor<T> {
                 Ints.saturatedCast((long) limit + 1),
                 getRequestedFields());
         logger.atFine().log("Query options: %s", opts);
-        Predicate<T> pred = rewriter.rewrite(q, opts);
+        // Apply index-specific rewrite first
+        Predicate<T> pred = indexes.getSearchIndex().getIndexRewriter().rewrite(q, opts);
+        pred = rewriter.rewrite(pred, opts);
         if (enforceVisibility) {
           pred = enforceVisibility(pred);
         }
@@ -287,7 +289,7 @@ public abstract class QueryProcessor<T> {
         @SuppressWarnings("unchecked")
         DataSource<T> s = (DataSource<T>) pred;
         if (initialPageSize < limit && !(pred instanceof AndSource)) {
-          s = new PaginatingSource<T>(s, start, indexConfig);
+          s = new PaginatingSource<>(s, start, indexConfig);
         }
         sources.add(s);
       }

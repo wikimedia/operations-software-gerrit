@@ -135,7 +135,7 @@ suite('gr-diff-processor tests', () => {
         element.context = 10;
         const content = [
           {
-            ab: new Array(100).fill(
+            ab: Array.from<string>({length: 100}).fill(
               'all work and no play make jack a dull boy'
             ),
           },
@@ -165,9 +165,13 @@ suite('gr-diff-processor tests', () => {
       test('at the beginning with skip chunks', async () => {
         element.context = 10;
         const content = [
-          {ab: new Array(20).fill('all work and no play make jack a dull boy')},
+          {
+            ab: Array.from<string>({length: 20}).fill(
+              'all work and no play make jack a dull boy'
+            ),
+          },
           {skip: 43900},
-          {ab: new Array(30).fill('some other content')},
+          {ab: Array.from<string>({length: 30}).fill('some other content')},
           {a: ['some other content']},
         ];
 
@@ -213,7 +217,11 @@ suite('gr-diff-processor tests', () => {
       test('at the beginning, smaller than context', () => {
         element.context = 10;
         const content = [
-          {ab: new Array(5).fill('all work and no play make jack a dull boy')},
+          {
+            ab: Array.from<string>({length: 5}).fill(
+              'all work and no play make jack a dull boy'
+            ),
+          },
           {a: ['all work and no play make andybons a dull boy']},
         ];
 
@@ -235,7 +243,7 @@ suite('gr-diff-processor tests', () => {
         const content = [
           {a: ['all work and no play make andybons a dull boy']},
           {
-            ab: new Array(100).fill(
+            ab: Array.from<string>({length: 100}).fill(
               'all work and no play make jill a dull girl'
             ),
           },
@@ -266,7 +274,11 @@ suite('gr-diff-processor tests', () => {
         element.context = 10;
         const content = [
           {a: ['all work and no play make andybons a dull boy']},
-          {ab: new Array(5).fill('all work and no play make jill a dull girl')},
+          {
+            ab: Array.from<string>({length: 5}).fill(
+              'all work and no play make jill a dull girl'
+            ),
+          },
         ];
 
         return element.process(content, false).then(() => {
@@ -287,23 +299,39 @@ suite('gr-diff-processor tests', () => {
         element.context = 10;
         const content = [
           {a: ['all work and no play make andybons a dull boy']},
-          {ab: new Array(3).fill('all work and no play make jill a dull girl')},
           {
-            a: new Array(3).fill('all work and no play make jill a dull girl'),
-            b: new Array(3).fill(
+            ab: Array.from<string>({length: 3}).fill(
+              'all work and no play make jill a dull girl'
+            ),
+          },
+          {
+            a: Array.from<string>({length: 3}).fill(
+              'all work and no play make jill a dull girl'
+            ),
+            b: Array.from<string>({length: 3}).fill(
               '  all work and no play make jill a dull girl'
             ),
             common: true,
           },
-          {ab: new Array(3).fill('all work and no play make jill a dull girl')},
           {
-            a: new Array(3).fill('all work and no play make jill a dull girl'),
-            b: new Array(3).fill(
+            ab: Array.from<string>({length: 3}).fill(
+              'all work and no play make jill a dull girl'
+            ),
+          },
+          {
+            a: Array.from<string>({length: 3}).fill(
+              'all work and no play make jill a dull girl'
+            ),
+            b: Array.from<string>({length: 3}).fill(
               '  all work and no play make jill a dull girl'
             ),
             common: true,
           },
-          {ab: new Array(3).fill('all work and no play make jill a dull girl')},
+          {
+            ab: Array.from<string>({length: 3}).fill(
+              'all work and no play make jill a dull girl'
+            ),
+          },
         ];
 
         return element.process(content, false).then(() => {
@@ -387,7 +415,7 @@ suite('gr-diff-processor tests', () => {
         const content = [
           {a: ['all work and no play make andybons a dull boy']},
           {
-            ab: new Array(100).fill(
+            ab: Array.from<string>({length: 100}).fill(
               'all work and no play make jill a dull girl'
             ),
           },
@@ -425,7 +453,11 @@ suite('gr-diff-processor tests', () => {
         element.context = 10;
         const content = [
           {a: ['all work and no play make andybons a dull boy']},
-          {ab: new Array(5).fill('all work and no play make jill a dull girl')},
+          {
+            ab: Array.from<string>({length: 5}).fill(
+              'all work and no play make jill a dull girl'
+            ),
+          },
           {a: ['all work and no play make andybons a dull boy']},
         ];
 
@@ -448,9 +480,17 @@ suite('gr-diff-processor tests', () => {
       element.context = 10;
       const content = [
         {a: ['all work and no play make andybons a dull boy']},
-        {ab: new Array(20).fill('all work and no play make jill a dull girl')},
+        {
+          ab: Array.from<string>({length: 20}).fill(
+            'all work and no play make jill a dull girl'
+          ),
+        },
         {skip: 60},
-        {ab: new Array(20).fill('all work and no play make jill a dull girl')},
+        {
+          ab: Array.from<string>({length: 20}).fill(
+            'all work and no play make jill a dull girl'
+          ),
+        },
         {a: ['all work and no play make andybons a dull boy']},
       ];
 
@@ -723,15 +763,37 @@ suite('gr-diff-processor tests', () => {
           endIndex: 41,
         },
       ]);
+
+      content = ['🙈 a', '🙉 b', '🙊 c'];
+      highlights = [[2, 7]];
+      results = element.convertIntralineInfos(content, highlights);
+      assert.deepEqual(results, [
+        {
+          contentIndex: 0,
+          startIndex: 2,
+        },
+        {
+          contentIndex: 1,
+          startIndex: 0,
+        },
+        {
+          contentIndex: 2,
+          startIndex: 0,
+          endIndex: 1,
+        },
+      ]);
     });
 
-    test('scrolling pauses rendering', () => {
+    test('isScrolling paused', () => {
       const content = Array(200).fill({ab: ['', '']});
       element.isScrolling = true;
       element.process(content, false);
-      // Just the files group - no more processing during scrolling.
+      // Just the FILE and LOST groups.
       assert.equal(groups.length, 2);
+    });
 
+    test('isScrolling unpaused', () => {
+      const content = Array(200).fill({ab: ['', '']});
       element.isScrolling = false;
       element.process(content, false);
       // More groups have been processed. How many does not matter here.

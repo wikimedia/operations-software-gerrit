@@ -17,6 +17,7 @@ package com.google.gerrit.server.config;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.CoreDownloadSchemes;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo.DownloadCommand;
 import com.google.gerrit.server.change.ArchiveFormatInternal;
@@ -28,6 +29,7 @@ import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import org.eclipse.jgit.lib.Config;
 
@@ -97,9 +99,10 @@ public class DownloadConfig {
     return list.size() == 1 && list.get(0) == null;
   }
 
+  @Nullable
   private static String toCoreScheme(String s) {
     try {
-      Field f = CoreDownloadSchemes.class.getField(s.toUpperCase());
+      Field f = CoreDownloadSchemes.class.getField(s.toUpperCase(Locale.US));
       int m = Modifier.PUBLIC | Modifier.STATIC | Modifier.FINAL;
       if ((f.getModifiers() & m) == m && f.getType() == String.class) {
         return (String) f.get(null);

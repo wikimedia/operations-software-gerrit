@@ -24,7 +24,7 @@ import com.google.gerrit.entities.Permission;
 import com.google.gerrit.extensions.api.access.GlobalOrPluginPermission;
 import com.google.gerrit.extensions.api.access.PluginPermission;
 import com.google.gerrit.extensions.api.access.PluginProjectPermission;
-import com.google.gerrit.server.permissions.LabelPermission.ForUser;
+import com.google.gerrit.server.permissions.AbstractLabelPermission.ForUser;
 import java.util.EnumSet;
 import java.util.Optional;
 import java.util.Set;
@@ -61,6 +61,7 @@ public class DefaultPermissionMappings {
           .put(GlobalPermission.VIEW_CONNECTIONS, GlobalCapability.VIEW_CONNECTIONS)
           .put(GlobalPermission.VIEW_PLUGINS, GlobalCapability.VIEW_PLUGINS)
           .put(GlobalPermission.VIEW_QUEUE, GlobalCapability.VIEW_QUEUE)
+          .put(GlobalPermission.VIEW_SECONDARY_EMAILS, GlobalCapability.VIEW_SECONDARY_EMAILS)
           .build();
 
   static {
@@ -90,7 +91,6 @@ public class DefaultPermissionMappings {
       ImmutableBiMap.<ChangePermission, String>builder()
           .put(ChangePermission.READ, Permission.READ)
           .put(ChangePermission.ABANDON, Permission.ABANDON)
-          .put(ChangePermission.EDIT_ASSIGNEE, Permission.EDIT_ASSIGNEE)
           .put(ChangePermission.EDIT_HASHTAGS, Permission.EDIT_HASHTAGS)
           .put(ChangePermission.EDIT_TOPIC_NAME, Permission.EDIT_TOPIC_NAME)
           .put(ChangePermission.REMOVE_REVIEWER, Permission.REMOVE_REVIEWER)
@@ -160,19 +160,29 @@ public class DefaultPermissionMappings {
     return Optional.ofNullable(CHANGE_PERMISSIONS.inverse().get(permissionName));
   }
 
-  public static String labelPermissionName(LabelPermission labelPermission) {
-    if (labelPermission.forUser() == ForUser.ON_BEHALF_OF) {
-      return Permission.forLabelAs(labelPermission.label());
+  public static String labelPermissionName(AbstractLabelPermission labelPermission) {
+    if (labelPermission instanceof LabelPermission) {
+      if (labelPermission.forUser() == ForUser.ON_BEHALF_OF) {
+        return Permission.forLabelAs(labelPermission.label());
+      }
+      return Permission.forLabel(labelPermission.label());
+    } else if (labelPermission instanceof LabelRemovalPermission) {
+      return Permission.forRemoveLabel(labelPermission.label());
     }
-    return Permission.forLabel(labelPermission.label());
+    throw new IllegalStateException("invalid AbstractLabelPermission subtype");
   }
 
   // TODO(dborowitz): Can these share a common superinterface?
-  public static String labelPermissionName(LabelPermission.WithValue labelPermission) {
-    if (labelPermission.forUser() == ForUser.ON_BEHALF_OF) {
-      return Permission.forLabelAs(labelPermission.label());
+  public static String labelPermissionName(AbstractLabelPermission.WithValue labelPermission) {
+    if (labelPermission instanceof LabelPermission.WithValue) {
+      if (labelPermission.forUser() == ForUser.ON_BEHALF_OF) {
+        return Permission.forLabelAs(labelPermission.label());
+      }
+      return Permission.forLabel(labelPermission.label());
+    } else if (labelPermission instanceof LabelRemovalPermission.WithValue) {
+      return Permission.forRemoveLabel(labelPermission.label());
     }
-    return Permission.forLabel(labelPermission.label());
+    throw new IllegalStateException("invalid AbstractLabelPermission.WithValue subtype");
   }
 
   private DefaultPermissionMappings() {}

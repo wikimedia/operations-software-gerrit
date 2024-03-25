@@ -29,6 +29,7 @@ import com.google.gerrit.entities.Project;
 import com.google.gerrit.index.Index;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.Schema;
+import com.google.gerrit.index.SchemaFieldDefs;
 import com.google.gerrit.index.SchemaFieldDefs.SchemaField;
 import com.google.gerrit.index.project.ProjectData;
 import com.google.gerrit.index.project.ProjectIndex;
@@ -166,6 +167,7 @@ public abstract class AbstractFakeIndex<K, V, D> implements Index<K, V> {
       @Override
       public ResultSet<V> read() {
         return new ListResultSet<>(results) {
+          @Nullable
           @Override
           public Object searchAfter() {
             @Nullable V last = Iterables.getLast(results, null);
@@ -190,7 +192,7 @@ public abstract class AbstractFakeIndex<K, V, D> implements Index<K, V> {
               fields.put(field.getName(), field.get(result));
             }
           }
-          fieldBundles.add(new FieldBundle(fields.build()));
+          fieldBundles.add(new FieldBundle(fields.build(), /* storesIndexedFields= */ false));
           searchAfter = keyFor(result);
         }
         ImmutableList<FieldBundle> resultSet = fieldBundles.build();
@@ -228,7 +230,7 @@ public abstract class AbstractFakeIndex<K, V, D> implements Index<K, V> {
    * <p>This index is special in that ChangeData is a mutable object. Therefore we can't just hold
    * onto the object that the caller wanted us to index. We also can't just create a new ChangeData
    * from scratch because there are tests that assert that certain computations (e.g. diffs) are
-   * only done once. So we do what the prod indices do: We read and write fields using FieldDef.
+   * only done once. So we do what the prod indices do: We read and write fields using SchemaField.
    */
   public static class FakeChangeIndex
       extends AbstractFakeIndex<Change.Id, ChangeData, Map<String, Object>> implements ChangeIndex {
@@ -266,7 +268,7 @@ public abstract class AbstractFakeIndex<K, V, D> implements Index<K, V> {
     protected Map<String, Object> docFor(ChangeData value) {
       ImmutableMap.Builder<String, Object> doc = ImmutableMap.builder();
       for (SchemaField<ChangeData, ?> field : getSchema().getSchemaFields().values()) {
-        if (ChangeField.MERGEABLE.getName().equals(field.getName()) && skipMergable) {
+        if (ChangeField.MERGEABLE_SPEC.getName().equals(field.getName()) && skipMergable) {
           continue;
         }
         Object docifiedValue = field.get(value);
@@ -281,16 +283,23 @@ public abstract class AbstractFakeIndex<K, V, D> implements Index<K, V> {
     protected ChangeData valueFor(Map<String, Object> doc) {
       ChangeData cd =
           changeDataFactory.create(
-              Project.nameKey((String) doc.get(ChangeField.PROJECT.getName())),
-              Change.id(Integer.valueOf((String) doc.get(ChangeField.LEGACY_ID_STR.getName()))));
+              Project.nameKey((String) doc.get(ChangeField.PROJECT_SPEC.getName())),
+              Change.id(
+                  Integer.valueOf((String) doc.get(ChangeField.NUMERIC_ID_STR_SPEC.getName()))));
       for (SchemaField<ChangeData, ?> field : getSchema().getSchemaFields().values()) {
-        field.setIfPossible(cd, new FakeStoredValue(doc.get(field.getName())));
+        boolean isProtoField = SchemaFieldDefs.isProtoField(field);
+        field.setIfPossible(cd, new FakeStoredValue(doc.get(field.getName()), isProtoField));
       }
       return cd;
     }
 
     @Override
     public void insert(ChangeData obj) {}
+
+    @Override
+    public void deleteByValue(ChangeData value) {
+      delete(ChangeIndex.ENTITY_TO_KEY.apply(value));
+    }
   }
 
   /** Fake implementation of {@link AccountIndex} where all filtering happens in-memory. */
@@ -323,6 +332,11 @@ public abstract class AbstractFakeIndex<K, V, D> implements Index<K, V> {
 
     @Override
     public void insert(AccountState obj) {}
+
+    @Override
+    public void deleteByValue(AccountState value) {
+      delete(AccountIndex.ENTITY_TO_KEY.apply(value));
+    }
   }
 
   /** Fake implementation of {@link GroupIndex} where all filtering happens in-memory. */
@@ -356,6 +370,11 @@ public abstract class AbstractFakeIndex<K, V, D> implements Index<K, V> {
 
     @Override
     public void insert(InternalGroup obj) {}
+
+    @Override
+    public void deleteByValue(InternalGroup value) {
+      delete(GroupIndex.ENTITY_TO_KEY.apply(value));
+    }
   }
 
   /** Fake implementation of {@link ProjectIndex} where all filtering happens in-memory. */
@@ -388,5 +407,10 @@ public abstract class AbstractFakeIndex<K, V, D> implements Index<K, V> {
 
     @Override
     public void insert(ProjectData obj) {}
+
+    @Override
+    public void deleteByValue(ProjectData value) {
+      delete(ProjectIndex.ENTITY_TO_KEY.apply(value));
+    }
   }
 }

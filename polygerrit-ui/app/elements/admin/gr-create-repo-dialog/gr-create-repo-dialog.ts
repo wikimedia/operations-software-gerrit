@@ -7,8 +7,6 @@ import '@polymer/iron-input/iron-input';
 import '../../shared/gr-autocomplete/gr-autocomplete';
 import '../../shared/gr-button/gr-button';
 import '../../shared/gr-select/gr-select';
-import {encodeURL, getBaseUrl} from '../../../utils/url-util';
-import {page} from '../../../utils/page-wrapper-utils';
 import {
   BranchName,
   GroupId,
@@ -22,22 +20,25 @@ import {formStyles} from '../../../styles/gr-form-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, css, html} from 'lit';
 import {customElement, query, property, state} from 'lit/decorators.js';
-import {fireEvent} from '../../../utils/event-util';
+import {fire} from '../../../utils/event-util';
+import {throwingErrorCallback} from '../../shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
+import {createRepoUrl} from '../../../models/views/repo';
+import {resolve} from '../../../models/dependency';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
+import {ValueChangedEvent} from '../../../types/events';
 
 declare global {
   interface HTMLElementTagNameMap {
     'gr-create-repo-dialog': GrCreateRepoDialog;
   }
+  interface HTMLElementEventMap {
+    /** Fired when repostiory name is entered. */
+    'new-repo-name': CustomEvent<{}>;
+  }
 }
 
 @customElement('gr-create-repo-dialog')
 export class GrCreateRepoDialog extends LitElement {
-  /**
-   * Fired when repostiory name is entered.
-   *
-   * @event new-repo-name
-   */
-
   @query('input')
   input?: HTMLInputElement;
 
@@ -69,6 +70,8 @@ export class GrCreateRepoDialog extends LitElement {
   private readonly queryGroups: AutocompleteQuery;
 
   private readonly restApiService = getAppContext().restApiService;
+
+  private readonly getNavigation = resolve(this, navigationToken);
 
   constructor() {
     super();
@@ -182,10 +185,6 @@ export class GrCreateRepoDialog extends LitElement {
     `;
   }
 
-  _computeRepoUrl(repoName: string) {
-    return getBaseUrl() + '/admin/repos/' + encodeURL(repoName, true);
-  }
-
   override focus() {
     this.input?.focus();
   }
@@ -198,23 +197,32 @@ export class GrCreateRepoDialog extends LitElement {
     );
     if (repoRegistered.status === 201) {
       this.repoCreated = true;
-      page.show(this._computeRepoUrl(this.repoConfig.name));
+      this.getNavigation().setUrl(createRepoUrl({repo: this.repoConfig.name}));
     }
     return repoRegistered;
   }
 
   private async getRepoSuggestions(input: string) {
-    const response = await this.restApiService.getSuggestedProjects(input);
+    const response = await this.restApiService.getSuggestedRepos(
+      input,
+      /* n=*/ undefined,
+      throwingErrorCallback
+    );
 
     const repos = [];
-    for (const [name, project] of Object.entries(response ?? {})) {
-      repos.push({name, value: project.id});
+    for (const [name, repo] of Object.entries(response ?? {})) {
+      repos.push({name, value: repo.id});
     }
     return repos;
   }
 
   private async getGroupSuggestions(input: string) {
-    const response = await this.restApiService.getSuggestedGroups(input);
+    const response = await this.restApiService.getSuggestedGroups(
+      input,
+      /* project=*/ undefined,
+      /* n=*/ undefined,
+      throwingErrorCallback
+    );
 
     const groups = [];
     for (const [name, group] of Object.entries(response ?? {})) {
@@ -223,39 +231,41 @@ export class GrCreateRepoDialog extends LitElement {
     return groups;
   }
 
-  private handleRightsTextChanged(e: CustomEvent) {
+  private handleRightsTextChanged(e: ValueChangedEvent) {
     this.repoConfig.parent = e.detail.value as RepoName;
     this.requestUpdate();
   }
 
-  private handleOwnerTextChanged(e: CustomEvent) {
+  private handleOwnerTextChanged(e: ValueChangedEvent) {
     this.repoOwner = e.detail.value;
   }
 
-  private handleOwnerValueChanged(e: CustomEvent) {
+  private handleOwnerValueChanged(e: ValueChangedEvent) {
     this.repoOwnerId = e.detail.value as GroupId;
   }
 
-  private handleNameBindValueChanged(e: CustomEvent) {
+  private handleNameBindValueChanged(e: ValueChangedEvent) {
     this.repoConfig.name = e.detail.value as RepoName;
     // nameChanged needs to be set before the event is fired,
     // because when the event is fired, gr-repo-list gets
     // the nameChanged value.
     this.nameChanged = !!e.detail.value;
-    fireEvent(this, 'new-repo-name');
+    fire(this, 'new-repo-name', {});
     this.requestUpdate();
   }
 
-  private handleBranchNameBindValueChanged(e: CustomEvent) {
+  private handleBranchNameBindValueChanged(e: ValueChangedEvent) {
     this.defaultBranch = e.detail.value as BranchName;
   }
 
-  private handleCreateEmptyCommitBindValueChanged(e: CustomEvent) {
+  private handleCreateEmptyCommitBindValueChanged(
+    e: ValueChangedEvent<boolean>
+  ) {
     this.repoConfig.create_empty_commit = e.detail.value;
     this.requestUpdate();
   }
 
-  private handlePermissionsOnlyBindValueChanged(e: CustomEvent) {
+  private handlePermissionsOnlyBindValueChanged(e: ValueChangedEvent<boolean>) {
     this.repoConfig.permissions_only = e.detail.value;
     this.requestUpdate();
   }

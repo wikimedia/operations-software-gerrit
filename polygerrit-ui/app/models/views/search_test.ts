@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import {assert} from '@open-wc/testing';
-import {SinonStub} from 'sinon';
+import {SinonStubbedMember} from 'sinon';
 import {
   AccountId,
   BranchName,
@@ -13,7 +13,10 @@ import {
   RepoName,
   TopicName,
 } from '../../api/rest-api';
-import {navigationToken} from '../../elements/core/gr-navigation/gr-navigation';
+import {
+  NavigationService,
+  navigationToken,
+} from '../../elements/core/gr-navigation/gr-navigation';
 import '../../test/common-test-setup';
 import {testResolver} from '../../test/common-test-setup';
 import {createChange} from '../../test/test-data-generators';
@@ -31,7 +34,7 @@ suite('search view state tests', () => {
   test('createSearchUrl', () => {
     let options: SearchUrlOptions = {
       owner: 'a%b',
-      project: 'c%d' as RepoName,
+      repo: 'c%d' as RepoName,
       branch: 'e%f' as BranchName,
       topic: 'g%h' as TopicName,
       statuses: ['op%en'],
@@ -39,7 +42,7 @@ suite('search view state tests', () => {
     assert.equal(
       createSearchUrl(options),
       '/q/owner:a%2525b+project:c%2525d+branch:e%2525f+' +
-        'topic:g%2525h+status:op%2525en'
+        'topic:"g%2525h"+status:op%2525en'
     );
 
     window.CANONICAL_PATH = '/base';
@@ -50,16 +53,16 @@ suite('search view state tests', () => {
     assert.equal(
       createSearchUrl(options),
       '/q/owner:a%2525b+project:c%2525d+branch:e%2525f+' +
-        'topic:g%2525h+status:op%2525en,100'
+        'topic:"g%2525h"+status:op%2525en,100'
     );
     delete options.offset;
 
     // The presence of the query param overrides other options.
     options.query = 'foo$bar';
-    assert.equal(createSearchUrl(options), '/q/foo%2524bar');
+    assert.equal(createSearchUrl(options), '/q/foo%24bar');
 
     options.offset = 100;
-    assert.equal(createSearchUrl(options), '/q/foo%2524bar,100');
+    assert.equal(createSearchUrl(options), '/q/foo%24bar,100');
 
     options = {statuses: ['a', 'b', 'c']};
     assert.equal(
@@ -68,7 +71,7 @@ suite('search view state tests', () => {
     );
 
     options = {topic: 'test' as TopicName};
-    assert.equal(createSearchUrl(options), '/q/topic:test');
+    assert.equal(createSearchUrl(options), '/q/topic:"test"');
 
     options = {topic: 'test test' as TopicName};
     assert.equal(createSearchUrl(options), '/q/topic:"test+test"');
@@ -78,7 +81,7 @@ suite('search view state tests', () => {
   });
 
   suite('query based navigation', () => {
-    let replaceUrlStub: SinonStub;
+    let replaceUrlStub: SinonStubbedMember<NavigationService['replaceUrl']>;
     let model: SearchViewModel;
 
     setup(() => {
@@ -151,25 +154,32 @@ suite('search view state tests', () => {
     test('userId', async () => {
       assert.isUndefined(userId);
 
+      // userId set when all owners are the same
       model.updateState({
-        query: 'owner: foo@bar',
+        query: 'owner:foo',
         changes: [
+          {...createChange(), owner: {email: 'foo@bar' as EmailAddress}},
           {...createChange(), owner: {email: 'foo@bar' as EmailAddress}},
         ],
       });
       assert.equal(userId, 'foo@bar' as EmailAddress);
 
+      // userId not set when multiple owners exist
+      model.updateState({
+        query: 'owner:foo',
+        changes: [
+          {...createChange(), owner: {email: 'foo@bar' as EmailAddress}},
+          {...createChange(), owner: {email: 'foo@foo' as EmailAddress}},
+        ],
+      });
+      assert.isUndefined(userId);
+
+      // userId not set when query is not about owner
       model.updateState({
         query: 'foo bar baz',
         changes: [
           {...createChange(), owner: {email: 'foo@bar' as EmailAddress}},
         ],
-      });
-      assert.isUndefined(userId);
-
-      model.updateState({
-        query: 'owner: foo@bar',
-        changes: [{...createChange(), owner: {}}],
       });
       assert.isUndefined(userId);
     });

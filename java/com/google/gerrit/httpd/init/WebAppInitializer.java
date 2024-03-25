@@ -46,6 +46,7 @@ import com.google.gerrit.lifecycle.LifecycleModule;
 import com.google.gerrit.lucene.LuceneIndexModule;
 import com.google.gerrit.metrics.dropwizard.DropWizardMetricMaker;
 import com.google.gerrit.pgm.util.LogFileCompressor.LogFileCompressorModule;
+import com.google.gerrit.server.DefaultRefLogIdentityProvider;
 import com.google.gerrit.server.LibModuleLoader;
 import com.google.gerrit.server.LibModuleType;
 import com.google.gerrit.server.ModuleOverloader;
@@ -55,6 +56,7 @@ import com.google.gerrit.server.account.InternalAccountDirectory.InternalAccount
 import com.google.gerrit.server.account.externalids.ExternalIdCaseSensitivityMigrator;
 import com.google.gerrit.server.api.GerritApiModule;
 import com.google.gerrit.server.api.PluginApiModule;
+import com.google.gerrit.server.api.projects.ProjectQueryBuilderModule;
 import com.google.gerrit.server.audit.AuditModule;
 import com.google.gerrit.server.cache.h2.H2CacheModule;
 import com.google.gerrit.server.cache.mem.DefaultMemoryCacheModule;
@@ -308,6 +310,8 @@ public class WebAppInitializer extends GuiceServletContextListener implements Fi
     modules.add(new MimeUtil2Module());
     modules.add(cfgInjector.getInstance(GerritGlobalModule.class));
     modules.add(new GerritApiModule());
+    modules.add(new ProjectQueryBuilderModule());
+    modules.add(new DefaultRefLogIdentityProvider.Module());
     modules.add(new PluginApiModule());
     modules.add(new ChangesByProjectCache.Module(ChangesByProjectCache.UseIndex.TRUE, config));
     modules.add(new InternalAccountDirectoryModule());

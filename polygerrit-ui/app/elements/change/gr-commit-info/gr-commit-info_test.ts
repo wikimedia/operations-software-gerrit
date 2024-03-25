@@ -12,6 +12,7 @@ import {
 } from '../../../test/test-data-generators';
 import {CommitId} from '../../../types/common';
 import {fixture, html, assert} from '@open-wc/testing';
+import {queryAndAssert} from '../../../utils/common-util';
 
 suite('gr-commit-info tests', () => {
   let element: GrCommitInfo;
@@ -40,9 +41,20 @@ suite('gr-commit-info tests', () => {
       element,
       /* HTML */ `
         <div class="container">
-          <a href="link-url" rel="noopener" target="_blank">sha4567</a>
+          <gr-weblink imageandtext=""> </gr-weblink>
           <gr-copy-clipboard hastooltip="" hideinput=""> </gr-copy-clipboard>
         </div>
+      `
+    );
+    const weblink = queryAndAssert(element, 'gr-weblink');
+    assert.shadowDom.equal(
+      weblink,
+      /* HTML */ `
+        <a href="link-url" rel="noopener" target="_blank">
+          <gr-tooltip-content>
+            <span> sha4567 </span>
+          </gr-tooltip-content>
+        </a>
       `
     );
   });
@@ -58,9 +70,20 @@ suite('gr-commit-info tests', () => {
       element,
       /* HTML */ `
         <div class="container">
-          <a href="/q/sha4567" rel="noopener" target="_blank">sha4567</a>
+          <gr-weblink imageandtext=""> </gr-weblink>
           <gr-copy-clipboard hastooltip="" hideinput=""> </gr-copy-clipboard>
         </div>
+      `
+    );
+    const weblink = queryAndAssert(element, 'gr-weblink');
+    assert.shadowDom.equal(
+      weblink,
+      /* HTML */ `
+        <a href="/q/sha4567" rel="noopener" target="_blank">
+          <gr-tooltip-content>
+            <span> sha4567 </span>
+          </gr-tooltip-content>
+        </a>
       `
     );
   });

@@ -63,22 +63,6 @@ public class Schema<T> {
     }
 
     @SafeVarargs
-    public final Builder<T> add(FieldDef<T, ?>... fields) {
-      return add(ImmutableList.copyOf(fields));
-    }
-
-    public final Builder<T> add(ImmutableList<FieldDef<T, ?>> fields) {
-      this.searchFields.addAll(fields);
-      return this;
-    }
-
-    @SafeVarargs
-    public final Builder<T> remove(FieldDef<T, ?>... fields) {
-      this.searchFields.removeAll(Arrays.asList(fields));
-      return this;
-    }
-
-    @SafeVarargs
     public final Builder<T> addSearchSpecs(IndexedField<T, ?>.SearchSpec... searchSpecs) {
       return addSearchSpecs(ImmutableList.copyOf(searchSpecs));
     }
@@ -202,14 +186,17 @@ public class Schema<T> {
    * @return all fields in this schema indexed by name.
    */
   public final ImmutableMap<String, SchemaField<T, ?>> getSchemaFields() {
-    return ImmutableMap.copyOf(schemaFields);
+    return schemaFields;
   }
 
   public final ImmutableMap<String, IndexedField<T, ?>> getIndexFields() {
     return indexedFields;
   }
 
-  /** Returns all fields in this schema where {@link FieldDef#isStored()} is true. */
+  /**
+   * Returns names of {@link SchemaField} fields in this schema where {@link SchemaField#isStored()}
+   * is true.
+   */
   public final ImmutableSet<String> getStoredFields() {
     return storedFields;
   }

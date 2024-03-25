@@ -103,15 +103,17 @@ Query for open changes of watched projects:
       "id": "demo~master~Idaf5e098d70898b7119f6f4af5a6c13343d64b57",
       "project": "demo",
       "branch": "master",
-      "attention_set": [
-        {
+      "attention_set": {
+        "1000096": {
           "account": {
-            "name": "John Doe"
+            "_account_id": 1000096,
+            "name": "John Doe",
+            "email": "john.doe@example.com"
           },
-         "last_update": "2012-07-17 07:19:27.766000000",
-         "reason": "reviewer or cc replied"
+          "last_update": "2012-07-17 07:19:27.766000000",
+          "reason": "reviewer or cc replied"
         }
-      ]
+      },
       "change_id": "Idaf5e098d70898b7119f6f4af5a6c13343d64b57",
       "subject": "One change",
       "status": "NEW",
@@ -552,15 +554,17 @@ describes the change.
     "id": "myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940",
     "project": "myProject",
     "branch": "master",
-    "attention_set": [
-      {
+    "attention_set": {
+      "1000096": {
         "account": {
-          "name": "John Doe"
+          "_account_id": 1000096,
+          "name": "John Doe",
+          "email": "john.doe@example.com"
         },
-       "last_update": "2013-02-21 11:16:36.775000000",
-       "reason": "reviewer or cc replied"
+        "last_update": "2013-02-21 11:16:36.775000000",
+        "reason": "reviewer or cc replied"
       }
-    ]
+    },
     "change_id": "I8473b95934b5732ac55d26311a706c9c2bde9940",
     "subject": "Implementing Feature X",
     "status": "NEW",
@@ -619,15 +623,17 @@ returned. Only fields that differ between the change's two states are returned.
   )]}'
   {
     "added": {
-      "attention_set": [
-        {
+      "attention_set": {
+        "1000096": {
           "account": {
-            "name": "John Doe"
+            "_account_id": 1000096,
+            "name": "John Doe",
+            "email": "john.doe@example.com"
           },
-         "last_update": "2013-02-21 11:16:36.775000000",
-         "reason": "reviewer or cc replied"
+          "last_update": "2013-02-21 11:16:36.775000000",
+          "reason": "reviewer or cc replied"
         }
-      ]
+      },
       "updated": "2013-02-21 11:16:36.775000000",
       "topic": "new-topic"
     },
@@ -658,15 +664,17 @@ returned. Only fields that differ between the change's two states are returned.
       "id": "myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940",
       "project": "myProject",
       "branch": "master",
-      "attention_set": [
-        {
+      "attention_set": {
+        "1000096": {
           "account": {
-            "name": "John Doe"
+            "_account_id": 1000096,
+            "name": "John Doe",
+            "email": "john.doe@example.com"
           },
-         "last_update": "2013-02-21 11:16:36.775000000",
-         "reason": "reviewer or cc replied"
+          "last_update": "2013-02-21 11:16:36.775000000",
+          "reason": "reviewer or cc replied"
         }
-      ],
+      },
       "change_id": "I8473b95934b5732ac55d26311a706c9c2bde9940",
       "subject": "Implementing Feature X",
       "status": "NEW",
@@ -726,18 +734,18 @@ REJECTED > APPROVED > DISLIKED > RECOMMENDED.
     "id": "myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940",
     "project": "myProject",
     "branch": "master",
-    "attention_set": [
-      {
+    "attention_set": {
+      "1000096": {
         "account": {
           "_account_id": 1000096,
           "name": "John Doe",
           "email": "john.doe@example.com",
           "username": "jdoe"
         },
-       "last_update": "2013-02-21 11:16:36.775000000",
-       "reason": "reviewer or cc replied"
+        "last_update": "2013-02-21 11:16:36.775000000",
+        "reason": "reviewer or cc replied"
       }
-    ]
+    },
     "change_id": "I8473b95934b5732ac55d26311a706c9c2bde9940",
     "subject": "Implementing Feature X",
     "status": "NEW",
@@ -822,6 +830,26 @@ REJECTED > APPROVED > DISLIKED > RECOMMENDED.
         "+1",
         "+2"
       ]
+    },
+    "removable_labels": {
+      "Code-Review": {
+        "-1": [
+          {
+            "_account_id": 1000096,
+            "name": "John Doe",
+            "email": "john.doe@example.com",
+            "username": "jdoe"
+          }
+        ],
+        "+1": [
+          {
+            "_account_id": 1000097,
+            "name": "Jane Roe",
+            "email": "jane.roe@example.com",
+            "username": "jroe"
+          }
+        ]
+      }
     },
     "removable_reviewers": [
       {
@@ -1104,154 +1132,6 @@ Deletes the topic of a change.
   HTTP/1.1 204 No Content
 ----
 
-[[get-assignee]]
-=== Get Assignee
---
-'GET /changes/link:#change-id[\{change-id\}]/assignee'
---
-
-Retrieves the account of the user assigned to a change.
-
-.Request
-----
-  GET /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/assignee HTTP/1.0
-----
-
-As a response an link:rest-api-accounts.html#account-info[AccountInfo] entity
-describing the assigned account is returned.
-
-.Response
-----
-  HTTP/1.1 200 OK
-  Content-Disposition: attachment
-  Content-Type: application/json; charset=UTF-8
-
-  )]}'
-  {
-    "_account_id": 1000096,
-    "name": "John Doe",
-    "email": "john.doe@example.com",
-    "username": "jdoe"
-  }
-----
-
-If the change has no assignee the response is "`204 No Content`".
-
-[[get-past-assignees]]
-=== Get Past Assignees
---
-'GET /changes/link:#change-id[\{change-id\}]/past_assignees'
---
-
-Returns a list of every user ever assigned to a change, in the order in which
-they were first assigned.
-
-.Request
-----
-  GET /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/past_assignees HTTP/1.0
-----
-
-As a response a list of link:rest-api-accounts.html#account-info[AccountInfo]
-entities is returned.
-
-.Response
-----
-  HTTP/1.1 200 OK
-  Content-Disposition: attachment
-  Content-Type: application/json; charset=UTF-8
-
-  )]}'
-  [
-    {
-      "_account_id": 1000051,
-      "name": "Jane Doe",
-      "email": "jane.doe@example.com",
-      "username": "janed"
-    },
-    {
-      "_account_id": 1000096,
-      "name": "John Doe",
-      "email": "john.doe@example.com",
-      "username": "jdoe"
-    }
-  ]
-
-----
-
-
-[[set-assignee]]
-=== Set Assignee
---
-'PUT /changes/link:#change-id[\{change-id\}]/assignee'
---
-
-Sets the assignee of a change.
-
-The new assignee must be provided in the request body inside a
-link:#assignee-input[AssigneeInput] entity.
-
-.Request
-----
-  PUT /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/assignee HTTP/1.0
-  Content-Type: application/json; charset=UTF-8
-
-  {
-    "assignee": "jdoe"
-  }
-----
-
-As a response an link:rest-api-accounts.html#account-info[AccountInfo] entity
-describing the assigned account is returned.
-
-.Response
-----
-  HTTP/1.1 200 OK
-  Content-Disposition: attachment
-  Content-Type: application/json; charset=UTF-8
-
-  )]}'
-  {
-    "_account_id": 1000096,
-    "name": "John Doe",
-    "email": "john.doe@example.com",
-    "username": "jdoe"
-  }
-----
-
-[[delete-assignee]]
-=== Delete Assignee
---
-'DELETE /changes/link:#change-id[\{change-id\}]/assignee'
---
-
-Deletes the assignee of a change.
-
-
-.Request
-----
-  DELETE /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/assignee HTTP/1.0
-----
-
-As a response an link:rest-api-accounts.html#account-info[AccountInfo] entity
-describing the account of the deleted assignee is returned.
-
-.Response
-----
-  HTTP/1.1 200 OK
-  Content-Disposition: attachment
-  Content-Type: application/json; charset=UTF-8
-
-  )]}'
-  {
-    "_account_id": 1000096,
-    "name": "John Doe",
-    "email": "john.doe@example.com",
-    "username": "jdoe"
-  }
-----
-
-If the change had no assignee the response is "`204 No Content`".
-
 [[get-pure-revert]]
 === Get Pure Revert
 --
@@ -1510,6 +1390,250 @@ body.
   Content-Type: text/plain; charset=UTF-8
 
   The change could not be rebased due to a path conflict during merge.
+----
+
+Rebasing a change is allowed for the change owner, users with the
+link:access-control.html#category_rebase[Rebase] permission and users
+with the link:access-control.html#category_submit[Submit] permission.
+
+In addition, the rebaser or the original uploader, if rebasing is done
+on behalf of the uploader (see `rebase_on_behalf_of_uploader` option in
+link:#rebase-input[RebaseInput]), needs to have all permissions that
+are required to create the new patch set:
+
+* the link:access-control.html#category_push[Push] permission
+* the link:access-control.html#category_add_patch_set[Add Patch Set]
+  permission (only if the user is not the change owner)
+* the link:access-control.html#category_forge_author[Forge Author]
+  permission (only if the commit author is forged)
+* the link:access-control.html#category_forge_server[Forge Server]
+  permission (only if the commit author is the server identity)
+
+The same permissions were required for the upload of the original patch
+set. This means if the rebase is done on behalf of the uploader these
+permission checks should just pass, unless the uploader lost
+permissions after the upload of the original patch set. In this case
+rebasing on behalf of the uploader is not possible and a normal rebase
+(on behalf of the rebaser) must be done, which means that the rebaser
+becomes the uploader and takes over the change. If self approvals are
+disallowed, this means that the rebaser can no longer approve the
+change (as approvals of the uploader are ignored).
+
+[[rebase-chain]]
+=== Rebase Chain
+--
+'POST /changes/link:#change-id[\{change-id\}]/rebase:chain'
+--
+
+Rebases an ancestry chain of changes.
+
+The operated change is treated as the chain tip. All unsubmitted ancestors are rebased.
+
+Requires a linear ancestry relation (single parenting throughout the chain).
+
+Optionally, the parent revision (of the oldest ancestor to be rebased) can be changed to another
+change, revision or branch through the link:#rebase-input[RebaseInput] entity.
+
+If the chain is outdated, i.e., there's a change that depends on an old revision of its parent, the
+result is the same as individually rebasing all outdated changes on top of their parent's latest
+revision before running the rebase chain action.
+
+.Request
+----
+  POST /changes/myProject~master~I08a021fb07b83fe845140a2c11508b3bdd93b48f/rebase:chain HTTP/1.0
+  Content-Type: application/json;charset=UTF-8
+
+  {
+    "base" : "1234",
+  }
+----
+
+As response a link:#rebase-chain-info[RebaseChainInfo] entity is returned that
+describes the rebased changes. Information about the current patch sets
+are included.
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Disposition: attachment
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    "rebased_changes": [
+      {
+        "id": "myProject~master~I0e534de9d7f0d6f35b71f7d726acf835b2110c66",
+        "project": "myProject",
+        "branch": "master",
+        "hashtags": [
+
+        ],
+        "change_id": "I0e534de9d7f0d6f35b71f7d726acf835b2110c66",
+        "subject": "456",
+        "status": "NEW",
+        "created": "2022-11-21 20: 51: 31.000000000",
+        "updated": "2022-11-21 20: 56: 49.000000000",
+        "submit_type": "MERGE_IF_NECESSARY",
+        "insertions": 0,
+        "deletions": 0,
+        "total_comment_count": 0,
+        "unresolved_comment_count": 0,
+        "has_review_started": true,
+        "meta_rev_id": "a2a6692213f546e1045ecf4647439fac8d6d8faa",
+        "_number": 21,
+        "owner": {
+          "_account_id": 1000000
+        },
+        "current_revision": "c3b2ba222d42a56e05c90f88d4509a124620517d",
+        "revisions": {
+          "c3b2ba222d42a56e05c90f88d4509a124620517d": {
+            "kind": "NO_CHANGE",
+            "_number": 2,
+            "created": "2022-11-21 20: 56: 49.000000000",
+            "uploader": {
+              "_account_id": 1000000
+            },
+            "ref": "refs/changes/21/21/2",
+            "fetch": {
+
+            },
+            "commit": {
+              "parents": [
+                {
+                  "commit": "7803f427dd7c4a2441466e4d740a1850dcee1af4",
+                  "subject": "123"
+                }
+              ],
+              "author": {
+                "name": "Nitzan Gur-Furman",
+                "email": "nitzan@google.com",
+                "date": "2022-11-21 20: 49: 39.000000000",
+                "tz": 60
+              },
+              "committer": {
+                "name": "Administrator",
+                "email": "admin@example.com",
+                "date": "2022-11-21 20: 56: 49.000000000",
+                "tz": 60
+              },
+              "subject": "456",
+              "message": "456\n"
+            },
+            "description": "Rebase"
+          }
+        },
+        "requirements": [
+
+        ],
+        "submit_records": [
+          {
+            "rule_name": "gerrit~DefaultSubmitRule",
+            "status": "NOT_READY",
+            "labels": [
+              {
+                "label": "Code-Review",
+                "status": "NEED"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "myProject~master~I08a021fb07b83fe845140a2c11508b3bdd93b48f",
+        "project": "myProject",
+        "branch": "master",
+        "hashtags": [
+
+        ],
+        "change_id": "I08a021fb07b83fe845140a2c11508b3bdd93b48f",
+        "subject": "789",
+        "status": "NEW",
+        "created": "2022-11-21 20: 51: 31.000000000",
+        "updated": "2022-11-21 20: 56: 49.000000000",
+        "submit_type": "MERGE_IF_NECESSARY",
+        "insertions": 0,
+        "deletions": 0,
+        "total_comment_count": 0,
+        "unresolved_comment_count": 0,
+        "has_review_started": true,
+        "meta_rev_id": "3bfb843fea471f96e16b9199c3a30fff0285bc45",
+        "_number": 22,
+        "owner": {
+          "_account_id": 1000000
+        },
+        "current_revision": "77eb17a9501a5c21963bc6af56085e60f281acbb",
+        "revisions": {
+          "77eb17a9501a5c21963bc6af56085e60f281acbb": {
+            "kind": "NO_CHANGE",
+            "_number": 2,
+            "created": "2022-11-21 20: 56: 49.000000000",
+            "uploader": {
+              "_account_id": 1000000
+            },
+            "ref": "refs/changes/22/22/2",
+            "fetch": {
+
+            },
+            "commit": {
+              "parents": [
+                {
+                  "commit": "c3b2ba222d42a56e05c90f88d4509a124620517d",
+                  "subject": "456"
+                }
+              ],
+              "author": {
+                "name": "Nitzan Gur-Furman",
+                "email": "nitzan@google.com",
+                "date": "2022-11-21 20: 51: 07.000000000",
+                "tz": 60
+              },
+              "committer": {
+                "name": "Administrator",
+                "email": "admin@example.com",
+                "date": "2022-11-21 20: 56: 49.000000000",
+                "tz": 60
+              },
+              "subject": "789",
+              "message": "789\n"
+            },
+            "description": "Rebase"
+          }
+        },
+        "requirements": [
+
+        ],
+        "submit_records": [
+          {
+            "rule_name": "gerrit~DefaultSubmitRule",
+            "status": "NOT_READY",
+            "labels": [
+              {
+                "label": "Code-Review",
+                "status": "NEED"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+  }
+----
+
+If the change cannot be rebased, e.g. due to conflicts, the response is
+"`409 Conflict`" and the error message is contained in the response
+body.
+
+.Response
+----
+  HTTP/1.1 409 Conflict
+  Content-Disposition: attachment
+  Content-Type: text/plain; charset=UTF-8
+
+  Change I0e534de9d7f0d6f35b71f7d726acf835b2110c66 could not be rebased due to a conflict during
+  merge.
+
+  merge conflict(s):
+  a.txt
 ----
 
 [[move-change]]
@@ -2129,6 +2253,66 @@ otherwise only by administrators.
 .Response
 ----
   HTTP/1.1 204 No Content
+----
+
+[[apply-patch]]
+=== Create patch-set from patch
+--
+'POST /changes/link:#change-id[\{change-id\}]/patch:apply'
+--
+
+Creates a new patch set on a destination change from the provided patch.
+
+The patch must be provided in the request body, inside a
+link:#applypatchpatchset-input[ApplyPatchPatchSetInput] entity.
+
+If a base commit is given, the patch is applied on top of it. Otherwise, the
+patch is applied on top of the target change's original parent.
+
+Applying the patch will fail if the destination change is closed, or in case of any conflicts.
+
+.Request
+----
+  POST /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/patch:apply HTTP/1.0
+  Content-Type: application/json; charset=UTF-8
+
+  {
+    "patch": {
+      "patch": "new file mode 100644\n--- /dev/null\n+++ b/a_new_file.txt\n@@ -0,0 +1,2 @@ \
++Patch compatible `git diff` output \
++For example: `link:#get-patch[<gerrit patch>] | base64 -d | sed -z 's/\n/\\n/g'`"
+    }
+  }
+----
+
+As response a link:#change-info[ChangeInfo] entity is returned that
+describes the destination change after applying the patch.
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Disposition: attachment
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    "id": "myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9941",
+    "project": "myProject",
+    "branch": "release-branch",
+    "change_id": "I8473b95934b5732ac55d26311a706c9c2bde9941",
+    "subject": "Original change subject",
+    "status": "NEW",
+    "created": "2013-02-01 09:59:32.126000000",
+    "updated": "2013-02-21 11:16:36.775000000",
+    "mergeable": true,
+    "insertions": 12,
+    "deletions": 11,
+    "_number": 3965,
+    "owner": {
+      "name": "John Doe"
+    },
+    "current_revision": "184ebe53805e102605d11f6b143486d15c23a09c"
+  }
 ----
 
 [[get-included-in]]
@@ -2862,7 +3046,7 @@ entity is returned that describes the submit requirement result.
 'GET /changes/link:#change-id[\{change-id\}]/edit
 --
 
-Retrieves a change edit details.
+Retrieves the details of the change edit done by the caller to the given change.
 
 .Request
 ----
@@ -2934,11 +3118,18 @@ To upload a file as binary data in the request body:
   Content-Type: application/json; charset=UTF-8
 
   {
-    "binary_content": "data:text/plain;base64,SGVsbG8sIFdvcmxkIQ=="
+    "binary_content": "data:text/plain;base64,SGVsbG8sIFdvcmxkIQ==",
+    "file_mode": 100755
   }
 ----
 
 Note that it must be base-64 encoded data uri.
+
+The "file_mode" field is optional, and if provided must be in octal format. The field
+indicates whether the file is executable or not and has a value of either 100755
+(executable) or 100644 (not executable). If it's unset, this indicates no change
+has been made. New files default to not being executable if this parameter is not
+provided
 
 When change edit doesn't exist for this change yet it is created. When file
 content isn't provided, it is wiped out for that file. As response
@@ -3641,6 +3832,10 @@ a reviewer is removed the reviewer itself is still listed on the change.
 
 If another user removed a user's vote, the user with the deleted vote will be
 added to the attention set.
+
+The request returns:
+ * '204 No Content' if the vote is deleted successfully;
+ * '404 Not Found' when the vote to be deleted is zero or not present.
 
 .Request
 ----
@@ -6469,7 +6664,7 @@ This can be:
 * a commit ID ("674ac754f91e64a0efb8087e59a176484bd534d1")
 * an abbreviated commit ID that uniquely identifies one revision of the
   change ("674ac754"), at least 4 digits are required
-* a legacy numeric patch number ("1" for first patch set of the change)
+* a numeric patch number ("1" for first patch set of the change)
 * "0" or the literal `edit` for a change edit
 
 [[json-entities]]
@@ -6520,7 +6715,93 @@ the user hovers the mouse.
 If true the action is permitted at this time and the caller is
 likely allowed to execute it. This may change if state is updated
 at the server or permissions are modified. Not present if false.
+|`enabled_options`      |optional|
+Optional list of enabled options. +
+See the list of suppported options link:#action-options[below].
 |====================================
+
+[[action-options]]
+==== Action Options
+
+Options that are returned via the `enabled_options` field of
+link:#action-info[ActionInfo].
+
+[options="header",cols="1,^1,5"]
+|===================================
+|REST view     |Option  |Description
+|`rebase`      |`rebase`|
+Present if the user can rebase the change. +
+This is the case for the change owner and users with the
+link:access-control.html#category_submit[Submit] or
+link:access-control.html#category_rebase[Rebase] permission if they
+have the link:access-control.html#category_push[Push] permission.
+|`rebase`      |`rebase_on_behalf_of_uploader`|
+Present if the user can rebase the change on behalf of the uploader. +
+This is the case for the change owner and users with the
+link:access-control.html#category_submit[Submit] or
+link:access-control.html#category_rebase[Rebase] permission.
+|`rebase:chain`|`rebase`|
+Present if the user can rebase the chain. +
+This is the case if the calling user can rebase each change in the
+chain.
+Rebasing a change is allowed for the change owner and users with the
+link:access-control.html#category_submit[Submit] or
+link:access-control.html#category_rebase[Rebase] permission if they
+have the link:access-control.html#category_push[Push] permission.
+|`rebase:chain`|`rebase_on_behalf_of_uploader`|
+Present if the user can rebase the chain on behalf of the uploader. +
+This is the case if the calling user can rebase each change in the
+chain on behalf of the uploader.
+Rebasing a change on behalf of the uploader is allowed for the change
+owner and users with the link:access-control.html#category_submit[Submit]
+or link:access-control.html#category_rebase[Rebase] permission.
+|===================================
+
+For all other REST views no options are returned.
+
+[[applypatch-input]]
+=== ApplyPatchInput
+The `ApplyPatchInput` entity contains information about a patch to apply.
+
+A new commit will be created from the patch, and saved as a new patch set.
+
+[options="header",cols="1,^1,5"]
+|=================================
+|Field Name          ||Description
+|`patch`             |required|
+The patch to be applied. Must be compatible with `git diff` output.
+For example, link:#get-patch[Get Patch] output.
+The patch must be provided as UTF-8 text, either directly or base64-encoded.
+|=================================
+
+[[applypatchpatchset-input]]
+=== ApplyPatchPatchSetInput
+The `ApplyPatchPatchSetInput` entity contains information for creating a new patch set from a
+given patch.
+
+[options="header",cols="1,^1,5"]
+|=================================
+|Field Name           ||Description
+|`patch`              |required|
+The details of the patch to be applied as a link:#applypatch-input[ApplyPatchInput] entity.
+|`commit_message`     |optional|
+The commit message for the new patch set. If not specified, the latest patch-set message will be
+used.
+|`base`               |optional|
+40-hex digit SHA-1 of the commit which will be the parent commit of the newly created patch set.
+If set, it must be a merged commit or a change revision on the destination branch.
+Otherwise, the target change's branch tip will be used.
+|`author`             |optional|
+The author of the commit to create. Must be an
+link:rest-api-accounts.html#account-input[AccountInput] entity with at least
+the `name` and `email` fields set.
+The caller needs "Forge Author" permission when using this field, unless specifies their own details.
+This field does not affect the owner of the change, which will continue to use the identity of the
+caller.
+|`response_format_options`     |optional|
+List of link:#query-options[query options] to format the response.
+|=================================
+
 
 [[approval-info]]
 === ApprovalInfo
@@ -6553,18 +6834,6 @@ NOTE: To apply different tags on different votes/comments multiple
 invocations of the REST call are required.
 |`post_submit` |not set if `false`|
 If true, this vote was made after the change was submitted.
-|===========================
-
-[[assignee-input]]
-=== AssigneeInput
-The `AssigneeInput` entity contains the identity of the user to be set as assignee.
-
-[options="header",cols="1,^1,5"]
-|===========================
-|Field Name    ||Description
-|`assignee`     ||
-The link:rest-api-accounts.html#account-id[ID] of one account that
-should be added as assignee.
 |===========================
 
 [[attention-set-info]]
@@ -6675,9 +6944,6 @@ to link:#attention-set-info[AttentionSetInfo] of that account. Those are all
 accounts that were in the attention set but were removed. The
 link:#attention-set-info[AttentionSetInfo] is the latest and most recent removal
  of the account from the attention set.
-|`assignee`           |optional|
-The assignee of the change as an link:rest-api-accounts.html#account-info[
-AccountInfo] entity.
 |`hashtags`           |optional|
 List of hashtags that are set on the change.
 |`change_id`          ||The Change-Id of the change.
@@ -6756,6 +7022,13 @@ labels] are requested.
 A map of the permitted labels that maps a label name to the list of
 values that are allowed for that label. +
 Only set if link:#detailed-labels[detailed labels] are requested.
+|`removable_labels`   |optional|
+A map of the removable labels that maps a label name to the map of
+values and reviewers (
+link:rest-api-accounts.html#account-info[AccountInfo] entities)
+that are allowed to be removed from the change. +
+Only set if link:#labels[labels] or
+link:#detailed-labels[detailed labels] are requested.
 |`removable_reviewers`|optional|
 The reviewers that can be removed by the calling user as a list of
 link:rest-api-accounts.html#account-info[AccountInfo] entities. +
@@ -6874,11 +7147,16 @@ Whether the new change should be marked as private.
 Whether the new change should be set to work in progress.
 |`base_change`        |optional|
 A link:#change-id[\{change-id\}] that identifies the base change for a create
-change operation. Mutually exclusive with `base_commit`.
+change operation. +
+Mutually exclusive with `base_commit`. +
+If neither `base_commit` nor `base_change` are set, the target branch tip will
+be used as the parent commit.
 |`base_commit`        |optional|
 A 40-digit hex SHA-1 of the commit which will be the parent commit of the newly
-created change. If set, it must be a merged commit on the destination branch.
-Mutually exclusive with `base_change`.
+created change. If set, it must be a merged commit on the destination branch. +
+Mutually exclusive with `base_change`. +
+If neither `base_commit` nor `base_change` are set, the target branch tip will
+be used as the parent commit.
 |`new_branch`         |optional, default to `false`|
 Allow creating a new branch when set to `true`. Using this option is
 only possible for non-merge commits (if the `merge` field is not set).
@@ -6895,10 +7173,12 @@ The detail of a merge commit as a link:#merge-input[MergeInput] entity.
 If set, the target branch (see  `branch` field) must exist (it is not
 possible to create it automatically by setting the `new_branch` field
 to `true`.
+|`patch`              |optional|
+The detail of a patch to be applied as an link:#applypatch-input[ApplyPatchInput] entity.
 |`author`             |optional|
-An link:rest-api-accounts.html#account-input[AccountInput] entity
-that will set the author of the commit to create. The author must be
-specified as name/email combination.
+The author of the commit to create. Must be an
+link:rest-api-accounts.html#account-input[AccountInput] entity with at least
+the `name` and `email` fields set.
 The caller needs "Forge Author" permission when using this field.
 This field does not affect the owner of the change, which will
 continue to use the identity of the caller.
@@ -6911,6 +7191,8 @@ If not set, the default is `ALL`.
 Additional information about whom to notify about the change creation
 as a map of link:user-notify.html#recipient-types[recipient type] to
 link:#notify-info[NotifyInfo] entity.
+|`response_format_options`     |optional|
+List of link:#query-options[query options] to format the response.
 |==================================
 
 [[change-message-info]]
@@ -6929,7 +7211,7 @@ Unset if written by the Gerrit system.
 |`real_author`         |optional|
 Real author of the message as an
 link:rest-api-accounts.html#account-info[AccountInfo] entity. +
-Set if the message was posted on behalf of another user.
+Only set if the message was posted on behalf of another user.
 |`date`            ||
 The link:rest-api.html#timestamp[timestamp] this message was posted.
 |`message`            ||
@@ -7386,18 +7668,19 @@ the length calculation, and thus it is possible for the edits to span newlines.
 
 [[diff-web-link-info]]
 === DiffWebLinkInfo
-The `DiffWebLinkInfo` entity describes a link on a diff screen to an
-external site.
+The `DiffWebLinkInfo` entity extends link:#web-link-info[WebLinkInfo] and
+describes a link on a diff screen to an external site.
 
-[options="header",cols="1,6"]
+[options="header",cols="1,^1,5"]
 |=======================
-|Field Name|Description
-|`name`     |The link name.
-|`url`      |The link URL.
-|`image_url`|URL to the icon of the link.
-|show_on_side_by_side_diff_view|
+|Field Name||Description
+|`name`     ||See link:#web-link-info[WebLinkInfo]
+|`tooltip`  |optional|See link:#web-link-info[WebLinkInfo]
+|`url`      ||See link:#web-link-info[WebLinkInfo]
+|`image_url`|optional|See link:#web-link-info[WebLinkInfo]
+|show_on_side_by_side_diff_view||
 Whether the web link should be shown on the side-by-side diff screen.
-|show_on_unified_diff_view|
+|show_on_unified_diff_view||
 Whether the web link should be shown on the unified diff screen.
 |=======================
 
@@ -7488,8 +7771,13 @@ An empty last line is not included in the count and hence this number can
 differ by one from details provided in <<diff-info,DiffInfo>>.
 |`size_delta`    ||
 Number of bytes by which the file size increased/decreased.
-|`size`          ||
-File size in bytes.
+|`size`          || File size in bytes.
+|`old_mode`        |optional|File mode in octal (e.g. 100644) at the old commit.
+The first three digits indicate the file type and the last three digits contain
+the file permission bits. For added files, this field will not be present.
+|`new_mode`        |optional|File mode in octal (e.g. 100644) at the new commit.
+The first three digits indicate the file type and the last three digits contain
+the file permission bits. For deleted files, this field will not be present.
 |=============================
 
 [[fix-input]]
@@ -7731,11 +8019,11 @@ it's set. Otherwise, the current branch tip of the destination branch will be us
 The detail of the source commit for merge as a link:#merge-input[MergeInput]
 entity.
 |`author`             |optional|
-An link:rest-api-accounts.html#account-input[AccountInput] entity
-that will set the author of the commit to create. The author must be
-specified as name/email combination.
+The author of the commit to create. Must be an
+link:rest-api-accounts.html#account-input[AccountInput] entity with at least
+the `name` and `email` fields set.
 The caller needs "Forge Author" permission when using this field.
-This field does not affect the owner of the change, which will
+This field does not affect the owner or the committer of the change, which will
 continue to use the identity of the caller.
 |==================================
 
@@ -7865,22 +8153,32 @@ The `RangeInfo` entity stores the coordinates of a range.
 The `RebaseInput` entity contains information for changing parent when rebasing.
 
 [options="header",cols="1,^1,5"]
-|===========================
-|Field Name          ||Description
-|`base`              |optional|
+|====================================
+|Field Name             ||Description
+|`base`                 |optional|
 The new parent revision. This can be a ref or a SHA-1 to a concrete patchset. +
 Alternatively, a change number can be specified, in which case the current
 patch set is inferred. +
 Empty string is used for rebasing directly on top of the target branch,
 which effectively breaks dependency towards a parent change.
-|`allow_conflicts`   |optional, defaults to false|
+|`allow_conflicts`      |optional, defaults to false|
 If `true`, the rebase also succeeds if there are conflicts. +
 If there are conflicts the file contents of the rebased patch set contain
 git conflict markers to indicate the conflicts. +
 Callers can find out whether there were conflicts by checking the
 `contains_git_conflicts` field in the returned link:#change-info[ChangeInfo]. +
-If there are conflicts the change is marked as work-in-progress.
-|`validation_options`|optional|
+If there are conflicts the change is marked as work-in-progress. +
+Cannot be combined with the `on_behalf_of_uploader` option.
+|`on_behalf_of_uploader`|optional, defaults to false|
+If `true`, the rebase is done on behalf of the uploader. +
+This means the uploader of the current patch set will also be the uploader of
+the rebased patch set. The calling user will be recorded as the real user. +
+Rebasing on behalf of the uploader is only supported for trivial rebases.
+This means this option cannot be combined with the `allow_conflicts` option. +
+In addition, rebasing on behalf of the uploader is only supported for the
+current patch set of a change. +
+If the caller is the uploader this flag is ignored and a normal rebase is done.
+|`validation_options`   |optional|
 Map with key-value pairs that are forwarded as options to the commit validation
 listeners (e.g. can be used to skip certain validations). Which validation
 options are supported depends on the installed commit validation listeners.
@@ -7888,6 +8186,22 @@ Gerrit core doesn't support any validation options, but commit validation
 listeners that are implemented in plugins may. Please refer to the
 documentation of the installed plugins to learn whether they support validation
 options. Unknown validation options are silently ignored.
+|====================================
+
+[[rebase-chain-info]]
+=== RebaseChainInfo
+
+The `RebaseChainInfo` entity contains information about a chain of changes
+that were rebased.
+
+[options="header",cols="1,^1,5"]
+|===========================
+|Field Name                ||Description
+|`rebased_changes`         ||List of the unsubmitted ancestors, as link:#change-info[ChangeInfo]
+entities. Includes both rebased changes, and previously up-to-date ancestors. The list is ordered by
+ancestry, where the oldest ancestor is the first.
+|`contains_git_conflicts`  ||Whether any of the rebased changes has conflicts
+due to rebasing.
 |===========================
 
 [[related-change-and-commit-info]]
@@ -7982,7 +8296,9 @@ RevertSubmission endpoint is `revert-{submission_id}-{timestamp.now}`.
 Topic can't contain quotation marks.
 |`work_in_progress`  |optional|
 When present, change is marked as Work In Progress. The `notify` input is
-used if it's present, otherwise it will be overridden to `OWNER`. +
+used if it's present, otherwise it will be overridden to `NONE`. +
+Notifications for the reverted change will only sent once the result change is
+no longer WIP. +
 If not set, the default is false.
 |`validation_options`|optional|
 Map with key-value pairs that are forwarded as options to the commit validation
@@ -8251,6 +8567,10 @@ created.
 |`uploader`    ||
 The uploader of the patch set as an
 link:rest-api-accounts.html#account-info[AccountInfo] entity.
+|`real_uploader`|optional|
+The real uploader of the patch set as an
+link:rest-api-accounts.html#account-info[AccountInfo] entity. +
+Only set if the upload was done on behalf of another user.
 |`ref`         ||The Git reference for the patch set.
 |`fetch`       ||
 Information about how to fetch this patch set. The fetch information is
@@ -8380,7 +8700,13 @@ permission on the branch.
 Notify handling that defines to whom email notifications should be sent after
 the change is submitted. +
 Allowed values are `NONE`, `OWNER`, `OWNER_REVIEWERS` and `ALL`. +
-If not set, the default is `ALL`.
+If not set, the default is `ALL`.+
+Ignored if a post approval diff is present (i.e. if the change is submitted
+with copied approvals), because in this case everyone should be informed
+about the non-reviewed diff which has been applied after the change has been
+approved so that they can take action if the post approval diff looks
+unexpected. In other words if a post approval diff is present `ALL` is
+enforced.
 |`notify_details`|optional|
 Additional information about whom to notify about the update as a map
 of link:user-notify.html#recipient-types[recipient type] to
@@ -8635,15 +8961,23 @@ to max values.
 
 [[web-link-info]]
 === WebLinkInfo
-The `WebLinkInfo` entity describes a link to an external site.
+The `WebLinkInfo` entity describes a link to an external site. Depending on the
+context and the provided data the UI may decide to show the link as a text link,
+a linkified icon, or both.
+
+If the `tooltip` is not provided, then the UI may fall back to showing something
+like "Open in External Tool".
+
+Weblinks will always be opened in a new tab.
 
 [options="header",cols="1,^1,5"]
 |========================
 |Field Name ||Description
-|`name`     ||The link name.
+|`name`     ||The text to be linkified.
+|`tooltip`  |optional|Tooltip to show when hovering over the link. Using "Open
+in $NAME_OF_EXTERNAL_TOOL" is a good option here.
 |`url`      ||The link URL.
 |`image_url`|optional|URL to the icon of the link.
-|`target`   |optional|The target window in which the web link should be opened.
 |========================
 
 [[work-in-progress-input]]

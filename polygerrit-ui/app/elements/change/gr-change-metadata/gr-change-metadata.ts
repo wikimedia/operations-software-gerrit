@@ -9,7 +9,6 @@ import '../../../styles/gr-change-metadata-shared-styles';
 import '../../../styles/gr-change-view-integration-shared-styles';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../plugins/gr-endpoint-param/gr-endpoint-param';
-import '../../plugins/gr-external-style/gr-external-style';
 import '../../shared/gr-account-chip/gr-account-chip';
 import '../../shared/gr-date-formatter/gr-date-formatter';
 import '../../shared/gr-editable-label/gr-editable-label';
@@ -17,6 +16,7 @@ import '../../shared/gr-icon/gr-icon';
 import '../../shared/gr-limited-text/gr-limited-text';
 import '../../shared/gr-linked-chip/gr-linked-chip';
 import '../../shared/gr-tooltip-content/gr-tooltip-content';
+import '../../shared/gr-weblink/gr-weblink';
 import '../gr-submit-requirements/gr-submit-requirements';
 import '../gr-commit-info/gr-commit-info';
 import '../gr-reviewer-list/gr-reviewer-list';
@@ -48,6 +48,7 @@ import {
   RepoName,
   RevisionInfo,
   ServerInfo,
+  WebLinkInfo,
 } from '../../../types/common';
 import {assertIsDefined, assertNever, unique} from '../../../utils/common-util';
 import {GrEditableLabel} from '../../shared/gr-editable-label/gr-editable-label';
@@ -58,10 +59,10 @@ import {
   isSectionSet,
   DisplayRules,
 } from '../../../utils/change-metadata-util';
-import {fireAlert, fireEvent, fireReload} from '../../../utils/event-util';
+import {fireAlert, fire, fireReload} from '../../../utils/event-util';
 import {
   EditRevisionInfo,
-  notUndefined,
+  isDefined,
   ParsedChangeInfo,
 } from '../../../types/types';
 import {
@@ -77,10 +78,10 @@ import {sharedStyles} from '../../../styles/shared-styles';
 import {fontStyles} from '../../../styles/gr-font-styles';
 import {changeMetadataStyles} from '../../../styles/gr-change-metadata-shared-styles';
 import {when} from 'lit/directives/when.js';
-import {ifDefined} from 'lit/directives/if-defined.js';
 import {createSearchUrl} from '../../../models/views/search';
 import {createChangeUrl} from '../../../models/views/change';
-import {GeneratedWebLink, getChangeWeblinks} from '../../../utils/weblink-util';
+import {getChangeWeblinks} from '../../../utils/weblink-util';
+import {throwingErrorCallback} from '../../shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
 
 const HASHTAG_ADD_MESSAGE = 'Add Hashtag';
 
@@ -125,6 +126,7 @@ export class GrChangeMetadata extends LitElement {
 
   @property({type: Object}) revision?: RevisionInfo | EditRevisionInfo;
 
+  // TODO: Just use `revision.commit` instead.
   @property({type: Object}) commitInfo?: CommitInfoWithRequiredCommit;
 
   @property({type: Object}) serverConfig?: ServerInfo;
@@ -182,7 +184,7 @@ export class GrChangeMetadata extends LitElement {
       gr-editable-label {
         max-width: 9em;
       }
-      .webLink {
+      gr-weblink {
         display: block;
       }
       gr-account-chip[disabled],
@@ -279,7 +281,7 @@ export class GrChangeMetadata extends LitElement {
       ${this.renderNonOwner(ChangeRole.AUTHOR)}
       ${this.renderNonOwner(ChangeRole.COMMITTER)} ${this.renderReviewers()}
       ${this.renderCCs()} ${this.renderProjectBranch()} ${this.renderParent()}
-      ${this.renderMergedAs()} ${this.renderShowReverCreatedAs()}
+      ${this.renderMergedAs()} ${this.renderShowRevertCreatedAs()}
       ${this.renderTopic()} ${this.renderCherryPickOf()}
       ${this.renderStrategy()} ${this.renderHashTags()}
       ${this.renderSubmitRequirements()} ${this.renderWeblinks()}
@@ -462,7 +464,14 @@ export class GrChangeMetadata extends LitElement {
       this.computeShowRepoBranchTogether(),
       () =>
         html`<section class=${this.computeDisplayState(Metadata.REPO_BRANCH)}>
-          <span class="title">Repo | Branch</span>
+          <span class="title">
+            <gr-tooltip-content
+              has-tooltip
+              title="Repository and branch that the change will be merged into if submitted."
+            >
+              Repo | Branch
+            </gr-tooltip-content>
+          </span>
           <span class="value">
             <a href=${this.computeProjectUrl(change.project)}
               >${change.project}</a
@@ -474,10 +483,17 @@ export class GrChangeMetadata extends LitElement {
           </span>
         </section>`,
 
-      () => html` <section
+      () => html`<section
           class=${this.computeDisplayState(Metadata.REPO_BRANCH)}
         >
-          <span class="title">Repo</span>
+          <span class="title">
+            <gr-tooltip-content
+              has-tooltip
+              title="Repository that the change will be merged into if submitted."
+            >
+              Repo
+            </gr-tooltip-content>
+          </span>
           <span class="value">
             <a href=${this.computeProjectUrl(change.project)}>
               <gr-limited-text
@@ -488,7 +504,14 @@ export class GrChangeMetadata extends LitElement {
           </span>
         </section>
         <section class=${this.computeDisplayState(Metadata.REPO_BRANCH)}>
-          <span class="title">Branch</span>
+          <span class="title">
+            <gr-tooltip-content
+              has-tooltip
+              title="Branch that the change will be merged into if submitted."
+            >
+              Branch
+            </gr-tooltip-content>
+          </span>
           <span class="value">
             <a href=${this.computeBranchUrl(change.project, change.branch)}>
               <gr-limited-text
@@ -540,7 +563,7 @@ export class GrChangeMetadata extends LitElement {
     </section>`;
   }
 
-  private renderShowReverCreatedAs() {
+  private renderShowRevertCreatedAs() {
     if (!this.showRevertCreatedAs()) return nothing;
 
     return html`<section
@@ -682,16 +705,7 @@ export class GrChangeMetadata extends LitElement {
     return html`<section id="webLinks">
       <span class="title">Links</span>
       <span class="value">
-        ${webLinks.map(
-          link => html`<a
-            href=${ifDefined(link.url)}
-            class="webLink"
-            rel="noopener"
-            target="_blank"
-          >
-            ${link.name}
-          </a>`
-        )}
+        ${webLinks.map(info => html`<gr-weblink .info=${info}></gr-weblink>`)}
       </span>
     </section>`;
   }
@@ -720,7 +734,7 @@ export class GrChangeMetadata extends LitElement {
   }
 
   // private but used in test
-  computeWebLinks(): GeneratedWebLink[] {
+  computeWebLinks(): WebLinkInfo[] {
     return getChangeWeblinks(this.commitInfo?.web_links, this.serverConfig);
   }
 
@@ -748,7 +762,7 @@ export class GrChangeMetadata extends LitElement {
     } finally {
       this.settingTopic = false;
     }
-    fireEvent(this, 'hide-alert');
+    fire(this, 'hide-alert', {});
     fireReload(this);
   }
 
@@ -781,7 +795,7 @@ export class GrChangeMetadata extends LitElement {
     await this.restApiService.setChangeHashtag(this.change._number, {
       add: [newHashtag as Hashtag],
     });
-    fireEvent(this, 'hide-alert');
+    fire(this, 'hide-alert', {});
     fireReload(this);
   }
 
@@ -891,14 +905,14 @@ export class GrChangeMetadata extends LitElement {
 
   private computeProjectUrl(project?: RepoName) {
     if (!project) return '';
-    return createSearchUrl({project});
+    return createSearchUrl({repo: project});
   }
 
   private computeBranchUrl(project?: RepoName, branch?: BranchName) {
     if (!project || !branch || !this.change || !this.change.status) return '';
     return createSearchUrl({
       branch,
-      project,
+      repo: project,
       statuses:
         this.change.status === ChangeStatus.NEW
           ? ['open']
@@ -916,7 +930,7 @@ export class GrChangeMetadata extends LitElement {
     }
     return createChangeUrl({
       changeNum: change,
-      project,
+      repo: project,
       usp: 'metadata',
       patchNum: patchset,
     });
@@ -926,7 +940,7 @@ export class GrChangeMetadata extends LitElement {
     return createSearchUrl({hashtag, statuses: ['open', 'merged']});
   }
 
-  private async handleTopicRemoved(e: CustomEvent) {
+  private async handleTopicRemoved(e: Event) {
     assertIsDefined(this.change, 'change');
     const target = e.composedPath()[0] as GrLinkedChip;
     target.disabled = true;
@@ -936,12 +950,12 @@ export class GrChangeMetadata extends LitElement {
     } finally {
       target.disabled = false;
     }
-    fireEvent(this, 'hide-alert');
+    fire(this, 'hide-alert', {});
     fireReload(this);
   }
 
   // private but used in test
-  async handleHashtagRemoved(e: CustomEvent) {
+  async handleHashtagRemoved(e: Event) {
     e.preventDefault();
     assertIsDefined(this.change, 'change');
     const target = e.target as GrLinkedChip;
@@ -954,7 +968,7 @@ export class GrChangeMetadata extends LitElement {
     } finally {
       target.disabled = false;
     }
-    fireEvent(this, 'hide-alert');
+    fire(this, 'hide-alert', {});
     fireReload(this);
   }
 
@@ -1120,11 +1134,11 @@ export class GrChangeMetadata extends LitElement {
     input: string
   ): Promise<AutocompleteSuggestion[]> {
     return this.restApiService
-      .getChangesWithSimilarTopic(input)
+      .getChangesWithSimilarTopic(input, throwingErrorCallback)
       .then(response =>
         (response ?? [])
           .map(change => change.topic)
-          .filter(notUndefined)
+          .filter(isDefined)
           .filter(unique)
           .map(topic => {
             return {name: topic, value: topic};
@@ -1136,11 +1150,11 @@ export class GrChangeMetadata extends LitElement {
     input: string
   ): Promise<AutocompleteSuggestion[]> {
     return this.restApiService
-      .getChangesWithSimilarHashtag(input)
+      .getChangesWithSimilarHashtag(input, throwingErrorCallback)
       .then(response =>
         (response ?? [])
           .flatMap(change => change.hashtags ?? [])
-          .filter(notUndefined)
+          .filter(isDefined)
           .filter(unique)
           .map(hashtag => {
             return {name: hashtag, value: hashtag};

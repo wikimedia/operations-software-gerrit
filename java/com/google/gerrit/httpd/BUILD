@@ -38,9 +38,11 @@ java_library(
         "//lib/auto:auto-value",
         "//lib/auto:auto-value-annotations",
         "//lib/commons:lang3",
+        "//lib/errorprone:annotations",
         "//lib/flogger:api",
         "//lib/guice",
         "//lib/guice:guice-assistedinject",
         "//lib/guice:guice-servlet",
+        "//lib/jsoup",
     ],
 )

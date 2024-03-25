@@ -6,10 +6,13 @@
 import '../../../test/common-test-setup';
 import './gr-textarea';
 import {GrTextarea} from './gr-textarea';
-import {ItemSelectedEvent} from '../gr-autocomplete-dropdown/gr-autocomplete-dropdown';
 import {
+  Item,
+  ItemSelectedEventDetail,
+} from '../gr-autocomplete-dropdown/gr-autocomplete-dropdown';
+import {
+  mockPromise,
   pressKey,
-  stubFlags,
   stubRestApi,
   waitUntil,
 } from '../../../test/test-utils';
@@ -31,14 +34,16 @@ suite('gr-textarea tests', () => {
       element,
       /* HTML */ `<div id="hiddenText"></div>
         <span id="caratSpan"> </span>
+        <gr-autocomplete-dropdown id="emojiSuggestions" is-hidden="">
+        </gr-autocomplete-dropdown>
         <gr-autocomplete-dropdown
-          id="emojiSuggestions"
+          id="mentionsSuggestions"
           is-hidden=""
-          style="position: fixed; top: 150px; left: 392.5px; box-sizing: border-box; max-height: 300px; max-width: 785px;"
+          role="listbox"
         >
         </gr-autocomplete-dropdown>
         <iron-autogrow-textarea aria-disabled="false" focused="" id="textarea">
-        </iron-autogrow-textarea> `,
+        </iron-autogrow-textarea>`,
       {
         // gr-autocomplete-dropdown sizing seems to vary between local & CI
         ignoreAttributes: [
@@ -49,52 +54,11 @@ suite('gr-textarea tests', () => {
   });
 
   suite('mention users', () => {
-    setup(async () => {
-      stubFlags('isEnabled').returns(true);
-      element.requestUpdate();
-      await element.updateComplete;
-    });
-
-    test('renders', () => {
-      assert.shadowDom.equal(
-        element,
-        /* HTML */ `
-          <div id="hiddenText"></div>
-          <span id="caratSpan"> </span>
-          <gr-autocomplete-dropdown
-            id="emojiSuggestions"
-            is-hidden=""
-            style="position: fixed; top: 478px; left: 321px; box-sizing: border-box; max-height: 956px; max-width: 642px;"
-          >
-          </gr-autocomplete-dropdown>
-          <gr-autocomplete-dropdown
-            id="mentionsSuggestions"
-            is-hidden=""
-            role="listbox"
-            style="position: fixed; top: 478px; left: 321px; box-sizing: border-box; max-height: 956px; max-width: 642px;"
-          >
-          </gr-autocomplete-dropdown>
-          <iron-autogrow-textarea
-            focused=""
-            aria-disabled="false"
-            id="textarea"
-          >
-          </iron-autogrow-textarea>
-        `,
-        {
-          // gr-autocomplete-dropdown sizing seems to vary between local & CI
-          ignoreAttributes: [
-            {tags: ['gr-autocomplete-dropdown'], attributes: ['style']},
-          ],
-        }
-      );
-    });
-
     test('mentions selector is open when @ is typed & the textarea has focus', async () => {
       // Needed for Safari tests. selectionStart is not updated when text is
       // updated.
       const listenerStub = sinon.stub();
-      element.addEventListener('bind-value-changed', listenerStub);
+      element.addEventListener('text-changed', listenerStub);
       stubRestApi('getSuggestedAccounts').returns(
         Promise.resolve([
           createAccountWithEmail('abc@google.com'),
@@ -164,6 +128,98 @@ suite('gr-textarea tests', () => {
       assert.isFalse(element.mentionsSuggestions!.isHidden);
     });
 
+    test('mention suggestions cleared before request returns', async () => {
+      const promise = mockPromise<Item[]>();
+      stubRestApi('getSuggestedAccounts').returns(promise);
+      element.textarea!.focus();
+      await waitUntil(() => element.textarea!.focused === true);
+
+      element.suggestions = [
+        {dataValue: 'prior@google.com', text: 'Prior suggestion'},
+      ];
+      element.textarea!.selectionStart = 1;
+      element.textarea!.selectionEnd = 1;
+      element.text = '@';
+
+      await element.updateComplete;
+      assert.equal(element.suggestions.length, 0);
+
+      promise.resolve([
+        createAccountWithEmail('abc@google.com'),
+        createAccountWithEmail('abcdef@google.com'),
+      ]);
+      await waitUntil(() => element.suggestions.length !== 0);
+      assert.deepEqual(element.suggestions, [
+        {
+          dataValue: 'abc@google.com',
+          text: 'abc@google.com <abc@google.com>',
+        },
+        {
+          dataValue: 'abcdef@google.com',
+          text: 'abcdef@google.com <abcdef@google.com>',
+        },
+      ]);
+    });
+
+    test('mention dropdown shows suggestion for latest text', async () => {
+      const promise1 = mockPromise<Item[]>();
+      const promise2 = mockPromise<Item[]>();
+      const suggestionStub = stubRestApi('getSuggestedAccounts');
+      suggestionStub.returns(promise1);
+      element.textarea!.focus();
+      await waitUntil(() => element.textarea!.focused === true);
+
+      element.textarea!.selectionStart = 1;
+      element.textarea!.selectionEnd = 1;
+      element.text = '@';
+      await element.updateComplete;
+      assert.equal(element.currentSearchString, '');
+
+      suggestionStub.returns(promise2);
+      element.text = '@abc@google.com';
+      // None of suggestions returned yet.
+      assert.equal(element.suggestions.length, 0);
+      await element.updateComplete;
+      assert.equal(element.currentSearchString, 'abc@google.com');
+
+      promise2.resolve([
+        createAccountWithEmail('abc@google.com'),
+        createAccountWithEmail('abcdef@google.com'),
+      ]);
+
+      await waitUntil(() => element.suggestions.length !== 0);
+      assert.deepEqual(element.suggestions, [
+        {
+          dataValue: 'abc@google.com',
+          text: 'abc@google.com <abc@google.com>',
+        },
+        {
+          dataValue: 'abcdef@google.com',
+          text: 'abcdef@google.com <abcdef@google.com>',
+        },
+      ]);
+
+      promise1.resolve([
+        createAccountWithEmail('dce@google.com'),
+        createAccountWithEmail('defcba@google.com'),
+      ]);
+      // Empty the event queue.
+      await new Promise<void>(resolve => {
+        setTimeout(() => resolve());
+      });
+      // Suggestions didn't change
+      assert.deepEqual(element.suggestions, [
+        {
+          dataValue: 'abc@google.com',
+          text: 'abc@google.com <abc@google.com>',
+        },
+        {
+          dataValue: 'abcdef@google.com',
+          text: 'abcdef@google.com <abcdef@google.com>',
+        },
+      ]);
+    });
+
     test('emoji selector does not open when previous char is \n', async () => {
       element.textarea!.focus();
       await waitUntil(() => element.textarea!.focused === true);
@@ -210,7 +266,7 @@ suite('gr-textarea tests', () => {
 
     test('emoji dropdown does not open if mention dropdown is open', async () => {
       const listenerStub = sinon.stub();
-      element.addEventListener('bind-value-changed', listenerStub);
+      element.addEventListener('text-changed', listenerStub);
       const resetSpy = sinon.spy(element, 'resetDropdown');
       stubRestApi('getSuggestedAccounts').returns(
         Promise.resolve([
@@ -239,21 +295,25 @@ suite('gr-textarea tests', () => {
       assert.isFalse(element.mentionsSuggestions!.isHidden);
 
       element.text = '@h';
+      await waitUntil(() => element.suggestions.length > 0);
       await element.updateComplete;
       assert.isTrue(element.emojiSuggestions!.isHidden);
       assert.isFalse(element.mentionsSuggestions!.isHidden);
 
       element.text = '@h ';
+      await waitUntil(() => element.suggestions.length > 0);
       await element.updateComplete;
       assert.isTrue(element.emojiSuggestions!.isHidden);
       assert.isFalse(element.mentionsSuggestions!.isHidden);
 
       element.text = '@h :';
+      await waitUntil(() => element.suggestions.length > 0);
       await element.updateComplete;
       assert.isTrue(element.emojiSuggestions!.isHidden);
       assert.isFalse(element.mentionsSuggestions!.isHidden);
 
       element.text = '@h :D';
+      await waitUntil(() => element.suggestions.length > 0);
       await element.updateComplete;
       assert.isTrue(element.emojiSuggestions!.isHidden);
       assert.isFalse(element.mentionsSuggestions!.isHidden);
@@ -261,7 +321,7 @@ suite('gr-textarea tests', () => {
 
     test('mention dropdown does not open if emoji dropdown is open', async () => {
       const listenerStub = sinon.stub();
-      element.addEventListener('bind-value-changed', listenerStub);
+      element.addEventListener('text-changed', listenerStub);
       element.textarea!.focus();
       await waitUntil(() => element.textarea!.focused === true);
 
@@ -355,7 +415,7 @@ suite('gr-textarea tests', () => {
     // Needed for Safari tests. selectionStart is not updated when text is
     // updated.
     const listenerStub = sinon.stub();
-    element.addEventListener('bind-value-changed', listenerStub);
+    element.addEventListener('text-changed', listenerStub);
     element.textarea!.focus();
     await waitUntil(() => element.textarea!.focused === true);
     element.textarea!.selectionStart = 1;
@@ -509,13 +569,13 @@ suite('gr-textarea tests', () => {
       {value: '😢', match: 'tear'},
       {value: '😂', match: 'tears'},
     ];
-    element.formatSuggestions(matchedSuggestions);
+    const suggestions = element.formatSuggestions(matchedSuggestions);
     assert.deepEqual(
       [
         {value: '😢', dataValue: '😢', match: 'tear', text: '😢 tear'},
         {value: '😂', dataValue: '😂', match: 'tears', text: '😂 tears'},
       ],
-      element.suggestions
+      suggestions
     );
   });
 
@@ -526,7 +586,7 @@ suite('gr-textarea tests', () => {
     element.specialCharIndex = 10;
     await element.updateComplete;
     const selectedItem = {dataset: {value: '😂'}} as unknown as HTMLElement;
-    const event = new CustomEvent<ItemSelectedEvent>('item-selected', {
+    const event = new CustomEvent<ItemSelectedEventDetail>('item-selected', {
       detail: {trigger: 'click', selected: selectedItem},
     });
     element.handleDropdownItemSelect(event);
@@ -553,7 +613,7 @@ suite('gr-textarea tests', () => {
     assert.deepEqual(indentCommand.args[0], ['insertText', false, '\n    ']);
   });
 
-  test('emoji dropdown is closed when iron-overlay-closed is fired', async () => {
+  test('emoji dropdown is closed when dropdown-closed is fired', async () => {
     const resetSpy = sinon.spy(element, 'closeDropdown');
     element.emojiSuggestions!.dispatchEvent(
       new CustomEvent('dropdown-closed', {
@@ -617,28 +677,9 @@ suite('gr-textarea tests', () => {
       await element.updateComplete;
       assert.equal(element.text, '💯');
     });
-
-    test('enter key - ignored on just colon without more information', async () => {
-      const enterSpy = sinon.spy(element.emojiSuggestions!, 'getCursorTarget');
-      pressKey(element.textarea! as HTMLElement, Key.ENTER);
-      assert.isFalse(enterSpy.called);
-      element.textarea!.focus();
-      element.textarea!.selectionStart = 1;
-      element.textarea!.selectionEnd = 1;
-      element.text = ':';
-      await element.updateComplete;
-      pressKey(element.textarea! as HTMLElement, Key.ENTER);
-      assert.isFalse(enterSpy.called);
-    });
   });
 
   suite('gr-textarea monospace', () => {
-    // gr-textarea set monospace class in the ready() method.
-    // In Polymer2, ready() is called from the fixture(...) method,
-    // If ready() is called again later, some nested elements doesn't
-    // handle it correctly. A separate test-fixture is used to set
-    // properties before ready() is called.
-
     let element: GrTextarea;
 
     setup(async () => {
@@ -654,12 +695,6 @@ suite('gr-textarea tests', () => {
   });
 
   suite('gr-textarea hideBorder', () => {
-    // gr-textarea set noBorder class in the ready() method.
-    // In Polymer2, ready() is called from the fixture(...) method,
-    // If ready() is called again later, some nested elements doesn't
-    // handle it correctly. A separate test-fixture is used to set
-    // properties before ready() is called.
-
     let element: GrTextarea;
 
     setup(async () => {

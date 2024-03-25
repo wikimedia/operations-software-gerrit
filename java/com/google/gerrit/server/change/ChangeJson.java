@@ -46,6 +46,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -149,7 +150,7 @@ public class ChangeJson {
   public static final SubmitRuleOptions SUBMIT_RULE_OPTIONS_STRICT =
       ChangeField.SUBMIT_RULE_OPTIONS_STRICT.toBuilder().build();
 
-  static final ImmutableSet<ListChangesOption> REQUIRE_LAZY_LOAD =
+  public static final ImmutableSet<ListChangesOption> REQUIRE_LAZY_LOAD =
       ImmutableSet.of(
           ALL_COMMITS,
           ALL_REVISIONS,
@@ -632,7 +633,6 @@ public class ChangeJson {
                       a -> a.account().get(),
                       a -> AttentionSetUtil.createAttentionSetInfo(a, accountLoader)));
     }
-    out.assignee = in.getAssignee() != null ? accountLoader.get(in.getAssignee()) : null;
     out.hashtags = cd.hashtags();
     out.changeId = in.getKey().get();
     if (in.isNew()) {
@@ -703,6 +703,7 @@ public class ChangeJson {
             !cd.change().isAbandoned()
                 ? labelsJson.permittedLabels(user.getAccountId(), cd)
                 : ImmutableMap.of();
+        out.removableLabels = labelsJson.removableLabels(accountLoader, user, cd);
       }
     }
 
@@ -947,11 +948,12 @@ public class ChangeJson {
       }
       src = Collections.singletonList(ps);
     }
-    Map<PatchSet.Id, PatchSet> map = Maps.newHashMapWithExpectedSize(src.size());
+    // Sort by patch set ID in increasing order to have a stable output.
+    ImmutableSortedMap.Builder<PatchSet.Id, PatchSet> map = ImmutableSortedMap.naturalOrder();
     for (PatchSet patchSet : src) {
       map.put(patchSet.id(), patchSet);
     }
-    return map;
+    return map.build();
   }
 
   /** Populate the 'starred' field. */

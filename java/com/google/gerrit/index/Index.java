@@ -60,6 +60,9 @@ public interface Index<K, V> {
    */
   void replace(V obj);
 
+  /** Delete a document from the index by value */
+  void deleteByValue(V value);
+
   /**
    * Delete a document from the index by key.
    *
@@ -152,5 +155,15 @@ public interface Index<K, V> {
    */
   default boolean isEnabled() {
     return true;
+  }
+
+  /**
+   * Rewriter that should be invoked on queries to this index.
+   *
+   * <p>The default implementation does not do anything. Should be overridden by implementation, if
+   * needed.
+   */
+  default IndexRewriter<V> getIndexRewriter() {
+    return (in, opts) -> in;
   }
 }

@@ -46,14 +46,6 @@ public class ChangePredicates {
   }
 
   /**
-   * Returns a predicate that matches changes that are assigned to the provided {@link
-   * com.google.gerrit.entities.Account.Id}.
-   */
-  public static Predicate<ChangeData> assignee(Account.Id id) {
-    return new ChangeIndexPredicate(ChangeField.ASSIGNEE, id.toString());
-  }
-
-  /**
    * Returns a predicate that matches changes that are a revert of the provided {@link
    * com.google.gerrit.entities.Change.Id}.
    */
@@ -66,7 +58,7 @@ public class ChangePredicates {
    * com.google.gerrit.entities.Account.Id}.
    */
   public static Predicate<ChangeData> commentBy(Account.Id id) {
-    return new ChangeIndexPredicate(ChangeField.COMMENTBY, id.toString());
+    return new ChangeIndexPredicate(ChangeField.COMMENTBY_SPEC, id.toString());
   }
 
   /**
@@ -74,7 +66,7 @@ public class ChangePredicates {
    * com.google.gerrit.entities.Account.Id} has a pending change edit.
    */
   public static Predicate<ChangeData> editBy(Account.Id id) {
-    return new ChangeIndexPredicate(ChangeField.EDITBY, id.toString());
+    return new ChangeIndexPredicate(ChangeField.EDITBY_SPEC, id.toString());
   }
 
   /**
@@ -95,10 +87,9 @@ public class ChangePredicates {
    * Returns a predicate that matches changes where the provided {@link
    * com.google.gerrit.entities.Account.Id} has starred changes with {@code label}.
    */
-  public static Predicate<ChangeData> starBy(
-      StarredChangesUtil starredChangesUtil, Account.Id id, String label) {
+  public static Predicate<ChangeData> starBy(StarredChangesUtil starredChangesUtil, Account.Id id) {
     Set<Predicate<ChangeData>> starredChanges =
-        starredChangesUtil.byAccountId(id, label).stream()
+        starredChangesUtil.byAccountId(id).stream()
             .map(ChangePredicates::idStr)
             .collect(toImmutableSet());
     return starredChanges.isEmpty() ? ChangeIndexPredicate.none() : Predicate.or(starredChanges);
@@ -111,7 +102,7 @@ public class ChangePredicates {
   public static Predicate<ChangeData> reviewedBy(Collection<Account.Id> ids) {
     List<Predicate<ChangeData>> predicates = new ArrayList<>(ids.size());
     for (Account.Id id : ids) {
-      predicates.add(new ChangeIndexPredicate(ChangeField.REVIEWEDBY, id.toString()));
+      predicates.add(new ChangeIndexPredicate(ChangeField.REVIEWEDBY_SPEC, id.toString()));
     }
     return Predicate.or(predicates);
   }
@@ -119,7 +110,7 @@ public class ChangePredicates {
   /** Returns a predicate that matches changes that were not yet reviewed. */
   public static Predicate<ChangeData> unreviewed() {
     return Predicate.not(
-        new ChangeIndexPredicate(ChangeField.REVIEWEDBY, ChangeField.NOT_REVIEWED.toString()));
+        new ChangeIndexPredicate(ChangeField.REVIEWEDBY_SPEC, ChangeField.NOT_REVIEWED.toString()));
   }
 
   /**
@@ -127,8 +118,12 @@ public class ChangePredicates {
    * com.google.gerrit.entities.Change.Id}.
    */
   public static Predicate<ChangeData> idStr(Change.Id id) {
+    return idStr(id.toString());
+  }
+
+  public static Predicate<ChangeData> idStr(String id) {
     return new ChangeIndexCardinalPredicate(
-        ChangeField.LEGACY_ID_STR, ChangeQueryBuilder.FIELD_CHANGE, id.toString(), 1);
+        ChangeField.NUMERIC_ID_STR_SPEC, ChangeQueryBuilder.FIELD_CHANGE, id, 1);
   }
 
   /**
@@ -136,7 +131,7 @@ public class ChangePredicates {
    * com.google.gerrit.entities.Account.Id}.
    */
   public static Predicate<ChangeData> owner(Account.Id id) {
-    return new ChangeIndexCardinalPredicate(ChangeField.OWNER, id.toString(), 5000);
+    return new ChangeIndexCardinalPredicate(ChangeField.OWNER_SPEC, id.toString(), 5000);
   }
 
   /**
@@ -144,7 +139,7 @@ public class ChangePredicates {
    * provided {@link com.google.gerrit.entities.Account.Id}.
    */
   public static Predicate<ChangeData> uploader(Account.Id id) {
-    return new ChangeIndexPredicate(ChangeField.UPLOADER, id.toString());
+    return new ChangeIndexPredicate(ChangeField.UPLOADER_SPEC, id.toString());
   }
 
   /**
@@ -170,12 +165,12 @@ public class ChangePredicates {
    * com.google.gerrit.entities.Project.NameKey}.
    */
   public static Predicate<ChangeData> project(Project.NameKey id) {
-    return new ChangeIndexCardinalPredicate(ChangeField.PROJECT, id.get(), 1_000_000);
+    return new ChangeIndexCardinalPredicate(ChangeField.PROJECT_SPEC, id.get(), 1_000_000);
   }
 
   /** Returns a predicate that matches changes targeted at the provided {@code refName}. */
   public static Predicate<ChangeData> ref(String refName) {
-    return new ChangeIndexCardinalPredicate(ChangeField.REF, refName, 10_000);
+    return new ChangeIndexCardinalPredicate(ChangeField.REF_SPEC, refName, 10_000);
   }
 
   /** Returns a predicate that matches changes in the provided {@code topic}. */
@@ -195,26 +190,26 @@ public class ChangePredicates {
 
   /** Returns a predicate that matches changes submitted in the provided {@code changeSet}. */
   public static Predicate<ChangeData> submissionId(String changeSet) {
-    return new ChangeIndexPredicate(ChangeField.SUBMISSIONID, changeSet);
+    return new ChangeIndexPredicate(ChangeField.SUBMISSIONID_SPEC, changeSet);
   }
 
   /** Returns a predicate that matches changes that modified the provided {@code path}. */
   public static Predicate<ChangeData> path(String path) {
-    return new ChangeIndexPredicate(ChangeField.PATH, path);
+    return new ChangeIndexPredicate(ChangeField.PATH_SPEC, path);
   }
 
   /** Returns a predicate that matches changes tagged with the provided {@code hashtag}. */
   public static Predicate<ChangeData> hashtag(String hashtag) {
     // Use toLowerCase without locale to match behavior in ChangeField.
     return new ChangeIndexPredicate(
-        ChangeField.HASHTAG, HashtagsUtil.cleanupHashtag(hashtag).toLowerCase());
+        ChangeField.HASHTAG_SPEC, HashtagsUtil.cleanupHashtag(hashtag).toLowerCase(Locale.US));
   }
 
   /** Returns a predicate that matches changes tagged with the provided {@code hashtag}. */
   public static Predicate<ChangeData> fuzzyHashtag(String hashtag) {
     // Use toLowerCase without locale to match behavior in ChangeField.
     return new ChangeIndexPredicate(
-        ChangeField.FUZZY_HASHTAG, HashtagsUtil.cleanupHashtag(hashtag).toLowerCase());
+        ChangeField.FUZZY_HASHTAG, HashtagsUtil.cleanupHashtag(hashtag).toLowerCase(Locale.US));
   }
 
   /**
@@ -223,16 +218,16 @@ public class ChangePredicates {
   public static Predicate<ChangeData> prefixHashtag(String hashtag) {
     // Use toLowerCase without locale to match behavior in ChangeField.
     return new ChangeIndexPredicate(
-        ChangeField.PREFIX_HASHTAG, HashtagsUtil.cleanupHashtag(hashtag).toLowerCase());
+        ChangeField.PREFIX_HASHTAG, HashtagsUtil.cleanupHashtag(hashtag).toLowerCase(Locale.US));
   }
 
   /** Returns a predicate that matches changes that modified the provided {@code file}. */
   public static Predicate<ChangeData> file(ChangeQueryBuilder.Arguments args, String file) {
     Predicate<ChangeData> eqPath = path(file);
-    if (!args.getSchema().hasField(ChangeField.FILE_PART)) {
+    if (!args.getSchema().hasField(ChangeField.FILE_PART_SPEC)) {
       return eqPath;
     }
-    return Predicate.or(eqPath, new ChangeIndexPredicate(ChangeField.FILE_PART, file));
+    return Predicate.or(eqPath, new ChangeIndexPredicate(ChangeField.FILE_PART_SPEC, file));
   }
 
   /**
@@ -247,7 +242,7 @@ public class ChangePredicates {
     if (indexEquals > 0 && (indexEquals < indexColon || indexColon < 0)) {
       footer = footer.substring(0, indexEquals) + ": " + footer.substring(indexEquals + 1);
     }
-    return new ChangeIndexPredicate(ChangeField.FOOTER, footer.toLowerCase(Locale.US));
+    return new ChangeIndexPredicate(ChangeField.FOOTER_SPEC, footer.toLowerCase(Locale.US));
   }
 
   /**
@@ -263,22 +258,23 @@ public class ChangePredicates {
    */
   public static Predicate<ChangeData> directory(String directory) {
     return new ChangeIndexPredicate(
-        ChangeField.DIRECTORY, CharMatcher.is('/').trimFrom(directory).toLowerCase(Locale.US));
+        ChangeField.DIRECTORY_SPEC, CharMatcher.is('/').trimFrom(directory).toLowerCase(Locale.US));
   }
 
   /** Returns a predicate that matches changes with the provided {@code trackingId}. */
   public static Predicate<ChangeData> trackingId(String trackingId) {
-    return new ChangeIndexCardinalPredicate(ChangeField.TR, trackingId, 5);
+    return new ChangeIndexCardinalPredicate(ChangeField.TR_SPEC, trackingId, 5);
   }
 
   /** Returns a predicate that matches changes authored by the provided {@code exactAuthor}. */
   public static Predicate<ChangeData> exactAuthor(String exactAuthor) {
-    return new ChangeIndexPredicate(ChangeField.EXACT_AUTHOR, exactAuthor.toLowerCase(Locale.US));
+    return new ChangeIndexPredicate(
+        ChangeField.EXACT_AUTHOR_SPEC, exactAuthor.toLowerCase(Locale.US));
   }
 
   /** Returns a predicate that matches changes authored by the provided {@code author}. */
   public static Predicate<ChangeData> author(String author) {
-    return new ChangeIndexPredicate(ChangeField.AUTHOR, author);
+    return new ChangeIndexPredicate(ChangeField.AUTHOR_PARTS_SPEC, author);
   }
 
   /**
@@ -287,7 +283,7 @@ public class ChangePredicates {
    */
   public static Predicate<ChangeData> exactCommitter(String exactCommitter) {
     return new ChangeIndexPredicate(
-        ChangeField.EXACT_COMMITTER, exactCommitter.toLowerCase(Locale.US));
+        ChangeField.EXACT_COMMITTER_SPEC, exactCommitter.toLowerCase(Locale.US));
   }
 
   /**
@@ -295,12 +291,13 @@ public class ChangePredicates {
    * committer}.
    */
   public static Predicate<ChangeData> committer(String comitter) {
-    return new ChangeIndexPredicate(ChangeField.COMMITTER, comitter.toLowerCase(Locale.US));
+    return new ChangeIndexPredicate(
+        ChangeField.COMMITTER_PARTS_SPEC, comitter.toLowerCase(Locale.US));
   }
 
   /** Returns a predicate that matches changes whose ID starts with the provided {@code id}. */
   public static Predicate<ChangeData> idPrefix(String id) {
-    return new ChangeIndexCardinalPredicate(ChangeField.ID, id, 5);
+    return new ChangeIndexCardinalPredicate(ChangeField.CHANGE_ID_SPEC, id, 5);
   }
 
   /**
@@ -308,7 +305,7 @@ public class ChangePredicates {
    * its name.
    */
   public static Predicate<ChangeData> projectPrefix(String prefix) {
-    return new ChangeIndexPredicate(ChangeField.PROJECTS, prefix);
+    return new ChangeIndexPredicate(ChangeField.PROJECTS_SPEC, prefix);
   }
 
   /**
@@ -317,9 +314,9 @@ public class ChangePredicates {
    */
   public static Predicate<ChangeData> commitPrefix(String commitId) {
     if (commitId.length() == ObjectIds.STR_LEN) {
-      return new ChangeIndexCardinalPredicate(ChangeField.EXACT_COMMIT, commitId, 5);
+      return new ChangeIndexCardinalPredicate(ChangeField.EXACT_COMMIT_SPEC, commitId, 5);
     }
-    return new ChangeIndexCardinalPredicate(ChangeField.COMMIT, commitId, 5);
+    return new ChangeIndexCardinalPredicate(ChangeField.COMMIT_SPEC, commitId, 5);
   }
 
   /**
@@ -330,12 +327,20 @@ public class ChangePredicates {
     return new ChangeIndexPredicate(ChangeField.COMMIT_MESSAGE, message);
   }
 
+  public static Predicate<ChangeData> subject(String subject) {
+    return new ChangeIndexPredicate(ChangeField.SUBJECT_SPEC, subject);
+  }
+
+  public static Predicate<ChangeData> prefixSubject(String subject) {
+    return new ChangeIndexPredicate(ChangeField.PREFIX_SUBJECT_SPEC, subject);
+  }
+
   /**
    * Returns a predicate that matches changes where the provided {@code comment} appears in any
    * comment on any patch set of the change. Uses full-text search semantics.
    */
   public static Predicate<ChangeData> comment(String comment) {
-    return new ChangeIndexPredicate(ChangeField.COMMENT, comment);
+    return new ChangeIndexPredicate(ChangeField.COMMENT_SPEC, comment);
   }
 
   /**
@@ -346,7 +351,7 @@ public class ChangePredicates {
    * in the form of 'gerrit~$rule_name'.
    */
   public static Predicate<ChangeData> submitRuleStatus(String value) {
-    return new ChangeIndexPredicate(ChangeField.SUBMIT_RULE_RESULT, value);
+    return new ChangeIndexPredicate(ChangeField.SUBMIT_RULE_RESULT_SPEC, value);
   }
 
   /**
@@ -354,7 +359,7 @@ public class ChangePredicates {
    * to "1", or non-pure reverts if {@code value} is "0".
    */
   public static Predicate<ChangeData> pureRevert(String value) {
-    return new ChangeIndexPredicate(ChangeField.IS_PURE_REVERT, value);
+    return new ChangeIndexPredicate(ChangeField.IS_PURE_REVERT_SPEC, value);
   }
 
   /**
@@ -365,6 +370,6 @@ public class ChangePredicates {
    * com.google.gerrit.entities.SubmitRequirement}s.
    */
   public static Predicate<ChangeData> isSubmittable(String value) {
-    return new ChangeIndexPredicate(ChangeField.IS_SUBMITTABLE, value);
+    return new ChangeIndexPredicate(ChangeField.IS_SUBMITTABLE_SPEC, value);
   }
 }

@@ -66,57 +66,53 @@ import {
   SubmitTypeInfo,
   SuggestInfo,
   Timestamp,
-  TimezoneOffset,
   UrlEncodedCommentId,
   UserConfigInfo,
+  CommentThread,
+  DraftInfo,
+  ChangeMessage,
+  SavingState,
 } from '../types/common';
 import {
   AccountsVisibility,
   AccountTag,
-  AppTheme,
   AuthType,
   ChangeStatus,
   CommentSide,
-  DateFormat,
-  DefaultBase,
+  createDefaultPreferences,
   DefaultDisplayNameConfig,
-  DiffViewMode,
   EmailStrategy,
   InheritedBooleanInfoConfiguredValue,
   MergeabilityComputationBehavior,
   RequirementStatus,
   RevisionKind,
   SubmitType,
-  TimeFormat,
 } from '../constants/constants';
 import {formatDate} from '../utils/date-util';
 import {GetDiffCommentsOutput} from '../services/gr-rest-api/gr-rest-api';
 import {CommitInfoWithRequiredCommit} from '../elements/change/gr-change-metadata/gr-change-metadata';
 import {WebLinkInfo} from '../types/diff';
-import {
-  ChangeMessage,
-  CommentThread,
-  createCommentThreads,
-  DraftInfo,
-  UnsavedInfo,
-} from '../utils/comment-util';
+import {createCommentThreads, createNew} from '../utils/comment-util';
 import {GerritView} from '../services/router/router-model';
 import {ChangeComments} from '../elements/diff/gr-comment-api/gr-comment-api';
 import {EditRevisionInfo, ParsedChangeInfo} from '../types/types';
 import {
   DetailedLabelInfo,
-  FileInfo,
   QuickLabelInfo,
   SubmitRequirementExpressionInfo,
   SubmitRequirementResultInfo,
   SubmitRequirementStatus,
 } from '../api/rest-api';
-import {CheckResult, RunResult} from '../models/checks/checks-model';
+import {CheckResult, CheckRun, RunResult} from '../models/checks/checks-model';
 import {Category, RunStatus} from '../api/checks';
 import {DiffInfo} from '../api/diff';
 import {SearchViewState} from '../models/views/search';
-import {ChangeViewState} from '../models/views/change';
-import {EditViewState} from '../models/views/edit';
+import {ChangeChildView, ChangeViewState} from '../models/views/change';
+import {NormalizedFileInfo} from '../models/change/files-model';
+import {GroupViewState} from '../models/views/group';
+import {RepoDetailView, RepoViewState} from '../models/views/repo';
+import {AdminChildView, AdminViewState} from '../models/views/admin';
+import {DashboardViewState} from '../models/views/dashboard';
 
 const TEST_DEFAULT_EXPRESSION = 'label:Verified=MAX -label:Verified=MIN';
 export const TEST_PROJECT_NAME: RepoName = 'test-project' as RepoName;
@@ -136,9 +132,13 @@ export function dateToTimestamp(date: Date): Timestamp {
     nanosecondSuffix) as Timestamp;
 }
 
-export function createCommentLink(match = 'test'): CommentLinkInfo {
+export function createCommentLink(
+  match = 'test',
+  link = 'http://test.com'
+): CommentLinkInfo {
   return {
     match,
+    link,
   };
 }
 
@@ -243,7 +243,6 @@ export function createGitPerson(name = 'Test name'): GitPersonInfo {
     name,
     email: `${name}@` as EmailAddress,
     date: dateToTimestamp(new Date(2019, 11, 6, 14, 5, 8)),
-    tz: 0 as TimezoneOffset,
   };
 }
 
@@ -388,6 +387,7 @@ export function createChangeMessages(count: number): ChangeMessageInfo[] {
     messages.push({
       ...createChangeMessageInfo((i + messageIdStart).toString(16)),
       date: dateToTimestamp(messageDate),
+      author: createAccountDetailWithId(i),
     });
     messageDate = new Date(messageDate);
     messageDate.setDate(messageDate.getDate() + 1);
@@ -395,14 +395,19 @@ export function createChangeMessages(count: number): ChangeMessageInfo[] {
   return messages;
 }
 
-export function createFileInfo(): FileInfo {
+export function createFileInfo(
+  path = 'test-path/test-file.txt'
+): NormalizedFileInfo {
   return {
     size: 314,
     size_delta: 7,
+    lines_deleted: 0,
+    lines_inserted: 0,
+    __path: path,
   };
 }
 
-export function createChange(): ChangeInfo {
+export function createChange(partial: Partial<ChangeInfo> = {}): ChangeInfo {
   return {
     id: TEST_CHANGE_INFO_ID,
     project: TEST_PROJECT_NAME,
@@ -418,6 +423,7 @@ export function createChange(): ChangeInfo {
     owner: createAccountWithId(),
     // This is documented as optional, but actually always set.
     reviewers: createReviewers(),
+    ...partial,
   };
 }
 
@@ -559,8 +565,7 @@ export function createDiff(): DiffInfo {
     content: [
       {
         ab: [
-          'Lorem ipsum dolor sit amet, suspendisse inceptos vehicula, ' +
-            'nulla phasellus.',
+          'Lorem ipsum dolor sit amet, suspendisse inceptos vehicula.',
           'Mattis lectus.',
           'Sodales duis.',
           'Orci a faucibus.',
@@ -631,7 +636,7 @@ export function createDiff(): DiffInfo {
           'Etiam dui, blandit wisi.',
           'Mi nec.',
           'Vitae eget vestibulum.',
-          'Ullamcorper nunc ante, nec imperdiet felis, consectetur in.',
+          'Ullamcorper nunc ante, nec imperdiet felis, consectetur.',
           'Ac eget.',
           'Vel fringilla, interdum pellentesque placerat, proin ante.',
         ],
@@ -667,25 +672,19 @@ export function createBlame(): BlameInfo {
   };
 }
 
-export function createMergeable(): MergeableInfo {
+export function createMergeable(mergeable = false): MergeableInfo {
   return {
     submit_type: SubmitType.MERGE_IF_NECESSARY,
-    mergeable: false,
+    mergeable,
   };
 }
 
-// TODO: Maybe reconcile with createDefaultPreferences() in constants.ts.
+// TODO: Do not change the values of createDefaultPreferences() here.
 export function createPreferences(): PreferencesInfo {
   return {
+    ...createDefaultPreferences(),
     changes_per_page: 10,
-    theme: AppTheme.AUTO,
-    date_format: DateFormat.ISO,
-    time_format: TimeFormat.HHMM_24,
-    diff_view: DiffViewMode.SIDE_BY_SIDE,
-    my: [],
-    change_table: [],
     email_strategy: EmailStrategy.ENABLED,
-    default_base_for_merges: DefaultBase.AUTO_MERGE,
     allow_browser_notifications: true,
   };
 }
@@ -697,8 +696,9 @@ export function createApproval(account?: AccountInfo): ApprovalInfo {
 export function createChangeViewState(): ChangeViewState {
   return {
     view: GerritView.CHANGE,
+    childView: ChangeChildView.OVERVIEW,
     changeNum: TEST_NUMERIC_CHANGE_ID,
-    project: TEST_PROJECT_NAME,
+    repo: TEST_PROJECT_NAME,
   };
 }
 
@@ -712,13 +712,89 @@ export function createAppElementSearchViewParams(): SearchViewState {
   };
 }
 
-export function createEditViewState(): EditViewState {
+export function createEditViewState(): ChangeViewState {
   return {
-    view: GerritView.EDIT,
+    view: GerritView.CHANGE,
+    childView: ChangeChildView.EDIT,
     changeNum: TEST_NUMERIC_CHANGE_ID,
     patchNum: EDIT,
-    path: 'foo/bar.baz',
-    project: TEST_PROJECT_NAME,
+    repo: TEST_PROJECT_NAME,
+    editView: {path: 'foo/bar.baz'},
+  };
+}
+
+export function createDiffViewState(): ChangeViewState {
+  return {
+    view: GerritView.CHANGE,
+    childView: ChangeChildView.DIFF,
+    changeNum: TEST_NUMERIC_CHANGE_ID,
+    repo: TEST_PROJECT_NAME,
+  };
+}
+
+export function createSearchViewState(): SearchViewState {
+  return {
+    view: GerritView.SEARCH,
+    query: '',
+    offset: '0',
+    loading: false,
+  };
+}
+
+export function createDashboardViewState(): DashboardViewState {
+  return {
+    view: GerritView.DASHBOARD,
+    user: 'self',
+  };
+}
+
+export function createAdminReposViewState(): AdminViewState {
+  return {
+    view: GerritView.ADMIN,
+    adminView: AdminChildView.REPOS,
+    offset: '0',
+    filter: '',
+    openCreateModal: false,
+  };
+}
+
+export function createAdminPluginsViewState(): AdminViewState {
+  return {
+    view: GerritView.ADMIN,
+    adminView: AdminChildView.PLUGINS,
+    offset: '0',
+    filter: '',
+  };
+}
+
+export function createGroupViewState(): GroupViewState {
+  return {
+    view: GerritView.GROUP,
+    groupId: 'test-group-id' as GroupId,
+  };
+}
+
+export function createRepoViewState(): RepoViewState {
+  return {
+    view: GerritView.REPO,
+  };
+}
+
+export function createRepoBranchesViewState(): RepoViewState {
+  return {
+    view: GerritView.REPO,
+    detail: RepoDetailView.BRANCHES,
+    offset: '0',
+    filter: '',
+  };
+}
+
+export function createRepoTagsViewState(): RepoViewState {
+  return {
+    view: GerritView.REPO,
+    detail: RepoDetailView.TAGS,
+    offset: '0',
+    filter: '',
   };
 }
 
@@ -766,18 +842,16 @@ export function createComment(
 export function createDraft(extra: Partial<CommentInfo> = {}): DraftInfo {
   return {
     ...createComment(),
-    __draft: true,
+    savingState: SavingState.OK,
     ...extra,
   };
 }
 
-export function createUnsaved(extra: Partial<CommentInfo> = {}): UnsavedInfo {
+export function createNewDraft(extra: Partial<CommentInfo> = {}): DraftInfo {
   return {
     ...createComment(),
-    __unsaved: true,
-    id: undefined,
-    updated: undefined,
     ...extra,
+    ...createNew(),
   };
 }
 
@@ -789,7 +863,24 @@ export function createRobotComment(
     robot_id: 'robot-id-123' as RobotId,
     robot_run_id: 'robot-run-id-456' as RobotRunId,
     properties: {},
-    fix_suggestions: [],
+    fix_suggestions: [
+      {
+        fix_id: 'robot-run-id-456-fix' as FixId,
+        description: 'Robot suggestion',
+        replacements: [
+          {
+            path: 'abc.txt'!,
+            range: {
+              start_line: 0,
+              start_character: 0,
+              end_line: 1,
+              end_character: 10,
+            },
+            replacement: 'replacement',
+          },
+        ],
+      },
+    ],
     ...extra,
   };
 }
@@ -900,6 +991,9 @@ export function createChangeComments(): ChangeComments {
 export function createThread(
   ...comments: Partial<CommentInfo | DraftInfo>[]
 ): CommentThread {
+  if (comments.length === 0) {
+    comments = [createComment()];
+  }
   return {
     comments: comments.map(c => createComment(c)),
     rootId: 'test-root-id-comment-thread' as UrlEncodedCommentId,
@@ -1013,27 +1107,39 @@ export function createNonApplicableSubmitRequirementResultInfo(): SubmitRequirem
   };
 }
 
-export function createRunResult(): RunResult {
+export function createRun(partial: Partial<CheckRun> = {}): CheckRun {
   return {
     attemptDetails: [],
-    category: Category.INFO,
     checkName: 'test-name',
-    internalResultId: 'test-internal-result-id',
     internalRunId: 'test-internal-run-id',
     isLatestAttempt: true,
     isSingleAttempt: true,
     pluginName: 'test-plugin-name',
     status: RunStatus.COMPLETED,
+    ...partial,
+  };
+}
+
+export function createRunResult(): RunResult {
+  return {
+    category: Category.INFO,
+    checkName: 'test-name',
+    internalResultId: 'test-internal-result-id',
+    isLatestAttempt: true,
+    pluginName: 'test-plugin-name',
     summary: 'This is the test summary.',
     message: 'This is the test message.',
   };
 }
 
-export function createCheckResult(): CheckResult {
+export function createCheckResult(
+  partial: Partial<CheckResult> = {}
+): CheckResult {
   return {
     category: Category.ERROR,
     summary: 'error',
     internalResultId: 'test-internal-result-id',
+    ...partial,
   };
 }
 

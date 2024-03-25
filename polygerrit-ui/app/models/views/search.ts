@@ -16,8 +16,9 @@ import {RepoName, BranchName, TopicName, ChangeInfo} from '../../api/rest-api';
 import {NavigationService} from '../../elements/core/gr-navigation/gr-navigation';
 import {RestApiService} from '../../services/gr-rest-api/gr-rest-api';
 import {GerritView} from '../../services/router/router-model';
+import {accountKey} from '../../utils/account-util';
 import {select} from '../../utils/observable-util';
-import {addQuotesWhen} from '../../utils/string-util';
+import {escapeAndWrapSearchOperatorValue} from '../../utils/string-util';
 import {encodeURL, getBaseUrl} from '../../utils/url-util';
 import {define, Provider} from '../dependency';
 import {Model} from '../model';
@@ -64,14 +65,19 @@ export interface SearchViewState extends ViewState {
 
   /**
    * The search results for the current query.
+   * `undefined` must be allowed here, because updating state with a partial
+   * state without `changes` must be possible without overwriting existing
+   * changes.
+   * TODO: We should consider moving `changes` to a another model. This is not
+   * really "view" state. View state must directly correlate to the URL.
    */
-  changes: ChangeInfo[];
+  changes?: ChangeInfo[];
 }
 
 export interface SearchUrlOptions {
   query?: string;
   offset?: number;
-  project?: RepoName;
+  repo?: RepoName;
   branch?: BranchName;
   topic?: TopicName;
   statuses?: string[];
@@ -86,46 +92,39 @@ export function createSearchUrl(params: SearchUrlOptions): string {
   }
 
   if (params.query) {
-    return `${getBaseUrl()}/q/${encodeURL(params.query, true)}${offsetExpr}`;
+    return `${getBaseUrl()}/q/${encodeURL(params.query)}${offsetExpr}`;
   }
 
   const operators: string[] = [];
   if (params.owner) {
-    operators.push('owner:' + encodeURL(params.owner, false));
+    operators.push('owner:' + encodeURL(params.owner));
   }
-  if (params.project) {
-    operators.push('project:' + encodeURL(params.project, false));
+  if (params.repo) {
+    operators.push('project:' + encodeURL(params.repo));
   }
   if (params.branch) {
-    operators.push('branch:' + encodeURL(params.branch, false));
+    operators.push('branch:' + encodeURL(params.branch));
   }
   if (params.topic) {
     operators.push(
-      'topic:' +
-        addQuotesWhen(
-          encodeURL(params.topic, false),
-          /[\s:]/.test(params.topic)
-        )
+      'topic:' + escapeAndWrapSearchOperatorValue(encodeURL(params.topic))
     );
   }
   if (params.hashtag) {
     operators.push(
       'hashtag:' +
-        addQuotesWhen(
-          encodeURL(params.hashtag.toLowerCase(), false),
-          /[\s:]/.test(params.hashtag)
+        escapeAndWrapSearchOperatorValue(
+          encodeURL(params.hashtag.toLowerCase())
         )
     );
   }
   if (params.statuses) {
     if (params.statuses.length === 1) {
-      operators.push('status:' + encodeURL(params.statuses[0], false));
+      operators.push('status:' + encodeURL(params.statuses[0]));
     } else if (params.statuses.length > 1) {
       operators.push(
         '(' +
-          params.statuses
-            .map(s => `status:${encodeURL(s, false)}`)
-            .join(' OR ') +
+          params.statuses.map(s => `status:${encodeURL(s)}`).join(' OR ') +
           ')'
       );
     }
@@ -170,8 +169,11 @@ export class SearchViewModel extends Model<SearchViewState | undefined> {
     ([query, changes]) => {
       if (changes.length === 0) return undefined;
       if (!USER_QUERY_PATTERN.test(query)) return undefined;
-      const owner = changes[0].owner;
-      return owner?._account_id ?? owner?.email;
+      const ownerKey = accountKey(changes[0].owner);
+      if (changes.some(change => accountKey(change.owner) !== ownerKey)) {
+        return undefined;
+      }
+      return ownerKey;
     }
   );
 

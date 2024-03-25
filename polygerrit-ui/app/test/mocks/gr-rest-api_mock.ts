@@ -30,10 +30,9 @@ import {
   ConfigInfo,
   EditInfo,
   DashboardInfo,
-  ProjectAccessInfoMap,
+  RepoAccessInfoMap,
   IncludedInInfo,
   CommentInfo,
-  PathToCommentsInfoMap,
   PluginInfo,
   DocResult,
   ContributorAgreementInfo,
@@ -59,6 +58,7 @@ import {
   UrlEncodedRepoName,
   NumericChangeId,
   PreferencesInput,
+  DraftInfo,
 } from '../../types/common';
 import {DiffInfo, DiffPreferencesInfo} from '../../types/diff';
 import {readResponsePayload} from '../../elements/shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
@@ -67,6 +67,7 @@ import {
   createChange,
   createCommit,
   createConfig,
+  createMergeable,
   createPreferences,
   createServerInfo,
   createSubmittedTogetherInfo,
@@ -76,6 +77,11 @@ import {
   createDefaultEditPrefs,
 } from '../../constants/constants';
 import {ParsedChangeInfo} from '../../types/types';
+import {getBaseUrl} from '../../utils/url-util';
+import {
+  DOCS_BASE_PATH,
+  PROBE_PATH,
+} from '../../services/gr-rest-api/gr-rest-api-impl';
 
 export const grRestApiMock: RestApiService = {
   addAccountEmail(): Promise<Response> {
@@ -305,6 +311,16 @@ export const grRestApiMock: RestApiService = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return Promise.resolve({}) as any;
   },
+  getDocsBaseUrl(config?: ServerInfo): Promise<string | null> {
+    if (config?.gerrit?.doc_url) {
+      return Promise.resolve(config.gerrit.doc_url);
+    } else {
+      return this.probePath(getBaseUrl() + PROBE_PATH).then(ok =>
+        Promise.resolve(ok ? getBaseUrl() + DOCS_BASE_PATH : null)
+      );
+    }
+    return Promise.resolve('');
+  },
   getDocumentationSearches(): Promise<DocResult[] | undefined> {
     return Promise.resolve([]);
   },
@@ -350,18 +366,19 @@ export const grRestApiMock: RestApiService = {
     return Promise.resolve(true);
   },
   getMergeable(): Promise<MergeableInfo | undefined> {
-    throw new Error('getMergeable() not implemented by RestApiMock.');
+    return Promise.resolve(createMergeable());
   },
   getPlugins(): Promise<{[p: string]: PluginInfo} | undefined> {
     return Promise.resolve({});
   },
-  getPortedComments(): Promise<PathToCommentsInfoMap | undefined> {
+  getPortedComments(): Promise<{[path: string]: CommentInfo[]} | undefined> {
     return Promise.resolve({});
   },
-  getPortedDrafts(): Promise<PathToCommentsInfoMap | undefined> {
+  getPortedDrafts(): Promise<{[path: string]: DraftInfo[]} | undefined> {
     return Promise.resolve({});
   },
   getPreferences(): Promise<PreferencesInfo | undefined> {
+    // TODO: Use createDefaultPreferences() instead.
     return Promise.resolve(createPreferences());
   },
   getProjectConfig(): Promise<ConfigInfo | undefined> {
@@ -376,7 +393,7 @@ export const grRestApiMock: RestApiService = {
       name: repo,
     });
   },
-  getRepoAccess(): Promise<ProjectAccessInfoMap | undefined> {
+  getRepoAccess(): Promise<RepoAccessInfoMap | undefined> {
     return Promise.resolve({});
   },
   getRepoAccessRights(): Promise<ProjectAccessInfo | undefined> {
@@ -412,7 +429,7 @@ export const grRestApiMock: RestApiService = {
   getSuggestedGroups(): Promise<GroupNameToGroupInfoMap | undefined> {
     return Promise.resolve({});
   },
-  getSuggestedProjects(): Promise<NameToProjectInfoMap | undefined> {
+  getSuggestedRepos(): Promise<NameToProjectInfoMap | undefined> {
     return Promise.resolve({});
   },
   getTopMenus(): Promise<TopMenuEntryInfo[] | undefined> {

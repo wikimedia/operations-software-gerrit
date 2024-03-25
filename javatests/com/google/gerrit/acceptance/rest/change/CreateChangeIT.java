@@ -19,11 +19,15 @@ import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.a
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block;
 import static com.google.gerrit.entities.Permission.CREATE;
 import static com.google.gerrit.entities.Permission.READ;
+import static com.google.gerrit.entities.RefNames.HEAD;
 import static com.google.gerrit.entities.RefNames.changeMetaRef;
+import static com.google.gerrit.extensions.client.ListChangesOption.ALL_REVISIONS;
+import static com.google.gerrit.extensions.client.ListChangesOption.CURRENT_COMMIT;
 import static com.google.gerrit.extensions.common.testing.GitPersonSubject.assertThat;
 import static com.google.gerrit.git.ObjectIds.abbreviateName;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
+import static com.google.gerrit.testing.TestActionRefUpdateContext.testRefAction;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.eclipse.jgit.lib.Constants.SIGNED_OFF_BY_TAG;
 
@@ -47,18 +51,23 @@ import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Permission;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.accounts.AccountInput;
+import com.google.gerrit.extensions.api.changes.ApplyPatchInput;
 import com.google.gerrit.extensions.api.changes.ChangeApi;
 import com.google.gerrit.extensions.api.changes.CherryPickInput;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.api.changes.RevisionApi;
 import com.google.gerrit.extensions.api.projects.BranchInput;
+import com.google.gerrit.extensions.api.projects.ConfigInput;
 import com.google.gerrit.extensions.client.ChangeStatus;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo;
+import com.google.gerrit.extensions.client.InheritableBoolean;
+import com.google.gerrit.extensions.client.ListChangesOption;
 import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.ChangeInput;
 import com.google.gerrit.extensions.common.ChangeMessageInfo;
+import com.google.gerrit.extensions.common.DiffInfo;
 import com.google.gerrit.extensions.common.GitPerson;
 import com.google.gerrit.extensions.common.MergeInput;
 import com.google.gerrit.extensions.restapi.AuthException;
@@ -74,6 +83,7 @@ import com.google.gerrit.server.git.validators.CommitValidationListener;
 import com.google.gerrit.server.git.validators.CommitValidationMessage;
 import com.google.gerrit.server.submit.ChangeAlreadyMergedException;
 import com.google.gerrit.testing.FakeEmailSender.Message;
+import com.google.gson.stream.JsonReader;
 import com.google.inject.Inject;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
@@ -94,6 +104,7 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.transport.RefSpec;
+import org.eclipse.jgit.util.Base64;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -105,16 +116,19 @@ public class CreateChangeIT extends AbstractDaemonTest {
 
   @Before
   public void addNonCommitHead() throws Exception {
-    try (Repository repo = repoManager.openRepository(project);
-        ObjectInserter ins = repo.newObjectInserter()) {
-      ObjectId answer = ins.insert(Constants.OBJ_BLOB, new byte[] {42});
-      ins.flush();
-      ins.close();
+    testRefAction(
+        () -> {
+          try (Repository repo = repoManager.openRepository(project);
+              ObjectInserter ins = repo.newObjectInserter()) {
+            ObjectId answer = ins.insert(Constants.OBJ_BLOB, new byte[] {42});
+            ins.flush();
+            ins.close();
 
-      RefUpdate update = repo.getRefDatabase().newUpdate("refs/heads/answer", false);
-      update.setNewObjectId(answer);
-      assertThat(update.forceUpdate()).isEqualTo(RefUpdate.Result.NEW);
-    }
+            RefUpdate update = repo.getRefDatabase().newUpdate("refs/heads/answer", false);
+            update.setNewObjectId(answer);
+            assertThat(update.forceUpdate()).isEqualTo(RefUpdate.Result.NEW);
+          }
+        });
   }
 
   @Test
@@ -207,6 +221,38 @@ public class CreateChangeIT extends AbstractDaemonTest {
     ChangeInfo info = assertCreateSucceeds(ci);
     assertThat(info.changeId).isEqualTo(changeId);
     assertThat(info.revisions.get(info.currentRevision).commit.message).contains(changeIdLine);
+  }
+
+  @Test
+  public void formatResponse_fieldsPresentWhenRequested() throws Exception {
+    ChangeInput ci = newChangeInput(ChangeStatus.NEW);
+    String changeId = "I1234000000000000000000000000000000000000";
+    String changeIdLine = "Change-Id: " + changeId;
+    ci.subject = "Subject\n\n" + changeIdLine;
+    ci.responseFormatOptions =
+        ImmutableList.of(ListChangesOption.CURRENT_REVISION, ListChangesOption.CURRENT_ACTIONS);
+    // Must use REST directly because the Java API returns a ChangeApi upon
+    // creation that will do its own formatting when #get is called on it.
+    RestResponse resp = adminRestSession.post("/changes/", ci);
+    resp.assertCreated();
+    ChangeInfo res = readContentFromJson(resp, ChangeInfo.class);
+    assertThat(res.actions).isNotEmpty();
+    assertThat(res.revisions.values()).hasSize(1);
+  }
+
+  @Test
+  public void formatResponse_fieldsAbsentWhenNotRequested() throws Exception {
+    ChangeInput ci = newChangeInput(ChangeStatus.NEW);
+    String changeId = "I1234000000000000000000000000000000000000";
+    String changeIdLine = "Change-Id: " + changeId;
+    ci.subject = "Subject\n\n" + changeIdLine;
+    // Must use REST directly because the Java API returns a ChangeApi upon
+    // creation that will do its own formatting when #get is called on it.
+    RestResponse resp = adminRestSession.post("/changes/", ci);
+    resp.assertCreated();
+    ChangeInfo res = readContentFromJson(resp, ChangeInfo.class);
+    assertThat(res.actions).isNull();
+    assertThat(res.revisions).isNull();
   }
 
   @Test
@@ -482,6 +528,20 @@ public class CreateChangeIT extends AbstractDaemonTest {
     assertThat(Iterables.getOnlyElement(info.reviewers.get(ReviewerState.CC)).email)
         .isEqualTo(user.email());
     assertThat(sender.getMessages()).isEmpty();
+  }
+
+  @Test
+  public void createAuthorNotAddedAsCcWithAvoidAddingOriginalAuthorAsReviewer() throws Exception {
+    ConfigInput config = new ConfigInput();
+    config.skipAddingAuthorAndCommitterAsReviewers = InheritableBoolean.TRUE;
+    gApi.projects().name(project.get()).config(config);
+    ChangeInput input = newChangeInput(ChangeStatus.NEW);
+    input.author = new AccountInput();
+    input.author.email = user.email();
+    input.author.name = user.fullName();
+
+    ChangeInfo info = assertCreateSucceeds(input);
+    assertThat(info.reviewers).isEmpty();
   }
 
   @Test
@@ -923,6 +983,170 @@ public class CreateChangeIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void createChangeWithBothMergeAndPatch_fails() throws Exception {
+    ChangeInput input = newMergeChangeInput("foo", "master", "");
+    input.patch = new ApplyPatchInput();
+    assertCreateFails(
+        input, BadRequestException.class, "Only one of `merge` and `patch` arguments can be set");
+  }
+
+  private static final String PATCH_FILE_NAME = "a_file.txt";
+  private static final String PATCH_NEW_FILE_CONTENT = "First added line\nSecond added line\n";
+  private static final String PATCH_INPUT =
+      "diff --git a/a_file.txt b/a_file.txt\n"
+          + "new file mode 100644\n"
+          + "index 0000000..f0eec86\n"
+          + "--- /dev/null\n"
+          + "+++ b/a_file.txt\n"
+          + "@@ -0,0 +1,2 @@\n"
+          + "+First added line\n"
+          + "+Second added line\n";
+  private static final String MODIFICATION_PATCH_INPUT =
+      "diff --git a/a_file.txt b/a_file.txt\n"
+          + "new file mode 100644\n"
+          + "--- a/a_file.txt\n"
+          + "+++ b/a_file.txt.txt\n"
+          + "@@ -1,2 +1 @@\n"
+          + "-First original line\n"
+          + "-Second original line\n"
+          + "+Modified line\n";
+
+  @Test
+  public void createPatchApplyingChange_success() throws Exception {
+    createBranch(BranchNameKey.create(project, "other"));
+    ChangeInput input = newPatchApplyingChangeInput("other", PATCH_INPUT);
+
+    ChangeInfo info = assertCreateSucceeds(input);
+
+    DiffInfo diff = gApi.changes().id(info.id).current().file(PATCH_FILE_NAME).diff();
+    assertDiffForNewFile(diff, info.currentRevision, PATCH_FILE_NAME, PATCH_NEW_FILE_CONTENT);
+    assertThat(info.revisions.get(info.currentRevision).commit.message)
+        .isEqualTo("apply patch to other\n\nChange-Id: " + info.changeId + "\n");
+  }
+
+  @Test
+  public void createPatchApplyingChange_fromGerritPatch_success() throws Exception {
+    String head = getHead(repo(), HEAD).name();
+    createBranchWithRevision(BranchNameKey.create(project, "branch"), head);
+    PushOneCommit.Result baseCommit =
+        createChange("Add file", PATCH_FILE_NAME, PATCH_NEW_FILE_CONTENT);
+    baseCommit.assertOkStatus();
+    BinaryResult originalPatch = gApi.changes().id(baseCommit.getChangeId()).current().patch();
+    createBranchWithRevision(BranchNameKey.create(project, "other"), head);
+    ChangeInput input = newPatchApplyingChangeInput("other", originalPatch.asString());
+
+    ChangeInfo info = assertCreateSucceeds(input);
+
+    DiffInfo diff = gApi.changes().id(info.id).current().file(PATCH_FILE_NAME).diff();
+    assertDiffForNewFile(diff, info.currentRevision, PATCH_FILE_NAME, PATCH_NEW_FILE_CONTENT);
+  }
+
+  @Test
+  public void createPatchApplyingChange_fromGerritPatchUsingRest_success() throws Exception {
+    String head = getHead(repo(), HEAD).name();
+    createBranchWithRevision(BranchNameKey.create(project, "branch"), head);
+    PushOneCommit.Result baseCommit =
+        createChange("Add file", PATCH_FILE_NAME, PATCH_NEW_FILE_CONTENT);
+    baseCommit.assertOkStatus();
+    createBranchWithRevision(BranchNameKey.create(project, "other"), head);
+    RestResponse patchResp =
+        userRestSession.get("/changes/" + baseCommit.getChangeId() + "/revisions/current/patch");
+    patchResp.assertOK();
+    String originalPatch = new String(Base64.decode(patchResp.getEntityContent()), UTF_8);
+    ChangeInput input = newPatchApplyingChangeInput("other", originalPatch);
+
+    ChangeInfo info = assertCreateSucceedsUsingRest(input);
+
+    DiffInfo diff = gApi.changes().id(info.id).current().file(PATCH_FILE_NAME).diff();
+    assertDiffForNewFile(diff, info.currentRevision, PATCH_FILE_NAME, PATCH_NEW_FILE_CONTENT);
+  }
+
+  @Test
+  public void createPatchApplyingChange_withParentChange_success() throws Exception {
+    Result change = createChange();
+    ChangeInput input = newPatchApplyingChangeInput("other", PATCH_INPUT);
+    input.baseChange = change.getChangeId();
+
+    ChangeInfo info = assertCreateSucceeds(input);
+
+    assertThat(gApi.changes().id(info.id).current().commit(false).parents.get(0).commit)
+        .isEqualTo(change.getCommit().getId().name());
+    DiffInfo diff = gApi.changes().id(info.id).current().file(PATCH_FILE_NAME).diff();
+    assertDiffForNewFile(diff, info.currentRevision, PATCH_FILE_NAME, PATCH_NEW_FILE_CONTENT);
+  }
+
+  @Test
+  public void createPatchApplyingChange_withParentCommit_success() throws Exception {
+    createBranch(BranchNameKey.create(project, "other"));
+    Result baseChange = createChange("refs/heads/other");
+    PushOneCommit.Result ignoredCommit = createChange();
+    ignoredCommit.assertOkStatus();
+    ChangeInput input = newPatchApplyingChangeInput("other", PATCH_INPUT);
+    input.baseCommit = baseChange.getCommit().getId().name();
+
+    ChangeInfo info = assertCreateSucceeds(input);
+
+    assertThat(gApi.changes().id(info.id).current().commit(false).parents.get(0).commit)
+        .isEqualTo(input.baseCommit);
+    DiffInfo diff = gApi.changes().id(info.id).current().file(PATCH_FILE_NAME).diff();
+    assertDiffForNewFile(diff, info.currentRevision, PATCH_FILE_NAME, PATCH_NEW_FILE_CONTENT);
+  }
+
+  @Test
+  public void createPatchApplyingChange_withEmptyTip_fails() throws Exception {
+    ChangeInput input = newPatchApplyingChangeInput("foo", "patch");
+    input.newBranch = true;
+    assertCreateFails(
+        input, BadRequestException.class, "Cannot apply patch on top of an empty tree");
+  }
+
+  @Test
+  public void createPatchApplyingChange_fromBadPatch_fails() throws Exception {
+    final String invalidPatch = "@@ -2,2 +2,3 @@ a\n" + " b\n" + "+c\n" + " d";
+    createBranch(BranchNameKey.create(project, "other"));
+    ChangeInput input = newPatchApplyingChangeInput("other", invalidPatch);
+    assertCreateFails(input, BadRequestException.class, "Invalid patch format");
+  }
+
+  @Test
+  public void createPatchApplyingChange_withAuthorOverride_success() throws Exception {
+    createBranch(BranchNameKey.create(project, "other"));
+    ChangeInput input = newPatchApplyingChangeInput("other", PATCH_INPUT);
+    input.author = new AccountInput();
+    input.author.email = "gerritlessjane@invalid";
+    // This is an email address that doesn't exist as account on the Gerrit server.
+    input.author.name = "Gerritless Jane";
+    ChangeInfo info = assertCreateSucceeds(input);
+
+    RevisionApi rApi = gApi.changes().id(info.id).current();
+    GitPerson author = rApi.commit(false).author;
+    assertThat(author).email().isEqualTo(input.author.email);
+    assertThat(author).name().isEqualTo(input.author.name);
+    GitPerson committer = rApi.commit(false).committer;
+    assertThat(committer).email().isEqualTo(admin.getNameEmail().email());
+  }
+
+  @Test
+  public void createPatchApplyingChange_withConflicts_appendErrorsToCommitMessage()
+      throws Exception {
+    createBranch(BranchNameKey.create(project, "other"));
+    PushOneCommit push =
+        pushFactory.create(
+            admin.newIdent(),
+            testRepo,
+            "Adding unexpected base content, which will cause errors",
+            PATCH_FILE_NAME,
+            "unexpected base content");
+    Result conflictingChange = push.to("refs/heads/other");
+    conflictingChange.assertOkStatus();
+    ChangeInput input = newPatchApplyingChangeInput("other", MODIFICATION_PATCH_INPUT);
+
+    ChangeInfo info = assertCreateSucceeds(input);
+
+    assertThat(info.revisions.get(info.currentRevision).commit.message).contains("errors occurred");
+  }
+
+  @Test
   @UseSystemTime
   public void sha1sOfTwoNewChangesDiffer() throws Exception {
     ChangeInput changeInput = newChangeInput(ChangeStatus.NEW);
@@ -1084,17 +1308,38 @@ public class CreateChangeIT extends AbstractDaemonTest {
 
   private ChangeInfo assertCreateSucceeds(ChangeInput in) throws Exception {
     ChangeInfo out = gApi.changes().create(in).get();
+    validateCreateSucceeds(in, out);
+    return out;
+  }
+
+  private ChangeInfo assertCreateSucceedsUsingRest(ChangeInput in) throws Exception {
+    RestResponse resp = adminRestSession.post("/changes/", in);
+    resp.assertCreated();
+    ChangeInfo res = readContentFromJson(resp, ChangeInfo.class);
+    // The original result doesn't contain any revision data.
+    ChangeInfo out = gApi.changes().id(res.changeId).get(ALL_REVISIONS, CURRENT_COMMIT);
+    validateCreateSucceeds(in, out);
+    return out;
+  }
+
+  private static <T> T readContentFromJson(RestResponse r, Class<T> clazz) throws Exception {
+    try (JsonReader jsonReader = new JsonReader(r.getReader())) {
+      return newGson().fromJson(jsonReader, clazz);
+    }
+  }
+
+  private void validateCreateSucceeds(ChangeInput in, ChangeInfo out) throws Exception {
     assertThat(out.project).isEqualTo(in.project);
     assertThat(RefNames.fullName(out.branch)).isEqualTo(RefNames.fullName(in.branch));
     assertThat(out.subject).isEqualTo(Splitter.on("\n").splitToList(in.subject).get(0));
     assertThat(out.topic).isEqualTo(in.topic);
     assertThat(out.status).isEqualTo(in.status);
-    if (in.isPrivate) {
+    if (Boolean.TRUE.equals(in.isPrivate)) {
       assertThat(out.isPrivate).isTrue();
     } else {
       assertThat(out.isPrivate).isNull();
     }
-    if (in.workInProgress) {
+    if (Boolean.TRUE.equals(in.workInProgress)) {
       assertThat(out.workInProgress).isTrue();
     } else {
       assertThat(out.workInProgress).isNull();
@@ -1103,7 +1348,6 @@ public class CreateChangeIT extends AbstractDaemonTest {
     assertThat(out.submitted).isNull();
     assertThat(out.containsGitConflicts).isNull();
     assertThat(in.status).isEqualTo(ChangeStatus.NEW);
-    return out;
   }
 
   private ChangeInfo assertCreateSucceedsWithConflicts(ChangeInput in) throws Exception {
@@ -1171,6 +1415,19 @@ public class CreateChangeIT extends AbstractDaemonTest {
       in.merge.strategy = strategy;
     }
     in.merge.allowConflicts = allowConflicts;
+    return in;
+  }
+
+  private ChangeInput newPatchApplyingChangeInput(String targetBranch, String patch) {
+    // create a change applying the given patch on the target branch in gerrit
+    ChangeInput in = new ChangeInput();
+    in.project = project.get();
+    in.branch = targetBranch;
+    in.subject = "apply patch to " + targetBranch;
+    in.status = ChangeStatus.NEW;
+    ApplyPatchInput patchInput = new ApplyPatchInput();
+    patchInput.patch = patch;
+    in.patch = patchInput;
     return in;
   }
 

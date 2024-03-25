@@ -13,17 +13,18 @@ import {
   AutocompleteQuery,
 } from '../../shared/gr-autocomplete/gr-autocomplete';
 import {GroupId, GroupInfo, GroupName} from '../../../types/common';
-import {firePageError, fireTitleChange} from '../../../utils/event-util';
+import {fire, firePageError, fireTitleChange} from '../../../utils/event-util';
 import {getAppContext} from '../../../services/app-context';
 import {ErrorCallback} from '../../../api/rest';
 import {convertToString} from '../../../utils/string-util';
-import {BindValueChangeEvent} from '../../../types/events';
+import {BindValueChangeEvent, ValueChangedEvent} from '../../../types/events';
 import {fontStyles} from '../../../styles/gr-font-styles';
 import {formStyles} from '../../../styles/gr-form-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {subpageStyles} from '../../../styles/gr-subpage-styles';
 import {LitElement, PropertyValues, css, html} from 'lit';
 import {customElement, property, state} from 'lit/decorators.js';
+import {throwingErrorCallback} from '../../shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
 
 const INTERNAL_GROUP_REGEX = /^[\da-f]{40}$/;
 
@@ -47,16 +48,13 @@ declare global {
   interface HTMLElementTagNameMap {
     'gr-group': GrGroup;
   }
+  interface HTMLElementEventMap {
+    'name-changed': CustomEvent<GroupNameChangedDetail>;
+  }
 }
 
 @customElement('gr-group')
 export class GrGroup extends LitElement {
-  /**
-   * Fired when the group name changes.
-   *
-   * @event name-changed
-   */
-
   private readonly query: AutocompleteQuery;
 
   @property({type: String})
@@ -344,7 +342,7 @@ export class GrGroup extends LitElement {
     this.groupConfig = config;
     this.originalOptionsVisibleToAll = config?.options?.visible_to_all;
 
-    fireTitleChange(this, config.name);
+    fireTitleChange(config.name);
 
     await Promise.all(promises);
     this.loading = false;
@@ -372,13 +370,7 @@ export class GrGroup extends LitElement {
         name: groupName,
         external: !this.groupIsInternal,
       };
-      this.dispatchEvent(
-        new CustomEvent('name-changed', {
-          detail,
-          composed: true,
-          bubbles: true,
-        })
-      );
+      fire(this, 'name-changed', detail);
       this.requestUpdate();
     }
 
@@ -427,13 +419,20 @@ export class GrGroup extends LitElement {
   }
 
   private getGroupSuggestions(input: string) {
-    return this.restApiService.getSuggestedGroups(input).then(response => {
-      const groups: AutocompleteSuggestion[] = [];
-      for (const [name, group] of Object.entries(response ?? {})) {
-        groups.push({name, value: decodeURIComponent(group.id)});
-      }
-      return groups;
-    });
+    return this.restApiService
+      .getSuggestedGroups(
+        input,
+        /* project=*/ undefined,
+        /* n=*/ undefined,
+        throwingErrorCallback
+      )
+      .then(response => {
+        const groups: AutocompleteSuggestion[] = [];
+        for (const [name, group] of Object.entries(response ?? {})) {
+          groups.push({name, value: decodeURIComponent(group.id)});
+        }
+        return groups;
+      });
   }
 
   // private but used in test
@@ -447,25 +446,25 @@ export class GrGroup extends LitElement {
     return id.match(INTERNAL_GROUP_REGEX) ? id : decodeURIComponent(id);
   }
 
-  private handleNameTextChanged(e: CustomEvent) {
+  private handleNameTextChanged(e: ValueChangedEvent) {
     if (!this.groupConfig || this.loading) return;
     this.groupConfig.name = e.detail.value as GroupName;
     this.requestUpdate();
   }
 
-  private handleOwnerTextChanged(e: CustomEvent) {
+  private handleOwnerTextChanged(e: ValueChangedEvent) {
     if (!this.groupConfig || this.loading) return;
     this.groupConfig.owner = e.detail.value;
     this.requestUpdate();
   }
 
-  private handleOwnerValueChanged(e: CustomEvent) {
+  private handleOwnerValueChanged(e: ValueChangedEvent) {
     if (this.loading) return;
     this.groupConfigOwner = e.detail.value;
     this.requestUpdate();
   }
 
-  private handleDescriptionTextChanged(e: CustomEvent) {
+  private handleDescriptionTextChanged(e: ValueChangedEvent) {
     if (!this.groupConfig || this.loading) return;
     this.groupConfig.description = e.detail.value;
     this.requestUpdate();

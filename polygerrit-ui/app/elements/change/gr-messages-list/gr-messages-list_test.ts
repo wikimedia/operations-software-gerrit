@@ -27,11 +27,13 @@ import {
   Timestamp,
   UrlEncodedCommentId,
 } from '../../../types/common';
-import {assertIsDefined} from '../../../utils/common-util';
+import {assertIsDefined, uuid} from '../../../utils/common-util';
 import {html} from 'lit';
 import {fixture, assert} from '@open-wc/testing';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {PaperToggleButtonElement} from '@polymer/paper-toggle-button';
+import {testResolver} from '../../../test/common-test-setup';
+import {commentsModelToken} from '../../../models/comments/comments-model';
 
 const author = {
   _account_id: 42 as AccountId,
@@ -51,17 +53,17 @@ const createComment = function () {
   };
 };
 
-const randomMessage = function (opt_params?: ChangeMessageInfo) {
-  const params = opt_params || ({} as ChangeMessageInfo);
+const randomMessage = function (params?: ChangeMessageInfo) {
+  params = params || ({} as ChangeMessageInfo);
   const author1 = {
     _account_id: 1115495 as AccountId,
     name: 'Andrew Bonventre',
     email: 'andybons@chromium.org' as EmailAddress,
   };
   return {
-    id: (params.id || Math.random().toString()) as ChangeMessageId,
+    id: (params.id || uuid()) as ChangeMessageId,
     date: (params.date || '2016-01-12 20:28:33.038000') as Timestamp,
-    message: params.message || Math.random().toString(),
+    message: params.message || uuid(),
     _revision_number: (params._revision_number || 1) as PatchSetNum,
     author: params.author || author1,
     tag: params.tag,
@@ -69,7 +71,7 @@ const randomMessage = function (opt_params?: ChangeMessageInfo) {
 };
 
 function generateRandomMessages(count: number) {
-  return new Array(count)
+  return Array.from({length: count})
     .fill(undefined)
     .map(() => randomMessage()) as ChangeMessageInfo[];
 }
@@ -136,7 +138,9 @@ suite('gr-messages-list tests', () => {
       element = await fixture<GrMessagesList>(
         html`<gr-messages-list></gr-messages-list>`
       );
-      await element.getCommentsModel().reloadComments(0 as NumericChangeId);
+      await testResolver(commentsModelToken).reloadComments(
+        0 as NumericChangeId
+      );
       element.messages = messages;
       await element.updateComplete;
     });
@@ -191,9 +195,9 @@ suite('gr-messages-list tests', () => {
       }
     });
 
-    test('expand/collapse from external keypress', () => {
+    test('expand/collapse from external keypress', async () => {
       // Start with one expanded message. -> not all collapsed
-      element.scrollToMessage(messages[1].id);
+      await element.scrollToMessage(messages[1].id);
       assert.isFalse(
         [...getMessages()].filter(m => m.message?.expanded).length === 0
       );
@@ -229,7 +233,6 @@ suite('gr-messages-list tests', () => {
         message.message = {...message.message, expanded: false};
       }
 
-      const scrollToStub = sinon.stub(window, 'scrollTo');
       const highlightStub = sinon.stub(element, 'highlightEl');
 
       await element.scrollToMessage('invalid');
@@ -243,6 +246,11 @@ suite('gr-messages-list tests', () => {
       }
 
       const messageID = messages[1].id;
+
+      const selector = `[data-message-id="${messageID}"]`;
+      const el = queryAndAssert<GrMessage>(element, selector);
+      const scrollToStub = sinon.stub(el, 'scrollIntoView');
+
       await element.scrollToMessage(messageID);
       assert.isTrue(
         queryAndAssert<GrMessage>(element, `[data-message-id="${messageID}"]`)
@@ -254,14 +262,18 @@ suite('gr-messages-list tests', () => {
     });
 
     test('scroll to message offscreen', async () => {
-      const scrollToStub = sinon.stub(window, 'scrollTo');
       const highlightStub = sinon.stub(element, 'highlightEl');
       element.messages = generateRandomMessages(25);
       await element.updateComplete;
-      assert.isFalse(scrollToStub.called);
       assert.isFalse(highlightStub.called);
 
       const messageID = element.messages[1].id;
+      const selector = `[data-message-id="${messageID}"]`;
+      const el = queryAndAssert<GrMessage>(element, selector);
+      const scrollToStub = sinon.stub(el, 'scrollIntoView');
+
+      assert.isFalse(scrollToStub.called);
+
       await element.scrollToMessage(messageID);
       assert.isTrue(scrollToStub.calledOnce);
       assert.isTrue(highlightStub.calledOnce);
@@ -317,10 +329,11 @@ suite('gr-messages-list tests', () => {
       await element.updateComplete;
       const messageElements = getMessages();
       // threads
-      assert.equal(messageElements[0].message!.commentThreads.length, 3);
+      assertIsDefined(messageElements[0].message, 'message');
+      assert.equal(messageElements[0].message.commentThreads.length, 3);
       // first thread contains 1 comment
       assert.equal(
-        messageElements[0].message!.commentThreads[0].comments.length,
+        messageElements[0].message.commentThreads[0].comments.length,
         1
       );
     });
@@ -512,7 +525,8 @@ suite('gr-messages-list tests', () => {
       await element.updateComplete;
       const messageEls = getMessages();
       assert.equal(messageEls.length, 1);
-      assert.equal(messageEls[0].message!.message, messages[0].message);
+      assertIsDefined(messageEls[0].message, 'message');
+      assert.equal(messageEls[0].message.message, messages[0].message);
     });
   });
 

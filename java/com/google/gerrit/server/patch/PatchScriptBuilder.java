@@ -19,6 +19,7 @@ import static com.google.common.collect.ImmutableSet.toImmutableSet;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.data.PatchScript;
 import com.google.gerrit.common.data.PatchScript.DisplayMethod;
 import com.google.gerrit.entities.FixReplacement;
@@ -121,7 +122,7 @@ class PatchScriptBuilder {
     if (a.mode == FileMode.MISSING) {
       throw new ResourceNotFoundException(String.format("File %s not found", fileName));
     }
-    FixCalculator.FixResult fixResult = FixCalculator.calculateFix(a.src, fixReplacements);
+    FixCalculator.FixResult fixResult = FixCalculator.calculateFix(a.src, fixReplacements, true);
     PatchSide b =
         new PatchSide(
             null,
@@ -209,6 +210,7 @@ class PatchScriptBuilder {
     }
   }
 
+  @Nullable
   private static String oldName(PatchFileChange entry) {
     switch (entry.getChangeType()) {
       case ADDED:
@@ -224,6 +226,7 @@ class PatchScriptBuilder {
     }
   }
 
+  @Nullable
   private static String newName(PatchFileChange entry) {
     switch (entry.getChangeType()) {
       case DELETED:
@@ -412,6 +415,7 @@ class PatchScriptBuilder {
           treeId, path, id, mode, srcContent, src, mimeType, displayMethod, fileMode);
     }
 
+    @Nullable
     private TreeWalk find(ObjectReader reader, String path, ObjectId within) throws IOException {
       if (path == null || within == null) {
         return null;

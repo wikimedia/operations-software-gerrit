@@ -24,14 +24,10 @@ import {ifDefined} from 'lit/directives/if-defined.js';
 import {classMap} from 'lit/directives/class-map.js';
 import {StyleInfo, styleMap} from 'lit/directives/style-map.js';
 
-import {
-  createEvent,
-  Dimensions,
-  fitToFrame,
-  FrameConstrainer,
-  Point,
-  Rect,
-} from './util';
+import {Dimensions, fitToFrame, FrameConstrainer, Point, Rect} from './util';
+import {ValueChangedEvent} from '../../../types/events';
+import {fire} from '../../../utils/event-util';
+import {ImageDiffAction} from '../../../api/diff';
 
 const DRAG_DEAD_ZONE_PIXELS = 5;
 
@@ -686,27 +682,25 @@ export class GrImageViewer extends LitElement {
       });
   }
 
+  fireAction(detail: ImageDiffAction) {
+    fire(this, 'image-diff-action', detail);
+  }
+
   selectBase() {
     if (!this.baseUrl) return;
     this.baseSelected = true;
-    this.dispatchEvent(
-      createEvent({type: 'version-switcher-clicked', button: 'base'})
-    );
+    this.fireAction({type: 'version-switcher-clicked', button: 'base'});
   }
 
   selectRevision() {
     if (!this.revisionUrl) return;
     this.baseSelected = false;
-    this.dispatchEvent(
-      createEvent({type: 'version-switcher-clicked', button: 'revision'})
-    );
+    this.fireAction({type: 'version-switcher-clicked', button: 'revision'});
   }
 
   manualBlink() {
     this.toggleImage();
-    this.dispatchEvent(
-      createEvent({type: 'version-switcher-clicked', button: 'switch'})
-    );
+    this.fireAction({type: 'version-switcher-clicked', button: 'switch'});
   }
 
   private toggleImage() {
@@ -717,9 +711,10 @@ export class GrImageViewer extends LitElement {
 
   toggleAutomaticBlink() {
     this.automaticBlink = !this.automaticBlink;
-    this.dispatchEvent(
-      createEvent({type: 'automatic-blink-changed', value: this.automaticBlink})
-    );
+    this.fireAction({
+      type: 'automatic-blink-changed',
+      value: this.automaticBlink,
+    });
   }
 
   private updateAutomaticBlink() {
@@ -751,52 +746,43 @@ export class GrImageViewer extends LitElement {
 
   private toggleHighlight(source: 'controls' | 'magnifier') {
     this.showHighlight = !this.showHighlight;
-    this.dispatchEvent(
-      createEvent({
-        type: 'highlight-changes-changed',
-        value: this.showHighlight,
-        source,
-      })
-    );
+    this.fireAction({
+      type: 'highlight-changes-changed',
+      value: this.showHighlight,
+      source,
+    });
   }
 
-  zoomControlChanged(event: CustomEvent) {
-    const value = event.detail.value;
-    if (!value) return;
-    if (value === 'fit') {
+  zoomControlChanged(event: ValueChangedEvent<string>) {
+    const scaleString = event.detail.value;
+    if (!scaleString) return;
+    if (scaleString === 'fit') {
       this.scaledSelected = true;
-      this.dispatchEvent(
-        createEvent({type: 'zoom-level-changed', scale: 'fit'})
-      );
+      this.fireAction({type: 'zoom-level-changed', scale: 'fit'});
     }
-    if (value > 0) {
+    const scale = Number(scaleString);
+    if (Number.isFinite(scale) && scale > 0) {
       this.scaledSelected = false;
-      this.scale = value;
-      this.dispatchEvent(
-        createEvent({type: 'zoom-level-changed', scale: value})
-      );
+      this.scale = scale;
+      this.fireAction({type: 'zoom-level-changed', scale});
     }
     this.updateSizes();
   }
 
   followMouseChanged() {
     this.followMouse = !this.followMouse;
-    this.dispatchEvent(
-      createEvent({type: 'follow-mouse-changed', value: this.followMouse})
-    );
+    this.fireAction({type: 'follow-mouse-changed', value: this.followMouse});
   }
 
   pickColor(value: string) {
     this.checkerboardSelected = false;
     this.backgroundColor = value;
-    this.dispatchEvent(createEvent({type: 'background-color-changed', value}));
+    this.fireAction({type: 'background-color-changed', value});
   }
 
   pickCheckerboard() {
     this.checkerboardSelected = true;
-    this.dispatchEvent(
-      createEvent({type: 'background-color-changed', value: 'checkerboard'})
-    );
+    this.fireAction({type: 'background-color-changed', value: 'checkerboard'});
   }
 
   mousemoveImageArea(event: MouseEvent) {
@@ -849,9 +835,9 @@ export class GrImageViewer extends LitElement {
     // external mice.
     if (distance < DRAG_DEAD_ZONE_PIXELS) {
       this.toggleImage();
-      this.dispatchEvent(createEvent({type: 'magnifier-clicked'}));
+      this.fireAction({type: 'magnifier-clicked'});
     } else {
-      this.dispatchEvent(createEvent({type: 'magnifier-dragged'}));
+      this.fireAction({type: 'magnifier-dragged'});
     }
   }
 
@@ -894,17 +880,17 @@ export class GrImageViewer extends LitElement {
     if (!this.ownsMouseDown) return;
     this.grabbing = false;
     this.ownsMouseDown = false;
-    this.dispatchEvent(createEvent({type: 'magnifier-dragged'}));
+    this.fireAction({type: 'magnifier-dragged'});
   }
 
   dragstartMagnifier(event: DragEvent) {
     event.preventDefault();
   }
 
-  onOverviewCenterUpdated(event: CustomEvent) {
+  onOverviewCenterUpdated(event: CustomEvent<Point>) {
     this.frameConstrainer.requestCenter({
-      x: event.detail.x as number,
-      y: event.detail.y as number,
+      x: event.detail.x,
+      y: event.detail.y,
     });
     this.updateFrames();
   }
@@ -954,5 +940,8 @@ export class GrImageViewer extends LitElement {
 declare global {
   interface HTMLElementTagNameMap {
     'gr-image-viewer': GrImageViewer;
+  }
+  interface HTMLElementEventMap {
+    'image-diff-action': CustomEvent<ImageDiffAction>;
   }
 }

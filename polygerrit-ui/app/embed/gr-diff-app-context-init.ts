@@ -63,30 +63,6 @@ export function createDiffAppContext(): AppContext & Finalizable {
     restApiService: (_ctx: Partial<AppContext>) => {
       throw new Error('restApiService is not implemented');
     },
-    jsApiService: (_ctx: Partial<AppContext>) => {
-      throw new Error('jsApiService is not implemented');
-    },
-    storageService: (_ctx: Partial<AppContext>) => {
-      throw new Error('storageService is not implemented');
-    },
-    userModel: (_ctx: Partial<AppContext>) => {
-      throw new Error('userModel is not implemented');
-    },
-    accountsModel: (_ctx: Partial<AppContext>) => {
-      throw new Error('accountsModel is not implemented');
-    },
-    routerModel: (_ctx: Partial<AppContext>) => {
-      throw new Error('routerModel is not implemented');
-    },
-    shortcutsService: (_ctx: Partial<AppContext>) => {
-      throw new Error('shortcutsService is not implemented');
-    },
-    pluginsModel: (_ctx: Partial<AppContext>) => {
-      throw new Error('pluginsModel is not implemented');
-    },
-    highlightService: (_ctx: Partial<AppContext>) => {
-      throw new Error('highlightService is not implemented');
-    },
   };
   return create<AppContext>(appRegistry);
 }

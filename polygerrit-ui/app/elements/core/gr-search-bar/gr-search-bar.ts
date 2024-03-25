@@ -25,6 +25,11 @@ import {assertIsDefined} from '../../../utils/common-util';
 import {configModelToken} from '../../../models/config/config-model';
 import {resolve} from '../../../models/dependency';
 import {subscribe} from '../../lit/subscription-controller';
+import {
+  AutocompleteCommitEvent,
+  ValueChangedEvent,
+} from '../../../types/events';
+import {fireNoBubbleNoCompose} from '../../../utils/event-util';
 
 // Possible static search options for auto complete, without negations.
 const SEARCH_OPERATORS: ReadonlyArray<string> = [
@@ -159,9 +164,6 @@ export class GrSearchBar extends LitElement {
   @state()
   mergeabilityComputationBehavior?: MergeabilityComputationBehavior;
 
-  @property({type: String})
-  label = '';
-
   // private but used in test
   @state() inputVal = '';
 
@@ -198,6 +200,9 @@ export class GrSearchBar extends LitElement {
     return [
       sharedStyles,
       css`
+        gr-icon.searchIcon {
+          margin: 0 var(--spacing-xs);
+        }
         form {
           display: flex;
         }
@@ -216,8 +221,7 @@ export class GrSearchBar extends LitElement {
       <form>
         <gr-autocomplete
           id="searchInput"
-          .label=${this.label}
-          show-search-icon
+          label="Search for changes"
           .text=${this.inputVal}
           .query=${this.query}
           allow-non-suggested-values
@@ -225,13 +229,14 @@ export class GrSearchBar extends LitElement {
           .threshold=${this.threshold}
           tab-complete
           .verticalOffset=${30}
-          @commit=${(e: Event) => {
+          @commit=${(e: AutocompleteCommitEvent) => {
             this.handleInputCommit(e);
           }}
-          @text-changed=${(e: CustomEvent) => {
+          @text-changed=${(e: ValueChangedEvent) => {
             this.handleSearchTextChanged(e);
           }}
         >
+          <gr-icon icon="search" class="searchIcon" slot="prefix"></gr-icon>
           <a
             class="help"
             slot="suffix"
@@ -275,14 +280,14 @@ export class GrSearchBar extends LitElement {
     // fallback to gerrit's official doc
     let baseUrl =
       this.docsBaseUrl ||
-      'https://gerrit-review.googlesource.com/documentation/';
+      'https://gerrit-review.googlesource.com/Documentation/';
     if (baseUrl.endsWith('/')) {
       baseUrl = baseUrl.substring(0, baseUrl.length - 1);
     }
     return `${baseUrl}/user-search.html`;
   }
 
-  private handleInputCommit(e: Event) {
+  private handleInputCommit(e: AutocompleteCommitEvent) {
     this.preventDefaultAndNavigateToInputVal(e);
   }
 
@@ -292,7 +297,7 @@ export class GrSearchBar extends LitElement {
    * - e.target is the gr-autocomplete widget (#searchInput)
    * - e.target is the input element wrapped within #searchInput
    */
-  private preventDefaultAndNavigateToInputVal(e: Event) {
+  private preventDefaultAndNavigateToInputVal(e: AutocompleteCommitEvent) {
     e.preventDefault();
     if (!this.inputVal) return;
     const trimmedInput = this.inputVal.trim();
@@ -306,11 +311,7 @@ export class GrSearchBar extends LitElement {
       const detail: SearchBarHandleSearchDetail = {
         inputVal: this.inputVal,
       };
-      this.dispatchEvent(
-        new CustomEvent('handle-search', {
-          detail,
-        })
-      );
+      fireNoBubbleNoCompose(this, 'handle-search', detail);
     }
   }
 
@@ -422,7 +423,7 @@ export class GrSearchBar extends LitElement {
     this.searchInput.selectAll();
   }
 
-  private handleSearchTextChanged(e: CustomEvent) {
+  private handleSearchTextChanged(e: ValueChangedEvent) {
     this.inputVal = e.detail.value;
   }
 }

@@ -15,6 +15,8 @@ import {Binding, Key, Modifier} from '../../utils/dom-util';
 import {getAppContext} from '../app-context';
 import {pressKey} from '../../test/test-utils';
 import {assert} from '@open-wc/testing';
+import {testResolver} from '../../test/common-test-setup';
+import {userModelToken} from '../../models/user/user-model';
 
 const KEY_A: Binding = {key: 'a'};
 
@@ -23,14 +25,14 @@ suite('shortcuts-service tests', () => {
 
   setup(() => {
     service = new ShortcutsService(
-      getAppContext().userModel,
+      testResolver(userModelToken),
       getAppContext().reportingService
     );
   });
 
   test('getShortcut', () => {
     assert.equal(service.getShortcut(Shortcut.NEXT_FILE), ']');
-    assert.equal(service.getShortcut(Shortcut.TOGGLE_LEFT_PANE), 'A');
+    assert.equal(service.getShortcut(Shortcut.TOGGLE_LEFT_PANE), 'Shift+a');
   });
 
   suite('addShortcut()', () => {

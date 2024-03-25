@@ -10,8 +10,6 @@ import {GrChangeListItem} from '../gr-change-list-item/gr-change-list-item';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import {getAppContext} from '../../../services/app-context';
 import {navigationToken} from '../../core/gr-navigation/gr-navigation';
-import {getPluginEndpoints} from '../../shared/gr-js-api-interface/gr-plugin-endpoints';
-import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {GrCursorManager} from '../../shared/gr-cursor-manager/gr-cursor-manager';
 import {
   AccountInfo,
@@ -19,7 +17,7 @@ import {
   ServerInfo,
   PreferencesInput,
 } from '../../../types/common';
-import {fire, fireEvent, fireReload} from '../../../utils/event-util';
+import {fire, fireReload} from '../../../utils/event-util';
 import {ColumnNames, ScrollMode} from '../../../constants/constants';
 import {getRequirements} from '../../../utils/label-util';
 import {Key} from '../../../utils/dom-util';
@@ -36,6 +34,7 @@ import {Execution} from '../../../constants/reporting';
 import {ValueChangedEvent} from '../../../types/events';
 import {resolve} from '../../../models/dependency';
 import {createChangeUrl} from '../../../models/views/change';
+import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 
 export interface ChangeListSection {
   countLabel?: string;
@@ -77,18 +76,6 @@ export function computeRelativeIndex(
 
 @customElement('gr-change-list')
 export class GrChangeList extends LitElement {
-  /**
-   * Fired when next page key shortcut was pressed.
-   *
-   * @event next-page
-   */
-
-  /**
-   * Fired when previous page key shortcut was pressed.
-   *
-   * @event previous-page
-   */
-
   /**
    * The logged-in user's account, or an empty object if no user is logged
    * in.
@@ -134,9 +121,6 @@ export class GrChangeList extends LitElement {
   // private but used in test
   @state() config?: ServerInfo;
 
-  // Private but used in test.
-  userModel = getAppContext().userModel;
-
   private readonly flagsService = getAppContext().flagsService;
 
   private readonly restApiService = getAppContext().restApiService;
@@ -144,6 +128,8 @@ export class GrChangeList extends LitElement {
   private readonly reporting = getAppContext().reportingService;
 
   private readonly shortcuts = new ShortcutController(this);
+
+  private readonly getPluginLoader = resolve(this, pluginLoaderToken);
 
   private readonly getNavigation = resolve(this, navigationToken);
 
@@ -179,11 +165,13 @@ export class GrChangeList extends LitElement {
     this.restApiService.getConfig().then(config => {
       this.config = config;
     });
-    getPluginLoader()
+    this.getPluginLoader()
       .awaitPluginsLoaded()
       .then(() => {
         this.dynamicHeaderEndpoints =
-          getPluginEndpoints().getDynamicEndpoints('change-list-header');
+          this.getPluginLoader().pluginEndPoints.getDynamicEndpoints(
+            'change-list-header'
+          );
       });
   }
 
@@ -241,7 +229,7 @@ export class GrChangeList extends LitElement {
   }
 
   private calculateStartIndices(sections: ChangeListSection[]): number[] {
-    const startIndices: number[] = new Array(sections.length).fill(0);
+    const startIndices = Array.from<number>({length: sections.length}).fill(0);
     for (let i = 1; i < sections.length; ++i) {
       startIndices[i] = startIndices[i - 1] + sections[i - 1].results.length;
     }
@@ -415,11 +403,11 @@ export class GrChangeList extends LitElement {
   }
 
   private nextPage() {
-    fireEvent(this, 'next-page');
+    fire(this, 'next-page', {});
   }
 
   private prevPage() {
-    fireEvent(this, 'previous-page');
+    fire(this, 'previous-page', {});
   }
 
   private refreshChangeList() {
@@ -484,5 +472,9 @@ declare global {
   }
   interface HTMLElementEventMap {
     'selected-index-changed': ValueChangedEvent<number>;
+    /** Fired when next page key shortcut was pressed. */
+    'next-page': CustomEvent<{}>;
+    /** Fired when previous page key shortcut was pressed. */
+    'previous-page': CustomEvent<{}>;
   }
 }

@@ -24,10 +24,10 @@ import {
   AccountInfo,
   BasePatchSetNum,
   LabelNameToInfoMap,
+  CommentThread,
+  ChangeMessage,
 } from '../../../types/common';
 import {
-  ChangeMessage,
-  CommentThread,
   isFormattedReviewerUpdate,
   LabelExtreme,
   PATCH_SET_PREFIX_PATTERN,
@@ -48,12 +48,18 @@ import {when} from 'lit/directives/when.js';
 import {FormattedReviewerUpdateInfo} from '../../../types/types';
 import {resolve} from '../../../models/dependency';
 import {createChangeUrl} from '../../../models/views/change';
+import {fire} from '../../../utils/event-util';
+import {ChangeMessageDeletedEventDetail} from '../../../types/events';
 
 const UPLOADED_NEW_PATCHSET_PATTERN = /Uploaded patch set (\d+)./;
 const MERGED_PATCHSET_PATTERN = /(\d+) is the latest approved patch-set/;
 declare global {
   interface HTMLElementTagNameMap {
     'gr-message': GrMessage;
+  }
+  interface HTMLElementEventMap {
+    'message-anchor-tap': CustomEvent<MessageAnchorTapDetail>;
+    'change-message-deleted': CustomEvent<ChangeMessageDeletedEventDetail>;
   }
 }
 
@@ -67,12 +73,6 @@ export class GrMessage extends LitElement {
    * Fired when this message's reply link is tapped.
    *
    * @event reply
-   */
-
-  /**
-   * Fired when the message's timestamp is tapped.
-   *
-   * @event message-anchor-tap
    */
 
   /**
@@ -122,9 +122,6 @@ export class GrMessage extends LitElement {
   private readonly restApiService = getAppContext().restApiService;
 
   private readonly getNavigation = resolve(this, navigationToken);
-
-  // for COMMENTS_AUTOCLOSE logging purposes only
-  readonly uid = performance.now().toString(36) + Math.random().toString(36);
 
   constructor() {
     super();
@@ -205,14 +202,10 @@ export class GrMessage extends LitElement {
           margin: 0 -4px;
         }
         .collapsed gr-thread-list,
-        .collapsed .replyBtn,
         .collapsed .deleteBtn,
         .collapsed .hideOnCollapsed,
         .hideOnOpen {
           display: none;
-        }
-        .replyBtn {
-          margin-right: var(--spacing-m);
         }
         .collapsed .hideOnOpen {
           display: block;
@@ -440,24 +433,18 @@ export class GrMessage extends LitElement {
   }
 
   private renderActionContainer() {
-    if (!this.computeShowReplyButton()) return nothing;
+    if (!this.isAdmin || !this.loggedIn || this.computeIsAutomated()) {
+      return nothing;
+    }
     return html` <div class="replyActionContainer">
-      <gr-button class="replyBtn" link="" @click=${this.handleReplyTap}>
-        Reply
+      <gr-button
+        ?disabled=${this.isDeletingChangeMsg}
+        class="deleteBtn"
+        link=""
+        @click=${this.handleDeleteMessage}
+      >
+        Delete
       </gr-button>
-      ${when(
-        this.isAdmin,
-        () => html`
-          <gr-button
-            ?disabled=${this.isDeletingChangeMsg}
-            class="deleteBtn"
-            link=""
-            @click=${this.handleDeleteMessage}
-          >
-            Delete
-          </gr-button>
-        `
-      )}
     </div>`;
   }
 
@@ -695,16 +682,6 @@ export class GrMessage extends LitElement {
     );
   }
 
-  // private but used in tests.
-  computeShowReplyButton() {
-    return (
-      !!this.message &&
-      !!this.message.message &&
-      this.loggedIn &&
-      !this.computeIsAutomated()
-    );
-  }
-
   private handleClick(e: Event) {
     if (!this.message || this.message?.expanded) {
       return;
@@ -746,29 +723,13 @@ export class GrMessage extends LitElement {
 
   private handleAnchorClick(e: Event) {
     e.preventDefault();
+    assertIsDefined(this.message, 'message');
     // The element which triggers handleAnchorClick is rendered only if
     // message.id defined: the element is wrapped in dom-if if="[[message.id]]"
     const detail: MessageAnchorTapDetail = {
-      id: this.message!.id,
+      id: this.message.id,
     };
-    this.dispatchEvent(
-      new CustomEvent('message-anchor-tap', {
-        bubbles: true,
-        composed: true,
-        detail,
-      })
-    );
-  }
-
-  private handleReplyTap(e: Event) {
-    e.preventDefault();
-    this.dispatchEvent(
-      new CustomEvent('reply', {
-        detail: {message: this.message},
-        composed: true,
-        bubbles: true,
-      })
-    );
+    fire(this, 'message-anchor-tap', detail);
   }
 
   private handleDeleteMessage(e: Event) {
@@ -779,13 +740,10 @@ export class GrMessage extends LitElement {
       .deleteChangeCommitMessage(this.changeNum, this.message.id)
       .then(() => {
         this.isDeletingChangeMsg = false;
-        this.dispatchEvent(
-          new CustomEvent('change-message-deleted', {
-            detail: {message: this.message},
-            composed: true,
-            bubbles: true,
-          })
-        );
+        // TODO: Fix the type casting. Might actually be a bug.
+        fire(this, 'change-message-deleted', {
+          message: this.message as ChangeMessage,
+        });
       });
   }
 

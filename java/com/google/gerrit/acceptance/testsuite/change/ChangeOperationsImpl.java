@@ -16,10 +16,12 @@ package com.google.gerrit.acceptance.testsuite.change;
 
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.gerrit.testing.TestActionRefUpdateContext.openTestRefUpdateContext;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Streams;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.PatchSet;
@@ -43,6 +45,7 @@ import com.google.gerrit.server.notedb.Sequences;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.UpdateException;
+import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.gerrit.server.util.CommitMessageUtil;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.inject.Inject;
@@ -131,29 +134,33 @@ public class ChangeOperationsImpl implements ChangeOperations {
   }
 
   private Change.Id createChange(TestChangeCreation changeCreation) throws Exception {
-    Change.Id changeId = Change.id(seq.nextChangeId());
-    Project.NameKey project = getTargetProject(changeCreation);
+    try (RefUpdateContext ctx = openTestRefUpdateContext()) {
+      Change.Id changeId = Change.id(seq.nextChangeId());
+      Project.NameKey project = getTargetProject(changeCreation);
 
-    try (Repository repository = repositoryManager.openRepository(project);
-        ObjectInserter objectInserter = repository.newObjectInserter();
-        RevWalk revWalk = new RevWalk(objectInserter.newReader())) {
-      Instant now = TimeUtil.now();
-      IdentifiedUser changeOwner = getChangeOwner(changeCreation);
-      PersonIdent authorAndCommitter = changeOwner.newCommitterIdent(now, serverIdent.getZoneId());
-      ObjectId commitId =
-          createCommit(repository, revWalk, objectInserter, changeCreation, authorAndCommitter);
+      try (Repository repository = repositoryManager.openRepository(project);
+          ObjectInserter objectInserter = repository.newObjectInserter();
+          RevWalk revWalk = new RevWalk(objectInserter.newReader())) {
+        Instant now = TimeUtil.now();
+        IdentifiedUser changeOwner = getChangeOwner(changeCreation);
+        PersonIdent author = getAuthorIdent(now, changeCreation);
+        PersonIdent committer = getCommitterIdent(now, changeCreation);
+        ObjectId commitId =
+            createCommit(repository, revWalk, objectInserter, changeCreation, author, committer);
 
-      String refName = RefNames.fullName(changeCreation.branch());
-      ChangeInserter inserter = getChangeInserter(changeId, refName, commitId);
-      changeCreation.topic().ifPresent(t -> inserter.setTopic(t));
-      inserter.setApprovals(changeCreation.approvals());
+        String refName = RefNames.fullName(changeCreation.branch());
+        ChangeInserter inserter = getChangeInserter(changeId, refName, commitId);
+        inserter.setGroups(getGroups(changeCreation));
+        changeCreation.topic().ifPresent(t -> inserter.setTopic(t));
+        inserter.setApprovals(changeCreation.approvals());
 
-      try (BatchUpdate batchUpdate = batchUpdateFactory.create(project, changeOwner, now)) {
-        batchUpdate.setRepository(repository, revWalk, objectInserter);
-        batchUpdate.insertChange(inserter);
-        batchUpdate.execute();
+        try (BatchUpdate batchUpdate = batchUpdateFactory.create(project, changeOwner, now)) {
+          batchUpdate.setRepository(repository, revWalk, objectInserter);
+          batchUpdate.insertChange(inserter);
+          batchUpdate.execute();
+        }
+        return changeId;
       }
-      return changeId;
     }
   }
 
@@ -189,6 +196,30 @@ public class ChangeOperationsImpl implements ChangeOperations {
     return getArbitraryUser();
   }
 
+  private PersonIdent getAuthorIdent(Instant when, TestChangeCreation changeCreation)
+      throws IOException, ConfigInvalidException {
+    if (changeCreation.authorIdent().isPresent()) {
+      return new PersonIdent(changeCreation.authorIdent().get(), when);
+    }
+
+    return (changeCreation.author().isPresent()
+            ? userFactory.create(changeCreation.author().get())
+            : getChangeOwner(changeCreation))
+        .newCommitterIdent(when, serverIdent.getZoneId());
+  }
+
+  private PersonIdent getCommitterIdent(Instant when, TestChangeCreation changeCreation)
+      throws IOException, ConfigInvalidException {
+    if (changeCreation.committerIdent().isPresent()) {
+      return new PersonIdent(changeCreation.committerIdent().get(), when);
+    }
+
+    return (changeCreation.committer().isPresent()
+            ? userFactory.create(changeCreation.committer().get())
+            : getChangeOwner(changeCreation))
+        .newCommitterIdent(when, serverIdent.getZoneId());
+  }
+
   private IdentifiedUser getArbitraryUser() throws ConfigInvalidException, IOException {
     ImmutableSet<Account.Id> foundAccounts = resolver.resolveIgnoreVisibility("").asIdSet();
     checkState(
@@ -202,20 +233,84 @@ public class ChangeOperationsImpl implements ChangeOperations {
       RevWalk revWalk,
       ObjectInserter objectInserter,
       TestChangeCreation changeCreation,
-      PersonIdent authorAndCommitter)
+      PersonIdent author,
+      PersonIdent committer)
       throws IOException, BadRequestException {
     ImmutableList<ObjectId> parentCommits = getParentCommits(repository, revWalk, changeCreation);
     TreeCreator treeCreator =
         getTreeCreator(objectInserter, parentCommits, changeCreation.mergeStrategy());
     ObjectId tree = createNewTree(repository, treeCreator, changeCreation.treeModifications());
     String commitMessage = correctCommitMessage(changeCreation.commitMessage());
-    return createCommit(
-        objectInserter, tree, parentCommits, authorAndCommitter, authorAndCommitter, commitMessage);
+    return createCommit(objectInserter, tree, parentCommits, author, committer, commitMessage);
+  }
+
+  private ImmutableList<String> getGroups(TestChangeCreation changeCreation) {
+    return changeCreation
+        .parents()
+        .map(parents -> getGroups(parents))
+        .orElseGet(() -> ImmutableList.of());
+  }
+
+  private ImmutableList<String> getGroups(ImmutableList<TestCommitIdentifier> parents) {
+    return parents.stream()
+        .map(parent -> getGroups(parent))
+        .flatMap(groups -> groups.stream())
+        .collect(toImmutableList());
+  }
+
+  private ImmutableList<String> getGroups(TestCommitIdentifier parentCommit) {
+    switch (parentCommit.getKind()) {
+      case BRANCH:
+        return ImmutableList.of();
+      case CHANGE_ID:
+        return getGroupsFromChange(parentCommit.changeId());
+      case COMMIT_SHA_1:
+        return ImmutableList.of();
+      case PATCHSET_ID:
+        return getGroupsFromPatchset(parentCommit.patchsetId());
+      default:
+        throw new IllegalStateException(
+            String.format("No parent behavior implemented for %s.", parentCommit.getKind()));
+    }
+  }
+
+  private ImmutableList<String> getGroupsFromChange(Change.Id changeId) {
+    Optional<ChangeNotes> changeNotes = changeFinder.findOne(changeId);
+
+    if (changeNotes.isPresent() && changeNotes.get().getChange().isClosed()) {
+      return ImmutableList.of();
+    }
+
+    return changeNotes
+        .map(ChangeNotes::getCurrentPatchSet)
+        .map(PatchSet::groups)
+        .orElseThrow(
+            () ->
+                new IllegalStateException(
+                    String.format(
+                        "Change %s not found and hence can't be used as parent.", changeId)));
+  }
+
+  private ImmutableList<String> getGroupsFromPatchset(PatchSet.Id patchsetId) {
+    Optional<ChangeNotes> changeNotes = changeFinder.findOne(patchsetId.changeId());
+
+    if (changeNotes.isPresent() && changeNotes.get().getChange().isClosed()) {
+      return ImmutableList.of();
+    }
+
+    return changeNotes
+        .map(ChangeNotes::getPatchSets)
+        .map(patchsets -> patchsets.get(patchsetId))
+        .map(PatchSet::groups)
+        .orElseThrow(
+            () ->
+                new IllegalStateException(
+                    String.format(
+                        "Patchset %s not found and hence can't be used as parent.", patchsetId)));
   }
 
   private ImmutableList<ObjectId> getParentCommits(
       Repository repository, RevWalk revWalk, TestChangeCreation changeCreation) {
-
     return changeCreation
         .parents()
         .map(parents -> resolveParents(repository, revWalk, parents))
@@ -426,29 +521,72 @@ public class ChangeOperationsImpl implements ChangeOperations {
 
     private PatchSet.Id createPatchset(TestPatchsetCreation patchsetCreation)
         throws IOException, RestApiException, UpdateException {
-      ChangeNotes changeNotes = getChangeNotes();
-      Project.NameKey project = changeNotes.getProjectName();
-      try (Repository repository = repositoryManager.openRepository(project);
-          ObjectInserter objectInserter = repository.newObjectInserter();
-          RevWalk revWalk = new RevWalk(objectInserter.newReader())) {
-        Instant now = TimeUtil.now();
-        ObjectId newPatchsetCommit =
-            createPatchsetCommit(
-                repository, revWalk, objectInserter, changeNotes, patchsetCreation, now);
+      try (RefUpdateContext ctx = openTestRefUpdateContext()) {
+        ChangeNotes changeNotes = getChangeNotes();
+        Project.NameKey project = changeNotes.getProjectName();
+        try (Repository repository = repositoryManager.openRepository(project);
+            ObjectInserter objectInserter = repository.newObjectInserter();
+            RevWalk revWalk = new RevWalk(objectInserter.newReader())) {
+          Instant now = TimeUtil.now();
+          PersonIdent authorIdent = getAuthorIdent(now, patchsetCreation);
+          PersonIdent committerIdent = getCommitterIdent(now, patchsetCreation);
+          ObjectId newPatchsetCommit =
+              createPatchsetCommit(
+                  repository,
+                  revWalk,
+                  objectInserter,
+                  changeNotes,
+                  patchsetCreation,
+                  authorIdent,
+                  committerIdent,
+                  now);
 
-        PatchSet.Id patchsetId =
-            ChangeUtil.nextPatchSetId(repository, changeNotes.getCurrentPatchSet().id());
-        PatchSetInserter patchSetInserter =
-            getPatchSetInserter(changeNotes, newPatchsetCommit, patchsetId);
+          PatchSet.Id patchsetId =
+              ChangeUtil.nextPatchSetId(repository, changeNotes.getCurrentPatchSet().id());
+          PatchSetInserter patchSetInserter =
+              getPatchSetInserter(changeNotes, newPatchsetCommit, patchsetId);
 
-        IdentifiedUser changeOwner = userFactory.create(changeNotes.getChange().getOwner());
-        try (BatchUpdate batchUpdate = batchUpdateFactory.create(project, changeOwner, now)) {
-          batchUpdate.setRepository(repository, revWalk, objectInserter);
-          batchUpdate.addOp(changeId, patchSetInserter);
-          batchUpdate.execute();
+          Account.Id uploaderId =
+              patchsetCreation.uploader().orElse(changeNotes.getChange().getOwner());
+          IdentifiedUser uploader = userFactory.create(uploaderId);
+          try (BatchUpdate batchUpdate = batchUpdateFactory.create(project, uploader, now)) {
+            batchUpdate.setRepository(repository, revWalk, objectInserter);
+            batchUpdate.addOp(changeId, patchSetInserter);
+            batchUpdate.execute();
+          }
+          return patchsetId;
         }
-        return patchsetId;
       }
+    }
+
+    @Nullable
+    private PersonIdent getAuthorIdent(Instant when, TestPatchsetCreation patchsetCreation) {
+      if (patchsetCreation.authorIdent().isPresent()) {
+        return new PersonIdent(patchsetCreation.authorIdent().get(), when);
+      }
+
+      if (patchsetCreation.author().isPresent()) {
+        return userFactory
+            .create(patchsetCreation.author().get())
+            .newCommitterIdent(when, serverIdent.getZoneId());
+      }
+
+      return null;
+    }
+
+    @Nullable
+    private PersonIdent getCommitterIdent(Instant when, TestPatchsetCreation patchsetCreation) {
+      if (patchsetCreation.committerIdent().isPresent()) {
+        return new PersonIdent(patchsetCreation.committerIdent().get(), when);
+      }
+
+      if (patchsetCreation.committer().isPresent()) {
+        return userFactory
+            .create(patchsetCreation.committer().get())
+            .newCommitterIdent(when, serverIdent.getZoneId());
+      }
+
+      return null;
     }
 
     private ObjectId createPatchsetCommit(
@@ -457,6 +595,8 @@ public class ChangeOperationsImpl implements ChangeOperations {
         ObjectInserter objectInserter,
         ChangeNotes changeNotes,
         TestPatchsetCreation patchsetCreation,
+        @Nullable PersonIdent author,
+        @Nullable PersonIdent committer,
         Instant now)
         throws IOException, BadRequestException {
       ObjectId oldPatchsetCommitId = changeNotes.getCurrentPatchSet().commitId();
@@ -472,9 +612,13 @@ public class ChangeOperationsImpl implements ChangeOperations {
               changeNotes.getChange().getKey().get(),
               patchsetCreation.commitMessage().orElseGet(oldPatchsetCommit::getFullMessage));
 
-      PersonIdent author = getAuthor(oldPatchsetCommit);
-      PersonIdent committer = getCommitter(oldPatchsetCommit, now);
-      return createCommit(objectInserter, tree, parentCommitIds, author, committer, commitMessage);
+      return createCommit(
+          objectInserter,
+          tree,
+          parentCommitIds,
+          Optional.ofNullable(author).orElse(getAuthor(oldPatchsetCommit)),
+          Optional.ofNullable(committer).orElse(getCommitter(oldPatchsetCommit, now)),
+          commitMessage);
     }
 
     private String correctCommitMessage(String oldChangeId, String desiredCommitMessage)

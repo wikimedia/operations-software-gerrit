@@ -8,14 +8,15 @@ import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
 import {LitElement, html, css, nothing} from 'lit';
 import {customElement, state} from 'lit/decorators.js';
-import {ChangeInfo, CommitId} from '../../../types/common';
+import {ChangeActionDialog, ChangeInfo, CommitId} from '../../../types/common';
 import {fire, fireAlert} from '../../../utils/event-util';
-import {getAppContext} from '../../../services/app-context';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {BindValueChangeEvent} from '../../../types/events';
+import {resolve} from '../../../models/dependency';
+import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
+import {createSearchUrl} from '../../../models/views/search';
 
 const ERR_COMMIT_NOT_FOUND = 'Unable to find the commit hash of this change.';
-const CHANGE_SUBJECT_LIMIT = 50;
 const INSERT_REASON_STRING = '<INSERT REASONING HERE>';
 
 // TODO(dhruvsri): clean up repeated definitions after moving to js modules
@@ -29,23 +30,11 @@ export interface ConfirmRevertEventDetail {
   message?: string;
 }
 
-export interface CancelRevertEventDetail {
-  revertType: RevertType;
-}
-
-declare global {
-  interface HTMLElementEventMap {
-    /** Fired when the confirm button is pressed. */
-    // prettier-ignore
-    'confirm': CustomEvent<ConfirmRevertEventDetail>;
-    /** Fired when the cancel button is pressed. */
-    // prettier-ignore
-    'cancel': CustomEvent<CancelRevertEventDetail>;
-  }
-}
-
 @customElement('gr-confirm-revert-dialog')
-export class GrConfirmRevertDialog extends LitElement {
+export class GrConfirmRevertDialog
+  extends LitElement
+  implements ChangeActionDialog
+{
   /* The revert message updated by the user
       The default value is set by the dialog */
   @state()
@@ -57,8 +46,9 @@ export class GrConfirmRevertDialog extends LitElement {
   @state()
   private showRevertSubmission = false;
 
+  // Value supplied by populate(). Non-private for access in tests.
   @state()
-  private changesCount?: number;
+  changesCount?: number;
 
   @state()
   showErrorMessage = false;
@@ -72,6 +62,8 @@ export class GrConfirmRevertDialog extends LitElement {
   // Store the actual messages that the user has edited
   @state()
   private revertMessages: string[] = [];
+
+  private readonly getPluginLoader = resolve(this, pluginLoaderToken);
 
   static override styles = [
     sharedStyles,
@@ -170,8 +162,6 @@ export class GrConfirmRevertDialog extends LitElement {
     `;
   }
 
-  private readonly jsAPI = getAppContext().jsApiService;
-
   private computeIfSingleRevert() {
     return this.revertType === RevertType.REVERT_SINGLE_CHANGE;
   }
@@ -181,18 +171,22 @@ export class GrConfirmRevertDialog extends LitElement {
   }
 
   modifyRevertMsg(change: ChangeInfo, commitMessage: string, message: string) {
-    return this.jsAPI.modifyRevertMsg(change, message, commitMessage);
+    return this.getPluginLoader().jsApiService.modifyRevertMsg(
+      change,
+      message,
+      commitMessage
+    );
   }
 
-  populate(change: ChangeInfo, commitMessage: string, changes: ChangeInfo[]) {
-    this.changesCount = changes.length;
+  populate(change: ChangeInfo, commitMessage: string, changesCount: number) {
+    this.changesCount = changesCount;
     // The option to revert a single change is always available
     this.populateRevertSingleChangeMessage(
       change,
       commitMessage,
       change.current_revision
     );
-    this.populateRevertSubmissionMessage(change, changes, commitMessage);
+    this.populateRevertSubmissionMessage(change, commitMessage);
   }
 
   populateRevertSingleChangeMessage(
@@ -220,44 +214,34 @@ export class GrConfirmRevertDialog extends LitElement {
     this.originalRevertMessages[this.revertType] = this.message;
   }
 
-  private getTrimmedChangeSubject(subject: string) {
-    if (!subject) return '';
-    if (subject.length < CHANGE_SUBJECT_LIMIT) return subject;
-    return subject.substring(0, CHANGE_SUBJECT_LIMIT) + '...';
-  }
-
   private modifyRevertSubmissionMsg(
     change: ChangeInfo,
     msg: string,
     commitMessage: string
   ) {
-    return this.jsAPI.modifyRevertSubmissionMsg(change, msg, commitMessage);
+    return this.getPluginLoader().jsApiService.modifyRevertSubmissionMsg(
+      change,
+      msg,
+      commitMessage
+    );
   }
 
-  populateRevertSubmissionMessage(
-    change: ChangeInfo,
-    changes: ChangeInfo[],
-    commitMessage: string
-  ) {
+  populateRevertSubmissionMessage(change: ChangeInfo, commitMessage: string) {
     // Follow the same convention of the revert
     const commitHash = change.current_revision;
     if (!commitHash) {
       fireAlert(this, ERR_COMMIT_NOT_FOUND);
       return;
     }
-    if (!changes || changes.length <= 1) return;
-    const revertTitle = `Revert submission ${change.submission_id}`;
-    let message =
-      revertTitle +
+    if (this.changesCount! <= 1) return;
+    const message =
+      `Revert submission ${change.submission_id}` +
       '\n\n' +
       'Reason for revert: <INSERT ' +
-      'REASONING HERE>\n';
-    message += 'Reverted Changes:\n';
-    changes.forEach(change => {
-      message +=
-        `${change.change_id.substring(0, 10)}:` +
-        `${this.getTrimmedChangeSubject(change.subject)}\n`;
-    });
+      'REASONING HERE>\n\n' +
+      'Reverted changes: ' +
+      createSearchUrl({query: `submissionid:${change.submission_id}`}) +
+      '\n';
     this.message = this.modifyRevertSubmissionMsg(
       change,
       message,
@@ -303,21 +287,21 @@ export class GrConfirmRevertDialog extends LitElement {
       revertType: this.revertType,
       message: this.message,
     };
-    fire(this, 'confirm', detail);
+    fire(this, 'confirm-revert', detail);
   }
 
   private handleCancelTap(e: Event) {
     e.preventDefault();
     e.stopPropagation();
-    const detail: ConfirmRevertEventDetail = {
-      revertType: this.revertType,
-    };
-    fire(this, 'cancel', detail);
+    fire(this, 'cancel', {});
   }
 }
 
 declare global {
   interface HTMLElementTagNameMap {
     'gr-confirm-revert-dialog': GrConfirmRevertDialog;
+  }
+  interface HTMLElementEventMap {
+    'confirm-revert': CustomEvent<ConfirmRevertEventDetail>;
   }
 }

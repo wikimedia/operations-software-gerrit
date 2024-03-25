@@ -5,10 +5,7 @@
  */
 import {getBaseUrl} from '../../../../utils/url-util';
 import {CancelConditionCallback} from '../../../../services/gr-rest-api/gr-rest-api';
-import {
-  AuthRequestInit,
-  AuthService,
-} from '../../../../services/gr-auth/gr-auth';
+import {AuthService} from '../../../../services/gr-auth/gr-auth';
 import {
   AccountDetailInfo,
   EmailInfo,
@@ -17,8 +14,12 @@ import {
 } from '../../../../types/common';
 import {HttpMethod} from '../../../../constants/constants';
 import {RpcLogEventDetail} from '../../../../types/events';
-import {fireNetworkError, fireServerError} from '../../../../utils/event-util';
-import {FetchRequest} from '../../../../types/types';
+import {
+  fire,
+  fireNetworkError,
+  fireServerError,
+} from '../../../../utils/event-util';
+import {AuthRequestInit, FetchRequest} from '../../../../types/types';
 import {ErrorCallback} from '../../../../api/rest';
 import {Scheduler, Task} from '../../../../services/scheduler/scheduler';
 import {RetryError} from '../../../../services/scheduler/retry-scheduler';
@@ -102,7 +103,7 @@ export class SiteBasedCache {
 
   get(key: '/accounts/self/emails'): EmailInfo[] | null;
 
-  get(key: '/accounts/self/detail'): AccountDetailInfo[] | null;
+  get(key: '/accounts/self/detail'): AccountDetailInfo | null;
 
   get(key: string): ParsedJSON | null;
 
@@ -112,7 +113,7 @@ export class SiteBasedCache {
 
   set(key: '/accounts/self/emails', value: EmailInfo[]): void;
 
-  set(key: '/accounts/self/detail', value: AccountDetailInfo[]): void;
+  set(key: '/accounts/self/detail', value: AccountDetailInfo): void;
 
   set(key: string, value: ParsedJSON | null): void;
 
@@ -182,6 +183,35 @@ export class FetchPromisesCache {
 export type FetchParams = {
   [name: string]: string[] | string | number | boolean | undefined | null;
 };
+
+/**
+ * Error callback that throws an error.
+ *
+ * Pass into REST API methods as errFn to make the returned Promises reject on
+ * error.
+ *
+ * If error is provided, it's thrown.
+ * Otherwise if response with error is provided the promise that will throw an
+ * error is returned.
+ */
+export function throwingErrorCallback(
+  response?: Response | null,
+  err?: Error
+): void | Promise<void> {
+  if (err) throw err;
+  if (!response) return;
+
+  return response.text().then(errorText => {
+    let message = `Error ${response.status}`;
+    if (response.statusText) {
+      message += ` (${response.statusText})`;
+    }
+    if (errorText) {
+      message += `: ${errorText}`;
+    }
+    throw new Error(message);
+  });
+}
 
 interface SendRequestBase {
   method: HttpMethod | undefined;
@@ -275,16 +305,14 @@ s   */
    * by this method, it should be called immediately after the request
    * finishes.
    *
+   * Private, but used in tests.
+   *
    * @param startTime the time that the request was started.
    * @param status the HTTP status of the response. The status value
    *     is used here rather than the response object so there is no way this
    *     method can read the body stream.
    */
-  private _logCall(
-    req: FetchRequest,
-    startTime: number,
-    status: number | null
-  ) {
+  _logCall(req: FetchRequest, startTime: number, status: number | null) {
     const method =
       req.fetchOptions && req.fetchOptions.method
         ? req.fetchOptions.method
@@ -310,13 +338,7 @@ s   */
         elapsed,
         anonymizedUrl: req.anonymizedUrl,
       };
-      document.dispatchEvent(
-        new CustomEvent('gr-rpc-log', {
-          detail,
-          composed: true,
-          bubbles: true,
-        })
-      );
+      fire(document, 'gr-rpc-log', detail);
     }
   }
 
@@ -363,27 +385,26 @@ s   */
    *
    * @param noAcceptHeader - don't add default accept json header
    */
-  fetchJSON(
+  async fetchJSON(
     req: FetchJSONRequest,
     noAcceptHeader?: boolean
   ): Promise<ParsedJSON | undefined> {
     if (!noAcceptHeader) {
       req = this.addAcceptJsonHeader(req);
     }
-    return this.fetchRawJSON(req).then(response => {
-      if (!response) {
+    const response = await this.fetchRawJSON(req);
+    if (!response) {
+      return;
+    }
+    if (!response.ok) {
+      if (req.errFn) {
+        await req.errFn.call(undefined, response);
         return;
       }
-      if (!response.ok) {
-        if (req.errFn) {
-          req.errFn.call(null, response);
-          return;
-        }
-        fireServerError(response, req);
-        return;
-      }
-      return this.getResponseObject(response);
-    });
+      fireServerError(response, req);
+      return;
+    }
+    return this.getResponseObject(response);
   }
 
   urlWithParams(url: string, fetchParams?: FetchParams): string {
@@ -393,9 +414,7 @@ s   */
 
     const params: Array<string | number | boolean> = [];
     for (const [p, paramValue] of Object.entries(fetchParams)) {
-      // TODO(TS): Replace == null with === and check for null and undefined
-      // eslint-disable-next-line eqeqeq
-      if (paramValue == null) {
+      if (paramValue === null || paramValue === undefined) {
         params.push(this.encodeRFC5987(p));
         continue;
       }
@@ -476,7 +495,7 @@ s   */
    *     (i.e. no exception and response.ok is true). If response fails then
    *     promise resolves either to void if errFn is set or rejects if errFn
    *     is not set   */
-  send(req: SendRequest): Promise<Response | ParsedJSON | undefined> {
+  async send(req: SendRequest): Promise<Response | ParsedJSON | undefined> {
     const options: AuthRequestInit = {method: req.method};
     if (req.body) {
       options.headers = new Headers();
@@ -501,38 +520,30 @@ s   */
       fetchOptions: options,
       anonymizedUrl: req.reportUrlAsIs ? url : req.anonymizedUrl,
     };
-    const xhr = this.fetch(fetchReq)
-      .catch(err => {
-        fireNetworkError(err);
-        if (req.errFn) {
-          req.errFn.call(undefined, null, err);
-          return;
-        } else {
-          throw err;
-        }
-      })
-      .then(response => {
-        if (response && !response.ok) {
-          if (req.errFn) {
-            req.errFn.call(undefined, response);
-            return;
-          }
-          fireServerError(response, fetchReq);
-        }
-        return response;
-      });
+    let xhr;
+    try {
+      xhr = await this.fetch(fetchReq);
+    } catch (err) {
+      fireNetworkError(err as Error);
+      if (req.errFn) {
+        await req.errFn.call(undefined, null, err as Error);
+        xhr = undefined;
+      } else {
+        throw err;
+      }
+    }
+    if (xhr && !xhr.ok) {
+      if (req.errFn) {
+        await req.errFn.call(undefined, xhr);
+      } else {
+        fireServerError(xhr, fetchReq);
+      }
+    }
 
     if (req.parseResponse) {
-      // TODO(TS): remove as Response and fix error.
-      // Javascript code allows returning of a Response object from errFn.
-      // This can be a mistake and we should add check here or it can be used
-      // somewhere - in this case we should fix it carefully (define
-      // different type of callback if parseResponse is true, etc...).
-      return xhr.then(res => this.getResponseObject(res as Response));
+      xhr = xhr && this.getResponseObject(xhr);
     }
-    // The actual xhr type is Promise<Response|undefined|void> because of the
-    // catch callback
-    return xhr as Promise<Response | undefined>;
+    return xhr;
   }
 
   invalidateFetchPromisesPrefix(prefix: string) {

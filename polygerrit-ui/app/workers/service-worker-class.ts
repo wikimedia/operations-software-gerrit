@@ -18,6 +18,7 @@ import {
 } from './service-worker-indexdb';
 import {createDashboardUrl} from '../models/views/dashboard';
 import {createChangeUrl} from '../models/views/change';
+import {noAwait} from '../utils/async-util';
 
 export class ServiceWorker {
   constructor(
@@ -130,16 +131,22 @@ export class ServiceWorker {
     // User can have different service workers for different origins/hosts.
     // TODO(milutin): Check if this works properly with getBaseUrl()
     const data = {url: `${self.location.origin}${changeUrl}`};
-
-    // TODO(milutin): Add gerrit host icon
-    this.ctx.registration.showNotification(change.subject, {body, data});
+    const icon = `${self.location.origin}/favicon.ico`;
+    this.ctx.registration.showNotification(change.subject, {
+      body,
+      data,
+      icon,
+    });
+    this.sendReport('notify about 1 change');
   }
 
   private showNotificationForDashboard(numOfChangesToNotifyAbout: number) {
-    const title = `You are in the attention set for ${numOfChangesToNotifyAbout} changes.`;
+    const title = `You are in the attention set for ${numOfChangesToNotifyAbout} new changes.`;
     const dashboardUrl = createDashboardUrl({});
     const data = {url: `${self.location.origin}${dashboardUrl}`};
-    this.ctx.registration.showNotification(title, {data});
+    const icon = `${self.location.origin}/favicon.ico`;
+    this.ctx.registration.showNotification(title, {data, icon});
+    this.sendReport(`notify about ${numOfChangesToNotifyAbout} changes`);
   }
 
   // private but used in test
@@ -154,6 +161,7 @@ export class ServiceWorker {
     const prevLatestUpdateTimestampMs = this.latestUpdateTimestampMs;
     this.latestUpdateTimestampMs = Date.now();
     await this.saveState();
+    noAwait(this.sendReport('polling'));
     const changes = await this.getLatestAttentionSetChanges();
     const latestAttentionChanges = filterAttentionChangesAfter(
       changes,
@@ -172,5 +180,20 @@ export class ServiceWorker {
     const payload = await readResponsePayload(response);
     const changes = payload.parsed as unknown as ParsedChangeInfo[] | undefined;
     return changes ?? [];
+  }
+
+  /**
+   * Send report event to 1 client (last focused one). The client will use
+   * gr-reporting service to send event to metric event collectors.
+   */
+  async sendReport(eventName: string) {
+    const clientsArr = await this.ctx.clients.matchAll({type: 'window'});
+    const lastFocusedClient = clientsArr?.[0];
+    if (!lastFocusedClient) return;
+
+    lastFocusedClient.postMessage({
+      type: ServiceWorkerMessageType.REPORTING,
+      eventName,
+    });
   }
 }

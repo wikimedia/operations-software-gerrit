@@ -14,24 +14,18 @@
 
 package com.google.gerrit.extensions.common;
 
-import com.google.gerrit.extensions.webui.WebLink.Target;
 import java.util.Objects;
 
 public class WebLinkInfo {
   public String name;
+  public String tooltip;
   public String imageUrl;
   public String url;
-  public String target;
 
-  public WebLinkInfo(String name, String imageUrl, String url, String target) {
+  public WebLinkInfo(String name, String imageUrl, String url) {
     this.name = name;
     this.imageUrl = imageUrl;
     this.url = url;
-    this.target = target;
-  }
-
-  public WebLinkInfo(String name, String imageUrl, String url) {
-    this(name, imageUrl, url, Target.SELF);
   }
 
   @Override
@@ -41,14 +35,14 @@ public class WebLinkInfo {
     }
     WebLinkInfo i = (WebLinkInfo) o;
     return Objects.equals(name, i.name)
+        && Objects.equals(tooltip, i.tooltip)
         && Objects.equals(imageUrl, i.imageUrl)
-        && Objects.equals(url, i.url)
-        && Objects.equals(target, i.target);
+        && Objects.equals(url, i.url);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(name, imageUrl, url, target);
+    return Objects.hash(name, tooltip, imageUrl, url);
   }
 
   @Override
@@ -56,12 +50,12 @@ public class WebLinkInfo {
     return getClass().getSimpleName()
         + "{name="
         + name
+        + ", tooltip="
+        + tooltip
         + ", imageUrl="
         + imageUrl
         + ", url="
         + url
-        + ", target"
-        + target
         + "}";
   }
 

@@ -17,6 +17,7 @@ package com.google.gerrit.acceptance.server.mail;
 import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowLabel;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block;
 import static com.google.gerrit.entities.NotifyConfig.NotifyType.ABANDONED_CHANGES;
 import static com.google.gerrit.entities.NotifyConfig.NotifyType.ALL_COMMENTS;
 import static com.google.gerrit.entities.NotifyConfig.NotifyType.NEW_CHANGES;
@@ -28,9 +29,13 @@ import static com.google.gerrit.extensions.api.changes.NotifyHandling.OWNER;
 import static com.google.gerrit.extensions.api.changes.NotifyHandling.OWNER_REVIEWERS;
 import static com.google.gerrit.extensions.client.GeneralPreferencesInfo.EmailStrategy.CC_ON_OWN_COMMENTS;
 import static com.google.gerrit.extensions.client.GeneralPreferencesInfo.EmailStrategy.ENABLED;
+import static com.google.gerrit.server.group.SystemGroupBackend.ANONYMOUS_USERS;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
+import static com.google.gerrit.server.project.testing.TestLabels.labelBuilder;
+import static com.google.gerrit.server.project.testing.TestLabels.value;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.truth.Truth;
 import com.google.gerrit.acceptance.AbstractNotificationTest;
 import com.google.gerrit.acceptance.PushOneCommit;
@@ -38,11 +43,15 @@ import com.google.gerrit.acceptance.TestAccount;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.Address;
 import com.google.gerrit.entities.LabelId;
+import com.google.gerrit.entities.LabelType;
+import com.google.gerrit.entities.NotifyConfig;
+import com.google.gerrit.entities.NotifyConfig.Header;
+import com.google.gerrit.entities.NotifyConfig.NotifyType;
 import com.google.gerrit.entities.Permission;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.changes.AbandonInput;
-import com.google.gerrit.extensions.api.changes.AssigneeInput;
 import com.google.gerrit.extensions.api.changes.DeleteReviewerInput;
 import com.google.gerrit.extensions.api.changes.DeleteVoteInput;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
@@ -302,6 +311,25 @@ public class ChangeNotificationsIT extends AbstractNotificationTest {
   @Test
   public void addReviewerToReviewableChangeBatch() throws Exception {
     addReviewerToReviewableChange(batch());
+  }
+
+  @Test
+  public void addReviewerToChangeNoAnonymousUsersNotified() throws Exception {
+    StagedChange sc = stageReviewableChange();
+    // Remove read permission for anonymous users.
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.READ).ref("refs/*").group(ANONYMOUS_USERS))
+        .add(allow(Permission.READ).ref("refs/*").group(REGISTERED_USERS))
+        .update();
+
+    TestAccount reviewer = accountCreator.create("added", "added@example.com", "added", null);
+    addReviewer(singly(), sc.changeId, sc.owner, reviewer.email());
+
+    // No BY_EMAIL cc's.
+    assertThat(sender).sent("newchange", sc).to(reviewer).cc(sc.reviewer).noOneElse();
+    assertThat(sender).didNotSend();
   }
 
   private void addReviewerToReviewableChangeByOwnerCcingSelf(Adder adder) throws Exception {
@@ -670,6 +698,95 @@ public class ChangeNotificationsIT extends AbstractNotificationTest {
   }
 
   @Test
+  public void commentOnChangeWithNotifyConfig() throws Exception {
+    try (ProjectConfigUpdate u = updateProject(project)) {
+      NotifyConfig nc =
+          NotifyConfig.builder()
+              .setName("observer")
+              .setNotify(ImmutableSet.of(NotifyType.ALL))
+              .setHeader(Header.CC)
+              .addAddress(Address.create("observer@example.com"))
+              .build();
+      u.getConfig().putNotifyConfig("observer", nc);
+      u.save();
+    }
+
+    StagedChange sc = stageReviewableChange();
+    review(sc.reviewer, sc.changeId, ENABLED);
+    assertThat(sender)
+        .sent("comment", sc)
+        .to(sc.owner)
+        .cc(sc.ccer)
+        .cc(StagedUsers.REVIEWER_BY_EMAIL, StagedUsers.CC_BY_EMAIL)
+        .cc("observer@example.com")
+        .bcc(sc.starrer)
+        .bcc(ALL_COMMENTS)
+        .noOneElse();
+    assertThat(sender).didNotSend();
+  }
+
+  @Test
+  public void commentOnChangeNotVisibleToAnonymousByReviewer() throws Exception {
+    StagedChange sc = stageReviewableChange();
+
+    // Remove read permission for anonymous users.
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.READ).ref("refs/*").group(ANONYMOUS_USERS))
+        .add(allow(Permission.READ).ref("refs/*").group(REGISTERED_USERS))
+        .update();
+
+    review(sc.reviewer, sc.changeId, ENABLED);
+    // Not cc'ed to BY_EMAIL added addresses.
+    assertThat(sender)
+        .sent("comment", sc)
+        .to(sc.owner)
+        .cc(sc.ccer)
+        .bcc(sc.starrer)
+        .bcc(ALL_COMMENTS)
+        .noOneElse();
+    assertThat(sender).didNotSend();
+  }
+
+  @Test
+  public void commentOnChangeNotVisibleToAnonymousByReviewerWithNotifyConfig() throws Exception {
+    try (ProjectConfigUpdate u = updateProject(project)) {
+      NotifyConfig nc =
+          NotifyConfig.builder()
+              .setName("observer")
+              .setNotify(ImmutableSet.of(NotifyType.ALL))
+              .setHeader(Header.CC)
+              .addAddress(Address.create("observer@example.com"))
+              .build();
+      u.getConfig().putNotifyConfig("observer", nc);
+      u.save();
+    }
+
+    StagedChange sc = stageReviewableChange();
+
+    // Remove read permission for anonymous users.
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.READ).ref("refs/*").group(ANONYMOUS_USERS))
+        .add(allow(Permission.READ).ref("refs/*").group(REGISTERED_USERS))
+        .update();
+
+    review(sc.reviewer, sc.changeId, ENABLED);
+    // Not cc'ed to BY_EMAIL added addresses.
+    assertThat(sender)
+        .sent("comment", sc)
+        .to(sc.owner)
+        .cc(sc.ccer)
+        .cc("observer@example.com")
+        .bcc(sc.starrer)
+        .bcc(ALL_COMMENTS)
+        .noOneElse();
+    assertThat(sender).didNotSend();
+  }
+
+  @Test
   public void commentOnReviewableChangeByOwnerCcingSelf() throws Exception {
     StagedChange sc = stageReviewableChange();
     review(sc.owner, sc.changeId, CC_ON_OWN_COMMENTS);
@@ -982,7 +1099,7 @@ public class ChangeNotificationsIT extends AbstractNotificationTest {
     StagedPreChange spc = stagePreChange("refs/for/master");
     assertThat(sender)
         .sent("newchange", spc)
-        .title(String.format("[S] Change in %s[master]: test commit", project));
+        .title(String.format("[XS] Change in %s[master]: test commit", project));
     assertThat(sender).didNotSend();
   }
 
@@ -1710,6 +1827,42 @@ public class ChangeNotificationsIT extends AbstractNotificationTest {
     assertThat(sender).didNotSend();
   }
 
+  @Test
+  public void mergeByOtherAlwaysNotifiesAllIfThereIsAStickyApprovalDiff() throws Exception {
+    StagedChange sc = stageChangeReadyForMergeWithStickyApprovalDiff();
+    // The user requests to notify NONE, but if there is a sticky approval diff we notify ALL.
+    merge(sc.changeId, other, NONE);
+    assertThat(sender)
+        .sent("merged", sc)
+        .to(sc.owner)
+        .cc(sc.reviewer)
+        .cc(sc.ccer)
+        .cc(StagedUsers.REVIEWER_BY_EMAIL, StagedUsers.CC_BY_EMAIL)
+        .bcc(sc.starrer)
+        .bcc(SUBMITTED_CHANGES)
+        .bcc(ALL_COMMENTS)
+        .noOneElse();
+    assertThat(sender).didNotSend();
+  }
+
+  @Test
+  public void mergeOnBehalfOfAlwaysNotifiesAllIfThereIsAStickyApprovalDiff() throws Exception {
+    StagedChange sc = stageChangeReadyForMergeWithStickyApprovalDiff();
+    // The user requests to notify NONE, but if there is a sticky approval diff we notify ALL.
+    merge(sc.changeId, other, sc.owner, NONE);
+    assertThat(sender)
+        .sent("merged", sc)
+        .to(sc.owner)
+        .cc(sc.reviewer)
+        .cc(sc.ccer)
+        .cc(StagedUsers.REVIEWER_BY_EMAIL, StagedUsers.CC_BY_EMAIL)
+        .bcc(sc.starrer)
+        .bcc(SUBMITTED_CHANGES)
+        .bcc(ALL_COMMENTS)
+        .noOneElse();
+    assertThat(sender).didNotSend();
+  }
+
   private void merge(String changeId, TestAccount by) throws Exception {
     merge(changeId, by, ENABLED);
   }
@@ -1749,6 +1902,29 @@ public class ChangeNotificationsIT extends AbstractNotificationTest {
     StagedChange sc = stageReviewableChange();
     requestScopeOperations.setApiUser(sc.reviewer.id());
     gApi.changes().id(sc.changeId).current().review(ReviewInput.approve());
+    sender.clear();
+    return sc;
+  }
+
+  private StagedChange stageChangeReadyForMergeWithStickyApprovalDiff() throws Exception {
+    try (ProjectConfigUpdate u = updateProject(project)) {
+      LabelType.Builder codeReview =
+          labelBuilder(
+                  LabelId.CODE_REVIEW,
+                  value(2, "Looks good to me, approved"),
+                  value(1, "Looks good to me, but someone else must approve"),
+                  value(0, "No score"),
+                  value(-1, "I would prefer this is not submitted as is"),
+                  value(-2, "This shall not be submitted"))
+              .setCopyCondition("is:ANY");
+      u.getConfig().upsertLabelType(codeReview.build());
+      u.save();
+    }
+
+    StagedChange sc = stageReviewableChange();
+    requestScopeOperations.setApiUser(sc.reviewer.id());
+    gApi.changes().id(sc.changeId).current().review(ReviewInput.approve());
+    amendChange(sc.changeId, "refs/for/master", sc.owner, sc.repo).assertOkStatus();
     sender.clear();
     return sc;
   }
@@ -2387,154 +2563,6 @@ public class ChangeNotificationsIT extends AbstractNotificationTest {
     setEmailStrategy(by, emailStrategy);
     requestScopeOperations.setApiUser(by.id());
     gApi.changes().id(sc.changeId).revert();
-  }
-
-  /*
-   * SetAssigneeSender tests.
-   */
-
-  @Test
-  public void setAssigneeOnReviewableChange() throws Exception {
-    StagedChange sc = stageReviewableChange();
-    assign(sc, sc.owner, sc.assignee);
-    assertThat(sender)
-        .sent("setassignee", sc)
-        .cc(
-            StagedUsers.REVIEWER_BY_EMAIL,
-            StagedUsers.CC_BY_EMAIL) // TODO(logan): This is probably not intended!
-        .to(sc.assignee)
-        .noOneElse();
-    assertThat(sender).didNotSend();
-  }
-
-  @Test
-  public void setAssigneeOnReviewableChangeByOwnerCcingSelf() throws Exception {
-    StagedChange sc = stageReviewableChange();
-    assign(sc, sc.owner, sc.assignee, CC_ON_OWN_COMMENTS);
-    assertThat(sender)
-        .sent("setassignee", sc)
-        .cc(sc.owner)
-        .cc(
-            StagedUsers.REVIEWER_BY_EMAIL,
-            StagedUsers.CC_BY_EMAIL) // TODO(logan): This is probably not intended!
-        .to(sc.assignee)
-        .noOneElse();
-    assertThat(sender).didNotSend();
-  }
-
-  @Test
-  public void setAssigneeOnReviewableChangeByAdmin() throws Exception {
-    StagedChange sc = stageReviewableChange();
-    assign(sc, admin, sc.assignee);
-    assertThat(sender)
-        .sent("setassignee", sc)
-        .cc(
-            StagedUsers.REVIEWER_BY_EMAIL,
-            StagedUsers.CC_BY_EMAIL) // TODO(logan): This is probably not intended!
-        .to(sc.assignee)
-        .noOneElse();
-    assertThat(sender).didNotSend();
-  }
-
-  @Test
-  public void setAssigneeOnReviewableChangeByAdminCcingSelf() throws Exception {
-    StagedChange sc = stageReviewableChange();
-    assign(sc, admin, sc.assignee, CC_ON_OWN_COMMENTS);
-    assertThat(sender)
-        .sent("setassignee", sc)
-        .cc(admin)
-        .cc(
-            StagedUsers.REVIEWER_BY_EMAIL,
-            StagedUsers.CC_BY_EMAIL) // TODO(logan): This is probably not intended!
-        .to(sc.assignee)
-        .noOneElse();
-    assertThat(sender).didNotSend();
-  }
-
-  @Test
-  public void setAssigneeToSelfOnReviewableChange() throws Exception {
-    StagedChange sc = stageReviewableChange();
-    assign(sc, sc.owner, sc.owner);
-    assertThat(sender)
-        .sent("setassignee", sc)
-        .cc(
-            StagedUsers.REVIEWER_BY_EMAIL,
-            StagedUsers.CC_BY_EMAIL) // TODO(logan): This is probably not intended!
-        .noOneElse();
-    assertThat(sender).didNotSend();
-  }
-
-  @Test
-  public void changeAssigneeOnReviewableChange() throws Exception {
-    StagedChange sc = stageReviewableChange();
-    TestAccount other = accountCreator.create("other", "other@example.com", "other", null);
-    assign(sc, sc.owner, other);
-    sender.clear();
-    assign(sc, sc.owner, sc.assignee);
-    assertThat(sender)
-        .sent("setassignee", sc)
-        .cc(
-            StagedUsers.REVIEWER_BY_EMAIL,
-            StagedUsers.CC_BY_EMAIL) // TODO(logan): This is probably not intended!
-        .to(sc.assignee)
-        .noOneElse();
-    assertThat(sender).didNotSend();
-  }
-
-  @Test
-  public void changeAssigneeToSelfOnReviewableChange() throws Exception {
-    StagedChange sc = stageReviewableChange();
-    assign(sc, sc.owner, sc.assignee);
-    sender.clear();
-    assign(sc, sc.owner, sc.owner);
-    assertThat(sender)
-        .sent("setassignee", sc)
-        .cc(
-            StagedUsers.REVIEWER_BY_EMAIL,
-            StagedUsers.CC_BY_EMAIL) // TODO(logan): This is probably not intended!
-        .noOneElse();
-    assertThat(sender).didNotSend();
-  }
-
-  @Test
-  public void setAssigneeOnReviewableWipChange() throws Exception {
-    StagedChange sc = stageReviewableWipChange();
-    assign(sc, sc.owner, sc.assignee);
-    assertThat(sender)
-        .sent("setassignee", sc)
-        .cc(
-            StagedUsers.REVIEWER_BY_EMAIL,
-            StagedUsers.CC_BY_EMAIL) // TODO(logan): This is probably not intended!
-        .to(sc.assignee)
-        .noOneElse();
-    assertThat(sender).didNotSend();
-  }
-
-  @Test
-  public void setAssigneeOnWipChange() throws Exception {
-    StagedChange sc = stageWipChange();
-    assign(sc, sc.owner, sc.assignee);
-    assertThat(sender)
-        .sent("setassignee", sc)
-        .cc(
-            StagedUsers.REVIEWER_BY_EMAIL,
-            StagedUsers.CC_BY_EMAIL) // TODO(logan): This is probably not intended!
-        .to(sc.assignee)
-        .noOneElse();
-    assertThat(sender).didNotSend();
-  }
-
-  private void assign(StagedChange sc, TestAccount by, TestAccount to) throws Exception {
-    assign(sc, by, to, ENABLED);
-  }
-
-  private void assign(StagedChange sc, TestAccount by, TestAccount to, EmailStrategy emailStrategy)
-      throws Exception {
-    setEmailStrategy(by, emailStrategy);
-    requestScopeOperations.setApiUser(by.id());
-    AssigneeInput in = new AssigneeInput();
-    in.assignee = to.email();
-    gApi.changes().id(sc.changeId).setAssignee(in);
   }
 
   /*

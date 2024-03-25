@@ -28,7 +28,7 @@ import {
   Tag,
 } from '../../api/checks';
 import {sharedStyles} from '../../styles/shared-styles';
-import {CheckRun, RunResult} from '../../models/checks/checks-model';
+import {CheckRun, RunResult, runResult} from '../../models/checks/checks-model';
 import {
   ALL_ATTEMPTS,
   AttemptChoice,
@@ -54,14 +54,17 @@ import {durationString} from '../../utils/date-util';
 import {charsOnly} from '../../utils/string-util';
 import {isAttemptSelected, matches} from './gr-checks-util';
 import {ChecksTabState, ValueChangedEvent} from '../../types/events';
-import {LabelNameToInfoMap, PatchSetNumber} from '../../types/common';
+import {
+  DropdownLink,
+  LabelNameToInfoMap,
+  PatchSetNumber,
+} from '../../types/common';
 import {spinnerStyles} from '../../styles/gr-spinner-styles';
 import {
   getLabelStatus,
   getRepresentativeValue,
   valueString,
 } from '../../utils/label-util';
-import {DropdownLink} from '../shared/gr-dropdown/gr-dropdown';
 import {subscribe} from '../lit/subscription-controller';
 import {fontStyles} from '../../styles/gr-font-styles';
 import {fire} from '../../utils/event-util';
@@ -72,12 +75,9 @@ import {Deduping} from '../../api/reporting';
 import {changeModelToken} from '../../models/change/change-model';
 import {getAppContext} from '../../services/app-context';
 import {when} from 'lit/directives/when.js';
-import {KnownExperimentId} from '../../services/flags/flags';
-import {HtmlPatched} from '../../utils/lit-util';
 import {DropdownItem} from '../shared/gr-dropdown-list/gr-dropdown-list';
 import './gr-checks-attempt';
-import {createDiffUrl} from '../../models/views/diff';
-import {changeViewModelToken} from '../../models/views/change';
+import {createDiffUrl, changeViewModelToken} from '../../models/views/change';
 
 /**
  * Firing this event sets the regular expression of the results filter.
@@ -124,8 +124,6 @@ export class GrResultRow extends LitElement {
   private getChecksModel = resolve(this, checksModelToken);
 
   private readonly reporting = getAppContext().reportingService;
-
-  private readonly flags = getAppContext().flagsService;
 
   constructor() {
     super();
@@ -326,8 +324,16 @@ export class GrResultRow extends LitElement {
 
   override updated(changedProperties: PropertyValues) {
     if (changedProperties.has('result')) {
-      this.isExpandable = !!this.result?.summary && !!this.result?.message;
+      this.isExpandable = this.computeIsExpandable();
     }
+  }
+
+  private computeIsExpandable() {
+    const hasSummary = !!this.result?.summary;
+    const hasMessage = !!this.result?.message;
+    const hasMultipleLinks = (this.result?.links ?? []).length > 1;
+    const hasPointers = (this.result?.codePointers ?? []).length > 0;
+    return hasSummary && (hasMessage || hasMultipleLinks || hasPointers);
   }
 
   override focus() {
@@ -536,10 +542,8 @@ export class GrResultRow extends LitElement {
 
   private renderActions() {
     const actions = [...(this.result?.actions ?? [])];
-    if (this.flags.isEnabled(KnownExperimentId.CHECKS_FIXES)) {
-      const fixAction = createFixAction(this, this.result);
-      if (fixAction) actions.unshift(fixAction);
-    }
+    const fixAction = createFixAction(this, this.result);
+    if (fixAction) actions.unshift(fixAction);
     if (actions.length === 0) return;
     const overflowItems = actions.slice(2).map(action => {
       return {...action, id: action.name};
@@ -711,10 +715,9 @@ class GrResultExpanded extends LitElement {
         tooltip: `${path}${rangeText}`,
         url: createDiffUrl({
           changeNum: change._number,
-          project: change.project,
-          path,
+          repo: change.project,
           patchNum: patchset,
-          lineNum: line,
+          diffView: {path, lineNum: line},
         }),
         primary: true,
       };
@@ -816,13 +819,6 @@ export class GrChecksResults extends LitElement {
   private readonly getChecksModel = resolve(this, checksModelToken);
 
   private readonly reporting = getAppContext().reportingService;
-
-  private readonly patched = new HtmlPatched(key => {
-    this.reporting.reportInteraction(Interaction.AUTOCLOSE_HTML_PATCHED, {
-      component: this.tagName,
-      key: key.substring(0, 300),
-    });
-  });
 
   constructor() {
     super();
@@ -1501,7 +1497,7 @@ export class GrChecksResults extends LitElement {
           ${repeat(
             filtered,
             result => result.internalResultId,
-            (result?: RunResult) => this.patched.html`
+            (result?: RunResult) => html`
               <gr-result-row
                 class=${charsOnly(result!.checkName)}
                 .result=${result}
@@ -1533,26 +1529,23 @@ export class GrChecksResults extends LitElement {
     this.requestUpdate();
   }
 
-  computeRunResults(category: Category, run: CheckRun) {
+  computeRunResults(category: Category, run: CheckRun): RunResult[] {
     if (category === Category.SUCCESS && hasCompletedWithoutResults(run)) {
       return [this.computeSuccessfulRunResult(run)];
     }
     return (
       run.results
         ?.filter(result => result.category === category)
-        .map(result => {
-          return {...run, ...result};
-        }) ?? []
+        .map(result => runResult(run, result)) ?? []
     );
   }
 
   computeSuccessfulRunResult(run: CheckRun): RunResult {
-    const adaptedRun: RunResult = {
+    const adaptedRun: RunResult = runResult(run, {
       internalResultId: run.internalRunId + '-0',
       category: Category.SUCCESS,
       summary: run.statusDescription ?? '',
-      ...run,
-    };
+    });
     if (!run.statusDescription) {
       const start = run.scheduledTimestamp ?? run.startedTimestamp;
       const end = run.finishedTimestamp;

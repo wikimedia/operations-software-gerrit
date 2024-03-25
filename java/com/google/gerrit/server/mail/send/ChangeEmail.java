@@ -24,7 +24,9 @@ import com.google.common.collect.ListMultimap;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Address;
 import com.google.gerrit.entities.AttentionSetUpdate;
+import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.ChangeSizeBucket;
 import com.google.gerrit.entities.NotifyConfig.NotifyType;
@@ -42,6 +44,7 @@ import com.google.gerrit.mail.MailHeader;
 import com.google.gerrit.server.StarredChangesUtil;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.mail.send.ProjectWatch.Watchers;
+import com.google.gerrit.server.mail.send.ProjectWatch.Watchers.WatcherList;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
 import com.google.gerrit.server.patch.DiffNotAvailableException;
 import com.google.gerrit.server.patch.DiffOptions;
@@ -77,7 +80,7 @@ import org.eclipse.jgit.util.RawParseUtils;
 import org.eclipse.jgit.util.TemporaryBuffer;
 
 /** Sends an email to one or more interested parties. */
-public abstract class ChangeEmail extends NotificationEmail {
+public abstract class ChangeEmail extends OutgoingEmail {
 
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
@@ -99,19 +102,25 @@ public abstract class ChangeEmail extends NotificationEmail {
   protected PatchSetInfo patchSetInfo;
   protected String changeMessage;
   protected Instant timestamp;
+  protected BranchNameKey branch;
 
   protected ProjectState projectState;
-  protected Set<Account.Id> authors;
-  protected boolean emailOnlyAuthors;
+  private Set<Account.Id> authors;
+  private boolean emailOnlyAuthors;
   protected boolean emailOnlyAttentionSetIfEnabled;
+  // Watchers ignore attention set rules.
+  protected Set<Account.Id> watcherAccounts = new HashSet<>();
+  // Watcher can only be an email if it's specified in notify section of ProjectConfig.
+  protected Set<Address> watcherEmails = new HashSet<>();
 
   protected ChangeEmail(EmailArguments args, String messageClass, ChangeData changeData) {
-    super(args, messageClass, changeData.change().getDest());
+    super(args, messageClass);
     this.changeData = changeData;
     change = changeData.change();
     emailOnlyAuthors = false;
     emailOnlyAttentionSetIfEnabled = true;
     currentAttentionSet = getAttentionSet();
+    branch = changeData.change().getDest();
   }
 
   @Override
@@ -192,7 +201,6 @@ public abstract class ChangeEmail extends NotificationEmail {
         }
       }
     }
-    authors = getAuthors();
 
     try {
       stars = changeData.stars();
@@ -201,6 +209,7 @@ public abstract class ChangeEmail extends NotificationEmail {
     }
 
     super.init();
+    BranchEmailUtils.setListIdHeader(this, branch);
     if (timestamp != null) {
       setHeader(FieldName.DATE, timestamp);
     }
@@ -211,13 +220,13 @@ public abstract class ChangeEmail extends NotificationEmail {
     setChangeUrlHeader();
     setCommitIdHeader();
 
-    if (notify.handling().compareTo(NotifyHandling.OWNER_REVIEWERS) >= 0) {
+    if (notify.handling().equals(NotifyHandling.OWNER_REVIEWERS)
+        || notify.handling().equals(NotifyHandling.ALL)) {
       try {
-        addByEmail(
-            RecipientType.CC, changeData.reviewersByEmail().byState(ReviewerStateInternal.CC));
-        addByEmail(
-            RecipientType.CC,
-            changeData.reviewersByEmail().byState(ReviewerStateInternal.REVIEWER));
+        changeData.reviewersByEmail().byState(ReviewerStateInternal.CC).stream()
+            .forEach(address -> addByEmail(RecipientType.CC, address));
+        changeData.reviewersByEmail().byState(ReviewerStateInternal.REVIEWER).stream()
+            .forEach(address -> addByEmail(RecipientType.CC, address));
       } catch (StorageException e) {
         throw new EmailException("Failed to add unregistered CCs " + change.getChangeId(), e);
       }
@@ -242,7 +251,9 @@ public abstract class ChangeEmail extends NotificationEmail {
   }
 
   private int getInsertionsCount() {
-    return listModifiedFiles().values().stream()
+    return listModifiedFiles().entrySet().stream()
+        .filter(e -> !Patch.COMMIT_MSG.equals(e.getKey()))
+        .map(Map.Entry::getValue)
         .map(FileDiffOutput::insertions)
         .reduce(0, Integer::sum);
   }
@@ -323,8 +334,8 @@ public abstract class ChangeEmail extends NotificationEmail {
                     + "{1,choice,0#0 insertions|1#1 insertion|1<{1} insertions}(+), " //
                     + "{2,choice,0#0 deletions|1#1 deletion|1<{2} deletions}(-)" //
                     + "\n",
-                modifiedFiles.size() - 1, //
-                getInsertionsCount(), //
+                modifiedFiles.size() - 1, // -1 to account for the commit message
+                getInsertionsCount(),
                 getDeletionsCount()));
         detail.append("\n");
       }
@@ -373,9 +384,9 @@ public abstract class ChangeEmail extends NotificationEmail {
   }
 
   /** TO or CC all vested parties (change owner, patch set uploader, author). */
-  protected void rcptToAuthors(RecipientType rt) {
-    for (Account.Id id : authors) {
-      add(rt, id);
+  protected void addAuthors(RecipientType rt) {
+    for (Account.Id id : getAuthors()) {
+      addByAccountId(rt, id);
     }
   }
 
@@ -387,13 +398,45 @@ public abstract class ChangeEmail extends NotificationEmail {
 
     for (Map.Entry<Account.Id, Collection<String>> e : stars.asMap().entrySet()) {
       if (e.getValue().contains(StarredChangesUtil.DEFAULT_LABEL)) {
-        super.add(RecipientType.BCC, e.getKey());
+        super.addByAccountId(RecipientType.BCC, e.getKey());
       }
     }
   }
 
-  @Override
-  protected final Watchers getWatchers(NotifyType type, boolean includeWatchersFromNotifyConfig) {
+  /** Include users and groups that want notification of events. */
+  protected void includeWatchers(NotifyType type) {
+    includeWatchers(type, true);
+  }
+
+  /** Include users and groups that want notification of events. */
+  protected void includeWatchers(NotifyType type, boolean includeWatchersFromNotifyConfig) {
+    try {
+      Watchers matching = getWatchers(type, includeWatchersFromNotifyConfig);
+      addWatchers(RecipientType.TO, matching.to);
+      addWatchers(RecipientType.CC, matching.cc);
+      addWatchers(RecipientType.BCC, matching.bcc);
+    } catch (StorageException err) {
+      // Just don't CC everyone. Better to send a partial message to those
+      // we already have queued up then to fail deliver entirely to people
+      // who have a lower interest in the change.
+      logger.atWarning().withCause(err).log("Cannot BCC watchers for %s", type);
+    }
+  }
+
+  /** Add users or email addresses to the TO, CC, or BCC list. */
+  private void addWatchers(RecipientType type, WatcherList watcherList) {
+    watcherAccounts.addAll(watcherList.accounts);
+    for (Account.Id user : watcherList.accounts) {
+      addByAccountId(type, user);
+    }
+
+    watcherEmails.addAll(watcherList.emails);
+    for (Address addr : watcherList.emails) {
+      addByEmail(type, addr);
+    }
+  }
+
+  private final Watchers getWatchers(NotifyType type, boolean includeWatchersFromNotifyConfig) {
     if (!NotifyHandling.ALL.equals(notify.handling())) {
       return new Watchers();
     }
@@ -411,7 +454,7 @@ public abstract class ChangeEmail extends NotificationEmail {
 
     try {
       for (Account.Id id : changeData.reviewers().all()) {
-        add(RecipientType.CC, id);
+        addByAccountId(RecipientType.CC, id);
       }
     } catch (StorageException err) {
       logger.atWarning().withCause(err).log("Cannot CC users that reviewed updated change");
@@ -427,7 +470,7 @@ public abstract class ChangeEmail extends NotificationEmail {
 
     try {
       for (Account.Id id : changeData.reviewers().byState(ReviewerStateInternal.REVIEWER)) {
-        add(RecipientType.CC, id);
+        addByAccountId(RecipientType.CC, id);
       }
     } catch (StorageException err) {
       logger.atWarning().withCause(err).log("Cannot CC users that commented on updated change");
@@ -435,43 +478,54 @@ public abstract class ChangeEmail extends NotificationEmail {
   }
 
   @Override
-  protected void add(RecipientType rt, Account.Id to) {
-    addRecipient(rt, to, /* isWatcher= */ false);
+  protected boolean isRecipientAllowed(Address addr) throws PermissionBackendException {
+    if (!projectState.statePermitsRead()) {
+      return false;
+    }
+    if (emailOnlyAuthors) {
+      return false;
+    }
+
+    // If the email is a watcher email, skip permission check. An email can only be a watcher if
+    // it is specified in notify section of ProjectConfig, so we trust that the recipient is
+    // allowed.
+    if (watcherEmails.contains(addr)) {
+      return true;
+    }
+    return args.permissionBackend
+        .user(args.anonymousUser.get())
+        .change(changeData)
+        .test(ChangePermission.READ);
   }
 
-  /** This bypasses the EmailStrategy.ATTENTION_SET_ONLY strategy when adding the recipient. */
   @Override
-  protected void addWatcher(RecipientType rt, Account.Id to) {
-    addRecipient(rt, to, /* isWatcher= */ true);
-  }
-
-  private void addRecipient(RecipientType rt, Account.Id to, boolean isWatcher) {
-    if (!isWatcher) {
+  protected boolean isRecipientAllowed(Account.Id to) throws PermissionBackendException {
+    if (!projectState.statePermitsRead()) {
+      return false;
+    }
+    if (emailOnlyAuthors && !getAuthors().contains(to)) {
+      return false;
+    }
+    // Watchers ignore AttentionSet rules.
+    if (!watcherAccounts.contains(to)) {
       Optional<AccountState> accountState = args.accountCache.get(to);
       if (emailOnlyAttentionSetIfEnabled
           && accountState.isPresent()
           && accountState.get().generalPreferences().getEmailStrategy()
               == EmailStrategy.ATTENTION_SET_ONLY
           && !currentAttentionSet.contains(to)) {
-        return;
+        return false;
       }
     }
-    if (emailOnlyAuthors && !authors.contains(to)) {
-      return;
-    }
-    super.add(rt, to);
-  }
 
-  @Override
-  protected boolean isVisibleTo(Account.Id to) throws PermissionBackendException {
-    if (!projectState.statePermitsRead()) {
-      return false;
-    }
     return args.permissionBackend.absentUser(to).change(changeData).test(ChangePermission.READ);
   }
 
-  /** Find all users who are authors of any part of this change. */
+  /** Lazily finds all users who are authors of any part of this change. */
   protected Set<Account.Id> getAuthors() {
+    if (this.authors != null) {
+      return this.authors;
+    }
     Set<Account.Id> authors = new HashSet<>();
 
     switch (notify.handling()) {
@@ -497,12 +551,13 @@ public abstract class ChangeEmail extends NotificationEmail {
         break;
     }
 
-    return authors;
+    return this.authors = authors;
   }
 
   @Override
   protected void setupSoyContext() {
     super.setupSoyContext();
+    BranchEmailUtils.addBranchData(this, args, branch);
 
     soyContext.put("changeId", change.getKey().get());
     soyContext.put("coverLetter", getCoverLetter());
@@ -546,9 +601,6 @@ public abstract class ChangeEmail extends NotificationEmail {
     footers.add(MailHeader.CHANGE_NUMBER.withDelimiter() + change.getChangeId());
     footers.add(MailHeader.PATCH_SET.withDelimiter() + patchSet.number());
     footers.add(MailHeader.OWNER.withDelimiter() + getNameEmailFor(change.getOwner()));
-    if (change.getAssignee() != null) {
-      footers.add(MailHeader.ASSIGNEE.withDelimiter() + getNameEmailFor(change.getAssignee()));
-    }
     for (String reviewer : getEmailsByState(ReviewerStateInternal.REVIEWER)) {
       footers.add(MailHeader.REVIEWER.withDelimiter() + reviewer);
     }
@@ -558,8 +610,7 @@ public abstract class ChangeEmail extends NotificationEmail {
     for (Account.Id attentionUser : currentAttentionSet) {
       footers.add(MailHeader.ATTENTION.withDelimiter() + getNameEmailFor(attentionUser));
     }
-    // Since this would be user visible, only show it if attention set is enabled
-    if (args.settings.isAttentionSetEnabled && !currentAttentionSet.isEmpty()) {
+    if (!currentAttentionSet.isEmpty()) {
       // We need names rather than account ids / emails to make it user readable.
       soyContext.put(
           "attentionSet",

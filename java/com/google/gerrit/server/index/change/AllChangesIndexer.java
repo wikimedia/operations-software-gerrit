@@ -27,6 +27,7 @@ import com.google.common.flogger.FluentLogger;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.UncheckedExecutionException;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.index.SiteIndexer;
@@ -117,6 +118,11 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
         ImmutableMap<Change.Id, ObjectId> metaIdByChange) {
       return new AutoValue_AllChangesIndexer_ProjectSlice(name, slice, slices, metaIdByChange);
     }
+
+    private static ProjectSlice oneSlice(
+        Project.NameKey name, ImmutableMap<Change.Id, ObjectId> metaIdByChange) {
+      return new AutoValue_AllChangesIndexer_ProjectSlice(name, 0, 1, metaIdByChange);
+    }
   }
 
   @Override
@@ -180,50 +186,39 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
     return Result.create(sw, ok.get(), nDone, nFailed);
   }
 
+  @Nullable
   public Callable<Void> reindexProject(
       ChangeIndexer indexer, Project.NameKey project, Task done, Task failed) {
     try (Repository repo = repoManager.openRepository(project)) {
-      return reindexProject(
-          indexer, project, 0, 1, ChangeNotes.Factory.scanChangeIds(repo), done, failed);
+      return reindexProjectSlice(
+          indexer,
+          ProjectSlice.oneSlice(project, ChangeNotes.Factory.scanChangeIds(repo)),
+          done,
+          failed);
     } catch (IOException e) {
       logger.atSevere().log("%s", e.getMessage());
       return null;
     }
   }
 
-  public Callable<Void> reindexProject(
-      ChangeIndexer indexer,
-      Project.NameKey project,
-      int slice,
-      int slices,
-      ImmutableMap<Change.Id, ObjectId> metaIdByChange,
-      Task done,
-      Task failed) {
-    return new ProjectIndexer(indexer, project, slice, slices, metaIdByChange, done, failed);
+  public Callable<Void> reindexProjectSlice(
+      ChangeIndexer indexer, ProjectSlice projectSlice, Task done, Task failed) {
+    return new ProjectSliceIndexer(indexer, projectSlice, done, failed);
   }
 
-  private class ProjectIndexer implements Callable<Void> {
+  private class ProjectSliceIndexer implements Callable<Void> {
     private final ChangeIndexer indexer;
-    private final Project.NameKey project;
-    private final int slice;
-    private final int slices;
-    private final ImmutableMap<Change.Id, ObjectId> metaIdByChange;
+    private final ProjectSlice projectSlice;
     private final ProgressMonitor done;
     private final ProgressMonitor failed;
 
-    private ProjectIndexer(
+    private ProjectSliceIndexer(
         ChangeIndexer indexer,
-        Project.NameKey project,
-        int slice,
-        int slices,
-        ImmutableMap<Change.Id, ObjectId> metaIdByChange,
+        ProjectSlice projectSlice,
         ProgressMonitor done,
         ProgressMonitor failed) {
       this.indexer = indexer;
-      this.project = project;
-      this.slice = slice;
-      this.slices = slices;
-      this.metaIdByChange = metaIdByChange;
+      this.projectSlice = projectSlice;
       this.done = done;
       this.failed = failed;
     }
@@ -237,7 +232,10 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
       // but the goal is to invalidate that cache as infrequently as we possibly can. And besides,
       // we don't have concrete proof that improving packfile locality would help.
       notesFactory
-          .scan(metaIdByChange, project, id -> (id.get() % slices) == slice)
+          .scan(
+              projectSlice.metaIdByChange(),
+              projectSlice.name(),
+              id -> (id.get() % projectSlice.slices()) == projectSlice.slice())
           .forEach(r -> index(r));
       OnlineReindexMode.end();
       return null;
@@ -276,10 +274,15 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
 
     @Override
     public String toString() {
-      if (slices == 1) {
-        return "Index all changes of project " + project.get();
+      if (projectSlice.slices() == 1) {
+        return "Index all changes of project " + projectSlice.name();
       }
-      return "Index changes slice " + slice + "/" + slices + " of project " + project.get();
+      return "Index changes slice "
+          + projectSlice.slice()
+          + "/"
+          + projectSlice.slices()
+          + " of project "
+          + projectSlice.name();
     }
   }
 
@@ -347,7 +350,7 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
           int size = metaIdByChange.size();
           if (size > 0) {
             changeCount.addAndGet(size);
-            int slices = 1 + size / PROJECT_SLICE_MAX_REFS;
+            int slices = 1 + (size - 1) / PROJECT_SLICE_MAX_REFS;
             if (slices > 1) {
               verboseWriter.println(
                   "Submitting " + name + " for indexing in " + slices + " slices");
@@ -360,12 +363,9 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
               ProjectSlice projectSlice = ProjectSlice.create(name, slice, slices, metaIdByChange);
               ListenableFuture<?> future =
                   executor.submit(
-                      reindexProject(
+                      reindexProjectSlice(
                           indexerFactory.create(executor, index),
-                          name,
-                          slice,
-                          slices,
-                          projectSlice.metaIdByChange(),
+                          projectSlice,
                           doneTask,
                           failedTask));
               String description = "project " + name + " (" + slice + "/" + slices + ")";

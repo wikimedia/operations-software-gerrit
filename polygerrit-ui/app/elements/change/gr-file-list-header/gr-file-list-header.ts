@@ -25,8 +25,8 @@ import {
 import {DiffPreferencesInfo} from '../../../types/diff';
 import {GrDiffModeSelector} from '../../../embed/diff/gr-diff-mode-selector/gr-diff-mode-selector';
 import {GrButton} from '../../shared/gr-button/gr-button';
-import {fireEvent} from '../../../utils/event-util';
-import {css, html, LitElement} from 'lit';
+import {fire, fireNoBubbleNoCompose} from '../../../utils/event-util';
+import {css, html, LitElement, nothing} from 'lit';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {when} from 'lit/directives/when.js';
 import {ifDefined} from 'lit/directives/if-defined.js';
@@ -36,30 +36,16 @@ import {
   shortcutsServiceToken,
 } from '../../../services/shortcuts/shortcuts-service';
 import {resolve} from '../../../models/dependency';
-import {getAppContext} from '../../../services/app-context';
 import {subscribe} from '../../lit/subscription-controller';
 import {configModelToken} from '../../../models/config/config-model';
 import {createChangeUrl} from '../../../models/views/change';
+import {userModelToken} from '../../../models/user/user-model';
 import {changeModelToken} from '../../../models/change/change-model';
+import {PatchRangeChangeEvent} from '../../diff/gr-patch-range-select/gr-patch-range-select';
+import {classMap} from 'lit/directives/class-map.js';
 
 @customElement('gr-file-list-header')
 export class GrFileListHeader extends LitElement {
-  /**
-   * @event expand-diffs
-   */
-
-  /**
-   * @event collapse-diffs
-   */
-
-  /**
-   * @event open-diff-prefs
-   */
-
-  /**
-   * @event open-download-dialog
-   */
-
   @property({type: Object})
   account: AccountInfo | undefined;
 
@@ -113,7 +99,7 @@ export class GrFileListHeader extends LitElement {
   // 'hide diffs' buttons still be functional.
   private readonly maxFilesForBulkActions = 225;
 
-  private readonly userModel = getAppContext().userModel;
+  private readonly getUserModel = resolve(this, userModelToken);
 
   private readonly getNavigation = resolve(this, navigationToken);
 
@@ -123,7 +109,7 @@ export class GrFileListHeader extends LitElement {
     super();
     subscribe(
       this,
-      () => this.userModel.diffPreferences$,
+      () => this.getUserModel().diffPreferences$,
       diffPreferences => {
         if (!diffPreferences) return;
         this.diffPrefs = diffPreferences;
@@ -176,15 +162,6 @@ export class GrFileListHeader extends LitElement {
         display: flex;
         flex-wrap: wrap;
       }
-      .patchInfo-header .container.latestPatchContainer {
-        display: none;
-      }
-      .patchInfoOldPatchSet .container.latestPatchContainer {
-        display: initial;
-      }
-      .editMode.patchInfoOldPatchSet .container.latestPatchContainer {
-        display: none;
-      }
       .latestPatchContainer a {
         text-decoration: none;
       }
@@ -233,16 +210,7 @@ export class GrFileListHeader extends LitElement {
         margin: 0;
         --gr-button-padding: 2px 4px;
       }
-      .editMode .hideOnEdit {
-        display: none;
-      }
-      .showOnEdit {
-        display: none;
-      }
-      .editMode .showOnEdit {
-        display: initial;
-      }
-      .editMode .showOnEdit.flexContainer {
+      .flexContainer {
         align-items: center;
         display: flex;
       }
@@ -269,15 +237,14 @@ export class GrFileListHeader extends LitElement {
     if (!this.change || !this.diffPrefs) {
       return;
     }
-    const editModeClass = this.computeEditModeClass(this.editMode);
-    const patchInfoClass = this.computePatchInfoClass();
     const expandedClass = this.computeExpandedClass(this.filesExpanded);
-    const prefsButtonHidden = this.computePrefsButtonHidden(
-      this.diffPrefs,
-      this.loggedIn
-    );
     return html`
-      <div class="patchInfo-header ${editModeClass} ${patchInfoClass}">
+      <div
+        class=${classMap({
+          'patchInfo-header': true,
+          patchInfoOldPatchSet: this.patchNum !== this.latestPatchNum,
+        })}
+      >
         <div class="patchInfo-left">
           <div class="patchInfoContent">
             <gr-patch-range-select
@@ -287,17 +254,14 @@ export class GrFileListHeader extends LitElement {
             </gr-patch-range-select>
             <span class="separator"></span>
             <gr-commit-info .commitInfo=${this.commitInfo}></gr-commit-info>
-            <span class="container latestPatchContainer">
-              <span class="separator"></span>
-              <a href=${ifDefined(this.changeUrl)}>Go to latest patch set</a>
-            </span>
+            ${this.renderLatestPatchContainer()}
           </div>
         </div>
         <div class="rightControls ${expandedClass}">
           ${when(
             this.editMode,
             () => html`
-              <span class="showOnEdit flexContainer">
+              <span class="flexContainer">
                 <gr-edit-controls
                   id="editControls"
                   .patchNum=${this.patchNum}
@@ -307,28 +271,20 @@ export class GrFileListHeader extends LitElement {
               </span>
             `
           )}
-          <div class="fileViewActions">
-            <span class="fileViewActionsLabel">Diff view:</span>
-            <gr-diff-mode-selector
-              id="modeSelect"
-              .saveOnChange=${this.loggedIn ?? false}
-            ></gr-diff-mode-selector>
-            <span
-              id="diffPrefsContainer"
-              class="hideOnEdit"
-              ?hidden=${prefsButtonHidden}
-            >
-              <gr-tooltip-content has-tooltip title="Diff preferences">
-                <gr-button
-                  link
-                  class="prefsButton desktop"
-                  @click=${this.handlePrefsTap}
-                  ><gr-icon icon="settings" filled></gr-icon
-                ></gr-button>
-              </gr-tooltip-content>
-            </span>
-            <span class="separator"></span>
-          </div>
+          ${when(
+            this.loggedIn && this.diffPrefs,
+            () => html`
+              <div class="fileViewActions">
+                <span class="fileViewActionsLabel">Diff view:</span>
+                <gr-diff-mode-selector
+                  id="modeSelect"
+                  .saveOnChange=${true}
+                ></gr-diff-mode-selector>
+                ${this.renderDiffPrefsContainer()}
+                <span class="separator"></span>
+              </div>
+            `
+          )}
           <span class="downloadContainer desktop">
             <gr-tooltip-content
               has-tooltip
@@ -380,12 +336,38 @@ export class GrFileListHeader extends LitElement {
     `;
   }
 
+  private renderLatestPatchContainer() {
+    if (this.editMode || this.patchNum === this.latestPatchNum) return nothing;
+    return html`
+      <span class="container latestPatchContainer">
+        <span class="separator"></span>
+        <a href=${ifDefined(this.changeUrl)}>Go to latest patch set</a>
+      </span>
+    `;
+  }
+
+  private renderDiffPrefsContainer() {
+    if (this.editMode) return nothing;
+    return html`
+      <span id="diffPrefsContainer">
+        <gr-tooltip-content has-tooltip title="Diff preferences">
+          <gr-button
+            link
+            class="prefsButton desktop"
+            @click=${this.handleDiffPrefsTap}
+            ><gr-icon icon="settings" filled></gr-icon
+          ></gr-button>
+        </gr-tooltip-content>
+      </span>
+    `;
+  }
+
   private expandAllDiffs() {
-    fireEvent(this, 'expand-diffs');
+    fire(this, 'expand-diffs', {});
   }
 
   private collapseAllDiffs() {
-    fireEvent(this, 'collapse-diffs');
+    fire(this, 'collapse-diffs', {});
   }
 
   private computeExpandedClass(filesExpanded?: FilesExpandedState) {
@@ -400,13 +382,6 @@ export class GrFileListHeader extends LitElement {
     return classes.join(' ');
   }
 
-  private computePrefsButtonHidden(
-    prefs: DiffPreferencesInfo,
-    loggedIn?: boolean
-  ) {
-    return !loggedIn || !prefs;
-  }
-
   private fileListActionsVisible(
     shownFileCount: number,
     maxFilesForBulkActions: number
@@ -414,7 +389,7 @@ export class GrFileListHeader extends LitElement {
     return shownFileCount <= maxFilesForBulkActions;
   }
 
-  handlePatchChange(e: CustomEvent) {
+  handlePatchChange(e: PatchRangeChangeEvent) {
     const {basePatchNum, patchNum} = e.detail;
     if (
       (basePatchNum === this.basePatchNum && patchNum === this.patchNum) ||
@@ -427,28 +402,15 @@ export class GrFileListHeader extends LitElement {
     );
   }
 
-  private handlePrefsTap(e: Event) {
+  private handleDiffPrefsTap(e: Event) {
     e.preventDefault();
-    fireEvent(this, 'open-diff-prefs');
+    fire(this, 'open-diff-prefs', {});
   }
 
   private handleDownloadTap(e: Event) {
     e.preventDefault();
     e.stopPropagation();
-    this.dispatchEvent(
-      new CustomEvent('open-download-dialog', {bubbles: false})
-    );
-  }
-
-  private computeEditModeClass(editMode?: boolean) {
-    return editMode ? 'editMode' : '';
-  }
-
-  computePatchInfoClass() {
-    if (this.patchNum === this.latestPatchNum) {
-      return '';
-    }
-    return 'patchInfoOldPatchSet';
+    fireNoBubbleNoCompose(this, 'open-download-dialog', {});
   }
 
   private createTitle(shortcutName: Shortcut, section: ShortcutSection) {
@@ -459,5 +421,11 @@ export class GrFileListHeader extends LitElement {
 declare global {
   interface HTMLElementTagNameMap {
     'gr-file-list-header': GrFileListHeader;
+  }
+  interface HTMLElementEventMap {
+    'collapse-diffs': CustomEvent<{}>;
+    'expand-diffs': CustomEvent<{}>;
+    'open-diff-prefs': CustomEvent<{}>;
+    'open-download-dialog': CustomEvent<{}>;
   }
 }

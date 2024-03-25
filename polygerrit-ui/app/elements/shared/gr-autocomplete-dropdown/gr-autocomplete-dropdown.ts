@@ -6,11 +6,12 @@
 import '../gr-cursor-manager/gr-cursor-manager';
 import '../../../styles/shared-styles';
 import {GrCursorManager} from '../gr-cursor-manager/gr-cursor-manager';
-import {fireEvent} from '../../../utils/event-util';
+import {fire} from '../../../utils/event-util';
 import {Key} from '../../../utils/dom-util';
 import {FitController} from '../../lit/fit-controller';
 import {css, html, LitElement, PropertyValues} from 'lit';
 import {customElement, property, query} from 'lit/decorators.js';
+import {when} from 'lit/directives/when.js';
 import {repeat} from 'lit/directives/repeat.js';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {ShortcutController} from '../../lit/shortcut-controller';
@@ -18,6 +19,9 @@ import {ShortcutController} from '../../lit/shortcut-controller';
 declare global {
   interface HTMLElementTagNameMap {
     'gr-autocomplete-dropdown': GrAutocompleteDropdown;
+  }
+  interface HTMLElementEventMap {
+    'dropdown-closed': CustomEvent<{}>;
   }
 }
 
@@ -29,9 +33,19 @@ export interface Item {
   value?: string;
 }
 
-export interface ItemSelectedEvent {
+export interface ItemSelectedEventDetail {
   trigger: string;
   selected: HTMLElement | null;
+}
+
+export enum AutocompleteQueryStatusType {
+  LOADING = 'loading',
+  ERROR = 'error',
+}
+
+export interface AutocompleteQueryStatus {
+  type: AutocompleteQueryStatusType;
+  message: string;
 }
 
 @customElement('gr-autocomplete-dropdown')
@@ -53,6 +67,12 @@ export class GrAutocompleteDropdown extends LitElement {
 
   @property({type: Boolean, reflect: true, attribute: 'is-hidden'})
   isHidden = true;
+
+  /** If specified a single non-interactable line is shown instead of
+   * suggestions.
+   */
+  @property({type: Object})
+  queryStatus?: AutocompleteQueryStatus;
 
   @property({type: Number})
   verticalOffset = 0;
@@ -79,6 +99,11 @@ export class GrAutocompleteDropdown extends LitElement {
       css`
         :host {
           z-index: 100;
+          box-shadow: var(--elevation-level-2);
+          overflow: auto;
+          background: var(--dropdown-background-color);
+          border-radius: var(--border-radius);
+          max-height: 50vh;
         }
         :host([is-hidden]) {
           display: none;
@@ -105,12 +130,13 @@ export class GrAutocompleteDropdown extends LitElement {
         li.selected {
           background-color: var(--hover-background-color);
         }
-        .dropdown-content {
-          background: var(--dropdown-background-color);
-          box-shadow: var(--elevation-level-2);
-          border-radius: var(--border-radius);
-          max-height: 50vh;
-          overflow: auto;
+        li.query-status {
+          background-color: var(--disabled-background);
+          cursor: default;
+        }
+        li.query-status.error {
+          color: var(--error-foreground);
+          white-space: pre-wrap;
         }
         @media only screen and (max-height: 35em) {
           .dropdown-content {
@@ -128,19 +154,23 @@ export class GrAutocompleteDropdown extends LitElement {
     ];
   }
 
+  private isSuggestionListInteractible() {
+    return !this.isHidden && !this.queryStatus;
+  }
+
   constructor() {
     super();
     this.cursor.cursorTargetClass = 'selected';
     this.cursor.focusOnMove = true;
-    this.shortcuts.addLocal({key: Key.UP}, () => this.handleUp());
-    this.shortcuts.addLocal({key: Key.DOWN}, () => this.handleDown());
+    this.shortcuts.addLocal({key: Key.UP, allowRepeat: true}, () =>
+      this.cursorUp()
+    );
+    this.shortcuts.addLocal({key: Key.DOWN, allowRepeat: true}, () =>
+      this.cursorDown()
+    );
     this.shortcuts.addLocal({key: Key.ENTER}, () => this.handleEnter());
     this.shortcuts.addLocal({key: Key.ESC}, () => this.handleEscape());
     this.shortcuts.addLocal({key: Key.TAB}, () => this.handleTab());
-  }
-
-  override connectedCallback() {
-    super.connectedCallback();
   }
 
   override disconnectedCallback() {
@@ -157,7 +187,8 @@ export class GrAutocompleteDropdown extends LitElement {
   override updated(changedProperties: PropertyValues) {
     if (
       changedProperties.has('suggestions') ||
-      changedProperties.has('isHidden')
+      changedProperties.has('isHidden') ||
+      changedProperties.has('queryStatus')
     ) {
       if (!this.isHidden) {
         this.computeCursorStopsAndRefit();
@@ -165,32 +196,50 @@ export class GrAutocompleteDropdown extends LitElement {
     }
   }
 
+  private renderStatus() {
+    return html`
+      <li
+        tabindex="-1"
+        aria-label="autocomplete query status"
+        class="query-status ${this.queryStatus?.type}"
+      >
+        <span>${this.queryStatus?.message}</span>
+        <span class="label"
+          >${this.queryStatus?.type === AutocompleteQueryStatusType.ERROR
+            ? 'ERROR'
+            : ''}</span
+        >
+      </li>
+    `;
+  }
+
   override render() {
     return html`
-      <div
-        class="dropdown-content"
-        slot="dropdown-content"
-        id="suggestions"
-        role="listbox"
-      >
+      <div class="dropdown-content" id="suggestions" role="listbox">
         <ul>
-          ${repeat(
-            this.suggestions,
-            (item, index) => html`
-              <li
-                data-index=${index}
-                data-value=${item.dataValue ?? ''}
-                tabindex="-1"
-                aria-label=${item.name ?? ''}
-                class="autocompleteOption"
-                role="option"
-                @click=${this.handleClickItem}
-              >
-                <span>${item.text}</span>
-                <span class="label ${this.computeLabelClass(item)}"
-                  >${item.label}</span
-                >
-              </li>
+          ${when(
+            this.queryStatus,
+            () => this.renderStatus(),
+            () => html`
+              ${repeat(
+                this.suggestions,
+                (item, index) => html`
+                  <li
+                    data-index=${index}
+                    data-value=${item.dataValue ?? ''}
+                    tabindex="-1"
+                    aria-label=${item.name ?? ''}
+                    class="autocompleteOption"
+                    role="option"
+                    @click=${this.handleClickItem}
+                  >
+                    <span>${item.text}</span>
+                    <span class="label ${this.computeLabelClass(item)}"
+                      >${item.label}</span
+                    >
+                  </li>
+                `
+              )}
             `
           )}
         </ul>
@@ -207,55 +256,42 @@ export class GrAutocompleteDropdown extends LitElement {
   }
 
   getCurrentText() {
-    return this.getCursorTarget()?.dataset['value'] || '';
+    if (!this.queryStatus) {
+      return this.getCursorTarget()?.dataset['value'] || '';
+    }
+    return '';
   }
 
   setPositionTarget(target: HTMLElement) {
-    this.fitController?.setPositionTarget(target);
-  }
-
-  private handleUp() {
-    if (!this.isHidden) this.cursorUp();
-  }
-
-  private handleDown() {
-    if (!this.isHidden) this.cursorDown();
+    this.fitController.setPositionTarget(target);
   }
 
   cursorDown() {
-    if (!this.isHidden) this.cursor.next();
+    if (this.isSuggestionListInteractible()) this.cursor.next();
   }
 
   cursorUp() {
-    if (!this.isHidden) this.cursor.previous();
+    if (this.isSuggestionListInteractible()) this.cursor.previous();
   }
 
   // private but used in tests
   handleTab() {
-    this.dispatchEvent(
-      new CustomEvent<ItemSelectedEvent>('item-selected', {
-        detail: {
-          trigger: 'tab',
-          selected: this.cursor.target,
-        },
-        composed: true,
-        bubbles: true,
-      })
-    );
+    if (this.isSuggestionListInteractible()) {
+      fire(this, 'item-selected', {
+        trigger: 'tab',
+        selected: this.cursor.target,
+      });
+    }
   }
 
   // private but used in tests
   handleEnter() {
-    this.dispatchEvent(
-      new CustomEvent<ItemSelectedEvent>('item-selected', {
-        detail: {
-          trigger: 'enter',
-          selected: this.cursor.target,
-        },
-        composed: true,
-        bubbles: true,
-      })
-    );
+    if (this.isSuggestionListInteractible()) {
+      fire(this, 'item-selected', {
+        trigger: 'enter',
+        selected: this.cursor.target,
+      });
+    }
   }
 
   private handleEscape() {
@@ -273,20 +309,14 @@ export class GrAutocompleteDropdown extends LitElement {
       }
       selected = selected.parentElement!;
     }
-    this.dispatchEvent(
-      new CustomEvent<ItemSelectedEvent>('item-selected', {
-        detail: {
-          trigger: 'click',
-          selected,
-        },
-        composed: true,
-        bubbles: true,
-      })
-    );
+    fire(this, 'item-selected', {
+      trigger: 'click',
+      selected,
+    });
   }
 
   private fireClose() {
-    fireEvent(this, 'dropdown-closed');
+    fire(this, 'dropdown-closed', {});
   }
 
   getCursorTarget() {
@@ -296,13 +326,13 @@ export class GrAutocompleteDropdown extends LitElement {
   computeCursorStopsAndRefit() {
     if (this.suggestions.length > 0) {
       this.cursor.stops = Array.from(
-        this.suggestionsDiv?.querySelectorAll('li') ?? []
+        this.suggestionsDiv?.querySelectorAll('li.autocompleteOption') ?? []
       );
       this.resetCursorIndex();
     } else {
       this.cursor.stops = [];
     }
-    this.fitController?.refit();
+    this.fitController.refit();
   }
 
   private setIndex() {

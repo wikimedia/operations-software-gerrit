@@ -4,8 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import './gr-checks-chip';
-import './gr-summary-chip';
-import '../../shared/gr-avatar/gr-avatar-stack';
+import '../gr-comments-summary/gr-comments-summary';
 import '../../shared/gr-icon/gr-icon';
 import '../../checks/gr-checks-action';
 import {LitElement, css, html, nothing} from 'lit';
@@ -29,34 +28,21 @@ import {
   isRunningOrScheduled,
   isRunningScheduledOrCompleted,
 } from '../../../models/checks/checks-util';
-import {
-  CommentThread,
-  getFirstComment,
-  getMentionedThreads,
-  hasHumanReply,
-  isResolved,
-  isRobotThread,
-  isUnresolved,
-} from '../../../utils/comment-util';
-import {pluralize} from '../../../utils/string-util';
-import {AccountInfo} from '../../../types/common';
-import {notUndefined} from '../../../types/types';
+import {getMentionedThreads, isUnresolved} from '../../../utils/comment-util';
+import {AccountInfo, CommentThread, DropdownLink} from '../../../types/common';
 import {Tab} from '../../../constants/constants';
-import {ChecksTabState, CommentTabState} from '../../../types/events';
+import {ChecksTabState} from '../../../types/events';
 import {spinnerStyles} from '../../../styles/gr-spinner-styles';
 import {modifierPressed} from '../../../utils/dom-util';
-import {DropdownLink} from '../../shared/gr-dropdown/gr-dropdown';
 import {commentsModelToken} from '../../../models/comments/comments-model';
 import {resolve} from '../../../models/dependency';
 import {checksModelToken} from '../../../models/checks/checks-model';
 import {changeModelToken} from '../../../models/change/change-model';
 import {Interaction} from '../../../constants/reporting';
 import {roleDetails} from '../../../utils/change-util';
-
-import {SummaryChipStyles} from './gr-summary-chip';
 import {when} from 'lit/directives/when.js';
-import {KnownExperimentId} from '../../../services/flags/flags';
 import {combineLatest} from 'rxjs';
+import {userModelToken} from '../../../models/user/user-model';
 
 function handleSpaceOrEnter(e: KeyboardEvent, handler: () => void) {
   if (modifierPressed(e)) return;
@@ -70,10 +56,15 @@ function handleSpaceOrEnter(e: KeyboardEvent, handler: () => void) {
 const DETAILS_QUOTA: Map<RunStatus | Category, number> = new Map();
 DETAILS_QUOTA.set(Category.ERROR, 7);
 DETAILS_QUOTA.set(Category.WARNING, 2);
+DETAILS_QUOTA.set(Category.INFO, 2);
+DETAILS_QUOTA.set(Category.SUCCESS, 2);
 DETAILS_QUOTA.set(RunStatus.RUNNING, 2);
 
 @customElement('gr-change-summary')
 export class GrChangeSummary extends LitElement {
+  @state()
+  commentsLoading = true;
+
   @state()
   commentThreads?: CommentThread[];
 
@@ -109,19 +100,15 @@ export class GrChangeSummary extends LitElement {
 
   private readonly showAllChips = new Map<RunStatus | Category, boolean>();
 
-  // private but used in tests
-  readonly getCommentsModel = resolve(this, commentsModelToken);
+  private readonly getCommentsModel = resolve(this, commentsModelToken);
 
-  // private but used in tests
-  readonly userModel = getAppContext().userModel;
+  private readonly getUserModel = resolve(this, userModelToken);
 
   private readonly getChecksModel = resolve(this, checksModelToken);
 
   private readonly getChangeModel = resolve(this, changeModelToken);
 
   private readonly reporting = getAppContext().reportingService;
-
-  private readonly flagsService = getAppContext().flagsService;
 
   constructor() {
     super();
@@ -167,32 +154,35 @@ export class GrChangeSummary extends LitElement {
     );
     subscribe(
       this,
-      () => this.getCommentsModel().threads$,
+      () => this.getCommentsModel().threadsSaved$,
       x => (this.commentThreads = x)
     );
     subscribe(
       this,
-      () => this.userModel.account$,
+      () => this.getUserModel().account$,
       x => (this.selfAccount = x)
     );
-    if (this.flagsService.isEnabled(KnownExperimentId.MENTION_USERS)) {
-      subscribe(
-        this,
-        () =>
-          combineLatest([
-            this.userModel.account$,
-            this.getCommentsModel().threads$,
-          ]),
-        ([selfAccount, threads]) => {
-          if (!selfAccount || !selfAccount.email) return;
-          const unresolvedThreadsMentioningSelf = getMentionedThreads(
-            threads,
-            selfAccount
-          ).filter(isUnresolved);
-          this.mentionCount = unresolvedThreadsMentioningSelf.length;
-        }
-      );
-    }
+    subscribe(
+      this,
+      () => this.getCommentsModel().commentsLoading$,
+      x => (this.commentsLoading = x)
+    );
+    subscribe(
+      this,
+      () =>
+        combineLatest([
+          this.getUserModel().account$,
+          this.getCommentsModel().threadsSaved$,
+        ]),
+      ([selfAccount, threads]) => {
+        if (!selfAccount || !selfAccount.email) return;
+        const unresolvedThreadsMentioningSelf = getMentionedThreads(
+          threads,
+          selfAccount
+        ).filter(isUnresolved);
+        this.mentionCount = unresolvedThreadsMentioningSelf.length;
+      }
+    );
   }
 
   static override get styles() {
@@ -269,14 +259,6 @@ export class GrChangeSummary extends LitElement {
           padding-right: var(--spacing-l);
           padding-bottom: var(--spacing-s);
           line-height: calc(var(--line-height-normal) + var(--spacing-s));
-        }
-        gr-avatar-stack {
-          --avatar-size: var(--line-height-small, 16px);
-          --stack-border-color: var(--warning-background);
-        }
-        .unresolvedIcon {
-          font-size: var(--line-height-small);
-          color: var(--warning-foreground);
         }
         /* The basics of .loadingSpin are defined in shared styles. */
         .loadingSpin {
@@ -423,8 +405,27 @@ export class GrChangeSummary extends LitElement {
       if (hasResultsOf(run, category)) return true;
       return category === Category.SUCCESS && hasCompletedWithoutResults(run);
     });
+    const hasRunning = this.runs.some(isRunningOrScheduled);
+    const hasWarning = this.runs.some(run =>
+      hasResultsOf(run, Category.WARNING)
+    );
+    const hasError = this.runs.some(run => hasResultsOf(run, Category.ERROR));
     const count = (run: CheckRun) => getResultsOf(run, category);
-    if (category === Category.SUCCESS || category === Category.INFO) {
+
+    // Sometimes INFO and SUCCESS results should not consume much UI space and
+    // not grab any attention, e.g. when there are errors. Then let's
+    // aggressively collapse them into one small chip. But if INFO and SUCCESS
+    // is all we have, then make use of the one line we have and show expanded
+    // chips.
+    if (
+      category === Category.SUCCESS &&
+      (hasRunning || hasError || hasWarning || runs.length > 3)
+    ) {
+      return this.renderChecksChipsCollapsed(runs, category, count);
+    } else if (
+      category === Category.INFO &&
+      (hasRunning || hasError || runs.length > 3)
+    ) {
       return this.renderChecksChipsCollapsed(runs, category, count);
     }
     return this.renderChecksChipsExpanded(runs, category);
@@ -531,107 +532,29 @@ export class GrChangeSummary extends LitElement {
   }
 
   override render() {
-    const commentThreads =
-      this.commentThreads?.filter(t => !isRobotThread(t) || hasHumanReply(t)) ??
-      [];
-    const countResolvedComments = commentThreads.filter(isResolved).length;
-    const unresolvedThreads = commentThreads.filter(isUnresolved);
-    const countUnresolvedComments = unresolvedThreads.length;
-    const unresolvedAuthors = this.getAccounts(unresolvedThreads);
     return html`
       <div>
         <table>
           <tr>
             <td class="key">Comments</td>
             <td class="value">
-              ${this.renderZeroState(
-                countResolvedComments,
-                countUnresolvedComments
+              ${when(
+                this.commentsLoading,
+                () => html`<span class="loadingSpin"></span>`
               )}
-              ${this.renderDraftChip()} ${this.renderMentionChip()}
-              ${this.renderUnresolvedCommentsChip(
-                countUnresolvedComments,
-                unresolvedAuthors
-              )}
-              ${this.renderResolvedCommentsChip(countResolvedComments)}
+              <gr-comments-summary
+                .commentThreads=${this.commentThreads}
+                .draftCount=${this.draftCount}
+                .mentionCount=${this.mentionCount}
+                showCommentCategoryName
+                clickableChips
+              ></gr-comments-summary>
             </td>
           </tr>
           ${this.renderChecksSummary()}
         </table>
       </div>
     `;
-  }
-
-  private renderZeroState(
-    countResolvedComments: number,
-    countUnresolvedComments: number
-  ) {
-    if (
-      !!countResolvedComments ||
-      !!this.draftCount ||
-      !!countUnresolvedComments
-    )
-      return nothing;
-    return html`<span class="zeroState"> No comments</span>`;
-  }
-
-  private renderMentionChip() {
-    if (!this.flagsService.isEnabled(KnownExperimentId.MENTION_USERS))
-      return nothing;
-    if (!this.mentionCount) return nothing;
-    return html` <gr-summary-chip
-      class="mentionSummary"
-      styleType=${SummaryChipStyles.WARNING}
-      category=${CommentTabState.MENTIONS}
-      icon="alternate_email"
-    >
-      ${pluralize(this.mentionCount, 'mention')}</gr-summary-chip
-    >`;
-  }
-
-  private renderDraftChip() {
-    if (!this.draftCount) return nothing;
-    return html` <gr-summary-chip
-      styleType=${SummaryChipStyles.INFO}
-      category=${CommentTabState.DRAFTS}
-      icon="rate_review"
-      iconFilled
-    >
-      ${pluralize(this.draftCount, 'draft')}</gr-summary-chip
-    >`;
-  }
-
-  private renderUnresolvedCommentsChip(
-    countUnresolvedComments: number,
-    unresolvedAuthors: AccountInfo[]
-  ) {
-    if (!countUnresolvedComments) return nothing;
-    return html` <gr-summary-chip
-      styleType=${SummaryChipStyles.WARNING}
-      category=${CommentTabState.UNRESOLVED}
-      ?hidden=${!countUnresolvedComments}
-    >
-      <gr-avatar-stack .accounts=${unresolvedAuthors} imageSize="32">
-        <gr-icon
-          slot="fallback"
-          icon="chat_bubble"
-          filled
-          class="unresolvedIcon"
-        >
-        </gr-icon>
-      </gr-avatar-stack>
-      ${countUnresolvedComments} unresolved</gr-summary-chip
-    >`;
-  }
-
-  private renderResolvedCommentsChip(countResolvedComments: number) {
-    if (!countResolvedComments) return nothing;
-    return html` <gr-summary-chip
-      styleType=${SummaryChipStyles.CHECK}
-      category=${CommentTabState.SHOW_ALL}
-      icon="mark_chat_read"
-      >${countResolvedComments} resolved</gr-summary-chip
-    >`;
   }
 
   private renderChecksSummary() {
@@ -664,13 +587,6 @@ export class GrChangeSummary extends LitElement {
         </div>
       </td>
     </tr>`;
-  }
-
-  getAccounts(commentThreads: CommentThread[]): AccountInfo[] {
-    return commentThreads
-      .map(getFirstComment)
-      .map(comment => comment?.author ?? this.selfAccount)
-      .filter(notUndefined);
   }
 }
 

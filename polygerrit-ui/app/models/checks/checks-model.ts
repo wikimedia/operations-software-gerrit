@@ -12,7 +12,6 @@ import {
 } from './checks-util';
 import {assertIsDefined} from '../../utils/common-util';
 import {select} from '../../utils/observable-util';
-import {Finalizable} from '../../services/registry';
 import {
   BehaviorSubject,
   combineLatest,
@@ -52,8 +51,7 @@ import {getCurrentRevision} from '../../utils/change-util';
 import {getShaByPatchNum} from '../../utils/patch-set-util';
 import {ReportingService} from '../../services/gr-reporting/gr-reporting';
 import {Execution, Interaction, Timing} from '../../constants/reporting';
-import {fireAlert, fireEvent} from '../../utils/event-util';
-import {RouterModel} from '../../services/router/router-model';
+import {fireAlert, fire} from '../../utils/event-util';
 import {Model} from '../model';
 import {define} from '../dependency';
 import {
@@ -110,9 +108,30 @@ export interface CheckRun extends CheckRunApi {
 }
 
 // This is a convenience type for working with results, because when working
-// with a bunch of results you will typically also want to know about the run
-// properties. So you can just combine them with {...run, ...result}.
-export type RunResult = CheckRun & CheckResult;
+// with a bunch of results you will typically also want to know about some run
+// properties.
+// Note that you don't want to just spread the entire run object, because you
+// definitely don't want the `results` property in the RunResult object.
+// Use the `runResult()` function below for creating `RunResult` objects.
+export type RunResult = CheckResult &
+  Pick<CheckRun, 'pluginName'> &
+  Pick<CheckRun, 'attempt'> &
+  Pick<CheckRun, 'patchset'> &
+  Pick<CheckRun, 'isLatestAttempt'> &
+  Pick<CheckRun, 'checkName'> &
+  Pick<CheckRun, 'labelName'> & {results?: never};
+
+export function runResult(run: CheckRun, result: CheckResult): RunResult {
+  return {
+    pluginName: run.pluginName,
+    attempt: run.attempt,
+    patchset: run.patchset,
+    isLatestAttempt: run.isLatestAttempt,
+    checkName: run.checkName,
+    labelName: run.labelName,
+    ...result,
+  };
+}
 
 export const checksModelToken = define<ChecksModel>('checks-model');
 
@@ -161,17 +180,15 @@ const FETCH_RESULT_TIMEOUT_MS = 16000;
  * Can be used in `reduce()` to collect all results from all runs from all
  * providers into one array.
  */
-function collectRunResults(
+export function collectRunResults(
   allResults: RunResult[],
   providerState: ChecksProviderState
-) {
+): RunResult[] {
   return [
     ...allResults,
     ...providerState.runs.reduce((results: RunResult[], run: CheckRun) => {
       const runResults: RunResult[] =
-        run.results?.map(r => {
-          return {...run, ...r};
-        }) ?? [];
+        run.results?.map(r => runResult(run, r)) ?? [];
       return results.concat(runResults ?? []);
     }, []),
   ];
@@ -182,7 +199,7 @@ export interface ErrorMessages {
   [name: string]: string;
 }
 
-export class ChecksModel extends Model<ChecksState> implements Finalizable {
+export class ChecksModel extends Model<ChecksState> {
   private readonly providers: {[name: string]: ChecksProvider} = {};
 
   private readonly reloadSubjects: {[name: string]: Subject<void>} = {};
@@ -196,8 +213,6 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
   latestPatchNum?: PatchSetNumber;
 
   private readonly documentVisibilityChange$ = new BehaviorSubject(undefined);
-
-  private readonly reloadListener: () => void;
 
   private readonly visibilityChangeListener: () => void;
 
@@ -374,11 +389,10 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
   );
 
   constructor(
-    readonly routerModel: RouterModel,
-    readonly changeViewModel: ChangeViewModel,
-    readonly changeModel: ChangeModel,
-    readonly reporting: ReportingService,
-    readonly pluginsModel: PluginsModel
+    private readonly changeViewModel: ChangeViewModel,
+    private readonly changeModel: ChangeModel,
+    private readonly reporting: ReportingService,
+    private readonly pluginsModel: PluginsModel
   ) {
     super({
       pluginStateLatest: {},
@@ -417,8 +431,6 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
       'visibilitychange',
       this.visibilityChangeListener
     );
-    this.reloadListener = () => this.reloadAll();
-    document.addEventListener('reload', this.reloadListener);
   }
 
   private reportStats(state: {[name: string]: ChecksProviderState}) {
@@ -462,7 +474,6 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
   }
 
   override finalize() {
-    document.removeEventListener('reload', this.reloadListener);
     document.removeEventListener(
       'visibilitychange',
       this.visibilityChangeListener
@@ -637,8 +648,15 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
   }
 
   updateStateSetPatchset(num?: PatchSetNumber) {
+    const newPatchset = num === this.latestPatchNum ? undefined : num;
+    const oldPatchset = this.changeViewModel.getState()?.checksPatchset;
+    // For `checksPatchset` itself we could just let updateState() do the
+    // standard old===new comparison. But we have to make sure here that
+    // the attempt reset only actually happens when a new patchset is chosen.
+    if (newPatchset === oldPatchset) return;
     this.changeViewModel.updateState({
-      checksPatchset: num === this.latestPatchNum ? undefined : num,
+      checksPatchset: newPatchset,
+      attempt: LATEST_ATTEMPT,
     });
   }
 
@@ -682,7 +700,11 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
     );
   }
 
-  triggerAction(action: Action, run: CheckRun | undefined, context: string) {
+  triggerAction(
+    action: Action,
+    run: CheckRun | RunResult | undefined,
+    context: string
+  ) {
     if (!action?.callback) return;
     if (!this.changeNum) return;
     const patchSet = run?.patchset ?? this.latestPatchNum;
@@ -712,7 +734,7 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
         if (result.errorMessage || result.message) {
           fireAlert(document, `${result.message ?? result.errorMessage}`);
         } else {
-          fireEvent(document, 'hide-alert');
+          fire(document, 'hide-alert', {});
         }
         if (result.shouldReload) {
           this.reloadForCheck(run?.checkName);
@@ -753,15 +775,14 @@ export class ChecksModel extends Model<ChecksState> implements Finalizable {
         patchset === ChecksPatchset.LATEST
           ? this.changeModel.latestPatchNum$
           : this.checksSelectedPatchsetNumber$,
-        this.reloadSubjects[pluginName].pipe(
-          throttleTime(1000, undefined, {trailing: true, leading: true})
-        ),
+        this.reloadSubjects[pluginName],
         pollIntervalMs === 0 ? from([0]) : timer(0, pollIntervalMs),
         this.documentVisibilityChange$,
       ])
         .pipe(
           takeWhile(_ => !!this.providers[pluginName]),
           filter(_ => document.visibilityState !== 'hidden'),
+          throttleTime(500, undefined, {leading: true, trailing: true}),
           switchMap(([change, patchNum]): Observable<FetchResponse> => {
             if (!change || !patchNum) return of(this.empty());
             if (typeof patchNum !== 'number') return of(this.empty());

@@ -17,15 +17,7 @@ import '../gr-repo-commands/gr-repo-commands';
 import '../gr-repo-dashboards/gr-repo-dashboards';
 import '../gr-repo-detail-list/gr-repo-detail-list';
 import '../gr-repo-list/gr-repo-list';
-import {getBaseUrl} from '../../../utils/url-util';
 import {navigationToken} from '../../core/gr-navigation/gr-navigation';
-import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
-import {
-  AdminNavLinksOption,
-  getAdminLinks,
-  NavLink,
-  SubsectionInterface,
-} from '../../../utils/admin-nav-util';
 import {
   AccountDetailInfo,
   GroupId,
@@ -34,7 +26,10 @@ import {
 } from '../../../types/common';
 import {GroupNameChangedDetail} from '../gr-group/gr-group';
 import {getAppContext} from '../../../services/app-context';
-import {GerritView} from '../../../services/router/router-model';
+import {
+  GerritView,
+  routerModelToken,
+} from '../../../services/router/router-model';
 import {menuPageStyles} from '../../../styles/gr-menu-page-styles';
 import {pageNavStyles} from '../../../styles/gr-page-nav-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
@@ -46,6 +41,10 @@ import {
   AdminChildView,
   adminViewModelToken,
   AdminViewState,
+  AdminNavLinksOption,
+  getAdminLinks,
+  NavLink,
+  SubsectionInterface,
 } from '../../../models/views/admin';
 import {
   GroupDetailView,
@@ -59,6 +58,7 @@ import {
 } from '../../../models/views/repo';
 import {resolve} from '../../../models/dependency';
 import {subscribe} from '../../lit/subscription-controller';
+import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 
 const INTERNAL_GROUP_REGEX = /^[\da-f]{40}$/;
 
@@ -110,9 +110,9 @@ export class GrAdminView extends LitElement {
   private reloading = false;
 
   // private but used in the tests
-  readonly jsAPI = getAppContext().jsApiService;
-
   private readonly restApiService = getAppContext().restApiService;
+
+  private readonly getPluginLoader = resolve(this, pluginLoaderToken);
 
   private readonly getAdminViewModel = resolve(this, adminViewModelToken);
 
@@ -120,12 +120,13 @@ export class GrAdminView extends LitElement {
 
   private readonly getRepoViewModel = resolve(this, repoViewModelToken);
 
-  private readonly routerModel = getAppContext().routerModel;
+  private readonly getRouterModel = resolve(this, routerModelToken);
 
   private readonly getNavigation = resolve(this, navigationToken);
 
   constructor() {
     super();
+    this.addEventListener('reload', () => window.location.reload());
     subscribe(
       this,
       () => this.getAdminViewModel().state$,
@@ -152,7 +153,7 @@ export class GrAdminView extends LitElement {
     );
     subscribe(
       this,
-      () => this.routerModel.routerView$,
+      () => this.getRouterModel().routerView$,
       view => {
         this.view = view;
         if (this.needsReload()) this.reload();
@@ -415,7 +416,10 @@ export class GrAdminView extends LitElement {
 
     return html`
       <div class="main breadcrumbs">
-        <gr-repo-commands .repo=${this.repoViewState.repo}></gr-repo-commands>
+        <gr-repo-commands
+          .repo=${this.repoViewState.repo}
+          .createEdit=${this.repoViewState.createEdit}
+        ></gr-repo-commands>
       </div>
     `;
   }
@@ -457,7 +461,7 @@ export class GrAdminView extends LitElement {
       const promises: [Promise<AccountDetailInfo | undefined>, Promise<void>] =
         [
           this.restApiService.getAccount(),
-          getPluginLoader().awaitPluginsLoaded(),
+          this.getPluginLoader().awaitPluginsLoaded(),
         ];
       const result = await Promise.all(promises);
       this.account = result[0];
@@ -487,7 +491,7 @@ export class GrAdminView extends LitElement {
             }
             return capabilities;
           }),
-        () => this.jsAPI.getAdminMenuLinks(),
+        () => this.getPluginLoader().jsApiService.getAdminMenuLinks(),
         options
       );
       this.filteredLinks = res.links;
@@ -593,12 +597,7 @@ export class GrAdminView extends LitElement {
 
   // private but used in test
   computeLinkURL(link?: NavLink | SubsectionInterface) {
-    if (!link || typeof link.url === 'undefined') return '';
-
-    if ((link as NavLink).target || !(link as NavLink).noBaseUrl) {
-      return link.url;
-    }
-    return `//${window.location.host}${getBaseUrl()}${link.url}`;
+    return link?.url || '';
   }
 
   private computeSelectedClass(

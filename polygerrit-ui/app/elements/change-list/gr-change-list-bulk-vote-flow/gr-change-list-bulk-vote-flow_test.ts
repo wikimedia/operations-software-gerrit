@@ -147,12 +147,9 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
       >
         Vote
       </gr-button>
-      <gr-overlay
-        aria-hidden="true"
-        id="actionOverlay"
-        style="outline: none; display: none;"
+      <dialog
+        id="actionModal"
         tabindex="-1"
-        with-backdrop=""
       >
         <gr-dialog role="dialog">
           <div slot="header">
@@ -197,7 +194,7 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
             </div>
           </div>
         </gr-dialog>
-      </gr-overlay> `
+      </dialog> `
     );
   });
 
@@ -238,12 +235,9 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
       >
         Vote
       </gr-button>
-      <gr-overlay
-        aria-hidden="true"
-        id="actionOverlay"
-        style="outline: none; display: none;"
+      <dialog
+        id="actionModal"
         tabindex="-1"
-        with-backdrop=""
       >
         <gr-dialog role="dialog">
           <div slot="header">
@@ -292,7 +286,7 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
             </div>
           </div>
         </gr-dialog>
-      </gr-overlay> `
+      </dialog> `
     );
   });
 
@@ -313,17 +307,18 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
     );
 
     // No common label with change1 so button is disabled
-    change2.labels = {
+    const c2 = {...change2}; // create copy so other tests are not affected
+    c2.labels = {
       x: {value: null} as LabelInfo,
       y: {value: null} as LabelInfo,
       z: {value: null} as LabelInfo,
     };
-    change2.submit_requirements = [
+    c2.submit_requirements = [
       createSubmitRequirementResultInfo('label:x=MAX'),
       createSubmitRequirementResultInfo('label:y=MAX'),
       createSubmitRequirementResultInfo('label:z=MAX'),
     ];
-    changes.push({...change2});
+    changes.push({...c2});
     getChangesStub.restore();
     getChangesStub.returns(Promise.resolve(changes));
     model.sync(changes);
@@ -367,10 +362,7 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
     const saveChangeReview = mockPromise<Response>();
     stubRestApi('saveChangeReview').returns(saveChangeReview);
 
-    const stopsStub = sinon.stub(element.actionOverlay, 'setFocusStops');
-
     queryAndAssert<GrButton>(element, '#voteFlowButton').click();
-    await waitUntil(() => stopsStub.called);
 
     await element.updateComplete;
 
@@ -491,6 +483,45 @@ suite('gr-change-list-bulk-vote-flow tests', () => {
 
       await waitUntil(() => dispatchEventStub.called);
       assert.equal(dispatchEventStub.lastCall.args[0].type, 'reload');
+    });
+
+    test('button is disabled if no votes are possible', async () => {
+      const c2 = {...change2}; // create copy so other tests are not affected
+      c2.labels = {
+        x: {value: null} as LabelInfo,
+        y: {value: null} as LabelInfo,
+        z: {value: null} as LabelInfo,
+      };
+      c2.submit_requirements = [
+        createSubmitRequirementResultInfo('label:x=MAX'),
+        createSubmitRequirementResultInfo('label:y=MAX'),
+        createSubmitRequirementResultInfo('label:z=MAX'),
+      ];
+
+      const changes: ChangeInfo[] = [change1, c2];
+      getChangesStub.returns(Promise.resolve(changes));
+
+      stubRestApi('saveChangeReview').callsFake(
+        (_changeNum, _patchNum, _review, errFn) =>
+          Promise.resolve(new Response()).then(res => {
+            errFn && errFn();
+            return res;
+          })
+      );
+
+      model.sync(changes);
+      await waitUntilObserved(
+        model.loadingState$,
+        state => state === LoadingState.LOADED
+      );
+      await selectChange(change1);
+      await selectChange(c2);
+      await element.updateComplete;
+
+      assert.isTrue(
+        queryAndAssert<GrButton>(query(element, 'gr-dialog'), '#confirm')
+          .disabled
+      );
     });
 
     test('closing dialog does not trigger reload if no request made', async () => {

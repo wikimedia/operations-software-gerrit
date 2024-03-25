@@ -43,6 +43,17 @@ presented instead of a list.
 For more predictable results, use explicit search operators as described
 in the following section.
 
+[IMPORTANT]
+--
+The change search API is backed by a secondary index and might sometimes return
+stale results if the re-indexing operation failed for a change update.
+
+Please also note that changes are not re-indexed if the project configuration
+is updated with newly added or modified
+link:config-submit-requirements.html[submit requirements].
+--
+
+
 [[search-operators]]
 == Search Operators
 
@@ -73,11 +84,6 @@ to include a unit suffix, for example `-age:2d`:
 `age` can be used both forward and backward looking: `age:2d`
 means 'everything older than 2 days' while `-age:2d` means
 'everything with an age of at most 2 days'.
-
-[[assignee]]
-assignee:'USER'::
-+
-Changes assigned to the given user.
 
 [[attention]]
 attention:'USER'::
@@ -345,6 +351,18 @@ is used for the evaluation of such patterns. Note, that searching with
 regular expressions is limited to the first 32766 bytes of the
 commit message due to limitations in Lucene.
 
+[[subject]]
+subject:'SUBJECT'::
++
+Changes that have a commit message where the first line (aka the subject)
+matches 'SUBJECT'. The matching is done by full text search over the subject.
+
+[[prefixsubject]]
+prefixsubject:'PREFIX'::
++
+Changes that have a commit message where the first line (aka the subject)
+has the prefix 'PREFIX'.
+
 [[comment]]
 comment:'TEXT'::
 +
@@ -358,6 +376,10 @@ matching is used, but regular expressions can be enabled by starting
 with `^`.  For example, to match all XML files use `file:"^.*\.xml$"`.
 The link:http://www.brics.dk/automaton/[dk.brics.automaton library,role=external,window=_blank]
 is used for the evaluation of such patterns.
++
+Note that the Gerrit host may not support regular expression search.
+You will then see an error dialog when using expressions starting with
+`^`.
 +
 The `^` required at the beginning of the regular expression not only
 denotes a regular expression, but it also has the usual meaning of
@@ -460,19 +482,11 @@ True if the change has attention by the current user.
 
 
 [[is]]
-is:assigned::
-+
-True if the change has an assignee.
-
 [[is-starred]]
 is:starred::
 +
 Same as 'has:star', true if the change has been starred by the
 current user with the default label.
-
-is:unassigned::
-+
-True if the change does not have an assignee.
 
 is:attention::
 +
@@ -618,7 +632,7 @@ commentby:'USER'::
 +
 Changes containing a top-level or inline comment by 'USER'. The special
 case of `commentby:self` will find changes where the caller has
-commented.
+commented. Note that setting a vote is also considered as a comment.
 
 [[from]]
 from:'USER'::
@@ -633,7 +647,7 @@ Changes where 'USER' has commented on the change more recently than the
 last update (comment or patch set) from the change owner.
 
 [[author]]
-author:'AUTHOR'::
+author:'AUTHOR', a:'AUTHOR'::
 +
 Changes where 'AUTHOR' is the author of the current patch set. 'AUTHOR' may be
 the author's exact email address, or part of the name or email address. The

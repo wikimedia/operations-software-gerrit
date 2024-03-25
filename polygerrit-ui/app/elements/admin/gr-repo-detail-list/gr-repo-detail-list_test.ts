@@ -6,7 +6,6 @@
 import '../../../test/common-test-setup';
 import './gr-repo-detail-list';
 import {GrRepoDetailList} from './gr-repo-detail-list';
-import {page} from '../../../utils/page-wrapper-utils';
 import {
   addListenerForTest,
   mockPromise,
@@ -20,22 +19,21 @@ import {
   GitRef,
   GroupId,
   GroupName,
-  ProjectAccessGroups,
-  ProjectAccessInfoMap,
+  RepoAccessGroups,
+  RepoAccessInfoMap,
   RepoName,
   TagInfo,
   Timestamp,
-  TimezoneOffset,
 } from '../../../types/common';
 import {GerritView} from '../../../services/router/router-model';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {PageErrorEvent} from '../../../types/events';
-import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
 import {GrDialog} from '../../shared/gr-dialog/gr-dialog';
 import {GrListView} from '../../shared/gr-list-view/gr-list-view';
-import {SHOWN_ITEMS_COUNT} from '../../../constants/constants';
 import {fixture, html, assert} from '@open-wc/testing';
 import {RepoDetailView} from '../../../models/views/repo';
+import {testResolver} from '../../../test/common-test-setup';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 
 function branchGenerator(counter: number) {
   return {
@@ -74,7 +72,6 @@ function tagGenerator(counter: number) {
       name: 'Test User',
       email: 'test.user@gmail.com' as EmailAddress,
       date: '2017-09-19 14:54:00.000000000' as Timestamp,
-      tz: 540 as TimezoneOffset,
     },
   };
 }
@@ -97,7 +94,7 @@ suite('gr-repo-detail-list', () => {
         html`<gr-repo-detail-list></gr-repo-detail-list>`
       );
       element.detailType = RepoDetailView.BRANCHES;
-      sinon.stub(page, 'show');
+      sinon.stub(testResolver(navigationToken), 'setUrl');
     });
 
     suite('list of repo branches', () => {
@@ -254,14 +251,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test0"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -330,14 +320,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test1"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -406,14 +389,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test2"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -482,14 +458,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test3"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -558,14 +527,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test4"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -634,14 +596,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test5"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -710,14 +665,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test6"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -786,14 +734,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test7"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -862,14 +803,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test8"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -938,14 +872,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test9"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -1014,14 +941,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test10"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -1090,14 +1010,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test11"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -1166,14 +1079,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test12"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -1242,14 +1148,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test13"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -1318,14 +1217,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test14"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -1394,14 +1286,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test15"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -1470,14 +1355,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test16"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -1546,14 +1424,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test17"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -1622,14 +1493,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test18"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -1698,14 +1562,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test19"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -1774,14 +1631,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test20"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -1850,14 +1700,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test21"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -1926,14 +1769,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test22"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -2002,14 +1838,7 @@ suite('gr-repo-detail-list', () => {
                     <td class="hideItem message"></td>
                     <td class="hideItem tagger"></td>
                     <td class="repositoryBrowser">
-                      <a
-                        class="webLink"
-                        href="https://git.example.org/branch/test;refs/heads/test23"
-                        rel="noopener"
-                        target="_blank"
-                      >
-                        (diffusion)
-                      </a>
+                      <gr-weblink imageAndText></gr-weblink>
                     </td>
                     <td class="delete">
                       <gr-button
@@ -2026,24 +1855,12 @@ suite('gr-repo-detail-list', () => {
                   </tr>
                 </tbody>
               </table>
-              <gr-overlay
-                aria-hidden="true"
-                id="overlay"
-                style="outline: none; display: none;"
-                tabindex="-1"
-                with-backdrop=""
-              >
+              <dialog id="modal" tabindex="-1">
                 <gr-confirm-delete-item-dialog class="confirmDialog">
                 </gr-confirm-delete-item-dialog>
-              </gr-overlay>
+              </dialog>
             </gr-list-view>
-            <gr-overlay
-              aria-hidden="true"
-              id="createOverlay"
-              style="outline: none; display: none;"
-              tabindex="-1"
-              with-backdrop=""
-            >
+            <dialog id="createModal" tabindex="-1">
               <gr-dialog
                 confirm-label="Create"
                 disabled=""
@@ -2056,7 +1873,7 @@ suite('gr-repo-detail-list', () => {
                   </gr-create-pointer-dialog>
                 </div>
               </gr-dialog>
-            </gr-overlay>
+            </dialog>
           `
         );
       });
@@ -2103,10 +1920,10 @@ suite('gr-repo-detail-list', () => {
                   url: 'test',
                   name: 'test' as GroupName,
                 },
-              } as ProjectAccessGroups,
+              } as RepoAccessGroups,
               config_web_links: [{name: 'gitiles', url: 'test'}],
             },
-          } as ProjectAccessInfoMap)
+          } as RepoAccessInfoMap)
         );
         await element.determineIfOwner('test' as RepoName);
         assert.equal(element.isOwner, false);
@@ -2157,10 +1974,10 @@ suite('gr-repo-detail-list', () => {
                   url: 'test',
                   name: 'test' as GroupName,
                 },
-              } as ProjectAccessGroups,
+              } as RepoAccessGroups,
               config_web_links: [{name: 'gitiles', url: 'test'}],
             },
-          } as ProjectAccessInfoMap)
+          } as RepoAccessInfoMap)
         );
         const handleSaveRevisionStub = sinon.stub(
           element,
@@ -2316,7 +2133,7 @@ suite('gr-repo-detail-list', () => {
       test('fires page-error', async () => {
         const response = {status: 404} as Response;
         stubRestApi('getRepoBranches').callsFake(
-          (_filter, _repo, _reposBranchesPerPage, _opt_offset, errFn) => {
+          (_filter, _repo, _reposBranchesPerPage, _offset, errFn) => {
             if (errFn !== undefined) {
               errFn(response);
             }
@@ -2352,7 +2169,7 @@ suite('gr-repo-detail-list', () => {
         html`<gr-repo-detail-list></gr-repo-detail-list>`
       );
       element.detailType = RepoDetailView.TAGS;
-      sinon.stub(page, 'show');
+      sinon.stub(testResolver(navigationToken), 'setUrl');
     });
 
     suite('list of repo tags', () => {
@@ -2383,7 +2200,6 @@ suite('gr-repo-detail-list', () => {
           name: 'Test User',
           email: 'test.user@gmail.com' as EmailAddress,
           date: '2017-09-19 14:54:00.000000000' as Timestamp,
-          tz: 540 as TimezoneOffset,
         };
 
         assert.deepEqual((element.items as TagInfo[])![2].tagger, tagger);
@@ -2404,7 +2220,9 @@ suite('gr-repo-detail-list', () => {
       });
 
       test('items', () => {
-        assert.equal(element.items!.slice(0, SHOWN_ITEMS_COUNT)!.length, 25);
+        const table = queryAndAssert(element, 'table');
+        const rows = table.querySelectorAll('tr.table');
+        assert.equal(rows.length, element.itemsPerPage);
       });
     });
 
@@ -2424,7 +2242,9 @@ suite('gr-repo-detail-list', () => {
       });
 
       test('items', () => {
-        assert.equal(element.items!.slice(0, SHOWN_ITEMS_COUNT)!.length, 25);
+        const table = queryAndAssert(element, 'table');
+        const rows = table.querySelectorAll('tr.table');
+        assert.equal(rows.length, element.itemsPerPage);
       });
     });
 
@@ -2447,6 +2267,18 @@ suite('gr-repo-detail-list', () => {
     });
 
     suite('create new', () => {
+      setup(async () => {
+        stubRestApi('getRepoBranches').resolves(createBranchesList(3));
+
+        element.params = {
+          view: GerritView.REPO,
+          repo: 'test' as RepoName,
+          detail: RepoDetailView.BRANCHES,
+        };
+        await element.paramsChanged();
+        await element.updateComplete;
+      });
+
       test('handleCreateClicked called when create-click fired', () => {
         const handleCreateClickedStub = sinon.stub(
           element,
@@ -2462,10 +2294,10 @@ suite('gr-repo-detail-list', () => {
       });
 
       test('handleCreateClicked opens modal', () => {
-        queryAndAssert<GrOverlay>(element, '#createOverlay');
+        queryAndAssert<HTMLDialogElement>(element, '#createModal');
         const openStub = sinon.stub(
-          queryAndAssert<GrOverlay>(element, '#createOverlay'),
-          'open'
+          queryAndAssert<HTMLDialogElement>(element, '#createModal'),
+          'showModal'
         );
         element.handleCreateClicked();
         assert.isTrue(openStub.called);
@@ -2498,7 +2330,7 @@ suite('gr-repo-detail-list', () => {
       test('fires page-error', async () => {
         const response = {status: 404} as Response;
         stubRestApi('getRepoTags').callsFake(
-          (_filter, _repo, _reposTagsPerPage, _opt_offset, errFn) => {
+          (_filter, _repo, _reposTagsPerPage, _offset, errFn) => {
             if (errFn !== undefined) {
               errFn(response);
             }

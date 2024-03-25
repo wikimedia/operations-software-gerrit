@@ -15,7 +15,6 @@ import {
 import {combineLatest, of, from} from 'rxjs';
 import {switchMap, map} from 'rxjs/operators';
 import {RestApiService} from '../../services/gr-rest-api/gr-rest-api';
-import {Finalizable} from '../../services/registry';
 import {select} from '../../utils/observable-util';
 import {FileInfoStatus, SpecialFilePath} from '../../constants/constants';
 import {specialFilePathCompare} from '../../utils/path-list-util';
@@ -23,7 +22,12 @@ import {Model} from '../model';
 import {define} from '../dependency';
 import {ChangeModel} from './change-model';
 import {CommentsModel} from '../comments/comments-model';
+import {Timing} from '../../constants/reporting';
+import {ReportingService} from '../../services/gr-reporting/gr-reporting';
 
+export type FileNameToNormalizedFileInfoMap = {
+  [name: string]: NormalizedFileInfo;
+};
 export interface NormalizedFileInfo extends FileInfo {
   __path: string;
   // Compared to `FileInfo` these four props are required here.
@@ -113,10 +117,15 @@ const initialState: FilesState = {
 
 export const filesModelToken = define<FilesModel>('files-model');
 
-export class FilesModel extends Model<FilesState> implements Finalizable {
+export class FilesModel extends Model<FilesState> {
   public readonly files$ = select(this.state$, state => state.files);
 
-  public readonly filesWithUnmodified$ = select(
+  /**
+   * `files$` only includes the files that were modified. Here we also include
+   * all unmodified files that have comments with
+   * `status: FileInfoStatus.UNMODIFIED`.
+   */
+  public readonly filesIncludingUnmodified$ = select(
     combineLatest([this.files$, this.commentsModel.commentedPaths$]),
     ([files, commentedPaths]) => addUnmodified(files, commentedPaths)
   );
@@ -134,10 +143,13 @@ export class FilesModel extends Model<FilesState> implements Finalizable {
   constructor(
     readonly changeModel: ChangeModel,
     readonly commentsModel: CommentsModel,
-    readonly restApiService: RestApiService
+    readonly restApiService: RestApiService,
+    private readonly reporting: ReportingService
   ) {
     super(initialState);
     this.subscriptions = [
+      this.reportChangeDataStart(),
+      this.reportChangeDataEnd(),
       this.subscribeToFiles(
         (psLeft, psRight) => {
           return {basePatchNum: psLeft, patchNum: psRight};
@@ -148,7 +160,8 @@ export class FilesModel extends Model<FilesState> implements Finalizable {
       ),
       this.subscribeToFiles(
         (psLeft, _) => {
-          if (psLeft === PARENT || psLeft <= 0) return undefined;
+          if (psLeft === PARENT || (psLeft as PatchSetNumber) <= 0)
+            return undefined;
           return {basePatchNum: PARENT, patchNum: psLeft as PatchSetNumber};
         },
         files => {
@@ -157,7 +170,8 @@ export class FilesModel extends Model<FilesState> implements Finalizable {
       ),
       this.subscribeToFiles(
         (psLeft, psRight) => {
-          if (psLeft === PARENT || psLeft <= 0) return undefined;
+          if (psLeft === PARENT || (psLeft as PatchSetNumber) <= 0)
+            return undefined;
           return {basePatchNum: PARENT, patchNum: psRight as PatchSetNumber};
         },
         files => {
@@ -165,6 +179,26 @@ export class FilesModel extends Model<FilesState> implements Finalizable {
         }
       ),
     ];
+  }
+
+  private reportChangeDataStart() {
+    return combineLatest([this.changeModel.loading$]).subscribe(
+      ([changeLoading]) => {
+        if (changeLoading) {
+          this.reporting.time(Timing.CHANGE_DATA);
+        }
+      }
+    );
+  }
+
+  private reportChangeDataEnd() {
+    return combineLatest([this.changeModel.loading$, this.files$]).subscribe(
+      ([changeLoading, files]) => {
+        if (!changeLoading && files.length > 0) {
+          this.reporting.timeEnd(Timing.CHANGE_DATA);
+        }
+      }
+    );
   }
 
   private subscribeToFiles(
@@ -175,13 +209,12 @@ export class FilesModel extends Model<FilesState> implements Finalizable {
     filesToState: (files: NormalizedFileInfo[]) => Partial<FilesState>
   ) {
     return combineLatest([
-      this.changeModel.reload$,
       this.changeModel.changeNum$,
       this.changeModel.basePatchNum$,
       this.changeModel.patchNum$,
     ])
       .pipe(
-        switchMap(([_, changeNum, basePatchNum, patchNum]) => {
+        switchMap(([changeNum, basePatchNum, patchNum]) => {
           if (!changeNum || !patchNum) return of({});
           const range = rangeChooser(basePatchNum, patchNum);
           if (!range) return of({});

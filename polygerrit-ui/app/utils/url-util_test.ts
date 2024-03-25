@@ -3,37 +3,23 @@
  * Copyright 2020 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {
-  AuthType,
-  BasePatchSetNum,
-  RevisionPatchSetNum,
-  ServerInfo,
-} from '../api/rest-api';
+import {AuthType, BasePatchSetNum, RevisionPatchSetNum} from '../api/rest-api';
 import '../test/common-test-setup';
 import {
-  createAuth,
-  createGerritInfo,
-  createServerInfo,
-} from '../test/test-data-generators';
-import {
-  getBaseUrl,
-  getDocsBaseUrl,
-  _testOnly_clearDocsBaseUrlCache,
   encodeURL,
+  getBaseUrl,
+  getPatchRangeExpression,
+  loginUrl,
+  PatchRangeParams,
   singleDecodeURL,
   toPath,
   toPathname,
   toSearchParams,
-  getPatchRangeExpression,
-  PatchRangeParams,
-  loginUrl,
 } from './url-util';
-import {getAppContext, AppContext} from '../services/app-context';
-import {stubRestApi} from '../test/test-utils';
 import {assert} from '@open-wc/testing';
+import {createAuth} from '../test/test-data-generators';
 
 suite('url-util tests', () => {
-  let appContext: AppContext;
   suite('getBaseUrl tests', () => {
     let originalCanonicalPath: string | undefined;
 
@@ -53,7 +39,6 @@ suite('url-util tests', () => {
 
   suite('loginUrl tests', () => {
     const authConfig = createAuth();
-    const customLoginUrl = '/custom';
 
     test('default url if auth.loginUrl is not defined', () => {
       const current = encodeURIComponent(
@@ -71,8 +56,9 @@ suite('url-util tests', () => {
             window.location.search +
             window.location.hash
         );
-
+      const customLoginUrl = '/custom';
       authConfig.login_url = customLoginUrl;
+
       authConfig.auth_type = AuthType.LDAP;
       assert.deepEqual(loginUrl(authConfig), defaultUrl);
       authConfig.auth_type = AuthType.OPENID_SSO;
@@ -82,7 +68,9 @@ suite('url-util tests', () => {
     });
 
     test('use auth.loginUrl when defined', () => {
+      const customLoginUrl = '/custom';
       authConfig.login_url = customLoginUrl;
+
       authConfig.auth_type = AuthType.HTTP;
       assert.deepEqual(loginUrl(authConfig), customLoginUrl);
       authConfig.auth_type = AuthType.HTTP_LDAP;
@@ -96,84 +84,26 @@ suite('url-util tests', () => {
     });
   });
 
-  suite('getDocsBaseUrl tests', () => {
-    setup(() => {
-      _testOnly_clearDocsBaseUrlCache();
-      appContext = getAppContext();
-    });
-
-    test('null config', async () => {
-      const probePathMock = stubRestApi('probePath').resolves(true);
-      const docsBaseUrl = await getDocsBaseUrl(
-        undefined,
-        appContext.restApiService
-      );
-      assert.isTrue(probePathMock.calledWith('/Documentation/index.html'));
-      assert.equal(docsBaseUrl, '/Documentation');
-    });
-
-    test('no doc config', async () => {
-      const probePathMock = stubRestApi('probePath').resolves(true);
-      const config: ServerInfo = {
-        ...createServerInfo(),
-        gerrit: createGerritInfo(),
-      };
-      const docsBaseUrl = await getDocsBaseUrl(
-        config,
-        appContext.restApiService
-      );
-      assert.isTrue(probePathMock.calledWith('/Documentation/index.html'));
-      assert.equal(docsBaseUrl, '/Documentation');
-    });
-
-    test('has doc config', async () => {
-      const probePathMock = stubRestApi('probePath').resolves(true);
-      const config: ServerInfo = {
-        ...createServerInfo(),
-        gerrit: {...createGerritInfo(), doc_url: 'foobar'},
-      };
-      const docsBaseUrl = await getDocsBaseUrl(
-        config,
-        appContext.restApiService
-      );
-      assert.isFalse(probePathMock.called);
-      assert.equal(docsBaseUrl, 'foobar');
-    });
-
-    test('no probe', async () => {
-      const probePathMock = stubRestApi('probePath').resolves(false);
-      const docsBaseUrl = await getDocsBaseUrl(
-        undefined,
-        appContext.restApiService
-      );
-      assert.isTrue(probePathMock.calledWith('/Documentation/index.html'));
-      assert.isNotOk(docsBaseUrl);
-    });
-  });
-
   suite('url encoding and decoding tests', () => {
     suite('encodeURL', () => {
-      test('double encodes', () => {
-        assert.equal(encodeURL('abc?123'), 'abc%253F123');
-        assert.equal(encodeURL('def/ghi'), 'def%252Fghi');
-        assert.equal(encodeURL('jkl'), 'jkl');
-        assert.equal(encodeURL(''), '');
+      test('does not encode alphanumeric chars', () => {
+        assert.equal(encodeURL("AZaz09-_.!~*'()"), "AZaz09-_.!~*'()");
       });
 
-      test('does not convert colons', () => {
-        assert.equal(encodeURL('mno:pqr'), 'mno:pqr');
+      test('double encodes %', () => {
+        assert.equal(encodeURL('abc%def'), 'abc%2525def');
       });
 
-      test('converts spaces to +', () => {
+      test('double encodes +', () => {
+        assert.equal(encodeURL('abc+def'), 'abc%252Bdef');
+      });
+
+      test('does not encode colon and slash', () => {
+        assert.equal(encodeURL(':/'), ':/');
+      });
+
+      test('encodes spaces as +', () => {
         assert.equal(encodeURL('words with spaces'), 'words+with+spaces');
-      });
-
-      test('does not convert slashes when configured', () => {
-        assert.equal(encodeURL('stu/vwx', true), 'stu/vwx');
-      });
-
-      test('does not convert slashes when configured', () => {
-        assert.equal(encodeURL('stu/vwx', true), 'stu/vwx');
       });
     });
 

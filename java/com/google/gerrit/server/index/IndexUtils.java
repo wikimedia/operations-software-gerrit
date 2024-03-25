@@ -14,9 +14,9 @@
 
 package com.google.gerrit.server.index;
 
-import static com.google.gerrit.server.index.change.ChangeField.CHANGE;
-import static com.google.gerrit.server.index.change.ChangeField.LEGACY_ID_STR;
-import static com.google.gerrit.server.index.change.ChangeField.PROJECT;
+import static com.google.gerrit.server.index.change.ChangeField.CHANGE_SPEC;
+import static com.google.gerrit.server.index.change.ChangeField.NUMERIC_ID_STR_SPEC;
+import static com.google.gerrit.server.index.change.ChangeField.PROJECT_SPEC;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
@@ -77,14 +77,14 @@ public final class IndexUtils {
     // change ID and project, which can either come via the Change field or
     // separate fields.
     Set<String> fs = opts.fields();
-    if (fs.contains(CHANGE.getName())) {
+    if (fs.contains(CHANGE_SPEC.getName())) {
       // A Change is always sufficient.
       return fs;
     }
-    if (fs.contains(PROJECT.getName()) && fs.contains(LEGACY_ID_STR.getName())) {
+    if (fs.contains(PROJECT_SPEC.getName()) && fs.contains(NUMERIC_ID_STR_SPEC.getName())) {
       return fs;
     }
-    return Sets.union(fs, ImmutableSet.of(LEGACY_ID_STR.getName(), PROJECT.getName()));
+    return Sets.union(fs, ImmutableSet.of(NUMERIC_ID_STR_SPEC.getName(), PROJECT_SPEC.getName()));
   }
 
   /**
@@ -116,9 +116,9 @@ public final class IndexUtils {
    */
   public static Set<String> projectFields(QueryOptions opts) {
     Set<String> fs = opts.fields();
-    return fs.contains(ProjectField.NAME.getName())
+    return fs.contains(ProjectField.NAME_SPEC.getName())
         ? fs
-        : Sets.union(fs, ImmutableSet.of(ProjectField.NAME.getName()));
+        : Sets.union(fs, ImmutableSet.of(ProjectField.NAME_SPEC.getName()));
   }
 
   private IndexUtils() {

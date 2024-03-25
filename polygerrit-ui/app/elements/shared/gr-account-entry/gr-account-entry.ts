@@ -11,9 +11,14 @@ import {
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, html, css} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
-import {BindValueChangeEvent} from '../../../types/events';
+import {
+  AddAccountEvent,
+  AutocompleteCommitEvent,
+  BindValueChangeEvent,
+} from '../../../types/events';
 import {SuggestedReviewerInfo} from '../../../types/common';
 import {PaperInputElement} from '@polymer/paper-input/paper-input';
+import {fire} from '../../../utils/event-util';
 
 /**
  * gr-account-entry is an element for entering account
@@ -22,20 +27,6 @@ import {PaperInputElement} from '@polymer/paper-input/paper-input';
 @customElement('gr-account-entry')
 export class GrAccountEntry extends LitElement {
   @query('#input') private input?: GrAutocomplete;
-
-  /**
-   * Fired when an account is entered.
-   *
-   * @event add
-   */
-
-  /**
-   * When allowAnyInput is true, account-text-changed is fired when input text
-   * changed. This is needed so that the reply dialog's save button can be
-   * enabled for arbitrary cc's, which don't need a 'commit'.
-   *
-   * @event account-text-changed
-   */
 
   @property({type: Boolean})
   allowAnyInput = false;
@@ -110,22 +101,14 @@ export class GrAccountEntry extends LitElement {
     return this.input!.text;
   }
 
-  private handleInputCommit(e: CustomEvent) {
-    this.dispatchEvent(
-      new CustomEvent('add', {
-        detail: {value: e.detail.value},
-        composed: true,
-        bubbles: true,
-      })
-    );
+  private handleInputCommit(e: AutocompleteCommitEvent) {
+    fire(this, 'add', {value: e.detail.value});
     this.input!.focus();
   }
 
   private inputTextChanged() {
     if (this.inputText.length && this.allowAnyInput) {
-      this.dispatchEvent(
-        new CustomEvent('account-text-changed', {bubbles: true, composed: true})
-      );
+      fire(this, 'account-text-changed', {});
     }
   }
 
@@ -137,5 +120,16 @@ export class GrAccountEntry extends LitElement {
 declare global {
   interface HTMLElementTagNameMap {
     'gr-account-entry': GrAccountEntry;
+  }
+  interface HTMLElementEventMap {
+    /** Fired when an account is entered. */
+    // prettier-ignore
+    'add': AddAccountEvent;
+    /**
+     * When allowAnyInput is true, account-text-changed is fired when input text
+     * changed. This is needed so that the reply dialog's save button can be
+     * enabled for arbitrary cc's, which don't need a 'commit'.
+     */
+    'account-text-changed': CustomEvent<{}>;
   }
 }

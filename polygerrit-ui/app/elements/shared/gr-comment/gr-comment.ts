@@ -3,7 +3,6 @@
  * Copyright 2015 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
 import '../../../styles/shared-styles';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../plugins/gr-endpoint-param/gr-endpoint-param';
@@ -11,7 +10,6 @@ import '../gr-button/gr-button';
 import '../gr-dialog/gr-dialog';
 import '../gr-formatted-text/gr-formatted-text';
 import '../gr-icon/gr-icon';
-import '../gr-overlay/gr-overlay';
 import '../gr-textarea/gr-textarea';
 import '../gr-tooltip-content/gr-tooltip-content';
 import '../gr-confirm-delete-comment-dialog/gr-confirm-delete-comment-dialog';
@@ -21,24 +19,26 @@ import {css, html, LitElement, nothing, PropertyValues} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
 import {resolve} from '../../../models/dependency';
 import {GrTextarea} from '../gr-textarea/gr-textarea';
-import {GrOverlay} from '../gr-overlay/gr-overlay';
 import {
   AccountDetailInfo,
+  DraftInfo,
   NumericChangeId,
   RepoName,
   RobotCommentInfo,
+  Comment,
+  isRobot,
+  isSaving,
+  isError,
+  isDraft,
+  isNew,
 } from '../../../types/common';
 import {GrConfirmDeleteCommentDialog} from '../gr-confirm-delete-comment-dialog/gr-confirm-delete-comment-dialog';
 import {
-  Comment,
   createUserFixSuggestion,
-  DraftInfo,
   getContentInCommentRange,
   getUserSuggestion,
   hasUserSuggestion,
-  isDraftOrUnsaved,
-  isRobot,
-  isUnsaved,
+  id,
   NEWLINE_PATTERN,
   USER_SUGGESTION_START_PATTERN,
 } from '../../../utils/comment-util';
@@ -47,9 +47,9 @@ import {
   ReplyToCommentEventDetail,
   ValueChangedEvent,
 } from '../../../types/events';
-import {fire, fireEvent} from '../../../utils/event-util';
+import {fire} from '../../../utils/event-util';
 import {assertIsDefined, assert} from '../../../utils/common-util';
-import {Key, Modifier} from '../../../utils/dom-util';
+import {Key, Modifier, whenVisible} from '../../../utils/dom-util';
 import {commentsModelToken} from '../../../models/comments/comments-model';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {subscribe} from '../../lit/subscription-controller';
@@ -60,19 +60,16 @@ import {CommentSide, SpecialFilePath} from '../../../constants/constants';
 import {Subject} from 'rxjs';
 import {debounceTime} from 'rxjs/operators';
 import {changeModelToken} from '../../../models/change/change-model';
-import {Interaction} from '../../../constants/reporting';
 import {KnownExperimentId} from '../../../services/flags/flags';
 import {isBase64FileContent} from '../../../api/rest-api';
-import {createDiffUrl} from '../../../models/views/diff';
-
-const UNSAVED_MESSAGE = 'Unable to save draft';
+import {createDiffUrl} from '../../../models/views/change';
+import {userModelToken} from '../../../models/user/user-model';
+import {modalStyles} from '../../../styles/gr-modal-styles';
 
 const FILE = 'FILE';
 
 // visible for testing
 export const AUTO_SAVE_DEBOUNCE_DELAY_MS = 2000;
-
-export const __testOnly_UNSAVED_MESSAGE = UNSAVED_MESSAGE;
 
 declare global {
   interface HTMLElementEventMap {
@@ -128,8 +125,11 @@ export class GrComment extends LitElement {
   @query('#resolvedCheckbox')
   resolvedCheckbox?: HTMLInputElement;
 
-  @query('#confirmDeleteOverlay')
-  confirmDeleteOverlay?: GrOverlay;
+  @query('#confirmDeleteModal')
+  confirmDeleteModal?: HTMLDialogElement;
+
+  @query('#confirmDeleteCommentDialog')
+  confirmDeleteDialog?: GrConfirmDeleteCommentDialog;
 
   @property({type: Object})
   comment?: Comment;
@@ -165,21 +165,11 @@ export class GrComment extends LitElement {
   @property({type: String})
   messagePlaceholder?: string;
 
-  /* private, but used in css rules */
-  @property({type: Boolean, reflect: true})
-  saving = false;
-
   // GrReplyDialog requires the patchset level comment to always remain
   // editable.
   @property({type: Boolean, attribute: 'permanent-editing-mode'})
   permanentEditingMode = false;
 
-  /**
-   * `saving` and `autoSaving` are separate and cannot be set at the same time.
-   * `saving` affects the UI state (disabled buttons, etc.) and eventually
-   * leaves editing mode, but `autoSaving` just happens in the background
-   * without the user noticing.
-   */
   @state()
   autoSaving?: Promise<DraftInfo>;
 
@@ -199,12 +189,6 @@ export class GrComment extends LitElement {
   /* The 'dirty' state of !comment.unresolved, which will be saved on demand. */
   @state()
   unresolved = true;
-
-  @property({type: Boolean})
-  showConfirmDeleteOverlay = false;
-
-  @property({type: Boolean})
-  unableToSave = false;
 
   @property({type: Boolean, attribute: 'show-patchset'})
   showPatchset = false;
@@ -229,10 +213,9 @@ export class GrComment extends LitElement {
 
   private readonly getChangeModel = resolve(this, changeModelToken);
 
-  // Private but used in tests.
-  readonly getCommentsModel = resolve(this, commentsModelToken);
+  private readonly getCommentsModel = resolve(this, commentsModelToken);
 
-  private readonly userModel = getAppContext().userModel;
+  private readonly getUserModel = resolve(this, userModelToken);
 
   private readonly shortcuts = new ShortcutController(this);
 
@@ -277,17 +260,18 @@ export class GrComment extends LitElement {
         this.save();
       });
     }
-    if (this.flagsService.isEnabled(KnownExperimentId.MENTION_USERS)) {
-      this.messagePlaceholder = 'Mention others with @';
-    }
+    this.addEventListener('open-user-suggest-preview', e => {
+      this.handleShowFix(e.detail.code);
+    });
+    this.messagePlaceholder = 'Mention others with @';
     subscribe(
       this,
-      () => this.userModel.account$,
+      () => this.getUserModel().account$,
       x => (this.account = x)
     );
     subscribe(
       this,
-      () => this.userModel.isAdmin$,
+      () => this.getUserModel().isAdmin$,
       x => (this.isAdmin = x)
     );
 
@@ -319,17 +303,13 @@ export class GrComment extends LitElement {
   override disconnectedCallback() {
     // Clean up emoji dropdown.
     if (this.textarea) this.textarea.closeDropdown();
-    if (this.editing) {
-      this.reporting.reportInteraction(
-        Interaction.COMMENTS_AUTOCLOSE_EDITING_DISCONNECTED
-      );
-    }
     super.disconnectedCallback();
   }
 
   static override get styles() {
     return [
       sharedStyles,
+      modalStyles,
       css`
         :host {
           display: block;
@@ -339,13 +319,9 @@ export class GrComment extends LitElement {
         :host([collapsed]) {
           padding: var(--spacing-s) var(--spacing-m);
         }
-        :host([saving]) {
-          pointer-events: none;
-        }
-        :host([saving]) .actions,
-        :host([saving]) .robotActions,
-        :host([saving]) .date {
-          opacity: 0.5;
+        :host([error]) {
+          background-color: var(--error-background);
+          border-radius: var(--border-radius);
         }
         .header {
           align-items: center;
@@ -500,18 +476,36 @@ export class GrComment extends LitElement {
           margin-left: var(--spacing-m);
           cursor: pointer;
         }
+        .suggestEdit {
+          /** same height as header */
+          --margin: calc(0px - var(--spacing-s));
+          margin-right: var(--spacing-s);
+        }
+        .suggestEdit gr-icon {
+          color: inherit;
+          margin-right: var(--spacing-s);
+        }
       `,
     ];
   }
 
   override render() {
-    if (isUnsaved(this.comment) && !this.editing) return;
-    const classes = {container: true, draft: isDraftOrUnsaved(this.comment)};
+    if (!this.comment) return;
+    this.toggleAttribute('saving', isSaving(this.comment));
+    this.toggleAttribute('error', isError(this.comment));
+    const classes = {
+      container: true,
+      draft: isDraft(this.comment),
+    };
     return html`
       <gr-endpoint-decorator name="comment">
         <gr-endpoint-param name="comment" .value=${this.comment}>
         </gr-endpoint-param>
         <gr-endpoint-param name="editing" .value=${this.editing}>
+        </gr-endpoint-param>
+        <gr-endpoint-param name="message" .value=${this.messageText}>
+        </gr-endpoint-param>
+        <gr-endpoint-param name="isDraft" .value=${isDraft(this.comment)}>
         </gr-endpoint-param>
         <div id="container" class=${classMap(classes)}>
           ${this.renderHeader()}
@@ -520,7 +514,6 @@ export class GrComment extends LitElement {
             ${this.renderCommentMessage()}
             <gr-endpoint-slot name="above-actions"></gr-endpoint-slot>
             ${this.renderHumanActions()} ${this.renderRobotActions()}
-            ${this.renderSuggestEditActions()}
           </div>
         </div>
       </gr-endpoint-decorator>
@@ -541,24 +534,21 @@ export class GrComment extends LitElement {
           ${this.renderDraftLabel()}
         </div>
         <div class="headerMiddle">${this.renderCollapsedContent()}</div>
-        ${this.renderRunDetails()} ${this.renderDeleteButton()}
-        ${this.renderPatchset()} ${this.renderDate()} ${this.renderToggle()}
+        ${this.renderSuggestEditButton()} ${this.renderRunDetails()}
+        ${this.renderDeleteButton()} ${this.renderPatchset()}
+        ${this.renderSeparator()} ${this.renderDate()} ${this.renderToggle()}
       </div>
     `;
   }
 
   private renderAuthor() {
-    if (isDraftOrUnsaved(this.comment)) return;
+    if (isDraft(this.comment)) return;
     if (isRobot(this.comment)) {
       const id = this.comment.robot_id;
       return html`<span class="robotName">${id}</span>`;
     }
-    const classes = {draft: isDraftOrUnsaved(this.comment)};
     return html`
-      <gr-account-label
-        .account=${this.comment?.author ?? this.account}
-        class=${classMap(classes)}
-      >
+      <gr-account-label .account=${this.comment?.author ?? this.account}>
       </gr-account-label>
     `;
   }
@@ -576,13 +566,13 @@ export class GrComment extends LitElement {
   }
 
   private renderDraftLabel() {
-    if (!isDraftOrUnsaved(this.comment)) return;
+    if (!isDraft(this.comment)) return;
     let label = 'Draft';
     let tooltip =
       'This draft is only visible to you. ' +
       "To publish drafts, click the 'Reply' or 'Start review' button " +
       "at the top of the change or press the 'a' key.";
-    if (this.unableToSave) {
+    if (isError(this.comment)) {
       label += ' (Failed to save)';
       tooltip = 'Unable to save draft. Please try to save again.';
     }
@@ -625,12 +615,7 @@ export class GrComment extends LitElement {
    * a draft. It is an action applied to published comments.
    */
   private renderDeleteButton() {
-    if (
-      !this.isAdmin ||
-      isDraftOrUnsaved(this.comment) ||
-      isRobot(this.comment)
-    )
-      return;
+    if (!this.isAdmin || isDraft(this.comment) || isRobot(this.comment)) return;
     if (this.collapsed) return;
     return html`
       <gr-button
@@ -638,7 +623,10 @@ export class GrComment extends LitElement {
         title="Delete Comment"
         link
         class="action delete"
-        @click=${this.openDeleteCommentOverlay}
+        @click=${(e: MouseEvent) => {
+          e.stopPropagation();
+          this.openDeleteCommentModal();
+        }}
       >
         <gr-icon id="icon" icon="delete" filled></gr-icon>
       </gr-button>
@@ -653,16 +641,33 @@ export class GrComment extends LitElement {
     `;
   }
 
+  private renderSeparator() {
+    // This should match the condition of `renderPatchset()`.
+    if (!this.showPatchset) return;
+    // This should match the condition of `renderDate()`.
+    if (this.collapsed) return;
+    // Render separator, if both are present: patchset AND date.
+    return html`<span class="separator"></span>`;
+  }
+
   private renderDate() {
-    if (!this.comment?.updated || this.collapsed) return;
+    if (this.collapsed) return;
     return html`
-      <span class="separator"></span>
       <span class="date" tabindex="0" @click=${this.handleAnchorClick}>
-        <gr-date-formatter
-          withTooltip
-          .dateStr=${this.comment.updated}
-        ></gr-date-formatter>
+        ${this.renderDateInner()}
       </span>
+    `;
+  }
+
+  private renderDateInner() {
+    if (isError(this.comment)) return 'Error';
+    if (isSaving(this.comment) && !this.autoSaving) return 'Saving';
+    if (isNew(this.comment)) return 'New';
+    return html`
+      <gr-date-formatter
+        withTooltip
+        .dateStr=${this.comment!.updated}
+      ></gr-date-formatter>
     `;
   }
 
@@ -697,7 +702,6 @@ export class GrComment extends LitElement {
         class="editMessage"
         autocomplete="on"
         code=""
-        ?disabled=${this.saving}
         rows="4"
         .placeholder=${this.messagePlaceholder}
         text=${this.messageText}
@@ -729,7 +733,7 @@ export class GrComment extends LitElement {
 
   private renderCopyLinkIcon() {
     // Only show the icon when the thread contains a published comment.
-    if (!this.comment?.in_reply_to && isDraftOrUnsaved(this.comment)) return;
+    if (!this.comment?.in_reply_to && isDraft(this.comment)) return;
     return html`
       <gr-icon
         icon="link"
@@ -744,7 +748,7 @@ export class GrComment extends LitElement {
 
   private renderHumanActions() {
     if (!this.account || isRobot(this.comment)) return;
-    if (this.collapsed || !isDraftOrUnsaved(this.comment)) return;
+    if (this.collapsed || !isDraft(this.comment)) return;
     return html`
       <div class="actions">
         <div class="action resolve">
@@ -764,34 +768,13 @@ export class GrComment extends LitElement {
   }
 
   private renderDraftActions() {
-    if (!isDraftOrUnsaved(this.comment)) return;
+    if (!isDraft(this.comment)) return;
     return html`
       <div class="rightActions">
-        ${this.autoSaving ? html`.&nbsp;&nbsp;` : ''}
-        ${this.renderDiscardButton()} ${this.renderSuggestEditButton()}
-        ${this.renderPreviewSuggestEditButton()} ${this.renderEditButton()}
+        ${this.renderDiscardButton()} ${this.renderEditButton()}
         ${this.renderCancelButton()} ${this.renderSaveButton()}
         ${this.renderCopyLinkIcon()}
       </div>
-    `;
-  }
-
-  private renderPreviewSuggestEditButton() {
-    if (!this.flagsService.isEnabled(KnownExperimentId.SUGGEST_EDIT)) {
-      return nothing;
-    }
-    assertIsDefined(this.comment, 'comment');
-    if (!hasUserSuggestion(this.comment)) return nothing;
-    return html`
-      <gr-button
-        link
-        secondary
-        class="action show-fix"
-        ?disabled=${this.saving}
-        @click=${this.handleShowFix}
-      >
-        Preview Fix
-      </gr-button>
     `;
   }
 
@@ -800,6 +783,7 @@ export class GrComment extends LitElement {
       return nothing;
     }
     if (
+      !this.editing ||
       this.permanentEditingMode ||
       this.comment?.path === SpecialFilePath.PATCHSET_LEVEL_COMMENTS
     ) {
@@ -815,8 +799,9 @@ export class GrComment extends LitElement {
     return html`<gr-button
       link
       class="action suggestEdit"
+      title="This button copies the text to make a suggestion"
       @click=${this.createSuggestEdit}
-      >Suggest Fix</gr-button
+      ><gr-icon icon="edit" id="icon" filled></gr-icon> Suggest edit</gr-button
     >`;
   }
 
@@ -824,7 +809,7 @@ export class GrComment extends LitElement {
     if (this.editing || this.permanentEditingMode) return;
     return html`<gr-button
       link
-      ?disabled=${this.saving}
+      ?disabled=${isSaving(this.comment) && !this.autoSaving}
       class="action discard"
       @click=${this.discard}
       >Discard</gr-button
@@ -833,11 +818,7 @@ export class GrComment extends LitElement {
 
   private renderEditButton() {
     if (this.editing) return;
-    return html`<gr-button
-      link
-      ?disabled=${this.saving}
-      class="action edit"
-      @click=${this.edit}
+    return html`<gr-button link class="action edit" @click=${this.edit}
       >Edit</gr-button
     >`;
   }
@@ -847,7 +828,7 @@ export class GrComment extends LitElement {
     return html`
       <gr-button
         link
-        ?disabled=${this.saving}
+        ?disabled=${isSaving(this.comment) && !this.autoSaving}
         class="action cancel"
         @click=${this.cancel}
         >Cancel</gr-button
@@ -856,7 +837,7 @@ export class GrComment extends LitElement {
   }
 
   private renderSaveButton() {
-    if (!this.editing && !this.unableToSave) return;
+    if (!this.editing) return;
     return html`
       <gr-button
         link
@@ -884,31 +865,15 @@ export class GrComment extends LitElement {
     `;
   }
 
-  private renderSuggestEditActions() {
-    if (!this.flagsService.isEnabled(KnownExperimentId.SUGGEST_EDIT)) {
-      return nothing;
-    }
-    if (
-      !this.account ||
-      isRobot(this.comment) ||
-      isDraftOrUnsaved(this.comment)
-    ) {
-      return nothing;
-    }
-    return html`
-      <div class="robotActions">${this.renderPreviewSuggestEditButton()}</div>
-    `;
-  }
-
   private renderShowFixButton() {
-    if (!(this.comment as RobotCommentInfo)?.fix_suggestions) return;
+    const fix_suggestions = (this.comment as RobotCommentInfo)?.fix_suggestions;
+    if (!fix_suggestions || fix_suggestions.length === 0) return;
     return html`
       <gr-button
         link
         secondary
         class="action show-fix"
-        ?disabled=${this.saving}
-        @click=${this.handleShowFix}
+        @click=${() => this.handleShowFix()}
       >
         Show Fix
       </gr-button>
@@ -930,27 +895,24 @@ export class GrComment extends LitElement {
   }
 
   private renderConfirmDialog() {
-    if (!this.showConfirmDeleteOverlay) return;
     return html`
-      <gr-overlay id="confirmDeleteOverlay" with-backdrop>
+      <dialog id="confirmDeleteModal" tabindex="-1">
         <gr-confirm-delete-comment-dialog
-          id="confirmDeleteComment"
+          id="confirmDeleteCommentDialog"
           @confirm=${this.handleConfirmDeleteComment}
-          @cancel=${this.closeDeleteCommentOverlay}
+          @cancel=${this.closeDeleteCommentModal}
         >
         </gr-confirm-delete-comment-dialog>
-      </gr-overlay>
+      </dialog>
     `;
   }
 
   private getUrlForComment() {
-    const comment = this.comment;
-    if (!comment || !this.changeNum || !this.repoName) return '';
-    if (!comment.id) throw new Error('comment must have an id');
+    if (!this.changeNum || !this.repoName || !this.comment?.id) return '';
     return createDiffUrl({
       changeNum: this.changeNum,
-      project: this.repoName,
-      commentId: comment.id,
+      repo: this.repoName,
+      commentId: this.comment.id,
     });
   }
 
@@ -958,24 +920,41 @@ export class GrComment extends LitElement {
 
   firstWillUpdate() {
     if (this.firstWillUpdateDone) return;
-    this.firstWillUpdateDone = true;
-    if (this.permanentEditingMode) this.editing = true;
     assertIsDefined(this.comment, 'comment');
+    this.firstWillUpdateDone = true;
     this.unresolved = this.comment.unresolved ?? true;
-    if (isUnsaved(this.comment)) this.editing = true;
-    if (isDraftOrUnsaved(this.comment)) {
-      this.reporting.reportInteraction(
-        Interaction.COMMENTS_AUTOCLOSE_FIRST_UPDATE,
-        {editing: this.editing, unsaved: isUnsaved(this.comment)}
-      );
+    if (this.permanentEditingMode) {
+      this.edit();
+    }
+    if (
+      isDraft(this.comment) &&
+      isNew(this.comment) &&
+      !isSaving(this.comment)
+    ) {
+      this.edit();
+    }
+    if (isDraft(this.comment)) {
       this.collapsed = false;
     } else {
       this.collapsed = !!this.initiallyCollapsed;
     }
   }
 
+  override updated(changed: PropertyValues) {
+    if (changed.has('editing')) {
+      if (this.editing && !this.permanentEditingMode) {
+        whenVisible(this, () => this.textarea?.putCursorAtEnd());
+      }
+    }
+  }
+
   override willUpdate(changed: PropertyValues) {
     this.firstWillUpdate();
+    if (changed.has('comment')) {
+      if (isDraft(this.comment) && isError(this.comment)) {
+        this.edit();
+      }
+    }
     if (changed.has('editing')) {
       this.onEditingChanged();
     }
@@ -1000,14 +979,12 @@ export class GrComment extends LitElement {
   }
 
   private handleCopyLink() {
-    fireEvent(this, 'copy-comment-link');
+    fire(this, 'copy-comment-link', {});
   }
 
   /** Enter editing mode. */
   private edit() {
-    if (!isDraftOrUnsaved(this.comment)) {
-      throw new Error('Cannot edit published comment.');
-    }
+    assert(isDraft(this.comment), 'only drafts are editable');
     if (this.editing) return;
     this.editing = true;
   }
@@ -1022,12 +999,14 @@ export class GrComment extends LitElement {
   }
 
   // private, but visible for testing
-  async createFixPreview(): Promise<OpenFixPreviewEventDetail> {
+  async createFixPreview(
+    replacement?: string
+  ): Promise<OpenFixPreviewEventDetail> {
     assertIsDefined(this.comment?.patch_set, 'comment.patch_set');
     assertIsDefined(this.comment?.path, 'comment.path');
 
-    if (hasUserSuggestion(this.comment)) {
-      const replacement = getUserSuggestion(this.comment);
+    if (hasUserSuggestion(this.comment) || replacement) {
+      replacement = replacement ?? getUserSuggestion(this.comment);
       assert(!!replacement, 'malformed user suggestion');
       const line = await this.getCommentedCode();
 
@@ -1038,6 +1017,11 @@ export class GrComment extends LitElement {
           replacement
         ),
         patchNum: this.comment.patch_set,
+        onCloseFixPreviewCallbacks: [
+          fixApplied => {
+            if (fixApplied) this.handleAppliedFix();
+          },
+        ],
       };
     }
     if (isRobot(this.comment) && this.comment.fix_suggestions.length > 0) {
@@ -1050,6 +1034,7 @@ export class GrComment extends LitElement {
           };
         }),
         patchNum: this.comment.patch_set,
+        onCloseFixPreviewCallbacks: [],
       };
     }
     throw new Error('unable to create preview fix event');
@@ -1060,9 +1045,10 @@ export class GrComment extends LitElement {
       this.collapsed = false;
       this.messageText = this.comment?.message ?? '';
       this.unresolved = this.comment?.unresolved ?? true;
-      this.originalMessage = this.messageText;
-      this.originalUnresolved = this.unresolved;
-      setTimeout(() => this.textarea?.putCursorAtEnd(), 1);
+      if (!isError(this.comment) && !isSaving(this.comment)) {
+        this.originalMessage = this.messageText;
+        this.originalUnresolved = this.unresolved;
+      }
     }
 
     // Parent components such as the reply dialog might be interested in whether
@@ -1076,8 +1062,12 @@ export class GrComment extends LitElement {
   // private, but visible for testing
   isSaveDisabled() {
     assertIsDefined(this.comment, 'comment');
-    if (this.saving) return true;
+    if (isSaving(this.comment) && !this.autoSaving) return true;
     return !this.messageText?.trimEnd();
+  }
+
+  override focus() {
+    this.textarea?.focus();
   }
 
   private handleEsc() {
@@ -1114,12 +1104,25 @@ export class GrComment extends LitElement {
     fire(this, 'reply-to-comment', eventDetail);
   }
 
-  private async handleShowFix() {
-    // Handled top-level in the diff and change view components.
-    fire(this, 'open-fix-preview', await this.createFixPreview());
+  private handleAppliedFix() {
+    const message = this.comment?.message;
+    assert(!!message, 'empty message');
+    const eventDetail: ReplyToCommentEventDetail = {
+      content: 'Fix applied.',
+      userWantsToEdit: false,
+      unresolved: false,
+    };
+    // Handled by <gr-comment-thread>.
+    fire(this, 'reply-to-comment', eventDetail);
   }
 
-  async createSuggestEdit() {
+  private async handleShowFix(replacement?: string) {
+    // Handled top-level in the diff and change view components.
+    fire(this, 'open-fix-preview', await this.createFixPreview(replacement));
+  }
+
+  async createSuggestEdit(e: MouseEvent) {
+    e.stopPropagation();
     const line = await this.getCommentedCode();
     this.messageText += `${USER_SUGGESTION_START_PATTERN}${line}${'\n```'}`;
   }
@@ -1146,24 +1149,22 @@ export class GrComment extends LitElement {
   // private, but visible for testing
   cancel() {
     assertIsDefined(this.comment, 'comment');
-    if (!isDraftOrUnsaved(this.comment)) {
-      throw new Error('only unsaved and draft comments are editable');
-    }
+    assert(isDraft(this.comment), 'only drafts are editable');
     this.messageText = this.originalMessage;
     this.unresolved = this.originalUnresolved;
     this.save();
   }
 
   async autoSave() {
-    if (this.saving || this.autoSaving) return;
+    if (isSaving(this.comment) || this.autoSaving) return;
     if (!this.editing || !this.comment) return;
-    if (!isDraftOrUnsaved(this.comment)) return;
+    assert(isDraft(this.comment), 'only drafts are editable');
     const messageToSave = this.messageText.trimEnd();
     if (messageToSave === '') return;
     if (messageToSave === this.comment.message) return;
 
     try {
-      this.autoSaving = this.rawSave(messageToSave, {showToast: false});
+      this.autoSaving = this.rawSave({showToast: false});
       await this.autoSaving;
     } finally {
       this.autoSaving = undefined;
@@ -1176,55 +1177,51 @@ export class GrComment extends LitElement {
   }
 
   async save() {
-    if (!isDraftOrUnsaved(this.comment)) throw new Error('not a draft');
-    // If it's an unsaved comment then it does not have a draftID yet which
-    // means sending another save() request will create a new draft
-    if (isUnsaved(this.comment) && this.saving) return;
+    assert(isDraft(this.comment), 'only drafts are editable');
+    // There is a minimal chance of `isSaving()` being false between iterations
+    // of the below while loop. But this will be extremely rare and just lead
+    // to a harmless assertion error. So let's not bother.
+    if (isSaving(this.comment) && !this.autoSaving) return;
 
-    try {
-      this.saving = true;
-      this.unableToSave = false;
-      if (this.autoSaving) {
-        this.comment = await this.autoSaving;
+    if (!this.permanentEditingMode) {
+      this.editing = false;
+    }
+    if (this.autoSaving) {
+      this.comment = await this.autoSaving;
+    }
+    // Depending on whether `messageToSave` is empty we treat this either as
+    // a discard or a save action.
+    const messageToSave = this.messageText.trimEnd();
+    if (messageToSave === '') {
+      if (!this.permanentEditingMode || this.somethingToSave()) {
+        await this.getCommentsModel().discardDraft(id(this.comment));
       }
-      // Depending on whether `messageToSave` is empty we treat this either as
-      // a discard or a save action.
-      const messageToSave = this.messageText.trimEnd();
-      if (messageToSave === '') {
-        // Don't try to discard UnsavedInfo. Nothing to do then.
-        if (this.comment.id) {
-          await this.getCommentsModel().discardDraft(this.comment.id);
-        }
-      } else {
-        // No need to make a backend call when nothing has changed.
-        if (
-          messageToSave !== this.comment?.message ||
-          this.unresolved !== this.comment.unresolved
-        ) {
-          await this.rawSave(messageToSave, {showToast: true});
-        }
+    } else {
+      // No need to make a backend call when nothing has changed.
+      while (this.somethingToSave()) {
+        this.comment = await this.rawSave({showToast: true});
+        if (isError(this.comment)) return;
       }
-      this.reporting.reportInteraction(
-        Interaction.COMMENTS_AUTOCLOSE_EDITING_FALSE_SAVE
-      );
-      if (!this.permanentEditingMode) {
-        this.editing = false;
-      }
-    } catch (e) {
-      this.unableToSave = true;
-      throw e;
-    } finally {
-      this.saving = false;
     }
   }
 
+  private somethingToSave() {
+    if (!this.comment) return false;
+    return (
+      isError(this.comment) ||
+      this.messageText.trimEnd() !== this.comment?.message ||
+      this.unresolved !== this.comment.unresolved
+    );
+  }
+
   /** For sharing between save() and autoSave(). */
-  private rawSave(message: string, options: {showToast: boolean}) {
-    if (!isDraftOrUnsaved(this.comment)) throw new Error('not a draft');
+  private rawSave(options: {showToast: boolean}) {
+    assert(isDraft(this.comment), 'only drafts are editable');
+    assert(!isSaving(this.comment), 'saving already in progress');
     return this.getCommentsModel().saveDraft(
       {
         ...this.comment,
-        message,
+        message: this.messageText.trimEnd(),
         unresolved: this.unresolved,
       },
       options.showToast
@@ -1243,56 +1240,43 @@ export class GrComment extends LitElement {
     }
   }
 
-  private async openDeleteCommentOverlay() {
-    this.showConfirmDeleteOverlay = true;
-    await this.updateComplete;
-    await this.confirmDeleteOverlay?.open();
+  private openDeleteCommentModal() {
+    this.confirmDeleteModal?.showModal();
+    whenVisible(this.confirmDeleteDialog!, () => {
+      this.confirmDeleteDialog!.resetFocus();
+    });
   }
 
-  private closeDeleteCommentOverlay() {
-    this.showConfirmDeleteOverlay = false;
-    this.confirmDeleteOverlay?.remove();
-    this.confirmDeleteOverlay?.close();
+  private closeDeleteCommentModal() {
+    this.confirmDeleteModal?.close();
   }
 
   /**
    * Deleting a *published* comment is an admin feature. It means more than just
    * discarding a draft.
-   *
-   * TODO: Also move this into the comments-service.
-   * TODO: Figure out a good reloading strategy when deleting was successful.
-   *       `this.comment = newComment` does not seem sufficient.
    */
   // private, but visible for testing
-  handleConfirmDeleteComment() {
-    const dialog = this.confirmDeleteOverlay?.querySelector(
-      '#confirmDeleteComment'
-    ) as GrConfirmDeleteCommentDialog | null;
-    if (!dialog || !dialog.message) {
+  async handleConfirmDeleteComment() {
+    if (!this.confirmDeleteDialog || !this.confirmDeleteDialog.message) {
       throw new Error('missing confirm delete dialog');
     }
     assertIsDefined(this.changeNum, 'changeNum');
     assertIsDefined(this.comment, 'comment');
-    assertIsDefined(this.comment.patch_set, 'comment.patch_set');
-    if (isDraftOrUnsaved(this.comment)) {
-      throw new Error('Admin deletion is only for published comments.');
-    }
-    this.restApiService
-      .deleteComment(
-        this.changeNum,
-        this.comment.patch_set,
-        this.comment.id,
-        dialog.message
-      )
-      .then(newComment => {
-        this.closeDeleteCommentOverlay();
-        this.comment = newComment;
-      });
+
+    await this.getCommentsModel().deleteComment(
+      this.changeNum,
+      this.comment,
+      this.confirmDeleteDialog.message
+    );
+    this.closeDeleteCommentModal();
   }
 }
 
 declare global {
   interface HTMLElementTagNameMap {
     'gr-comment': GrComment;
+  }
+  interface HTMLElementEventMap {
+    'copy-comment-link': CustomEvent<{}>;
   }
 }

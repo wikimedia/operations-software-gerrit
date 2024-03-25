@@ -16,7 +16,8 @@ import {
   LifeCycle,
   Timing,
 } from '../../constants/reporting';
-import {getCLS, getFID, getLCP, Metric} from 'web-vitals';
+import {onCLS, onFID, onLCP, Metric, onINP} from 'web-vitals';
+import {getEventPath, isElementTarget} from '../../utils/dom-util';
 
 // Latency reporting constants.
 
@@ -130,8 +131,8 @@ export function initErrorReporter(reportingService: ReportingService) {
   };
   // TODO(dmfilippov): TS-fix-any unclear what is context
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const catchErrors = function (opt_context?: any) {
-    const context = opt_context || window;
+  const catchErrors = function (context?: any) {
+    context = context || window;
     const oldOnError = context.onerror;
     context.onerror = (
       event: Event | string,
@@ -186,21 +187,47 @@ export function initVisibilityReporter(reportingService: ReportingService) {
   });
 }
 
+export function initClickReporter(reportingService: ReportingService) {
+  document.addEventListener('click', (e: MouseEvent) => {
+    const anchorEl = e
+      .composedPath()
+      .find(el => isElementTarget(el) && el.tagName.toUpperCase() === 'A') as
+      | HTMLAnchorElement
+      | undefined;
+    if (!anchorEl) return;
+    reportingService.reportInteraction(Interaction.LINK_CLICK, {
+      path: getEventPath(e),
+      link: anchorEl.href,
+      text: anchorEl.innerText,
+    });
+  });
+}
+
 export function initWebVitals(reportingService: ReportingService) {
   function reportWebVitalMetric(name: Timing, metric: Metric) {
+    let score = metric.value;
+    // CLS good score is 0.1 and poor score is 0.25. Logging system
+    // prefers integers, so we multiple by 100;
+    if (name === Timing.CLS) {
+      score *= 100;
+    }
     reportingService.reporter(
       TIMING.TYPE,
       TIMING.CATEGORY.UI_LATENCY,
       name,
-      metric.value,
-      JSON.stringify(metric),
-      false
+      score,
+      {
+        navigationType: metric.navigationType,
+        rating: metric.rating,
+        entries: metric.entries,
+      }
     );
   }
 
-  getCLS(metric => reportWebVitalMetric(Timing.CLS, metric));
-  getFID(metric => reportWebVitalMetric(Timing.FID, metric));
-  getLCP(metric => reportWebVitalMetric(Timing.LCP, metric));
+  onCLS(metric => reportWebVitalMetric(Timing.CLS, metric));
+  onFID(metric => reportWebVitalMetric(Timing.FID, metric));
+  onLCP(metric => reportWebVitalMetric(Timing.LCP, metric));
+  onINP(metric => reportWebVitalMetric(Timing.INP, metric));
 }
 
 // Calculates the time of Gerrit being in a background tab. When Gerrit reports
@@ -360,18 +387,18 @@ export class GrReporting implements ReportingService, Finalizable {
       // We cache until metrics plugin is loaded
       this.pending.push([eventInfo, noLog]);
       if (this._isMetricsPluginLoaded()) {
-        this.pending.forEach(([eventInfo, opt_noLog]) => {
-          this._reportEvent(eventInfo, opt_noLog);
+        this.pending.forEach(([eventInfo, noLog]) => {
+          this._reportEvent(eventInfo, noLog);
         });
         this.pending = [];
       }
     }
   }
 
-  private _reportEvent(eventInfo: EventInfo, opt_noLog?: boolean) {
+  private _reportEvent(eventInfo: EventInfo, noLog?: boolean) {
     const {type, value, name, eventDetails} = eventInfo;
     document.dispatchEvent(new CustomEvent(type, {detail: eventInfo}));
-    if (opt_noLog) {
+    if (noLog) {
       return;
     }
     if (type !== ERROR.TYPE) {

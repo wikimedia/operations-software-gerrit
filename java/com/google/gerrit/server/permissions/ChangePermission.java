@@ -16,7 +16,9 @@ package com.google.gerrit.server.permissions;
 
 import static java.util.Objects.requireNonNull;
 
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.extensions.api.access.GerritPermission;
+import java.util.Optional;
 
 public enum ChangePermission implements ChangePermissionOrLabel {
   READ,
@@ -35,7 +37,6 @@ public enum ChangePermission implements ChangePermissionOrLabel {
    * change is not locked by calling {@code PatchSetUtil.isPatchSetLocked}.
    */
   ABANDON,
-  EDIT_ASSIGNEE,
   EDIT_DESCRIPTION,
   EDIT_HASHTAGS,
   EDIT_TOPIC_NAME,
@@ -53,24 +54,53 @@ public enum ChangePermission implements ChangePermissionOrLabel {
    * <p>Before checking this permission, the caller should first verify the current patch set of the
    * change is not locked by calling {@code PatchSetUtil.isPatchSetLocked}.
    */
-  REBASE,
+  REBASE(
+      /* description= */ null,
+      /* hint= */ "change owners and users with the 'Submit' or 'Rebase' permission can rebase"
+          + " if they have the 'Push' permission"),
+  /**
+   * Permission that is required for a user to rebase a change on behalf of the uploader.
+   *
+   * <p>This only covers the permissions of the rebaser (aka the impersonating user).
+   *
+   * <p>In addition rebase on behalf of the uploader requires the uploader (aka the impersonated
+   * user) to have permissions to create the new patch set. These permissions need to be checked
+   * separately.
+   */
+  REBASE_ON_BEHALF_OF_UPLOADER(
+      /* description= */ null,
+      /* hint= */ "change owners and users with the 'Submit' or 'Rebase' permission can rebase on"
+          + " behalf of the uploader"),
   REVERT,
   SUBMIT,
   SUBMIT_AS("submit on behalf of other users"),
   TOGGLE_WORK_IN_PROGRESS_STATE;
 
   private final String description;
+  private final String hint;
 
   ChangePermission() {
     this.description = null;
+    this.hint = null;
   }
 
   ChangePermission(String description) {
     this.description = requireNonNull(description);
+    this.hint = null;
+  }
+
+  ChangePermission(@Nullable String description, String hint) {
+    this.description = description;
+    this.hint = requireNonNull(hint);
   }
 
   @Override
   public String describeForException() {
     return description != null ? description : GerritPermission.describeEnumValue(this);
+  }
+
+  @Override
+  public Optional<String> hintForException() {
+    return Optional.ofNullable(hint);
   }
 }

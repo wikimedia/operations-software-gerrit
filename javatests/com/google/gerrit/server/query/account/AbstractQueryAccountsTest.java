@@ -17,6 +17,7 @@ package com.google.gerrit.server.query.account;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.common.truth.Truth8.assertThat;
+import static com.google.common.truth.TruthJUnit.assume;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.util.stream.Collectors.toList;
 import static org.junit.Assert.fail;
@@ -24,6 +25,7 @@ import static org.junit.Assert.fail;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Streams;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.GerritApi;
@@ -32,10 +34,12 @@ import com.google.gerrit.extensions.api.access.PermissionInfo;
 import com.google.gerrit.extensions.api.access.PermissionRuleInfo;
 import com.google.gerrit.extensions.api.access.ProjectAccessInput;
 import com.google.gerrit.extensions.api.accounts.Accounts.QueryRequest;
+import com.google.gerrit.extensions.api.changes.ReviewerInput;
 import com.google.gerrit.extensions.api.groups.GroupInput;
 import com.google.gerrit.extensions.api.projects.ProjectInput;
 import com.google.gerrit.extensions.client.ListAccountsOption;
 import com.google.gerrit.extensions.client.ProjectWatchInfo;
+import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.common.AccountExternalIdInfo;
 import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.common.ChangeInfo;
@@ -90,6 +94,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Repository;
@@ -238,7 +243,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
 
     assertQuery(user5.email, user5);
     assertQuery("email:" + user5.email, user5);
-    assertQuery("email:" + user5.email.toUpperCase(), user5);
+    assertQuery("email:" + user5.email.toUpperCase(Locale.US), user5);
   }
 
   @Test
@@ -277,6 +282,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
 
   @Test
   public void byUsername() throws Exception {
+    assume().that(hasIndexByUsername()).isTrue();
     AccountInfo user1 = newAccount("myuser");
 
     assertQuery("notexisting");
@@ -284,7 +290,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
 
     assertQuery(user1.username, user1);
     assertQuery("username:" + user1.username, user1);
-    assertQuery("username:" + user1.username.toUpperCase(), user1);
+    assertQuery("username:" + user1.username.toUpperCase(Locale.US), user1);
   }
 
   @Test
@@ -384,6 +390,46 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     GroupInfo group = createGroup(name("group"), user1, user2);
     blockRead(p, group);
     assertQuery("name:" + domain + " cansee:" + c.changeId, user3);
+  }
+
+  @Test
+  public void byCanSee_privateChange() throws Exception {
+    String domain = name("test.com");
+    AccountInfo user1 = newAccountWithEmail("account1", "account1@" + domain);
+    AccountInfo user2 = newAccountWithEmail("account2", "account2@" + domain);
+    AccountInfo user3 = newAccountWithEmail("account3", "account3@" + domain);
+    AccountInfo user4 = newAccountWithEmail("account4", "account4@" + domain);
+
+    Project.NameKey p = createProject(name("p"));
+
+    // Create the change as User1
+    requestContext.setContext(newRequestContext(Account.id(user1._accountId)));
+    ChangeInfo c = createPrivateChange(p);
+    assertThat(c.owner).isEqualTo(user1);
+
+    // Add user2 as a reviewer, user3 as a CC, and leave user4 dangling.
+    addReviewer(c.changeId, user2.email, ReviewerState.REVIEWER);
+    addReviewer(c.changeId, user3.email, ReviewerState.CC);
+
+    // Request as the owner
+    requestContext.setContext(newRequestContext(Account.id(user1._accountId)));
+    assertQuery("cansee:" + c.changeId, user1, user2, user3);
+
+    // Request as the reviewer
+    requestContext.setContext(newRequestContext(Account.id(user2._accountId)));
+    assertQuery("cansee:" + c.changeId, user1, user2, user3);
+
+    // Request as the CC
+    requestContext.setContext(newRequestContext(Account.id(user3._accountId)));
+    assertQuery("cansee:" + c.changeId, user1, user2, user3);
+
+    // Request as an account not in {owner, reviewer, CC}
+    requestContext.setContext(newRequestContext(Account.id(user4._accountId)));
+    BadRequestException exception =
+        assertThrows(BadRequestException.class, () -> newQuery("cansee:" + c.changeId).get());
+    assertThat(exception)
+        .hasMessageThat()
+        .isEqualTo(String.format("change %s not found", c.changeId));
   }
 
   @Test
@@ -517,7 +563,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
   public void withDetails() throws Exception {
     AccountInfo user1 = newAccount("myuser", "My User", "my.user@example.com", true);
 
-    List<AccountInfo> result = assertQuery(user1.username, user1);
+    List<AccountInfo> result = assertQuery(getDefaultSearch(user1), user1);
     AccountInfo ai = result.get(0);
     assertThat(ai._accountId).isEqualTo(user1._accountId);
     assertThat(ai.name).isNull();
@@ -525,7 +571,9 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     assertThat(ai.email).isNull();
     assertThat(ai.avatars).isNull();
 
-    result = assertQuery(newQuery(user1.username).withOption(ListAccountsOption.DETAILS), user1);
+    result =
+        assertQuery(
+            newQuery(getDefaultSearch(user1)).withOption(ListAccountsOption.DETAILS), user1);
     ai = result.get(0);
     assertThat(ai._accountId).isEqualTo(user1._accountId);
     assertThat(ai.name).isEqualTo(user1.name);
@@ -540,25 +588,29 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     String[] secondaryEmails = new String[] {"bar@example.com", "foo@example.com"};
     addEmails(user1, secondaryEmails);
 
-    List<AccountInfo> result = assertQuery(user1.username, user1);
+    List<AccountInfo> result = assertQuery(getDefaultSearch(user1), user1);
     assertThat(result.get(0).secondaryEmails).isNull();
 
-    result = assertQuery(newQuery(user1.username).withSuggest(true), user1);
-    assertThat(result.get(0).secondaryEmails)
-        .containsExactlyElementsIn(Arrays.asList(secondaryEmails))
-        .inOrder();
-
-    result = assertQuery(newQuery(user1.username).withOption(ListAccountsOption.DETAILS), user1);
-    assertThat(result.get(0).secondaryEmails).isNull();
-
-    result = assertQuery(newQuery(user1.username).withOption(ListAccountsOption.ALL_EMAILS), user1);
+    result = assertQuery(newQuery(getDefaultSearch(user1)).withSuggest(true), user1);
     assertThat(result.get(0).secondaryEmails)
         .containsExactlyElementsIn(Arrays.asList(secondaryEmails))
         .inOrder();
 
     result =
         assertQuery(
-            newQuery(user1.username)
+            newQuery(getDefaultSearch(user1)).withOption(ListAccountsOption.DETAILS), user1);
+    assertThat(result.get(0).secondaryEmails).isNull();
+
+    result =
+        assertQuery(
+            newQuery(getDefaultSearch(user1)).withOption(ListAccountsOption.ALL_EMAILS), user1);
+    assertThat(result.get(0).secondaryEmails)
+        .containsExactlyElementsIn(Arrays.asList(secondaryEmails))
+        .inOrder();
+
+    result =
+        assertQuery(
+            newQuery(getDefaultSearch(user1))
                 .withOptions(ListAccountsOption.DETAILS, ListAccountsOption.ALL_EMAILS),
             user1);
     assertThat(result.get(0).secondaryEmails)
@@ -576,21 +628,22 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
 
     requestContext.setContext(newRequestContext(Account.id(user._accountId)));
 
-    List<AccountInfo> result = newQuery(otherUser.username).withSuggest(true).get();
+    List<AccountInfo> result = newQuery(getDefaultSearch(otherUser)).withSuggest(true).get();
     assertThat(result.get(0).secondaryEmails).isNull();
     assertThrows(
         AuthException.class,
-        () -> newQuery(otherUser.username).withOption(ListAccountsOption.ALL_EMAILS).get());
+        () ->
+            newQuery(getDefaultSearch(otherUser)).withOption(ListAccountsOption.ALL_EMAILS).get());
   }
 
   @Test
   public void asAnonymous() throws Exception {
-    AccountInfo user1 = newAccount("user1");
+    AccountInfo user1 = newAccount("user1", "user1@gerrit.com", /*active=*/ true);
 
     setAnonymous();
     assertQuery("9999999");
     assertQuery("self");
-    assertQuery("username:" + user1.username, user1);
+    assertQuery("email:" + user1.email, user1);
   }
 
   // reindex permissions are tested by {@link AccountIT#reindexPermissions}
@@ -631,7 +684,12 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
             .getRaw(
                 Account.id(userInfo._accountId),
                 QueryOptions.create(
-                    IndexConfig.fromConfig(config).build(), 0, 1, schema.getStoredFields()));
+                    config != null
+                        ? IndexConfig.fromConfig(config).build()
+                        : IndexConfig.createDefault(),
+                    0,
+                    1,
+                    schema.getStoredFields()));
 
     assertThat(rawFields).isPresent();
     if (schema.hasField(AccountField.ID_FIELD_SPEC)) {
@@ -649,11 +707,31 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
       assertThat(extId).isPresent();
       blobs.add(new ByteArrayWrapper(extId.get().toByteArray()));
     }
+
+    // Some installations do not store EXTERNAL_ID_STATE_SPEC
+    if (!schema.hasField(AccountField.EXTERNAL_ID_STATE_SPEC)) {
+      return;
+    }
     Iterable<byte[]> externalIdStates =
         rawFields.get().<Iterable<byte[]>>getValue(AccountField.EXTERNAL_ID_STATE_SPEC);
     assertThat(externalIdStates).hasSize(blobs.size());
     assertThat(Streams.stream(externalIdStates).map(b -> new ByteArrayWrapper(b)).collect(toList()))
         .containsExactlyElementsIn(blobs);
+  }
+
+  private String getDefaultSearch(AccountInfo user) {
+    return hasIndexByUsername() ? user.username : user.name;
+  }
+
+  /**
+   * Returns 'true' is {@link AccountField#USERNAME_FIELD} is indexed.
+   *
+   * <p>Some installations do not index {@link AccountField#USERNAME_FIELD}, since they do not use
+   * {@link ExternalId#SCHEME_USERNAME}
+   */
+  private boolean hasIndexByUsername() {
+    Schema<AccountState> schema = indexes.getSearchIndex().getSchema();
+    return schema.hasField(AccountField.USERNAME_SPEC);
   }
 
   protected AccountInfo newAccount(String username) throws Exception {
@@ -709,12 +787,29 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     gApi.projects().name(project.get()).access(in);
   }
 
+  protected ChangeInfo createPrivateChange(Project.NameKey project) throws RestApiException {
+    ChangeInput in = new ChangeInput();
+    in.subject = "A change";
+    in.project = project.get();
+    in.branch = "master";
+    in.isPrivate = true;
+    return gApi.changes().create(in).get();
+  }
+
   protected ChangeInfo createChange(Project.NameKey project) throws RestApiException {
     ChangeInput in = new ChangeInput();
     in.subject = "A change";
     in.project = project.get();
     in.branch = "master";
     return gApi.changes().create(in).get();
+  }
+
+  protected void addReviewer(String changeId, String email, ReviewerState state)
+      throws RestApiException {
+    ReviewerInput reviewerInput = new ReviewerInput();
+    reviewerInput.reviewer = email;
+    reviewerInput.state = state;
+    gApi.changes().id(changeId).addReviewer(reviewerInput);
   }
 
   protected GroupInfo createGroup(String name, AccountInfo... members) throws RestApiException {
@@ -742,6 +837,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     return "\"" + s + "\"";
   }
 
+  @Nullable
   protected String name(String name) {
     if (name == null) {
       return null;

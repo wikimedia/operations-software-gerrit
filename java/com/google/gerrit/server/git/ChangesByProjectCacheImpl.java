@@ -132,7 +132,8 @@ public class ChangesByProjectCacheImpl implements ChangesByProjectCache {
             "Querying changes of project", Metadata.builder().projectName(project.get()).build())) {
       return queryProvider
           .get()
-          .setRequestedFields(ChangeField.CHANGE, ChangeField.REVIEWER, ChangeField.REF_STATE)
+          .setRequestedFields(
+              ChangeField.CHANGE_SPEC, ChangeField.REVIEWER_SPEC, ChangeField.REF_STATE_SPEC)
           .byProject(project);
     }
   }

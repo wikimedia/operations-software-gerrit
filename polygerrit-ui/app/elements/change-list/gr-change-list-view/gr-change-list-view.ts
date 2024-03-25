@@ -6,7 +6,6 @@
 import '../gr-change-list/gr-change-list';
 import '../gr-repo-header/gr-repo-header';
 import '../gr-user-header/gr-user-header';
-import {page} from '../../../utils/page-wrapper-utils';
 import {
   AccountDetailInfo,
   AccountId,
@@ -16,7 +15,7 @@ import {
   RepoName,
 } from '../../../types/common';
 import {ChangeStarToggleStarDetail} from '../../shared/gr-change-star/gr-change-star';
-import {fireAlert, fireEvent, fireTitleChange} from '../../../utils/event-util';
+import {fireAlert, fire, fireTitleChange} from '../../../utils/event-util';
 import {getAppContext} from '../../../services/app-context';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, html, css, nothing} from 'lit';
@@ -27,17 +26,13 @@ import {
 } from '../../../models/views/search';
 import {resolve} from '../../../models/dependency';
 import {subscribe} from '../../lit/subscription-controller';
+import {userModelToken} from '../../../models/user/user-model';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 
 const LIMIT_OPERATOR_PATTERN = /\blimit:(\d+)/i;
 
 @customElement('gr-change-list-view')
 export class GrChangeListView extends LitElement {
-  /**
-   * Fired when the title of the page should change.
-   *
-   * @event title-change
-   */
-
   @query('#prevArrow') protected prevArrow?: HTMLAnchorElement;
 
   @query('#nextArrow') protected nextArrow?: HTMLAnchorElement;
@@ -76,9 +71,11 @@ export class GrChangeListView extends LitElement {
 
   private reporting = getAppContext().reportingService;
 
-  private userModel = getAppContext().userModel;
+  private readonly getUserModel = resolve(this, userModelToken);
 
   private readonly getViewModel = resolve(this, searchViewModelToken);
+
+  private readonly getNavigation = resolve(this, navigationToken);
 
   constructor() {
     super();
@@ -117,22 +114,22 @@ export class GrChangeListView extends LitElement {
     );
     subscribe(
       this,
-      () => this.userModel.account$,
+      () => this.getUserModel().account$,
       x => (this.account = x)
     );
     subscribe(
       this,
-      () => this.userModel.loggedIn$,
+      () => this.getUserModel().loggedIn$,
       x => (this.loggedIn = x)
     );
     subscribe(
       this,
-      () => this.userModel.preferenceChangesPerPage$,
+      () => this.getUserModel().preferenceChangesPerPage$,
       x => (this.changesPerPage = x)
     );
     subscribe(
       this,
-      () => this.userModel.preferences$,
+      () => this.getUserModel().preferences$,
       x => (this.preferences = x)
     );
   }
@@ -255,7 +252,7 @@ export class GrChangeListView extends LitElement {
 
   override updated(changedProperties: PropertyValues) {
     if (changedProperties.has('query')) {
-      fireTitleChange(this, this.query);
+      fireTitleChange(this.query);
     }
   }
 
@@ -280,13 +277,13 @@ export class GrChangeListView extends LitElement {
   // private but used in test
   handleNextPage() {
     if (!this.nextArrow || !this.changesPerPage) return;
-    page.show(this.computeNavLink(1));
+    this.getNavigation().setUrl(this.computeNavLink(1));
   }
 
   // private but used in test
   handlePreviousPage() {
     if (!this.prevArrow || !this.changesPerPage) return;
-    page.show(this.computeNavLink(-1));
+    this.getNavigation().setUrl(this.computeNavLink(-1));
   }
 
   // private but used in test
@@ -313,7 +310,7 @@ export class GrChangeListView extends LitElement {
       e.detail.change._number,
       e.detail.starred
     );
-    fireEvent(this, 'hide-alert');
+    fire(this, 'hide-alert', {});
   }
 }
 

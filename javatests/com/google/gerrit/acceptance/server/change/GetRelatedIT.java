@@ -20,6 +20,7 @@ import static com.google.gerrit.acceptance.GitUtil.assertPushOk;
 import static com.google.gerrit.acceptance.GitUtil.pushHead;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowCapability;
 import static com.google.gerrit.extensions.common.testing.EditInfoSubject.assertThat;
+import static com.google.gerrit.testing.TestActionRefUpdateContext.openTestRefUpdateContext;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
@@ -39,6 +40,7 @@ import com.google.gerrit.common.RawInputUtil;
 import com.google.gerrit.common.data.GlobalCapability;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.extensions.api.changes.GetRelatedOption;
@@ -53,6 +55,7 @@ import com.google.gerrit.server.restapi.change.ChangesCollection;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
+import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.gerrit.testing.ConfigSuite;
 import com.google.inject.Inject;
@@ -95,6 +98,35 @@ public class GetRelatedIT extends AbstractDaemonTest {
   public void getRelatedNoResult() throws Exception {
     PushOneCommit push = pushFactory.create(admin.newIdent(), testRepo);
     assertRelated(push.to("refs/for/master").getPatchSetId());
+  }
+
+  @Test
+  public void getRelatedAcrossBranchesWithMergeChange() throws Exception {
+    RevCommit initialHead = projectOperations.project(project).getHead("master");
+    createBranch(BranchNameKey.create(project, "foo"));
+
+    // Create and merge change on 'foo' branch.
+    merge(createChange("refs/for/foo"));
+
+    // Create change on 'foo' branch
+    PushOneCommit.Result base = createChange("refs/for/foo");
+    base.assertOkStatus();
+    RevCommit c1_1 = base.getCommit();
+    PatchSet.Id ps1_1 = getPatchSetId(c1_1);
+
+    testRepo.reset(initialHead);
+
+    // Create and push merge commit
+    PushOneCommit m = pushFactory.create(admin.newIdent(), testRepo);
+    m.setParents(ImmutableList.of(c1_1, initialHead));
+    PushOneCommit.Result result = m.to("refs/for/master");
+    result.assertOkStatus();
+    RevCommit c2_1 = result.getCommit();
+    PatchSet.Id ps2_1 = getPatchSetId(c2_1);
+
+    for (PatchSet.Id ps : ImmutableList.of(ps2_1, ps1_1)) {
+      assertRelated(ps, changeAndCommit(ps2_1, c2_1, 1), changeAndCommit(ps1_1, c1_1, 1));
+    }
   }
 
   @Test
@@ -703,17 +735,19 @@ public class GetRelatedIT extends AbstractDaemonTest {
   }
 
   private void clearGroups(PatchSet.Id psId) throws Exception {
-    try (BatchUpdate bu = batchUpdateFactory.create(project, user(user), TimeUtil.now())) {
-      bu.addOp(
-          psId.changeId(),
-          new BatchUpdateOp() {
-            @Override
-            public boolean updateChange(ChangeContext ctx) {
-              ctx.getUpdate(psId).setGroups(ImmutableList.of());
-              return true;
-            }
-          });
-      bu.execute();
+    try (RefUpdateContext ctx = openTestRefUpdateContext()) {
+      try (BatchUpdate bu = batchUpdateFactory.create(project, user(user), TimeUtil.now())) {
+        bu.addOp(
+            psId.changeId(),
+            new BatchUpdateOp() {
+              @Override
+              public boolean updateChange(ChangeContext ctx) {
+                ctx.getUpdate(psId).setGroups(ImmutableList.of());
+                return true;
+              }
+            });
+        bu.execute();
+      }
     }
   }
 

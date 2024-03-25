@@ -4,11 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import {fixture, html, assert} from '@open-wc/testing';
-import {SinonStubbedMember} from 'sinon';
 import {PluginApi} from '../../../api/plugin';
-import {ChangeStatus} from '../../../constants/constants';
-import {RestApiService} from '../../../services/gr-rest-api/gr-rest-api';
 import '../../../test/common-test-setup';
+import {testResolver} from '../../../test/common-test-setup';
 import {
   createChange,
   createCommitInfoWithRequiredCommit,
@@ -18,13 +16,7 @@ import {
   createRevision,
   createSubmittedTogetherInfo,
 } from '../../../test/test-data-generators';
-import {
-  query,
-  queryAndAssert,
-  resetPlugins,
-  stubRestApi,
-  waitEventLoop,
-} from '../../../test/test-utils';
+import {query, queryAndAssert, waitEventLoop} from '../../../test/test-utils';
 import {
   ChangeId,
   ChangeInfo,
@@ -38,7 +30,7 @@ import {
 import {ParsedChangeInfo} from '../../../types/types';
 import {getChangeNumber} from '../../../utils/change-util';
 import {GrEndpointDecorator} from '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
-import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
+import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import './gr-related-changes-list';
 import {
   ChangeMarkersInList,
@@ -196,16 +188,10 @@ suite('gr-related-changes-list', () => {
     });
 
     test('render', async () => {
-      stubRestApi('getRelatedChanges').returns(
-        Promise.resolve(relatedChangeInfo)
-      );
-      stubRestApi('getChangesSubmittedTogether').returns(
-        Promise.resolve(submittedTogether)
-      );
-      stubRestApi('getChangeCherryPicks').returns(
-        Promise.resolve([createChange()])
-      );
-      await element.reload();
+      element.relatedChanges = relatedChangeInfo.changes;
+      element.submittedTogether = submittedTogether;
+      element.cherryPickChanges = [createChange()];
+      await element.updateComplete;
 
       assert.shadowDom.equal(
         element,
@@ -249,7 +235,7 @@ suite('gr-related-changes-list', () => {
               <gr-related-collapse title="Cherry picks">
                 <div class="relatedChangeLine show-when-collapsed">
                   <span class="marker space"> </span>
-                  <gr-related-change>
+                  <gr-related-change show-change-status="">
                     test-branch: Test subject
                   </gr-related-change>
                 </div>
@@ -262,10 +248,9 @@ suite('gr-related-changes-list', () => {
     });
 
     test('first list', async () => {
-      stubRestApi('getRelatedChanges').returns(
-        Promise.resolve(relatedChangeInfo)
-      );
-      await element.reload();
+      element.relatedChanges = relatedChangeInfo.changes;
+      await element.updateComplete;
+
       const section = queryAndAssert<HTMLElement>(element, '#relatedChanges');
       const relatedChanges = queryAndAssert<GrRelatedCollapse>(
         section,
@@ -275,13 +260,10 @@ suite('gr-related-changes-list', () => {
     });
 
     test('first empty second non-empty', async () => {
-      stubRestApi('getRelatedChanges').returns(
-        Promise.resolve(createRelatedChangesInfo())
-      );
-      stubRestApi('getChangesSubmittedTogether').returns(
-        Promise.resolve(submittedTogether)
-      );
-      await element.reload();
+      element.relatedChanges = createRelatedChangesInfo().changes;
+      element.submittedTogether = submittedTogether;
+      await element.updateComplete;
+
       const relatedChanges = query<HTMLElement>(element, '#relatedChanges');
       assert.notExists(relatedChanges);
       const submittedTogetherSection = queryAndAssert<GrRelatedCollapse>(
@@ -292,16 +274,10 @@ suite('gr-related-changes-list', () => {
     });
 
     test('first non-empty second empty third non-empty', async () => {
-      stubRestApi('getRelatedChanges').returns(
-        Promise.resolve(relatedChangeInfo)
-      );
-      stubRestApi('getChangesSubmittedTogether').returns(
-        Promise.resolve(createSubmittedTogetherInfo())
-      );
-      stubRestApi('getChangeCherryPicks').returns(
-        Promise.resolve([createChange()])
-      );
-      await element.reload();
+      element.relatedChanges = relatedChangeInfo.changes;
+      element.submittedTogether = createSubmittedTogetherInfo();
+      element.cherryPickChanges = [createChange()];
+      await element.updateComplete;
 
       const relatedChanges = queryAndAssert<GrRelatedCollapse>(
         queryAndAssert<HTMLElement>(element, '#relatedChanges'),
@@ -362,67 +338,6 @@ suite('gr-related-changes-list', () => {
     };
     assert.equal(getChangeNumber(change1), 0);
     assert.equal(getChangeNumber(change2), 1);
-  });
-
-  suite('get conflicts tests', () => {
-    let element: GrRelatedChangesList;
-    let conflictsStub: SinonStubbedMember<RestApiService['getChangeConflicts']>;
-
-    setup(async () => {
-      element = await fixture(
-        html`<gr-related-changes-list></gr-related-changes-list>`
-      );
-      conflictsStub = stubRestApi('getChangeConflicts').returns(
-        Promise.resolve(undefined)
-      );
-    });
-
-    test('request conflicts if open and mergeable', () => {
-      element.latestPatchNum = 7 as PatchSetNumber;
-      element.change = {
-        ...createParsedChange(),
-        change_id: '123' as ChangeId,
-        status: ChangeStatus.NEW,
-      };
-      element.mergeable = true;
-      element.reload();
-      assert.isTrue(conflictsStub.called);
-    });
-
-    test('does not request conflicts if closed and mergeable', () => {
-      element.latestPatchNum = 7 as PatchSetNumber;
-      element.change = {
-        ...createParsedChange(),
-        change_id: '123' as ChangeId,
-        status: ChangeStatus.NEW,
-      };
-      element.reload();
-      assert.isFalse(conflictsStub.called);
-    });
-
-    test('does not request conflicts if open and not mergeable', () => {
-      element.latestPatchNum = 7 as PatchSetNumber;
-      element.change = {
-        ...createParsedChange(),
-        change_id: '123' as ChangeId,
-        status: ChangeStatus.NEW,
-      };
-      element.mergeable = false;
-      element.reload();
-      assert.isFalse(conflictsStub.called);
-    });
-
-    test('doesnt request conflicts if closed and not mergeable', () => {
-      element.latestPatchNum = 7 as PatchSetNumber;
-      element.change = {
-        ...createParsedChange(),
-        change_id: '123' as ChangeId,
-        status: ChangeStatus.NEW,
-      };
-      element.mergeable = false;
-      element.reload();
-      assert.isFalse(conflictsStub.called);
-    });
   });
 
   test('connected revisions', () => {
@@ -646,14 +561,9 @@ suite('gr-related-changes-list', () => {
     let element: GrRelatedChangesList;
 
     setup(async () => {
-      resetPlugins();
       element = await fixture(
         html`<gr-related-changes-list></gr-related-changes-list>`
       );
-    });
-
-    teardown(() => {
-      resetPlugins();
     });
 
     test('endpoint params', async () => {
@@ -676,7 +586,7 @@ suite('gr-related-changes-list', () => {
         '0.1',
         'http://some/plugins/url1.js'
       );
-      getPluginLoader().loadPlugins([]);
+      testResolver(pluginLoaderToken).loadPlugins([]);
       await waitEventLoop();
       assert.strictEqual(hookEl!.plugin, plugin!);
       assert.strictEqual(hookEl!.change, element.change);

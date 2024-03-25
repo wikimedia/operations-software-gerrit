@@ -9,10 +9,10 @@ import {resolve} from '../../../models/dependency';
 import {bulkActionsModelToken} from '../../../models/bulk-actions/bulk-actions-model';
 import {NumericChangeId, ChangeInfo, ChangeStatus} from '../../../api/rest-api';
 import {subscribe} from '../../lit/subscription-controller';
-import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
 import {ProgressStatus} from '../../../constants/constants';
 import '../../shared/gr-dialog/gr-dialog';
 import {fireAlert, fireReload} from '../../../utils/event-util';
+import {modalStyles} from '../../../styles/gr-modal-styles';
 
 @customElement('gr-change-list-bulk-abandon-flow')
 export class GrChangeListBulkAbandonFlow extends LitElement {
@@ -22,10 +22,11 @@ export class GrChangeListBulkAbandonFlow extends LitElement {
 
   @state() progress: Map<NumericChangeId, ProgressStatus> = new Map();
 
-  @query('#actionOverlay') actionOverlay!: GrOverlay;
+  @query('#actionModal') actionModal!: HTMLDialogElement;
 
   static override get styles() {
     return [
+      modalStyles,
       css`
         section {
           padding: var(--spacing-l);
@@ -49,13 +50,13 @@ export class GrChangeListBulkAbandonFlow extends LitElement {
         id="abandon"
         flatten
         .disabled=${!this.isEnabled()}
-        @click=${() => this.actionOverlay.open()}
+        @click=${() => this.actionModal.showModal()}
         >Abandon</gr-button
       >
-      <gr-overlay id="actionOverlay" with-backdrop="">
+      <dialog id="actionModal" tabindex="-1">
         <gr-dialog
           .disableCancel=${!this.isCancelEnabled()}
-          .disabled=${!this.isConfirmEnabled()}
+          .disabled=${this.isDisabled()}
           @confirm=${() => this.handleConfirm()}
           @cancel=${() => this.handleClose()}
           .cancelLabel=${'Close'}
@@ -86,7 +87,7 @@ export class GrChangeListBulkAbandonFlow extends LitElement {
             </table>
           </div>
         </gr-dialog>
-      </gr-overlay>
+      </dialog>
     `;
   }
 
@@ -103,13 +104,13 @@ export class GrChangeListBulkAbandonFlow extends LitElement {
     );
   }
 
-  private isConfirmEnabled() {
+  private isDisabled() {
     // Action is allowed if none of the changes have any bulk action performed
     // on them. In case an error happens then we keep the button disabled.
     for (const status of this.progress.values()) {
-      if (status !== ProgressStatus.NOT_STARTED) return false;
+      if (status !== ProgressStatus.NOT_STARTED) return true;
     }
-    return true;
+    return false;
   }
 
   private isCancelEnabled() {
@@ -144,9 +145,9 @@ export class GrChangeListBulkAbandonFlow extends LitElement {
   }
 
   private handleClose() {
-    this.actionOverlay.close();
+    this.actionModal.close();
     fireAlert(this, 'Reloading page..');
-    fireReload(this, true);
+    fireReload(this);
   }
 }
 

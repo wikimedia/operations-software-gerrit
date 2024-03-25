@@ -42,6 +42,7 @@ public class FileInfoJsonImpl implements FileInfoJson {
     this.diffs = diffOperations;
   }
 
+  @Nullable
   @Override
   public Map<String, FileInfo> getFileInfoMap(
       Change change, ObjectId objectId, @Nullable PatchSet base)
@@ -63,6 +64,7 @@ public class FileInfoJsonImpl implements FileInfoJson {
     }
   }
 
+  @Nullable
   @Override
   public Map<String, FileInfo> getFileInfoMap(
       Project.NameKey project, ObjectId objectId, int parent)
@@ -102,6 +104,14 @@ public class FileInfoJsonImpl implements FileInfoJson {
       fileInfo.oldPath = FilePathAdapter.getOldPath(fileDiff.oldPath(), fileDiff.changeType());
       fileInfo.sizeDelta = fileDiff.sizeDelta();
       fileInfo.size = fileDiff.size();
+      fileInfo.oldMode =
+          fileDiff.oldMode().isPresent() && !fileDiff.oldMode().get().equals(Patch.FileMode.MISSING)
+              ? fileDiff.oldMode().get().getMode()
+              : null;
+      fileInfo.newMode =
+          fileDiff.newMode().isPresent() && !fileDiff.newMode().get().equals(Patch.FileMode.MISSING)
+              ? fileDiff.newMode().get().getMode()
+              : null;
       if (fileDiff.patchType().get() == Patch.PatchType.BINARY) {
         fileInfo.binary = true;
       } else {

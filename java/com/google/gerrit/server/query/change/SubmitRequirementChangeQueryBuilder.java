@@ -14,13 +14,24 @@
 
 package com.google.gerrit.server.query.change;
 
-import com.google.gerrit.index.FieldDef;
+import com.google.common.base.Splitter;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.index.SchemaFieldDefs.SchemaField;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryBuilder;
 import com.google.gerrit.index.query.QueryParseException;
-import com.google.gerrit.server.query.FileEditsPredicate;
-import com.google.gerrit.server.query.FileEditsPredicate.FileEditsArgs;
+import com.google.gerrit.server.submitrequirement.predicate.ConstantPredicate;
+import com.google.gerrit.server.submitrequirement.predicate.DistinctVotersPredicate;
+import com.google.gerrit.server.submitrequirement.predicate.FileEditsPredicate;
+import com.google.gerrit.server.submitrequirement.predicate.FileEditsPredicate.FileEditsArgs;
+import com.google.gerrit.server.submitrequirement.predicate.HasSubmoduleUpdatePredicate;
+import com.google.gerrit.server.submitrequirement.predicate.RegexAuthorEmailPredicate;
+import com.google.gerrit.server.submitrequirement.predicate.RegexCommitterEmailPredicate;
+import com.google.gerrit.server.submitrequirement.predicate.RegexUploaderEmailPredicateFactory;
 import com.google.inject.Inject;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
@@ -37,6 +48,7 @@ public class SubmitRequirementChangeQueryBuilder extends ChangeQueryBuilder {
       new QueryBuilder.Definition<>(SubmitRequirementChangeQueryBuilder.class);
 
   private final DistinctVotersPredicate.Factory distinctVotersPredicateFactory;
+  private final HasSubmoduleUpdatePredicate.Factory hasSubmoduleUpdateFactory;
 
   /**
    * Regular expression for the {@link #file(String)} operator. Field value is of the form:
@@ -48,20 +60,28 @@ public class SubmitRequirementChangeQueryBuilder extends ChangeQueryBuilder {
   private static final Pattern FILE_EDITS_PATTERN =
       Pattern.compile("'((?:(?:\\\\')|(?:[^']))*)',withDiffContaining='((?:(?:\\\\')|(?:[^']))*)'");
 
+  public static final String SUBMODULE_UPDATE_HAS_ARG = "submodule-update";
+  private static final Splitter SUBMODULE_UPDATE_SPLITTER = Splitter.on(",");
+
   private final FileEditsPredicate.Factory fileEditsPredicateFactory;
+  private final RegexUploaderEmailPredicateFactory regexUploaderEmailPredicateFactory;
 
   @Inject
   SubmitRequirementChangeQueryBuilder(
       Arguments args,
       DistinctVotersPredicate.Factory distinctVotersPredicateFactory,
-      FileEditsPredicate.Factory fileEditsPredicateFactory) {
+      FileEditsPredicate.Factory fileEditsPredicateFactory,
+      HasSubmoduleUpdatePredicate.Factory hasSubmoduleUpdateFactory,
+      RegexUploaderEmailPredicateFactory regexUploaderEmailPredicateFactory) {
     super(def, args);
     this.distinctVotersPredicateFactory = distinctVotersPredicateFactory;
     this.fileEditsPredicateFactory = fileEditsPredicateFactory;
+    this.hasSubmoduleUpdateFactory = hasSubmoduleUpdateFactory;
+    this.regexUploaderEmailPredicateFactory = regexUploaderEmailPredicateFactory;
   }
 
   @Override
-  protected void checkFieldAvailable(FieldDef<ChangeData, ?> field, String operator) {
+  protected void checkFieldAvailable(SchemaField<ChangeData, ?> field, String operator) {
     // Submit requirements don't rely on the index, so they can be used regardless of index schema
     // version.
   }
@@ -79,9 +99,50 @@ public class SubmitRequirementChangeQueryBuilder extends ChangeQueryBuilder {
     return super.is(value);
   }
 
+  @Override
+  public Predicate<ChangeData> has(String value) throws QueryParseException {
+    if (value.toLowerCase(Locale.US).startsWith(SUBMODULE_UPDATE_HAS_ARG)) {
+      List<String> args = SUBMODULE_UPDATE_SPLITTER.splitToList(value);
+      if (args.size() > 2) {
+        throw error(
+            String.format(
+                "wrong number of arguments for the has:%s operator", SUBMODULE_UPDATE_HAS_ARG));
+      } else if (args.size() == 2) {
+        List<String> baseValue = Splitter.on("=").splitToList(args.get(1));
+        if (baseValue.size() != 2) {
+          throw error("unexpected base value format");
+        }
+        if (!baseValue.get(0).toLowerCase(Locale.US).equals("base")) {
+          throw error("unexpected base value format");
+        }
+        try {
+          int base = Integer.parseInt(baseValue.get(1));
+          return hasSubmoduleUpdateFactory.create(base);
+        } catch (NumberFormatException e) {
+          throw error(
+              String.format(
+                  "failed to parse the parent number %s: %s", baseValue.get(1), e.getMessage()));
+        }
+      } else {
+        return hasSubmoduleUpdateFactory.create(0);
+      }
+    }
+    return super.has(value);
+  }
+
   @Operator
   public Predicate<ChangeData> authoremail(String who) throws QueryParseException {
     return new RegexAuthorEmailPredicate(who);
+  }
+
+  @Operator
+  public Predicate<ChangeData> committerEmail(String who) throws QueryParseException {
+    return new RegexCommitterEmailPredicate(who);
+  }
+
+  @Operator
+  public Predicate<ChangeData> uploaderEmail(String who) throws QueryParseException {
+    return regexUploaderEmailPredicateFactory.create(who);
   }
 
   @Operator
@@ -119,6 +180,9 @@ public class SubmitRequirementChangeQueryBuilder extends ChangeQueryBuilder {
     }
     return fileEditsPredicateFactory.create(FileEditsArgs.create(filePattern, contentPattern));
   }
+
+  @Override
+  protected void validateLabelArgs(Set<Account.Id> accountIds) throws QueryParseException {}
 
   private static void validateRegularExpression(String pattern, String errorMessage)
       throws QueryParseException {

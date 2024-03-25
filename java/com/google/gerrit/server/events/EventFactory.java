@@ -20,6 +20,7 @@ import static java.util.Objects.requireNonNull;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
@@ -132,7 +133,6 @@ public class EventFactory {
     a.subject = change.getSubject();
     a.url = getChangeUrl(change);
     a.owner = asAccountAttribute(change.getOwner(), accountLoader);
-    a.assignee = asAccountAttribute(change.getAssignee(), accountLoader);
     a.status = change.getStatus();
     a.createdOn = change.getCreatedOn().getEpochSecond();
     a.wip = change.isWorkInProgress() ? true : null;
@@ -523,6 +523,7 @@ public class EventFactory {
   }
 
   /** Create an AuthorAttribute for the given account suitable for serialization to JSON. */
+  @Nullable
   public AccountAttribute asAccountAttribute(Account.Id id) {
     if (id == null) {
       return null;
@@ -590,6 +591,7 @@ public class EventFactory {
   }
 
   /** Get a link to the change; null if the server doesn't know its own address. */
+  @Nullable
   private String getChangeUrl(Change change) {
     if (change != null) {
       return urlFormatter.get().getChangeViewUrl(change.getProject(), change.getId()).orElse(null);

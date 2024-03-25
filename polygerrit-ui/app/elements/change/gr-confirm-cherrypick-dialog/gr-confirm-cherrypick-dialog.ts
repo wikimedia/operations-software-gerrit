@@ -16,6 +16,8 @@ import {
   RepoName,
   CommitId,
   ChangeInfoId,
+  TopicName,
+  ChangeActionDialog,
 } from '../../../types/common';
 import {customElement, property, query, state} from 'lit/decorators.js';
 import {
@@ -28,7 +30,7 @@ import {
   ChangeStatus,
   ProgressStatus,
 } from '../../../constants/constants';
-import {fireEvent} from '../../../utils/event-util';
+import {fire, fireNoBubble} from '../../../utils/event-util';
 import {css, html, LitElement, PropertyValues} from 'lit';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {choose} from 'lit/directives/choose.js';
@@ -36,6 +38,8 @@ import {when} from 'lit/directives/when.js';
 import {BindValueChangeEvent} from '../../../types/events';
 import {resolve} from '../../../models/dependency';
 import {createSearchUrl} from '../../../models/views/search';
+import {throwingErrorCallback} from '../../shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
+import {uuid} from '../../../utils/common-util';
 
 const SUGGESTIONS_LIMIT = 15;
 const CHANGE_SUBJECT_LIMIT = 50;
@@ -58,7 +62,10 @@ declare global {
 }
 
 @customElement('gr-confirm-cherrypick-dialog')
-export class GrConfirmCherrypickDialog extends LitElement {
+export class GrConfirmCherrypickDialog
+  extends LitElement
+  implements ChangeActionDialog
+{
   /**
    * Fired when the confirm button is pressed.
    *
@@ -497,12 +504,12 @@ export class GrConfirmCherrypickDialog extends LitElement {
 
   private handlecherryPickSingleChangeClicked() {
     this.cherryPickType = CherryPickType.SINGLE_CHANGE;
-    fireEvent(this, 'iron-resize');
+    fire(this, 'iron-resize', {});
   }
 
   private handlecherryPickTopicClicked() {
     this.cherryPickType = CherryPickType.TOPIC;
-    fireEvent(this, 'iron-resize');
+    fire(this, 'iron-resize', {});
   }
 
   private computeMessage() {
@@ -526,8 +533,7 @@ export class GrConfirmCherrypickDialog extends LitElement {
   }
 
   private generateRandomCherryPickTopic(change: ChangeInfo) {
-    const randomString = Math.random().toString(36).substr(2, 10);
-    const message = `cherrypick-${change.topic}-${randomString}`;
+    const message = `cherrypick-${change.topic}-${uuid()}`;
     return message;
   }
 
@@ -582,8 +588,9 @@ export class GrConfirmCherrypickDialog extends LitElement {
           if (!failedOrPending) {
             // This needs some more work, as the new topic may not always be
             // created, instead we may end up creating a new patchset */
-            const query = `topic: "${topic}"`;
-            this.getNavigation().setUrl(createSearchUrl({query}));
+            this.getNavigation().setUrl(
+              createSearchUrl({topic: topic as TopicName})
+            );
           }
         });
     });
@@ -598,23 +605,13 @@ export class GrConfirmCherrypickDialog extends LitElement {
       return;
     }
     // Cherry pick single change
-    this.dispatchEvent(
-      new CustomEvent('confirm', {
-        composed: true,
-        bubbles: false,
-      })
-    );
+    fireNoBubble(this, 'confirm', {});
   }
 
   private handleCancelTap(e: Event) {
     e.preventDefault();
     e.stopPropagation();
-    this.dispatchEvent(
-      new CustomEvent('cancel', {
-        composed: true,
-        bubbles: false,
-      })
-    );
+    fireNoBubble(this, 'cancel', {});
   }
 
   resetFocus() {
@@ -629,7 +626,13 @@ export class GrConfirmCherrypickDialog extends LitElement {
       input = input.substring('refs/heads/'.length);
     }
     return this.restApiService
-      .getRepoBranches(input, this.project, SUGGESTIONS_LIMIT)
+      .getRepoBranches(
+        input,
+        this.project,
+        SUGGESTIONS_LIMIT,
+        /* offset=*/ undefined,
+        throwingErrorCallback
+      )
       .then(response => {
         if (!response) return [];
         const branches: Array<{name: BranchName}> = [];

@@ -17,6 +17,7 @@ package com.google.gerrit.acceptance.testsuite.project;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.gerrit.entities.RefNames.REFS_CONFIG;
 import static com.google.gerrit.server.project.ProjectConfig.PROJECT_CONFIG;
+import static com.google.gerrit.testing.TestActionRefUpdateContext.openTestRefUpdateContext;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 
@@ -26,6 +27,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.TestCapability;
 import com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.TestLabelPermission;
 import com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.TestPermission;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.AccessSection;
 import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.entities.GroupReference;
@@ -40,6 +42,7 @@ import com.google.gerrit.server.project.CreateProjectArgs;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectConfig;
 import com.google.gerrit.server.project.ProjectCreator;
+import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.inject.Inject;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -135,19 +138,21 @@ public class ProjectOperationsImpl implements ProjectOperations {
 
     private void updateProject(TestProjectUpdate projectUpdate)
         throws IOException, ConfigInvalidException {
-      try (MetaDataUpdate metaDataUpdate = metaDataUpdateFactory.create(nameKey)) {
-        ProjectConfig projectConfig = projectConfigFactory.read(metaDataUpdate);
-        if (projectUpdate.removeAllAccessSections()) {
-          projectConfig.getAccessSections().forEach(as -> projectConfig.remove(as));
+      try (RefUpdateContext ctx = openTestRefUpdateContext()) {
+        try (MetaDataUpdate metaDataUpdate = metaDataUpdateFactory.create(nameKey)) {
+          ProjectConfig projectConfig = projectConfigFactory.read(metaDataUpdate);
+          if (projectUpdate.removeAllAccessSections()) {
+            projectConfig.getAccessSections().forEach(as -> projectConfig.remove(as));
+          }
+          removePermissions(projectConfig, projectUpdate.removedPermissions());
+          addCapabilities(projectConfig, projectUpdate.addedCapabilities());
+          addPermissions(projectConfig, projectUpdate.addedPermissions());
+          addLabelPermissions(projectConfig, projectUpdate.addedLabelPermissions());
+          setExclusiveGroupPermissions(projectConfig, projectUpdate.exclusiveGroupPermissions());
+          projectConfig.commit(metaDataUpdate);
         }
-        removePermissions(projectConfig, projectUpdate.removedPermissions());
-        addCapabilities(projectConfig, projectUpdate.addedCapabilities());
-        addPermissions(projectConfig, projectUpdate.addedPermissions());
-        addLabelPermissions(projectConfig, projectUpdate.addedLabelPermissions());
-        setExclusiveGroupPermissions(projectConfig, projectUpdate.exclusiveGroupPermissions());
-        projectConfig.commit(metaDataUpdate);
+        projectCache.evictAndReindex(nameKey);
       }
-      projectCache.evictAndReindex(nameKey);
     }
 
     private void removePermissions(
@@ -196,8 +201,13 @@ public class ProjectOperationsImpl implements ProjectOperations {
         PermissionRule.Builder rule = newRule(projectConfig, p.group());
         rule.setAction(p.action());
         rule.setRange(p.min(), p.max());
-        String permissionName =
-            p.impersonation() ? Permission.forLabelAs(p.name()) : Permission.forLabel(p.name());
+        String permissionName;
+        if (p.isAddPermission()) {
+          permissionName =
+              p.impersonation() ? Permission.forLabelAs(p.name()) : Permission.forLabel(p.name());
+        } else {
+          permissionName = Permission.forRemoveLabel(p.name());
+        }
         projectConfig.upsertAccessSection(
             p.ref(), as -> as.upsertPermission(permissionName).add(rule));
       }
@@ -213,6 +223,7 @@ public class ProjectOperationsImpl implements ProjectOperations {
                   as -> as.upsertPermission(key.name()).setExclusiveGroup(exclusive)));
     }
 
+    @Nullable
     private RevCommit headOrNull(String branch) {
       branch = RefNames.fullName(branch);
 

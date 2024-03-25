@@ -51,6 +51,7 @@ suite('gr-file-list-header tests', () => {
         .shownFileCount=${3}
       ></gr-file-list-header>`
     );
+    element.loggedIn = true;
     element.diffPrefs = createDefaultDiffPrefs();
     await element.updateComplete;
   });
@@ -65,17 +66,13 @@ suite('gr-file-list-header tests', () => {
               <gr-patch-range-select id="rangeSelect"> </gr-patch-range-select>
               <span class="separator"> </span>
               <gr-commit-info> </gr-commit-info>
-              <span class="container latestPatchContainer">
-                <span class="separator"> </span>
-                <a> Go to latest patch set </a>
-              </span>
             </div>
           </div>
           <div class="rightControls">
             <div class="fileViewActions">
               <span class="fileViewActionsLabel"> Diff view: </span>
               <gr-diff-mode-selector id="modeSelect"> </gr-diff-mode-selector>
-              <span class="hideOnEdit" hidden="" id="diffPrefsContainer">
+              <span id="diffPrefsContainer">
                 <gr-tooltip-content has-tooltip="" title="Diff preferences">
                   <gr-button
                     aria-disabled="false"
@@ -108,7 +105,7 @@ suite('gr-file-list-header tests', () => {
             </span>
             <gr-tooltip-content
               has-tooltip=""
-              title="Show/hide all inline diffs (shortcut: I)"
+              title="Show/hide all inline diffs (shortcut: Shift+i)"
             >
               <gr-button
                 aria-disabled="false"
@@ -122,7 +119,7 @@ suite('gr-file-list-header tests', () => {
             </gr-tooltip-content>
             <gr-tooltip-content
               has-tooltip=""
-              title="Show/hide all inline diffs (shortcut: I)"
+              title="Show/hide all inline diffs (shortcut: Shift+i)"
             >
               <gr-button
                 aria-disabled="false"
@@ -141,17 +138,13 @@ suite('gr-file-list-header tests', () => {
   });
 
   test('Diff preferences hidden when no prefs', async () => {
-    assert.isTrue(
-      queryAndAssert<HTMLElement>(element, '#diffPrefsContainer').hidden
-    );
+    assert.isOk(query<HTMLElement>(element, '#diffPrefsContainer'));
 
-    element.diffPrefs = createDefaultDiffPrefs();
+    element.diffPrefs = undefined;
     element.loggedIn = true;
     await element.updateComplete;
 
-    assert.isFalse(
-      queryAndAssert<HTMLElement>(element, '#diffPrefsContainer').hidden
-    );
+    assert.isNotOk(query<HTMLElement>(element, '#diffPrefsContainer'));
   });
 
   test('expandAllDiffs called when expand button clicked', async () => {
@@ -251,17 +244,20 @@ suite('gr-file-list-header tests', () => {
     assert.equal(setUrlStub.lastCall.firstArg, '/c/test-project/+/42/1..3');
   });
 
-  test('class is applied to file list on old patch set', () => {
+  test('class is applied to file list on old patch set', async () => {
     element.latestPatchNum = 4 as PatchSetNumber;
 
     element.patchNum = 1 as PatchSetNumber;
-    assert.equal(element.computePatchInfoClass(), 'patchInfoOldPatchSet');
+    await element.updateComplete;
+    assert.isTrue(Boolean(query(element, '.patchInfoOldPatchSet')));
 
     element.patchNum = 2 as PatchSetNumber;
-    assert.equal(element.computePatchInfoClass(), 'patchInfoOldPatchSet');
+    await element.updateComplete;
+    assert.isTrue(Boolean(query(element, '.patchInfoOldPatchSet')));
 
     element.patchNum = 4 as PatchSetNumber;
-    assert.equal(element.computePatchInfoClass(), '');
+    await element.updateComplete;
+    assert.isFalse(Boolean(query(element, '.patchInfoOldPatchSet')));
   });
 
   suite('editMode behavior', () => {
@@ -273,17 +269,11 @@ suite('gr-file-list-header tests', () => {
     test('patch specific elements', async () => {
       element.editMode = true;
       await element.updateComplete;
-
-      assert.isFalse(
-        isVisible(queryAndAssert<HTMLElement>(element, '#diffPrefsContainer'))
-      );
+      assert.isFalse(Boolean(query(element, '#diffPrefsContainer')));
 
       element.editMode = false;
       await element.updateComplete;
-
-      assert.isTrue(
-        isVisible(queryAndAssert<HTMLElement>(element, '#diffPrefsContainer'))
-      );
+      assert.isTrue(Boolean(query(element, '#diffPrefsContainer')));
     });
 
     test('edit-controls visibility', async () => {

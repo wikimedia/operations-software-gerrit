@@ -20,6 +20,7 @@ import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
@@ -31,7 +32,6 @@ import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.common.ApprovalInfo;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.RevisionInfo;
-import com.google.gerrit.extensions.events.AssigneeChangedListener;
 import com.google.gerrit.extensions.events.ChangeAbandonedListener;
 import com.google.gerrit.extensions.events.ChangeDeletedListener;
 import com.google.gerrit.extensions.events.ChangeMergedListener;
@@ -72,8 +72,7 @@ import org.eclipse.jgit.revwalk.RevWalk;
 
 @Singleton
 public class StreamEventsApiListener
-    implements AssigneeChangedListener,
-        ChangeAbandonedListener,
+    implements ChangeAbandonedListener,
         ChangeDeletedListener,
         ChangeMergedListener,
         ChangeRestoredListener,
@@ -94,7 +93,6 @@ public class StreamEventsApiListener
   public static class StreamEventsApiListenerModule extends AbstractModule {
     @Override
     protected void configure() {
-      DynamicSet.bind(binder(), AssigneeChangedListener.class).to(StreamEventsApiListener.class);
       DynamicSet.bind(binder(), ChangeAbandonedListener.class).to(StreamEventsApiListener.class);
       DynamicSet.bind(binder(), ChangeDeletedListener.class).to(StreamEventsApiListener.class);
       DynamicSet.bind(binder(), ChangeMergedListener.class).to(StreamEventsApiListener.class);
@@ -234,28 +232,12 @@ public class StreamEventsApiListener
         });
   }
 
+  @Nullable
   String[] hashtagArray(Collection<String> hashtags) {
     if (hashtags != null && !hashtags.isEmpty()) {
       return Sets.newHashSet(hashtags).toArray(new String[hashtags.size()]);
     }
     return null;
-  }
-
-  @Override
-  public void onAssigneeChanged(AssigneeChangedListener.Event ev) {
-    try {
-      ChangeNotes notes = getNotes(ev.getChange());
-      Change change = notes.getChange();
-      AssigneeChangedEvent event = new AssigneeChangedEvent(change);
-
-      event.change = changeAttributeSupplier(change, notes);
-      event.changer = accountAttributeSupplier(ev.getWho());
-      event.oldAssignee = accountAttributeSupplier(ev.getOldAssignee());
-
-      dispatcher.run(d -> d.postEvent(change, event));
-    } catch (StorageException e) {
-      logger.atSevere().withCause(e).log("Failed to dispatch event");
-    }
   }
 
   @Override

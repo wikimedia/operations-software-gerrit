@@ -6,13 +6,10 @@
 import '../../shared/gr-dropdown/gr-dropdown';
 import '../../shared/gr-avatar/gr-avatar';
 import {getUserName} from '../../../utils/display-name-util';
-import {AccountInfo, ServerInfo} from '../../../types/common';
+import {AccountInfo, DropdownLink, ServerInfo} from '../../../types/common';
 import {getAppContext} from '../../../services/app-context';
-import {fireEvent} from '../../../utils/event-util';
-import {
-  DropdownContent,
-  DropdownLink,
-} from '../../shared/gr-dropdown/gr-dropdown';
+import {fire} from '../../../utils/event-util';
+import {DropdownContent} from '../../shared/gr-dropdown/gr-dropdown';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, css, html} from 'lit';
 import {customElement, property} from 'lit/decorators.js';
@@ -22,6 +19,9 @@ const INTERPOLATE_URL_PATTERN = /\${([\w]+)}/g;
 declare global {
   interface HTMLElementTagNameMap {
     'gr-account-dropdown': GrAccountDropdown;
+  }
+  interface HTMLElementEventMap {
+    'show-keyboard-shortcuts': CustomEvent<{}>;
   }
 }
 
@@ -136,7 +136,7 @@ export class GrAccountDropdown extends LitElement {
   }
 
   _handleShortcutsTap() {
-    fireEvent(this, 'show-keyboard-shortcuts');
+    fire(this, 'show-keyboard-shortcuts', {});
   }
 
   private readonly handleLocationChange = () => {

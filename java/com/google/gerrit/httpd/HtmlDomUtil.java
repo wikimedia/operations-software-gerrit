@@ -16,7 +16,9 @@ package com.google.gerrit.httpd;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
+import com.google.common.flogger.FluentLogger;
 import com.google.common.io.ByteStreams;
+import com.google.gerrit.common.Nullable;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -25,6 +27,8 @@ import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import java.util.zip.GZIPOutputStream;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -39,6 +43,7 @@ import javax.xml.xpath.XPathConstants;
 import javax.xml.xpath.XPathExpression;
 import javax.xml.xpath.XPathExpressionException;
 import javax.xml.xpath.XPathFactory;
+import org.jsoup.parser.Parser;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -47,6 +52,8 @@ import org.xml.sax.SAXException;
 
 /** Utility functions to deal with HTML using W3C DOM operations. */
 public class HtmlDomUtil {
+  private static final FluentLogger logger = FluentLogger.forEnclosingClass();
+
   /** Standard character encoding we prefer (UTF-8). */
   public static final Charset ENC = UTF_8;
 
@@ -89,6 +96,7 @@ public class HtmlDomUtil {
   }
 
   /** Find an element by its "id" attribute; null if no element is found. */
+  @Nullable
   public static Element find(Node parent, String name) {
     NodeList list = parent.getChildNodes();
     for (int i = 0; i < list.getLength(); i++) {
@@ -139,6 +147,7 @@ public class HtmlDomUtil {
   }
 
   /** Parse an XHTML file from our CLASSPATH and return the instance. */
+  @Nullable
   public static Document parseFile(Class<?> context, String name) throws IOException {
     try (InputStream in = context.getResourceAsStream(name)) {
       if (in == null) {
@@ -168,6 +177,7 @@ public class HtmlDomUtil {
   }
 
   /** Read a Read a UTF-8 text file from our CLASSPATH and return it. */
+  @Nullable
   public static String readFile(Class<?> context, String name) throws IOException {
     try (InputStream in = context.getResourceAsStream(name)) {
       if (in == null) {
@@ -180,6 +190,7 @@ public class HtmlDomUtil {
   }
 
   /** Parse an XHTML file from the local drive and return the instance. */
+  @Nullable
   public static Document parseFile(Path path) throws IOException {
     try (InputStream in = Files.newInputStream(path)) {
       Document doc = newBuilder().parse(in);
@@ -193,6 +204,7 @@ public class HtmlDomUtil {
   }
 
   /** Read a UTF-8 text file from the local drive. */
+  @Nullable
   public static String readFile(Path parentDir, String name) throws IOException {
     if (parentDir == null) {
       return null;
@@ -214,5 +226,28 @@ public class HtmlDomUtil {
     factory.setIgnoringComments(true);
     factory.setCoalescing(true);
     return factory.newDocumentBuilder();
+  }
+
+  /**
+   * Attaches nonce to all script elements in html.
+   *
+   * <p>The returned html is not guaranteed to have the same formatting as the input.
+   *
+   * @return Updated html or {#link Optional.empty()} if parsing failed.
+   */
+  public static Optional<String> attachNonce(String html, String nonce) {
+    Parser parser = Parser.htmlParser();
+    org.jsoup.nodes.Document document = parser.parseInput(html, "");
+    if (!parser.getErrors().isEmpty()) {
+      logger.atSevere().atMostEvery(5, TimeUnit.MINUTES).log(
+          "Html couldn't be parsed to attach nonce. Errors: %s", parser.getErrors());
+      return Optional.empty();
+    }
+    document.getElementsByTag("script").attr("nonce", nonce);
+    return Optional.of(
+        document
+            .outputSettings(
+                new org.jsoup.nodes.Document.OutputSettings().prettyPrint(false).indentAmount(0))
+            .outerHtml());
   }
 }

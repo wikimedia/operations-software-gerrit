@@ -5,13 +5,7 @@
  */
 import '../../../test/common-test-setup';
 import '../../change/gr-change-actions/gr-change-actions';
-import {
-  query,
-  queryAll,
-  queryAndAssert,
-  resetPlugins,
-} from '../../../test/test-utils';
-import {getPluginLoader} from './gr-plugin-loader';
+import {query, queryAll, queryAndAssert} from '../../../test/test-utils';
 import {GrChangeActions} from '../../change/gr-change-actions/gr-change-actions';
 import {fixture, html, assert} from '@open-wc/testing';
 import {PluginApi} from '../../../api/plugin';
@@ -24,6 +18,8 @@ import {GrButton} from '../gr-button/gr-button';
 import {ChangeViewChangeInfo} from '../../../types/common';
 import {GrDropdown} from '../gr-dropdown/gr-dropdown';
 import {GrIcon} from '../gr-icon/gr-icon';
+import {testResolver} from '../../../test/common-test-setup';
+import {pluginLoaderToken} from './gr-plugin-loader';
 
 suite('gr-change-actions-js-api-interface tests', () => {
   let element: GrChangeActions;
@@ -32,7 +28,6 @@ suite('gr-change-actions-js-api-interface tests', () => {
 
   suite('early init', () => {
     setup(async () => {
-      resetPlugins();
       window.Gerrit.install(
         p => {
           plugin = p;
@@ -41,15 +36,11 @@ suite('gr-change-actions-js-api-interface tests', () => {
         'http://test.com/plugins/testplugin/static/test.js'
       );
       // Mimic all plugins loaded.
-      getPluginLoader().loadPlugins([]);
+      testResolver(pluginLoaderToken).loadPlugins([]);
       changeActions = plugin.changeActions();
       element = await fixture<GrChangeActions>(html`
         <gr-change-actions></gr-change-actions>
       `);
-    });
-
-    teardown(() => {
-      resetPlugins();
     });
 
     test('does not throw', () => {
@@ -61,12 +52,10 @@ suite('gr-change-actions-js-api-interface tests', () => {
 
   suite('normal init', () => {
     setup(async () => {
-      resetPlugins();
       element = await fixture<GrChangeActions>(html`
         <gr-change-actions></gr-change-actions>
       `);
       element.change = {} as ChangeViewChangeInfo;
-      element._hasKnownChainState = false;
       window.Gerrit.install(
         p => {
           plugin = p;
@@ -76,11 +65,7 @@ suite('gr-change-actions-js-api-interface tests', () => {
       );
       changeActions = plugin.changeActions();
       // Mimic all plugins loaded.
-      getPluginLoader().loadPlugins([]);
-    });
-
-    teardown(() => {
-      resetPlugins();
+      testResolver(pluginLoaderToken).loadPlugins([]);
     });
 
     test('property existence', () => {
@@ -161,20 +146,17 @@ suite('gr-change-actions-js-api-interface tests', () => {
     test('move action button to overflow', async () => {
       const key = changeActions.add(ActionType.REVISION, 'Bork!');
       await element.updateComplete;
-      assert.isTrue(queryAndAssert<GrDropdown>(element, '#moreActions').hidden);
-      assert.isOk(
-        queryAndAssert<GrButton>(element, `[data-action-key="${key}"]`)
-      );
+
+      let items = queryAndAssert<GrDropdown>(element, '#moreActions').items;
+      assert.isFalse(items?.some(item => item.name === 'Bork!'));
+      assert.isOk(query<GrButton>(element, `[data-action-key="${key}"]`));
+
       changeActions.setActionOverflow(ActionType.REVISION, key, true);
       await element.updateComplete;
+
+      items = queryAndAssert<GrDropdown>(element, '#moreActions').items;
+      assert.isTrue(items?.some(item => item.name === 'Bork!'));
       assert.isNotOk(query<GrButton>(element, `[data-action-key="${key}"]`));
-      assert.isFalse(
-        queryAndAssert<GrDropdown>(element, '#moreActions').hidden
-      );
-      assert.strictEqual(
-        queryAndAssert<GrDropdown>(element, '#moreActions').items![0].name,
-        'Bork!'
-      );
     });
 
     test('change actions priority', async () => {

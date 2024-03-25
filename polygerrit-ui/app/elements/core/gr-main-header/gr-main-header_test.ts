@@ -17,7 +17,7 @@ import {
   createGerritInfo,
   createServerInfo,
 } from '../../../test/test-data-generators';
-import {NavLink} from '../../../utils/admin-nav-util';
+import {NavLink} from '../../../models/views/admin';
 import {ServerInfo, TopMenuItemInfo} from '../../../types/common';
 import {AuthType} from '../../../constants/constants';
 import {fixture, html, assert} from '@open-wc/testing';
@@ -61,12 +61,8 @@ suite('gr-main-header tests', () => {
               name="header-small-banner"
             >
             </gr-endpoint-decorator>
-            <gr-smart-search id="search" label="Search for changes">
-            </gr-smart-search>
-            <gr-endpoint-decorator
-              class="hideOnMobile"
-              name="header-browse-source"
-            >
+            <gr-smart-search id="search"> </gr-smart-search>
+            <gr-endpoint-decorator class="hideOnMobile" name="header-top-right">
             </gr-endpoint-decorator>
             <gr-endpoint-decorator
               class="feedbackButton"
@@ -162,7 +158,6 @@ suite('gr-main-header tests', () => {
       {
         name: 'Repos',
         url: '/repos',
-        noBaseUrl: true,
         view: undefined,
       },
     ];
@@ -236,7 +231,6 @@ suite('gr-main-header tests', () => {
       {
         name: 'Repos',
         url: '/repos',
-        noBaseUrl: true,
         view: undefined,
       },
     ];
@@ -283,7 +277,6 @@ suite('gr-main-header tests', () => {
       {
         name: 'Repos',
         url: '/repos',
-        noBaseUrl: true,
         view: undefined,
       },
     ];
@@ -335,7 +328,6 @@ suite('gr-main-header tests', () => {
       {
         name: 'Repos',
         url: '/repos',
-        noBaseUrl: true,
         view: undefined,
       },
     ];
@@ -497,7 +489,6 @@ suite('gr-main-header tests', () => {
       {
         name: 'Repos',
         url: '/repos',
-        noBaseUrl: true,
         view: undefined,
       },
     ];

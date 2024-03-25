@@ -18,31 +18,31 @@ import static com.google.common.base.MoreObjects.firstNonNull;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.gerrit.entities.RefNames.changeMetaRef;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_ASSIGNEE;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_ATTENTION;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_BRANCH;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_CHANGE_ID;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_CHERRY_PICK_OF;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_COMMIT;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_COPIED_LABEL;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_CURRENT;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_GROUPS;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_HASHTAGS;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_LABEL;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_PATCH_SET;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_PATCH_SET_DESCRIPTION;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_PRIVATE;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_REAL_USER;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_REVERT_OF;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_STATUS;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_SUBJECT;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_SUBMISSION_ID;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_SUBMITTED_WITH;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_TAG;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_TOPIC;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_WORK_IN_PROGRESS;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_ATTENTION;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_BRANCH;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_CHANGE_ID;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_CHERRY_PICK_OF;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_COMMIT;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_COPIED_LABEL;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_CURRENT;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_GROUPS;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_HASHTAGS;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_LABEL;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_PATCH_SET;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_PATCH_SET_DESCRIPTION;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_PRIVATE;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_REAL_USER;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_REVERT_OF;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_STATUS;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_SUBJECT;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_SUBMISSION_ID;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_SUBMITTED_WITH;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_TAG;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_TOPIC;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_WORK_IN_PROGRESS;
 import static com.google.gerrit.server.notedb.NoteDbUtil.sanitizeFooter;
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
+import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.CHANGE_MODIFICATION;
 import static java.util.Comparator.naturalOrder;
 import static java.util.Objects.requireNonNull;
 import static org.eclipse.jgit.lib.Constants.OBJ_BLOB;
@@ -80,6 +80,7 @@ import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.account.ServiceUserClassifier;
 import com.google.gerrit.server.approval.PatchSetApprovalUuidGenerator;
 import com.google.gerrit.server.project.ProjectCache;
+import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.gerrit.server.util.AttentionSetUtil;
 import com.google.gerrit.server.util.LabelVote;
 import com.google.gerrit.server.validators.ValidationException;
@@ -94,6 +95,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -160,7 +162,6 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   private String commit;
   private Map<Account.Id, AttentionSetUpdate> plannedAttentionSetUpdates;
   private boolean ignoreFurtherAttentionSetUpdates;
-  private Optional<Account.Id> assignee;
   private Set<String> hashtags;
   private String changeMessage;
   private String tag;
@@ -250,9 +251,11 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   }
 
   public ObjectId commit() throws IOException {
-    try (NoteDbUpdateManager updateManager = updateManagerFactory.create(getProjectName())) {
-      updateManager.add(this);
-      updateManager.execute();
+    try (RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
+      try (NoteDbUpdateManager updateManager = updateManagerFactory.create(getProjectName())) {
+        updateManager.add(this);
+        updateManager.execute();
+      }
     }
     return getResult();
   }
@@ -510,15 +513,6 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     return attentionSetUpdatesBuilder.build();
   }
 
-  public void setAssignee(Account.Id assignee) {
-    checkArgument(assignee != null, "use removeAssignee");
-    this.assignee = Optional.of(assignee);
-  }
-
-  public void removeAssignee() {
-    this.assignee = Optional.empty();
-  }
-
   public Map<Account.Id, ReviewerStateInternal> getReviewers() {
     return reviewers;
   }
@@ -571,6 +565,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   }
 
   /** Returns the tree id for the updated tree */
+  @Nullable
   private ObjectId storeRevisionNotes(RevWalk rw, ObjectInserter inserter, ObjectId curr)
       throws ConfigInvalidException, IOException {
     if (submitRequirementResults == null && comments.isEmpty() && pushCert == null) {
@@ -747,7 +742,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     }
 
     if (status != null) {
-      addFooter(msg, FOOTER_STATUS, status.name().toLowerCase());
+      addFooter(msg, FOOTER_STATUS, status.name().toLowerCase(Locale.US));
       if (status.equals(Change.Status.ABANDONED)) {
         clearAttentionSet("Change was abandoned");
       }
@@ -762,15 +757,6 @@ public class ChangeUpdate extends AbstractChangeUpdate {
 
     if (commit != null) {
       addFooter(msg, FOOTER_COMMIT, commit);
-    }
-
-    if (assignee != null) {
-      if (assignee.isPresent()) {
-        addFooter(msg, FOOTER_ASSIGNEE);
-        noteUtil.appendAccountIdIdentString(msg, assignee.get()).append('\n');
-      } else {
-        addFooter(msg, FOOTER_ASSIGNEE).append('\n');
-      }
     }
 
     Joiner comma = Joiner.on(',');
@@ -1100,7 +1086,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
             // remove users that are currently being removed from the attention set.
             .filter(
                 a ->
-                    plannedAttentionSetUpdates.getOrDefault(a, /*defaultValue= */ null) == null
+                    plannedAttentionSetUpdates.getOrDefault(a, /* defaultValue= */ null) == null
                         || plannedAttentionSetUpdates.get(a).operation().equals(Operation.REMOVE))
             // remove users that are still active on the change.
             .filter(a -> !isActiveOnChange(currentReviewers, a))
@@ -1144,7 +1130,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   private void addPatchSetFooter(StringBuilder sb, PatchSet.Id ps) {
     addFooter(sb, FOOTER_PATCH_SET).append(ps.get());
     if (psState != null) {
-      sb.append(" (").append(psState.name().toLowerCase()).append(')');
+      sb.append(" (").append(psState.name().toLowerCase(Locale.US)).append(')');
     }
     sb.append('\n');
   }
@@ -1172,7 +1158,6 @@ public class ChangeUpdate extends AbstractChangeUpdate {
         && status == null
         && submissionId == null
         && submitRecords == null
-        && assignee == null
         && hashtags == null
         && topic == null
         && commit == null

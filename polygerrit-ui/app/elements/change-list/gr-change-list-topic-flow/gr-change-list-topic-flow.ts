@@ -15,7 +15,7 @@ import '../../shared/gr-autocomplete/gr-autocomplete';
 import '@polymer/iron-dropdown/iron-dropdown';
 import {IronDropdownElement} from '@polymer/iron-dropdown/iron-dropdown';
 import {getAppContext} from '../../../services/app-context';
-import {notUndefined} from '../../../types/types';
+import {isDefined} from '../../../types/types';
 import {unique} from '../../../utils/common-util';
 import {AutocompleteSuggestion} from '../../shared/gr-autocomplete/gr-autocomplete';
 import {when} from 'lit/directives/when.js';
@@ -28,6 +28,7 @@ import {fireReload} from '../../../utils/event-util';
 import {fireAlert} from '../../../utils/event-util';
 import {pluralize} from '../../../utils/string-util';
 import {Interaction} from '../../../constants/reporting';
+import {throwingErrorCallback} from '../../shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
 
 @customElement('gr-change-list-topic-flow')
 export class GrChangeListTopicFlow extends LitElement {
@@ -158,7 +159,7 @@ export class GrChangeListTopicFlow extends LitElement {
         .horizontalAlign=${'auto'}
         .verticalAlign=${'auto'}
         .verticalOffset=${24}
-        @opened-changed=${(e: CustomEvent) =>
+        @opened-changed=${(e: ValueChangedEvent<boolean>) =>
           (this.isDropdownOpen = e.detail.value)}
       >
         ${when(
@@ -190,7 +191,7 @@ export class GrChangeListTopicFlow extends LitElement {
   private renderExistingTopicsMode() {
     const topics = this.selectedChanges
       .map(change => change.topic)
-      .filter(notUndefined)
+      .filter(isDefined)
       .filter(unique);
     const removeDisabled =
       this.selectedExistingTopics.size === 0 ||
@@ -343,11 +344,12 @@ export class GrChangeListTopicFlow extends LitElement {
     query: string
   ): Promise<AutocompleteSuggestion[]> {
     const suggestions = await this.restApiService.getChangesWithSimilarTopic(
-      query
+      query,
+      throwingErrorCallback
     );
     this.existingTopicSuggestions = (suggestions ?? [])
       .map(change => change.topic)
-      .filter(notUndefined)
+      .filter(isDefined)
       .filter(unique);
     return this.existingTopicSuggestions.map(topic => {
       return {name: topic, value: topic};

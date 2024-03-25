@@ -5,17 +5,20 @@
  */
 import {AttributeHelperPluginApi} from '../../../api/attribute-helper';
 import {PluginApi} from '../../../api/plugin';
-import {getAppContext} from '../../../services/app-context';
+import {ReportingService} from '../../../services/gr-reporting/gr-reporting';
+import {ValueChangedEvent} from '../../../types/events';
 
 export class GrAttributeHelper implements AttributeHelperPluginApi {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private readonly _promises = new Map<string, Promise<any>>();
 
-  private readonly reporting = getAppContext().reportingService;
-
   // TODO(TS): Change any to something more like HTMLElement.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructor(readonly plugin: PluginApi, public element: any) {
+  constructor(
+    private readonly reporting: ReportingService,
+    readonly plugin: PluginApi,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    public element: any
+  ) {
     this.reporting.trackApi(this.plugin, 'attribute', 'constructor');
   }
 
@@ -49,7 +52,7 @@ export class GrAttributeHelper implements AttributeHelperPluginApi {
   bind(name: string, callback: (value: any) => void) {
     this.reporting.trackApi(this.plugin, 'attribute', 'bind');
     const attributeChangedEventName = this._getChangedEventName(name);
-    const changedHandler = (e: CustomEvent) =>
+    const changedHandler = (e: ValueChangedEvent) =>
       this._reportValue(callback, e.detail.value);
     const unbind = () =>
       this.element.removeEventListener(

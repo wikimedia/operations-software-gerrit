@@ -5,11 +5,36 @@
  */
 import {assert} from '@open-wc/testing';
 import {RepoName} from '../../api/rest-api';
+import {GerritView} from '../../services/router/router-model';
 import '../../test/common-test-setup';
+import {assertRouteFalse, assertRouteState} from '../../test/test-utils';
 import {DashboardId} from '../../types/common';
-import {createDashboardUrl} from './dashboard';
+import {
+  createDashboardUrl,
+  DashboardViewState,
+  PROJECT_DASHBOARD_ROUTE,
+} from './dashboard';
 
 suite('dashboard view state tests', () => {
+  suite('routes', () => {
+    test('PROJECT_DASHBOARD_ROUTE', () => {
+      assertRouteFalse(PROJECT_DASHBOARD_ROUTE, '/p//+/dashboard/qwer');
+      assertRouteFalse(PROJECT_DASHBOARD_ROUTE, '/p/asdf/+/dashboard/');
+
+      const state: DashboardViewState = {
+        view: GerritView.DASHBOARD,
+        project: 'asdf' as RepoName,
+        dashboard: 'qwer' as DashboardId,
+      };
+      assertRouteState(
+        PROJECT_DASHBOARD_ROUTE,
+        '/p/asdf/+/dashboard/qwer',
+        state,
+        createDashboardUrl
+      );
+    });
+  });
+
   suite('createDashboardUrl()', () => {
     test('self dashboard', () => {
       assert.equal(createDashboardUrl({}), '/dashboard/self');
@@ -34,7 +59,7 @@ suite('dashboard view state tests', () => {
       };
       assert.equal(
         createDashboardUrl(state),
-        '/dashboard/?section%201=query%201&section%202=query%202'
+        '/dashboard/?section+1=query+1&section+2=query+2'
       );
     });
 
@@ -48,8 +73,8 @@ suite('dashboard view state tests', () => {
       };
       assert.equal(
         createDashboardUrl(state),
-        '/dashboard/?section%201=query%201%20repo-name&' +
-          'section%202=query%202%20repo-name'
+        '/dashboard/?section+1=query+1+repo-name&' +
+          'section+2=query+2+repo-name'
       );
     });
 
@@ -61,7 +86,7 @@ suite('dashboard view state tests', () => {
       };
       assert.equal(
         createDashboardUrl(state),
-        '/dashboard/user?name=query&title=custom%20dashboard'
+        '/dashboard/user?name=query&title=custom+dashboard'
       );
     });
 

@@ -10,6 +10,7 @@ import {css, html, LitElement, PropertyValues} from 'lit';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {fontStyles} from '../../../styles/gr-font-styles';
 import {when} from 'lit/directives/when.js';
+import {fireNoBubble} from '../../../utils/event-util';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -30,6 +31,9 @@ export class GrDialog extends LitElement {
    *
    * @event cancel
    */
+
+  @query('#cancel')
+  cancelButton?: GrButton;
 
   @query('#confirm')
   confirmButton?: GrButton;
@@ -102,6 +106,7 @@ export class GrDialog extends LitElement {
           display: flex;
           flex-shrink: 0;
           padding-top: var(--spacing-xl);
+          align-items: center;
         }
         .flex-space {
           flex-grow: 1;
@@ -147,6 +152,7 @@ export class GrDialog extends LitElement {
               <span class="loadingLabel"> ${this.loadingLabel} </span>
             `
           )}
+          <slot name="footer"></slot>
           <div class="flex-space"></div>
           <gr-button
             id="cancel"
@@ -195,23 +201,13 @@ export class GrDialog extends LitElement {
 
     e.preventDefault();
     e.stopPropagation();
-    this.dispatchEvent(
-      new CustomEvent('confirm', {
-        composed: true,
-        bubbles: false,
-      })
-    );
+    fireNoBubble(this, 'confirm', {});
   }
 
   private handleCancelTap(e: Event) {
     e.preventDefault();
     e.stopPropagation();
-    this.dispatchEvent(
-      new CustomEvent('cancel', {
-        composed: true,
-        bubbles: false,
-      })
-    );
+    fireNoBubble(this, 'cancel', {});
   }
 
   _handleKeydown(e: KeyboardEvent) {
@@ -221,6 +217,10 @@ export class GrDialog extends LitElement {
   }
 
   resetFocus() {
-    this.confirmButton!.focus();
+    if (this.disabled && this.cancelLabel) {
+      this.cancelButton!.focus();
+    } else {
+      this.confirmButton!.focus();
+    }
   }
 }

@@ -9,7 +9,7 @@ import './gr-patch-range-select';
 import {GrPatchRangeSelect} from './gr-patch-range-select';
 import {RevisionInfo as RevisionInfoClass} from '../../shared/revision-info/revision-info';
 import {ChangeComments} from '../gr-comment-api/gr-comment-api';
-import {stubReporting} from '../../../test/test-utils';
+import {queryAll, stubReporting} from '../../../test/test-utils';
 import {
   BasePatchSetNum,
   EDIT,
@@ -20,7 +20,7 @@ import {
   RevisionInfo,
   Timestamp,
   UrlEncodedCommentId,
-  PathToCommentsInfoMap,
+  CommentInfo,
 } from '../../../types/common';
 import {EditRevisionInfo, ParsedChangeInfo} from '../../../types/types';
 import {SpecialFilePath} from '../../../constants/constants';
@@ -30,7 +30,6 @@ import {
   createParsedChange,
   createRevision,
   createRevisions,
-  TEST_NUMERIC_CHANGE_ID,
 } from '../../../test/test-data-generators';
 import {PatchSet} from '../../../utils/patch-set-util';
 import {
@@ -43,7 +42,6 @@ import {fixture, html, assert} from '@open-wc/testing';
 import {testResolver} from '../../../test/common-test-setup';
 import {changeViewModelToken} from '../../../models/views/change';
 import {changeModelToken} from '../../../models/change/change-model';
-import {GerritView} from '../../../services/router/router-model';
 
 type RevIdToRevisionInfo = {
   [revisionId: string]: RevisionInfo | EditRevisionInfo;
@@ -67,11 +65,6 @@ suite('gr-patch-range-select tests', () => {
       html`<gr-patch-range-select></gr-patch-range-select>`
     );
 
-    element.routerModel.setState({
-      changeNum: TEST_NUMERIC_CHANGE_ID,
-      view: GerritView.CHANGE,
-      patchNum: 1 as RevisionPatchSetNum,
-    });
     const viewModel = testResolver(changeViewModelToken);
     viewModel.setState({
       ...createChangeViewState(),
@@ -154,6 +147,7 @@ suite('gr-patch-range-select tests', () => {
         mobileText: EDIT,
         bottomText: '',
         value: EDIT,
+        commentThreads: [],
       },
       {
         disabled: true,
@@ -163,6 +157,7 @@ suite('gr-patch-range-select tests', () => {
         bottomText: '',
         value: 3,
         date: '2020-02-01 01:02:03.000000000' as Timestamp,
+        commentThreads: [],
       } as DropdownItem,
       {
         disabled: true,
@@ -172,6 +167,7 @@ suite('gr-patch-range-select tests', () => {
         bottomText: '',
         value: 2,
         date: '2020-02-01 01:02:03.000000000' as Timestamp,
+        commentThreads: [],
       } as DropdownItem,
       {
         disabled: true,
@@ -181,6 +177,7 @@ suite('gr-patch-range-select tests', () => {
         bottomText: '',
         value: 1,
         date: '2020-02-01 01:02:03.000000000' as Timestamp,
+        commentThreads: [],
       } as DropdownItem,
       {
         text: 'Base',
@@ -294,6 +291,7 @@ suite('gr-patch-range-select tests', () => {
         mobileText: EDIT,
         bottomText: '',
         value: EDIT,
+        commentThreads: [],
       },
       {
         disabled: false,
@@ -303,6 +301,7 @@ suite('gr-patch-range-select tests', () => {
         bottomText: '',
         value: 3,
         date: '2020-02-01 01:02:03.000000000' as Timestamp,
+        commentThreads: [],
       } as DropdownItem,
       {
         disabled: false,
@@ -312,6 +311,7 @@ suite('gr-patch-range-select tests', () => {
         bottomText: 'description',
         value: 2,
         date: '2020-02-01 01:02:03.000000000' as Timestamp,
+        commentThreads: [],
       } as DropdownItem,
       {
         disabled: true,
@@ -321,6 +321,7 @@ suite('gr-patch-range-select tests', () => {
         bottomText: '',
         value: 1,
         date: '2020-02-01 01:02:03.000000000' as Timestamp,
+        commentThreads: [],
       } as DropdownItem,
     ];
 
@@ -329,33 +330,16 @@ suite('gr-patch-range-select tests', () => {
 
   test('filesWeblinks', async () => {
     element.filesWeblinks = {
-      meta_a: [
-        {
-          name: 'foo',
-          url: 'f.oo',
-        },
-      ],
-      meta_b: [
-        {
-          name: 'bar',
-          url: 'ba.r',
-        },
-      ],
+      meta_a: [{name: 'foo', url: 'f.oo'}],
+      meta_b: [{name: 'bar', url: 'ba.r'}],
     };
     await element.updateComplete;
-    assert.equal(
-      queryAndAssert(element, 'a[href="f.oo"]').textContent!.trim(),
-      'foo'
-    );
-    assert.equal(
-      queryAndAssert(element, 'a[href="ba.r"]').textContent!.trim(),
-      'bar'
-    );
+    assert.equal(queryAll(element, 'gr-weblink').length, 2);
   });
 
   test('computePatchSetCommentsString', () => {
     // Test string with unresolved comments.
-    const comments: PathToCommentsInfoMap = {
+    const comments: {[path: string]: CommentInfo[]} = {
       foo: [
         {
           id: '27dcee4d_f7b77cfa' as UrlEncodedCommentId,
@@ -476,10 +460,10 @@ suite('gr-patch-range-select tests', () => {
     await element.updateComplete;
 
     const stub = stubReporting('reportInteraction');
-    fire(element.patchNumDropdown!, 'value-change', {value: '1'});
+    fire(element.patchNumDropdown, 'value-change', {value: '1'});
     assert.isFalse(stub.called);
 
-    fire(element.patchNumDropdown!, 'value-change', {value: '2'});
+    fire(element.patchNumDropdown, 'value-change', {value: '2'});
     assert.isTrue(stub.called);
   });
 });

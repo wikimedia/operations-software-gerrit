@@ -6,7 +6,6 @@
 import '../../../styles/shared-styles';
 import '../../shared/gr-dialog/gr-dialog';
 import '../../shared/gr-icon/gr-icon';
-import '../../shared/gr-overlay/gr-overlay';
 import '../../../embed/diff/gr-diff/gr-diff';
 import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {
@@ -18,15 +17,13 @@ import {
   FilePathToDiffInfoMap,
 } from '../../../types/common';
 import {DiffInfo, DiffPreferencesInfo} from '../../../types/diff';
-import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
 import {PROVIDED_FIX_ID} from '../../../utils/comment-util';
 import {OpenFixPreviewEvent} from '../../../types/events';
 import {getAppContext} from '../../../services/app-context';
-import {fireCloseFixPreview} from '../../../utils/event-util';
 import {DiffLayer, ParsedChangeInfo} from '../../../types/types';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {TokenHighlightLayer} from '../../../embed/diff/gr-diff-builder/token-highlight-layer';
-import {css, html, LitElement} from 'lit';
+import {css, html, LitElement, nothing} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {subscribe} from '../../lit/subscription-controller';
@@ -34,6 +31,13 @@ import {assert} from '../../../utils/common-util';
 import {resolve} from '../../../models/dependency';
 import {createChangeUrl} from '../../../models/views/change';
 import {GrDialog} from '../../shared/gr-dialog/gr-dialog';
+import {userModelToken} from '../../../models/user/user-model';
+import {modalStyles} from '../../../styles/gr-modal-styles';
+import {GrSyntaxLayerWorker} from '../../../embed/diff/gr-syntax-layer/gr-syntax-layer-worker';
+import {highlightServiceToken} from '../../../services/highlight/highlight-service';
+import {anyLineTooLong} from '../../../embed/diff/gr-diff/gr-diff-utils';
+import {fireReload} from '../../../utils/event-util';
+import {when} from 'lit/directives/when.js';
 
 interface FilePreview {
   filepath: string;
@@ -42,8 +46,8 @@ interface FilePreview {
 
 @customElement('gr-apply-fix-dialog')
 export class GrApplyFixDialog extends LitElement {
-  @query('#applyFixOverlay')
-  applyFixOverlay?: GrOverlay;
+  @query('#applyFixModal')
+  applyFixModal?: HTMLDialogElement;
 
   @query('#applyFixDialog')
   applyFixDialog?: GrDialog;
@@ -87,35 +91,50 @@ export class GrApplyFixDialog extends LitElement {
   @state()
   diffPrefs?: DiffPreferencesInfo;
 
+  @state()
+  loading = false;
+
+  @state()
+  onCloseFixPreviewCallbacks: ((fixapplied: boolean) => void)[] = [];
+
   private readonly restApiService = getAppContext().restApiService;
 
-  private readonly userModel = getAppContext().userModel;
+  private readonly getUserModel = resolve(this, userModelToken);
 
   private readonly getNavigation = resolve(this, navigationToken);
+
+  private readonly syntaxLayer = new GrSyntaxLayerWorker(
+    resolve(this, highlightServiceToken),
+    () => getAppContext().reportingService
+  );
 
   constructor() {
     super();
     subscribe(
       this,
-      () => this.userModel.preferences$,
+      () => this.getUserModel().preferences$,
       preferences => {
+        const layers: DiffLayer[] = [this.syntaxLayer];
         if (!preferences?.disable_token_highlighting) {
-          this.layers = [new TokenHighlightLayer(this)];
+          layers.push(new TokenHighlightLayer(this));
         }
+        this.layers = layers;
       }
     );
     subscribe(
       this,
-      () => this.userModel.diffPreferences$,
+      () => this.getUserModel().diffPreferences$,
       diffPreferences => {
         if (!diffPreferences) return;
         this.diffPrefs = diffPreferences;
+        this.syntaxLayer.setEnabled(!!this.diffPrefs.syntax_highlighting);
       }
     );
   }
 
   static override styles = [
     sharedStyles,
+    modalStyles,
     css`
       .diffContainer {
         padding: var(--spacing-l) 0;
@@ -140,9 +159,11 @@ export class GrApplyFixDialog extends LitElement {
 
   override render() {
     return html`
-      <gr-overlay id="applyFixOverlay" with-backdrop="">
+      <dialog id="applyFixModal" tabindex="-1">
         <gr-dialog
           id="applyFixDialog"
+          ?loading=${this.loading}
+          .loadingLabel=${'Creating preview ...'}
           .confirmLabel=${this.isApplyFixLoading ? 'Saving...' : 'Apply Fix'}
           .confirmTooltip=${this.computeTooltip()}
           ?disabled=${this.computeDisableApplyFixButton()}
@@ -151,41 +172,12 @@ export class GrApplyFixDialog extends LitElement {
         >
           ${this.renderHeader()} ${this.renderMain()} ${this.renderFooter()}
         </gr-dialog>
-      </gr-overlay>
+      </dialog>
     `;
   }
 
-  override updated() {
-    this.updateDialogObserver();
-  }
-
   override disconnectedCallback() {
-    this.removeDialogObserver();
     super.disconnectedCallback();
-  }
-
-  private removeDialogObserver() {
-    this.dialogObserver?.disconnect();
-    this.dialogObserver = undefined;
-    this.observedDialog = undefined;
-  }
-
-  private updateDialogObserver() {
-    if (
-      this.applyFixDialog === this.observedDialog &&
-      this.dialogObserver !== undefined
-    ) {
-      return;
-    }
-
-    this.removeDialogObserver();
-    if (!this.applyFixDialog) return;
-
-    this.observedDialog = this.applyFixDialog;
-    this.dialogObserver = new ResizeObserver(() => {
-      this.applyFixOverlay?.refit();
-    });
-    this.dialogObserver.observe(this.observedDialog);
   }
 
   private renderHeader() {
@@ -200,42 +192,61 @@ export class GrApplyFixDialog extends LitElement {
         <div class="file-name">
           <span>${item.filepath}</span>
         </div>
-        <div class="diffContainer">
-          <gr-diff
-            .prefs=${this.overridePartialDiffPrefs()}
-            .path=${item.filepath}
-            .diff=${item.preview}
-            .layers=${this.layers}
-          ></gr-diff>
-        </div>
+        <div class="diffContainer">${this.renderDiff(item)}</div>
       `
     );
     return html`<div slot="main">${items}</div>`;
   }
 
+  private renderDiff(preview: FilePreview) {
+    const diff = preview.preview;
+    if (!anyLineTooLong(diff)) {
+      this.syntaxLayer.process(diff);
+    }
+    return html`<gr-diff
+      .prefs=${this.overridePartialDiffPrefs()}
+      .path=${preview.filepath}
+      .diff=${diff}
+      .layers=${this.layers}
+    ></gr-diff>`;
+  }
+
   private renderFooter() {
-    const id = this.selectedFixIdx;
     const fixCount = this.fixSuggestions?.length ?? 0;
-    if (fixCount < 2) return;
+    const reasonForDisabledApplyButton = this.computeTooltip();
+    if (fixCount < 2 && !reasonForDisabledApplyButton) return nothing;
+    return html`<div slot="footer" class="fix-picker">
+      ${when(fixCount >= 2, () =>
+        this.renderNavForMultipleSuggestedFixes(fixCount)
+      )}
+      ${this.renderWarning(reasonForDisabledApplyButton)}
+    </div>`;
+  }
+
+  private renderNavForMultipleSuggestedFixes(fixCount: number) {
+    const id = this.selectedFixIdx;
     return html`
-      <div slot="footer" class="fix-picker">
-        <span>Suggested fix ${id + 1} of ${fixCount}</span>
-        <gr-button
-          id="prevFix"
-          @click=${this.onPrevFixClick}
-          ?disabled=${id === 0}
-        >
-          <gr-icon icon="chevron_left"></gr-icon>
-        </gr-button>
-        <gr-button
-          id="nextFix"
-          @click=${this.onNextFixClick}
-          ?disabled=${id === fixCount - 1}
-        >
-          <gr-icon icon="chevron_right"></gr-icon>
-        </gr-button>
-      </div>
+      <span>Suggested fix ${id + 1} of ${fixCount}</span>
+      <gr-button
+        id="prevFix"
+        @click=${this.onPrevFixClick}
+        ?disabled=${id === 0}
+      >
+        <gr-icon icon="chevron_left"></gr-icon>
+      </gr-button>
+      <gr-button
+        id="nextFix"
+        @click=${this.onNextFixClick}
+        ?disabled=${id === fixCount - 1}
+      >
+        <gr-icon icon="chevron_right"></gr-icon>
+      </gr-button>
     `;
+  }
+
+  private renderWarning(message: string) {
+    if (!message) return nothing;
+    return html`<span><gr-icon icon="info"></gr-icon>${message}</span>`;
   }
 
   /**
@@ -245,18 +256,18 @@ export class GrApplyFixDialog extends LitElement {
   open(e: OpenFixPreviewEvent) {
     this.patchNum = e.detail.patchNum;
     this.fixSuggestions = e.detail.fixSuggestions;
+    this.onCloseFixPreviewCallbacks = e.detail.onCloseFixPreviewCallbacks;
     assert(this.fixSuggestions.length > 0, 'no fix in the event');
     this.selectedFixIdx = 0;
-    const promises = [];
-    promises.push(
-      this.showSelectedFixSuggestion(this.fixSuggestions[0]),
-      this.applyFixOverlay?.open()
-    );
+    this.applyFixModal?.showModal();
+    return this.showSelectedFixSuggestion(this.fixSuggestions[0]);
   }
 
   private async showSelectedFixSuggestion(fixSuggestion: FixSuggestionInfo) {
     this.currentFix = fixSuggestion;
+    this.loading = true;
     await this.fetchFixPreview(fixSuggestion);
+    this.loading = false;
   }
 
   private async fetchFixPreview(fixSuggestion: FixSuggestionInfo) {
@@ -333,8 +344,9 @@ export class GrApplyFixDialog extends LitElement {
     this.currentPreviews = [];
     this.isApplyFixLoading = false;
 
-    fireCloseFixPreview(this, fixApplied);
-    this.applyFixOverlay?.close();
+    this.onCloseFixPreviewCallbacks.forEach(fn => fn(fixApplied));
+    this.applyFixModal?.close();
+    if (fixApplied) fireReload(this);
   }
 
   private computeTooltip() {
@@ -342,7 +354,7 @@ export class GrApplyFixDialog extends LitElement {
     const latestPatchNum =
       this.change.revisions[this.change.current_revision]._number;
     return latestPatchNum !== this.patchNum
-      ? 'Fix can only be applied to the latest patchset'
+      ? 'You cannot apply this fix because it is from a previous patchset'
       : '';
   }
 

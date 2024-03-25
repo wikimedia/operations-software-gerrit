@@ -6,8 +6,6 @@
 import '@polymer/iron-input/iron-input';
 import '../../shared/gr-button/gr-button';
 import '../../shared/gr-select/gr-select';
-import {encodeURL, getBaseUrl} from '../../../utils/url-util';
-import {page} from '../../../utils/page-wrapper-utils';
 import {BranchName, RepoName} from '../../../types/common';
 import {getAppContext} from '../../../services/app-context';
 import {formStyles} from '../../../styles/gr-form-styles';
@@ -15,12 +13,15 @@ import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, css, html} from 'lit';
 import {customElement, property, state} from 'lit/decorators.js';
 import {BindValueChangeEvent} from '../../../types/events';
-import {fireEvent} from '../../../utils/event-util';
+import {fireAlert, fire, fireReload} from '../../../utils/event-util';
 import {RepoDetailView} from '../../../models/views/repo';
 
 declare global {
   interface HTMLElementTagNameMap {
     'gr-create-pointer-dialog': GrCreatePointerDialog;
+  }
+  interface HTMLElementEventMap {
+    'update-item-name': CustomEvent<{}>;
   }
 }
 
@@ -115,7 +116,7 @@ export class GrCreatePointerDialog extends LitElement {
   }
 
   private updateItemName() {
-    fireEvent(this, 'update-item-name');
+    fire(this, 'update-item-name', {});
   }
 
   handleCreateItem() {
@@ -126,13 +127,13 @@ export class GrCreatePointerDialog extends LitElement {
       throw new Error('itemName name is not set');
     }
     const USE_HEAD = this.itemRevision ? this.itemRevision : 'HEAD';
-    const url = `${getBaseUrl()}/admin/repos/${encodeURL(this.repoName, true)}`;
     if (this.itemDetail === RepoDetailView.BRANCHES) {
       return this.restApiService
         .createRepoBranch(this.repoName, this.itemName, {revision: USE_HEAD})
         .then(itemRegistered => {
           if (itemRegistered.status === 201) {
-            page.show(`${url},branches`);
+            fireAlert(this, 'Branch created successfully. Reloading...');
+            fireReload(this);
           }
         });
     } else if (this.itemDetail === RepoDetailView.TAGS) {
@@ -143,7 +144,8 @@ export class GrCreatePointerDialog extends LitElement {
         })
         .then(itemRegistered => {
           if (itemRegistered.status === 201) {
-            page.show(`${url},tags`);
+            fireAlert(this, 'Tag created successfully. Reloading...');
+            fireReload(this);
           }
         });
     }

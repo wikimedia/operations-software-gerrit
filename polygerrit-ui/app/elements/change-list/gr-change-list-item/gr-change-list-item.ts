@@ -17,18 +17,16 @@ import '../gr-change-list-column-requirement/gr-change-list-column-requirement';
 import '../../shared/gr-tooltip-content/gr-tooltip-content';
 import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {getDisplayName} from '../../../utils/display-name-util';
-import {getPluginEndpoints} from '../../shared/gr-js-api-interface/gr-plugin-endpoints';
-import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {getAppContext} from '../../../services/app-context';
 import {truncatePath} from '../../../utils/path-list-util';
 import {changeStatuses} from '../../../utils/change-util';
 import {isSelf, isServiceUser} from '../../../utils/account-util';
-import {ReportingService} from '../../../services/gr-reporting/gr-reporting';
 import {
   ChangeInfo,
   ServerInfo,
   AccountInfo,
   Timestamp,
+  NumericChangeId,
 } from '../../../types/common';
 import {hasOwnProperty, assertIsDefined} from '../../../utils/common-util';
 import {changeListStyles} from '../../../styles/gr-change-list-styles';
@@ -44,6 +42,8 @@ import {subscribe} from '../../lit/subscription-controller';
 import {classMap} from 'lit/directives/class-map.js';
 import {createSearchUrl} from '../../../models/views/search';
 import {createChangeUrl} from '../../../models/views/change';
+import {userModelToken} from '../../../models/user/user-model';
+import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 
 enum ChangeSize {
   XS = 10,
@@ -115,15 +115,15 @@ export class GrChangeListItem extends LitElement {
 
   @state() private dynamicCellEndpoints?: string[];
 
-  // Private but used in test.
-  reporting: ReportingService = getAppContext().reportingService;
+  private readonly reporting = getAppContext().reportingService;
 
-  // Private but used in test.
-  userModel = getAppContext().userModel;
+  private readonly getPluginLoader = resolve(this, pluginLoaderToken);
 
   private readonly getBulkActionsModel = resolve(this, bulkActionsModelToken);
 
   private readonly getNavigation = resolve(this, navigationToken);
+
+  private readonly getUserModel = resolve(this, userModelToken);
 
   @state() private isLoggedIn = false;
 
@@ -133,25 +133,25 @@ export class GrChangeListItem extends LitElement {
       this,
       () => this.getBulkActionsModel().selectedChangeNums$,
       selectedChangeNums => {
-        if (!this.change) return;
-        this.checked = selectedChangeNums.includes(this.change._number);
+        this.updateCheckedState(selectedChangeNums);
       }
     );
     subscribe(
       this,
-      () => this.userModel.loggedIn$,
+      () => this.getUserModel().loggedIn$,
       isLoggedIn => (this.isLoggedIn = isLoggedIn)
     );
   }
 
   override connectedCallback() {
     super.connectedCallback();
-    getPluginLoader()
+    this.getPluginLoader()
       .awaitPluginsLoaded()
       .then(() => {
-        this.dynamicCellEndpoints = getPluginEndpoints().getDynamicEndpoints(
-          'change-list-item-cell'
-        );
+        this.dynamicCellEndpoints =
+          this.getPluginLoader().pluginEndPoints.getDynamicEndpoints(
+            'change-list-item-cell'
+          );
       });
     this.addEventListener('click', this.onItemClick);
   }
@@ -166,6 +166,20 @@ export class GrChangeListItem extends LitElement {
     if (this.selected && changedProperties.has('selected')) {
       this.focus();
     }
+
+    if (changedProperties.has('change')) {
+      this.updateCheckedState(
+        this.getBulkActionsModel().getState().selectedChangeNums
+      );
+    }
+  }
+
+  private updateCheckedState(selectedChangeNums: NumericChangeId[]) {
+    if (!this.change) {
+      this.checked = false;
+      return;
+    }
+    this.checked = selectedChangeNums.includes(this.change._number);
   }
 
   static override get styles() {
@@ -682,14 +696,14 @@ export class GrChangeListItem extends LitElement {
 
   private computeRepoUrl() {
     if (!this.change) return '';
-    return createSearchUrl({project: this.change.project, statuses: ['open']});
+    return createSearchUrl({repo: this.change.project, statuses: ['open']});
   }
 
   private computeRepoBranchURL() {
     if (!this.change) return '';
     return createSearchUrl({
       branch: this.change.branch,
-      project: this.change.project,
+      repo: this.change.project,
     });
   }
 

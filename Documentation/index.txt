@@ -15,18 +15,21 @@
 == Contributor Guides
 . link:dev-community.html[Gerrit Community]
 . link:dev-community.html#how-to-contribute[How to Contribute]
+.. link:dev-readme.html[Developer Setup]
 
 == User Guides
 . link:intro-user.html[User Guide]
 . link:intro-project-owner.html[Project Owner Guide]
 . link:https://source.android.com/source/developing[Default Android Workflow,role=external,window=_blank] (external)
 
-== Tutorials
+== Features and Workflows
 . Web
-.. link:user-review-ui.html[Reviewing Changes]
+.. link:user-review-ui.html[Review UI Overview]
 .. link:user-search.html[Searching Changes]
 .. link:user-inline-edit.html[Manipulating Changes in Browser]
 .. link:user-notify.html[Subscribing to Email Notifications]
+.. link:user-attention-set.html[Attention Set]
+.. link:user-suggest-edits.html[User Suggest Edits]
 . SSH
 .. link:user-upload.html#ssh[SSH connection details]
 .. link:cmd-index.html[Command Line Tools]
@@ -49,9 +52,6 @@
 . Multi-project management
 .. link:user-submodules.html[Submodules]
 .. link:https://source.android.com/source/using-repo.html[Repo,role=external,window=_blank] (external)
-. Prolog rules
-.. link:prolog-cookbook.html[Prolog Cookbook]
-.. link:prolog-change-facts.html[Prolog Facts for Gerrit Changes]
 . link:intro-project-owner.html#project-deletion[Project deletion]
 
 == Customization and Integration

@@ -104,6 +104,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
     this.mem = mem;
   }
 
+  @Nullable
   @Override
   public V getIfPresent(Object objKey) {
     if (!keyType.getRawType().isInstance(objKey)) {
@@ -427,6 +428,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
       return b == null || b.mightContain(key);
     }
 
+    @Nullable
     private BloomFilter<K> buildBloomFilter() {
       SqlHandle c = null;
       try {
@@ -476,6 +478,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
       }
     }
 
+    @Nullable
     ValueHolder<V> getIfPresent(K key) {
       SqlHandle c = null;
       try {
@@ -731,6 +734,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
       }
     }
 
+    @Nullable
     private SqlHandle close(SqlHandle h) {
       if (h != null) {
         h.close();
@@ -790,6 +794,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
       }
     }
 
+    @Nullable
     private PreparedStatement closeStatement(PreparedStatement ps) {
       if (ps != null) {
         try {

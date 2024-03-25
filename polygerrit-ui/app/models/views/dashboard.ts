@@ -10,7 +10,21 @@ import {DashboardSection} from '../../utils/dashboard-util';
 import {encodeURL, getBaseUrl} from '../../utils/url-util';
 import {define} from '../dependency';
 import {Model} from '../model';
-import {ViewState} from './base';
+import {Route, ViewState} from './base';
+
+export const PROJECT_DASHBOARD_ROUTE: Route<DashboardViewState> = {
+  urlPattern: /^\/p\/(.+)\/\+\/dashboard\/(.+)/,
+  createState: ctx => {
+    const project = (ctx.params[0] ?? '') as RepoName;
+    const dashboard = (ctx.params[1] ?? '') as DashboardId;
+    const state: DashboardViewState = {
+      view: GerritView.DASHBOARD,
+      project,
+      dashboard,
+    };
+    return state;
+  },
+};
 
 export interface DashboardViewState extends ViewState {
   view: GerritView.DASHBOARD;
@@ -33,7 +47,7 @@ function sectionsToEncodedParams(
     const query = repoName
       ? section.query.replace(REPO_TOKEN_PATTERN, repoName)
       : section.query;
-    return encodeURIComponent(section.name) + '=' + encodeURIComponent(query);
+    return encodeURL(section.name) + '=' + encodeURL(query);
   });
 }
 
@@ -43,13 +57,13 @@ export function createDashboardUrl(state: Omit<DashboardViewState, 'view'>) {
     // Custom dashboard.
     const queryParams = sectionsToEncodedParams(state.sections, repoName);
     if (state.title) {
-      queryParams.push('title=' + encodeURIComponent(state.title));
+      queryParams.push('title=' + encodeURL(state.title));
     }
     const user = state.user ? state.user : '';
     return `${getBaseUrl()}/dashboard/${user}?${queryParams.join('&')}`;
   } else if (repoName) {
     // Project dashboard.
-    const encodedRepo = encodeURL(repoName, true);
+    const encodedRepo = encodeURL(repoName);
     return `${getBaseUrl()}/p/${encodedRepo}/+/dashboard/${state.dashboard}`;
   } else {
     // User dashboard.

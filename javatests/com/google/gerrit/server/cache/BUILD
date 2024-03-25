@@ -8,11 +8,9 @@ junit_tests(
         "//java/com/google/gerrit/entities",
         "//java/com/google/gerrit/server",
         "//java/com/google/gerrit/testing:gerrit-test-util",
-        "//javatests/com/google/gerrit/util/http/testutil",
         "//lib:junit",
         "//lib/truth",
         "//lib/truth:truth-java8-extension",
-        "@servlet-api//jar",
     ],
 )
 

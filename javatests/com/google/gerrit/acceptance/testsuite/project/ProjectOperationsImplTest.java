@@ -18,11 +18,14 @@ import static com.google.common.truth.Truth.assertThat;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowCapability;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowLabel;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowLabelRemoval;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.blockLabel;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.blockLabelRemoval;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.capabilityKey;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.deny;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.labelPermissionKey;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.labelRemovalPermissionKey;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.permissionKey;
 import static com.google.gerrit.common.data.GlobalCapability.ADMINISTRATE_SERVER;
 import static com.google.gerrit.common.data.GlobalCapability.DEFAULT_MAX_QUERY_LIMIT;
@@ -160,7 +163,8 @@ public class ProjectOperationsImplTest extends AbstractDaemonTest {
     Project.NameKey key = projectOperations.newProject().create();
     Config config = projectOperations.project(key).getConfig();
     assertThat(config).isNotInstanceOf(StoredConfig.class);
-    assertThat(config).text().isEmpty();
+    assertThat(config).sections().containsExactly("submit");
+    assertThat(config).sectionValues("submit").containsExactly("action", "inherit");
 
     ConfigInput input = new ConfigInput();
     input.description = "my fancy project";
@@ -168,7 +172,7 @@ public class ProjectOperationsImplTest extends AbstractDaemonTest {
 
     config = projectOperations.project(key).getConfig();
     assertThat(config).isNotInstanceOf(StoredConfig.class);
-    assertThat(config).sections().containsExactly("project");
+    assertThat(config).sections().containsExactly("project", "submit");
     assertThat(config).subsections("project").isEmpty();
     assertThat(config).sectionValues("project").containsExactly("description", "my fancy project");
   }
@@ -193,7 +197,7 @@ public class ProjectOperationsImplTest extends AbstractDaemonTest {
         .update();
 
     Config config = projectOperations.project(key).getConfig();
-    assertThat(config).sections().containsExactly("access");
+    assertThat(config).sections().containsExactly("access", "submit");
     assertThat(config).subsections("access").containsExactly("refs/foo");
     assertThat(config)
         .subsectionValues("access", "refs/foo")
@@ -210,7 +214,7 @@ public class ProjectOperationsImplTest extends AbstractDaemonTest {
         .update();
 
     Config config = projectOperations.project(key).getConfig();
-    assertThat(config).sections().containsExactly("access");
+    assertThat(config).sections().containsExactly("access", "submit");
     assertThat(config).subsections("access").containsExactly("refs/foo");
     assertThat(config)
         .subsectionValues("access", "refs/foo")
@@ -227,7 +231,7 @@ public class ProjectOperationsImplTest extends AbstractDaemonTest {
         .update();
 
     Config config = projectOperations.project(key).getConfig();
-    assertThat(config).sections().containsExactly("access");
+    assertThat(config).sections().containsExactly("access", "submit");
     assertThat(config).subsections("access").containsExactly("refs/foo");
     assertThat(config)
         .subsectionValues("access", "refs/foo")
@@ -244,7 +248,7 @@ public class ProjectOperationsImplTest extends AbstractDaemonTest {
         .update();
 
     Config config = projectOperations.project(key).getConfig();
-    assertThat(config).sections().containsExactly("access");
+    assertThat(config).sections().containsExactly("access", "submit");
     assertThat(config).subsections("access").containsExactly("refs/foo");
     assertThat(config)
         .subsectionValues("access", "refs/foo")
@@ -262,7 +266,7 @@ public class ProjectOperationsImplTest extends AbstractDaemonTest {
         .update();
 
     Config config = projectOperations.project(key).getConfig();
-    assertThat(config).sections().containsExactly("access");
+    assertThat(config).sections().containsExactly("access", "submit");
     assertThat(config).subsections("access").containsExactly("refs/foo");
     assertThat(config)
         .subsectionValues("access", "refs/foo")
@@ -277,7 +281,7 @@ public class ProjectOperationsImplTest extends AbstractDaemonTest {
         .update();
 
     config = projectOperations.project(key).getConfig();
-    assertThat(config).sections().containsExactly("access");
+    assertThat(config).sections().containsExactly("access", "submit");
     assertThat(config).subsections("access").containsExactly("refs/foo");
     assertThat(config)
         .subsectionValues("access", "refs/foo")
@@ -318,7 +322,7 @@ public class ProjectOperationsImplTest extends AbstractDaemonTest {
         .update();
 
     Config config = projectOperations.project(key).getConfig();
-    assertThat(config).sections().containsExactly("access");
+    assertThat(config).sections().containsExactly("access", "submit");
     assertThat(config).subsections("access").containsExactly("refs/foo");
     assertThat(config)
         .subsectionValues("access", "refs/foo")
@@ -328,31 +332,28 @@ public class ProjectOperationsImplTest extends AbstractDaemonTest {
   }
 
   @Test
-  public void addDuplicatePermissions() throws Exception {
+  public void addDuplicatePermissions_isIgnored() throws Exception {
     TestPermission permission =
         TestProjectUpdate.allow(Permission.ABANDON).ref("refs/foo").group(REGISTERED_USERS).build();
     Project.NameKey key = projectOperations.newProject().create();
     projectOperations.project(key).forUpdate().add(permission).add(permission).update();
 
     Config config = projectOperations.project(key).getConfig();
-    assertThat(config).sections().containsExactly("access");
+    assertThat(config).sections().contains("access");
     assertThat(config).subsections("access").containsExactly("refs/foo");
     assertThat(config)
         .subsectionValues("access", "refs/foo")
-        .containsExactly(
-            "abandon", "group global:Registered-Users",
-            "abandon", "group global:Registered-Users");
+        // Duplicated permission was recorded only once
+        .containsExactly("abandon", "group global:Registered-Users");
 
     projectOperations.project(key).forUpdate().add(permission).update();
     config = projectOperations.project(key).getConfig();
-    assertThat(config).sections().containsExactly("access");
+    assertThat(config).sections().containsExactly("access", "submit");
     assertThat(config).subsections("access").containsExactly("refs/foo");
     assertThat(config)
         .subsectionValues("access", "refs/foo")
-        .containsExactly(
-            "abandon", "group global:Registered-Users",
-            "abandon", "group global:Registered-Users",
-            "abandon", "group global:Registered-Users");
+        // Duplicated permission in request was dropped
+        .containsExactly("abandon", "group global:Registered-Users");
   }
 
   @Test
@@ -365,7 +366,7 @@ public class ProjectOperationsImplTest extends AbstractDaemonTest {
         .update();
 
     Config config = projectOperations.project(key).getConfig();
-    assertThat(config).sections().containsExactly("access");
+    assertThat(config).sections().containsExactly("access", "submit");
     assertThat(config).subsections("access").containsExactly("refs/foo");
     assertThat(config)
         .subsectionValues("access", "refs/foo")
@@ -382,7 +383,7 @@ public class ProjectOperationsImplTest extends AbstractDaemonTest {
         .update();
 
     Config config = projectOperations.project(key).getConfig();
-    assertThat(config).sections().containsExactly("access");
+    assertThat(config).sections().containsExactly("access", "submit");
     assertThat(config).subsections("access").containsExactly("refs/foo");
     assertThat(config)
         .subsectionValues("access", "refs/foo")
@@ -400,7 +401,7 @@ public class ProjectOperationsImplTest extends AbstractDaemonTest {
         .update();
 
     Config config = projectOperations.project(key).getConfig();
-    assertThat(config).sections().containsExactly("access");
+    assertThat(config).sections().containsExactly("access", "submit");
     assertThat(config).subsections("access").containsExactly("refs/foo");
     assertThat(config)
         .subsectionValues("access", "refs/foo")
@@ -415,7 +416,7 @@ public class ProjectOperationsImplTest extends AbstractDaemonTest {
         .update();
 
     config = projectOperations.project(key).getConfig();
-    assertThat(config).sections().containsExactly("access");
+    assertThat(config).sections().containsExactly("access", "submit");
     assertThat(config).subsections("access").containsExactly("refs/foo");
     assertThat(config)
         .subsectionValues("access", "refs/foo")
@@ -437,11 +438,78 @@ public class ProjectOperationsImplTest extends AbstractDaemonTest {
         .update();
 
     Config config = projectOperations.project(key).getConfig();
-    assertThat(config).sections().containsExactly("access");
+    assertThat(config).sections().containsExactly("access", "submit");
     assertThat(config).subsections("access").containsExactly("refs/foo");
     assertThat(config)
         .subsectionValues("access", "refs/foo")
         .containsExactly("labelAs-Code-Review", "-1..+2 group global:Registered-Users");
+  }
+
+  @Test
+  public void addAllowLabelRemovalPermission() throws Exception {
+    Project.NameKey key = projectOperations.newProject().create();
+    projectOperations
+        .project(key)
+        .forUpdate()
+        .add(allowLabelRemoval("Code-Review").ref("refs/foo").group(REGISTERED_USERS).range(-1, 2))
+        .update();
+
+    Config config = projectOperations.project(key).getConfig();
+    assertThat(config).sections().containsExactly("access", "submit");
+    assertThat(config).subsections("access").containsExactly("refs/foo");
+    assertThat(config)
+        .subsectionValues("access", "refs/foo")
+        .containsExactly("removeLabel-Code-Review", "-1..+2 group global:Registered-Users");
+  }
+
+  @Test
+  public void addBlockLabelRemovalPermission() throws Exception {
+    Project.NameKey key = projectOperations.newProject().create();
+    projectOperations
+        .project(key)
+        .forUpdate()
+        .add(blockLabelRemoval("Code-Review").ref("refs/foo").group(REGISTERED_USERS).range(-1, 2))
+        .update();
+
+    Config config = projectOperations.project(key).getConfig();
+    assertThat(config).sections().containsExactly("access", "submit");
+    assertThat(config).subsections("access").containsExactly("refs/foo");
+    assertThat(config)
+        .subsectionValues("access", "refs/foo")
+        .containsExactly("removeLabel-Code-Review", "block -1..+2 group global:Registered-Users");
+  }
+
+  @Test
+  public void addAllowExclusiveLabelRemovalPermission() throws Exception {
+    Project.NameKey key = projectOperations.newProject().create();
+    projectOperations
+        .project(key)
+        .forUpdate()
+        .add(allowLabelRemoval("Code-Review").ref("refs/foo").group(REGISTERED_USERS).range(-1, 2))
+        .setExclusiveGroup(labelRemovalPermissionKey("Code-Review").ref("refs/foo"), true)
+        .update();
+
+    Config config = projectOperations.project(key).getConfig();
+    assertThat(config).sections().containsExactly("access", "submit");
+    assertThat(config).subsections("access").containsExactly("refs/foo");
+    assertThat(config)
+        .subsectionValues("access", "refs/foo")
+        .containsExactly(
+            "removeLabel-Code-Review", "-1..+2 group global:Registered-Users",
+            "exclusiveGroupPermissions", "removeLabel-Code-Review");
+
+    projectOperations
+        .project(key)
+        .forUpdate()
+        .setExclusiveGroup(labelRemovalPermissionKey("Code-Review").ref("refs/foo"), false)
+        .update();
+
+    config = projectOperations.project(key).getConfig();
+    assertThat(config).sections().containsExactly("access", "submit");
+    assertThat(config).subsections("access").containsExactly("refs/foo");
+    assertThat(config)
+        .subsectionValues("access", "refs/foo")
+        .containsExactly("removeLabel-Code-Review", "-1..+2 group global:Registered-Users");
   }
 
   @Test
@@ -539,6 +607,31 @@ public class ProjectOperationsImplTest extends AbstractDaemonTest {
     assertThat(projectOperations.project(key).getConfig())
         .subsectionValues("access", "refs/foo")
         .containsExactly("label-Code-Review", "-2..+1 group global:Project-Owners");
+  }
+
+  @Test
+  public void removeLabelRemovalPermission() throws Exception {
+    Project.NameKey key = projectOperations.newProject().create();
+    projectOperations
+        .project(key)
+        .forUpdate()
+        .add(allowLabelRemoval("Code-Review").ref("refs/foo").group(REGISTERED_USERS).range(-1, 2))
+        .add(allowLabelRemoval("Code-Review").ref("refs/foo").group(PROJECT_OWNERS).range(-2, 1))
+        .update();
+    assertThat(projectOperations.project(key).getConfig())
+        .subsectionValues("access", "refs/foo")
+        .containsExactly(
+            "removeLabel-Code-Review", "-1..+2 group global:Registered-Users",
+            "removeLabel-Code-Review", "-2..+1 group global:Project-Owners");
+
+    projectOperations
+        .project(key)
+        .forUpdate()
+        .remove(labelRemovalPermissionKey("Code-Review").ref("refs/foo").group(REGISTERED_USERS))
+        .update();
+    assertThat(projectOperations.project(key).getConfig())
+        .subsectionValues("access", "refs/foo")
+        .containsExactly("removeLabel-Code-Review", "-2..+1 group global:Project-Owners");
   }
 
   @Test

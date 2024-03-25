@@ -12,9 +12,8 @@ import {
   queryAndAssert,
   stubRestApi,
 } from '../../../test/test-utils';
-import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
 import {GrDialog} from '../../shared/gr-dialog/gr-dialog';
-import {EventType, PageErrorEvent} from '../../../types/events';
+import {PageErrorEvent} from '../../../types/events';
 import {RepoName} from '../../../types/common';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {fixture, html, assert} from '@open-wc/testing';
@@ -81,13 +80,7 @@ suite('gr-repo-commands tests', () => {
             </div>
           </div>
         </div>
-        <gr-overlay
-          aria-hidden="true"
-          id="createChangeOverlay"
-          style="outline: none; display: none;"
-          tabindex="-1"
-          with-backdrop=""
-        >
+        <dialog id="createChangeModal" tabindex="-1">
           <gr-dialog
             confirm-label="Create"
             disabled=""
@@ -100,7 +93,9 @@ suite('gr-repo-commands tests', () => {
               </gr-create-change-dialog>
             </div>
           </gr-dialog>
-        </gr-overlay>
+        </dialog>
+        <gr-create-file-edit-dialog id="createFileEditDialog">
+        </gr-create-file-edit-dialog>
       `,
       {ignoreTags: ['p']}
     );
@@ -109,8 +104,8 @@ suite('gr-repo-commands tests', () => {
   suite('create new change dialog', () => {
     test('createNewChange opens modal', () => {
       const openStub = sinon.stub(
-        queryAndAssert<GrOverlay>(element, '#createChangeOverlay'),
-        'open'
+        queryAndAssert<HTMLDialogElement>(element, '#createChangeModal'),
+        'showModal'
       );
       element.createNewChange();
       assert.isTrue(openStub.called);
@@ -152,7 +147,7 @@ suite('gr-repo-commands tests', () => {
       handleSpy = sinon.spy(element, 'handleEditRepoConfig');
       alertStub = sinon.stub();
       element.repo = 'test' as RepoName;
-      element.addEventListener(EventType.SHOW_ALERT, alertStub);
+      element.addEventListener('show-alert', alertStub);
     });
 
     test('successful creation of change', async () => {

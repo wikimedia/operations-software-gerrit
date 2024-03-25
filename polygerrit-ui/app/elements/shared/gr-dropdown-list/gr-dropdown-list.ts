@@ -14,7 +14,7 @@ import '../gr-file-status/gr-file-status';
 import {css, html, LitElement, PropertyValues} from 'lit';
 import {customElement, property, query} from 'lit/decorators.js';
 import {IronDropdownElement} from '@polymer/iron-dropdown/iron-dropdown';
-import {Timestamp} from '../../../types/common';
+import {CommentThread, Timestamp} from '../../../types/common';
 import {NormalizedFileInfo} from '../../change/gr-file-list/gr-file-list';
 import {GrButton} from '../gr-button/gr-button';
 import {assertIsDefined} from '../../../utils/common-util';
@@ -23,6 +23,7 @@ import {ValueChangedEvent} from '../../../types/events';
 import {incrementalRepeat} from '../../lit/incremental-repeat';
 import {when} from 'lit/directives/when.js';
 import {isMagicPath} from '../../../utils/path-list-util';
+import {fireNoBubble} from '../../../utils/event-util';
 
 /**
  * Required values are text and value. mobileText and triggerText will
@@ -42,6 +43,7 @@ export interface DropdownItem {
   date?: Timestamp;
   disabled?: boolean;
   file?: NormalizedFileInfo;
+  commentThreads?: CommentThread[];
 }
 
 declare global {
@@ -164,6 +166,9 @@ export class GrDropdownList extends LitElement {
             --selection-background-color
           );
         }
+        gr-comments-summary {
+          padding-left: var(--spacing-s);
+        }
         @media only screen and (max-width: 50em) {
           gr-select {
             display: var(--gr-select-style-display, inline);
@@ -250,7 +255,17 @@ export class GrDropdownList extends LitElement {
     return html`
       <paper-item ?disabled=${item.disabled} data-value=${item.value}>
         <div class="topContent">
-          <div>${item.text}</div>
+          <div>
+            <span>${item.text}</span>
+            ${when(
+              item.commentThreads,
+              () => html`<gr-comments-summary
+                .commentThreads=${item.commentThreads}
+                emptyWhenNoComments
+                showAvatarForResolved
+              ></gr-comments-summary>`
+            )}
+          </div>
           ${when(
             item.date,
             () => html`
@@ -303,12 +318,7 @@ export class GrDropdownList extends LitElement {
     this.text = selectedObj.triggerText
       ? selectedObj.triggerText
       : selectedObj.text;
-    this.dispatchEvent(
-      new CustomEvent('value-change', {
-        detail: {value: this.value},
-        bubbles: false,
-      })
-    );
+    fireNoBubble(this, 'value-change', {value: this.value});
   }
 
   /**

@@ -9,7 +9,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {CommentRange, CursorMoveResult} from './core';
+import {CursorMoveResult} from './core';
+import {CommentRange} from './rest-api';
 
 /**
  * Diff type in preferences
@@ -201,7 +202,7 @@ export declare interface DiffPreferencesInfo {
   syntax_highlighting?: boolean;
   tab_size: number;
   font_size: number;
-  // TODO: Missing documentation
+  // Hides the FILE and LOST diff rows. Default is TRUE.
   show_file_comment_button?: boolean;
   line_wrapping?: boolean;
 }
@@ -242,13 +243,14 @@ export declare interface RenderPreferences {
   image_diff_prefs?: ImageDiffPreferences;
   responsive_mode?: DiffResponsiveMode;
   num_lines_rendered_at_once?: number;
-  /**
-   * If enabled, then a new (experimental) diff rendering is used that is
-   * based on Lit components and multiple rendering passes. This is planned to
-   * be a temporary setting until the experiment is concluded.
-   */
-  use_lit_components?: boolean;
   show_sign_col?: boolean;
+  /**
+   * The default view mode is SIDE_BY_SIDE.
+   *
+   * Note that gr-diff also still supports setting viewMode as a dedicated
+   * property on <gr-diff>. TODO: Migrate usages to RenderPreferences.
+   */
+  view_mode?: DiffViewMode;
 }
 
 /**
@@ -327,6 +329,12 @@ export declare interface MovedLinkClickedEventDetail {
 export declare interface LineNumberEventDetail {
   side: Side;
   lineNum: LineNumber;
+}
+
+export declare interface LineSelectedEventDetail {
+  number: LineNumber;
+  side: Side;
+  path?: string;
 }
 
 // TODO: Currently unused and not fired.

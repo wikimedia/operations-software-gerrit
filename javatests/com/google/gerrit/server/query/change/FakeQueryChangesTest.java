@@ -35,14 +35,13 @@ import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.server.group.SystemGroupBackend;
 import com.google.gerrit.server.index.change.ChangeIndexCollection;
 import com.google.gerrit.testing.InMemoryModule;
-import com.google.gerrit.testing.InMemoryRepositoryManager;
-import com.google.gerrit.testing.InMemoryRepositoryManager.Repo;
 import com.google.inject.Guice;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
 import java.util.List;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.Config;
+import org.eclipse.jgit.lib.Repository;
 import org.junit.Test;
 
 /**
@@ -64,47 +63,51 @@ public abstract class FakeQueryChangesTest extends AbstractQueryChangesTest {
 
   @Test
   @UseClockStep
-  @SuppressWarnings("unchecked")
   public void stopQueryIfNoMoreResults() throws Exception {
     // create 2 visible changes
-    TestRepository<InMemoryRepositoryManager.Repo> testRepo = createProject("repo");
-    insert(testRepo, newChange(testRepo));
-    insert(testRepo, newChange(testRepo));
+    try (TestRepository<Repository> testRepo = createAndOpenProject("repo")) {
+      insert("repo", newChange(testRepo));
+      insert("repo", newChange(testRepo));
+    }
 
     // create 2 invisible changes
-    TestRepository<Repo> hiddenProject = createProject("hiddenProject");
-    insert(hiddenProject, newChange(hiddenProject));
-    insert(hiddenProject, newChange(hiddenProject));
-    projectOperations
-        .project(Project.nameKey("hiddenProject"))
-        .forUpdate()
-        .add(block(Permission.READ).ref("refs/*").group(REGISTERED_USERS))
-        .update();
+    try (TestRepository<Repository> hiddenProject = createAndOpenProject("hiddenProject")) {
+      insert("hiddenProject", newChange(hiddenProject));
+      insert("hiddenProject", newChange(hiddenProject));
+      projectOperations
+          .project(Project.nameKey("hiddenProject"))
+          .forUpdate()
+          .add(block(Permission.READ).ref("refs/*").group(REGISTERED_USERS))
+          .update();
+    }
 
-    AbstractFakeIndex idx = (AbstractFakeIndex) changeIndexCollection.getSearchIndex();
+    AbstractFakeIndex<?, ?, ?> idx =
+        (AbstractFakeIndex<?, ?, ?>) changeIndexCollection.getSearchIndex();
     newQuery("status:new").withLimit(5).get();
     assertThatSearchQueryWasNotPaginated(idx.getQueryCount());
   }
 
   @Test
   @UseClockStep
-  @SuppressWarnings("unchecked")
   public void noLimitQueryPaginates() throws Exception {
     assumeFalse(PaginationType.NONE == getCurrentPaginationType());
 
-    TestRepository<InMemoryRepositoryManager.Repo> testRepo = createProject("repo");
-    // create 4 changes
-    insert(testRepo, newChange(testRepo));
-    insert(testRepo, newChange(testRepo));
-    insert(testRepo, newChange(testRepo));
-    insert(testRepo, newChange(testRepo));
+    try (TestRepository<Repository> testRepo = createAndOpenProject("repo")) {
+      insert("repo", newChange(testRepo));
+      insert("repo", newChange(testRepo));
+      insert("repo", newChange(testRepo));
+      insert("repo", newChange(testRepo));
+    }
     // Set queryLimit to 2
     projectOperations
         .project(allProjects)
         .forUpdate()
         .add(allowCapability(QUERY_LIMIT).group(REGISTERED_USERS).range(0, 2))
         .update();
-    AbstractFakeIndex idx = (AbstractFakeIndex) changeIndexCollection.getSearchIndex();
+
+    AbstractFakeIndex<?, ?, ?> idx =
+        (AbstractFakeIndex<?, ?, ?>) changeIndexCollection.getSearchIndex();
+
     // 2 index searches are expected. The first index search will run with size 3 (i.e.
     // the configured query-limit+1), and then we will paginate to get the remaining
     // changes with the second index search.
@@ -180,17 +183,16 @@ public abstract class FakeQueryChangesTest extends AbstractQueryChangesTest {
 
   @Test
   @UseClockStep
-  @SuppressWarnings("unchecked")
   public void internalQueriesPaginate() throws Exception {
     assumeFalse(PaginationType.NONE == getCurrentPaginationType());
     final int LIMIT = 2;
 
-    TestRepository<Repo> testRepo = createProject("repo");
-    // create 4 changes
-    insert(testRepo, newChange(testRepo));
-    insert(testRepo, newChange(testRepo));
-    insert(testRepo, newChange(testRepo));
-    insert(testRepo, newChange(testRepo));
+    try (TestRepository<Repository> testRepo = createAndOpenProject("repo")) {
+      insert("repo", newChange(testRepo));
+      insert("repo", newChange(testRepo));
+      insert("repo", newChange(testRepo));
+      insert("repo", newChange(testRepo));
+    }
     // Set queryLimit to 2
     projectOperations
         .project(allProjects)
@@ -230,12 +232,12 @@ public abstract class FakeQueryChangesTest extends AbstractQueryChangesTest {
   }
 
   private AbstractFakeIndex setupRepoWithFourChanges() throws Exception {
-    TestRepository<Repo> testRepo = createProject("repo");
-    // create 4 changes
-    insert(testRepo, newChange(testRepo));
-    insert(testRepo, newChange(testRepo));
-    insert(testRepo, newChange(testRepo));
-    insert(testRepo, newChange(testRepo));
+    try (TestRepository<Repository> testRepo = createAndOpenProject("repo")) {
+      insert("repo", newChange(testRepo));
+      insert("repo", newChange(testRepo));
+      insert("repo", newChange(testRepo));
+      insert("repo", newChange(testRepo));
+    }
 
     // Set queryLimit to 2
     projectOperations

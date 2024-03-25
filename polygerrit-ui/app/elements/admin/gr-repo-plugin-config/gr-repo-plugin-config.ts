@@ -25,8 +25,7 @@ import {
   PluginOption,
 } from './gr-repo-plugin-config-types';
 import {paperStyles} from '../../../styles/gr-paper-styles';
-
-const PLUGIN_CONFIG_CHANGED_EVENT_NAME = 'plugin-config-changed';
+import {fire} from '../../../utils/event-util';
 
 export interface ConfigChangeInfo {
   _key: string; // parameterName of PluginParameterToConfigParameterInfoMap
@@ -256,14 +255,7 @@ export class GrRepoPluginConfig extends LitElement {
       name,
       config: {...config, [_key]: info},
     };
-
-    this.dispatchEvent(
-      new CustomEvent(PLUGIN_CONFIG_CHANGED_EVENT_NAME, {
-        detail,
-        bubbles: true,
-        composed: true,
-      })
-    );
+    fire(this, 'plugin-config-changed', detail);
   }
 
   /**
@@ -277,5 +269,8 @@ export class GrRepoPluginConfig extends LitElement {
 declare global {
   interface HTMLElementTagNameMap {
     'gr-repo-plugin-config': GrRepoPluginConfig;
+  }
+  interface HTMLElementEventMap {
+    'plugin-config-changed': CustomEvent<PluginConfigChangeDetail>;
   }
 }

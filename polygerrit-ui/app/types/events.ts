@@ -3,80 +3,62 @@
  * Copyright 2020 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {FixSuggestionInfo, PatchSetNum} from './common';
-import {ChangeMessage} from '../utils/comment-util';
+import {
+  AccountInfo,
+  ChangeMessage,
+  DropdownLink,
+  FixSuggestionInfo,
+  PatchSetNum,
+} from './common';
 import {FetchRequest} from './types';
 import {LineNumberEventDetail, MovedLinkClickedEventDetail} from '../api/diff';
 import {Category, RunStatus} from '../api/checks';
 
-export enum EventType {
-  BIND_VALUE_CHANGED = 'bind-value-changed',
-  CHANGE = 'change',
-  CHANGED = 'changed',
-  CHANGE_MESSAGE_DELETED = 'change-message-deleted',
-  COMMIT = 'commit',
-  DIALOG_CHANGE = 'dialog-change',
-  DROP = 'drop',
-  EDITABLE_CONTENT_SAVE = 'editable-content-save',
-  GR_RPC_LOG = 'gr-rpc-log',
-  IRON_ANNOUNCE = 'iron-announce',
-  KEYDOWN = 'keydown',
-  KEYPRESS = 'keypress',
-  LOCATION_CHANGE = 'location-change',
-  MOVED_LINK_CLICKED = 'moved-link-clicked',
-  NETWORK_ERROR = 'network-error',
-  OPEN_FIX_PREVIEW = 'open-fix-preview',
-  CLOSE_FIX_PREVIEW = 'close-fix-preview',
-  PAGE_ERROR = 'page-error',
-  RECREATE_CHANGE_VIEW = 'recreate-change-view',
-  RECREATE_DIFF_VIEW = 'recreate-diff-view',
-  RELOAD = 'reload',
-  REPLY = 'reply',
-  SERVER_ERROR = 'server-error',
-  SHORTCUT_TRIGGERERD = 'shortcut-triggered',
-  SHOW_ALERT = 'show-alert',
-  SHOW_ERROR = 'show-error',
-  SHOW_TAB = 'show-tab',
-  SHOW_SECONDARY_TAB = 'show-secondary-tab',
-  TAP_ITEM = 'tap-item',
-  TITLE_CHANGE = 'title-change',
-}
-
+// TODO: Local events that are only fired by one component should also be
+// declared and documented in that component. Don't collect ALL the events here.
+// 'show-alert' for example is fine to keep, because it is fired all over the
+// place. But 'line-cursor-moved-in' is only fired by <gr-diff-cursor>, so let's
+// move it there.
 declare global {
   interface HTMLElementEventMap {
-    /* prettier-ignore */
+    'add-reviewer': AddReviewerEvent;
     'bind-value-changed': BindValueChangeEvent;
-    /* prettier-ignore */
+    /** Fired when a 'cancel' button in a dialog was pressed. */
+    // prettier-ignore
+    'cancel': CustomEvent<{}>;
+    // prettier-ignore
     'change': ChangeEvent;
-    /* prettier-ignore */
+    // prettier-ignore
     'changed': ChangedEvent;
-    'change-message-deleted': ChangeMessageDeletedEvent;
-    /* prettier-ignore */
-    'commit': CommitEvent;
+    // prettier-ignore
+    'close': CustomEvent<{}>;
+    // prettier-ignore
+    'commit': AutocompleteCommitEvent;
+    /** Fired when a 'confirm' button in a dialog was pressed. */
+    // prettier-ignore
+    'confirm': CustomEvent<{}>;
     'dialog-change': DialogChangeEvent;
-    /* prettier-ignore */
+    // prettier-ignore
     'drop': DropEvent;
-    'editable-content-save': EditableContentSaveEvent;
+    'hide-alert': CustomEvent<{}>;
     'location-change': LocationChangeEvent;
     'iron-announce': IronAnnounceEvent;
+    'iron-resize': CustomEvent<{}>;
     'line-mouse-enter': LineNumberEvent;
     'line-mouse-leave': LineNumberEvent;
     'line-cursor-moved-in': LineNumberEvent;
     'line-cursor-moved-out': LineNumberEvent;
     'moved-link-clicked': MovedLinkClickedEvent;
     'open-fix-preview': OpenFixPreviewEvent;
-    'close-fix-preview': CloseFixPreviewEvent;
     'reply-to-comment': ReplyToCommentEvent;
-    /* prettier-ignore */
-    'reload': ReloadEvent;
-    /* prettier-ignore */
-    'reply': ReplyEvent;
+    // prettier-ignore
+    'reload': CustomEvent<{}>;
+    'remove-reviewer': RemoveReviewerEvent;
     'show-alert': ShowAlertEvent;
     'show-error': ShowErrorEvent;
     'show-tab': SwitchTabEvent;
     'show-secondary-tab': SwitchTabEvent;
     'tap-item': TapItemEvent;
-    'title-change': TitleChangeEvent;
   }
 }
 
@@ -85,14 +67,37 @@ declare global {
     'gr-rpc-log': RpcLogEvent;
     'network-error': NetworkErrorEvent;
     'page-error': PageErrorEvent;
-    /* prettier-ignore */
-    'reload': ReloadEvent;
+    // prettier-ignore
+    'reload': CustomEvent<{}>;
     'server-error': ServerErrorEvent;
     'show-alert': ShowAlertEvent;
     'show-error': ShowErrorEvent;
-    'location-change': LocationChangeEvent;
+    'auth-error': AuthErrorEvent;
+    'title-change': TitleChangeEvent;
   }
 }
+
+export interface AutocompleteCommitEventDetail {
+  value: string;
+}
+
+export type AutocompleteCommitEvent =
+  CustomEvent<AutocompleteCommitEventDetail>;
+
+export interface AddAccountEventDetail {
+  value: string;
+}
+export type AddAccountEvent = CustomEvent<AddAccountEventDetail>;
+
+export interface AddReviewerEventDetail {
+  reviewer: AccountInfo;
+}
+export type AddReviewerEvent = CustomEvent<AddReviewerEventDetail>;
+
+export interface RemoveReviewerEventDetail {
+  reviewer: AccountInfo;
+}
+export type RemoveReviewerEvent = CustomEvent<RemoveReviewerEventDetail>;
 
 export interface BindValueChangeEventDetail {
   value: string | undefined;
@@ -101,15 +106,14 @@ export type BindValueChangeEvent = CustomEvent<BindValueChangeEventDetail>;
 
 export type ChangeEvent = InputEvent;
 
-export type ChangedEvent = CustomEvent<string>;
+// TODO: This event seems to be unused (no listener). Remove?
+export type ChangedEvent = CustomEvent<string | undefined>;
 
 export interface ChangeMessageDeletedEventDetail {
   message: ChangeMessage;
 }
 export type ChangeMessageDeletedEvent =
   CustomEvent<ChangeMessageDeletedEventDetail>;
-
-export type CommitEvent = CustomEvent;
 
 // TODO(milutin) - remove once new gr-dialog will do it out of the box
 // This informs gr-app-element to remove footer, header from a11y tree
@@ -126,6 +130,13 @@ export interface EditableContentSaveEventDetail {
 }
 export type EditableContentSaveEvent =
   CustomEvent<EditableContentSaveEventDetail>;
+
+export interface FileActionTapEventDetail {
+  path: string;
+  action: string;
+}
+
+export type FileActionTapEvent = CustomEvent<FileActionTapEventDetail>;
 
 export interface RpcLogEventDetail {
   status: number | null;
@@ -158,18 +169,16 @@ export type NetworkErrorEvent = CustomEvent<NetworkErrorEventDetail>;
 export interface OpenFixPreviewEventDetail {
   patchNum: PatchSetNum;
   fixSuggestions: FixSuggestionInfo[];
+  onCloseFixPreviewCallbacks: ((fixapplied: boolean) => void)[];
 }
 export type OpenFixPreviewEvent = CustomEvent<OpenFixPreviewEventDetail>;
 
-export interface CloseFixPreviewEventDetail {
-  fixApplied: boolean;
-}
-export type CloseFixPreviewEvent = CustomEvent<CloseFixPreviewEventDetail>;
 export interface ReplyToCommentEventDetail {
   content: string;
   userWantsToEdit: boolean;
   unresolved: boolean;
 }
+
 export type ReplyToCommentEvent = CustomEvent<ReplyToCommentEventDetail>;
 
 export interface PageErrorEventDetail {
@@ -177,15 +186,10 @@ export interface PageErrorEventDetail {
 }
 export type PageErrorEvent = CustomEvent<PageErrorEventDetail>;
 
-export interface ReloadEventDetail {
-  clearPatchset: boolean;
+export interface RemoveAccountEventDetail {
+  account: AccountInfo;
 }
-export type ReloadEvent = CustomEvent<ReloadEventDetail>;
-
-export interface ReplyEventDetail {
-  message: ChangeMessage;
-}
-export type ReplyEvent = CustomEvent<ReplyEventDetail>;
+export type RemoveAccountEvent = CustomEvent<RemoveAccountEventDetail>;
 
 export interface ServerErrorEventDetail {
   request?: FetchRequest;
@@ -206,6 +210,20 @@ export interface ShowErrorEventDetail {
   message: string;
 }
 export type ShowErrorEvent = CustomEvent<ShowErrorEventDetail>;
+
+export interface ShowReplyDialogEventDetail {
+  value: {
+    reviewersOnly: boolean;
+    ccsOnly: boolean;
+  };
+}
+export type ShowReplyDialogEvent = CustomEvent<ShowReplyDialogEventDetail>;
+
+export interface AuthErrorEventDetail {
+  message: string;
+  action: string;
+}
+export type AuthErrorEvent = CustomEvent<AuthErrorEventDetail>;
 
 // Type for the custom event to switch tab.
 export interface SwitchTabEventDetail {
@@ -232,7 +250,7 @@ export interface ChecksTabState {
 }
 export type SwitchTabEvent = CustomEvent<SwitchTabEventDetail>;
 
-export type TapItemEvent = CustomEvent;
+export type TapItemEvent = CustomEvent<DropdownLink>;
 
 export interface TitleChangeEventDetail {
   title: string;

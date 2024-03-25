@@ -11,15 +11,17 @@ import {
   ChangeInfo,
   AccountInfo,
   RelatedChangeAndCommitInfo,
+  ChangeStates,
 } from '../types/common';
 import {ParsedChangeInfo} from '../types/types';
-import {ChangeStates} from '../elements/shared/gr-change-status/gr-change-status';
 import {getUserId, isServiceUser} from './account-util';
 
 // This can be wrong! See WARNING above
 interface ChangeStatusesOptions {
   mergeable: boolean; // This can be wrong! See WARNING above
   submitEnabled: boolean; // This can be wrong! See WARNING above
+  /** Is there a reverting change and if so, what status has it? */
+  revertingChangeStatus?: ChangeStatus;
 }
 
 export const ChangeDiffType = {
@@ -111,11 +113,11 @@ export function listChangesOptionsToHex(...args: number[]) {
 }
 
 export function changeBaseURL(
-  project: string,
+  repo: string,
   changeNum: NumericChangeId,
   patchNum: PatchSetNum
 ): string {
-  let v = `${getBaseUrl()}/changes/${encodeURIComponent(project)}~${changeNum}`;
+  let v = `${getBaseUrl()}/changes/${encodeURIComponent(repo)}~${changeNum}`;
   if (patchNum) {
     v += `/revisions/${patchNum}`;
   }
@@ -156,19 +158,22 @@ export function getChangeNumber(
 
 export function changeStatuses(
   change: ChangeInfo,
-  opt_options?: ChangeStatusesOptions
+  options?: ChangeStatusesOptions
 ): ChangeStates[] {
   const states = [];
   if (change.status === ChangeStatus.MERGED) {
+    if (options?.revertingChangeStatus === ChangeStatus.MERGED) {
+      return [ChangeStates.MERGED, ChangeStates.REVERT_SUBMITTED];
+    }
+    if (options?.revertingChangeStatus !== undefined) {
+      return [ChangeStates.MERGED, ChangeStates.REVERT_CREATED];
+    }
     return [ChangeStates.MERGED];
   }
   if (change.status === ChangeStatus.ABANDONED) {
     return [ChangeStates.ABANDONED];
   }
-  if (
-    change.mergeable === false ||
-    (opt_options && opt_options.mergeable === false)
-  ) {
+  if (change.mergeable === false || (options && options.mergeable === false)) {
     // 'mergeable' prop may not always exist (@see Issue 6819)
     states.push(ChangeStates.MERGE_CONFLICT);
   } else if (change.contains_git_conflicts) {
@@ -183,12 +188,12 @@ export function changeStatuses(
 
   // If there are any pre-defined statuses, only return those. Otherwise,
   // will determine the derived status.
-  if (states.length || !opt_options) {
+  if (states.length || !options) {
     return states;
   }
 
   // If no missing requirements, either active or ready to submit.
-  if (change.submittable && opt_options.submitEnabled) {
+  if (change.submittable && options.submitEnabled) {
     states.push(ChangeStates.READY_TO_SUBMIT);
   } else {
     // Otherwise it is active.

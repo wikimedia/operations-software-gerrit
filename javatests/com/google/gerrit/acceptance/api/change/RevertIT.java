@@ -26,14 +26,15 @@ import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.ExtensionRegistry;
 import com.google.gerrit.acceptance.ExtensionRegistry.Registration;
 import com.google.gerrit.acceptance.PushOneCommit;
+import com.google.gerrit.acceptance.TestAccount;
 import com.google.gerrit.acceptance.TestProjectInput;
 import com.google.gerrit.acceptance.config.GerritConfig;
+import com.google.gerrit.acceptance.testsuite.account.AccountOperations;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Permission;
 import com.google.gerrit.entities.Project;
-import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.changes.ChangeApi;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.api.changes.RevertInput;
@@ -62,9 +63,9 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.junit.TestRepository;
-import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.transport.RefSpec;
 import org.junit.Test;
 
@@ -73,63 +74,7 @@ public class RevertIT extends AbstractDaemonTest {
   @Inject private ProjectOperations projectOperations;
   @Inject private RequestScopeOperations requestScopeOperations;
   @Inject private ExtensionRegistry extensionRegistry;
-
-  @Test
-  public void pureRevertFactBlocksSubmissionOfNonReverts() throws Exception {
-    addPureRevertSubmitRule();
-
-    // Create a change that is not a revert of another change
-    PushOneCommit.Result r1 = pushFactory.create(user.newIdent(), testRepo).to("refs/for/master");
-    approve(r1.getChangeId());
-
-    ResourceConflictException thrown =
-        assertThrows(
-            ResourceConflictException.class,
-            () -> gApi.changes().id(r1.getChangeId()).current().submit());
-    assertThat(thrown)
-        .hasMessageThat()
-        .contains("Failed to submit 1 change due to the following problems");
-    assertThat(thrown)
-        .hasMessageThat()
-        .contains("submit requirement 'Is-Pure-Revert' is unsatisfied.");
-  }
-
-  @Test
-  public void pureRevertFactBlocksSubmissionOfNonPureReverts() throws Exception {
-    PushOneCommit.Result r1 = pushFactory.create(user.newIdent(), testRepo).to("refs/for/master");
-    merge(r1);
-
-    addPureRevertSubmitRule();
-
-    // Create a revert and push a content change
-    String revertId = gApi.changes().id(r1.getChangeId()).revert().get().changeId;
-    amendChange(revertId);
-    approve(revertId);
-
-    ResourceConflictException thrown =
-        assertThrows(
-            ResourceConflictException.class, () -> gApi.changes().id(revertId).current().submit());
-    assertThat(thrown)
-        .hasMessageThat()
-        .contains("Failed to submit 1 change due to the following problems");
-    assertThat(thrown)
-        .hasMessageThat()
-        .contains("submit requirement 'Is-Pure-Revert' is unsatisfied.");
-  }
-
-  @Test
-  public void pureRevertFactAllowsSubmissionOfPureReverts() throws Exception {
-    // Create a change that we can later revert
-    PushOneCommit.Result r1 = pushFactory.create(user.newIdent(), testRepo).to("refs/for/master");
-    merge(r1);
-
-    addPureRevertSubmitRule();
-
-    // Create a revert and submit it
-    String revertId = gApi.changes().id(r1.getChangeId()).revert().get().changeId;
-    approve(revertId);
-    gApi.changes().id(revertId).current().submit();
-  }
+  @Inject private AccountOperations accountOperations;
 
   @Test
   public void pureRevertReturnsTrueForPureRevert() throws Exception {
@@ -267,10 +212,19 @@ public class RevertIT extends AbstractDaemonTest {
     PushOneCommit.Result r = createChange();
     gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).review(ReviewInput.approve());
     gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).submit();
-
     RevertInput in = createWipRevertInput();
+
     ChangeInfo revertChange = gApi.changes().id(r.getChangeId()).revert(in).get();
+
     assertThat(revertChange.workInProgress).isTrue();
+    // expected messages on source change:
+    // 1. Uploaded patch set 1.
+    // 2. Patch Set 1: Code-Review+2
+    // 3. Change has been successfully merged by Administrator
+    // No "reverted" message is expected.
+    List<ChangeMessageInfo> sourceMessages =
+        new ArrayList<>(gApi.changes().id(r.getChangeId()).get().messages);
+    assertThat(sourceMessages).hasSize(3);
   }
 
   @Test
@@ -365,14 +319,14 @@ public class RevertIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void revertNotificationsSupressedOnWip() throws Exception {
+  public void revertNotificationsSuppressedOnWip() throws Exception {
     PushOneCommit.Result r = createChange();
     gApi.changes().id(r.getChangeId()).addReviewer(user.email());
     gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).review(ReviewInput.approve());
     gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).submit();
 
     sender.clear();
-    // If notify input not specified, the endpoint overrides it to OWNER
+    // If notify input not specified, the endpoint overrides it to NONE
     RevertInput revertInput = createWipRevertInput();
     revertInput.notify = null;
     gApi.changes().id(r.getChangeId()).revert(revertInput).get();
@@ -421,6 +375,73 @@ public class RevertIT extends AbstractDaemonTest {
         result.get(ReviewerState.CC).stream().map(a -> a._accountId).collect(toList());
     assertThat(ccs).containsExactly(accountCreator.user2().id().get());
     assertThat(reviewers).containsExactly(user.id().get(), admin.id().get());
+  }
+
+  @Test
+  public void revertAllowedIfUserAccountIsInactive() throws Exception {
+    PushOneCommit.Result r = createChange();
+    ReviewInput in = ReviewInput.approve();
+    in.reviewer(user.email());
+    in.reviewer(accountCreator.user2().email(), ReviewerState.CC, true);
+    // Add user as reviewer that will create the revert
+    in.reviewer(accountCreator.admin2().email());
+    gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).review(in);
+    gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).submit();
+
+    accountOperations.account(user.id()).forUpdate().inactive().update();
+    accountOperations.account(accountCreator.user2().id()).forUpdate().inactive().update();
+
+    requestScopeOperations.setApiUser(accountCreator.admin2().id());
+    Map<ReviewerState, Collection<AccountInfo>> result =
+        gApi.changes().id(r.getChangeId()).revert().get().reviewers;
+    assertThat(result).containsKey(ReviewerState.REVIEWER);
+
+    // The active user should be preserved as reviewer. For inactive user this test doesn't
+    // fix specific behavior - they can be either preserved or removed depending on the
+    // implementation.
+    List<Integer> reviewers =
+        result.get(ReviewerState.REVIEWER).stream().map(a -> a._accountId).collect(toList());
+    assertThat(reviewers).contains(admin.id().get());
+  }
+
+  @Test
+  @GerritConfig(name = "accounts.visibility", value = "SAME_GROUP")
+  public void revertWithNonVisibleUsers() throws Exception {
+    // Define readable names for the users we use in this test.
+    TestAccount reverter = user;
+    TestAccount changeOwner = admin; // must be admin, since admin cloned testRepo
+    TestAccount reviewer = accountCreator.user2();
+    TestAccount cc =
+        accountCreator.create("user3", "user3@example.com", "User3", /* displayName= */ null);
+
+    // Check that the reverter can neither see the changeOwner, the reviewer nor the cc.
+    requestScopeOperations.setApiUser(reverter.id());
+    assertThatAccountIsNotVisible(changeOwner, reviewer, cc);
+
+    // Create the change.
+    requestScopeOperations.setApiUser(changeOwner.id());
+    PushOneCommit.Result r = createChange();
+
+    // Add reviewer and cc.
+    ReviewInput reviewerInput = ReviewInput.approve();
+    reviewerInput.reviewer(reviewer.email());
+    reviewerInput.cc(cc.email());
+    gApi.changes().id(r.getChangeId()).current().review(reviewerInput);
+
+    // Approve and submit the change.
+    gApi.changes().id(r.getChangeId()).current().review(ReviewInput.approve());
+    gApi.changes().id(r.getChangeId()).current().submit();
+
+    // Revert the change.
+    requestScopeOperations.setApiUser(reverter.id());
+    String revertChangeId = gApi.changes().id(r.getChangeId()).revert().get().id;
+
+    // Revert doesn't check the reviewer/CC visibility. Since the reverter can see the reverted
+    // change, they can also see its reviewers/CCs. This means preserving them on the revert change
+    // doesn't expose their account existence and it's OK to keep them even if their accounts are
+    // not visible to the reverter.
+    assertReviewers(revertChangeId, changeOwner, reviewer);
+    assertCcs(revertChangeId, cc);
   }
 
   @Test
@@ -765,8 +786,7 @@ public class RevertIT extends AbstractDaemonTest {
     gApi.changes().id(secondResult).current().submit();
 
     sender.clear();
-    RevertInput revertInput = new RevertInput();
-    revertInput.workInProgress = true;
+    RevertInput revertInput = createWipRevertInput();
     revertInput.notify = NotifyHandling.NONE;
     gApi.changes().id(secondResult).revertSubmission(revertInput);
     assertThat(sender.getMessages()).isEmpty();
@@ -788,9 +808,14 @@ public class RevertIT extends AbstractDaemonTest {
     // If notify handling is specified, it will be used by the API
     RevertInput revertInput = createWipRevertInput();
     revertInput.notify = NotifyHandling.ALL;
-    gApi.changes().id(changeId2).revertSubmission(revertInput);
+    RevertSubmissionInfo revertChanges = gApi.changes().id(changeId2).revertSubmission(revertInput);
 
-    assertThat(sender.getMessages()).hasSize(4);
+    assertThat(revertChanges.revertChanges).hasSize(2);
+    assertThat(sender.getMessages()).hasSize(2);
+    assertThat(sender.getMessages(revertChanges.revertChanges.get(0).changeId, "newchange"))
+        .hasSize(1);
+    assertThat(sender.getMessages(revertChanges.revertChanges.get(1).changeId, "newchange"))
+        .hasSize(1);
   }
 
   @Test
@@ -801,17 +826,23 @@ public class RevertIT extends AbstractDaemonTest {
     String changeId2 = createChange("second change", "b.txt", "other").getChangeId();
     approve(changeId2);
     gApi.changes().id(changeId2).addReviewer(user.email());
-
     gApi.changes().id(changeId2).current().submit();
-
     sender.clear();
-
     RevertInput revertInput = createWipRevertInput();
+
     RevertSubmissionInfo revertSubmissionInfo =
         gApi.changes().id(changeId2).revertSubmission(revertInput);
 
     assertThat(revertSubmissionInfo.revertChanges.stream().allMatch(r -> r.workInProgress))
         .isTrue();
+
+    // expected messages on source change:
+    // 1. Uploaded patch set 1.
+    // 2. Patch Set 1: Code-Review+2
+    // 3. Change has been successfully merged by Administrator
+    // No "reverted" message is expected.
+    assertThat(gApi.changes().id(changeId1).get().messages).hasSize(3);
+    assertThat(gApi.changes().id(changeId2).get().messages).hasSize(3);
   }
 
   @Test
@@ -1218,10 +1249,38 @@ public class RevertIT extends AbstractDaemonTest {
                 .distinct()
                 .count())
         .isEqualTo(1);
+
+    // Size
     List<ChangeApi> revertChanges = getChangeApis(revertSubmissionInfo);
+    assertThat(revertChanges).hasSize(3);
+    assertThat(gApi.changes().id(revertChanges.get(1).id()).current().related().changes).hasSize(2);
+
+    // Contents
     assertThat(revertChanges.get(0).current().files().get("c.txt").linesDeleted).isEqualTo(1);
     assertThat(revertChanges.get(1).current().files().get("a.txt").linesDeleted).isEqualTo(1);
     assertThat(revertChanges.get(2).current().files().get("b.txt").linesDeleted).isEqualTo(1);
+
+    // Commit message
+    assertThat(revertChanges.get(0).current().commit(false).message)
+        .matches(
+            Pattern.compile(
+                "Revert \"first change\"\n\n"
+                    + "This reverts commit [a-f0-9]+\\.\n\n"
+                    + "Change-Id: I[a-f0-9]+\n"));
+    assertThat(revertChanges.get(1).current().commit(false).message)
+        .matches(
+            Pattern.compile(
+                "Revert \"second change\"\n\n"
+                    + "This reverts commit [a-f0-9]+\\.\n\n"
+                    + "Change-Id: I[a-f0-9]+\n"));
+    assertThat(revertChanges.get(2).current().commit(false).message)
+        .matches(
+            Pattern.compile(
+                "Revert \"third change\"\n\n"
+                    + "This reverts commit [a-f0-9]+\\.\n\n"
+                    + "Change-Id: I[a-f0-9]+\n"));
+
+    // Relationships
     String sha1FirstChange = resultCommits.get(0).getCommit().getName();
     String sha1ThirdChange = resultCommits.get(2).getCommit().getName();
     String sha1SecondRevert = revertChanges.get(2).current().commit(false).commit;
@@ -1231,9 +1290,6 @@ public class RevertIT extends AbstractDaemonTest {
         .isEqualTo(sha1ThirdChange);
     assertThat(revertChanges.get(1).current().commit(false).parents.get(0).commit)
         .isEqualTo(sha1SecondRevert);
-
-    assertThat(revertChanges).hasSize(3);
-    assertThat(gApi.changes().id(revertChanges.get(1).id()).current().related().changes).hasSize(2);
   }
 
   @Test
@@ -1446,34 +1502,6 @@ public class RevertIT extends AbstractDaemonTest {
     PushOneCommit.Result result = push.to(ref);
     result.assertOkStatus();
     return result;
-  }
-
-  private void addPureRevertSubmitRule() throws Exception {
-    modifySubmitRules(
-        "submit_rule(submit(R)) :- \n"
-            + "gerrit:pure_revert(1), \n"
-            + "!,"
-            + "gerrit:uploader(U), \n"
-            + "R = label('Is-Pure-Revert', ok(U)).\n"
-            + "submit_rule(submit(R)) :- \n"
-            + "gerrit:pure_revert(U), \n"
-            + "U \\= 1,"
-            + "R = label('Is-Pure-Revert', need(_)). \n\n");
-  }
-
-  private void modifySubmitRules(String newContent) throws Exception {
-    try (Repository repo = repoManager.openRepository(project);
-        TestRepository<Repository> testRepo = new TestRepository<>(repo)) {
-      testRepo
-          .branch(RefNames.REFS_CONFIG)
-          .commit()
-          .author(admin.newIdent())
-          .committer(admin.newIdent())
-          .add("rules.pl", newContent)
-          .message("Modify rules.pl")
-          .create();
-    }
-    projectCache.evict(project);
   }
 
   private List<ChangeApi> getChangeApis(RevertSubmissionInfo revertSubmissionInfo)

@@ -9,14 +9,13 @@ import '../../../elements/shared/gr-button/gr-button';
 import '../../../elements/shared/gr-icon/gr-icon';
 import {DiffViewMode} from '../../../constants/constants';
 import {customElement, property, state} from 'lit/decorators.js';
-import {IronA11yAnnouncer} from '@polymer/iron-a11y-announcer/iron-a11y-announcer';
-import {FixIronA11yAnnouncer} from '../../../types/types';
-import {getAppContext} from '../../../services/app-context';
 import {fireIronAnnounce} from '../../../utils/event-util';
 import {browserModelToken} from '../../../models/browser/browser-model';
 import {resolve} from '../../../models/dependency';
 import {css, html, LitElement} from 'lit';
 import {sharedStyles} from '../../../styles/shared-styles';
+import {userModelToken} from '../../../models/user/user-model';
+import {ironAnnouncerRequestAvailability} from '../../../elements/polymer-util';
 
 @customElement('gr-diff-mode-selector')
 export class GrDiffModeSelector extends LitElement {
@@ -34,7 +33,7 @@ export class GrDiffModeSelector extends LitElement {
 
   private readonly getBrowserModel = resolve(this, browserModelToken);
 
-  private readonly userModel = getAppContext().userModel;
+  private readonly getUserModel = resolve(this, userModelToken);
 
   private subscriptions: Subscription[] = [];
 
@@ -44,9 +43,7 @@ export class GrDiffModeSelector extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
-    (
-      IronA11yAnnouncer as unknown as FixIronA11yAnnouncer
-    ).requestAvailability();
+    ironAnnouncerRequestAvailability();
     this.subscriptions.push(
       this.getBrowserModel().diffViewMode$.subscribe(
         diffView => (this.mode = diffView)
@@ -118,7 +115,7 @@ export class GrDiffModeSelector extends LitElement {
    */
   private setMode(newMode: DiffViewMode) {
     if (this.saveOnChange && this.mode && this.mode !== newMode) {
-      this.userModel.updatePreferences({diff_view: newMode});
+      this.getUserModel().updatePreferences({diff_view: newMode});
     }
     this.mode = newMode;
     let announcement;

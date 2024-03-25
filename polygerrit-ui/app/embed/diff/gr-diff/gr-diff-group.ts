@@ -8,6 +8,8 @@ import {LineRange, Side} from '../../../api/diff';
 import {LineNumber} from './gr-diff-line';
 import {assertIsDefined, assert} from '../../../utils/common-util';
 import {untilRendered} from '../../../utils/dom-util';
+import {isDefined} from '../../../types/types';
+import {LitElement} from 'lit';
 
 export enum GrDiffGroupType {
   /** Unchanged context. */
@@ -65,7 +67,7 @@ export function hideInContextControl(
   // because then that row would consume as much space as the collapsed code.
   if (numHidden > 3) {
     if (hiddenStart) {
-      [before, hidden] = _splitCommonGroups(hidden, hiddenStart);
+      [before, hidden] = splitCommonGroups(hidden, hiddenStart);
     }
     if (hiddenEnd) {
       let beforeLength = 0;
@@ -74,7 +76,7 @@ export function hideInContextControl(
         const beforeEnd = before[before.length - 1].lineRange.left.end_line;
         beforeLength = beforeEnd - beforeStart + 1;
       }
-      [hidden, after] = _splitCommonGroups(hidden, hiddenEnd - beforeLength);
+      [hidden, after] = splitCommonGroups(hidden, hiddenEnd - beforeLength);
     }
   } else {
     [hidden, after] = [[], hidden];
@@ -95,7 +97,7 @@ export function hideInContextControl(
 
 /**
  * Splits a group in two, defined by leftSplit and rightSplit. Primarily to be
- * used in function _splitCommonGroups
+ * used in function splitCommonGroups
  * Groups with some lines before and some lines after the split will be split
  * into two groups, which will be put into the first and second list.
  *
@@ -104,7 +106,7 @@ export function hideInContextControl(
  * @param rightSplit The line number relative to the split on the right side
  * @return two new groups, one before the split and another after it
  */
-function _splitGroupInTwo(
+function splitGroupInTwo(
   group: GrDiffGroup,
   leftSplit: number,
   rightSplit: number
@@ -130,8 +132,14 @@ function _splitGroupInTwo(
     const after = [];
     for (const line of group.lines) {
       if (
-        (line.beforeNumber && line.beforeNumber < leftSplit) ||
-        (line.afterNumber && line.afterNumber < rightSplit)
+        (line.beforeNumber &&
+          line.beforeNumber !== 'FILE' &&
+          line.beforeNumber !== 'LOST' &&
+          line.beforeNumber < leftSplit) ||
+        (line.afterNumber &&
+          line.afterNumber !== 'FILE' &&
+          line.afterNumber !== 'LOST' &&
+          line.afterNumber < rightSplit)
       ) {
         before.push(line);
       } else {
@@ -167,7 +175,7 @@ function _splitGroupInTwo(
  * @return The outer array has 2 elements, the
  *   list of groups before and the list of groups after the split.
  */
-function _splitCommonGroups(
+function splitCommonGroups(
   groups: readonly GrDiffGroup[],
   split: number
 ): GrDiffGroup[][] {
@@ -189,7 +197,7 @@ function _splitCommonGroups(
     } else if (isCompletelyAfter) {
       afterGroups.push(group);
     } else {
-      const {beforeSplit, afterSplit} = _splitGroupInTwo(
+      const {beforeSplit, afterSplit} = splitGroupInTwo(
         group,
         leftSplit,
         rightSplit
@@ -385,10 +393,7 @@ export class GrDiffGroup {
       this.type === GrDiffGroupType.CONTEXT_CONTROL
     ) {
       return this.lines.map(line => {
-        return {
-          left: line,
-          right: line,
-        };
+        return {left: line, right: line};
       });
     }
 
@@ -406,9 +411,27 @@ export class GrDiffGroup {
     return pairs;
   }
 
+  getUnifiedPairs(): GrDiffLinePair[] {
+    return this.lines
+      .map(line => {
+        if (line.type === GrDiffLineType.ADD) {
+          return {left: BLANK_LINE, right: line};
+        }
+        if (line.type === GrDiffLineType.REMOVE) {
+          if (this.ignoredWhitespaceOnly) return undefined;
+          return {left: line, right: BLANK_LINE};
+        }
+        return {left: line, right: line};
+      })
+      .filter(isDefined);
+  }
+
   /** Returns true if it is, or contains, a skip group. */
   hasSkipGroup() {
-    return !!this.skip || this.contextGroups?.some(g => !!g.skip);
+    return (
+      this.skip !== undefined ||
+      this.contextGroups?.some(g => g.skip !== undefined)
+    );
   }
 
   containsLine(side: Side, line: LineNumber) {
@@ -418,6 +441,24 @@ export class GrDiffGroup {
     }
     const lineRange = this.lineRange[side];
     return lineRange.start_line <= line && line <= lineRange.end_line;
+  }
+
+  startLine(side: Side): LineNumber {
+    // For both CONTEXT_CONTROL groups and SKIP groups the `lines` array will
+    // be empty. So we have to use `lineRange` instead of looking at the first
+    // line.
+    if (
+      this.type === GrDiffGroupType.CONTEXT_CONTROL ||
+      this.skip !== undefined
+    ) {
+      return side === Side.LEFT
+        ? this.lineRange.left.start_line
+        : this.lineRange.right.start_line;
+    }
+    // For "normal" groups we could also use the `lineRange`, but for FILE or
+    // LOST lines we want to return FILE or LOST. The `lineRange` contains
+    // numbers only.
+    return this.lines[0].lineNumber(side);
   }
 
   private _updateRangeWithNewLine(line: GrDiffLine) {
@@ -463,7 +504,7 @@ export class GrDiffGroup {
     // The LOST or FILE lines may be hidden and thus never resolve an
     // untilRendered() promise.
     if (
-      this.skip ||
+      this.skip !== undefined ||
       lineNumber === 'LOST' ||
       lineNumber === 'FILE' ||
       this.type === GrDiffGroupType.CONTEXT_CONTROL
@@ -471,7 +512,8 @@ export class GrDiffGroup {
       return Promise.resolve();
     }
     assertIsDefined(this.element);
-    await untilRendered(this.element);
+    await (this.element as LitElement).updateComplete;
+    await untilRendered(this.element.firstElementChild as HTMLElement);
   }
 
   /**

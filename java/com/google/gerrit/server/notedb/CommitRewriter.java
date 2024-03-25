@@ -15,12 +15,12 @@ package com.google.gerrit.server.notedb;
 
 import static com.google.common.base.MoreObjects.firstNonNull;
 import static com.google.common.base.Preconditions.checkState;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_ASSIGNEE;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_ATTENTION;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_LABEL;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_REAL_USER;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_SUBMITTED_WITH;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_TAG;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_ATTENTION;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_LABEL;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_REAL_USER;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_SUBMITTED_WITH;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_TAG;
+import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.CHANGE_MODIFICATION;
 import static com.google.gerrit.server.util.AccountTemplateUtil.ACCOUNT_TEMPLATE_PATTERN;
 import static com.google.gerrit.server.util.AccountTemplateUtil.ACCOUNT_TEMPLATE_REGEX;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -49,6 +49,7 @@ import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.notedb.ChangeNoteUtil.AttentionStatusInNoteDb;
 import com.google.gerrit.server.notedb.ChangeNoteUtil.CommitMessageRange;
+import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.gerrit.server.util.AccountTemplateUtil;
 import com.google.gson.Gson;
 import com.google.inject.Inject;
@@ -89,6 +90,7 @@ import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.revwalk.FooterKey;
 import org.eclipse.jgit.revwalk.FooterLine;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevSort;
@@ -110,6 +112,10 @@ import org.eclipse.jgit.util.RawParseUtils;
 @UsedAt(UsedAt.Project.GOOGLE)
 @Singleton
 public class CommitRewriter {
+  // Reading and Writing assignee footer no longer supported. We keep the definition here to be able
+  // to rewrite older commit messages.
+  public static final FooterKey FOOTER_ASSIGNEE = new FooterKey("Assignee");
+
   /** Options to run {@link #backfillProject}. */
   public static class RunOptions implements Serializable {
     private static final long serialVersionUID = 1L;
@@ -340,13 +346,15 @@ public class CommitRewriter {
     if (refsUpdate == null) {
       return;
     }
-    if (!refsUpdate.batchRefUpdate().getCommands().isEmpty()) {
-      if (!options.dryRun) {
-        refsUpdate.inserter().flush();
-        RefUpdateUtil.executeChecked(refsUpdate.batchRefUpdate(), refsUpdate.revWalk());
+    try (RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
+      if (!refsUpdate.batchRefUpdate().getCommands().isEmpty()) {
+        if (!options.dryRun) {
+          refsUpdate.inserter().flush();
+          RefUpdateUtil.executeChecked(refsUpdate.batchRefUpdate(), refsUpdate.revWalk());
+        }
       }
+      refsUpdate.close();
     }
-    refsUpdate.close();
   }
 
   /**
@@ -368,7 +376,9 @@ public class CommitRewriter {
       }
     }
     accounts.addAll(changeNotes.getAllPastReviewers());
-    accounts.addAll(changeNotes.getPastAssignees());
+    // Change Notes class can no longer read or write assignees, we skip assignee accounts at
+    // verifyCommit stage.
+    // accounts.addAll(changeNotes.getPastAssignees());
     changeNotes
         .getAttentionSetUpdates()
         .forEach(attentionSetUpdate -> accounts.add(attentionSetUpdate.account()));
@@ -896,7 +906,7 @@ public class CommitRewriter {
             commitMessageRange.get().subjectEnd());
     Optional<String> fixedChangeMessage = Optional.empty();
     String originalChangeMessage = null;
-    if (commitMessageRange.isPresent() && commitMessageRange.get().hasChangeMessage()) {
+    if (commitMessageRange.get().hasChangeMessage()) {
       originalChangeMessage =
           RawParseUtils.decode(
                   enc,

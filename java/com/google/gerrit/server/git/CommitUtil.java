@@ -15,9 +15,9 @@
 package com.google.gerrit.server.git;
 
 import static com.google.common.base.MoreObjects.firstNonNull;
+import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.CHANGE_MODIFICATION;
 
 import com.google.common.base.Strings;
-import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
@@ -26,10 +26,13 @@ import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.api.changes.RevertInput;
 import com.google.gerrit.extensions.common.CommitInfo;
+import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestApiException;
+import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
 import com.google.gerrit.server.ChangeMessagesUtil;
+import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.CommonConverters;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.GerritPersonIdent;
@@ -38,17 +41,21 @@ import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.change.ChangeInserter;
 import com.google.gerrit.server.change.ChangeMessages;
 import com.google.gerrit.server.change.NotifyResolver;
+import com.google.gerrit.server.change.ValidationOptionsUtil;
 import com.google.gerrit.server.extensions.events.ChangeReverted;
 import com.google.gerrit.server.mail.send.MessageIdGenerator;
 import com.google.gerrit.server.mail.send.RevertedSender;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
 import com.google.gerrit.server.notedb.Sequences;
+import com.google.gerrit.server.query.change.ChangeData;
+import com.google.gerrit.server.query.change.InternalChangeQuery;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.gerrit.server.update.UpdateException;
+import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.gerrit.server.util.CommitMessageUtil;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
@@ -58,15 +65,18 @@ import java.text.MessageFormat;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.Map;
+import java.util.List;
 import java.util.Set;
 import org.eclipse.jgit.errors.ConfigInvalidException;
+import org.eclipse.jgit.errors.InvalidObjectIdException;
+import org.eclipse.jgit.errors.MissingObjectException;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.PersonIdent;
+import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
@@ -85,6 +95,7 @@ public class CommitUtil {
   private final NotifyResolver notifyResolver;
   private final RevertedSender.Factory revertedSenderFactory;
   private final ChangeMessagesUtil cmUtil;
+  private final ChangeNotes.Factory changeNotesFactory;
   private final ChangeReverted changeReverted;
   private final BatchUpdate.Factory updateFactory;
   private final MessageIdGenerator messageIdGenerator;
@@ -99,6 +110,7 @@ public class CommitUtil {
       NotifyResolver notifyResolver,
       RevertedSender.Factory revertedSenderFactory,
       ChangeMessagesUtil cmUtil,
+      ChangeNotes.Factory changeNotesFactory,
       ChangeReverted changeReverted,
       BatchUpdate.Factory updateFactory,
       MessageIdGenerator messageIdGenerator) {
@@ -110,6 +122,7 @@ public class CommitUtil {
     this.notifyResolver = notifyResolver;
     this.revertedSenderFactory = revertedSenderFactory;
     this.cmUtil = cmUtil;
+    this.changeNotesFactory = changeNotesFactory;
     this.changeReverted = changeReverted;
     this.updateFactory = updateFactory;
     this.messageIdGenerator = messageIdGenerator;
@@ -151,18 +164,19 @@ public class CommitUtil {
       ChangeNotes notes, CurrentUser user, RevertInput input, Instant timestamp)
       throws RestApiException, UpdateException, ConfigInvalidException, IOException {
     String message = Strings.emptyToNull(input.message);
-
-    try (Repository git = repoManager.openRepository(notes.getProjectName());
-        ObjectInserter oi = git.newObjectInserter();
-        ObjectReader reader = oi.newReader();
-        RevWalk revWalk = new RevWalk(reader)) {
-      ObjectId generatedChangeId = CommitMessageUtil.generateChangeId();
-      ObjectId revCommit =
-          createRevertCommit(message, notes, user, timestamp, oi, revWalk, generatedChangeId);
-      return createRevertChangeFromCommit(
-          revCommit, input, notes, user, generatedChangeId, timestamp, oi, revWalk, git);
-    } catch (RepositoryNotFoundException e) {
-      throw new ResourceNotFoundException(notes.getChangeId().toString(), e);
+    try (RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
+      try (Repository git = repoManager.openRepository(notes.getProjectName());
+          ObjectInserter oi = git.newObjectInserter();
+          ObjectReader reader = oi.newReader();
+          RevWalk revWalk = new RevWalk(reader)) {
+        ObjectId generatedChangeId = CommitMessageUtil.generateChangeId();
+        ObjectId revCommit =
+            createRevertCommit(message, notes, user, timestamp, oi, revWalk, generatedChangeId);
+        return createRevertChangeFromCommit(
+            revCommit, input, notes, user, generatedChangeId, timestamp, oi, revWalk, git);
+      } catch (RepositoryNotFoundException e) {
+        throw new ResourceNotFoundException(notes.getChangeId().toString(), e);
+      }
     }
   }
 
@@ -187,6 +201,41 @@ public class CommitUtil {
     } catch (RepositoryNotFoundException e) {
       throw new ResourceNotFoundException(notes.getProjectName().toString(), e);
     }
+  }
+
+  /**
+   * Creates a commit with the specified tree ID.
+   *
+   * @param oi ObjectInserter for inserting the newly created commit.
+   * @param authorIdent of the new commit
+   * @param committerIdent of the new commit
+   * @param parentCommit of the new commit. Can be null.
+   * @param commitMessage for the new commit.
+   * @param treeId of the content for the new commit.
+   * @return the newly created commit.
+   * @throws IOException if fails to insert the commit.
+   */
+  public static ObjectId createCommitWithTree(
+      ObjectInserter oi,
+      PersonIdent authorIdent,
+      PersonIdent committerIdent,
+      @Nullable RevCommit parentCommit,
+      String commitMessage,
+      ObjectId treeId)
+      throws IOException {
+    logger.atFine().log("Creating commit with tree: %s", treeId.getName());
+    CommitBuilder commit = new CommitBuilder();
+    commit.setTreeId(treeId);
+    if (parentCommit != null) {
+      commit.setParentId(parentCommit);
+    }
+    commit.setAuthor(authorIdent);
+    commit.setCommitter(committerIdent);
+    commit.setMessage(commitMessage);
+
+    ObjectId id = oi.insert(commit);
+    oi.flush();
+    return id;
   }
 
   /**
@@ -227,12 +276,6 @@ public class CommitUtil {
     RevCommit parentToCommitToRevert = commitToRevert.getParent(0);
     revWalk.parseHeaders(parentToCommitToRevert);
 
-    CommitBuilder revertCommitBuilder = new CommitBuilder();
-    revertCommitBuilder.addParentId(commitToRevert);
-    revertCommitBuilder.setTreeId(parentToCommitToRevert.getTree());
-    revertCommitBuilder.setAuthor(authorIdent);
-    revertCommitBuilder.setCommitter(authorIdent);
-
     Change changeToRevert = notes.getChange();
     String subject = changeToRevert.getSubject();
     if (subject.length() > 63) {
@@ -244,11 +287,11 @@ public class CommitUtil {
               ChangeMessages.get().revertChangeDefaultMessage, subject, patch.commitId().name());
     }
     if (generatedChangeId != null) {
-      revertCommitBuilder.setMessage(ChangeIdUtil.insertId(message, generatedChangeId, true));
+      message = ChangeIdUtil.insertId(message, generatedChangeId, true);
     }
-    ObjectId id = oi.insert(revertCommitBuilder);
-    oi.flush();
-    return id;
+
+    return createCommitWithTree(
+        oi, authorIdent, committerIdent, commitToRevert, message, parentToCommitToRevert.getTree());
   }
 
   private Change.Id createRevertChangeFromCommit(
@@ -263,20 +306,21 @@ public class CommitUtil {
       Repository git)
       throws IOException, RestApiException, UpdateException, ConfigInvalidException {
     RevCommit revertCommit = revWalk.parseCommit(revertCommitId);
-    Change changeToRevert = notes.getChange();
     Change.Id changeId = Change.id(seq.nextChangeId());
     if (input.workInProgress) {
-      input.notify = firstNonNull(input.notify, NotifyHandling.OWNER);
+      input.notify = firstNonNull(input.notify, NotifyHandling.NONE);
     }
     NotifyResolver.Result notify =
         notifyResolver.resolve(firstNonNull(input.notify, NotifyHandling.ALL), input.notifyDetails);
 
+    Change changeToRevert = notes.getChange();
     ChangeInserter ins =
         changeInserterFactory
-            .create(changeId, revertCommit, notes.getChange().getDest().branch())
+            .create(changeId, revertCommit, changeToRevert.getDest().branch())
             .setTopic(input.topic == null ? changeToRevert.getTopic() : input.topic.trim());
     ins.setMessage("Uploaded patch set 1.");
-    ins.setValidationOptions(getValidateOptionsAsMultimap(input.validationOptions));
+    ins.setValidationOptions(
+        ValidationOptionsUtil.getValidateOptionsAsMultimap(input.validationOptions));
 
     ReviewerSet reviewerSet = approvalsUtil.getReviewers(notes);
 
@@ -286,7 +330,7 @@ public class CommitUtil {
     reviewers.remove(user.getAccountId());
     Set<Account.Id> ccs = new HashSet<>(reviewerSet.byState(ReviewerStateInternal.CC));
     ccs.remove(user.getAccountId());
-    ins.setReviewersAndCcs(reviewers, ccs);
+    ins.setReviewersAndCcsIgnoreVisibility(reviewers, ccs);
     ins.setRevertOf(notes.getChangeId());
     ins.setWorkInProgress(input.workInProgress);
 
@@ -294,68 +338,149 @@ public class CommitUtil {
       bu.setRepository(git, revWalk, oi);
       bu.setNotify(notify);
       bu.insertChange(ins);
-      bu.addOp(changeId, new NotifyOp(changeToRevert, ins));
-      bu.addOp(changeToRevert.getId(), new PostRevertedMessageOp(generatedChangeId));
+      if (!input.workInProgress) {
+        addChangeRevertedNotificationOps(
+            bu, changeToRevert.getId(), changeId, generatedChangeId.name());
+      }
       bu.execute();
     }
     return changeId;
   }
 
-  private static ImmutableListMultimap<String, String> getValidateOptionsAsMultimap(
-      @Nullable Map<String, String> validationOptions) {
-    if (validationOptions == null) {
-      return ImmutableListMultimap.of();
-    }
-
-    ImmutableListMultimap.Builder<String, String> validationOptionsBuilder =
-        ImmutableListMultimap.builder();
-    validationOptions
-        .entrySet()
-        .forEach(e -> validationOptionsBuilder.put(e.getKey(), e.getValue()));
-    return validationOptionsBuilder.build();
+  /**
+   * Notify the owners of a change that their change is being reverted.
+   *
+   * @param bu to append the notification actions to.
+   * @param revertedChangeId to be notified.
+   * @param revertingChangeId to notify about.
+   * @param revertingChangeKey to notify about.
+   */
+  public void addChangeRevertedNotificationOps(
+      BatchUpdate bu,
+      Change.Id revertedChangeId,
+      Change.Id revertingChangeId,
+      String revertingChangeKey) {
+    bu.addOp(revertingChangeId, new ChangeRevertedNotifyOp(revertedChangeId, revertingChangeId));
+    bu.addOp(revertedChangeId, new PostRevertedMessageOp(revertingChangeKey));
   }
 
-  private class NotifyOp implements BatchUpdateOp {
-    private final Change change;
-    private final ChangeInserter ins;
+  private class ChangeRevertedNotifyOp implements BatchUpdateOp {
+    private final Change.Id revertedChangeId;
+    private final Change.Id revertingChangeId;
 
-    NotifyOp(Change change, ChangeInserter ins) {
-      this.change = change;
-      this.ins = ins;
+    ChangeRevertedNotifyOp(Change.Id revertedChangeId, Change.Id revertingChangeId) {
+      this.revertedChangeId = revertedChangeId;
+      this.revertingChangeId = revertingChangeId;
     }
 
     @Override
     public void postUpdate(PostUpdateContext ctx) throws Exception {
-      changeReverted.fire(
-          ctx.getChangeData(change), ctx.getChangeData(ins.getChange()), ctx.getWhen());
+      ChangeData revertedChange =
+          ctx.getChangeData(changeNotesFactory.createChecked(ctx.getProject(), revertedChangeId));
+      ChangeData revertingChange =
+          ctx.getChangeData(changeNotesFactory.createChecked(ctx.getProject(), revertingChangeId));
+      changeReverted.fire(revertedChange, revertingChange, ctx.getWhen());
       try {
-        RevertedSender emailSender = revertedSenderFactory.create(ctx.getProject(), change.getId());
+        RevertedSender emailSender =
+            revertedSenderFactory.create(ctx.getProject(), revertedChange.getId());
         emailSender.setFrom(ctx.getAccountId());
-        emailSender.setNotify(ctx.getNotify(change.getId()));
+        emailSender.setNotify(ctx.getNotify(revertedChangeId));
         emailSender.setMessageId(
-            messageIdGenerator.fromChangeUpdate(ctx.getRepoView(), change.currentPatchSetId()));
+            messageIdGenerator.fromChangeUpdate(
+                ctx.getRepoView(), revertedChange.currentPatchSet().id()));
         emailSender.send();
       } catch (Exception err) {
         logger.atSevere().withCause(err).log(
-            "Cannot send email for revert change %s", change.getId());
+            "Cannot send email for revert change %s", revertedChangeId);
       }
     }
   }
 
   private class PostRevertedMessageOp implements BatchUpdateOp {
-    private final ObjectId computedChangeId;
+    private final String revertingChangeKey;
 
-    PostRevertedMessageOp(ObjectId computedChangeId) {
-      this.computedChangeId = computedChangeId;
+    PostRevertedMessageOp(String revertingChangeKey) {
+      this.revertingChangeKey = revertingChangeKey;
     }
 
     @Override
     public boolean updateChange(ChangeContext ctx) {
       cmUtil.setChangeMessage(
           ctx,
-          "Created a revert of this change as I" + computedChangeId.name(),
+          "Created a revert of this change as I" + revertingChangeKey,
           ChangeMessagesUtil.TAG_REVERT);
       return true;
     }
+  }
+
+  /**
+   * Returns the parent commit for a new commit.
+   *
+   * <p>If {@code baseSha1} is provided, the method verifies it can be used as a base. If {@code
+   * baseSha1} is not provided the tip of the {@code destRef} is returned.
+   *
+   * @param project The name of the project.
+   * @param changeQuery Used for looking up the base commit.
+   * @param revWalk Used for parsing the base commit.
+   * @param destRef The destination branch.
+   * @param baseSha1 The hash of the base commit. Nullable.
+   * @return the base commit. Either the commit matching the provided hash, or the direct parent if
+   *     a hash was not provided.
+   * @throws IOException if the branch reference cannot be parsed.
+   * @throws RestApiException if the base commit cannot be fetched.
+   */
+  public static RevCommit getBaseCommit(
+      String project,
+      InternalChangeQuery changeQuery,
+      RevWalk revWalk,
+      Ref destRef,
+      @Nullable String baseSha1)
+      throws IOException, RestApiException {
+    RevCommit destRefTip = revWalk.parseCommit(destRef.getObjectId());
+    // The tip commit of the destination ref is the default base for the newly created change.
+    if (Strings.isNullOrEmpty(baseSha1)) {
+      return destRefTip;
+    }
+
+    ObjectId baseObjectId;
+    try {
+      baseObjectId = ObjectId.fromString(baseSha1);
+    } catch (InvalidObjectIdException e) {
+      throw new BadRequestException(
+          String.format("Base %s doesn't represent a valid SHA-1", baseSha1), e);
+    }
+
+    RevCommit baseCommit;
+    try {
+      baseCommit = revWalk.parseCommit(baseObjectId);
+    } catch (MissingObjectException e) {
+      throw new UnprocessableEntityException(
+          String.format("Base %s doesn't exist", baseObjectId.name()), e);
+    }
+
+    changeQuery.enforceVisibility(true);
+    List<ChangeData> changeDatas = changeQuery.byBranchCommit(project, destRef.getName(), baseSha1);
+
+    if (changeDatas.isEmpty()) {
+      if (revWalk.isMergedInto(baseCommit, destRefTip)) {
+        // The base commit is a merged commit with no change associated.
+        return baseCommit;
+      }
+      throw new UnprocessableEntityException(
+          String.format("Commit %s does not exist on branch %s", baseSha1, destRef.getName()));
+    } else if (changeDatas.size() != 1) {
+      throw new ResourceConflictException("Multiple changes found for commit " + baseSha1);
+    }
+
+    Change change = changeDatas.get(0).change();
+    if (!change.isAbandoned()) {
+      // The base commit is a valid change revision.
+      return baseCommit;
+    }
+
+    throw new ResourceConflictException(
+        String.format(
+            "Change %s with commit %s is %s",
+            change.getChangeId(), baseSha1, ChangeUtil.status(change)));
   }
 }

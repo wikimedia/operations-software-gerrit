@@ -8,10 +8,15 @@ import '../../shared/gr-icon/gr-icon';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../plugins/gr-endpoint-param/gr-endpoint-param';
 import '../gr-thread-list/gr-thread-list';
-import {ActionInfo, EDIT} from '../../../types/common';
+import {
+  ActionInfo,
+  ChangeActionDialog,
+  CommentThread,
+  EDIT,
+} from '../../../types/common';
 import {GrDialog} from '../../shared/gr-dialog/gr-dialog';
 import {pluralize} from '../../../utils/string-util';
-import {CommentThread, isUnresolved} from '../../../utils/comment-util';
+import {isUnresolved} from '../../../utils/comment-util';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, css, html} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
@@ -21,9 +26,13 @@ import {ParsedChangeInfo} from '../../../types/types';
 import {commentsModelToken} from '../../../models/comments/comments-model';
 import {changeModelToken} from '../../../models/change/change-model';
 import {resolve} from '../../../models/dependency';
+import {fireNoBubbleNoCompose} from '../../../utils/event-util';
 
 @customElement('gr-confirm-submit-dialog')
-export class GrConfirmSubmitDialog extends LitElement {
+export class GrConfirmSubmitDialog
+  extends LitElement
+  implements ChangeActionDialog
+{
   @query('#dialog')
   dialog?: GrDialog;
 
@@ -90,7 +99,7 @@ export class GrConfirmSubmitDialog extends LitElement {
     );
     subscribe(
       this,
-      () => this.getCommentsModel().threads$,
+      () => this.getCommentsModel().threadsSaved$,
       x => (this.unresolvedThreads = x.filter(isUnresolved))
     );
   }
@@ -127,7 +136,7 @@ export class GrConfirmSubmitDialog extends LitElement {
     return html`
       <gr-icon icon="warning" filled class="warningBeforeSubmit"></gr-icon>
       Your unpublished edit will not be submitted. Did you forget to click
-      <b>PUBLISH</b>
+      <b>PUBLISH</b> after pressing <b>EDIT</b>?
     `;
   }
 
@@ -190,13 +199,13 @@ export class GrConfirmSubmitDialog extends LitElement {
   private handleConfirmTap(e: Event) {
     e.preventDefault();
     e.stopPropagation();
-    this.dispatchEvent(new CustomEvent('confirm', {bubbles: false}));
+    fireNoBubbleNoCompose(this, 'confirm', {});
   }
 
   private handleCancelTap(e: Event) {
     e.preventDefault();
     e.stopPropagation();
-    this.dispatchEvent(new CustomEvent('cancel', {bubbles: false}));
+    fireNoBubbleNoCompose(this, 'cancel', {});
   }
 }
 

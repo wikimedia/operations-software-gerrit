@@ -35,11 +35,6 @@ export interface PatchSet {
   wip?: boolean;
 }
 
-interface PatchRange {
-  patchNum?: RevisionPatchSetNum;
-  basePatchNum?: BasePatchSetNum;
-}
-
 /**
  * Whether the given patch is a numbered parent of a merge (i.e. a negative
  * number).
@@ -64,7 +59,7 @@ export function isPatchSetNum(patchset: string) {
 export function convertToPatchSetNum(
   patchset: string | undefined
 ): PatchSetNum | undefined {
-  if (patchset === undefined) return patchset;
+  if (!patchset) return undefined;
   if (!isPatchSetNum(patchset)) {
     console.error('string is not of type PatchSetNum');
   }
@@ -206,7 +201,7 @@ export function computeAllPatchSets(
       };
     });
   }
-  return _computeWipForPatchSets(change, patchNums);
+  return computeWipForPatchSets(change, patchNums);
 }
 
 /**
@@ -218,7 +213,7 @@ export function computeAllPatchSets(
  * @return The given list of patch set objects, with the
  *     wip property set on each of them
  */
-function _computeWipForPatchSets(
+function computeWipForPatchSets(
   change: ChangeInfo | ParsedChangeInfo,
   patchNums: PatchSet[]
 ) {
@@ -249,7 +244,7 @@ function _computeWipForPatchSets(
   return patchNums;
 }
 
-export const _testOnly_computeWipForPatchSets = _computeWipForPatchSets;
+export const _testOnly_computeWipForPatchSets = computeWipForPatchSets;
 
 export function computeLatestPatchNum(
   allPatchSets?: PatchSet[]
@@ -292,10 +287,6 @@ export function hasEditBasedOnCurrentPatchSet(
     return false;
   }
   return allPatchSets[0].num === EDIT;
-}
-
-export function hasEditPatchsetLoaded(patchRange: PatchRange) {
-  return patchRange.patchNum === EDIT;
 }
 
 /**

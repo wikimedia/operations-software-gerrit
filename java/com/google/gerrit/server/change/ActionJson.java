@@ -106,6 +106,7 @@ public class ActionJson {
     to.actions = toActionMap(rsrc, visitors, changeInfo, copy(visitors, to));
   }
 
+  @Nullable
   private ChangeInfo copy(List<ActionVisitor> visitors, ChangeInfo changeInfo) {
     if (visitors.isEmpty()) {
       return null;
@@ -122,7 +123,6 @@ public class ActionJson {
         changeInfo.removedFromAttentionSet == null
             ? null
             : ImmutableMap.copyOf(changeInfo.removedFromAttentionSet);
-    copy.assignee = changeInfo.assignee;
     copy.hashtags = changeInfo.hashtags;
     copy.changeId = changeInfo.changeId;
     copy.submitType = changeInfo.submitType;
@@ -152,6 +152,7 @@ public class ActionJson {
     return copy;
   }
 
+  @Nullable
   private RevisionInfo copy(List<ActionVisitor> visitors, RevisionInfo revisionInfo) {
     if (visitors.isEmpty()) {
       return null;
@@ -164,6 +165,7 @@ public class ActionJson {
     copy.ref = revisionInfo.ref;
     copy.created = revisionInfo.created;
     copy.uploader = revisionInfo.uploader;
+    copy.realUploader = revisionInfo.realUploader;
     copy.fetch = revisionInfo.fetch;
     copy.kind = revisionInfo.kind;
     copy.description = revisionInfo.description;

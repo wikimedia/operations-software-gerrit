@@ -20,7 +20,6 @@ import {
 import {GrReviewerUpdatesParser} from '../../elements/shared/gr-rest-api-interface/gr-reviewer-updates-parser';
 import {parseDate} from '../../utils/date-util';
 import {getBaseUrl} from '../../utils/url-util';
-import {getAppContext} from '../app-context';
 import {Finalizable} from '../registry';
 import {getParentIndex, isMergeParent} from '../../utils/patch-set-util';
 import {
@@ -28,7 +27,7 @@ import {
   listChangesOptionsToHex,
 } from '../../utils/change-util';
 import {assertNever, hasOwnProperty} from '../../utils/common-util';
-import {AuthRequestInit, AuthService} from '../gr-auth/gr-auth';
+import {AuthService} from '../gr-auth/gr-auth';
 import {
   AccountCapabilityInfo,
   AccountDetailInfo,
@@ -94,13 +93,12 @@ import {
   Password,
   PatchRange,
   PatchSetNum,
-  PathToCommentsInfoMap,
   PathToRobotCommentsInfoMap,
   PluginInfo,
   PreferencesInfo,
   PreferencesInput,
   ProjectAccessInfo,
-  ProjectAccessInfoMap,
+  RepoAccessInfoMap,
   ProjectAccessInput,
   ProjectInfo,
   ProjectInfoWithName,
@@ -120,6 +118,7 @@ import {
   TopMenuEntryInfo,
   UrlEncodedCommentId,
   FixReplacementInfo,
+  DraftInfo,
 } from '../../types/common';
 import {
   DiffInfo,
@@ -141,14 +140,16 @@ import {
   ReviewerState,
 } from '../../constants/constants';
 import {firePageError, fireServerError} from '../../utils/event-util';
-import {ParsedChangeInfo} from '../../types/types';
+import {AuthRequestInit, ParsedChangeInfo} from '../../types/types';
 import {ErrorCallback} from '../../api/rest';
-import {addDraftProp, DraftInfo} from '../../utils/comment-util';
-import {BaseScheduler} from '../scheduler/scheduler';
+import {addDraftProp} from '../../utils/comment-util';
+import {BaseScheduler, Scheduler} from '../scheduler/scheduler';
 import {MaxInFlightScheduler} from '../scheduler/max-in-flight-scheduler';
-import {FlagsService} from '../flags/flags';
+import {escapeAndWrapSearchOperatorValue} from '../../utils/string-util';
 
 const MAX_PROJECT_RESULTS = 25;
+export const PROBE_PATH = '/Documentation/index.html';
+export const DOCS_BASE_PATH = '/Documentation';
 
 const Requests = {
   SEND_DIFF_DRAFT: 'sendDiffDraft',
@@ -255,13 +256,13 @@ interface GetDiffParams {
 
 type SendChangeRequest = SendRawChangeRequest | SendJSONChangeRequest;
 
-export function _testOnlyResetGrRestApiSharedObjects() {
+export function testOnlyResetGrRestApiSharedObjects(authService: AuthService) {
   siteBasedCache = new SiteBasedCache();
   fetchPromisesCache = new FetchPromisesCache();
   pendingRequest = {};
   grEtagDecorator = new GrEtagDecorator();
   projectLookup = {};
-  getAppContext().authService.clearCache();
+  authService.clearCache();
 }
 
 function createReadScheduler() {
@@ -271,6 +272,11 @@ function createReadScheduler() {
 function createWriteScheduler() {
   return new MaxInFlightScheduler<Response>(new BaseScheduler<Response>(), 5);
 }
+
+function createSerializingScheduler() {
+  return new MaxInFlightScheduler<Response>(new BaseScheduler<Response>(), 1);
+}
+
 export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   readonly _cache = siteBasedCache; // Shared across instances.
 
@@ -280,16 +286,19 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
 
   readonly _etags = grEtagDecorator; // Shared across instances.
 
-  readonly _projectLookup = projectLookup; // Shared across instances.
+  getDocsBaseUrlCachedPromise: Promise<string | null> | undefined;
+
+  // readonly, but set in tests.
+  _projectLookup = projectLookup; // Shared across instances.
 
   // The value is set in created, before any other actions
-  private readonly _restApiHelper: GrRestApiHelper;
+  // Private, but used in tests.
+  readonly _restApiHelper: GrRestApiHelper;
 
-  constructor(
-    private readonly authService: AuthService,
-    // @ts-ignore: it's ok.
-    private readonly _flagsService: FlagsService
-  ) {
+  // Used to serialize requests for certain RPCs
+  readonly _serialScheduler: Scheduler<Response>;
+
+  constructor(private readonly authService: AuthService) {
     this._restApiHelper = new GrRestApiHelper(
       this._cache,
       this.authService,
@@ -297,6 +306,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
       createReadScheduler(),
       createWriteScheduler()
     );
+    this._serialScheduler = createSerializingScheduler();
   }
 
   finalize() {}
@@ -350,13 +360,13 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     }) as Promise<ConfigInfo | undefined>;
   }
 
-  getRepoAccess(repo: RepoName): Promise<ProjectAccessInfoMap | undefined> {
+  getRepoAccess(repo: RepoName): Promise<RepoAccessInfoMap | undefined> {
     // TODO(kaspern): Rename rest api from /projects/ to /repos/ once backend
     // supports it.
     return this._fetchSharedCacheURL({
       url: '/access/?project=' + encodeURIComponent(repo),
       anonymizedUrl: '/access/?project=*',
-    }) as Promise<ProjectAccessInfoMap | undefined>;
+    }) as Promise<RepoAccessInfoMap | undefined>;
   }
 
   getRepoDashboards(
@@ -763,7 +773,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     userId: AccountId | EmailAddress,
     errFn?: ErrorCallback
   ): Promise<AccountDetailInfo | undefined> {
-    return this._restApiHelper.fetchJSON({
+    return this._fetchSharedCacheURL({
       url: `/accounts/${encodeURIComponent(userId)}/detail`,
       anonymizedUrl: '/accounts/*/detail',
       errFn,
@@ -1097,7 +1107,8 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     changesPerPage?: number,
     query?: string,
     offset?: 'n,z' | number,
-    options?: string
+    options?: string,
+    errFn?: ErrorCallback
   ): Promise<ChangeInfo[] | undefined> {
     const request = this.getRequestForGetChanges(
       changesPerPage,
@@ -1107,9 +1118,13 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     );
 
     return Promise.resolve(
-      this._restApiHelper.fetchJSON(request, true) as Promise<
-        ChangeInfo[] | undefined
-      >
+      this._restApiHelper.fetchJSON(
+        {
+          ...request,
+          errFn,
+        },
+        true
+      ) as Promise<ChangeInfo[] | undefined>
     ).then(response => {
       if (!response) {
         return;
@@ -1132,7 +1147,6 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
       undefined,
       listChangesOptionsToHex(
         ListChangesOption.CHANGE_ACTIONS,
-        ListChangesOption.CURRENT_ACTIONS,
         ListChangesOption.CURRENT_REVISION,
         ListChangesOption.DETAILED_LABELS,
         // TODO: remove this option and merge requirements from dashboard req
@@ -1335,13 +1349,15 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   queryChangeFiles(
     changeNum: NumericChangeId,
     patchNum: PatchSetNum,
-    query: string
+    query: string,
+    errFn?: ErrorCallback
   ) {
     return this._getChangeURLAndFetch({
       changeNum,
       endpoint: `/files?q=${encodeURIComponent(query)}`,
       revision: patchNum,
       anonymizedEndpoint: '/files?q=*',
+      errFn,
     }) as Promise<string[] | undefined>;
   }
 
@@ -1372,22 +1388,37 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     >;
   }
 
-  getChangeSuggestedReviewers(changeNum: NumericChangeId, inputVal: string) {
+  getChangeSuggestedReviewers(
+    changeNum: NumericChangeId,
+    inputVal: string,
+    errFn?: ErrorCallback
+  ) {
     return this._getChangeSuggestedGroup(
       ReviewerState.REVIEWER,
       changeNum,
-      inputVal
+      inputVal,
+      errFn
     );
   }
 
-  getChangeSuggestedCCs(changeNum: NumericChangeId, inputVal: string) {
-    return this._getChangeSuggestedGroup(ReviewerState.CC, changeNum, inputVal);
+  getChangeSuggestedCCs(
+    changeNum: NumericChangeId,
+    inputVal: string,
+    errFn?: ErrorCallback
+  ) {
+    return this._getChangeSuggestedGroup(
+      ReviewerState.CC,
+      changeNum,
+      inputVal,
+      errFn
+    );
   }
 
   _getChangeSuggestedGroup(
     reviewerState: ReviewerState,
     changeNum: NumericChangeId,
-    inputVal: string
+    inputVal: string,
+    errFn?: ErrorCallback
   ): Promise<SuggestedReviewerInfo[] | undefined> {
     // More suggestions may obscure content underneath in the reply dialog,
     // see issue 10793.
@@ -1403,6 +1434,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
       endpoint: '/suggest_reviewers',
       params,
       reportEndpointAsIs: true,
+      errFn,
     }) as Promise<SuggestedReviewerInfo[] | undefined>;
   }
 
@@ -1490,7 +1522,8 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   async getRepos(
     filter: string | undefined,
     reposPerPage: number,
-    offset?: number
+    offset?: number,
+    errFn?: ErrorCallback
   ): Promise<ProjectInfoWithName[] | undefined> {
     const [isQuery, url] = this._getReposUrl(filter, reposPerPage, offset);
 
@@ -1504,11 +1537,13 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
       return this._fetchSharedCacheURL({
         url,
         anonymizedUrl: '/projects/?*',
+        errFn,
       }) as Promise<ProjectInfoWithName[] | undefined>;
     } else {
       const result = await (this._fetchSharedCacheURL({
         url,
         anonymizedUrl: '/projects/?*',
+        errFn,
       }) as Promise<NameToProjectInfoMap | undefined>);
       if (result === undefined) return [];
       return Object.entries(result).map(([name, project]) => {
@@ -1634,7 +1669,8 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   getSuggestedGroups(
     inputVal: string,
     project?: RepoName,
-    n?: number
+    n?: number,
+    errFn?: ErrorCallback
   ): Promise<GroupNameToGroupInfoMap | undefined> {
     const params: QueryGroupsParams = {s: inputVal};
     if (n) {
@@ -1647,12 +1683,14 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
       url: '/groups/',
       params,
       reportUrlAsIs: true,
+      errFn,
     }) as Promise<GroupNameToGroupInfoMap | undefined>;
   }
 
-  getSuggestedProjects(
+  getSuggestedRepos(
     inputVal: string,
-    n?: number
+    n?: number,
+    errFn?: ErrorCallback
   ): Promise<NameToProjectInfoMap | undefined> {
     const params = {
       m: inputVal,
@@ -1666,6 +1704,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
       url: '/projects/',
       params,
       reportUrlAsIs: true,
+      errFn,
     });
   }
 
@@ -1673,13 +1712,18 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     inputVal: string,
     n?: number,
     canSee?: NumericChangeId,
-    filterActive?: boolean
+    filterActive?: boolean,
+    errFn?: ErrorCallback
   ): Promise<AccountInfo[] | undefined> {
     const params: QueryAccountsParams = {o: 'DETAILS', q: ''};
     const queryParams = [];
     inputVal = inputVal?.trim() ?? '';
     if (inputVal.length > 0) {
-      queryParams.push(inputVal);
+      // Wrap in quotes so that reserved keywords do not throw an error such
+      // as typing "and"
+      // Espace quotes in user input since we are wrapping input in quotes
+      // explicitly
+      queryParams.push(`${escapeAndWrapSearchOperatorValue(inputVal)}`);
     }
     if (canSee) {
       queryParams.push(`cansee:${canSee}`);
@@ -1696,6 +1740,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
       url: '/accounts/',
       params,
       anonymizedUrl: '/accounts/?n=*',
+      errFn,
     }) as Promise<AccountInfo[] | undefined>;
   }
 
@@ -1778,7 +1823,8 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     }
     const options = listChangesOptionsToHex(
       ListChangesOption.CURRENT_REVISION,
-      ListChangesOption.CURRENT_COMMIT
+      ListChangesOption.CURRENT_COMMIT,
+      ListChangesOption.SUBMITTABLE
     );
     const params = {
       O: options,
@@ -1792,7 +1838,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   }
 
   getChangeCherryPicks(
-    project: RepoName,
+    repo: RepoName,
     changeID: ChangeId,
     branch: BranchName
   ): Promise<ChangeInfo[] | undefined> {
@@ -1801,7 +1847,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
       ListChangesOption.CURRENT_COMMIT
     );
     const query = [
-      `project:${project}`,
+      `project:${repo}`,
       `change:${changeID}`,
       `-branch:${branch}`,
       '-is:abandoned',
@@ -1828,9 +1874,10 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
       ListChangesOption.LABELS,
       ListChangesOption.CURRENT_REVISION,
       ListChangesOption.CURRENT_COMMIT,
-      ListChangesOption.DETAILED_LABELS
+      ListChangesOption.DETAILED_LABELS,
+      ListChangesOption.SUBMITTABLE
     );
-    const queryTerms = [`topic:"${topic}"`];
+    const queryTerms = [`topic:${escapeAndWrapSearchOperatorValue(topic)}`];
     if (options?.openChangesOnly) {
       queryTerms.push('status:open');
     }
@@ -1848,23 +1895,29 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     }) as Promise<ChangeInfo[] | undefined>;
   }
 
-  getChangesWithSimilarTopic(topic: string): Promise<ChangeInfo[] | undefined> {
-    const query = `intopic:"${topic}"`;
+  getChangesWithSimilarTopic(
+    topic: string,
+    errFn?: ErrorCallback
+  ): Promise<ChangeInfo[] | undefined> {
+    const query = `intopic:${escapeAndWrapSearchOperatorValue(topic)}`;
     return this._restApiHelper.fetchJSON({
       url: '/changes/',
       params: {q: query},
       anonymizedUrl: '/changes/intopic:*',
+      errFn,
     }) as Promise<ChangeInfo[] | undefined>;
   }
 
   getChangesWithSimilarHashtag(
-    hashtag: string
+    hashtag: string,
+    errFn?: ErrorCallback
   ): Promise<ChangeInfo[] | undefined> {
-    const query = `inhashtag:"${hashtag}"`;
+    const query = `inhashtag:${escapeAndWrapSearchOperatorValue(hashtag)}`;
     return this._restApiHelper.fetchJSON({
       url: '/changes/',
       params: {q: query},
       anonymizedUrl: '/changes/inhashtag:*',
+      errFn,
     }) as Promise<ChangeInfo[] | undefined>;
   }
 
@@ -1948,7 +2001,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   }
 
   createChange(
-    project: RepoName,
+    repo: RepoName,
     branch: BranchName,
     subject: string,
     topic?: string,
@@ -1961,7 +2014,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
       method: HttpMethod.POST,
       url: '/changes/',
       body: {
-        project,
+        project: repo,
         branch,
         subject,
         topic,
@@ -2212,11 +2265,13 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     return this.getFromProjectLookup(changeNum).then(project => {
       const encodedRepoName = project ? encodeURIComponent(project) + '~' : '';
       const url = `/accounts/self/starred.changes/${encodedRepoName}${changeNum}`;
-      return this._restApiHelper.send({
-        method: starred ? HttpMethod.PUT : HttpMethod.DELETE,
-        url,
-        anonymizedUrl: '/accounts/self/starred.changes/*',
-      });
+      return this._serialScheduler.schedule(() =>
+        this._restApiHelper.send({
+          method: starred ? HttpMethod.PUT : HttpMethod.DELETE,
+          url,
+          anonymizedUrl: '/accounts/self/starred.changes/*',
+        })
+      );
     });
   }
 
@@ -2302,7 +2357,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
 
   getDiffComments(
     changeNum: NumericChangeId
-  ): Promise<PathToCommentsInfoMap | undefined>;
+  ): Promise<{[path: string]: CommentInfo[]} | undefined>;
 
   getDiffComments(
     changeNum: NumericChangeId,
@@ -2403,7 +2458,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     changeNum: NumericChangeId,
     endpoint: '/comments' | '/drafts',
     params?: FetchParams
-  ): Promise<PathToCommentsInfoMap | undefined>;
+  ): Promise<{[path: string]: CommentInfo[]} | undefined>;
 
   _getDiffComments(
     changeNum: NumericChangeId,
@@ -2438,7 +2493,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   ): Promise<
     | GetDiffCommentsOutput
     | GetDiffRobotCommentsOutput
-    | PathToCommentsInfoMap
+    | {[path: string]: CommentInfo[]}
     | PathToRobotCommentsInfoMap
     | undefined
   > {
@@ -2460,7 +2515,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
         },
         noAcceptHeader
       ) as Promise<
-        PathToCommentsInfoMap | PathToRobotCommentsInfoMap | undefined
+        {[path: string]: CommentInfo[]} | PathToRobotCommentsInfoMap | undefined
       >;
 
     if (!basePatchNum && !patchNum && !path) {
@@ -2528,7 +2583,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   getPortedComments(
     changeNum: NumericChangeId,
     revision: RevisionId
-  ): Promise<PathToCommentsInfoMap | undefined> {
+  ): Promise<{[path: string]: CommentInfo[]} | undefined> {
     // maintaining a custom error function so that errors do not surface in UI
     const errFn: ErrorCallback = (response?: Response | null) => {
       if (response)
@@ -2542,24 +2597,24 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     });
   }
 
-  getPortedDrafts(
+  async getPortedDrafts(
     changeNum: NumericChangeId,
     revision: RevisionId
-  ): Promise<PathToCommentsInfoMap | undefined> {
+  ): Promise<{[path: string]: DraftInfo[]} | undefined> {
     // maintaining a custom error function so that errors do not surface in UI
     const errFn: ErrorCallback = (response?: Response | null) => {
       if (response)
         console.info(`Fetching ported drafts failed, ${response.status}`);
     };
-    return this.getLoggedIn().then(loggedIn => {
-      if (!loggedIn) return {};
-      return this._getChangeURLAndFetch({
-        changeNum,
-        endpoint: '/ported_drafts/',
-        revision,
-        errFn,
-      });
-    });
+    const loggedIn = await this.getLoggedIn();
+    if (!loggedIn) return {};
+    const comments = (await this._getChangeURLAndFetch({
+      changeNum,
+      endpoint: '/ported_drafts/',
+      revision,
+      errFn,
+    })) as {[path: string]: CommentInfo[]} | undefined;
+    return addDraftProp(comments);
   }
 
   saveDiffDraft(
@@ -2657,16 +2712,16 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   }
 
   getCommitInfo(
-    project: RepoName,
+    repo: RepoName,
     commit: CommitId
   ): Promise<CommitInfo | undefined> {
     return this._restApiHelper.fetchJSON({
       url:
         '/projects/' +
-        encodeURIComponent(project) +
+        encodeURIComponent(repo) +
         '/commits/' +
         encodeURIComponent(commit),
-      anonymizedUrl: '/projects/*/comments/*',
+      anonymizedUrl: '/projects/*/commits/*',
     }) as Promise<CommitInfo | undefined>;
   }
 
@@ -2761,15 +2816,9 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
 
   _changeBaseURL(
     changeNum: NumericChangeId,
-    revisionId?: RevisionId,
-    project?: RepoName
+    revisionId?: RevisionId
   ): Promise<string> {
-    // TODO(kaspern): For full slicer migration, app should warn with a call
-    // stack every time _changeBaseURL is called without a project.
-    const projectPromise = project
-      ? Promise.resolve(project)
-      : this.getFromProjectLookup(changeNum);
-    return projectPromise.then(project => {
+    return this.getFromProjectLookup(changeNum).then(project => {
       // TODO(TS): unclear why project can't be null here. Fix it
       let url = `/changes/${encodeURIComponent(
         project as RepoName
@@ -3053,37 +3102,48 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
       });
   }
 
-  async setInProjectLookup(changeNum: NumericChangeId, project: RepoName) {
-    const lookupProject = await this._projectLookup[changeNum];
-    if (lookupProject && lookupProject !== project) {
-      console.warn(
-        'Change set with multiple project nums.' +
-          'One of them must be invalid.'
-      );
-    }
+  /**
+   * This can be called by the router, if the project can be determined from
+   * the URL. Or when handling a dashabord or a search response.
+   *
+   * Then we don't need to make a dedicated REST API call or have a fallback,
+   * if that fails.
+   */
+  setInProjectLookup(changeNum: NumericChangeId, project: RepoName) {
     this._projectLookup[changeNum] = Promise.resolve(project);
   }
 
   getFromProjectLookup(
     changeNum: NumericChangeId
   ): Promise<RepoName | undefined> {
-    const project = this._projectLookup[`${changeNum}`];
-    if (project) {
-      return project;
-    }
+    // Hopefully setInProjectLookup() has already been called. Then we don't
+    // have to make a dedicated REST API call to look up the project.
+    let projectPromise = this._projectLookup[changeNum];
+    if (projectPromise) return projectPromise;
 
-    const onError = (response?: Response | null) => firePageError(response);
+    // Ignore errors, because we have some dedicated fallback logic, see below.
+    const onError = () => {};
+    projectPromise = this.getChange(changeNum, onError).then(change => {
+      if (change?.project) return change.project;
 
-    const projectPromise = this.getChange(changeNum, onError).then(change => {
-      if (!change || !change.project) {
-        return;
+      // In the very rare case that the change index cannot provide an answer
+      // (e.g. stale index) we should check, if the router has called
+      // setInProjectLookup() in the meantime. Then we can fall back to that.
+      const currentProjectPromise = this._projectLookup[changeNum];
+      if (currentProjectPromise !== projectPromise) {
+        return currentProjectPromise;
       }
-      this.setInProjectLookup(changeNum, change.project);
-      return change.project;
+
+      // No luck. Without knowing the project we cannot proceed at all.
+      firePageError(
+        new Response(
+          `Failed to lookup the repo for change number ${changeNum}`,
+          {status: 404}
+        )
+      );
+      return undefined;
     });
-
     this._projectLookup[changeNum] = projectPromise;
-
     return projectPromise;
   }
 
@@ -3098,9 +3158,6 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
 
   _getChangeURLAndSend(req: SendJSONChangeRequest): Promise<ParsedJSON>;
 
-  /**
-   * Alias for _changeBaseURL.then(send).
-   */
   _getChangeURLAndSend(
     req: SendChangeRequest
   ): Promise<ParsedJSON | Response | undefined> {
@@ -3128,9 +3185,6 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     });
   }
 
-  /**
-   * Alias for _changeBaseURL.then(_fetchJSON).
-   */
   _getChangeURLAndFetch(
     req: FetchChangeJSON,
     noAcceptHeader?: boolean
@@ -3243,13 +3297,13 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   }
 
   getDashboard(
-    project: RepoName,
+    repo: RepoName,
     dashboard: DashboardId,
     errFn?: ErrorCallback
   ): Promise<DashboardInfo | undefined> {
     const url =
       '/projects/' +
-      encodeURIComponent(project) +
+      encodeURIComponent(repo) +
       '/dashboards/' +
       encodeURIComponent(dashboard);
     return this._fetchSharedCacheURL({
@@ -3257,6 +3311,26 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
       errFn,
       anonymizedUrl: '/projects/*/dashboards/*',
     }) as Promise<DashboardInfo | undefined>;
+  }
+
+  /**
+   * Get the docs base URL from either the server config or by probing.
+   *
+   * @return A promise that resolves with the docs base URL.
+   */
+  getDocsBaseUrl(config: ServerInfo | undefined): Promise<string | null> {
+    if (!this.getDocsBaseUrlCachedPromise) {
+      this.getDocsBaseUrlCachedPromise = new Promise(resolve => {
+        if (config?.gerrit?.doc_url) {
+          resolve(config.gerrit.doc_url);
+        } else {
+          this.probePath(getBaseUrl() + PROBE_PATH).then(ok => {
+            resolve(ok ? getBaseUrl() + DOCS_BASE_PATH : null);
+          });
+        }
+      });
+    }
+    return this.getDocsBaseUrlCachedPromise;
   }
 
   getDocumentationSearches(filter: string): Promise<DocResult[] | undefined> {

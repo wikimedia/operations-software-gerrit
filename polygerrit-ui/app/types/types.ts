@@ -5,12 +5,10 @@
  */
 import {DiffLayer as DiffLayerApi} from '../api/diff';
 import {MessageTag, Side} from '../constants/constants';
-import {IronA11yAnnouncer} from '@polymer/iron-a11y-announcer/iron-a11y-announcer';
 import {
   AccountInfo,
   BasePatchSetNum,
   ChangeViewChangeInfo,
-  CommitId,
   CommitInfo,
   EditPatchSet,
   PatchSetNum,
@@ -18,19 +16,9 @@ import {
   RevisionInfo,
   Timestamp,
 } from './common';
-import {AuthRequestInit} from '../services/gr-auth/gr-auth';
 
-export function notUndefined<T>(x: T): x is NonNullable<T> {
+export function isDefined<T>(x: T): x is NonNullable<T> {
   return x !== undefined && x !== null;
-}
-
-export interface FixIronA11yAnnouncer extends IronA11yAnnouncer {
-  requestAvailability(): void;
-}
-
-export interface CommitRange {
-  baseCommit: CommitId;
-  commit: CommitId;
 }
 
 export type {CoverageRange} from '../api/diff';
@@ -40,6 +28,13 @@ export enum ErrorType {
   AUTH = 'AUTH',
   NETWORK = 'NETWORK',
   GENERIC = 'GENERIC',
+}
+
+export interface AuthRequestInit extends RequestInit {
+  // RequestInit define headers as HeadersInit, i.e.
+  // Headers | string[][] | Record<string, string>
+  // Auth class supports only Headers in options
+  headers?: Headers;
 }
 
 /*

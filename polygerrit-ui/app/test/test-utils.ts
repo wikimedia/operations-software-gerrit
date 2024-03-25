@@ -4,42 +4,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import '../types/globals';
-import {_testOnly_resetPluginLoader} from '../elements/shared/gr-js-api-interface/gr-plugin-loader';
-import {_testOnly_resetEndpoints} from '../elements/shared/gr-js-api-interface/gr-plugin-endpoints';
 import {getAppContext} from '../services/app-context';
 import {RestApiService} from '../services/gr-rest-api/gr-rest-api';
 import {SinonSpy, SinonStub} from 'sinon';
-import {StorageService} from '../services/storage/gr-storage';
-import {AuthService} from '../services/gr-auth/gr-auth';
 import {ReportingService} from '../services/gr-reporting/gr-reporting';
-import {UserModel} from '../models/user/user-model';
 import {queryAndAssert, query} from '../utils/common-util';
 import {FlagsService} from '../services/flags/flags';
-import {Key, Modifier} from '../utils/dom-util';
+import {Key, Modifier, whenVisible} from '../utils/dom-util';
 import {Observable} from 'rxjs';
 import {filter, take, timeout} from 'rxjs/operators';
-import {HighlightService} from '../services/highlight/highlight-service';
 import {assert} from '@open-wc/testing';
+import {Route, ViewState} from '../models/views/base';
+import {PageContext} from '../elements/core/gr-router/gr-page';
+import {waitUntil} from '../utils/async-util';
 export {query, queryAll, queryAndAssert} from '../utils/common-util';
-
-export interface MockPromise<T> extends Promise<T> {
-  resolve: (value?: T) => void;
-  reject: (reason?: any) => void;
-}
-
-export function mockPromise<T = unknown>(): MockPromise<T> {
-  let res: (value?: T) => void;
-  let rej: (reason?: any) => void;
-  const promise: MockPromise<T> = new Promise<T | undefined>(
-    (resolve, reject) => {
-      res = resolve;
-      rej = reject;
-    }
-  ) as MockPromise<T>;
-  promise.resolve = res!;
-  promise.reject = rej!;
-  return promise;
-}
+export {waitUntil} from '../utils/async-util';
+export {mockPromise} from '../utils/async-util';
+export type {MockPromise} from '../utils/async-util';
 
 export function isHidden(el: Element | undefined | null) {
   if (!el) return true;
@@ -50,14 +31,6 @@ export function isVisible(el: Element) {
   assert.ok(el);
   return getComputedStyle(el).getPropertyValue('display') !== 'none';
 }
-
-// Provide reset plugins function to clear installed plugins between tests.
-// No gr-app found (running tests)
-export const resetPlugins = () => {
-  _testOnly_resetEndpoints();
-  const pl = _testOnly_resetPluginLoader();
-  pl.loadPlugins([]);
-};
 
 export type CleanupCallback = () => void;
 
@@ -109,28 +82,6 @@ export function spyRestApi<K extends keyof RestApiService>(method: K) {
   return sinon.spy(getAppContext().restApiService, method);
 }
 
-export function stubUsers<K extends keyof UserModel>(method: K) {
-  return sinon.stub(getAppContext().userModel, method);
-}
-
-export function stubHighlightService<K extends keyof HighlightService>(
-  method: K
-) {
-  return sinon.stub(getAppContext().highlightService, method);
-}
-
-export function stubStorage<K extends keyof StorageService>(method: K) {
-  return sinon.stub(getAppContext().storageService, method);
-}
-
-export function spyStorage<K extends keyof StorageService>(method: K) {
-  return sinon.spy(getAppContext().storageService, method);
-}
-
-export function stubAuth<K extends keyof AuthService>(method: K) {
-  return sinon.stub(getAppContext().authService, method);
-}
-
 export function stubReporting<K extends keyof ReportingService>(method: K) {
   return sinon.stub(getAppContext().reportingService, method);
 }
@@ -158,29 +109,35 @@ export type SinonSpyMember<F extends (...args: any) => any> = SinonSpy<
   ReturnType<F>
 >;
 
-/**
- * Forcing an opacity of 0 onto the ironOverlayBackdrop is required, because
- * otherwise the backdrop stays around in the DOM for too long waiting for
- * an animation to finish.
- */
-export function addIronOverlayBackdropStyleEl() {
-  const el = document.createElement('style');
-  el.setAttribute('id', 'backdrop-style');
-  document.head.appendChild(el);
-  el.sheet!.insertRule('body { --iron-overlay-backdrop-opacity: 0; }');
-}
-
-export function removeIronOverlayBackdropStyleEl() {
-  const el = document.getElementById('backdrop-style');
-  if (!el?.parentNode) throw new Error('Backdrop style element not found.');
-  el.parentNode?.removeChild(el);
-}
-
 export function removeThemeStyles() {
   // Do not remove the light theme, because it is only added once statically,
   // not once per gr-app instantiation.
   // document.head.querySelector('#light-theme')?.remove();
   document.head.querySelector('#dark-theme')?.remove();
+}
+
+function getActiveElement() {
+  return document.activeElement;
+}
+
+export function isFocusInsideElement(element: Element) {
+  // In Polymer 2 focused element either <paper-input> or nested
+  // native input <input> element depending on the current focus
+  // in browser window.
+  // For example, the focus is changed if the developer console
+  // get a focus.
+  let activeElement = getActiveElement();
+  while (activeElement) {
+    if (activeElement === element) {
+      return true;
+    }
+    if (activeElement.parentElement) {
+      activeElement = activeElement.parentElement;
+    } else {
+      activeElement = (activeElement.getRootNode() as ShadowRoot).host;
+    }
+  }
+  return false;
 }
 
 export async function waitQueryAndAssert<E extends Element = Element>(
@@ -194,29 +151,9 @@ export async function waitQueryAndAssert<E extends Element = Element>(
   return queryAndAssert<E>(el, selector);
 }
 
-export async function waitUntil(
-  predicate: (() => boolean) | (() => Promise<boolean>),
-  message = 'The waitUntil() predicate is still false after 1000 ms.',
-  timeout_ms = 1000
-): Promise<void> {
-  const start = Date.now();
-  let sleep = 0;
-  if (await predicate()) return Promise.resolve();
-  const error = new Error(message);
-  return new Promise((resolve, reject) => {
-    const waiter = async () => {
-      if (await predicate()) {
-        resolve();
-        return;
-      }
-      if (Date.now() - start >= timeout_ms) {
-        reject(error);
-        return;
-      }
-      setTimeout(waiter, sleep);
-      sleep = sleep === 0 ? 1 : sleep * 4;
-    };
-    waiter();
+export async function waitUntilVisible(element: Element): Promise<void> {
+  return new Promise(resolve => {
+    whenVisible(element, () => resolve());
   });
 }
 
@@ -324,12 +261,12 @@ export function mouseDown(element: HTMLElement) {
   element.dispatchEvent(new MouseEvent('mousedown', eventOptions));
 }
 
-export function assertFails(promise: Promise<unknown>, error?: unknown) {
+export function assertFails<T = unknown>(promise: Promise<unknown>, error?: T) {
   return promise
     .then((_v: unknown) => {
       assert.fail('Promise resolved but should have failed');
     })
-    .catch((e: unknown) => {
+    .catch((e: T) => {
       if (error) {
         assert.equal(e, error);
       }
@@ -351,4 +288,27 @@ export function logProxy<T extends object>(obj: T, name?: string): T {
     },
   };
   return new Proxy(obj, handler) as unknown as T;
+}
+
+export function assertRouteState<T extends ViewState>(
+  route: Route<T>,
+  path: string,
+  state: T,
+  createUrl: (state: T) => string
+) {
+  const {urlPattern, createState} = route;
+  const ctx = new PageContext(path);
+  const matches = ctx.match(urlPattern);
+  assert.isTrue(matches);
+  assert.deepEqual(createState(ctx), state);
+  assert.equal(path, createUrl(state));
+}
+
+export function assertRouteFalse<T extends ViewState>(
+  route: Route<T>,
+  path: string
+) {
+  const ctx = new PageContext(path);
+  const matches = ctx.match(route.urlPattern);
+  assert.isFalse(matches);
 }

@@ -562,7 +562,8 @@ By default this is false (no agreements are used).
 +
 To enable the actual usage of contributor agreement the project
 specific config option in the `project.config` must be set:
-link:config-project-config.html[receive.requireContributorAgreement].
+link:config-project-config.html#receive.requireContributorAgreement[
+receive.requireContributorAgreement].
 
 [[auth.trustContainerAuth]]auth.trustContainerAuth::
 +
@@ -1429,20 +1430,6 @@ If set to true, users are not allowed to create private changes.
 +
 The default is false.
 
-[[change.enableAttentionSet]]change.enableAttentionSet::
-+
-If set to true, then all UI features for using and interacting with the
-attention set are enabled.
-+
-The default is true.
-
-[[change.enableAssignee]]change.enableAssignee::
-+
-If set to true, then all UI features for using and interacting with the
-assignee are enabled.
-+
-The default is false.
-
 [[change.maxComments]]change.maxComments::
 +
 Maximum number of comments (regular plus robot) allowed per change. Additional
@@ -1548,6 +1535,13 @@ branch, the changes on which the change depends are silently merged
 into the new branch, although these changes have not been moved to that
 branch (see details in
 link:https://issues.gerritcodereview.com/issues/40009784[issue 40009784]).
++
+By default true.
+
+[[change.enableRobotComments]]change.enableRobotComments::
++
+Are robot comments enabled in the Gerrit UI? This setting allows phasing out
+robot comments.
 +
 By default true.
 
@@ -1756,9 +1750,7 @@ In the following example configuration the 'changeid' comment link
 will match typical Gerrit Change-Id values and create a hyperlink
 to changes which reference it.  The second configuration 'bugzilla'
 will hyperlink terms such as 'bug 42' to an external bug tracker,
-supplying the argument record number '42' for display.  The third
-configuration 'tracker' uses raw HTML to more precisely control
-how the replacement is displayed to the user.
+supplying the argument record number '42' for display.
 
 commentlinks supports link:#reloadConfig[configuration reloads]. Though a
 link:cmd-flush-caches.html[flush-caches] of "projects" is needed for the
@@ -1775,16 +1767,10 @@ commentlinks to be immediately available in the UI.
   prefix = $1
   suffix = $4
   text = $2$3
-
-[commentlink "tracker"]
-  match = ([Bb]ug:\\s+)(\\d+)
-  html = $1<a href=\"http://trak.example.com/$2\">$2</a>
 ----
 
 Comment links can also be specified in `project.config` and sections in
-children override those in parents. The only restriction is that to
-avoid injecting arbitrary user-supplied HTML in the page, comment links
-defined in `project.config` may only supply `link`, not `html`.
+children override those in parents.
 
 [[commentlink.name.match]]commentlink.<name>.match::
 +
@@ -1818,49 +1804,29 @@ In order to better control the visual presentation of the link `prefix`,
 +
 The URL to direct the user to whenever the regular expression is
 matched.  Groups in the match expression may be accessed as `$'n'`.
-+
-The link property is used only when the html property is not present.
 
 [[commentlink.name.prefix]]commentlink.<name>.prefix::
 +
 The text inserted before the link. Groups in the match expression may be
 accessed as `$'n'`.
-+
-The link property is used only when the html property is not present.
 
 [[commentlink.name.suffix]]commentlink.<name>.suffix::
 +
 The text inserted after the link. Groups in the match expression may be
 accessed as `$'n'`.
-+
-The link property is used only when the html property is not present.
 
 [[commentlink.name.text]]commentlink.<name>.text::
 +
 The text content of the link. Groups in the match expression may be
 accessed as `$'n'`.
 +
-The link property is used only when the html property is not present.
-
-[[commentlink.name.html]]commentlink.<name>.html::
-+
-HTML to replace the entire matched string with.  If present,
-this property overrides the link property above.  Groups in the
-match expression may be accessed as `$'n'`.
-+
-The configuration file eats double quotes, so escaping them as
-`\"` is necessary to protect them from the parser.
+If not specified defaults to `$&` (the matched text).
 
 [[commentlink.name.enabled]]commentlink.<name>.enabled::
 +
 Whether the comment link is enabled. A child project may override a
 section in a parent or the site-wide config that is disabled by
 specifying `enabled = true`.
-+
-Disabling sections in `gerrit.config` can be used by site administrators
-to create a library of comment links with `html` set that are not
-user-supplied and thus can be verified to be XSS-free, but are only
-enabled for a subset of projects.
 +
 By default, true.
 +
@@ -2115,6 +2081,16 @@ Values can be specified using standard time unit abbreviations (`ms`, `sec`,
 `min`, etc.).
 +
 Default is 1 hour.
+
+[[core.usePerRequestRefCache]]core.usePerRequestRefCache::
++
+Use a per request (currently per request thread) ref cache. The ref
+cache uses JGit's SnapshottingRefDirectory to ensure that packed
+refs are checked and potentially read at least once per request
+(lazily) if needed. This helps reduce the overhead of checking if
+the packed-refs file is outdated.
++
+Default is true.
 
 [[dashboard]]
 === Section dashboard
@@ -2814,6 +2790,39 @@ keeps the default name reserved so that it cannot be used for new
 groups either. This means there is no danger of ambiguous group names
 when this parameter is removed and the system group uses the default
 name again.
+
+[[groups.relevantGroup]]groups.relevantGroup::
++
+UUID of an external group that should always be considered as relevant
+when checking whether an account is visible.
++
+This setting is only relevant for external group backends and only if
+the link:#accounts.visibility[account visibility] is set to
+`SAME_GROUP` or `VISIBLE_GROUP`.
++
+If the link:#accounts.visibility[account visibility] is set to
+`SAME_GROUP` or `VISIBLE_GROUP` users should see all accounts that are
+a member of a group that contains themselves or that is visible to
+them. Checking this would require getting all groups of the current
+user and all groups of the accounts for which the visibility is being
+checked, but since getting all groups that a user is a member of is
+expensive for external group backends Gerrit doesn't query these groups
+but instead guesses the relevant groups. Guessing relevant groups
+limits the inspected groups to all groups that are mentioned in the
+ACLs of the projects that are currently cached (i.e. all groups that
+are listed in the link:config-project-config.html#file-groups[groups]
+files of the cached projects). This is not very reliable since it
+depends on which groups are mentioned in the ACLs and which projects
+are currently cached. To make this more reliable this configuration
+parameter allows to configure external groups that should always be
+considered as relevant.
++
+As said this setting is only relevant for external group backends. In
+Gerrit core this is only the LDAP backend, but it may apply to further
+group backends that are added by plugins.
++
+This parameter may be added multiple times to specify multiple relevant
+groups.
 
 [[has-operand-alias]]
 === Section has operand alias
@@ -4362,6 +4371,14 @@ Values can be specified using standard time unit abbreviations ('ms',
 'sec', 'min', etc.).
 +
 Default is 5 seconds. Negative values will be converted to 0.
+
+[[plugins.transitionalPushOptions]]plugins.transitionalPushOptions::
++
+Additional push options which should be accepted by gerrit as valid
+options even if they are not registered by any plugin(e.g. "myplugin~foo").
++
+This config can be used when gerrit migrates from a deprecated plugin to the new one. The new plugin
+can (temporary) accept push options of the old plugin without registering such options.
 
 [[receive]]
 === Section receive

@@ -101,6 +101,7 @@ public class IndexHtmlUtil {
             IndexPreloadingUtil.computeChangeRequestsPath(requestedPath, page).get());
         data.put("changeNum", IndexPreloadingUtil.computeChangeNum(requestedPath, page).get());
         break;
+      case PROFILE:
       case DASHBOARD:
         // Dashboard is preloaded queries are added later when we check user is authenticated.
       case PAGE_WITHOUT_PRELOADING:
@@ -121,7 +122,7 @@ public class IndexHtmlUtil {
       data.put("userIsAuthenticated", true);
       if (page == RequestedPage.DASHBOARD) {
         data.put("defaultDashboardHex", ListOption.toHex(IndexPreloadingUtil.DASHBOARD_OPTIONS));
-        data.put("dashboardQuery", IndexPreloadingUtil.computeDashboardQueryList(serverApi));
+        data.put("dashboardQuery", IndexPreloadingUtil.computeDashboardQueryList());
       }
     } catch (AuthException e) {
       logger.atFine().log("Can't inline account-related data because user is unauthenticated");

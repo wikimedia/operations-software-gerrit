@@ -17,9 +17,12 @@ import {
   dispatch,
   MockPromise,
   stubFlags,
+  waitUntil,
 } from '../../../test/test-utils';
 import {
   AccountId,
+  DraftInfo,
+  SavingState,
   EmailAddress,
   NumericChangeId,
   PatchSetNum,
@@ -29,27 +32,25 @@ import {
 import {
   createComment,
   createDraft,
-  createFixSuggestionInfo,
   createRobotComment,
-  createUnsaved,
+  createNewDraft,
 } from '../../../test/test-data-generators';
-import {
-  ReplyToCommentEvent,
-  OpenFixPreviewEventDetail,
-} from '../../../types/events';
+import {ReplyToCommentEvent} from '../../../types/events';
 import {GrConfirmDeleteCommentDialog} from '../gr-confirm-delete-comment-dialog/gr-confirm-delete-comment-dialog';
-import {
-  DraftInfo,
-  USER_SUGGESTION_START_PATTERN,
-} from '../../../utils/comment-util';
 import {assertIsDefined} from '../../../utils/common-util';
 import {Modifier} from '../../../utils/dom-util';
-import {SinonStub} from 'sinon';
+import {SinonStubbedMember} from 'sinon';
 import {fixture, html, assert} from '@open-wc/testing';
 import {GrButton} from '../gr-button/gr-button';
+import {testResolver} from '../../../test/common-test-setup';
+import {
+  CommentsModel,
+  commentsModelToken,
+} from '../../../models/comments/comments-model';
 
 suite('gr-comment tests', () => {
   let element: GrComment;
+  let commentsModel: CommentsModel;
   const account = {
     email: 'dhruvsri@google.com' as EmailAddress,
     name: 'Dhruv Srivastava',
@@ -77,6 +78,7 @@ suite('gr-comment tests', () => {
         .comment=${comment}
       ></gr-comment>`
     );
+    commentsModel = testResolver(commentsModelToken);
   });
 
   suite('DOM rendering', () => {
@@ -95,6 +97,8 @@ suite('gr-comment tests', () => {
           <gr-endpoint-decorator name="comment">
             <gr-endpoint-param name="comment"></gr-endpoint-param>
             <gr-endpoint-param name="editing"></gr-endpoint-param>
+            <gr-endpoint-param name="message"></gr-endpoint-param>
+            <gr-endpoint-param name="isDraft"></gr-endpoint-param>
             <div class="container" id="container">
               <div class="header" id="header">
                 <div class="headerLeft">
@@ -118,6 +122,10 @@ suite('gr-comment tests', () => {
               </div>
             </div>
           </gr-endpoint-decorator>
+          <dialog id="confirmDeleteModal" tabindex="-1">
+            <gr-confirm-delete-comment-dialog id="confirmDeleteCommentDialog">
+            </gr-confirm-delete-comment-dialog>
+          </dialog>
         `
       );
     });
@@ -131,6 +139,8 @@ suite('gr-comment tests', () => {
           <gr-endpoint-decorator name="comment">
             <gr-endpoint-param name="comment"></gr-endpoint-param>
             <gr-endpoint-param name="editing"></gr-endpoint-param>
+            <gr-endpoint-param name="message"></gr-endpoint-param>
+            <gr-endpoint-param name="isDraft"></gr-endpoint-param>
             <div class="container" id="container">
               <div class="header" id="header">
                 <div class="headerLeft">
@@ -155,6 +165,10 @@ suite('gr-comment tests', () => {
               </div>
             </div>
           </gr-endpoint-decorator>
+          <dialog id="confirmDeleteModal" tabindex="-1">
+            <gr-confirm-delete-comment-dialog id="confirmDeleteCommentDialog">
+            </gr-confirm-delete-comment-dialog>
+          </dialog>
         `
       );
     });
@@ -169,6 +183,8 @@ suite('gr-comment tests', () => {
           <gr-endpoint-decorator name="comment">
             <gr-endpoint-param name="comment"></gr-endpoint-param>
             <gr-endpoint-param name="editing"></gr-endpoint-param>
+            <gr-endpoint-param name="message"></gr-endpoint-param>
+            <gr-endpoint-param name="isDraft"></gr-endpoint-param>
             <div class="container" id="container">
               <div class="header" id="header">
                 <div class="headerLeft">
@@ -225,6 +241,10 @@ suite('gr-comment tests', () => {
               </div>
             </div>
           </gr-endpoint-decorator>
+          <dialog id="confirmDeleteModal" tabindex="-1">
+            <gr-confirm-delete-comment-dialog id="confirmDeleteCommentDialog">
+            </gr-confirm-delete-comment-dialog>
+          </dialog>
         `
       );
     });
@@ -253,7 +273,7 @@ suite('gr-comment tests', () => {
 
     test('renders draft', async () => {
       element.initiallyCollapsed = false;
-      (element.comment as DraftInfo).__draft = true;
+      (element.comment as DraftInfo).savingState = SavingState.OK;
       await element.updateComplete;
       assert.shadowDom.equal(
         element,
@@ -261,6 +281,8 @@ suite('gr-comment tests', () => {
           <gr-endpoint-decorator name="comment">
             <gr-endpoint-param name="comment"></gr-endpoint-param>
             <gr-endpoint-param name="editing"></gr-endpoint-param>
+            <gr-endpoint-param name="message"></gr-endpoint-param>
+            <gr-endpoint-param name="isDraft"></gr-endpoint-param>
             <div class="container draft" id="container">
               <div class="header" id="header">
                 <div class="headerLeft">
@@ -321,13 +343,17 @@ suite('gr-comment tests', () => {
               </div>
             </div>
           </gr-endpoint-decorator>
+          <dialog id="confirmDeleteModal" tabindex="-1">
+            <gr-confirm-delete-comment-dialog id="confirmDeleteCommentDialog">
+            </gr-confirm-delete-comment-dialog>
+          </dialog>
         `
       );
     });
 
     test('renders draft in editing mode', async () => {
       element.initiallyCollapsed = false;
-      (element.comment as DraftInfo).__draft = true;
+      (element.comment as DraftInfo).savingState = SavingState.OK;
       element.editing = true;
       await element.updateComplete;
       assert.shadowDom.equal(
@@ -336,6 +362,8 @@ suite('gr-comment tests', () => {
           <gr-endpoint-decorator name="comment">
             <gr-endpoint-param name="comment"></gr-endpoint-param>
             <gr-endpoint-param name="editing"></gr-endpoint-param>
+            <gr-endpoint-param name="message"></gr-endpoint-param>
+            <gr-endpoint-param name="isDraft"></gr-endpoint-param>
             <div class="container draft" id="container">
               <div class="header" id="header">
                 <div class="headerLeft">
@@ -404,6 +432,10 @@ suite('gr-comment tests', () => {
               </div>
             </div>
           </gr-endpoint-decorator>
+          <dialog id="confirmDeleteModal" tabindex="-1">
+            <gr-confirm-delete-comment-dialog id="confirmDeleteCommentDialog">
+            </gr-confirm-delete-comment-dialog>
+          </dialog>
         `
       );
     });
@@ -435,7 +467,7 @@ suite('gr-comment tests', () => {
       },
       line: 5,
       path: 'test',
-      __draft: true,
+      savingState: SavingState.OK,
       message: 'hello world',
     };
     element.editing = true;
@@ -460,7 +492,7 @@ suite('gr-comment tests', () => {
       },
       line: 5,
       path: 'test',
-      __draft: true,
+      savingState: SavingState.OK,
       message: 'hello world',
     };
     element.editing = true;
@@ -483,10 +515,10 @@ suite('gr-comment tests', () => {
     deleteButton.click();
     await element.updateComplete;
 
-    assertIsDefined(element.confirmDeleteOverlay, 'confirmDeleteOverlay');
+    assertIsDefined(element.confirmDeleteModal, 'confirmDeleteModal');
     const dialog = queryAndAssert<GrConfirmDeleteCommentDialog>(
-      element.confirmDeleteOverlay,
-      '#confirmDeleteComment'
+      element.confirmDeleteModal,
+      '#confirmDeleteCommentDialog'
     );
     dialog.message = 'removal reason';
     await element.updateComplete;
@@ -510,14 +542,13 @@ suite('gr-comment tests', () => {
       element.changeNum = 42 as NumericChangeId;
       element.comment = {
         ...createComment(),
-        __draft: true,
+        savingState: SavingState.OK,
         path: '/path/to/file',
         line: 5,
       };
     });
 
     test('isSaveDisabled', async () => {
-      element.saving = false;
       element.unresolved = true;
       element.comment = {...createComment(), unresolved: true};
       element.messageText = 'asdf';
@@ -534,7 +565,7 @@ suite('gr-comment tests', () => {
       await element.updateComplete;
       assert.isTrue(element.isSaveDisabled());
 
-      element.saving = true;
+      element.comment = {...element.comment, savingState: SavingState.SAVING};
       await element.updateComplete;
       assert.isTrue(element.isSaveDisabled());
     });
@@ -550,9 +581,7 @@ suite('gr-comment tests', () => {
 
     test('save', async () => {
       const savePromise = mockPromise<DraftInfo>();
-      const stub = sinon
-        .stub(element.getCommentsModel(), 'saveDraft')
-        .returns(savePromise);
+      const stub = sinon.stub(commentsModel, 'saveDraft').returns(savePromise);
 
       element.comment = createDraft();
       element.editing = true;
@@ -568,14 +597,12 @@ suite('gr-comment tests', () => {
       waitUntilCalled(stub, 'saveDraft()');
       assert.equal(stub.lastCall.firstArg.message, textToSave);
       assert.equal(stub.lastCall.firstArg.unresolved, true);
-      assert.isTrue(element.editing);
-      assert.isTrue(element.saving);
+      assert.isFalse(element.editing);
 
       savePromise.resolve();
       await element.updateComplete;
 
       assert.isFalse(element.editing);
-      assert.isFalse(element.saving);
     });
 
     test('previewing formatting triggers save', async () => {
@@ -596,28 +623,36 @@ suite('gr-comment tests', () => {
     });
 
     test('save failed', async () => {
-      sinon
-        .stub(element.getCommentsModel(), 'saveDraft')
-        .returns(Promise.reject(new Error('saving failed')));
+      sinon.stub(commentsModel, 'saveDraft').returns(
+        Promise.resolve({
+          ...createNewDraft(),
+          message: 'something, not important',
+          unresolved: true,
+          savingState: SavingState.ERROR,
+        })
+      );
 
-      element.comment = createDraft();
+      element.comment = createNewDraft({
+        message: '',
+        unresolved: true,
+      });
+      element.unresolved = true;
       element.editing = true;
       await element.updateComplete;
       element.messageText = 'something, not important';
       await element.updateComplete;
 
       element.save();
-      await element.updateComplete;
+      assert.isFalse(element.editing);
 
-      assert.isTrue(element.unableToSave);
+      await waitUntil(() => element.hasAttribute('error'));
       assert.isTrue(element.editing);
-      assert.isFalse(element.saving);
     });
 
     test('discard', async () => {
       const discardPromise = mockPromise<void>();
       const stub = sinon
-        .stub(element.getCommentsModel(), 'discardDraft')
+        .stub(commentsModel, 'discardDraft')
         .returns(discardPromise);
 
       element.comment = createDraft();
@@ -629,21 +664,19 @@ suite('gr-comment tests', () => {
       await element.updateComplete;
       waitUntilCalled(stub, 'discardDraft()');
       assert.equal(stub.lastCall.firstArg, element.comment.id);
-      assert.isTrue(element.editing);
-      assert.isTrue(element.saving);
+      assert.isFalse(element.editing);
 
       discardPromise.resolve();
       await element.updateComplete;
 
       assert.isFalse(element.editing);
-      assert.isFalse(element.saving);
     });
 
     test('resolved comment state indicated by checkbox', async () => {
-      const saveStub = sinon.stub(element.getCommentsModel(), 'saveDraft');
+      const saveStub = sinon.stub(commentsModel, 'saveDraft');
       element.comment = {
         ...createComment(),
-        __draft: true,
+        savingState: SavingState.OK,
         unresolved: false,
       };
       await element.updateComplete;
@@ -664,11 +697,8 @@ suite('gr-comment tests', () => {
     });
 
     test('saving empty text calls discard()', async () => {
-      const saveStub = sinon.stub(element.getCommentsModel(), 'saveDraft');
-      const discardStub = sinon.stub(
-        element.getCommentsModel(),
-        'discardDraft'
-      );
+      const saveStub = sinon.stub(commentsModel, 'saveDraft');
+      const discardStub = sinon.stub(commentsModel, 'discardDraft');
       element.comment = createDraft();
       element.editing = true;
       await element.updateComplete;
@@ -715,38 +745,19 @@ suite('gr-comment tests', () => {
       actions = query(element, '.robotActions gr-button.fix');
       assert.isNotOk(actions);
     });
-
-    test('handleShowFix fires open-fix-preview event', async () => {
-      const listener = listenOnce<CustomEvent<OpenFixPreviewEventDetail>>(
-        element,
-        'open-fix-preview'
-      );
-      element.comment = {
-        ...createRobotComment(),
-        fix_suggestions: [{...createFixSuggestionInfo()}],
-      };
-      await element.updateComplete;
-
-      queryAndAssert<GrButton>(element, '.show-fix').click();
-
-      const e = await listener;
-      assert.deepEqual(e.detail, await element.createFixPreview());
-    });
   });
 
   suite('auto saving', () => {
     let clock: sinon.SinonFakeTimers;
     let savePromise: MockPromise<DraftInfo>;
-    let saveStub: SinonStub;
+    let saveStub: SinonStubbedMember<CommentsModel['saveDraft']>;
 
     setup(async () => {
       clock = sinon.useFakeTimers();
       savePromise = mockPromise<DraftInfo>();
-      saveStub = sinon
-        .stub(element.getCommentsModel(), 'saveDraft')
-        .returns(savePromise);
+      saveStub = sinon.stub(commentsModel, 'saveDraft').returns(savePromise);
 
-      element.comment = createUnsaved();
+      element.comment = createNewDraft();
       element.editing = true;
       await element.updateComplete;
     });
@@ -772,32 +783,43 @@ suite('gr-comment tests', () => {
     });
 
     test('saving while auto saving', async () => {
+      saveStub.reset();
+      const autoSavePromise = mockPromise<DraftInfo>();
+      saveStub.onCall(0).returns(autoSavePromise);
+      saveStub.onCall(1).returns(savePromise);
+
       const textarea = queryAndAssert<HTMLElement>(element, '#editTextarea');
       dispatch(textarea, 'text-changed', {value: 'auto save text'});
 
       clock.tick(2 * AUTO_SAVE_DEBOUNCE_DELAY_MS);
-      assert.isTrue(saveStub.called);
+      assert.equal(saveStub.callCount, 1);
       assert.equal(saveStub.firstCall.firstArg.message, 'auto save text');
-      saveStub.reset();
 
       element.messageText = 'actual save text';
       const save = element.save();
       await element.updateComplete;
       // First wait for the auto saving to finish.
-      assert.isFalse(saveStub.called);
+      assert.equal(saveStub.callCount, 1);
 
-      // Resolve auto-saving promise.
-      savePromise.resolve({
+      autoSavePromise.resolve({
         ...element.comment,
-        __draft: true,
+        savingState: SavingState.OK,
+        message: 'auto save text',
         id: 'exp123' as UrlEncodedCommentId,
         updated: '2018-02-13 22:48:48.018000000' as Timestamp,
       });
+      savePromise.resolve({
+        ...element.comment,
+        savingState: SavingState.OK,
+        message: 'actual save text',
+        id: 'exp123' as UrlEncodedCommentId,
+        updated: '2018-02-13 22:48:49.018000000' as Timestamp,
+      });
       await save;
       // Only then save.
-      assert.isTrue(saveStub.called);
-      assert.equal(saveStub.firstCall.firstArg.message, 'actual save text');
-      assert.equal(saveStub.firstCall.firstArg.id, 'exp123');
+      assert.equal(saveStub.callCount, 2);
+      assert.equal(saveStub.lastCall.firstArg.message, 'actual save text');
+      assert.equal(saveStub.lastCall.firstArg.id, 'exp123');
     });
   });
 
@@ -813,7 +835,7 @@ suite('gr-comment tests', () => {
         },
         line: 5,
         path: 'test',
-        __draft: true,
+        savingState: SavingState.OK,
         message: 'hello world',
       };
       element = await fixture(
@@ -824,46 +846,19 @@ suite('gr-comment tests', () => {
           .initiallyCollapsed=${false}
         ></gr-comment>`
       );
+      element.editing = true;
     });
-    test('renders suggest fix button', () => {
+    test('renders suggest edit button', () => {
       assert.dom.equal(
         queryAndAssert(element, 'gr-button.suggestEdit'),
         /* HTML */ `<gr-button
-          aria-disabled="false"
           class="action suggestEdit"
           link=""
           role="button"
           tabindex="0"
+          title="This button copies the text to make a suggestion"
         >
-          Suggest Fix
-        </gr-button> `
-      );
-    });
-
-    test('renders preview suggest fix', async () => {
-      element.comment = {
-        ...createComment(),
-        author: {
-          name: 'Mr. Peanutbutter',
-          email: 'tenn1sballchaser@aol.com' as EmailAddress,
-        },
-        line: 5,
-        path: 'test',
-        message: `${USER_SUGGESTION_START_PATTERN}afterSuggestion${'\n```'}`,
-      };
-      await element.updateComplete;
-
-      assert.dom.equal(
-        queryAndAssert(element, 'gr-button.show-fix'),
-        /* HTML */ `<gr-button
-          aria-disabled="false"
-          class="action show-fix"
-          link=""
-          role="button"
-          secondary
-          tabindex="0"
-        >
-          Preview Fix
+          <gr-icon icon="edit" id="icon" filled></gr-icon> Suggest edit
         </gr-button> `
       );
     });

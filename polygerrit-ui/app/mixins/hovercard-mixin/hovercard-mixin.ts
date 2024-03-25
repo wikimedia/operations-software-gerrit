@@ -3,11 +3,10 @@
  * Copyright 2020 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {getRootElement} from '../../scripts/rootElement';
 import {Constructor} from '../../utils/common-util';
 import {LitElement, PropertyValues} from 'lit';
 import {property, query} from 'lit/decorators.js';
-import {EventType, ShowAlertEventDetail} from '../../types/events';
+import {ShowAlertEventDetail} from '../../types/events';
 import {debounce, DelayedTask} from '../../utils/async-util';
 import {hovercardStyles} from '../../styles/gr-hovercard-styles';
 import {sharedStyles} from '../../styles/shared-styles';
@@ -46,21 +45,6 @@ export interface MouseKeyboardOrFocusEvent {
   keyboardEvent?: KeyboardEvent;
   mouseEvent?: MouseEvent;
   focusEvent?: FocusEvent;
-}
-
-export function getHovercardContainer(
-  options: {createIfNotExists: boolean} = {createIfNotExists: false}
-): HTMLElement | null {
-  let container = getRootElement().querySelector<HTMLElement>(
-    `#${containerId}`
-  );
-  if (!container && options.createIfNotExists) {
-    // If it does not exist, create and initialize the hovercard container.
-    container = document.createElement('div');
-    container.setAttribute('id', containerId);
-    getRootElement().appendChild(container);
-  }
-  return container;
 }
 
 /**
@@ -177,7 +161,7 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
         this.addTargetEventListeners();
       }
 
-      this.container = getHovercardContainer({createIfNotExists: true});
+      this.container = this.getContainer();
       this.cleanups.push(
         addShortcut(
           this,
@@ -235,6 +219,7 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
         );
       }
       this.addEventListener('request-dependency', this.resolveDep);
+      this.addEventListener('reload', this.reload);
     }
 
     private removeTargetEventListeners() {
@@ -247,6 +232,7 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
       }
       this.targetCleanups = [];
       this.removeEventListener('request-dependency', this.resolveDep);
+      this.removeEventListener('reload', this.reload);
     }
 
     /**
@@ -261,6 +247,10 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
         this.addTargetEventListeners();
       }
     }
+
+    readonly reload = () => {
+      this.dispatchEventThroughTarget('reload');
+    };
 
     readonly mouseDebounceHide = (e: MouseEvent) => {
       this.debounceHide({mouseEvent: e});
@@ -313,7 +303,7 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
     dispatchEventThroughTarget(eventName: string): void;
 
     dispatchEventThroughTarget(
-      eventName: EventType.SHOW_ALERT,
+      eventName: 'show-alert',
       detail: ShowAlertEventDetail
     ): void;
 
@@ -332,6 +322,29 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
             composed: true,
           })
         );
+    }
+
+    getHost(): HTMLElement {
+      let el = this._target as Node;
+      while (el) {
+        if ((el as HTMLElement).tagName === 'DIALOG') {
+          return el as HTMLElement;
+        }
+        el = el.parentNode || (el as ShadowRoot).host;
+      }
+      return document.body;
+    }
+
+    getContainer(): HTMLElement | null {
+      const host = this.getHost();
+      let container = host.querySelector<HTMLElement>(`#${containerId}`);
+      if (!container) {
+        // If it does not exist, create and initialize the hovercard container.
+        container = document.createElement('div');
+        container.setAttribute('id', containerId);
+        host.appendChild(container);
+      }
+      return container;
     }
 
     /**
@@ -358,6 +371,10 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
       if (!e.target || !isElementTarget(e.target)) return;
       if (this.contains(e.target)) return;
       this.forceHide();
+    };
+
+    private containerClickListener = (e: MouseEvent) => {
+      e.stopPropagation();
     };
 
     /**
@@ -424,6 +441,7 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
         this.container.removeChild(this);
       }
       document.removeEventListener('click', this.documentClickListener);
+      this.container?.removeEventListener('click', this.containerClickListener);
       this.reportingTimer?.end({
         targetId: this._target?.id,
         tagName: this.tagName,
@@ -521,6 +539,7 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
       if (props?.keyboardEvent) {
         this.focus();
       }
+      this.container.addEventListener('click', this.containerClickListener);
       document.addEventListener('click', this.documentClickListener);
       this.reportingTimer = this.reporting.getTimer('Show Hovercard');
     };
@@ -542,16 +561,15 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
         if (this._isInsideViewport()) return;
       }
       this.updatePositionTo(this.position);
-      console.warn('Could not find a visible position for the hovercard.');
     }
 
     _isInsideViewport() {
       const thisRect = this.getBoundingClientRect();
-      if (thisRect.top < 0) return false;
-      if (thisRect.left < 0) return false;
-      const docuRect = document.documentElement.getBoundingClientRect();
-      if (thisRect.bottom > docuRect.height) return false;
-      if (thisRect.right > docuRect.width) return false;
+      const hostRect = this.getHost().getBoundingClientRect();
+      if (thisRect.top < hostRect.top) return false;
+      if (thisRect.left < hostRect.left) return false;
+      if (thisRect.bottom > hostRect.bottom) return false;
+      if (thisRect.right > hostRect.right) return false;
       return true;
     }
 
@@ -576,12 +594,12 @@ export const HovercardMixin = <T extends Constructor<LitElement>>(
       // in the width and height of the bounding client rect.
       this.style.cssText = '';
 
-      const docuRect = document.documentElement.getBoundingClientRect();
+      const hostRect = this.getHost().getBoundingClientRect();
       const targetRect = this._target.getBoundingClientRect();
       const thisRect = this.getBoundingClientRect();
 
-      const targetLeft = targetRect.left - docuRect.left;
-      const targetTop = targetRect.top - docuRect.top;
+      const targetLeft = targetRect.left - hostRect.left;
+      const targetTop = targetRect.top - hostRect.top;
 
       let hovercardLeft;
       let hovercardTop;
@@ -640,6 +658,7 @@ export interface HovercardMixinInterface {
 
   // Used for tests
   mouseHide(e: MouseEvent): void;
+  getHost(): HTMLElement;
   hide(props: MouseKeyboardOrFocusEvent): void;
   container: HTMLElement | null;
   hideTask?: DelayedTask;

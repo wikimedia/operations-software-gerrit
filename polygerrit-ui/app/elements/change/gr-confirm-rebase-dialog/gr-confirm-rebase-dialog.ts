@@ -3,9 +3,17 @@
  * Copyright 2016 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import '../../shared/gr-account-chip/gr-account-chip';
 import {css, html, LitElement, PropertyValues} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
-import {NumericChangeId, BranchName} from '../../../types/common';
+import {when} from 'lit/directives/when.js';
+import {
+  NumericChangeId,
+  BranchName,
+  ChangeActionDialog,
+  AccountDetailInfo,
+  AccountInfo,
+} from '../../../types/common';
 import '../../shared/gr-dialog/gr-dialog';
 import '../../shared/gr-autocomplete/gr-autocomplete';
 import {
@@ -16,6 +24,13 @@ import {
 import {getAppContext} from '../../../services/app-context';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {ValueChangedEvent} from '../../../types/events';
+import {throwingErrorCallback} from '../../shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
+import {fireNoBubbleNoCompose} from '../../../utils/event-util';
+import {resolve} from '../../../models/dependency';
+import {changeModelToken} from '../../../models/change/change-model';
+import {userModelToken} from '../../../models/user/user-model';
+import {relatedChangesModelToken} from '../../../models/change/related-changes-model';
+import {subscribe} from '../../lit/subscription-controller';
 
 export interface RebaseChange {
   name: string;
@@ -25,10 +40,15 @@ export interface RebaseChange {
 export interface ConfirmRebaseEventDetail {
   base: string | null;
   allowConflicts: boolean;
+  rebaseChain: boolean;
+  onBehalfOfUploader: boolean;
 }
 
 @customElement('gr-confirm-rebase-dialog')
-export class GrConfirmRebaseDialog extends LitElement {
+export class GrConfirmRebaseDialog
+  extends LitElement
+  implements ChangeActionDialog
+{
   /**
    * Fired when the confirm button is pressed.
    *
@@ -44,17 +64,23 @@ export class GrConfirmRebaseDialog extends LitElement {
   @property({type: String})
   branch?: BranchName;
 
-  @property({type: Number})
-  changeNumber?: NumericChangeId;
-
-  @property({type: Boolean})
-  hasParent?: boolean;
-
   @property({type: Boolean})
   rebaseOnCurrent?: boolean;
 
+  @property({type: Boolean})
+  disableActions = false;
+
+  @state()
+  changeNum?: NumericChangeId;
+
+  @state()
+  hasParent?: boolean;
+
   @state()
   text = '';
+
+  @state()
+  shouldRebaseChain = false;
 
   @state()
   private query: AutocompleteQuery;
@@ -62,26 +88,67 @@ export class GrConfirmRebaseDialog extends LitElement {
   @state()
   recentChanges?: RebaseChange[];
 
+  @state()
+  allowConflicts = false;
+
   @query('#rebaseOnParentInput')
-  private rebaseOnParentInput!: HTMLInputElement;
+  private rebaseOnParentInput?: HTMLInputElement;
 
   @query('#rebaseOnTipInput')
-  private rebaseOnTipInput!: HTMLInputElement;
+  private rebaseOnTipInput?: HTMLInputElement;
 
   @query('#rebaseOnOtherInput')
-  rebaseOnOtherInput!: HTMLInputElement;
+  rebaseOnOtherInput?: HTMLInputElement;
 
   @query('#rebaseAllowConflicts')
-  private rebaseAllowConflicts!: HTMLInputElement;
+  private rebaseAllowConflicts?: HTMLInputElement;
+
+  @query('#rebaseChain')
+  private rebaseChain?: HTMLInputElement;
 
   @query('#parentInput')
   parentInput!: GrAutocomplete;
 
+  @state()
+  account?: AccountDetailInfo;
+
+  @state()
+  uploader?: AccountInfo;
+
   private readonly restApiService = getAppContext().restApiService;
+
+  private readonly getChangeModel = resolve(this, changeModelToken);
+
+  private readonly getUserModel = resolve(this, userModelToken);
+
+  private readonly getRelatedChangesModel = resolve(
+    this,
+    relatedChangesModelToken
+  );
 
   constructor() {
     super();
     this.query = input => this.getChangeSuggestions(input);
+    subscribe(
+      this,
+      () => this.getUserModel().account$,
+      x => (this.account = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().latestUploader$,
+      x => (this.uploader = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().changeNum$,
+      x => (this.changeNum = x)
+    );
+    subscribe(
+      this,
+      () => this.getRelatedChangesModel().hasParent$,
+      x => (this.hasParent = x)
+    );
   }
 
   override willUpdate(changedProperties: PropertyValues): void {
@@ -115,11 +182,14 @@ export class GrConfirmRebaseDialog extends LitElement {
         display: block;
         width: 100%;
       }
-      .rebaseAllowConflicts {
+      .rebaseCheckbox {
         margin-top: var(--spacing-m);
       }
       .rebaseOption {
         margin: var(--spacing-m) 0;
+      }
+      .rebaseOnBehalfMsg {
+        margin-top: var(--spacing-m);
       }
     `,
   ];
@@ -129,6 +199,7 @@ export class GrConfirmRebaseDialog extends LitElement {
       <gr-dialog
         id="confirmDialog"
         confirm-label="Rebase"
+        .disabled=${this.disableActions}
         @confirm=${this.handleConfirmTap}
         @cancel=${this.handleCancelTap}
       >
@@ -143,6 +214,9 @@ export class GrConfirmRebaseDialog extends LitElement {
             <label id="rebaseOnParentLabel" for="rebaseOnParentInput">
               Rebase on parent change
             </label>
+          </div>
+          <div class="message" ?hidden=${this.hasParent !== undefined}>
+            Still loading parent information ...
           </div>
           <div
             id="parentUpToDateMsg"
@@ -164,7 +238,7 @@ export class GrConfirmRebaseDialog extends LitElement {
             />
             <label id="rebaseOnTipLabel" for="rebaseOnTipInput">
               Rebase on top of the ${this.branch} branch<span
-                ?hidden=${!this.hasParent}
+                ?hidden=${!this.hasParent || this.shouldRebaseChain}
               >
                 (breaks relation chain)
               </span>
@@ -186,14 +260,15 @@ export class GrConfirmRebaseDialog extends LitElement {
             />
             <label id="rebaseOnOtherLabel" for="rebaseOnOtherInput">
               Rebase on a specific change, ref, or commit
-              <span ?hidden=${!this.hasParent}> (breaks relation chain) </span>
+              <span ?hidden=${!this.hasParent || this.shouldRebaseChain}>
+                (breaks relation chain)
+              </span>
             </label>
           </div>
           <div class="parentRevisionContainer">
             <gr-autocomplete
               id="parentInput"
               .query=${this.query}
-              no-debounce
               .text=${this.text}
               @text-changed=${(e: ValueChangedEvent) =>
                 (this.text = e.detail.value)}
@@ -203,12 +278,50 @@ export class GrConfirmRebaseDialog extends LitElement {
             >
             </gr-autocomplete>
           </div>
-          <div class="rebaseAllowConflicts">
-            <input id="rebaseAllowConflicts" type="checkbox" />
+          <div class="rebaseCheckbox">
+            <input
+              id="rebaseAllowConflicts"
+              type="checkbox"
+              @change=${() => {
+                this.allowConflicts = !!this.rebaseAllowConflicts?.checked;
+              }}
+            />
             <label for="rebaseAllowConflicts"
               >Allow rebase with conflicts</label
             >
           </div>
+          ${when(
+            !this.isCurrentUserEqualToLatestUploader() && this.allowConflicts,
+            () =>
+              html`<span class="message"
+                >Rebase cannot be done on behalf of the uploader when allowing
+                conflicts.</span
+              >`
+          )}
+          ${when(
+            this.hasParent,
+            () =>
+              html`<div class="rebaseCheckbox">
+                <input
+                  id="rebaseChain"
+                  type="checkbox"
+                  @change=${() => {
+                    this.shouldRebaseChain = !!this.rebaseChain?.checked;
+                  }}
+                />
+                <label for="rebaseChain">Rebase all ancestors</label>
+              </div>`
+          )}
+          ${when(
+            !this.isCurrentUserEqualToLatestUploader(),
+            () => html`<div class="rebaseOnBehalfMsg">Rebase will be done on behalf of${
+              !this.allowConflicts ? ' the uploader:' : ''
+            } <gr-account-chip
+                .account=${this.allowConflicts ? this.account : this.uploader}
+                .hideHovercard=${true}
+              ></gr-account-chip
+              ><span></div>`
+          )}
         </div>
       </gr-dialog>
     `;
@@ -222,7 +335,13 @@ export class GrConfirmRebaseDialog extends LitElement {
   // last time it was run.
   fetchRecentChanges() {
     return this.restApiService
-      .getChanges(undefined, 'is:open -age:90d')
+      .getChanges(
+        undefined,
+        'is:open -age:90d',
+        /* offset=*/ undefined,
+        /* options=*/ undefined,
+        throwingErrorCallback
+      )
       .then(response => {
         if (!response) return [];
         const changes: RebaseChange[] = [];
@@ -235,6 +354,11 @@ export class GrConfirmRebaseDialog extends LitElement {
         this.recentChanges = changes;
         return this.recentChanges;
       });
+  }
+
+  isCurrentUserEqualToLatestUploader() {
+    if (!this.account || !this.uploader) return true;
+    return this.account._account_id === this.uploader._account_id;
   }
 
   getRecentChanges() {
@@ -256,8 +380,7 @@ export class GrConfirmRebaseDialog extends LitElement {
   ): AutocompleteSuggestion[] {
     return changes
       .filter(
-        change =>
-          change.name.includes(input) && change.value !== this.changeNumber
+        change => change.name.includes(input) && change.value !== this.changeNum
       )
       .map(
         change =>
@@ -288,10 +411,10 @@ export class GrConfirmRebaseDialog extends LitElement {
    * should be rebased on top of its current parent.
    */
   getSelectedBase() {
-    if (this.rebaseOnParentInput.checked) {
+    if (this.rebaseOnParentInput?.checked) {
       return null;
     }
-    if (this.rebaseOnTipInput.checked) {
+    if (this.rebaseOnTipInput?.checked) {
       return '';
     }
     if (!this.text) {
@@ -307,16 +430,23 @@ export class GrConfirmRebaseDialog extends LitElement {
     e.stopPropagation();
     const detail: ConfirmRebaseEventDetail = {
       base: this.getSelectedBase(),
-      allowConflicts: this.rebaseAllowConflicts.checked,
+      allowConflicts: !!this.rebaseAllowConflicts?.checked,
+      rebaseChain: !!this.rebaseChain?.checked,
+      onBehalfOfUploader: this.rebaseOnBehalfOfUploader(),
     };
-    this.dispatchEvent(new CustomEvent('confirm', {detail}));
+    fireNoBubbleNoCompose(this, 'confirm-rebase', detail);
     this.text = '';
+  }
+
+  private rebaseOnBehalfOfUploader() {
+    if (this.allowConflicts) return false;
+    return true;
   }
 
   private handleCancelTap(e: Event) {
     e.preventDefault();
     e.stopPropagation();
-    this.dispatchEvent(new CustomEvent('cancel'));
+    fireNoBubbleNoCompose(this, 'cancel', {});
     this.text = '';
   }
 
@@ -325,7 +455,7 @@ export class GrConfirmRebaseDialog extends LitElement {
   }
 
   private handleEnterChangeNumberClick() {
-    this.rebaseOnOtherInput.checked = true;
+    if (this.rebaseOnOtherInput) this.rebaseOnOtherInput.checked = true;
   }
 
   /**
@@ -339,11 +469,11 @@ export class GrConfirmRebaseDialog extends LitElement {
     }
 
     if (this.displayParentOption()) {
-      this.rebaseOnParentInput.checked = true;
+      if (this.rebaseOnParentInput) this.rebaseOnParentInput.checked = true;
     } else if (this.displayTipOption()) {
-      this.rebaseOnTipInput.checked = true;
+      if (this.rebaseOnTipInput) this.rebaseOnTipInput.checked = true;
     } else {
-      this.rebaseOnOtherInput.checked = true;
+      if (this.rebaseOnOtherInput) this.rebaseOnOtherInput.checked = true;
     }
   }
 }
@@ -351,5 +481,8 @@ export class GrConfirmRebaseDialog extends LitElement {
 declare global {
   interface HTMLElementTagNameMap {
     'gr-confirm-rebase-dialog': GrConfirmRebaseDialog;
+  }
+  interface HTMLElementEventMap {
+    'confirm-rebase': CustomEvent<ConfirmRebaseEventDetail>;
   }
 }

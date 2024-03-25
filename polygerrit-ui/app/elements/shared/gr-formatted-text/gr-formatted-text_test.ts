@@ -15,14 +15,9 @@ import {getAppContext} from '../../../services/app-context';
 import './gr-formatted-text';
 import {GrFormattedText} from './gr-formatted-text';
 import {createConfig} from '../../../test/test-data-generators';
-import {
-  queryAndAssert,
-  stubFlags,
-  waitUntilObserved,
-} from '../../../test/test-utils';
+import {queryAndAssert, waitUntilObserved} from '../../../test/test-utils';
 import {CommentLinks, EmailAddress} from '../../../api/rest-api';
 import {testResolver} from '../../../test/common-test-setup';
-import {KnownExperimentId} from '../../../services/flags/flags';
 import {GrAccountChip} from '../gr-account-chip/gr-account-chip';
 
 suite('gr-formatted-text tests', () => {
@@ -46,10 +41,6 @@ suite('gr-formatted-text tests', () => {
       customLinkRewrite: {
         match: '(LinkRewriteMe)',
         link: 'http://google.com/$1',
-      },
-      customHtmlRewrite: {
-        match: 'HTMLRewriteMe',
-        html: '<div>HTMLRewritten</div>',
       },
       complexLinkRewrite: {
         match: '(^|\\s)A Link (\\d+)($|\\s)',
@@ -101,11 +92,13 @@ suite('gr-formatted-text tests', () => {
       await setCommentLinks({
         capitalizeFoo: {
           match: 'foo',
-          html: 'FOO',
+          prefix: 'FOO',
+          link: 'a.b.c',
         },
         lowercaseFoo: {
           match: 'FOO',
-          html: 'foo',
+          prefix: 'foo',
+          link: 'c.d.e',
         },
       });
       element.content = 'foo';
@@ -115,9 +108,8 @@ suite('gr-formatted-text tests', () => {
         element,
         /* HTML */ `
           <pre class="plaintext">
-          FOO
-        </pre
-          >
+          FOO<a href="a.b.c" rel="noopener" target="_blank">foo</a>
+        </pre>
         `
       );
     });
@@ -126,11 +118,15 @@ suite('gr-formatted-text tests', () => {
       await setCommentLinks({
         bracketNum: {
           match: '(Start:) ([0-9]+)',
-          html: '$1 [$2]',
+          prefix: '$1 ',
+          link: 'bug/$2',
+          text: 'bug/$2',
         },
         bracketNum2: {
           match: '(Start: [0-9]+) ([0-9]+)',
-          html: '$1 [$2]',
+          prefix: '$1 ',
+          link: 'bug/$2',
+          text: 'bug/$2',
         },
       });
       element.content = 'Start: 123 456';
@@ -140,9 +136,14 @@ suite('gr-formatted-text tests', () => {
         element,
         /* HTML */ `
           <pre class="plaintext">
-            Start: [123] [456]
-          </pre
-          >
+            Start:
+            <a href="bug/123" rel="noopener" target="_blank">
+              bug/123
+            </a>
+            <a href="bug/456" rel="noopener" target="_blank">
+              bug/456
+            </a>
+          </pre>
         `
       );
     });
@@ -151,8 +152,7 @@ suite('gr-formatted-text tests', () => {
       element.content = `
         text with plain link: http://google.com
         text with config link: LinkRewriteMe
-        text with complex link: A Link 12
-        text with config html: HTMLRewriteMe`;
+        text with complex link: A Link 12`;
       await element.updateComplete;
 
       assert.shadowDom.equal(
@@ -183,8 +183,6 @@ suite('gr-formatted-text tests', () => {
             >
               Link 12
             </a>
-            text with config html:
-            <div>HTMLRewritten</div>
           </pre>
         `
       );
@@ -210,6 +208,22 @@ suite('gr-formatted-text tests', () => {
         /* HTML */ '<pre class="plaintext"># A Markdown Heading</pre>'
       );
     });
+
+    test('does default linking', async () => {
+      const checkLinking = async (url: string) => {
+        element.content = url;
+        await element.updateComplete;
+        const a = queryAndAssert<HTMLElement>(element, 'a');
+        assert.equal(a.getAttribute('href'), url);
+        assert.equal(a.innerText, url);
+      };
+
+      await checkLinking('http://www.google.com');
+      await checkLinking('https://www.google.com');
+      await checkLinking('https://www.google.com/');
+      await checkLinking('https://www.google.com/asdf~');
+      await checkLinking('https://www.google.com/asdf-');
+    });
   });
 
   suite('as markdown', () => {
@@ -222,15 +236,14 @@ suite('gr-formatted-text tests', () => {
         \ntext with plain link: http://google.com
         \ntext with config link: LinkRewriteMe
         \ntext without a link: NotA Link 15 cats
-        \ntext with complex link: A Link 12
-        \ntext with config html: HTMLRewriteMe`;
+        \ntext with complex link: A Link 12`;
       await element.updateComplete;
 
       assert.shadowDom.equal(
         element,
         /* HTML */ `
           <marked-element>
-            <div slot="markdown-html">
+            <div slot="markdown-html" class="markdown-html">
               <p>text</p>
               <p>
                 text with plain link:
@@ -259,11 +272,52 @@ suite('gr-formatted-text tests', () => {
                   Link 12
                 </a>
               </p>
-              <p>text with config html:</p>
-              <div>HTMLRewritten</div>
-              <p></p>
             </div>
           </marked-element>
+        `
+      );
+    });
+
+    test('does not render if too long', async () => {
+      element.content = `text
+        text with plain link: http://google.com
+        text with config link: LinkRewriteMe
+        text without a link: NotA Link 15 cats
+        text with complex link: A Link 12`;
+      element.MARKDOWN_LIMIT = 10;
+      await element.updateComplete;
+
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `
+          <pre class="plaintext">
+          text
+        text with plain link:
+        <a
+          href="http://google.com"
+          rel="noopener"
+          target="_blank"
+        >
+          http://google.com
+        </a>
+        text with config link:
+          <a
+            href="http://google.com/LinkRewriteMe"
+            rel="noopener"
+            target="_blank"
+          >
+            LinkRewriteMe
+          </a>
+        text without a link: NotA Link 15 cats
+        text with complex link: A
+          <a
+            href="http://localhost/page?id=12"
+            rel="noopener"
+            target="_blank"
+          >
+            Link 12
+          </a>
+        </pre>
         `
       );
     });
@@ -276,15 +330,14 @@ suite('gr-formatted-text tests', () => {
         \n##### h5-heading
         \n###### h6-heading
         \n# heading with plain link: http://google.com
-        \n# heading with config link: LinkRewriteMe
-        \n# heading with config html: HTMLRewriteMe`;
+        \n# heading with config link: LinkRewriteMe`;
       await element.updateComplete;
 
       assert.shadowDom.equal(
         element,
         /* HTML */ `
           <marked-element>
-            <div slot="markdown-html">
+            <div slot="markdown-html" class="markdown-html">
               <h1>h1-heading</h1>
               <h2>h2-heading</h2>
               <h3>h3-heading</h3>
@@ -307,10 +360,6 @@ suite('gr-formatted-text tests', () => {
                   LinkRewriteMe
                 </a>
               </h1>
-              <h1>
-                heading with config html:
-                <div>HTMLRewritten</div>
-              </h1>
             </div>
           </marked-element>
         `
@@ -320,15 +369,14 @@ suite('gr-formatted-text tests', () => {
     test('renders inline-code without linking or rewriting', async () => {
       element.content = `\`inline code\`
         \n\`inline code with plain link: google.com\`
-        \n\`inline code with config link: LinkRewriteMe\`
-        \n\`inline code with config html: HTMLRewriteMe\``;
+        \n\`inline code with config link: LinkRewriteMe\``;
       await element.updateComplete;
 
       assert.shadowDom.equal(
         element,
         /* HTML */ `
           <marked-element>
-            <div slot="markdown-html">
+            <div slot="markdown-html" class="markdown-html">
               <p>
                 <code>inline code</code>
               </p>
@@ -337,9 +385,6 @@ suite('gr-formatted-text tests', () => {
               </p>
               <p>
                 <code>inline code with config link: LinkRewriteMe</code>
-              </p>
-              <p>
-                <code>inline code with config html: HTMLRewriteMe</code>
               </p>
             </div>
           </marked-element>
@@ -350,15 +395,14 @@ suite('gr-formatted-text tests', () => {
     test('renders multiline-code without linking or rewriting', async () => {
       element.content = `\`\`\`\nmultiline code\n\`\`\`
         \n\`\`\`\nmultiline code with plain link: google.com\n\`\`\`
-        \n\`\`\`\nmultiline code with config link: LinkRewriteMe\n\`\`\`
-        \n\`\`\`\nmultiline code with config html: HTMLRewriteMe\n\`\`\``;
+        \n\`\`\`\nmultiline code with config link: LinkRewriteMe\n\`\`\``;
       await element.updateComplete;
 
       assert.shadowDom.equal(
         element,
         /* HTML */ `
           <marked-element>
-            <div slot="markdown-html">
+            <div slot="markdown-html" class="markdown-html">
               <pre>
               <code>multiline code</code>
             </pre>
@@ -367,9 +411,6 @@ suite('gr-formatted-text tests', () => {
             </pre>
               <pre>
               <code>multiline code with config link: LinkRewriteMe</code>
-            </pre>
-              <pre>
-              <code>multiline code with config html: HTMLRewriteMe</code>
             </pre>
             </div>
           </marked-element>
@@ -385,7 +426,7 @@ suite('gr-formatted-text tests', () => {
         element,
         /* HTML */ `
           <marked-element>
-            <div slot="markdown-html">
+            <div slot="markdown-html" class="markdown-html">
               <p>![img](google.com/img.png)</p>
             </div>
           </marked-element>
@@ -393,10 +434,7 @@ suite('gr-formatted-text tests', () => {
       );
     });
 
-    test('does not handle @mentions if not enabled', async () => {
-      stubFlags('isEnabled')
-        .withArgs(KnownExperimentId.MENTION_USERS)
-        .returns(false);
+    test('handles @mentions', async () => {
       element.content = '@someone@google.com';
       await element.updateComplete;
 
@@ -404,35 +442,7 @@ suite('gr-formatted-text tests', () => {
         element,
         /* HTML */ `
           <marked-element>
-            <div slot="markdown-html">
-              <p>
-                @
-                <a
-                  href="mailto:someone@google.com"
-                  rel="noopener"
-                  target="_blank"
-                >
-                  someone@google.com
-                </a>
-              </p>
-            </div>
-          </marked-element>
-        `
-      );
-    });
-
-    test('handles @mentions if enabled', async () => {
-      stubFlags('isEnabled')
-        .withArgs(KnownExperimentId.MENTION_USERS)
-        .returns(true);
-      element.content = '@someone@google.com';
-      await element.updateComplete;
-
-      assert.shadowDom.equal(
-        element,
-        /* HTML */ `
-          <marked-element>
-            <div slot="markdown-html">
+            <div slot="markdown-html" class="markdown-html">
               <p>
                 <gr-account-chip></gr-account-chip>
               </p>
@@ -451,9 +461,6 @@ suite('gr-formatted-text tests', () => {
     });
 
     test('does not handle @mentions that is part of a code block', async () => {
-      stubFlags('isEnabled')
-        .withArgs(KnownExperimentId.MENTION_USERS)
-        .returns(true);
       element.content = '`@`someone@google.com';
       await element.updateComplete;
 
@@ -461,7 +468,7 @@ suite('gr-formatted-text tests', () => {
         element,
         /* HTML */ `
           <marked-element>
-            <div slot="markdown-html">
+            <div slot="markdown-html" class="markdown-html">
               <p>
                 <code>@</code>
                 <a
@@ -486,7 +493,7 @@ suite('gr-formatted-text tests', () => {
         element,
         /* HTML */ `
           <marked-element>
-            <div slot="markdown-html">
+            <div slot="markdown-html" class="markdown-html">
               <p>
                 <a href="https://www.google.com" rel="noopener" target="_blank"
                   >myLink</a
@@ -501,15 +508,14 @@ suite('gr-formatted-text tests', () => {
     test('renders block quotes with links and rewrites', async () => {
       element.content = `> block quote
         \n> block quote with plain link: http://google.com
-        \n> block quote with config link: LinkRewriteMe
-        \n> block quote with config html: HTMLRewriteMe`;
+        \n> block quote with config link: LinkRewriteMe`;
       await element.updateComplete;
 
       assert.shadowDom.equal(
         element,
         /* HTML */ `
           <marked-element>
-            <div slot="markdown-html">
+            <div slot="markdown-html" class="markdown-html">
               <blockquote>
                 <p>block quote</p>
               </blockquote>
@@ -533,11 +539,6 @@ suite('gr-formatted-text tests', () => {
                   </a>
                 </p>
               </blockquote>
-              <blockquote>
-                <p>block quote with config html:</p>
-                <div>HTMLRewritten</div>
-                <p></p>
-              </blockquote>
             </div>
           </marked-element>
         `
@@ -557,7 +558,7 @@ suite('gr-formatted-text tests', () => {
         element,
         /* HTML */ `
           <marked-element>
-            <div slot="markdown-html">
+            <div slot="markdown-html" class="markdown-html">
               <p>plain text ${escapedDiv}</p>
               <p>
                 <code>inline code ${escapedDiv}</code>
@@ -579,6 +580,91 @@ suite('gr-formatted-text tests', () => {
           </marked-element>
         `
       );
+    });
+
+    test('renders nested block quotes', async () => {
+      element.content = '> > > block quote';
+      await element.updateComplete;
+
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `
+          <marked-element>
+            <div slot="markdown-html" class="markdown-html">
+              <blockquote>
+                <blockquote>
+                  <blockquote>
+                    <p>block quote</p>
+                  </blockquote>
+                </blockquote>
+              </blockquote>
+            </div>
+          </marked-element>
+        `
+      );
+    });
+
+    test('renders rewrites with an asterisk', async () => {
+      await setCommentLinks({
+        customLinkRewrite: {
+          match: 'asterisks (\\*) rule',
+          link: 'http://google.com',
+        },
+      });
+
+      element.content = 'I think asterisks * rule';
+      await element.updateComplete;
+
+      assert.shadowDom.equal(
+        element,
+        /* HTML */ `
+          <marked-element>
+            <div slot="markdown-html" class="markdown-html">
+              <p>
+                I think
+                <a href="http://google.com" rel="noopener" target="_blank"
+                  >asterisks * rule</a
+                >
+              </p>
+            </div>
+          </marked-element>
+        `
+      );
+    });
+
+    test('does default linking', async () => {
+      const checkLinking = async (url: string) => {
+        element.content = url;
+        await element.updateComplete;
+        const a = queryAndAssert<HTMLElement>(element, 'a');
+        const p = queryAndAssert<HTMLElement>(element, 'p');
+        assert.equal(a.getAttribute('href'), url);
+        assert.equal(p.innerText, url);
+      };
+
+      await checkLinking('http://www.google.com');
+      await checkLinking('https://www.google.com');
+      await checkLinking('https://www.google.com/');
+    });
+
+    suite('user suggest fix', () => {
+      setup(async () => {
+        const flagsService = getAppContext().flagsService;
+        sinon.stub(flagsService, 'isEnabled').returns(true);
+      });
+
+      test('renders', async () => {
+        element.content = '```suggestion\nHello World```';
+        await element.updateComplete;
+        assert.shadowDom.equal(
+          element,
+          /* HTML */ `<marked-element>
+            <div class="markdown-html" slot="markdown-html">
+              <gr-user-suggestion-fix>Hello World</gr-user-suggestion-fix>
+            </div>
+          </marked-element>`
+        );
+      });
     });
   });
 });

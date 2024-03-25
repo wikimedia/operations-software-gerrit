@@ -9,12 +9,15 @@ import {firePageError, fireTitleChange} from '../../../utils/event-util';
 import {getAppContext} from '../../../services/app-context';
 import {ErrorCallback} from '../../../api/rest';
 import {encodeURL, getBaseUrl} from '../../../utils/url-util';
-import {SHOWN_ITEMS_COUNT} from '../../../constants/constants';
 import {tableStyles} from '../../../styles/gr-table-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, css, html} from 'lit';
 import {customElement, property, state} from 'lit/decorators.js';
-import {AdminViewState} from '../../../models/views/admin';
+import {
+  AdminChildView,
+  AdminViewState,
+  createAdminUrl,
+} from '../../../models/views/admin';
 
 // Exported for tests
 export interface PluginInfoWithName extends PluginInfo {
@@ -23,8 +26,6 @@ export interface PluginInfoWithName extends PluginInfo {
 
 @customElement('gr-plugin-list')
 export class GrPluginList extends LitElement {
-  readonly path = '/admin/plugins';
-
   /**
    * URL params passed from the router.
    */
@@ -34,23 +35,21 @@ export class GrPluginList extends LitElement {
   /**
    * Offset of currently visible query results.
    */
-  @state() private offset = 0;
+  @state() offset = 0;
 
-  // private but used in test
   @state() plugins?: PluginInfoWithName[];
 
-  @state() private pluginsPerPage = 25;
+  @state() pluginsPerPage = 25;
 
-  // private but used in test
   @state() loading = true;
 
-  @state() private filter = '';
+  @state() filter = '';
 
   private readonly restApiService = getAppContext().restApiService;
 
   override connectedCallback() {
     super.connectedCallback();
-    fireTitleChange(this, 'Plugins');
+    fireTitleChange('Plugins');
   }
 
   static override get styles() {
@@ -73,7 +72,7 @@ export class GrPluginList extends LitElement {
         .items=${this.plugins}
         .loading=${this.loading}
         .offset=${this.offset}
-        .path=${this.path}
+        .path=${createAdminUrl({adminView: AdminChildView.PLUGINS})}
       >
         <table id="list" class="genericList">
           <tbody>
@@ -107,7 +106,7 @@ export class GrPluginList extends LitElement {
     return html`
       <tbody>
         ${this.plugins
-          ?.slice(0, SHOWN_ITEMS_COUNT)
+          ?.slice(0, this.pluginsPerPage)
           .map(plugin => this.renderPluginList(plugin))}
       </tbody>
     `;
@@ -176,7 +175,7 @@ export class GrPluginList extends LitElement {
   }
 
   private computePluginUrl(id: string) {
-    return getBaseUrl() + '/' + encodeURL(id, true);
+    return getBaseUrl() + '/' + encodeURL(id);
   }
 }
 

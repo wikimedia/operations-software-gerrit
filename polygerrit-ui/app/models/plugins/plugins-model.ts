@@ -3,7 +3,6 @@
  * Copyright 2022 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {Finalizable} from '../../services/registry';
 import {Observable, Subject} from 'rxjs';
 import {
   CheckResult,
@@ -12,8 +11,13 @@ import {
   ChecksProvider,
 } from '../../api/checks';
 import {Model} from '../model';
-import {define} from '../dependency';
 import {select} from '../../utils/observable-util';
+import {CoverageProvider} from '../../api/annotation';
+
+export interface CoveragePlugin {
+  pluginName: string;
+  provider: CoverageProvider;
+}
 
 export interface ChecksPlugin {
   pluginName: string;
@@ -30,14 +34,16 @@ export interface ChecksUpdate {
 /** Application wide state of plugins. */
 interface PluginsState {
   /**
+   * List of plugins that have called annotationApi().setCoverageProvider().
+   */
+  coveragePlugins: CoveragePlugin[];
+  /**
    * List of plugins that have called checks().register().
    */
   checksPlugins: ChecksPlugin[];
 }
 
-export const pluginsModelToken = define<PluginsModel>('plugins-model');
-
-export class PluginsModel extends Model<PluginsState> implements Finalizable {
+export class PluginsModel extends Model<PluginsState> {
   /** Private version of the event bus below. */
   private checksAnnounceSubject$ = new Subject<ChecksPlugin>();
 
@@ -54,19 +60,38 @@ export class PluginsModel extends Model<PluginsState> implements Finalizable {
 
   public checksPlugins$ = select(this.state$, state => state.checksPlugins);
 
+  public coveragePlugins$ = select(this.state$, state => state.coveragePlugins);
+
   constructor() {
     super({
+      coveragePlugins: [],
       checksPlugins: [],
     });
+  }
+
+  coverageRegister(plugin: CoveragePlugin) {
+    const nextState = {...this.getState()};
+    nextState.coveragePlugins = [...nextState.coveragePlugins];
+    const alreadyRegistered = nextState.coveragePlugins.some(
+      p => p.pluginName === plugin.pluginName
+    );
+    if (alreadyRegistered) {
+      console.warn(
+        `${plugin.pluginName} tried to register twice as a coverage provider. Ignored.`
+      );
+      return;
+    }
+    nextState.coveragePlugins.push(plugin);
+    this.setState(nextState);
   }
 
   checksRegister(plugin: ChecksPlugin) {
     const nextState = {...this.getState()};
     nextState.checksPlugins = [...nextState.checksPlugins];
-    const alreadysRegistered = nextState.checksPlugins.some(
+    const alreadyRegistered = nextState.checksPlugins.some(
       p => p.pluginName === plugin.pluginName
     );
-    if (alreadysRegistered) {
+    if (alreadyRegistered) {
       console.warn(
         `${plugin.pluginName} tried to register twice as a checks provider. Ignored.`
       );

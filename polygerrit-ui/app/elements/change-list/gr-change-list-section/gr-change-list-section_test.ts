@@ -28,11 +28,15 @@ import {GrChangeListItem} from '../gr-change-list-item/gr-change-list-item';
 import {ChangeListSection} from '../gr-change-list/gr-change-list';
 import {fixture, html, assert} from '@open-wc/testing';
 import {ColumnNames} from '../../../constants/constants';
+import {testResolver} from '../../../test/common-test-setup';
+import {UserModel, userModelToken} from '../../../models/user/user-model';
 
 suite('gr-change-list section', () => {
   let element: GrChangeListSection;
+  let userModel: UserModel;
 
   setup(async () => {
+    userModel = testResolver(userModelToken);
     const changeSection: ChangeListSection = {
       name: 'test',
       query: 'test',
@@ -194,7 +198,7 @@ suite('gr-change-list section', () => {
         ],
         emptyStateSlotName: 'test',
       };
-      element.userModel.setAccount({
+      userModel.setAccount({
         ...createAccountWithEmail('abc@def.com'),
         registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
       });
@@ -240,7 +244,7 @@ suite('gr-change-list section', () => {
         ],
         emptyStateSlotName: 'test',
       };
-      element.userModel.setAccount({
+      userModel.setAccount({
         ...createAccountWithEmail('abc@def.com'),
         registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
       });
@@ -300,7 +304,7 @@ suite('gr-change-list section', () => {
       ],
       emptyStateSlotName: 'test',
     };
-    element.userModel.setAccount(undefined);
+    userModel.setAccount(undefined);
     await element.updateComplete;
     const rows = queryAll(element, 'gr-change-list-item');
     assert.lengthOf(rows, 2);

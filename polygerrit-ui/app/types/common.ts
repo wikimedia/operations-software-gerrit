@@ -3,10 +3,9 @@
  * Copyright 2020 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {CommentRange} from '../api/core';
 import {
   ChangeStatus,
-  ProjectState,
+  RepoState,
   SubmitType,
   InheritedBooleanInfoConfiguredValue,
   PermissionAction,
@@ -23,7 +22,6 @@ import {
   EmailFormat,
   MergeStrategy,
 } from '../constants/constants';
-import {PolymerDeepPropertyChange} from '@polymer/polymer/interfaces';
 import {
   AccountId,
   AccountDetailInfo,
@@ -107,7 +105,6 @@ import {
   SubmitTypeInfo,
   SuggestInfo,
   Timestamp,
-  TimezoneOffset,
   TopicName,
   UrlEncodedRepoName,
   UserConfigInfo,
@@ -116,8 +113,10 @@ import {
   isDetailedLabelInfo,
   isQuickLabelInfo,
   Base64FileContent,
+  CommentRange,
 } from '../api/rest-api';
 import {DiffInfo, IgnoreWhitespaceType} from './diff';
+import {LineNumber} from '../api/diff';
 
 export type {
   AccountId,
@@ -200,7 +199,6 @@ export type {
   SubmitTypeInfo,
   SuggestInfo,
   Timestamp,
-  TimezoneOffset,
   TopicName,
   UrlEncodedRepoName,
   UserConfigInfo,
@@ -216,11 +214,6 @@ export type RequireProperties<T, K extends keyof T> = Omit<T, K> &
   Required<Pick<T, K>>;
 
 export type PropertyType<T, K extends keyof T> = ReturnType<() => T[K]>;
-
-export type ElementPropertyDeepChange<
-  T,
-  K extends keyof T
-> = PolymerDeepPropertyChange<PropertyType<T, K>, PropertyType<T, K>>;
 
 /**
  * Type alias for parsed json object to make code cleaner
@@ -362,6 +355,16 @@ export interface GroupInput {
   visible_to_all?: string;
   owner_id?: string;
   members?: string[];
+}
+
+export interface DropdownLink {
+  url?: string;
+  name?: string;
+  external?: boolean;
+  target?: string | null;
+  download?: boolean;
+  id?: string;
+  tooltip?: string;
 }
 
 /**
@@ -679,6 +682,160 @@ export interface TopMenuItemInfo {
   id?: string;
 }
 
+export enum ChangeStates {
+  ABANDONED = 'Abandoned',
+  ACTIVE = 'Active',
+  MERGE_CONFLICT = 'Merge Conflict',
+  GIT_CONFLICT = 'Git Conflict',
+  MERGED = 'Merged',
+  PRIVATE = 'Private',
+  READY_TO_SUBMIT = 'Ready to submit',
+  REVERT_CREATED = 'Revert Created',
+  REVERT_SUBMITTED = 'Revert Submitted',
+  WIP = 'WIP',
+}
+
+export enum SavingState {
+  /**
+   * Currently not saving. Not yet saved or last saving attempt successful.
+   */
+  // Possible prior states: SAVING
+  // Possible subsequent states: SAVING
+  OK = 'OK',
+  /**
+   * Currently saving to the backend.
+   */
+  // Possible prior states: OK, ERROR
+  // Possible subsequent states: OK, ERROR
+  SAVING = 'SAVING',
+  /**
+   * Latest saving attempt failed with an error.
+   */
+  // Possible prior states: SAVING
+  // Possible subsequent states: SAVING
+  ERROR = 'ERROR',
+}
+
+export type DraftInfo = Omit<CommentInfo, 'id' | 'updated'> & {
+  // Must be set for all drafts.
+  // Drafts received from the backend will be modified immediately with
+  // `state: OK` before allowing them to get into the model.
+  savingState: SavingState;
+  // Must be set for new drafts created in this session.
+  // Use the id() utility function for uniquely identifying drafts.
+  client_id?: UrlEncodedCommentId;
+  // Must be set for drafts known to the backend.
+  // Use the id() utility function for uniquely identifying drafts.
+  id?: UrlEncodedCommentId;
+  // Set, iff `id` is set. Reflects the time when the draft was last saved to
+  // the backend.
+  updated?: Timestamp;
+};
+
+export interface NewDraftInfo extends DraftInfo {
+  client_id: UrlEncodedCommentId;
+  id: undefined;
+  updated: undefined;
+}
+
+/**
+ * This is what human, robot and draft comments can agree upon.
+ *
+ * Note that `id` and `updated` must be considered optional, because we might
+ * be dealing with unsaved draft comments.
+ */
+export type Comment = DraftInfo | CommentInfo | RobotCommentInfo;
+
+// TODO: Replace the CommentMap type with just an array of paths.
+export type CommentMap = {[path: string]: boolean};
+
+export function isRobot<T extends Comment>(
+  x: T | RobotCommentInfo | undefined
+): x is RobotCommentInfo {
+  return !!x && !!(x as RobotCommentInfo).robot_id;
+}
+
+export function isDraft<T extends Comment>(
+  x: T | DraftInfo | undefined
+): x is DraftInfo {
+  return !!x && (x as DraftInfo).savingState !== undefined;
+}
+
+export function isSaving<T extends Comment>(
+  x: T | DraftInfo | undefined
+): boolean {
+  return !!x && (x as DraftInfo).savingState === SavingState.SAVING;
+}
+
+export function isError<T extends Comment>(
+  x: T | DraftInfo | undefined
+): boolean {
+  return !!x && (x as DraftInfo).savingState === SavingState.ERROR;
+}
+
+/**
+ * A new draft comment is a comment that was created by the user in this session
+ * and has not yet been saved to the backend. Such a comment must have a
+ * `client_id`, but it must not have an `id`.
+ */
+export function isNew<T extends Comment>(
+  x: T | DraftInfo | undefined
+): boolean {
+  return !!x && !!(x as DraftInfo).client_id && !(x as DraftInfo).id;
+}
+
+export interface CommentThread {
+  /**
+   * This can only contain at most one draft. And if so, then it is the last
+   * comment in this list. This must not contain unsaved drafts.
+   */
+  comments: Array<Comment>;
+  /**
+   * Identical to the id of the first comment. If this is undefined, then the
+   * thread only contains an unsaved draft.
+   */
+  rootId?: UrlEncodedCommentId;
+  /**
+   * Note that all location information is typically identical to that of the
+   * first comment, but not for ported comments!
+   */
+  path: string;
+  commentSide: CommentSide;
+  /* mergeParentNum is the merge parent number only valid for merge commits
+     when commentSide is PARENT.
+     mergeParentNum is undefined for auto merge commits
+     Same as `parent` in CommentInfo.
+  */
+  mergeParentNum?: number;
+  patchNum?: RevisionPatchSetNum;
+  /* Different from CommentInfo, which just keeps the line undefined for
+     FILE comments. */
+  line?: LineNumber;
+  range?: CommentRange;
+  /**
+   * Was the thread ported over from its original location to a newer patchset?
+   * If yes, then the location information above contains the ported location,
+   * but the comments still have the original location set.
+   */
+  ported?: boolean;
+  /**
+   * Only relevant when ported:true. Means that no ported range could be
+   * computed. `line` and `range` can be undefined then.
+   */
+  rangeInfoLost?: boolean;
+}
+
+export type CommentIdToCommentThreadMap = {
+  [urlEncodedCommentId: string]: CommentThread;
+};
+
+export interface ChangeMessage extends ChangeMessageInfo {
+  // TODO(TS): maybe should be an enum instead
+  type: string;
+  expanded: boolean;
+  commentThreads: CommentThread[];
+}
+
 /**
  * The CommentInfo entity contains information about an inline comment.
  * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#comment-info
@@ -703,8 +860,6 @@ export interface CommentInfo {
   context_lines?: ContextLine[];
   source_content_type?: string;
 }
-
-export type PathToCommentsInfoMap = {[path: string]: CommentInfo[]};
 
 /**
  * The ContextLine entity contains the line number and line text of a single line of the source file content..
@@ -750,8 +905,6 @@ export interface ImageInfo {
   type: string;
   _name?: string;
   _expectedType?: string;
-  _width?: number;
-  _height?: number;
 }
 
 /**
@@ -769,13 +922,13 @@ export interface ProjectAccessInfo {
   can_add?: boolean;
   can_add_tags?: boolean;
   config_visible?: boolean;
-  groups: ProjectAccessGroups;
+  groups: RepoAccessGroups;
   config_web_links: WebLinkInfo[];
 }
 
-export type ProjectAccessInfoMap = {[projectName: string]: ProjectAccessInfo};
+export type RepoAccessInfoMap = {[projectName: string]: ProjectAccessInfo};
 export type LocalAccessSectionInfo = {[ref: string]: AccessSectionInfo};
-export type ProjectAccessGroups = {[uuid: string]: GroupInfo};
+export type RepoAccessGroups = {[uuid: string]: GroupInfo};
 
 /**
  * The AccessSectionInfo describes the access rights that are assigned on a ref.
@@ -858,7 +1011,7 @@ export interface ConfigInput {
   reject_empty_commit?: InheritedBooleanInfoConfiguredValue;
   max_object_size_limit?: MaxObjectSizeLimitInfo;
   submit_type?: SubmitType;
-  state?: ProjectState;
+  state?: RepoState;
   plugin_config_values?: PluginNameToPluginParametersMap;
   commentlinks?: ConfigInfoCommentLinks;
 }
@@ -907,13 +1060,13 @@ export interface BranchInfo {
  * https://gerrit-review.googlesource.com/Documentation/rest-api-projects.html#project-access-input
  */
 export interface ProjectAccessInput {
-  remove?: RefToProjectAccessInfoMap;
-  add?: RefToProjectAccessInfoMap;
+  remove?: RefToRepoAccessInfoMap;
+  add?: RefToRepoAccessInfoMap;
   message?: string;
   parent?: string;
 }
 
-export type RefToProjectAccessInfoMap = {[refName: string]: ProjectAccessInfo};
+export type RefToRepoAccessInfoMap = {[refName: string]: ProjectAccessInfo};
 
 /**
  * Represent a file in a base64 encoding
@@ -1203,18 +1356,6 @@ export type RecipientTypeToNotifyInfoMap = {
  * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#robot-comment-input
  */
 export type RobotCommentInput = RobotCommentInfo;
-
-/**
- * This is what human, robot and draft comments can agree upon.
- *
- * Human, robot and saved draft comments all have a required id, but unsaved
- * drafts do not. That is why the id is omitted from CommentInfo, such that it
- * can be optional in Draft, but required in CommentInfo and RobotCommentInfo.
- */
-export interface CommentBasics extends Omit<CommentInfo, 'id' | 'updated'> {
-  id?: UrlEncodedCommentId;
-  updated?: Timestamp;
-}
 
 /**
  * The RobotCommentInfo entity contains information about a robot inline comment
@@ -1512,4 +1653,9 @@ export interface MergeableInfo {
   content_merged?: boolean;
   conflicts?: string[];
   mergeable_into?: string[];
+}
+
+export interface ChangeActionDialog extends HTMLElement {
+  resetFocus?(): void;
+  init?(): void;
 }

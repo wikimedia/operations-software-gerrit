@@ -34,12 +34,15 @@ import {fixture, assert} from '@open-wc/testing';
 import {html} from 'lit';
 import {testResolver} from '../../../test/common-test-setup';
 import {Timestamp} from '../../../api/rest-api';
+import {UserModel, userModelToken} from '../../../models/user/user-model';
 
 suite('gr-change-list basic tests', () => {
   let element: GrChangeList;
+  let userModel: UserModel;
 
   setup(async () => {
     element = await fixture(html`<gr-change-list></gr-change-list>`);
+    userModel = testResolver(userModelToken);
   });
 
   test('renders', async () => {
@@ -138,7 +141,10 @@ suite('gr-change-list basic tests', () => {
   });
 
   test('computeRelativeIndex', () => {
-    element.sections = [{results: new Array(1)}, {results: new Array(2)}];
+    element.sections = [
+      {results: Array.from({length: 1})},
+      {results: Array.from({length: 2})},
+    ];
 
     let selectedChangeIndex = 0;
     assert.equal(
@@ -225,7 +231,10 @@ suite('gr-change-list basic tests', () => {
 
   test('keyboard shortcuts', async () => {
     sinon.stub(element, 'computeLabelNames');
-    element.sections = [{results: new Array(1)}, {results: new Array(2)}];
+    element.sections = [
+      {results: Array.from({length: 1})},
+      {results: Array.from({length: 2})},
+    ];
     element.selectedIndex = 0;
     element.preferences = createDefaultPreferences();
     element.config = createServerInfo();
@@ -287,7 +296,7 @@ suite('gr-change-list basic tests', () => {
   });
 
   test('toggle checkbox keyboard shortcut', async () => {
-    element.userModel.setAccount({
+    userModel.setAccount({
       ...createAccountWithEmail('abc@def.com'),
       registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
     });
@@ -297,7 +306,10 @@ suite('gr-change-list basic tests', () => {
       queryAndAssert<HTMLInputElement>(query(item, '.selection'), 'input');
 
     sinon.stub(element, 'computeLabelNames');
-    element.sections = [{results: new Array(1)}, {results: new Array(2)}];
+    element.sections = [
+      {results: Array.from({length: 1})},
+      {results: Array.from({length: 2})},
+    ];
     element.selectedIndex = 0;
     element.preferences = createDefaultPreferences();
     element.config = createServerInfo();
@@ -521,7 +533,6 @@ suite('gr-change-list basic tests', () => {
 
   test('obsolete column in preferences not visible', () => {
     assert.isTrue(element.isColumnEnabled('Subject'));
-    assert.isFalse(element.isColumnEnabled('Assignee'));
   });
 
   test('loggedIn and showNumber', async () => {
@@ -543,7 +554,7 @@ suite('gr-change-list basic tests', () => {
       ],
     };
     element.config = createServerInfo();
-    element.userModel.setAccount(undefined);
+    userModel.setAccount(undefined);
     await element.updateComplete;
     const section = query<GrChangeListSection>(
       element,
@@ -557,7 +568,7 @@ suite('gr-change-list basic tests', () => {
     assert.isNotOk(query(query(section, 'gr-change-list-item'), '.star'));
     assert.isNotOk(query(query(section, 'gr-change-list-item'), '.number'));
 
-    element.userModel.setAccount({
+    userModel.setAccount({
       ...createAccountWithEmail('abc@def.com'),
       registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
     });

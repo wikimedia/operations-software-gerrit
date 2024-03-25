@@ -5,7 +5,14 @@
  */
 import '../../test/common-test-setup';
 import './checks-model';
-import {ChecksModel, ChecksPatchset, ChecksProviderState} from './checks-model';
+import {
+  CheckResult,
+  ChecksModel,
+  ChecksPatchset,
+  ChecksProviderState,
+  RunResult,
+  collectRunResults,
+} from './checks-model';
 import {
   Action,
   Category,
@@ -16,7 +23,11 @@ import {
   RunStatus,
 } from '../../api/checks';
 import {getAppContext} from '../../services/app-context';
-import {createParsedChange} from '../../test/test-data-generators';
+import {
+  createCheckResult,
+  createParsedChange,
+  createRun,
+} from '../../test/test-data-generators';
 import {waitUntil, waitUntilCalled} from '../../test/test-utils';
 import {ParsedChangeInfo} from '../../types/types';
 import {changeModelToken} from '../change/change-model';
@@ -24,6 +35,7 @@ import {assert} from '@open-wc/testing';
 import {testResolver} from '../../test/common-test-setup';
 import {changeViewModelToken} from '../views/change';
 import {NumericChangeId, PatchSetNumber} from '../../api/rest-api';
+import {pluginLoaderToken} from '../../elements/shared/gr-js-api-interface/gr-plugin-loader';
 
 const PLUGIN_NAME = 'test-plugin';
 
@@ -69,11 +81,10 @@ suite('checks-model tests', () => {
 
   setup(() => {
     model = new ChecksModel(
-      getAppContext().routerModel,
       testResolver(changeViewModelToken),
       testResolver(changeModelToken),
       getAppContext().reportingService,
-      getAppContext().pluginsModel
+      testResolver(pluginLoaderToken).pluginsModel
     );
     model.checksLatest$.subscribe(c => (current = c[PLUGIN_NAME]));
   });
@@ -84,7 +95,7 @@ suite('checks-model tests', () => {
 
   test('register and fetch', async () => {
     let change: ParsedChangeInfo | undefined = undefined;
-    model.changeModel.change$.subscribe(c => (change = c));
+    testResolver(changeModelToken).change$.subscribe(c => (change = c));
     const provider = createProvider();
     const fetchSpy = sinon.spy(provider, 'fetch');
 
@@ -96,7 +107,7 @@ suite('checks-model tests', () => {
     await waitUntil(() => change === undefined);
 
     const testChange = createParsedChange();
-    model.changeModel.updateStateChange(testChange);
+    testResolver(changeModelToken).updateStateChange(testChange);
     await waitUntil(() => change === testChange);
     await waitUntilCalled(fetchSpy, 'fetch');
 
@@ -108,10 +119,10 @@ suite('checks-model tests', () => {
     assert.equal(model.changeNum, testChange._number);
   });
 
-  test('reload throttle', async () => {
+  test('fetch throttle', async () => {
     const clock = sinon.useFakeTimers();
     let change: ParsedChangeInfo | undefined = undefined;
-    model.changeModel.change$.subscribe(c => (change = c));
+    testResolver(changeModelToken).change$.subscribe(c => (change = c));
     const provider = createProvider();
     const fetchSpy = sinon.spy(provider, 'fetch');
 
@@ -123,18 +134,33 @@ suite('checks-model tests', () => {
     await waitUntil(() => change === undefined);
 
     const testChange = createParsedChange();
-    model.changeModel.updateStateChange(testChange);
+    testResolver(changeModelToken).updateStateChange(testChange);
     await waitUntil(() => change === testChange);
-    clock.tick(1);
+
+    model.reload('test-plugin');
+    model.reload('test-plugin');
+    model.reload('test-plugin');
+
+    // Does not emit at 'leading' of throttle interval,
+    // because fetch() is not called when change is undefined.
+    assert.equal(fetchSpy.callCount, 0);
+
+    // 600 ms is greater than the 500 ms throttle time.
+    clock.tick(600);
+    // emits at 'trailing' of throttle interval
     assert.equal(fetchSpy.callCount, 1);
 
-    // The second reload call will be processed, but only after a 1s throttle.
     model.reload('test-plugin');
-    clock.tick(100);
-    assert.equal(fetchSpy.callCount, 1);
-    // 2000 ms is greater than the 1000 ms throttle time.
-    clock.tick(2000);
+    model.reload('test-plugin');
+    model.reload('test-plugin');
+    model.reload('test-plugin');
+    // emits at 'leading' of throttle interval
     assert.equal(fetchSpy.callCount, 2);
+
+    // 600 ms is greater than the 500 ms throttle time.
+    clock.tick(600);
+    // emits at 'trailing' of throttle interval
+    assert.equal(fetchSpy.callCount, 3);
   });
 
   test('triggerAction', async () => {
@@ -268,7 +294,7 @@ suite('checks-model tests', () => {
   test('polls for changes', async () => {
     const clock = sinon.useFakeTimers();
     let change: ParsedChangeInfo | undefined = undefined;
-    model.changeModel.change$.subscribe(c => (change = c));
+    testResolver(changeModelToken).change$.subscribe(c => (change = c));
     const provider = createProvider();
     const fetchSpy = sinon.spy(provider, 'fetch');
 
@@ -280,10 +306,10 @@ suite('checks-model tests', () => {
     await waitUntil(() => change === undefined);
     clock.tick(1);
     const testChange = createParsedChange();
-    model.changeModel.updateStateChange(testChange);
+    testResolver(changeModelToken).updateStateChange(testChange);
     await waitUntil(() => change === testChange);
+    clock.tick(600); // need to wait for 500ms throttle
     await waitUntilCalled(fetchSpy, 'fetch');
-    clock.tick(1);
     const pollCount = fetchSpy.callCount;
 
     // polling should continue while we wait
@@ -295,7 +321,7 @@ suite('checks-model tests', () => {
   test('does not poll when config specifies 0 seconds', async () => {
     const clock = sinon.useFakeTimers();
     let change: ParsedChangeInfo | undefined = undefined;
-    model.changeModel.change$.subscribe(c => (change = c));
+    testResolver(changeModelToken).change$.subscribe(c => (change = c));
     const provider = createProvider();
     const fetchSpy = sinon.spy(provider, 'fetch');
 
@@ -307,8 +333,9 @@ suite('checks-model tests', () => {
     await waitUntil(() => change === undefined);
     clock.tick(1);
     const testChange = createParsedChange();
-    model.changeModel.updateStateChange(testChange);
+    testResolver(changeModelToken).updateStateChange(testChange);
     await waitUntil(() => change === testChange);
+    clock.tick(600); // need to wait for 500ms throttle
     await waitUntilCalled(fetchSpy, 'fetch');
     clock.tick(1);
     const pollCount = fetchSpy.callCount;
@@ -317,5 +344,25 @@ suite('checks-model tests', () => {
     clock.tick(60 * 1000);
 
     assert.equal(fetchSpy.callCount, pollCount);
+  });
+
+  test('collectRunResults does not incur quadratic size increase', async () => {
+    const results: CheckResult[] = [];
+    for (let i = 0; i < 100; i++) {
+      results.push({
+        ...createCheckResult({
+          message: 'some message',
+        }),
+      });
+    }
+    const run = createRun({results});
+    let collected: RunResult[] = [];
+    collected = collectRunResults(collected, {
+      runs: [run],
+    } as ChecksProviderState);
+    const collectedString = JSON.stringify(collected);
+    // If the `results` property would not be removed from every check run, then
+    // this combined string would be >1MB in size.
+    assert.isAtMost(collectedString.length, 50000);
   });
 });

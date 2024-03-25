@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import '../gr-access-section/gr-access-section';
-import {encodeURL, getBaseUrl, singleDecodeURL} from '../../../utils/url-util';
+import {singleDecodeURL} from '../../../utils/url-util';
 import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {toSortedPermissionsArray} from '../../../utils/access-util';
 import {
@@ -15,7 +15,7 @@ import {
   ProjectAccessInput,
   GitRef,
   UrlEncodedRepoName,
-  ProjectAccessGroups,
+  RepoAccessGroups,
 } from '../../../types/common';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {GrAccessSection} from '../gr-access-section/gr-access-section';
@@ -39,10 +39,15 @@ import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, css, html} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
 import {assertIsDefined} from '../../../utils/common-util';
-import {ValueChangedEvent} from '../../../types/events';
-import {ifDefined} from 'lit/directives/if-defined.js';
+import {
+  AutocompleteCommitEvent,
+  ValueChangedEvent,
+} from '../../../types/events';
 import {resolve} from '../../../models/dependency';
 import {createChangeUrl} from '../../../models/views/change';
+import {throwingErrorCallback} from '../../shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
+import {createRepoUrl, RepoDetailView} from '../../../models/views/repo';
+import '../../shared/gr-weblink/gr-weblink';
 
 const NOTHING_TO_SAVE = 'No changes to save.';
 
@@ -79,7 +84,7 @@ export class GrRepoAccess extends LitElement {
   @state() capabilities?: CapabilityInfoMap;
 
   // private but used in test
-  @state() groups?: ProjectAccessGroups;
+  @state() groups?: RepoAccessGroups;
 
   // private but used in test
   @state() inheritsFrom?: ProjectInfo;
@@ -141,7 +146,7 @@ export class GrRepoAccess extends LitElement {
           min-height: 2em;
           align-items: center;
         }
-        .weblink {
+        gr-weblink {
           margin-right: var(--spacing-xs);
         }
         gr-access-section {
@@ -192,7 +197,7 @@ export class GrRepoAccess extends LitElement {
               id="editInheritFromInput"
               .text=${this.inheritFromFilter}
               .query=${this.query}
-              @commit=${(e: ValueChangedEvent) => {
+              @commit=${(e: AutocompleteCommitEvent) => {
                 this.handleUpdateInheritFrom(e);
               }}
               @bind-value-changed=${(e: ValueChangedEvent) => {
@@ -205,7 +210,9 @@ export class GrRepoAccess extends LitElement {
           </h3>
           <div class="weblinks ${this.weblinks?.length ? 'show' : ''}">
             History:
-            ${this.weblinks?.map(webLink => this.renderWebLinks(webLink))}
+            ${this.weblinks?.map(
+              info => html`<gr-weblink .info=${info}></gr-weblink>`
+            )}
           </div>
           ${this.sections?.map((section, index) =>
             this.renderPermissionSections(section, index)
@@ -246,19 +253,6 @@ export class GrRepoAccess extends LitElement {
           </div>
         </div>
       </div>
-    `;
-  }
-
-  private renderWebLinks(webLink: WebLinkInfo) {
-    return html`
-      <a
-        class="weblink"
-        href=${webLink.url}
-        rel="noopener"
-        target=${ifDefined(webLink.target)}
-      >
-        ${webLink.name}
-      </a>
     `;
   }
 
@@ -318,7 +312,7 @@ export class GrRepoAccess extends LitElement {
 
     this.editing = false;
 
-    // Always reset sections when a project changes.
+    // Always reset sections when a repo changes.
     this.sections = [];
     const sectionsPromises = this.restApiService
       .getRepoAccessRights(repo, errFn)
@@ -386,7 +380,7 @@ export class GrRepoAccess extends LitElement {
   }
 
   // private but used in test
-  handleUpdateInheritFrom(e: ValueChangedEvent) {
+  handleUpdateInheritFrom(e: AutocompleteCommitEvent) {
     this.inheritsFrom = {
       ...(this.inheritsFrom ?? {}),
       id: e.detail.value as UrlEncodedRepoName,
@@ -397,19 +391,24 @@ export class GrRepoAccess extends LitElement {
 
   private getInheritFromSuggestions(): Promise<AutocompleteSuggestion[]> {
     return this.restApiService
-      .getRepos(this.inheritFromFilter, MAX_AUTOCOMPLETE_RESULTS)
+      .getRepos(
+        this.inheritFromFilter,
+        MAX_AUTOCOMPLETE_RESULTS,
+        /* offset=*/ undefined,
+        throwingErrorCallback
+      )
       .then(response => {
-        const projects: AutocompleteSuggestion[] = [];
+        const repos: AutocompleteSuggestion[] = [];
         if (!response) {
-          return projects;
+          return repos;
         }
         for (const item of response) {
-          projects.push({
+          repos.push({
             name: item.name,
             value: item.id,
           });
         }
-        return projects;
+        return repos;
       });
   }
 
@@ -720,10 +719,10 @@ export class GrRepoAccess extends LitElement {
 
   computeParentHref() {
     if (!this.inheritsFrom?.name) return '';
-    return `${getBaseUrl()}/admin/repos/${encodeURL(
-      this.inheritsFrom.name,
-      true
-    )},access`;
+    return createRepoUrl({
+      repo: this.inheritsFrom.name,
+      detail: RepoDetailView.ACCESS,
+    });
   }
 
   private handleEditInheritFromTextChanged(e: ValueChangedEvent) {

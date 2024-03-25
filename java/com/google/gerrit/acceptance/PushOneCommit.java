@@ -24,6 +24,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Sets;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.UsedAt;
 import com.google.gerrit.common.UsedAt.Project;
@@ -40,6 +41,7 @@ import com.google.inject.assistedinject.Assisted;
 import com.google.inject.assistedinject.AssistedInject;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.jgit.api.TagCommand;
@@ -280,6 +282,12 @@ public class PushOneCommit {
     return this;
   }
 
+  @CanIgnoreReturnValue
+  public PushOneCommit setTopLevelTreeId(ObjectId treeId) throws Exception {
+    commitBuilder.setTopLevelTree(treeId);
+    return this;
+  }
+
   public PushOneCommit setParent(RevCommit parent) throws Exception {
     commitBuilder.noParents();
     commitBuilder.parent(parent);
@@ -288,6 +296,19 @@ public class PushOneCommit {
 
   public PushOneCommit noParent() throws Exception {
     commitBuilder.noParents();
+    return this;
+  }
+
+  public PushOneCommit addFile(String path, String content, int fileMode) throws Exception {
+    RevBlob blobId = testRepo.blob(content);
+    commitBuilder.edit(
+        new PathEdit(path) {
+          @Override
+          public void apply(DirCacheEntry ent) {
+            ent.setFileMode(FileMode.fromBits(fileMode));
+            ent.setObjectId(blobId);
+          }
+        });
     return this;
   }
 
@@ -470,12 +491,14 @@ public class PushOneCommit {
     public void assertMessage(String expectedMessage) {
       RemoteRefUpdate refUpdate = result.getRemoteUpdate(ref);
       assertThat(refUpdate).isNotNull();
-      assertThat(message(refUpdate).toLowerCase()).contains(expectedMessage.toLowerCase());
+      assertThat(message(refUpdate).toLowerCase(Locale.US))
+          .contains(expectedMessage.toLowerCase(Locale.US));
     }
 
     public void assertNotMessage(String message) {
       RemoteRefUpdate refUpdate = result.getRemoteUpdate(ref);
-      assertThat(message(refUpdate).toLowerCase()).doesNotContain(message.toLowerCase());
+      assertThat(message(refUpdate).toLowerCase(Locale.US))
+          .doesNotContain(message.toLowerCase(Locale.US));
     }
 
     public String getMessage() {

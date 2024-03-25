@@ -32,6 +32,8 @@ import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
 import static com.google.gerrit.server.project.testing.TestLabels.label;
 import static com.google.gerrit.server.project.testing.TestLabels.value;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
+import static com.google.gerrit.testing.TestActionRefUpdateContext.testRefAction;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toList;
@@ -91,6 +93,7 @@ import com.google.gerrit.extensions.api.projects.ProjectInput;
 import com.google.gerrit.extensions.client.InheritableBoolean;
 import com.google.gerrit.extensions.client.ListChangesOption;
 import com.google.gerrit.extensions.client.ProjectWatchInfo;
+import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.client.SubmitType;
 import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.common.ChangeInfo;
@@ -100,6 +103,7 @@ import com.google.gerrit.extensions.common.DiffInfo;
 import com.google.gerrit.extensions.common.EditInfo;
 import com.google.gerrit.extensions.restapi.BinaryResult;
 import com.google.gerrit.extensions.restapi.IdString;
+import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.json.OutputFormat;
 import com.google.gerrit.server.GerritPersonIdent;
@@ -1100,6 +1104,19 @@ public abstract class AbstractDaemonTest {
     }
   }
 
+  protected void setSkipAddingAuthorAndCommitterAsReviewers(InheritableBoolean value)
+      throws Exception {
+    try (MetaDataUpdate md = metaDataUpdateFactory.create(project)) {
+      ProjectConfig config = projectConfigFactory.read(md);
+      config.updateProject(
+          p ->
+              p.setBooleanConfig(
+                  BooleanProjectConfig.SKIP_ADDING_AUTHOR_AND_COMMITTER_AS_REVIEWERS, value));
+      config.commit(md);
+      projectCache.evictAndReindex(config.getProject());
+    }
+  }
+
   protected void blockAnonymousRead() throws Exception {
     String allRefs = RefNames.REFS + "*";
     projectOperations
@@ -1121,6 +1138,42 @@ public abstract class AbstractDaemonTest {
 
   protected void recommend(String id) throws Exception {
     gApi.changes().id(id).current().review(ReviewInput.recommend());
+  }
+
+  protected void assertThatAccountIsNotVisible(TestAccount... testAccounts) {
+    for (TestAccount testAccount : testAccounts) {
+      assertThrows(
+          ResourceNotFoundException.class, () -> gApi.accounts().id(testAccount.id().get()).get());
+    }
+  }
+
+  protected void assertReviewers(String changeId, TestAccount... expectedReviewers)
+      throws RestApiException {
+    Map<ReviewerState, Collection<AccountInfo>> reviewerMap =
+        gApi.changes().id(changeId).get().reviewers;
+    assertThat(reviewerMap).containsKey(ReviewerState.REVIEWER);
+    List<Integer> reviewers =
+        reviewerMap.get(ReviewerState.REVIEWER).stream().map(a -> a._accountId).collect(toList());
+    assertThat(reviewers)
+        .containsExactlyElementsIn(
+            Arrays.stream(expectedReviewers).map(a -> a.id().get()).collect(toList()));
+  }
+
+  protected void assertCcs(String changeId, TestAccount... expectedCcs) throws RestApiException {
+    Map<ReviewerState, Collection<AccountInfo>> reviewerMap =
+        gApi.changes().id(changeId).get().reviewers;
+    assertThat(reviewerMap).containsKey(ReviewerState.CC);
+    List<Integer> ccs =
+        reviewerMap.get(ReviewerState.CC).stream().map(a -> a._accountId).collect(toList());
+    assertThat(ccs)
+        .containsExactlyElementsIn(
+            Arrays.stream(expectedCcs).map(a -> a.id().get()).collect(toList()));
+  }
+
+  protected void assertNoCcs(String changeId) throws RestApiException {
+    Map<ReviewerState, Collection<AccountInfo>> reviewerMap =
+        gApi.changes().id(changeId).get().reviewers;
+    assertThat(reviewerMap).doesNotContainKey(ReviewerState.CC);
   }
 
   protected void assertSubmittedTogether(String chId, String... expected) throws Exception {
@@ -1237,34 +1290,61 @@ public abstract class AbstractDaemonTest {
     assertThat(refValues.keySet()).containsAnyIn(trees.keySet());
   }
 
-  protected void assertDiffForNewFile(
-      DiffInfo diff, RevCommit commit, String path, String expectedContentSideB) throws Exception {
-    List<String> expectedLines = ImmutableList.copyOf(expectedContentSideB.split("\n", -1));
+  protected void assertDiffForFullyModifiedFile(
+      DiffInfo diff,
+      String commitName,
+      String path,
+      String expectedContentSideA,
+      String expectedContentSideB)
+      throws Exception {
+    assertDiffForFile(diff, commitName, path);
 
-    assertThat(diff.binary).isNull();
+    ImmutableList<String> expectedOldLines =
+        ImmutableList.copyOf(expectedContentSideA.split("\n", -1));
+    ImmutableList<String> expectedNewLines =
+        ImmutableList.copyOf(expectedContentSideB.split("\n", -1));
+
+    assertThat(diff.changeType).isEqualTo(ChangeType.MODIFIED);
+
+    assertThat(diff.metaA).isNotNull();
+    assertThat(diff.metaB).isNotNull();
+
+    assertThat(diff.metaA.name).isEqualTo(path);
+    assertThat(diff.metaA.lines).isEqualTo(expectedOldLines.size());
+    assertThat(diff.metaB.name).isEqualTo(path);
+    assertThat(diff.metaB.lines).isEqualTo(expectedNewLines.size());
+
+    DiffInfo.ContentEntry contentEntry = diff.content.get(0);
+    assertThat(contentEntry.a).containsExactlyElementsIn(expectedOldLines).inOrder();
+    assertThat(contentEntry.b).containsExactlyElementsIn(expectedNewLines).inOrder();
+    assertThat(contentEntry.ab).isNull();
+    assertThat(contentEntry.common).isNull();
+    assertThat(contentEntry.editA).isNull();
+    assertThat(contentEntry.editB).isNull();
+    assertThat(contentEntry.skip).isNull();
+  }
+
+  protected void assertDiffForNewFile(
+      DiffInfo diff, @Nullable RevCommit commit, String path, String expectedContentSideB)
+      throws Exception {
+    assertDiffForNewFile(diff, commit.name(), path, expectedContentSideB);
+  }
+
+  protected void assertDiffForNewFile(
+      DiffInfo diff, String commitName, String path, String expectedContentSideB) throws Exception {
+    assertDiffForFile(diff, commitName, path);
+
+    ImmutableList<String> expectedLines =
+        ImmutableList.copyOf(expectedContentSideB.split("\n", -1));
+
     assertThat(diff.changeType).isEqualTo(ChangeType.ADDED);
-    assertThat(diff.diffHeader).isNotNull();
-    assertThat(diff.intralineStatus).isNull();
-    assertThat(diff.webLinks).isNull();
-    assertThat(diff.editWebLinks).isNull();
 
     assertThat(diff.metaA).isNull();
     assertThat(diff.metaB).isNotNull();
-    assertThat(diff.metaB.commitId).isEqualTo(commit.name());
 
-    String expectedContentType = "text/plain";
-    if (COMMIT_MSG.equals(path)) {
-      expectedContentType = FileContentUtil.TEXT_X_GERRIT_COMMIT_MESSAGE;
-    } else if (MERGE_LIST.equals(path)) {
-      expectedContentType = FileContentUtil.TEXT_X_GERRIT_MERGE_LIST;
-    }
-    assertThat(diff.metaB.contentType).isEqualTo(expectedContentType);
-
-    assertThat(diff.metaB.lines).isEqualTo(expectedLines.size());
     assertThat(diff.metaB.name).isEqualTo(path);
-    assertThat(diff.metaB.webLinks).isNull();
+    assertThat(diff.metaB.lines).isEqualTo(expectedLines.size());
 
-    assertThat(diff.content).hasSize(1);
     DiffInfo.ContentEntry contentEntry = diff.content.get(0);
     assertThat(contentEntry.b).containsExactlyElementsIn(expectedLines).inOrder();
     assertThat(contentEntry.a).isNull();
@@ -1273,6 +1353,57 @@ public abstract class AbstractDaemonTest {
     assertThat(contentEntry.editA).isNull();
     assertThat(contentEntry.editB).isNull();
     assertThat(contentEntry.skip).isNull();
+  }
+
+  protected void assertDiffForDeletedFile(DiffInfo diff, String path, String expectedContentSideA)
+      throws Exception {
+    assertDiffHeaders(diff);
+
+    ImmutableList<String> expectedOriginalLines =
+        ImmutableList.copyOf(expectedContentSideA.split("\n", -1));
+
+    assertThat(diff.changeType).isEqualTo(ChangeType.DELETED);
+
+    assertThat(diff.metaA).isNotNull();
+    assertThat(diff.metaB).isNull();
+
+    assertThat(diff.metaA.name).isEqualTo(path);
+    assertThat(diff.metaA.lines).isEqualTo(expectedOriginalLines.size());
+
+    DiffInfo.ContentEntry contentEntry = diff.content.get(0);
+    assertThat(contentEntry.a).containsExactlyElementsIn(expectedOriginalLines).inOrder();
+    assertThat(contentEntry.b).isNull();
+    assertThat(contentEntry.ab).isNull();
+    assertThat(contentEntry.common).isNull();
+    assertThat(contentEntry.editA).isNull();
+    assertThat(contentEntry.editB).isNull();
+    assertThat(contentEntry.skip).isNull();
+  }
+
+  private void assertDiffForFile(DiffInfo diff, String commitName, String path) throws Exception {
+    assertDiffHeaders(diff);
+
+    assertThat(diff.metaB.commitId).isEqualTo(commitName);
+
+    String expectedContentType = "text/plain";
+    if (COMMIT_MSG.equals(path)) {
+      expectedContentType = FileContentUtil.TEXT_X_GERRIT_COMMIT_MESSAGE;
+    } else if (MERGE_LIST.equals(path)) {
+      expectedContentType = FileContentUtil.TEXT_X_GERRIT_MERGE_LIST;
+    }
+
+    assertThat(diff.metaB.contentType).isEqualTo(expectedContentType);
+
+    assertThat(diff.metaB.name).isEqualTo(path);
+    assertThat(diff.metaB.webLinks).isNull();
+  }
+
+  private void assertDiffHeaders(DiffInfo diff) throws Exception {
+    assertThat(diff.binary).isNull();
+    assertThat(diff.diffHeader).isNotNull();
+    assertThat(diff.intralineStatus).isNull();
+    assertThat(diff.webLinks).isNull();
+    assertThat(diff.editWebLinks).isNull();
   }
 
   protected void assertPermitted(ChangeInfo info, String label, Integer... expected) {
@@ -1284,6 +1415,17 @@ public abstract class AbstractDaemonTest {
       assertThat(strs.stream().map(s -> Integer.valueOf(s.trim())).collect(toList()))
           .containsExactlyElementsIn(Arrays.asList(expected));
     }
+  }
+
+  protected void assertOnlyRemovableLabel(
+      ChangeInfo info, String labelId, String labelValue, TestAccount reviewer) {
+    assertThat(info.removableLabels).hasSize(1);
+    assertThat(info.removableLabels).containsKey(labelId);
+    assertThat(info.removableLabels.get(labelId)).hasSize(1);
+    assertThat(info.removableLabels.get(labelId)).containsKey(labelValue);
+    assertThat(info.removableLabels.get(labelId).get(labelValue)).hasSize(1);
+    assertThat(info.removableLabels.get(labelId).get(labelValue).get(0).email)
+        .isEqualTo(reviewer.email());
   }
 
   protected void assertPermissions(
@@ -1589,11 +1731,14 @@ public abstract class AbstractDaemonTest {
     }
 
     public void save() throws Exception {
-      metaDataUpdate.setAuthor(identifiedUserFactory.create(admin.id()));
-      projectConfig.commit(metaDataUpdate);
-      metaDataUpdate.close();
-      metaDataUpdate = null;
-      projectCache.evictAndReindex(projectConfig.getProject());
+      testRefAction(
+          () -> {
+            metaDataUpdate.setAuthor(identifiedUserFactory.create(admin.id()));
+            projectConfig.commit(metaDataUpdate);
+            metaDataUpdate.close();
+            metaDataUpdate = null;
+            projectCache.evictAndReindex(projectConfig.getProject());
+          });
     }
 
     @Override
@@ -1634,6 +1779,14 @@ public abstract class AbstractDaemonTest {
       throws RestApiException {
     return gApi.projects().name(projectName).branches().get().stream()
         .collect(ImmutableMap.toImmutableMap(branch -> branch.ref, branch -> branch));
+  }
+
+  protected void createRefLogFileIfMissing(Repository repo, String ref) throws IOException {
+    File log = new File(repo.getDirectory(), "logs/" + ref);
+    if (!log.exists()) {
+      log.getParentFile().mkdirs();
+      assertThat(log.createNewFile()).isTrue();
+    }
   }
 
   protected AutoCloseable installPlugin(String pluginName, Class<? extends Module> sysModuleClass)

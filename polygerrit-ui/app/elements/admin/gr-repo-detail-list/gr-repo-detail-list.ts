@@ -9,11 +9,9 @@ import '../../shared/gr-button/gr-button';
 import '../../shared/gr-date-formatter/gr-date-formatter';
 import '../../shared/gr-dialog/gr-dialog';
 import '../../shared/gr-list-view/gr-list-view';
-import '../../shared/gr-overlay/gr-overlay';
+import '../../shared/gr-weblink/gr-weblink';
 import '../gr-create-pointer-dialog/gr-create-pointer-dialog';
 import '../gr-confirm-delete-item-dialog/gr-confirm-delete-item-dialog';
-import {encodeURL} from '../../../utils/url-util';
-import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
 import {GrCreatePointerDialog} from '../gr-create-pointer-dialog/gr-create-pointer-dialog';
 import {
   BranchInfo,
@@ -27,24 +25,28 @@ import {
 import {firePageError} from '../../../utils/event-util';
 import {getAppContext} from '../../../services/app-context';
 import {ErrorCallback} from '../../../api/rest';
-import {SHOWN_ITEMS_COUNT} from '../../../constants/constants';
 import {formStyles} from '../../../styles/gr-form-styles';
 import {tableStyles} from '../../../styles/gr-table-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
-import {LitElement, PropertyValues, css, html} from 'lit';
+import {LitElement, PropertyValues, css, html, nothing} from 'lit';
 import {customElement, query, property, state} from 'lit/decorators.js';
 import {BindValueChangeEvent} from '../../../types/events';
 import {assertIsDefined} from '../../../utils/common-util';
 import {ifDefined} from 'lit/directives/if-defined.js';
-import {RepoDetailView, RepoViewState} from '../../../models/views/repo';
+import {
+  createRepoUrl,
+  RepoDetailView,
+  RepoViewState,
+} from '../../../models/views/repo';
+import {modalStyles} from '../../../styles/gr-modal-styles';
 
 const PGP_START = '-----BEGIN PGP SIGNATURE-----';
 
 @customElement('gr-repo-detail-list')
 export class GrRepoDetailList extends LitElement {
-  @query('#overlay') private readonly overlay?: GrOverlay;
+  @query('#modal') private readonly modal?: HTMLDialogElement;
 
-  @query('#createOverlay') private readonly createOverlay?: GrOverlay;
+  @query('#createModal') private readonly createModal?: HTMLDialogElement;
 
   @query('#createNewModal')
   private readonly createNewModal?: GrCreatePointerDialog;
@@ -52,36 +54,30 @@ export class GrRepoDetailList extends LitElement {
   @property({type: Object})
   params?: RepoViewState;
 
-  // private but used in test
   @state() detailType?: RepoDetailView.BRANCHES | RepoDetailView.TAGS;
 
-  // private but used in test
   @state() isOwner = false;
 
-  @state() private loggedIn = false;
+  @state() loggedIn = false;
 
-  @state() private offset = 0;
+  @state() offset = 0;
 
-  // private but used in test
   @state() repo?: RepoName;
 
-  // private but used in test
   @state() items?: BranchInfo[] | TagInfo[];
 
-  @state() private readonly itemsPerPage = 25;
+  @state() readonly itemsPerPage = 25;
 
-  @state() private loading = true;
+  @state() loading = true;
 
-  @state() private filter?: string;
+  @state() filter?: string;
 
-  @state() private refName?: GitRef;
+  @state() refName?: GitRef;
 
-  @state() private newItemName = false;
+  @state() newItemName = false;
 
-  // private but used in test
   @state() isEditing = false;
 
-  // private but used in test
   @state() revisedRef?: GitRef;
 
   private readonly restApiService = getAppContext().restApiService;
@@ -91,6 +87,7 @@ export class GrRepoDetailList extends LitElement {
       formStyles,
       tableStyles,
       sharedStyles,
+      modalStyles,
       css`
         .tags td.name {
           min-width: 25em;
@@ -139,6 +136,8 @@ export class GrRepoDetailList extends LitElement {
   }
 
   override render() {
+    if (!this.repo) return nothing;
+    if (!this.detailType) return nothing;
     return html`
       <gr-list-view
         .createNew=${this.loggedIn}
@@ -147,7 +146,7 @@ export class GrRepoDetailList extends LitElement {
         .items=${this.items}
         .loading=${this.loading}
         .offset=${this.offset}
-        .path=${this.getPath(this.repo, this.detailType)}
+        .path=${this.getPath()}
         @create-clicked=${() => {
           this.handleCreateClicked();
         }}
@@ -185,11 +184,11 @@ export class GrRepoDetailList extends LitElement {
           </tbody>
           <tbody class=${this.loading ? 'loading' : ''}>
             ${this.items
-              ?.slice(0, SHOWN_ITEMS_COUNT)
+              ?.slice(0, this.itemsPerPage)
               .map((item, index) => this.renderItemList(item, index))}
           </tbody>
         </table>
-        <gr-overlay id="overlay" with-backdrop>
+        <dialog id="modal" tabindex="-1">
           <gr-confirm-delete-item-dialog
             class="confirmDialog"
             .item=${this.refName}
@@ -199,9 +198,9 @@ export class GrRepoDetailList extends LitElement {
               this.handleConfirmDialogCancel();
             }}
           ></gr-confirm-delete-item-dialog>
-        </gr-overlay>
+        </dialog>
       </gr-list-view>
-      <gr-overlay id="createOverlay" with-backdrop>
+      <dialog id="createModal" tabindex="-1">
         <gr-dialog
           id="createDialog"
           ?disabled=${!this.newItemName}
@@ -228,7 +227,7 @@ export class GrRepoDetailList extends LitElement {
             ></gr-create-pointer-dialog>
           </div>
         </gr-dialog>
-      </gr-overlay>
+      </dialog>
     `;
   }
 
@@ -337,12 +336,8 @@ export class GrRepoDetailList extends LitElement {
     `;
   }
 
-  private renderWeblink(link: WebLinkInfo) {
-    return html`
-      <a href=${link.url} class="webLink" rel="noopener" target="_blank">
-        (${link.name})
-      </a>
-    `;
+  private renderWeblink(info: WebLinkInfo) {
+    return html`<gr-weblink imageAndText .info=${info}></gr-weblink>`;
   }
 
   override willUpdate(changedProperties: PropertyValues) {
@@ -441,8 +436,10 @@ export class GrRepoDetailList extends LitElement {
     return Promise.reject(new Error('unknown detail type'));
   }
 
-  private getPath(repo?: RepoName, detailType?: RepoDetailView) {
-    return `/admin/repos/${encodeURL(repo ?? '', false)},${detailType}`;
+  private getPath() {
+    if (!this.repo) return '';
+    if (!this.detailType) return '';
+    return createRepoUrl({repo: this.repo, detail: this.detailType});
   }
 
   private computeWeblink(repo: ProjectInfo | BranchInfo | TagInfo) {
@@ -531,8 +528,8 @@ export class GrRepoDetailList extends LitElement {
   }
 
   private handleDeleteItemConfirm() {
-    assertIsDefined(this.overlay, 'overlay');
-    this.overlay.close();
+    assertIsDefined(this.modal, 'modal');
+    this.modal.close();
     if (!this.repo || !this.refName) {
       return Promise.reject(new Error('undefined repo or refName'));
     }
@@ -569,20 +566,20 @@ export class GrRepoDetailList extends LitElement {
   }
 
   private handleConfirmDialogCancel() {
-    assertIsDefined(this.overlay, 'overlay');
-    this.overlay.close();
+    assertIsDefined(this.modal, 'modal');
+    this.modal.close();
   }
 
   private handleDeleteItem(index: number) {
     if (!this.items) return;
-    assertIsDefined(this.overlay, 'overlay');
+    assertIsDefined(this.modal, 'modal');
     const name = this.stripRefs(
       this.items[index].ref,
       this.detailType
     ) as GitRef;
     if (!name) return;
     this.refName = name;
-    this.overlay.open();
+    this.modal.showModal();
   }
 
   // private but used in test
@@ -594,14 +591,14 @@ export class GrRepoDetailList extends LitElement {
 
   // private but used in test
   handleCloseCreate() {
-    assertIsDefined(this.createOverlay, 'createOverlay');
-    this.createOverlay.close();
+    assertIsDefined(this.createModal, 'createModal');
+    this.createModal.close();
   }
 
   // private but used in test
   handleCreateClicked() {
-    assertIsDefined(this.createOverlay, 'createOverlay');
-    this.createOverlay.open();
+    assertIsDefined(this.createModal, 'createModal');
+    this.createModal.showModal();
   }
 
   private handleUpdateItemName() {

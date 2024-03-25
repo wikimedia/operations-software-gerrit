@@ -3,13 +3,13 @@
  * Copyright 2017 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {GrDiffBuilderUnified} from './gr-diff-builder-unified';
+import {GrDiffBuilder} from './gr-diff-builder';
 import {DiffInfo, DiffPreferencesInfo} from '../../../types/diff';
-import {GrDiffLine, GrDiffLineType} from '../gr-diff/gr-diff-line';
-import {queryAndAssert} from '../../../utils/common-util';
 import {createElementDiff} from '../gr-diff/gr-diff-utils';
+import {GrDiffGroup} from '../gr-diff/gr-diff-group';
+import {html, render} from 'lit';
 
-export class GrDiffBuilderBinary extends GrDiffBuilderUnified {
+export class GrDiffBuilderBinary extends GrDiffBuilder {
   constructor(
     diff: DiffInfo,
     prefs: DiffPreferencesInfo,
@@ -18,13 +18,25 @@ export class GrDiffBuilderBinary extends GrDiffBuilderUnified {
     super(diff, prefs, outputEl);
   }
 
-  override buildSectionElement(): HTMLElement {
+  override buildSectionElement(group: GrDiffGroup): HTMLElement {
     const section = createElementDiff('tbody', 'binary-diff');
-    const line = new GrDiffLine(GrDiffLineType.BOTH, 'FILE', 'FILE');
-    const fileRow = this.createRow(line);
-    const contentTd = queryAndAssert(fileRow, 'td.both.file')!;
-    contentTd.textContent = ' Difference in binary files';
-    section.appendChild(fileRow);
-    return section;
+    // Do not create a diff row for 'LOST'.
+    if (group.lines[0].beforeNumber !== 'FILE') return section;
+    return super.buildSectionElement(group);
+  }
+
+  public renderBinaryDiff() {
+    render(
+      html`
+        <tbody class="gr-diff binary-diff">
+          <tr class="gr-diff">
+            <td colspan="5" class="gr-diff">
+              <span>Difference in binary files</span>
+            </td>
+          </tr>
+        </tbody>
+      `,
+      this.outputEl
+    );
   }
 }

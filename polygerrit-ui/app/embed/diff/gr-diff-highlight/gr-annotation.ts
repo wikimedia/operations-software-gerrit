@@ -22,8 +22,14 @@ export const GrAnnotation = {
     return this.getStringLength(node.textContent || '');
   },
 
+  /**
+   * Returns the number of Unicode code points in the given string
+   *
+   * This is not necessarily the same as the number of visible symbols.
+   * See https://mathiasbynens.be/notes/javascript-unicode for more details.
+   */
   getStringLength(str: string) {
-    return str.replace(REGEX_ASTRAL_SYMBOL, '_').length;
+    return [...str].length;
   },
 
   /**
@@ -165,18 +171,20 @@ export const GrAnnotation = {
     cssClass: string,
     firstPart?: boolean
   ) {
-    if (this.getLength(node) === offset || offset === 0) {
-      return this.wrapInHighlight(node, cssClass);
-    } else {
-      if (firstPart) {
-        this.splitNode(node, offset);
-        // Node points to first part of the Text, second one is sibling.
-      } else {
-        // if node is Text then splitNode will return a Text
-        node = this.splitNode(node, offset) as Text;
-      }
+    if (
+      (this.getLength(node) === offset && firstPart) ||
+      (offset === 0 && !firstPart)
+    ) {
       return this.wrapInHighlight(node, cssClass);
     }
+    if (firstPart) {
+      this.splitNode(node, offset);
+      // Node points to first part of the Text, second one is sibling.
+    } else {
+      // if node is Text then splitNode will return a Text
+      node = this.splitNode(node, offset) as Text;
+    }
+    return this.wrapInHighlight(node, cssClass);
   },
 
   /**
@@ -219,7 +227,6 @@ export const GrAnnotation = {
    */
   splitTextNode(node: Text, offset: number) {
     if (node.textContent?.match(REGEX_ASTRAL_SYMBOL)) {
-      // TODO (viktard): Polyfill Array.from for IE10.
       const head = Array.from(node.textContent);
       const tail = head.splice(offset);
       const parent = node.parentNode;

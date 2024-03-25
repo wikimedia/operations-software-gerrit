@@ -15,6 +15,7 @@
 package com.google.gerrit.server.edit;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.CHANGE_MODIFICATION;
 
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.PatchSet;
@@ -29,7 +30,6 @@ import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.PatchSetUtil;
-import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.change.ChangeKindCache;
 import com.google.gerrit.server.change.NotifyResolver;
 import com.google.gerrit.server.change.PatchSetInserter;
@@ -41,6 +41,7 @@ import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.RepoContext;
 import com.google.gerrit.server.update.UpdateException;
+import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
@@ -71,7 +72,7 @@ public class ChangeEditUtil {
   private final Provider<CurrentUser> userProvider;
   private final ChangeKindCache changeKindCache;
   private final PatchSetUtil psUtil;
-  private final GitReferenceUpdated gitRefUpdated;
+  private final GitReferenceUpdated gitReferenceUpdated;
 
   @Inject
   ChangeEditUtil(
@@ -81,14 +82,14 @@ public class ChangeEditUtil {
       Provider<CurrentUser> userProvider,
       ChangeKindCache changeKindCache,
       PatchSetUtil psUtil,
-      GitReferenceUpdated gitRefUpdated) {
+      GitReferenceUpdated gitReferenceUpdated) {
     this.gitManager = gitManager;
     this.patchSetInserterFactory = patchSetInserterFactory;
     this.indexer = indexer;
     this.userProvider = userProvider;
     this.changeKindCache = changeKindCache;
     this.psUtil = psUtil;
-    this.gitRefUpdated = gitRefUpdated;
+    this.gitReferenceUpdated = gitReferenceUpdated;
   }
 
   /**
@@ -189,20 +190,22 @@ public class ChangeEditUtil {
       } else {
         message.append("Published edit on patch set ").append(basePatchSet.number()).append(".");
       }
-
-      try (BatchUpdate bu = updateFactory.create(change.getProject(), user, TimeUtil.now())) {
-        bu.setRepository(repo, rw, oi);
-        bu.setNotify(notify);
-        bu.addOp(change.getId(), inserter.setMessage(message.toString()));
-        bu.addOp(
-            change.getId(),
-            new BatchUpdateOp() {
-              @Override
-              public void updateRepo(RepoContext ctx) throws Exception {
-                ctx.addRefUpdate(edit.getEditCommit().copy(), ObjectId.zeroId(), edit.getRefName());
-              }
-            });
-        bu.execute();
+      try (RefUpdateContext changeCtx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
+        try (BatchUpdate bu = updateFactory.create(change.getProject(), user, TimeUtil.now())) {
+          bu.setRepository(repo, rw, oi);
+          bu.setNotify(notify);
+          bu.addOp(change.getId(), inserter.setMessage(message.toString()));
+          bu.addOp(
+              change.getId(),
+              new BatchUpdateOp() {
+                @Override
+                public void updateRepo(RepoContext ctx) throws Exception {
+                  ctx.addRefUpdate(
+                      edit.getEditCommit().copy(), ObjectId.zeroId(), edit.getRefName());
+                }
+              });
+          bu.execute();
+        }
       }
     }
   }
@@ -243,31 +246,34 @@ public class ChangeEditUtil {
   }
 
   private void deleteRef(Repository repo, ChangeEdit edit) throws IOException {
-    AccountState userAccountState = userProvider.get().asIdentifiedUser().state();
-    String refName = edit.getRefName();
-    RefUpdate ru = repo.updateRef(refName, true);
-    ru.setExpectedOldObjectId(edit.getEditCommit());
-    ru.setForceUpdate(true);
-    RefUpdate.Result result = ru.delete();
-    switch (result) {
-      case FORCED:
-      case NEW:
-        gitRefUpdated.fire(edit.getChange().getProject(), ru, userAccountState);
-        break;
-      case NO_CHANGE:
-        break;
-      case LOCK_FAILURE:
-        throw new LockFailureException(String.format("Failed to delete ref %s", refName), ru);
-      case FAST_FORWARD:
-      case IO_FAILURE:
-      case NOT_ATTEMPTED:
-      case REJECTED:
-      case REJECTED_CURRENT_BRANCH:
-      case RENAMED:
-      case REJECTED_MISSING_OBJECT:
-      case REJECTED_OTHER_REASON:
-      default:
-        throw new IOException(String.format("Failed to delete ref %s: %s", refName, result));
+    try (RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
+      String refName = edit.getRefName();
+      RefUpdate ru = repo.updateRef(refName, true);
+      ru.setExpectedOldObjectId(edit.getEditCommit());
+      ru.setForceUpdate(true);
+      RefUpdate.Result result = ru.delete();
+      switch (result) {
+        case FORCED:
+        case NEW:
+        case NO_CHANGE:
+          break;
+        case LOCK_FAILURE:
+          throw new LockFailureException(String.format("Failed to delete ref %s", refName), ru);
+        case FAST_FORWARD:
+        case IO_FAILURE:
+        case NOT_ATTEMPTED:
+        case REJECTED:
+        case REJECTED_CURRENT_BRANCH:
+        case RENAMED:
+        case REJECTED_MISSING_OBJECT:
+        case REJECTED_OTHER_REASON:
+        default:
+          throw new IOException(String.format("Failed to delete ref %s: %s", refName, result));
+      }
+      gitReferenceUpdated.fire(
+          edit.getChange().getProject(),
+          ru,
+          /* updater= */ userProvider.get().asIdentifiedUser().state());
     }
   }
 

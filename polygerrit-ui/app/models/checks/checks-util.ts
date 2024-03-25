@@ -14,12 +14,17 @@ import {
   Replacement,
   RunStatus,
 } from '../../api/checks';
-import {PatchSetNumber} from '../../api/rest-api';
-import {FixSuggestionInfo, FixReplacementInfo} from '../../types/common';
+import {PatchSetNumber, RevisionPatchSetNum} from '../../api/rest-api';
+import {CommentSide} from '../../constants/constants';
+import {
+  FixSuggestionInfo,
+  FixReplacementInfo,
+  DraftInfo,
+} from '../../types/common';
 import {OpenFixPreviewEventDetail} from '../../types/events';
-import {notUndefined} from '../../types/types';
-import {PROVIDED_FIX_ID} from '../../utils/comment-util';
-import {assert, assertNever} from '../../utils/common-util';
+import {isDefined} from '../../types/types';
+import {PROVIDED_FIX_ID, createNew} from '../../utils/comment-util';
+import {assert, assertIsDefined, assertNever} from '../../utils/common-util';
 import {fire} from '../../utils/event-util';
 import {CheckResult, CheckRun, RunResult} from './checks-model';
 
@@ -86,6 +91,25 @@ export function tooltipForLink(linkIcon?: LinkIcon) {
   }
 }
 
+function pleaseFixMessage(result: RunResult) {
+  return `Please fix this ${result.category} reported by ${result.checkName}: ${result.summary}
+
+${result.message}`;
+}
+
+export function createPleaseFixComment(result: RunResult): DraftInfo {
+  const pointer = result.codePointers?.[0];
+  assertIsDefined(pointer, 'codePointer');
+  return {
+    ...createNew(pleaseFixMessage(result), true),
+    path: pointer.path,
+    patch_set: result.patchset as RevisionPatchSetNum,
+    side: CommentSide.REVISION,
+    line: pointer.range.end_line ?? pointer.range.start_line,
+    range: pointer.range,
+  };
+}
+
 export function createFixAction(
   target: EventTarget,
   result?: RunResult
@@ -94,11 +118,12 @@ export function createFixAction(
   if (!result?.fixes) return;
   const fixSuggestions = result.fixes
     .map(f => rectifyFix(f, result?.checkName))
-    .filter(notUndefined);
+    .filter(isDefined);
   if (fixSuggestions.length === 0) return;
   const eventDetail: OpenFixPreviewEventDetail = {
     patchNum: result.patchset as PatchSetNumber,
     fixSuggestions,
+    onCloseFixPreviewCallbacks: [],
   };
   return {
     name: 'Show Fix',
@@ -116,7 +141,7 @@ export function rectifyFix(
   if (!fix?.replacements) return undefined;
   const replacements = fix.replacements
     .map(rectifyReplacement)
-    .filter(notUndefined);
+    .filter(isDefined);
   if (replacements.length === 0) return undefined;
 
   return {
@@ -445,7 +470,11 @@ export function createAttemptMap(runs: CheckRunApi[]) {
       );
     }
     value.isSingleAttempt = false;
-    if (run.attempt > value.latestAttempt) {
+    if (
+      value.latestAttempt !== 'all' &&
+      value.latestAttempt !== 'latest' &&
+      run.attempt > value.latestAttempt
+    ) {
       value.latestAttempt = run.attempt;
     }
     value.attempts.push(detail);

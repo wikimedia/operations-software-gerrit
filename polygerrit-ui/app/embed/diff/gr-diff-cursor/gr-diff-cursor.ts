@@ -8,7 +8,8 @@ import {AbortStop, CursorMoveResult, Stop} from '../../../api/core';
 import {
   DiffViewMode,
   GrDiffCursor as GrDiffCursorApi,
-  LineNumberEventDetail,
+  LineNumber,
+  LineSelectedEventDetail,
 } from '../../../api/diff';
 import {ScrollMode, Side} from '../../../constants/constants';
 import {toggleClass} from '../../../utils/dom-util';
@@ -19,6 +20,7 @@ import {
 import {GrDiffLineType} from '../gr-diff/gr-diff-line';
 import {GrDiffGroupType} from '../gr-diff/gr-diff-group';
 import {GrDiff} from '../gr-diff/gr-diff';
+import {fire} from '../../../utils/event-util';
 
 type GrDiffRowType = GrDiffLineType | GrDiffGroupType;
 
@@ -28,6 +30,29 @@ const RIGHT_SIDE_CLASS = 'target-side-right';
 interface Address {
   leftSide: boolean;
   number: number;
+}
+
+/**
+ * From <tr> diff row go up to <tbody> diff chunk.
+ *
+ * In Lit based diff there is a <gr-diff-row> element in between the two.
+ */
+export function fromRowToChunk(
+  rowEl: HTMLElement
+): HTMLTableSectionElement | undefined {
+  const parent = rowEl.parentElement;
+  if (!parent) return undefined;
+  if (parent.tagName === 'TBODY') {
+    return parent as HTMLTableSectionElement;
+  }
+
+  const grandParent = parent.parentElement;
+  if (!grandParent) return undefined;
+  if (grandParent.tagName === 'TBODY') {
+    return grandParent as HTMLTableSectionElement;
+  }
+
+  return undefined;
 }
 
 /** A subset of the GrDiff API that the cursor is using. */
@@ -179,8 +204,7 @@ export class GrDiffCursor implements GrDiffCursorApi {
   moveToNextChunk(clipToTop?: boolean): CursorMoveResult {
     const result = this.cursorManager.next({
       filter: (row: HTMLElement) => this._isFirstRowOfChunk(row),
-      getTargetHeight: target =>
-        (target?.parentNode as HTMLElement)?.scrollHeight || 0,
+      getTargetHeight: target => fromRowToChunk(target)?.scrollHeight || 0,
       clipToTop,
     });
     this._fixSide();
@@ -215,7 +239,7 @@ export class GrDiffCursor implements GrDiffCursorApi {
   }
 
   moveToLineNumber(
-    number: number,
+    number: LineNumber,
     side: Side,
     path?: string,
     intentionalMove?: boolean
@@ -330,13 +354,10 @@ export class GrDiffCursor implements GrDiffCursorApi {
     this.preventAutoScrollOnManualScroll = false;
   };
 
-  private _boundHandleDiffLineSelected = (event: Event) => {
-    const customEvent = event as CustomEvent;
-    this.moveToLineNumber(
-      customEvent.detail.number,
-      customEvent.detail.side,
-      customEvent.detail.path
-    );
+  private _boundHandleDiffLineSelected = (
+    e: CustomEvent<LineSelectedEventDetail>
+  ) => {
+    this.moveToLineNumber(e.detail.number, e.detail.side, e.detail.path);
   };
 
   createCommentInPlace() {
@@ -413,17 +434,21 @@ export class GrDiffCursor implements GrDiffCursorApi {
   }
 
   _isFirstRowOfChunk(row: HTMLElement) {
-    const parentClassList = (row.parentNode as HTMLElement).classList;
-    const isInChunk =
-      parentClassList.contains('section') && parentClassList.contains('delta');
-    const previousRow = row.previousSibling as HTMLElement;
-    const firstContentRow =
-      !previousRow || previousRow.classList.contains('moveControls');
-    return isInChunk && firstContentRow;
+    const chunk = fromRowToChunk(row);
+    if (!chunk) return false;
+
+    const isInDeltaChunk = chunk.classList.contains('delta');
+    if (!isInDeltaChunk) return false;
+
+    const firstRow = chunk.querySelector('tr:not(.moveControls)');
+    return firstRow === row;
   }
 
   _rowHasThread(row: HTMLElement): boolean {
-    return !!row.querySelector('.thread-group');
+    const slots = [
+      ...row.querySelectorAll<HTMLSlotElement>('.thread-group > slot'),
+    ];
+    return slots.some(slot => slot.assignedElements().length > 0);
   }
 
   /**
@@ -459,16 +484,10 @@ export class GrDiffCursor implements GrDiffCursorApi {
     const address = this.getAddressFor(row, side);
     if (address) {
       const {leftSide, number} = address;
-      row.dispatchEvent(
-        new CustomEvent<LineNumberEventDetail>(event, {
-          detail: {
-            lineNum: number,
-            side: leftSide ? Side.LEFT : Side.RIGHT,
-          },
-          composed: true,
-          bubbles: true,
-        })
-      );
+      fire(row, event, {
+        lineNum: number,
+        side: leftSide ? Side.LEFT : Side.RIGHT,
+      });
     }
   }
 
@@ -554,7 +573,7 @@ export class GrDiffCursor implements GrDiffCursorApi {
   }
 
   _findRowByNumberAndFile(
-    targetNumber: number,
+    targetNumber: LineNumber,
     side: Side,
     path?: string
   ): HTMLElement | undefined {

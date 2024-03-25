@@ -15,29 +15,28 @@
 package com.google.gerrit.server.notedb;
 
 import static com.google.common.base.MoreObjects.firstNonNull;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_ASSIGNEE;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_ATTENTION;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_BRANCH;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_CHANGE_ID;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_CHERRY_PICK_OF;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_COMMIT;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_COPIED_LABEL;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_CURRENT;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_GROUPS;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_HASHTAGS;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_LABEL;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_PATCH_SET;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_PATCH_SET_DESCRIPTION;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_PRIVATE;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_REAL_USER;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_REVERT_OF;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_STATUS;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_SUBJECT;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_SUBMISSION_ID;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_SUBMITTED_WITH;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_TAG;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_TOPIC;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_WORK_IN_PROGRESS;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_ATTENTION;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_BRANCH;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_CHANGE_ID;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_CHERRY_PICK_OF;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_COMMIT;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_COPIED_LABEL;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_CURRENT;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_GROUPS;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_HASHTAGS;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_LABEL;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_PATCH_SET;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_PATCH_SET_DESCRIPTION;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_PRIVATE;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_REAL_USER;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_REVERT_OF;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_STATUS;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_SUBJECT;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_SUBMISSION_ID;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_SUBMITTED_WITH;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_TAG;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_TOPIC;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_WORK_IN_PROGRESS;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.parseCommitMessageRange;
 import static java.util.Comparator.comparing;
 import static java.util.Comparator.comparingInt;
@@ -76,12 +75,11 @@ import com.google.gerrit.entities.SubmitRecord;
 import com.google.gerrit.entities.SubmitRecord.Label.Status;
 import com.google.gerrit.entities.SubmitRequirementResult;
 import com.google.gerrit.metrics.Timer0;
-import com.google.gerrit.server.AssigneeStatusUpdate;
 import com.google.gerrit.server.ReviewerByEmailSet;
 import com.google.gerrit.server.ReviewerSet;
 import com.google.gerrit.server.ReviewerStatusUpdate;
-import com.google.gerrit.server.notedb.ChangeNoteUtil.ParsedPatchSetApproval;
 import com.google.gerrit.server.notedb.ChangeNotesCommit.ChangeNotesRevWalk;
+import com.google.gerrit.server.notedb.ChangeNotesParseApprovalUtil.ParsedPatchSetApproval;
 import com.google.gerrit.server.util.LabelVote;
 import java.io.IOException;
 import java.nio.charset.Charset;
@@ -95,6 +93,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -160,7 +159,6 @@ class ChangeNotesParser {
   /** Holds all updates to attention set. */
   private final List<AttentionSetUpdate> allAttentionSetUpdates;
 
-  private final List<AssigneeStatusUpdate> assigneeUpdates;
   private final List<SubmitRecord> submitRecords;
   private final ListMultimap<ObjectId, HumanComment> humanComments;
   private final List<SubmitRequirementResult> submitRequirementResults;
@@ -225,7 +223,6 @@ class ChangeNotesParser {
     reviewerUpdates = new ArrayList<>();
     latestAttentionStatus = new HashMap<>();
     allAttentionSetUpdates = new ArrayList<>();
-    assigneeUpdates = new ArrayList<>();
     submitRecords = Lists.newArrayListWithExpectedSize(1);
     allChangeMessages = new ArrayList<>();
     humanComments = MultimapBuilder.hashKeys().arrayListValues().build();
@@ -298,7 +295,6 @@ class ChangeNotesParser {
         buildReviewerUpdates(),
         ImmutableSet.copyOf(latestAttentionStatus.values()),
         allAttentionSetUpdates,
-        assigneeUpdates,
         submitRecords,
         buildAllMessages(),
         humanComments,
@@ -327,6 +323,7 @@ class ChangeNotesParser {
     return result;
   }
 
+  @Nullable
   private PatchSet.Id buildCurrentPatchSetId() {
     // currentPatchSets are in parse order, i.e. newest first. Pick the first
     // patch set that was marked as current, excluding deleted patch sets.
@@ -492,7 +489,6 @@ class ChangeNotesParser {
 
     parseHashtags(commit);
     parseAttentionSetUpdates(commit);
-    parseAssigneeUpdates(commitTimestamp, commit);
 
     parseSubmission(commit, commitTimestamp);
 
@@ -511,7 +507,7 @@ class ChangeNotesParser {
 
     ObjectId currRev = parseRevision(commit);
     if (currRev != null) {
-      parsePatchSet(psId, currRev, accountId, commitTimestamp);
+      parsePatchSet(psId, currRev, accountId, realAccountId, commitTimestamp);
     }
     parseCurrentPatchSet(psId, commit);
 
@@ -580,6 +576,7 @@ class ChangeNotesParser {
     return parseOneFooter(commit, FOOTER_SUBMISSION_ID);
   }
 
+  @Nullable
   private String parseBranch(ChangeNotesCommit commit) throws ConfigInvalidException {
     String branch = parseOneFooter(commit, FOOTER_BRANCH);
     return branch != null ? RefNames.fullName(branch) : null;
@@ -607,6 +604,7 @@ class ChangeNotesParser {
     return parseOneFooter(commit, FOOTER_TOPIC);
   }
 
+  @Nullable
   private String parseOneFooter(ChangeNotesCommit commit, FooterKey footerKey)
       throws ConfigInvalidException {
     List<String> footerLines = commit.getFooterLineValues(footerKey);
@@ -627,6 +625,7 @@ class ChangeNotesParser {
     return line;
   }
 
+  @Nullable
   private ObjectId parseRevision(ChangeNotesCommit commit) throws ConfigInvalidException {
     String sha = parseOneFooter(commit, FOOTER_COMMIT);
     if (sha == null) {
@@ -641,7 +640,8 @@ class ChangeNotesParser {
     }
   }
 
-  private void parsePatchSet(PatchSet.Id psId, ObjectId rev, Account.Id accountId, Instant ts)
+  private void parsePatchSet(
+      PatchSet.Id psId, ObjectId rev, Account.Id accountId, Account.Id realAccountId, Instant ts)
       throws ConfigInvalidException {
     if (accountId == null) {
       throw parseException("patch set %s requires an identified user as uploader", psId.get());
@@ -658,6 +658,7 @@ class ChangeNotesParser {
         .id(psId)
         .commitId(rev)
         .uploader(accountId)
+        .realUploader(realAccountId)
         .createdOn(ts);
     // Fields not set here:
     // * Groups, parsed earlier in parseGroups.
@@ -736,22 +737,6 @@ class ChangeNotesParser {
     }
   }
 
-  private void parseAssigneeUpdates(Instant ts, ChangeNotesCommit commit)
-      throws ConfigInvalidException {
-    String assigneeValue = parseOneFooter(commit, FOOTER_ASSIGNEE);
-    if (assigneeValue != null) {
-      Optional<Account.Id> parsedAssignee;
-      if (assigneeValue.equals("")) {
-        // Empty footer found, assignee deleted
-        parsedAssignee = Optional.empty();
-      } else {
-        PersonIdent ident = RawParseUtils.parsePersonIdent(assigneeValue);
-        parsedAssignee = Optional.ofNullable(parseIdent(ident));
-      }
-      assigneeUpdates.add(AssigneeStatusUpdate.create(ts, ownerId, parsedAssignee));
-    }
-  }
-
   private void parseTag(ChangeNotesCommit commit) throws ConfigInvalidException {
     tag = null;
     List<String> tagLines = commit.getFooterLineValues(FOOTER_TAG);
@@ -764,6 +749,7 @@ class ChangeNotesParser {
     }
   }
 
+  @Nullable
   private Change.Status parseStatus(ChangeNotesCommit commit) throws ConfigInvalidException {
     List<String> statusLines = commit.getFooterLineValues(FOOTER_STATUS);
     if (statusLines.isEmpty()) {
@@ -772,7 +758,7 @@ class ChangeNotesParser {
       throw expectedOneFooter(FOOTER_STATUS, statusLines);
     }
     Change.Status status =
-        Enums.getIfPresent(Change.Status.class, statusLines.get(0).toUpperCase()).orNull();
+        Enums.getIfPresent(Change.Status.class, statusLines.get(0).toUpperCase(Locale.US)).orNull();
     if (status == null) {
       throw invalidFooter(FOOTER_STATUS, statusLines.get(0));
     }
@@ -802,6 +788,7 @@ class ChangeNotesParser {
     return PatchSet.id(id, psId);
   }
 
+  @Nullable
   private PatchSetState parsePatchSetState(ChangeNotesCommit commit) throws ConfigInvalidException {
     String psIdLine = parseExactlyOneFooter(commit, FOOTER_PATCH_SET);
     int s = psIdLine.indexOf(' ');
@@ -813,7 +800,7 @@ class ChangeNotesParser {
       PatchSetState state =
           Enums.getIfPresent(
                   PatchSetState.class,
-                  withParens.substring(1, withParens.length() - 1).toUpperCase())
+                  withParens.substring(1, withParens.length() - 1).toUpperCase(Locale.US))
               .orNull();
       if (state != null) {
         return state;
@@ -942,7 +929,8 @@ class ChangeNotesParser {
   /** Parses copied {@link PatchSetApproval}. */
   private void parseCopiedApproval(PatchSet.Id psId, Instant ts, String line)
       throws ConfigInvalidException {
-    ParsedPatchSetApproval parsedPatchSetApproval = ChangeNoteUtil.parseCopiedApproval(line);
+    ParsedPatchSetApproval parsedPatchSetApproval =
+        ChangeNotesParseApprovalUtil.parseCopiedApproval(line);
     checkFooter(
         parsedPatchSetApproval.accountIdent().isPresent(),
         FOOTER_COPIED_LABEL,
@@ -1000,7 +988,8 @@ class ChangeNotesParser {
       throw parseException("patch set %s requires an identified user as uploader", psId.get());
     }
     PatchSetApproval.Builder psa;
-    ParsedPatchSetApproval parsedPatchSetApproval = ChangeNoteUtil.parseApproval(line);
+    ParsedPatchSetApproval parsedPatchSetApproval =
+        ChangeNotesParseApprovalUtil.parseApproval(line);
     if (line.startsWith("-")) {
       psa = parseRemoveApproval(psId, accountId, realAccountId, ts, parsedPatchSetApproval);
     } else {
@@ -1009,7 +998,7 @@ class ChangeNotesParser {
     bufferedApprovals.add(psa);
   }
 
-  /** Parses {@link PatchSetApproval} out of the {@link ChangeNoteUtil#FOOTER_LABEL} value. */
+  /** Parses {@link PatchSetApproval} out of the {@link ChangeNoteFooters#FOOTER_LABEL} value. */
   private PatchSetApproval.Builder parseAddApproval(
       PatchSet.Id psId,
       Account.Id committerId,
@@ -1151,6 +1140,7 @@ class ChangeNotesParser {
     }
   }
 
+  @Nullable
   private Account.Id parseIdent(ChangeNotesCommit commit) throws ConfigInvalidException {
     // Check if the author name/email is the same as the committer name/email,
     // i.e. was the server ident at the time this commit was made.
@@ -1236,6 +1226,7 @@ class ChangeNotesParser {
     throw invalidFooter(FOOTER_WORK_IN_PROGRESS, raw);
   }
 
+  @Nullable
   private Change.Id parseRevertOf(ChangeNotesCommit commit) throws ConfigInvalidException {
     String footer = parseOneFooter(commit, FOOTER_REVERT_OF);
     if (footer == null) {
@@ -1249,7 +1240,7 @@ class ChangeNotesParser {
   }
 
   /**
-   * Parses {@link ChangeNoteUtil#FOOTER_CHERRY_PICK_OF} of the commit.
+   * Parses {@link ChangeNoteFooters#FOOTER_CHERRY_PICK_OF} of the commit.
    *
    * @param commit the commit to parse.
    * @return {@link Optional} value of the parsed footer or {@code null} if the footer is missing in

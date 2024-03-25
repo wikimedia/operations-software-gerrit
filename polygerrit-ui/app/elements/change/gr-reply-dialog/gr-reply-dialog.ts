@@ -10,12 +10,11 @@ import '../../shared/gr-account-chip/gr-account-chip';
 import '../../shared/gr-button/gr-button';
 import '../../shared/gr-icon/gr-icon';
 import '../../shared/gr-formatted-text/gr-formatted-text';
-import '../../shared/gr-overlay/gr-overlay';
 import '../../shared/gr-account-list/gr-account-list';
 import '../gr-label-scores/gr-label-scores';
 import '../gr-thread-list/gr-thread-list';
 import '../../../styles/shared-styles';
-import {GrReviewerSuggestionsProvider} from '../../../scripts/gr-reviewer-suggestions-provider/gr-reviewer-suggestions-provider';
+import {GrReviewerSuggestionsProvider} from '../../../services/gr-reviewer-suggestions-provider/gr-reviewer-suggestions-provider';
 import {getAppContext} from '../../../services/app-context';
 import {
   ChangeStatus,
@@ -35,19 +34,16 @@ import {
   removeServiceUsers,
   toReviewInput,
 } from '../../../utils/account-util';
-import {IronA11yAnnouncer} from '@polymer/iron-a11y-announcer/iron-a11y-announcer';
 import {TargetElement} from '../../../api/plugin';
-import {
-  FixIronA11yAnnouncer,
-  notUndefined,
-  ParsedChangeInfo,
-} from '../../../types/types';
+import {isDefined, ParsedChangeInfo} from '../../../types/types';
 import {GrAccountList} from '../../shared/gr-account-list/gr-account-list';
 import {
   AccountId,
   AccountInfo,
   AttentionSetInput,
   ChangeInfo,
+  CommentThread,
+  DraftInfo,
   GroupInfo,
   isAccount,
   isDetailedLabelInfo,
@@ -61,6 +57,7 @@ import {
   SuggestedReviewerGroupInfo,
   Suggestion,
   UserId,
+  isDraft,
 } from '../../../types/common';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {GrLabelScores} from '../gr-label-scores/gr-label-scores';
@@ -73,16 +70,11 @@ import {
   queryAndAssert,
 } from '../../../utils/common-util';
 import {
-  CommentThread,
-  DraftInfo,
   getFirstComment,
-  isDraft,
   isPatchsetLevel,
   isUnresolved,
-  UnsavedInfo,
 } from '../../../utils/comment-util';
 import {GrAccountChip} from '../../shared/gr-account-chip/gr-account-chip';
-import {GrOverlay, GrOverlayStops} from '../../shared/gr-overlay/gr-overlay';
 import {
   getApprovalInfo,
   getMaxAccounts,
@@ -91,9 +83,10 @@ import {
 import {pluralize} from '../../../utils/string-util';
 import {
   fireAlert,
-  fireEvent,
+  fireError,
+  fire,
+  fireNoBubble,
   fireIronAnnounce,
-  fireReload,
   fireServerError,
 } from '../../../utils/event-util';
 import {ErrorCallback} from '../../../api/rest';
@@ -111,24 +104,32 @@ import {
   LabelNameToValuesMap,
   PatchSetNumber,
 } from '../../../api/rest-api';
-import {css, html, PropertyValues, LitElement} from 'lit';
+import {css, html, PropertyValues, LitElement, nothing} from 'lit';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {when} from 'lit/directives/when.js';
 import {classMap} from 'lit/directives/class-map.js';
-import {ValueChangedEvent} from '../../../types/events';
+import {
+  AddReviewerEvent,
+  RemoveReviewerEvent,
+  ValueChangedEvent,
+} from '../../../types/events';
 import {customElement, property, state, query} from 'lit/decorators.js';
 import {subscribe} from '../../lit/subscription-controller';
 import {configModelToken} from '../../../models/config/config-model';
-import {hasHumanReviewer, isOwner} from '../../../utils/change-util';
-import {KnownExperimentId} from '../../../services/flags/flags';
+import {hasHumanReviewer} from '../../../utils/change-util';
 import {commentsModelToken} from '../../../models/comments/comments-model';
 import {
   CommentEditingChangedDetail,
   GrComment,
 } from '../../shared/gr-comment/gr-comment';
 import {ShortcutController} from '../../lit/shortcut-controller';
-import {Key, Modifier} from '../../../utils/dom-util';
+import {Key, Modifier, whenVisible} from '../../../utils/dom-util';
 import {GrThreadList} from '../gr-thread-list/gr-thread-list';
+import {userModelToken} from '../../../models/user/user-model';
+import {accountsModelToken} from '../../../models/accounts-model/accounts-model';
+import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
+import {modalStyles} from '../../../styles/gr-modal-styles';
+import {ironAnnouncerRequestAvailability} from '../../polymer-util';
 
 export enum FocusTarget {
   ANY = 'any',
@@ -164,58 +165,13 @@ const EMPTY_REPLY_MESSAGE = 'Cannot send an empty reply.';
 
 @customElement('gr-reply-dialog')
 export class GrReplyDialog extends LitElement {
-  /**
-   * Fired when a reply is successfully sent.
-   *
-   * @event send
-   */
-
-  /**
-   * Fired when the user presses the cancel button.
-   *
-   * @event cancel
-   */
-
-  /**
-   * Fired when the main textarea's value changes, which may have triggered
-   * a change in size for the dialog.
-   *
-   * @event autogrow
-   */
-
-  /**
-   * Fires to show an alert when a send is attempted on the non-latest patch.
-   *
-   * @event show-alert
-   */
-
-  /**
-   * Fires when the reply dialog believes that the server side diff drafts
-   * have been updated and need to be refreshed.
-   *
-   * @event comment-refresh
-   */
-
-  /**
-   * Fires when the state of the send button (enabled/disabled) changes.
-   *
-   * @event send-disabled-changed
-   */
-
-  /**
-   * Fired to reload the change page.
-   *
-   * @event reload
-   */
-
   FocusTarget = FocusTarget;
 
   private readonly reporting = getAppContext().reportingService;
 
   private readonly getChangeModel = resolve(this, changeModelToken);
 
-  // Private but used in tests.
-  readonly getCommentsModel = resolve(this, commentsModelToken);
+  private readonly getCommentsModel = resolve(this, commentsModelToken);
 
   // TODO: update type to only ParsedChangeInfo
   @property({type: Object})
@@ -236,6 +192,8 @@ export class GrReplyDialog extends LitElement {
   @property({type: Object})
   projectConfig?: ConfigInfo;
 
+  @query('#patchsetLevelComment') patchsetLevelGrComment?: GrComment;
+
   @query('#reviewers') reviewersList?: GrAccountList;
 
   @query('#ccs') ccsList?: GrAccountList;
@@ -246,8 +204,8 @@ export class GrReplyDialog extends LitElement {
 
   @query('#labelScores') labelScores?: GrLabelScores;
 
-  @query('#reviewerConfirmationOverlay')
-  reviewerConfirmationOverlay?: GrOverlay;
+  @query('#reviewerConfirmationModal')
+  reviewerConfirmationModal?: HTMLDialogElement;
 
   @state() latestPatchNum?: PatchSetNumber;
 
@@ -338,9 +296,6 @@ export class GrReplyDialog extends LitElement {
   reviewerPendingConfirmation: SuggestedReviewerGroupInfo | null = null;
 
   @state()
-  sendButtonLabel?: string;
-
-  @state()
   savingComments = false;
 
   @state()
@@ -373,24 +328,24 @@ export class GrReplyDialog extends LitElement {
   newAttentionSet: Set<UserId> = new Set();
 
   @state()
-  sendDisabled?: boolean;
-
-  @state()
   patchsetLevelDraftIsResolved = true;
 
   @state()
-  patchsetLevelComment?: UnsavedInfo | DraftInfo;
+  patchsetLevelComment?: DraftInfo;
+
+  @state()
+  isOwner = false;
 
   private readonly restApiService: RestApiService =
     getAppContext().restApiService;
 
-  private readonly jsAPI = getAppContext().jsApiService;
-
-  private readonly flagsService = getAppContext().flagsService;
+  private readonly getPluginLoader = resolve(this, pluginLoaderToken);
 
   private readonly getConfigModel = resolve(this, configModelToken);
 
-  private readonly accountsModel = getAppContext().accountsModel;
+  private readonly getAccountsModel = resolve(this, accountsModelToken);
+
+  private readonly getUserModel = resolve(this, userModelToken);
 
   storeTask?: DelayedTask;
 
@@ -400,6 +355,7 @@ export class GrReplyDialog extends LitElement {
 
   static override styles = [
     sharedStyles,
+    modalStyles,
     css`
       :host {
         background-color: var(--dialog-background-color);
@@ -464,7 +420,7 @@ export class GrReplyDialog extends LitElement {
         flex-wrap: wrap;
         flex: 1;
       }
-      #reviewerConfirmationOverlay {
+      #reviewerConfirmationModal {
         padding: var(--spacing-l);
         text-align: center;
       }
@@ -586,7 +542,7 @@ export class GrReplyDialog extends LitElement {
         border: 1px solid var(--border-color);
         border-radius: var(--border-radius);
         margin-top: var(--spacing-m);
-        background-color: var(--assignee-highlight-color);
+        background-color: var(--line-item-highlight-color);
       }
       .attentionTip div gr-icon {
         margin-right: var(--spacing-s);
@@ -602,6 +558,16 @@ export class GrReplyDialog extends LitElement {
       .patchsetLevelContainer.unresolved {
         background-color: var(--unresolved-comment-background-color);
       }
+      .privateVisiblityInfo {
+        display: flex;
+        justify-content: center;
+        background-color: var(--info-background);
+        padding: var(--spacing-s) 0;
+      }
+      .privateVisiblityInfo gr-icon {
+        margin-right: var(--spacing-m);
+        color: var(--info-foreground);
+      }
     `,
   ];
 
@@ -610,7 +576,6 @@ export class GrReplyDialog extends LitElement {
     this.filterReviewerSuggestion =
       this.filterReviewerSuggestionGenerator(false);
     this.filterCCSuggestion = this.filterReviewerSuggestionGenerator(true);
-    this.jsAPI.addElement(TargetElement.REPLY_DIALOG, this);
 
     this.shortcuts.addLocal({key: Key.ESC}, () => this.cancel());
     this.shortcuts.addLocal(
@@ -624,7 +589,7 @@ export class GrReplyDialog extends LitElement {
 
     subscribe(
       this,
-      () => getAppContext().userModel.loggedIn$,
+      () => this.getUserModel().loggedIn$,
       isLoggedIn => (this.isLoggedIn = isLoggedIn)
     );
     subscribe(
@@ -646,6 +611,11 @@ export class GrReplyDialog extends LitElement {
     );
     subscribe(
       this,
+      () => this.getChangeModel().isOwner$,
+      x => (this.isOwner = x)
+    );
+    subscribe(
+      this,
       () => this.getCommentsModel().mentionedUsersInDrafts$,
       x => {
         this.mentionedUsers = x;
@@ -657,9 +627,6 @@ export class GrReplyDialog extends LitElement {
       this,
       () => this.getCommentsModel().mentionedUsersInUnresolvedDrafts$,
       x => {
-        if (!this.flagsService.isEnabled(KnownExperimentId.MENTION_USERS)) {
-          return;
-        }
         this.mentionedUsersInUnresolvedDrafts = x.filter(
           v => !this.isAlreadyReviewerOrCC(v)
         );
@@ -672,7 +639,7 @@ export class GrReplyDialog extends LitElement {
     );
     subscribe(
       this,
-      () => this.getCommentsModel().draftThreads$,
+      () => this.getCommentsModel().draftThreadsSaved$,
       threads =>
         (this.draftCommentThreads = threads.filter(
           t => !(isDraft(getFirstComment(t)) && isPatchsetLevel(t))
@@ -682,9 +649,13 @@ export class GrReplyDialog extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
-    (
-      IronA11yAnnouncer as unknown as FixIronA11yAnnouncer
-    ).requestAvailability();
+    ironAnnouncerRequestAvailability();
+
+    this.getPluginLoader().jsApiService.addElement(
+      TargetElement.REPLY_DIALOG,
+      this
+    );
+
     this.restApiService.getAccount().then(account => {
       if (account) this.account = account;
     });
@@ -709,17 +680,19 @@ export class GrReplyDialog extends LitElement {
     // Plugins on reply-reviewers endpoint can take advantage of these
     // events to add / remove reviewers
 
-    this.addEventListener('add-reviewer', e => {
+    this.addEventListener('add-reviewer', (e: AddReviewerEvent) => {
+      const reviewer = e.detail.reviewer;
       // Only support account type, see more from:
       // elements/shared/gr-account-list/gr-account-list.js#addAccountItem
       this.reviewersList?.addAccountItem({
-        account: (e as CustomEvent).detail.reviewer,
+        account: reviewer,
         count: 1,
       });
     });
 
-    this.addEventListener('remove-reviewer', e => {
-      this.reviewersList?.removeAccount((e as CustomEvent).detail.reviewer);
+    this.addEventListener('remove-reviewer', (e: RemoveReviewerEvent) => {
+      const reviewer = e.detail.reviewer;
+      this.reviewersList?.removeAccount(reviewer);
     });
   }
 
@@ -736,16 +709,6 @@ export class GrReplyDialog extends LitElement {
     }
     if (changedProperties.has('canBeStarted')) {
       this.computeMessagePlaceholder();
-      this.computeSendButtonLabel();
-    }
-    if (changedProperties.has('reviewFormatting')) {
-      this.handleHeightChanged();
-    }
-    if (changedProperties.has('draftCommentThreads')) {
-      this.handleHeightChanged();
-    }
-    if (changedProperties.has('sendDisabled')) {
-      this.sendDisabledChanged();
     }
     if (changedProperties.has('attentionExpanded')) {
       this.onAttentionExpandedChange();
@@ -773,7 +736,6 @@ export class GrReplyDialog extends LitElement {
 
   override render() {
     if (!this.change) return;
-    this.sendDisabled = this.computeSendButtonDisabled();
     return html`
       <div tabindex="-1">
         <section class="peopleContainer">
@@ -788,6 +750,7 @@ export class GrReplyDialog extends LitElement {
             <gr-endpoint-slot name="below"></gr-endpoint-slot>
           </gr-endpoint-decorator>
           ${this.renderCCList()} ${this.renderReviewConfirmation()}
+          ${this.renderPrivateVisiblityInfo()}
         </section>
         <section class="labelsContainer">${this.renderLabels()}</section>
         <section class="newReplyDialog textareaContainer">
@@ -864,9 +827,10 @@ export class GrReplyDialog extends LitElement {
 
   private renderReviewConfirmation() {
     return html`
-      <gr-overlay
-        id="reviewerConfirmationOverlay"
-        @iron-overlay-canceled=${this.cancelPendingReviewer}
+      <dialog
+        tabindex="-1"
+        id="reviewerConfirmationModal"
+        @close=${this.cancelPendingReviewer}
       >
         <div class="reviewerConfirmation">
           Group
@@ -885,7 +849,23 @@ export class GrReplyDialog extends LitElement {
           <gr-button @click=${this.confirmPendingReviewer}>Yes</gr-button>
           <gr-button @click=${this.cancelPendingReviewer}>No</gr-button>
         </div>
-      </gr-overlay>
+      </dialog>
+    `;
+  }
+
+  private renderPrivateVisiblityInfo() {
+    const addedAccounts = [
+      ...(this.reviewersList?.additions() ?? []),
+      ...(this.ccsList?.additions() ?? []),
+    ];
+    if (!this.change?.is_private || !addedAccounts.length) return nothing;
+    return html`
+      <div class="privateVisiblityInfo">
+        <gr-icon icon="info"></gr-icon>
+        <div>
+          Adding a reviewer/CC will make this private change visible to them
+        </div>
+      </div>
     `;
   }
 
@@ -909,20 +889,8 @@ export class GrReplyDialog extends LitElement {
     `;
   }
 
-  // TODO: move to comment-util
-  private createDraft(): UnsavedInfo {
-    return {
-      patch_set: this.latestPatchNum,
-      message: this.patchsetLevelDraftMessage,
-      unresolved: !this.patchsetLevelDraftIsResolved,
-      path: SpecialFilePath.PATCHSET_LEVEL_COMMENTS,
-      __unsaved: true,
-    };
-  }
-
   private renderPatchsetLevelComment() {
-    if (!this.patchsetLevelComment)
-      this.patchsetLevelComment = this.createDraft();
+    if (!this.patchsetLevelComment) return nothing;
     return html`
       <gr-comment
         id="patchsetLevelComment"
@@ -933,6 +901,8 @@ export class GrReplyDialog extends LitElement {
         }}
         @comment-text-changed=${(e: ValueChangedEvent<string>) => {
           this.patchsetLevelDraftMessage = e.detail.value;
+          // See `addReplyTextChangedCallback` in `ChangeReplyPluginApi`.
+          fire(e.currentTarget as HTMLElement, 'value-changed', e.detail);
         }}
         .messagePlaceholder=${this.messagePlaceholder}
         hide-header
@@ -962,7 +932,8 @@ export class GrReplyDialog extends LitElement {
   }
 
   private renderDraftsSection() {
-    if (this.computeHideDraftList(this.draftCommentThreads)) return;
+    const threads = this.draftCommentThreads;
+    if (!threads || threads.length === 0) return;
     return html`
       <section class="draftsContainer">
         <div class="includeComments">
@@ -973,17 +944,13 @@ export class GrReplyDialog extends LitElement {
             ?checked=${this.includeComments}
           />
           <label for="includeComments"
-            >Publish ${this.computeDraftsTitle(this.draftCommentThreads)}</label
+            >Publish ${this.computeDraftsTitle(threads)}</label
           >
         </div>
         ${when(
           this.includeComments,
           () => html`
-            <gr-thread-list
-              id="commentList"
-              .threads=${this.draftCommentThreads}
-              hide-dropdown
-            >
+            <gr-thread-list id="commentList" .threads=${threads} hide-dropdown>
             </gr-thread-list>
           `
         )}
@@ -1032,7 +999,7 @@ export class GrReplyDialog extends LitElement {
               <gr-button
                 class="edit-attention-button"
                 @click=${this.handleAttentionModify}
-                ?disabled=${this.sendDisabled}
+                ?disabled=${this.isSendDisabled()}
                 link
                 position-below
                 data-label="Edit"
@@ -1231,10 +1198,12 @@ export class GrReplyDialog extends LitElement {
             <gr-button
               id="sendButton"
               primary
-              ?disabled=${this.sendDisabled}
+              ?disabled=${this.isSendDisabled()}
               class="action send"
-              @click=${this.sendTapHandler}
-              >${this.sendButtonLabel}
+              @click=${this.sendClickHandler}
+              >${this.canBeStarted
+                ? ButtonLabels.SEND + ' and ' + ButtonLabels.START_REVIEW
+                : ButtonLabels.SEND}
             </gr-button>
           </gr-tooltip-content>
         </div>
@@ -1248,7 +1217,7 @@ export class GrReplyDialog extends LitElement {
    * change view for initializing the dialog after opening the overlay. Maybe it
    * should be called `onOpened()` or `initialize()`?
    */
-  open(focusTarget?: FocusTarget, quote?: string) {
+  open(focusTarget?: FocusTarget) {
     assertIsDefined(this.change, 'change');
     this.knownLatestState = LatestPatchState.CHECKING;
     this.getChangeModel()
@@ -1260,14 +1229,10 @@ export class GrReplyDialog extends LitElement {
       });
 
     this.focusOn(focusTarget);
-    if (quote?.length) {
-      // If a reply quote has been provided, use it.
-      this.patchsetLevelDraftMessage = quote;
-    }
     if (this.restApiService.hasPendingDiffDrafts()) {
       this.savingComments = true;
       this.restApiService.awaitPendingDiffDrafts().then(() => {
-        fireEvent(this, 'comment-refresh');
+        fire(this, 'comment-refresh', {});
         this.savingComments = false;
       });
     }
@@ -1282,15 +1247,6 @@ export class GrReplyDialog extends LitElement {
 
   override focus() {
     this.focusOn(FocusTarget.ANY);
-  }
-
-  getFocusStops(): GrOverlayStops | undefined {
-    const end = this.sendDisabled ? this.cancelButton : this.sendButton;
-    if (!this.reviewersList?.focusStart || !end) return undefined;
-    return {
-      start: this.reviewersList.focusStart,
-      end,
-    };
   }
 
   private handleIncludeCommentsChanged(e: Event) {
@@ -1378,7 +1334,9 @@ export class GrReplyDialog extends LitElement {
     );
   }
 
+  // visible for testing
   async send(includeComments: boolean, startReview: boolean) {
+    // The change model will end this timing when the change was reloaded.
     this.reporting.time(Timing.SEND_REPLY);
     const labels = this.getLabelScores().getLabelValues();
 
@@ -1391,6 +1349,14 @@ export class GrReplyDialog extends LitElement {
 
     if (startReview) {
       reviewInput.ready = true;
+    } else if (this.change?.work_in_progress) {
+      const addedAccounts = [
+        ...(this.reviewersList?.additions() ?? []),
+        ...(this.ccsList?.additions() ?? []),
+      ];
+      if (addedAccounts.length > 0) {
+        fireAlert(this, 'Reviewers are not notified for WIP changes');
+      }
     }
 
     this.disabled = true;
@@ -1406,27 +1372,24 @@ export class GrReplyDialog extends LitElement {
     )
       .filter(user => !this.currentAttentionSet.has(user))
       .map(user => allAccounts.find(a => getUserId(a) === user))
-      .filter(notUndefined);
+      .filter(isDefined);
 
     const newAttentionSetUsers = (
       await Promise.all(
-        newAttentionSetAdditions.map(a => this.accountsModel.fillDetails(a))
+        newAttentionSetAdditions.map(a =>
+          this.getAccountsModel().fillDetails(a)
+        )
       )
-    ).filter(notUndefined);
+    ).filter(isDefined);
 
     for (const user of newAttentionSetUsers) {
-      let reason;
-      if (this.flagsService.isEnabled(KnownExperimentId.MENTION_USERS)) {
-        reason =
-          getMentionedReason(
-            this.draftCommentThreads,
-            this.account,
-            user,
-            this.serverConfig
-          ) ?? '';
-      } else {
-        reason = getReplyByReason(this.account, this.serverConfig);
-      }
+      const reason =
+        getMentionedReason(
+          this.draftCommentThreads,
+          this.account,
+          user,
+          this.serverConfig
+        ) ?? '';
       reviewInput.add_to_attention_set.push({user: getUserId(user), reason});
     }
     reviewInput.remove_from_attention_set = [];
@@ -1441,11 +1404,7 @@ export class GrReplyDialog extends LitElement {
       reviewInput.remove_from_attention_set
     );
 
-    const patchsetLevelComment = queryAndAssert<GrComment>(
-      this,
-      '#patchsetLevelComment'
-    );
-    await patchsetLevelComment.save();
+    await this.patchsetLevelGrComment?.save();
 
     assertIsDefined(this.change, 'change');
     reviewInput.reviewers = this.computeReviewers();
@@ -1465,12 +1424,7 @@ export class GrReplyDialog extends LitElement {
 
         this.patchsetLevelDraftMessage = '';
         this.includeComments = true;
-        this.dispatchEvent(
-          new CustomEvent('send', {
-            composed: true,
-            bubbles: false,
-          })
-        );
+        fireNoBubble(this, 'send', {});
         fireIronAnnounce(this, 'Reply sent');
         return;
       })
@@ -1489,24 +1443,23 @@ export class GrReplyDialog extends LitElement {
     if (!section || section === FocusTarget.ANY) {
       section = this.chooseFocusTarget();
     }
-    if (section === FocusTarget.REVIEWERS) {
-      const reviewerEntry = this.reviewersList?.focusStart;
-      setTimeout(() => reviewerEntry?.focus());
-    } else if (section === FocusTarget.CCS) {
-      const ccEntry = this.ccsList?.focusStart;
-      setTimeout(() => ccEntry?.focus());
-    }
+    whenVisible(this, () => {
+      if (section === FocusTarget.REVIEWERS) {
+        const reviewerEntry = this.reviewersList?.focusStart;
+        reviewerEntry?.focus();
+      } else if (section === FocusTarget.CCS) {
+        const ccEntry = this.ccsList?.focusStart;
+        ccEntry?.focus();
+      } else {
+        this.patchsetLevelGrComment?.focus();
+      }
+    });
   }
 
   chooseFocusTarget() {
-    if (!isOwner(this.change, this.account)) return FocusTarget.BODY;
+    if (!this.isOwner) return FocusTarget.BODY;
     if (hasHumanReviewer(this.change)) return FocusTarget.BODY;
     return FocusTarget.REVIEWERS;
-  }
-
-  isOwner(account?: AccountInfo, change?: ParsedChangeInfo | ChangeInfo) {
-    if (!account || !change || !change.owner) return false;
-    return account._account_id === change.owner._account_id;
   }
 
   handle400Error(r?: Response | null) {
@@ -1547,10 +1500,6 @@ export class GrReplyDialog extends LitElement {
     });
   }
 
-  computeHideDraftList(draftCommentThreads?: CommentThread[]) {
-    return !draftCommentThreads || draftCommentThreads.length === 0;
-  }
-
   computeDraftsTitle(draftCommentThreads?: CommentThread[]) {
     const total = draftCommentThreads ? draftCommentThreads.length : 0;
     return pluralize(total, 'Draft');
@@ -1580,11 +1529,11 @@ export class GrReplyDialog extends LitElement {
   onAttentionExpandedChange() {
     // If the attention-detail section is expanded without dispatching this
     // event, then the dialog may expand beyond the screen's bottom border.
-    fireEvent(this, 'iron-resize');
+    fire(this, 'iron-resize', {});
   }
 
-  computeAttentionButtonTitle(sendDisabled?: boolean) {
-    return sendDisabled
+  computeAttentionButtonTitle() {
+    return this.isSendDisabled()
       ? 'Modify the attention set by adding a comment or use the account ' +
           'hovercard in the change page.'
       : 'Edit attention set changes';
@@ -1632,7 +1581,6 @@ export class GrReplyDialog extends LitElement {
       ? this.draftCommentThreads
       : [];
     const hasVote = !!this.labelsChanged;
-    const isOwner = this.isOwner(this.account, this.change);
     const isUploader = this.uploader?._account_id === this.account._account_id;
 
     this.attentionCcsCount = removeServiceUsers(this.ccs).length;
@@ -1666,7 +1614,7 @@ export class GrReplyDialog extends LitElement {
         .filter(
           r =>
             isAccountNewlyAdded(r, ReviewerState.REVIEWER, this.change) ||
-            (this.canBeStarted && isOwner)
+            (this.canBeStarted && this.isOwner)
         )
         .filter(notIsReviewerAndHasDraftOrLabel)
         .forEach(r => newAttention.add((r as AccountInfo)._account_id!));
@@ -1675,7 +1623,7 @@ export class GrReplyDialog extends LitElement {
         if (this.uploader?._account_id && !isUploader) {
           newAttention.add(this.uploader._account_id);
         }
-        if (this.change.owner?._account_id && !isOwner) {
+        if (this.change.owner?._account_id && !this.isOwner) {
           newAttention.add(this.change.owner._account_id);
         }
       }
@@ -1703,18 +1651,11 @@ export class GrReplyDialog extends LitElement {
   }
 
   computeShowAttentionTip() {
-    if (
-      !this.account ||
-      !this.change?.owner ||
-      !this.currentAttentionSet ||
-      !this.newAttentionSet
-    )
-      return false;
-    const isOwner = this.account._account_id === this.change.owner._account_id;
+    if (!this.currentAttentionSet || !this.newAttentionSet) return false;
     const addedIds = [...this.newAttentionSet].filter(
       id => !this.currentAttentionSet.has(id)
     );
-    return isOwner && addedIds.length > 2;
+    return this.isOwner && addedIds.length > 2;
   }
 
   computeCommentAccounts(threads: CommentThread[]) {
@@ -1736,13 +1677,15 @@ export class GrReplyDialog extends LitElement {
   }
 
   computeShowNoAttentionUpdate() {
-    return this.sendDisabled || this.computeNewAttentionAccounts().length === 0;
+    return (
+      this.isSendDisabled() || this.computeNewAttentionAccounts().length === 0
+    );
   }
 
   computeDoNotUpdateMessage() {
     if (!this.currentAttentionSet || !this.newAttentionSet) return '';
     if (
-      this.sendDisabled ||
+      this.isSendDisabled() ||
       areSetsEqual(this.currentAttentionSet, this.newAttentionSet)
     ) {
       return 'No changes to the attention set.';
@@ -1849,53 +1792,36 @@ export class GrReplyDialog extends LitElement {
   async cancel() {
     assertIsDefined(this.change, 'change');
     if (!this.change?.owner) throw new Error('missing required owner property');
-    this.dispatchEvent(
-      new CustomEvent('cancel', {
-        composed: true,
-        bubbles: false,
-      })
-    );
-    const patchsetLevelComment = queryAndAssert<GrComment>(
-      this,
-      '#patchsetLevelComment'
-    );
-    await patchsetLevelComment.save();
+    fireNoBubble(this, 'cancel', {});
+    await this.patchsetLevelGrComment?.save();
     this.rebuildReviewerArrays();
   }
 
-  saveClickHandler(e: Event) {
+  private saveClickHandler(e: Event) {
     e.preventDefault();
-    if (!this.ccsList?.submitEntryText()) {
-      // Do not proceed with the save if there is an invalid email entry in
-      // the text field of the CC entry.
-      return;
+    this.submit(false);
+  }
+
+  private sendClickHandler(e: Event) {
+    e.preventDefault();
+    this.submit(this.canBeStarted);
+  }
+
+  private submit(startReview?: boolean) {
+    if (startReview === undefined) {
+      startReview = this.isOwner && this.canBeStarted;
     }
-    this.send(this.includeComments, false);
-  }
-
-  sendTapHandler(e: Event) {
-    e.preventDefault();
-    this.submit();
-  }
-
-  submit() {
     if (!this.ccsList?.submitEntryText()) {
       // Do not proceed with the send if there is an invalid email entry in
       // the text field of the CC entry.
       return;
     }
-    if (this.sendDisabled) {
+    if (this.isSendDisabled()) {
       fireAlert(this, EMPTY_REPLY_MESSAGE);
       return;
     }
-    return this.send(this.includeComments, this.canBeStarted).catch(err => {
-      this.dispatchEvent(
-        new CustomEvent('show-error', {
-          bubbles: true,
-          composed: true,
-          detail: {message: `Error submitting review ${err}`},
-        })
-      );
+    return this.send(this.includeComments, startReview).catch(err => {
+      fireError(this, `Error submitting review ${err}`);
     });
   }
 
@@ -1912,15 +1838,16 @@ export class GrReplyDialog extends LitElement {
 
   pendingConfirmationUpdated(reviewer: RawAccountInput | null) {
     if (reviewer === null) {
-      this.reviewerConfirmationOverlay?.close();
+      this.reviewerConfirmationModal?.close();
     } else {
       this.pendingConfirmationDetails =
         this.ccPendingConfirmation || this.reviewerPendingConfirmation;
-      this.reviewerConfirmationOverlay?.open();
+      this.reviewerConfirmationModal?.showModal();
     }
   }
 
   confirmPendingReviewer() {
+    this.reviewerConfirmationModal?.close();
     if (this.ccPendingConfirmation) {
       this.ccsList?.confirmGroup(this.ccPendingConfirmation.group);
       this.focusOn(FocusTarget.CCS);
@@ -1938,6 +1865,7 @@ export class GrReplyDialog extends LitElement {
   }
 
   cancelPendingReviewer() {
+    this.reviewerConfirmationModal?.close();
     this.ccPendingConfirmation = null;
     this.reviewerPendingConfirmation = null;
 
@@ -1966,10 +1894,6 @@ export class GrReplyDialog extends LitElement {
       this.alreadyExists(this.reviewers, user) ||
       this.alreadyExists(this._ccs, user)
     );
-  }
-
-  handleHeightChanged() {
-    fireEvent(this, 'autogrow');
   }
 
   getLabelScores(): GrLabelScores {
@@ -2004,14 +1928,8 @@ export class GrReplyDialog extends LitElement {
   }
 
   _reload() {
-    fireReload(this, true);
+    this.getChangeModel().navigateToChangeResetReload();
     this.cancel();
-  }
-
-  computeSendButtonLabel() {
-    this.sendButtonLabel = this.canBeStarted
-      ? ButtonLabels.SEND + ' and ' + ButtonLabels.START_REVIEW
-      : ButtonLabels.SEND;
   }
 
   computeSendButtonTooltip(canBeStarted?: boolean, commentEditing?: boolean) {
@@ -2025,7 +1943,8 @@ export class GrReplyDialog extends LitElement {
     return savingComments ? 'saving' : '';
   }
 
-  computeSendButtonDisabled() {
+  // visible for testing
+  isSendDisabled() {
     if (
       this.canBeStarted === undefined ||
       this.patchsetLevelDraftMessage === undefined ||
@@ -2071,10 +1990,6 @@ export class GrReplyDialog extends LitElement {
 
   setPluginMessage(message: string) {
     this.pluginMessage = message;
-  }
-
-  sendDisabledChanged() {
-    this.dispatchEvent(new CustomEvent('send-disabled-changed'));
   }
 
   getReviewerSuggestionsProvider(change?: ChangeInfo | ParsedChangeInfo) {
@@ -2129,5 +2044,20 @@ export class GrReplyDialog extends LitElement {
 declare global {
   interface HTMLElementTagNameMap {
     'gr-reply-dialog': GrReplyDialog;
+  }
+  interface HTMLElementEventMap {
+    /** Fired when the user presses the cancel button. */
+    // prettier-ignore
+    'cancel': CustomEvent<{}>;
+    /**
+     * Fires when the reply dialog believes that the server side diff drafts
+     * have been updated and need to be refreshed.
+     */
+    'comment-refresh': CustomEvent<{}>;
+    /** Fired when a reply is successfully sent. */
+    // prettier-ignore
+    'send': CustomEvent<{}>;
+    /** Fires when the state of the send button (enabled/disabled) changes. */
+    'send-disabled-changed': CustomEvent<{}>;
   }
 }

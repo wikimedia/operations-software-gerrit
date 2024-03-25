@@ -6,10 +6,11 @@
 import '../../../test/common-test-setup';
 import './gr-search-bar';
 import {GrSearchBar} from './gr-search-bar';
-import '../../../scripts/util';
+import '../../../utils/async-util';
 import {
   mockPromise,
   pressKey,
+  stubRestApi,
   waitUntil,
   waitUntilObserved,
 } from '../../../test/test-utils';
@@ -37,12 +38,13 @@ suite('gr-search-bar tests', () => {
   let configModel: ConfigModel;
 
   setup(async () => {
+    const serverConfig = createServerInfo();
+    serverConfig.gerrit.doc_url = 'https://mydocumentationurl.google.com/';
+    stubRestApi('getConfig').returns(Promise.resolve(serverConfig));
     configModel = new ConfigModel(
       testResolver(changeModelToken),
       getAppContext().restApiService
     );
-    const serverConfig = createServerInfo();
-    serverConfig.gerrit.doc_url = 'https://mydocumentationurl.google.com/';
     configModel.updateServerConfig(serverConfig);
     await waitUntilObserved(
       configModel.docsBaseUrl$,
@@ -68,10 +70,11 @@ suite('gr-search-bar tests', () => {
           <gr-autocomplete
             allow-non-suggested-values=""
             id="searchInput"
+            label="Search for changes"
             multi=""
-            show-search-icon=""
             tab-complete=""
           >
+            <gr-icon icon="search" class="searchIcon" slot="prefix"></gr-icon>
             <a
               class="help"
               href="https://mydocumentationurl.google.com/user-search.html"
@@ -319,7 +322,7 @@ suite('gr-search-bar tests', () => {
       await element.updateComplete;
       assert.equal(
         element.computeHelpDocLink(),
-        'https://gerrit-review.googlesource.com/documentation/' +
+        'https://gerrit-review.googlesource.com/Documentation/' +
           'user-search.html'
       );
     });

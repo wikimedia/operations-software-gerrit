@@ -22,10 +22,14 @@ import com.google.common.cache.LoadingCache;
 import com.google.common.cache.RemovalNotification;
 import com.google.common.cache.Weigher;
 import com.google.common.collect.ImmutableMap;
+import com.google.gerrit.common.Nullable;
+import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.metrics.DisabledMetricMaker;
 import com.google.gerrit.server.cache.CacheDef;
 import com.google.gerrit.server.cache.ForwardingRemovalListener;
 import com.google.gerrit.server.git.WorkQueue;
+import com.google.gerrit.server.plugincontext.PluginContext;
+import com.google.gerrit.server.plugincontext.PluginMapContext;
 import com.google.gerrit.server.util.IdGenerator;
 import com.google.inject.Guice;
 import com.google.inject.TypeLiteral;
@@ -74,7 +78,13 @@ public class DefaultMemoryCacheFactoryTest {
   @Before
   public void setUp() {
     IdGenerator idGenerator = Guice.createInjector().getInstance(IdGenerator.class);
-    workQueue = new WorkQueue(idGenerator, 10, new DisabledMetricMaker());
+    workQueue =
+        new WorkQueue(
+            idGenerator,
+            10,
+            new DisabledMetricMaker(),
+            new PluginMapContext<>(
+                DynamicMap.emptyMap(), PluginContext.PluginMetrics.DISABLED_INSTANCE));
     memoryCacheConfig = new Config();
     memoryCacheConfigDirectExecutor = new Config();
     memoryCacheConfigDirectExecutor.setInt("cache", null, "threads", 0);
@@ -273,11 +283,13 @@ public class DefaultMemoryCacheFactoryTest {
       }
 
       @Override
+      @Nullable
       public TypeLiteral<Integer> keyType() {
         return null;
       }
 
       @Override
+      @Nullable
       public TypeLiteral<Integer> valueType() {
         return null;
       }
@@ -288,26 +300,31 @@ public class DefaultMemoryCacheFactoryTest {
       }
 
       @Override
+      @Nullable
       public Duration expireAfterWrite() {
         return null;
       }
 
       @Override
+      @Nullable
       public Duration expireFromMemoryAfterAccess() {
         return null;
       }
 
       @Override
+      @Nullable
       public Duration refreshAfterWrite() {
         return null;
       }
 
       @Override
+      @Nullable
       public Weigher<Integer, Integer> weigher() {
         return null;
       }
 
       @Override
+      @Nullable
       public CacheLoader<Integer, Integer> loader() {
         return null;
       }

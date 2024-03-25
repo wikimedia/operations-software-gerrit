@@ -23,6 +23,7 @@ import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.RangeUtil;
 import com.google.gerrit.index.query.RangeUtil.Range;
 import com.google.gerrit.server.IdentifiedUser;
+import com.google.gerrit.server.account.AccountResolver;
 import com.google.gerrit.server.account.GroupBackend;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.project.ProjectCache;
@@ -37,6 +38,7 @@ public class LabelPredicate extends OrPredicate<ChangeData> {
   protected static final int MAX_COUNT = 5; // inclusive
 
   protected static class Args {
+    protected final AccountResolver accountResolver;
     protected final ProjectCache projectCache;
     protected final PermissionBackend permissionBackend;
     protected final IdentifiedUser.GenericFactory userFactory;
@@ -48,6 +50,7 @@ public class LabelPredicate extends OrPredicate<ChangeData> {
     protected final GroupBackend groupBackend;
 
     protected Args(
+        AccountResolver accountResolver,
         ProjectCache projectCache,
         PermissionBackend permissionBackend,
         IdentifiedUser.GenericFactory userFactory,
@@ -57,6 +60,7 @@ public class LabelPredicate extends OrPredicate<ChangeData> {
         @Nullable Integer count,
         @Nullable PredicateArgs.Operator countOp,
         GroupBackend groupBackend) {
+      this.accountResolver = accountResolver;
       this.projectCache = projectCache;
       this.permissionBackend = permissionBackend;
       this.userFactory = userFactory;
@@ -93,6 +97,7 @@ public class LabelPredicate extends OrPredicate<ChangeData> {
     super(
         predicates(
             new Args(
+                a.accountResolver,
                 a.projectCache,
                 a.permissionBackend,
                 a.userFactory,

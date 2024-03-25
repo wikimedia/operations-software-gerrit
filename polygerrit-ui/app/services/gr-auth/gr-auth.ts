@@ -3,6 +3,8 @@
  * Copyright 2017 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import {define} from '../../models/dependency';
+import {AuthRequestInit} from '../../types/types';
 import {Finalizable} from '../registry';
 export enum AuthType {
   XSRF_TOKEN = 'xsrf_token',
@@ -27,12 +29,7 @@ export interface DefaultAuthOptions {
   credentials: RequestCredentials;
 }
 
-export interface AuthRequestInit extends RequestInit {
-  // RequestInit define headers as HeadersInit, i.e.
-  // Headers | string[][] | Record<string, string>
-  // Auth class supports only Headers in options
-  headers?: Headers;
-}
+export const authServiceToken = define<AuthService>('auth-service');
 
 export interface AuthService extends Finalizable {
   baseUrl: string;
@@ -53,5 +50,5 @@ export interface AuthService extends Finalizable {
   /**
    * Perform network fetch with authentication.
    */
-  fetch(url: string, opt_options?: AuthRequestInit): Promise<Response>;
+  fetch(url: string, options?: AuthRequestInit): Promise<Response>;
 }

@@ -16,8 +16,11 @@ import {
   createServerInfo,
 } from '../test/test-data-generators';
 import {GrAppElement} from './gr-app-element';
-import {GrRouter} from './core/gr-router/gr-router';
+import {GrRouter, routerToken} from './core/gr-router/gr-router';
+import {resolve} from '../models/dependency';
+import {removeRequestDependencyListener} from '../test/common-test-setup';
 import {ReactiveElement} from 'lit';
+
 suite('gr-app callback tests', () => {
   const requestUpdateStub = sinon.stub(
     ReactiveElement.prototype,
@@ -30,6 +33,7 @@ suite('gr-app callback tests', () => {
   setup(async () => {
     await fixture<GrApp>(html`<gr-app id="app"></gr-app>`);
   });
+
   test("requestUpdate in reactive-element is called after dispatching 'location-change' event in gr-router", () => {
     dispatchLocationChangeEventSpy();
     assert.isTrue(requestUpdateStub.calledOnce);
@@ -52,9 +56,14 @@ suite('gr-app tests', () => {
     stubRestApi('getPreferences').returns(Promise.resolve(createPreferences()));
     stubRestApi('getVersion').returns(Promise.resolve('42'));
     stubRestApi('probePath').returns(Promise.resolve(false));
-
     grApp = await fixture<GrApp>(html`<gr-app id="app"></gr-app>`);
-    await grApp.updateComplete;
+  });
+
+  test('models resolve', () => {
+    // Verify that models resolve on grApp without falling back
+    // to the ones instantiated by the test-setup.
+    removeRequestDependencyListener();
+    assert.ok(resolve(grApp, routerToken)());
   });
 
   test('reporting', () => {

@@ -32,12 +32,15 @@ import {
   RobotId,
   UrlEncodedCommentId,
   RevisionPatchSetNum,
+  CommentThread,
+  isDraft,
+  SavingState,
 } from '../../../types/common';
-import {CommentThread, isDraft} from '../../../utils/comment-util';
 import {query, queryAndAssert} from '../../../utils/common-util';
 import {GrAccountLabel} from '../../shared/gr-account-label/gr-account-label';
 import {GrDropdownList} from '../../shared/gr-dropdown-list/gr-dropdown-list';
 import {fixture, html, assert} from '@open-wc/testing';
+import {GrCommentThread} from '../../shared/gr-comment-thread/gr-comment-thread';
 
 suite('gr-thread-list tests', () => {
   let element: GrThreadList;
@@ -73,7 +76,7 @@ suite('gr-thread-list tests', () => {
             updated: '2015-12-01 15:16:15.000000000' as Timestamp,
             message: 'draft',
             unresolved: true,
-            __draft: true,
+            savingState: SavingState.OK,
             patch_set: '2' as RevisionPatchSetNum,
           },
         ],
@@ -160,7 +163,7 @@ suite('gr-thread-list tests', () => {
             updated: '2015-12-05 15:16:15.000000000' as Timestamp,
             message: 'resolved draft',
             unresolved: false,
-            __draft: true,
+            savingState: SavingState.OK,
             patch_set: '2' as RevisionPatchSetNum,
           },
         ],
@@ -288,6 +291,40 @@ suite('gr-thread-list tests', () => {
       ];
       const actual = element.getDisplayedThreads().map(t => t.rootId);
       assert.sameOrderedMembers(actual, expected);
+    });
+
+    test('respects special cases for ordering', async () => {
+      element.sortDropdownValue = __testOnly_SortDropdownState.FILES;
+      element.threads = [
+        {
+          ...createThread(createComment({path: '/app/test.cc'})),
+          path: '/app/test.cc',
+        },
+        {
+          ...createThread(createComment({path: '/app/test.h'})),
+          path: '/app/test.h',
+        },
+        {
+          ...createThread(
+            createComment({path: SpecialFilePath.PATCHSET_LEVEL_COMMENTS})
+          ),
+          path: SpecialFilePath.PATCHSET_LEVEL_COMMENTS,
+        },
+      ];
+      await element.updateComplete;
+
+      const paths = Array.from(
+        queryAll<GrCommentThread>(element, 'gr-comment-thread')
+      ).map(threadElement => threadElement.thread?.path);
+
+      // Patchset comment is always first, then we have a special case where .h
+      // files should appear above other files of the same name regardless of
+      // their alphabetical ordering.
+      assert.sameOrderedMembers(paths, [
+        SpecialFilePath.PATCHSET_LEVEL_COMMENTS,
+        '/app/test.h',
+        '/app/test.cc',
+      ]);
     });
 
     test('sort all threads by timestamp', () => {

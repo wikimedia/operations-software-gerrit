@@ -17,8 +17,8 @@ package com.google.gerrit.lucene;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.gerrit.lucene.AbstractLuceneIndex.sortFieldName;
 import static com.google.gerrit.server.git.QueueProvider.QueueType.INTERACTIVE;
-import static com.google.gerrit.server.index.change.ChangeField.LEGACY_ID_STR;
-import static com.google.gerrit.server.index.change.ChangeField.PROJECT;
+import static com.google.gerrit.server.index.change.ChangeField.NUMERIC_ID_STR_SPEC;
+import static com.google.gerrit.server.index.change.ChangeField.PROJECT_SPEC;
 import static com.google.gerrit.server.index.change.ChangeIndexRewriter.CLOSED_STATUSES;
 import static com.google.gerrit.server.index.change.ChangeIndexRewriter.OPEN_STATUSES;
 import static java.util.Objects.requireNonNull;
@@ -33,6 +33,7 @@ import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListeningExecutorService;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.converter.ChangeProtoConverter;
@@ -102,21 +103,21 @@ import org.eclipse.jgit.lib.Config;
 public class LuceneChangeIndex implements ChangeIndex {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
-  static final String UPDATED_SORT_FIELD = sortFieldName(ChangeField.UPDATED);
-  static final String MERGED_ON_SORT_FIELD = sortFieldName(ChangeField.MERGED_ON);
-  static final String ID_STR_SORT_FIELD = sortFieldName(ChangeField.LEGACY_ID_STR);
+  static final String UPDATED_SORT_FIELD = sortFieldName(ChangeField.UPDATED_SPEC);
+  static final String MERGED_ON_SORT_FIELD = sortFieldName(ChangeField.MERGED_ON_SPEC);
+  static final String ID_STR_SORT_FIELD = sortFieldName(ChangeField.NUMERIC_ID_STR_SPEC);
 
   private static final String CHANGES = "changes";
   private static final String CHANGES_OPEN = "open";
   private static final String CHANGES_CLOSED = "closed";
-  private static final String CHANGE_FIELD = ChangeField.CHANGE.getName();
+  private static final String CHANGE_FIELD = ChangeField.CHANGE_SPEC.getName();
 
   static Term idTerm(ChangeData cd) {
     return idTerm(cd.getVirtualId());
   }
 
   static Term idTerm(Change.Id id) {
-    return QueryBuilder.stringTerm(LEGACY_ID_STR.getName(), Integer.toString(id.get()));
+    return QueryBuilder.stringTerm(NUMERIC_ID_STR_SPEC.getName(), Integer.toString(id.get()));
   }
 
   private final ListeningExecutorService executor;
@@ -142,7 +143,7 @@ public class LuceneChangeIndex implements ChangeIndex {
     this.skipFields =
         MergeabilityComputationBehavior.fromConfig(cfg).includeInIndex()
             ? ImmutableSet.of()
-            : ImmutableSet.of(ChangeField.MERGEABLE.getName());
+            : ImmutableSet.of(ChangeField.MERGEABLE_SPEC.getName());
 
     GerritIndexWriterConfig openConfig = new GerritIndexWriterConfig(cfg, "changes_open");
     GerritIndexWriterConfig closedConfig = new GerritIndexWriterConfig(cfg, "changes_closed");
@@ -239,6 +240,11 @@ public class LuceneChangeIndex implements ChangeIndex {
     } catch (ExecutionException | InterruptedException e) {
       throw new StorageException(e);
     }
+  }
+
+  @Override
+  public void deleteByValue(ChangeData value) {
+    delete(ChangeIndex.ENTITY_TO_KEY.apply(value));
   }
 
   @Override
@@ -454,11 +460,13 @@ public class LuceneChangeIndex implements ChangeIndex {
      * @param subIndex change sub-index
      * @return the score doc that can be used to page result sets
      */
+    @Nullable
     private ScoreDoc getSearchAfter(ChangeSubIndex subIndex) {
       if (isSearchAfterPagination
           && opts.searchAfter() != null
-          && opts.searchAfter() instanceof Map) {
-        return ((Map<ChangeSubIndex, ScoreDoc>) opts.searchAfter()).get(subIndex);
+          && opts.searchAfter() instanceof Map
+          && ((Map<?, ?>) opts.searchAfter()).get(subIndex) instanceof ScoreDoc) {
+        return (ScoreDoc) ((Map<?, ?>) opts.searchAfter()).get(subIndex);
       }
       return null;
     }
@@ -498,7 +506,7 @@ public class LuceneChangeIndex implements ChangeIndex {
         ImmutableList.Builder<ChangeData> result =
             ImmutableList.builderWithExpectedSize(docs.size());
         for (Document doc : docs) {
-          result.add(toChangeData(fields(doc, fields), fields, LEGACY_ID_STR.getName()));
+          result.add(toChangeData(fields(doc, fields), fields, NUMERIC_ID_STR_SPEC.getName()));
         }
         return result.build();
       } catch (InterruptedException e) {
@@ -547,7 +555,7 @@ public class LuceneChangeIndex implements ChangeIndex {
 
       Change.Id id = Change.id(Integer.valueOf(f.stringValue()));
       // IndexUtils#changeFields ensures either CHANGE or PROJECT is always present.
-      IndexableField project = doc.get(PROJECT.getName()).iterator().next();
+      IndexableField project = doc.get(PROJECT_SPEC.getName()).iterator().next();
       cd = changeDataFactory.create(Project.nameKey(project.stringValue()), id);
     }
 

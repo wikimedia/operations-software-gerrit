@@ -18,6 +18,7 @@ import static com.google.common.base.Preconditions.checkState;
 import static java.util.Objects.requireNonNull;
 
 import com.google.common.collect.ImmutableList;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.entities.GroupDescription;
@@ -32,7 +33,7 @@ import java.util.Map;
 
 /** Implementation of GroupBackend for tests. */
 public class TestGroupBackend implements GroupBackend {
-  private static final String PREFIX = "testbackend:";
+  public static final String PREFIX = "testbackend:";
 
   private final Map<AccountGroup.UUID, GroupDescription.Basic> groups = new HashMap<>();
   private final Map<Account.Id, GroupMembership> memberships = new HashMap<>();
@@ -72,11 +73,13 @@ public class TestGroupBackend implements GroupBackend {
           }
 
           @Override
+          @Nullable
           public String getEmailAddress() {
             return null;
           }
 
           @Override
+          @Nullable
           public String getUrl() {
             return null;
           }
@@ -116,6 +119,7 @@ public class TestGroupBackend implements GroupBackend {
     return false;
   }
 
+  @Nullable
   @Override
   public GroupDescription.Basic get(AccountGroup.UUID uuid) {
     return uuid == null ? null : groups.get(uuid);

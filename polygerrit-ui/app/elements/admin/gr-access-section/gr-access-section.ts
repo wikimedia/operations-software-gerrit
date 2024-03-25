@@ -16,7 +16,7 @@ import {
 import {
   EditablePermissionInfo,
   PermissionAccessSection,
-  EditableProjectAccessGroups,
+  EditableRepoAccessGroups,
 } from '../gr-repo-access/gr-repo-access-interfaces';
 import {
   CapabilityInfoMap,
@@ -24,7 +24,7 @@ import {
   LabelNameToLabelTypeInfoMap,
   RepoName,
 } from '../../../types/common';
-import {fire, fireEvent} from '../../../utils/event-util';
+import {fire} from '../../../utils/event-util';
 import {IronInputElement} from '@polymer/iron-input/iron-input';
 import {fontStyles} from '../../../styles/gr-font-styles';
 import {formStyles} from '../../../styles/gr-form-styles';
@@ -34,25 +34,11 @@ import {customElement, property, query, state} from 'lit/decorators.js';
 import {BindValueChangeEvent, ValueChangedEvent} from '../../../types/events';
 import {assertIsDefined, queryAndAssert} from '../../../utils/common-util';
 
-/**
- * Fired when the section has been modified or removed.
- *
- * @event access-modified
- */
-
-/**
- * Fired when a section that was previously added was removed.
- *
- * @event added-section-removed
- */
-
 const GLOBAL_NAME = 'GLOBAL_CAPABILITIES';
 
 // The name that gets automatically input when a new reference is added.
 const NEW_NAME = 'refs/heads/*';
 const REFS_NAME = 'refs/';
-const ON_BEHALF_OF = '(On Behalf Of)';
-const LABEL = 'Label';
 
 @customElement('gr-access-section')
 export class GrAccessSection extends LitElement {
@@ -68,7 +54,7 @@ export class GrAccessSection extends LitElement {
   section?: PermissionAccessSection;
 
   @property({type: Object})
-  groups?: EditableProjectAccessGroups;
+  groups?: EditableRepoAccessGroups;
 
   @property({type: Object})
   labels?: LabelNameToLabelTypeInfoMap;
@@ -300,7 +286,7 @@ export class GrAccessSection extends LitElement {
       // For a new section, this is not fired because new permissions and
       // rules have to be added in order to save, modifying the ref is not
       // enough.
-      fireEvent(this, 'access-modified');
+      fire(this, 'access-modified', {});
     }
     this.section.value.updatedId = this.section.id;
     this.requestUpdate();
@@ -372,14 +358,14 @@ export class GrAccessSection extends LitElement {
       labelOptions.push({
         id: 'label-' + labelName,
         value: {
-          name: `${LABEL} ${labelName}`,
+          name: `Label ${labelName}`,
           id: 'label-' + labelName,
         },
       });
       labelOptions.push({
         id: 'labelAs-' + labelName,
         value: {
-          name: `${LABEL} ${labelName} ${ON_BEHALF_OF}`,
+          name: `Label ${labelName} (On Behalf Of)`,
           id: 'labelAs-' + labelName,
         },
       });
@@ -396,11 +382,13 @@ export class GrAccessSection extends LitElement {
     } else if (AccessPermissions[permission.id]) {
       return AccessPermissions[permission.id]?.name;
     } else if (permission.value.label) {
-      let behalfOf = '';
       if (permission.id.startsWith('labelAs-')) {
-        behalfOf = ON_BEHALF_OF;
+        return `Label ${permission.value.label} (On Behalf Of)`;
+      } else if (permission.id.startsWith('removeLabel-')) {
+        return `Remove Label ${permission.value.label}`;
+      } else {
+        return `Label ${permission.value.label}`;
       }
-      return `${LABEL} ${permission.value.label}${behalfOf}`;
     }
     return undefined;
   }
@@ -432,11 +420,11 @@ export class GrAccessSection extends LitElement {
       return;
     }
     if (this.section.value.added) {
-      fireEvent(this, 'added-section-removed');
+      fire(this, 'added-section-removed', {});
     }
     this.deleted = true;
     this.section.value.deleted = true;
-    fireEvent(this, 'access-modified');
+    fire(this, 'access-modified', {});
   }
 
   _handleUndoRemove() {
@@ -533,6 +521,10 @@ export class GrAccessSection extends LitElement {
 
 declare global {
   interface HTMLElementEventMap {
+    /** Fired when the section has been modified or removed. */
+    'access-modified': CustomEvent<{}>;
+    /** Fired when a section that was previously added was removed. */
+    'added-section-removed': CustomEvent<{}>;
     'section-changed': ValueChangedEvent<PermissionAccessSection>;
   }
   interface HTMLElementTagNameMap {

@@ -21,21 +21,17 @@ import {
   isNumber,
 } from '../../../utils/patch-set-util';
 import {
-  CommentThread,
-  equalLocation,
+  createNew,
   isInBaseOfPatchRange,
   isInRevisionOfPatchRange,
 } from '../../../utils/comment-util';
-import {
-  CommitRange,
-  CoverageRange,
-  DiffLayer,
-  PatchSetFile,
-} from '../../../types/types';
+import {CoverageRange, DiffLayer, PatchSetFile} from '../../../types/types';
 import {
   Base64ImageFile,
   BlameInfo,
   ChangeInfo,
+  CommentThread,
+  DraftInfo,
   EDIT,
   NumericChangeId,
   PARENT,
@@ -49,6 +45,7 @@ import {
   DiffInfo,
   DiffPreferencesInfo,
   IgnoreWhitespaceType,
+  WebLinkInfo,
 } from '../../../types/diff';
 import {
   CreateCommentEventDetail,
@@ -63,18 +60,20 @@ import {
   firePageError,
   fireAlert,
   fireServerError,
-  fireEvent,
-  waitForEventOnce,
   fire,
+  waitForEventOnce,
 } from '../../../utils/event-util';
-import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {assertIsDefined} from '../../../utils/common-util';
 import {DiffContextExpandedEventDetail} from '../../../embed/diff/gr-diff-builder/gr-diff-builder';
 import {TokenHighlightLayer} from '../../../embed/diff/gr-diff-builder/token-highlight-layer';
-import {Timing, Interaction} from '../../../constants/reporting';
+import {Timing} from '../../../constants/reporting';
 import {ChangeComments} from '../gr-comment-api/gr-comment-api';
 import {Subscription} from 'rxjs';
-import {DisplayLine, RenderPreferences} from '../../../api/diff';
+import {
+  DisplayLine,
+  LineSelectedEventDetail,
+  RenderPreferences,
+} from '../../../api/diff';
 import {resolve} from '../../../models/dependency';
 import {browserModelToken} from '../../../models/browser/browser-model';
 import {commentsModelToken} from '../../../models/comments/comments-model';
@@ -84,7 +83,10 @@ import {distinctUntilChanged, map} from 'rxjs/operators';
 import {deepEqual} from '../../../utils/deep-util';
 import {Category} from '../../../api/checks';
 import {GrSyntaxLayerWorker} from '../../../embed/diff/gr-syntax-layer/gr-syntax-layer-worker';
-import {CODE_MAX_LINES} from '../../../services/highlight/highlight-service';
+import {
+  CODE_MAX_LINES,
+  highlightServiceToken,
+} from '../../../services/highlight/highlight-service';
 import {html, LitElement, PropertyValues} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
 import {ValueChangedEvent} from '../../../types/events';
@@ -92,9 +94,11 @@ import {
   debounceP,
   DelayedPromise,
   DELAYED_CANCELLATION,
+  noAwait,
 } from '../../../utils/async-util';
 import {subscribe} from '../../lit/subscription-controller';
-import {GeneratedWebLink} from '../../../utils/weblink-util';
+import {userModelToken} from '../../../models/user/user-model';
+import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 
 const EMPTY_BLAME = 'No blame information for this diff.';
 
@@ -119,19 +123,19 @@ export interface LineInfo {
 
 declare global {
   interface HTMLElementEventMap {
-    /* prettier-ignore */
-    'render': CustomEvent;
+    // prettier-ignore
+    'render': CustomEvent<{}>;
     'diff-context-expanded': CustomEvent<DiffContextExpandedEventDetail>;
     'create-comment': CustomEvent<CreateCommentEventDetail>;
     'is-blame-loaded-changed': ValueChangedEvent<boolean>;
     'diff-changed': ValueChangedEvent<DiffInfo | undefined>;
-    'edit-weblinks-changed': ValueChangedEvent<GeneratedWebLink[] | undefined>;
+    'edit-weblinks-changed': ValueChangedEvent<WebLinkInfo[] | undefined>;
     'files-weblinks-changed': ValueChangedEvent<FilesWebLinks | undefined>;
     'is-image-diff-changed': ValueChangedEvent<boolean>;
     // Fired when the user selects a line (See gr-diff).
-    'line-selected': CustomEvent;
+    'line-selected': CustomEvent<LineSelectedEventDetail>;
     // Fired if being logged in is required.
-    'show-auth-required': void;
+    'show-auth-required': CustomEvent<{}>;
   }
 }
 
@@ -171,9 +175,6 @@ export class GrDiffHost extends LitElement {
   @property({type: String})
   projectName?: RepoName;
 
-  @property({type: Boolean})
-  displayLine = false;
-
   @state()
   private _isImageDiff = false;
 
@@ -187,17 +188,14 @@ export class GrDiffHost extends LitElement {
     fire(this, 'is-image-diff-changed', {value: isImageDiff});
   }
 
-  @property({type: Object})
-  commitRange?: CommitRange;
-
   @state()
-  private _editWeblinks?: GeneratedWebLink[];
+  private _editWeblinks?: WebLinkInfo[];
 
   get editWeblinks() {
     return this._editWeblinks;
   }
 
-  set editWeblinks(editWeblinks: GeneratedWebLink[] | undefined) {
+  set editWeblinks(editWeblinks: WebLinkInfo[] | undefined) {
     if (this._editWeblinks === editWeblinks) return;
     this._editWeblinks = editWeblinks;
     fire(this, 'edit-weblinks-changed', {value: editWeblinks});
@@ -322,6 +320,8 @@ export class GrDiffHost extends LitElement {
 
   private readonly getChecksModel = resolve(this, checksModelToken);
 
+  private readonly getPluginLoader = resolve(this, pluginLoaderToken);
+
   // visible for testing
   readonly reporting = getAppContext().reportingService;
 
@@ -330,28 +330,19 @@ export class GrDiffHost extends LitElement {
   private readonly restApiService = getAppContext().restApiService;
 
   // visible for testing
-  readonly userModel = getAppContext().userModel;
-
-  // visible for testing
-  readonly jsAPI = getAppContext().jsApiService;
+  readonly getUserModel = resolve(this, userModelToken);
 
   // visible for testing
   readonly syntaxLayer: GrSyntaxLayerWorker;
 
   private checksSubscription?: Subscription;
 
-  // for DIFF_AUTOCLOSE logging purposes only
-  readonly uid = performance.now().toString(36) + Math.random().toString(36);
-
   constructor() {
     super();
-    this.syntaxLayer = new GrSyntaxLayerWorker();
-    this.renderPrefs = {
-      ...this.renderPrefs,
-      use_lit_components: this.flags.isEnabled(
-        KnownExperimentId.DIFF_RENDERING_LIT
-      ),
-    };
+    this.syntaxLayer = new GrSyntaxLayerWorker(
+      resolve(this, highlightServiceToken),
+      () => getAppContext().reportingService
+    );
     this.addEventListener(
       // These are named inconsistently for a reason:
       // The create-comment event is fired to indicate that we should
@@ -372,7 +363,7 @@ export class GrDiffHost extends LitElement {
     );
     subscribe(
       this,
-      () => this.userModel.loggedIn$,
+      () => this.getUserModel().loggedIn$,
       loggedIn => (this.loggedIn = loggedIn)
     );
     subscribe(
@@ -384,28 +375,11 @@ export class GrDiffHost extends LitElement {
     );
     subscribe(
       this,
-      () => this.userModel.diffPreferences$,
+      () => this.getUserModel().diffPreferences$,
       diffPreferences => {
         this.prefs = diffPreferences;
       }
     );
-    this.logForDiffAutoClose();
-  }
-
-  // for DIFF_AUTOCLOSE logging purposes only
-  private logForDiffAutoClose() {
-    this.reporting.reportInteraction(
-      Interaction.DIFF_AUTOCLOSE_DIFF_HOST_CREATED,
-      {uid: this.uid}
-    );
-    setTimeout(() => {
-      if (!this.hasReloadBeenCalledOnce) {
-        this.reporting.reportInteraction(
-          Interaction.DIFF_AUTOCLOSE_DIFF_HOST_NOT_RENDERING,
-          {uid: this.uid}
-        );
-      }
-    }, /* 10 seconds */ 10000);
   }
 
   override connectedCallback() {
@@ -480,7 +454,9 @@ export class GrDiffHost extends LitElement {
     // this method calls getThreadEls which inspects the DOM. Also <gr-diff>
     // only starts observing nodes (for thread element changes) after rendering
     // is done.
-    if (changedProperties.has('threads')) {
+    // Change in layers will likely cause gr-diff to update. Since we add
+    // threads manually we need to call threadsChanged in this case as well.
+    if (changedProperties.has('threads') || changedProperties.has('layers')) {
       this.threadsChanged(this.threads);
     }
   }
@@ -525,7 +501,6 @@ export class GrDiffHost extends LitElement {
       .noAutoRender=${this.noAutoRender}
       .path=${this.path}
       .prefs=${this.prefs}
-      .displayLine=${this.displayLine}
       .isImageDiff=${this.isImageDiff}
       .noRenderOnPrefsChange=${this.noRenderOnPrefsChange}
       .renderPrefs=${this.renderPrefs}
@@ -548,17 +523,16 @@ export class GrDiffHost extends LitElement {
 
   async initLayers() {
     const preferencesPromise = this.restApiService.getPreferences();
-    await getPluginLoader().awaitPluginsLoaded();
     const prefs = await preferencesPromise;
     const enableTokenHighlight = !prefs?.disable_token_highlighting;
 
     assertIsDefined(this.path, 'path');
-    this.layers = this.getLayers(this.path, enableTokenHighlight);
+    this.layers = this.getLayers(enableTokenHighlight);
     this.coverageRanges = [];
     // We kick off fetching the data here, but we don't return the promise,
     // so awaiting initLayers() will not wait for coverage data to be
     // completely loaded.
-    this.getCoverageData();
+    noAwait(this.getCoverageData());
   }
 
   /**
@@ -591,26 +565,19 @@ export class GrDiffHost extends LitElement {
     return this.reloadPromise;
   }
 
-  // for DIFF_AUTOCLOSE logging purposes only
-  private reloadOngoing = false;
-
-  // for DIFF_AUTOCLOSE logging purposes only
-  private hasReloadBeenCalledOnce = false;
-
   async reloadInternal(shouldReportMetric?: boolean) {
-    this.hasReloadBeenCalledOnce = true;
     this.reporting.time(Timing.DIFF_TOTAL);
     this.reporting.time(Timing.DIFF_LOAD);
+    // TODO: Find better names for these 3 clear/cancel methods. Ideally the
+    // <gr-diff-host> should not re-used at all for another diff rendering pass.
     this.clear();
+    this.cancel();
+    this.clearDiffContent();
     assertIsDefined(this.path, 'path');
     assertIsDefined(this.changeNum, 'changeNum');
     this.diff = undefined;
     this.errorMessage = null;
     const whitespaceLevel = this.getIgnoreWhitespace();
-    if (this.reloadOngoing) {
-      this.reporting.reportInteraction(Interaction.DIFF_AUTOCLOSE_DIFF_ONGOING);
-    }
-    this.reloadOngoing = true;
 
     try {
       // We are carefully orchestrating operations that have to wait for another
@@ -620,11 +587,6 @@ export class GrDiffHost extends LitElement {
       // assets in parallel.
       const layerPromise = this.initLayers();
       const diff = await this.getDiff();
-      if (diff === undefined) {
-        this.reporting.reportInteraction(
-          Interaction.DIFF_AUTOCLOSE_DIFF_UNDEFINED
-        );
-      }
       this.loadedWhitespaceLevel = whitespaceLevel;
       this.reportDiff(diff);
 
@@ -671,7 +633,6 @@ export class GrDiffHost extends LitElement {
       }
     } finally {
       this.reporting.timeEnd(Timing.DIFF_TOTAL, this.timingDetails());
-      this.reloadOngoing = false;
     }
   }
 
@@ -705,19 +666,16 @@ export class GrDiffHost extends LitElement {
     };
   }
 
-  private getLayers(path: string, enableTokenHighlight: boolean): DiffLayer[] {
+  private getLayers(enableTokenHighlight: boolean): DiffLayer[] {
     const layers = [];
     if (enableTokenHighlight) {
       layers.push(new TokenHighlightLayer(this));
     }
     layers.push(this.syntaxLayer);
-    // Get layers from plugins (if any).
-    layers.push(...this.jsAPI.getDiffLayers(path));
     return layers;
   }
 
   clear() {
-    if (this.path) this.jsAPI.disposeDiffLayers(this.path);
     this.layers = [];
   }
 
@@ -762,9 +720,6 @@ export class GrDiffHost extends LitElement {
     const idToEl = new Map<string, GrDiffCheckResult>();
     const checkEls = this.getCheckEls();
     const dontRemove = new Set<GrDiffCheckResult>();
-    let createdCount = 0;
-    let updatedCount = 0;
-    let removedCount = 0;
     const checksCount = checks.length;
     const checkElsCount = checkEls.length;
     if (checksCount === 0 && checkElsCount === 0) return;
@@ -779,23 +734,16 @@ export class GrDiffHost extends LitElement {
       if (existingEl) {
         existingEl.result = check;
         dontRemove.add(existingEl);
-        updatedCount++;
       } else {
         const newEl = this.createCheckEl(check);
         dontRemove.add(newEl);
-        createdCount++;
       }
     }
     // Remove all check els that don't have a matching check anymore.
     for (const el of checkEls) {
       if (dontRemove.has(el)) continue;
       el.remove();
-      removedCount++;
     }
-    this.reporting.reportInteraction(
-      Interaction.COMMENTS_AUTOCLOSE_CHECKS_UPDATED,
-      {createdCount, updatedCount, removedCount, checksCount, checkElsCount}
-    );
   }
 
   /**
@@ -832,7 +780,7 @@ export class GrDiffHost extends LitElement {
     return el;
   }
 
-  private getCoverageData() {
+  private async getCoverageData() {
     assertIsDefined(this.changeNum, 'changeNum');
     assertIsDefined(this.change, 'change');
     assertIsDefined(this.path, 'path');
@@ -847,58 +795,39 @@ export class GrDiffHost extends LitElement {
 
     const basePatchNum = toNumberOnly(this.patchRange.basePatchNum);
     const patchNum = toNumberOnly(this.patchRange.patchNum);
-    this.jsAPI
-      .getCoverageAnnotationApis()
-      .then(coverageAnnotationApis => {
-        coverageAnnotationApis.forEach(coverageAnnotationApi => {
-          const provider = coverageAnnotationApi.getCoverageProvider();
-          if (!provider) return;
-          provider(changeNum, path, basePatchNum, patchNum, change)
-            .then(coverageRanges => {
-              assertIsDefined(this.patchRange, 'patchRange');
-              if (
-                !coverageRanges ||
-                changeNum !== this.changeNum ||
-                change !== this.change ||
-                path !== this.path ||
-                basePatchNum !== toNumberOnly(this.patchRange.basePatchNum) ||
-                patchNum !== toNumberOnly(this.patchRange.patchNum)
-              ) {
-                return;
-              }
-
-              const existingCoverageRanges = this.coverageRanges;
-              this.coverageRanges = coverageRanges;
-
-              // Notify with existing coverage ranges in case there is some
-              // existing coverage data that needs to be removed
-              existingCoverageRanges.forEach(range => {
-                coverageAnnotationApi.notify(
-                  path,
-                  range.code_range.start_line,
-                  range.code_range.end_line,
-                  range.side
-                );
-              });
-
-              // Notify with new coverage data
-              coverageRanges.forEach(range => {
-                coverageAnnotationApi.notify(
-                  path,
-                  range.code_range.start_line,
-                  range.code_range.end_line,
-                  range.side
-                );
-              });
-            })
-            .catch(err => {
-              this.reporting.error('GrDiffHost Coverage', err);
-            });
-        });
-      })
-      .catch(err => {
-        this.reporting.error('GrDiffHost Coverage', err);
-      });
+    // We are simply waiting here for all plugins to be loaded. Ideally we would
+    // just react to state changes, but plugins are loaded quickly once at app
+    // startup, and coordinating incoming coverage providers with the reloading
+    // process seems to be complex enough to avoid it for the time being.
+    await this.getPluginLoader().awaitPluginsLoaded();
+    const plugins =
+      this.getPluginLoader().pluginsModel.getState().coveragePlugins;
+    const providers = plugins.map(p => p.provider);
+    for (const provider of providers) {
+      try {
+        const coverageRanges = await provider(
+          changeNum,
+          path,
+          basePatchNum,
+          patchNum,
+          change
+        );
+        assertIsDefined(this.patchRange, 'patchRange');
+        if (
+          !coverageRanges ||
+          changeNum !== this.changeNum ||
+          change !== this.change ||
+          path !== this.path ||
+          basePatchNum !== toNumberOnly(this.patchRange.basePatchNum) ||
+          patchNum !== toNumberOnly(this.patchRange.patchNum)
+        ) {
+          continue;
+        }
+        this.coverageRanges = coverageRanges;
+      } catch (e) {
+        if (e instanceof Error) this.reporting.error('GrDiffHost Coverage', e);
+      }
+    }
   }
 
   private computeFileThreads(
@@ -1118,20 +1047,12 @@ export class GrDiffHost extends LitElement {
 
   private threadsChanged(threads: CommentThread[]) {
     const rootIdToThreadEl = new Map<UrlEncodedCommentId, GrCommentThread>();
-    const unsavedThreadEls: GrCommentThread[] = [];
     const threadEls = this.getThreadEls();
     for (const threadEl of threadEls) {
-      if (threadEl.rootId) {
-        rootIdToThreadEl.set(threadEl.rootId, threadEl);
-      } else {
-        // Unsaved thread els must have editing:true, just being defensive here.
-        if (threadEl.editing) unsavedThreadEls.push(threadEl);
-      }
+      assertIsDefined(threadEl.rootId, 'threadEl.rootId');
+      rootIdToThreadEl.set(threadEl.rootId, threadEl);
     }
     const dontRemove = new Set<GrCommentThread>();
-    let createdCount = 0;
-    let updatedCount = 0;
-    let removedCount = 0;
     const threadCount = threads.length;
     const threadElCount = threadEls.length;
     if (threadCount === 0 && threadElCount === 0) return;
@@ -1139,23 +1060,8 @@ export class GrDiffHost extends LitElement {
     for (const thread of threads) {
       // Let's find an existing DOM element matching the thread. Normally this
       // is as simple as matching the rootIds.
-      let existingThreadEl =
+      const existingThreadEl =
         thread.rootId && rootIdToThreadEl.get(thread.rootId);
-      // But unsaved threads don't have rootIds. The incoming thread might be
-      // the saved version of the unsaved thread element. To verify that we
-      // check that the thread only has one comment and that their location is
-      // identical.
-      // TODO(brohlfs): This matching is not perfect. You could quickly create
-      // two new threads on the same line/range. Then this code just makes a
-      // random guess.
-      if (!existingThreadEl && thread.comments?.length === 1) {
-        for (const unsavedThreadEl of unsavedThreadEls) {
-          if (equalLocation(unsavedThreadEl.thread, thread)) {
-            existingThreadEl = unsavedThreadEl;
-            break;
-          }
-        }
-      }
       // There is a case possible where the rootIds match but the locations
       // are different. Such as when a thread was originally attached on the
       // right side of the diff but now should be attached on the left side of
@@ -1173,28 +1079,17 @@ export class GrDiffHost extends LitElement {
       ) {
         existingThreadEl.thread = thread;
         dontRemove.add(existingThreadEl);
-        updatedCount++;
       } else {
         const threadEl = this.createThreadElement(thread);
         this.attachThreadElement(threadEl);
         dontRemove.add(threadEl);
-        createdCount++;
       }
     }
     // Remove all threads that are no longer existing.
     for (const threadEl of this.getThreadEls()) {
       if (dontRemove.has(threadEl)) continue;
-      // The user may have opened a couple of comment boxes for editing. They
-      // might be unsaved and thus not be reflected in `threads` yet, so let's
-      // keep them open.
-      if (threadEl.editing && threadEl.thread?.comments.length === 0) continue;
-      removedCount++;
       threadEl.remove();
     }
-    this.reporting.reportInteraction(
-      Interaction.COMMENTS_AUTOCLOSE_THREADS_UPDATED,
-      {createdCount, updatedCount, removedCount, threadCount, threadElCount}
-    );
     const portedThreadsCount = threads.filter(thread => thread.ported).length;
     const portedThreadsWithoutRange = threads.filter(
       thread => thread.ported && thread.rangeInfoLost
@@ -1247,24 +1142,21 @@ export class GrDiffHost extends LitElement {
     assertIsDefined(path, 'path');
 
     const parentIndex = this.computeParentIndex();
-    const newThread: CommentThread = {
-      rootId: undefined,
-      comments: [],
-      patchNum: patchNum as RevisionPatchSetNum,
-      commentSide,
-      // TODO: Maybe just compute from patchRange.base on the fly?
-      mergeParentNum: parentIndex ?? undefined,
+    const draft: DraftInfo = {
+      ...createNew('', true),
+      patch_set: patchNum as RevisionPatchSetNum,
+      side: commentSide,
+      parent: parentIndex ?? undefined,
       path,
-      line: lineNum,
+      line: typeof lineNum === 'number' ? lineNum : undefined,
       range,
     };
-    const el = this.createThreadElement(newThread);
-    this.attachThreadElement(el);
+    this.getCommentsModel().addNewDraft(draft);
   }
 
   private canCommentOnPatchSetNum(patchNum: PatchSetNum) {
     if (!this.loggedIn) {
-      fireEvent(this, 'show-auth-required');
+      fire(this, 'show-auth-required', {});
       return false;
     }
     if (!this.patchRange) {
@@ -1394,9 +1286,6 @@ export class GrDiffHost extends LitElement {
       preferredWhitespaceLevel !== loadedWhitespaceLevel &&
       !noRenderOnPrefsChange
     ) {
-      this.reporting.reportInteraction(
-        Interaction.DIFF_AUTOCLOSE_RELOAD_ON_WHITESPACE
-      );
       return this.reload();
     }
   }
@@ -1415,9 +1304,6 @@ export class GrDiffHost extends LitElement {
     if (oldPrefs?.syntax_highlighting === prefs.syntax_highlighting) return;
 
     if (!noRenderOnPrefsChange) {
-      this.reporting.reportInteraction(
-        Interaction.DIFF_AUTOCLOSE_RELOAD_ON_SYNTAX
-      );
       return this.reload();
     }
   }

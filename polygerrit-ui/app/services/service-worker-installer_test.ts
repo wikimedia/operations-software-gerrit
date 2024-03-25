@@ -9,14 +9,17 @@ import {ServiceWorkerInstaller} from './service-worker-installer';
 import {assert} from '@open-wc/testing';
 import {createDefaultPreferences} from '../constants/constants';
 import {waitUntilObserved} from '../test/test-utils';
+import {testResolver} from '../test/common-test-setup';
+import {userModelToken} from '../models/user/user-model';
 
 suite('service worker installer tests', () => {
   test('init', async () => {
     const registerStub = sinon.stub(window.navigator.serviceWorker, 'register');
     const flagsService = getAppContext().flagsService;
-    const userModel = getAppContext().userModel;
+    const reportingService = getAppContext().reportingService;
+    const userModel = testResolver(userModelToken);
     sinon.stub(flagsService, 'isEnabled').returns(true);
-    new ServiceWorkerInstaller(flagsService, userModel);
+    new ServiceWorkerInstaller(flagsService, reportingService, userModel);
     const prefs = {
       ...createDefaultPreferences(),
       allow_browser_notifications: true,

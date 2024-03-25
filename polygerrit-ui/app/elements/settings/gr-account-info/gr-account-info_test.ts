@@ -5,7 +5,12 @@
  */
 import '../../../test/common-test-setup';
 import './gr-account-info';
-import {query, queryAll, stubRestApi} from '../../../test/test-utils';
+import {
+  query,
+  queryAll,
+  queryAndAssert,
+  stubRestApi,
+} from '../../../test/test-utils';
 import {GrAccountInfo} from './gr-account-info';
 import {AccountDetailInfo, ServerInfo} from '../../../types/common';
 import {
@@ -20,6 +25,7 @@ import {SinonStubbedMember} from 'sinon';
 import {RestApiService} from '../../../services/gr-rest-api/gr-rest-api';
 import {EditableAccountField} from '../../../api/rest-api';
 import {fixture, html, assert} from '@open-wc/testing';
+import {IronAutogrowTextareaElement} from '@polymer/iron-autogrow-textarea';
 
 suite('gr-account-info tests', () => {
   let element!: GrAccountInfo;
@@ -63,6 +69,16 @@ suite('gr-account-info tests', () => {
       element,
       /* HTML */ `
         <div class="gr-form-styles">
+          <p>
+            All profile fields below may be publicly displayed to others,
+            including on changes you are associated with, as well as in search
+            and autocompletion.
+            <a
+              href="https://gerrit-review.googlesource.com/Documentation/user-privacy.html"
+              >Learn more</a
+            >
+          </p>
+          <gr-endpoint-decorator name="profile"></gr-endpoint-decorator>
           <section>
             <span class="title"></span>
             <span class="value">
@@ -100,17 +116,36 @@ suite('gr-account-info tests', () => {
             </span>
           </section>
           <section>
-            <label class="title" for="statusInput">
-              About me (e.g. employer)
-            </label>
+            <span class="title">
+              <label for="statusInput">About me (e.g. employer)</label>
+              <div class="lengthCounter">0/140</div>
+            </span>
             <span class="value">
-              <iron-input id="statusIronInput">
-                <input id="statusInput" />
-              </iron-input>
+              <iron-autogrow-textarea
+                aria-disabled="false"
+                id="statusInput"
+                maxlength="140"
+              />
+            </span>
+          </section>
+          <section>
+            <span class="title">
+              <gr-tooltip-content
+                has-tooltip=""
+                show-icon=""
+                title="This is how you appear to others"
+              >
+                Account preview
+              </gr-tooltip-content>
+            </span>
+            <span class="value"
+              ><gr-account-chip></gr-account-chip>
+              <gr-hovercard-account-contents></gr-hovercard-account-contents>
             </span>
           </section>
         </div>
-      `
+      `,
+      {ignoreChildren: ['p']}
     );
   });
 
@@ -261,8 +296,11 @@ suite('gr-account-info tests', () => {
     test('status', async () => {
       assert.isFalse(element.hasUnsavedChanges);
 
-      const statusInputEl = queryIronInput('#statusIronInput');
-      statusInputEl.bindValue = 'new status';
+      const statusTextarea = queryAndAssert<IronAutogrowTextareaElement>(
+        element,
+        '#statusInput'
+      );
+      statusTextarea.value = 'new status';
       await element.updateComplete;
       assert.isFalse(element.hasNameChange);
       assert.isTrue(element.hasStatusChange);
@@ -305,8 +343,11 @@ suite('gr-account-info tests', () => {
       await element.updateComplete;
       assert.isTrue(element.hasNameChange);
 
-      const statusInputEl = queryIronInput('#statusIronInput');
-      statusInputEl.bindValue = 'new status';
+      const statusTextarea = queryAndAssert<IronAutogrowTextareaElement>(
+        element,
+        '#statusInput'
+      );
+      statusTextarea.value = 'new status';
       await element.updateComplete;
       assert.isTrue(element.hasStatusChange);
 
@@ -351,8 +392,11 @@ suite('gr-account-info tests', () => {
       assert.equal(displaySpan.textContent, account.name);
       assert.isUndefined(inputSpan);
 
-      const inputEl = queryIronInput('#statusIronInput');
-      inputEl.bindValue = 'new status';
+      const statusTextarea = queryAndAssert<IronAutogrowTextareaElement>(
+        element,
+        '#statusInput'
+      );
+      statusTextarea.value = 'new status';
       await element.updateComplete;
       assert.isTrue(element.hasStatusChange);
 

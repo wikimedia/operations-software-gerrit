@@ -37,6 +37,11 @@ export function asyncForeach<T>(
 
 export const _testOnly_allTasks = new Map<number, DelayedTask>();
 
+export enum ResolvedDelayedTaskStatus {
+  CALLBACK_EXECUTED = 'CALLBACK_EXECUTED',
+  TASK_CANCELLED = 'TASK_CANCELLED',
+}
+
 /**
  * This is just a very simple and small wrapper around setTimeout(). Instead of
  * the usual:
@@ -52,34 +57,69 @@ export const _testOnly_allTasks = new Map<number, DelayedTask>();
  * It is just nicer to have an object for this instead of a number as a handle.
  */
 export class DelayedTask {
-  private timer?: number;
+  private timerId?: number;
 
-  constructor(private callback: () => void, waitMs = 0) {
-    this.timer = window.setTimeout(() => {
-      if (this.timer) _testOnly_allTasks.delete(this.timer);
-      this.timer = undefined;
-      if (this.callback) this.callback();
-    }, waitMs);
-    _testOnly_allTasks.set(this.timer, this);
+  /**
+   * Promise that is resolved after the callback is run or the task is
+   * cancelled.
+   *
+   * If callback returns a Promise this resolves after the promise is settled.
+   */
+  public readonly promise: Promise<ResolvedDelayedTaskStatus>;
+
+  private resolvePromise?: (
+    value: ResolvedDelayedTaskStatus | PromiseLike<ResolvedDelayedTaskStatus>
+  ) => void;
+
+  private callCallbackAndResolveOnCompletion() {
+    let callbackResult;
+    if (this.callback) callbackResult = this.callback();
+    if (callbackResult instanceof Promise) {
+      callbackResult.finally(() => {
+        this.resolvePromise!(ResolvedDelayedTaskStatus.CALLBACK_EXECUTED);
+      });
+    } else {
+      this.resolvePromise!(ResolvedDelayedTaskStatus.CALLBACK_EXECUTED);
+    }
+  }
+
+  constructor(
+    private readonly callback: () => void | Promise<void>,
+    waitMs = 0
+  ) {
+    this.promise = new Promise(resolve => {
+      this.resolvePromise = resolve;
+      this.timerId = window.setTimeout(() => {
+        if (this.timerId) _testOnly_allTasks.delete(this.timerId);
+        this.timerId = undefined;
+        this.callCallbackAndResolveOnCompletion();
+      }, waitMs);
+      _testOnly_allTasks.set(this.timerId, this);
+    });
+  }
+
+  private cancelTimer() {
+    window.clearTimeout(this.timerId);
+    if (this.timerId) _testOnly_allTasks.delete(this.timerId);
+    this.timerId = undefined;
   }
 
   cancel() {
     if (this.isActive()) {
-      window.clearTimeout(this.timer);
-      if (this.timer) _testOnly_allTasks.delete(this.timer);
-      this.timer = undefined;
+      this.cancelTimer();
+      this.resolvePromise?.(ResolvedDelayedTaskStatus.TASK_CANCELLED);
     }
   }
 
   flush() {
     if (this.isActive()) {
-      this.cancel();
-      if (this.callback) this.callback();
+      this.cancelTimer();
+      this.callCallbackAndResolveOnCompletion();
     }
   }
 
   isActive() {
-    return this.timer !== undefined;
+    return this.timerId !== undefined;
   }
 }
 
@@ -244,4 +284,116 @@ export function allSettled<T>(
         .catch(reason => ({status: 'rejected', reason} as const))
     )
   );
+}
+
+/**
+ * Noop function that can be used to suppress the tsetse must-use-promises rule.
+ *
+ * Example Usage:
+ *   async function x() {
+ *     await doA();
+ *     noAwait(doB());
+ *   }
+ */
+export function noAwait(_: {then: Function} | null | undefined) {}
+
+export interface CancelablePromise<T> extends Promise<T> {
+  cancel(): void;
+}
+
+/**
+ * Make the promise cancelable.
+ *
+ * Returns a promise with a `cancel()` method wrapped around `promise`.
+ * Calling `cancel()` will reject the returned promise with
+ * {isCancelled: true} synchronously. If the inner promise for a cancelled
+ * promise resolves or rejects this is ignored.
+ */
+export function makeCancelable<T>(promise: Promise<T>) {
+  // True if the promise is either resolved or reject (possibly cancelled)
+  let isDone = false;
+
+  let rejectPromise: (reason?: unknown) => void;
+
+  const wrappedPromise: CancelablePromise<T> = new Promise(
+    (resolve, reject) => {
+      rejectPromise = reject;
+      promise.then(
+        val => {
+          if (!isDone) resolve(val);
+          isDone = true;
+        },
+        error => {
+          if (!isDone) reject(error);
+          isDone = true;
+        }
+      );
+    }
+  ) as CancelablePromise<T>;
+
+  wrappedPromise.cancel = () => {
+    if (isDone) return;
+    rejectPromise({isCanceled: true});
+    isDone = true;
+  };
+  return wrappedPromise;
+}
+
+export async function waitUntil(
+  predicate: (() => boolean) | (() => Promise<boolean>),
+  message = 'The waitUntil() predicate is still false after 1000 ms.',
+  timeout_ms = 1000
+): Promise<void> {
+  if (await predicate()) return Promise.resolve();
+  const start = Date.now();
+  let sleep = 10;
+  const error = new Error(message);
+  return new Promise((resolve, reject) => {
+    const waiter = async () => {
+      if (await predicate()) {
+        resolve();
+        return;
+      }
+      if (Date.now() - start >= timeout_ms) {
+        reject(error);
+        return;
+      }
+      setTimeout(waiter, sleep);
+      sleep *= 2;
+    };
+    waiter();
+  });
+}
+
+export interface MockPromise<T> extends Promise<T> {
+  resolve: (value?: T) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  reject: (reason?: any) => void;
+}
+
+export function mockPromise<T = unknown>(): MockPromise<T> {
+  let res: (value?: T) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let rej: (reason?: any) => void;
+  const promise: MockPromise<T> = new Promise<T | undefined>(
+    (resolve, reject) => {
+      res = resolve;
+      rej = reject;
+    }
+  ) as MockPromise<T>;
+  promise.resolve = res!;
+  promise.reject = rej!;
+  return promise;
+}
+
+// MockPromise is the established name in tests, and we don't want to rename
+// that in 50 files. But "Mock" is a bit misleading and definitely not a great
+// fit for non-test code. So let's also export under a different name.
+export type InteractivePromise<T> = MockPromise<T>;
+export const interactivePromise = mockPromise;
+
+export function timeoutPromise(timeoutMs: number): Promise<void> {
+  return new Promise<void>(resolve => {
+    setTimeout(resolve, timeoutMs);
+  });
 }

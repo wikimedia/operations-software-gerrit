@@ -13,15 +13,16 @@ import {getDisplayName} from '../../../utils/display-name-util';
 import {isSelf, isServiceUser} from '../../../utils/account-util';
 import {ChangeInfo, AccountInfo, ServerInfo} from '../../../types/common';
 import {assertIsDefined, hasOwnProperty} from '../../../utils/common-util';
-import {fireEvent} from '../../../utils/event-util';
+import {fire} from '../../../utils/event-util';
 import {isInvolved} from '../../../utils/change-util';
-import {EventType, ShowAlertEventDetail} from '../../../types/events';
 import {LitElement, css, html, TemplateResult} from 'lit';
 import {customElement, property, state} from 'lit/decorators.js';
 import {classMap} from 'lit/directives/class-map.js';
 import {getRemovedByIconClickReason} from '../../../utils/attention-set-util';
 import {ifDefined} from 'lit/directives/if-defined.js';
 import {createSearchUrl} from '../../../models/views/search';
+import {accountsModelToken} from '../../../models/accounts-model/accounts-model';
+import {resolve} from '../../../models/dependency';
 
 @customElement('gr-account-label')
 export class GrAccountLabel extends LitElement {
@@ -97,7 +98,7 @@ export class GrAccountLabel extends LitElement {
 
   private readonly restApiService = getAppContext().restApiService;
 
-  private readonly accountsModel = getAppContext().accountsModel;
+  private readonly getAccountsModel = resolve(this, accountsModelToken);
 
   static override get styles() {
     return [
@@ -190,7 +191,7 @@ export class GrAccountLabel extends LitElement {
 
   override async updated() {
     assertIsDefined(this.account, 'account');
-    const account = await this.accountsModel.fillDetails(this.account);
+    const account = await this.getAccountsModel().fillDetails(this.account);
     if (account) this.account = account;
   }
 
@@ -362,16 +363,10 @@ export class GrAccountLabel extends LitElement {
     e.stopPropagation();
     if (!this.account._account_id) return;
 
-    this.dispatchEvent(
-      new CustomEvent<ShowAlertEventDetail>(EventType.SHOW_ALERT, {
-        detail: {
-          message: 'Saving attention set update ...',
-          dismissOnNavigation: true,
-        },
-        composed: true,
-        bubbles: true,
-      })
-    );
+    fire(this, 'show-alert', {
+      message: 'Saving attention set update ...',
+      dismissOnNavigation: true,
+    });
 
     // We are deliberately updating the UI before making the API call. It is a
     // risk that we are taking to achieve a better UX for 99.9% of the cases.
@@ -392,7 +387,7 @@ export class GrAccountLabel extends LitElement {
         reason
       )
       .then(() => {
-        fireEvent(this, 'hide-alert');
+        fire(this, 'hide-alert', {});
       });
   }
 

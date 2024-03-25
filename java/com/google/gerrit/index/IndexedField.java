@@ -36,6 +36,7 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.sql.Timestamp;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.StreamSupport;
@@ -118,7 +119,7 @@ public abstract class IndexedField<I, T> {
   /**
    * Defines how {@link IndexedField} can be searched and how the index tokens are generated.
    *
-   * <p>Multiple {@link SearchSpec} can be defined on single {@link IndexedField}.
+   * <p>Multiple {@link SearchSpec} can be defined on a single {@link IndexedField}.
    *
    * <p>Depending on the implementation, indexes can choose to store {@link IndexedField} and {@link
    * SearchSpec} separately. The searches are issues to {@link SearchSpec}.
@@ -249,6 +250,8 @@ public abstract class IndexedField<I, T> {
 
   public SearchSpec integerRange(String name) {
     checkState(fieldType().equals(INTEGER_TYPE));
+    // we currently store all integer range fields, this may change in the future
+    checkState(stored());
     return addSearchSpec(name, SearchOption.RANGE);
   }
 
@@ -349,7 +352,8 @@ public abstract class IndexedField<I, T> {
 
     private static String checkName(String name) {
       String allowedCharacters = "abcdefghijklmnopqrstuvwxyz0123456789_";
-      CharMatcher m = CharMatcher.anyOf(allowedCharacters + allowedCharacters.toUpperCase());
+      CharMatcher m =
+          CharMatcher.anyOf(allowedCharacters + allowedCharacters.toUpperCase(Locale.US));
       checkArgument(name != null && m.matchesAllOf(name), "illegal field name: %s", name);
       return name;
     }
@@ -357,13 +361,22 @@ public abstract class IndexedField<I, T> {
 
   private Map<String, SearchSpec> searchSpecs = new HashMap<>();
 
-  /** The name to store this field under. */
+  /**
+   * The name to store this field under.
+   *
+   * <p>The name should use the UpperCamelCase format, see {@link Builder#checkName}.
+   */
   public abstract String name();
 
   /** Optional description of the field data. */
   public abstract Optional<String> description();
 
-  /** True if this field is mandatory. Default is false. */
+  /**
+   * True if this field is mandatory. Default is false.
+   *
+   * <p>This property is not enforced by the common indexing logic. It is up to the index
+   * implementations to enforce that the field is required.
+   */
   public abstract boolean required();
 
   /** Allow reading the actual data from the index. Default is false. */
@@ -375,6 +388,11 @@ public abstract class IndexedField<I, T> {
   /**
    * Optional size constrain on the field. The size is not constrained if this property is {@link
    * Optional#empty()}
+   *
+   * <p>This property is not enforced by the common indexing logic. It is up to the index
+   * implementations to enforce the size.
+   *
+   * <p>If the field is {@link #repeatable()}, the constraint applies to each element separately.
    */
   public abstract Optional<Integer> size();
 

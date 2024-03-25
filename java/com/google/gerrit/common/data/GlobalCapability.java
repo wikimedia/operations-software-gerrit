@@ -14,6 +14,7 @@
 
 package com.google.gerrit.common.data;
 
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Permission;
 import com.google.gerrit.entities.PermissionRange;
 import java.util.ArrayList;
@@ -21,6 +22,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Server wide capabilities. Represented as {@link Permission} objects.
@@ -127,6 +129,9 @@ public class GlobalCapability {
   /** Can view all pending tasks in the queue (not just the filtered set). */
   public static final String VIEW_QUEUE = "viewQueue";
 
+  /** Can view secondary emails of other accounts. */
+  public static final String VIEW_SECONDARY_EMAILS = "viewSecondaryEmails";
+
   private static final List<String> NAMES_ALL;
   private static final List<String> NAMES_LC;
   private static final String[] RANGE_NAMES = {
@@ -158,10 +163,11 @@ public class GlobalCapability {
     NAMES_ALL.add(VIEW_CONNECTIONS);
     NAMES_ALL.add(VIEW_PLUGINS);
     NAMES_ALL.add(VIEW_QUEUE);
+    NAMES_ALL.add(VIEW_SECONDARY_EMAILS);
 
     NAMES_LC = new ArrayList<>(NAMES_ALL.size());
     for (String name : NAMES_ALL) {
-      NAMES_LC.add(name.toLowerCase());
+      NAMES_LC.add(name.toLowerCase(Locale.US));
     }
   }
 
@@ -172,7 +178,7 @@ public class GlobalCapability {
 
   /** Returns true if the name is recognized as a capability name. */
   public static boolean isGlobalCapability(String varName) {
-    return NAMES_LC.contains(varName.toLowerCase());
+    return NAMES_LC.contains(varName.toLowerCase(Locale.US));
   }
 
   /** Returns true if the capability should have a range attached. */
@@ -190,6 +196,7 @@ public class GlobalCapability {
   }
 
   /** Returns the valid range for the capability if it has one, otherwise null. */
+  @Nullable
   public static PermissionRange.WithDefaults getRange(String varName) {
     if (QUERY_LIMIT.equalsIgnoreCase(varName)) {
       return new PermissionRange.WithDefaults(

@@ -14,6 +14,7 @@
 
 package com.google.gerrit.server.notedb;
 
+import static com.google.gerrit.testing.TestActionRefUpdateContext.testRefAction;
 import static com.google.inject.Scopes.SINGLETON;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
@@ -30,6 +31,7 @@ import com.google.gerrit.extensions.config.FactoryModule;
 import com.google.gerrit.metrics.DisabledMetricMaker;
 import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.server.CurrentUser;
+import com.google.gerrit.server.DefaultRefLogIdentityProvider;
 import com.google.gerrit.server.FanOutExecutor;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.IdentifiedUser;
@@ -75,6 +77,7 @@ import com.google.inject.Module;
 import com.google.inject.TypeLiteral;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
@@ -180,6 +183,7 @@ public abstract class AbstractChangeNotesTest {
 
             install(new DefaultUrlFormatterModule());
             install(NoteDbModule.forTest());
+            install(new DefaultRefLogIdentityProvider.Module());
             bind(AllUsersName.class).toProvider(AllUsersNameProvider.class);
             bind(String.class).annotatedWith(GerritServerId.class).toInstance(serverId);
             bind(new TypeLiteral<ImmutableList<String>>() {})
@@ -245,13 +249,16 @@ public abstract class AbstractChangeNotesTest {
   }
 
   protected Change newChange(Injector injector, boolean workInProgress) throws Exception {
-    Change c = TestChanges.newChange(project, changeOwner.getAccountId());
-    ChangeUpdate u = newUpdate(injector, c, changeOwner, false);
-    u.setChangeId(c.getKey().get());
-    u.setBranch(c.getDest().branch());
-    u.setWorkInProgress(workInProgress);
-    u.commit();
-    return c;
+    return testRefAction(
+        () -> {
+          Change c = TestChanges.newChange(project, changeOwner.getAccountId());
+          ChangeUpdate u = newUpdate(injector, c, changeOwner, false);
+          u.setChangeId(c.getKey().get());
+          u.setBranch(c.getDest().branch());
+          u.setWorkInProgress(workInProgress);
+          u.commit();
+          return c;
+        });
   }
 
   protected Change newWorkInProgressChange() throws Exception {
@@ -277,7 +284,7 @@ public abstract class AbstractChangeNotesTest {
 
   protected ChangeUpdate newUpdate(
       Injector injector, Change c, CurrentUser user, boolean shouldExist) throws Exception {
-    ChangeUpdate update = TestChanges.newUpdate(injector, c, user, shouldExist);
+    ChangeUpdate update = TestChanges.newUpdate(injector, c, Optional.of(user), shouldExist);
     update.setPatchSetId(c.currentPatchSetId());
     update.setAllowWriteToNewRef(true);
     return update;

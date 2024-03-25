@@ -14,7 +14,6 @@
 
 package com.google.gerrit.server.project;
 
-import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.gerrit.entities.Permission.isPermission;
@@ -104,6 +103,8 @@ import org.eclipse.jgit.revwalk.RevWalk;
 public class ProjectConfig extends VersionedMetaData implements ValidationError.Sink {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
+  public static final String RULES_PL_FILE = "rules.pl";
+
   public static final String COMMENTLINK = "commentlink";
   public static final String LABEL = "label";
   public static final String KEY_LABEL_DESCRIPTION = "description";
@@ -131,7 +132,6 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
           KEY_SR_OVERRIDE_IN_CHILD_PROJECTS);
 
   public static final String KEY_MATCH = "match";
-  private static final String KEY_HTML = "html";
   public static final String KEY_LINK = "link";
   public static final String KEY_PREFIX = "prefix";
   public static final String KEY_SUFFIX = "suffix";
@@ -318,7 +318,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     return builder.build();
   }
 
-  public static StoredCommentLinkInfo buildCommentLink(Config cfg, String name, boolean allowRaw)
+  public static StoredCommentLinkInfo buildCommentLink(Config cfg, String name)
       throws IllegalArgumentException {
     String match = cfg.getString(COMMENTLINK, name, KEY_MATCH);
     if (match != null) {
@@ -335,9 +335,6 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     String linkSuffix = cfg.getString(COMMENTLINK, name, KEY_SUFFIX);
     String linkText = cfg.getString(COMMENTLINK, name, KEY_TEXT);
 
-    String html = cfg.getString(COMMENTLINK, name, KEY_HTML);
-    boolean hasHtml = !Strings.isNullOrEmpty(html);
-
     String rawEnabled = cfg.getString(COMMENTLINK, name, KEY_ENABLED);
     Boolean enabled;
     if (rawEnabled != null) {
@@ -345,12 +342,8 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     } else {
       enabled = null;
     }
-    checkArgument(allowRaw || !hasHtml, "Raw html replacement not allowed");
 
-    if (Strings.isNullOrEmpty(match)
-        && Strings.isNullOrEmpty(link)
-        && !hasHtml
-        && enabled != null) {
+    if (Strings.isNullOrEmpty(match) && Strings.isNullOrEmpty(link) && enabled != null) {
       if (enabled) {
         return StoredCommentLinkInfo.enabled(name);
       }
@@ -362,7 +355,6 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
         .setPrefix(linkPrefix)
         .setSuffix(linkSuffix)
         .setText(linkText)
-        .setHtml(html)
         .setEnabled(enabled)
         .setOverrideOnly(false)
         .build();
@@ -667,7 +659,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     }
     readGroupList();
 
-    rulesId = getObjectId("rules.pl");
+    rulesId = getObjectId(RULES_PL_FILE);
     Config rc = readConfig(PROJECT_CONFIG, baseConfig);
     Project.Builder p = Project.builder(projectName);
     p.setDescription(Strings.nullToEmpty(rc.getString(PROJECT, null, KEY_DESCRIPTION)));
@@ -728,7 +720,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     Map<String, String> lowerNames = Maps.newHashMapWithExpectedSize(2);
     extensionPanelSections = new LinkedHashMap<>();
     for (String name : rc.getSubsections(EXTENSION_PANELS)) {
-      String lower = name.toLowerCase();
+      String lower = name.toLowerCase(Locale.US);
       if (lowerNames.containsKey(lower)) {
         error(
             String.format(
@@ -977,7 +969,8 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     Map<String, String> lowerNames = new HashMap<>();
     submitRequirementSections = new LinkedHashMap<>();
     for (String name : rc.getSubsections(SUBMIT_REQUIREMENT)) {
-      String lower = name.toLowerCase();
+      checkDuplicateSrDefinition(rc, name);
+      String lower = name.toLowerCase(Locale.US);
       if (lowerNames.containsKey(lower)) {
         error(
             String.format(
@@ -1034,6 +1027,40 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     }
   }
 
+  private void checkDuplicateSrDefinition(Config rc, String srName) {
+    if (rc.getStringList(SUBMIT_REQUIREMENT, srName, KEY_SR_DESCRIPTION).length > 1) {
+      error(
+          String.format(
+              "Multiple definitions of %s for submit requirement '%s'",
+              KEY_SR_DESCRIPTION, srName));
+    }
+    if (rc.getStringList(SUBMIT_REQUIREMENT, srName, KEY_SR_APPLICABILITY_EXPRESSION).length > 1) {
+      error(
+          String.format(
+              "Multiple definitions of %s for submit requirement '%s'",
+              KEY_SR_APPLICABILITY_EXPRESSION, srName));
+    }
+    if (rc.getStringList(SUBMIT_REQUIREMENT, srName, KEY_SR_SUBMITTABILITY_EXPRESSION).length > 1) {
+      error(
+          String.format(
+              "Multiple definitions of %s for submit requirement '%s'",
+              KEY_SR_SUBMITTABILITY_EXPRESSION, srName));
+    }
+    if (rc.getStringList(SUBMIT_REQUIREMENT, srName, KEY_SR_OVERRIDE_EXPRESSION).length > 1) {
+      error(
+          String.format(
+              "Multiple definitions of %s for submit requirement '%s'",
+              KEY_SR_OVERRIDE_EXPRESSION, srName));
+    }
+    if (rc.getStringList(SUBMIT_REQUIREMENT, srName, KEY_SR_OVERRIDE_IN_CHILD_PROJECTS).length
+        > 1) {
+      error(
+          String.format(
+              "Multiple definitions of %s for submit requirement '%s'",
+              KEY_SR_OVERRIDE_IN_CHILD_PROJECTS, srName));
+    }
+  }
+
   /**
    * Report unsupported submit requirement parameters as errors.
    *
@@ -1075,7 +1102,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     Map<String, String> lowerNames = Maps.newHashMapWithExpectedSize(2);
     labelSections = new LinkedHashMap<>();
     for (String name : rc.getSubsections(LABEL)) {
-      String lower = name.toLowerCase();
+      String lower = name.toLowerCase(Locale.US);
       if (lowerNames.containsKey(lower)) {
         error(String.format("Label \"%s\" conflicts with \"%s\"", name, lowerNames.get(lower)));
       }
@@ -1118,9 +1145,11 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
         error(
             String.format(
                 "Invalid %s for label \"%s\". Valid names are: %s",
-                KEY_FUNCTION, name, Joiner.on(", ").join(LabelFunction.ALL.keySet())));
+                KEY_FUNCTION,
+                name,
+                Joiner.on(", ").join(LabelFunction.ALL_NON_DEPRECATED.keySet())));
       }
-      label.setFunction(function.orElse(null));
+      function.ifPresent(label::setFunction);
       label.setCopyCondition(rc.getString(LABEL, name, KEY_COPY_CONDITION));
 
       if (!values.isEmpty()) {
@@ -1168,6 +1197,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     return false;
   }
 
+  @Nullable
   private List<String> getStringListOrNull(
       Config rc, String section, String subSection, String name) {
     String[] ac = rc.getStringList(section, subSection, name);
@@ -1179,7 +1209,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     commentLinkSections = new LinkedHashMap<>(subsections.size());
     for (String name : subsections) {
       try {
-        commentLinkSections.put(name, buildCommentLink(rc, name, false));
+        commentLinkSections.put(name, buildCommentLink(rc, name));
       } catch (PatternSyntaxException e) {
         error(
             String.format(
@@ -1269,7 +1299,8 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
           parsedConfig.fromText(cfg);
           projectLevelConfigs.put(pathInfo.path, parsedConfig);
         } catch (ConfigInvalidException e) {
-          logger.atWarning().withCause(e).log("Unable to parse config");
+          logger.atWarning().withCause(e).log(
+              "Unable to parse config for project %s", projectName.get());
         }
       }
     }
@@ -1337,6 +1368,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     return true;
   }
 
+  @Nullable
   public static String validMaxObjectSizeLimit(String value) throws ConfigInvalidException {
     if (value == null) {
       return null;
@@ -1380,9 +1412,9 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     unsetSection(rc, COMMENTLINK);
     if (commentLinkSections != null) {
       for (StoredCommentLinkInfo cm : commentLinkSections.values()) {
-        rc.setString(COMMENTLINK, cm.getName(), KEY_MATCH, cm.getMatch());
-        if (!Strings.isNullOrEmpty(cm.getHtml())) {
-          rc.setString(COMMENTLINK, cm.getName(), KEY_HTML, cm.getHtml());
+        // Match and Link can be empty if the commentlink is override only.
+        if (!Strings.isNullOrEmpty(cm.getMatch())) {
+          rc.setString(COMMENTLINK, cm.getName(), KEY_MATCH, cm.getMatch());
         }
         if (!Strings.isNullOrEmpty(cm.getLink())) {
           rc.setString(COMMENTLINK, cm.getName(), KEY_LINK, cm.getLink());
@@ -1498,7 +1530,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     if (capability != null) {
       Set<String> have = new HashSet<>();
       for (Permission permission : sort(capability.getPermissions())) {
-        have.add(permission.getName().toLowerCase());
+        have.add(permission.getName().toLowerCase(Locale.US));
 
         boolean needRange = GlobalCapability.hasRange(permission.getName());
         List<String> rules = new ArrayList<>();
@@ -1512,7 +1544,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
         rc.setStringList(CAPABILITY, null, permission.getName(), rules);
       }
       for (String varName : rc.getNames(CAPABILITY)) {
-        if (!have.contains(varName.toLowerCase())) {
+        if (!have.contains(varName.toLowerCase(Locale.US))) {
           rc.unset(CAPABILITY, null, varName);
         }
       }
@@ -1543,7 +1575,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
 
       Set<String> have = new HashSet<>();
       for (Permission permission : sort(as.getPermissions())) {
-        have.add(permission.getName().toLowerCase());
+        have.add(permission.getName().toLowerCase(Locale.US));
 
         boolean needRange = Permission.hasRange(permission.getName());
         List<String> rules = new ArrayList<>();
@@ -1559,7 +1591,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
 
       for (String varName : rc.getNames(ACCESS, refName)) {
         if (isCoreOrPluginPermission(convertLegacyPermission(varName))
-            && !have.contains(varName.toLowerCase())) {
+            && !have.contains(varName.toLowerCase(Locale.US))) {
           rc.unset(ACCESS, refName, varName);
         }
       }

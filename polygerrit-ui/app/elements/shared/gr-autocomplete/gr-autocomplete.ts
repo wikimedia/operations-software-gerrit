@@ -6,11 +6,19 @@
 import '@polymer/paper-input/paper-input';
 import '../gr-autocomplete-dropdown/gr-autocomplete-dropdown';
 import '../gr-cursor-manager/gr-cursor-manager';
-import '../gr-icon/gr-icon';
 import '../../../styles/shared-styles';
-import {GrAutocompleteDropdown} from '../gr-autocomplete-dropdown/gr-autocomplete-dropdown';
-import {fire, fireEvent} from '../../../utils/event-util';
-import {debounce, DelayedTask} from '../../../utils/async-util';
+import {
+  AutocompleteQueryStatus,
+  AutocompleteQueryStatusType,
+  GrAutocompleteDropdown,
+  ItemSelectedEventDetail,
+} from '../gr-autocomplete-dropdown/gr-autocomplete-dropdown';
+import {fire} from '../../../utils/event-util';
+import {
+  debounce,
+  DelayedTask,
+  ResolvedDelayedTaskStatus,
+} from '../../../utils/async-util';
 import {PropertyType} from '../../../types/common';
 import {modifierPressed} from '../../../utils/dom-util';
 import {sharedStyles} from '../../../styles/shared-styles';
@@ -44,13 +52,6 @@ export interface AutocompleteSuggestion<T = string> {
   text?: string;
 }
 
-export interface AutocompleteCommitEventDetail {
-  value: string;
-}
-
-export type AutocompleteCommitEvent =
-  CustomEvent<AutocompleteCommitEventDetail>;
-
 @customElement('gr-autocomplete')
 export class GrAutocomplete extends LitElement {
   /**
@@ -66,13 +67,6 @@ export class GrAutocomplete extends LitElement {
    */
 
   /**
-   * Fired on keydown to allow for custom hooks into autocomplete textbox
-   * behavior.
-   *
-   * @event input-keydown
-   */
-
-  /**
    * Query for requesting autocomplete suggestions. The function should
    * accept the input as a string parameter and return a promise. The
    * promise yields an array of suggestion objects with "name", "label",
@@ -81,6 +75,9 @@ export class GrAutocomplete extends LitElement {
    * next to the "name" as label text. The "value" property will be emitted
    * if that suggestion is selected.
    *
+   * If query fails, the function should return rejected promise containing
+   * an Error. The "message" property will be shown in a dropdown instead of
+   * rendering suggestions.
    */
   @property({type: Object})
   query?: AutocompleteQuery = () => Promise.resolve([]);
@@ -104,9 +101,6 @@ export class GrAutocomplete extends LitElement {
 
   @property({type: Boolean})
   disabled = false;
-
-  @property({type: Boolean, attribute: 'show-search-icon'})
-  showSearchIcon = false;
 
   /**
    * Vertical offset needed for an element with 20px line-height, 4px
@@ -151,12 +145,6 @@ export class GrAutocomplete extends LitElement {
   @property({type: Boolean, attribute: 'warn-uncommitted'})
   warnUncommitted = false;
 
-  /**
-   * When true, querying for suggestions is not debounced w/r/t keypresses
-   */
-  @property({type: Boolean, attribute: 'no-debounce'})
-  noDebounce = false;
-
   @property({type: Boolean, attribute: 'show-blue-focus-border'})
   showBlueFocusBorder = false;
 
@@ -169,6 +157,8 @@ export class GrAutocomplete extends LitElement {
 
   @state() suggestions: AutocompleteSuggestion[] = [];
 
+  @state() queryStatus?: AutocompleteQueryStatus;
+
   @state() index: number | null = null;
 
   // Enabled to suppress showing/updating suggestions when changing properties
@@ -180,7 +170,31 @@ export class GrAutocomplete extends LitElement {
 
   @state() selected: HTMLElement | null = null;
 
+  /**
+   * The query id that status or suggestions correspond to.
+   */
+  private activeQueryId = 0;
+
+  /**
+   * Last scheduled update suggestions task.
+   */
   private updateSuggestionsTask?: DelayedTask;
+
+  // Generate ids for scheduled suggestion queries to easily distinguish them.
+  private static NEXT_QUERY_ID = 1;
+
+  private static getNextQueryId() {
+    return GrAutocomplete.NEXT_QUERY_ID++;
+  }
+
+  /**
+   * @return Promise that resolves when suggestions are update.
+   */
+  get latestSuggestionUpdateComplete():
+    | Promise<ResolvedDelayedTaskStatus>
+    | undefined {
+    return this.updateSuggestionsTask?.promise;
+  }
 
   get nativeInput() {
     return (this.input!.inputElement as IronInputElement)
@@ -190,15 +204,6 @@ export class GrAutocomplete extends LitElement {
   static override styles = [
     sharedStyles,
     css`
-      .searchIcon {
-        display: none;
-      }
-      .searchIcon.showSearchIcon {
-        display: inline-block;
-      }
-      gr-icon {
-        margin: 0 var(--spacing-xs);
-      }
       paper-input.borderless {
         border: none;
         padding: 0;
@@ -262,14 +267,13 @@ export class GrAutocomplete extends LitElement {
   }
 
   override willUpdate(changedProperties: PropertyValues) {
-    if (
-      changedProperties.has('text') ||
-      changedProperties.has('threshold') ||
-      changedProperties.has('noDebounce')
-    ) {
+    if (changedProperties.has('text') || changedProperties.has('threshold')) {
       this.updateSuggestions();
     }
-    if (changedProperties.has('suggestions')) {
+    if (
+      changedProperties.has('suggestions') ||
+      changedProperties.has('queryStatus')
+    ) {
       this.updateDropdownVisibility();
     }
     if (changedProperties.has('text')) {
@@ -288,7 +292,7 @@ export class GrAutocomplete extends LitElement {
         class=${this.computeClass()}
         ?disabled=${this.disabled}
         .value=${this.text}
-        @value-changed=${(e: CustomEvent) => {
+        @value-changed=${(e: ValueChangedEvent) => {
           this.text = e.detail.value;
         }}
         .placeholder=${this.placeholder}
@@ -299,12 +303,7 @@ export class GrAutocomplete extends LitElement {
         .label=${this.label}
       >
         <div slot="prefix">
-          <gr-icon
-            icon="search"
-            class="searchIcon ${this.computeShowSearchIconClass(
-              this.showSearchIcon
-            )}"
-          ></gr-icon>
+          <slot name="prefix"></slot>
         </div>
 
         <div slot="suffix">
@@ -317,6 +316,7 @@ export class GrAutocomplete extends LitElement {
         @item-selected=${this.handleItemSelect}
         @dropdown-closed=${this.focusWithoutDisplayingSuggestions}
         .suggestions=${this.suggestions}
+        .queryStatus=${this.queryStatus}
         role="listbox"
         .index=${this.index}
       >
@@ -353,14 +353,16 @@ export class GrAutocomplete extends LitElement {
     this.text = '';
   }
 
-  private handleItemSelectEnter(e: CustomEvent | KeyboardEvent) {
+  private handleItemSelectEnter(
+    e: CustomEvent<ItemSelectedEventDetail> | KeyboardEvent
+  ) {
     this.handleInputCommit();
     e.stopPropagation();
     e.preventDefault();
     this.focusWithoutDisplayingSuggestions();
   }
 
-  handleItemSelect(e: CustomEvent) {
+  handleItemSelect(e: CustomEvent<ItemSelectedEventDetail>) {
     if (e.detail.trigger === 'click') {
       this.selected = e.detail.selected;
       this._commit();
@@ -413,17 +415,12 @@ export class GrAutocomplete extends LitElement {
   }
 
   updateSuggestions() {
-    if (
-      this.text === undefined ||
-      this.threshold === undefined ||
-      this.noDebounce === undefined
-    )
-      return;
+    if (this.text === undefined || this.threshold === undefined) return;
 
     // Reset suggestions for every update
     // This will also prevent from carrying over suggestions:
     // @see Issue 12039
-    this.suggestions = [];
+    this.resetQueryOutput();
 
     // TODO(taoalpha): Also skip if text has not changed
 
@@ -431,8 +428,7 @@ export class GrAutocomplete extends LitElement {
       return;
     }
 
-    const query = this.query;
-    if (!query) {
+    if (!this.query) {
       return;
     }
 
@@ -445,32 +441,55 @@ export class GrAutocomplete extends LitElement {
       return;
     }
 
-    const requestText = this.text;
-    const update = () => {
-      query(this.text).then(suggestions => {
-        if (requestText !== this.text) {
-          // Late response.
-          return;
-        }
-        for (const suggestion of suggestions) {
-          suggestion.text = suggestion?.name ?? '';
-        }
-        this.suggestions = suggestions;
-        if (this.index === -1) {
-          this.value = '';
-        }
-      });
-    };
+    const queryId = GrAutocomplete.getNextQueryId();
+    this.activeQueryId = queryId;
+    this.setQueryStatus({
+      type: AutocompleteQueryStatusType.LOADING,
+      message: 'Loading...',
+    });
+    this.updateSuggestionsTask = debounce(
+      this.updateSuggestionsTask,
+      this.createUpdateTask(queryId, this.query, this.text),
+      DEBOUNCE_WAIT_MS
+    );
+  }
 
-    if (this.noDebounce) {
-      update();
-    } else {
-      this.updateSuggestionsTask = debounce(
-        this.updateSuggestionsTask,
-        update,
-        DEBOUNCE_WAIT_MS
-      );
-    }
+  private createUpdateTask(
+    queryId: number,
+    query: AutocompleteQuery,
+    text: string
+  ): () => Promise<void> {
+    return async () => {
+      let suggestions: AutocompleteSuggestion[];
+      try {
+        suggestions = await query(text);
+      } catch (e) {
+        this.value = '';
+        if (typeof e === 'string') {
+          this.setQueryStatus({
+            type: AutocompleteQueryStatusType.ERROR,
+            message: e,
+          });
+        } else if (e instanceof Error) {
+          this.setQueryStatus({
+            type: AutocompleteQueryStatusType.ERROR,
+            message: e.message,
+          });
+        }
+        return;
+      }
+      if (queryId !== this.activeQueryId) {
+        // Late response.
+        return;
+      }
+      for (const suggestion of suggestions) {
+        suggestion.text = suggestion?.name ?? '';
+      }
+      this.setSuggestions(suggestions);
+      if (this.index === -1) {
+        this.value = '';
+      }
+    };
   }
 
   setFocus(focused: boolean) {
@@ -479,8 +498,12 @@ export class GrAutocomplete extends LitElement {
     this.updateDropdownVisibility();
   }
 
+  private shouldShowDropdown() {
+    return (this.suggestions.length > 0 || this.queryStatus) && this.focused;
+  }
+
   updateDropdownVisibility() {
-    if (this.suggestions.length > 0 && this.focused) {
+    if (this.shouldShowDropdown()) {
       this.suggestionsDropdown?.open();
       return;
     }
@@ -513,10 +536,26 @@ export class GrAutocomplete extends LitElement {
         this.cancel();
         break;
       case 'Tab':
-        if (this.suggestions.length > 0 && this.tabComplete) {
+        if (
+          this.queryStatus?.type === AutocompleteQueryStatusType.LOADING &&
+          this.tabComplete
+        ) {
           e.preventDefault();
+          // Queue tab on load.
+          this.queryStatus = {
+            type: AutocompleteQueryStatusType.LOADING,
+            message: 'Loading... (Handle Tab on load)',
+          };
+          const queryId = this.activeQueryId;
+          this.latestSuggestionUpdateComplete?.then(() => {
+            if (queryId === this.activeQueryId) {
+              this.handleInputCommit(/* _tabComplete=*/ true);
+            }
+          });
+        } else if (this.suggestions.length > 0 && this.tabComplete) {
+          e.preventDefault();
+          this.handleInputCommit(/* _tabComplete=*/ true);
           this.focus();
-          this.handleInputCommit(true);
         } else {
           this.setFocus(false);
         }
@@ -525,11 +564,24 @@ export class GrAutocomplete extends LitElement {
         if (modifierPressed(e)) {
           break;
         }
-        if (this.suggestions.length > 0) {
+        e.preventDefault();
+        if (this.queryStatus?.type === AutocompleteQueryStatusType.LOADING) {
+          // Queue enter on load.
+          this.queryStatus = {
+            type: AutocompleteQueryStatusType.LOADING,
+            message: 'Loading... (Handle Enter on load)',
+          };
+          const queryId = this.activeQueryId;
+          this.latestSuggestionUpdateComplete?.then(() => {
+            if (queryId === this.activeQueryId) {
+              this.handleItemSelectEnter(e);
+            }
+          });
+        } else if (this.suggestions.length > 0) {
           // If suggestions are shown, act as if the keypress is in dropdown.
+          // suggestions length is 0 if error is shown.
           this.handleItemSelectEnter(e);
         } else {
-          e.preventDefault();
           this.handleInputCommit();
         }
         break;
@@ -542,29 +594,29 @@ export class GrAutocomplete extends LitElement {
         // been based on a previous input. Clear them. This prevents an
         // outdated suggestion from being used if the input keystroke is
         // immediately followed by a commit keystroke. @see Issue 8655
-        this.suggestions = [];
+        this.resetQueryOutput();
+        this.activeQueryId = 0;
     }
-    this.dispatchEvent(
-      new CustomEvent('input-keydown', {
-        detail: {key: e.key, input: this.input},
-        composed: true,
-        bubbles: true,
-      })
-    );
   }
 
   cancel() {
-    if (this.suggestions.length) {
-      this.suggestions = [];
+    if (this.shouldShowDropdown()) {
+      this.resetQueryOutput();
+      // If query is in flight by setting id to 0 we indicate that the results
+      // are outdated.
+      this.activeQueryId = 0;
       this.requestUpdate();
     } else {
-      fireEvent(this, 'cancel');
+      fire(this, 'cancel', {});
     }
   }
 
   handleInputCommit(_tabComplete?: boolean) {
-    // Nothing to do if the dropdown is not open.
-    if (!this.allowNonSuggestedValues && this.suggestionsDropdown?.isHidden) {
+    // Nothing to do if no suggestions.
+    if (
+      !this.allowNonSuggestedValues &&
+      (this.suggestionsDropdown?.isHidden || this.suggestions.length === 0)
+    ) {
       return;
     }
 
@@ -605,6 +657,7 @@ export class GrAutocomplete extends LitElement {
       }
     }
     this.setFocus(false);
+    this.activeQueryId = 0;
   };
 
   /**
@@ -641,23 +694,30 @@ export class GrAutocomplete extends LitElement {
       }
     }
 
-    this.suggestions = [];
+    this.resetQueryOutput();
     // we need willUpdate to send text-changed event before we can send the
     // 'commit' event
     await this.updateComplete;
     if (!silent) {
-      this.dispatchEvent(
-        new CustomEvent('commit', {
-          detail: {value} as AutocompleteCommitEventDetail,
-          composed: true,
-          bubbles: true,
-        })
-      );
+      fire(this, 'commit', {value});
     }
   }
 
-  computeShowSearchIconClass(showSearchIcon: boolean) {
-    return showSearchIcon ? 'showSearchIcon' : '';
+  // resetQueryOutput, setSuggestions and setQueryStatus insure that suggestions
+  // and queryStatus are never set at the same time.
+  private resetQueryOutput() {
+    this.suggestions = [];
+    this.queryStatus = undefined;
+  }
+
+  private setSuggestions(suggestions: AutocompleteSuggestion[]) {
+    this.suggestions = suggestions;
+    this.queryStatus = undefined;
+  }
+
+  private setQueryStatus(queryStatus: AutocompleteQueryStatus) {
+    this.suggestions = [];
+    this.queryStatus = queryStatus;
   }
 }
 

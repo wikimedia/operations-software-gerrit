@@ -11,6 +11,7 @@ import {customElement, property} from 'lit/decorators.js';
 import {addShortcut, getEventPath, Key} from '../../../utils/dom-util';
 import {getAppContext} from '../../../services/app-context';
 import {classMap} from 'lit/directives/class-map.js';
+import {Interaction} from '../../../constants/reporting';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -113,23 +114,6 @@ export class GrButton extends LitElement {
         paper-button:hover {
           background: linear-gradient(rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.12)),
             var(--background-color);
-        }
-
-        /* Some mobile browsers treat focused element as hovered element.
-        As a result, element remains hovered after click (has grey background in default theme).
-        Use @media (hover:none) to remove background if
-        user's primary input mechanism can't hover over elements.
-        See: https://developer.mozilla.org/en-US/docs/Web/CSS/@media/hover
-
-        Note 1: not all browsers support this media query
-        (see https://caniuse.com/#feat=css-media-interaction).
-        If browser doesn't support it, then the whole content of @media .. is ignored.
-        This is why the default behavior is placed outside of @media.
-        */
-        @media (hover: none) {
-          paper-button:hover {
-            background: transparent;
-          }
         }
 
         :host([primary]) {
@@ -245,6 +229,8 @@ export class GrButton extends LitElement {
       return;
     }
 
-    this.reporting.reportInteraction('button-click', {path: getEventPath(e)});
+    this.reporting.reportInteraction(Interaction.BUTTON_CLICK, {
+      path: getEventPath(e),
+    });
   }
 }

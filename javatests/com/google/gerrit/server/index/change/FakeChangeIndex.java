@@ -16,7 +16,9 @@ package com.google.gerrit.server.index.change;
 
 import static com.google.gerrit.index.SchemaUtil.schema;
 
+import com.google.common.collect.ImmutableList;
 import com.google.gerrit.entities.Change;
+import com.google.gerrit.index.IndexedField;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.query.FieldBundle;
@@ -29,10 +31,19 @@ import org.junit.Ignore;
 
 @Ignore
 public class FakeChangeIndex implements ChangeIndex {
-  static final Schema<ChangeData> V1 = schema(1, ChangeField.STATUS);
+  static final Schema<ChangeData> V1 =
+      schema(
+          1,
+          ImmutableList.<IndexedField<ChangeData, ?>>of(ChangeField.STATUS_FIELD),
+          ImmutableList.<IndexedField<ChangeData, ?>.SearchSpec>of(ChangeField.STATUS_SPEC));
 
   static final Schema<ChangeData> V2 =
-      schema(2, ChangeField.STATUS, ChangeField.PATH, ChangeField.UPDATED);
+      schema(
+          2,
+          ImmutableList.<IndexedField<ChangeData, ?>>of(
+              ChangeField.PATH_FIELD, ChangeField.STATUS_FIELD, ChangeField.UPDATED_FIELD),
+          ImmutableList.<IndexedField<ChangeData, ?>.SearchSpec>of(
+              ChangeField.PATH_SPEC, ChangeField.STATUS_SPEC, ChangeField.UPDATED_SPEC));
 
   private static class Source implements ChangeDataSource {
     private final Predicate<ChangeData> p;
@@ -80,6 +91,11 @@ public class FakeChangeIndex implements ChangeIndex {
 
   @Override
   public void replace(ChangeData cd) {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public void deleteByValue(ChangeData value) {
     throw new UnsupportedOperationException();
   }
 

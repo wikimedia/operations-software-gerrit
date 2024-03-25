@@ -31,6 +31,7 @@ import java.io.IOException;
 import java.security.SecureRandom;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
@@ -124,7 +125,10 @@ public class ChangeUtil {
    * @throws BadRequestException if the new commit message is null or empty
    */
   public static void ensureChangeIdIsCorrect(
-      boolean requireChangeId, String currentChangeId, String newCommitMessage)
+      boolean requireChangeId,
+      String currentChangeId,
+      String newCommitMessage,
+      UrlFormatter urlFormatter)
       throws ResourceConflictException, BadRequestException {
     RevCommit revCommit =
         RevCommit.parse(
@@ -133,7 +137,7 @@ public class ChangeUtil {
     // Check that the commit message without footers is not empty
     CommitMessageUtil.checkAndSanitizeCommitMessage(revCommit.getShortMessage());
 
-    List<String> changeIdFooters = revCommit.getFooterLines(FooterConstants.CHANGE_ID);
+    List<String> changeIdFooters = getChangeIdsFromFooter(revCommit, urlFormatter);
     if (requireChangeId && changeIdFooters.isEmpty()) {
       throw new ResourceConflictException("missing Change-Id footer");
     }
@@ -146,7 +150,7 @@ public class ChangeUtil {
   }
 
   public static String status(Change c) {
-    return c != null ? c.getStatus().name().toLowerCase() : "deleted";
+    return c != null ? c.getStatus().name().toLowerCase(Locale.US) : "deleted";
   }
 
   private static final Pattern LINK_CHANGE_ID_PATTERN = Pattern.compile("I[0-9a-f]{40}");

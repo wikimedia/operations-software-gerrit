@@ -14,6 +14,7 @@
 
 package com.google.gerrit.server.mail.send;
 
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Address;
 import com.google.gerrit.exceptions.EmailException;
@@ -74,18 +75,18 @@ public abstract class NewChangeSender extends ChangeEmail {
         break;
       case ALL:
       default:
-        extraCC.stream().forEach(cc -> add(RecipientType.CC, cc));
-        extraCCByEmail.stream().forEach(cc -> add(RecipientType.CC, cc));
+        extraCC.stream().forEach(cc -> addByAccountId(RecipientType.CC, cc));
+        extraCCByEmail.stream().forEach(cc -> addByEmail(RecipientType.CC, cc));
         // $FALL-THROUGH$
       case OWNER_REVIEWERS:
-        reviewers.stream().forEach(r -> add(RecipientType.TO, r, true));
-        addByEmail(RecipientType.TO, reviewersByEmail, true);
-        removedReviewers.stream().forEach(r -> add(RecipientType.TO, r, true));
-        addByEmail(RecipientType.TO, removedByEmailReviewers, true);
+        reviewers.stream().forEach(r -> addByAccountId(RecipientType.TO, r, true));
+        reviewersByEmail.stream().forEach(r -> addByEmail(RecipientType.TO, r, true));
+        removedReviewers.stream().forEach(r -> addByAccountId(RecipientType.TO, r, true));
+        removedByEmailReviewers.stream().forEach(r -> addByEmail(RecipientType.TO, r, true));
         break;
     }
 
-    rcptToAuthors(RecipientType.CC);
+    addAuthors(RecipientType.CC);
   }
 
   @Override
@@ -96,7 +97,8 @@ public abstract class NewChangeSender extends ChangeEmail {
     }
   }
 
-  public List<String> getReviewerNames() {
+  @Nullable
+  private List<String> getReviewerNames() {
     if (reviewers.isEmpty()) {
       return null;
     }
@@ -107,7 +109,8 @@ public abstract class NewChangeSender extends ChangeEmail {
     return names;
   }
 
-  public List<String> getRemovedReviewerNames() {
+  @Nullable
+  private List<String> getRemovedReviewerNames() {
     if (removedReviewers.isEmpty() && removedByEmailReviewers.isEmpty()) {
       return null;
     }

@@ -15,13 +15,16 @@
 package com.google.gerrit.server.edit;
 
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
+import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.CHANGE_MODIFICATION;
 
 import com.google.common.base.Charsets;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.BooleanProjectConfig;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.extensions.registration.DynamicItem;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.MergeConflictException;
@@ -34,6 +37,7 @@ import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.account.AccountState;
+import com.google.gerrit.server.config.UrlFormatter;
 import com.google.gerrit.server.edit.tree.ChangeFileContentModification;
 import com.google.gerrit.server.edit.tree.DeleteFileModification;
 import com.google.gerrit.server.edit.tree.RenameFileModification;
@@ -48,6 +52,7 @@ import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.InvalidChangeOperationException;
 import com.google.gerrit.server.project.ProjectCache;
+import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.gerrit.server.util.CommitMessageUtil;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.inject.Inject;
@@ -100,6 +105,7 @@ public class ChangeEditModifier {
   private final PatchSetUtil patchSetUtil;
   private final ProjectCache projectCache;
   private final NoteDbEdits noteDbEdits;
+  private final DynamicItem<UrlFormatter> urlFormatter;
 
   @Inject
   ChangeEditModifier(
@@ -110,15 +116,16 @@ public class ChangeEditModifier {
       ChangeEditUtil changeEditUtil,
       PatchSetUtil patchSetUtil,
       ProjectCache projectCache,
-      GitReferenceUpdated gitRefUpdated) {
+      GitReferenceUpdated gitReferenceUpdated,
+      DynamicItem<UrlFormatter> urlFormatter) {
     this.currentUser = currentUser;
     this.permissionBackend = permissionBackend;
     this.zoneId = gerritIdent.getZoneId();
     this.changeEditUtil = changeEditUtil;
     this.patchSetUtil = patchSetUtil;
     this.projectCache = projectCache;
-
-    noteDbEdits = new NoteDbEdits(zoneId, indexer, currentUser, gitRefUpdated);
+    noteDbEdits = new NoteDbEdits(gitReferenceUpdated, zoneId, indexer, currentUser);
+    this.urlFormatter = urlFormatter;
   }
 
   /**
@@ -175,10 +182,14 @@ public class ChangeEditModifier {
               notes.getChangeId(), currentPatchSet.id()));
     }
 
-    rebase(repository, changeEdit, currentPatchSet);
+    rebase(notes.getProjectName(), repository, changeEdit, currentPatchSet);
   }
 
-  private void rebase(Repository repository, ChangeEdit changeEdit, PatchSet currentPatchSet)
+  private void rebase(
+      Project.NameKey project,
+      Repository repository,
+      ChangeEdit changeEdit,
+      PatchSet currentPatchSet)
       throws IOException, MergeConflictException, InvalidChangeOperationException {
     RevCommit currentEditCommit = changeEdit.getEditCommit();
     if (currentEditCommit.getParentCount() == 0) {
@@ -196,7 +207,13 @@ public class ChangeEditModifier {
         createCommit(repository, basePatchSetCommit, newTreeId, commitMessage, nowTimestamp);
 
     noteDbEdits.baseEditOnDifferentPatchset(
-        repository, changeEdit, currentPatchSet, currentEditCommit, newEditCommitId, nowTimestamp);
+        project,
+        repository,
+        changeEdit,
+        currentPatchSet,
+        currentEditCommit,
+        newEditCommitId,
+        nowTimestamp);
   }
 
   /**
@@ -229,13 +246,18 @@ public class ChangeEditModifier {
    * @param notes the {@link ChangeNotes} of the change whose change edit should be modified
    * @param filePath the path of the file whose contents should be modified
    * @param newContent the new file content
+   * @param newGitFileMode the new file mode in octal format. {@code null} indicates no change
    * @throws AuthException if the user isn't authenticated or not allowed to use change edits
    * @throws BadRequestException if the user provided bad input (e.g. invalid file paths)
    * @throws InvalidChangeOperationException if the file already had the specified content
    * @throws ResourceConflictException if the project state does not permit the operation
    */
   public void modifyFile(
-      Repository repository, ChangeNotes notes, String filePath, RawInput newContent)
+      Repository repository,
+      ChangeNotes notes,
+      String filePath,
+      RawInput newContent,
+      @Nullable Integer newGitFileMode)
       throws AuthException, BadRequestException, InvalidChangeOperationException, IOException,
           PermissionBackendException, ResourceConflictException {
     modifyCommit(
@@ -243,7 +265,8 @@ public class ChangeEditModifier {
         notes,
         new ModificationIntention.LatestCommit(),
         CommitModification.builder()
-            .addTreeModification(new ChangeFileContentModification(filePath, newContent))
+            .addTreeModification(
+                new ChangeFileContentModification(filePath, newContent, newGitFileMode))
             .build());
   }
 
@@ -392,8 +415,10 @@ public class ChangeEditModifier {
     ObjectId newEditCommit =
         createCommit(repository, basePatchsetCommit, newTreeId, newCommitMessage, nowTimestamp);
 
-    return editBehavior.updateEditInStorage(
-        repository, notes, basePatchset, newEditCommit, nowTimestamp);
+    try (RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
+      return editBehavior.updateEditInStorage(
+          repository, notes, basePatchset, newEditCommit, nowTimestamp);
+    }
   }
 
   private void assertCanEdit(ChangeNotes notes)
@@ -495,7 +520,8 @@ public class ChangeEditModifier {
           "New commit message cannot be same as existing commit message");
     }
 
-    ChangeUtil.ensureChangeIdIsCorrect(requireChangeId, currentChangeId, newCommitMessage);
+    ChangeUtil.ensureChangeIdIsCorrect(
+        requireChangeId, currentChangeId, newCommitMessage, urlFormatter.get());
 
     return newCommitMessage;
   }
@@ -715,17 +741,17 @@ public class ChangeEditModifier {
     private final ZoneId zoneId;
     private final ChangeIndexer indexer;
     private final Provider<CurrentUser> currentUser;
-    private final GitReferenceUpdated gitRefUpdated;
+    private final GitReferenceUpdated gitReferenceUpdated;
 
     NoteDbEdits(
+        GitReferenceUpdated gitReferenceUpdated,
         ZoneId zoneId,
         ChangeIndexer indexer,
-        Provider<CurrentUser> currentUser,
-        GitReferenceUpdated gitRefUpdated) {
+        Provider<CurrentUser> currentUser) {
       this.zoneId = zoneId;
       this.indexer = indexer;
       this.currentUser = currentUser;
-      this.gitRefUpdated = gitRefUpdated;
+      this.gitReferenceUpdated = gitReferenceUpdated;
     }
 
     ChangeEdit createEdit(
@@ -755,6 +781,10 @@ public class ChangeEditModifier {
       return RefNames.refsEdit(me.getAccountId(), change.getId(), basePatchset.id());
     }
 
+    private AccountState getUpdater() {
+      return currentUser.get().asIdentifiedUser().state();
+    }
+
     ChangeEdit updateEdit(
         Project.NameKey projectName,
         Repository repository,
@@ -781,27 +811,29 @@ public class ChangeEditModifier {
         ObjectId targetObjectId,
         Instant timestamp)
         throws IOException {
-      AccountState userAccountState = currentUser.get().asIdentifiedUser().state();
-      RefUpdate ru = repository.updateRef(refName);
-      ru.setExpectedOldObjectId(currentObjectId);
-      ru.setNewObjectId(targetObjectId);
-      ru.setRefLogIdent(getRefLogIdent(timestamp));
-      ru.setRefLogMessage("inline edit (amend)", false);
-      ru.setForceUpdate(true);
-      try (RevWalk revWalk = new RevWalk(repository)) {
-        RefUpdate.Result res = ru.update(revWalk);
-        String message = "cannot update " + ru.getName() + " in " + projectName + ": " + res;
-        if (res == RefUpdate.Result.LOCK_FAILURE) {
-          throw new LockFailureException(message, ru);
+      try (RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
+        RefUpdate ru = repository.updateRef(refName);
+        ru.setExpectedOldObjectId(currentObjectId);
+        ru.setNewObjectId(targetObjectId);
+        ru.setRefLogIdent(getRefLogIdent(timestamp));
+        ru.setRefLogMessage("inline edit (amend)", false);
+        ru.setForceUpdate(true);
+        try (RevWalk revWalk = new RevWalk(repository)) {
+          RefUpdate.Result res = ru.update(revWalk);
+          String message = "cannot update " + ru.getName() + " in " + projectName + ": " + res;
+          if (res == RefUpdate.Result.LOCK_FAILURE) {
+            throw new LockFailureException(message, ru);
+          }
+          if (res != RefUpdate.Result.NEW && res != RefUpdate.Result.FORCED) {
+            throw new IOException(message);
+          }
         }
-        if (res != RefUpdate.Result.NEW && res != RefUpdate.Result.FORCED) {
-          throw new IOException(message);
-        }
-        gitRefUpdated.fire(projectName, ru, userAccountState);
+        gitReferenceUpdated.fire(projectName, ru, getUpdater());
       }
     }
 
     void baseEditOnDifferentPatchset(
+        Project.NameKey project,
         Repository repository,
         ChangeEdit changeEdit,
         PatchSet currentPatchSet,
@@ -811,6 +843,7 @@ public class ChangeEditModifier {
         throws IOException {
       String newEditRefName = getEditRefName(changeEdit.getChange(), currentPatchSet);
       updateReferenceWithNameChange(
+          project,
           repository,
           changeEdit.getRefName(),
           currentEditCommit,
@@ -821,6 +854,7 @@ public class ChangeEditModifier {
     }
 
     private void updateReferenceWithNameChange(
+        Project.NameKey projectName,
         Repository repository,
         String currentRefName,
         ObjectId currentObjectId,
@@ -828,19 +862,23 @@ public class ChangeEditModifier {
         ObjectId targetObjectId,
         Instant timestamp)
         throws IOException {
-      BatchRefUpdate batchRefUpdate = repository.getRefDatabase().newBatchUpdate();
-      batchRefUpdate.addCommand(new ReceiveCommand(ObjectId.zeroId(), targetObjectId, newRefName));
-      batchRefUpdate.addCommand(
-          new ReceiveCommand(currentObjectId, ObjectId.zeroId(), currentRefName));
-      batchRefUpdate.setRefLogMessage("rebase edit", false);
-      batchRefUpdate.setRefLogIdent(getRefLogIdent(timestamp));
-      try (RevWalk revWalk = new RevWalk(repository)) {
-        batchRefUpdate.execute(revWalk, NullProgressMonitor.INSTANCE);
-      }
-      for (ReceiveCommand cmd : batchRefUpdate.getCommands()) {
-        if (cmd.getResult() != ReceiveCommand.Result.OK) {
-          throw new IOException("failed: " + cmd);
+      try (RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
+        BatchRefUpdate batchRefUpdate = repository.getRefDatabase().newBatchUpdate();
+        batchRefUpdate.addCommand(
+            new ReceiveCommand(ObjectId.zeroId(), targetObjectId, newRefName));
+        batchRefUpdate.addCommand(
+            new ReceiveCommand(currentObjectId, ObjectId.zeroId(), currentRefName));
+        batchRefUpdate.setRefLogMessage("rebase edit", false);
+        batchRefUpdate.setRefLogIdent(getRefLogIdent(timestamp));
+        try (RevWalk revWalk = new RevWalk(repository)) {
+          batchRefUpdate.execute(revWalk, NullProgressMonitor.INSTANCE);
         }
+        for (ReceiveCommand cmd : batchRefUpdate.getCommands()) {
+          if (cmd.getResult() != ReceiveCommand.Result.OK) {
+            throw new IOException("failed: " + cmd);
+          }
+        }
+        gitReferenceUpdated.fire(projectName, batchRefUpdate, getUpdater());
       }
     }
 

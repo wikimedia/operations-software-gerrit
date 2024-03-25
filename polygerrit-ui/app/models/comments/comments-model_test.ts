@@ -6,11 +6,14 @@
 import '../../test/common-test-setup';
 import {
   createAccountWithEmail,
+  createChangeViewState,
   createDraft,
 } from '../../test/test-data-generators';
 import {
   AccountInfo,
+  CommentInfo,
   EmailAddress,
+  NumericChangeId,
   Timestamp,
   UrlEncodedCommentId,
 } from '../../types/common';
@@ -19,15 +22,16 @@ import {Subscription} from 'rxjs';
 import {
   createComment,
   createParsedChange,
-  TEST_NUMERIC_CHANGE_ID,
 } from '../../test/test-data-generators';
 import {stubRestApi, waitUntil, waitUntilCalled} from '../../test/test-utils';
 import {getAppContext} from '../../services/app-context';
-import {GerritView} from '../../services/router/router-model';
-import {PathToCommentsInfoMap} from '../../types/common';
 import {changeModelToken} from '../change/change-model';
 import {assert} from '@open-wc/testing';
 import {testResolver} from '../../test/common-test-setup';
+import {accountsModelToken} from '../accounts-model/accounts-model';
+import {ChangeComments} from '../../elements/diff/gr-comment-api/gr-comment-api';
+import {changeViewModelToken} from '../views/change';
+import {navigationToken} from '../../elements/core/gr-navigation/gr-navigation';
 
 suite('comments model tests', () => {
   test('updateStateDeleteDraft', () => {
@@ -69,11 +73,12 @@ suite('change service tests', () => {
 
   test('loads comments', async () => {
     const model = new CommentsModel(
-      getAppContext().routerModel,
+      testResolver(changeViewModelToken),
       testResolver(changeModelToken),
-      getAppContext().accountsModel,
+      testResolver(accountsModelToken),
       getAppContext().restApiService,
-      getAppContext().reportingService
+      getAppContext().reportingService,
+      testResolver(navigationToken)
     );
     const diffCommentsSpy = stubRestApi('getDiffComments').returns(
       Promise.resolve({'foo.c': [createComment()]})
@@ -90,18 +95,15 @@ suite('change service tests', () => {
     const portedDraftsSpy = stubRestApi('getPortedDrafts').returns(
       Promise.resolve({})
     );
-    let comments: PathToCommentsInfoMap = {};
+    let comments: {[path: string]: CommentInfo[]} = {};
     subscriptions.push(model.comments$.subscribe(c => (comments = c ?? {})));
-    let portedComments: PathToCommentsInfoMap = {};
+    let portedComments: {[path: string]: CommentInfo[]} = {};
     subscriptions.push(
       model.portedComments$.subscribe(c => (portedComments = c ?? {}))
     );
 
-    model.routerModel.setState({
-      view: GerritView.CHANGE,
-      changeNum: TEST_NUMERIC_CHANGE_ID,
-    });
-    model.changeModel.updateStateChange(createParsedChange());
+    testResolver(changeViewModelToken).setState(createChangeViewState());
+    testResolver(changeModelToken).updateStateChange(createParsedChange());
 
     await waitUntilCalled(diffCommentsSpy, 'diffCommentsSpy');
     await waitUntilCalled(diffRobotCommentsSpy, 'diffRobotCommentsSpy');
@@ -130,11 +132,12 @@ suite('change service tests', () => {
     };
     stubRestApi('getAccountDetails').returns(Promise.resolve(account));
     const model = new CommentsModel(
-      getAppContext().routerModel,
+      testResolver(changeViewModelToken),
       testResolver(changeModelToken),
-      getAppContext().accountsModel,
+      testResolver(accountsModelToken),
       getAppContext().restApiService,
-      getAppContext().reportingService
+      getAppContext().reportingService,
+      testResolver(navigationToken)
     );
     let mentionedUsers: AccountInfo[] = [];
     const draft = {...createDraft(), message: 'hey @abc@def.com'};
@@ -158,11 +161,12 @@ suite('change service tests', () => {
     };
     stubRestApi('getAccountDetails').returns(Promise.resolve(account));
     const model = new CommentsModel(
-      getAppContext().routerModel,
+      testResolver(changeViewModelToken),
       testResolver(changeModelToken),
-      getAppContext().accountsModel,
+      testResolver(accountsModelToken),
       getAppContext().restApiService,
-      getAppContext().reportingService
+      getAppContext().reportingService,
+      testResolver(navigationToken)
     );
     let mentionedUsers: AccountInfo[] = [];
     const draft = {...createDraft(), message: 'hey @abc@def.com'};
@@ -185,5 +189,38 @@ suite('change service tests', () => {
       discardedDrafts: [],
     });
     await waitUntil(() => mentionedUsers.length === 0);
+  });
+
+  test('delete comment change is emitted', async () => {
+    const comment = createComment();
+    stubRestApi('deleteComment').returns(
+      Promise.resolve({
+        ...comment,
+        message: 'Comment is deleted',
+      })
+    );
+    const model = new CommentsModel(
+      testResolver(changeViewModelToken),
+      testResolver(changeModelToken),
+      testResolver(accountsModelToken),
+      getAppContext().restApiService,
+      getAppContext().reportingService,
+      testResolver(navigationToken)
+    );
+
+    let changeComments: ChangeComments | undefined = undefined;
+    model.changeComments$.subscribe(x => (changeComments = x));
+    model.setState({
+      comments: {[comment.path!]: [comment]},
+      discardedDrafts: [],
+    });
+
+    model.deleteComment(123 as NumericChangeId, comment, 'Comment is deleted');
+
+    await waitUntil(
+      () =>
+        changeComments?.getAllCommentsForPath(comment.path!)[0].message ===
+        'Comment is deleted'
+    );
   });
 });

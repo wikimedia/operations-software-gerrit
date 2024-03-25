@@ -117,7 +117,7 @@ suite('gr-result-row test', () => {
           aria-checked="false"
           aria-label="Expand result row"
           class="show-hide"
-          hidden=""
+          hidden
           role="switch"
           tabindex="0"
         >

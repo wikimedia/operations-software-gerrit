@@ -105,15 +105,17 @@ suite('token-highlight-layer', () => {
   suite('annotate', () => {
     function assertAnnotation(
       args: any[],
-      el: HTMLElement,
-      start: number,
-      length: number,
-      cssClass: string
+      expected: {
+        parent: HTMLElement;
+        offset: number;
+        length: number;
+        cssClass: string;
+      }
     ) {
-      assert.equal(args[0], el);
-      assert.equal(args[1], start);
-      assert.equal(args[2], length);
-      assert.equal(args[3], cssClass);
+      assert.equal(args[0], expected.parent);
+      assert.equal(args[1], expected.offset);
+      assert.equal(args[2], expected.length);
+      assert.equal(args[3], expected.cssClass);
     }
 
     test('annotate adds css token', () => {
@@ -121,27 +123,51 @@ suite('token-highlight-layer', () => {
       const el = createLine('these are words');
       annotate(el);
       assert.isTrue(annotateElementStub.calledThrice);
-      assertAnnotation(
-        annotateElementStub.args[0],
-        el,
-        0,
-        5,
-        'tk-text-these tk-index-0 token '
-      );
-      assertAnnotation(
-        annotateElementStub.args[1],
-        el,
-        6,
-        3,
-        'tk-text-are tk-index-6 token '
-      );
-      assertAnnotation(
-        annotateElementStub.args[2],
-        el,
-        10,
-        5,
-        'tk-text-words tk-index-10 token '
-      );
+      assertAnnotation(annotateElementStub.args[0], {
+        parent: el,
+        offset: 0,
+        length: 5,
+        cssClass: 'tk-text-these tk-index-0 token ',
+      });
+      assertAnnotation(annotateElementStub.args[1], {
+        parent: el,
+        offset: 6,
+        length: 3,
+        cssClass: 'tk-text-are tk-index-6 token ',
+      });
+      assertAnnotation(annotateElementStub.args[2], {
+        parent: el,
+        offset: 10,
+        length: 5,
+        cssClass: 'tk-text-words tk-index-10 token ',
+      });
+    });
+
+    test('annotate adds css tokens w/ emojis', () => {
+      const annotateElementStub = sinon.stub(GrAnnotation, 'annotateElement');
+      const el = createLine('these 💩 are 👨‍👩‍👧‍👦 words');
+
+      annotate(el);
+
+      assert.isTrue(annotateElementStub.calledThrice);
+      assertAnnotation(annotateElementStub.args[0], {
+        parent: el,
+        offset: 0,
+        length: 5,
+        cssClass: 'tk-text-these tk-index-0 token ',
+      });
+      assertAnnotation(annotateElementStub.args[1], {
+        parent: el,
+        offset: 8,
+        length: 3,
+        cssClass: 'tk-text-are tk-index-8 token ',
+      });
+      assertAnnotation(annotateElementStub.args[2], {
+        parent: el,
+        offset: 20,
+        length: 5,
+        cssClass: 'tk-text-words tk-index-20 token ',
+      });
     });
 
     test('annotate adds mouse handlers', () => {
@@ -334,6 +360,45 @@ suite('token-highlight-layer', () => {
       words1.click();
       assert.equal(listener.pending, 0);
       assert.isTrue(words1.classList.contains('token-highlight'));
+    });
+
+    test('query based highlighting', async () => {
+      highlighter = new TokenHighlightLayer(
+        container,
+        tokenHighlightListener,
+        /* getTokenQueryContainer=*/ () => container
+      );
+      const clock = sinon.useFakeTimers();
+      const line1 = createLine('two words');
+      annotate(line1);
+      const line2 = createLine('three words', 2);
+      annotate(line2, Side.RIGHT, 2);
+      // Invalidate pointers.
+      for (const child of line1.childNodes) {
+        line1.replaceChild(child.cloneNode(), child);
+      }
+      for (const child of line2.childNodes) {
+        line2.replaceChild(child.cloneNode(), child);
+      }
+
+      const words1 = queryAndAssert(line1, '.tk-text-words');
+      assert.isTrue(words1.classList.contains('token'));
+      dispatchMouseEvent('mouseover', words1);
+      assert.equal(tokenHighlightingCalls.length, 0);
+      clock.tick(HOVER_DELAY_MS);
+      assert.equal(tokenHighlightingCalls.length, 1);
+      assert.deepEqual(tokenHighlightingCalls[0].details, {
+        token: 'words',
+        side: Side.RIGHT,
+        element: words1,
+        range: {start_line: 1, start_column: 5, end_line: 1, end_column: 9},
+      });
+      assert.isTrue(words1.classList.contains('token-highlight'));
+
+      container.click();
+      assert.equal(tokenHighlightingCalls.length, 2);
+      assert.deepEqual(tokenHighlightingCalls[1].details, undefined);
+      assert.isFalse(words1.classList.contains('token-highlight'));
     });
   });
 });

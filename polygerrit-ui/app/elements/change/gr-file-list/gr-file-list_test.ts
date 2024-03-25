@@ -56,6 +56,7 @@ import {GrIcon} from '../../shared/gr-icon/gr-icon';
 import {fixture, html, assert} from '@open-wc/testing';
 import {Modifier} from '../../../utils/dom-util';
 import {testResolver} from '../../../test/common-test-setup';
+import {FileMode} from '../../../utils/file-util';
 
 suite('gr-diff a11y test', () => {
   test('audit', async () => {
@@ -68,7 +69,7 @@ function createFiles(
   fileInfo: FileInfo = {}
 ): NormalizedFileInfo[] {
   const files = Array(count).fill({});
-  return files.map((_, idx) => normalize(fileInfo, `'/file${idx}`));
+  return files.map((_, idx) => normalize(fileInfo, `path/file${idx}`));
 }
 
 suite('gr-file-list tests', () => {
@@ -82,9 +83,6 @@ suite('gr-file-list tests', () => {
       stubRestApi('getDiffRobotComments').returns(Promise.resolve({}));
       stubRestApi('getDiffDrafts').returns(Promise.resolve({}));
       stubRestApi('getAccountCapabilities').returns(Promise.resolve({}));
-      stubElement('gr-date-formatter', 'loadTimeFormat').callsFake(() =>
-        Promise.resolve()
-      );
       stubElement('gr-diff-host', 'reload').callsFake(() => Promise.resolve());
       stubElement('gr-diff-host', 'prefetchDiff').callsFake(() => {});
 
@@ -110,6 +108,7 @@ suite('gr-file-list tests', () => {
         .stub(element, '_saveReviewedState')
         .callsFake(() => Promise.resolve());
       await element.updateComplete;
+      element.showSizeBars = true;
       // Wait for expandedFilesChanged to complete.
       await waitEventLoop();
     });
@@ -171,26 +170,33 @@ suite('gr-file-list tests', () => {
         fileRows?.[0],
         /* HTML */ `<div
           class="file-row row"
-          data-file='{"path":"&apos;/file0"}'
+          data-file='{"path":"path/file0"}'
           role="row"
           tabindex="-1"
+          aria-label="path/file0"
         >
           <div class="status" role="gridcell">
             <gr-file-status></gr-file-status>
           </div>
           <span class="path" role="gridcell">
             <a class="pathLink">
-              <span class="fullFileName" title="'/file0">
-                <span class="newFilePath"> '/ </span>
+              <span class="fullFileName" title="path/file0">
+                <span class="newFilePath"> path/ </span>
                 <span class="fileName"> file0 </span>
               </span>
-              <span class="truncatedFileName" title="'/file0"> …/file0 </span>
+              <span class="truncatedFileName" title="path/file0">
+                …/file0
+              </span>
               <gr-copy-clipboard hideinput=""> </gr-copy-clipboard>
             </a>
           </span>
           <div role="gridcell">
             <div class="comments desktop">
-              <span class="drafts"> </span> <span> </span>
+              <span
+                ><gr-comments-summary
+                  emptywhennocomments=""
+                ></gr-comments-summary
+              ></span>
               <span class="noCommentsScreenReaderText"> No comments </span>
             </div>
             <div class="comments mobile">
@@ -199,17 +205,12 @@ suite('gr-file-list tests', () => {
             </div>
           </div>
           <div class="desktop" role="gridcell">
-            <div
-              aria-label="A bar that represents the addition and deletion ratio for the current file"
-              class="hide sizeBars"
-            ></div>
+            <div aria-hidden="true" class="sizeBars"></div>
           </div>
           <div class="stats" role="gridcell">
             <div>
-              <span aria-label="9 lines added" class="added" tabindex="0">
-                +9
-              </span>
-              <span aria-label="0 lines removed" class="removed" tabindex="0">
+              <span aria-label="9 added" class="added" tabindex="0"> +9 </span>
+              <span aria-label="0 removed" class="removed" tabindex="0">
                 -0
               </span>
               <span hidden=""> +/-0 B </span>
@@ -241,10 +242,11 @@ suite('gr-file-list tests', () => {
           <div class="show-hide" role="gridcell">
             <span
               aria-checked="false"
-              aria-label="Expand file"
+              aria-label="expand"
+              aria-description="Expand diff of this file"
               class="show-hide"
               data-expand="true"
-              data-path="'/file0"
+              data-path="path/file0"
               role="switch"
               tabindex="0"
             >
@@ -270,11 +272,13 @@ suite('gr-file-list tests', () => {
         /* HTML */ `
           <span class="path" role="gridcell">
             <a class="pathLink">
-              <span class="fullFileName" title="'/file0">
-                <span class="newFilePath"> '/ </span>
+              <span class="fullFileName" title="path/file0">
+                <span class="newFilePath"> path/ </span>
                 <span class="fileName"> file0 </span>
               </span>
-              <span class="truncatedFileName" title="'/file0"> …/file0 </span>
+              <span class="truncatedFileName" title="path/file0">
+                …/file0
+              </span>
               <gr-copy-clipboard hideinput=""> </gr-copy-clipboard>
             </a>
           </span>
@@ -286,11 +290,13 @@ suite('gr-file-list tests', () => {
         /* HTML */ `
           <span class="path" role="gridcell">
             <a class="pathLink">
-              <span class="fullFileName" title="'/file1">
-                <span class="matchingFilePath"> '/ </span>
+              <span class="fullFileName" title="path/file1">
+                <span class="matchingFilePath"> path/ </span>
                 <span class="fileName"> file1 </span>
               </span>
-              <span class="truncatedFileName" title="'/file1"> …/file1 </span>
+              <span class="truncatedFileName" title="path/file1">
+                …/file1
+              </span>
               <gr-copy-clipboard hideinput=""> </gr-copy-clipboard>
             </a>
           </span>
@@ -309,11 +315,53 @@ suite('gr-file-list tests', () => {
         /* HTML */ `
           <div class="extended status" role="gridcell">
             <gr-file-status></gr-file-status>
-            <gr-icon class="file-status-arrow" icon="arrow_right_alt"></gr-icon>
+            <gr-icon
+              aria-label="then"
+              class="file-status-arrow"
+              icon="arrow_right_alt"
+            ></gr-icon>
             <gr-file-status></gr-file-status>
           </div>
         `
       );
+    });
+
+    test('renders file mode', async () => {
+      element.files = createFiles(1, {
+        old_mode: FileMode.REGULAR_FILE,
+        new_mode: FileMode.EXECUTABLE_FILE,
+      });
+      await element.updateComplete;
+      const fileRows = queryAll<HTMLDivElement>(element, '.file-row');
+      const fileMode = queryAndAssert(
+        fileRows?.[0],
+        '.path gr-tooltip-content'
+      );
+      assert.dom.equal(
+        fileMode,
+        /* HTML */ `
+          <gr-tooltip-content
+            has-tooltip=""
+            title="file mode changed from regular (100644) to executable (100755)"
+          >
+            <div class="file-mode-content">
+              <gr-icon class="file-mode-warning" icon="warning"> </gr-icon>
+              (executable)
+            </div>
+          </gr-tooltip-content>
+        `
+      );
+    });
+
+    test('renders file mode, but not for regular files', async () => {
+      element.files = createFiles(3, {
+        old_mode: FileMode.REGULAR_FILE,
+        new_mode: FileMode.REGULAR_FILE,
+      });
+      await element.updateComplete;
+      const fileRows = queryAll<HTMLDivElement>(element, '.file-row');
+      const fileMode = query(fileRows?.[0], '.path gr-tooltip-content');
+      assert.notOk(fileMode);
     });
 
     test('renders file status column header', async () => {
@@ -330,7 +378,11 @@ suite('gr-file-list tests', () => {
             <gr-tooltip-content has-tooltip="" title="Patchset 1">
               <div class="content">1</div>
             </gr-tooltip-content>
-            <gr-icon class="file-status-arrow" icon="arrow_right_alt"></gr-icon>
+            <gr-icon
+              aria-label="then"
+              class="file-status-arrow"
+              icon="arrow_right_alt"
+            ></gr-icon>
             <gr-tooltip-content has-tooltip="" title="Patchset 2">
               <div class="content">2</div>
             </gr-tooltip-content>
@@ -2030,9 +2082,6 @@ suite('gr-file-list tests', () => {
       stubRestApi('getDiffComments').returns(Promise.resolve({}));
       stubRestApi('getDiffRobotComments').returns(Promise.resolve({}));
       stubRestApi('getDiffDrafts').returns(Promise.resolve({}));
-      stubElement('gr-date-formatter', 'loadTimeFormat').callsFake(() =>
-        Promise.resolve()
-      );
       stubRestApi('getDiff').callsFake(() => Promise.resolve(createDiff()));
       stubElement('gr-diff-host', 'prefetchDiff').callsFake(() => {});
 
@@ -2260,22 +2309,6 @@ suite('gr-file-list tests', () => {
       // Navigates when a file is selected.
       element.openSelectedFile();
       assert.isTrue(setUrlStub.calledOnce);
-    });
-
-    test('displayLine', () => {
-      element.filesExpanded = FilesExpandedState.ALL;
-
-      element.displayLine = false;
-      element.handleCursorNext(new KeyboardEvent('keydown'));
-      assert.isTrue(element.displayLine);
-
-      element.displayLine = false;
-      element.handleCursorPrev(new KeyboardEvent('keydown'));
-      assert.isTrue(element.displayLine);
-
-      element.displayLine = true;
-      element.handleEscKey();
-      assert.isFalse(element.displayLine);
     });
 
     suite('editMode behavior', () => {

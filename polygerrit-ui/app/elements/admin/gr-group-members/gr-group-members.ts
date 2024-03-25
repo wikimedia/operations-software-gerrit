@@ -3,14 +3,11 @@
  * Copyright 2017 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
 import '../../shared/gr-account-label/gr-account-label';
 import '../../shared/gr-autocomplete/gr-autocomplete';
 import '../../shared/gr-button/gr-button';
-import '../../shared/gr-overlay/gr-overlay';
 import '../gr-confirm-delete-item-dialog/gr-confirm-delete-item-dialog';
 import {getBaseUrl} from '../../../utils/url-util';
-import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
 import {
   GroupId,
   AccountId,
@@ -18,6 +15,7 @@ import {
   GroupInfo,
   GroupName,
   ServerInfo,
+  NumericChangeId,
 } from '../../../types/common';
 import {
   AutocompleteQuery,
@@ -40,15 +38,19 @@ import {tableStyles} from '../../../styles/gr-table-styles';
 import {LitElement, css, html} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
 import {ifDefined} from 'lit/directives/if-defined.js';
-import {getAccountSuggestions} from '../../../utils/account-util';
 import {subscribe} from '../../lit/subscription-controller';
 import {configModelToken} from '../../../models/config/config-model';
 import {resolve} from '../../../models/dependency';
+import {modalStyles} from '../../../styles/gr-modal-styles';
+import {throwingErrorCallback} from '../../shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
+import {ValueChangedEvent} from '../../../types/events';
+import {getAccountDisplayName} from '../../../utils/display-name-util';
 
 const SAVING_ERROR_TEXT =
   'Group may not exist, or you may not have ' + 'permission to add it';
 
 const URL_REGEX = '^(?:[a-z]+:)?//';
+const SUGGESTIONS_LIMIT = 15;
 
 export enum ItemType {
   MEMBER = 'member',
@@ -63,7 +65,7 @@ declare global {
 
 @customElement('gr-group-members')
 export class GrGroupMembers extends LitElement {
-  @query('#overlay') protected overlay!: GrOverlay;
+  @query('#modal') protected modal!: HTMLDialogElement;
 
   @property({type: String})
   groupId?: GroupId;
@@ -119,7 +121,7 @@ export class GrGroupMembers extends LitElement {
       }
     );
     this.queryMembers = input =>
-      getAccountSuggestions(input, this.restApiService, this.serverConfig);
+      this.getAccountSuggestions(input, this.serverConfig);
     this.queryIncludedGroup = input => this.getGroupSuggestions(input);
   }
 
@@ -127,7 +129,7 @@ export class GrGroupMembers extends LitElement {
     super.connectedCallback();
     this.loadGroupDetails();
 
-    fireTitleChange(this, 'Members');
+    fireTitleChange('Members');
   }
 
   static override get styles() {
@@ -137,6 +139,7 @@ export class GrGroupMembers extends LitElement {
       sharedStyles,
       subpageStyles,
       tableStyles,
+      modalStyles,
       css`
         .input {
           width: 15em;
@@ -258,7 +261,7 @@ export class GrGroupMembers extends LitElement {
           </div>
         </div>
       </div>
-      <gr-overlay id="overlay" with-backdrop>
+      <dialog id="modal" tabindex="-1">
         <gr-confirm-delete-item-dialog
           class="confirmDialog"
           .item=${this.itemName}
@@ -266,8 +269,35 @@ export class GrGroupMembers extends LitElement {
           @confirm=${this.handleDeleteConfirm}
           @cancel=${this.handleConfirmDialogCancel}
         ></gr-confirm-delete-item-dialog>
-      </gr-overlay>
+      </dialog>
     `;
+  }
+
+  getAccountSuggestions(
+    input: string,
+    config?: ServerInfo,
+    canSee?: NumericChangeId,
+    filterActive = false
+  ) {
+    return this.restApiService
+      .getSuggestedAccounts(
+        input,
+        SUGGESTIONS_LIMIT,
+        canSee,
+        filterActive,
+        throwingErrorCallback
+      )
+      .then(accounts => {
+        if (!accounts) return [];
+        const accountSuggestions = [];
+        for (const account of accounts) {
+          accountSuggestions.push({
+            name: getAccountDisplayName(config, account),
+            value: account._account_id?.toString(),
+          });
+        }
+        return accountSuggestions;
+      });
   }
 
   private renderGroupMember(member: AccountInfo, index: number) {
@@ -411,7 +441,7 @@ export class GrGroupMembers extends LitElement {
     if (!this.groupName) {
       return Promise.reject(new Error('group name undefined'));
     }
-    this.overlay.close();
+    this.modal.close();
     if (this.itemType === ItemType.MEMBER) {
       return this.restApiService
         .deleteGroupMember(this.groupName, this.itemId! as AccountId)
@@ -457,7 +487,7 @@ export class GrGroupMembers extends LitElement {
   }
 
   private handleConfirmDialogCancel() {
-    this.overlay.close();
+    this.modal.close();
   }
 
   private handleDeleteMember(e: Event) {
@@ -472,7 +502,7 @@ export class GrGroupMembers extends LitElement {
     this.itemName = item;
     this.itemId = keys._account_id;
     this.itemType = ItemType.MEMBER;
-    this.overlay.open();
+    this.modal.showModal();
   }
 
   /* private but used in test */
@@ -490,7 +520,7 @@ export class GrGroupMembers extends LitElement {
           if (errResponse) {
             if (errResponse.status === 404) {
               fireAlert(this, SAVING_ERROR_TEXT);
-              return errResponse;
+              return;
             }
             throw Error(errResponse.statusText);
           }
@@ -525,36 +555,43 @@ export class GrGroupMembers extends LitElement {
     this.itemName = item;
     this.itemId = id;
     this.itemType = ItemType.INCLUDED_GROUP;
-    this.overlay.open();
+    this.modal.showModal();
   }
 
   /* private but used in test */
   getGroupSuggestions(input: string) {
-    return this.restApiService.getSuggestedGroups(input).then(response => {
-      const groups: AutocompleteSuggestion[] = [];
-      for (const [name, group] of Object.entries(response ?? {})) {
-        groups.push({name, value: decodeURIComponent(group.id)});
-      }
-      return groups;
-    });
+    return this.restApiService
+      .getSuggestedGroups(
+        input,
+        /* project=*/ undefined,
+        /* n=*/ undefined,
+        throwingErrorCallback
+      )
+      .then(response => {
+        const groups: AutocompleteSuggestion[] = [];
+        for (const [name, group] of Object.entries(response ?? {})) {
+          groups.push({name, value: decodeURIComponent(group.id)});
+        }
+        return groups;
+      });
   }
 
-  private handleGroupMemberTextChanged(e: CustomEvent) {
+  private handleGroupMemberTextChanged(e: ValueChangedEvent) {
     if (this.loading) return;
     this.groupMemberSearchName = e.detail.value;
   }
 
-  private handleGroupMemberValueChanged(e: CustomEvent) {
+  private handleGroupMemberValueChanged(e: ValueChangedEvent<number>) {
     if (this.loading) return;
     this.groupMemberSearchId = e.detail.value;
   }
 
-  private handleIncludedGroupTextChanged(e: CustomEvent) {
+  private handleIncludedGroupTextChanged(e: ValueChangedEvent) {
     if (this.loading) return;
     this.includedGroupSearchName = e.detail.value;
   }
 
-  private handleIncludedGroupValueChanged(e: CustomEvent) {
+  private handleIncludedGroupValueChanged(e: ValueChangedEvent) {
     if (this.loading) return;
     this.includedGroupSearchId = e.detail.value;
   }

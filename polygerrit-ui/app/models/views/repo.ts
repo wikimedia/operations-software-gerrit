@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import {GerritView} from '../../services/router/router-model';
-import {RepoName} from '../../types/common';
+import {BranchName, RepoName} from '../../types/common';
 import {encodeURL, getBaseUrl} from '../../utils/url-util';
 import {define} from '../dependency';
 import {Model} from '../model';
@@ -25,10 +25,18 @@ export interface RepoViewState extends ViewState {
   repo?: RepoName;
   filter?: string | null;
   offset?: number | string;
+  /**
+   * This is for creating a change from the URL and then redirecting to a file
+   * editing page.
+   */
+  createEdit?: {
+    branch: BranchName;
+    path: string;
+  };
 }
 
 export function createRepoUrl(state: Omit<RepoViewState, 'view'>) {
-  let url = `/admin/repos/${encodeURL(`${state.repo}`, true)}`;
+  let url = `/admin/repos/${encodeURL(`${state.repo}`)}`;
   if (state.detail === RepoDetailView.GENERAL) {
     url += ',general';
   } else if (state.detail === RepoDetailView.ACCESS) {

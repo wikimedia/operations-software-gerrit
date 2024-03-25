@@ -3,7 +3,6 @@
  * Copyright 2019 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {getAppContext} from '../../../services/app-context';
 import {
   PLUGIN_LOADING_TIMEOUT_MS,
   getPluginNameFromUrl,
@@ -12,10 +11,25 @@ import {
 } from './gr-api-utils';
 import {Plugin} from './gr-public-js-api';
 import {getBaseUrl} from '../../../utils/url-util';
-import {getPluginEndpoints} from './gr-plugin-endpoints';
+import {GrPluginEndpoints} from './gr-plugin-endpoints';
 import {PluginApi} from '../../../api/plugin';
 import {ReportingService} from '../../../services/gr-reporting/gr-reporting';
 import {fireAlert} from '../../../utils/event-util';
+import {JsApiService} from './gr-js-api-types';
+import {RestApiService} from '../../../services/gr-rest-api/gr-rest-api';
+import {Finalizable} from '../../../services/registry';
+import {PluginsModel} from '../../../models/plugins/plugins-model';
+import {Gerrit} from '../../../api/gerrit';
+import {fontStyles} from '../../../styles/gr-font-styles';
+import {formStyles} from '../../../styles/gr-form-styles';
+import {menuPageStyles} from '../../../styles/gr-menu-page-styles';
+import {spinnerStyles} from '../../../styles/gr-spinner-styles';
+import {subpageStyles} from '../../../styles/gr-subpage-styles';
+import {tableStyles} from '../../../styles/gr-table-styles';
+import {iconStyles} from '../../../styles/gr-icon-styles';
+import {GrJsApiInterface} from './gr-js-api-interface-element';
+import {define} from '../../../models/dependency';
+import {modalStyles} from '../../../styles/gr-modal-styles';
 
 enum PluginState {
   /** State that indicates the plugin is pending to be loaded. */
@@ -55,6 +69,8 @@ const UNKNOWN_PLUGIN_PREFIX = '__$$__';
 // plugins with incompatible version will not be loaded.
 const API_VERSION = '0.1';
 
+export const pluginLoaderToken = define<PluginLoader>('plugin-loader');
+
 /**
  * PluginLoader, responsible for:
  *
@@ -64,32 +80,54 @@ const API_VERSION = '0.1';
  * Retrieve plugin.
  * Check plugin status and if all plugins loaded.
  */
-export class PluginLoader {
-  _pluginListLoaded = false;
+export class PluginLoader implements Gerrit, Finalizable {
+  public readonly styles = {
+    font: fontStyles,
+    form: formStyles,
+    icon: iconStyles,
+    menuPage: menuPageStyles,
+    spinner: spinnerStyles,
+    subPage: subpageStyles,
+    table: tableStyles,
+    modal: modalStyles,
+  };
 
-  _plugins = new Map<string, PluginObject>();
+  private pluginListLoaded = false;
 
-  _reporting: ReportingService | null = null;
+  private plugins = new Map<string, PluginObject>();
 
   // Promise that resolves when all plugins loaded
-  _loadingPromise: Promise<void> | null = null;
+  private loadingPromise: Promise<void> | null = null;
 
-  // Resolver to resolve _loadingPromise once all plugins loaded
-  _loadingResolver: (() => void) | null = null;
+  // Resolver to resolve loadingPromise once all plugins loaded
+  private loadingResolver: (() => void) | null = null;
 
   private instanceId?: string;
 
-  _getReporting() {
-    if (!this._reporting) {
-      this._reporting = getAppContext().reportingService;
-    }
-    return this._reporting;
+  public readonly jsApiService: JsApiService;
+
+  public readonly pluginsModel: PluginsModel;
+
+  public pluginEndPoints: GrPluginEndpoints;
+
+  constructor(
+    private readonly reportingService: ReportingService,
+    private readonly restApiService: RestApiService
+  ) {
+    this.jsApiService = new GrJsApiInterface(
+      () => this.awaitPluginsLoaded(),
+      this.reportingService
+    );
+    this.pluginsModel = new PluginsModel();
+    this.pluginEndPoints = new GrPluginEndpoints();
   }
+
+  finalize() {}
 
   /**
    * Use the plugin name or use the full url if not recognized.
    */
-  _getPluginKeyFromUrl(url: string) {
+  private getPluginKeyFromUrl(url: string) {
     return getPluginNameFromUrl(url) || `${UNKNOWN_PLUGIN_PREFIX}${url}`;
   }
 
@@ -98,41 +136,41 @@ export class PluginLoader {
    */
   loadPlugins(plugins: string[] = [], instanceId?: string) {
     this.instanceId = instanceId;
-    this._pluginListLoaded = true;
+    this.pluginListLoaded = true;
 
     plugins.forEach(path => {
-      const url = this._urlFor(path, window.ASSETS_PATH);
-      const pluginKey = this._getPluginKeyFromUrl(url);
+      const url = this.urlFor(path, window.ASSETS_PATH);
+      const pluginKey = this.getPluginKeyFromUrl(url);
       // Skip if already installed.
-      if (this._plugins.has(pluginKey)) return;
-      this._plugins.set(pluginKey, {
+      if (this.plugins.has(pluginKey)) return;
+      this.plugins.set(pluginKey, {
         name: pluginKey,
         url,
         state: PluginState.PENDING,
         plugin: null,
       });
 
-      if (this._isPathEndsWith(url, '.js')) {
-        this._loadJsPlugin(path);
+      if (this.isPathEndsWith(url, '.js')) {
+        this.loadJsPlugin(path);
       } else {
-        this._failToLoad(`Unrecognized plugin path ${path}`, path);
+        this.failToLoad(`Unrecognized plugin path ${path}`, path);
       }
     });
 
     this.awaitPluginsLoaded().then(() => {
       const loaded = this.getPluginsByState(PluginState.LOADED);
       const failed = this.getPluginsByState(PluginState.LOAD_FAILED);
-      this._getReporting().pluginsLoaded(loaded.map(p => p.name));
-      this._getReporting().pluginsFailed(failed.map(p => p.name));
+      this.reportingService.pluginsLoaded(loaded.map(p => p.name));
+      this.reportingService.pluginsFailed(failed.map(p => p.name));
     });
   }
 
-  _isPathEndsWith(url: string | URL, suffix: string) {
+  private isPathEndsWith(url: string | URL, suffix: string) {
     if (!(url instanceof URL)) {
       try {
         url = new URL(url);
       } catch (e: unknown) {
-        this._getReporting().error(
+        this.reportingService.error(
           'GrPluginLoader',
           new Error('url parse error'),
           e
@@ -145,7 +183,7 @@ export class PluginLoader {
   }
 
   private getPluginsByState(state: PluginState) {
-    return [...this._plugins.values()].filter(p => p.state === state);
+    return [...this.plugins.values()].filter(p => p.state === state);
   }
 
   install(
@@ -163,31 +201,38 @@ export class PluginLoader {
       src = script && script.baseURI;
     }
     if (!src) {
-      this._failToLoad('Failed to determine src.');
+      this.failToLoad('Failed to determine src.');
       return;
     }
     if (version && version !== API_VERSION) {
-      this._failToLoad(
+      this.failToLoad(
         `Plugin ${src} install error: only version ${API_VERSION} is supported in PolyGerrit. ${version} was given.`,
         src
       );
       return;
     }
 
-    const url = this._urlFor(src);
+    const url = this.urlFor(src);
     const pluginObject = this.getPlugin(url);
     let plugin = pluginObject && pluginObject.plugin;
     if (!plugin) {
-      plugin = new Plugin(url);
+      plugin = new Plugin(
+        url,
+        this.jsApiService,
+        this.reportingService,
+        this.restApiService,
+        this.pluginsModel,
+        this.pluginEndPoints
+      );
     }
     try {
       callback(plugin);
-      this._pluginInstalled(url, plugin);
+      this.pluginInstalled(url, plugin);
     } catch (e: unknown) {
       if (e instanceof Error) {
-        this._failToLoad(`${e.name}: ${e.message}`, src);
+        this.failToLoad(`${e.name}: ${e.message}`, src);
       } else {
-        this._getReporting().error(
+        this.reportingService.error(
           'GrPluginLoader',
           new Error('plugin callback error'),
           e
@@ -197,27 +242,27 @@ export class PluginLoader {
   }
 
   arePluginsLoaded() {
-    if (!this._pluginListLoaded) return false;
+    if (!this.pluginListLoaded) return false;
     return this.getPluginsByState(PluginState.PENDING).length === 0;
   }
 
-  _checkIfCompleted() {
+  private checkIfCompleted() {
     if (this.arePluginsLoaded()) {
-      getPluginEndpoints().setPluginsReady();
-      if (this._loadingResolver) {
-        this._loadingResolver();
-        this._loadingResolver = null;
-        this._loadingPromise = null;
+      this.pluginEndPoints.setPluginsReady();
+      if (this.loadingResolver) {
+        this.loadingResolver();
+        this.loadingResolver = null;
+        this.loadingPromise = null;
       }
     }
   }
 
-  _timeout() {
+  private timeout() {
     const pending = this.getPluginsByState(PluginState.PENDING);
     for (const plugin of pending) {
-      this._updatePluginState(plugin.url, PluginState.LOAD_FAILED);
+      this.updatePluginState(plugin.url, PluginState.LOAD_FAILED);
     }
-    this._checkIfCompleted();
+    this.checkIfCompleted();
     const errorMessage = `Timeout when loading plugins: ${pending
       .map(p => p.name)
       .join(',')}`;
@@ -225,21 +270,25 @@ export class PluginLoader {
     return errorMessage;
   }
 
-  _failToLoad(message: string, pluginUrl?: string) {
+  // Private but mocked in tests.
+  failToLoad(message: string, pluginUrl?: string) {
     // Show an alert with the error
     fireAlert(document, `Plugin install error: ${message} from ${pluginUrl}`);
-    if (pluginUrl) this._updatePluginState(pluginUrl, PluginState.LOAD_FAILED);
-    this._checkIfCompleted();
+    if (pluginUrl) this.updatePluginState(pluginUrl, PluginState.LOAD_FAILED);
+    this.checkIfCompleted();
   }
 
-  _updatePluginState(pluginUrl: string, state: PluginState): PluginObject {
-    const key = this._getPluginKeyFromUrl(pluginUrl);
-    if (this._plugins.has(key)) {
-      this._plugins.get(key)!.state = state;
+  private updatePluginState(
+    pluginUrl: string,
+    state: PluginState
+  ): PluginObject {
+    const key = this.getPluginKeyFromUrl(pluginUrl);
+    if (this.plugins.has(key)) {
+      this.plugins.get(key)!.state = state;
     } else {
       // Plugin is not recorded for some reason.
       console.info(`Plugin loaded separately: ${pluginUrl}`);
-      this._plugins.set(key, {
+      this.plugins.set(key, {
         name: key,
         url: pluginUrl,
         state,
@@ -247,59 +296,61 @@ export class PluginLoader {
       });
     }
     console.debug(`Plugin ${key} ${state}`);
-    return this._plugins.get(key)!;
+    return this.plugins.get(key)!;
   }
 
-  _pluginInstalled(url: string, plugin: PluginApi) {
-    const pluginObj = this._updatePluginState(url, PluginState.LOADED);
+  private pluginInstalled(url: string, plugin: PluginApi) {
+    const pluginObj = this.updatePluginState(url, PluginState.LOADED);
     pluginObj.plugin = plugin;
-    this._getReporting().pluginLoaded(plugin.getPluginName() || url);
-    this._checkIfCompleted();
+    this.reportingService.pluginLoaded(plugin.getPluginName() || url);
+    this.checkIfCompleted();
   }
 
   /**
    * Checks if given plugin path/url is enabled or not.
    */
   isPluginEnabled(pathOrUrl: string) {
-    const url = this._urlFor(pathOrUrl);
-    const key = this._getPluginKeyFromUrl(url);
-    return this._plugins.has(key);
+    const url = this.urlFor(pathOrUrl);
+    const key = this.getPluginKeyFromUrl(url);
+    return this.plugins.has(key);
   }
 
   /**
    * Returns the plugin object with a given url.
    */
   getPlugin(pathOrUrl: string) {
-    const url = this._urlFor(pathOrUrl);
-    const key = this._getPluginKeyFromUrl(url);
-    return this._plugins.get(key);
+    const url = this.urlFor(pathOrUrl);
+    const key = this.getPluginKeyFromUrl(url);
+    return this.plugins.get(key);
   }
 
   /**
    * Checks if given plugin path/url is loaded or not.
    */
   isPluginLoaded(pathOrUrl: string): boolean {
-    const url = this._urlFor(pathOrUrl);
-    const key = this._getPluginKeyFromUrl(url);
-    return this._plugins.has(key)
-      ? this._plugins.get(key)!.state === PluginState.LOADED
+    const url = this.urlFor(pathOrUrl);
+    const key = this.getPluginKeyFromUrl(url);
+    return this.plugins.has(key)
+      ? this.plugins.get(key)!.state === PluginState.LOADED
       : false;
   }
 
-  _loadJsPlugin(pluginUrl: string) {
-    const urlWithAP = this._urlFor(pluginUrl, window.ASSETS_PATH);
-    const urlWithoutAP = this._urlFor(pluginUrl);
+  // Private but mocked in tests.
+  loadJsPlugin(pluginUrl: string) {
+    const urlWithAP = this.urlFor(pluginUrl, window.ASSETS_PATH);
+    const urlWithoutAP = this.urlFor(pluginUrl);
     let onerror = undefined;
     if (urlWithAP !== urlWithoutAP) {
-      onerror = () => this._createScriptTag(urlWithoutAP);
+      onerror = () => this.createScriptTag(urlWithoutAP);
     }
 
-    this._createScriptTag(urlWithAP, onerror);
+    this.createScriptTag(urlWithAP, onerror);
   }
 
-  _createScriptTag(url: string, onerror?: OnErrorEventHandler) {
+  // Private but mocked in tests.
+  createScriptTag(url: string, onerror?: OnErrorEventHandler) {
     if (!onerror) {
-      onerror = () => this._failToLoad(`${url} load error`, url);
+      onerror = () => this.failToLoad(`${url} load error`, url);
     }
 
     const el = document.createElement('script');
@@ -313,7 +364,7 @@ export class PluginLoader {
     return document.body.appendChild(el);
   }
 
-  _urlFor(pathOrUrl: string, assetsPath?: string): string {
+  private urlFor(pathOrUrl: string, assetsPath?: string): string {
     if (isThemeFile(pathOrUrl)) {
       if (assetsPath && this.instanceId) {
         return `${assetsPath}/hosts/${this.instanceId}${THEME_JS}`;
@@ -341,39 +392,28 @@ export class PluginLoader {
 
   awaitPluginsLoaded() {
     // Resolve if completed.
-    this._checkIfCompleted();
+    this.checkIfCompleted();
 
     if (this.arePluginsLoaded()) {
       return Promise.resolve();
     }
-    if (!this._loadingPromise) {
+    if (!this.loadingPromise) {
       // specify window here so that TS pulls the correct setTimeout method
       // if window is not specified, then the function is pulled from node
       // and the return type is NodeJS.Timeout object
       let timerId: number;
-      this._loadingPromise = Promise.race([
-        new Promise<void>(resolve => (this._loadingResolver = resolve)),
+      this.loadingPromise = Promise.race([
+        new Promise<void>(resolve => (this.loadingResolver = resolve)),
         new Promise(
           (_, reject) =>
             (timerId = window.setTimeout(() => {
-              reject(new Error(this._timeout()));
+              reject(new Error(this.timeout()));
             }, PLUGIN_LOADING_TIMEOUT_MS))
         ),
       ]).finally(() => {
         if (timerId) clearTimeout(timerId);
       }) as Promise<void>;
     }
-    return this._loadingPromise;
+    return this.loadingPromise;
   }
-}
-
-// TODO(dmfilippov): Convert to service and add to appContext
-let pluginLoader = new PluginLoader();
-export function _testOnly_resetPluginLoader() {
-  pluginLoader = new PluginLoader();
-  return pluginLoader;
-}
-
-export function getPluginLoader() {
-  return pluginLoader;
 }

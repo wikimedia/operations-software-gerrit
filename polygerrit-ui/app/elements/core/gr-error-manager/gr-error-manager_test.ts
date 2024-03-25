@@ -11,7 +11,6 @@ import {
   __testOnly_ErrorType,
 } from './gr-error-manager';
 import {
-  stubAuth,
   stubReporting,
   stubRestApi,
   waitEventLoop,
@@ -25,7 +24,8 @@ import {AccountId} from '../../../types/common';
 import {waitUntil} from '../../../test/test-utils';
 import {fixture, assert} from '@open-wc/testing';
 import {html} from 'lit';
-import {EventType} from '../../../types/events';
+import {testResolver} from '../../../test/common-test-setup';
+import {authServiceToken} from '../../../services/gr-auth/gr-auth';
 
 suite('gr-error-manager tests', () => {
   let element: GrErrorManager;
@@ -37,9 +37,9 @@ suite('gr-error-manager tests', () => {
     let appContext: AppContext;
 
     setup(async () => {
-      fetchStub = stubAuth('fetch').returns(
-        Promise.resolve({...new Response(), ok: true, status: 204})
-      );
+      fetchStub = sinon
+        .stub(testResolver(authServiceToken), 'fetch')
+        .returns(Promise.resolve({...new Response(), ok: true, status: 204}));
       appContext = getAppContext();
       getLoggedInStub = stubRestApi('getLoggedIn').callsFake(() =>
         appContext.authService.authCheck()
@@ -65,26 +65,19 @@ suite('gr-error-manager tests', () => {
       assert.shadowDom.equal(
         element,
         /* HTML */ `
-          <gr-overlay
-            aria-hidden="true"
-            id="errorOverlay"
-            style="outline: none; display: none;"
-            tabindex="-1"
-            with-backdrop=""
-          >
+          <dialog id="errorModal" tabindex="-1">
             <gr-error-dialog id="errorDialog"> </gr-error-dialog>
-          </gr-overlay>
-          <gr-overlay
-            always-on-top=""
-            aria-hidden="true"
-            id="noInteractionOverlay"
-            no-cancel-on-esc-key=""
-            no-cancel-on-outside-click=""
-            style="outline: none; display: none;"
-            tabindex="-1"
-            with-backdrop=""
-          >
-          </gr-overlay>
+          </dialog>
+          <dialog id="signInModal" tabindex="-1">
+            <gr-dialog
+              id="signInDialog"
+              confirm-label="Sign In"
+              role="dialog"
+              cancel-label=""
+            >
+              <div class="header" slot="header">Refresh Credentials</div>
+            </gr-dialog>
+          </dialog>
         `
       );
     });
@@ -354,17 +347,11 @@ suite('gr-error-manager tests', () => {
       assert.include(toast.shadowRoot.textContent, 'Credentials expired.');
       assert.include(toast.shadowRoot.textContent, 'Refresh credentials');
 
-      // noInteractionOverlay
-      const noInteractionOverlay = element.noInteractionOverlay;
-      assert.isOk(noInteractionOverlay);
-      const noInteractionOverlayCloseSpy = sinon.spy(
-        noInteractionOverlay,
-        'close'
-      );
-      assert.equal(
-        noInteractionOverlay.backdropElement.getAttribute('opened'),
-        ''
-      );
+      // signInModal
+      const signInModal = element.signInModal;
+      assert.isOk(signInModal);
+      const signInModalCloseSpy = sinon.spy(signInModal, 'close');
+      assert.isTrue(signInModal.hasAttribute('open'));
       assert.isFalse(windowOpen.called);
       toast.shadowRoot.querySelector('gr-button.action')!.click();
       assert.isTrue(windowOpen.called);
@@ -392,7 +379,7 @@ suite('gr-error-manager tests', () => {
       assert.include(toast.shadowRoot.textContent, 'Credentials refreshed');
 
       // close overlay
-      assert.isTrue(noInteractionOverlayCloseSpy.called);
+      assert.isTrue(signInModalCloseSpy.called);
     });
 
     test('auth toast should dismiss existing toast', async () => {
@@ -403,7 +390,7 @@ suite('gr-error-manager tests', () => {
 
       // fake an alert
       element.dispatchEvent(
-        new CustomEvent(EventType.SHOW_ALERT, {
+        new CustomEvent('show-alert', {
           detail: {message: 'test reload', action: 'reload'},
           composed: true,
           bubbles: true,
@@ -451,7 +438,7 @@ suite('gr-error-manager tests', () => {
 
       // fake an alert
       element.dispatchEvent(
-        new CustomEvent(EventType.SHOW_ALERT, {
+        new CustomEvent('show-alert', {
           detail: {message: 'test reload', action: 'reload'},
           composed: true,
           bubbles: true,
@@ -464,7 +451,7 @@ suite('gr-error-manager tests', () => {
 
       // new alert
       element.dispatchEvent(
-        new CustomEvent(EventType.SHOW_ALERT, {
+        new CustomEvent('show-alert', {
           detail: {message: 'second-test', action: 'reload'},
           composed: true,
           bubbles: true,
@@ -510,7 +497,7 @@ suite('gr-error-manager tests', () => {
 
       // fake an alert
       element.dispatchEvent(
-        new CustomEvent(EventType.SHOW_ALERT, {
+        new CustomEvent('show-alert', {
           detail: {
             message: 'test-alert',
             action: 'reload',
@@ -531,7 +518,7 @@ suite('gr-error-manager tests', () => {
       const alertObj = {message: 'foo'};
       const showAlertStub = sinon.stub(element, '_showAlert');
       element.dispatchEvent(
-        new CustomEvent(EventType.SHOW_ALERT, {
+        new CustomEvent('show-alert', {
           detail: alertObj,
           composed: true,
           bubbles: true,
@@ -593,8 +580,8 @@ suite('gr-error-manager tests', () => {
     });
 
     test('show-error', async () => {
-      const openStub = sinon.stub(element.errorOverlay, 'open');
-      const closeStub = sinon.stub(element.errorOverlay, 'close');
+      const openStub = sinon.stub(element.errorModal, 'showModal');
+      const closeStub = sinon.stub(element.errorModal, 'close');
       const reportStub = stubReporting('reportErrorDialog');
 
       const message = 'test message';

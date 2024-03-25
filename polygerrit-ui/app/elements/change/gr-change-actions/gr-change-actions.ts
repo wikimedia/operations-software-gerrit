@@ -8,7 +8,6 @@ import '../../shared/gr-button/gr-button';
 import '../../shared/gr-dialog/gr-dialog';
 import '../../shared/gr-dropdown/gr-dropdown';
 import '../../shared/gr-icon/gr-icon';
-import '../../shared/gr-overlay/gr-overlay';
 import '../gr-confirm-abandon-dialog/gr-confirm-abandon-dialog';
 import '../gr-confirm-cherrypick-dialog/gr-confirm-cherrypick-dialog';
 import '../gr-confirm-cherrypick-conflict-dialog/gr-confirm-cherrypick-conflict-dialog';
@@ -18,7 +17,6 @@ import '../gr-confirm-revert-dialog/gr-confirm-revert-dialog';
 import '../gr-confirm-submit-dialog/gr-confirm-submit-dialog';
 import '../../../styles/shared-styles';
 import {navigationToken} from '../../core/gr-navigation/gr-navigation';
-import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {getAppContext} from '../../../services/app-context';
 import {
   CURRENT,
@@ -36,12 +34,13 @@ import {
   HttpMethod,
   NotifyType,
 } from '../../../constants/constants';
-import {EventType as PluginEventType, TargetElement} from '../../../api/plugin';
+import {TargetElement} from '../../../api/plugin';
 import {
   AccountInfo,
   ActionInfo,
   ActionNameToActionInfoMap,
   BranchName,
+  ChangeActionDialog,
   ChangeInfo,
   ChangeViewChangeInfo,
   CherryPickInput,
@@ -57,7 +56,6 @@ import {
   ReviewInput,
 } from '../../../types/common';
 import {GrConfirmAbandonDialog} from '../gr-confirm-abandon-dialog/gr-confirm-abandon-dialog';
-import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
 import {GrDialog} from '../../shared/gr-dialog/gr-dialog';
 import {GrCreateChangeDialog} from '../../admin/gr-create-change-dialog/gr-create-change-dialog';
 import {GrConfirmSubmitDialog} from '../gr-confirm-submit-dialog/gr-confirm-submit-dialog';
@@ -81,15 +79,14 @@ import {
 import {
   fire,
   fireAlert,
-  fireEvent,
-  fireReload,
+  fireError,
+  fireNoBubbleNoCompose,
 } from '../../../utils/event-util';
 import {
   getApprovalInfo,
   getVotingRange,
   StandardLabels,
 } from '../../../utils/label-util';
-import {EventType, ShowAlertEventDetail} from '../../../types/events';
 import {
   ActionPriority,
   ActionType,
@@ -105,11 +102,16 @@ import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, css, html, nothing} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
 import {ifDefined} from 'lit/directives/if-defined.js';
-import {assertIsDefined, queryAll} from '../../../utils/common-util';
+import {assertIsDefined, queryAll, uuid} from '../../../utils/common-util';
 import {Interaction} from '../../../constants/reporting';
 import {rootUrl} from '../../../utils/url-util';
 import {createSearchUrl} from '../../../models/views/search';
 import {createChangeUrl} from '../../../models/views/change';
+import {storageServiceToken} from '../../../services/storage/gr-storage_impl';
+import {ShowRevisionActionsDetail} from '../../shared/gr-js-api-interface/gr-js-api-types';
+import {whenVisible} from '../../../utils/dom-util';
+import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
+import {modalStyles} from '../../../styles/gr-modal-styles';
 import {subscribe} from '../../lit/subscription-controller';
 
 const ERR_BRANCH_EMPTY = 'The destination branch can’t be empty.';
@@ -318,11 +320,6 @@ interface ActionPriorityOverride {
   priority: ActionPriority;
 }
 
-interface ChangeActionDialog extends HTMLElement {
-  resetFocus?(): void;
-  init?(): void;
-}
-
 @customElement('gr-change-actions')
 export class GrChangeActions
   extends LitElement
@@ -340,21 +337,9 @@ export class GrChangeActions
    * @event custom-tap - naming pattern: <action key>-tap
    */
 
-  /**
-   * Fires to show an alert when a send is attempted on the non-latest patch.
-   *
-   * @event show-alert
-   */
-
-  /**
-   * Fires when a change action fails.
-   *
-   * @event show-error
-   */
-
   @query('#mainContent') mainContent?: Element;
 
-  @query('#overlay') overlay?: GrOverlay;
+  @query('#actionsModal') actionsModal?: HTMLDialogElement;
 
   @query('#confirmRebase') confirmRebase?: GrConfirmRebaseDialog;
 
@@ -392,13 +377,6 @@ export class GrChangeActions
 
   RevisionActions = RevisionActions;
 
-  private readonly reporting = getAppContext().reportingService;
-
-  // Accessed in tests
-  readonly jsAPI = getAppContext().jsApiService;
-
-  private readonly getChangeModel = resolve(this, changeModelToken);
-
   @property({type: Object})
   change?: ChangeViewChangeInfo;
 
@@ -414,9 +392,6 @@ export class GrChangeActions
   @property({type: Boolean})
   disableEdit = false;
 
-  @property({type: Boolean})
-  _hasKnownChainState = false;
-
   // private but used in test
   @state() _hideQuickApproveAction = false;
 
@@ -431,9 +406,6 @@ export class GrChangeActions
 
   @property({type: String})
   commitNum?: CommitId;
-
-  @property({type: Boolean})
-  hasParent?: boolean;
 
   @state() latestPatchNum?: PatchSetNumber;
 
@@ -456,6 +428,8 @@ export class GrChangeActions
 
   // private but used in test
   @state() actionLoadingMessage = '';
+
+  @state() private inProgressActionKeys = new Set<string>();
 
   // _computeAllActions always returns an array
   // private but used in test
@@ -545,18 +519,18 @@ export class GrChangeActions
 
   private readonly restApiService = getAppContext().restApiService;
 
-  private readonly storage = getAppContext().storageService;
+  private readonly reporting = getAppContext().reportingService;
+
+  private readonly getPluginLoader = resolve(this, pluginLoaderToken);
+
+  private readonly getChangeModel = resolve(this, changeModelToken);
+
+  private readonly getStorage = resolve(this, storageServiceToken);
 
   private readonly getNavigation = resolve(this, navigationToken);
 
   constructor() {
     super();
-    this.addEventListener('fullscreen-overlay-opened', () =>
-      this.handleHideBackgroundContent()
-    );
-    this.addEventListener('fullscreen-overlay-closed', () =>
-      this.handleShowBackgroundContent()
-    );
     subscribe(
       this,
       () => this.getChangeModel().latestPatchNum$,
@@ -576,13 +550,17 @@ export class GrChangeActions
 
   override connectedCallback() {
     super.connectedCallback();
-    this.jsAPI.addElement(TargetElement.CHANGE_ACTIONS, this);
+    this.getPluginLoader().jsApiService.addElement(
+      TargetElement.CHANGE_ACTIONS,
+      this
+    );
     this.handleLoadingComplete();
   }
 
   static override get styles() {
     return [
       sharedStyles,
+      modalStyles,
       css`
         :host {
           display: flex;
@@ -689,15 +667,16 @@ export class GrChangeActions
           <span id="moreMessage">More</span>
         </gr-dropdown>
       </div>
-      <gr-overlay id="overlay" with-backdrop="">
+      <dialog id="actionsModal" tabindex="-1">
         <gr-confirm-rebase-dialog
           id="confirmRebase"
           class="confirmDialog"
-          .changeNumber=${this.change?._number}
-          @confirm=${this.handleRebaseConfirm}
+          @confirm-rebase=${this.handleRebaseConfirm}
           @cancel=${this.handleConfirmDialogCancel}
+          .disableActions=${this.inProgressActionKeys.has(
+            RevisionActions.REBASE
+          )}
           .branch=${this.change?.branch}
-          .hasParent=${this.hasParent}
           .rebaseOnCurrent=${this.revisionRebaseAction
             ? !!this.revisionRebaseAction.enabled
             : null}
@@ -728,7 +707,7 @@ export class GrChangeActions
         <gr-confirm-revert-dialog
           id="confirmRevertDialog"
           class="confirmDialog"
-          @confirm=${this.handleRevertDialogConfirm}
+          @confirm-revert=${this.handleRevertDialogConfirm}
           @cancel=${this.handleConfirmDialogCancel}
         ></gr-confirm-revert-dialog>
         <gr-confirm-abandon-dialog
@@ -788,7 +767,7 @@ export class GrChangeActions
             Do you really want to delete the edit?
           </div>
         </gr-dialog>
-      </gr-overlay>
+      </dialog>
     `;
   }
 
@@ -822,10 +801,6 @@ export class GrChangeActions
   }
 
   override willUpdate(changedProperties: PropertyValues) {
-    if (changedProperties.has('hasParent')) {
-      this.computeChainState();
-    }
-
     if (changedProperties.has('change')) {
       this.reload();
       this.actions = this.change?.actions ?? {};
@@ -903,17 +878,14 @@ export class GrChangeActions
   }
 
   private handleLoadingComplete() {
-    getPluginLoader()
+    this.getPluginLoader()
       .awaitPluginsLoaded()
       .then(() => (this.loading = false));
   }
 
   // private but used in test
-  sendShowRevisionActions(detail: {
-    change: ChangeInfo;
-    revisionActions: ActionNameToActionInfoMap;
-  }) {
-    this.jsAPI.handleEvent(PluginEventType.SHOW_REVISION_ACTIONS, detail);
+  sendShowRevisionActions(detail: ShowRevisionActionsDetail) {
+    this.getPluginLoader().jsApiService.handleShowRevisionActions(detail);
   }
 
   addActionButton(type: ActionType, label: string) {
@@ -924,8 +896,7 @@ export class GrChangeActions
       enabled: true,
       label,
       __type: type,
-      __key:
-        ADDITIONAL_ACTION_KEY_PREFIX + Math.random().toString(36).substr(2),
+      __key: ADDITIONAL_ACTION_KEY_PREFIX + uuid(),
     };
     this.additionalActions.push(action);
     this.requestUpdate('additionalActions');
@@ -1033,23 +1004,17 @@ export class GrChangeActions
   }
 
   private actionsChanged() {
-    this.hidden =
-      Object.keys(this.actions).length === 0 &&
-      Object.keys(this.revisionActions).length === 0 &&
-      this.additionalActions.length === 0;
     this.actionLoadingMessage = '';
     this.disabledMenuActions = [];
 
-    if (Object.keys(this.revisionActions).length !== 0) {
-      if (!this.revisionActions.download) {
-        this.revisionActions = {
-          ...this.revisionActions,
-          download: DOWNLOAD_ACTION,
-        };
-        fire(this, 'revision-actions-changed', {
-          value: this.revisionActions,
-        });
-      }
+    if (!this.revisionActions.download) {
+      this.revisionActions = {
+        ...this.revisionActions,
+        download: DOWNLOAD_ACTION,
+      };
+      fire(this, 'revision-actions-changed', {
+        value: this.revisionActions,
+      });
     }
     if (
       !this.actions.includedIn &&
@@ -1355,7 +1320,7 @@ export class GrChangeActions
     if (!this.change) {
       return false;
     }
-    return this.jsAPI.canSubmitChange(
+    return this.getPluginLoader().jsApiService.canSubmitChange(
       this.change,
       this.getRevision(this.change, this.latestPatchNum)
     );
@@ -1374,7 +1339,6 @@ export class GrChangeActions
   showRevertDialog() {
     const change = this.change;
     if (!change) return;
-    // The search is still broken if there is a " in the topic.
     const query = `submissionid: "${change.submission_id}"`;
     /* A chromium plugin expects that the modifyRevertMsg hook will only
     be called after the revert button is pressed, hence we populate the
@@ -1388,7 +1352,11 @@ export class GrChangeActions
         return;
       }
       assertIsDefined(this.confirmRevertDialog, 'confirmRevertDialog');
-      this.confirmRevertDialog.populate(change, this.commitMessage, changes);
+      this.confirmRevertDialog.populate(
+        change,
+        this.commitMessage,
+        changes.length
+      );
       this.showActionDialog(this.confirmRevertDialog);
     });
   }
@@ -1556,22 +1524,10 @@ export class GrChangeActions
     return key === '/' ? key : `/${key}`;
   }
 
-  /**
-   * _hasKnownChainState set to true true if hasParent is defined (can be
-   * either true or false). set to false otherwise.
-   *
-   * private but used in test
-   */
-  computeChainState() {
-    this._hasKnownChainState = true;
-  }
-
-  // private but used in test
-  calculateDisabled(action: UIActionInfo) {
-    if (action.__key === 'rebase') {
-      // Rebase button is only disabled when change has no parent(s).
-      return this._hasKnownChainState === false;
-    }
+  private calculateDisabled(action: UIActionInfo) {
+    // TODO(b/270972983): Remove this special casing once the backend is more
+    // aggressive about setting`enabled:true`.
+    if (action.__key === 'rebase') return false;
     return !action.enabled;
   }
 
@@ -1585,27 +1541,29 @@ export class GrChangeActions
     for (const dialogEl of dialogEls) {
       (dialogEl as HTMLElement).hidden = true;
     }
-    assertIsDefined(this.overlay, 'overlay');
-    this.overlay.close();
+    assertIsDefined(this.actionsModal, 'actionsModal');
+    this.actionsModal.close();
   }
 
   // private but used in test
   handleRebaseConfirm(e: CustomEvent<ConfirmRebaseEventDetail>) {
     assertIsDefined(this.confirmRebase, 'confirmRebase');
-    assertIsDefined(this.overlay, 'overlay');
-    const el = this.confirmRebase;
+    assertIsDefined(this.actionsModal, 'actionsModal');
     const payload = {
       base: e.detail.base,
       allow_conflicts: e.detail.allowConflicts,
+      on_behalf_of_uploader: e.detail.onBehalfOfUploader,
     };
-    this.overlay.close();
-    el.hidden = true;
+    const rebaseChain = !!e.detail.rebaseChain;
     this.fireAction(
-      '/rebase',
+      rebaseChain ? '/rebase:chain' : '/rebase',
       assertUIActionInfo(this.revisionActions.rebase),
-      true,
+      rebaseChain ? false : true,
       payload,
-      {allow_conflicts: payload.allow_conflicts}
+      {
+        allow_conflicts: payload.allow_conflicts,
+        on_behalf_of_uploader: payload.on_behalf_of_uploader,
+      }
     );
   }
 
@@ -1621,7 +1579,7 @@ export class GrChangeActions
 
   private handleCherryPickRestApi(conflicts: boolean) {
     assertIsDefined(this.confirmCherrypick, 'confirmCherrypick');
-    assertIsDefined(this.overlay, 'overlay');
+    assertIsDefined(this.actionsModal, 'actionsModal');
     const el = this.confirmCherrypick;
     if (!el.branch) {
       fireAlert(this, ERR_BRANCH_EMPTY);
@@ -1631,7 +1589,7 @@ export class GrChangeActions
       fireAlert(this, ERR_COMMIT_EMPTY);
       return;
     }
-    this.overlay.close();
+    this.actionsModal.close();
     el.hidden = true;
     this.fireAction(
       '/cherrypick',
@@ -1649,13 +1607,13 @@ export class GrChangeActions
   // private but used in test
   handleMoveConfirm() {
     assertIsDefined(this.confirmMove, 'confirmMove');
-    assertIsDefined(this.overlay, 'overlay');
+    assertIsDefined(this.actionsModal, 'actionsModal');
     const el = this.confirmMove;
     if (!el.branch) {
       fireAlert(this, ERR_BRANCH_EMPTY);
       return;
     }
-    this.overlay.close();
+    this.actionsModal.close();
     el.hidden = true;
     this.fireAction('/move', assertUIActionInfo(this.actions.move), false, {
       destination_branch: el.branch,
@@ -1665,11 +1623,11 @@ export class GrChangeActions
 
   private handleRevertDialogConfirm(e: CustomEvent<ConfirmRevertEventDetail>) {
     assertIsDefined(this.confirmRevertDialog, 'confirmRevertDialog');
-    assertIsDefined(this.overlay, 'overlay');
+    assertIsDefined(this.actionsModal, 'actionsModal');
     const revertType = e.detail.revertType;
     const message = e.detail.message;
     const el = this.confirmRevertDialog;
-    this.overlay.close();
+    this.actionsModal.close();
     el.hidden = true;
     switch (revertType) {
       case RevertType.REVERT_SINGLE_CHANGE:
@@ -1701,9 +1659,9 @@ export class GrChangeActions
   // private but used in test
   handleAbandonDialogConfirm() {
     assertIsDefined(this.confirmAbandonDialog, 'confirmAbandonDialog');
-    assertIsDefined(this.overlay, 'overlay');
+    assertIsDefined(this.actionsModal, 'actionsModal');
     const el = this.confirmAbandonDialog;
-    this.overlay.close();
+    this.actionsModal.close();
     el.hidden = true;
     this.fireAction(
       '/abandon',
@@ -1722,8 +1680,8 @@ export class GrChangeActions
   }
 
   private handleCloseCreateFollowUpChange() {
-    assertIsDefined(this.overlay, 'overlay');
-    this.overlay.close();
+    assertIsDefined(this.actionsModal, 'actionsModal');
+    this.actionsModal.close();
   }
 
   private handleDeleteConfirm() {
@@ -1740,7 +1698,7 @@ export class GrChangeActions
 
     // We need to make sure that all cached version of a change
     // edit are deleted.
-    this.storage.eraseEditableContentItemsForChangeEdit(this.changeNum);
+    this.getStorage().eraseEditableContentItemsForChangeEdit(this.changeNum);
 
     this.fireAction(
       '/edit',
@@ -1769,7 +1727,9 @@ export class GrChangeActions
   }
 
   // private but used in test
-  setLoadingOnButtonWithKey(type: string, key: string) {
+  setLoadingOnButtonWithKey(action: UIActionInfo) {
+    const key = action.__key;
+    this.inProgressActionKeys.add(key);
     this.actionLoadingMessage = this.computeLoadingLabel(key);
     let buttonKey = key;
     // TODO(dhruvsri): clean this up later
@@ -1780,12 +1740,14 @@ export class GrChangeActions
     }
 
     // If the action appears in the overflow menu.
-    if (this.getActionOverflowIndex(type, buttonKey) !== -1) {
+    if (this.getActionOverflowIndex(action.__type, buttonKey) !== -1) {
       this.disabledMenuActions.push(buttonKey === '/' ? 'delete' : buttonKey);
       this.requestUpdate('disabledMenuActions');
       return () => {
+        this.inProgressActionKeys.delete(key);
         this.actionLoadingMessage = '';
         this.disabledMenuActions = [];
+        this.requestUpdate();
       };
     }
 
@@ -1799,9 +1761,11 @@ export class GrChangeActions
     buttonEl.setAttribute('loading', 'true');
     buttonEl.disabled = true;
     return () => {
+      this.inProgressActionKeys.delete(action.__key);
       this.actionLoadingMessage = '';
       buttonEl.removeAttribute('loading');
       buttonEl.disabled = false;
+      this.requestUpdate();
     };
   }
 
@@ -1813,10 +1777,7 @@ export class GrChangeActions
     payload?: RequestPayload,
     toReport?: Object
   ) {
-    const cleanupFn = this.setLoadingOnButtonWithKey(
-      action.__type,
-      action.__key
-    );
+    const cleanupFn = this.setLoadingOnButtonWithKey(action);
     this.reporting.reportInteraction(Interaction.CHANGE_ACTION_FIRED, {
       endpoint,
       toReport,
@@ -1837,8 +1798,9 @@ export class GrChangeActions
     this.hideAllDialogs();
     if (dialog.init) dialog.init();
     dialog.hidden = false;
-    assertIsDefined(this.overlay, 'overlay');
-    this.overlay.open().then(() => {
+    assertIsDefined(this.actionsModal, 'actionsModal');
+    this.actionsModal.showModal();
+    whenVisible(dialog, () => {
       if (dialog.resetFocus) {
         dialog.resetFocus();
       }
@@ -1849,7 +1811,9 @@ export class GrChangeActions
   // https://issues.gerritcodereview.com/issues/40004936 is resolved.
   // private but used in test
   setReviewOnRevert(newChangeId: NumericChangeId) {
-    const review = this.jsAPI.getReviewPostRevert(this.change);
+    const review = this.getPluginLoader().jsApiService.getReviewPostRevert(
+      this.change
+    );
     if (!review) {
       return Promise.resolve(undefined);
     }
@@ -1861,6 +1825,7 @@ export class GrChangeActions
     if (!response) {
       return;
     }
+    // response is guaranteed to be ok (due to semantics of rest-api methods)
     return this.restApiService.getResponseObject(response).then(obj => {
       switch (action.__key) {
         case ChangeActions.REVERT: {
@@ -1894,7 +1859,10 @@ export class GrChangeActions
         case ChangeActions.REBASE_EDIT:
         case ChangeActions.REBASE:
         case ChangeActions.SUBMIT:
-          fireReload(this, true);
+          // Hide rebase dialog only if the action succeeds
+          this.actionsModal?.close();
+          this.hideAllDialogs();
+          this.getChangeModel().navigateToChangeResetReload();
           break;
         case ChangeActions.REVERT_SUBMISSION: {
           const revertSubmistionInfo = obj as unknown as RevertSubmissionInfo;
@@ -1906,12 +1874,11 @@ export class GrChangeActions
           /* If there is only 1 change then gerrit will automatically
             redirect to that change */
           const topic = revertSubmistionInfo.revert_changes[0].topic;
-          const query = `topic:${topic}`;
-          if (topic) this.getNavigation().setUrl(createSearchUrl({query}));
+          this.getNavigation().setUrl(createSearchUrl({topic}));
           break;
         }
         default:
-          fireReload(this, true);
+          this.getChangeModel().navigateToChangeResetReload();
           break;
       }
     });
@@ -1925,13 +1892,7 @@ export class GrChangeActions
   ) {
     if (!response) {
       return Promise.resolve(() => {
-        this.dispatchEvent(
-          new CustomEvent('show-error', {
-            detail: {message: `Could not perform action '${action.__key}'`},
-            composed: true,
-            bubbles: true,
-          })
-        );
+        fireError(this, `Could not perform action '${action.__key}'`);
       });
     }
     if (action && action.__key === RevisionActions.CHERRYPICK) {
@@ -1949,13 +1910,7 @@ export class GrChangeActions
       }
     }
     return response.text().then(errText => {
-      this.dispatchEvent(
-        new CustomEvent('show-error', {
-          detail: {message: `Could not perform action: ${errText}`},
-          composed: true,
-          bubbles: true,
-        })
-      );
+      fireError(this, `Could not perform action: ${errText}`);
       if (!errText.startsWith('Change is already up to date')) {
         throw Error(errText);
       }
@@ -1986,19 +1941,13 @@ export class GrChangeActions
       .fetchChangeUpdates(change)
       .then(result => {
         if (!result.isLatest) {
-          this.dispatchEvent(
-            new CustomEvent<ShowAlertEventDetail>(EventType.SHOW_ALERT, {
-              detail: {
-                message:
-                  'Cannot set label: a newer patch has been ' +
-                  'uploaded to this change.',
-                action: 'Reload',
-                callback: () => fireReload(this, true),
-              },
-              composed: true,
-              bubbles: true,
-            })
-          );
+          fire(this, 'show-alert', {
+            message:
+              'Cannot set label: a newer patch has been ' +
+              'uploaded to this change.',
+            action: 'Reload',
+            callback: () => this.getChangeModel().navigateToChangeResetReload(),
+          });
 
           // Because this is not a network error, call the cleanup function
           // but not the error handler.
@@ -2060,12 +2009,12 @@ export class GrChangeActions
 
   // private but used in test
   handleDownloadTap() {
-    fireEvent(this, 'download-tap');
+    fire(this, 'download-tap', {});
   }
 
   // private but used in test
   handleIncludedInTap() {
-    fireEvent(this, 'included-tap');
+    fire(this, 'included-tap', {});
   }
 
   // private but used in test
@@ -2097,7 +2046,7 @@ export class GrChangeActions
 
     // We need to make sure that all cached version of a change
     // edit are deleted.
-    this.storage.eraseEditableContentItemsForChangeEdit(this.changeNum);
+    this.getStorage().eraseEditableContentItemsForChangeEdit(this.changeNum);
 
     this.fireAction(
       '/edit:publish',
@@ -2116,18 +2065,6 @@ export class GrChangeActions
       assertUIActionInfo(this.actions.rebaseEdit),
       false
     );
-  }
-
-  // private but used in test
-  handleHideBackgroundContent() {
-    assertIsDefined(this.mainContent, 'mainContent');
-    this.mainContent.classList.add('overlayOpen');
-  }
-
-  // private but used in test
-  handleShowBackgroundContent() {
-    assertIsDefined(this.mainContent, 'mainContent');
-    this.mainContent.classList.remove('overlayOpen');
   }
 
   /**
@@ -2266,17 +2203,21 @@ export class GrChangeActions
   }
 
   private handleEditTap() {
-    this.dispatchEvent(new CustomEvent('edit-tap', {bubbles: false}));
+    fireNoBubbleNoCompose(this, 'edit-tap', {});
   }
 
   private handleStopEditTap() {
-    this.dispatchEvent(new CustomEvent('stop-edit-tap', {bubbles: false}));
+    fireNoBubbleNoCompose(this, 'stop-edit-tap', {});
   }
 }
 
 declare global {
   interface HTMLElementEventMap {
+    'download-tap': CustomEvent<{}>;
+    'edit-tap': CustomEvent<{}>;
+    'included-tap': CustomEvent<{}>;
     'revision-actions-changed': CustomEvent<{value: ActionNameToActionInfoMap}>;
+    'stop-edit-tap': CustomEvent<{}>;
   }
   interface HTMLElementTagNameMap {
     'gr-change-actions': GrChangeActions;

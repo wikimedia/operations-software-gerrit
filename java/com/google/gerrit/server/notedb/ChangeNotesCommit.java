@@ -15,8 +15,8 @@
 package com.google.gerrit.server.notedb;
 
 import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_ATTENTION;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_PATCH_SET;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_ATTENTION;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_PATCH_SET;
 
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.MultimapBuilder;
@@ -25,6 +25,7 @@ import com.google.gerrit.server.git.InMemoryInserter;
 import com.google.gerrit.server.git.InsertedObject;
 import java.io.IOException;
 import java.util.List;
+import java.util.Locale;
 import org.eclipse.jgit.errors.IncorrectObjectTypeException;
 import org.eclipse.jgit.errors.MissingObjectException;
 import org.eclipse.jgit.lib.AnyObjectId;
@@ -125,10 +126,10 @@ public class ChangeNotesCommit extends RevCommit {
       List<FooterLine> src = getFooterLines();
       footerLines = MultimapBuilder.hashKeys(src.size()).arrayListValues(1).build();
       for (FooterLine fl : src) {
-        footerLines.put(fl.getKey().toLowerCase(), fl.getValue());
+        footerLines.put(fl.getKey().toLowerCase(Locale.US), fl.getValue());
       }
     }
-    return footerLines.get(key.getName().toLowerCase());
+    return footerLines.get(key.getName().toLowerCase(Locale.US));
   }
 
   public boolean isAttentionSetCommitOnly(boolean hasChangeMessage) {
@@ -137,7 +138,7 @@ public class ChangeNotesCommit extends RevCommit {
             .keySet()
             .equals(
                 Sets.newHashSet(
-                    FOOTER_PATCH_SET.getName().toLowerCase(),
-                    FOOTER_ATTENTION.getName().toLowerCase()));
+                    FOOTER_PATCH_SET.getName().toLowerCase(Locale.US),
+                    FOOTER_ATTENTION.getName().toLowerCase(Locale.US)));
   }
 }

@@ -5,7 +5,6 @@
  */
 import '../gr-autocomplete-dropdown/gr-autocomplete-dropdown';
 import '../gr-cursor-manager/gr-cursor-manager';
-import '../gr-overlay/gr-overlay';
 import '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
 import '../../../styles/shared-styles';
 import {getAppContext} from '../../../services/app-context';
@@ -13,17 +12,16 @@ import {IronAutogrowTextareaElement} from '@polymer/iron-autogrow-textarea/iron-
 import {
   GrAutocompleteDropdown,
   Item,
-  ItemSelectedEvent,
+  ItemSelectedEventDetail,
 } from '../gr-autocomplete-dropdown/gr-autocomplete-dropdown';
 import {Key} from '../../../utils/dom-util';
 import {ValueChangedEvent} from '../../../types/events';
 import {fire} from '../../../utils/event-util';
-import {LitElement, css, html, nothing} from 'lit';
+import {LitElement, css, html} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {PropertyValues} from 'lit';
 import {classMap} from 'lit/directives/class-map.js';
-import {KnownExperimentId} from '../../../services/flags/flags';
 import {NumericChangeId, ServerInfo} from '../../../api/rest-api';
 import {subscribe} from '../../lit/subscription-controller';
 import {resolve} from '../../../models/dependency';
@@ -69,7 +67,7 @@ function isEmojiSuggestion(x: EmojiSuggestion | Item): x is EmojiSuggestion {
 
 declare global {
   interface HTMLElementEventMap {
-    'item-selected': CustomEvent<ItemSelectedEvent>;
+    'item-selected': CustomEvent<ItemSelectedEventDetail>;
   }
 }
 
@@ -115,8 +113,6 @@ export class GrTextarea extends LitElement {
   readonly reporting = getAppContext().reportingService;
 
   private readonly getChangeModel = resolve(this, changeModelToken);
-
-  private readonly flagsService = getAppContext().flagsService;
 
   private readonly restApiService = getAppContext().restApiService;
 
@@ -234,9 +230,7 @@ export class GrTextarea extends LitElement {
       hiddenText in order to correctly position the dropdown. After being moved,
       it is set as the positionTarget for the emojiSuggestions dropdown. -->
       <span id="caratSpan"></span>
-      ${this.renderEmojiDropdown()}
-      ${this.renderMentionsDropdown()}
-      </gr-autocomplete-dropdown>
+      ${this.renderEmojiDropdown()} ${this.renderMentionsDropdown()}
       <iron-autogrow-textarea
         id="textarea"
         class=${classMap({noBorder: this.hideBorder})}
@@ -268,8 +262,6 @@ export class GrTextarea extends LitElement {
   }
 
   private renderMentionsDropdown() {
-    if (!this.flagsService.isEnabled(KnownExperimentId.MENTION_USERS))
-      return nothing;
     return html` <gr-autocomplete-dropdown
       id="mentionsSuggestions"
       .suggestions=${this.suggestions}
@@ -302,14 +294,16 @@ export class GrTextarea extends LitElement {
     return this.textarea!.textarea;
   }
 
+  override focus() {
+    this.textarea?.textarea.focus();
+  }
+
   putCursorAtEnd() {
     const textarea = this.getNativeTextarea();
     // Put the cursor at the end always.
     textarea.selectionStart = textarea.value.length;
     textarea.selectionEnd = textarea.selectionStart;
-    setTimeout(() => {
-      textarea.focus();
-    });
+    textarea.focus();
   }
 
   private getVisibleDropdown() {
@@ -343,7 +337,7 @@ export class GrTextarea extends LitElement {
     e.preventDefault();
     e.stopPropagation();
     this.getVisibleDropdown().cursorUp();
-    this.textarea!.textarea.focus();
+    this.focus();
   }
 
   private handleDownKey(e: KeyboardEvent) {
@@ -353,16 +347,12 @@ export class GrTextarea extends LitElement {
     e.preventDefault();
     e.stopPropagation();
     this.getVisibleDropdown().cursorDown();
-    this.textarea!.textarea.focus();
+    this.focus();
   }
 
   private handleTabKey(e: KeyboardEvent) {
-    // Tab should have normal behavior if the picker is closed or if the user
-    // has only typed ':'.
-    if (
-      !this.isDropdownVisible() ||
-      (this.isEmojiDropdownActive() && this.currentSearchString === '')
-    ) {
+    // Tab should have normal behavior if the picker is closed.
+    if (!this.isDropdownVisible()) {
       return;
     }
     e.preventDefault();
@@ -372,12 +362,9 @@ export class GrTextarea extends LitElement {
 
   // private but used in test
   handleEnterByKey(e: KeyboardEvent) {
-    // Enter should have newline behavior if the picker is closed or if the user
-    // has only typed ':'. Also make sure that shortcuts aren't clobbered.
-    if (
-      !this.isDropdownVisible() ||
-      (this.isEmojiDropdownActive() && this.currentSearchString === '')
-    ) {
+    // Enter should have newline behavior if the picker is closed. Also make
+    // sure that shortcuts aren't clobbered.
+    if (!this.isDropdownVisible()) {
       this.indent(e);
       return;
     }
@@ -388,7 +375,7 @@ export class GrTextarea extends LitElement {
   }
 
   // private but used in test
-  handleDropdownItemSelect(e: CustomEvent<ItemSelectedEvent>) {
+  handleDropdownItemSelect(e: CustomEvent<ItemSelectedEventDetail>) {
     if (e.detail.selected?.dataset['value']) {
       this.setValue(e.detail.selected?.dataset['value']);
     }
@@ -488,14 +475,19 @@ export class GrTextarea extends LitElement {
   }
 
   private async computeSuggestions() {
+    this.suggestions = [];
     if (this.currentSearchString === undefined) {
-      this.suggestions = [];
       return;
     }
+    const searchString = this.currentSearchString;
+    let suggestions: (Item | EmojiSuggestion)[] = [];
     if (this.isEmojiDropdownActive()) {
-      this.computeEmojiSuggestions(this.currentSearchString);
+      suggestions = this.computeEmojiSuggestions(this.currentSearchString);
     } else if (this.isMentionsDropdownActive()) {
-      await this.computeReviewerSuggestions();
+      suggestions = await this.computeReviewerSuggestions();
+    }
+    if (searchString === this.currentSearchString) {
+      this.suggestions = suggestions;
     }
   }
 
@@ -532,8 +524,6 @@ export class GrTextarea extends LitElement {
   }
 
   private isMentionsDropdownActive() {
-    if (!this.flagsService.isEnabled(KnownExperimentId.MENTION_USERS))
-      return false;
     return (
       this.specialCharIndex !== -1 && this.text[this.specialCharIndex] === '@'
     );
@@ -548,10 +538,8 @@ export class GrTextarea extends LitElement {
   private computeSpecialCharIndex() {
     const charAtCursor = this.text[this.textarea!.selectionStart - 1];
 
-    if (this.flagsService.isEnabled(KnownExperimentId.MENTION_USERS)) {
-      if (charAtCursor === '@' && this.specialCharIndex === -1) {
-        this.specialCharIndex = this.getSpecialCharIndex(this.text);
-      }
+    if (charAtCursor === '@' && this.specialCharIndex === -1) {
+      this.specialCharIndex = this.getSpecialCharIndex(this.text);
     }
     if (charAtCursor === ':' && this.specialCharIndex === -1) {
       this.specialCharIndex = this.getSpecialCharIndex(this.text);
@@ -573,7 +561,7 @@ export class GrTextarea extends LitElement {
   async handleTextChanged() {
     await this.computeSuggestions();
     this.openOrResetDropdown();
-    this.textarea!.textarea.focus();
+    this.focus();
   }
 
   private openEmojiDropdown() {
@@ -587,7 +575,7 @@ export class GrTextarea extends LitElement {
   }
 
   // private but used in test
-  formatSuggestions(matchedSuggestions: EmojiSuggestion[]) {
+  formatSuggestions(matchedSuggestions: EmojiSuggestion[]): EmojiSuggestion[] {
     const suggestions = [];
     for (const suggestion of matchedSuggestions) {
       assert(isEmojiSuggestion(suggestion), 'malformed suggestion');
@@ -595,28 +583,27 @@ export class GrTextarea extends LitElement {
       suggestion.text = `${suggestion.value} ${suggestion.match}`;
       suggestions.push(suggestion);
     }
-    this.suggestions = suggestions;
+    return suggestions;
   }
 
   // private but used in test
-  computeEmojiSuggestions(suggestionsText?: string) {
+  computeEmojiSuggestions(suggestionsText?: string): EmojiSuggestion[] {
     if (suggestionsText === undefined) {
-      this.suggestions = [];
-      return;
+      return [];
     }
     if (!suggestionsText.length) {
-      this.formatSuggestions(ALL_SUGGESTIONS);
+      return this.formatSuggestions(ALL_SUGGESTIONS);
     } else {
       const matches = ALL_SUGGESTIONS.filter(suggestion =>
         suggestion.match.includes(suggestionsText)
       ).slice(0, MAX_ITEMS_DROPDOWN);
-      this.formatSuggestions(matches);
+      return this.formatSuggestions(matches);
     }
   }
 
   // TODO(dhruvsri): merge with getAccountSuggestions in account-util
-  async computeReviewerSuggestions() {
-    this.suggestions = (
+  async computeReviewerSuggestions(): Promise<Item[]> {
+    return (
       (await this.restApiService.getSuggestedAccounts(
         this.currentSearchString ?? '',
         /* number= */ 15,
@@ -644,13 +631,7 @@ export class GrTextarea extends LitElement {
   }
 
   private fireChangedEvents() {
-    // This is a bit redundant, because the `text` property has `notify:true`,
-    // so whenever the `text` changes the component fires two identical events
-    // `text-changed` and `value-changed`.
-    fire(this, 'value-changed', {value: this.text});
     fire(this, 'text-changed', {value: this.text});
-    // Relay the event.
-    fire(this, 'bind-value-changed', {value: this.text});
   }
 
   private indent(e: KeyboardEvent): void {

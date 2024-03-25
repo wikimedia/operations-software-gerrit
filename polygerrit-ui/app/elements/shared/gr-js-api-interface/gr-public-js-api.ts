@@ -13,7 +13,7 @@ import {GrAdminApi} from '../../plugins/gr-admin-api/gr-admin-api';
 import {GrAnnotationActionsInterface} from './gr-annotation-actions-js-api';
 import {GrEventHelper} from '../../plugins/gr-event-helper/gr-event-helper';
 import {GrPluginRestApi} from './gr-plugin-rest-api';
-import {getPluginEndpoints} from './gr-plugin-endpoints';
+import {EndpointType, GrPluginEndpoints} from './gr-plugin-endpoints';
 import {getPluginNameFromUrl, send} from './gr-api-utils';
 import {GrReportingJsApi} from './gr-reporting-js-api';
 import {EventType, PluginApi, TargetElement} from '../../../api/plugin';
@@ -21,7 +21,6 @@ import {RequestPayload} from '../../../types/common';
 import {HttpMethod} from '../../../constants/constants';
 import {GrChangeActions} from '../../change/gr-change-actions/gr-change-actions';
 import {GrChecksApi} from '../../plugins/gr-checks-api/gr-checks-api';
-import {getAppContext} from '../../../services/app-context';
 import {AdminPluginApi} from '../../../api/admin';
 import {AnnotationPluginApi} from '../../../api/annotation';
 import {EventHelperPluginApi} from '../../../api/event-helper';
@@ -32,22 +31,12 @@ import {ChangeReplyPluginApi} from '../../../api/change-reply';
 import {RestPluginApi} from '../../../api/rest';
 import {HookApi, PluginElement, RegisterOptions} from '../../../api/hook';
 import {AttributeHelperPluginApi} from '../../../api/attribute-helper';
-
-/**
- * Plugin-provided custom components can affect content in extension
- * points using one of following methods:
- * - DECORATE: custom component is set with `content` attribute and may
- *   decorate (e.g. style) DOM element.
- * - REPLACE: contents of extension point are replaced with the custom
- *   component.
- * - STYLE: custom component is a shared styles module that is inserted
- *   into the extension point.
- */
-enum EndpointType {
-  DECORATE = 'decorate',
-  REPLACE = 'replace',
-  STYLE = 'style',
-}
+import {JsApiService} from './gr-js-api-types';
+import {ReportingService} from '../../../services/gr-reporting/gr-reporting';
+import {RestApiService} from '../../../services/gr-rest-api/gr-rest-api';
+import {PluginsModel} from '../../../models/plugins/plugins-model';
+import {GrPluginStyleApi} from './gr-plugin-style-api';
+import {StylePluginApi} from '../../../api/styles';
 
 const PLUGIN_NAME_NOT_SET = 'NULL';
 
@@ -60,13 +49,14 @@ export class Plugin implements PluginApi {
 
   private readonly _name: string = PLUGIN_NAME_NOT_SET;
 
-  private readonly jsApi = getAppContext().jsApiService;
-
-  private readonly report = getAppContext().reportingService;
-
-  private readonly restApiService = getAppContext().restApiService;
-
-  constructor(url?: string) {
+  constructor(
+    url: string,
+    private readonly jsApi: JsApiService,
+    private readonly report: ReportingService,
+    private readonly restApiService: RestApiService,
+    private readonly pluginsModel: PluginsModel,
+    private readonly pluginEndpoints: GrPluginEndpoints
+  ) {
     this.domHooks = new GrDomHooksManager(this);
 
     if (!url) {
@@ -86,18 +76,6 @@ export class Plugin implements PluginApi {
 
   getPluginName() {
     return this._name;
-  }
-
-  registerStyleModule(endpoint: string, moduleName: string) {
-    console.warn(
-      `The deprecated plugin API 'registerStyleModule()' was called with parameters '${endpoint}' and '${moduleName}'.`
-    );
-    this.report.trackApi(this, 'plugin', 'registerStyleModule');
-    getPluginEndpoints().registerModule(this, {
-      endpoint,
-      type: EndpointType.STYLE,
-      moduleName,
-    });
   }
 
   /**
@@ -145,7 +123,7 @@ export class Plugin implements PluginApi {
     const slot = options?.slot ?? '';
     const domHook = this.domHooks.getDomHook<T>(endpoint, moduleName);
     moduleName = moduleName || domHook.getModuleName();
-    getPluginEndpoints().registerModule(this, {
+    this.pluginEndpoints.registerModule(this, {
       slot,
       endpoint,
       type,
@@ -211,12 +189,17 @@ export class Plugin implements PluginApi {
   }
 
   annotationApi(): AnnotationPluginApi {
-    return new GrAnnotationActionsInterface(this);
+    return new GrAnnotationActionsInterface(
+      this.report,
+      this.pluginsModel,
+      this
+    );
   }
 
   changeActions(): ChangeActionsPluginApi {
     return new GrChangeActionsInterface(
       this,
+      this.jsApi,
       this.jsApi.getElement(
         TargetElement.CHANGE_ACTIONS
       ) as unknown as GrChangeActions
@@ -228,27 +211,31 @@ export class Plugin implements PluginApi {
   }
 
   checks(): GrChecksApi {
-    return new GrChecksApi(this);
+    return new GrChecksApi(this.report, this.pluginsModel, this);
   }
 
   reporting(): ReportingPluginApi {
-    return new GrReportingJsApi(this);
+    return new GrReportingJsApi(this.report, this);
+  }
+
+  styleApi(): StylePluginApi {
+    return new GrPluginStyleApi(this.report, this);
   }
 
   admin(): AdminPluginApi {
-    return new GrAdminApi(this);
+    return new GrAdminApi(this.report, this);
   }
 
   restApi(prefix?: string): RestPluginApi {
-    return new GrPluginRestApi(this, prefix);
+    return new GrPluginRestApi(this.restApiService, this.report, this, prefix);
   }
 
   attributeHelper(element: HTMLElement): AttributeHelperPluginApi {
-    return new GrAttributeHelper(this, element);
+    return new GrAttributeHelper(this.report, this, element);
   }
 
   eventHelper(element: HTMLElement): EventHelperPluginApi {
-    return new GrEventHelper(this, element);
+    return new GrEventHelper(this.report, this, element);
   }
 
   popup(): Promise<PopupPluginApi>;

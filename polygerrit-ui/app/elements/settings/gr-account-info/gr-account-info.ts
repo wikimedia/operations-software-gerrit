@@ -3,15 +3,19 @@
  * Copyright 2016 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
 import '@polymer/iron-input/iron-input';
 import '../../shared/gr-avatar/gr-avatar';
 import '../../shared/gr-date-formatter/gr-date-formatter';
+import '../../shared/gr-tooltip-content/gr-tooltip-content';
 import '../../../styles/gr-form-styles';
 import '../../../styles/shared-styles';
+import '../../shared/gr-account-chip/gr-account-chip';
+import '../../shared/gr-hovercard-account/gr-hovercard-account-contents';
 import {AccountDetailInfo, ServerInfo} from '../../../types/common';
 import {EditableAccountField} from '../../../constants/constants';
 import {getAppContext} from '../../../services/app-context';
-import {fire, fireEvent} from '../../../utils/event-util';
+import {fire} from '../../../utils/event-util';
 import {LitElement, css, html, nothing, PropertyValues} from 'lit';
 import {customElement, property, state} from 'lit/decorators.js';
 import {sharedStyles} from '../../../styles/shared-styles';
@@ -21,12 +25,6 @@ import {BindValueChangeEvent, ValueChangedEvent} from '../../../types/events';
 
 @customElement('gr-account-info')
 export class GrAccountInfo extends LitElement {
-  /**
-   * Fired when account details are changed.
-   *
-   * @event account-detail-update
-   */
-
   // private but used in test
   @state() nameMutable?: boolean;
 
@@ -75,12 +73,42 @@ export class GrAccountInfo extends LitElement {
       div section.hide {
         display: none;
       }
+      gr-hovercard-account-contents {
+        display: block;
+        max-width: 600px;
+        margin-top: var(--spacing-m);
+        background: var(--dialog-background-color);
+        border: 1px solid var(--border-color);
+        border-radius: var(--border-radius);
+        box-shadow: var(--elevation-level-5);
+      }
+      iron-autogrow-textarea {
+        background-color: var(--view-background-color);
+        color: var(--primary-text-color);
+      }
+      .lengthCounter {
+        font-weight: var(--font-weight-normal);
+      }
+      p {
+        max-width: 65ch;
+        margin-bottom: var(--spacing-m);
+      }
     `,
   ];
 
   override render() {
     if (!this.account || this.loading) return nothing;
     return html`<div class="gr-form-styles">
+      <p>
+        All profile fields below may be publicly displayed to others, including
+        on changes you are associated with, as well as in search and
+        autocompletion.
+        <a
+          href="https://gerrit-review.googlesource.com/Documentation/user-privacy.html"
+          >Learn more</a
+        >
+      </p>
+      <gr-endpoint-decorator name="profile"></gr-endpoint-decorator>
       <section>
         <span class="title"></span>
         <span class="value">
@@ -188,25 +216,43 @@ export class GrAccountInfo extends LitElement {
         </span>
       </section>
       <section>
-        <label class="title" for="statusInput">About me (e.g. employer)</label>
+        <span class="title">
+          <label for="statusInput">About me (e.g. employer)</label>
+          <div class="lengthCounter">
+            ${this.account.status?.length ?? 0}/140
+          </div>
+        </span>
         <span class="value">
-          <iron-input
-            id="statusIronInput"
-            @keydown=${this.handleKeydown}
-            .bindValue=${this.account?.status}
+          <iron-autogrow-textarea
+            id="statusInput"
+            .name=${'statusInput'}
+            ?disabled=${this.saving}
+            maxlength="140"
+            .value=${this.account?.status}
             @bind-value-changed=${(e: BindValueChangeEvent) => {
               const oldAccount = this.account;
               if (!oldAccount || oldAccount.status === e.detail.value) return;
               this.account = {...oldAccount, status: e.detail.value};
               this.hasStatusChange = true;
             }}
+          ></iron-autogrow-textarea>
+        </span>
+      </section>
+      <section>
+        <span class="title">
+          <gr-tooltip-content
+            title="This is how you appear to others"
+            has-tooltip
+            show-icon
           >
-            <input
-              id="statusInput"
-              ?disabled=${this.saving}
-              @keydown=${this.handleKeydown}
-            />
-          </iron-input>
+            Account preview
+          </gr-tooltip-content>
+        </span>
+        <span class="value">
+          <gr-account-chip .account=${this.account}></gr-account-chip>
+          <gr-hovercard-account-contents
+            .account=${this.account}
+          ></gr-hovercard-account-contents>
         </span>
       </section>
     </div>`;
@@ -289,7 +335,7 @@ export class GrAccountInfo extends LitElement {
         this.hasDisplayNameChange = false;
         this.hasStatusChange = false;
         this.saving = false;
-        fireEvent(this, 'account-detail-update');
+        fire(this, 'account-detail-update', {});
       });
   }
 
@@ -358,6 +404,8 @@ export class GrAccountInfo extends LitElement {
 declare global {
   interface HTMLElementEventMap {
     'unsaved-changes-changed': ValueChangedEvent<boolean>;
+    /** Fired when account details are changed. */
+    'account-detail-update': CustomEvent<{}>;
   }
   interface HTMLElementTagNameMap {
     'gr-account-info': GrAccountInfo;

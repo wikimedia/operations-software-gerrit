@@ -113,6 +113,8 @@ const appThemeCss = safeStyleSheet`
     --white-10: #ffffff1a;
     --white-12: #ffffff1f;
 
+    --modal-opacity: 0.32;
+
     --error-foreground: var(--red-700);
     --error-background: var(--red-50);
     --error-background-hover: linear-gradient(
@@ -224,7 +226,7 @@ const appThemeCss = safeStyleSheet`
     --tooltip-button-text-color: var(--gerrit-blue-dark);
     --negative-red-text-color: var(--red-600);
     --positive-green-text-color: var(--green-700);
-    --indirect-ancestor-text-color: var(--green-700);
+    --indirect-relation-text-color: var(--green-700);
 
     /* background colors */
     /* primary background colors */
@@ -246,10 +248,13 @@ const appThemeCss = safeStyleSheet`
     --table-subheader-background-color: var(--background-color-tertiary);
     --view-background-color: var(--background-color-primary);
     /* unique background colors */
+    /* TODO: Remove assignee colors once references are migrated */
     --assignee-highlight-color: #fcfad6;
-    /* TODO: Find a nicer way to combine the --assignee-highlight-color and the
-       --selection-background-color than to just invent another unique color. */
     --assignee-highlight-selection-color: #f6f4d0;
+    --line-item-highlight-color: #fcfad6;
+    /* TODO: Find a nicer way to combine the --line-item-highlight-color and the
+       --selection-background-color than to just invent another unique color. */
+    --line-item-highlight-selection-color: #f6f4d0;
     --chip-selected-background-color: var(--blue-50);
     --edit-mode-background-color: #ebf5fb;
     --emphasis-color: #fff9c4;
@@ -272,6 +277,11 @@ const appThemeCss = safeStyleSheet`
     --comment-background-color: var(--gray-200);
     --robot-comment-background-color: var(--blue-50);
     --unresolved-comment-background-color: #fef7e0;
+
+
+    /* Suggest edits */
+    --user-suggestion-header-background: var(--gray-700);
+    --user-suggestion-header-color: white;
 
     /* vote background colors */
     --vote-color-approved: var(--green-300);
@@ -397,6 +407,8 @@ const appThemeCss = safeStyleSheet`
 
     --diff-moved-in-background: var(--cyan-50);
     --diff-moved-in-label-color: var(--cyan-900);
+    --diff-moved-in-changed-background: var(--cyan-50);
+    --diff-moved-in-changed-label-color: var(--cyan-900);
     --diff-moved-out-background: var(--purple-50);
     --diff-moved-out-label-color: var(--purple-900);
 
@@ -411,8 +423,8 @@ const appThemeCss = safeStyleSheet`
     --diff-trailing-whitespace-indicator: #ff9ad2;
     --focused-line-outline-color: var(--blue-700);
     --coverage-covered-line-num-color: var(--deemphasized-text-color);
-    --coverage-covered: #e0f2f1;
-    --coverage-not-covered: #ffd1a4;
+    --coverage-covered: var(--cyan-100);
+    --coverage-not-covered: var(--orange-100);
     --ranged-comment-hint-text-color: var(--orange-900);
     --token-highlighting-color: #fffd54;
 
@@ -474,13 +486,9 @@ const appThemeCss = safeStyleSheet`
 
     /* misc */
     --border-radius: 4px;
-    --reply-overlay-z-index: 1000;
     --line-length-indicator-color: #681da8;
 
-    /* paper and iron component overrides */
-    --iron-overlay-backdrop-background-color: black;
-    --iron-overlay-backdrop-opacity: 0.32;
-
+    /* paper component overrides */
     --paper-tooltip-delay-in: 200ms;
     --paper-tooltip-delay-out: 0;
     --paper-tooltip-duration-in: 0;
@@ -516,9 +524,6 @@ const appThemeCssPolymerLegacy = safeStyleSheet`
   html {
     --paper-tooltip: {
       font-size: var(--font-size-small);
-    };
-    --iron-overlay-backdrop: {
-      transition: none;
     };
   }
 `;

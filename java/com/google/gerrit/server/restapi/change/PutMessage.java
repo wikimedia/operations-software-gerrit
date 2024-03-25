@@ -15,11 +15,13 @@
 package com.google.gerrit.server.restapi.change;
 
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
+import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.CHANGE_MODIFICATION;
 
 import com.google.gerrit.entities.BooleanProjectConfig;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.common.CommitMessageInput;
+import com.google.gerrit.extensions.registration.DynamicItem;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
@@ -33,6 +35,7 @@ import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.change.NotifyResolver;
 import com.google.gerrit.server.change.PatchSetInserter;
+import com.google.gerrit.server.config.UrlFormatter;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.permissions.ChangePermission;
@@ -41,6 +44,7 @@ import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.UpdateException;
+import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.gerrit.server.util.CommitMessageUtil;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.inject.Inject;
@@ -70,6 +74,7 @@ public class PutMessage implements RestModifyView<ChangeResource, CommitMessageI
   private final PatchSetUtil psUtil;
   private final NotifyResolver notifyResolver;
   private final ProjectCache projectCache;
+  private final DynamicItem<UrlFormatter> urlFormatter;
 
   @Inject
   PutMessage(
@@ -81,7 +86,8 @@ public class PutMessage implements RestModifyView<ChangeResource, CommitMessageI
       @GerritPersonIdent PersonIdent gerritIdent,
       PatchSetUtil psUtil,
       NotifyResolver notifyResolver,
-      ProjectCache projectCache) {
+      ProjectCache projectCache,
+      DynamicItem<UrlFormatter> urlFormatter) {
     this.updateFactory = updateFactory;
     this.repositoryManager = repositoryManager;
     this.userProvider = userProvider;
@@ -91,6 +97,7 @@ public class PutMessage implements RestModifyView<ChangeResource, CommitMessageI
     this.psUtil = psUtil;
     this.notifyResolver = notifyResolver;
     this.projectCache = projectCache;
+    this.urlFormatter = urlFormatter;
   }
 
   @Override
@@ -114,7 +121,8 @@ public class PutMessage implements RestModifyView<ChangeResource, CommitMessageI
             .orElseThrow(illegalState(resource.getProject()))
             .is(BooleanProjectConfig.REQUIRE_CHANGE_ID),
         resource.getChange().getKey().get(),
-        sanitizedCommitMessage);
+        sanitizedCommitMessage,
+        urlFormatter.get());
 
     try (Repository repository = repositoryManager.openRepository(resource.getProject());
         RevWalk revWalk = new RevWalk(repository);
@@ -127,21 +135,24 @@ public class PutMessage implements RestModifyView<ChangeResource, CommitMessageI
       }
 
       Instant ts = TimeUtil.now();
-      try (BatchUpdate bu =
-          updateFactory.create(resource.getChange().getProject(), userProvider.get(), ts)) {
-        // Ensure that BatchUpdate will update the same repo
-        bu.setRepository(repository, new RevWalk(objectInserter.newReader()), objectInserter);
+      try (RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
+        try (BatchUpdate bu =
+            updateFactory.create(resource.getChange().getProject(), userProvider.get(), ts)) {
+          // Ensure that BatchUpdate will update the same repo
+          bu.setRepository(repository, new RevWalk(objectInserter.newReader()), objectInserter);
 
-        PatchSet.Id psId = ChangeUtil.nextPatchSetId(repository, ps.id());
-        ObjectId newCommit =
-            createCommit(objectInserter, patchSetCommit, sanitizedCommitMessage, ts);
-        PatchSetInserter inserter = psInserterFactory.create(resource.getNotes(), psId, newCommit);
-        inserter.setMessage(
-            String.format("Patch Set %s: Commit message was updated.", psId.getId()));
-        inserter.setDescription("Edit commit message");
-        bu.setNotify(resolveNotify(input, resource));
-        bu.addOp(resource.getChange().getId(), inserter);
-        bu.execute();
+          PatchSet.Id psId = ChangeUtil.nextPatchSetId(repository, ps.id());
+          ObjectId newCommit =
+              createCommit(objectInserter, patchSetCommit, sanitizedCommitMessage, ts);
+          PatchSetInserter inserter =
+              psInserterFactory.create(resource.getNotes(), psId, newCommit);
+          inserter.setMessage(
+              String.format("Patch Set %s: Commit message was updated.", psId.getId()));
+          inserter.setDescription("Edit commit message");
+          bu.setNotify(resolveNotify(input, resource));
+          bu.addOp(resource.getChange().getId(), inserter);
+          bu.execute();
+        }
       }
     }
     return Response.ok("ok");

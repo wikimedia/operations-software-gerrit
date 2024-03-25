@@ -11,8 +11,6 @@ import {
   isDraftThread,
   isUnresolved,
   createCommentThreads,
-  DraftInfo,
-  CommentThread,
 } from '../../../utils/comment-util';
 import {
   createDraft,
@@ -26,10 +24,11 @@ import {CommentSide, FileInfoStatus} from '../../../constants/constants';
 import {
   BasePatchSetNum,
   CommentInfo,
+  CommentThread,
+  DraftInfo,
   PARENT,
   PatchRange,
   PatchSetNum,
-  PathToCommentsInfoMap,
   RevisionPatchSetNum,
   RobotCommentInfo,
   Timestamp,
@@ -49,7 +48,7 @@ suite('ChangeComments tests', () => {
     });
 
     suite('ported comments', () => {
-      let portedComments: PathToCommentsInfoMap;
+      let portedComments: {[path: string]: CommentInfo[]};
       const comment1: CommentInfo = {
         ...createComment(),
         unresolved: true,
@@ -593,7 +592,7 @@ suite('ChangeComments tests', () => {
       const robotComments: {[path: string]: RobotCommentInfo[]} = {
         'file/one': [comments[0], comments[1]],
       };
-      const commentsByFile: PathToCommentsInfoMap = {
+      const commentsByFile: {[path: string]: CommentInfo[]} = {
         'file/one': [comments[2], comments[3]],
         'file/two': [comments[4], comments[5]],
         'file/three': [comments[6], comments[7], comments[8]],
@@ -741,7 +740,7 @@ suite('ChangeComments tests', () => {
       });
 
       test('computeUnresolvedNum w/ non-linear thread', () => {
-        const comments: PathToCommentsInfoMap = {
+        const comments: {[path: string]: CommentInfo[]} = {
           path: [
             {
               id: '9c6ba3c6_28b7d467' as UrlEncodedCommentId,
@@ -911,27 +910,44 @@ suite('ChangeComments tests', () => {
         );
       });
 
-      test('computeCommentThreadCount', () => {
+      test('computeCommentThreads - check length', () => {
         assert.equal(
-          changeComments.computeCommentThreadCount({
+          changeComments.computeCommentThreads({
             patchNum: 2 as PatchSetNum,
             path: 'file/one',
-          }),
+          }).length,
           3
         );
-        assert.equal(
-          changeComments.computeCommentThreadCount({
+        assert.deepEqual(
+          changeComments.computeCommentThreads({
             patchNum: 1 as PatchSetNum,
             path: 'file/one',
           }),
-          0
+          []
         );
         assert.equal(
-          changeComments.computeCommentThreadCount({
+          changeComments.computeCommentThreads({
             patchNum: 2 as PatchSetNum,
             path: 'file/three',
-          }),
+          }).length,
           1
+        );
+      });
+
+      test('computeCommentThreads - check content', () => {
+        const expectedThreads: CommentThread[] = [
+          {
+            ...createCommentThread([{...comments[9], path: 'file/four'}]),
+          },
+          {
+            ...createCommentThread([{...comments[10], path: 'file/four'}]),
+          },
+        ];
+        assert.deepEqual(
+          changeComments.computeCommentThreads({
+            path: 'file/four',
+          }),
+          expectedThreads
         );
       });
 

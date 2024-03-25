@@ -8,27 +8,15 @@ import '../../shared/gr-button/gr-button';
 import '../../shared/gr-select/gr-select';
 import {encodeURL, getBaseUrl} from '../../../utils/url-util';
 import {AccessPermissionId} from '../../../utils/access-util';
-import {fireEvent} from '../../../utils/event-util';
+import {fire} from '../../../utils/event-util';
 import {formStyles} from '../../../styles/gr-form-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, html, css} from 'lit';
 import {customElement, property, state} from 'lit/decorators.js';
-import {BindValueChangeEvent} from '../../../types/events';
+import {BindValueChangeEvent, ValueChangedEvent} from '../../../types/events';
 import {ifDefined} from 'lit/directives/if-defined.js';
 import {EditablePermissionRuleInfo} from '../gr-repo-access/gr-repo-access-interfaces';
 import {PermissionAction} from '../../../constants/constants';
-
-/**
- * Fired when the rule has been modified or removed.
- *
- * @event access-modified
- */
-
-/**
- * Fired when a rule that was previously added was removed.
- *
- * @event added-rule-removed
- */
 
 const PRIORITY_OPTIONS = [PermissionAction.BATCH, PermissionAction.INTERACTIVE];
 
@@ -80,6 +68,11 @@ interface RuleLabelValue {
 declare global {
   interface HTMLElementTagNameMap {
     'gr-rule-editor': GrRuleEditor;
+  }
+  interface HTMLElementEventMap {
+    /** Fired when a rule that was previously added was removed. */
+    'added-rule-removed': CustomEvent<{}>;
+    'rule-changed': ValueChangedEvent<Rule | undefined>;
   }
 }
 
@@ -343,7 +336,7 @@ export class GrRuleEditor extends LitElement {
   // private but used in test
   computeGroupPath(groupId?: string) {
     if (!groupId) return;
-    return `${getBaseUrl()}/admin/groups/${encodeURL(groupId, true)}`;
+    return `${getBaseUrl()}/admin/groups/${encodeURL(groupId)}`;
   }
 
   // private but used in test
@@ -431,14 +424,14 @@ export class GrRuleEditor extends LitElement {
   private handleRemoveRule() {
     if (!this.rule?.value) return;
     if (this.rule.value.added) {
-      fireEvent(this, 'added-rule-removed');
+      fire(this, 'added-rule-removed', {});
     }
     this.deleted = true;
     this.rule.value.deleted = true;
 
     this.handleRuleChange();
 
-    fireEvent(this, 'access-modified');
+    fire(this, 'access-modified', {});
   }
 
   private handleUndoRemove() {
@@ -476,7 +469,7 @@ export class GrRuleEditor extends LitElement {
     this.handleRuleChange();
 
     // Allows overall access page to know a change has been made.
-    fireEvent(this, 'access-modified');
+    fire(this, 'access-modified', {});
   }
 
   // private but used in test
@@ -537,13 +530,6 @@ export class GrRuleEditor extends LitElement {
 
   private handleRuleChange() {
     this.requestUpdate('rule');
-
-    this.dispatchEvent(
-      new CustomEvent('rule-changed', {
-        detail: {value: this.rule},
-        composed: true,
-        bubbles: true,
-      })
-    );
+    fire(this, 'rule-changed', {value: this.rule});
   }
 }

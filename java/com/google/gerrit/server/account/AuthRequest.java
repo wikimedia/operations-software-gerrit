@@ -16,6 +16,7 @@ package com.google.gerrit.server.account;
 
 import static com.google.gerrit.server.account.externalids.ExternalId.SCHEME_EXTERNAL;
 import static com.google.gerrit.server.account.externalids.ExternalId.SCHEME_GERRIT;
+import static com.google.gerrit.server.account.externalids.ExternalId.SCHEME_GOOGLE_OAUTH;
 import static com.google.gerrit.server.account.externalids.ExternalId.SCHEME_MAILTO;
 
 import com.google.common.base.Strings;
@@ -66,6 +67,14 @@ public class AuthRequest {
       return r;
     }
 
+    public AuthRequest createForOAuthUser(String userName) {
+      AuthRequest r =
+          new AuthRequest(
+              externalIdKeyFactory.create(SCHEME_GOOGLE_OAUTH, userName), externalIdKeyFactory);
+      r.setUserName(userName);
+      return r;
+    }
+
     /**
      * Create a request for an email address registration.
      *
@@ -102,6 +111,7 @@ public class AuthRequest {
     return externalId;
   }
 
+  @Nullable
   public String getLocalUser() {
     if (externalId.isScheme(SCHEME_GERRIT)) {
       return externalId.id();

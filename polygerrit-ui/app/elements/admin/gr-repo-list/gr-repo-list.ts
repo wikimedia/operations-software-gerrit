@@ -5,25 +5,25 @@
  */
 import '../../shared/gr-dialog/gr-dialog';
 import '../../shared/gr-list-view/gr-list-view';
-import '../../shared/gr-overlay/gr-overlay';
+import '../../shared/gr-weblink/gr-weblink';
 import '../gr-create-repo-dialog/gr-create-repo-dialog';
-import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
-import {
-  RepoName,
-  ProjectInfoWithName,
-  WebLinkInfo,
-} from '../../../types/common';
+import {ProjectInfoWithName, WebLinkInfo} from '../../../types/common';
 import {GrCreateRepoDialog} from '../gr-create-repo-dialog/gr-create-repo-dialog';
-import {ProjectState, SHOWN_ITEMS_COUNT} from '../../../constants/constants';
+import {RepoState} from '../../../constants/constants';
 import {fireTitleChange} from '../../../utils/event-util';
 import {getAppContext} from '../../../services/app-context';
-import {encodeURL, getBaseUrl} from '../../../utils/url-util';
 import {tableStyles} from '../../../styles/gr-table-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, css, html} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
-import {AdminViewState} from '../../../models/views/admin';
+import {
+  AdminChildView,
+  AdminViewState,
+  createAdminUrl,
+} from '../../../models/views/admin';
 import {createSearchUrl} from '../../../models/views/search';
+import {modalStyles} from '../../../styles/gr-modal-styles';
+import {createRepoUrl} from '../../../models/views/repo';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -33,32 +33,25 @@ declare global {
 
 @customElement('gr-repo-list')
 export class GrRepoList extends LitElement {
-  readonly path = '/admin/repos';
-
-  @query('#createOverlay') private createOverlay?: GrOverlay;
+  @query('#createModal') private createModal?: HTMLDialogElement;
 
   @query('#createNewModal') private createNewModal?: GrCreateRepoDialog;
 
   @property({type: Object})
   params?: AdminViewState;
 
-  // private but used in test
   @state() offset = 0;
 
-  @state() private newRepoName = false;
+  @state() newRepoName = false;
 
-  @state() private createNewCapability = false;
+  @state() createNewCapability = false;
 
-  // private but used in test
   @state() repos: ProjectInfoWithName[] = [];
 
-  // private but used in test
   @state() reposPerPage = 25;
 
-  // private but used in test
   @state() loading = true;
 
-  // private but used in test
   @state() filter = '';
 
   private readonly restApiService = getAppContext().restApiService;
@@ -66,14 +59,15 @@ export class GrRepoList extends LitElement {
   override async connectedCallback() {
     super.connectedCallback();
     await this.getCreateRepoCapability();
-    fireTitleChange(this, 'Repos');
-    this.maybeOpenCreateOverlay(this.params);
+    fireTitleChange('Repos');
+    this.maybeOpenCreateModal(this.params);
   }
 
   static override get styles() {
     return [
       tableStyles,
       sharedStyles,
+      modalStyles,
       css`
         .genericList tr td:last-of-type {
           text-align: left;
@@ -103,7 +97,7 @@ export class GrRepoList extends LitElement {
         .items=${this.repos}
         .loading=${this.loading}
         .offset=${this.offset}
-        .path=${this.path}
+        .path=${createAdminUrl({adminView: AdminChildView.REPOS})}
         @create-clicked=${() => this.handleCreateClicked()}
       >
         <table id="list" class="genericList">
@@ -127,7 +121,7 @@ export class GrRepoList extends LitElement {
           </tbody>
         </table>
       </gr-list-view>
-      <gr-overlay id="createOverlay" with-backdrop>
+      <dialog id="createModal" tabindex="-1">
         <gr-dialog
           id="createDialog"
           class="confirmDialog"
@@ -144,12 +138,12 @@ export class GrRepoList extends LitElement {
             ></gr-create-repo-dialog>
           </div>
         </gr-dialog>
-      </gr-overlay>
+      </dialog>
     `;
   }
 
   private renderRepoList() {
-    const shownRepos = this.repos.slice(0, SHOWN_ITEMS_COUNT);
+    const shownRepos = this.repos.slice(0, this.reposPerPage);
     return shownRepos.map(item => this.renderRepo(item));
   }
 
@@ -157,14 +151,14 @@ export class GrRepoList extends LitElement {
     return html`
       <tr class="table">
         <td class="name">
-          <a href=${this.computeRepoUrl(item.name)}>${item.name}</a>
+          <a href=${createRepoUrl({repo: item.name})}>${item.name}</a>
         </td>
         <td class="repositoryBrowser">${this.renderWebLinks(item)}</td>
         <td class="changesLink">
-          <a href=${this.computeChangesLink(item.name)}>view all</a>
+          <a href=${createSearchUrl({repo: item.name})}>view all</a>
         </td>
         <td class="readOnly">
-          ${item.state === ProjectState.READ_ONLY ? 'Y' : ''}
+          ${item.state === RepoState.READ_ONLY ? 'Y' : ''}
         </td>
         <td class="description">${item.description}</td>
       </tr>
@@ -176,12 +170,8 @@ export class GrRepoList extends LitElement {
     return webLinks.map(link => this.renderWebLink(link));
   }
 
-  private renderWebLink(link: WebLinkInfo) {
-    return html`
-      <a href=${link.url} class="webLink" rel="noopener" target="_blank">
-        ${link.name}
-      </a>
-    `;
+  private renderWebLink(info: WebLinkInfo) {
+    return html`<gr-weblink imageAndText .info=${info}></gr-weblink>`;
   }
 
   override willUpdate(changedProperties: PropertyValues) {
@@ -204,18 +194,10 @@ export class GrRepoList extends LitElement {
    *
    * private but used in test
    */
-  maybeOpenCreateOverlay(params?: AdminViewState) {
+  maybeOpenCreateModal(params?: AdminViewState) {
     if (params?.openCreateModal) {
-      this.createOverlay?.open();
+      this.createModal?.showModal();
     }
-  }
-
-  private computeRepoUrl(name: string) {
-    return `${getBaseUrl()}${this.path}/${encodeURL(name, true)}`;
-  }
-
-  private computeChangesLink(name: string) {
-    return createSearchUrl({project: name as RepoName});
   }
 
   private async getCreateRepoCapability() {
@@ -268,14 +250,13 @@ export class GrRepoList extends LitElement {
 
   // private but used in test
   handleCloseCreate() {
-    this.createOverlay?.close();
+    this.createModal?.close();
   }
 
   // private but used in test
   handleCreateClicked() {
-    this.createOverlay?.open().then(() => {
-      this.createNewModal?.focus();
-    });
+    this.createModal?.showModal();
+    this.createNewModal?.focus();
   }
 
   // private but used in test

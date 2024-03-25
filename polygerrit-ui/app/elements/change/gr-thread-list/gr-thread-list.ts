@@ -10,16 +10,16 @@ import {SpecialFilePath} from '../../../constants/constants';
 import {
   AccountDetailInfo,
   AccountInfo,
+  CommentThread,
   NumericChangeId,
   UrlEncodedCommentId,
+  isDraft,
 } from '../../../types/common';
 import {ChangeMessageId} from '../../../api/rest-api';
 import {
-  CommentThread,
   getCommentAuthors,
   getMentionedThreads,
   hasHumanReply,
-  isDraft,
   isDraftThread,
   isMentionedThread,
   isRobotThread,
@@ -28,7 +28,11 @@ import {
 } from '../../../utils/comment-util';
 import {pluralize} from '../../../utils/string-util';
 import {assertIsDefined} from '../../../utils/common-util';
-import {CommentTabState, TabState} from '../../../types/events';
+import {
+  CommentTabState,
+  TabState,
+  ValueChangedEvent,
+} from '../../../types/events';
 import {DropdownItem} from '../../shared/gr-dropdown-list/gr-dropdown-list';
 import {GrAccountChip} from '../../shared/gr-account-chip/gr-account-chip';
 import {css, html, LitElement, PropertyValues} from 'lit';
@@ -38,12 +42,10 @@ import {subscribe} from '../../lit/subscription-controller';
 import {ParsedChangeInfo} from '../../../types/types';
 import {repeat} from 'lit/directives/repeat.js';
 import {GrCommentThread} from '../../shared/gr-comment-thread/gr-comment-thread';
-import {getAppContext} from '../../../services/app-context';
 import {resolve} from '../../../models/dependency';
 import {changeModelToken} from '../../../models/change/change-model';
-import {Interaction} from '../../../constants/reporting';
-import {KnownExperimentId} from '../../../services/flags/flags';
-import {HtmlPatched} from '../../../utils/lit-util';
+import {userModelToken} from '../../../models/user/user-model';
+import {specialFilePathCompare} from '../../../utils/path-list-util';
 
 enum SortDropdownState {
   TIMESTAMP = 'Latest timestamp',
@@ -91,7 +93,7 @@ export function compareThreads(
     if (c2.path === SpecialFilePath.PATCHSET_LEVEL_COMMENTS) {
       return 1;
     }
-    return c1.path.localeCompare(c2.path);
+    return specialFilePathCompare(c1.path, c2.path);
   }
 
   // Convert 'FILE' and 'LOST' to undefined.
@@ -201,18 +203,7 @@ export class GrThreadList extends LitElement {
 
   private readonly getChangeModel = resolve(this, changeModelToken);
 
-  private readonly reporting = getAppContext().reportingService;
-
-  private readonly flagsService = getAppContext().flagsService;
-
-  private readonly userModel = getAppContext().userModel;
-
-  private readonly patched = new HtmlPatched(key => {
-    this.reporting.reportInteraction(Interaction.AUTOCLOSE_HTML_PATCHED, {
-      component: this.tagName,
-      key: key.substring(0, 300),
-    });
-  });
+  private readonly getUserModel = resolve(this, userModelToken);
 
   constructor() {
     super();
@@ -228,12 +219,8 @@ export class GrThreadList extends LitElement {
     );
     subscribe(
       this,
-      () => this.userModel.account$,
+      () => this.getUserModel().account$,
       x => (this.account = x)
-    );
-    // for COMMENTS_AUTOCLOSE logging purposes only
-    this.reporting.reportInteraction(
-      Interaction.COMMENTS_AUTOCLOSE_THREAD_LIST_CREATED
     );
   }
 
@@ -338,17 +325,6 @@ export class GrThreadList extends LitElement {
     ];
   }
 
-  override updated(): void {
-    // for COMMENTS_AUTOCLOSE logging purposes only
-    const threads = this.shadowRoot!.querySelectorAll('gr-comment-thread');
-    if (threads.length > 0) {
-      this.reporting.reportInteraction(
-        Interaction.COMMENTS_AUTOCLOSE_THREAD_LIST_UPDATED,
-        {uid: threads[0].uid}
-      );
-    }
-  }
-
   override render() {
     return html`
       ${this.renderDropdown()}
@@ -366,7 +342,7 @@ export class GrThreadList extends LitElement {
         <gr-dropdown-list
           id="sortDropdown"
           .value=${this.sortDropdownValue}
-          @value-change=${(e: CustomEvent) =>
+          @value-change=${(e: ValueChangedEvent<SortDropdownState>) =>
             (this.sortDropdownValue = e.detail.value)}
           .items=${this.getSortDropdownEntries()}
         >
@@ -422,16 +398,16 @@ export class GrThreadList extends LitElement {
           index === 0 || threads[index - 1].path !== threads[index].path;
         const separator =
           index !== 0 && isFirst
-            ? this.patched.html`<div class="thread-separator"></div>`
+            ? html`<div class="thread-separator"></div>`
             : undefined;
         const commentThread = this.renderCommentThread(thread, isFirst);
-        return this.patched.html`${separator}${commentThread}`;
+        return html`${separator}${commentThread}`;
       }
     );
   }
 
   private renderCommentThread(thread: CommentThread, isFirst: boolean) {
-    return this.patched.html`
+    return html`
       <gr-comment-thread
         .thread=${thread}
         show-file-path
@@ -493,14 +469,10 @@ export class GrThreadList extends LitElement {
       value: CommentTabState.UNRESOLVED,
     });
     if (this.account) {
-      if (this.flagsService.isEnabled(KnownExperimentId.MENTION_USERS)) {
-        items.push({
-          text: `Mentions (${
-            getMentionedThreads(threads, this.account).length
-          })`,
-          value: CommentTabState.MENTIONS,
-        });
-      }
+      items.push({
+        text: `Mentions (${getMentionedThreads(threads, this.account).length})`,
+        value: CommentTabState.MENTIONS,
+      });
       items.push({
         text: `Drafts (${threads.filter(isDraftThread).length})`,
         value: CommentTabState.DRAFTS,
@@ -526,7 +498,7 @@ export class GrThreadList extends LitElement {
   }
 
   // private, but visible for testing
-  handleCommentsDropdownValueChange(e: CustomEvent) {
+  handleCommentsDropdownValueChange(e: ValueChangedEvent<CommentTabState>) {
     const value = e.detail.value;
     switch (value) {
       case CommentTabState.UNRESOLVED:

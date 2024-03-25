@@ -164,6 +164,12 @@ public final class TestIndexedFields {
   public static final IndexedField<TestIndexedData, String>.SearchSpec STRING_FIELD_SPEC =
       STRING_FIELD.fullText("string_test");
 
+  public static final IndexedField<TestIndexedData, String>.SearchSpec PREFIX_STRING_FIELD_SPEC =
+      STRING_FIELD.prefix("prefix_string_test");
+
+  public static final IndexedField<TestIndexedData, String>.SearchSpec EXACT_STRING_FIELD_SPEC =
+      STRING_FIELD.exact("exact_string_test");
+
   public static final IndexedField<TestIndexedData, Iterable<byte[]>> ITERABLE_STORED_BYTE_FIELD =
       IndexedField.<TestIndexedData>iterableByteArrayBuilder("IterableByteTestField")
           .stored()
@@ -182,7 +188,10 @@ public final class TestIndexedFields {
 
   public static final IndexedField<TestIndexedData, Entities.Change> STORED_PROTO_FIELD =
       IndexedField.<TestIndexedData, Entities.Change>builder(
-              "TestChange", new TypeToken<Entities.Change>() {})
+              "TestChange",
+              new TypeToken<Entities.Change>() {
+                private static final long serialVersionUID = 1L;
+              })
           .stored()
           .build(getter(), setter(), ChangeProtoConverter.INSTANCE);
 
@@ -192,7 +201,10 @@ public final class TestIndexedFields {
   public static final IndexedField<TestIndexedData, Iterable<Entities.Change>>
       ITERABLE_STORED_PROTO_FIELD =
           IndexedField.<TestIndexedData, Iterable<Entities.Change>>builder(
-                  "IterableTestChange", new TypeToken<Iterable<Entities.Change>>() {})
+                  "IterableTestChange",
+                  new TypeToken<Iterable<Entities.Change>>() {
+                    private static final long serialVersionUID = 1L;
+                  })
               .stored()
               .build(getter(), setter(), ChangeProtoConverter.INSTANCE);
 

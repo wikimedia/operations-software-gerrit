@@ -87,16 +87,19 @@ public class CommentSender extends ReplyToChangeSender {
     public List<Comment> comments = new ArrayList<>();
 
     /** Returns a web link to a comment for a change. */
+    @Nullable
     public String getCommentLink(String uuid) {
       return args.urlFormatter.get().getInlineCommentView(change, uuid).orElse(null);
     }
 
     /** Returns a web link to the comment tab view of a change. */
+    @Nullable
     public String getCommentsTabLink() {
       return args.urlFormatter.get().getCommentsTabView(change).orElse(null);
     }
 
     /** Returns a web link to the findings tab view of a change. */
+    @Nullable
     public String getFindingsTabLink() {
       return args.urlFormatter.get().getFindingsTabView(change).orElse(null);
     }
@@ -169,10 +172,11 @@ public class CommentSender extends ReplyToChangeSender {
   protected void init() throws EmailException {
     super.init();
 
-    if (notify.handling().compareTo(NotifyHandling.OWNER_REVIEWERS) >= 0) {
+    if (notify.handling().equals(NotifyHandling.OWNER_REVIEWERS)
+        || notify.handling().equals(NotifyHandling.ALL)) {
       ccAllApprovals();
     }
-    if (notify.handling().compareTo(NotifyHandling.ALL) >= 0) {
+    if (notify.handling().equals(NotifyHandling.ALL)) {
       bccStarredBy();
       includeWatchers(NotifyType.ALL_COMMENTS, !change.isWorkInProgress() && !change.isPrivate());
     }
@@ -505,6 +509,7 @@ public class CommentSender extends ReplyToChangeSender {
     return false;
   }
 
+  @Nullable
   private Repository getRepository() {
     try {
       return args.server.openRepository(projectState.getNameKey());

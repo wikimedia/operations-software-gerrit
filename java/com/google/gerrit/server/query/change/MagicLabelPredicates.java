@@ -16,6 +16,7 @@ package com.google.gerrit.server.query.change;
 
 import static com.google.gerrit.server.query.change.EqualsLabelPredicates.type;
 
+import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
@@ -30,6 +31,8 @@ import java.util.List;
 import java.util.Optional;
 
 public class MagicLabelPredicates {
+  private static final FluentLogger logger = FluentLogger.forEnclosingClass();
+
   public static class PostFilterMagicLabelPredicate extends PostFilterPredicate<ChangeData> {
     private static class PostFilterMatcher extends Matcher {
       public PostFilterMatcher(
@@ -62,6 +65,14 @@ public class MagicLabelPredicates {
     public int getCost() {
       return 2;
     }
+
+    public String getLabel() {
+      return matcher.getLabel();
+    }
+
+    public boolean ignoresUploaderApprovals() {
+      return matcher.ignoresUploaderApprovals();
+    }
   }
 
   public static class IndexMagicLabelPredicate extends ChangeIndexPredicate {
@@ -69,7 +80,7 @@ public class MagicLabelPredicates {
       public IndexMatcher(
           LabelPredicate.Args args,
           MagicLabelVote magicLabelVote,
-          Account.Id account,
+          @Nullable Account.Id account,
           @Nullable Integer count) {
         super(args, magicLabelVote, account, count);
       }
@@ -91,10 +102,10 @@ public class MagicLabelPredicates {
     public IndexMagicLabelPredicate(
         LabelPredicate.Args args,
         MagicLabelVote magicLabelVote,
-        Account.Id account,
+        @Nullable Account.Id account,
         @Nullable Integer count) {
       super(
-          ChangeField.LABEL,
+          ChangeField.LABEL_SPEC,
           ChangeField.formatLabel(
               magicLabelVote.label(), magicLabelVote.value().name(), account, count));
       this.matcher = new IndexMatcher(args, magicLabelVote, account, count);
@@ -104,12 +115,20 @@ public class MagicLabelPredicates {
     public boolean match(ChangeData changeData) {
       return matcher.match(changeData);
     }
+
+    public String getLabel() {
+      return matcher.getLabel();
+    }
+
+    public boolean ignoresUploaderApprovals() {
+      return matcher.ignoresUploaderApprovals();
+    }
   }
 
   private abstract static class Matcher {
     protected final LabelPredicate.Args args;
     protected final MagicLabelVote magicLabelVote;
-    protected final Account.Id account;
+    @Nullable protected final Account.Id account;
     @Nullable protected final Integer count;
 
     public Matcher(
@@ -120,7 +139,7 @@ public class MagicLabelPredicates {
     public Matcher(
         LabelPredicate.Args args,
         MagicLabelVote magicLabelVote,
-        Account.Id account,
+        @Nullable Account.Id account,
         @Nullable Integer count) {
       this.account = account;
       this.args = args;
@@ -154,6 +173,19 @@ public class MagicLabelPredicates {
       }
 
       throw new IllegalStateException("Unsupported magic label value: " + magicLabelVote.value());
+    }
+
+    public String getLabel() {
+      return magicLabelVote.label();
+    }
+
+    public boolean ignoresUploaderApprovals() {
+      logger.atFine().log("account = %s", account);
+      if (account != null) {
+        return account.equals(ChangeQueryBuilder.NON_UPLOADER_ACCOUNT_ID)
+            || account.equals(ChangeQueryBuilder.NON_CONTRIBUTOR_ACCOUNT_ID);
+      }
+      return false;
     }
 
     private boolean matchAny(ChangeData changeData, LabelType labelType) {

@@ -16,6 +16,7 @@ package com.google.gerrit.server.update;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMultiset.toImmutableMultiset;
 import static com.google.common.flogger.LazyArgs.lazy;
 import static java.util.Comparator.comparing;
@@ -23,6 +24,8 @@ import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toMap;
 import static java.util.stream.Collectors.toSet;
 
+import com.google.auto.value.AutoValue;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableList;
@@ -34,6 +37,7 @@ import com.google.common.collect.Multiset;
 import com.google.common.flogger.FluentLogger;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.AttentionSetUpdate;
 import com.google.gerrit.entities.BranchNameKey;
@@ -50,8 +54,12 @@ import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.GerritPersonIdent;
+import com.google.gerrit.server.RefLogIdentityProvider;
+import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.change.NotifyResolver;
+import com.google.gerrit.server.experiments.ExperimentFeatures;
+import com.google.gerrit.server.experiments.ExperimentFeaturesConstants;
 import com.google.gerrit.server.extensions.events.AttentionSetObserver;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
@@ -243,6 +251,12 @@ public class BatchUpdate implements AutoCloseable {
   }
 
   class ContextImpl implements Context {
+    private final CurrentUser contextUser;
+
+    ContextImpl(@Nullable CurrentUser contextUser) {
+      this.contextUser = contextUser != null ? contextUser : user;
+    }
+
     @Override
     public RepoView getRepoView() throws IOException {
       return BatchUpdate.this.getRepoView();
@@ -270,7 +284,7 @@ public class BatchUpdate implements AutoCloseable {
 
     @Override
     public CurrentUser getUser() {
-      return user;
+      return contextUser;
     }
 
     @Override
@@ -281,6 +295,10 @@ public class BatchUpdate implements AutoCloseable {
   }
 
   private class RepoContextImpl extends ContextImpl implements RepoContext {
+    RepoContextImpl(@Nullable CurrentUser contextUser) {
+      super(contextUser);
+    }
+
     @Override
     public ObjectInserter getInserter() throws IOException {
       return getRepoView().getInserterWrapper();
@@ -296,21 +314,22 @@ public class BatchUpdate implements AutoCloseable {
     private final ChangeNotes notes;
 
     /**
-     * Updates where the caller instructed us to create one NoteDb commit per update. Keyed by
-     * PatchSet.Id only for convenience.
+     * Updates where the caller allowed us to combine potentially multiple adjustments into a single
+     * commit in NoteDb by re-using the same ChangeUpdate instance. Will still be one commit per
+     * patch set.
      */
     private final Map<PatchSet.Id, ChangeUpdate> defaultUpdates;
 
     /**
-     * Updates where the caller allowed us to combine potentially multiple adjustments into a single
-     * commit in NoteDb by re-using the same ChangeUpdate instance. Will still be one commit per
-     * patch set.
+     * Updates where the caller instructed us to create one NoteDb commit per update. Keyed by
+     * PatchSet.Id only for convenience.
      */
     private final ListMultimap<PatchSet.Id, ChangeUpdate> distinctUpdates;
 
     private boolean deleted;
 
-    ChangeContextImpl(ChangeNotes notes) {
+    ChangeContextImpl(@Nullable CurrentUser contextUser, ChangeNotes notes) {
+      super(contextUser);
       this.notes = requireNonNull(notes);
       defaultUpdates = new TreeMap<>(comparing(PatchSet.Id::get));
       distinctUpdates = ArrayListMultimap.create();
@@ -334,7 +353,7 @@ public class BatchUpdate implements AutoCloseable {
     }
 
     private ChangeUpdate getNewChangeUpdate(PatchSet.Id psId) {
-      ChangeUpdate u = changeUpdateFactory.create(notes, user, when);
+      ChangeUpdate u = changeUpdateFactory.create(notes, getUser(), getWhen());
       if (newChanges.containsKey(notes.getChangeId())) {
         u.setAllowWriteToNewRef(true);
       }
@@ -356,7 +375,9 @@ public class BatchUpdate implements AutoCloseable {
   private class PostUpdateContextImpl extends ContextImpl implements PostUpdateContext {
     private final Map<Change.Id, ChangeData> changeDatas;
 
-    PostUpdateContextImpl(Map<Change.Id, ChangeData> changeDatas) {
+    PostUpdateContextImpl(
+        @Nullable CurrentUser contextUser, Map<Change.Id, ChangeData> changeDatas) {
+      super(contextUser);
       this.changeDatas = changeDatas;
     }
 
@@ -374,29 +395,37 @@ public class BatchUpdate implements AutoCloseable {
 
   /** Per-change result status from {@link #executeChangeOps}. */
   private enum ChangeResult {
+    /** Change was not modified by any of the batch update ops. */
     SKIPPED,
+
+    /** Change was inserted or updated. */
     UPSERTED,
+
+    /** Change was deleted. */
     DELETED
   }
 
   private final GitRepositoryManager repoManager;
+  private final AccountCache accountCache;
   private final ChangeData.Factory changeDataFactory;
   private final ChangeNotes.Factory changeNotesFactory;
   private final ChangeUpdate.Factory changeUpdateFactory;
   private final NoteDbUpdateManager.Factory updateManagerFactory;
   private final ChangeIndexer indexer;
   private final GitReferenceUpdated gitRefUpdated;
+  private final RefLogIdentityProvider refLogIdentityProvider;
 
   private final Project.NameKey project;
   private final CurrentUser user;
   private final Instant when;
   private final ZoneId zoneId;
 
-  private final ListMultimap<Change.Id, BatchUpdateOp> ops =
+  private final ListMultimap<Change.Id, OpData<BatchUpdateOp>> ops =
       MultimapBuilder.linkedHashKeys().arrayListValues().build();
   private final Map<Change.Id, Change> newChanges = new HashMap<>();
-  private final List<RepoOnlyOp> repoOnlyOps = new ArrayList<>();
+  private final List<OpData<RepoOnlyOp>> repoOnlyOps = new ArrayList<>();
   private final Map<Change.Id, NotifyHandling> perChangeNotifyHandling = new HashMap<>();
+  private final ExperimentFeatures experimentFeatures;
 
   private RepoView repoView;
   private BatchRefUpdate batchRefUpdate;
@@ -414,27 +443,33 @@ public class BatchUpdate implements AutoCloseable {
   BatchUpdate(
       GitRepositoryManager repoManager,
       @GerritPersonIdent PersonIdent serverIdent,
+      AccountCache accountCache,
       ChangeData.Factory changeDataFactory,
       ChangeNotes.Factory changeNotesFactory,
       ChangeUpdate.Factory changeUpdateFactory,
       NoteDbUpdateManager.Factory updateManagerFactory,
       ChangeIndexer indexer,
       GitReferenceUpdated gitRefUpdated,
+      RefLogIdentityProvider refLogIdentityProvider,
       AttentionSetObserver attentionSetObserver,
+      ExperimentFeatures experimentFeatures,
       @Assisted Project.NameKey project,
       @Assisted CurrentUser user,
       @Assisted Instant when) {
     this.repoManager = repoManager;
+    this.accountCache = accountCache;
     this.changeDataFactory = changeDataFactory;
     this.changeNotesFactory = changeNotesFactory;
     this.changeUpdateFactory = changeUpdateFactory;
     this.updateManagerFactory = updateManagerFactory;
     this.indexer = indexer;
     this.gitRefUpdated = gitRefUpdated;
+    this.refLogIdentityProvider = refLogIdentityProvider;
+    this.attentionSetObserver = attentionSetObserver;
+    this.experimentFeatures = experimentFeatures;
     this.project = project;
     this.user = user;
     this.when = when;
-    this.attentionSetObserver = attentionSetObserver;
     zoneId = serverIdent.getZoneId();
   }
 
@@ -544,48 +579,77 @@ public class BatchUpdate implements AutoCloseable {
             toMap(entry -> BranchNameKey.create(project, entry.getKey()), Map.Entry::getValue));
   }
 
+  /**
+   * Adds a {@link BatchUpdate} for a change.
+   *
+   * <p>The op is executed by the user for which the {@link BatchUpdate} has been created.
+   */
+  @CanIgnoreReturnValue
   public BatchUpdate addOp(Change.Id id, BatchUpdateOp op) {
     checkArgument(!(op instanceof InsertChangeOp), "use insertChange");
     requireNonNull(op);
-    ops.put(id, op);
+    ops.put(id, OpData.create(op, user));
     return this;
   }
 
+  /** Adds a {@link BatchUpdate} for a change that should be executed by the given context user. */
+  @CanIgnoreReturnValue
+  public BatchUpdate addOp(Change.Id id, CurrentUser contextUser, BatchUpdateOp op) {
+    checkArgument(!(op instanceof InsertChangeOp), "use insertChange");
+    requireNonNull(op);
+    ops.put(id, OpData.create(op, contextUser));
+    return this;
+  }
+
+  /**
+   * Adds a {@link RepoOnlyOp}.
+   *
+   * <p>The op is executed by the user for which the {@link BatchUpdate} has been created.
+   */
+  @CanIgnoreReturnValue
   public BatchUpdate addRepoOnlyOp(RepoOnlyOp op) {
     checkArgument(!(op instanceof BatchUpdateOp), "use addOp()");
-    repoOnlyOps.add(op);
+    repoOnlyOps.add(OpData.create(op, user));
     return this;
   }
 
+  /** Adds a {@link RepoOnlyOp} that should be executed by the given context user. */
+  @CanIgnoreReturnValue
+  public BatchUpdate addRepoOnlyOp(CurrentUser contextUser, RepoOnlyOp op) {
+    checkArgument(!(op instanceof BatchUpdateOp), "use addOp()");
+    repoOnlyOps.add(OpData.create(op, contextUser));
+    return this;
+  }
+
+  @CanIgnoreReturnValue
   public BatchUpdate insertChange(InsertChangeOp op) throws IOException {
-    Context ctx = new ContextImpl();
+    Context ctx = new ContextImpl(user);
     Change c = op.createChange(ctx);
     checkArgument(
         !newChanges.containsKey(c.getId()), "only one op allowed to create change %s", c.getId());
     newChanges.put(c.getId(), c);
-    ops.get(c.getId()).add(0, op);
+    ops.get(c.getId()).add(0, OpData.create(op, user));
     return this;
   }
 
   private void executeUpdateRepo() throws UpdateException, RestApiException {
     try {
       logDebug("Executing updateRepo on %d ops", ops.size());
-      RepoContextImpl ctx = new RepoContextImpl();
-      for (Map.Entry<Change.Id, BatchUpdateOp> op : ops.entries()) {
+      for (Map.Entry<Change.Id, OpData<BatchUpdateOp>> e : ops.entries()) {
+        BatchUpdateOp op = e.getValue().op();
+        RepoContextImpl ctx = new RepoContextImpl(e.getValue().user());
         try (TraceContext.TraceTimer ignored =
             TraceContext.newTimer(
                 op.getClass().getSimpleName() + "#updateRepo",
-                Metadata.builder()
-                    .projectName(project.get())
-                    .changeId(op.getKey().get())
-                    .build())) {
-          op.getValue().updateRepo(ctx);
+                Metadata.builder().projectName(project.get()).changeId(e.getKey().get()).build())) {
+          op.updateRepo(ctx);
         }
       }
 
       logDebug("Executing updateRepo on %d RepoOnlyOps", repoOnlyOps.size());
-      for (RepoOnlyOp op : repoOnlyOps) {
-        op.updateRepo(ctx);
+      for (OpData<RepoOnlyOp> opData : repoOnlyOps) {
+        RepoContextImpl ctx = new RepoContextImpl(opData.user());
+        opData.op().updateRepo(ctx);
       }
 
       if (onSubmitValidators != null && !getRefUpdates().isEmpty()) {
@@ -594,12 +658,17 @@ public class BatchUpdate implements AutoCloseable {
         // first update's executeRefUpdates has finished, hence after first repo's refs have been
         // updated, which is too late.
         onSubmitValidators.validate(
-            project, ctx.getRevWalk().getObjectReader(), repoView.getCommands());
+            project, getRepoView().getRevWalk().getObjectReader(), repoView.getCommands());
       }
     } catch (Exception e) {
       Throwables.throwIfInstanceOf(e, RestApiException.class);
       throw new UpdateException(e);
     }
+  }
+
+  private boolean indexAsync() {
+    return experimentFeatures.isFeatureEnabled(
+        ExperimentFeaturesConstants.GERRIT_BACKEND_FEATURE_DO_NOT_AWAIT_CHANGE_INDEXING);
   }
 
   private void fireRefChangeEvent() {
@@ -608,12 +677,14 @@ public class BatchUpdate implements AutoCloseable {
     }
   }
 
-  private void fireAttentionSetUpdateEvents(PostUpdateContext ctx) {
+  private void fireAttentionSetUpdateEvents(Map<Change.Id, ChangeData> changeDatas) {
     for (ProjectChangeKey key : attentionSetUpdates.keySet()) {
-      ChangeData change = ctx.getChangeData(key.projectName(), key.changeId());
-      AccountState account = getAccount().orElse(null);
+      ChangeData change =
+          changeDatas.computeIfAbsent(
+              key.changeId(), id -> changeDataFactory.create(key.projectName(), key.changeId()));
       for (AttentionSetUpdate update : attentionSetUpdates.get(key)) {
-        attentionSetObserver.fire(change, account, update, ctx.getWhen());
+        attentionSetObserver.fire(
+            change, accountCache.getEvenIfMissing(update.account()), update, when);
       }
     }
   }
@@ -622,11 +693,13 @@ public class BatchUpdate implements AutoCloseable {
     private final NoteDbUpdateManager manager;
     private final boolean dryrun;
     private final Map<Change.Id, ChangeResult> results;
+    private final boolean indexAsync;
 
-    ChangesHandle(NoteDbUpdateManager manager, boolean dryrun) {
+    ChangesHandle(NoteDbUpdateManager manager, boolean dryrun, boolean indexAsync) {
       this.manager = manager;
       this.dryrun = dryrun;
       results = new HashMap<>();
+      this.indexAsync = indexAsync;
     }
 
     @Override
@@ -669,13 +742,24 @@ public class BatchUpdate implements AutoCloseable {
             indexFutures.add(indexer.indexAsync(project, id));
             break;
           case DELETED:
-            indexFutures.add(indexer.deleteAsync(id));
+            indexFutures.add(indexer.deleteAsync(project, id));
             break;
           case SKIPPED:
             break;
           default:
             throw new IllegalStateException("unexpected result: " + e.getValue());
         }
+      }
+      if (indexAsync) {
+        // We want to index asynchronously. However, the callers will await all
+        // index futures. This allows us to - even in synchronous case -
+        // parallelize indexing changes.
+        // Returning immediate futures for newly-created change data objects
+        // while letting the actual futures go will make actual indexing
+        // asynchronous.
+        return results.keySet().stream()
+            .map(cId -> Futures.immediateFuture(changeDataFactory.create(project, cId)))
+            .collect(toImmutableList());
       }
       return indexFutures.build();
     }
@@ -698,37 +782,50 @@ public class BatchUpdate implements AutoCloseable {
                 .setBatchUpdateListeners(batchUpdateListeners)
                 .setChangeRepo(
                     repo, repoView.getRevWalk(), repoView.getInserter(), repoView.getCommands()),
-            dryrun);
-    if (user.isIdentifiedUser()) {
-      handle.manager.setRefLogIdent(user.asIdentifiedUser().newRefLogIdent(when, zoneId));
-    }
+            dryrun,
+            indexAsync());
+    getRefLogIdent().ifPresent(handle.manager::setRefLogIdent);
     handle.manager.setRefLogMessage(refLogMessage);
     handle.manager.setPushCertificate(pushCert);
-    for (Map.Entry<Change.Id, Collection<BatchUpdateOp>> e : ops.asMap().entrySet()) {
+    for (Map.Entry<Change.Id, Collection<OpData<BatchUpdateOp>>> e : ops.asMap().entrySet()) {
       Change.Id id = e.getKey();
-      ChangeContextImpl ctx = newChangeContext(id);
       boolean dirty = false;
+      boolean deleted = false;
+      List<ChangeUpdate> changeUpdates = new ArrayList<>();
+      ChangeContextImpl ctx = null;
       logDebug(
           "Applying %d ops for change %s: %s",
           e.getValue().size(),
           id,
           lazy(() -> e.getValue().stream().map(op -> op.getClass().getName()).collect(toSet())));
-      for (BatchUpdateOp op : e.getValue()) {
+      for (OpData<BatchUpdateOp> opData : e.getValue()) {
+        if (ctx == null) {
+          ctx = newChangeContext(opData.user(), id);
+        } else if (!ctx.getUser().equals(opData.user())) {
+          ctx.defaultUpdates.values().forEach(changeUpdates::add);
+          ctx.distinctUpdates.values().forEach(changeUpdates::add);
+          ctx = newChangeContext(opData.user(), id);
+        }
         try (TraceContext.TraceTimer ignored =
             TraceContext.newTimer(
-                op.getClass().getSimpleName() + "#updateChange",
+                opData.getClass().getSimpleName() + "#updateChange",
                 Metadata.builder().projectName(project.get()).changeId(id.get()).build())) {
-          dirty |= op.updateChange(ctx);
+          dirty |= opData.op().updateChange(ctx);
+          deleted |= ctx.deleted;
         }
       }
+      if (ctx != null) {
+        ctx.defaultUpdates.values().forEach(changeUpdates::add);
+        ctx.distinctUpdates.values().forEach(changeUpdates::add);
+      }
+
       if (!dirty) {
         logDebug("No ops reported dirty, short-circuiting");
         handle.setResult(id, ChangeResult.SKIPPED);
         continue;
       }
-      ctx.defaultUpdates.values().forEach(handle.manager::add);
-      ctx.distinctUpdates.values().forEach(handle.manager::add);
-      if (ctx.deleted) {
+      changeUpdates.forEach(handle.manager::add);
+      if (deleted) {
         logDebug("Change %s was deleted", id);
         handle.manager.deleteChange(id);
         handle.setResult(id, ChangeResult.DELETED);
@@ -739,7 +836,48 @@ public class BatchUpdate implements AutoCloseable {
     return handle;
   }
 
-  private ChangeContextImpl newChangeContext(Change.Id id) {
+  /**
+   * Creates the ref log identity that should be used for the ref updates that are done by this
+   * {@code BatchUpdate}.
+   *
+   * <p>The ref log identity is created for the users for which operations should be executed. If
+   * all operations are executed by the same user the ref log identity is created for that user. If
+   * operations are executed for multiple users a shared reflog identity is created.
+   */
+  @VisibleForTesting
+  Optional<PersonIdent> getRefLogIdent() {
+    if (ops.isEmpty()) {
+      return Optional.empty();
+    }
+
+    // If all updates are done by identified users, create a shared ref log identity.
+    if (ops.values().stream()
+        .map(OpData::user)
+        .allMatch(currentUser -> currentUser.isIdentifiedUser())) {
+      return Optional.of(
+          refLogIdentityProvider.newRefLogIdent(
+              ops.values().stream()
+                  .map(OpData::user)
+                  .map(CurrentUser::asIdentifiedUser)
+                  .collect(toImmutableList()),
+              when,
+              zoneId));
+    }
+
+    // Fail if some but not all updates are done by identified users. At the moment we do not
+    // support batching updates of identified users and non-identified users (e.g. updates done on
+    // behalf of the server).
+    checkState(
+        ops.values().stream()
+            .map(OpData::user)
+            .noneMatch(currentUser -> currentUser.isIdentifiedUser()),
+        "batching updates of identified users and non-identified users is not supported");
+
+    // As fallback the server identity will be used as the ref log identity.
+    return Optional.empty();
+  }
+
+  private ChangeContextImpl newChangeContext(@Nullable CurrentUser contextUser, Change.Id id) {
     logDebug("Opening change %s for update", id);
     Change c = newChanges.get(id);
     boolean isNew = c != null;
@@ -752,27 +890,30 @@ public class BatchUpdate implements AutoCloseable {
       logDebug("Change %s is new", id);
     }
     ChangeNotes notes = changeNotesFactory.createForBatchUpdate(c, !isNew);
-    return new ChangeContextImpl(notes);
+    return new ChangeContextImpl(contextUser, notes);
   }
 
   private void executePostOps(Map<Change.Id, ChangeData> changeDatas) throws Exception {
-    PostUpdateContextImpl ctx = new PostUpdateContextImpl(changeDatas);
-    for (BatchUpdateOp op : ops.values()) {
+    for (OpData<BatchUpdateOp> opData : ops.values()) {
+      PostUpdateContextImpl ctx = new PostUpdateContextImpl(opData.user(), changeDatas);
       try (TraceContext.TraceTimer ignored =
-          TraceContext.newTimer(op.getClass().getSimpleName() + "#postUpdate", Metadata.empty())) {
-        op.postUpdate(ctx);
+          TraceContext.newTimer(
+              opData.getClass().getSimpleName() + "#postUpdate", Metadata.empty())) {
+        opData.op().postUpdate(ctx);
       }
     }
 
-    for (RepoOnlyOp op : repoOnlyOps) {
+    for (OpData<RepoOnlyOp> opData : repoOnlyOps) {
+      PostUpdateContextImpl ctx = new PostUpdateContextImpl(opData.user(), changeDatas);
       try (TraceContext.TraceTimer ignored =
-          TraceContext.newTimer(op.getClass().getSimpleName() + "#postUpdate", Metadata.empty())) {
-        op.postUpdate(ctx);
+          TraceContext.newTimer(
+              opData.getClass().getSimpleName() + "#postUpdate", Metadata.empty())) {
+        opData.op().postUpdate(ctx);
       }
     }
     try (TraceContext.TraceTimer ignored =
         TraceContext.newTimer("fireAttentionSetUpdates#postUpdate", Metadata.empty())) {
-      fireAttentionSetUpdateEvents(ctx);
+      fireAttentionSetUpdateEvents(changeDatas);
     }
   }
 
@@ -801,6 +942,20 @@ public class BatchUpdate implements AutoCloseable {
     // noisy.
     if (RequestId.isSet()) {
       logger.atFine().log(msg, arg1, arg2, arg3);
+    }
+  }
+
+  /** Data needed to execute a {@link RepoOnlyOp} or a {@link BatchUpdateOp}. */
+  @AutoValue
+  abstract static class OpData<T extends RepoOnlyOp> {
+    /** Op that should be executed. */
+    abstract T op();
+
+    /** User that should be used to execute the {@link #op}. */
+    abstract CurrentUser user();
+
+    static <T extends RepoOnlyOp> OpData<T> create(T op, CurrentUser user) {
+      return new AutoValue_BatchUpdate_OpData<>(op, user);
     }
   }
 }

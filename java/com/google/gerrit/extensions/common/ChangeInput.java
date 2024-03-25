@@ -14,11 +14,15 @@
 
 package com.google.gerrit.extensions.common;
 
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.extensions.api.accounts.AccountInput;
+import com.google.gerrit.extensions.api.changes.ApplyPatchInput;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.api.changes.NotifyInfo;
 import com.google.gerrit.extensions.api.changes.RecipientType;
 import com.google.gerrit.extensions.client.ChangeStatus;
+import com.google.gerrit.extensions.client.ListChangesOption;
+import java.util.List;
 import java.util.Map;
 
 public class ChangeInput {
@@ -35,8 +39,11 @@ public class ChangeInput {
   public Boolean newBranch;
   public Map<String, String> validationOptions;
   public MergeInput merge;
+  public ApplyPatchInput patch;
 
   public AccountInput author;
+
+  @Nullable public List<ListChangesOption> responseFormatOptions;
 
   public ChangeInput() {}
 

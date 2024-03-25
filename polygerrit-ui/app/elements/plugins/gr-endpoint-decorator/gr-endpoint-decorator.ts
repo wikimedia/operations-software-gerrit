@@ -6,14 +6,15 @@
 import {html, LitElement} from 'lit';
 import {customElement, property} from 'lit/decorators.js';
 import {
-  getPluginEndpoints,
+  EndpointType,
   ModuleInfo,
 } from '../../shared/gr-js-api-interface/gr-plugin-endpoints';
-import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {PluginApi} from '../../../api/plugin';
 import {HookApi, PluginElement} from '../../../api/hook';
 import {getAppContext} from '../../../services/app-context';
 import {assertIsDefined} from '../../../utils/common-util';
+import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
+import {resolve} from '../../../models/dependency';
 
 const INIT_PROPERTIES_TIMEOUT_MS = 10000;
 
@@ -38,6 +39,8 @@ export class GrEndpointDecorator extends LitElement {
 
   private readonly reporting = getAppContext().reportingService;
 
+  private readonly getPluginLoader = resolve(this, pluginLoaderToken);
+
   override render() {
     return html`<slot></slot>`;
   }
@@ -45,12 +48,17 @@ export class GrEndpointDecorator extends LitElement {
   override connectedCallback() {
     super.connectedCallback();
     assertIsDefined(this.name);
-    getPluginEndpoints().onNewEndpoint(this.name, this.initModule);
-    getPluginLoader()
+    this.getPluginLoader().pluginEndPoints.onNewEndpoint(
+      this.name,
+      this.initModule
+    );
+    this.getPluginLoader()
       .awaitPluginsLoaded()
       .then(() => {
         assertIsDefined(this.name);
-        const modules = getPluginEndpoints().getDetails(this.name);
+        const modules = this.getPluginLoader().pluginEndPoints.getDetails(
+          this.name
+        );
         for (const module of modules) {
           this.initModule(module);
         }
@@ -62,7 +70,10 @@ export class GrEndpointDecorator extends LitElement {
       domHook.handleInstanceDetached(el);
     }
     assertIsDefined(this.name);
-    getPluginEndpoints().onDetachedEndpoint(this.name, this.initModule);
+    this.getPluginLoader().pluginEndPoints.onDetachedEndpoint(
+      this.name,
+      this.initModule
+    );
     super.disconnectedCallback();
   }
 
@@ -187,10 +198,10 @@ export class GrEndpointDecorator extends LitElement {
     }
     let initPromise;
     switch (type) {
-      case 'decorate':
+      case EndpointType.DECORATE:
         initPromise = this.initDecoration(moduleName, plugin, slot);
         break;
-      case 'replace':
+      case EndpointType.REPLACE:
         initPromise = this.initReplacement(moduleName, plugin);
         break;
     }

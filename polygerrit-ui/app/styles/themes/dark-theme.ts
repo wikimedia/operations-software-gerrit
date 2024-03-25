@@ -113,7 +113,7 @@ const darkThemeCss = safeStyleSheet`
     --tooltip-button-text-color: var(--gerrit-blue-light);
     --negative-red-text-color: var(--red-200);
     --positive-green-text-color: var(--green-200);
-    --indirect-ancestor-text-color: var(--green-200);
+    --indirect-relation-text-color: var(--green-200);
 
     /* background colors */
     /* primary background colors */
@@ -123,8 +123,8 @@ const darkThemeCss = safeStyleSheet`
     /* directly derived from primary background colors */
     /*   empty, because inheriting from app-theme is just fine
       /* unique background colors */
-    --assignee-highlight-color: #3a361c;
-    --assignee-highlight-selection-color: #423e24;
+    --line-item-highlight-color: #3a361c;
+    --line-item-highlight-selection-color: #423e24;
     --chip-selected-background-color: #3c4455;
     --edit-mode-background-color: #5c0a36;
     --emphasis-color: #383f4a;
@@ -137,6 +137,10 @@ const darkThemeCss = safeStyleSheet`
     --comment-background-color: #3c3f43;
     --robot-comment-background-color: #1e3a5f;
     --unresolved-comment-background-color: #614a19;
+
+    /* Suggest edits */
+    --user-suggestion-header-background: var(--gray-700);
+    --user-suggestion-header-color: white;
 
     /* vote background colors */
     --vote-color-approved: var(--green-300);
@@ -226,6 +230,8 @@ const darkThemeCss = safeStyleSheet`
 
     --diff-moved-in-background: #1d4042;
     --diff-moved-in-label-color: var(--cyan-50);
+    --diff-moved-in-changed-background: #1d4042;
+    --diff-moved-in-changed-label-color: var(--cyan-50);
     --diff-moved-out-background: #230e34;
     --diff-moved-out-label-color: var(--purple-50);
 
@@ -239,9 +245,9 @@ const darkThemeCss = safeStyleSheet`
     --diff-tab-indicator-color: var(--deemphasized-text-color);
     --diff-trailing-whitespace-indicator: #ff9ad2;
     --focused-line-outline-color: var(--blue-200);
-    --coverage-covered: #37674a;
+    --coverage-covered: var(--cyan-tonal);
     --coverage-covered-line-num-color: var(--gray-200);
-    --coverage-not-covered: #6b3600;
+    --coverage-not-covered: var(--orange-tonal);
     --ranged-comment-hint-text-color: var(--blue-50);
     --token-highlighting-color: var(--yellow-tonal);
 
@@ -279,9 +285,6 @@ const darkThemeCss = safeStyleSheet`
     /* misc */
     --line-length-indicator-color: #d7aefb;
 
-    /* paper and iron component overrides */
-    --iron-overlay-backdrop-background-color: white;
-
     /* rules applied to html */
     background-color: var(--view-background-color);
   }
@@ -292,7 +295,13 @@ export function applyTheme() {
   const styleEl = document.createElement('style');
   styleEl.setAttribute('id', 'dark-theme');
   safeStyleEl.setTextContent(styleEl, darkThemeCss);
-  document.head.appendChild(styleEl);
+
+  // We would like to insert the dark theme styles after the light theme such
+  // that the dark theme values override the defaults in the light theme. But
+  // OTOH we want to insert before any plugin provided styles, because we do NOT
+  // want to override those.
+  const pluginStyleEl = document.head.querySelector('style#plugin-style');
+  document.head.insertBefore(styleEl, pluginStyleEl);
 }
 
 export function removeTheme() {

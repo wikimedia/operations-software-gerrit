@@ -44,6 +44,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Properties;
@@ -222,7 +223,7 @@ public final class GerritLauncher {
         String cn = programClassName(name);
         clazz = Class.forName(PKG + "." + cn, true, loader);
       } catch (ClassNotFoundException cnfe) {
-        if (name.equals(name.toLowerCase())) {
+        if (name.equals(name.toLowerCase(Locale.US))) {
           clazz = Class.forName(PKG + "." + name, true, loader);
         } else {
           throw cnfe;
@@ -266,7 +267,7 @@ public final class GerritLauncher {
   }
 
   private static String programClassName(String cn) {
-    if (cn.equals(cn.toLowerCase())) {
+    if (cn.equals(cn.toLowerCase(Locale.US))) {
       StringBuilder buf = new StringBuilder();
       buf.append(Character.toUpperCase(cn.charAt(0)));
       for (int i = 1; i < cn.length(); i++) {
@@ -560,6 +561,7 @@ public final class GerritLauncher {
     return myHome;
   }
 
+  @SuppressWarnings("ReturnMissingNullable")
   private static File tmproot() {
     File tmp;
     String gerritTemp = System.getenv("GERRIT_TMP");
@@ -599,6 +601,7 @@ public final class GerritLauncher {
     }
   }
 
+  @SuppressWarnings("ReturnMissingNullable")
   private static File locateHomeDirectory() {
     // Try to find the user's home directory. If we can't find it
     // return null so the JVM's default temporary directory is used

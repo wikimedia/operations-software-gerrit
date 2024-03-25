@@ -6,7 +6,6 @@
 import '../../../test/common-test-setup';
 import './gr-change-actions';
 import {navigationToken} from '../../core/gr-navigation/gr-navigation';
-import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {
   createAccountWithId,
   createApproval,
@@ -22,7 +21,6 @@ import {
   query,
   queryAll,
   queryAndAssert,
-  spyStorage,
   stubReporting,
   stubRestApi,
 } from '../../../test/test-utils';
@@ -42,27 +40,33 @@ import {
   TopicName,
 } from '../../../types/common';
 import {ActionType} from '../../../api/change-actions';
-import {SinonFakeTimers} from 'sinon';
+import {SinonFakeTimers, SinonStubbedMember} from 'sinon';
 import {IronAutogrowTextareaElement} from '@polymer/iron-autogrow-textarea';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {GrDialog} from '../../shared/gr-dialog/gr-dialog';
 import {UIActionInfo} from '../../shared/gr-js-api-interface/gr-change-actions-js-api';
-import {getAppContext} from '../../../services/app-context';
 import {fixture, html, assert} from '@open-wc/testing';
 import {GrConfirmCherrypickDialog} from '../gr-confirm-cherrypick-dialog/gr-confirm-cherrypick-dialog';
 import {GrDropdown} from '../../shared/gr-dropdown/gr-dropdown';
-import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
 import {GrConfirmSubmitDialog} from '../gr-confirm-submit-dialog/gr-confirm-submit-dialog';
 import {GrConfirmRebaseDialog} from '../gr-confirm-rebase-dialog/gr-confirm-rebase-dialog';
 import {GrConfirmMoveDialog} from '../gr-confirm-move-dialog/gr-confirm-move-dialog';
 import {GrConfirmAbandonDialog} from '../gr-confirm-abandon-dialog/gr-confirm-abandon-dialog';
 import {GrConfirmRevertDialog} from '../gr-confirm-revert-dialog/gr-confirm-revert-dialog';
-import {EventType} from '../../../types/events';
 import {testResolver} from '../../../test/common-test-setup';
+import {storageServiceToken} from '../../../services/storage/gr-storage_impl';
+import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
+import {
+  ChangeModel,
+  changeModelToken,
+} from '../../../models/change/change-model';
 
 // TODO(dhruvsri): remove use of _populateRevertMessage as it's private
 suite('gr-change-actions tests', () => {
   let element: GrChangeActions;
+  let navigateResetStub: SinonStubbedMember<
+    ChangeModel['navigateToChangeResetReload']
+  >;
 
   suite('basic tests', () => {
     setup(async () => {
@@ -119,7 +123,7 @@ suite('gr-change-actions tests', () => {
       });
 
       sinon
-        .stub(getPluginLoader(), 'awaitPluginsLoaded')
+        .stub(testResolver(pluginLoaderToken), 'awaitPluginsLoaded')
         .returns(Promise.resolve());
 
       element = await fixture<GrChangeActions>(html`
@@ -142,6 +146,10 @@ suite('gr-change-actions tests', () => {
         _account_id: 123 as AccountId,
       };
       stubRestApi('getRepoBranches').returns(Promise.resolve([]));
+      navigateResetStub = sinon.stub(
+        testResolver(changeModelToken),
+        'navigateToChangeResetReload'
+      );
 
       await element.updateComplete;
       await element.reload();
@@ -180,14 +188,13 @@ suite('gr-change-actions tests', () => {
                 title="Rebase onto tip of branch or parent change"
               >
                 <gr-button
-                  aria-disabled="true"
+                  aria-disabled="false"
                   class="rebase"
                   data-action-key="rebase"
                   data-label="Rebase"
-                  disabled=""
                   link=""
                   role="button"
-                  tabindex="-1"
+                  tabindex="0"
                 >
                   <gr-icon icon="rebase"> </gr-icon>
                   Rebase
@@ -207,13 +214,7 @@ suite('gr-change-actions tests', () => {
               <span id="moreMessage"> More </span>
             </gr-dropdown>
           </div>
-          <gr-overlay
-            aria-hidden="true"
-            id="overlay"
-            style="outline: none; display: none;"
-            tabindex="-1"
-            with-backdrop=""
-          >
+          <dialog id="actionsModal" tabindex="-1">
             <gr-confirm-rebase-dialog class="confirmDialog" id="confirmRebase">
             </gr-confirm-rebase-dialog>
             <gr-confirm-cherrypick-dialog
@@ -279,7 +280,7 @@ suite('gr-change-actions tests', () => {
                 Do you really want to delete the edit?
               </div>
             </gr-dialog>
-          </gr-overlay>
+          </dialog>
         `
       );
     });
@@ -479,9 +480,6 @@ suite('gr-change-actions tests', () => {
       stubRestApi('getFromProjectLookup').returns(
         Promise.resolve('test' as RepoName)
       );
-      sinon
-        .stub(queryAndAssert<GrOverlay>(element, '#overlay'), 'open')
-        .returns(Promise.resolve());
       element.change = {
         ...createChangeViewChange(),
         revisions: {
@@ -518,9 +516,6 @@ suite('gr-change-actions tests', () => {
       stubRestApi('getFromProjectLookup').returns(
         Promise.resolve('test' as RepoName)
       );
-      sinon
-        .stub(queryAndAssert<GrOverlay>(element, '#overlay'), 'open')
-        .returns(Promise.resolve());
       element.change = {
         ...createChangeViewChange(),
         revisions: {
@@ -585,34 +580,6 @@ suite('gr-change-actions tests', () => {
       assert.equal(fireActionStub.callCount, 0);
     });
 
-    test('chain state', async () => {
-      assert.equal(element._hasKnownChainState, false);
-      element.hasParent = true;
-      await element.updateComplete;
-      assert.equal(element._hasKnownChainState, true);
-    });
-
-    test('calculateDisabled', () => {
-      const action = {
-        __key: 'rebase',
-        enabled: true,
-        __type: ActionType.CHANGE,
-        label: 'l',
-      };
-      element._hasKnownChainState = false;
-      assert.equal(element.calculateDisabled(action), true);
-
-      action.__key = 'delete';
-      assert.equal(element.calculateDisabled(action), false);
-
-      action.__key = 'rebase';
-      element._hasKnownChainState = true;
-      assert.equal(element.calculateDisabled(action), false);
-
-      action.enabled = false;
-      assert.equal(element.calculateDisabled(action), false);
-    });
-
     test('rebase change', async () => {
       const fireActionStub = sinon.stub(element, 'fireAction');
       const fetchChangesStub = sinon
@@ -621,7 +588,6 @@ suite('gr-change-actions tests', () => {
           'fetchRecentChanges'
         )
         .returns(Promise.resolve([]));
-      element._hasKnownChainState = true;
       await element.updateComplete;
       queryAndAssert<GrButton>(
         element,
@@ -638,25 +604,30 @@ suite('gr-change-actions tests', () => {
       };
       assert.isTrue(fetchChangesStub.called);
       element.handleRebaseConfirm(
-        new CustomEvent('', {detail: {base: '1234', allowConflicts: false}})
+        new CustomEvent('', {
+          detail: {
+            base: '1234',
+            allowConflicts: false,
+            rebaseChain: false,
+            onBehalfOfUploader: true,
+          },
+        })
       );
       assert.deepEqual(fireActionStub.lastCall.args, [
         '/rebase',
         assertUIActionInfo(rebaseAction),
         true,
-        {base: '1234', allow_conflicts: false},
-        {allow_conflicts: false},
+        {base: '1234', allow_conflicts: false, on_behalf_of_uploader: true},
+        {allow_conflicts: false, on_behalf_of_uploader: true},
       ]);
     });
 
     test('rebase change fires reload event', async () => {
-      const eventStub = sinon.stub(element, 'dispatchEvent');
       await element.handleResponse(
         {__key: 'rebase', __type: ActionType.CHANGE, label: 'l'},
         new Response()
       );
-      assert.isTrue(eventStub.called);
-      assert.equal(eventStub.lastCall.args[0].type, 'reload');
+      assert.isTrue(navigateResetStub.called);
     });
 
     test("rebase dialog gets recent changes each time it's opened", async () => {
@@ -666,7 +637,6 @@ suite('gr-change-actions tests', () => {
           'fetchRecentChanges'
         )
         .returns(Promise.resolve([]));
-      element._hasKnownChainState = true;
       await element.updateComplete;
       const rebaseButton = queryAndAssert<GrButton>(
         element,
@@ -691,7 +661,6 @@ suite('gr-change-actions tests', () => {
     });
 
     test('two dialogs are not shown at the same time', async () => {
-      element._hasKnownChainState = true;
       await element.updateComplete;
       queryAndAssert<GrButton>(
         element,
@@ -713,42 +682,15 @@ suite('gr-change-actions tests', () => {
       );
     });
 
-    test('fullscreen-overlay-opened hides content', () => {
-      const spy = sinon.spy(element, 'handleHideBackgroundContent');
-      queryAndAssert<GrOverlay>(element, '#overlay').dispatchEvent(
-        new CustomEvent('fullscreen-overlay-opened', {
-          composed: true,
-          bubbles: true,
-        })
-      );
-      assert.isTrue(spy.called);
-      assert.isTrue(
-        queryAndAssert<Element>(element, '#mainContent').classList.contains(
-          'overlayOpen'
-        )
-      );
-    });
-
-    test('fullscreen-overlay-closed shows content', () => {
-      const spy = sinon.spy(element, 'handleShowBackgroundContent');
-      queryAndAssert<GrOverlay>(element, '#overlay').dispatchEvent(
-        new CustomEvent('fullscreen-overlay-closed', {
-          composed: true,
-          bubbles: true,
-        })
-      );
-      assert.isTrue(spy.called);
-      assert.isFalse(
-        queryAndAssert<Element>(element, '#mainContent').classList.contains(
-          'overlayOpen'
-        )
-      );
-    });
-
     test('setReviewOnRevert', () => {
       const review = {labels: {Foo: 1, 'Bar-Baz': -2}};
       const changeId = 1234 as NumericChangeId;
-      sinon.stub(element.jsAPI, 'getReviewPostRevert').returns(review);
+      sinon
+        .stub(
+          testResolver(pluginLoaderToken).jsApiService,
+          'getReviewPostRevert'
+        )
+        .returns(review);
       const saveStub = stubRestApi('saveChangeReview').returns(
         Promise.resolve(new Response())
       );
@@ -812,7 +754,7 @@ suite('gr-change-actions tests', () => {
         element.editPatchsetLoaded = true;
         await element.updateComplete;
 
-        const storage = getAppContext().storageService;
+        const storage = testResolver(storageServiceToken);
         storage.setEditableContentItem(
           'c42_ps2_index.php',
           '<?php\necho 42_ps_2'
@@ -835,7 +777,8 @@ suite('gr-change-actions tests', () => {
         assert.isOk(storage.getEditableContentItem('c42_ps2_index.php')!);
         assert.isNotOk(storage.getEditableContentItem('c50_psedit_index.php')!);
 
-        const eraseEditableContentItemsForChangeEditSpy = spyStorage(
+        const eraseEditableContentItemsForChangeEditSpy = sinon.spy(
+          storage,
           'eraseEditableContentItemsForChangeEdit'
         );
         sinon.stub(element, 'fireAction');
@@ -1308,18 +1251,28 @@ suite('gr-change-actions tests', () => {
       await keyTapped;
     });
 
-    test('setLoadingOnButtonWithKey top-level', () => {
+    test('setLoadingOnButtonWithKey top-level', async () => {
       const key = 'rebase';
-      const type = 'revision';
-      const cleanup = element.setLoadingOnButtonWithKey(type, key);
+      const type = ActionType.REVISION;
+      const cleanup = element.setLoadingOnButtonWithKey({
+        __type: type,
+        __key: key,
+        label: 'label',
+      });
       assert.equal(element.actionLoadingMessage, 'Rebasing...');
 
       const button = queryAndAssert<GrButton>(
         element,
         '[data-action-key="' + key + '"]'
       );
+      const dialog = queryAndAssert<GrConfirmRebaseDialog>(
+        element,
+        'gr-confirm-rebase-dialog'
+      );
       assert.isTrue(button.hasAttribute('loading'));
       assert.isTrue(button.disabled);
+      await dialog.updateComplete;
+      assert.isTrue(dialog.disableActions);
 
       assert.isOk(cleanup);
       assert.isFunction(cleanup);
@@ -1328,12 +1281,18 @@ suite('gr-change-actions tests', () => {
       assert.isFalse(button.hasAttribute('loading'));
       assert.isFalse(button.disabled);
       assert.isNotOk(element.actionLoadingMessage);
+      await dialog.updateComplete;
+      assert.isFalse(dialog.disableActions);
     });
 
     test('setLoadingOnButtonWithKey overflow menu', () => {
       const key = 'cherrypick';
-      const type = 'revision';
-      const cleanup = element.setLoadingOnButtonWithKey(type, key);
+      const type = ActionType.REVISION;
+      const cleanup = element.setLoadingOnButtonWithKey({
+        __type: type,
+        __key: key,
+        label: 'label',
+      });
       assert.equal(element.actionLoadingMessage, 'Cherry-picking...');
       assert.include(element.disabledMenuActions, 'cherrypick');
       assert.isFunction(cleanup);
@@ -1459,6 +1418,39 @@ suite('gr-change-actions tests', () => {
         await element.updateComplete;
         // test
         await element.reload();
+      });
+
+      test('revert change payload', async () => {
+        await element.updateComplete;
+        queryAndAssert<GrButton>(
+          element,
+          'gr-button[data-action-key="revert"]'
+        ).click();
+        const revertAction = {
+          __key: 'revert',
+          __type: 'change',
+          __primary: false,
+          method: HttpMethod.POST,
+          label: 'Revert',
+          title: 'Revert the change',
+          enabled: true,
+        };
+        queryAndAssert(element, 'gr-confirm-revert-dialog').dispatchEvent(
+          new CustomEvent('confirm-revert', {
+            detail: {
+              message: 'foo message',
+              revertType: 1,
+            },
+          })
+        );
+        assert.deepEqual(fireActionStub.lastCall.args, [
+          '/revert',
+          assertUIActionInfo(revertAction),
+          false,
+          {
+            message: 'foo message',
+          },
+        ]);
       });
 
       test('revert change with plugin hook', async () => {
@@ -1588,13 +1580,8 @@ suite('gr-change-actions tests', () => {
             'Revert submission 199 0' +
             '\n\n' +
             'Reason for revert: <INSERT REASONING HERE>' +
-            '\n' +
-            'Reverted Changes:' +
-            '\n' +
-            '1234567890:random' +
-            '\n' +
-            '23456:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...' +
-            '\n';
+            '\n\n' +
+            'Reverted changes: /q/submissionid:199+0\n';
           assert.equal(confirmRevertDialog.message, expectedMsg);
           const radioInputs = queryAll<HTMLInputElement>(
             confirmRevertDialog,
@@ -1654,13 +1641,8 @@ suite('gr-change-actions tests', () => {
             'Revert submission 199 0' +
             '\n\n' +
             'Reason for revert: <INSERT REASONING HERE>' +
-            '\n' +
-            'Reverted Changes:' +
-            '\n' +
-            '1234567890:random' +
-            '\n' +
-            '23456:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...' +
-            '\n';
+            '\n\n' +
+            'Reverted changes: /q/submissionid:199+0\n';
           const singleChangeMsg =
             'Revert "random commit message"\n\nThis reverts ' +
             'commit 2000.\n\nReason' +
@@ -2438,7 +2420,7 @@ suite('gr-change-actions tests', () => {
         onShowError = sinon.stub();
         element.addEventListener('show-error', onShowError);
         onShowAlert = sinon.stub();
-        element.addEventListener(EventType.SHOW_ALERT, onShowAlert);
+        element.addEventListener('show-alert', onShowAlert);
       });
 
       suite('happy path', () => {
@@ -2533,7 +2515,7 @@ suite('gr-change-actions tests', () => {
               new Response()
             );
             assert.isTrue(setUrlStub.called);
-            assert.equal(setUrlStub.lastCall.args[0], '/q/topic:T');
+            assert.equal(setUrlStub.lastCall.args[0], '/q/topic:"T"');
           });
         });
 
@@ -2572,7 +2554,7 @@ suite('gr-change-actions tests', () => {
             );
             assert.isFalse(showActionDialogStub.called);
             assert.isTrue(setUrlStub.called);
-            assert.equal(setUrlStub.lastCall.args[0], '/q/topic:T');
+            assert.equal(setUrlStub.lastCall.args[0], '/q/topic:"T"');
           });
         });
 
@@ -2684,7 +2666,7 @@ suite('gr-change-actions tests', () => {
       stubRestApi('send').returns(Promise.reject(new Error('error')));
 
       sinon
-        .stub(getPluginLoader(), 'awaitPluginsLoaded')
+        .stub(testResolver(pluginLoaderToken), 'awaitPluginsLoaded')
         .returns(Promise.resolve());
 
       element = await fixture<GrChangeActions>(html`

@@ -31,14 +31,8 @@ function getRewriteResultsFromConfig(
 ): RewriteResult[] {
   const enabledRewrites = Object.values(repoCommentLinks).filter(
     commentLinkInfo =>
-      commentLinkInfo.enabled !== false &&
-      (commentLinkInfo.link !== undefined || commentLinkInfo.html !== undefined)
+      commentLinkInfo.enabled !== false && commentLinkInfo.link !== undefined
   );
-  // Always linkify URLs starting with https?://
-  enabledRewrites.push({
-    match: '(https?://\\S+[\\w/])',
-    link: '$1',
-  });
   return enabledRewrites.flatMap(rewrite => {
     const regexp = new RegExp(rewrite.match, 'g');
     const partialResults: RewriteResult[] = [];
@@ -118,25 +112,19 @@ function getReplacementText(
   matchedText: string,
   rewrite: CommentLinkInfo
 ): string {
-  if (rewrite.link !== undefined) {
-    const replacementHref = rewrite.link.startsWith('/')
-      ? `${getBaseUrl()}${rewrite.link}`
-      : rewrite.link;
-    const regexp = new RegExp(rewrite.match, 'g');
-    return matchedText.replace(
-      regexp,
-      createLinkTemplate(
-        replacementHref,
-        rewrite.text ?? '$&',
-        rewrite.prefix,
-        rewrite.suffix
-      )
-    );
-  } else if (rewrite.html !== undefined) {
-    return matchedText.replace(new RegExp(rewrite.match, 'g'), rewrite.html);
-  } else {
-    throw new Error('commentLinkInfo is not a link or html rewrite');
-  }
+  const replacementHref = rewrite.link.startsWith('/')
+    ? `${getBaseUrl()}${rewrite.link}`
+    : rewrite.link;
+  const regexp = new RegExp(rewrite.match, 'g');
+  return matchedText.replace(
+    regexp,
+    createLinkTemplate(
+      replacementHref,
+      rewrite.text ?? '$&',
+      rewrite.prefix,
+      rewrite.suffix
+    )
+  );
 }
 
 function createLinkTemplate(

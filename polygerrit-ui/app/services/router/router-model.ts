@@ -4,23 +4,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import {Observable} from 'rxjs';
-import {Finalizable} from '../registry';
-import {
-  NumericChangeId,
-  RevisionPatchSetNum,
-  BasePatchSetNum,
-} from '../../types/common';
 import {Model} from '../../models/model';
 import {select} from '../../utils/observable-util';
+import {define} from '../../models/dependency';
 
 export enum GerritView {
   ADMIN = 'admin',
   AGREEMENTS = 'agreements',
   CHANGE = 'change',
   DASHBOARD = 'dashboard',
-  DIFF = 'diff',
   DOCUMENTATION_SEARCH = 'documentation-search',
-  EDIT = 'edit',
   GROUP = 'group',
   PLUGIN_SCREEN = 'plugin-screen',
   REPO = 'repo',
@@ -28,30 +21,22 @@ export enum GerritView {
   SETTINGS = 'settings',
 }
 
+// TODO: Consider renaming this to AppElementState or something similar.
+// Or maybe RootViewState. This class does *not* model the state of the router.
 export interface RouterState {
   // Note that this router model view must be updated before view model state.
   view?: GerritView;
-  changeNum?: NumericChangeId;
-  patchNum?: RevisionPatchSetNum;
-  basePatchNum?: BasePatchSetNum;
 }
 
-export class RouterModel extends Model<RouterState> implements Finalizable {
+export const routerModelToken = define<RouterModel>('router-model');
+
+// TODO: Consider renaming this to AppElementViewModel or something similar.
+// Or maybe RootViewModel. This class is *not* a view model of the router.
+export class RouterModel extends Model<RouterState> {
   readonly routerView$: Observable<GerritView | undefined> = select(
     this.state$,
     state => state.view
   );
-
-  readonly routerChangeNum$: Observable<NumericChangeId | undefined> = select(
-    this.state$,
-    state => state.changeNum
-  );
-
-  readonly routerPatchNum$: Observable<RevisionPatchSetNum | undefined> =
-    select(this.state$, state => state.patchNum);
-
-  readonly routerBasePatchNum$: Observable<BasePatchSetNum | undefined> =
-    select(this.state$, state => state.basePatchNum);
 
   constructor() {
     super({});

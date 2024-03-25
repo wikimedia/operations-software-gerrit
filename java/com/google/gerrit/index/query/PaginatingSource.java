@@ -113,7 +113,7 @@ public class PaginatingSource<T> implements DataSource<T> {
 
   @Override
   public ResultSet<FieldBundle> readRaw() {
-    // TOOD(hiesel): Implement
+    // TODO(hiesel): Implement
     throw new UnsupportedOperationException("not implemented");
   }
 
@@ -122,6 +122,12 @@ public class PaginatingSource<T> implements DataSource<T> {
         .transformAndConcat(this::transformBuffer);
   }
 
+  /**
+   * Checks whether the given object matches.
+   *
+   * @param object the object to be matched
+   * @return whether the given object matches
+   */
   protected boolean match(T object) {
     return true;
   }

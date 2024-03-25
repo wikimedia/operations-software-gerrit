@@ -6,8 +6,11 @@
 import '../../shared/gr-dropdown/gr-dropdown';
 import {GrEditConstants} from '../gr-edit-constants';
 import {sharedStyles} from '../../../styles/shared-styles';
+import {FileActionTapEvent} from '../../../types/events';
 import {LitElement, css, html} from 'lit';
 import {customElement, property} from 'lit/decorators.js';
+import {fire} from '../../../utils/event-util';
+import {DropdownLink} from '../../../types/common';
 
 interface EditAction {
   label: string;
@@ -16,12 +19,6 @@ interface EditAction {
 
 @customElement('gr-edit-file-controls')
 export class GrEditFileControls extends LitElement {
-  /**
-   * Fired when an action in the overflow menu is tapped.
-   *
-   * @event file-action-tap
-   */
-
   @property({type: String})
   filePath?: string;
 
@@ -64,23 +61,20 @@ export class GrEditFileControls extends LitElement {
     >`;
   }
 
-  _handleActionTap(e: CustomEvent) {
+  _handleActionTap(e: CustomEvent<DropdownLink>) {
     e.preventDefault();
     e.stopPropagation();
-    this._dispatchFileAction(e.detail.id, this.filePath);
+    const actionId = e.detail.id;
+    if (!actionId) return;
+    if (!this.filePath) return;
+    this._dispatchFileAction(actionId, this.filePath);
   }
 
-  _dispatchFileAction(action: EditAction, path?: string) {
-    this.dispatchEvent(
-      new CustomEvent('file-action-tap', {
-        detail: {action, path},
-        bubbles: true,
-        composed: true,
-      })
-    );
+  _dispatchFileAction(action: string, path: string) {
+    fire(this, 'file-action-tap', {action, path});
   }
 
-  _computeFileActions(actions: EditAction[]) {
+  _computeFileActions(actions: EditAction[]): DropdownLink[] {
     // TODO(kaspern): conditionally disable some actions based on file status.
     return actions.map(action => {
       return {
@@ -94,5 +88,8 @@ export class GrEditFileControls extends LitElement {
 declare global {
   interface HTMLElementTagNameMap {
     'gr-edit-file-controls': GrEditFileControls;
+  }
+  interface HTMLElementEventMap {
+    'file-action-tap': FileActionTapEvent;
   }
 }

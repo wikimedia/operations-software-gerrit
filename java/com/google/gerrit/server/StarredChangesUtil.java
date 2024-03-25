@@ -14,6 +14,7 @@
 
 package com.google.gerrit.server;
 
+import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.CHANGE_MODIFICATION;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.joining;
@@ -23,7 +24,6 @@ import com.google.auto.value.AutoValue;
 import com.google.common.base.CharMatcher;
 import com.google.common.base.Joiner;
 import com.google.common.base.Splitter;
-import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
@@ -32,7 +32,6 @@ import com.google.common.primitives.Ints;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
-import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.git.GitUpdateFailureException;
@@ -40,13 +39,10 @@ import com.google.gerrit.git.LockFailureException;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
-import com.google.gerrit.server.index.change.ChangeField;
 import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
-import com.google.gerrit.server.project.NoSuchChangeException;
-import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gerrit.server.query.change.InternalChangeQuery;
+import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -55,6 +51,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.NavigableSet;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
@@ -81,6 +78,7 @@ public class StarredChangesUtil {
   public abstract static class StarField {
     private static final String SEPARATOR = ":";
 
+    @Nullable
     public static StarField parse(String s) {
       int p = s.indexOf(SEPARATOR);
       if (p >= 0) {
@@ -167,20 +165,17 @@ public class StarredChangesUtil {
   private final GitReferenceUpdated gitRefUpdated;
   private final AllUsersName allUsers;
   private final Provider<PersonIdent> serverIdent;
-  private final Provider<InternalChangeQuery> queryProvider;
 
   @Inject
   StarredChangesUtil(
       GitRepositoryManager repoManager,
       GitReferenceUpdated gitRefUpdated,
       AllUsersName allUsers,
-      @GerritPersonIdent Provider<PersonIdent> serverIdent,
-      Provider<InternalChangeQuery> queryProvider) {
+      @GerritPersonIdent Provider<PersonIdent> serverIdent) {
     this.repoManager = repoManager;
     this.gitRefUpdated = gitRefUpdated;
     this.allUsers = allUsers;
     this.serverIdent = serverIdent;
-    this.queryProvider = queryProvider;
   }
 
   public NavigableSet<String> getLabels(Account.Id accountId, Change.Id changeId) {
@@ -195,7 +190,7 @@ public class StarredChangesUtil {
     }
   }
 
-  public void star(Account.Id accountId, Project.NameKey project, Change.Id changeId, Operation op)
+  public void star(Account.Id accountId, Change.Id changeId, Operation op)
       throws IllegalLabelException {
     try (Repository repo = repoManager.openRepository(allUsers)) {
       String refName = RefNames.refsStarredChanges(changeId, accountId);
@@ -262,7 +257,7 @@ public class StarredChangesUtil {
       batchUpdate.setAllowNonFastForwards(true);
       batchUpdate.setRefLogIdent(serverIdent.get());
       batchUpdate.setRefLogMessage("Unstar change " + changeId.get(), true);
-      for (Account.Id accountId : byChangeFromIndex(changeId).keySet()) {
+      for (Account.Id accountId : getStars(repo, changeId)) {
         String refName = RefNames.refsStarredChanges(changeId, accountId);
         Ref ref = repo.getRefDatabase().exactRef(refName);
         if (ref != null) {
@@ -288,12 +283,7 @@ public class StarredChangesUtil {
   public ImmutableMap<Account.Id, StarRef> byChange(Change.Id changeId) {
     try (Repository repo = repoManager.openRepository(allUsers)) {
       ImmutableMap.Builder<Account.Id, StarRef> builder = ImmutableMap.builder();
-      for (String refPart : getRefNames(repo, RefNames.refsStarredChangesPrefix(changeId))) {
-        Integer id = Ints.tryParse(refPart);
-        if (id == null) {
-          continue;
-        }
-        Account.Id accountId = Account.id(id);
+      for (Account.Id accountId : getStars(repo, changeId)) {
         builder.put(accountId, readLabels(repo, RefNames.refsStarredChanges(changeId, accountId)));
       }
       return builder.build();
@@ -303,7 +293,7 @@ public class StarredChangesUtil {
     }
   }
 
-  public ImmutableSet<Change.Id> byAccountId(Account.Id accountId, String label) {
+  public ImmutableSet<Change.Id> byAccountId(Account.Id accountId) {
     try (Repository repo = repoManager.openRepository(allUsers)) {
       ImmutableSet.Builder<Change.Id> builder = ImmutableSet.builder();
       for (Ref ref : repo.getRefDatabase().getRefsByPrefix(RefNames.REFS_STARRED_CHANGES)) {
@@ -314,7 +304,7 @@ public class StarredChangesUtil {
         }
         // Skip all refs that don't contain the required label.
         StarRef starRef = readLabels(repo, ref.getName());
-        if (!starRef.labels().contains(label)) {
+        if (!starRef.labels().contains(DEFAULT_LABEL)) {
           continue;
         }
 
@@ -332,22 +322,15 @@ public class StarredChangesUtil {
     }
   }
 
-  public ImmutableListMultimap<Account.Id, String> byChangeFromIndex(Change.Id changeId) {
-    List<ChangeData> changeData =
-        queryProvider
-            .get()
-            .setRequestedFields(ChangeField.ID, ChangeField.STAR)
-            .byLegacyChangeId(changeId);
-    if (changeData.size() != 1) {
-      throw new NoSuchChangeException(changeId);
-    }
-    return changeData.get(0).stars();
-  }
-
-  private static Set<String> getRefNames(Repository repo, String prefix) throws IOException {
-    RefDatabase refDb = repo.getRefDatabase();
+  private static Set<Account.Id> getStars(Repository allUsers, Change.Id changeId)
+      throws IOException {
+    String prefix = RefNames.refsStarredChangesPrefix(changeId);
+    RefDatabase refDb = allUsers.getRefDatabase();
     return refDb.getRefsByPrefix(prefix).stream()
         .map(r -> r.getName().substring(prefix.length()))
+        .map(refPart -> Ints.tryParse(refPart))
+        .filter(Objects::nonNull)
+        .map(id -> Account.id(id))
         .collect(toSet());
   }
 
@@ -432,27 +415,29 @@ public class StarredChangesUtil {
       u.setNewObjectId(writeLabels(repo, labels));
       u.setRefLogIdent(serverIdent.get());
       u.setRefLogMessage("Update star labels", true);
-      RefUpdate.Result result = u.update(rw);
-      switch (result) {
-        case NEW:
-        case FORCED:
-        case NO_CHANGE:
-        case FAST_FORWARD:
-          gitRefUpdated.fire(allUsers, u, null);
-          return;
-        case LOCK_FAILURE:
-          throw new LockFailureException(
-              String.format("Update star labels on ref %s failed", refName), u);
-        case IO_FAILURE:
-        case NOT_ATTEMPTED:
-        case REJECTED:
-        case REJECTED_CURRENT_BRANCH:
-        case RENAMED:
-        case REJECTED_MISSING_OBJECT:
-        case REJECTED_OTHER_REASON:
-        default:
-          throw new StorageException(
-              String.format("Update star labels on ref %s failed: %s", refName, result.name()));
+      try (RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
+        RefUpdate.Result result = u.update(rw);
+        switch (result) {
+          case NEW:
+          case FORCED:
+          case NO_CHANGE:
+          case FAST_FORWARD:
+            gitRefUpdated.fire(allUsers, u, null);
+            return;
+          case LOCK_FAILURE:
+            throw new LockFailureException(
+                String.format("Update star labels on ref %s failed", refName), u);
+          case IO_FAILURE:
+          case NOT_ATTEMPTED:
+          case REJECTED:
+          case REJECTED_CURRENT_BRANCH:
+          case RENAMED:
+          case REJECTED_MISSING_OBJECT:
+          case REJECTED_OTHER_REASON:
+          default:
+            throw new StorageException(
+                String.format("Update star labels on ref %s failed: %s", refName, result.name()));
+        }
       }
     }
   }
@@ -471,26 +456,28 @@ public class StarredChangesUtil {
       u.setExpectedOldObjectId(oldObjectId);
       u.setRefLogIdent(serverIdent.get());
       u.setRefLogMessage("Unstar change", true);
-      RefUpdate.Result result = u.delete();
-      switch (result) {
-        case FORCED:
-          gitRefUpdated.fire(allUsers, u, null);
-          return;
-        case LOCK_FAILURE:
-          throw new LockFailureException(String.format("Delete star ref %s failed", refName), u);
-        case NEW:
-        case NO_CHANGE:
-        case FAST_FORWARD:
-        case IO_FAILURE:
-        case NOT_ATTEMPTED:
-        case REJECTED:
-        case REJECTED_CURRENT_BRANCH:
-        case RENAMED:
-        case REJECTED_MISSING_OBJECT:
-        case REJECTED_OTHER_REASON:
-        default:
-          throw new StorageException(
-              String.format("Delete star ref %s failed: %s", refName, result.name()));
+      try (RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
+        RefUpdate.Result result = u.delete();
+        switch (result) {
+          case FORCED:
+            gitRefUpdated.fire(allUsers, u, null);
+            return;
+          case LOCK_FAILURE:
+            throw new LockFailureException(String.format("Delete star ref %s failed", refName), u);
+          case NEW:
+          case NO_CHANGE:
+          case FAST_FORWARD:
+          case IO_FAILURE:
+          case NOT_ATTEMPTED:
+          case REJECTED:
+          case REJECTED_CURRENT_BRANCH:
+          case RENAMED:
+          case REJECTED_MISSING_OBJECT:
+          case REJECTED_OTHER_REASON:
+          default:
+            throw new StorageException(
+                String.format("Delete star ref %s failed: %s", refName, result.name()));
+        }
       }
     }
   }

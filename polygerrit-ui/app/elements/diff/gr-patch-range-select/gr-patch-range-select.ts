@@ -5,6 +5,7 @@
  */
 import '../../shared/gr-dropdown-list/gr-dropdown-list';
 import '../../shared/gr-select/gr-select';
+import '../../shared/gr-weblink/gr-weblink';
 import {convertToString, pluralize} from '../../../utils/string-util';
 import {getAppContext} from '../../../services/app-context';
 import {
@@ -13,7 +14,6 @@ import {
   getParentIndex,
   getRevisionByPatchNum,
   isMergeParent,
-  sortRevisions,
   PatchSet,
   convertToPatchSetNum,
 } from '../../../utils/patch-set-util';
@@ -27,6 +27,7 @@ import {
   RevisionInfo,
   RevisionPatchSetNum,
   Timestamp,
+  WebLinkInfo,
 } from '../../../types/common';
 import {RevisionInfo as RevisionInfoClass} from '../../shared/revision-info/revision-info';
 import {ChangeComments} from '../gr-comment-api/gr-comment-api';
@@ -42,10 +43,10 @@ import {customElement, property, query, state} from 'lit/decorators.js';
 import {subscribe} from '../../lit/subscription-controller';
 import {commentsModelToken} from '../../../models/comments/comments-model';
 import {resolve} from '../../../models/dependency';
-import {ifDefined} from 'lit/directives/if-defined.js';
 import {ValueChangedEvent} from '../../../types/events';
-import {GeneratedWebLink} from '../../../utils/weblink-util';
 import {changeModelToken} from '../../../models/change/change-model';
+import {changeViewModelToken} from '../../../models/views/change';
+import {fireNoBubbleNoCompose} from '../../../utils/event-util';
 
 // Maximum length for patch set descriptions.
 const PATCH_DESC_MAX_LENGTH = 500;
@@ -55,20 +56,26 @@ function getShaForPatch(patch: PatchSet) {
 }
 
 export interface PatchRangeChangeDetail {
-  patchNum?: PatchSetNum;
+  patchNum?: RevisionPatchSetNum;
   basePatchNum?: BasePatchSetNum;
 }
 
 export type PatchRangeChangeEvent = CustomEvent<PatchRangeChangeDetail>;
 
 export interface FilesWebLinks {
-  meta_a: GeneratedWebLink[];
-  meta_b: GeneratedWebLink[];
+  meta_a: WebLinkInfo[];
+  meta_b: WebLinkInfo[];
 }
 
 declare global {
   interface HTMLElementTagNameMap {
     'gr-patch-range-select': GrPatchRangeSelect;
+  }
+}
+
+declare global {
+  interface HTMLElementEventMap {
+    'patch-range-change': PatchRangeChangeEvent;
   }
 }
 
@@ -116,14 +123,13 @@ export class GrPatchRangeSelect extends LitElement {
 
   private readonly getChangeModel = resolve(this, changeModelToken);
 
-  // Private but used in tests.
-  readonly routerModel = getAppContext().routerModel;
+  private readonly getViewModel = resolve(this, changeViewModelToken);
 
   constructor() {
     super();
     subscribe(
       this,
-      () => this.routerModel.routerChangeNum$,
+      () => this.getViewModel().changeNum$,
       x => (this.changeNum = x)
     );
     subscribe(
@@ -149,7 +155,7 @@ export class GrPatchRangeSelect extends LitElement {
     subscribe(
       this,
       () => this.getChangeModel().revisions$,
-      x => (this.sortedRevisions = sortRevisions(Object.values(x || {})))
+      x => (this.sortedRevisions = x)
     );
     subscribe(
       this,
@@ -177,6 +183,9 @@ export class GrPatchRangeSelect extends LitElement {
         gr-dropdown-list {
           --trigger-style-text-color: var(--deemphasized-text-color);
           --trigger-style-font-family: var(--font-family);
+        }
+        .filesWeblinks gr-weblink {
+          vertical-align: baseline;
         }
         @media screen and (max-width: 50em) {
           .filesWeblinks {
@@ -224,15 +233,11 @@ export class GrPatchRangeSelect extends LitElement {
     `;
   }
 
-  private renderWeblinks(fileLinks?: GeneratedWebLink[]) {
+  private renderWeblinks(fileLinks?: WebLinkInfo[]) {
     if (!fileLinks) return;
     return html`<span class="filesWeblinks">
       ${fileLinks.map(
-        weblink => html`
-          <a target="_blank" rel="noopener" href=${ifDefined(weblink.url)}>
-            ${weblink.name}
-          </a>
-        `
+        weblink => html`<gr-weblink .info=${weblink}></gr-weblink>`
       )}</span
     > `;
   }
@@ -318,11 +323,7 @@ export class GrPatchRangeSelect extends LitElement {
   }
 
   private computeText(patchNum: PatchSetNum, prefix: string, sha: string) {
-    return (
-      `${prefix}${patchNum}` +
-      `${this.computePatchSetCommentsString(patchNum)}` +
-      ` | ${sha}`
-    );
+    return `${prefix}${patchNum} | ${sha}`;
   }
 
   private createDropdownEntry(
@@ -336,6 +337,12 @@ export class GrPatchRangeSelect extends LitElement {
       mobileText: this.computeMobileText(patchNum),
       bottomText: `${this.computePatchSetDescription(patchNum)}`,
       value: patchNum,
+      commentThreads: this.changeComments?.computeCommentThreads(
+        {
+          patchNum,
+        },
+        true
+      ),
     };
     const date = this.computePatchSetDate(patchNum);
     if (date) {
@@ -410,12 +417,12 @@ export class GrPatchRangeSelect extends LitElement {
   computePatchSetCommentsString(patchNum: PatchSetNum): string {
     if (!this.changeComments) return '';
 
-    const commentThreadCount = this.changeComments.computeCommentThreadCount(
+    const commentThreadCount = this.changeComments.computeCommentThreads(
       {
         patchNum,
       },
       true
-    );
+    ).length;
     const commentThreadString = pluralize(commentThreadCount, 'comment');
 
     const unresolvedCount = this.changeComments.computeUnresolvedNum(
@@ -463,7 +470,9 @@ export class GrPatchRangeSelect extends LitElement {
       basePatchNum: this.basePatchNum,
     };
     const target = e.target;
-    const patchSetValue = convertToPatchSetNum(e.detail.value)!;
+    const patchSetValue = convertToPatchSetNum(
+      e.detail.value
+    ) as RevisionPatchSetNum;
     const latestPatchNum = computeLatestPatchNum(this.availablePatches);
     if (target === this.patchNumDropdown) {
       if (detail.patchNum === patchSetValue) return;
@@ -471,9 +480,9 @@ export class GrPatchRangeSelect extends LitElement {
         previous: detail.patchNum,
         current: patchSetValue,
         latest: latestPatchNum,
-        commentCount: this.changeComments?.computeCommentThreadCount({
+        commentCount: this.changeComments?.computeCommentThreads({
           patchNum: patchSetValue,
-        }),
+        }).length,
       });
       detail.patchNum = patchSetValue;
     } else {
@@ -481,15 +490,13 @@ export class GrPatchRangeSelect extends LitElement {
       this.reporting.reportInteraction('left-patchset-changed', {
         previous: detail.basePatchNum,
         current: patchSetValue,
-        commentCount: this.changeComments?.computeCommentThreadCount({
+        commentCount: this.changeComments?.computeCommentThreads({
           patchNum: patchSetValue,
-        }),
+        }).length,
       });
       detail.basePatchNum = patchSetValue as BasePatchSetNum;
     }
 
-    this.dispatchEvent(
-      new CustomEvent('patch-range-change', {detail, bubbles: false})
-    );
+    fireNoBubbleNoCompose(this, 'patch-range-change', detail);
   }
 }

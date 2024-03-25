@@ -24,11 +24,13 @@ import static java.util.stream.Collectors.toSet;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Enums;
 import com.google.common.base.Splitter;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
 import com.google.common.primitives.Ints;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.entities.Address;
@@ -42,9 +44,9 @@ import com.google.gerrit.entities.SubmitRecord;
 import com.google.gerrit.exceptions.NotSignedInException;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.registration.DynamicMap;
-import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.IndexConfig;
 import com.google.gerrit.index.Schema;
+import com.google.gerrit.index.SchemaFieldDefs.SchemaField;
 import com.google.gerrit.index.SchemaUtil;
 import com.google.gerrit.index.query.LimitPredicate;
 import com.google.gerrit.index.query.Predicate;
@@ -63,6 +65,7 @@ import com.google.gerrit.server.account.DestinationList;
 import com.google.gerrit.server.account.GroupBackend;
 import com.google.gerrit.server.account.GroupBackends;
 import com.google.gerrit.server.account.GroupMembers;
+import com.google.gerrit.server.account.QueryList;
 import com.google.gerrit.server.account.VersionedAccountDestinations;
 import com.google.gerrit.server.account.VersionedAccountQueries;
 import com.google.gerrit.server.change.ChangeTriplet;
@@ -99,6 +102,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -151,7 +155,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   public static final String FIELD_ATTENTION_SET_USERS = "attentionusers";
   public static final String FIELD_ATTENTION_SET_USERS_COUNT = "attentionuserscount";
   public static final String FIELD_ATTENTION_SET_FULL = "attentionfull";
-  public static final String FIELD_ASSIGNEE = "assignee";
+  @Deprecated public static final String FIELD_ASSIGNEE = "assignee";
   public static final String FIELD_AUTHOR = "author";
   public static final String FIELD_EXACTAUTHOR = "exactauthor";
 
@@ -184,6 +188,8 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   public static final String FIELD_MERGEABLE = "mergeable2";
   public static final String FIELD_MERGED_ON = "mergedon";
   public static final String FIELD_MESSAGE = "message";
+  public static final String FIELD_SUBJECT = "subject";
+  public static final String FIELD_PREFIX_SUBJECT = "prefixsubject";
   public static final String FIELD_MESSAGE_EXACT = "messageexact";
   public static final String FIELD_OWNER = "owner";
   public static final String FIELD_OWNERIN = "ownerin";
@@ -221,9 +227,12 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   public static final String ARG_ID_GROUP = "group";
   public static final String ARG_ID_OWNER = "owner";
   public static final String ARG_ID_NON_UPLOADER = "non_uploader";
+  public static final String ARG_ID_NON_CONTRIBUTOR = "non_contributor";
   public static final String ARG_COUNT = "count";
   public static final Account.Id OWNER_ACCOUNT_ID = Account.id(0);
   public static final Account.Id NON_UPLOADER_ACCOUNT_ID = Account.id(-1);
+  public static final Account.Id NON_CONTRIBUTOR_ACCOUNT_ID = Account.id(-2);
+  public static final Account.Id NON_EXISTING_ACCOUNT_ID = Account.id(-1000);
 
   public static final String OPERATOR_MERGED_BEFORE = "mergedbefore";
   public static final String OPERATOR_MERGED_AFTER = "mergedafter";
@@ -407,7 +416,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
       this.submitRules = submitRules;
     }
 
-    Arguments asUser(CurrentUser otherUser) {
+    public Arguments asUser(CurrentUser otherUser) {
       return new Arguments(
           queryProvider,
           rewriter,
@@ -475,21 +484,23 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
       }
     }
 
+    @Nullable
     Schema<ChangeData> getSchema() {
       return index != null ? index.getSchema() : null;
     }
   }
 
-  private final Arguments args;
+  protected final Arguments args;
   protected Map<String, String> hasOperandAliases = Collections.emptyMap();
-  private Map<Account.Id, DestinationList> destinationListByAccount = new HashMap<>();
+  private final Map<Account.Id, DestinationList> destinationListByAccount = new HashMap<>();
+  private final Map<Account.Id, QueryList> queryListByAccount = new HashMap<>();
 
   private static final Splitter RULE_SPLITTER = Splitter.on("=");
   private static final Splitter PLUGIN_SPLITTER = Splitter.on("_");
-  private static final Splitter LABEL_SPLITTER = Splitter.on(",");
+  protected static final Splitter LABEL_SPLITTER = Splitter.on(",");
 
   @Inject
-  ChangeQueryBuilder(Arguments args) {
+  protected ChangeQueryBuilder(Arguments args) {
     this(mydef, args);
   }
 
@@ -513,6 +524,10 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     return new ChangeQueryBuilder(builderDef, args.asUser(user));
   }
 
+  public Arguments getArgs() {
+    return args;
+  }
+
   @Operator
   public Predicate<ChangeData> age(String value) {
     return new AgePredicate(value);
@@ -520,7 +535,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
   @Operator
   public Predicate<ChangeData> before(String value) throws QueryParseException {
-    return new BeforePredicate(ChangeField.UPDATED, ChangeQueryBuilder.OPERATOR_BEFORE, value);
+    return new BeforePredicate(ChangeField.UPDATED_SPEC, ChangeQueryBuilder.OPERATOR_BEFORE, value);
   }
 
   @Operator
@@ -530,7 +545,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
   @Operator
   public Predicate<ChangeData> after(String value) throws QueryParseException {
-    return new AfterPredicate(ChangeField.UPDATED, ChangeQueryBuilder.OPERATOR_AFTER, value);
+    return new AfterPredicate(ChangeField.UPDATED_SPEC, ChangeQueryBuilder.OPERATOR_AFTER, value);
   }
 
   @Operator
@@ -540,16 +555,16 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
   @Operator
   public Predicate<ChangeData> mergedBefore(String value) throws QueryParseException {
-    checkFieldAvailable(ChangeField.MERGED_ON, OPERATOR_MERGED_BEFORE);
+    checkOperatorAvailable(ChangeField.MERGED_ON_SPEC, OPERATOR_MERGED_BEFORE);
     return new BeforePredicate(
-        ChangeField.MERGED_ON, ChangeQueryBuilder.OPERATOR_MERGED_BEFORE, value);
+        ChangeField.MERGED_ON_SPEC, ChangeQueryBuilder.OPERATOR_MERGED_BEFORE, value);
   }
 
   @Operator
   public Predicate<ChangeData> mergedAfter(String value) throws QueryParseException {
-    checkFieldAvailable(ChangeField.MERGED_ON, OPERATOR_MERGED_AFTER);
+    checkOperatorAvailable(ChangeField.MERGED_ON_SPEC, OPERATOR_MERGED_AFTER);
     return new AfterPredicate(
-        ChangeField.MERGED_ON, ChangeQueryBuilder.OPERATOR_MERGED_AFTER, value);
+        ChangeField.MERGED_ON_SPEC, ChangeQueryBuilder.OPERATOR_MERGED_AFTER, value);
   }
 
   @Operator
@@ -630,7 +645,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     }
 
     if ("attention".equalsIgnoreCase(value)) {
-      checkFieldAvailable(ChangeField.ATTENTION_SET_USERS, "has:attention");
+      checkOperatorAvailable(ChangeField.ATTENTION_SET_USERS, "has:attention");
       return new IsAttentionPredicate();
     }
 
@@ -673,13 +688,14 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     }
 
     if ("uploader".equalsIgnoreCase(value)) {
-      checkFieldAvailable(ChangeField.UPLOADER, "is:uploader");
+      checkOperatorAvailable(ChangeField.UPLOADER_SPEC, "is:uploader");
       return ChangePredicates.uploader(self());
     }
 
     if ("reviewer".equalsIgnoreCase(value)) {
       return Predicate.and(
-          Predicate.not(new BooleanPredicate(ChangeField.WIP)), ReviewerPredicate.reviewer(self()));
+          Predicate.not(new BooleanPredicate(ChangeField.WIP_SPEC)),
+          ReviewerPredicate.reviewer(self()));
     }
 
     if ("cc".equalsIgnoreCase(value)) {
@@ -688,40 +704,33 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
     if ("mergeable".equalsIgnoreCase(value)) {
       if (!args.indexMergeable) {
-        throw new QueryParseException("'is:mergeable' operator is not supported by server");
+        throw new QueryParseException(
+            "'is:mergeable' operator is not supported on this gerrit host");
       }
-      return new BooleanPredicate(ChangeField.MERGEABLE);
+      return new BooleanPredicate(ChangeField.MERGEABLE_SPEC);
     }
 
     if ("merge".equalsIgnoreCase(value)) {
-      checkFieldAvailable(ChangeField.MERGE, "is:merge");
-      return new BooleanPredicate(ChangeField.MERGE);
+      checkOperatorAvailable(ChangeField.MERGE_SPEC, "is:merge");
+      return new BooleanPredicate(ChangeField.MERGE_SPEC);
     }
 
     if ("private".equalsIgnoreCase(value)) {
-      return new BooleanPredicate(ChangeField.PRIVATE);
+      return new BooleanPredicate(ChangeField.PRIVATE_SPEC);
     }
 
     if ("attention".equalsIgnoreCase(value)) {
-      checkFieldAvailable(ChangeField.ATTENTION_SET_USERS, "is:attention");
+      checkOperatorAvailable(ChangeField.ATTENTION_SET_USERS, "is:attention");
       return new IsAttentionPredicate();
     }
 
-    if ("assigned".equalsIgnoreCase(value)) {
-      return Predicate.not(ChangePredicates.assignee(Account.id(ChangeField.NO_ASSIGNEE)));
-    }
-
-    if ("unassigned".equalsIgnoreCase(value)) {
-      return ChangePredicates.assignee(Account.id(ChangeField.NO_ASSIGNEE));
-    }
-
     if ("pure-revert".equalsIgnoreCase(value)) {
-      checkFieldAvailable(ChangeField.IS_PURE_REVERT, "is:pure-revert");
+      checkOperatorAvailable(ChangeField.IS_PURE_REVERT_SPEC, "is:pure-revert");
       return ChangePredicates.pureRevert("1");
     }
 
     if ("submittable".equalsIgnoreCase(value)) {
-      if (!args.index.getSchema().hasField(ChangeField.IS_SUBMITTABLE)) {
+      if (!args.index.getSchema().hasField(ChangeField.IS_SUBMITTABLE_SPEC)) {
         // SubmittablePredicate will match if *any* of the submit records are OK,
         // but we need to check that they're *all* OK, so check that none of the
         // submit records match any of the negative cases. To avoid checking yet
@@ -732,22 +741,22 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
             Predicate.not(new SubmittablePredicate(SubmitRecord.Status.NOT_READY)),
             Predicate.not(new SubmittablePredicate(SubmitRecord.Status.RULE_ERROR)));
       }
-      checkFieldAvailable(ChangeField.IS_SUBMITTABLE, "is:submittable");
+      checkOperatorAvailable(ChangeField.IS_SUBMITTABLE_SPEC, "is:submittable");
       return new IsSubmittablePredicate();
     }
 
     if ("started".equalsIgnoreCase(value)) {
-      checkFieldAvailable(ChangeField.STARTED, "is:started");
-      return new BooleanPredicate(ChangeField.STARTED);
+      checkOperatorAvailable(ChangeField.STARTED_SPEC, "is:started");
+      return new BooleanPredicate(ChangeField.STARTED_SPEC);
     }
 
     if ("wip".equalsIgnoreCase(value)) {
-      return new BooleanPredicate(ChangeField.WIP);
+      return new BooleanPredicate(ChangeField.WIP_SPEC);
     }
 
     if ("cherrypick".equalsIgnoreCase(value)) {
-      checkFieldAvailable(ChangeField.CHERRY_PICK, "is:cherrypick");
-      return new BooleanPredicate(ChangeField.CHERRY_PICK);
+      checkOperatorAvailable(ChangeField.CHERRY_PICK_SPEC, "is:cherrypick");
+      return new BooleanPredicate(ChangeField.CHERRY_PICK_SPEC);
     }
 
     // for plugins the value will be operandName_pluginName
@@ -769,7 +778,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   @Operator
   public Predicate<ChangeData> conflicts(String value) throws QueryParseException {
     if (!args.conflictsPredicateEnabled) {
-      throw new QueryParseException("'conflicts:' operator is not supported by server");
+      throw new QueryParseException("'conflicts:' operator is not supported on this gerrit host");
     }
     List<Change> changes = parseChange(value);
     List<Predicate<ChangeData>> or = new ArrayList<>(changes.size());
@@ -881,7 +890,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
       return ChangePredicates.hashtag(hashtag);
     }
 
-    checkFieldAvailable(ChangeField.FUZZY_HASHTAG, "inhashtag");
+    checkOperatorAvailable(ChangeField.FUZZY_HASHTAG, "inhashtag");
     return ChangePredicates.fuzzyHashtag(hashtag);
   }
 
@@ -891,7 +900,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
       return ChangePredicates.hashtag(hashtag);
     }
 
-    checkFieldAvailable(ChangeField.PREFIX_HASHTAG, "prefixhashtag");
+    checkOperatorAvailable(ChangeField.PREFIX_HASHTAG, "prefixhashtag");
     return ChangePredicates.prefixHashtag(hashtag);
   }
 
@@ -917,7 +926,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
       return ChangePredicates.exactTopic(name);
     }
 
-    checkFieldAvailable(ChangeField.PREFIX_TOPIC, "prefixtopic");
+    checkOperatorAvailable(ChangeField.PREFIX_TOPIC, "prefixtopic");
     return ChangePredicates.prefixTopic(name);
   }
 
@@ -983,7 +992,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
   @Operator
   public Predicate<ChangeData> hasfooter(String footerName) throws QueryParseException {
-    checkFieldAvailable(ChangeField.FOOTER_NAME, "hasfooter");
+    checkOperatorAvailable(ChangeField.FOOTER_NAME, "hasfooter");
     return ChangePredicates.hasFooter(footerName);
   }
 
@@ -1039,8 +1048,10 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
             accounts = Collections.singleton(OWNER_ACCOUNT_ID);
           } else if (value.equals(ARG_ID_NON_UPLOADER)) {
             accounts = Collections.singleton(NON_UPLOADER_ACCOUNT_ID);
+          } else if (value.equals(ARG_ID_NON_CONTRIBUTOR)) {
+            accounts = Collections.singleton(NON_CONTRIBUTOR_ACCOUNT_ID);
           } else {
-            accounts = parseAccount(value);
+            accounts = parseAccountIgnoreVisibility(value);
           }
         } else if (key.equalsIgnoreCase(ARG_ID_GROUP)) {
           group = parseGroup(value).getUUID();
@@ -1068,15 +1079,17 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
         if (accounts != null || group != null) {
           throw new QueryParseException("more than one user/group specified (" + value + ")");
         }
-        try {
-          if (value.equals(ARG_ID_OWNER)) {
-            accounts = Collections.singleton(OWNER_ACCOUNT_ID);
-          } else if (value.equals(ARG_ID_NON_UPLOADER)) {
-            accounts = Collections.singleton(NON_UPLOADER_ACCOUNT_ID);
-          } else {
-            accounts = parseAccount(value);
-          }
-        } catch (QueryParseException qpex) {
+        if (value.equals(ARG_ID_OWNER)) {
+          accounts = Collections.singleton(OWNER_ACCOUNT_ID);
+        } else if (value.equals(ARG_ID_NON_UPLOADER)) {
+          accounts = Collections.singleton(NON_UPLOADER_ACCOUNT_ID);
+        } else if (value.equals(ARG_ID_NON_CONTRIBUTOR)) {
+          accounts = Collections.singleton(NON_CONTRIBUTOR_ACCOUNT_ID);
+        } else {
+          accounts = parseAccountIgnoreVisibility(value);
+        }
+
+        if (accounts.contains(NON_EXISTING_ACCOUNT_ID)) {
           // If it doesn't match an account, see if it matches a group
           // (accounts get precedence)
           try {
@@ -1096,7 +1109,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     // submit record status, interpret as a submit record query.
     int eq = name.indexOf('=');
     if (eq > 0) {
-      String statusName = name.substring(eq + 1).toUpperCase();
+      String statusName = name.substring(eq + 1).toUpperCase(Locale.US);
       if (!isInt(statusName) && !MagicLabelValue.tryParse(statusName).isPresent()) {
         SubmitRecord.Label.Status status =
             Enums.getIfPresent(SubmitRecord.Label.Status.class, statusName).orNull();
@@ -1107,7 +1120,14 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
       }
     }
 
+    validateLabelArgs(accounts);
     return new LabelPredicate(args, name, accounts, group, count, countOp);
+  }
+
+  protected void validateLabelArgs(Set<Account.Id> accounts) throws QueryParseException {
+    if (accounts != null && accounts.contains(NON_CONTRIBUTOR_ACCOUNT_ID)) {
+      throw new QueryParseException("non_contributor arg is not allowed in change queries");
+    }
   }
 
   /** Assert that keys {@code k1} and {@code k2} do not exist in {@code labelArgs} together. */
@@ -1134,15 +1154,29 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   @Operator
   public Predicate<ChangeData> message(String text) throws QueryParseException {
     if (text.startsWith("^")) {
-      checkFieldAvailable(ChangeField.COMMIT_MESSAGE_EXACT, "messageexact");
+      checkFieldAvailable(
+          ChangeField.COMMIT_MESSAGE_EXACT,
+          "'message' operator with regular expression is not supported on this gerrit host");
       return new RegexMessagePredicate(text);
     }
     return ChangePredicates.message(text);
   }
 
+  @Operator
+  public Predicate<ChangeData> subject(String value) throws QueryParseException {
+    checkOperatorAvailable(ChangeField.SUBJECT_SPEC, ChangeQueryBuilder.FIELD_SUBJECT);
+    return ChangePredicates.subject(value);
+  }
+
+  @Operator
+  public Predicate<ChangeData> prefixsubject(String value) throws QueryParseException {
+    checkOperatorAvailable(
+        ChangeField.PREFIX_SUBJECT_SPEC, ChangeQueryBuilder.FIELD_PREFIX_SUBJECT);
+    return ChangePredicates.prefixSubject(value);
+  }
+
   private Predicate<ChangeData> starredBySelf() throws QueryParseException {
-    return ChangePredicates.starBy(
-        args.starredChangesUtil, self(), StarredChangesUtil.DEFAULT_LABEL);
+    return ChangePredicates.starBy(args.starredChangesUtil, self());
   }
 
   private Predicate<ChangeData> draftBySelf() throws QueryParseException {
@@ -1201,7 +1235,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   @Operator
   public Predicate<ChangeData> owner(String who)
       throws QueryParseException, IOException, ConfigInvalidException {
-    return owner(parseAccount(who, (AccountState s) -> true));
+    return owner(parseAccountIgnoreVisibility(who, (AccountState s) -> true));
   }
 
   private Predicate<ChangeData> owner(Set<Account.Id> who) {
@@ -1214,7 +1248,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
   private Predicate<ChangeData> ownerDefaultField(String who)
       throws QueryParseException, IOException, ConfigInvalidException {
-    Set<Account.Id> accounts = parseAccount(who);
+    Set<Account.Id> accounts = parseAccountIgnoreVisibility(who);
     if (accounts.size() > MAX_ACCOUNTS_PER_DEFAULT_FIELD) {
       return Predicate.any();
     }
@@ -1224,8 +1258,8 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   @Operator
   public Predicate<ChangeData> uploader(String who)
       throws QueryParseException, IOException, ConfigInvalidException {
-    checkFieldAvailable(ChangeField.UPLOADER, "uploader");
-    return uploader(parseAccount(who, (AccountState s) -> true));
+    checkOperatorAvailable(ChangeField.UPLOADER_SPEC, "uploader");
+    return uploader(parseAccountIgnoreVisibility(who, (AccountState s) -> true));
   }
 
   private Predicate<ChangeData> uploader(Set<Account.Id> who) {
@@ -1239,26 +1273,12 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   @Operator
   public Predicate<ChangeData> attention(String who)
       throws QueryParseException, IOException, ConfigInvalidException {
-    checkFieldAvailable(ChangeField.ATTENTION_SET_USERS, "attention");
-    return attention(parseAccount(who, (AccountState s) -> true));
+    checkOperatorAvailable(ChangeField.ATTENTION_SET_USERS, "attention");
+    return attention(parseAccountIgnoreVisibility(who, (AccountState s) -> true));
   }
 
   private Predicate<ChangeData> attention(Set<Account.Id> who) {
     return Predicate.or(who.stream().map(ChangePredicates::attentionSet).collect(toImmutableSet()));
-  }
-
-  @Operator
-  public Predicate<ChangeData> assignee(String who)
-      throws QueryParseException, IOException, ConfigInvalidException {
-    return assignee(parseAccount(who, (AccountState s) -> true));
-  }
-
-  private Predicate<ChangeData> assignee(Set<Account.Id> who) {
-    List<Predicate<ChangeData>> p = Lists.newArrayListWithCapacity(who.size());
-    for (Account.Id id : who) {
-      p.add(ChangePredicates.assignee(id));
-    }
-    return Predicate.or(p);
   }
 
   @Operator
@@ -1279,7 +1299,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
   @Operator
   public Predicate<ChangeData> uploaderin(String group) throws QueryParseException, IOException {
-    checkFieldAvailable(ChangeField.UPLOADER, "uploaderin");
+    checkOperatorAvailable(ChangeField.UPLOADER_SPEC, "uploaderin");
 
     GroupReference g = parseGroup(group);
     AccountGroup.UUID groupId = g.getUUID();
@@ -1319,7 +1339,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     if (Objects.equals(byState, Predicate.<ChangeData>any())) {
       return Predicate.any();
     }
-    return Predicate.and(Predicate.not(new BooleanPredicate(ChangeField.WIP)), byState);
+    return Predicate.and(Predicate.not(new BooleanPredicate(ChangeField.WIP_SPEC)), byState);
   }
 
   @Operator
@@ -1376,7 +1396,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   @Operator
   public Predicate<ChangeData> commentby(String who)
       throws QueryParseException, IOException, ConfigInvalidException {
-    return commentby(parseAccount(who));
+    return commentby(parseAccountIgnoreVisibility(who));
   }
 
   private Predicate<ChangeData> commentby(Set<Account.Id> who) {
@@ -1390,7 +1410,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   @Operator
   public Predicate<ChangeData> from(String who)
       throws QueryParseException, IOException, ConfigInvalidException {
-    Set<Account.Id> ownerIds = parseAccount(who);
+    Set<Account.Id> ownerIds = parseAccountIgnoreVisibility(who);
     return Predicate.or(owner(ownerIds), commentby(ownerIds));
   }
 
@@ -1401,16 +1421,16 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     String name = null;
     Account.Id account = null;
 
-    try (Repository git = args.repoManager.openRepository(args.allUsersName)) {
-      // [name=]<name>
-      if (inputArgs.keyValue.containsKey(ARG_ID_NAME)) {
-        name = inputArgs.keyValue.get(ARG_ID_NAME).value();
-      } else if (inputArgs.positional.size() == 1) {
-        name = Iterables.getOnlyElement(inputArgs.positional);
-      } else if (inputArgs.positional.size() > 1) {
-        throw new QueryParseException("Error parsing named query: " + value);
-      }
+    // [name=]<name>
+    if (inputArgs.keyValue.containsKey(ARG_ID_NAME)) {
+      name = inputArgs.keyValue.get(ARG_ID_NAME).value();
+    } else if (inputArgs.positional.size() == 1) {
+      name = Iterables.getOnlyElement(inputArgs.positional);
+    } else if (inputArgs.positional.size() > 1) {
+      throw new QueryParseException("Error parsing named query: " + value);
+    }
 
+    try {
       // [,user=<user>]
       if (inputArgs.keyValue.containsKey(ARG_ID_USER)) {
         Set<Account.Id> accounts = parseAccount(inputArgs.keyValue.get(ARG_ID_USER).value());
@@ -1424,9 +1444,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
         account = self();
       }
 
-      VersionedAccountQueries q = VersionedAccountQueries.forUser(account);
-      q.load(args.allUsersName, git);
-      String query = q.getQueryList().getQuery(name);
+      String query = getQueryList(account).getQuery(name);
       if (query != null) {
         return parse(query);
       }
@@ -1439,10 +1457,27 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     throw new QueryParseException("Unknown named query: " + name);
   }
 
+  protected QueryList getQueryList(Account.Id account) throws ConfigInvalidException, IOException {
+    QueryList ql = queryListByAccount.get(account);
+    if (ql == null) {
+      ql = loadQueryList(account);
+      queryListByAccount.put(account, ql);
+    }
+    return ql;
+  }
+
+  protected QueryList loadQueryList(Account.Id account) throws ConfigInvalidException, IOException {
+    VersionedAccountQueries q = VersionedAccountQueries.forUser(account);
+    try (Repository git = args.repoManager.openRepository(args.allUsersName)) {
+      q.load(args.allUsersName, git);
+    }
+    return q.getQueryList();
+  }
+
   @Operator
   public Predicate<ChangeData> reviewedby(String who)
       throws QueryParseException, IOException, ConfigInvalidException {
-    return ChangePredicates.reviewedBy(parseAccount(who));
+    return ChangePredicates.reviewedBy(parseAccountIgnoreVisibility(who));
   }
 
   @Operator
@@ -1452,16 +1487,16 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     String name = null;
     Account.Id account = null;
 
-    try (Repository git = args.repoManager.openRepository(args.allUsersName)) {
-      // [name=]<name>
-      if (inputArgs.keyValue.containsKey(ARG_ID_NAME)) {
-        name = inputArgs.keyValue.get(ARG_ID_NAME).value();
-      } else if (inputArgs.positional.size() == 1) {
-        name = Iterables.getOnlyElement(inputArgs.positional);
-      } else if (inputArgs.positional.size() > 1) {
-        throw new QueryParseException("Error parsing named destination: " + value);
-      }
+    // [name=]<name>
+    if (inputArgs.keyValue.containsKey(ARG_ID_NAME)) {
+      name = inputArgs.keyValue.get(ARG_ID_NAME).value();
+    } else if (inputArgs.positional.size() == 1) {
+      name = Iterables.getOnlyElement(inputArgs.positional);
+    } else if (inputArgs.positional.size() > 1) {
+      throw new QueryParseException("Error parsing named destination: " + value);
+    }
 
+    try {
       // [,user=<user>]
       if (inputArgs.keyValue.containsKey(ARG_ID_USER)) {
         Set<Account.Id> accounts = parseAccount(inputArgs.keyValue.get(ARG_ID_USER).value());
@@ -1475,9 +1510,9 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
         account = self();
       }
 
-      Set<BranchNameKey> destinations = getDestinationList(git, account).getDestinations(name);
+      Set<BranchNameKey> destinations = getDestinationList(account).getDestinations(name);
       if (destinations != null && !destinations.isEmpty()) {
-        return new DestinationPredicate(destinations, value);
+        return new BranchSetIndexPredicate(FIELD_DESTINATION + ":" + value, destinations);
       }
     } catch (RepositoryNotFoundException e) {
       throw new QueryParseException(
@@ -1488,21 +1523,28 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     throw new QueryParseException("Unknown named destination: " + name);
   }
 
-  protected DestinationList getDestinationList(Repository git, Account.Id account)
+  protected DestinationList getDestinationList(Account.Id account)
       throws ConfigInvalidException, RepositoryNotFoundException, IOException {
     DestinationList dl = destinationListByAccount.get(account);
     if (dl == null) {
-      dl = loadDestinationList(git, account);
+      dl = loadDestinationList(account);
       destinationListByAccount.put(account, dl);
     }
     return dl;
   }
 
-  protected DestinationList loadDestinationList(Repository git, Account.Id account)
+  protected DestinationList loadDestinationList(Account.Id account)
       throws ConfigInvalidException, RepositoryNotFoundException, IOException {
     VersionedAccountDestinations d = VersionedAccountDestinations.forUser(account);
-    d.load(args.allUsersName, git);
+    try (Repository git = args.repoManager.openRepository(args.allUsersName)) {
+      d.load(args.allUsersName, git);
+    }
     return d.getDestinationList();
+  }
+
+  @Operator
+  public Predicate<ChangeData> a(String who) throws QueryParseException {
+    return author(who);
   }
 
   @Operator
@@ -1537,8 +1579,8 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
   @Operator
   public Predicate<ChangeData> cherryPickOf(String value) throws QueryParseException {
-    checkFieldAvailable(ChangeField.CHERRY_PICK_OF_CHANGE, "cherryPickOf");
-    checkFieldAvailable(ChangeField.CHERRY_PICK_OF_PATCHSET, "cherryPickOf");
+    checkOperatorAvailable(ChangeField.CHERRY_PICK_OF_CHANGE, "cherryPickOf");
+    checkOperatorAvailable(ChangeField.CHERRY_PICK_OF_PATCHSET, "cherryPickOf");
     if (Ints.tryParse(value) != null) {
       return ChangePredicates.cherryPickOf(Change.id(Ints.tryParse(value)));
     }
@@ -1610,11 +1652,16 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     return Predicate.or(predicates);
   }
 
-  protected void checkFieldAvailable(FieldDef<ChangeData, ?> field, String operator)
+  private void checkOperatorAvailable(SchemaField<ChangeData, ?> field, String operator)
+      throws QueryParseException {
+    checkFieldAvailable(
+        field, String.format("'%s' operator is not supported on this gerrit host", operator));
+  }
+
+  protected void checkFieldAvailable(SchemaField<ChangeData, ?> field, String errorMessage)
       throws QueryParseException {
     if (!args.index.getSchema().hasField(field)) {
-      throw new QueryParseException(
-          String.format("'%s' operator is not supported by change index version", operator));
+      throw new QueryParseException(errorMessage);
     }
   }
 
@@ -1665,7 +1712,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   private Set<Account.Id> parseAccount(String who)
       throws QueryParseException, IOException, ConfigInvalidException {
     try {
-      return args.accountResolver.resolve(who).asNonEmptyIdSet();
+      return args.accountResolver.resolveAsUser(args.getUser(), who).asNonEmptyIdSet();
     } catch (UnresolvableAccountException e) {
       if (e.isSelf()) {
         throw new QueryRequiresAuthException(e.getMessage(), e);
@@ -1674,16 +1721,42 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     }
   }
 
-  private Set<Account.Id> parseAccount(
-      String who, java.util.function.Predicate<AccountState> activityFilter)
-      throws QueryParseException, IOException, ConfigInvalidException {
+  private Set<Account.Id> parseAccountIgnoreVisibility(String who)
+      throws QueryRequiresAuthException, IOException, ConfigInvalidException {
     try {
-      return args.accountResolver.resolve(who, activityFilter).asNonEmptyIdSet();
+      return args.accountResolver
+          .resolveAsUserIgnoreVisibility(args.getUser(), who)
+          .asNonEmptyIdSet();
     } catch (UnresolvableAccountException e) {
       if (e.isSelf()) {
         throw new QueryRequiresAuthException(e.getMessage(), e);
       }
-      throw new QueryParseException(e.getMessage(), e);
+      return ImmutableSet.of(NON_EXISTING_ACCOUNT_ID);
+    }
+  }
+
+  private Set<Account.Id> parseAccountIgnoreVisibility(
+      String who, java.util.function.Predicate<AccountState> activityFilter)
+      throws QueryRequiresAuthException, IOException, ConfigInvalidException {
+    try {
+      return args.accountResolver
+          .resolveAsUserIgnoreVisibility(args.getUser(), who, activityFilter)
+          .asNonEmptyIdSet();
+    } catch (UnresolvableAccountException e) {
+      // Thrown if no account was found.
+
+      // Users can always see their own account. This means if self was being resolved and there was
+      // no match the user wasn't logged in and the request was done anonymously.
+      if (e.isSelf()) {
+        throw new QueryRequiresAuthException(e.getMessage(), e);
+      }
+
+      // If no account is found, we don't want to fail with an error as this would allow users to
+      // probe the existence of accounts (error -> account doesn't exist, empty result -> account
+      // exists but didn't take part in any visible changes). Hence, we return a special account ID
+      // (NON_EXISTING_ACCOUNT_ID) that doesn't match any account so the query can be normally
+      // executed
+      return ImmutableSet.of(NON_EXISTING_ACCOUNT_ID);
     }
   }
 
@@ -1724,7 +1797,8 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     return value;
   }
 
-  private Account.Id self() throws QueryParseException {
+  /** Returns {@link com.google.gerrit.entities.Account.Id} of the identified calling user. */
+  public Account.Id self() throws QueryParseException {
     return args.getIdentifiedUser().getAccountId();
   }
 
@@ -1739,7 +1813,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
     Predicate<ChangeData> reviewerPredicate = null;
     try {
-      Set<Account.Id> accounts = parseAccount(who);
+      Set<Account.Id> accounts = parseAccountIgnoreVisibility(who);
       if (!forDefaultField || accounts.size() <= MAX_ACCOUNTS_PER_DEFAULT_FIELD) {
         reviewerPredicate =
             Predicate.or(

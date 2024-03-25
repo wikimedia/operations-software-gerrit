@@ -16,7 +16,7 @@ import {
   SuggestedReviewerInfo,
   isGroup,
 } from '../../../types/common';
-import {ReviewerSuggestionsProvider} from '../../../scripts/gr-reviewer-suggestions-provider/gr-reviewer-suggestions-provider';
+import {ReviewerSuggestionsProvider} from '../../../services/gr-reviewer-suggestions-provider/gr-reviewer-suggestions-provider';
 import {GrAccountEntry} from '../gr-account-entry/gr-account-entry';
 import {GrAccountChip} from '../gr-account-chip/gr-account-chip';
 import {fire, fireAlert} from '../../../utils/event-util';
@@ -42,6 +42,7 @@ import {difference, queryAndAssert} from '../../../utils/common-util';
 import {PaperInputElement} from '@polymer/paper-input/paper-input';
 import {IronInputElement} from '@polymer/iron-input';
 import {ReviewerState} from '../../../api/rest-api';
+import {repeat} from 'lit/directives/repeat.js';
 
 const VALID_EMAIL_ALERT = 'Please input a valid email.';
 const VALID_USER_GROUP_ALERT = 'Please input a valid user or group.';
@@ -122,7 +123,7 @@ export class GrAccountList extends LitElement {
   constructor() {
     super();
     this.querySuggestions = input => this.getSuggestions(input);
-    this.addEventListener('remove', e =>
+    this.addEventListener('remove-account', e =>
       this.handleRemove(e as CustomEvent<{account: AccountInput}>)
     );
   }
@@ -156,7 +157,9 @@ export class GrAccountList extends LitElement {
 
   override render() {
     return html`<div class="list">
-        ${this.accounts.map(
+        ${repeat(
+          this.accounts,
+          account => getUserId(account),
           account => html`
             <gr-account-chip
               .account=${account}

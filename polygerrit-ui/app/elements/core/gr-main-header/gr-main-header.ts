@@ -10,25 +10,26 @@ import '../../shared/gr-dropdown/gr-dropdown';
 import '../../shared/gr-icon/gr-icon';
 import '../gr-account-dropdown/gr-account-dropdown';
 import '../gr-smart-search/gr-smart-search';
-import {getBaseUrl, getDocsBaseUrl} from '../../../utils/url-util';
-import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
-import {getAdminLinks, NavLink} from '../../../utils/admin-nav-util';
+import {getBaseUrl} from '../../../utils/url-util';
+import {getAdminLinks, NavLink} from '../../../models/views/admin';
 import {
   AccountDetailInfo,
+  DropdownLink,
   RequireProperties,
   ServerInfo,
   TopMenuEntryInfo,
   TopMenuItemInfo,
 } from '../../../types/common';
 import {AuthType} from '../../../constants/constants';
-import {DropdownLink} from '../../shared/gr-dropdown/gr-dropdown';
 import {getAppContext} from '../../../services/app-context';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, html, css} from 'lit';
 import {customElement, property, state} from 'lit/decorators.js';
-import {fireEvent} from '../../../utils/event-util';
+import {fire} from '../../../utils/event-util';
 import {resolve} from '../../../models/dependency';
 import {configModelToken} from '../../../models/config/config-model';
+import {userModelToken} from '../../../models/user/user-model';
+import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 
 type MainHeaderLink = RequireProperties<DropdownLink, 'url' | 'name'>;
 
@@ -96,13 +97,13 @@ declare global {
   interface HTMLElementTagNameMap {
     'gr-main-header': GrMainHeader;
   }
+  interface HTMLElementEventMap {
+    'mobile-search': CustomEvent<{}>;
+  }
 }
 
 @customElement('gr-main-header')
 export class GrMainHeader extends LitElement {
-  @property({type: String})
-  searchQuery = '';
-
   @property({type: Boolean, reflect: true})
   loggedIn?: boolean;
 
@@ -139,15 +140,13 @@ export class GrMainHeader extends LitElement {
   // private but used in test
   @state() feedbackURL = '';
 
-  @state() private serverConfig?: ServerInfo;
-
   private readonly restApiService = getAppContext().restApiService;
 
-  private readonly jsAPI = getAppContext().jsApiService;
+  private readonly getPluginLoader = resolve(this, pluginLoaderToken);
 
-  private readonly userModel = getAppContext().userModel;
+  private readonly getUserModel = resolve(this, userModelToken);
 
-  private readonly configModel = resolve(this, configModelToken);
+  private readonly getConfigModel = resolve(this, configModelToken);
 
   private subscriptions: Subscription[] = [];
 
@@ -156,8 +155,8 @@ export class GrMainHeader extends LitElement {
     this.loadAccount();
 
     this.subscriptions.push(
-      this.userModel.preferences$
-        .pipe(
+      this.getUserModel()
+        .preferences$.pipe(
           map(preferences => preferences?.my ?? []),
           distinctUntilChanged()
         )
@@ -166,12 +165,11 @@ export class GrMainHeader extends LitElement {
         })
     );
     this.subscriptions.push(
-      this.configModel().serverConfig$.subscribe(config => {
+      this.getConfigModel().serverConfig$.subscribe(config => {
         if (!config) return;
-        this.serverConfig = config;
         this.retrieveFeedbackURL(config);
         this.retrieveRegisterURL(config);
-        getDocsBaseUrl(config, this.restApiService).then(docBaseUrl => {
+        this.restApiService.getDocsBaseUrl(config).then(docBaseUrl => {
           this.docBaseUrl = docBaseUrl;
         });
       })
@@ -206,18 +204,22 @@ export class GrMainHeader extends LitElement {
           text-decoration: underline;
         }
         .titleText::before {
+          --icon-width: var(--header-icon-width, var(--header-icon-size, 0));
+          --icon-height: var(--header-icon-height, var(--header-icon-size, 0));
           background-image: var(--header-icon);
-          background-size: var(--header-icon-size) var(--header-icon-size);
+          background-size: var(--icon-width) var(--icon-height);
           background-repeat: no-repeat;
           content: '';
           display: inline-block;
-          height: var(--header-icon-size);
-          margin-right: calc(var(--header-icon-size) / 4);
+          height: var(--icon-height);
+          /* If size or height are set, then use 'spacing-m', 0px otherwise. */
+          margin-right: clamp(0px, var(--icon-height), var(--spacing-m));
           vertical-align: text-bottom;
-          width: var(--header-icon-size);
+          width: var(--icon-width);
         }
         .titleText::after {
           content: var(--header-title-content);
+          white-space: nowrap;
         }
         ul {
           list-style: none;
@@ -370,15 +372,10 @@ export class GrMainHeader extends LitElement {
         class="hideOnMobile"
         name="header-small-banner"
       ></gr-endpoint-decorator>
-      <gr-smart-search
-        id="search"
-        label="Search for changes"
-        .searchQuery=${this.searchQuery}
-        .serverConfig=${this.serverConfig}
-      ></gr-smart-search>
+      <gr-smart-search id="search"></gr-smart-search>
       <gr-endpoint-decorator
         class="hideOnMobile"
-        name="header-browse-source"
+        name="header-top-right"
       ></gr-endpoint-decorator>
       <gr-endpoint-decorator class="feedbackButton" name="header-feedback">
         ${this.renderFeedback()}
@@ -575,7 +572,7 @@ export class GrMainHeader extends LitElement {
     return Promise.all([
       this.restApiService.getAccount(),
       this.restApiService.getTopMenus(),
-      getPluginLoader().awaitPluginsLoaded(),
+      this.getPluginLoader().awaitPluginsLoaded(),
     ]).then(result => {
       const account = result[0];
       this.account = account;
@@ -592,7 +589,7 @@ export class GrMainHeader extends LitElement {
             }
             return capabilities;
           }),
-        () => this.jsAPI.getAdminMenuLinks()
+        () => this.getPluginLoader().jsApiService.getAdminMenuLinks()
       ).then(res => {
         this.adminLinks = res.links;
       });
@@ -639,6 +636,6 @@ export class GrMainHeader extends LitElement {
   private onMobileSearchTap(e: Event) {
     e.preventDefault();
     e.stopPropagation();
-    fireEvent(this, 'mobile-search');
+    fire(this, 'mobile-search', {});
   }
 }

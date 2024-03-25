@@ -283,6 +283,7 @@ public class ChangeEdits implements ChildCollection<ChangeResource, ChangeEditRe
   /** Put handler that is activated when PUT request is called on collection element. */
   @Singleton
   public static class Put implements RestModifyView<ChangeEditResource, FileContentInput> {
+
     private static final Pattern BINARY_DATA_PATTERN =
         Pattern.compile("data:([\\w/.-]*);([\\w]+),(.*)");
     private static final String BASE64 = "base64";
@@ -340,8 +341,17 @@ public class ChangeEdits implements ChildCollection<ChangeResource, ChangeEditRe
         throw new ResourceConflictException("Invalid path: " + path);
       }
 
+      if (fileContentInput.fileMode != null) {
+        if ((fileContentInput.fileMode != 100644) && (fileContentInput.fileMode != 100755)) {
+          throw new BadRequestException(
+              "file_mode ("
+                  + fileContentInput.fileMode
+                  + ") was invalid: supported values are 0, 644, or 755.");
+        }
+      }
       try (Repository repository = repositoryManager.openRepository(rsrc.getProject())) {
-        editModifier.modifyFile(repository, rsrc.getNotes(), path, newContent);
+        editModifier.modifyFile(
+            repository, rsrc.getNotes(), path, newContent, fileContentInput.fileMode);
       } catch (InvalidChangeOperationException e) {
         throw new ResourceConflictException(e.getMessage());
       }

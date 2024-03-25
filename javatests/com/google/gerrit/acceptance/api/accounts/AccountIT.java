@@ -42,6 +42,7 @@ import static com.google.gerrit.server.group.SystemGroupBackend.ANONYMOUS_USERS;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
+import static com.google.gerrit.testing.TestActionRefUpdateContext.testRefAction;
 import static com.google.gerrit.truth.ConfigSubject.assertThat;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
@@ -78,6 +79,7 @@ import com.google.gerrit.acceptance.testsuite.account.AccountOperations;
 import com.google.gerrit.acceptance.testsuite.account.TestSshKeys;
 import com.google.gerrit.acceptance.testsuite.group.GroupOperations;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.acceptance.testsuite.request.SshSessionFactory;
 import com.google.gerrit.common.Nullable;
@@ -130,10 +132,12 @@ import com.google.gerrit.gpg.testing.TestKey;
 import com.google.gerrit.httpd.CacheBasedWebSession;
 import com.google.gerrit.server.ExceptionHook;
 import com.google.gerrit.server.ServerInitiated;
+import com.google.gerrit.server.account.AccountControl;
 import com.google.gerrit.server.account.AccountProperties;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.account.AccountsUpdate;
 import com.google.gerrit.server.account.Emails;
+import com.google.gerrit.server.account.GroupMembership;
 import com.google.gerrit.server.account.VersionedAuthorizedKeys;
 import com.google.gerrit.server.account.externalids.DuplicateExternalIdKeyException;
 import com.google.gerrit.server.account.externalids.ExternalId;
@@ -144,6 +148,7 @@ import com.google.gerrit.server.account.externalids.ExternalIds;
 import com.google.gerrit.server.config.AuthConfig;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
+import com.google.gerrit.server.group.testing.TestGroupBackend;
 import com.google.gerrit.server.index.account.AccountIndexer;
 import com.google.gerrit.server.index.account.StalenessChecker;
 import com.google.gerrit.server.notedb.Sequences;
@@ -175,6 +180,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 import javax.servlet.http.HttpServletResponse;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.ClientProtocolException;
@@ -241,6 +247,7 @@ public class AccountIT extends AbstractDaemonTest {
   @Inject private ExternalIdKeyFactory externalIdKeyFactory;
   @Inject private ExternalIdFactory externalIdFactory;
   @Inject private AuthConfig authConfig;
+  @Inject private AccountControl.Factory accountControlFactory;
 
   @Inject protected Emails emails;
 
@@ -258,7 +265,7 @@ public class AccountIT extends AbstractDaemonTest {
       if (ref != null) {
         RefUpdate ru = repo.updateRef(REFS_GPG_KEYS);
         ru.setForceUpdate(true);
-        assertThat(ru.delete()).isEqualTo(RefUpdate.Result.FORCED);
+        testRefAction(() -> assertThat(ru.delete()).isEqualTo(RefUpdate.Result.FORCED));
       }
     }
   }
@@ -984,14 +991,15 @@ public class AccountIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void cannotGetEmailsOfOtherAccountWithoutModifyAccount() throws Exception {
+  public void cannotGetEmailsOfOtherAccountWithoutViewSecondaryEmailsAndWithoutModifyAccount()
+      throws Exception {
     String email = "preferred2@example.com";
     TestAccount foo = accountCreator.create(name("foo"), email, "Foo", null);
 
     requestScopeOperations.setApiUser(user.id());
     AuthException thrown =
         assertThrows(AuthException.class, () -> gApi.accounts().id(foo.id().get()).getEmails());
-    assertThat(thrown).hasMessageThat().contains("modify account not permitted");
+    assertThat(thrown).hasMessageThat().contains("view secondary emails not permitted");
   }
 
   @Test
@@ -1882,7 +1890,7 @@ public class AccountIT extends AbstractDaemonTest {
 
       // Mark first key as invalid
       assertThat(info.get(0).valid).isTrue();
-      authorizedKeys.markKeyInvalid(admin.id(), 1);
+      testRefAction(() -> authorizedKeys.markKeyInvalid(admin.id(), 1));
       info = gApi.accounts().self().listSshKeys();
       assertThat(info).hasSize(2);
       assertThat(info.get(0).seq).isEqualTo(1);
@@ -2064,6 +2072,7 @@ public class AccountIT extends AbstractDaemonTest {
     return newEmailInput(email, true);
   }
 
+  @Nullable
   private String getMetaId(Account.Id accountId) throws IOException {
     try (Repository repo = repoManager.openRepository(allUsers);
         RevWalk rw = new RevWalk(repo);
@@ -2427,79 +2436,88 @@ public class AccountIT extends AbstractDaemonTest {
 
     // Manually updating the user ref makes the index document stale.
     String userRef = RefNames.refsUsers(accountId);
-    try (Repository repo = repoManager.openRepository(allUsers);
-        ObjectInserter oi = repo.newObjectInserter();
-        RevWalk rw = new RevWalk(repo)) {
-      RevCommit commit = rw.parseCommit(repo.exactRef(userRef).getObjectId());
+    testRefAction(
+        () -> {
+          try (Repository repo = repoManager.openRepository(allUsers);
+              ObjectInserter oi = repo.newObjectInserter();
+              RevWalk rw = new RevWalk(repo)) {
+            RevCommit commit = rw.parseCommit(repo.exactRef(userRef).getObjectId());
 
-      PersonIdent ident = new PersonIdent(serverIdent.get(), TimeUtil.now());
-      CommitBuilder cb = new CommitBuilder();
-      cb.setTreeId(commit.getTree());
-      cb.setCommitter(ident);
-      cb.setAuthor(ident);
-      cb.setMessage(commit.getFullMessage());
-      ObjectId emptyCommit = oi.insert(cb);
-      oi.flush();
+            PersonIdent ident = new PersonIdent(serverIdent.get(), TimeUtil.now());
+            CommitBuilder cb = new CommitBuilder();
+            cb.setTreeId(commit.getTree());
+            cb.setCommitter(ident);
+            cb.setAuthor(ident);
+            cb.setMessage(commit.getFullMessage());
+            ObjectId emptyCommit = oi.insert(cb);
+            oi.flush();
 
-      RefUpdate updateRef = repo.updateRef(userRef);
-      updateRef.setExpectedOldObjectId(commit.toObjectId());
-      updateRef.setNewObjectId(emptyCommit);
-      assertThat(updateRef.forceUpdate()).isEqualTo(RefUpdate.Result.FORCED);
-    }
+            RefUpdate updateRef = repo.updateRef(userRef);
+            updateRef.setExpectedOldObjectId(commit.toObjectId());
+            updateRef.setNewObjectId(emptyCommit);
+            assertThat(updateRef.forceUpdate()).isEqualTo(RefUpdate.Result.FORCED);
+          }
+        });
     assertStaleAccountAndReindex(accountId);
 
     // Manually inserting/updating/deleting an external ID of the user makes the index document
     // stale.
     try (Repository repo = repoManager.openRepository(allUsers)) {
-      ExternalIdNotes extIdNotes =
-          ExternalIdNotes.load(
-              allUsers,
-              repo,
-              externalIdFactory,
-              authConfig.isUserNameCaseInsensitiveMigrationMode());
+      testRefAction(
+          () -> {
+            ExternalIdNotes extIdNotes =
+                ExternalIdNotes.load(
+                    allUsers,
+                    repo,
+                    externalIdFactory,
+                    authConfig.isUserNameCaseInsensitiveMigrationMode());
 
-      ExternalId.Key key = externalIdKeyFactory.create("foo", "foo");
-      extIdNotes.insert(externalIdFactory.create(key, accountId));
-      try (MetaDataUpdate update = metaDataUpdateFactory.create(allUsers)) {
-        extIdNotes.commit(update);
-      }
-      assertStaleAccountAndReindex(accountId);
+            ExternalId.Key key = externalIdKeyFactory.create("foo", "foo");
+            extIdNotes.insert(externalIdFactory.create(key, accountId));
+            try (MetaDataUpdate update = metaDataUpdateFactory.create(allUsers)) {
+              extIdNotes.commit(update);
+            }
+            assertStaleAccountAndReindex(accountId);
 
-      extIdNotes =
-          ExternalIdNotes.load(
-              allUsers,
-              repo,
-              externalIdFactory,
-              authConfig.isUserNameCaseInsensitiveMigrationMode());
-      extIdNotes.upsert(externalIdFactory.createWithEmail(key, accountId, "foo@example.com"));
-      try (MetaDataUpdate update = metaDataUpdateFactory.create(allUsers)) {
-        extIdNotes.commit(update);
-      }
-      assertStaleAccountAndReindex(accountId);
+            extIdNotes =
+                ExternalIdNotes.load(
+                    allUsers,
+                    repo,
+                    externalIdFactory,
+                    authConfig.isUserNameCaseInsensitiveMigrationMode());
+            extIdNotes.upsert(externalIdFactory.createWithEmail(key, accountId, "foo@example.com"));
+            try (MetaDataUpdate update = metaDataUpdateFactory.create(allUsers)) {
+              extIdNotes.commit(update);
+            }
+            assertStaleAccountAndReindex(accountId);
 
-      extIdNotes =
-          ExternalIdNotes.load(
-              allUsers,
-              repo,
-              externalIdFactory,
-              authConfig.isUserNameCaseInsensitiveMigrationMode());
-      extIdNotes.delete(accountId, key);
-      try (MetaDataUpdate update = metaDataUpdateFactory.create(allUsers)) {
-        extIdNotes.commit(update);
-      }
+            extIdNotes =
+                ExternalIdNotes.load(
+                    allUsers,
+                    repo,
+                    externalIdFactory,
+                    authConfig.isUserNameCaseInsensitiveMigrationMode());
+            extIdNotes.delete(accountId, key);
+            try (MetaDataUpdate update = metaDataUpdateFactory.create(allUsers)) {
+              extIdNotes.commit(update);
+            }
+          });
       assertStaleAccountAndReindex(accountId);
     }
 
     // Manually delete account
-    try (Repository repo = repoManager.openRepository(allUsers);
-        RevWalk rw = new RevWalk(repo)) {
-      RevCommit commit = rw.parseCommit(repo.exactRef(userRef).getObjectId());
-      RefUpdate updateRef = repo.updateRef(userRef);
-      updateRef.setExpectedOldObjectId(commit.toObjectId());
-      updateRef.setNewObjectId(ObjectId.zeroId());
-      updateRef.setForceUpdate(true);
-      assertThat(updateRef.delete()).isEqualTo(RefUpdate.Result.FORCED);
-    }
+    testRefAction(
+        () -> {
+          try (Repository repo = repoManager.openRepository(allUsers);
+              RevWalk rw = new RevWalk(repo)) {
+            RevCommit commit = rw.parseCommit(repo.exactRef(userRef).getObjectId());
+            RefUpdate updateRef = repo.updateRef(userRef);
+            updateRef.setExpectedOldObjectId(commit.toObjectId());
+            updateRef.setNewObjectId(ObjectId.zeroId());
+            updateRef.setForceUpdate(true);
+            assertThat(updateRef.delete()).isEqualTo(RefUpdate.Result.FORCED);
+          }
+        });
     assertStaleAccountAndReindex(accountId);
   }
 
@@ -2882,8 +2900,12 @@ public class AccountIT extends AbstractDaemonTest {
 
     requestScopeOperations.setApiUser(user.id());
     assertThrows(ResourceNotFoundException.class, () -> gApi.accounts().id("secondary"));
+    assertThrows(
+        ResourceNotFoundException.class, () -> gApi.accounts().id("secondary@example.com"));
     requestScopeOperations.setApiUser(admin.id());
     assertThat(gApi.accounts().id("secondary").get()._accountId).isEqualTo(foo.id().get());
+    assertThat(gApi.accounts().id("secondary@example.com").get()._accountId)
+        .isEqualTo(foo.id().get());
   }
 
   @Test
@@ -3117,6 +3139,139 @@ public class AccountIT extends AbstractDaemonTest {
         .isNotEqualTo(updatedUserState.account().metaId());
   }
 
+  @Test
+  @GerritConfig(name = "accounts.visibility", value = "SAME_GROUP")
+  public void accountsCanSeeEachOtherThroughASharedExternalGroupOnlyWhenTheGroupIsMentionedInAcls()
+      throws Exception {
+    TestAccount user2 = accountCreator.user2();
+
+    // user and user2 cannot see each other because they do not share a Gerrit internal group
+    assertThat(
+            accountControlFactory.get(identifiedUserFactory.create(user.id())).canSee(user2.id()))
+        .isFalse();
+    assertThat(
+            accountControlFactory.get(identifiedUserFactory.create(user2.id())).canSee(user.id()))
+        .isFalse();
+
+    // Configure an external group backend that has a single group that contains all users.
+    TestGroupBackend testGroupBackend = createTestGroupBackendWithAllUsersGroup("AllUsers");
+    try (ExtensionRegistry.Registration registration =
+        extensionRegistry.newRegistration().add(testGroupBackend)) {
+      // user and user2 cannot see each other although the external AllUsers group contains both
+      // users. That's because this group is not detected as relevant and hence its memberships are
+      // not checked.
+      assertThat(
+              accountControlFactory.get(identifiedUserFactory.create(user.id())).canSee(user2.id()))
+          .isFalse();
+      assertThat(
+              accountControlFactory.get(identifiedUserFactory.create(user2.id())).canSee(user.id()))
+          .isFalse();
+
+      // Add ACL for the external group.
+      projectOperations
+          .project(project)
+          .forUpdate()
+          .add(
+              TestProjectUpdate.allowLabel("Code-Review")
+                  .range(0, 1)
+                  .ref("refs/heads/*")
+                  .group(AccountGroup.uuid(TestGroupBackend.PREFIX + "AllUsers"))
+                  .build())
+          .update();
+
+      // user and user2 can now see each other because the external AllUsers group that contains
+      // both users is guessed as relevant now that permissions are assigned to this group.
+      assertThat(
+              accountControlFactory.get(identifiedUserFactory.create(user.id())).canSee(user2.id()))
+          .isTrue();
+      assertThat(
+              accountControlFactory.get(identifiedUserFactory.create(user2.id())).canSee(user.id()))
+          .isTrue();
+    }
+  }
+
+  @Test
+  @GerritConfig(name = "accounts.visibility", value = "SAME_GROUP")
+  @GerritConfig(name = "groups.relevantGroup", value = "testbackend:AllUsers")
+  public void accountsCanSeeEachOtherThroughASharedExternalGroupThatIsConfiguredAsRelevant()
+      throws Exception {
+    TestAccount user2 = accountCreator.user2();
+
+    // user and user2 cannot see each other because they do not share a Gerrit internal group
+    assertThat(
+            accountControlFactory.get(identifiedUserFactory.create(user.id())).canSee(user2.id()))
+        .isFalse();
+    assertThat(
+            accountControlFactory.get(identifiedUserFactory.create(user2.id())).canSee(user.id()))
+        .isFalse();
+
+    // Check that the configured relevant group is included into the guessed groups.
+    assertThat(projectCache.guessRelevantGroupUUIDs())
+        .contains(AccountGroup.uuid("testbackend:AllUsers"));
+
+    // Configure an external group backend that has a single group that contains all users.
+    TestGroupBackend testGroupBackend = createTestGroupBackendWithAllUsersGroup("AllUsers");
+    try (ExtensionRegistry.Registration registration =
+        extensionRegistry.newRegistration().add(testGroupBackend)) {
+      // user and user2 can see each other since the external AllUsers that contains both users has
+      // been configured as a relevant group.
+      assertThat(
+              accountControlFactory.get(identifiedUserFactory.create(user.id())).canSee(user2.id()))
+          .isTrue();
+      assertThat(
+              accountControlFactory.get(identifiedUserFactory.create(user2.id())).canSee(user.id()))
+          .isTrue();
+    }
+  }
+
+  private TestGroupBackend createTestGroupBackendWithAllUsersGroup(String nameOfAllUsersGroup)
+      throws IOException {
+    TestGroupBackend testGroupBackend = new TestGroupBackend();
+
+    AccountGroup.UUID allUsersGroupUuid =
+        testGroupBackend.create(nameOfAllUsersGroup).getGroupUUID();
+
+    GroupMembership testGroupMembership =
+        new GroupMembership() {
+          @Override
+          public Set<AccountGroup.UUID> intersection(Iterable<AccountGroup.UUID> groupUuids) {
+            return StreamSupport.stream(groupUuids.spliterator(), /* parallel= */ false)
+                .filter(this::contains)
+                .collect(toSet());
+          }
+
+          @Override
+          public Set<AccountGroup.UUID> getKnownGroups() {
+            // Typically for external group backends it's too expensive to query all groups that the
+            // user is a member of. Instead limit the group membership check to groups that are
+            // guessed to be relevant.
+            return projectCache.guessRelevantGroupUUIDs().stream()
+                // filter out groups of other group backends and groups of this group backend that
+                // don't exist
+                .filter(
+                    uuid -> testGroupBackend.handles(uuid) && testGroupBackend.get(uuid) != null)
+                .collect(toImmutableSet());
+          }
+
+          @Override
+          public boolean containsAnyOf(Iterable<AccountGroup.UUID> groupUuids) {
+            return StreamSupport.stream(groupUuids.spliterator(), /* parallel= */ false)
+                .anyMatch(this::contains);
+          }
+
+          @Override
+          public boolean contains(AccountGroup.UUID groupUuid) {
+            return allUsersGroupUuid.equals(groupUuid);
+          }
+        };
+
+    accounts
+        .allIds()
+        .forEach(accountId -> testGroupBackend.setMembershipsOf(accountId, testGroupMembership));
+
+    return testGroupBackend;
+  }
+
   private void assertExternalIds(Account.Id accountId, ImmutableSet<String> extIds)
       throws Exception {
     assertThat(
@@ -3245,16 +3400,19 @@ public class AccountIT extends AbstractDaemonTest {
   }
 
   private Map<String, GpgKeyInfo> addGpgKey(TestAccount account, String armored) throws Exception {
-    AccountIndexedCounter accountIndexedCounter = new AccountIndexedCounter();
-    try (Registration registration =
-        extensionRegistry.newRegistration().add(accountIndexedCounter)) {
-      Map<String, GpgKeyInfo> gpgKeys =
-          gApi.accounts()
-              .id(account.username())
-              .putGpgKeys(ImmutableList.of(armored), ImmutableList.<String>of());
-      accountIndexedCounter.assertReindexOf(gApi.accounts().id(account.username()).get());
-      return gpgKeys;
-    }
+    return testRefAction(
+        () -> {
+          AccountIndexedCounter accountIndexedCounter = new AccountIndexedCounter();
+          try (Registration registration =
+              extensionRegistry.newRegistration().add(accountIndexedCounter)) {
+            Map<String, GpgKeyInfo> gpgKeys =
+                gApi.accounts()
+                    .id(account.username())
+                    .putGpgKeys(ImmutableList.of(armored), ImmutableList.<String>of());
+            accountIndexedCounter.assertReindexOf(gApi.accounts().id(account.username()).get());
+            return gpgKeys;
+          }
+        });
   }
 
   private Map<String, GpgKeyInfo> addGpgKeyNoReindex(String armored) throws Exception {

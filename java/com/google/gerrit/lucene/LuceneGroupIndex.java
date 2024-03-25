@@ -18,6 +18,7 @@ import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.gerrit.server.index.group.GroupField.UUID_FIELD_SPEC;
 
 import com.google.common.collect.ImmutableSet;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.entities.InternalGroup;
 import com.google.gerrit.exceptions.StorageException;
@@ -97,7 +98,8 @@ public class LuceneGroupIndex extends AbstractLuceneIndex<AccountGroup.UUID, Int
         null,
         new GerritIndexWriterConfig(cfg, GROUPS),
         new SearcherFactory(),
-        autoFlush);
+        autoFlush,
+        GroupIndex.ENTITY_TO_KEY);
     this.groupCache = groupCache;
 
     indexWriterConfig = new GerritIndexWriterConfig(cfg, GROUPS);
@@ -151,6 +153,7 @@ public class LuceneGroupIndex extends AbstractLuceneIndex<AccountGroup.UUID, Int
         new Sort(new SortField(UUID_SORT_FIELD, SortField.Type.STRING, false)));
   }
 
+  @Nullable
   @Override
   protected InternalGroup fromDocument(Document doc) {
     AccountGroup.UUID uuid =

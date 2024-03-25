@@ -10,7 +10,7 @@ import '../gr-icon/gr-icon';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../plugins/gr-endpoint-param/gr-endpoint-param';
 import '../../plugins/gr-endpoint-slot/gr-endpoint-slot';
-import {fire, fireAlert, fireEvent} from '../../../utils/event-util';
+import {fire, fireAlert} from '../../../utils/event-util';
 import {getAppContext} from '../../../services/app-context';
 import {debounce, DelayedTask} from '../../../utils/async-util';
 import {queryAndAssert} from '../../../utils/common-util';
@@ -21,11 +21,17 @@ import {customElement, property, state} from 'lit/decorators.js';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {css} from 'lit';
 import {PropertyValues} from 'lit';
-import {BindValueChangeEvent, ValueChangedEvent} from '../../../types/events';
+import {
+  BindValueChangeEvent,
+  EditableContentSaveEvent,
+  ValueChangedEvent,
+} from '../../../types/events';
 import {nothing} from 'lit';
 import {classMap} from 'lit/directives/class-map.js';
 import {when} from 'lit/directives/when.js';
 import {fontStyles} from '../../../styles/gr-font-styles';
+import {storageServiceToken} from '../../../services/storage/gr-storage_impl';
+import {resolve} from '../../../models/dependency';
 
 const RESTORED_MESSAGE = 'Content restored from a previous edit.';
 const STORAGE_DEBOUNCE_INTERVAL_MS = 400;
@@ -37,23 +43,15 @@ declare global {
   interface HTMLElementEventMap {
     'content-changed': ValueChangedEvent<string>;
     'editing-changed': ValueChangedEvent<boolean>;
+    /** Fired when the 'cancel' button is pressed. */
+    'editable-content-cancel': CustomEvent<{}>;
+    /** Fired when the 'save' button is pressed. */
+    'editable-content-save': EditableContentSaveEvent;
   }
 }
 
 @customElement('gr-editable-content')
 export class GrEditableContent extends LitElement {
-  /**
-   * Fired when the save button is pressed.
-   *
-   * @event editable-content-save
-   */
-
-  /**
-   * Fired when the cancel button is pressed.
-   *
-   * @event editable-content-cancel
-   */
-
   /**
    * Fired when content is restored from storage.
    *
@@ -90,7 +88,7 @@ export class GrEditableContent extends LitElement {
 
   @state() newContent = '';
 
-  private readonly storage = getAppContext().storageService;
+  private readonly getStorage = resolve(this, storageServiceToken);
 
   private readonly reporting = getAppContext().reportingService;
 
@@ -321,14 +319,14 @@ export class GrEditableContent extends LitElement {
       this.storeTask,
       () => {
         if (this.newContent.length) {
-          this.storage.setEditableContentItem(storageKey, this.newContent);
+          this.getStorage().setEditableContentItem(storageKey, this.newContent);
         } else {
           // This does not really happen, because we don't clear newContent
           // after saving (see below). So this only occurs when the user clears
           // all the content in the editable textarea. But GrStorage cleans
           // up itself after one day, so we are not so concerned about leaving
           // some garbage behind.
-          this.storage.eraseEditableContentItem(storageKey);
+          this.getStorage().eraseEditableContentItem(storageKey);
         }
       },
       STORAGE_DEBOUNCE_INTERVAL_MS
@@ -358,7 +356,7 @@ export class GrEditableContent extends LitElement {
 
     let content;
     if (this.storageKey) {
-      const storedContent = this.storage.getEditableContentItem(
+      const storedContent = this.getStorage().getEditableContentItem(
         this.storageKey
       );
       if (storedContent?.message) {
@@ -384,13 +382,7 @@ export class GrEditableContent extends LitElement {
 
   handleSave(e: Event) {
     e.preventDefault();
-    this.dispatchEvent(
-      new CustomEvent('editable-content-save', {
-        detail: {content: this.newContent},
-        composed: true,
-        bubbles: true,
-      })
-    );
+    fire(this, 'editable-content-save', {content: this.newContent});
     // It would be nice, if we would set this.newContent = undefined here,
     // but we can only do that when we are sure that the save operation has
     // succeeded.
@@ -399,7 +391,7 @@ export class GrEditableContent extends LitElement {
   handleCancel(e: Event) {
     e.preventDefault();
     this.editing = false;
-    fireEvent(this, 'editable-content-cancel');
+    fire(this, 'editable-content-cancel', {});
   }
 
   toggleCommitCollapsed() {

@@ -23,6 +23,7 @@ import static java.util.stream.Collectors.toList;
 import static org.junit.Assert.fail;
 
 import com.google.common.base.CharMatcher;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.entities.InternalGroup;
@@ -382,7 +383,9 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
             .getRaw(
                 uuid,
                 QueryOptions.create(
-                    IndexConfig.fromConfig(config).build(),
+                    config != null
+                        ? IndexConfig.fromConfig(config).build()
+                        : IndexConfig.createDefault(),
                     0,
                     10,
                     indexes.getSearchIndex().getSchema().getStoredFields()));
@@ -398,9 +401,8 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
     String query = "uuid:" + uuid;
     assertQuery(query, group);
 
-    for (GroupIndex index : groupIndexes.getWriteIndexes()) {
-      index.delete(uuid);
-    }
+    deleteGroup(uuid);
+
     assertQuery(query);
   }
 
@@ -438,6 +440,10 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
     return createGroupWithDescription(name, null, members);
   }
 
+  protected GroupInfo createGroup(GroupInput in) throws Exception {
+    return gApi.groups().create(in).get();
+  }
+
   protected GroupInfo createGroupWithDescription(
       String name, String description, AccountInfo... members) throws Exception {
     GroupInput in = new GroupInput();
@@ -445,21 +451,27 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
     in.description = description;
     in.members =
         Arrays.asList(members).stream().map(a -> String.valueOf(a._accountId)).collect(toList());
-    return gApi.groups().create(in).get();
+    return createGroup(in);
   }
 
   protected GroupInfo createGroupWithOwner(String name, GroupInfo ownerGroup) throws Exception {
     GroupInput in = new GroupInput();
     in.name = name;
     in.ownerId = ownerGroup.id;
-    return gApi.groups().create(in).get();
+    return createGroup(in);
   }
 
   protected GroupInfo createGroupThatIsVisibleToAll(String name) throws Exception {
     GroupInput in = new GroupInput();
     in.name = name;
     in.visibleToAll = true;
-    return gApi.groups().create(in).get();
+    return createGroup(in);
+  }
+
+  protected void deleteGroup(AccountGroup.UUID uuid) throws Exception {
+    for (GroupIndex index : groupIndexes.getWriteIndexes()) {
+      index.delete(uuid);
+    }
   }
 
   protected GroupInfo getGroup(AccountGroup.UUID uuid) throws Exception {
@@ -558,6 +570,7 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
     return groups.stream().map(g -> g.id).sorted().collect(toList());
   }
 
+  @Nullable
   protected String name(String name) {
     if (name == null) {
       return null;

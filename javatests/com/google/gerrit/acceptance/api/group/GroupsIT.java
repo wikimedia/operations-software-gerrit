@@ -28,6 +28,7 @@ import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.a
 import static com.google.gerrit.server.group.SystemGroupBackend.ANONYMOUS_USERS;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
+import static com.google.gerrit.testing.TestActionRefUpdateContext.testRefAction;
 import static com.google.gerrit.truth.MapSubject.assertThatMap;
 import static java.lang.annotation.ElementType.METHOD;
 import static java.lang.annotation.RetentionPolicy.RUNTIME;
@@ -113,6 +114,7 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Stream;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
@@ -462,7 +464,7 @@ public class GroupsIT extends AbstractDaemonTest {
   @Test
   public void createDuplicateInternalGroupCaseInsensitiveName() throws Exception {
     String dupGroupName = name("dupGroupA");
-    String dupGroupNameLowerCase = name("dupGroupA").toLowerCase();
+    String dupGroupNameLowerCase = name("dupGroupA").toLowerCase(Locale.US);
     gApi.groups().create(dupGroupName);
     gApi.groups().create(dupGroupNameLowerCase);
     assertThat(gApi.groups().list().getAsMap().keySet()).contains(dupGroupName);
@@ -598,6 +600,20 @@ public class GroupsIT extends AbstractDaemonTest {
   private void testGetGroup(Object id, InternalGroup expectedGroup) throws Exception {
     GroupInfo group = gApi.groups().id(id.toString()).get();
     assertGroupInfo(expectedGroup, group);
+  }
+
+  @Test
+  public void getGroupFromMetaId() throws Exception {
+    AccountGroup.UUID uuid = groupOperations.newGroup().create();
+    InternalGroup preUpdateState = groupCache.get(uuid).get();
+    gApi.groups().id(uuid.toString()).description("New description");
+
+    InternalGroup postUpdateState = groupCache.get(uuid).get();
+    assertThat(postUpdateState).isNotEqualTo(preUpdateState);
+    assertThat(groupCache.getFromMetaId(uuid, preUpdateState.getRefState()))
+        .isEqualTo(preUpdateState);
+    assertThat(groupCache.getFromMetaId(uuid, postUpdateState.getRefState()))
+        .isEqualTo(postUpdateState);
   }
 
   @Test
@@ -1133,7 +1149,7 @@ public class GroupsIT extends AbstractDaemonTest {
       RefUpdate ru = repo.updateRef(RefNames.refsGroups(uuid));
       ru.setForceUpdate(true);
       ru.setNewObjectId(ObjectId.zeroId());
-      assertThat(ru.delete()).isEqualTo(RefUpdate.Result.FORCED);
+      testRefAction(() -> assertThat(ru.delete()).isEqualTo(RefUpdate.Result.FORCED));
     }
 
     // Reindex the group.
@@ -1343,7 +1359,7 @@ public class GroupsIT extends AbstractDaemonTest {
         updateRef.setExpectedOldObjectId(commit.toObjectId());
         updateRef.setNewObjectId(ObjectId.zeroId());
         updateRef.setForceUpdate(true);
-        assertThat(updateRef.delete()).isEqualTo(RefUpdate.Result.FORCED);
+        testRefAction(() -> assertThat(updateRef.delete()).isEqualTo(RefUpdate.Result.FORCED));
       }
 
       // refs/meta/group-names is only visible with ACCESS_DATABASE
@@ -1443,7 +1459,7 @@ public class GroupsIT extends AbstractDaemonTest {
       RefUpdate updateRef = repo.updateRef(groupRef);
       updateRef.setExpectedOldObjectId(commit.toObjectId());
       updateRef.setNewObjectId(emptyCommit);
-      assertThat(updateRef.forceUpdate()).isEqualTo(RefUpdate.Result.FORCED);
+      testRefAction(() -> assertThat(updateRef.forceUpdate()).isEqualTo(RefUpdate.Result.FORCED));
     }
     assertStaleGroupAndReindex(groupUuid);
 
@@ -1455,7 +1471,7 @@ public class GroupsIT extends AbstractDaemonTest {
       updateRef.setExpectedOldObjectId(commit.toObjectId());
       updateRef.setNewObjectId(ObjectId.zeroId());
       updateRef.setForceUpdate(true);
-      assertThat(updateRef.delete()).isEqualTo(RefUpdate.Result.FORCED);
+      testRefAction(() -> assertThat(updateRef.delete()).isEqualTo(RefUpdate.Result.FORCED));
     }
     assertStaleGroupAndReindex(groupUuid);
   }
@@ -1500,13 +1516,15 @@ public class GroupsIT extends AbstractDaemonTest {
       // then run the reindexer -> only the new group is reindexed.
       String groupName = "foo";
       AccountGroup.UUID groupUuid = AccountGroup.uuid(groupName + "-UUID");
-      groupsUpdate.createGroupInNoteDb(
-          InternalGroupCreation.builder()
-              .setGroupUUID(groupUuid)
-              .setNameKey(AccountGroup.nameKey(groupName))
-              .setId(AccountGroup.id(seq.nextGroupId()))
-              .build(),
-          GroupDelta.builder().build());
+      testRefAction(
+          () ->
+              groupsUpdate.createGroupInNoteDb(
+                  InternalGroupCreation.builder()
+                      .setGroupUUID(groupUuid)
+                      .setNameKey(AccountGroup.nameKey(groupName))
+                      .setId(AccountGroup.id(seq.nextGroupId()))
+                      .build(),
+                  GroupDelta.builder().build()));
       slaveGroupIndexer.run();
       groupIndexedCounter.assertReindexOf(groupUuid);
 
@@ -1522,7 +1540,7 @@ public class GroupsIT extends AbstractDaemonTest {
       try (Repository repo = repoManager.openRepository(allUsers)) {
         RefUpdate u = repo.updateRef(RefNames.refsGroups(groupUuid));
         u.setForceUpdate(true);
-        assertThat(u.delete()).isEqualTo(RefUpdate.Result.FORCED);
+        testRefAction(() -> assertThat(u.delete()).isEqualTo(RefUpdate.Result.FORCED));
       }
       slaveGroupIndexer.run();
       groupIndexedCounter.assertReindexOf(groupUuid);
@@ -1608,7 +1626,7 @@ public class GroupsIT extends AbstractDaemonTest {
       RefUpdate updateRef = r.updateRef(ref);
       updateRef.setExpectedOldObjectId(ObjectId.zeroId());
       updateRef.setNewObjectId(emptyCommit);
-      assertThat(updateRef.update(rw)).isEqualTo(RefUpdate.Result.NEW);
+      testRefAction(() -> assertThat(updateRef.update(rw)).isEqualTo(RefUpdate.Result.NEW));
     }
   }
 

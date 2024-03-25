@@ -11,6 +11,7 @@ import '../../shared/gr-button/gr-button';
 import '../../shared/gr-diff-preferences/gr-diff-preferences';
 import '../../shared/gr-page-nav/gr-page-nav';
 import '../../shared/gr-select/gr-select';
+import '../../shared/gr-icon/gr-icon';
 import '../gr-account-info/gr-account-info';
 import '../gr-agreements-list/gr-agreements-list';
 import '../gr-edit-preferences/gr-edit-preferences';
@@ -22,7 +23,6 @@ import '../gr-identities/gr-identities';
 import '../gr-menu-editor/gr-menu-editor';
 import '../gr-ssh-editor/gr-ssh-editor';
 import '../gr-watched-projects-editor/gr-watched-projects-editor';
-import {getDocsBaseUrl} from '../../../utils/url-util';
 import {GrAccountInfo} from '../gr-account-info/gr-account-info';
 import {GrWatchedProjectsEditor} from '../gr-watched-projects-editor/gr-watched-projects-editor';
 import {GrGroupList} from '../gr-group-list/gr-group-list';
@@ -63,6 +63,7 @@ import {subscribe} from '../../lit/subscription-controller';
 import {resolve} from '../../../models/dependency';
 import {settingsViewModelToken} from '../../../models/views/settings';
 import {areNotificationsEnabled} from '../../../utils/worker-util';
+import {userModelToken} from '../../../models/user/user-model';
 
 const GERRIT_DOCS_BASE_URL =
   'https://gerrit-review.googlesource.com/' + 'Documentation';
@@ -79,12 +80,6 @@ enum CopyPrefsDirection {
 
 @customElement('gr-settings-view')
 export class GrSettingsView extends LitElement {
-  /**
-   * Fired when the title of the page should change.
-   *
-   * @event title-change
-   */
-
   /**
    * Fired with email confirmation text, or when the page reloads.
    *
@@ -201,7 +196,7 @@ export class GrSettingsView extends LitElement {
 
   private readonly restApiService = getAppContext().restApiService;
 
-  private readonly userModel = getAppContext().userModel;
+  private readonly getUserModel = resolve(this, userModelToken);
 
   // private but used in test
   readonly flagsService = getAppContext().flagsService;
@@ -220,14 +215,14 @@ export class GrSettingsView extends LitElement {
     );
     subscribe(
       this,
-      () => this.userModel.account$,
+      () => this.getUserModel().account$,
       acc => {
         this.account = acc;
       }
     );
     subscribe(
       this,
-      () => this.userModel.preferences$,
+      () => this.getUserModel().preferences$,
       prefs => {
         if (!prefs) {
           throw new Error('getPreferences returned undefined');
@@ -260,7 +255,7 @@ export class GrSettingsView extends LitElement {
     // Polymer 2: anchor tag won't work on shadow DOM
     // we need to manually calling scrollIntoView when hash changed
     document.addEventListener('location-change', this.handleLocationChange);
-    fireTitleChange(this, 'Settings');
+    fireTitleChange('Settings');
   }
 
   override firstUpdated() {
@@ -289,7 +284,7 @@ export class GrSettingsView extends LitElement {
         }
 
         configPromises.push(
-          getDocsBaseUrl(config, this.restApiService).then(baseUrl => {
+          this.restApiService.getDocsBaseUrl(config).then(baseUrl => {
             this.docsBaseUrl = baseUrl;
           })
         );
@@ -879,12 +874,26 @@ export class GrSettingsView extends LitElement {
   private renderBrowserNotifications() {
     if (!this.flagsService.isEnabled(KnownExperimentId.PUSH_NOTIFICATIONS))
       return nothing;
-    if (!areNotificationsEnabled(this.account)) return nothing;
+    if (
+      !this.flagsService.isEnabled(
+        KnownExperimentId.PUSH_NOTIFICATIONS_DEVELOPER
+      ) &&
+      !areNotificationsEnabled(this.account)
+    )
+      return nothing;
     return html`
       <section id="allowBrowserNotificationsSection">
-        <label class="title" for="allowBrowserNotifications"
-          >Allow browser notifications</label
-        >
+        <div class="title">
+          <label for="allowBrowserNotifications"
+            >Allow browser notifications</label
+          >
+          <a
+            href="https://gerrit-review.googlesource.com/Documentation/user-attention-set.html#_browser_notifications"
+            target="_blank"
+          >
+            <gr-icon icon="help" title="read documentation"></gr-icon>
+          </a>
+        </div>
         <span class="value">
           <input
             id="allowBrowserNotifications"
@@ -1113,7 +1122,7 @@ export class GrSettingsView extends LitElement {
       // Use shadowRoot for Polymer 2
       const elem = (this.shadowRoot || document).querySelector(urlHash);
       if (elem) {
-        elem.scrollIntoView();
+        setTimeout(() => elem.scrollIntoView(), 0);
       }
     }
   };
@@ -1136,7 +1145,7 @@ export class GrSettingsView extends LitElement {
 
   // private but used in test
   handleSavePreferences() {
-    return this.userModel.updatePreferences(this.localPrefs);
+    return this.getUserModel().updatePreferences(this.localPrefs);
   }
 
   // private but used in test

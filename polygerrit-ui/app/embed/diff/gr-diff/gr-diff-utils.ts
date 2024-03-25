@@ -34,27 +34,41 @@ import {getBaseUrl} from '../../../utils/url-util';
  *   Graphemes: http://unicode.org/reports/tr29/#Grapheme_Cluster_Boundaries
  *   A proposed JS API: https://github.com/tc39/proposal-intl-segmenter
  */
-const REGEX_TAB_OR_SURROGATE_PAIR = /\t|[\uD800-\uDBFF][\uDC00-\uDFFF]/;
+export const REGEX_TAB_OR_SURROGATE_PAIR = /\t|[\uD800-\uDBFF][\uDC00-\uDFFF]/;
 
 // If any line of the diff is more than the character limit, then disable
 // syntax highlighting for the entire file.
 export const SYNTAX_MAX_LINE_LENGTH = 500;
 
+export function countLines(diff?: DiffInfo, side?: Side) {
+  if (!diff?.content || !side) return 0;
+  return diff.content.reduce((sum, chunk) => {
+    const sideChunk = side === Side.LEFT ? chunk.a : chunk.b;
+    return sum + (sideChunk?.length ?? chunk.ab?.length ?? chunk.skip ?? 0);
+  }, 0);
+}
+
+export function isFileUnchanged(diff: DiffInfo) {
+  return !diff.content.some(
+    content => (content.a && !content.common) || (content.b && !content.common)
+  );
+}
+
 export function getResponsiveMode(
-  prefs: DiffPreferencesInfo,
+  prefs?: DiffPreferencesInfo,
   renderPrefs?: RenderPreferences
 ): DiffResponsiveMode {
   if (renderPrefs?.responsive_mode) {
     return renderPrefs.responsive_mode;
   }
   // Backwards compatibility to the line_wrapping param.
-  if (prefs.line_wrapping) {
+  if (prefs?.line_wrapping) {
     return 'FULL_RESPONSIVE';
   }
   return 'NONE';
 }
 
-export function isResponsive(responsiveMode: DiffResponsiveMode) {
+export function isResponsive(responsiveMode?: DiffResponsiveMode) {
   return (
     responsiveMode === 'FULL_RESPONSIVE' || responsiveMode === 'SHRINK_ONLY'
   );
@@ -105,7 +119,12 @@ export function getLineElByChild(node?: Node): HTMLElement | null {
         return null;
       }
     }
-    node = node.previousSibling ?? node.parentElement ?? undefined;
+    node =
+      (node as Element).assignedSlot ??
+      (node as ShadowRoot).host ??
+      node.previousSibling ??
+      node.parentNode ??
+      undefined;
   }
   return null;
 }
@@ -149,7 +168,7 @@ export function getRange(threadEl: HTMLElement): CommentRange | undefined {
   const rangeAtt = threadEl.getAttribute('range');
   if (!rangeAtt) return undefined;
   const range = JSON.parse(rangeAtt) as CommentRange;
-  if (!range.start_line) throw new Error(`invalid range: ${rangeAtt}`);
+  if (!range.start_line) return undefined;
   return range;
 }
 
@@ -184,9 +203,16 @@ export function anyLineTooLong(diff?: DiffInfo) {
 }
 
 /**
+ * Simple helper method for creating element classes in the context of
+ * gr-diff. This is just a super simple convenience function.
+ */
+export function diffClasses(...additionalClasses: string[]) {
+  return ['gr-diff', ...additionalClasses].join(' ');
+}
+
+/**
  * Simple helper method for creating elements in the context of gr-diff.
- *
- * Otherwise this is just a super simple convenience function.
+ * This is just a super simple convenience function.
  */
 export function createElementDiff(
   tagName: string,
@@ -254,6 +280,12 @@ export function formatText(
   elementId: string
 ): HTMLElement {
   const contentText = createElementDiff('div', 'contentText');
+  // <gr-legacy-text> is not defined anywhere, so this behave just as a <div>
+  // would. We use this during the migration to lit based diff elements to
+  // match <gr-diff-text>. We define a css rule with `display:contents` making
+  // sure that this extra element is basically a no-op.
+  const legacyText = document.createElement('gr-legacy-text');
+  contentText.appendChild(legacyText);
   contentText.id = elementId;
   let columnPos = 0;
   let textOffset = 0;
@@ -265,16 +297,16 @@ export function formatText(
       let rowStart = 0;
       let rowEnd = lineLimit - columnPos;
       while (rowEnd < segment.length) {
-        contentText.appendChild(
+        legacyText.appendChild(
           document.createTextNode(segment.substring(rowStart, rowEnd))
         );
-        contentText.appendChild(createLineBreak(responsiveMode));
+        legacyText.appendChild(createLineBreak(responsiveMode));
         columnPos = 0;
         rowStart = rowEnd;
         rowEnd += lineLimit;
       }
       // Append the last part of |segment|, which fits on the current line.
-      contentText.appendChild(
+      legacyText.appendChild(
         document.createTextNode(segment.substring(rowStart))
       );
       columnPos += segment.length - rowStart;
@@ -286,20 +318,20 @@ export function formatText(
         // Append a single '\t' character.
         let effectiveTabSize = tabSize - (columnPos % tabSize);
         if (columnPos + effectiveTabSize > lineLimit) {
-          contentText.appendChild(createLineBreak(responsiveMode));
+          legacyText.appendChild(createLineBreak(responsiveMode));
           columnPos = 0;
           effectiveTabSize = tabSize;
         }
-        contentText.appendChild(createTabWrapper(effectiveTabSize));
+        legacyText.appendChild(createTabWrapper(effectiveTabSize));
         columnPos += effectiveTabSize;
         textOffset++;
       } else {
         // Append a single surrogate pair.
         if (columnPos >= lineLimit) {
-          contentText.appendChild(createLineBreak(responsiveMode));
+          legacyText.appendChild(createLineBreak(responsiveMode));
           columnPos = 0;
         }
-        contentText.appendChild(
+        legacyText.appendChild(
           document.createTextNode(text.substring(textOffset, textOffset + 2))
         );
         textOffset += 2;

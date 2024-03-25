@@ -21,8 +21,6 @@ import {asyncForeach} from '../../../utils/async-util';
 import {FilesExpandedState} from '../gr-file-list-constants';
 import {diffFilePaths, pluralize} from '../../../utils/string-util';
 import {navigationToken} from '../../core/gr-navigation/gr-navigation';
-import {getPluginEndpoints} from '../../shared/gr-js-api-interface/gr-plugin-endpoints';
-import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {getAppContext} from '../../../services/app-context';
 import {
   DiffViewMode,
@@ -53,7 +51,7 @@ import {GrDiffCursor} from '../../../embed/diff/gr-diff-cursor/gr-diff-cursor';
 import {GrCursorManager} from '../../shared/gr-cursor-manager/gr-cursor-manager';
 import {ChangeComments} from '../../diff/gr-comment-api/gr-comment-api';
 import {ParsedChangeInfo, PatchSetFile} from '../../../types/types';
-import {Interaction, Timing} from '../../../constants/reporting';
+import {Timing} from '../../../constants/reporting';
 import {RevisionInfo} from '../../shared/revision-info/revision-info';
 import {select} from '../../../utils/observable-util';
 import {resolve} from '../../../models/dependency';
@@ -62,7 +60,14 @@ import {commentsModelToken} from '../../../models/comments/comments-model';
 import {changeModelToken} from '../../../models/change/change-model';
 import {filesModelToken} from '../../../models/change/files-model';
 import {ShortcutController} from '../../lit/shortcut-controller';
-import {css, html, LitElement, nothing, PropertyValues} from 'lit';
+import {
+  css,
+  html,
+  LitElement,
+  nothing,
+  PropertyValues,
+  TemplateResult,
+} from 'lit';
 import {Shortcut} from '../../../services/shortcuts/shortcuts-config';
 import {fire} from '../../../utils/event-util';
 import {a11yStyles} from '../../../styles/gr-a11y-styles';
@@ -73,10 +78,14 @@ import {when} from 'lit/directives/when.js';
 import {classMap} from 'lit/directives/class-map.js';
 import {incrementalRepeat} from '../../lit/incremental-repeat';
 import {ifDefined} from 'lit/directives/if-defined.js';
-import {HtmlPatched} from '../../../utils/lit-util';
-import {createDiffUrl} from '../../../models/views/diff';
-import {createEditUrl} from '../../../models/views/edit';
-import {createChangeUrl} from '../../../models/views/change';
+import {
+  createDiffUrl,
+  createEditUrl,
+  createChangeUrl,
+} from '../../../models/views/change';
+import {userModelToken} from '../../../models/user/user-model';
+import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
+import {FileMode, fileModeToString} from '../../../utils/file-util';
 
 export const DEFAULT_NUM_FILES_SHOWN = 200;
 
@@ -164,11 +173,6 @@ declare global {
 }
 @customElement('gr-file-list')
 export class GrFileList extends LitElement {
-  /**
-   * @event files-expanded-changed
-   * @event files-shown-changed
-   * @event diff-prefs-changed
-   */
   @query('#diffPreferencesDialog')
   diffPreferencesDialog?: GrDiffPreferencesDialog;
 
@@ -259,10 +263,6 @@ export class GrFileList extends LitElement {
 
   // Private but used in tests.
   @state()
-  displayLine?: boolean;
-
-  // Private but used in tests.
-  @state()
   showSizeBars = true;
 
   // For merge commits vs Auto Merge, an extra file row is shown detailing the
@@ -296,7 +296,9 @@ export class GrFileList extends LitElement {
 
   private readonly restApiService = getAppContext().restApiService;
 
-  private readonly userModel = getAppContext().userModel;
+  private readonly getPluginLoader = resolve(this, pluginLoaderToken);
+
+  private readonly getUserModel = resolve(this, userModelToken);
 
   private readonly getChangeModel = resolve(this, changeModelToken);
 
@@ -305,13 +307,6 @@ export class GrFileList extends LitElement {
   private readonly getCommentsModel = resolve(this, commentsModelToken);
 
   private readonly getBrowserModel = resolve(this, browserModelToken);
-
-  private readonly patched = new HtmlPatched(key => {
-    this.reporting.reportInteraction(Interaction.AUTOCLOSE_HTML_PATCHED, {
-      component: this.tagName,
-      key: key.substring(0, 300),
-    });
-  });
 
   shortcutsController = new ShortcutController(this);
 
@@ -600,6 +595,16 @@ export class GrFileList extends LitElement {
           top: 2px;
           display: block;
         }
+        .file-mode-warning {
+          font-size: 16px;
+          position: relative;
+          top: 2px;
+          color: var(--warning-foreground);
+        }
+        .file-mode-content {
+          display: inline-block;
+          color: var(--deemphasized-text-color);
+        }
 
         @media screen and (max-width: 1200px) {
           gr-endpoint-decorator.extra-col {
@@ -722,9 +727,6 @@ export class GrFileList extends LitElement {
     this.shortcutsController.addAbstract(Shortcut.TOGGLE_LEFT_PANE, _ =>
       this.handleToggleLeftPane()
     );
-    this.shortcutsController.addGlobal({key: Key.ESC}, _ =>
-      this.handleEscKey()
-    );
     this.shortcutsController.addAbstract(
       Shortcut.EXPAND_ALL_COMMENT_THREADS,
       _ => {}
@@ -749,7 +751,7 @@ export class GrFileList extends LitElement {
     );
     subscribe(
       this,
-      () => this.getFilesModel().filesWithUnmodified$,
+      () => this.getFilesModel().filesIncludingUnmodified$,
       files => {
         this.files = [...files];
       }
@@ -777,7 +779,7 @@ export class GrFileList extends LitElement {
     );
     subscribe(
       this,
-      () => this.userModel.diffPreferences$,
+      () => this.getUserModel().diffPreferences$,
       diffPreferences => {
         this.diffPrefs = diffPreferences;
       }
@@ -786,7 +788,7 @@ export class GrFileList extends LitElement {
       this,
       () =>
         select(
-          this.userModel.preferences$,
+          this.getUserModel().preferences$,
           prefs => !!prefs?.size_bar_in_change_table
         ),
       sizeBarInChangeTable => {
@@ -795,7 +797,7 @@ export class GrFileList extends LitElement {
     );
     subscribe(
       this,
-      () => this.userModel.loggedIn$,
+      () => this.getUserModel().loggedIn$,
       loggedIn => {
         this.loggedIn = loggedIn;
       }
@@ -821,6 +823,13 @@ export class GrFileList extends LitElement {
 
   override willUpdate(changedProperties: PropertyValues): void {
     if (
+      changedProperties.has('patchNum') ||
+      changedProperties.has('basePatchNum')
+    ) {
+      this.resetFileState();
+      this.collapseAllDiffs();
+    }
+    if (
       changedProperties.has('diffPrefs') ||
       changedProperties.has('diffViewMode')
     ) {
@@ -843,26 +852,29 @@ export class GrFileList extends LitElement {
   override connectedCallback() {
     super.connectedCallback();
 
-    getPluginLoader()
+    this.getPluginLoader()
       .awaitPluginsLoaded()
       .then(() => {
-        this.dynamicHeaderEndpoints = getPluginEndpoints().getDynamicEndpoints(
-          'change-view-file-list-header'
-        );
-        this.dynamicContentEndpoints = getPluginEndpoints().getDynamicEndpoints(
-          'change-view-file-list-content'
-        );
+        this.dynamicHeaderEndpoints =
+          this.getPluginLoader().pluginEndPoints.getDynamicEndpoints(
+            'change-view-file-list-header'
+          );
+        this.dynamicContentEndpoints =
+          this.getPluginLoader().pluginEndPoints.getDynamicEndpoints(
+            'change-view-file-list-content'
+          );
         this.dynamicPrependedHeaderEndpoints =
-          getPluginEndpoints().getDynamicEndpoints(
+          this.getPluginLoader().pluginEndPoints.getDynamicEndpoints(
             'change-view-file-list-header-prepend'
           );
         this.dynamicPrependedContentEndpoints =
-          getPluginEndpoints().getDynamicEndpoints(
+          this.getPluginLoader().pluginEndPoints.getDynamicEndpoints(
             'change-view-file-list-content-prepend'
           );
-        this.dynamicSummaryEndpoints = getPluginEndpoints().getDynamicEndpoints(
-          'change-view-file-list-summary'
-        );
+        this.dynamicSummaryEndpoints =
+          this.getPluginLoader().pluginEndPoints.getDynamicEndpoints(
+            'change-view-file-list-summary'
+          );
 
         if (
           this.dynamicHeaderEndpoints.length !==
@@ -953,7 +965,10 @@ export class GrFileList extends LitElement {
       <div class="path" role="columnheader">File</div>
       <div class="comments desktop" role="columnheader">Comments</div>
       <div class="comments mobile" role="columnheader" title="Comments">C</div>
-      <div class="sizeBars desktop" role="columnheader">Size</div>
+      ${when(
+        this.showSizeBars,
+        () => html`<div class="sizeBars desktop" role="columnheader">Size</div>`
+      )}
       <div class="header-stats" role="columnheader">Delta</div>
       <!-- endpoint: change-view-file-list-header -->
       ${when(showDynamicColumns, () => this.renderDynamicHeaderEndpoints())}
@@ -999,25 +1014,12 @@ export class GrFileList extends LitElement {
     );
   }
 
-  // for DIFF_AUTOCLOSE logging purposes only
-  private shownFilesOld: NormalizedFileInfo[] = this.shownFiles;
-
   private renderShownFiles() {
     const showDynamicColumns = this.computeShowDynamicColumns();
     const showPrependedDynamicColumns =
       this.computeShowPrependedDynamicColumns();
     const sizeBarLayout = this.computeSizeBarLayout();
 
-    // for DIFF_AUTOCLOSE logging purposes only
-    if (
-      this.shownFilesOld.length > 0 &&
-      this.shownFiles !== this.shownFilesOld
-    ) {
-      this.reporting.reportInteraction(
-        Interaction.DIFF_AUTOCLOSE_SHOWN_FILES_CHANGED
-      );
-    }
-    this.shownFilesOld = this.shownFiles;
     return incrementalRepeat({
       values: this.shownFiles,
       mapFn: (f, i) =>
@@ -1049,6 +1051,7 @@ export class GrFileList extends LitElement {
         data-file=${JSON.stringify(patchSetFile)}
         tabindex="-1"
         role="row"
+        aria-label=${file.__path}
       >
         <!-- endpoint: change-view-file-list-content-prepend -->
         ${when(showPrependedDynamicColumns, () =>
@@ -1067,11 +1070,10 @@ export class GrFileList extends LitElement {
       </div>
       ${when(
         this.isFileExpanded(file.__path),
-        () => this.patched.html`
+        () => html`
           <gr-diff-host
             ?noAutoRender=${true}
             ?showLoadFailure=${true}
-            .displayLine=${this.displayLine}
             .changeNum=${this.changeNum}
             .change=${this.change}
             .patchRange=${this.patchRange}
@@ -1120,10 +1122,14 @@ export class GrFileList extends LitElement {
     </div>`;
   }
 
-  private renderDivWithTooltip(content: string, tooltip: string) {
+  private renderDivWithTooltip(
+    content: TemplateResult | string,
+    tooltip: string,
+    cssClass = 'content'
+  ) {
     return html`
       <gr-tooltip-content title=${tooltip} has-tooltip>
-        <div class="content">${content}</div>
+        <div class=${cssClass}>${content}</div>
       </gr-tooltip-content>
     `;
   }
@@ -1163,12 +1169,18 @@ export class GrFileList extends LitElement {
 
   private renderFileStatusLeft(path?: string) {
     if (this.filesLeftBase.length === 0) return nothing;
+    const arrow = html`
+      <gr-icon
+        icon="arrow_right_alt"
+        class="file-status-arrow"
+        aria-label="then"
+      ></gr-icon>
+    `;
     // no path means "header row"
     const psNum = this.basePatchNum;
     if (!path) {
       return html`
-        ${this.renderDivWithTooltip(`${psNum}`, `Patchset ${psNum}`)}
-        <gr-icon icon="arrow_right_alt" class="file-status-arrow"></gr-icon>
+        ${this.renderDivWithTooltip(`${psNum}`, `Patchset ${psNum}`)} ${arrow}
       `;
     }
     if (isMagicPath(path)) return nothing;
@@ -1185,7 +1197,7 @@ export class GrFileList extends LitElement {
         .status=${status}
         .labelPostfix=${postfix}
       ></gr-file-status>
-      <gr-icon icon="arrow_right_alt" class="file-status-arrow"></gr-icon>
+      ${arrow}
     `;
   }
 
@@ -1202,6 +1214,7 @@ export class GrFileList extends LitElement {
           >
             ${computeTruncatedPath(file.__path)}
           </span>
+          ${this.renderFileMode(file)}
           <gr-copy-clipboard
             ?hideInput=${true}
             .text=${file.__path}
@@ -1223,6 +1236,34 @@ export class GrFileList extends LitElement {
     `;
   }
 
+  private renderFileMode(file: NormalizedFileInfo) {
+    const {old_mode, new_mode} = file;
+
+    // For added, modified or deleted regular files we do not want to render
+    // anything. Only if a file changed from something else to regular, then let
+    // the user know.
+    if (new_mode === undefined) return nothing;
+    let newModeStr = fileModeToString(new_mode, false);
+    if (new_mode === FileMode.REGULAR_FILE) {
+      if (old_mode === undefined) return nothing;
+      if (old_mode === FileMode.REGULAR_FILE) return nothing;
+      newModeStr = `non-${fileModeToString(old_mode, false)}`;
+    }
+
+    const changed = old_mode !== undefined && old_mode !== new_mode;
+    const icon = changed
+      ? html`<gr-icon icon="warning" class="file-mode-warning"></gr-icon> `
+      : '';
+    const action = changed
+      ? `changed from ${fileModeToString(old_mode)} to`
+      : 'is';
+    return this.renderDivWithTooltip(
+      html`${icon}(${newModeStr})`,
+      `file mode ${action} ${fileModeToString(new_mode)}`,
+      'file-mode-content'
+    );
+  }
+
   private renderStyledPath(filePath: string, previousFilePath?: string) {
     const {matchingFolders, newFolders, fileName} = diffFilePaths(
       filePath,
@@ -1242,8 +1283,7 @@ export class GrFileList extends LitElement {
   private renderFileComments(file: NormalizedFileInfo) {
     return html` <div role="gridcell">
       <div class="comments desktop">
-        <span class="drafts">${this.computeDraftsString(file)}</span>
-        <span>${this.computeCommentsString(file)}</span>
+        <span>${this.renderCommentsChips(file)}</span>
         <span class="noCommentsScreenReaderText">
           <!-- Screen readers read the following content only if 2 other
           spans in the parent div is empty. The content is not visible on
@@ -1277,10 +1317,7 @@ export class GrFileList extends LitElement {
           For example, without a nested div screen readers pronounce the
           "Commit message" row content with incorrect column headers.
         -->
-      <div
-        class=${this.computeSizeBarsClass(file.__path)}
-        aria-label="A bar that represents the addition and deletion ratio for the current file"
-      >
+      <div class=${this.computeSizeBarsClass(file.__path)} aria-hidden="true">
         <svg width="61" height="8">
           <rect
             x=${this.computeBarAdditionX(file, sizeBarLayout)}
@@ -1312,7 +1349,7 @@ export class GrFileList extends LitElement {
         <span
           class="added"
           tabindex="0"
-          aria-label=${`${file.lines_inserted} lines added`}
+          aria-label=${`${file.lines_inserted} added`}
           ?hidden=${file.binary}
         >
           +${file.lines_inserted}
@@ -1320,7 +1357,7 @@ export class GrFileList extends LitElement {
         <span
           class="removed"
           tabindex="0"
-          aria-label=${`${file.lines_deleted} lines removed`}
+          aria-label=${`${file.lines_deleted} removed`}
           ?hidden=${file.binary}
         >
           -${file.lines_deleted}
@@ -1410,6 +1447,7 @@ export class GrFileList extends LitElement {
   }
 
   private renderShowHide(file: NormalizedFileInfo) {
+    const expanded = this.isFileExpanded(file.__path);
     return html` <div class="show-hide" role="gridcell">
       <!-- Do not use input type="checkbox" with hidden input and
             visible label here. Screen readers don't read/interract
@@ -1422,7 +1460,10 @@ export class GrFileList extends LitElement {
         role="switch"
         tabindex="0"
         aria-checked=${this.isFileExpandedStr(file.__path)}
-        aria-label="Expand file"
+        aria-label=${expanded ? 'collapse' : 'expand'}
+        aria-description=${expanded
+          ? 'Collapse diff of this file'
+          : 'Expand diff of this file'}
         @click=${this.expandedClick}
         @keydown=${this.expandedClick}
       >
@@ -1432,7 +1473,7 @@ export class GrFileList extends LitElement {
           class="show-hide-icon"
           tabindex="-1"
           id="icon"
-          icon=${this.computeShowHideIcon(file.__path)}
+          icon=${expanded ? 'expand_less' : 'expand_more'}
         ></gr-icon>
       </span>
     </div>`;
@@ -1597,20 +1638,29 @@ export class GrFileList extends LitElement {
     </div>`;
   }
 
+  renderCommentsChips(file?: NormalizedFileInfo) {
+    if (!this.changeComments || !this.patchRange || !file?.__path) {
+      return nothing;
+    }
+    const commentThreads = this.changeComments?.computeCommentsThreads(
+      this.patchRange,
+      file.__path,
+      file
+    );
+    const draftCount = this.changeComments?.computeDraftCountForFile(
+      this.patchRange,
+      file
+    );
+    return html`<gr-comments-summary
+      .commentThreads=${commentThreads}
+      .draftCount=${draftCount}
+      emptyWhenNoComments
+    ></gr-comments-summary>`;
+  }
+
   protected override firstUpdated(): void {
     this.detectChromiteButler();
     this.reporting.fileListDisplayed();
-  }
-
-  protected override updated(): void {
-    // for DIFF_AUTOCLOSE logging purposes only
-    const ids = this.diffs.map(d => d.uid);
-    if (ids.length > 0) {
-      this.reporting.reportInteraction(
-        Interaction.DIFF_AUTOCLOSE_FILE_LIST_UPDATED,
-        {l: ids.length, ids: ids.slice(0, 10)}
-      );
-    }
   }
 
   // TODO: Move into files-model.
@@ -1731,10 +1781,6 @@ export class GrFileList extends LitElement {
     if (!this.diffs.length) {
       return;
     }
-    this.reporting.reportInteraction(
-      Interaction.DIFF_AUTOCLOSE_RELOAD_FILELIST_PREFS
-    );
-
     // Re-render all expanded diffs sequentially.
     this.renderInOrder(this.expandedFiles, this.diffs);
   }
@@ -1821,14 +1867,14 @@ export class GrFileList extends LitElement {
       return '';
     }
     const commentThreadCount =
-      this.changeComments.computeCommentThreadCount({
+      this.changeComments.computeCommentThreads({
         patchNum: this.patchRange.basePatchNum,
         path: file.__path,
-      }) +
-      this.changeComments.computeCommentThreadCount({
+      }).length +
+      this.changeComments.computeCommentThreads({
         patchNum: this.patchRange.patchNum,
         path: file.__path,
-      });
+      }).length;
     return commentThreadCount === 0 ? '' : `${commentThreadCount}c`;
   }
 
@@ -1984,7 +2030,6 @@ export class GrFileList extends LitElement {
     e.stopPropagation();
     if (this.filesExpanded === FilesExpandedState.ALL) {
       this.diffCursor?.moveDown();
-      this.displayLine = true;
     } else {
       this.fileCursor.next({circular: true});
       this.selectedIndex = this.fileCursor.index;
@@ -2004,7 +2049,6 @@ export class GrFileList extends LitElement {
     e.stopPropagation();
     if (this.filesExpanded === FilesExpandedState.ALL) {
       this.diffCursor?.moveUp();
-      this.displayLine = true;
     } else {
       this.fileCursor.previous({circular: true});
       this.selectedIndex = this.fileCursor.index;
@@ -2075,9 +2119,9 @@ export class GrFileList extends LitElement {
     this.getNavigation().setUrl(
       createDiffUrl({
         change: this.change,
-        path: diff.path,
         patchNum: this.patchRange.patchNum,
         basePatchNum: this.patchRange.basePatchNum,
+        diffView: {path: diff.path},
       })
     );
   }
@@ -2096,9 +2140,9 @@ export class GrFileList extends LitElement {
     this.getNavigation().setUrl(
       createDiffUrl({
         change: this.change,
-        path: this.files[this.fileCursor.index].__path,
         patchNum: this.patchRange.patchNum,
         basePatchNum: this.patchRange.basePatchNum,
+        diffView: {path: this.files[this.fileCursor.index].__path},
       })
     );
   }
@@ -2129,17 +2173,17 @@ export class GrFileList extends LitElement {
     if (this.editMode && path !== SpecialFilePath.MERGE_LIST) {
       return createEditUrl({
         changeNum: this.change._number,
-        project: this.change.project,
-        path,
+        repo: this.change.project,
         patchNum: this.patchRange.patchNum,
+        editView: {path},
       });
     }
     return createDiffUrl({
       changeNum: this.change._number,
-      project: this.change.project,
-      path,
+      repo: this.change.project,
       patchNum: this.patchRange.patchNum,
       basePatchNum: this.patchRange.basePatchNum,
+      diffView: {path},
     });
   }
 
@@ -2190,10 +2234,6 @@ export class GrFileList extends LitElement {
     return this.isFileExpanded(path) ? 'expanded' : '';
   }
 
-  private computeShowHideIcon(path: string | undefined) {
-    return this.isFileExpanded(path) ? 'expand_less' : 'expand_more';
-  }
-
   private computeShowNumCleanlyMerged(): boolean {
     return this.cleanlyMergedPaths.length > 0;
   }
@@ -2218,13 +2258,7 @@ export class GrFileList extends LitElement {
     const previousNumFilesShown = this.shownFiles ? this.shownFiles.length : 0;
 
     const filesShown = this.files.slice(0, this.numFilesShown);
-    this.dispatchEvent(
-      new CustomEvent('files-shown-changed', {
-        detail: {length: filesShown.length},
-        composed: true,
-        bubbles: true,
-      })
-    );
+    fire(this, 'files-shown-changed', {length: filesShown.length});
 
     // Start the timer for the rendering work here because this is where the
     // shownFiles property is being set, and shownFiles is used in the
@@ -2460,11 +2494,6 @@ export class GrFileList extends LitElement {
     return undefined;
   }
 
-  // Private but used in tests.
-  handleEscKey() {
-    this.displayLine = false;
-  }
-
   /**
    * Compute size bar layout values from the file list.
    * Private but used in tests.
@@ -2616,7 +2645,7 @@ export class GrFileList extends LitElement {
   }
 
   private handleReloadingDiffPreference() {
-    this.userModel.getDiffPreferences();
+    this.getUserModel().getDiffPreferences();
   }
 
   private getOldPath(file: NormalizedFileInfo) {

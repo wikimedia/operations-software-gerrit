@@ -26,21 +26,24 @@ import {
   AutocompleteQuery,
   GrAutocomplete,
   AutocompleteSuggestion,
-  AutocompleteCommitEvent,
 } from '../../shared/gr-autocomplete/gr-autocomplete';
 import {
   EditablePermissionInfo,
   EditablePermissionRuleInfo,
-  EditableProjectAccessGroups,
+  EditableRepoAccessGroups,
 } from '../gr-repo-access/gr-repo-access-interfaces';
 import {getAppContext} from '../../../services/app-context';
-import {fire, fireEvent} from '../../../utils/event-util';
+import {fire} from '../../../utils/event-util';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {paperStyles} from '../../../styles/gr-paper-styles';
 import {formStyles} from '../../../styles/gr-form-styles';
 import {menuPageStyles} from '../../../styles/gr-menu-page-styles';
 import {when} from 'lit/directives/when.js';
-import {ValueChangedEvent} from '../../../types/events';
+import {
+  AutocompleteCommitEvent,
+  ValueChangedEvent,
+} from '../../../types/events';
+import {throwingErrorCallback} from '../../shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
 
 const MAX_AUTOCOMPLETE_RESULTS = 20;
 
@@ -63,16 +66,6 @@ interface GroupSuggestion {
   value: GroupInfo;
 }
 
-/**
- * Fired when the permission has been modified or removed.
- *
- * @event access-modified
- */
-/**
- * Fired when a permission that was previously added was removed.
- *
- * @event added-permission-removed
- */
 @customElement('gr-permission')
 export class GrPermission extends LitElement {
   @property({type: String})
@@ -88,7 +81,7 @@ export class GrPermission extends LitElement {
   permission?: PermissionArrayItem<EditablePermissionInfo>;
 
   @property({type: Object})
-  groups?: EditableProjectAccessGroups;
+  groups?: EditableRepoAccessGroups;
 
   @property({type: String})
   section?: GitRef;
@@ -360,7 +353,7 @@ export class GrPermission extends LitElement {
     this.permission.value.modified = true;
     this.permission.value.exclusive = (e.target as HTMLInputElement).checked;
     // Allows overall access page to know a change has been made.
-    fireEvent(this, 'access-modified');
+    fire(this, 'access-modified', {});
   }
 
   handleRemovePermission() {
@@ -368,11 +361,11 @@ export class GrPermission extends LitElement {
       return;
     }
     if (this.permission.value.added) {
-      fireEvent(this, 'added-permission-removed');
+      fire(this, 'added-permission-removed', {});
     }
     this.deleted = true;
     this.permission.value.deleted = true;
-    fireEvent(this, 'access-modified');
+    fire(this, 'access-modified', {});
   }
 
   private handleRulesChanged() {
@@ -458,7 +451,7 @@ export class GrPermission extends LitElement {
   }
 
   computeGroupName(
-    groups: EditableProjectAccessGroups | undefined,
+    groups: EditableRepoAccessGroups | undefined,
     groupId: GitRef
   ) {
     return groups && groups[groupId] && groups[groupId].name
@@ -471,7 +464,8 @@ export class GrPermission extends LitElement {
       .getSuggestedGroups(
         this.groupFilter || '',
         this.repo,
-        MAX_AUTOCOMPLETE_RESULTS
+        MAX_AUTOCOMPLETE_RESULTS,
+        throwingErrorCallback
       )
       .then(response => {
         const groups: GroupSuggestion[] = [];
@@ -540,7 +534,7 @@ export class GrPermission extends LitElement {
     const value = this.rules[this.rules.length - 1].value;
     value!.added = true;
     this.permission.value.rules[groupId] = value!;
-    fireEvent(this, 'access-modified');
+    fire(this, 'access-modified', {});
     this.requestUpdate();
   }
 
@@ -563,6 +557,11 @@ export class GrPermission extends LitElement {
     e.preventDefault();
   }
 
+  // TODO: Do not use generic `CustomEvent`.
+  // There is something fishy going on here though.
+  // `e.detail.value` is of type `Rule`, but `splice()` expects a `number`.
+  // Did not look closer, but this seems to be broken. Should `e.detail.value`
+  // be replaced by `1` maybe??
   private handleRuleChanged(e: CustomEvent, index: number) {
     this.rules!.splice(index, e.detail.value);
     this.handleRulesChanged();
@@ -572,6 +571,8 @@ export class GrPermission extends LitElement {
 
 declare global {
   interface HTMLElementEventMap {
+    /** Fired when a permission that was previously added was removed. */
+    'added-permission-removed': CustomEvent<{}>;
     'permission-changed': ValueChangedEvent<
       PermissionArrayItem<EditablePermissionInfo>
     >;

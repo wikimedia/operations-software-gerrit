@@ -5,21 +5,24 @@
  */
 import '../../shared/gr-dialog/gr-dialog';
 import '../../shared/gr-list-view/gr-list-view';
-import '../../shared/gr-overlay/gr-overlay';
 import '../gr-create-group-dialog/gr-create-group-dialog';
-import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
 import {GroupId, GroupInfo, GroupName} from '../../../types/common';
 import {GrCreateGroupDialog} from '../gr-create-group-dialog/gr-create-group-dialog';
 import {fireTitleChange} from '../../../utils/event-util';
 import {getAppContext} from '../../../services/app-context';
-import {SHOWN_ITEMS_COUNT} from '../../../constants/constants';
 import {tableStyles} from '../../../styles/gr-table-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, css, html} from 'lit';
 import {customElement, query, property, state} from 'lit/decorators.js';
 import {assertIsDefined} from '../../../utils/common-util';
-import {AdminViewState} from '../../../models/views/admin';
+import {
+  AdminChildView,
+  AdminViewState,
+  createAdminUrl,
+} from '../../../models/views/admin';
 import {createGroupUrl} from '../../../models/views/group';
+import {whenVisible} from '../../../utils/dom-util';
+import {modalStyles} from '../../../styles/gr-modal-styles';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -29,9 +32,7 @@ declare global {
 
 @customElement('gr-admin-group-list')
 export class GrAdminGroupList extends LitElement {
-  readonly path = '/admin/groups';
-
-  @query('#createOverlay') private createOverlay?: GrOverlay;
+  @query('#createModal') private createModal?: HTMLDialogElement;
 
   @query('#createNewModal') private createNewModal?: GrCreateGroupDialog;
 
@@ -41,34 +42,33 @@ export class GrAdminGroupList extends LitElement {
   /**
    * Offset of currently visible query results.
    */
-  @state() private offset = 0;
+  @state() offset = 0;
 
-  @state() private hasNewGroupName = false;
+  @state() hasNewGroupName = false;
 
-  @state() private createNewCapability = false;
+  @state() createNewCapability = false;
 
-  // private but used in test
   @state() groups: GroupInfo[] = [];
 
-  @state() private groupsPerPage = 25;
+  @state() groupsPerPage = 25;
 
-  // private but used in test
   @state() loading = true;
 
-  @state() private filter = '';
+  @state() filter = '';
 
   private readonly restApiService = getAppContext().restApiService;
 
   override connectedCallback() {
     super.connectedCallback();
     this.getCreateGroupCapability();
-    fireTitleChange(this, 'Groups');
+    fireTitleChange('Groups');
   }
 
   static override get styles() {
     return [
       tableStyles,
       sharedStyles,
+      modalStyles,
       css`
         gr-list-view {
           --generic-list-description-width: 70%;
@@ -86,7 +86,7 @@ export class GrAdminGroupList extends LitElement {
         .itemsPerPage=${this.groupsPerPage}
         .loading=${this.loading}
         .offset=${this.offset}
-        .path=${this.path}
+        .path=${createAdminUrl({adminView: AdminChildView.GROUPS})}
         @create-clicked=${() => this.handleCreateClicked()}
       >
         <table id="list" class="genericList">
@@ -105,12 +105,12 @@ export class GrAdminGroupList extends LitElement {
           </tbody>
           <tbody class=${this.loading ? 'loading' : ''}>
             ${this.groups
-              .slice(0, SHOWN_ITEMS_COUNT)
+              .slice(0, this.groupsPerPage)
               .map(group => this.renderGroupList(group))}
           </tbody>
         </table>
       </gr-list-view>
-      <gr-overlay id="createOverlay" with-backdrop>
+      <dialog id="createModal" tabindex="-1">
         <gr-dialog
           id="createDialog"
           class="confirmDialog"
@@ -128,7 +128,7 @@ export class GrAdminGroupList extends LitElement {
             ></gr-create-group-dialog>
           </div>
         </gr-dialog>
-      </gr-overlay>
+      </dialog>
     `;
   }
 
@@ -156,7 +156,7 @@ export class GrAdminGroupList extends LitElement {
   paramsChanged() {
     this.filter = this.params?.filter ?? '';
     this.offset = Number(this.params?.offset ?? 0);
-    this.maybeOpenCreateOverlay(this.params);
+    this.maybeOpenCreateModal(this.params);
 
     return this.getGroups(this.filter, this.groupsPerPage, this.offset);
   }
@@ -166,18 +166,14 @@ export class GrAdminGroupList extends LitElement {
    *
    * private but used in test
    */
-  maybeOpenCreateOverlay(params?: AdminViewState) {
+  async maybeOpenCreateModal(params?: AdminViewState) {
     if (params?.openCreateModal) {
-      assertIsDefined(this.createOverlay, 'createOverlay');
-      this.createOverlay.open();
+      await this.updateComplete;
+      if (!this.createModal?.open) this.createModal?.showModal();
     }
   }
 
-  /**
-   * Generates groups link (/admin/groups/<uuid>)
-   *
-   * private but used in test
-   */
+  // private but used in test
   computeGroupUrl(encodedId: string) {
     const groupId = decodeURIComponent(encodedId) as GroupId;
     return createGroupUrl({groupId});
@@ -229,14 +225,15 @@ export class GrAdminGroupList extends LitElement {
 
   // private but used in test
   handleCloseCreate() {
-    assertIsDefined(this.createOverlay, 'createOverlay');
-    this.createOverlay.close();
+    assertIsDefined(this.createModal, 'createModal');
+    this.createModal.close();
   }
 
   // private but used in test
   handleCreateClicked() {
-    assertIsDefined(this.createOverlay, 'createOverlay');
-    this.createOverlay.open().then(() => {
+    assertIsDefined(this.createModal, 'createModal');
+    this.createModal.showModal();
+    whenVisible(this.createModal, () => {
       assertIsDefined(this.createNewModal, 'createNewModal');
       this.createNewModal.focus();
     });

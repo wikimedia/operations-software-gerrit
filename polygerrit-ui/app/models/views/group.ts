@@ -17,12 +17,16 @@ export enum GroupDetailView {
 
 export interface GroupViewState extends ViewState {
   view: GerritView.GROUP;
+  /**
+   * This refers to the (string) `id` of `GroupInfo`, not the `groupId`, which
+   * is a number.
+   */
   groupId: GroupId;
   detail?: GroupDetailView;
 }
 
 export function createGroupUrl(state: Omit<GroupViewState, 'view'>) {
-  let url = `/admin/groups/${encodeURL(`${state.groupId}`, true)}`;
+  let url = `/admin/groups/${encodeURL(`${state.groupId}`)}`;
   if (state.detail === GroupDetailView.MEMBERS) {
     url += ',members';
   } else if (state.detail === GroupDetailView.LOG) {

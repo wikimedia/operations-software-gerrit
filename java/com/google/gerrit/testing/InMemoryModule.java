@@ -38,6 +38,7 @@ import com.google.gerrit.index.project.ProjectSchemaDefinitions;
 import com.google.gerrit.metrics.DisabledMetricMaker;
 import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.server.CacheRefreshExecutor;
+import com.google.gerrit.server.DefaultRefLogIdentityProvider;
 import com.google.gerrit.server.FanOutExecutor;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.GerritPersonIdentProvider;
@@ -46,6 +47,7 @@ import com.google.gerrit.server.PluginUser;
 import com.google.gerrit.server.account.GroupBackend;
 import com.google.gerrit.server.api.GerritApiModule;
 import com.google.gerrit.server.api.PluginApiModule;
+import com.google.gerrit.server.api.projects.ProjectQueryBuilderModule;
 import com.google.gerrit.server.audit.AuditModule;
 import com.google.gerrit.server.cache.h2.H2CacheModule;
 import com.google.gerrit.server.cache.mem.DefaultMemoryCacheModule;
@@ -84,6 +86,7 @@ import com.google.gerrit.server.git.GarbageCollection;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.PerThreadRequestScope;
 import com.google.gerrit.server.git.WorkQueue;
+import com.google.gerrit.server.git.WorkQueue.WorkQueueModule;
 import com.google.gerrit.server.group.testing.TestGroupBackend;
 import com.google.gerrit.server.index.account.AccountSchemaDefinitions;
 import com.google.gerrit.server.index.account.AllAccountsIndexer;
@@ -192,6 +195,8 @@ public class InMemoryModule extends FactoryModule {
     AuthConfig authConfig = cfgInjector.getInstance(AuthConfig.class);
     install(new AuthModule(authConfig));
     install(new GerritApiModule());
+    install(new ProjectQueryBuilderModule());
+    install(new DefaultRefLogIdentityProvider.Module());
     factory(PluginUser.Factory.class);
     install(new PluginApiModule());
     install(new DefaultPermissionBackendModule());
@@ -200,6 +205,7 @@ public class InMemoryModule extends FactoryModule {
     install(new AuditModule());
     install(new SubscriptionGraphModule());
     install(new SuperprojectUpdateSubmissionListenerModule());
+    install(new WorkQueueModule());
 
     bindScope(RequestScoped.class, PerThreadRequestScope.REQUEST);
 

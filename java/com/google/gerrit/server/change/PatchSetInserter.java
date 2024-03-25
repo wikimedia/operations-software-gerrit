@@ -15,12 +15,14 @@
 package com.google.gerrit.server.change;
 
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.CC;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.REVIEWER;
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
 import static java.util.Objects.requireNonNull;
 
 import com.google.common.collect.ImmutableListMultimap;
+import com.google.common.collect.ImmutableSet;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.PatchSet;
@@ -285,7 +287,7 @@ public class PatchSetInserter implements BatchUpdateOp {
         psUtil.insert(
             ctx.getRevWalk(), ctx.getUpdate(psId), psId, commitId, newGroups, null, description);
 
-    if (ctx.getNotify(change.getId()).handling() != NotifyHandling.NONE) {
+    if (!ctx.getNotify(change.getId()).handling().equals(NotifyHandling.NONE)) {
       oldReviewers = approvalsUtil.getReviewers(ctx.getNotes());
     }
 
@@ -360,17 +362,17 @@ public class PatchSetInserter implements BatchUpdateOp {
   @Override
   public void postUpdate(PostUpdateContext ctx) {
     NotifyResolver.Result notify = ctx.getNotify(change.getId());
-    if (notify.shouldNotify() && sendEmail) {
-      requireNonNull(mailMessage);
-
+    if (sendEmail) {
       emailNewPatchSetFactory
           .create(
               ctx,
               patchSet,
               mailMessage,
-              approvalCopierResult.outdatedApprovals(),
-              oldReviewers.byState(REVIEWER),
-              oldReviewers.byState(CC),
+              approvalCopierResult.outdatedApprovals().stream()
+                  .map(ApprovalCopier.Result.PatchSetApprovalData::patchSetApproval)
+                  .collect(toImmutableSet()),
+              oldReviewers == null ? ImmutableSet.of() : oldReviewers.byState(REVIEWER),
+              oldReviewers == null ? ImmutableSet.of() : oldReviewers.byState(CC),
               changeKind,
               preUpdateMetaId)
           .sendAsync();

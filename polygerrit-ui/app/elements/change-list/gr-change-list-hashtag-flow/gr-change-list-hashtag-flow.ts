@@ -15,7 +15,7 @@ import '../../shared/gr-autocomplete/gr-autocomplete';
 import '@polymer/iron-dropdown/iron-dropdown';
 import {IronDropdownElement} from '@polymer/iron-dropdown/iron-dropdown';
 import {getAppContext} from '../../../services/app-context';
-import {notUndefined} from '../../../types/types';
+import {isDefined} from '../../../types/types';
 import {unique} from '../../../utils/common-util';
 import {AutocompleteSuggestion} from '../../shared/gr-autocomplete/gr-autocomplete';
 import {when} from 'lit/directives/when.js';
@@ -27,6 +27,7 @@ import {allSettled} from '../../../utils/async-util';
 import {fireAlert} from '../../../utils/event-util';
 import {pluralize} from '../../../utils/string-util';
 import {Interaction} from '../../../constants/reporting';
+import {throwingErrorCallback} from '../../shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
 
 @customElement('gr-change-list-hashtag-flow')
 export class GrChangeListHashtagFlow extends LitElement {
@@ -158,7 +159,7 @@ export class GrChangeListHashtagFlow extends LitElement {
         .horizontalAlign=${'auto'}
         .verticalAlign=${'auto'}
         .verticalOffset=${24}
-        @opened-changed=${(e: CustomEvent) =>
+        @opened-changed=${(e: ValueChangedEvent<boolean>) =>
           (this.isDropdownOpen = e.detail.value)}
       >
         ${when(
@@ -215,7 +216,7 @@ export class GrChangeListHashtagFlow extends LitElement {
   private renderExistingHashtags() {
     const hashtags = this.selectedChanges
       .flatMap(change => change.hashtags ?? [])
-      .filter(notUndefined)
+      .filter(isDefined)
       .filter(unique);
     return html`
       <div class="chips">
@@ -298,11 +299,12 @@ export class GrChangeListHashtagFlow extends LitElement {
     query: string
   ): Promise<AutocompleteSuggestion[]> {
     const suggestions = await this.restApiService.getChangesWithSimilarHashtag(
-      query
+      query,
+      throwingErrorCallback
     );
     this.existingHashtagSuggestions = (suggestions ?? [])
       .flatMap(change => change.hashtags ?? [])
-      .filter(notUndefined)
+      .filter(isDefined)
       .filter(unique);
     return this.existingHashtagSuggestions.map(hashtag => {
       return {name: hashtag, value: hashtag};

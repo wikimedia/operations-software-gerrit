@@ -14,8 +14,6 @@
 
 package com.google.gerrit.server.permissions;
 
-import static com.google.common.collect.ImmutableMap.toImmutableMap;
-
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.flogger.FluentLogger;
@@ -24,9 +22,9 @@ import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.git.ChangesByProjectCache;
 import com.google.gerrit.server.query.change.ChangeData;
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.Objects;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.stream.Stream;
 import org.eclipse.jgit.lib.Repository;
 
@@ -64,16 +62,18 @@ public class GitVisibleChangeFilter {
       ImmutableSet<Change.Id> changes) {
     Stream<ChangeData> changeDatas = Stream.empty();
     if (changes.size() < CHANGE_LIMIT_FOR_DIRECT_FILTERING) {
+      logger.atFine().log("Loading changes one by one for project %s", projectName);
       changeDatas = loadChangeDatasOneByOne(changes, changeDataFactory, projectName);
     } else {
+      logger.atFine().log("Loading changes from ChangesByProjectCache for project %s", projectName);
       try {
         changeDatas = changesByProjectCache.streamChangeDatas(projectName, repository);
       } catch (IOException e) {
         logger.atWarning().withCause(e).log("Unable to streamChangeDatas for %s", projectName);
       }
     }
-
-    return changeDatas
+    HashMap<Change.Id, ChangeData> result = new HashMap<>();
+    changeDatas
         .filter(cd -> changes.contains(cd.getId()))
         .filter(
             cd -> {
@@ -87,7 +87,16 @@ public class GitVisibleChangeFilter {
                 return false;
               }
             })
-        .collect(toImmutableMap(ChangeData::getId, Function.identity()));
+        .forEach(
+            cd -> {
+              if (result.containsKey(cd.getId())) {
+                logger.atWarning().log(
+                    "Duplicate change datas for the repo %s: [%s, %s]",
+                    projectName, cd, result.get(cd.getId()));
+              }
+              result.put(cd.getId(), cd);
+            });
+    return ImmutableMap.copyOf(result);
   }
 
   /** Get a stream of changes by loading them individually. */

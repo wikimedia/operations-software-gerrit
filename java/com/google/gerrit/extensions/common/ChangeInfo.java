@@ -49,7 +49,6 @@ public class ChangeInfo {
 
   public Map<Integer, AttentionSetInfo> removedFromAttentionSet;
 
-  public AccountInfo assignee;
   public Collection<String> hashtags;
   public String changeId;
   public String subject;
@@ -105,6 +104,7 @@ public class ChangeInfo {
   public Map<String, ActionInfo> actions;
   public Map<String, LabelInfo> labels;
   public Map<String, Collection<String>> permittedLabels;
+  public Map<String, Map<String, List<AccountInfo>>> removableLabels;
   public Collection<AccountInfo> removableReviewers;
   public Map<ReviewerState, Collection<AccountInfo>> reviewers;
   public Map<ReviewerState, Collection<AccountInfo>> pendingReviewers;
@@ -173,5 +173,15 @@ public class ChangeInfo {
   public void setSubmitted(Instant when, AccountInfo who) {
     submitted = Timestamp.from(when);
     submitter = who;
+  }
+
+  public RevisionInfo getCurrentRevision() {
+    RevisionInfo currentRevisionInfo = revisions.get(currentRevision);
+    if (currentRevisionInfo.commit != null) {
+      // If all revisions are requested the commit.commit field is not populated because the commit
+      // SHA1 is already present as the key in the revisions map.
+      currentRevisionInfo.commit.commit = currentRevision;
+    }
+    return currentRevisionInfo;
   }
 }

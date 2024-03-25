@@ -204,6 +204,7 @@ public abstract class AbstractChangeNotes<T> {
     return load();
   }
 
+  @Nullable
   public ObjectId loadRevision() {
     if (loaded) {
       return getRevision();

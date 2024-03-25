@@ -15,12 +15,15 @@ import {
   ChangeId,
   ChangeMessageId,
   ChangeMessageInfo,
+  CommentThread,
   LabelNameToInfoMap,
   NumericChangeId,
   PatchSetNum,
   VotingRangeInfo,
+  isRobot,
+  EDIT,
+  PARENT,
 } from '../../../types/common';
-import {CommentThread, isRobot} from '../../../utils/comment-util';
 import {GrMessage, MessageAnchorTapDetail} from '../gr-message/gr-message';
 import {getVotingRange} from '../../../utils/label-util';
 import {
@@ -43,7 +46,7 @@ import {
   shortcutsServiceToken,
 } from '../../../services/shortcuts/shortcuts-service';
 import {GrFormattedText} from '../../shared/gr-formatted-text/gr-formatted-text';
-import {Interaction} from '../../../constants/reporting';
+import {waitUntil} from '../../../utils/async-util';
 
 /**
  * The content of the enum is also used in the UI for the button text.
@@ -154,13 +157,25 @@ function computeRevision(
   message: CombinedMessage,
   allMessages: CombinedMessage[]
 ): PatchSetNum | undefined {
-  if (message._revision_number && message._revision_number > 0)
+  if (
+    message._revision_number !== undefined &&
+    message._revision_number !== 0 &&
+    message._revision_number !== PARENT &&
+    message._revision_number !== EDIT
+  ) {
     return message._revision_number;
+  }
   let revision: PatchSetNum = 0 as PatchSetNum;
   for (const m of allMessages) {
     if (m.date > message.date) break;
-    if (m._revision_number && m._revision_number > revision)
+    if (
+      m._revision_number !== undefined &&
+      m._revision_number !== 0 &&
+      m._revision_number !== PARENT &&
+      m._revision_number !== EDIT
+    ) {
       revision = m._revision_number;
+    }
   }
   return revision > 0 ? revision : undefined;
 }
@@ -322,8 +337,7 @@ export class GrMessagesList extends LitElement {
   @state()
   private combinedMessages: CombinedMessage[] = [];
 
-  // Private but used in tests.
-  readonly getCommentsModel = resolve(this, commentsModelToken);
+  private readonly getCommentsModel = resolve(this, commentsModelToken);
 
   private readonly changeModel = resolve(this, changeModelToken);
 
@@ -335,7 +349,7 @@ export class GrMessagesList extends LitElement {
     super();
     subscribe(
       this,
-      () => this.getCommentsModel().threads$,
+      () => this.getCommentsModel().threadsSaved$,
       x => {
         this.commentThreads = x;
       }
@@ -354,21 +368,6 @@ export class GrMessagesList extends LitElement {
         this.changeNum = x;
       }
     );
-    // for COMMENTS_AUTOCLOSE logging purposes only
-    this.reporting.reportInteraction(
-      Interaction.COMMENTS_AUTOCLOSE_MESSAGES_LIST_CREATED
-    );
-  }
-
-  override updated(): void {
-    // for COMMENTS_AUTOCLOSE logging purposes only
-    const messages = this.shadowRoot!.querySelectorAll('gr-message');
-    if (messages.length > 0) {
-      this.reporting.reportInteraction(
-        Interaction.COMMENTS_AUTOCLOSE_MESSAGES_LIST_UPDATED,
-        {uid: messages[0].uid}
-      );
-    }
   }
 
   override willUpdate(changedProperties: PropertyValues): void {
@@ -441,6 +440,9 @@ export class GrMessagesList extends LitElement {
   }
 
   async scrollToMessage(messageID: string) {
+    await waitUntil(() => this.messages && this.messages.length > 0);
+    await this.updateComplete;
+
     const selector = `[data-message-id="${messageID}"]`;
     const el = this.shadowRoot!.querySelector(selector) as
       | GrMessage
@@ -465,15 +467,7 @@ export class GrMessagesList extends LitElement {
     await el.updateComplete;
     await query<GrFormattedText>(el, 'gr-formatted-text.message')
       ?.updateComplete;
-    let top = el.offsetTop;
-    for (
-      let offsetParent = el.offsetParent as HTMLElement | null;
-      offsetParent;
-      offsetParent = offsetParent.offsetParent as HTMLElement | null
-    ) {
-      top += offsetParent.offsetTop;
-    }
-    window.scrollTo(0, top);
+    el.scrollIntoView();
     this.highlightEl(el);
   }
 

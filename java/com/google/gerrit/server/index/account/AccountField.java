@@ -66,7 +66,8 @@ public class AccountField {
    * External IDs.
    *
    * <p>This field includes secondary emails. Use this field only if the current user is allowed to
-   * see secondary emails (requires the {@link GlobalCapability#MODIFY_ACCOUNT} capability).
+   * see secondary emails (requires the {@link GlobalCapability#VIEW_SECONDARY_EMAILS} capability or
+   * the {@link GlobalCapability#MODIFY_ACCOUNT} capability).
    */
   public static final IndexedField<AccountState, Iterable<String>> EXTERNAL_ID_FIELD =
       IndexedField.<AccountState>iterableStringBuilder("ExternalId")
@@ -80,8 +81,9 @@ public class AccountField {
    * Fuzzy prefix match on name and email parts.
    *
    * <p>This field includes parts from the secondary emails. Use this field only if the current user
-   * is allowed to see secondary emails (requires the {@link GlobalCapability#MODIFY_ACCOUNT}
-   * capability).
+   * is allowed to see secondary emails (requires requires the {@link
+   * GlobalCapability#VIEW_SECONDARY_EMAILS} capability or the {@link
+   * GlobalCapability#MODIFY_ACCOUNT} capability).
    *
    * <p>Use the {@link AccountField#NAME_PART_NO_SECONDARY_EMAIL_SPEC} if the current user can't see
    * secondary emails.
@@ -111,9 +113,7 @@ public class AccountField {
       NAME_PART_NO_SECONDARY_EMAIL_SPEC = NAME_PART_NO_SECONDARY_EMAIL_FIELD.prefix("name2");
 
   public static final IndexedField<AccountState, String> FULL_NAME_FIELD =
-      IndexedField.<AccountState>stringBuilder("FullName")
-          .required()
-          .build(a -> a.account().fullName());
+      IndexedField.<AccountState>stringBuilder("FullName").build(a -> a.account().fullName());
 
   public static final IndexedField<AccountState, String>.SearchSpec FULL_NAME_SPEC =
       FULL_NAME_FIELD.exact("full_name");
@@ -152,7 +152,7 @@ public class AccountField {
           .build(
               a -> {
                 String preferredEmail = a.account().preferredEmail();
-                return preferredEmail != null ? preferredEmail.toLowerCase() : null;
+                return preferredEmail != null ? preferredEmail.toLowerCase(Locale.US) : null;
               });
 
   public static final IndexedField<AccountState, String>.SearchSpec

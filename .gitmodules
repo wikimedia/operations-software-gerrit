@@ -69,7 +69,7 @@
 [submodule "plugins/healthcheck"]
 	path = plugins/healthcheck
 	url = https://gerrit.googlesource.com/plugins/healthcheck
-	branch = stable-3.7
+	branch = stable-3.8
 [submodule "plugins/its-phabricator"]
 	path = plugins/its-phabricator
 	url = https://gerrit.googlesource.com/plugins/its-phabricator
@@ -79,7 +79,6 @@
 [submodule "plugins/lfs"]
 	path = plugins/lfs
 	url = https://gerrit.googlesource.com/plugins/lfs
-	branch = stable-3.7
 [submodule "plugins/metrics-reporter-jmx"]
 	path = plugins/metrics-reporter-jmx
 	url = https://gerrit.googlesource.com/plugins/metrics-reporter-jmx
@@ -89,15 +88,13 @@
 [submodule "plugins/rename-project"]
 	path = plugins/rename-project
 	url = https://gerrit.googlesource.com/plugins/rename-project
-	branch = stable-3.7
+  branch = stable-3.8
 [submodule "plugins/reviewers"]
 	path = plugins/reviewers
 	url = https://gerrit.googlesource.com/plugins/reviewers
-	branch = stable-3.7
 [submodule "plugins/zuul"]
 	path = plugins/zuul
 	url = https://gerrit.googlesource.com/plugins/zuul
-	branch = stable-3.7
 [submodule "plugins/its-base"]
 	path = plugins/its-base
 	url = https://gerrit.googlesource.com/plugins/its-base

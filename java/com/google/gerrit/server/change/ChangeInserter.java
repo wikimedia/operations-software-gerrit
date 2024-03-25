@@ -29,7 +29,10 @@ import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Streams;
 import com.google.common.flogger.FluentLogger;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.BooleanProjectConfig;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.LabelType;
@@ -242,32 +245,38 @@ public class ChangeInserter implements InsertChangeOp {
     return change;
   }
 
+  @CanIgnoreReturnValue
   public ChangeInserter setTopic(String topic) {
     checkState(change == null, "setTopic(String) only valid before creating change");
     this.topic = topic;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public ChangeInserter setCherryPickOf(PatchSet.Id cherryPickOf) {
     this.cherryPickOf = cherryPickOf;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public ChangeInserter setMessage(String message) {
     this.message = message;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public ChangeInserter setPatchSetDescription(String patchSetDescription) {
     this.patchSetDescription = patchSetDescription;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public ChangeInserter setValidate(boolean validate) {
     this.validate = validate;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public ChangeInserter setReviewersAndCcs(
       Iterable<Account.Id> reviewers, Iterable<Account.Id> ccs) {
     return setReviewersAndCcsAsStrings(
@@ -275,35 +284,57 @@ public class ChangeInserter implements InsertChangeOp {
         Iterables.transform(ccs, Account.Id::toString));
   }
 
+  @CanIgnoreReturnValue
+  public ChangeInserter setReviewersAndCcsIgnoreVisibility(
+      Iterable<Account.Id> reviewers, Iterable<Account.Id> ccs) {
+    return setReviewersAndCcsAsStrings(
+        Iterables.transform(reviewers, Account.Id::toString),
+        Iterables.transform(ccs, Account.Id::toString),
+        /* skipVisibilityCheck= */ true);
+  }
+
+  @CanIgnoreReturnValue
   public ChangeInserter setReviewersAndCcsAsStrings(
       Iterable<String> reviewers, Iterable<String> ccs) {
+    return setReviewersAndCcsAsStrings(reviewers, ccs, /* skipVisibilityCheck= */ false);
+  }
+
+  @CanIgnoreReturnValue
+  private ChangeInserter setReviewersAndCcsAsStrings(
+      Iterable<String> reviewers, Iterable<String> ccs, boolean skipVisibilityCheck) {
     reviewerInputs =
         Streams.concat(
                 Streams.stream(reviewers)
                     .distinct()
-                    .map(id -> newReviewerInput(id, ReviewerState.REVIEWER)),
-                Streams.stream(ccs).distinct().map(id -> newReviewerInput(id, ReviewerState.CC)))
+                    .map(id -> newReviewerInput(id, ReviewerState.REVIEWER, skipVisibilityCheck)),
+                Streams.stream(ccs)
+                    .distinct()
+                    .map(id -> newReviewerInput(id, ReviewerState.CC, skipVisibilityCheck)))
             .collect(toImmutableList());
     return this;
   }
 
+  @CanIgnoreReturnValue
   public ChangeInserter setPrivate(boolean isPrivate) {
     checkState(change == null, "setPrivate(boolean) only valid before creating change");
     this.isPrivate = isPrivate;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public ChangeInserter setWorkInProgress(boolean workInProgress) {
     this.workInProgress = workInProgress;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public ChangeInserter setStatus(Change.Status status) {
     checkState(change == null, "setStatus(Change.Status) only valid before creating change");
     this.status = status;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public ChangeInserter setGroups(List<String> groups) {
     requireNonNull(groups, "groups may not be empty");
     checkState(patchSet == null, "setGroups(List<String>) only valid before creating change");
@@ -311,6 +342,7 @@ public class ChangeInserter implements InsertChangeOp {
     return this;
   }
 
+  @CanIgnoreReturnValue
   public ChangeInserter setValidationOptions(
       ImmutableListMultimap<String, String> validationOptions) {
     requireNonNull(validationOptions, "validationOptions may not be null");
@@ -322,21 +354,25 @@ public class ChangeInserter implements InsertChangeOp {
     return this;
   }
 
+  @CanIgnoreReturnValue
   public ChangeInserter setFireRevisionCreated(boolean fireRevisionCreated) {
     this.fireRevisionCreated = fireRevisionCreated;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public ChangeInserter setSendMail(boolean sendMail) {
     this.sendMail = sendMail;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public ChangeInserter setRequestScopePropagator(RequestScopePropagator r) {
     this.requestScopePropagator = r;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public ChangeInserter setRevertOf(Change.Id revertOf) {
     this.revertOf = revertOf;
     return this;
@@ -351,6 +387,7 @@ public class ChangeInserter implements InsertChangeOp {
     return patchSet;
   }
 
+  @CanIgnoreReturnValue
   public ChangeInserter setApprovals(Map<String, Short> approvals) {
     this.approvals = approvals;
     return this;
@@ -368,11 +405,13 @@ public class ChangeInserter implements InsertChangeOp {
    * @param updateRef whether to update the ref during {@link #updateRepo(RepoContext)}.
    */
   @Deprecated
+  @CanIgnoreReturnValue
   public ChangeInserter setUpdateRef(boolean updateRef) {
     this.updateRef = updateRef;
     return this;
   }
 
+  @Nullable
   public String getChangeMessage() {
     if (message == null) {
       return null;
@@ -486,7 +525,7 @@ public class ChangeInserter implements InsertChangeOp {
   public void postUpdate(PostUpdateContext ctx) throws Exception {
     reviewerAdditions.postUpdate(ctx);
     NotifyResolver.Result notify = ctx.getNotify(change.getId());
-    if (sendMail && notify.shouldNotify()) {
+    if (sendMail) {
       Runnable sender =
           new Runnable() {
             @Override
@@ -595,7 +634,8 @@ public class ChangeInserter implements InsertChangeOp {
     }
   }
 
-  private static InternalReviewerInput newReviewerInput(String reviewer, ReviewerState state) {
+  private static InternalReviewerInput newReviewerInput(
+      String reviewer, ReviewerState state, boolean skipVisibilityCheck) {
     // Disable individual emails when adding reviewers, as all reviewers will receive the single
     // bulk new change email.
     InternalReviewerInput input =
@@ -606,12 +646,17 @@ public class ChangeInserter implements InsertChangeOp {
     // certain commit footers: putting a nonexistent user in a footer should not cause an error. In
     // theory we could provide finer control to do this for some reviewers and not others, but it's
     // not worth complicating the ChangeInserter interface further at this time.
-    input.otherFailureBehavior = ReviewerModifier.FailureBehavior.IGNORE;
+    input.otherFailureBehavior = ReviewerModifier.FailureBehavior.IGNORE_EXCEPT_NOT_FOUND;
+
+    input.skipVisibilityCheck = skipVisibilityCheck;
 
     return input;
   }
 
   private ImmutableList<InternalReviewerInput> getReviewerInputs() {
+    if (projectState.is(BooleanProjectConfig.SKIP_ADDING_AUTHOR_AND_COMMITTER_AS_REVIEWERS)) {
+      return reviewerInputs;
+    }
     return Streams.concat(
             reviewerInputs.stream(),
             Streams.stream(

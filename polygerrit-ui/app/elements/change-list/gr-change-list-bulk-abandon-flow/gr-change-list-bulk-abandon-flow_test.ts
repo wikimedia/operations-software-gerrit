@@ -90,13 +90,7 @@ suite('gr-change-list-bulk-abandon-flow tests', () => {
         >
           Abandon
         </gr-button>
-        <gr-overlay
-          aria-hidden="true"
-          id="actionOverlay"
-          style="outline: none; display: none;"
-          tabindex="-1"
-          with-backdrop=""
-        >
+        <dialog id="actionModal" tabindex="-1">
           <gr-dialog role="dialog">
             <div slot="header">1 changes to abandon</div>
             <div slot="main">
@@ -116,7 +110,7 @@ suite('gr-change-list-bulk-abandon-flow tests', () => {
               </table>
             </div>
           </gr-dialog>
-        </gr-overlay>
+        </dialog>
       `
     );
   });

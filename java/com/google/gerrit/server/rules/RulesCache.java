@@ -14,6 +14,7 @@
 
 package com.google.gerrit.server.rules;
 
+import static com.google.gerrit.server.project.ProjectConfig.RULES_PL_FILE;
 import static com.googlecode.prolog_cafe.lang.PrologMachineCopy.save;
 
 import com.google.common.base.Joiner;
@@ -184,13 +185,14 @@ public class RulesCache {
     // Dynamically consult the rules into the machine's internal database.
     //
     String rules = read(project, rulesId);
-    PrologMachineCopy pmc = consultRules("rules.pl", new StringReader(rules));
+    PrologMachineCopy pmc = consultRules(RULES_PL_FILE, new StringReader(rules));
     if (pmc == null) {
       throw new CompileException("Cannot consult rules of " + project);
     }
     return pmc;
   }
 
+  @Nullable
   private PrologMachineCopy consultRules(String name, Reader rules) throws CompileException {
     BufferingPrologControl ctl = newEmptyMachine(systemLoader);
     PushbackReader in = new PushbackReader(rules, Prolog.PUSHBACK_SIZE);

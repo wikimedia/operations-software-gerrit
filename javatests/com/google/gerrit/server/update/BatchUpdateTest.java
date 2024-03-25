@@ -18,6 +18,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
+import static com.google.gerrit.testing.TestActionRefUpdateContext.openTestRefUpdateContext;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -37,6 +38,7 @@ import com.google.gerrit.extensions.events.AttentionSetListener;
 import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.server.CurrentUser;
+import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.InternalUser;
 import com.google.gerrit.server.account.AccountManager;
 import com.google.gerrit.server.account.AuthRequest;
@@ -47,19 +49,25 @@ import com.google.gerrit.server.change.PatchSetInserter;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ChangeUpdate;
+import com.google.gerrit.server.notedb.ReviewerStateInternal;
 import com.google.gerrit.server.notedb.Sequences;
 import com.google.gerrit.server.patch.DiffSummary;
 import com.google.gerrit.server.patch.DiffSummaryKey;
+import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.gerrit.testing.InMemoryTestEnvironment;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.name.Named;
+import java.util.ArrayList;
+import java.util.List;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -96,6 +104,7 @@ public class BatchUpdateTest {
   @Inject private DynamicSet<AttentionSetListener> attentionSetListeners;
   @Inject private AccountManager accountManager;
   @Inject private AuthRequest.Factory authRequestFactory;
+  @Inject private IdentifiedUser.GenericFactory userFactory;
   @Inject private InternalUser.Factory internalUserFactory;
   @Inject private AbandonOp.Factory abandonOpFactory;
 
@@ -110,12 +119,21 @@ public class BatchUpdateTest {
   private Project.NameKey project;
   private TestRepository<Repository> repo;
 
+  private RefUpdateContext testRefUpdateContext;
+
   @Before
   public void setUp() throws Exception {
     project = Project.nameKey("test");
 
     Repository inMemoryRepo = repoManager.createRepository(project);
     repo = new TestRepository<>(inMemoryRepo);
+    // All tests here are low level. Open context here to avoid repeated code in multiple tests.
+    testRefUpdateContext = openTestRefUpdateContext();
+  }
+
+  @After
+  public void tearDown() {
+    testRefUpdateContext.close();
   }
 
   @Test
@@ -133,7 +151,6 @@ public class BatchUpdateTest {
           });
       bu.execute();
     }
-
     assertThat(repo.getRepository().exactRef("refs/heads/master").getObjectId())
         .isEqualTo(branchCommit.getId());
   }
@@ -379,7 +396,8 @@ public class BatchUpdateTest {
 
     int cacheSizeBefore = diffSummaryCache.asMap().size();
 
-    // We don't want to depend on the test helper used above so we perform an explicit commit here.
+    // We don't want to depend on the test helper used above so we perform an explicit commit
+    // here.
     try (BatchUpdate bu = batchUpdateFactory.create(project, user.get(), TimeUtil.now())) {
       ObjectId commitId =
           repo.amend(notes.getCurrentPatchSet().commitId())
@@ -398,6 +416,165 @@ public class BatchUpdateTest {
     // Assert that we only performed the diff computation once. This would e.g. catch
     // bugs/deviations in the computation of the cache key.
     assertThat(diffSummaryCache.asMap()).hasSize(cacheSizeBefore + 1);
+  }
+
+  @Test
+  public void executeOpsWithDifferentUsers() throws Exception {
+    Change.Id changeId = createChange();
+
+    ObjectId oldHead = getMetaId(changeId);
+
+    CurrentUser defaultUser = user.get();
+    IdentifiedUser user1 =
+        userFactory.create(
+            accountManager.authenticate(authRequestFactory.createForUser("user1")).getAccountId());
+    IdentifiedUser user2 =
+        userFactory.create(
+            accountManager.authenticate(authRequestFactory.createForUser("user2")).getAccountId());
+
+    TestOp testOp1 = new TestOp().addReviewer(defaultUser.getAccountId());
+    TestOp testOp2 = new TestOp().addReviewer(user1.getAccountId());
+    TestOp testOp3 = new TestOp().addReviewer(user2.getAccountId());
+
+    try (BatchUpdate bu = batchUpdateFactory.create(project, defaultUser, TimeUtil.now())) {
+      bu.addOp(changeId, user1, testOp1);
+      bu.addOp(changeId, user2, testOp2);
+      bu.addOp(changeId, testOp3);
+      bu.execute();
+
+      PersonIdent refLogIdent = bu.getRefLogIdent().get();
+      assertThat(refLogIdent.getName())
+          .isEqualTo(
+              String.format(
+                  "account-%s|account-%s|account-%s",
+                  defaultUser.asIdentifiedUser().getAccountId(),
+                  user1.asIdentifiedUser().getAccountId(),
+                  user2.asIdentifiedUser().getAccountId()));
+      assertThat(refLogIdent.getEmailAddress())
+          .isEqualTo(String.format("%s@unknown", refLogIdent.getName()));
+    }
+
+    assertThat(testOp1.updateRepoUser).isEqualTo(user1);
+    assertThat(testOp1.updateChangeUser).isEqualTo(user1);
+    assertThat(testOp1.postUpdateUser).isEqualTo(user1);
+
+    assertThat(testOp2.updateRepoUser).isEqualTo(user2);
+    assertThat(testOp2.updateChangeUser).isEqualTo(user2);
+    assertThat(testOp2.postUpdateUser).isEqualTo(user2);
+
+    assertThat(testOp3.updateRepoUser).isEqualTo(defaultUser);
+    assertThat(testOp3.updateChangeUser).isEqualTo(defaultUser);
+    assertThat(testOp3.postUpdateUser).isEqualTo(defaultUser);
+
+    // Verify that we got one meta commit per op.
+    RevCommit metaCommitForTestOp3 = repo.getRepository().parseCommit(getMetaId(changeId));
+    assertThat(metaCommitForTestOp3.getAuthorIdent().getEmailAddress())
+        .isEqualTo(String.format("%s@gerrit", defaultUser.getAccountId()));
+    assertThat(metaCommitForTestOp3.getFullMessage())
+        .startsWith(
+            "Update patch set 1\n"
+                + "\n"
+                + "Patch-set: 1\n"
+                + String.format(
+                    "Reviewer: Gerrit User %s <%s@gerrit>\n",
+                    user2.getAccountId(), user2.getAccountId())
+                + "Attention:");
+
+    RevCommit metaCommitForTestOp2 =
+        repo.getRepository().parseCommit(metaCommitForTestOp3.getParent(0));
+    assertThat(metaCommitForTestOp2.getAuthorIdent().getEmailAddress())
+        .isEqualTo(String.format("%s@gerrit", user2.getAccountId()));
+    assertThat(metaCommitForTestOp2.getFullMessage())
+        .startsWith(
+            "Update patch set 1\n"
+                + "\n"
+                + "Patch-set: 1\n"
+                + String.format(
+                    "Reviewer: Gerrit User %s <%s@gerrit>\n",
+                    user1.getAccountId(), user1.getAccountId())
+                + "Attention:");
+
+    RevCommit metaCommitForTestOp1 =
+        repo.getRepository().parseCommit(metaCommitForTestOp2.getParent(0));
+    assertThat(metaCommitForTestOp1.getAuthorIdent().getEmailAddress())
+        .isEqualTo(String.format("%s@gerrit", user1.getAccountId()));
+    assertThat(metaCommitForTestOp1.getFullMessage())
+        .isEqualTo(
+            "Update patch set 1\n"
+                + "\n"
+                + "Patch-set: 1\n"
+                + String.format(
+                    "Reviewer: Gerrit User %s <%s@gerrit>\n",
+                    defaultUser.getAccountId(), defaultUser.getAccountId()));
+
+    assertThat(metaCommitForTestOp1.getParent(0)).isEqualTo(oldHead);
+  }
+
+  @Test
+  public void executeOpsWithSameUser() throws Exception {
+    Change.Id changeId = createChange();
+
+    ObjectId oldHead = getMetaId(changeId);
+
+    CurrentUser defaultUser = user.get();
+    IdentifiedUser user1 =
+        userFactory.create(
+            accountManager.authenticate(authRequestFactory.createForUser("user1")).getAccountId());
+    IdentifiedUser user2 =
+        userFactory.create(
+            accountManager.authenticate(authRequestFactory.createForUser("user2")).getAccountId());
+
+    TestOp testOp1 = new TestOp().addReviewer(user1.getAccountId());
+    TestOp testOp2 = new TestOp().addReviewer(user2.getAccountId());
+
+    try (BatchUpdate bu = batchUpdateFactory.create(project, defaultUser, TimeUtil.now())) {
+      bu.addOp(changeId, defaultUser, testOp1);
+      bu.addOp(changeId, testOp2);
+      bu.execute();
+
+      PersonIdent refLogIdent = bu.getRefLogIdent().get();
+      PersonIdent defaultUserRefLogIdent = defaultUser.asIdentifiedUser().newRefLogIdent();
+      assertThat(refLogIdent.getName()).isEqualTo(defaultUserRefLogIdent.getName());
+      assertThat(refLogIdent.getEmailAddress()).isEqualTo(defaultUserRefLogIdent.getEmailAddress());
+    }
+
+    assertThat(testOp1.updateRepoUser).isEqualTo(defaultUser);
+    assertThat(testOp1.updateChangeUser).isEqualTo(defaultUser);
+    assertThat(testOp1.postUpdateUser).isEqualTo(defaultUser);
+
+    assertThat(testOp2.updateRepoUser).isEqualTo(defaultUser);
+    assertThat(testOp2.updateChangeUser).isEqualTo(defaultUser);
+    assertThat(testOp2.postUpdateUser).isEqualTo(defaultUser);
+
+    // Verify that we got a single meta commit (updates of both ops squashed into one commit).
+    RevCommit metaCommit = repo.getRepository().parseCommit(getMetaId(changeId));
+    assertThat(metaCommit.getAuthorIdent().getEmailAddress())
+        .isEqualTo(String.format("%s@gerrit", defaultUser.getAccountId()));
+    assertThat(metaCommit.getFullMessage())
+        .startsWith(
+            "Update patch set 1\n"
+                + "\n"
+                + "Patch-set: 1\n"
+                + String.format(
+                    "Reviewer: Gerrit User %s <%s@gerrit>\n",
+                    user1.getAccountId(), user1.getAccountId())
+                + String.format(
+                    "Reviewer: Gerrit User %s <%s@gerrit>\n",
+                    user2.getAccountId(), user2.getAccountId())
+                + "Attention:");
+
+    assertThat(metaCommit.getParent(0)).isEqualTo(oldHead);
+  }
+
+  private Change.Id createChange() throws Exception {
+    Change.Id id = Change.id(sequences.nextChangeId());
+    try (BatchUpdate bu = batchUpdateFactory.create(project, user.get(), TimeUtil.now())) {
+      bu.insertChange(
+          changeInserterFactory.create(
+              id, repo.commit().message("Change").insertChangeId().create(), "refs/heads/master"));
+      bu.execute();
+    }
+    return id;
   }
 
   private Change.Id createChangeWithUpdates(int totalUpdates) throws Exception {
@@ -492,6 +669,40 @@ public class BatchUpdateTest {
       update.merge(new SubmissionId(ctx.getChange()), ImmutableList.of(sr));
       update.setChangeMessage("Submitted");
       return true;
+    }
+  }
+
+  private static class TestOp implements BatchUpdateOp {
+    CurrentUser updateRepoUser;
+    CurrentUser updateChangeUser;
+    CurrentUser postUpdateUser;
+
+    private List<Account.Id> reviewersToAdd = new ArrayList<>();
+
+    TestOp addReviewer(Account.Id accountId) {
+      reviewersToAdd.add(accountId);
+      return this;
+    }
+
+    @Override
+    public void updateRepo(RepoContext ctx) {
+      updateRepoUser = ctx.getUser();
+    }
+
+    @Override
+    public boolean updateChange(ChangeContext ctx) {
+      updateChangeUser = ctx.getUser();
+
+      reviewersToAdd.forEach(
+          accountId ->
+              ctx.getUpdate(ctx.getChange().currentPatchSetId())
+                  .putReviewer(accountId, ReviewerStateInternal.REVIEWER));
+      return true;
+    }
+
+    @Override
+    public void postUpdate(PostUpdateContext ctx) {
+      postUpdateUser = ctx.getUser();
     }
   }
 }

@@ -5,7 +5,7 @@
  */
 import '../../../test/common-test-setup';
 import './gr-diff-highlight';
-import {_getTextOffset} from './gr-range-normalizer';
+import {getTextOffset} from './gr-range-normalizer';
 import {fixture, fixtureCleanup, html, assert} from '@open-wc/testing';
 import {
   GrDiffHighlight,
@@ -62,7 +62,7 @@ const diffTable = html`
       <tr class="diff-row side-by-side" left-type="remove" right-type="add">
         <td class="left lineNum" data-value="140"></td>
         <!-- Next tag is formatted to eliminate zero-length text nodes. -->
-        <td class="content remove"><div class="contentText">na💢ti <hl class="foo">te, inquit</hl>, sumus <hl class="bar">aliquando</hl> otiosum, <hl>certe</hl> a <hl><span class="tab-indicator" style="tab-size:8;">\u0009</span></hl>udiam, <hl>quid</hl> sit, <span class="tab-indicator" style="tab-size:8;">\u0009</span>quod <hl>Epicurum</hl></div><div class="comment-thread">
+        <td class="content remove"><div class="contentText"><!-- a comment node -->na💢ti <hl class="foo">te, inquit</hl>, sumus <hl class="bar">aliquando</hl> otiosum, <hl>certe</hl> a <hl><span class="tab-indicator" style="tab-size:8;">\u0009</span></hl>udiam, <hl>quid</hl> sit, <span class="tab-indicator" style="tab-size:8;">\u0009</span>quod <hl>Epicurum</hl></div><div class="comment-thread">
           [Yet another random diff thread content here]
         </div></td>
         <td class="right lineNum" data-value="120"></td>
@@ -684,13 +684,13 @@ suite('gr-diff-highlight', () => {
       if (!content.lastChild) assert.fail('last child of content not found');
       let child = content.lastChild.lastChild;
       if (!child) assert.fail('last child of last child of content not found');
-      let result = _getTextOffset(content, child);
+      let result = getTextOffset(content, child);
       assert.equal(result, 75);
       content = stubContent(146, Side.RIGHT);
       if (!content) assert.fail('content element not found');
       child = content.lastChild;
       if (!child) assert.fail('child element not found');
-      result = _getTextOffset(content, child);
+      result = getTextOffset(content, child);
       assert.equal(result, 0);
     });
 

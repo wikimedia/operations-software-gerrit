@@ -198,14 +198,7 @@ message ChangeNotesStateProto {
   string server_id = 20;
   bool has_server_id = 21;
 
-  message AssigneeStatusUpdateProto {
-    // Epoch millis.
-    int64 timestamp_millis = 1;
-    int32 updated_by = 2;
-    int32 current_assignee = 3;
-    bool has_current_assignee = 4;
-  }
-  repeated AssigneeStatusUpdateProto assignee_update = 22;
+  reserved 22;  // assignee_update;
 
   // An update to the attention set of the change. See class AttentionSetUpdate
   // for context.
@@ -535,9 +528,10 @@ message SubscribeSectionProto {
 // Serialized form of com.google.gerrit.entities.StoredCommentLinkInfo.
 // Next ID: 10
 message StoredCommentLinkInfoProto {
+  reserved 4;  // html
+
   string name = 1;
   string match = 2;
-  string html = 4;
   bool enabled = 5;
   bool override_only = 6;
   string link = 3;
@@ -696,7 +690,7 @@ message FileDiffKeyProto {
 
 // Serialized form of
 // com.google.gerrit.server.patch.filediff.FileDiffOutput
-// Next ID: 13
+// Next ID: 15
 message FileDiffOutputProto {
   // Next ID: 5
   message Edit {
@@ -728,4 +722,6 @@ message FileDiffOutputProto {
   bytes new_commit = 10;
   ComparisonType comparison_type = 11;
   bool negative = 12;
+  string old_mode = 13; // ENUM as string
+  string new_mode = 14; // ENUM as string
 }

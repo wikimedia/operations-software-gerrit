@@ -5,7 +5,7 @@
  */
 import '../../../test/common-test-setup';
 import './gr-change-metadata';
-import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
+
 import {ChangeRole, GrChangeMetadata} from './gr-change-metadata';
 import {
   createServerInfo,
@@ -46,7 +46,6 @@ import {PluginApi} from '../../../api/plugin';
 import {GrEndpointDecorator} from '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import {
   queryAndAssert,
-  resetPlugins,
   stubRestApi,
   waitUntilCalled,
 } from '../../../test/test-utils';
@@ -55,7 +54,8 @@ import {GrLinkedChip} from '../../shared/gr-linked-chip/gr-linked-chip';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {nothing} from 'lit';
 import {fixture, html, assert} from '@open-wc/testing';
-import {EventType} from '../../../types/events';
+import {testResolver} from '../../../test/common-test-setup';
+import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 
 suite('gr-change-metadata tests', () => {
   let element: GrChangeMetadata;
@@ -164,7 +164,12 @@ suite('gr-change-metadata tests', () => {
       </section>
       <section>
           <span class="title">
-            Repo | Branch
+            <gr-tooltip-content
+              has-tooltip=""
+              title="Repository and branch that the change will be merged into if submitted."
+            >
+              Repo | Branch
+            </gr-tooltip-content>
           </span>
           <span class="value">
             <a href="/q/project:test-project">
@@ -865,7 +870,7 @@ suite('gr-change-metadata tests', () => {
         Promise.resolve(newTopic)
       );
       const alertStub = sinon.stub();
-      element.addEventListener(EventType.SHOW_ALERT, alertStub);
+      element.addEventListener('show-alert', alertStub);
 
       element.handleTopicChanged(new CustomEvent('test', {detail: newTopic}));
 
@@ -886,7 +891,7 @@ suite('gr-change-metadata tests', () => {
         Promise.resolve(newTopic)
       );
       const alertStub = sinon.stub();
-      element.addEventListener(EventType.SHOW_ALERT, alertStub);
+      element.addEventListener('show-alert', alertStub);
       await element.updateComplete;
       const chip = queryAndAssert<GrLinkedChip>(element, 'gr-linked-chip');
       const remove = queryAndAssert<GrButton>(chip, '#remove');
@@ -910,7 +915,7 @@ suite('gr-change-metadata tests', () => {
         Promise.resolve(newHashtag)
       );
       const alertStub = sinon.stub();
-      element.addEventListener(EventType.SHOW_ALERT, alertStub);
+      element.addEventListener('show-alert', alertStub);
       element.handleHashtagChanged(
         new CustomEvent('test', {detail: 'new hashtag'})
       );
@@ -949,15 +954,10 @@ suite('gr-change-metadata tests', () => {
 
   suite('plugin endpoints', () => {
     setup(async () => {
-      resetPlugins();
       element = await fixture(html`<gr-change-metadata></gr-change-metadata>`);
       element.change = createParsedChange();
       element.revision = createRevision();
       await element.updateComplete;
-    });
-
-    teardown(() => {
-      resetPlugins();
     });
 
     test('endpoint params', async () => {
@@ -978,7 +978,7 @@ suite('gr-change-metadata tests', () => {
       const hookEl = (await plugin!
         .hook('change-metadata-item')
         .getLastAttached()) as MetadataGrEndpointDecorator;
-      getPluginLoader().loadPlugins([]);
+      testResolver(pluginLoaderToken).loadPlugins([]);
       await element.updateComplete;
       assert.strictEqual(hookEl.plugin, plugin!);
       assert.strictEqual(hookEl.change, element.change);

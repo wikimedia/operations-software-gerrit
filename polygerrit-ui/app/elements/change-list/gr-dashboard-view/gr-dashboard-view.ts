@@ -6,7 +6,6 @@
 import '../gr-change-list/gr-change-list';
 import '../../shared/gr-button/gr-button';
 import '../../shared/gr-dialog/gr-dialog';
-import '../../shared/gr-overlay/gr-overlay';
 import '../gr-create-commands-dialog/gr-create-commands-dialog';
 import '../gr-create-change-help/gr-create-change-help';
 import '../gr-create-destination-dialog/gr-create-destination-dialog';
@@ -27,11 +26,10 @@ import {
   CreateDestinationConfirmDetail,
   GrCreateDestinationDialog,
 } from '../gr-create-destination-dialog/gr-create-destination-dialog';
-import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
 import {ChangeStarToggleStarDetail} from '../../shared/gr-change-star/gr-change-star';
 import {
   fireAlert,
-  fireEvent,
+  fire,
   firePageError,
   fireTitleChange,
 } from '../../../utils/event-util';
@@ -57,6 +55,9 @@ import {
   UserDashboard,
   YOUR_TURN,
 } from '../../../utils/dashboard-util';
+import {userModelToken} from '../../../models/user/user-model';
+import {Timing} from '../../../constants/reporting';
+import {modalStyles} from '../../../styles/gr-modal-styles';
 
 const PROJECT_PLACEHOLDER_PATTERN = /\${project}/g;
 
@@ -67,12 +68,6 @@ const slotNameBySectionName = new Map<string, string>([
 
 @customElement('gr-dashboard-view')
 export class GrDashboardView extends LitElement {
-  /**
-   * Fired when the title of the page should change.
-   *
-   * @event title-change
-   */
-
   @query('#confirmDeleteDialog') protected confirmDeleteDialog?: GrDialog;
 
   @query('#commandsDialog') protected commandsDialog?: GrCreateCommandsDialog;
@@ -80,7 +75,8 @@ export class GrDashboardView extends LitElement {
   @query('#destinationDialog')
   protected destinationDialog?: GrCreateDestinationDialog;
 
-  @query('#confirmDeleteOverlay') protected confirmDeleteOverlay?: GrOverlay;
+  @query('#confirmDeleteModal')
+  protected confirmDeleteModal?: HTMLDialogElement;
 
   @property({type: Object})
   account?: AccountDetailInfo;
@@ -107,11 +103,21 @@ export class GrDashboardView extends LitElement {
 
   private readonly restApiService = getAppContext().restApiService;
 
-  private readonly userModel = getAppContext().userModel;
+  private readonly getUserModel = resolve(this, userModelToken);
 
   private readonly getViewModel = resolve(this, dashboardViewModelToken);
 
   private lastVisibleTimestampMs = 0;
+
+  /**
+   * For `DASHBOARD_DISPLAYED` timing we can only rely on the router to have
+   * reset the timer properly when the dashboard loads for the first time.
+   * Later we won't have a guarantee that the timer was just reset. So we will
+   * just reset the timer at the beginning of `reload()`. The dashboard view
+   * is cached anyway, so there is unlikely a lot of time that has passed
+   * initiating the reload and the reload() method being executed.
+   */
+  private firstTimeLoad = true;
 
   private readonly shortcuts = new ShortcutController(this);
 
@@ -119,7 +125,7 @@ export class GrDashboardView extends LitElement {
     super();
     subscribe(
       this,
-      () => this.userModel.account$,
+      () => this.getUserModel().account$,
       x => (this.account = x)
     );
     subscribe(
@@ -167,6 +173,7 @@ export class GrDashboardView extends LitElement {
     return [
       a11yStyles,
       sharedStyles,
+      modalStyles,
       css`
         :host {
           display: block;
@@ -208,7 +215,7 @@ export class GrDashboardView extends LitElement {
     if (!this.viewState) return nothing;
     return html`
       ${this.renderBanner()} ${this.renderContent()}
-      <gr-overlay id="confirmDeleteOverlay" with-backdrop>
+      <dialog id="confirmDeleteModal" tabindex="-1">
         <gr-dialog
           id="confirmDeleteDialog"
           confirm-label="Delete"
@@ -216,7 +223,7 @@ export class GrDashboardView extends LitElement {
             this.handleConfirmDelete();
           }}
           @cancel=${() => {
-            this.closeConfirmDeleteOverlay();
+            this.closeConfirmDeleteModal();
           }}
         >
           <div class="header" slot="header">Delete comments</div>
@@ -225,10 +232,12 @@ export class GrDashboardView extends LitElement {
             changes? This action cannot be undone.
           </div>
         </gr-dialog>
-      </gr-overlay>
+      </dialog>
       <gr-create-destination-dialog
         id="destinationDialog"
-        @confirm=${(e: CustomEvent<CreateDestinationConfirmDetail>) => {
+        @confirm-destination=${(
+          e: CustomEvent<CreateDestinationConfirmDetail>
+        ) => {
           this.handleDestinationConfirm(e);
         }}
       ></gr-create-destination-dialog>
@@ -329,8 +338,8 @@ export class GrDashboardView extends LitElement {
   }
 
   // private but used in test
-  getProjectDashboard(
-    project: RepoName,
+  getRepositoryDashboard(
+    repo: RepoName,
     dashboard?: DashboardId
   ): Promise<UserDashboard | undefined> {
     const errFn = (response?: Response | null) => {
@@ -338,7 +347,7 @@ export class GrDashboardView extends LitElement {
     };
     assertIsDefined(dashboard, 'project dashboard must have id');
     return this.restApiService
-      .getDashboard(project, dashboard, errFn)
+      .getDashboard(repo, dashboard, errFn)
       .then(response => {
         if (!response) {
           return;
@@ -351,7 +360,7 @@ export class GrDashboardView extends LitElement {
               name: section.name,
               query: (section.query + suffix).replace(
                 PROJECT_PLACEHOLDER_PATTERN,
-                project
+                repo
               ),
             };
           }),
@@ -374,11 +383,18 @@ export class GrDashboardView extends LitElement {
    */
   reload() {
     if (!this.viewState) return Promise.resolve();
+
+    // See `firstTimeLoad` comment above.
+    if (!this.firstTimeLoad) {
+      this.reporting.time(Timing.DASHBOARD_DISPLAYED);
+    }
+    this.firstTimeLoad = false;
+
     this.loading = true;
     const {project, dashboard, title, user, sections} = this.viewState;
 
     const dashboardPromise: Promise<UserDashboard | undefined> = project
-      ? this.getProjectDashboard(project, dashboard)
+      ? this.getRepositoryDashboard(project, dashboard)
       : Promise.resolve(
           getUserDashboard(user, sections, title || this.computeTitle(user))
         );
@@ -388,7 +404,7 @@ export class GrDashboardView extends LitElement {
     return dashboardPromise
       .then(res => {
         if (res && res.title) {
-          fireTitleChange(this, res.title);
+          fireTitleChange(res.title);
         }
         return this.fetchDashboardChanges(res, checkForNewUser);
       })
@@ -397,7 +413,7 @@ export class GrDashboardView extends LitElement {
         this.reporting.dashboardDisplayed();
       })
       .catch(err => {
-        fireTitleChange(this, title || this.computeTitle(user));
+        fireTitleChange(title || this.computeTitle(user));
         this.reporting.error('Dashboard reload', err);
       })
       .finally(() => {
@@ -517,7 +533,7 @@ export class GrDashboardView extends LitElement {
       e.detail.change._number,
       e.detail.starred
     );
-    fireEvent(this, 'hide-alert');
+    fire(this, 'hide-alert', {});
     if (e.detail.starred) {
       this.reporting.reportInteraction('change-starred-from-dashboard');
     }
@@ -564,8 +580,8 @@ export class GrDashboardView extends LitElement {
 
   // private but used in test
   handleOpenDeleteDialog() {
-    assertIsDefined(this.confirmDeleteOverlay, 'confirmDeleteOverlay');
-    this.confirmDeleteOverlay.open();
+    assertIsDefined(this.confirmDeleteModal, 'confirmDeleteModal');
+    this.confirmDeleteModal.showModal();
   }
 
   // private but used in test
@@ -573,14 +589,14 @@ export class GrDashboardView extends LitElement {
     assertIsDefined(this.confirmDeleteDialog, 'confirmDeleteDialog');
     this.confirmDeleteDialog.disabled = true;
     return this.restApiService.deleteDraftComments('-is:open').then(() => {
-      this.closeConfirmDeleteOverlay();
+      this.closeConfirmDeleteModal();
       this.reload();
     });
   }
 
-  private closeConfirmDeleteOverlay() {
-    assertIsDefined(this.confirmDeleteOverlay, 'confirmDeleteOverlay');
-    this.confirmDeleteOverlay.close();
+  private closeConfirmDeleteModal() {
+    assertIsDefined(this.confirmDeleteModal, 'confirmDeleteModal');
+    this.confirmDeleteModal.close();
   }
 
   private computeDraftsLink() {

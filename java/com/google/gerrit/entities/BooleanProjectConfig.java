@@ -14,6 +14,8 @@
 
 package com.google.gerrit.entities;
 
+import com.google.gerrit.common.Nullable;
+
 /**
  * Contains all inheritable boolean project configs and maps internal representations to API
  * objects.
@@ -41,7 +43,9 @@ public enum BooleanProjectConfig {
   ENABLE_REVIEWER_BY_EMAIL("reviewer", "enableByEmail"),
   MATCH_AUTHOR_TO_COMMITTER_DATE("submit", "matchAuthorToCommitterDate"),
   REJECT_EMPTY_COMMIT("submit", "rejectEmptyCommit"),
-  WORK_IN_PROGRESS_BY_DEFAULT("change", "workInProgressByDefault");
+  WORK_IN_PROGRESS_BY_DEFAULT("change", "workInProgressByDefault"),
+  SKIP_ADDING_AUTHOR_AND_COMMITTER_AS_REVIEWERS(
+      "reviewer", "skipAddingAuthorAndCommitterAsReviewers");
 
   // Git config
   private final String section;
@@ -56,6 +60,7 @@ public enum BooleanProjectConfig {
     return section;
   }
 
+  @Nullable
   public String getSubSection() {
     return null;
   }

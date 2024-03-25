@@ -15,6 +15,7 @@
 package com.google.gerrit.server.config;
 
 import com.google.common.collect.Iterables;
+import com.google.gerrit.common.Nullable;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
@@ -29,7 +30,6 @@ public final class SitePaths {
   public static final String CSS_FILENAME = "GerritSite.css";
   public static final String HEADER_FILENAME = "GerritSiteHeader.html";
   public static final String FOOTER_FILENAME = "GerritSiteFooter.html";
-  public static final String THEME_FILENAME = "gerrit-theme.html";
   public static final String THEME_JS_FILENAME = "gerrit-theme.js";
 
   public final Path site_path;
@@ -69,8 +69,7 @@ public final class SitePaths {
   public final Path site_css;
   public final Path site_header;
   public final Path site_footer;
-  public final Path site_theme; // For PolyGerrit UI only.
-  public final Path site_theme_js; // For PolyGerrit UI only.
+  public final Path site_theme_js;
   public final Path site_gitweb;
 
   /** {@code true} if {@link #site_path} has not been initialized. */
@@ -118,9 +117,6 @@ public final class SitePaths {
     site_header = etc_dir.resolve(HEADER_FILENAME);
     site_footer = etc_dir.resolve(FOOTER_FILENAME);
     site_gitweb = etc_dir.resolve("gitweb_config.perl");
-
-    // For PolyGerrit UI.
-    site_theme = static_dir.resolve(THEME_FILENAME);
     site_theme_js = static_dir.resolve(THEME_JS_FILENAME);
 
     boolean isNew;
@@ -140,6 +136,7 @@ public final class SitePaths {
    * @param path the path string to resolve. May be null.
    * @return the resolved path; null if {@code path} was null or empty.
    */
+  @Nullable
   public Path resolve(String path) {
     if (path != null && !path.isEmpty()) {
       Path loc = site_path.resolve(path).normalize();

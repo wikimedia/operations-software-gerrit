@@ -94,6 +94,7 @@ public class ChangeEditIT extends AbstractDaemonTest {
   private static final String FILE_NAME = "foo";
   private static final String FILE_NAME2 = "foo2";
   private static final String FILE_NAME3 = "foo3";
+  private static final int FILE_MODE = 100644;
   private static final byte[] CONTENT_OLD = "bar".getBytes(UTF_8);
   private static final byte[] CONTENT_NEW = "baz".getBytes(UTF_8);
   private static final String CONTENT_NEW2_STR = "quxÄÜÖßµ";
@@ -107,6 +108,7 @@ public class ChangeEditIT extends AbstractDaemonTest {
       "Uploading to an edit worked!".getBytes(UTF_8);
   private static final String CONTENT_BINARY_ENCODED_NEW3 =
       "data:text/plain,VXBsb2FkaW5nIHRvIGFuIGVkaXQgd29ya2VkIQ==";
+  private static final String CONTENT_BINARY_ENCODED_EMPTY = "data:text/plain;base64,";
 
   @Inject private ProjectOperations projectOperations;
   @Inject private RequestScopeOperations requestScopeOperations;
@@ -313,6 +315,21 @@ public class ChangeEditIT extends AbstractDaemonTest {
   public void updateCommitMessageByEditingMagicCommitMsgFile() throws Exception {
     createEmptyEditFor(changeId);
     String updatedCommitMsg = "Foo Bar\n\nChange-Id: " + changeId + "\n";
+    gApi.changes()
+        .id(changeId)
+        .edit()
+        .modifyFile(Patch.COMMIT_MSG, RawInputUtil.create(updatedCommitMsg.getBytes(UTF_8)));
+    assertThat(getEdit(changeId)).isPresent();
+    ensureSameBytes(
+        getFileContentOfEdit(changeId, Patch.COMMIT_MSG), updatedCommitMsg.getBytes(UTF_8));
+  }
+
+  @Test
+  public void updateCommitMessageByEditingMagicCommitMsgFileChangingChangeIdFooterToLinkFooter()
+      throws Exception {
+    createEmptyEditFor(changeId);
+    String updatedCommitMsg =
+        "Foo Bar\n\n\n\nLink: " + canonicalWebUrl.get() + "id/" + changeId + "\n";
     gApi.changes()
         .id(changeId)
         .edit()
@@ -683,6 +700,26 @@ public class ChangeEditIT extends AbstractDaemonTest {
     in.content = RawInputUtil.create(CONTENT_NEW);
     adminRestSession.putRaw(urlEditFile(changeId, FILE_NAME), in.content).assertNoContent();
     ensureSameBytes(getFileContentOfEdit(changeId, FILE_NAME), CONTENT_NEW);
+  }
+
+  @Test
+  public void changeEditModifyFileModeRest() throws Exception {
+    createEmptyEditFor(changeId);
+    FileContentInput in = new FileContentInput();
+    in.binary_content = CONTENT_BINARY_ENCODED_NEW;
+    in.fileMode = FILE_MODE;
+    adminRestSession.put(urlEditFile(changeId, FILE_NAME), in).assertNoContent();
+    ensureSameBytes(getFileContentOfEdit(changeId, FILE_NAME), CONTENT_BINARY_DECODED_NEW);
+  }
+
+  @Test
+  public void changeEditModifyFileSetEmptyContentModeRest() throws Exception {
+    createEmptyEditFor(changeId);
+    FileContentInput in = new FileContentInput();
+    in.binary_content = CONTENT_BINARY_ENCODED_EMPTY;
+    in.fileMode = FILE_MODE;
+    adminRestSession.put(urlEditFile(changeId, FILE_NAME), in).assertNoContent();
+    ensureSameBytes(getFileContentOfEdit(changeId, FILE_NAME), "".getBytes(UTF_8));
   }
 
   @Test

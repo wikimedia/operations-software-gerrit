@@ -3,21 +3,16 @@
  * Copyright 2016 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-/* Import to get Gerrit interface */
-/* TODO(taoalpha): decouple gr-gerrit from gr-js-api-interface */
 import '../gr-error-dialog/gr-error-dialog';
 import '../../shared/gr-alert/gr-alert';
-import '../../shared/gr-overlay/gr-overlay';
 import {getBaseUrl} from '../../../utils/url-util';
 import {getAppContext} from '../../../services/app-context';
-import {IronA11yAnnouncer} from '@polymer/iron-a11y-announcer/iron-a11y-announcer';
-import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
 import {GrErrorDialog} from '../gr-error-dialog/gr-error-dialog';
 import {GrAlert} from '../../shared/gr-alert/gr-alert';
-import {ErrorType, FixIronA11yAnnouncer} from '../../../types/types';
+import {ErrorType} from '../../../types/types';
 import {AccountId} from '../../../types/common';
 import {
-  EventType,
+  AuthErrorEvent,
   NetworkErrorEvent,
   ServerErrorEvent,
   ShowAlertEventDetail,
@@ -28,6 +23,10 @@ import {debounce, DelayedTask} from '../../../utils/async-util';
 import {fireIronAnnounce} from '../../../utils/event-util';
 import {LitElement, html} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
+import {authServiceToken} from '../../../services/gr-auth/gr-auth';
+import {resolve} from '../../../models/dependency';
+import {modalStyles} from '../../../styles/gr-modal-styles';
+import {ironAnnouncerRequestAvailability} from '../../polymer-util';
 
 const HIDE_ALERT_TIMEOUT_MS = 10 * 1000;
 const CHECK_SIGN_IN_INTERVAL_MS = 60 * 1000;
@@ -100,11 +99,11 @@ export class GrErrorManager extends LitElement {
 
   @state() refreshingCredentials = false;
 
-  @query('#noInteractionOverlay') noInteractionOverlay!: GrOverlay;
+  @query('#signInModal') signInModal!: HTMLDialogElement;
 
   @query('#errorDialog') errorDialog!: GrErrorDialog;
 
-  @query('#errorOverlay') errorOverlay!: GrOverlay;
+  @query('#errorModal') errorModal!: HTMLDialogElement;
 
   /**
    * The time (in milliseconds) since the most recent credential check.
@@ -119,11 +118,7 @@ export class GrErrorManager extends LitElement {
 
   private readonly reporting = getAppContext().reportingService;
 
-  private readonly _authService = getAppContext().authService;
-
-  private readonly eventEmitter = getAppContext().eventEmitter;
-
-  private authErrorHandlerDeregistrationHook?: Function;
+  private readonly getAuthService = resolve(this, authServiceToken);
 
   private readonly restApiService = getAppContext().restApiService;
 
@@ -131,37 +126,23 @@ export class GrErrorManager extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
-    document.addEventListener(EventType.SERVER_ERROR, this.handleServerError);
-    document.addEventListener(EventType.NETWORK_ERROR, this.handleNetworkError);
-    document.addEventListener(EventType.SHOW_ALERT, this.handleShowAlert);
+    document.addEventListener('server-error', this.handleServerError);
+    document.addEventListener('network-error', this.handleNetworkError);
+    document.addEventListener('show-alert', this.handleShowAlert);
     document.addEventListener('hide-alert', this.hideAlert);
     document.addEventListener('show-error', this.handleShowErrorDialog);
     document.addEventListener('visibilitychange', this.handleVisibilityChange);
     document.addEventListener('show-auth-required', this.handleAuthRequired);
+    document.addEventListener('auth-error', this.handleAuthError);
 
-    this.authErrorHandlerDeregistrationHook = this.eventEmitter.on(
-      'auth-error',
-      event => {
-        this.handleAuthError(event.message, event.action);
-      }
-    );
-
-    (
-      IronA11yAnnouncer as unknown as FixIronA11yAnnouncer
-    ).requestAvailability();
+    ironAnnouncerRequestAvailability();
   }
 
   override disconnectedCallback() {
     this.clearHideAlertHandle();
-    document.removeEventListener(
-      EventType.SERVER_ERROR,
-      this.handleServerError
-    );
-    document.removeEventListener(
-      EventType.NETWORK_ERROR,
-      this.handleNetworkError
-    );
-    document.removeEventListener(EventType.SHOW_ALERT, this.handleShowAlert);
+    document.removeEventListener('server-error', this.handleServerError);
+    document.removeEventListener('network-error', this.handleNetworkError);
+    document.removeEventListener('show-alert', this.handleShowAlert);
     document.removeEventListener('hide-alert', this.hideAlert);
     document.removeEventListener('show-error', this.handleShowErrorDialog);
     document.removeEventListener(
@@ -171,30 +152,45 @@ export class GrErrorManager extends LitElement {
     document.removeEventListener('show-auth-required', this.handleAuthRequired);
     this.checkLoggedInTask?.cancel();
 
-    if (this.authErrorHandlerDeregistrationHook) {
-      this.authErrorHandlerDeregistrationHook();
-    }
+    document.removeEventListener('auth-error', this.handleAuthError);
     super.disconnectedCallback();
+  }
+
+  static override get styles() {
+    return [modalStyles];
   }
 
   override render() {
     return html`
-      <gr-overlay with-backdrop="" id="errorOverlay">
+      <dialog id="errorModal" tabindex="-1">
         <gr-error-dialog
           id="errorDialog"
-          @dismiss=${() => this.errorOverlay.close()}
+          @dismiss=${() => this.errorModal.close()}
           .loginUrl=${this.loginUrl}
           .loginText=${this.loginText}
         ></gr-error-dialog>
-      </gr-overlay>
-      <gr-overlay
-        id="noInteractionOverlay"
-        with-backdrop=""
-        always-on-top=""
-        no-cancel-on-esc-key=""
-        no-cancel-on-outside-click=""
+      </dialog>
+      <dialog
+        id="signInModal"
+        @keydown=${(e: KeyboardEvent) => {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
+        tabindex="-1"
       >
-      </gr-overlay>
+        <gr-dialog
+          id="signInDialog"
+          confirm-label="Sign In"
+          @confirm=${() => {
+            this.createLoginPopup();
+          }}
+          cancel-label=""
+        >
+          <div class="header" slot="header">Refresh Credentials</div>
+        </gr-dialog>
+      </dialog>
     `;
   }
 
@@ -209,11 +205,10 @@ export class GrErrorManager extends LitElement {
     );
   };
 
-  private handleAuthError(msg: string, action: string) {
-    this.noInteractionOverlay.open().then(() => {
-      this.showAuthErrorAlert(msg, action);
-    });
-  }
+  private handleAuthError = (event: AuthErrorEvent) => {
+    this.signInModal.showModal();
+    this.showAuthErrorAlert(event.detail.message, event.detail.action);
+  };
 
   private readonly handleServerError = (e: ServerErrorEvent) => {
     const {request, response} = e.detail;
@@ -222,7 +217,7 @@ export class GrErrorManager extends LitElement {
       const {status, statusText} = response;
       if (
         response.status === 403 &&
-        !this._authService.isAuthed &&
+        !this.getAuthService().isAuthed &&
         errorText === AUTHENTICATION_REQUIRED
       ) {
         // if not authed previously, this is trying to access auth required APIs
@@ -230,13 +225,13 @@ export class GrErrorManager extends LitElement {
         this.handleAuthRequired();
       } else if (
         response.status === 403 &&
-        this._authService.isAuthed &&
+        this.getAuthService().isAuthed &&
         errorText === AUTHENTICATION_REQUIRED
       ) {
         // The app was logged at one point and is now getting auth errors.
         // This indicates the auth token may no longer valid.
         // Re-check on auth
-        this._authService.clearCache();
+        this.getAuthService().clearCache();
         this.restApiService.getLoggedIn();
       } else if (!this.shouldSuppressError(errorText)) {
         const trace =
@@ -358,7 +353,7 @@ export class GrErrorManager extends LitElement {
     el.show(text, actionText, actionCallback);
     this.alertElement = el;
     fireIronAnnounce(this, `Alert: ${text}`);
-    this.reporting.reportInteraction(EventType.SHOW_ALERT, {text});
+    this.reporting.reportInteraction('show-alert', {text});
   }
 
   private readonly hideAlert = () => {
@@ -449,7 +444,7 @@ export class GrErrorManager extends LitElement {
 
     // force to refetch account info
     this.restApiService.invalidateAccountsCache();
-    this._authService.clearCache();
+    this.getAuthService().clearCache();
 
     this.restApiService.getLoggedIn().then(isLoggedIn => {
       if (!this.refreshingCredentials) return;
@@ -508,10 +503,10 @@ export class GrErrorManager extends LitElement {
     this.refreshingCredentials = false;
     this.hideAlert();
     this._showAlert('Credentials refreshed.');
-    this.noInteractionOverlay.close();
+    this.signInModal.close();
 
     // Clear the cache for auth
-    this._authService.clearCache();
+    this.getAuthService().clearCache();
   }
 
   private readonly handleWindowFocus = () => {
@@ -527,7 +522,10 @@ export class GrErrorManager extends LitElement {
     this.reporting.reportErrorDialog(message);
     this.errorDialog.text = message;
     this.errorDialog.showSignInButton = !!options && !!options.showSignInButton;
-    this.errorOverlay.open();
+    if (this.errorModal.hasAttribute('open')) {
+      this.errorModal.close();
+    }
+    this.errorModal.showModal();
   }
 }
 

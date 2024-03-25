@@ -34,6 +34,9 @@ export class GrSummaryChip extends LitElement {
   @property()
   category?: CommentTabState;
 
+  @property({type: Boolean})
+  clickable?: Boolean;
+
   private readonly reporting = getAppContext().reportingService;
 
   static override get styles() {
@@ -63,7 +66,7 @@ export class GrSummaryChip extends LitElement {
           border-color: var(--info-foreground);
           background: var(--info-background);
         }
-        .summaryChip.info:hover {
+        button.summaryChip.info:hover {
           background: var(--info-background-hover);
           box-shadow: var(--elevation-level-1);
         }
@@ -77,7 +80,7 @@ export class GrSummaryChip extends LitElement {
           border-color: var(--warning-foreground);
           background: var(--warning-background);
         }
-        .summaryChip.warning:hover {
+        button.summaryChip.warning:hover {
           background: var(--warning-background-hover);
           box-shadow: var(--elevation-level-1);
         }
@@ -91,7 +94,7 @@ export class GrSummaryChip extends LitElement {
           border-color: var(--gray-foreground);
           background: var(--gray-background);
         }
-        .summaryChip.check:hover {
+        button.summaryChip.check:hover {
           background: var(--gray-background-hover);
           box-shadow: var(--elevation-level-1);
         }
@@ -107,11 +110,19 @@ export class GrSummaryChip extends LitElement {
 
   override render() {
     const chipClass = `summaryChip font-small ${this.styleType}`;
-    return html`<button class=${chipClass} @click=${this.handleClick}>
-      ${this.icon &&
+    if (this.clickable) {
+      return html`<button class=${chipClass} @click=${this.handleClick}>
+        ${this.renderIconAndSlot()}
+      </button>`;
+    } else {
+      return html`<span class=${chipClass}>${this.renderIconAndSlot()}</span>`;
+    }
+  }
+
+  renderIconAndSlot() {
+    return html` ${this.icon &&
       html`<gr-icon ?filled=${this.iconFilled} icon=${this.icon}></gr-icon>`}
-      <slot></slot>
-    </button>`;
+      <slot></slot>`;
   }
 
   private handleClick(e: MouseEvent) {

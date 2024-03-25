@@ -272,7 +272,7 @@ public class ExternalIdCacheLoader {
         }
       }
     }
-    return new AutoValue_AllExternalIds(
+    return AllExternalIds.create(
         ImmutableMap.<ExternalId.Key, ExternalId>builder().putAll(byKeyMutableMap).build(),
         byAccount.build(),
         byEmail.build());

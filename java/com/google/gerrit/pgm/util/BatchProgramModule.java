@@ -28,6 +28,7 @@ import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.extensions.restapi.RestView;
 import com.google.gerrit.server.CurrentUser;
+import com.google.gerrit.server.DefaultRefLogIdentityProvider;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.InternalUser;
 import com.google.gerrit.server.LibModuleLoader;
@@ -84,18 +85,19 @@ import com.google.gerrit.server.project.ProjectCacheImpl;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.project.SubmitRequirementsEvaluatorImpl;
 import com.google.gerrit.server.project.SubmitRuleEvaluator;
-import com.google.gerrit.server.query.FileEditsPredicate;
 import com.google.gerrit.server.query.approval.ApprovalModule;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.ChangeIsVisibleToPredicate;
 import com.google.gerrit.server.query.change.ChangeQueryBuilder;
 import com.google.gerrit.server.query.change.ConflictsCacheImpl;
-import com.google.gerrit.server.query.change.DistinctVotersPredicate;
 import com.google.gerrit.server.restapi.group.GroupModule;
 import com.google.gerrit.server.rules.DefaultSubmitRule.DefaultSubmitRuleModule;
 import com.google.gerrit.server.rules.IgnoreSelfApprovalRule.IgnoreSelfApprovalRuleModule;
 import com.google.gerrit.server.rules.PrologModule;
 import com.google.gerrit.server.rules.SubmitRule;
+import com.google.gerrit.server.submitrequirement.predicate.DistinctVotersPredicate;
+import com.google.gerrit.server.submitrequirement.predicate.FileEditsPredicate;
+import com.google.gerrit.server.submitrequirement.predicate.HasSubmoduleUpdatePredicate;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.inject.Injector;
 import com.google.inject.Key;
@@ -127,6 +129,7 @@ public class BatchProgramModule extends FactoryModule {
     modules.add(PatchListCacheImpl.module());
     modules.add(new DefaultUrlFormatterModule());
     modules.add(DiffOperationsImpl.module());
+    modules.add(new DefaultRefLogIdentityProvider.Module());
 
     // There is the concept of LifecycleModule, in Gerrit's own extension to Guice, which has these:
     //  listener().to(SomeClassImplementingLifecycleListener.class);
@@ -197,6 +200,7 @@ public class BatchProgramModule extends FactoryModule {
     factory(ChangeData.AssistedFactory.class);
     factory(ChangeIsVisibleToPredicate.Factory.class);
     factory(DistinctVotersPredicate.Factory.class);
+    factory(HasSubmoduleUpdatePredicate.Factory.class);
     factory(ProjectState.Factory.class);
 
     DynamicMap.mapOf(binder(), ChangeQueryBuilder.ChangeOperatorFactory.class);

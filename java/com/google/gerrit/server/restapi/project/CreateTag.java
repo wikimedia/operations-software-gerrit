@@ -14,6 +14,7 @@
 
 package com.google.gerrit.server.restapi.project;
 
+import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.TAG_MODIFICATION;
 import static org.eclipse.jgit.lib.Constants.R_TAGS;
 
 import com.google.common.base.Strings;
@@ -28,6 +29,7 @@ import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestCollectionCreateView;
+import com.google.gerrit.git.LockFailureException;
 import com.google.gerrit.server.WebLinks;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
@@ -39,6 +41,7 @@ import com.google.gerrit.server.project.NoSuchProjectException;
 import com.google.gerrit.server.project.ProjectResource;
 import com.google.gerrit.server.project.RefUtil;
 import com.google.gerrit.server.project.TagResource;
+import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
@@ -46,6 +49,7 @@ import java.io.IOException;
 import java.time.ZoneId;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.TagCommand;
+import org.eclipse.jgit.api.errors.ConcurrentRefUpdateException;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
@@ -97,64 +101,71 @@ public class CreateTag implements RestCollectionCreateView<ProjectResource, TagR
     ref = RefUtil.normalizeTagRef(ref);
     PermissionBackend.ForRef perm =
         permissionBackend.currentUser().project(resource.getNameKey()).ref(ref);
+    try (RefUpdateContext ctx = RefUpdateContext.open(TAG_MODIFICATION)) {
+      try (Repository repo = repoManager.openRepository(resource.getNameKey())) {
+        ObjectId revid = RefUtil.parseBaseRevision(repo, input.revision);
+        RevWalk rw = RefUtil.verifyConnected(repo, revid);
+        // Reachability through tags does not influence a commit's visibility, so no need to check
+        // for
+        // visibility.
+        RevObject object = rw.parseAny(revid);
+        rw.reset();
+        boolean isAnnotated = Strings.emptyToNull(input.message) != null;
+        boolean isSigned = isAnnotated && input.message.contains("-----BEGIN PGP SIGNATURE-----\n");
+        if (isSigned) {
+          throw new MethodNotAllowedException("Cannot create signed tag \"" + ref + "\"");
+        } else if (isAnnotated) {
+          if (!check(perm, RefPermission.CREATE_TAG)) {
+            throw new AuthException("Cannot create annotated tag \"" + ref + "\"");
+          }
 
-    try (Repository repo = repoManager.openRepository(resource.getNameKey())) {
-      ObjectId revid = RefUtil.parseBaseRevision(repo, input.revision);
-      RevWalk rw = RefUtil.verifyConnected(repo, revid);
-      // Reachability through tags does not influence a commit's visibility, so no need to check for
-      // visibility.
-      RevObject object = rw.parseAny(revid);
-      rw.reset();
-      boolean isAnnotated = Strings.emptyToNull(input.message) != null;
-      boolean isSigned = isAnnotated && input.message.contains("-----BEGIN PGP SIGNATURE-----\n");
-      if (isSigned) {
-        throw new MethodNotAllowedException("Cannot create signed tag \"" + ref + "\"");
-      } else if (isAnnotated) {
-        if (!check(perm, RefPermission.CREATE_TAG)) {
-          throw new AuthException("Cannot create annotated tag \"" + ref + "\"");
+        } else {
+          perm.check(RefPermission.CREATE);
+        }
+        if (repo.getRefDatabase().exactRef(ref) != null) {
+          throw new ResourceConflictException("tag \"" + ref + "\" already exists");
         }
 
-      } else {
-        perm.check(RefPermission.CREATE);
-      }
-      if (repo.getRefDatabase().exactRef(ref) != null) {
-        throw new ResourceConflictException("tag \"" + ref + "\" already exists");
-      }
+        try (Git git = new Git(repo)) {
+          TagCommand tag =
+              git.tag()
+                  .setObjectId(object)
+                  .setName(ref.substring(R_TAGS.length()))
+                  .setAnnotated(isAnnotated)
+                  .setSigned(isSigned);
 
-      try (Git git = new Git(repo)) {
-        TagCommand tag =
-            git.tag()
-                .setObjectId(object)
-                .setName(ref.substring(R_TAGS.length()))
-                .setAnnotated(isAnnotated)
-                .setSigned(isSigned);
+          if (isAnnotated) {
+            tag.setMessage(input.message)
+                .setTagger(
+                    resource
+                        .getUser()
+                        .asIdentifiedUser()
+                        .newCommitterIdent(TimeUtil.now(), ZoneId.systemDefault()));
+          }
 
-        if (isAnnotated) {
-          tag.setMessage(input.message)
-              .setTagger(
-                  resource
-                      .getUser()
-                      .asIdentifiedUser()
-                      .newCommitterIdent(TimeUtil.now(), ZoneId.systemDefault()));
+          try {
+            Ref result = tag.call();
+            tagCache.updateFastForward(
+                resource.getNameKey(), ref, ObjectId.zeroId(), result.getObjectId());
+            referenceUpdated.fire(
+                resource.getNameKey(),
+                ref,
+                ObjectId.zeroId(),
+                result.getObjectId(),
+                resource.getUser().asIdentifiedUser().state());
+            try (RevWalk w = new RevWalk(repo)) {
+              return Response.created(
+                  ListTags.createTagInfo(perm, result, w, resource.getProjectState(), links));
+            }
+          } catch (ConcurrentRefUpdateException e) {
+            LockFailureException.throwIfLockFailure(e);
+            throw e;
+          }
         }
-
-        Ref result = tag.call();
-        tagCache.updateFastForward(
-            resource.getNameKey(), ref, ObjectId.zeroId(), result.getObjectId());
-        referenceUpdated.fire(
-            resource.getNameKey(),
-            ref,
-            ObjectId.zeroId(),
-            result.getObjectId(),
-            resource.getUser().asIdentifiedUser().state());
-        try (RevWalk w = new RevWalk(repo)) {
-          return Response.created(
-              ListTags.createTagInfo(perm, result, w, resource.getProjectState(), links));
-        }
+      } catch (GitAPIException e) {
+        logger.atSevere().withCause(e).log("Cannot create tag \"%s\"", ref);
+        throw new IOException(e);
       }
-    } catch (GitAPIException e) {
-      logger.atSevere().withCause(e).log("Cannot create tag \"%s\"", ref);
-      throw new IOException(e);
     }
   }
 

@@ -6,8 +6,7 @@
 import {fixture, html, assert} from '@open-wc/testing';
 import '../../../test/common-test-setup';
 import {createChange} from '../../../test/test-data-generators';
-import {CommitId} from '../../../types/common';
-import {EventType} from '../../../types/events';
+import {ChangeSubmissionId, CommitId} from '../../../types/common';
 import './gr-confirm-revert-dialog';
 import {GrConfirmRevertDialog} from './gr-confirm-revert-dialog';
 
@@ -47,7 +46,7 @@ suite('gr-confirm-revert-dialog tests', () => {
   test('no match', () => {
     assert.isNotOk(element.message);
     const alertStub = sinon.stub();
-    element.addEventListener(EventType.SHOW_ALERT, alertStub);
+    element.addEventListener('show-alert', alertStub);
     element.populateRevertSingleChangeMessage(
       createChange(),
       'not a commitHash in sight',
@@ -109,6 +108,24 @@ suite('gr-confirm-revert-dialog tests', () => {
       'Revert "Revert "one line commit""\n\n' +
       'This reverts commit abcd123.\n\n' +
       'Reason for revert: <INSERT REASONING HERE>\n';
+    assert.equal(element.message, expected);
+  });
+
+  test('revert submission', () => {
+    element.changesCount = 3;
+    element.populateRevertSubmissionMessage(
+      {
+        ...createChange(),
+        submission_id: '5545' as ChangeSubmissionId,
+        current_revision: 'abcd123' as CommitId,
+      },
+      'one line commit\n\nChange-Id: abcdefg\n'
+    );
+
+    const expected =
+      'Revert submission 5545\n\n' +
+      'Reason for revert: <INSERT REASONING HERE>\n\n' +
+      'Reverted changes: /q/submissionid:5545\n';
     assert.equal(element.message, expected);
   });
 });

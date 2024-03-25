@@ -25,6 +25,7 @@ import static com.google.gerrit.server.notedb.ReviewerStateInternal.CC;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.REMOVED;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.REVIEWER;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
+import static com.google.gerrit.testing.TestActionRefUpdateContext.testRefAction;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Comparator.comparing;
 import static org.eclipse.jgit.lib.Constants.OBJ_BLOB;
@@ -37,6 +38,7 @@ import com.google.common.collect.ImmutableTable;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Address;
 import com.google.gerrit.entities.AttentionSetUpdate;
@@ -52,7 +54,6 @@ import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.SubmissionId;
 import com.google.gerrit.entities.SubmitRecord;
 import com.google.gerrit.exceptions.StorageException;
-import com.google.gerrit.server.AssigneeStatusUpdate;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.ReviewerSet;
@@ -824,7 +825,8 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
         ImmutableList.of(", ", ":\"", ",", "!@#$%^\0&*):\" \n: \r\"#$@,. :");
     for (String strangeTag : strangeTags) {
       Change c = newChange();
-      CurrentUser otherUserAsOwner = userFactory.runAs(null, changeOwner.getAccountId(), otherUser);
+      CurrentUser otherUserAsOwner =
+          userFactory.runAs(/* remotePeer= */ null, changeOwner.getAccountId(), otherUser);
       ChangeUpdate update = newUpdate(c, otherUserAsOwner);
       update.putApproval(LabelId.CODE_REVIEW, (short) 2);
       update.setTag(strangeTag);
@@ -1112,7 +1114,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     ChangeUpdate update = newUpdate(c, changeOwner);
     update.putReviewer(changeOwner.getAccount().id(), REVIEWER);
     update.putReviewer(otherUser.getAccount().id(), CC);
-    update.commit();
+    testRefAction(() -> update.commit());
 
     ChangeNotes notes = newNotes(c);
     Instant ts = update.getWhen();
@@ -1469,91 +1471,6 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     assertThat(notes.getAttentionSet())
         .containsExactly(
             addTimestamp(attentionSetUpdate0, c), addTimestamp(attentionSetUpdate1, c));
-  }
-
-  @Test
-  public void assigneeCommit() throws Exception {
-    Change c = newChange();
-    ChangeUpdate update = newUpdate(c, changeOwner);
-    update.setAssignee(otherUserId);
-    ObjectId result = update.commit();
-    assertThat(result).isNotNull();
-    try (RevWalk rw = new RevWalk(repo)) {
-      RevCommit commit = rw.parseCommit(update.getResult());
-      rw.parseBody(commit);
-      String strIdent = "Gerrit User " + otherUserId + " <" + otherUserId + "@" + serverId + ">";
-      assertThat(commit.getFullMessage()).contains("Assignee: " + strIdent);
-    }
-  }
-
-  @Test
-  public void assigneeChangeNotes() throws Exception {
-    Change c = newChange();
-    ChangeUpdate update = newUpdate(c, changeOwner);
-    update.setAssignee(otherUserId);
-    update.commit();
-
-    ChangeNotes notes = newNotes(c);
-    assertThat(notes.getChange().getAssignee()).isEqualTo(otherUserId);
-
-    update = newUpdate(c, changeOwner);
-    update.setAssignee(changeOwner.getAccountId());
-    update.commit();
-
-    notes = newNotes(c);
-    assertThat(notes.getChange().getAssignee()).isEqualTo(changeOwner.getAccountId());
-  }
-
-  @Test
-  public void pastAssigneesChangeNotes() throws Exception {
-    Change c = newChange();
-    ChangeUpdate update = newUpdate(c, changeOwner);
-    update.setAssignee(otherUserId);
-    update.commit();
-
-    update = newUpdate(c, changeOwner);
-    update.setAssignee(changeOwner.getAccountId());
-    update.commit();
-
-    update = newUpdate(c, changeOwner);
-    update.setAssignee(otherUserId);
-    update.commit();
-
-    update = newUpdate(c, changeOwner);
-    update.removeAssignee();
-    update.commit();
-
-    ChangeNotes notes = newNotes(c);
-    assertThat(notes.getPastAssignees()).hasSize(2);
-  }
-
-  @Test
-  public void assigneeStatusUpdateChangeNotes() throws Exception {
-    Change c = newChange();
-    ChangeUpdate update = newUpdate(c, otherUser);
-    update.setAssignee(otherUserId);
-    update.commit();
-
-    update = newUpdate(c, changeOwner);
-    update.removeAssignee();
-    update.commit();
-
-    update = newUpdate(c, changeOwner);
-    update.setAssignee(changeOwner.getAccountId());
-    update.commit();
-
-    update = newUpdate(c, changeOwner);
-    update.setAssignee(otherUserId);
-    update.commit();
-
-    ChangeNotes notes = newNotes(c);
-    ImmutableList<AssigneeStatusUpdate> statusUpdates = notes.getAssigneeUpdates();
-    assertThat(statusUpdates).hasSize(4);
-    assertThat(statusUpdates.get(3).updatedBy()).isEqualTo(otherUserId);
-    assertThat(statusUpdates.get(3).currentAssignee()).hasValue(otherUserId);
-    assertThat(statusUpdates.get(2).currentAssignee()).isEmpty();
-    assertThat(statusUpdates.get(1).currentAssignee()).hasValue(changeOwner.getAccountId());
-    assertThat(statusUpdates.get(0).currentAssignee()).hasValue(otherUserId);
   }
 
   @Test
@@ -2020,7 +1937,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     try (NoteDbUpdateManager updateManager = updateManagerFactory.create(project)) {
       updateManager.add(update1);
       updateManager.add(update2);
-      updateManager.execute();
+      testRefAction(() -> updateManager.execute());
     }
 
     ChangeNotes notes = newNotes(c);
@@ -2069,7 +1986,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
       update2.putApproval(LabelId.CODE_REVIEW, (short) 2);
       updateManager.add(update2);
 
-      updateManager.execute();
+      testRefAction(() -> updateManager.execute());
     }
 
     ChangeNotes notes = newNotes(c);
@@ -2129,7 +2046,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     try (NoteDbUpdateManager updateManager = updateManagerFactory.create(project)) {
       updateManager.add(update1);
       updateManager.add(update2);
-      updateManager.execute();
+      testRefAction(() -> updateManager.execute());
     }
 
     Ref ref1 = repo.exactRef(update1.getRefName());
@@ -3444,7 +3361,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     draftUpdate.putComment(comment2);
     try (NoteDbUpdateManager manager = updateManagerFactory.create(c.getProject())) {
       manager.add(draftUpdate);
-      manager.execute();
+      testRefAction(() -> manager.execute());
     }
 
     // Looking at drafts directly shows the zombie comment.
@@ -3508,7 +3425,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     try (NoteDbUpdateManager manager = updateManagerFactory.create(project)) {
       manager.add(update1);
       manager.add(update2);
-      manager.execute();
+      testRefAction(() -> manager.execute());
     }
 
     ChangeNotes notes = newNotes(c);
@@ -3948,6 +3865,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     return new String(rw.getObjectReader().open(dataId, OBJ_BLOB).getCachedBytes(), UTF_8);
   }
 
+  @Nullable
   private ObjectId exactRefAllUsers(String refName) throws Exception {
     try (Repository allUsersRepo = repoManager.openRepository(allUsers)) {
       Ref ref = allUsersRepo.exactRef(refName);

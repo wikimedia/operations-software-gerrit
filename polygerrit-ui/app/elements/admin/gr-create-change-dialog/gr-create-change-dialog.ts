@@ -23,12 +23,13 @@ import {formStyles} from '../../../styles/gr-form-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, css, html} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
-import {BindValueChangeEvent} from '../../../types/events';
-import {fireEvent} from '../../../utils/event-util';
+import {BindValueChangeEvent, ValueChangedEvent} from '../../../types/events';
+import {fire} from '../../../utils/event-util';
 import {subscribe} from '../../lit/subscription-controller';
 import {configModelToken} from '../../../models/config/config-model';
 import {resolve} from '../../../models/dependency';
 import {createChangeUrl} from '../../../models/views/change';
+import {throwingErrorCallback} from '../../shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
 
 const SUGGESTIONS_LIMIT = 15;
 const REF_PREFIX = 'refs/heads/';
@@ -36,6 +37,9 @@ const REF_PREFIX = 'refs/heads/';
 declare global {
   interface HTMLElementTagNameMap {
     'gr-create-change-dialog': GrCreateChangeDialog;
+  }
+  interface HTMLElementEventMap {
+    'can-create-change': CustomEvent<{}>;
   }
 }
 
@@ -124,7 +128,7 @@ export class GrCreateChangeDialog extends LitElement {
               .text=${this.branch}
               .query=${this.query}
               placeholder="Destination branch"
-              @text-changed=${(e: CustomEvent) => {
+              @text-changed=${(e: ValueChangedEvent<BranchName>) => {
                 this.branch = e.detail.value;
               }}
             >
@@ -206,7 +210,7 @@ export class GrCreateChangeDialog extends LitElement {
   }
 
   private allowCreate() {
-    fireEvent(this, 'can-create-change');
+    fire(this, 'can-create-change', {});
   }
 
   handleCreateChange(): Promise<void> {
@@ -241,7 +245,13 @@ export class GrCreateChangeDialog extends LitElement {
       input = input.substring(REF_PREFIX.length);
     }
     return this.restApiService
-      .getRepoBranches(input, this.repoName, SUGGESTIONS_LIMIT)
+      .getRepoBranches(
+        input,
+        this.repoName,
+        SUGGESTIONS_LIMIT,
+        /* offset=*/ undefined,
+        throwingErrorCallback
+      )
       .then(response => {
         if (!response) return [];
         const branches: Array<{name: BranchName}> = [];

@@ -77,9 +77,9 @@ public class StaticModule extends ServletModule {
           "/x/*",
           "/admin/*",
           "/dashboard/*",
+          "/profile/*",
           "/groups/self",
           "/settings/*",
-          "/topic/*",
           "/Documentation/q/*");
 
   /**
@@ -144,12 +144,13 @@ public class StaticModule extends ServletModule {
   @Provides
   @Singleton
   @Named(DOC_SERVLET)
-  HttpServlet getDocServlet(@Named(CACHE) Cache<Path, Resource> cache) {
+  HttpServlet getDocServlet(
+      @Named(CACHE) Cache<Path, Resource> cache, ExperimentFeatures experimentFeatures) {
     Paths p = getPaths();
     if (p.warFs != null) {
-      return new WarDocServlet(cache, p.warFs);
+      return new WarDocServlet(cache, p.warFs, experimentFeatures);
     } else if (p.unpackedWar != null && !p.isDev()) {
-      return new DirectoryDocServlet(cache, p.unpackedWar);
+      return new DirectoryDocServlet(cache, p.unpackedWar, experimentFeatures);
     } else {
       return new HttpServlet() {
         private static final long serialVersionUID = 1L;
@@ -305,6 +306,7 @@ public class StaticModule extends ServletModule {
       sourceRoot = getSourceRootOrNull();
     }
 
+    @Nullable
     private static Path getSourceRootOrNull() {
       try {
         return GerritLauncher.resolveInSourceRoot(".");
@@ -313,6 +315,7 @@ public class StaticModule extends ServletModule {
       }
     }
 
+    @Nullable
     private FileSystem getDistributionArchive(File war) throws IOException {
       if (war == null) {
         return null;
@@ -320,6 +323,7 @@ public class StaticModule extends ServletModule {
       return GerritLauncher.getZipFileSystem(war.toPath());
     }
 
+    @Nullable
     private File getLauncherLoadedFrom() {
       File war;
       try {
@@ -441,6 +445,7 @@ public class StaticModule extends ServletModule {
       super(req);
     }
 
+    @Nullable
     @Override
     public String getPathInfo() {
       String uri = getRequestURI();

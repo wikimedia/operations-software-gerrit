@@ -9,7 +9,6 @@ import '../../shared/gr-button/gr-button';
 import '../../shared/gr-editable-label/gr-editable-label';
 import '../gr-default-editor/gr-default-editor';
 import {navigationToken} from '../../core/gr-navigation/gr-navigation';
-import {computeTruncatedPath} from '../../../utils/path-list-util';
 import {
   EditPreferencesInfo,
   Base64FileContent,
@@ -17,11 +16,7 @@ import {
 } from '../../../types/common';
 import {ParsedChangeInfo} from '../../../types/types';
 import {HttpMethod, NotifyType} from '../../../constants/constants';
-import {
-  fireAlert,
-  fireTitleChange,
-  fireReload,
-} from '../../../utils/event-util';
+import {fireAlert} from '../../../utils/event-util';
 import {getAppContext} from '../../../services/app-context';
 import {ErrorCallback} from '../../../api/rest';
 import {assertIsDefined} from '../../../utils/common-util';
@@ -35,8 +30,15 @@ import {subscribe} from '../../lit/subscription-controller';
 import {resolve} from '../../../models/dependency';
 import {changeModelToken} from '../../../models/change/change-model';
 import {ShortcutController} from '../../lit/shortcut-controller';
-import {editViewModelToken, EditViewState} from '../../../models/views/edit';
-import {createChangeUrl} from '../../../models/views/change';
+import {
+  ChangeChildView,
+  changeViewModelToken,
+  ChangeViewState,
+  createChangeUrl,
+} from '../../../models/views/change';
+import {userModelToken} from '../../../models/user/user-model';
+import {storageServiceToken} from '../../../services/storage/gr-storage_impl';
+import {isDarkTheme} from '../../../utils/theme-util';
 
 const RESTORED_MESSAGE = 'Content restored from a previous edit.';
 const SAVING_MESSAGE = 'Saving changes...';
@@ -50,18 +52,12 @@ const STORAGE_DEBOUNCE_INTERVAL_MS = 100;
 @customElement('gr-editor-view')
 export class GrEditorView extends LitElement {
   /**
-   * Fired when the title of the page should change.
-   *
-   * @event title-change
-   */
-
-  /**
    * Fired to notify the user of
    *
    * @event show-alert
    */
 
-  @state() viewState?: EditViewState;
+  @state() viewState?: ChangeViewState;
 
   // private but used in test
   @state() change?: ParsedChangeInfo;
@@ -86,17 +82,19 @@ export class GrEditorView extends LitElement {
   // private but used in test
   @state() latestPatchsetNumber?: RevisionPatchSetNum;
 
-  private readonly restApiService = getAppContext().restApiService;
+  @state() private darkMode = false;
 
-  private readonly storage = getAppContext().storageService;
+  private readonly restApiService = getAppContext().restApiService;
 
   private readonly reporting = getAppContext().reportingService;
 
-  private readonly userModel = getAppContext().userModel;
+  private readonly getStorage = resolve(this, storageServiceToken);
+
+  private readonly getUserModel = resolve(this, userModelToken);
 
   private readonly getChangeModel = resolve(this, changeModelToken);
 
-  private readonly getEditViewModel = resolve(this, editViewModelToken);
+  private readonly getViewModel = resolve(this, changeViewModelToken);
 
   private readonly getNavigation = resolve(this, navigationToken);
 
@@ -112,13 +110,20 @@ export class GrEditorView extends LitElement {
     });
     subscribe(
       this,
-      () => this.userModel.editPreferences$,
+      () => this.getChangeModel().change$,
+      x => (this.change = x)
+    );
+    subscribe(
+      this,
+      () => this.getUserModel().editPreferences$,
       editPreferences => (this.editPrefs = editPreferences)
     );
     subscribe(
       this,
-      () => this.getEditViewModel().state$,
+      () => this.getViewModel().state$,
       state => {
+        // TODO: Add a setter for `viewState` instead of relying on the
+        // `viewStateChanged()` call here.
         this.viewState = state;
         this.viewStateChanged();
       }
@@ -127,6 +132,13 @@ export class GrEditorView extends LitElement {
       this,
       () => this.getChangeModel().latestPatchNumWithEdit$,
       x => (this.latestPatchsetNumber = x)
+    );
+    subscribe(
+      this,
+      () => this.getUserModel().preferenceTheme$,
+      theme => {
+        this.darkMode = isDarkTheme(theme);
+      }
     );
     this.shortcuts.addLocal({key: 's', modifiers: [Modifier.CTRL_KEY]}, () =>
       this.handleSaveShortcut()
@@ -207,7 +219,7 @@ export class GrEditorView extends LitElement {
   }
 
   override render() {
-    if (!this.viewState) return;
+    if (this.viewState?.childView !== ChangeChildView.EDIT) return nothing;
     return html` ${this.renderHeader()} ${this.renderEndpoint()} `;
   }
 
@@ -221,7 +233,7 @@ export class GrEditorView extends LitElement {
             <span class="separator"></span>
             <gr-editable-label
               labelText="File path"
-              .value=${this.viewState?.path}
+              .value=${this.viewState?.editView?.path}
               placeholder="File path..."
               @changed=${this.handlePathChanged}
             ></gr-editable-label>
@@ -278,7 +290,11 @@ export class GrEditorView extends LitElement {
           ></gr-endpoint-param>
           <gr-endpoint-param
             name="lineNum"
-            .value=${this.viewState?.lineNum}
+            .value=${this.viewState?.editView?.lineNum}
+          ></gr-endpoint-param>
+          <gr-endpoint-param
+            name="darkMode"
+            .value=${this.darkMode}
           ></gr-endpoint-param>
           <gr-default-editor
             id="file"
@@ -299,32 +315,16 @@ export class GrEditorView extends LitElement {
   }
 
   get storageKey() {
-    return `c${this.viewState?.changeNum}_ps${this.viewState?.patchNum}_${this.viewState?.path}`;
+    return `c${this.viewState?.changeNum}_ps${this.viewState?.patchNum}_${this.viewState?.editView?.path}`;
   }
 
   // private but used in test
   viewStateChanged() {
-    if (!this.viewState) return;
-
-    // NOTE: This may be called before attachment (e.g. while parentElement is
-    // null). Fire title-change in an async so that, if attachment to the DOM
-    // has been queued, the event can bubble up to the handler in gr-app.
-    setTimeout(() => {
-      if (!this.viewState) return;
-      const title = `Editing ${computeTruncatedPath(this.viewState.path)}`;
-      fireTitleChange(this, title);
-    });
+    if (this.viewState?.childView !== ChangeChildView.EDIT) return;
 
     const promises = [];
-    promises.push(this.getChangeDetail());
     promises.push(this.getFileData());
     return Promise.all(promises);
-  }
-
-  private async getChangeDetail() {
-    const changeNum = this.viewState?.changeNum;
-    assertIsDefined(changeNum, 'change number');
-    this.change = await this.restApiService.getChangeDetail(changeNum);
   }
 
   private navigateToChangeIfEdit() {
@@ -348,7 +348,7 @@ export class GrEditorView extends LitElement {
   // private but used in test
   async handlePathChanged(e: CustomEvent<string>): Promise<void> {
     const changeNum = this.viewState?.changeNum;
-    const currentPath = this.viewState?.path;
+    const currentPath = this.viewState?.editView?.path;
     assertIsDefined(changeNum, 'change number');
     assertIsDefined(currentPath, 'path');
 
@@ -377,12 +377,14 @@ export class GrEditorView extends LitElement {
   getFileData() {
     const changeNum = this.viewState?.changeNum;
     const patchNum = this.viewState?.patchNum;
-    const path = this.viewState?.path;
+    const path = this.viewState?.editView?.path;
     assertIsDefined(changeNum, 'change number');
     assertIsDefined(patchNum, 'patchset number');
     assertIsDefined(path, 'path');
 
-    const storedContent = this.storage.getEditableContentItem(this.storageKey);
+    const storedContent = this.getStorage().getEditableContentItem(
+      this.storageKey
+    );
 
     return this.restApiService
       .getFileContent(changeNum, path, patchNum)
@@ -415,13 +417,13 @@ export class GrEditorView extends LitElement {
   // private but used in test
   saveEdit() {
     const changeNum = this.viewState?.changeNum;
-    const path = this.viewState?.path;
+    const path = this.viewState?.editView?.path;
     assertIsDefined(changeNum, 'change number');
     assertIsDefined(path, 'path');
 
     this.saving = true;
     this.showAlert(SAVING_MESSAGE);
-    this.storage.eraseEditableContentItem(this.storageKey);
+    this.getStorage().eraseEditableContentItem(this.storageKey);
     if (!this.newContent)
       return Promise.reject(new Error('new content undefined'));
     return this.restApiService
@@ -488,15 +490,7 @@ export class GrEditorView extends LitElement {
         )
         .then(() => {
           assertIsDefined(this.change, 'change');
-          // TODO: `forceReload: true` does not seem to work as expected:
-          // The patchset is not updated.
-          // Thus we are also calling `fireReload()` here.
-          // That can probably be cleaned up once the change-view was migrated
-          // to fully relying on the change model.
-          fireReload(this);
-          this.getNavigation().setUrl(
-            createChangeUrl({change: this.change, forceReload: true})
-          );
+          this.getChangeModel().navigateToChangeResetReload();
         });
     });
   };
@@ -508,9 +502,9 @@ export class GrEditorView extends LitElement {
         const content = e.detail.value;
         if (content) {
           this.newContent = e.detail.value;
-          this.storage.setEditableContentItem(this.storageKey, content);
+          this.getStorage().setEditableContentItem(this.storageKey, content);
         } else {
-          this.storage.eraseEditableContentItem(this.storageKey);
+          this.getStorage().eraseEditableContentItem(this.storageKey);
         }
       },
       STORAGE_DEBOUNCE_INTERVAL_MS

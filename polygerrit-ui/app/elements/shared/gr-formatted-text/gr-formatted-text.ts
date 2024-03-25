@@ -18,8 +18,13 @@ import {configModelToken} from '../../../models/config/config-model';
 import {CommentLinks, EmailAddress} from '../../../api/rest-api';
 import {linkifyUrlsAndApplyRewrite} from '../../../utils/link-util';
 import '../gr-account-chip/gr-account-chip';
+import '../gr-user-suggestion-fix/gr-user-suggestion-fix';
 import {KnownExperimentId} from '../../../services/flags/flags';
 import {getAppContext} from '../../../services/app-context';
+import {
+  getUserSuggestionFromString,
+  USER_SUGGESTION_INFO_STRING,
+} from '../../../utils/comment-util';
 
 /**
  * This element optionally renders markdown and also applies some regex
@@ -39,6 +44,12 @@ export class GrFormattedText extends LitElement {
   private readonly flagsService = getAppContext().flagsService;
 
   private readonly getConfigModel = resolve(this, configModelToken);
+
+  // Private const but used in tests.
+  // Limit the length of markdown because otherwise the markdown lexer will
+  // run out of memory causing the tab to crash.
+  @state()
+  MARKDOWN_LIMIT = 100000;
 
   /**
    * Note: Do not use sharedStyles or other styles here that should not affect
@@ -84,11 +95,6 @@ export class GrFormattedText extends LitElement {
       :not(pre) > code {
         display: inline;
       }
-      p {
-        /* prose will automatically wrap but inline <code> blocks won't and we
-           should overflow in that case rather than wrapping or leaking out */
-        overflow-x: auto;
-      }
       li {
         margin-left: var(--spacing-xl);
       }
@@ -100,6 +106,14 @@ export class GrFormattedText extends LitElement {
         white-space: var(--linked-text-white-space, pre-wrap);
         word-wrap: var(--linked-text-word-wrap, break-word);
       }
+      .markdown-html {
+        /* code overrides white-space to pre, everything else should wrap as
+           normal. */
+        white-space: normal;
+        /* prose will automatically wrap but inline <code> blocks won't and we
+           should overflow in that case rather than wrapping or leaking out */
+        overflow-x: auto;
+      }
     `,
   ];
 
@@ -108,12 +122,20 @@ export class GrFormattedText extends LitElement {
     subscribe(
       this,
       () => this.getConfigModel().repoCommentLinks$,
-      repoCommentLinks => (this.repoCommentLinks = repoCommentLinks)
+      repoCommentLinks => {
+        this.repoCommentLinks = repoCommentLinks;
+        // Always linkify URLs starting with https?://
+        this.repoCommentLinks['ALWAYS_LINK_HTTP'] = {
+          match: '(https?://\\S+[\\w/~-])',
+          link: '$1',
+          enabled: true,
+        };
+      }
     );
   }
 
   override render() {
-    if (this.markdown) {
+    if (this.markdown && this.content.length < this.MARKDOWN_LIMIT) {
       return this.renderAsMarkdown();
     } else {
       return this.renderAsPlaintext();
@@ -132,11 +154,36 @@ export class GrFormattedText extends LitElement {
   }
 
   private renderAsMarkdown() {
-    // <marked-element> internals will be in charge of calling our custom
-    // renderer so we wrap 'this.rewriteText' so that 'this' is preserved via
-    // closure.
-    const boundRewriteText = (text: string) =>
-      linkifyUrlsAndApplyRewrite(text, this.repoCommentLinks);
+    // Need to find out here, since customRender is not arrow function
+    const suggestEditsEnable = this.flagsService.isEnabled(
+      KnownExperimentId.SUGGEST_EDIT
+    );
+    // Bind `this` via closure.
+    const boundRewriteText = (text: string) => {
+      const nonAsteriskRewrites = Object.fromEntries(
+        Object.entries(this.repoCommentLinks).filter(
+          ([_name, rewrite]) => !rewrite.match.includes('\\*')
+        )
+      );
+      return linkifyUrlsAndApplyRewrite(text, nonAsteriskRewrites);
+    };
+
+    // Due to a tokenizer bug in the old version of markedjs we use, text with a
+    // single asterisk is separated into 2 tokens before passing to renderer
+    // ['text'] which breaks our rewrites that would span across the 2 tokens.
+    // Since upgrading our markedjs version is infeasible, we are applying those
+    // asterisk rewrites again at the end (using renderer['paragraph'] hook)
+    // after all the nodes are combined.
+    // Bind `this` via closure.
+    const boundRewriteAsterisks = (text: string) => {
+      const asteriskRewrites = Object.fromEntries(
+        Object.entries(this.repoCommentLinks).filter(([_name, rewrite]) =>
+          rewrite.match.includes('\\*')
+        )
+      );
+      const linkedText = linkifyUrlsAndApplyRewrite(text, asteriskRewrites);
+      return `<p>${linkedText}</p>`;
+    };
 
     // We are overriding some marked-element renderers for a few reasons:
     // 1. Disable inline images as a design/policy choice.
@@ -165,7 +212,23 @@ export class GrFormattedText extends LitElement {
         `![${text}](${href})`;
       renderer['codespan'] = (text: string) =>
         `<code>${unescapeHTML(text)}</code>`;
-      renderer['code'] = (text: string) => `<pre><code>${text}</code></pre>`;
+      renderer['code'] = (text: string, infostring: string) => {
+        if (suggestEditsEnable && infostring === USER_SUGGESTION_INFO_STRING) {
+          // default santizer in markedjs is very restrictive, we need to use
+          // existing html element to mark element. We cannot use css class for
+          // it. Therefore we pick mark - as not frequently used html element to
+          // represent unconverted gr-user-suggestion-fix.
+          // TODO(milutin): Find a way to override sanitizer to directly use
+          // gr-user-suggestion-fix
+          return `<mark>${text}</mark>`;
+        } else {
+          return `<pre><code>${text}</code></pre>`;
+        }
+      };
+      // <marked-element> internals will be in charge of calling our custom
+      // renderer so we write these functions separately so that 'this' is
+      // preserved via closure.
+      renderer['paragraph'] = boundRewriteAsterisks;
       renderer['text'] = boundRewriteText;
     }
 
@@ -181,7 +244,7 @@ export class GrFormattedText extends LitElement {
         .callback=${(_error: string | null, contents: string) =>
           sanitizeHtml(contents)}
       >
-        <div slot="markdown-html"></div>
+        <div class="markdown-html" slot="markdown-html"></div>
       </marked-element>
     `;
   }
@@ -192,15 +255,25 @@ export class GrFormattedText extends LitElement {
     text = htmlEscape(text).toString();
     // Unescape block quotes '>'. This is slightly dangerous as '>' can be used
     // in HTML fragments, but it is insufficient on it's own.
-    text = text.replace(/(^|\n)&gt;/g, '$1>');
+    for (;;) {
+      const newText = text.replace(
+        /(^|\n)((?:\s{0,3}&gt;)*\s{0,3})&gt;/g,
+        '$1$2>'
+      );
+      if (newText === text) {
+        break;
+      }
+      text = newText;
+    }
 
     return text;
   }
 
   override updated() {
     // Look for @mentions and replace them with an account-label chip.
-    if (this.flagsService.isEnabled(KnownExperimentId.MENTION_USERS)) {
-      this.convertEmailsToAccountChips();
+    this.convertEmailsToAccountChips();
+    if (this.flagsService.isEnabled(KnownExperimentId.SUGGEST_EDIT)) {
+      this.convertCodeToSuggestions();
     }
   }
 
@@ -224,6 +297,24 @@ export class GrFormattedText extends LitElement {
         previous.textContent = previous.textContent.slice(0, -1);
         emailLink.parentNode?.replaceChild(accountChip, emailLink);
       }
+    }
+  }
+
+  private convertCodeToSuggestions() {
+    const marks = this.renderRoot.querySelectorAll('mark');
+    if (marks.length > 0) {
+      const userSuggestionMark = marks[0];
+      const userSuggestion = document.createElement('gr-user-suggestion-fix');
+      // Temporary workaround for bug - tabs replacement
+      if (this.content.includes('\t')) {
+        userSuggestion.textContent = getUserSuggestionFromString(this.content);
+      } else {
+        userSuggestion.textContent = userSuggestionMark.textContent ?? '';
+      }
+      userSuggestionMark.parentNode?.replaceChild(
+        userSuggestion,
+        userSuggestionMark
+      );
     }
   }
 }

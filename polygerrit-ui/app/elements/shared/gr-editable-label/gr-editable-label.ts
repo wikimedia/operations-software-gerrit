@@ -21,6 +21,8 @@ import {sharedStyles} from '../../../styles/shared-styles';
 import {PaperInputElement} from '@polymer/paper-input/paper-input';
 import {IronInputElement} from '@polymer/iron-input';
 import {ShortcutController} from '../../lit/shortcut-controller';
+import {ValueChangedEvent} from '../../../types/events';
+import {fire} from '../../../utils/event-util';
 
 const AWAIT_MAX_ITERS = 10;
 const AWAIT_STEP = 5;
@@ -118,6 +120,7 @@ export class GrEditableLabel extends LitElement {
         .inputContainer {
           background-color: var(--dialog-background-color);
           padding: var(--spacing-m);
+          white-space: nowrap;
         }
         /* This makes inputContainer on one line. */
         .inputContainer gr-autocomplete,
@@ -207,7 +210,7 @@ export class GrEditableLabel extends LitElement {
         .text=${this.inputText}
         .query=${this.query}
         @cancel=${this.cancel}
-        @text-changed=${(e: CustomEvent) => {
+        @text-changed=${(e: ValueChangedEvent) => {
           this.inputText = e.detail.value;
         }}
       >
@@ -308,13 +311,8 @@ export class GrEditableLabel extends LitElement {
       this.value = this.inputText || '';
     }
     this.editing = false;
-    this.dispatchEvent(
-      new CustomEvent('changed', {
-        detail: this.value,
-        composed: true,
-        bubbles: true,
-      })
-    );
+    // TODO: This event seems to be unused (no listener). Remove?
+    fire(this, 'changed', this.value);
   }
 
   private cancel() {

@@ -21,6 +21,7 @@ import static com.google.gerrit.entities.LabelId.VERIFIED;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.CC;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.REMOVED;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.REVIEWER;
+import static com.google.gerrit.testing.TestActionRefUpdateContext.testRefAction;
 import static java.util.Objects.requireNonNull;
 
 import com.google.common.collect.ImmutableList;
@@ -90,7 +91,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
       bru.addCommand(new ReceiveCommand(ref.getObjectId(), ObjectId.zeroId(), ref.getName()));
     }
 
-    RefUpdateUtil.executeChecked(bru, repo);
+    testRefAction(() -> RefUpdateUtil.executeChecked(bru, repo));
   }
 
   @Test
@@ -214,37 +215,37 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
   @Test
   public void maxRefsToUpdate_coversAllInvalid_inMultipleBatches() throws Exception {
     testMaxRefsToUpdate(
-        /*numberOfInvalidChanges=*/ 11,
-        /*numberOfValidChanges=*/ 9,
-        /*maxRefsToUpdate=*/ 12,
-        /*maxRefsInBatch=*/ 2);
+        /* numberOfInvalidChanges= */ 11,
+        /* numberOfValidChanges= */ 9,
+        /* maxRefsToUpdate= */ 12,
+        /* maxRefsInBatch= */ 2);
   }
 
   @Test
   public void maxRefsToUpdate_coversAllInvalid_inSingleBatch() throws Exception {
     testMaxRefsToUpdate(
-        /*numberOfInvalidChanges=*/ 11,
-        /*numberOfValidChanges=*/ 9,
-        /*maxRefsToUpdate=*/ 12,
-        /*maxRefsInBatch=*/ 12);
+        /* numberOfInvalidChanges= */ 11,
+        /* numberOfValidChanges= */ 9,
+        /* maxRefsToUpdate= */ 12,
+        /* maxRefsInBatch= */ 12);
   }
 
   @Test
   public void moreInvalidRefs_thenMaxRefsToUpdate_inMultipleBatches() throws Exception {
     testMaxRefsToUpdate(
-        /*numberOfInvalidChanges=*/ 11,
-        /*numberOfValidChanges=*/ 9,
-        /*maxRefsToUpdate=*/ 10,
-        /*maxRefsInBatch=*/ 2);
+        /* numberOfInvalidChanges= */ 11,
+        /* numberOfValidChanges= */ 9,
+        /* maxRefsToUpdate= */ 10,
+        /* maxRefsInBatch= */ 2);
   }
 
   @Test
   public void moreInvalidRefs_thenMaxRefsToUpdate_inSingleBatch() throws Exception {
     testMaxRefsToUpdate(
-        /*numberOfInvalidChanges=*/ 11,
-        /*numberOfValidChanges=*/ 9,
-        /*maxRefsToUpdate=*/ 10,
-        /*maxRefsInBatch=*/ 10);
+        /* numberOfInvalidChanges= */ 11,
+        /* numberOfValidChanges= */ 9,
+        /* maxRefsToUpdate= */ 10,
+        /* maxRefsInBatch= */ 10);
   }
 
   private void testMaxRefsToUpdate(
@@ -333,7 +334,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     RevCommit invalidUpdateCommit =
         writeUpdate(
             RefNames.changeMetaRef(c.getId()),
-            getChangeUpdateBody(c, /*changeMessage=*/ null),
+            getChangeUpdateBody(c, /* changeMessage= */ null),
             invalidAuthorIdent);
     ChangeUpdate validUpdate = newUpdate(c, changeOwner);
     validUpdate.setChangeMessage("verification from jenkins");
@@ -399,7 +400,9 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
 
     IdentifiedUser impersonatedChangeOwner =
         this.userFactory.runAs(
-            null, changeOwner.getAccountId(), requireNonNull(otherUser).getRealUser());
+            /* remotePeer= */ null,
+            changeOwner.getAccountId(),
+            requireNonNull(otherUser).getRealUser());
     ChangeUpdate impersonatedChangeMessageUpdate = newUpdate(c, impersonatedChangeOwner);
     impersonatedChangeMessageUpdate.setChangeMessage("Other comment on behalf of");
     impersonatedChangeMessageUpdate.commit();
@@ -470,7 +473,8 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
                     // valid change message that should not be overwritten
                     getChangeUpdateBody(
                         c,
-                        "Removed cc <GERRIT_ACCOUNT_2> with the following votes:\n\n * Code-Review+2 by <GERRIT_ACCOUNT_2>",
+                        "Removed cc <GERRIT_ACCOUNT_2> with the following votes:\n\n"
+                            + " * Code-Review+2 by <GERRIT_ACCOUNT_2>",
                         "CC: " + reviewerIdentToFix),
                     getAuthorIdent(otherUser.getAccount())))
             .add(
@@ -675,7 +679,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
                     RefNames.changeMetaRef(c.getId()),
                     getChangeUpdateBody(
                         c,
-                        /*changeMessage=*/ null,
+                        /* changeMessage= */ null,
                         "Label: -Verified " + approverIdentToFix,
                         "Label: Custom-Label-1=-1 " + approverIdentToFix,
                         "Label: Verified=+1",
@@ -688,7 +692,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
                     RefNames.changeMetaRef(c.getId()),
                     getChangeUpdateBody(
                         c,
-                        /*changeMessage=*/ null,
+                        /* changeMessage= */ null,
                         "Label: -Verified " + changeOwnerIdentToFix,
                         "Label: Custom-Label-1=+1"),
                     getAuthorIdent(otherUser.getAccount())))
@@ -810,7 +814,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
                     RefNames.changeMetaRef(c.getId()),
                     getChangeUpdateBody(
                         c,
-                        /*changeMessage=*/ "Removed Code-Review+2 by " + otherUser.getNameEmail(),
+                        /* changeMessage= */ "Removed Code-Review+2 by " + otherUser.getNameEmail(),
                         "Label: -Code-Review " + approverIdentToFix),
                     getAuthorIdent(changeOwner.getAccount())))
             .add(
@@ -818,7 +822,8 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
                     RefNames.changeMetaRef(c.getId()),
                     getChangeUpdateBody(
                         c,
-                        /*changeMessage=*/ "Removed Custom-Label-1 by " + otherUser.getNameEmail(),
+                        /* changeMessage= */ "Removed Custom-Label-1 by "
+                            + otherUser.getNameEmail(),
                         "Label: -Custom-Label " + getValidIdentAsString(otherUser.getAccount())),
                     getAuthorIdent(changeOwner.getAccount())))
             .add(
@@ -826,7 +831,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
                     RefNames.changeMetaRef(c.getId()),
                     getChangeUpdateBody(
                         c,
-                        /*changeMessage=*/ "Removed Verified+2 by " + changeOwner.getNameEmail(),
+                        /* changeMessage= */ "Removed Verified+2 by " + changeOwner.getNameEmail(),
                         "Label: -Verified"),
                     getAuthorIdent(changeOwner.getAccount())))
             .build();
@@ -926,7 +931,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
         RefNames.changeMetaRef(c.getId()),
         getChangeUpdateBody(
             c,
-            /*changeMessage=*/ "Removed Verified+2 by " + otherUser.getNameEmail(),
+            /* changeMessage= */ "Removed Verified+2 by " + otherUser.getNameEmail(),
             "Label: -Verified"),
         invalidAuthorIdent);
 
@@ -959,19 +964,19 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
         RefNames.changeMetaRef(c.getId()),
 
         // Even though footer is missing, accounts are matched among the account in change updates.
-        getChangeUpdateBody(c, /*changeMessage=*/ "Removed Verified-1 by Other Account (0002)"),
+        getChangeUpdateBody(c, /* changeMessage= */ "Removed Verified-1 by Other Account (0002)"),
         getAuthorIdent(changeOwner.getAccount()));
 
     writeUpdate(
         RefNames.changeMetaRef(c.getId()),
         getChangeUpdateBody(
-            c, /*changeMessage=*/ "Removed Verified+2 by " + changeOwner.getNameEmail()),
+            c, /* changeMessage= */ "Removed Verified+2 by " + changeOwner.getNameEmail()),
         getAuthorIdent(changeOwner.getAccount()));
 
     // No rewrite for default
     writeUpdate(
         RefNames.changeMetaRef(c.getId()),
-        getChangeUpdateBody(c, /*changeMessage=*/ "Removed Verified+2 by Gerrit Account"),
+        getChangeUpdateBody(c, /* changeMessage= */ "Removed Verified+2 by Gerrit Account"),
         getAuthorIdent(changeOwner.getAccount()));
 
     RunOptions options = new RunOptions();
@@ -1004,7 +1009,8 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     writeUpdate(
         RefNames.changeMetaRef(c.getId()),
         getChangeUpdateBody(
-            c, /*changeMessage=*/ "Removed Verified+2 by Renamed Change Owner <change@owner.com>"),
+            c,
+            /* changeMessage= */ "Removed Verified+2 by Renamed Change Owner <change@owner.com>"),
         getAuthorIdent(changeOwner.getAccount()));
 
     RunOptions options = new RunOptions();
@@ -1033,7 +1039,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     approvalUpdate.commit();
     writeUpdate(
         RefNames.changeMetaRef(c.getId()),
-        getChangeUpdateBody(c, /*changeMessage=*/ "Removed Verified+2 by Change Owner"),
+        getChangeUpdateBody(c, /* changeMessage= */ "Removed Verified+2 by Change Owner"),
         getAuthorIdent(changeOwner.getAccount()));
 
     RunOptions options = new RunOptions();
@@ -1070,17 +1076,17 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     writeUpdate(
         RefNames.changeMetaRef(c.getId()),
         getChangeUpdateBody(
-            c, /*changeMessage=*/ "Removed Verified+2 by Change Owner <other@test.com>"),
+            c, /* changeMessage= */ "Removed Verified+2 by Change Owner <other@test.com>"),
         getAuthorIdent(changeOwner.getAccount()));
     writeUpdate(
         RefNames.changeMetaRef(c.getId()),
         getChangeUpdateBody(
-            c, /*changeMessage=*/ "Removed Verified+2 by Change Owner <change@owner.com>"),
+            c, /* changeMessage= */ "Removed Verified+2 by Change Owner <change@owner.com>"),
         getAuthorIdent(changeOwner.getAccount()));
     writeUpdate(
         RefNames.changeMetaRef(c.getId()),
         getChangeUpdateBody(
-            c, /*changeMessage=*/ "Removed Verified-1 by Change Owner <other@test.com>"),
+            c, /* changeMessage= */ "Removed Verified-1 by Change Owner <other@test.com>"),
         getAuthorIdent(changeOwner.getAccount()));
 
     RunOptions options = new RunOptions();
@@ -1119,7 +1125,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
         // Even though footer is missing, accounts are matched among the account in change updates.
         getChangeUpdateBody(
             c,
-            /*changeMessage=*/ "Removed the following votes:\n"
+            /* changeMessage= */ "Removed the following votes:\n"
                 + String.format("* Verified-1 by %s\n", otherUser.getNameEmail())),
         getAuthorIdent(changeOwner.getAccount()));
 
@@ -1127,7 +1133,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
         RefNames.changeMetaRef(c.getId()),
         getChangeUpdateBody(
             c,
-            /*changeMessage=*/ "Removed the following votes:\n"
+            /* changeMessage= */ "Removed the following votes:\n"
                 + String.format("* Verified+2 by %s\n", changeOwner.getNameEmail())
                 + String.format("* Verified-1 by %s\n", changeOwner.getNameEmail())
                 + String.format("* Code-Review by %s\n", otherUser.getNameEmail())),
@@ -1138,7 +1144,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
         RefNames.changeMetaRef(c.getId()),
         getChangeUpdateBody(
             c,
-            /*changeMessage=*/ "Removed the following votes:\n"
+            /* changeMessage= */ "Removed the following votes:\n"
                 + "* Verified+2 by Gerrit Account\n"
                 + "* Verified-1 by <GERRIT_ACCOUNT_2>\n"),
         getAuthorIdent(changeOwner.getAccount()));
@@ -1198,7 +1204,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
             RefNames.changeMetaRef(c.getId()),
             getChangeUpdateBody(
                 c,
-                /*changeMessage=*/ null,
+                /* changeMessage= */ null,
                 // Only 'person_ident' fix is required
                 "Attention: "
                     + gson.toJson(
@@ -1352,27 +1358,51 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     assertThat(commitHistoryDiff.get(0))
         .isEqualTo(
             "@@ -8 +8 @@\n"
-                + "-Attention: {\"person_ident\":\"Gerrit User 2 \\u003c2@gerrit\\u003e\",\"operation\":\"ADD\",\"reason\":\"Added by Other Account using the hovercard menu\"}\n"
-                + "+Attention: {\"person_ident\":\"Gerrit User 2 \\u003c2@gerrit\\u003e\",\"operation\":\"ADD\",\"reason\":\"Added by someone using the hovercard menu\"}\n");
+                + "-Attention: {\"person_ident\":\"Gerrit User 2"
+                + " \\u003c2@gerrit\\u003e\",\"operation\":\"ADD\",\"reason\":\"Added by Other"
+                + " Account using the hovercard menu\"}\n"
+                + "+Attention: {\"person_ident\":\"Gerrit User 2"
+                + " \\u003c2@gerrit\\u003e\",\"operation\":\"ADD\",\"reason\":\"Added by someone"
+                + " using the hovercard menu\"}\n");
     assertThat(Arrays.asList(commitHistoryDiff.get(1).split("\n")))
         .containsExactly(
             "@@ -7,2 +7,2 @@",
-            "-Attention: {\"person_ident\":\"Gerrit User 1 \\u003c1@gerrit\\u003e\",\"operation\":\"ADD\",\"reason\":\"Other Account replied on the change\"}",
-            "-Attention: {\"person_ident\":\"Gerrit User 2 \\u003c2@gerrit\\u003e\",\"operation\":\"REMOVE\",\"reason\":\"Removed by Other Account using the hovercard menu\"}",
-            "+Attention: {\"person_ident\":\"Gerrit User 1 \\u003c1@gerrit\\u003e\",\"operation\":\"ADD\",\"reason\":\"Someone replied on the change\"}",
-            "+Attention: {\"person_ident\":\"Gerrit User 2 \\u003c2@gerrit\\u003e\",\"operation\":\"REMOVE\",\"reason\":\"Removed by someone using the hovercard menu\"}");
+            "-Attention: {\"person_ident\":\"Gerrit User 1"
+                + " \\u003c1@gerrit\\u003e\",\"operation\":\"ADD\",\"reason\":\"Other Account"
+                + " replied on the change\"}",
+            "-Attention: {\"person_ident\":\"Gerrit User 2"
+                + " \\u003c2@gerrit\\u003e\",\"operation\":\"REMOVE\",\"reason\":\"Removed by Other"
+                + " Account using the hovercard menu\"}",
+            "+Attention: {\"person_ident\":\"Gerrit User 1"
+                + " \\u003c1@gerrit\\u003e\",\"operation\":\"ADD\",\"reason\":\"Someone replied on"
+                + " the change\"}",
+            "+Attention: {\"person_ident\":\"Gerrit User 2"
+                + " \\u003c2@gerrit\\u003e\",\"operation\":\"REMOVE\",\"reason\":\"Removed by"
+                + " someone using the hovercard menu\"}");
     assertThat(Arrays.asList(commitHistoryDiff.get(2).split("\n")))
         .containsExactly(
             "@@ -7,2 +7,2 @@",
-            "-Attention: {\"person_ident\":\"Other Account \\u003c2@gerrit\\u003e\",\"operation\":\"ADD\",\"reason\":\"Added by someone using the hovercard menu\"}",
-            "-Attention: {\"person_ident\":\"Change Owner \\u003c1@gerrit\\u003e\",\"operation\":\"REMOVE\",\"reason\":\"Other Account replied on the change\"}",
-            "+Attention: {\"person_ident\":\"Gerrit User 2 \\u003c2@gerrit\\u003e\",\"operation\":\"ADD\",\"reason\":\"Added by someone using the hovercard menu\"}",
-            "+Attention: {\"person_ident\":\"Gerrit User 1 \\u003c1@gerrit\\u003e\",\"operation\":\"REMOVE\",\"reason\":\"Someone replied on the change\"}");
+            "-Attention: {\"person_ident\":\"Other Account"
+                + " \\u003c2@gerrit\\u003e\",\"operation\":\"ADD\",\"reason\":\"Added by someone"
+                + " using the hovercard menu\"}",
+            "-Attention: {\"person_ident\":\"Change Owner"
+                + " \\u003c1@gerrit\\u003e\",\"operation\":\"REMOVE\",\"reason\":\"Other Account"
+                + " replied on the change\"}",
+            "+Attention: {\"person_ident\":\"Gerrit User 2"
+                + " \\u003c2@gerrit\\u003e\",\"operation\":\"ADD\",\"reason\":\"Added by someone"
+                + " using the hovercard menu\"}",
+            "+Attention: {\"person_ident\":\"Gerrit User 1"
+                + " \\u003c1@gerrit\\u003e\",\"operation\":\"REMOVE\",\"reason\":\"Someone replied"
+                + " on the change\"}");
     assertThat(commitHistoryDiff.get(3))
         .isEqualTo(
             "@@ -7 +7 @@\n"
-                + "-Attention: {\"person_ident\":\"Gerrit User 1 \\u003c1@gerrit\\u003e\",\"operation\":\"REMOVE\",\"reason\":\"Removed by Other Account by clicking the attention icon\"}\n"
-                + "+Attention: {\"person_ident\":\"Gerrit User 1 \\u003c1@gerrit\\u003e\",\"operation\":\"REMOVE\",\"reason\":\"Removed by someone by clicking the attention icon\"}\n");
+                + "-Attention: {\"person_ident\":\"Gerrit User 1"
+                + " \\u003c1@gerrit\\u003e\",\"operation\":\"REMOVE\",\"reason\":\"Removed by Other"
+                + " Account by clicking the attention icon\"}\n"
+                + "+Attention: {\"person_ident\":\"Gerrit User 1"
+                + " \\u003c1@gerrit\\u003e\",\"operation\":\"REMOVE\",\"reason\":\"Removed by"
+                + " someone by clicking the attention icon\"}\n");
     BackfillResult secondRunResult = rewriter.backfillProject(project, repo, options);
     assertThat(secondRunResult.fixedRefDiff.keySet()).isEmpty();
     assertThat(secondRunResult.refsFailedToFix).isEmpty();
@@ -1481,13 +1511,15 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     commitsToFix.add(invalidCherryPickedMessageUpdate.commit());
     ChangeUpdate invalidRebasedMessageUpdate = newUpdate(c, changeOwner);
     invalidRebasedMessageUpdate.setChangeMessage(
-        "Change has been successfully rebased and submitted as e40dc1a50dc7f457a37579e2755374f3e1a5413b by "
+        "Change has been successfully rebased and submitted as"
+            + " e40dc1a50dc7f457a37579e2755374f3e1a5413b by "
             + changeOwner.getName());
 
     commitsToFix.add(invalidRebasedMessageUpdate.commit());
     ChangeUpdate validSubmitMessageUpdate = newUpdate(c, changeOwner);
     validSubmitMessageUpdate.setChangeMessage(
-        "Change has been successfully rebased and submitted as e40dc1a50dc7f457a37579e2755374f3e1a5413b");
+        "Change has been successfully rebased and submitted as"
+            + " e40dc1a50dc7f457a37579e2755374f3e1a5413b");
     validSubmitMessageUpdate.commit();
 
     Ref metaRefBeforeRewrite = repo.exactRef(RefNames.changeMetaRef(c.getId()));
@@ -1510,15 +1542,21 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     assertThat(changeMessages(notesBeforeRewrite))
         .containsExactly(
             "Change has been successfully merged by Change Owner",
-            "Change has been successfully cherry-picked as e40dc1a50dc7f457a37579e2755374f3e1a5413b by Change Owner",
-            "Change has been successfully rebased and submitted as e40dc1a50dc7f457a37579e2755374f3e1a5413b by Change Owner",
-            "Change has been successfully rebased and submitted as e40dc1a50dc7f457a37579e2755374f3e1a5413b");
+            "Change has been successfully cherry-picked as e40dc1a50dc7f457a37579e2755374f3e1a5413b"
+                + " by Change Owner",
+            "Change has been successfully rebased and submitted as"
+                + " e40dc1a50dc7f457a37579e2755374f3e1a5413b by Change Owner",
+            "Change has been successfully rebased and submitted as"
+                + " e40dc1a50dc7f457a37579e2755374f3e1a5413b");
     assertThat(changeMessages(notesAfterRewrite))
         .containsExactly(
             "Change has been successfully merged",
-            "Change has been successfully cherry-picked as e40dc1a50dc7f457a37579e2755374f3e1a5413b",
-            "Change has been successfully rebased and submitted as e40dc1a50dc7f457a37579e2755374f3e1a5413b",
-            "Change has been successfully rebased and submitted as e40dc1a50dc7f457a37579e2755374f3e1a5413b");
+            "Change has been successfully cherry-picked as"
+                + " e40dc1a50dc7f457a37579e2755374f3e1a5413b",
+            "Change has been successfully rebased and submitted as"
+                + " e40dc1a50dc7f457a37579e2755374f3e1a5413b",
+            "Change has been successfully rebased and submitted as"
+                + " e40dc1a50dc7f457a37579e2755374f3e1a5413b");
 
     Ref metaRefAfterRewrite = repo.exactRef(RefNames.changeMetaRef(c.getId()));
     assertThat(metaRefAfterRewrite.getObjectId()).isNotEqualTo(metaRefBeforeRewrite.getObjectId());
@@ -1534,11 +1572,15 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
                 + "-Change has been successfully merged by Change Owner\n"
                 + "+Change has been successfully merged\n",
             "@@ -6 +6 @@\n"
-                + "-Change has been successfully cherry-picked as e40dc1a50dc7f457a37579e2755374f3e1a5413b by Change Owner\n"
-                + "+Change has been successfully cherry-picked as e40dc1a50dc7f457a37579e2755374f3e1a5413b\n",
+                + "-Change has been successfully cherry-picked as"
+                + " e40dc1a50dc7f457a37579e2755374f3e1a5413b by Change Owner\n"
+                + "+Change has been successfully cherry-picked as"
+                + " e40dc1a50dc7f457a37579e2755374f3e1a5413b\n",
             "@@ -6 +6 @@\n"
-                + "-Change has been successfully rebased and submitted as e40dc1a50dc7f457a37579e2755374f3e1a5413b by Change Owner\n"
-                + "+Change has been successfully rebased and submitted as e40dc1a50dc7f457a37579e2755374f3e1a5413b\n");
+                + "-Change has been successfully rebased and submitted as"
+                + " e40dc1a50dc7f457a37579e2755374f3e1a5413b by Change Owner\n"
+                + "+Change has been successfully rebased and submitted as"
+                + " e40dc1a50dc7f457a37579e2755374f3e1a5413b\n");
     BackfillResult secondRunResult = rewriter.backfillProject(project, repo, options);
     assertThat(secondRunResult.fixedRefDiff.keySet()).isEmpty();
     assertThat(secondRunResult.refsFailedToFix).isEmpty();
@@ -1608,7 +1650,7 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
             RefNames.changeMetaRef(c.getId()),
             getChangeUpdateBody(
                 c,
-                /*changeMessage=*/ null,
+                /* changeMessage= */ null,
                 "Label: SUBM=+1",
                 "Submission-id: 5271-1496917120975-10a10df9",
                 "Submitted-with: NOT_READY",
@@ -1874,59 +1916,72 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     ChangeUpdate invalidOnReviewUpdate = newUpdate(c, changeOwner);
     invalidOnReviewUpdate.setChangeMessage(
         "Patch Set 1: Any-Label+2 Other-Label+2 Code-Review+2\n\n"
-            + "By voting Code-Review+2 the following files are now code-owner approved by Change Owner:\n"
+            + "By voting Code-Review+2 the following files are now code-owner approved by Change"
+            + " Owner:\n"
             + "   * file1.java\n"
             + "   * file2.ts\n"
-            + "By voting Any-Label+2 the code-owners submit requirement is overridden by Change Owner\n"
-            + "By voting Other-Label+2 the code-owners submit requirement is still overridden by Change Owner\n");
+            + "By voting Any-Label+2 the code-owners submit requirement is overridden by Change"
+            + " Owner\n"
+            + "By voting Other-Label+2 the code-owners submit requirement is still overridden by"
+            + " Change Owner\n");
     commitsToFix.add(invalidOnReviewUpdate.commit());
 
     ChangeUpdate invalidOnReviewUpdateAnyOrder = newUpdate(c, changeOwner);
     invalidOnReviewUpdateAnyOrder.setChangeMessage(
         "Patch Set 1: Any-Label+2 Other-Label+2 Code-Review+2\n\n"
-            + "By voting Any-Label+2 the code-owners submit requirement is overridden by Change Owner\n"
-            + "By voting Other-Label+2 the code-owners submit requirement is still overridden by Change Owner\n"
-            + "By voting Code-Review+2 the following files are now code-owner approved by Change Owner:\n"
+            + "By voting Any-Label+2 the code-owners submit requirement is overridden by Change"
+            + " Owner\n"
+            + "By voting Other-Label+2 the code-owners submit requirement is still overridden by"
+            + " Change Owner\n"
+            + "By voting Code-Review+2 the following files are now code-owner approved by Change"
+            + " Owner:\n"
             + "   * file1.java\n"
             + "   * file2.ts\n");
     commitsToFix.add(invalidOnReviewUpdateAnyOrder.commit());
     ChangeUpdate invalidOnApprovalUpdate = newUpdate(c, otherUser);
     invalidOnApprovalUpdate.setChangeMessage(
         "Patch Set 1: -Code-Review\n\n"
-            + "By removing the Code-Review+2 vote the following files are no longer explicitly code-owner approved by Other Account:\n"
+            + "By removing the Code-Review+2 vote the following files are no longer explicitly"
+            + " code-owner approved by Other Account:\n"
             + "   * file1.java\n"
             + "   * file2.ts\n"
-            + "\nThe listed files are still implicitly approved by Other Account.\n");
+            + "\n"
+            + "The listed files are still implicitly approved by Other Account.\n");
     commitsToFix.add(invalidOnApprovalUpdate.commit());
 
     ChangeUpdate invalidOnOverrideUpdate = newUpdate(c, changeOwner);
     invalidOnOverrideUpdate.setChangeMessage(
         "Patch Set 1: -Owners-Override\n\n"
             + "(1 comment)\n\n"
-            + "By removing the Owners-Override+1 vote the code-owners submit requirement is no longer overridden by Change Owner\n");
+            + "By removing the Owners-Override+1 vote the code-owners submit requirement is no"
+            + " longer overridden by Change Owner\n");
 
     commitsToFix.add(invalidOnOverrideUpdate.commit());
 
     ChangeUpdate partiallyValidOnReviewUpdate = newUpdate(c, changeOwner);
     partiallyValidOnReviewUpdate.setChangeMessage(
         "Patch Set 1: Any-Label+2 Code-Review+2\n\n"
-            + "By voting Code-Review+2 the following files are now code-owner approved by <GERRIT_ACCOUNT_1>:\n"
+            + "By voting Code-Review+2 the following files are now code-owner approved by"
+            + " <GERRIT_ACCOUNT_1>:\n"
             + "   * file1.java\n"
             + "   * file2.ts\n"
-            + "By voting Any-Label+2 the code-owners submit requirement is overridden by Change Owner\n");
+            + "By voting Any-Label+2 the code-owners submit requirement is overridden by Change"
+            + " Owner\n");
     commitsToFix.add(partiallyValidOnReviewUpdate.commit());
 
     ChangeUpdate validOnApprovalUpdate = newUpdate(c, changeOwner);
     validOnApprovalUpdate.setChangeMessage(
         "Patch Set 1: Code-Review-2\n\n"
-            + "By voting Code-Review-2 the following files are no longer explicitly code-owner approved by <GERRIT_ACCOUNT_1>:\n"
+            + "By voting Code-Review-2 the following files are no longer explicitly code-owner"
+            + " approved by <GERRIT_ACCOUNT_1>:\n"
             + "   * file4.java\n");
     validOnApprovalUpdate.commit();
 
     ChangeUpdate validOnOverrideUpdate = newUpdate(c, changeOwner);
     validOnOverrideUpdate.setChangeMessage(
         "Patch Set 1: Owners-Override+1\n\n"
-            + "By voting Owners-Override+1 the code-owners submit requirement is still overridden by <GERRIT_ACCOUNT_1>\n");
+            + "By voting Owners-Override+1 the code-owners submit requirement is still overridden"
+            + " by <GERRIT_ACCOUNT_1>\n");
     validOnOverrideUpdate.commit();
 
     Ref metaRefBeforeRewrite = repo.exactRef(RefNames.changeMetaRef(c.getId()));
@@ -1950,39 +2005,52 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     assertThat(changeMessages(notesAfterRewrite))
         .containsExactly(
             "Patch Set 1: Any-Label+2 Other-Label+2 Code-Review+2\n\n"
-                + "By voting Code-Review+2 the following files are now code-owner approved by <GERRIT_ACCOUNT_1>:\n"
+                + "By voting Code-Review+2 the following files are now code-owner approved by"
+                + " <GERRIT_ACCOUNT_1>:\n"
                 + "   * file1.java\n"
                 + "   * file2.ts\n"
-                + "By voting Any-Label+2 the code-owners submit requirement is overridden by <GERRIT_ACCOUNT_1>\n"
-                + "By voting Other-Label+2 the code-owners submit requirement is still overridden by <GERRIT_ACCOUNT_1>\n",
+                + "By voting Any-Label+2 the code-owners submit requirement is overridden by"
+                + " <GERRIT_ACCOUNT_1>\n"
+                + "By voting Other-Label+2 the code-owners submit requirement is still overridden"
+                + " by <GERRIT_ACCOUNT_1>\n",
             "Patch Set 1: Any-Label+2 Other-Label+2 Code-Review+2\n\n"
-                + "By voting Any-Label+2 the code-owners submit requirement is overridden by <GERRIT_ACCOUNT_1>\n"
-                + "By voting Other-Label+2 the code-owners submit requirement is still overridden by <GERRIT_ACCOUNT_1>\n"
-                + "By voting Code-Review+2 the following files are now code-owner approved by <GERRIT_ACCOUNT_1>:\n"
+                + "By voting Any-Label+2 the code-owners submit requirement is overridden by"
+                + " <GERRIT_ACCOUNT_1>\n"
+                + "By voting Other-Label+2 the code-owners submit requirement is still overridden"
+                + " by <GERRIT_ACCOUNT_1>\n"
+                + "By voting Code-Review+2 the following files are now code-owner approved by"
+                + " <GERRIT_ACCOUNT_1>:\n"
                 + "   * file1.java\n"
                 + "   * file2.ts\n",
             "Patch Set 1: -Code-Review\n"
                 + "\n"
-                + "By removing the Code-Review+2 vote the following files are no longer explicitly code-owner approved by <GERRIT_ACCOUNT_2>:\n"
+                + "By removing the Code-Review+2 vote the following files are no longer explicitly"
+                + " code-owner approved by <GERRIT_ACCOUNT_2>:\n"
                 + "   * file1.java\n"
                 + "   * file2.ts\n"
-                + "\nThe listed files are still implicitly approved by <GERRIT_ACCOUNT_2>.\n",
+                + "\n"
+                + "The listed files are still implicitly approved by <GERRIT_ACCOUNT_2>.\n",
             "Patch Set 1: -Owners-Override\n"
                 + "\n"
                 + "(1 comment)\n"
                 + "\n"
-                + "By removing the Owners-Override+1 vote the code-owners submit requirement is no longer overridden by <GERRIT_ACCOUNT_1>\n",
+                + "By removing the Owners-Override+1 vote the code-owners submit requirement is no"
+                + " longer overridden by <GERRIT_ACCOUNT_1>\n",
             "Patch Set 1: Any-Label+2 Code-Review+2\n\n"
-                + "By voting Code-Review+2 the following files are now code-owner approved by <GERRIT_ACCOUNT_1>:\n"
+                + "By voting Code-Review+2 the following files are now code-owner approved by"
+                + " <GERRIT_ACCOUNT_1>:\n"
                 + "   * file1.java\n"
                 + "   * file2.ts\n"
-                + "By voting Any-Label+2 the code-owners submit requirement is overridden by <GERRIT_ACCOUNT_1>\n",
+                + "By voting Any-Label+2 the code-owners submit requirement is overridden by"
+                + " <GERRIT_ACCOUNT_1>\n",
             "Patch Set 1: Code-Review-2\n\n"
-                + "By voting Code-Review-2 the following files are no longer explicitly code-owner approved by <GERRIT_ACCOUNT_1>:\n"
+                + "By voting Code-Review-2 the following files are no longer explicitly code-owner"
+                + " approved by <GERRIT_ACCOUNT_1>:\n"
                 + "   * file4.java\n",
             "Patch Set 1: Owners-Override+1\n"
                 + "\n"
-                + "By voting Owners-Override+1 the code-owners submit requirement is still overridden by <GERRIT_ACCOUNT_1>\n");
+                + "By voting Owners-Override+1 the code-owners submit requirement is still"
+                + " overridden by <GERRIT_ACCOUNT_1>\n");
 
     Ref metaRefAfterRewrite = repo.exactRef(RefNames.changeMetaRef(c.getId()));
     assertThat(metaRefAfterRewrite.getObjectId()).isNotEqualTo(metaRefBeforeRewrite.getObjectId());
@@ -1995,32 +2063,50 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     assertThat(commitHistoryDiff)
         .containsExactly(
             "@@ -8 +8 @@\n"
-                + "-By voting Code-Review+2 the following files are now code-owner approved by Change Owner:\n"
-                + "+By voting Code-Review+2 the following files are now code-owner approved by <GERRIT_ACCOUNT_1>:\n"
+                + "-By voting Code-Review+2 the following files are now code-owner approved by"
+                + " Change Owner:\n"
+                + "+By voting Code-Review+2 the following files are now code-owner approved by"
+                + " <GERRIT_ACCOUNT_1>:\n"
                 + "@@ -11,2 +11,2 @@\n"
-                + "-By voting Any-Label+2 the code-owners submit requirement is overridden by Change Owner\n"
-                + "-By voting Other-Label+2 the code-owners submit requirement is still overridden by Change Owner\n"
-                + "+By voting Any-Label+2 the code-owners submit requirement is overridden by <GERRIT_ACCOUNT_1>\n"
-                + "+By voting Other-Label+2 the code-owners submit requirement is still overridden by <GERRIT_ACCOUNT_1>\n",
+                + "-By voting Any-Label+2 the code-owners submit requirement is overridden by"
+                + " Change Owner\n"
+                + "-By voting Other-Label+2 the code-owners submit requirement is still overridden"
+                + " by Change Owner\n"
+                + "+By voting Any-Label+2 the code-owners submit requirement is overridden by"
+                + " <GERRIT_ACCOUNT_1>\n"
+                + "+By voting Other-Label+2 the code-owners submit requirement is still overridden"
+                + " by <GERRIT_ACCOUNT_1>\n",
             "@@ -8,3 +8,3 @@\n"
-                + "-By voting Any-Label+2 the code-owners submit requirement is overridden by Change Owner\n"
-                + "-By voting Other-Label+2 the code-owners submit requirement is still overridden by Change Owner\n"
-                + "-By voting Code-Review+2 the following files are now code-owner approved by Change Owner:\n"
-                + "+By voting Any-Label+2 the code-owners submit requirement is overridden by <GERRIT_ACCOUNT_1>\n"
-                + "+By voting Other-Label+2 the code-owners submit requirement is still overridden by <GERRIT_ACCOUNT_1>\n"
-                + "+By voting Code-Review+2 the following files are now code-owner approved by <GERRIT_ACCOUNT_1>:\n",
+                + "-By voting Any-Label+2 the code-owners submit requirement is overridden by"
+                + " Change Owner\n"
+                + "-By voting Other-Label+2 the code-owners submit requirement is still overridden"
+                + " by Change Owner\n"
+                + "-By voting Code-Review+2 the following files are now code-owner approved by"
+                + " Change Owner:\n"
+                + "+By voting Any-Label+2 the code-owners submit requirement is overridden by"
+                + " <GERRIT_ACCOUNT_1>\n"
+                + "+By voting Other-Label+2 the code-owners submit requirement is still overridden"
+                + " by <GERRIT_ACCOUNT_1>\n"
+                + "+By voting Code-Review+2 the following files are now code-owner approved by"
+                + " <GERRIT_ACCOUNT_1>:\n",
             "@@ -8 +8 @@\n"
-                + "-By removing the Code-Review+2 vote the following files are no longer explicitly code-owner approved by Other Account:\n"
-                + "+By removing the Code-Review+2 vote the following files are no longer explicitly code-owner approved by <GERRIT_ACCOUNT_2>:\n"
+                + "-By removing the Code-Review+2 vote the following files are no longer explicitly"
+                + " code-owner approved by Other Account:\n"
+                + "+By removing the Code-Review+2 vote the following files are no longer explicitly"
+                + " code-owner approved by <GERRIT_ACCOUNT_2>:\n"
                 + "@@ -12 +12 @@\n"
                 + "-The listed files are still implicitly approved by Other Account.\n"
                 + "+The listed files are still implicitly approved by <GERRIT_ACCOUNT_2>.\n",
             "@@ -10 +10 @@\n"
-                + "-By removing the Owners-Override+1 vote the code-owners submit requirement is no longer overridden by Change Owner\n"
-                + "+By removing the Owners-Override+1 vote the code-owners submit requirement is no longer overridden by <GERRIT_ACCOUNT_1>\n",
+                + "-By removing the Owners-Override+1 vote the code-owners submit requirement is no"
+                + " longer overridden by Change Owner\n"
+                + "+By removing the Owners-Override+1 vote the code-owners submit requirement is no"
+                + " longer overridden by <GERRIT_ACCOUNT_1>\n",
             "@@ -11 +11 @@\n"
-                + "-By voting Any-Label+2 the code-owners submit requirement is overridden by Change Owner\n"
-                + "+By voting Any-Label+2 the code-owners submit requirement is overridden by <GERRIT_ACCOUNT_1>\n");
+                + "-By voting Any-Label+2 the code-owners submit requirement is overridden by"
+                + " Change Owner\n"
+                + "+By voting Any-Label+2 the code-owners submit requirement is overridden by"
+                + " <GERRIT_ACCOUNT_1>\n");
     BackfillResult secondRunResult = rewriter.backfillProject(project, repo, options);
     assertThat(secondRunResult.fixedRefDiff.keySet()).isEmpty();
     assertThat(secondRunResult.refsFailedToFix).isEmpty();
@@ -2037,33 +2123,29 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
             getChangeUpdateBody(c, "Assignee added", "Assignee: " + assigneeIdentToFix),
             getAuthorIdent(changeOwner.getAccount()));
 
-    ChangeUpdate changeAssigneeUpdate = newUpdate(c, changeOwner);
-    changeAssigneeUpdate.setAssignee(otherUserId);
-    changeAssigneeUpdate.commit();
-
-    ChangeUpdate removeAssigneeUpdate = newUpdate(c, changeOwner);
-    removeAssigneeUpdate.removeAssignee();
-    removeAssigneeUpdate.commit();
+    // Valid commits
+    writeUpdate(
+        RefNames.changeMetaRef(c.getId()),
+        getChangeUpdateBody(
+            c,
+            "Assignee added: <GERRIT_ACCOUNT_2>",
+            "Assignee: " + getValidIdentAsString(otherUser.getAccount())),
+        getAuthorIdent(changeOwner.getAccount()));
+    writeUpdate(
+        RefNames.changeMetaRef(c.getId()),
+        getChangeUpdateBody(c, "Assignee deleted: <GERRIT_ACCOUNT_2>", "Assignee:"),
+        getAuthorIdent(changeOwner.getAccount()));
 
     Ref metaRefBeforeRewrite = repo.exactRef(RefNames.changeMetaRef(c.getId()));
 
     ImmutableList<RevCommit> commitsBeforeRewrite = logMetaRef(repo, metaRefBeforeRewrite);
 
     int invalidCommitIndex = commitsBeforeRewrite.indexOf(invalidUpdateCommit);
-    ChangeNotes notesBeforeRewrite = newNotes(c);
 
     RunOptions options = new RunOptions();
     options.dryRun = false;
     BackfillResult result = rewriter.backfillProject(project, repo, options);
     assertThat(result.fixedRefDiff.keySet()).containsExactly(RefNames.changeMetaRef(c.getId()));
-
-    ChangeNotes notesAfterRewrite = newNotes(c);
-    assertThat(notesBeforeRewrite.getPastAssignees())
-        .containsExactly(changeOwner.getAccountId(), otherUser.getAccountId());
-    assertThat(notesBeforeRewrite.getChange().getAssignee()).isNull();
-    assertThat(notesAfterRewrite.getPastAssignees())
-        .containsExactly(changeOwner.getAccountId(), otherUser.getAccountId());
-    assertThat(notesAfterRewrite.getChange().getAssignee()).isNull();
 
     Ref metaRefAfterRewrite = repo.exactRef(RefNames.changeMetaRef(c.getId()));
     assertThat(metaRefAfterRewrite.getObjectId()).isNotEqualTo(metaRefBeforeRewrite.getObjectId());
@@ -2143,18 +2225,13 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     assertThat(result.fixedRefDiff.keySet()).containsExactly(RefNames.changeMetaRef(c.getId()));
 
     ChangeNotes notesAfterRewrite = newNotes(c);
-    assertThat(notesBeforeRewrite.getPastAssignees())
-        .containsExactly(changeOwner.getAccountId(), otherUser.getAccountId());
-    assertThat(notesBeforeRewrite.getChange().getAssignee()).isNull();
     assertThat(changeMessages(notesBeforeRewrite))
         .containsExactly(
             "Assignee added: Change Owner <change@owner.com>",
-            "Assignee changed from: Change Owner <change@owner.com> to: Other Account <other@account.com>",
+            "Assignee changed from: Change Owner <change@owner.com> to: Other Account"
+                + " <other@account.com>",
             "Assignee deleted: Other Account <other@account.com>");
 
-    assertThat(notesAfterRewrite.getPastAssignees())
-        .containsExactly(changeOwner.getAccountId(), otherUser.getAccountId());
-    assertThat(notesAfterRewrite.getChange().getAssignee()).isNull();
     assertThat(changeMessages(notesAfterRewrite))
         .containsExactly(
             "Assignee added: " + AccountTemplateUtil.getAccountTemplate(changeOwner.getAccountId()),
@@ -2179,7 +2256,8 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
                 + "-Assignee added: Change Owner <change@owner.com>\n"
                 + "+Assignee added: <GERRIT_ACCOUNT_1>\n",
             "@@ -6 +6 @@\n"
-                + "-Assignee changed from: Change Owner <change@owner.com> to: Other Account <other@account.com>\n"
+                + "-Assignee changed from: Change Owner <change@owner.com> to: Other Account"
+                + " <other@account.com>\n"
                 + "+Assignee changed from: <GERRIT_ACCOUNT_1> to: <GERRIT_ACCOUNT_2>\n",
             "@@ -6 +6 @@\n"
                 + "-Assignee deleted: Other Account <other@account.com>\n"
@@ -2242,7 +2320,8 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
                 + "-Assignee added: Change Owner\n"
                 + "+Assignee added: <GERRIT_ACCOUNT_1>\n",
             "@@ -6 +6 @@\n"
-                + "-Assignee changed from: Change Owner <change@owner.com> to: Other Account <other@account.com>\n"
+                + "-Assignee changed from: Change Owner <change@owner.com> to: Other Account"
+                + " <other@account.com>\n"
                 + "+Assignee changed from: <GERRIT_ACCOUNT_1> to: <GERRIT_ACCOUNT_2>\n",
             "@@ -6 +6 @@\n"
                 + "-Assignee deleted: Other Account\n"
@@ -2278,16 +2357,11 @@ public class CommitRewriterTest extends AbstractChangeNotesTest {
     ImmutableList<RevCommit> commitsBeforeRewrite = logMetaRef(repo, metaRefBeforeRewrite);
 
     int invalidCommitIndex = commitsBeforeRewrite.indexOf(invalidUpdateCommit);
-    ChangeNotes notesBeforeRewrite = newNotes(c);
 
     RunOptions options = new RunOptions();
     options.dryRun = false;
     BackfillResult result = rewriter.backfillProject(project, repo, options);
     assertThat(result.fixedRefDiff.keySet()).containsExactly(RefNames.changeMetaRef(c.getId()));
-
-    ChangeNotes notesAfterRewrite = newNotes(c);
-    assertThat(notesBeforeRewrite.getChange().getAssignee()).isEqualTo(otherUserId);
-    assertThat(notesAfterRewrite.getChange().getAssignee()).isEqualTo(otherUserId);
 
     Ref metaRefAfterRewrite = repo.exactRef(RefNames.changeMetaRef(c.getId()));
     assertThat(metaRefAfterRewrite.getObjectId()).isNotEqualTo(metaRefBeforeRewrite.getObjectId());

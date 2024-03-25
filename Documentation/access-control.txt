@@ -782,7 +782,7 @@ is already restricted to the correct set of users.
 === Rebase
 
 This category permits users to rebase changes via the web UI by pushing
-the `Rebase Change` button.
+the `REBASE` button.
 
 The change owner and submitters can always rebase changes in the web UI
 (even without having the `Rebase` access right assigned).
@@ -799,6 +799,22 @@ the `Revert Change` button.
 
 Users without this access right who are able to upload changes can
 still do the revert locally and upload the revert commit as a new change.
+
+[[category_remove_label]]
+=== Remove Label (Remove Vote)
+
+For every configured label `My-Name` in the project, there is a
+corresponding permission `removeLabel-My-Name` with a range corresponding to
+the defined values. For these values, the users are permitted to remove
+other users' votes from a change.
+
+Change owners can always remove zero or positive votes (even without
+having the `Remove Vote` access right assigned).
+
+Project owners and site administrators can always remove any vote (even
+without having the `Remove Vote` access right assigned).
+
+Users without this access right can still remove their own votes.
 
 [[category_remove_reviewer]]
 === Remove Reviewer
@@ -890,6 +906,9 @@ Change owner, server administrators and project owners can always flip
 the Work In Progress bit of the change (even without having the
 `Toggle Work In Progress state` access right assigned).
 
+Must be assigned on the target branch ref (i.e. on 'refs/heads/*', not on
+'refs/for/*').
+
 [[category_delete_own_changes]]
 === Delete Own Changes
 
@@ -931,15 +950,6 @@ link:intro-user.html#hashtags[hashtags] on a change that is uploaded for review.
 The change owner, branch owners, project owners, and site administrators
 can always edit or remove hashtags (even without having the `Edit Hashtags`
 access right assigned).
-
-[[category_edit_assigned_to]]
-=== Edit Assignee
-
-This category permits users to set who is assigned to a change that is
-uploaded for review.
-
-The change owner, ref owners, and the user currently assigned to a change
-can always change the assignee.
 
 [[example_roles]]
 == Examples of typical roles in a project
@@ -1143,7 +1153,7 @@ works across project inheritance, from the top down, so an administrator can
 use 'BLOCK' rules to enforce site-wide restrictions.
 
 For example, if a user in the 'Foo Users' group tries to push to
-'refs/heads/mater' with the permissions below, that user will be blocked
+'refs/heads/master' with the permissions below, that user will be blocked
 
 [options="header"]
 |=========================================================================
@@ -1351,10 +1361,11 @@ by navigating at the top of the page to BROWSE -> Groups, and then pushing the
 [[capability_createProject]]
 === Create Project
 
-Allow project creation.  This capability allows the granted group to
-either link:cmd-create-project.html[create new git projects via ssh]
-or via the web UI.
+Allow project creation.
 
+This capability allows the granted group to create projects via the web UI, via
+link:rest-api-projects.html#create-project][REST] and via
+link:cmd-create-project.html[SSH].
 
 [[capability_emailReviewers]]
 === Email Reviewers
@@ -1406,8 +1417,8 @@ Implies the following capabilities:
 
 Allow to link:cmd-set-account.html[modify accounts over the ssh prompt].
 This capability allows the granted group members to modify any user account
-setting. In addition this capability is required to view secondary emails
-of other accounts.
+setting. In addition this capability allows to view secondary emails of other
+accounts.
 
 [[capability_priority]]
 === Priority
@@ -1509,7 +1520,8 @@ setting.
 
 This capability allows to view all accounts but not all account data.
 E.g. secondary emails of all accounts can only be viewed with the
-link:#capability_modifyAccount[Modify Account] capability.
+link:#capability_viewSecondaryEmails[View Secondary Emails] capability
+or the link:#capability_modifyAccount[Modify Account] capability.
 
 
 [[capability_viewCaches]]
@@ -1540,6 +1552,15 @@ Allow viewing the list of installed plugins.
 Allow querying for status of Gerrit's internal task queue.  This capability
 allows the granted group to
 link:cmd-show-queue.html[look at the Gerrit task queue via ssh].
+
+
+[[capability_viewSecondaryEmails]]
+=== View Secondary Emails
+
+Allows viewing secondary emails of other accounts.
+
+Users with the link:#capability_modifyAccount[Modify Account] capability have
+this capbility implicitly.
 
 
 [[reference]]

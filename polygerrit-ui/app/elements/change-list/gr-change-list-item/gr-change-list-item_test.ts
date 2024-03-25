@@ -44,6 +44,7 @@ import {
   bulkActionsModelToken,
   BulkActionsModel,
 } from '../../../models/bulk-actions/bulk-actions-model';
+import {UserModel, userModelToken} from '../../../models/user/user-model';
 import {createTestAppContext} from '../../../test/test-app-context-init';
 import {ColumnNames} from '../../../constants/constants';
 import {testResolver} from '../../../test/common-test-setup';
@@ -59,11 +60,13 @@ suite('gr-change-list-item tests', () => {
 
   let element: GrChangeListItem;
   let bulkActionsModel: BulkActionsModel;
+  let userModel: UserModel;
 
   setup(async () => {
     bulkActionsModel = new BulkActionsModel(
       createTestAppContext().restApiService
     );
+    userModel = testResolver(userModelToken);
     element = (
       await fixture<DIProviderElement>(
         wrapInProvider(
@@ -104,7 +107,7 @@ suite('gr-change-list-item tests', () => {
     test('bulk actions checkboxes', async () => {
       element.change = {...createChange(), _number: 1 as NumericChangeId};
       bulkActionsModel.sync([element.change]);
-      element.userModel.setAccount({
+      userModel.setAccount({
         ...createAccountWithEmail('abc@def.com'),
         registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
       });
@@ -137,7 +140,7 @@ suite('gr-change-list-item tests', () => {
       element.globalIndex = 5;
       element.change = {...createChange(), _number: 1 as NumericChangeId};
       bulkActionsModel.sync([element.change]);
-      element.userModel.setAccount({
+      userModel.setAccount({
         ...createAccountWithEmail('abc@def.com'),
         registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
       });
@@ -154,7 +157,7 @@ suite('gr-change-list-item tests', () => {
     });
 
     test('checkbox state updates with model updates', async () => {
-      element.userModel.setAccount({
+      userModel.setAccount({
         ...createAccountWithEmail('abc@def.com'),
         registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
       });
@@ -164,10 +167,6 @@ suite('gr-change-list-item tests', () => {
       element.change = {...createChange(), _number: 1 as NumericChangeId};
       bulkActionsModel.sync([element.change]);
       bulkActionsModel.addSelectedChangeNum(element.change._number);
-      await waitUntilObserved(
-        bulkActionsModel.selectedChangeNums$,
-        s => s.length === 1
-      );
       await element.updateComplete;
 
       const checkbox = queryAndAssert<HTMLInputElement>(
@@ -177,10 +176,35 @@ suite('gr-change-list-item tests', () => {
       assert.isTrue(checkbox.checked);
 
       bulkActionsModel.removeSelectedChangeNum(element.change._number);
-      await waitUntilObserved(
-        bulkActionsModel.selectedChangeNums$,
-        s => s.length === 0
+      await element.updateComplete;
+
+      assert.isFalse(checkbox.checked);
+    });
+
+    test('checkbox state updates with change id update', async () => {
+      userModel.setAccount({
+        ...createAccountWithEmail('abc@def.com'),
+        registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
+      });
+      element.requestUpdate();
+      await element.updateComplete;
+
+      const changes = [
+        {...createChange(), _number: 1 as NumericChangeId},
+        {...createChange(), _number: 2 as NumericChangeId},
+      ];
+      element.change = changes[0];
+      bulkActionsModel.sync(changes);
+      bulkActionsModel.addSelectedChangeNum(element.change._number);
+      await element.updateComplete;
+
+      const checkbox = queryAndAssert<HTMLInputElement>(
+        element,
+        '.selection > .selectionLabel > input'
       );
+      assert.isTrue(checkbox.checked);
+
+      element.change = changes[1];
       await element.updateComplete;
 
       assert.isFalse(checkbox.checked);
@@ -352,15 +376,17 @@ suite('gr-change-list-item tests', () => {
   });
 
   test('renders', async () => {
-    element.userModel.setAccount({
+    const change = createChange();
+    bulkActionsModel.sync([change]);
+    bulkActionsModel.addSelectedChangeNum(change._number);
+    userModel.setAccount({
       ...createAccountWithEmail('abc@def.com'),
       registered_on: '2015-03-12 18:32:08.000000000' as Timestamp,
     });
     element.showNumber = true;
     element.account = createAccountWithId(1);
     element.config = createServerInfo();
-    element.change = createChange();
-    element.checked = true;
+    element.change = change;
     await element.updateComplete;
     assert.isTrue(element.hasAttribute('checked'));
 

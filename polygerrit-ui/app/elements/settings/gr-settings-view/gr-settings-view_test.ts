@@ -38,7 +38,6 @@ import {
 } from '../../../test/test-data-generators';
 import {GrSelect} from '../../shared/gr-select/gr-select';
 import {fixture, html, assert} from '@open-wc/testing';
-import {EventType} from '../../../types/events';
 
 suite('gr-settings-view tests', () => {
   let element: GrSettingsView;
@@ -525,9 +524,17 @@ suite('gr-settings-view tests', () => {
     assert.dom.equal(
       queryAndAssert(element, '#allowBrowserNotificationsSection'),
       /* HTML */ `<section id="allowBrowserNotificationsSection">
-        <label class="title" for="allowBrowserNotifications">
-          Allow browser notifications
-        </label>
+        <div class="title">
+          <label for="allowBrowserNotifications">
+            Allow browser notifications
+          </label>
+          <a
+            href="https://gerrit-review.googlesource.com/Documentation/user-attention-set.html#_browser_notifications"
+            target="_blank"
+          >
+            <gr-icon icon="help" title="read documentation"> </gr-icon>
+          </a>
+        </div>
         <span class="value">
           <input checked="" id="allowBrowserNotifications" type="checkbox" />
         </span>
@@ -537,10 +544,8 @@ suite('gr-settings-view tests', () => {
 
   test('calls the title-change event', async () => {
     const titleChangedStub = sinon.stub();
-
-    // Create a new view.
     const newElement = document.createElement('gr-settings-view');
-    newElement.addEventListener('title-change', titleChangedStub);
+    document.addEventListener('title-change', titleChangedStub);
 
     const div = await fixture(html`<div></div>`);
     div.appendChild(newElement);
@@ -907,7 +912,7 @@ suite('gr-settings-view tests', () => {
       await element._testOnly_loadingPromise;
       assert.equal(
         (dispatchEventSpy.lastCall.args[0] as CustomEvent).type,
-        EventType.SHOW_ALERT
+        'show-alert'
       );
       assert.deepEqual(
         (dispatchEventSpy.lastCall.args[0] as CustomEvent).detail,

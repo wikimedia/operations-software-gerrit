@@ -14,20 +14,20 @@
 
 package com.google.gerrit.server.query.change;
 
-import com.google.gerrit.index.FieldDef;
+import com.google.gerrit.index.SchemaFieldDefs.SchemaField;
 import com.google.gerrit.index.query.HasCardinality;
 
 public class ChangeIndexCardinalPredicate extends ChangeIndexPredicate implements HasCardinality {
   protected final int cardinality;
 
   protected ChangeIndexCardinalPredicate(
-      FieldDef<ChangeData, ?> def, String value, int cardinality) {
+      SchemaField<ChangeData, ?> def, String value, int cardinality) {
     super(def, value);
     this.cardinality = cardinality;
   }
 
   protected ChangeIndexCardinalPredicate(
-      FieldDef<ChangeData, ?> def, String name, String value, int cardinality) {
+      SchemaField<ChangeData, ?> def, String name, String value, int cardinality) {
     super(def, name, value);
     this.cardinality = cardinality;
   }

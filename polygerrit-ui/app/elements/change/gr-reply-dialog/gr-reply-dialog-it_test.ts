@@ -7,11 +7,11 @@ import '../../../test/common-test-setup';
 import './gr-reply-dialog';
 import {
   queryAndAssert,
-  resetPlugins,
   stubRestApi,
   waitEventLoop,
+  waitUntil,
 } from '../../../test/test-utils';
-import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
+
 import {GrReplyDialog} from './gr-reply-dialog';
 import {fixture, html, assert} from '@open-wc/testing';
 import {
@@ -22,6 +22,11 @@ import {
 } from '../../../types/common';
 import {createChange} from '../../../test/test-data-generators';
 import {GrButton} from '../../shared/gr-button/gr-button';
+import {testResolver} from '../../../test/common-test-setup';
+import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
+import {GrComment} from '../../shared/gr-comment/gr-comment';
+import {createNewPatchsetLevel} from '../../../utils/comment-util';
+import {commentsModelToken} from '../../../models/comments/comments-model';
 
 suite('gr-reply-dialog-it tests', () => {
   let element: GrReplyDialog;
@@ -59,6 +64,9 @@ suite('gr-reply-dialog-it tests', () => {
       'Code-Review': ['-1', ' 0', '+1'],
       Verified: ['-1', ' 0', '+1'],
     };
+    testResolver(commentsModelToken).addNewDraft(
+      createNewPatchsetLevel(latestPatchNum, '', false)
+    );
   };
 
   setup(async () => {
@@ -80,10 +88,6 @@ suite('gr-reply-dialog-it tests', () => {
     await element.updateComplete;
   });
 
-  teardown(() => {
-    resetPlugins();
-  });
-
   test('submit blocked when invalid email is supplied to ccs', async () => {
     const sendStub = sinon.stub(element, 'send').returns(Promise.resolve());
 
@@ -99,11 +103,15 @@ suite('gr-reply-dialog-it tests', () => {
   });
 
   test('lgtm plugin', async () => {
-    resetPlugins();
+    const attachStub = sinon.stub();
+    const callbackStub = sinon.stub();
     window.Gerrit.install(
       plugin => {
         const replyApi = plugin.changeReply();
+        const hook = plugin.hook('reply-text');
+        hook.onAttached(attachStub);
         replyApi.addReplyTextChangedCallback(text => {
+          callbackStub(text);
           const label = 'Code-Review';
           const labelValue = replyApi.getLabelValue(label);
           if (labelValue && labelValue === ' 0' && text.indexOf('LGTM') === 0) {
@@ -116,17 +124,29 @@ suite('gr-reply-dialog-it tests', () => {
     );
     element = await fixture(html`<gr-reply-dialog></gr-reply-dialog>`);
     setupElement(element);
-    getPluginLoader().loadPlugins([]);
-    await getPluginLoader().awaitPluginsLoaded();
-    await waitEventLoop();
-    await waitEventLoop();
+    const pluginLoader = testResolver(pluginLoaderToken);
+    pluginLoader.loadPlugins([]);
+    // This may seem a bit weird, but we have to somehow make sure that the
+    // event listener is actually installed, and apparently a `gr-comment` is
+    // attached twice inside the 'reply-text' endpoint. Could not find a better
+    // way to make sure that the callback is ready to receive events.
+    await waitUntil(() => attachStub.callCount === 2);
+
+    const comment = queryAndAssert<GrComment>(
+      element,
+      'gr-comment#patchsetLevelComment'
+    );
+    comment.messageText = 'LGTM';
+
+    await waitUntil(() => callbackStub.calledWith('LGTM'));
+
     const labelScoreRows = queryAndAssert(
       element.getLabelScores(),
       'gr-label-score-row[name="Code-Review"]'
     );
     const selectedBtn = queryAndAssert(
       labelScoreRows,
-      'gr-button[data-value="+1"]'
+      'gr-button[data-value="+1"].iron-selected'
     );
     assert.isOk(selectedBtn);
   });

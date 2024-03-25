@@ -6,8 +6,6 @@
 import '@polymer/iron-input/iron-input';
 import '../../../styles/gr-form-styles';
 import '../../../styles/shared-styles';
-import {encodeURL, getBaseUrl} from '../../../utils/url-util';
-import {page} from '../../../utils/page-wrapper-utils';
 import {GroupName} from '../../../types/common';
 import {getAppContext} from '../../../services/app-context';
 import {formStyles} from '../../../styles/gr-form-styles';
@@ -15,11 +13,17 @@ import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, css, html} from 'lit';
 import {customElement, query, property} from 'lit/decorators.js';
 import {BindValueChangeEvent} from '../../../types/events';
-import {fireEvent} from '../../../utils/event-util';
+import {fire} from '../../../utils/event-util';
+import {createGroupUrl} from '../../../models/views/group';
+import {resolve} from '../../../models/dependency';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 
 declare global {
   interface HTMLElementTagNameMap {
     'gr-create-group-dialog': GrCreateGroupDialog;
+  }
+  interface HTMLElementEventMap {
+    'has-new-group-name': CustomEvent<{}>;
   }
 }
 
@@ -31,6 +35,8 @@ export class GrCreateGroupDialog extends LitElement {
   name: GroupName | '' = '';
 
   private readonly restApiService = getAppContext().restApiService;
+
+  private readonly getNavigation = resolve(this, navigationToken);
 
   static override get styles() {
     return [
@@ -72,11 +78,7 @@ export class GrCreateGroupDialog extends LitElement {
   }
 
   private updateGroupName() {
-    fireEvent(this, 'has-new-group-name');
-  }
-
-  private computeGroupUrl(groupId: string) {
-    return getBaseUrl() + '/admin/groups/' + encodeURL(groupId, true);
+    fire(this, 'has-new-group-name', {});
   }
 
   override focus() {
@@ -89,7 +91,7 @@ export class GrCreateGroupDialog extends LitElement {
       if (groupRegistered.status !== 201) return;
       return this.restApiService.getGroupConfig(name).then(group => {
         if (!group) return;
-        page.show(this.computeGroupUrl(String(group.group_id!)));
+        this.getNavigation().setUrl(createGroupUrl({groupId: group.id}));
       });
     });
   }

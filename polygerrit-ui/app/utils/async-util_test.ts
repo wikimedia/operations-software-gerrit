@@ -6,10 +6,46 @@
 import {assert} from '@open-wc/testing';
 import {SinonFakeTimers} from 'sinon';
 import '../test/common-test-setup';
-import {waitEventLoop} from '../test/test-utils';
-import {asyncForeach, debounceP} from './async-util';
+import {mockPromise, waitEventLoop, waitUntil} from '../test/test-utils';
+import {
+  asyncForeach,
+  debounceP,
+  DelayedTask,
+  interactivePromise,
+  timeoutPromise,
+} from './async-util';
 
 suite('async-util tests', () => {
+  suite('interactivePromise', () => {
+    test('simple test', async () => {
+      let resolved = false;
+      const promise = interactivePromise();
+      promise.then(() => (resolved = true));
+      assert.isFalse(resolved);
+      promise.resolve();
+      await promise;
+      assert.isTrue(resolved);
+    });
+  });
+
+  suite('timeoutPromise', () => {
+    let clock: SinonFakeTimers;
+    setup(() => {
+      clock = sinon.useFakeTimers();
+    });
+    test('simple test', async () => {
+      let resolved = false;
+      const promise = timeoutPromise(1000);
+      promise.then(() => (resolved = true));
+      assert.isFalse(resolved);
+      clock.tick(999);
+      assert.isFalse(resolved);
+      clock.tick(1);
+      await promise;
+      assert.isTrue(resolved);
+    });
+  });
+
   suite('asyncForeach', () => {
     test('loops over each item', async () => {
       const fn = sinon.stub().resolves();
@@ -204,5 +240,17 @@ suite('async-util tests', () => {
       promise1.cancel();
       await waitEventLoop();
     });
+  });
+
+  test('DelayedTask promise resolved when callback is done', async () => {
+    const callbackPromise = mockPromise<void>();
+    const task = new DelayedTask(() => callbackPromise);
+    let completed = false;
+    task.promise.then(() => (completed = true));
+    await waitUntil(() => !task.isActive());
+
+    assert.isFalse(completed);
+    callbackPromise.resolve();
+    await waitUntil(() => completed);
   });
 });

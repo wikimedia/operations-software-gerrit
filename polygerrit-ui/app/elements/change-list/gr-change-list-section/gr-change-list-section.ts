@@ -15,12 +15,13 @@ import {fontStyles} from '../../../styles/gr-font-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {Metadata} from '../../../utils/change-metadata-util';
 import {WAITING} from '../../../constants/constants';
-import {provide} from '../../../models/dependency';
+import {provide, resolve} from '../../../models/dependency';
 import {
   bulkActionsModelToken,
   BulkActionsModel,
 } from '../../../models/bulk-actions/bulk-actions-model';
 import {createSearchUrl} from '../../../models/views/search';
+import {userModelToken} from '../../../models/user/user-model';
 import {subscribe} from '../../lit/subscription-controller';
 import {classMap} from 'lit/directives/class-map.js';
 
@@ -101,8 +102,7 @@ export class GrChangeListSection extends LitElement {
     getAppContext().restApiService
   );
 
-  // Private but used in test.
-  userModel = getAppContext().userModel;
+  private readonly getUserModel = resolve(this, userModelToken);
 
   private isLoggedIn = false;
 
@@ -160,7 +160,7 @@ export class GrChangeListSection extends LitElement {
     );
     subscribe(
       this,
-      () => this.userModel.loggedIn$,
+      () => this.getUserModel().loggedIn$,
       isLoggedIn => (this.isLoggedIn = isLoggedIn)
     );
   }

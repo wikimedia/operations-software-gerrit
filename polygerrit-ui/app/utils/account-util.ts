@@ -13,7 +13,6 @@ import {
   isAccount,
   isDetailedLabelInfo,
   isGroup,
-  NumericChangeId,
   ReviewerInput,
   ServerInfo,
   UserId,
@@ -22,13 +21,11 @@ import {
 } from '../types/common';
 import {AccountTag, ReviewerState} from '../constants/constants';
 import {assertNever, hasOwnProperty} from './common-util';
-import {getAccountDisplayName, getDisplayName} from './display-name-util';
+import {getDisplayName} from './display-name-util';
 import {getApprovalInfo} from './label-util';
-import {RestApiService} from '../services/gr-rest-api/gr-rest-api';
 import {ParsedChangeInfo} from '../types/types';
 
 export const ACCOUNT_TEMPLATE_REGEX = '<GERRIT_ACCOUNT_(\\d+)>';
-const SUGGESTIONS_LIMIT = 15;
 // https://html.spec.whatwg.org/multipage/input.html#valid-e-mail-address
 export const MENTIONS_REGEX =
   /(?:^|\s)@([a-zA-Z0-9.!#$%&'*+=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*)(?=\s+|$)/g;
@@ -123,6 +120,17 @@ export function uniqueDefinedAvatar(
   );
 }
 
+export function uniqueAccountId(
+  account: AccountInfo,
+  index: number,
+  accountArray: AccountInfo[]
+) {
+  return (
+    index ===
+    accountArray.findIndex(other => account._account_id === other._account_id)
+  );
+}
+
 export function isDetailedAccount(account?: AccountInfo) {
   // In case ChangeInfo is requested without DetailedAccount option, the
   // reviewer entry is returned as just {_account_id: 123}
@@ -214,28 +222,6 @@ export function computeVoteableText(change: ChangeInfo, reviewer: AccountInfo) {
     maxScores.push(`${label}: ${scoreLabel}`);
   }
   return maxScores.join(', ');
-}
-
-export function getAccountSuggestions(
-  input: string,
-  restApiService: RestApiService,
-  config?: ServerInfo,
-  canSee?: NumericChangeId,
-  filterActive = false
-) {
-  return restApiService
-    .getSuggestedAccounts(input, SUGGESTIONS_LIMIT, canSee, filterActive)
-    .then(accounts => {
-      if (!accounts) return [];
-      const accountSuggestions = [];
-      for (const account of accounts) {
-        accountSuggestions.push({
-          name: getAccountDisplayName(config, account),
-          value: account._account_id?.toString(),
-        });
-      }
-      return accountSuggestions;
-    });
 }
 
 /**

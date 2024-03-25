@@ -25,9 +25,7 @@ import {
 } from '../../../types/common';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {GrAutocomplete} from '../../shared/gr-autocomplete/gr-autocomplete';
-import {EventType, PageErrorEvent} from '../../../types/events';
-import {getAccountSuggestions} from '../../../utils/account-util';
-import {getAppContext} from '../../../services/app-context';
+import {PageErrorEvent} from '../../../types/events';
 import {fixture, html, assert} from '@open-wc/testing';
 import {createServerInfo} from '../../../test/test-data-generators';
 
@@ -346,16 +344,10 @@ suite('gr-group-members tests', () => {
             </div>
           </div>
         </div>
-        <gr-overlay
-          aria-hidden="true"
-          id="overlay"
-          style="outline: none; display: none;"
-          tabindex="-1"
-          with-backdrop=""
-        >
+        <dialog id="modal" tabindex="-1">
           <gr-confirm-delete-item-dialog class="confirmDialog">
           </gr-confirm-delete-item-dialog>
-        </gr-overlay>
+        </dialog>
       `
     );
   });
@@ -452,7 +444,7 @@ suite('gr-group-members tests', () => {
 
     const memberName = 'bad-name';
     const alertStub = sinon.stub();
-    element.addEventListener(EventType.SHOW_ALERT, alertStub);
+    element.addEventListener('show-alert', alertStub);
     const errorResponse = {...new Response(), status: 404, ok: false};
     stubRestApi('saveIncludedGroup').callsFake((_, _non, errFn) => {
       if (errFn !== undefined) {
@@ -498,18 +490,16 @@ suite('gr-group-members tests', () => {
   });
 
   test('getAccountSuggestions empty', async () => {
-    const accounts = await getAccountSuggestions(
+    const accounts = await element.getAccountSuggestions(
       'nonexistent',
-      getAppContext().restApiService,
       createServerInfo()
     );
     assert.equal(accounts.length, 0);
   });
 
   test('getAccountSuggestions non-empty', async () => {
-    const accounts = await getAccountSuggestions(
+    const accounts = await element.getAccountSuggestions(
       'test-',
-      getAppContext().restApiService,
       createServerInfo()
     );
     assert.equal(accounts.length, 3);
@@ -540,12 +530,18 @@ suite('gr-group-members tests', () => {
     deleteBtns[0].click();
     assert.equal(element.itemId, 1000097 as AccountId);
     assert.equal(element.itemName, 'jane');
+    queryAndAssert<HTMLDialogElement>(element, 'dialog').close();
+
     deleteBtns[1].click();
     assert.equal(element.itemId, 1000096 as AccountId);
     assert.equal(element.itemName, 'Test User');
+    queryAndAssert<HTMLDialogElement>(element, 'dialog').close();
+
     deleteBtns[2].click();
     assert.equal(element.itemId, 1000095 as AccountId);
     assert.equal(element.itemName, 'Gerrit');
+    queryAndAssert<HTMLDialogElement>(element, 'dialog').close();
+
     deleteBtns[3].click();
     assert.equal(element.itemId, 1000098 as AccountId);
     assert.equal(element.itemName, '1000098');
@@ -559,9 +555,13 @@ suite('gr-group-members tests', () => {
     deleteBtns[0].click();
     assert.equal(element.itemId, 'testId' as GroupId);
     assert.equal(element.itemName, 'testName');
+    queryAndAssert<HTMLDialogElement>(element, 'dialog').close();
+
     deleteBtns[1].click();
     assert.equal(element.itemId, 'testId2' as GroupId);
     assert.equal(element.itemName, 'testName2');
+    queryAndAssert<HTMLDialogElement>(element, 'dialog').close();
+
     deleteBtns[2].click();
     assert.equal(element.itemId, 'testId3' as GroupId);
     assert.equal(element.itemName, 'testName3');

@@ -18,6 +18,7 @@ import com.google.auto.value.AutoAnnotation;
 import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
+import com.google.gerrit.common.Nullable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -27,6 +28,7 @@ import org.eclipse.jgit.lib.Config;
 public class ConfigAnnotationParser {
   private static Splitter splitter = Splitter.on(".").trimResults();
 
+  @Nullable
   public static Config parse(Config base, GerritConfigs annotation) {
     if (annotation == null) {
       return null;
@@ -55,6 +57,7 @@ public class ConfigAnnotationParser {
     System.setProperty(annotation.name(), annotation.value());
   }
 
+  @Nullable
   public static Map<String, Config> parse(GlobalPluginConfigs annotation) {
     if (annotation == null || annotation.value().length < 1) {
       return null;
@@ -77,6 +80,7 @@ public class ConfigAnnotationParser {
     return result;
   }
 
+  @Nullable
   public static Map<String, Config> parse(GlobalPluginConfig annotation) {
     if (annotation == null) {
       return null;

@@ -17,8 +17,10 @@ package com.google.gerrit.pgm.init.api;
 import com.google.errorprone.annotations.FormatMethod;
 import com.google.errorprone.annotations.FormatString;
 import com.google.gerrit.common.Die;
+import com.google.gerrit.common.Nullable;
 import java.io.Console;
 import java.util.EnumSet;
+import java.util.Locale;
 import java.util.Set;
 
 /** Console based interaction with the invoking user. */
@@ -164,21 +166,22 @@ public abstract class ConsoleUI {
         String def, Set<String> allowedValues, @FormatString String fmt, Object... args) {
       for (; ; ) {
         String r = readString(def, fmt, args);
-        if (allowedValues.contains(r.toLowerCase())) {
-          return r.toLowerCase();
+        if (allowedValues.contains(r.toLowerCase(Locale.US))) {
+          return r.toLowerCase(Locale.US);
         }
         if (!"?".equals(r)) {
           console.printf("error: '%s' is not a valid choice\n", r);
         }
         console.printf("       Supported options are:\n");
         for (String v : allowedValues) {
-          console.printf("         %s\n", v.toLowerCase());
+          console.printf("         %s\n", v.toLowerCase(Locale.US));
         }
       }
     }
 
     @Override
     @FormatMethod
+    @Nullable
     public String password(String fmt, Object... args) {
       final String prompt = String.format(fmt, args);
       for (; ; ) {
@@ -208,7 +211,8 @@ public abstract class ConsoleUI {
         T def, A options, String fmt, Object... args) {
       final String prompt = String.format(fmt, args);
       for (; ; ) {
-        String r = console.readLine("%-30s [%s/?]: ", prompt, def.toString().toLowerCase());
+        String r =
+            console.readLine("%-30s [%s/?]: ", prompt, def.toString().toLowerCase(Locale.US));
         if (r == null) {
           throw abort();
         }
@@ -226,7 +230,7 @@ public abstract class ConsoleUI {
         }
         console.printf("       Supported options are:\n");
         for (T e : options) {
-          console.printf("         %s\n", e.toString().toLowerCase());
+          console.printf("         %s\n", e.toString().toLowerCase(Locale.US));
         }
       }
     }

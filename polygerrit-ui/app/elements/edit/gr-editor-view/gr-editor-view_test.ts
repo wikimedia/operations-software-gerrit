@@ -13,7 +13,6 @@ import {
   pressKey,
   query,
   stubRestApi,
-  stubStorage,
 } from '../../../test/test-utils';
 import {
   EDIT,
@@ -28,23 +27,23 @@ import {GrEndpointDecorator} from '../../plugins/gr-endpoint-decorator/gr-endpoi
 import {GrDefaultEditor} from '../gr-default-editor/gr-default-editor';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {fixture, html, assert} from '@open-wc/testing';
-import {EventType} from '../../../types/events';
 import {Modifier} from '../../../utils/dom-util';
 import {testResolver} from '../../../test/common-test-setup';
+import {storageServiceToken} from '../../../services/storage/gr-storage_impl';
+import {StorageService} from '../../../services/storage/gr-storage';
 
 suite('gr-editor-view tests', () => {
   let element: GrEditorView;
 
   let savePathStub: sinon.SinonStub;
   let saveFileStub: sinon.SinonStub;
-  let changeDetailStub: sinon.SinonStub;
   let navigateStub: sinon.SinonStub;
+  let storageService: StorageService;
 
   setup(async () => {
     element = await fixture(html`<gr-editor-view></gr-editor-view>`);
     savePathStub = stubRestApi('renameFileInChangeEdit');
     saveFileStub = stubRestApi('saveChangeEdit');
-    changeDetailStub = stubRestApi('getChangeDetail');
     navigateStub = sinon.stub(element, 'viewEditInChangeView');
     element.viewState = {
       ...createEditViewState(),
@@ -52,6 +51,7 @@ suite('gr-editor-view tests', () => {
     };
     element.latestPatchsetNumber = 1 as RevisionPatchSetNum;
     await element.updateComplete;
+    storageService = testResolver(storageServiceToken);
   });
 
   test('render', () => {
@@ -68,7 +68,7 @@ suite('gr-editor-view tests', () => {
                 labeltext="File path"
                 placeholder="File path..."
                 tabindex="0"
-                title="${element.viewState?.path}"
+                title="${element.viewState?.editView?.path}"
               >
               </gr-editable-label>
             </span>
@@ -115,6 +115,7 @@ suite('gr-editor-view tests', () => {
             <gr-endpoint-param name="prefs"> </gr-endpoint-param>
             <gr-endpoint-param name="fileType"> </gr-endpoint-param>
             <gr-endpoint-param name="lineNum"> </gr-endpoint-param>
+            <gr-endpoint-param name="darkMode"> </gr-endpoint-param>
             <gr-default-editor id="file"> </gr-default-editor>
           </gr-endpoint-decorator>
         </div>
@@ -124,7 +125,6 @@ suite('gr-editor-view tests', () => {
 
   suite('viewStateChanged', () => {
     test('good view state proceed', async () => {
-      changeDetailStub.returns(Promise.resolve({}));
       const fileStub = sinon.stub(element, 'getFileData').callsFake(() => {
         element.content = 'text';
         element.newContent = 'text';
@@ -137,8 +137,6 @@ suite('gr-editor-view tests', () => {
 
       await element.updateComplete;
 
-      const changeNum = 42 as NumericChangeId;
-      assert.deepEqual(changeDetailStub.lastCall.args[0], changeNum);
       assert.isTrue(fileStub.called);
 
       return promises?.then(() => {
@@ -177,7 +175,7 @@ suite('gr-editor-view tests', () => {
   });
 
   test('reacts to content-change event', async () => {
-    const storageStub = stubStorage('setEditableContentItem');
+    const storageStub = sinon.stub(storageService, 'setEditableContentItem');
     element.newContent = 'test';
     await element.updateComplete;
     query<GrEndpointDecorator>(element, '#editorEndpoint')!.dispatchEvent(
@@ -218,7 +216,7 @@ suite('gr-editor-view tests', () => {
 
     test('file modification and save, !ok response', async () => {
       const saveSpy = sinon.spy(element, 'saveEdit');
-      const eraseStub = stubStorage('eraseEditableContentItem');
+      const eraseStub = sinon.stub(storageService, 'eraseEditableContentItem');
       const alertStub = sinon.stub(element, 'showAlert');
       saveFileStub.returns(Promise.resolve({ok: false}));
       element.newContent = newText;
@@ -354,7 +352,7 @@ suite('gr-editor-view tests', () => {
       element.newContent = 'initial';
       element.content = 'initial';
       element.type = 'initial';
-      stubStorage('getEditableContentItem').returns(null);
+      sinon.stub(storageService, 'getEditableContentItem').returns(null);
     });
 
     test('res.ok', () => {
@@ -369,7 +367,7 @@ suite('gr-editor-view tests', () => {
         ...createEditViewState(),
         changeNum: 1 as NumericChangeId,
         patchNum: EDIT,
-        path: 'test/path',
+        editView: {path: 'test/path'},
       };
 
       // Ensure no data is set with a bad response.
@@ -388,7 +386,7 @@ suite('gr-editor-view tests', () => {
         ...createEditViewState(),
         changeNum: 1 as NumericChangeId,
         patchNum: EDIT,
-        path: 'test/path',
+        editView: {path: 'test/path'},
       };
 
       // Ensure no data is set with a bad response.
@@ -411,7 +409,7 @@ suite('gr-editor-view tests', () => {
         ...createEditViewState(),
         changeNum: 1 as NumericChangeId,
         patchNum: EDIT,
-        path: 'test/path',
+        editView: {path: 'test/path'},
       };
 
       return element.getFileData().then(() => {
@@ -429,7 +427,7 @@ suite('gr-editor-view tests', () => {
         ...createEditViewState(),
         changeNum: 1 as NumericChangeId,
         patchNum: EDIT,
-        path: 'test/path',
+        editView: {path: 'test/path'},
       };
 
       return element.getFileData().then(() => {
@@ -442,7 +440,7 @@ suite('gr-editor-view tests', () => {
 
   test('showAlert', async () => {
     const promise = mockPromise();
-    element.addEventListener(EventType.SHOW_ALERT, e => {
+    element.addEventListener('show-alert', e => {
       assert.deepEqual(e.detail, {message: 'test message', showDismiss: true});
       assert.isTrue(e.bubbles);
       promise.resolve();
@@ -511,7 +509,7 @@ suite('gr-editor-view tests', () => {
 
   suite('gr-storage caching', () => {
     test('local edit exists', () => {
-      stubStorage('getEditableContentItem').returns({
+      sinon.stub(storageService, 'getEditableContentItem').returns({
         message: 'pending edit',
         updated: 0,
       });
@@ -526,11 +524,11 @@ suite('gr-editor-view tests', () => {
         ...createEditViewState(),
         changeNum: 1 as NumericChangeId,
         patchNum: 1 as RevisionPatchSetNum,
-        path: 'test',
+        editView: {path: 'test'},
       };
 
       const alertStub = sinon.stub();
-      element.addEventListener(EventType.SHOW_ALERT, alertStub);
+      element.addEventListener('show-alert', alertStub);
 
       return element.getFileData().then(async () => {
         await element.updateComplete;
@@ -543,7 +541,7 @@ suite('gr-editor-view tests', () => {
     });
 
     test('local edit exists, is same as remote edit', () => {
-      stubStorage('getEditableContentItem').returns({
+      sinon.stub(storageService, 'getEditableContentItem').returns({
         message: 'pending edit',
         updated: 0,
       });
@@ -558,11 +556,11 @@ suite('gr-editor-view tests', () => {
         ...createEditViewState(),
         changeNum: 1 as NumericChangeId,
         patchNum: 1 as RevisionPatchSetNum,
-        path: 'test',
+        editView: {path: 'test'},
       };
 
       const alertStub = sinon.stub();
-      element.addEventListener(EventType.SHOW_ALERT, alertStub);
+      element.addEventListener('show-alert', alertStub);
 
       return element.getFileData().then(async () => {
         await element.updateComplete;
@@ -579,7 +577,7 @@ suite('gr-editor-view tests', () => {
         ...createEditViewState(),
         changeNum: 1 as NumericChangeId,
         patchNum: 1 as RevisionPatchSetNum,
-        path: 'test',
+        editView: {path: 'test'},
       };
       assert.equal(element.storageKey, 'c1_ps1_test');
     });

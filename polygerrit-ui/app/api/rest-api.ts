@@ -142,9 +142,9 @@ export enum ProblemInfoStatus {
 }
 
 /**
- * The state of the projects
+ * The state of the repository
  */
-export enum ProjectState {
+export enum RepoState {
   ACTIVE = 'ACTIVE',
   READ_ONLY = 'READ_ONLY',
   HIDDEN = 'HIDDEN',
@@ -452,12 +452,11 @@ export type CloneCommandMap = {[name: string]: string};
  */
 export declare interface CommentLinkInfo {
   match: string;
-  link?: string;
+  link: string;
   prefix?: string;
   suffix?: string;
   text?: string;
   enabled?: boolean;
-  html?: string;
 }
 
 export declare interface CommentLinks {
@@ -489,7 +488,7 @@ export declare interface ConfigArrayParameterInfo
 
 /**
  * The ConfigInfo entity contains information about the effective
- * project configuration.
+ * repository configuration.
  * https://gerrit-review.googlesource.com/Documentation/rest-api-projects.html#config-info
  */
 export declare interface ConfigInfo {
@@ -508,12 +507,39 @@ export declare interface ConfigInfo {
   default_submit_type: SubmitTypeInfo;
   submit_type: SubmitType;
   match_author_to_committer_date?: InheritedBooleanInfo;
-  state?: ProjectState;
+  state?: RepoState;
   commentlinks: CommentLinks;
   plugin_config?: PluginNameToPluginParametersMap;
   actions?: {[viewName: string]: ActionInfo};
   reject_empty_commit?: InheritedBooleanInfo;
   enable_reviewer_by_email: InheritedBooleanInfo;
+}
+
+/**
+ * The CommentRange entity describes the range of an inline comment.
+ * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#comment-range
+ *
+ * The range includes all characters from the start position, specified by
+ * start_line and start_character, to the end position, specified by end_line
+ * and end_character. The start position is inclusive and the end position is
+ * exclusive.
+ *
+ * So, a range over part of a line will have start_line equal to end_line;
+ * however a range with end_line set to 5 and end_character equal to 0 will not
+ * include any characters on line 5.
+ */
+export declare interface CommentRange {
+  /** The start line number of the range. (1-based) */
+  start_line: number;
+
+  /** The character position in the start line. (0-based) */
+  start_character: number;
+
+  /** The end line number of the range. (1-based) */
+  end_line: number;
+
+  /** The character position in the end line. (0-based) */
+  end_character: number;
 }
 
 export declare interface ConfigListParameterInfo
@@ -619,6 +645,8 @@ export declare interface FileInfo {
   lines_deleted?: number;
   size_delta?: number; // in bytes
   size?: number; // in bytes
+  old_mode?: number;
+  new_mode?: number;
 }
 
 /**
@@ -668,7 +696,6 @@ export declare interface GitPersonInfo {
   name: string;
   email: EmailAddress;
   date: Timestamp;
-  tz: TimezoneOffset;
 }
 
 export type GroupId = BrandType<string, '_groupId'>;
@@ -740,7 +767,7 @@ export type LabelInfo =
 export type LabelNameToLabelTypeInfoMap = {[labelName: string]: LabelTypeInfo};
 
 /**
- * The LabelTypeInfo entity contains metadata about the labels that a project
+ * The LabelTypeInfo entity contains metadata about the labels that a repository
  * has.
  * https://gerrit-review.googlesource.com/Documentation/rest-api-projects.html#label-type-info
  */
@@ -756,7 +783,7 @@ export type LabelValueToDescriptionMap = {[labelValue: string]: string};
 
 /**
  * The MaxObjectSizeLimitInfo entity contains information about the max object
- * size limit of a project.
+ * size limit of a repository.
  * https://gerrit-review.googlesource.com/Documentation/rest-api-projects.html#max-object-size-limit-info
  */
 export declare interface MaxObjectSizeLimitInfo {
@@ -835,23 +862,23 @@ export declare interface ProblemInfo {
 }
 
 /**
- * The ProjectInfo entity contains information about a project
+ * The ProjectInfo entity contains information about a repository
  * https://gerrit-review.googlesource.com/Documentation/rest-api-projects.html#project-info
  */
 export declare interface ProjectInfo {
   id: UrlEncodedRepoName;
-  // name is not set if returned in a map where the project name is used as
+  // name is not set if returned in a map where the repo name is used as
   // map key
   name?: RepoName;
-  // ?-<n> if the parent project is not visible (<n> is a number which
-  // is increased for each non-visible project).
+  // ?-<n> if the parent repository is not visible (<n> is a number which
+  // is increased for each non-visible repository).
   parent?: RepoName;
   description?: string;
-  state?: ProjectState;
+  state?: RepoState;
   branches?: {[branchName: string]: CommitId};
-  // labels is filled for Create Project and Get Project calls.
+  // labels is filled for Create Repo and Get Repo calls.
   labels?: LabelNameToLabelTypeInfoMap;
-  // Links to the project in external sites
+  // Links to the repository in external sites
   web_links?: WebLinkInfo[];
 }
 
@@ -1005,8 +1032,8 @@ export type StarLabel = BrandType<string, '_startLabel'>;
 // where "'ffffffffff'" represents nanoseconds.
 
 /**
- * Information about the default submittype of a project, taking into account
- * project inheritance.
+ * Information about the default submittype of a repository, taking into account
+ * repository inheritance.
  * https://gerrit-review.googlesource.com/Documentation/rest-api-projects.html#submit-type-info
  */
 export declare interface SubmitTypeInfo {
@@ -1026,8 +1053,6 @@ export declare interface SuggestInfo {
 
 export type Timestamp = BrandType<string, '_timestamp'>;
 // The timezone offset from UTC in minutes
-
-export type TimezoneOffset = BrandType<number, '_timezoneOffset'>;
 
 export type TopicName = BrandType<string, '_topicName'>;
 
@@ -1067,14 +1092,14 @@ export declare interface VotingRangeInfo {
  * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#web-link-info
  */
 export declare interface WebLinkInfo {
-  /** The link name. */
+  /** The text to be linkified. */
   name: string;
+  /** Tooltip to show when hovering over the link. */
+  tooltip?: string;
   /** The link URL. */
   url: string;
   /** URL to the icon of the link. */
   image_url?: string;
-  /* Value of the "target" attribute for anchor elements. */
-  target?: string;
 }
 
 /**
@@ -1169,7 +1194,7 @@ export enum LabelStatus {
   /**
    * The label is required for submission, but is impossible to complete.
    * The likely cause is access has not been granted correctly by the
-   * project owner or site administrator.
+   * repository owner or site administrator.
    */
   IMPOSSIBLE = 'IMPOSSIBLE',
   OPTIONAL = 'OPTIONAL',

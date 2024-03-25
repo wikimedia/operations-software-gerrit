@@ -22,6 +22,7 @@ import static com.google.gerrit.server.group.SystemGroupBackend.ANONYMOUS_USERS;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
 import static com.google.gerrit.server.schema.AclUtil.grant;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
+import static com.google.gerrit.testing.TestActionRefUpdateContext.testRefAction;
 import static com.google.gerrit.truth.ConfigSubject.assertThat;
 import static com.google.gerrit.truth.MapSubject.assertThatMap;
 import static java.util.Arrays.asList;
@@ -67,6 +68,7 @@ import com.google.gerrit.server.group.testing.TestGroupBackend;
 import com.google.gerrit.server.project.ProjectConfig;
 import com.google.gerrit.server.schema.GrantRevertPermission;
 import com.google.inject.Inject;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -74,6 +76,7 @@ import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.RefUpdate.Result;
 import org.eclipse.jgit.lib.Repository;
@@ -238,7 +241,7 @@ public class AccessIT extends AbstractDaemonTest {
         Registration registration = newFileHistoryWebLink()) {
       RefUpdate u = repo.updateRef(RefNames.REFS_CONFIG);
       u.setForceUpdate(true);
-      assertThat(u.delete()).isEqualTo(Result.FORCED);
+      testRefAction(() -> assertThat(u.delete()).isEqualTo(Result.FORCED));
 
       // This should not crash.
       pApi().access();
@@ -260,6 +263,38 @@ public class AccessIT extends AbstractDaemonTest {
     RevCommit updatedHead = projectOperations.project(newProjectName).getHead(RefNames.REFS_CONFIG);
     eventRecorder.assertRefUpdatedEvents(
         newProjectName.get(), RefNames.REFS_CONFIG, null, initialHead, initialHead, updatedHead);
+  }
+
+  @Test
+  public void addDuplicatedAccessSection_doesNotAddDuplicateEntry() throws Exception {
+    ProjectAccessInput accessInput = newProjectAccessInput();
+    AccessSectionInfo accessSectionInfo = createDefaultAccessSectionInfo();
+
+    // Update project config. Record the file content and the refs_config object ID
+    accessInput.add.put(REFS_HEADS, accessSectionInfo);
+    pApi().access(accessInput);
+    ObjectId refsConfigId =
+        projectOperations.project(newProjectName).getHead(RefNames.REFS_CONFIG).getId();
+    List<String> projectConfigLines =
+        Arrays.asList(projectOperations.project(newProjectName).getConfig().toText().split("\n"));
+    assertThat(projectConfigLines)
+        .containsExactly(
+            "[submit]",
+            "\taction = inherit",
+            "[access \"refs/heads/*\"]",
+            "\tlabel-Code-Review = deny group Registered Users",
+            "\tlabel-Code-Review = -1..+1 group Project Owners",
+            "\tpush = group Registered Users");
+
+    // Apply the same update once more. Make sure that the file content and the ref did not change
+    pApi().access(accessInput);
+
+    List<String> newProjectConfigLines =
+        Arrays.asList(projectOperations.project(newProjectName).getConfig().toText().split("\n"));
+    ObjectId newRefsConfigId =
+        projectOperations.project(newProjectName).getHead(RefNames.REFS_CONFIG).getId();
+    assertThat(projectConfigLines).isEqualTo(newProjectConfigLines);
+    assertThat(refsConfigId).isEqualTo(newRefsConfigId);
   }
 
   @Test
@@ -325,6 +360,79 @@ public class AccessIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void addAccessSectionWithInvalidLabelRange_minGreaterThanMax() throws Exception {
+    ProjectAccessInput accessInput = newProjectAccessInput();
+    AccessSectionInfo accessSectionInfo = createDefaultAccessSectionInfo();
+
+    PermissionInfo permissionInfo = newPermissionInfo();
+    PermissionRuleInfo permissionRuleInfo =
+        new PermissionRuleInfo(PermissionRuleInfo.Action.ALLOW, false);
+    permissionInfo.rules.put(SystemGroupBackend.REGISTERED_USERS.get(), permissionRuleInfo);
+    permissionRuleInfo.min = 1;
+    permissionRuleInfo.max = -1;
+    accessSectionInfo.permissions.put("label-Code-Review", permissionInfo);
+
+    accessInput.add.put(REFS_HEADS, accessSectionInfo);
+    BadRequestException ex =
+        assertThrows(BadRequestException.class, () -> pApi().access(accessInput));
+    assertThat(ex)
+        .hasMessageThat()
+        .isEqualTo(
+            String.format(
+                "Invalid range for permission rule that assigns label-Code-Review to group %s"
+                    + " on ref refs/heads/*: 1..-1 (min must be <= max)",
+                SystemGroupBackend.REGISTERED_USERS.get()));
+  }
+
+  @Test
+  public void addAccessSectionWithInvalidLabelRange_minSetMaxMissing() throws Exception {
+    ProjectAccessInput accessInput = newProjectAccessInput();
+    AccessSectionInfo accessSectionInfo = createDefaultAccessSectionInfo();
+
+    PermissionInfo permissionInfo = newPermissionInfo();
+    PermissionRuleInfo permissionRuleInfo =
+        new PermissionRuleInfo(PermissionRuleInfo.Action.ALLOW, false);
+    permissionInfo.rules.put(SystemGroupBackend.REGISTERED_USERS.get(), permissionRuleInfo);
+    permissionRuleInfo.min = -1;
+    accessSectionInfo.permissions.put("label-Code-Review", permissionInfo);
+
+    accessInput.add.put(REFS_HEADS, accessSectionInfo);
+    BadRequestException ex =
+        assertThrows(BadRequestException.class, () -> pApi().access(accessInput));
+    assertThat(ex)
+        .hasMessageThat()
+        .isEqualTo(
+            String.format(
+                "Invalid range for permission rule that assigns label-Code-Review to group %s"
+                    + " on ref refs/heads/*: -1.. (max is required if min is set)",
+                SystemGroupBackend.REGISTERED_USERS.get()));
+  }
+
+  @Test
+  public void addAccessSectionWithInvalidLabelRange_maxSetMinMissing() throws Exception {
+    ProjectAccessInput accessInput = newProjectAccessInput();
+    AccessSectionInfo accessSectionInfo = createDefaultAccessSectionInfo();
+
+    PermissionInfo permissionInfo = newPermissionInfo();
+    PermissionRuleInfo permissionRuleInfo =
+        new PermissionRuleInfo(PermissionRuleInfo.Action.ALLOW, false);
+    permissionInfo.rules.put(SystemGroupBackend.REGISTERED_USERS.get(), permissionRuleInfo);
+    permissionRuleInfo.max = 1;
+    accessSectionInfo.permissions.put("label-Code-Review", permissionInfo);
+
+    accessInput.add.put(REFS_HEADS, accessSectionInfo);
+    BadRequestException ex =
+        assertThrows(BadRequestException.class, () -> pApi().access(accessInput));
+    assertThat(ex)
+        .hasMessageThat()
+        .isEqualTo(
+            String.format(
+                "Invalid range for permission rule that assigns label-Code-Review to group %s"
+                    + " on ref refs/heads/*: ..1 (min is required if max is set)",
+                SystemGroupBackend.REGISTERED_USERS.get()));
+  }
+
+  @Test
   public void createAccessChangeNop() throws Exception {
     ProjectAccessInput accessInput = newProjectAccessInput();
     assertThrows(BadRequestException.class, () -> pApi().accessChange(accessInput));
@@ -335,7 +443,7 @@ public class AccessIT extends AbstractDaemonTest {
     try (Repository repo = repoManager.openRepository(newProjectName)) {
       RefUpdate ru = repo.updateRef(RefNames.REFS_CONFIG);
       ru.setForceUpdate(true);
-      assertThat(ru.delete()).isEqualTo(Result.FORCED);
+      testRefAction(() -> assertThat(ru.delete()).isEqualTo(Result.FORCED));
 
       ProjectAccessInput accessInput = newProjectAccessInput();
       AccessSectionInfo accessSection = newAccessSectionInfo();

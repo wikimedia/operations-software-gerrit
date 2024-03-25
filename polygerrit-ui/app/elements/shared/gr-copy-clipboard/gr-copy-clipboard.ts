@@ -39,6 +39,10 @@ export class GrCopyClipboard extends LitElement {
   @property({type: Boolean})
   hideInput = false;
 
+  // Optional property for toast to announce correct name of target that was copied
+  @property({type: String, reflect: true})
+  copyTargetName?: string;
+
   @query('#icon')
   iconEl!: GrIcon;
 
@@ -66,7 +70,10 @@ export class GrCopyClipboard extends LitElement {
           color: var(--primary-text-color);
         }
         gr-icon {
-          color: var(--deemphasized-text-color);
+          color: var(
+            --gr-copy-clipboard-icon-color,
+            var(--deemphasized-text-color)
+          );
         }
         gr-button {
           display: block;
@@ -105,7 +112,8 @@ export class GrCopyClipboard extends LitElement {
             link=""
             class="copyToClipboard"
             @click=${this._copyToClipboard}
-            aria-label="Click to copy to clipboard"
+            aria-label="copy"
+            aria-description="Click to copy to clipboard"
           >
             <div>
               <gr-icon id="icon" icon="content_copy" small></gr-icon>
@@ -133,7 +141,7 @@ export class GrCopyClipboard extends LitElement {
     this.text = queryAndAssert<HTMLInputElement>(this, '#input').value;
     assertIsDefined(this.text, 'text');
     this.iconEl.icon = 'check';
-    copyToClipbard(this.text, 'Link');
+    copyToClipbard(this.text, this.copyTargetName ?? 'Link');
     setTimeout(() => (this.iconEl.icon = 'content_copy'), COPY_TIMEOUT_MS);
   }
 }

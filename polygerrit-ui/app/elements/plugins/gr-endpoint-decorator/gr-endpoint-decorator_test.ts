@@ -8,12 +8,7 @@ import './gr-endpoint-decorator';
 import '../gr-endpoint-param/gr-endpoint-param';
 import '../gr-endpoint-slot/gr-endpoint-slot';
 import {fixture, html, assert} from '@open-wc/testing';
-import {
-  mockPromise,
-  queryAndAssert,
-  resetPlugins,
-} from '../../../test/test-utils';
-import {getPluginLoader} from '../../shared/gr-js-api-interface/gr-plugin-loader';
+import {mockPromise, queryAndAssert} from '../../../test/test-utils';
 import {GrEndpointDecorator} from './gr-endpoint-decorator';
 import {PluginApi} from '../../../api/plugin';
 import {GrEndpointParam} from '../gr-endpoint-param/gr-endpoint-param';
@@ -30,7 +25,6 @@ suite('gr-endpoint-decorator', () => {
   let banana: GrEndpointDecorator;
 
   setup(async () => {
-    resetPlugins();
     container = await fixture(
       html`<div>
         <gr-endpoint-decorator name="first">
@@ -100,16 +94,9 @@ suite('gr-endpoint-decorator', () => {
     const replacementHookPromise = mockPromise();
     replacementHook.onAttached(() => replacementHookPromise.resolve());
 
-    // Mimic all plugins loaded.
-    getPluginLoader().loadPlugins([]);
-
     await decorationHookPromise;
     await decorationHookSlotPromise;
     await replacementHookPromise;
-  });
-
-  teardown(() => {
-    resetPlugins();
   });
 
   test('imports plugin-provided modules into endpoints', () => {

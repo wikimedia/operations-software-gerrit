@@ -94,9 +94,21 @@ public class ReviewerModifier {
   public static final int DEFAULT_MAX_REVIEWERS_WITHOUT_CHECK = 10;
   public static final int DEFAULT_MAX_REVIEWERS = 20;
 
+  /**
+   * Controls which failures should be ignored.
+   *
+   * <p>If a failure is ignored the operation succeeds, but the reviewer is not added. If not
+   * ignored a failure means that the operation fails.
+   */
   public enum FailureBehavior {
+    // All failures cause the operation to fail.
     FAIL,
-    IGNORE;
+
+    // Only not found failures cause the operation to fail, all other failures are ignored.
+    IGNORE_EXCEPT_NOT_FOUND,
+
+    // All failures are ignored.
+    IGNORE_ALL;
   }
 
   private enum FailureType {
@@ -113,6 +125,9 @@ public class ReviewerModifier {
      * resolving to an account/group/email.
      */
     public FailureBehavior otherFailureBehavior = FailureBehavior.FAIL;
+
+    /** Whether the visibility check for the reviewer account should be skipped. */
+    public boolean skipVisibilityCheck = false;
   }
 
   public static InternalReviewerInput newReviewerInput(
@@ -143,7 +158,7 @@ public class ReviewerModifier {
     in.reviewer = accountId.toString();
     in.state = CC;
     in.notify = notify;
-    in.otherFailureBehavior = FailureBehavior.IGNORE;
+    in.otherFailureBehavior = FailureBehavior.IGNORE_ALL;
     return Optional.of(in);
   }
 
@@ -262,7 +277,14 @@ public class ReviewerModifier {
     IdentifiedUser reviewerUser;
     boolean exactMatchFound = false;
     try {
-      reviewerUser = accountResolver.resolveIncludeInactive(input.reviewer).asUniqueUser();
+      if (ReviewerState.REMOVED.equals(input.state)
+          || (input instanceof InternalReviewerInput
+              && ((InternalReviewerInput) input).skipVisibilityCheck)) {
+        reviewerUser =
+            accountResolver.resolveIncludeInactiveIgnoreVisibility(input.reviewer).asUniqueUser();
+      } else {
+        reviewerUser = accountResolver.resolveIncludeInactive(input.reviewer).asUniqueUser();
+      }
       if (input.reviewer.equalsIgnoreCase(reviewerUser.getName())
           || input.reviewer.equals(String.valueOf(reviewerUser.getAccountId()))) {
         exactMatchFound = true;
@@ -577,7 +599,9 @@ public class ReviewerModifier {
           (input instanceof InternalReviewerInput)
               ? ((InternalReviewerInput) input).otherFailureBehavior
               : FailureBehavior.FAIL;
-      return failureType == FailureType.OTHER && behavior == FailureBehavior.IGNORE;
+      return behavior == FailureBehavior.IGNORE_ALL
+          || (failureType == FailureType.OTHER
+              && behavior == FailureBehavior.IGNORE_EXCEPT_NOT_FOUND);
     }
   }
 

@@ -15,6 +15,7 @@
 package com.google.gerrit.server.mail.send;
 
 import com.google.common.base.Joiner;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.exceptions.EmailException;
 import com.google.gerrit.extensions.api.changes.RecipientType;
 import com.google.gerrit.server.IdentifiedUser;
@@ -67,7 +68,7 @@ public class AddKeySender extends OutgoingEmail {
     super.init();
     setHeader("Subject", String.format("[Gerrit Code Review] New %s Keys Added", getKeyType()));
     setMessageId(messageIdGenerator.fromAccountUpdate(user.getAccountId()));
-    add(RecipientType.TO, user.getAccountId());
+    addByAccountId(RecipientType.TO, user.getAccountId());
   }
 
   @Override
@@ -111,10 +112,12 @@ public class AddKeySender extends OutgoingEmail {
     return "Unknown";
   }
 
+  @Nullable
   private String getSshKey() {
     return (sshKey != null) ? sshKey.sshPublicKey() + "\n" : null;
   }
 
+  @Nullable
   private String getGpgKeys() {
     if (gpgKeys != null) {
       return Joiner.on("\n").join(gpgKeys);

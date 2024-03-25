@@ -14,8 +14,8 @@
 
 package com.google.gerrit.server.permissions;
 
+import static com.google.gerrit.server.permissions.AbstractLabelPermission.ForUser.ON_BEHALF_OF;
 import static com.google.gerrit.server.permissions.DefaultPermissionMappings.labelPermissionName;
-import static com.google.gerrit.server.permissions.LabelPermission.ForUser.ON_BEHALF_OF;
 
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
@@ -84,6 +84,19 @@ class ChangeControl {
         && refControl.asForRef().testOrFalse(RefPermission.CREATE_CHANGE);
   }
 
+  /**
+   * Can this user rebase this change on behalf of the uploader?
+   *
+   * <p>This only checks the permissions of the rebaser (aka the impersonating user).
+   *
+   * <p>In addition rebase on behalf of the uploader requires the uploader (aka the impersonated
+   * user) to have permissions to create the new patch set. These permissions need to be checked
+   * separately.
+   */
+  private boolean canRebaseOnBehalfOfUploader() {
+    return (isOwner() || refControl.canSubmit(isOwner()) || refControl.canRebase());
+  }
+
   /** Can this user restore this change? */
   private boolean canRestore() {
     // Anyone who can abandon the change can restore it, as long as they can create changes.
@@ -116,16 +129,6 @@ class ChangeControl {
     if (getUser().isIdentifiedUser()) {
       Account.Id id = getUser().asIdentifiedUser().getAccountId();
       return id.equals(getChange().getOwner());
-    }
-    return false;
-  }
-
-  /** Is this user assigned to this change? */
-  private boolean isAssignee() {
-    Account.Id currentAssignee = getChange().getAssignee();
-    if (currentAssignee != null && getUser().isIdentifiedUser()) {
-      Account.Id id = getUser().getAccountId();
-      return id.equals(currentAssignee);
     }
     return false;
   }
@@ -171,13 +174,6 @@ class ChangeControl {
     return false;
   }
 
-  private boolean canEditAssignee() {
-    return isOwner()
-        || getProjectControl().isOwner()
-        || refControl.canPerform(Permission.EDIT_ASSIGNEE)
-        || isAssignee();
-  }
-
   /** Can this user edit the hashtag name? */
   private boolean canEditHashtags() {
     return isOwner() // owner (aka creator) of the change can edit hashtags
@@ -216,7 +212,10 @@ class ChangeControl {
     public void check(ChangePermissionOrLabel perm)
         throws AuthException, PermissionBackendException {
       if (!can(perm)) {
-        throw new AuthException(perm.describeForException() + " not permitted");
+        throw new AuthException(
+            perm.describeForException()
+                + " not permitted"
+                + perm.hintForException().map(hint -> " (" + hint + ")").orElse(""));
       }
     }
 
@@ -240,10 +239,10 @@ class ChangeControl {
     private boolean can(ChangePermissionOrLabel perm) throws PermissionBackendException {
       if (perm instanceof ChangePermission) {
         return can((ChangePermission) perm);
-      } else if (perm instanceof LabelPermission) {
-        return can((LabelPermission) perm);
-      } else if (perm instanceof LabelPermission.WithValue) {
-        return can((LabelPermission.WithValue) perm);
+      } else if (perm instanceof AbstractLabelPermission) {
+        return can((AbstractLabelPermission) perm);
+      } else if (perm instanceof AbstractLabelPermission.WithValue) {
+        return can((AbstractLabelPermission.WithValue) perm);
       }
       throw new PermissionBackendException(perm + " unsupported");
     }
@@ -259,8 +258,6 @@ class ChangeControl {
             return getProjectControl().isAdmin() || refControl.canDeleteChanges(isOwner());
           case ADD_PATCH_SET:
             return canAddPatchSet();
-          case EDIT_ASSIGNEE:
-            return canEditAssignee();
           case EDIT_DESCRIPTION:
             return canEditDescription();
           case EDIT_HASHTAGS:
@@ -269,6 +266,8 @@ class ChangeControl {
             return canEditTopicName();
           case REBASE:
             return canRebase();
+          case REBASE_ON_BEHALF_OF_UPLOADER:
+            return canRebaseOnBehalfOfUploader();
           case RESTORE:
             return canRestore();
           case REVERT:
@@ -288,11 +287,11 @@ class ChangeControl {
       throw new PermissionBackendException(perm + " unsupported");
     }
 
-    private boolean can(LabelPermission perm) {
+    private boolean can(AbstractLabelPermission perm) {
       return !label(labelPermissionName(perm)).isEmpty();
     }
 
-    private boolean can(LabelPermission.WithValue perm) {
+    private boolean can(AbstractLabelPermission.WithValue perm) {
       PermissionRange r = label(labelPermissionName(perm));
       if (perm.forUser() == ON_BEHALF_OF && r.isEmpty()) {
         return false;

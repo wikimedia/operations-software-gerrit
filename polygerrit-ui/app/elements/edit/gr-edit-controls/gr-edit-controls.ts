@@ -8,7 +8,6 @@ import '../../shared/gr-autocomplete/gr-autocomplete';
 import '../../shared/gr-button/gr-button';
 import '../../shared/gr-dialog/gr-dialog';
 import '../../shared/gr-dropdown/gr-dropdown';
-import '../../shared/gr-overlay/gr-overlay';
 import {GrEditAction, GrEditConstants} from '../gr-edit-constants';
 import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {ChangeInfo, RevisionPatchSetNum} from '../../../types/common';
@@ -19,7 +18,7 @@ import {
   GrAutocomplete,
 } from '../../shared/gr-autocomplete/gr-autocomplete';
 import {getAppContext} from '../../../services/app-context';
-import {fireAlert, fireReload} from '../../../utils/event-util';
+import {fireAlert} from '../../../utils/event-util';
 import {
   assertIsDefined,
   query as queryUtil,
@@ -29,17 +28,20 @@ import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, html, css} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
 import {BindValueChangeEvent} from '../../../types/events';
-import {GrOverlay} from '../../shared/gr-overlay/gr-overlay';
 import {IronInputElement} from '@polymer/iron-input/iron-input';
-import {createEditUrl} from '../../../models/views/edit';
+import {createEditUrl} from '../../../models/views/change';
 import {resolve} from '../../../models/dependency';
+import {modalStyles} from '../../../styles/gr-modal-styles';
+import {whenVisible} from '../../../utils/dom-util';
+import {throwingErrorCallback} from '../../shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
+import {changeModelToken} from '../../../models/change/change-model';
 
 @customElement('gr-edit-controls')
 export class GrEditControls extends LitElement {
   // private but used in test
   @query('#newPathIronInput') newPathIronInput?: IronInputElement;
 
-  @query('#overlay') protected overlay?: GrOverlay;
+  @query('#modal') modal?: HTMLDialogElement;
 
   // private but used in test
   @query('#openDialog') openDialog?: GrDialog;
@@ -76,11 +78,14 @@ export class GrEditControls extends LitElement {
 
   private readonly restApiService = getAppContext().restApiService;
 
+  private readonly getChangeModel = resolve(this, changeModelToken);
+
   private readonly getNavigation = resolve(this, navigationToken);
 
   static override get styles() {
     return [
       sharedStyles,
+      modalStyles,
       css`
         :host {
           align-items: center;
@@ -137,10 +142,10 @@ export class GrEditControls extends LitElement {
   override render() {
     return html`
       ${this.actions.map(action => this.renderAction(action))}
-      <gr-overlay id="overlay" with-backdrop="">
+      <dialog id="modal" tabindex="-1">
         ${this.renderOpenDialog()} ${this.renderDeleteDialog()}
         ${this.renderRenameDialog()} ${this.renderRestoreDialog()}
-      </gr-overlay>
+      </dialog>
     `;
   }
 
@@ -309,7 +314,7 @@ export class GrEditControls extends LitElement {
       this.path = path;
     }
     assertIsDefined(this.openDialog, 'openDialog');
-    return this.showDialog(this.openDialog);
+    this.showDialog(this.openDialog);
   }
 
   openDeleteDialog(path?: string) {
@@ -317,7 +322,7 @@ export class GrEditControls extends LitElement {
       this.path = path;
     }
     assertIsDefined(this.deleteDialog, 'deleteDialog');
-    return this.showDialog(this.deleteDialog);
+    this.showDialog(this.deleteDialog);
   }
 
   openRenameDialog(path?: string) {
@@ -325,7 +330,7 @@ export class GrEditControls extends LitElement {
       this.path = path;
     }
     assertIsDefined(this.renameDialog, 'renameDialog');
-    return this.showDialog(this.renameDialog);
+    this.showDialog(this.renameDialog);
   }
 
   openRestoreDialog(path?: string) {
@@ -333,7 +338,7 @@ export class GrEditControls extends LitElement {
     if (path) {
       this.path = path;
     }
-    return this.showDialog(this.restoreDialog);
+    this.showDialog(this.restoreDialog);
   }
 
   /**
@@ -361,23 +366,20 @@ export class GrEditControls extends LitElement {
 
   // private but used in test
   showDialog(dialog: GrDialog) {
-    assertIsDefined(this.overlay, 'overlay');
+    assertIsDefined(this.modal, 'modal');
 
     // Some dialogs may not fire their on-close event when closed in certain
     // ways (e.g. by clicking outside the dialog body). This call prevents
-    // multiple dialogs from being shown in the same overlay.
+    // multiple dialogs from being shown in the same modal.
     this.hideAllDialogs();
 
-    return this.overlay.open().then(() => {
+    this.modal.showModal();
+    whenVisible(this.modal, () => {
       dialog.classList.toggle('invisible', false);
       const autocomplete = queryUtil<GrAutocomplete>(dialog, 'gr-autocomplete');
       if (autocomplete) {
         autocomplete.focus();
       }
-      setTimeout(() => {
-        assertIsDefined(this.overlay, 'overlay');
-        this.overlay.center();
-      }, 1);
     });
   }
 
@@ -412,8 +414,8 @@ export class GrEditControls extends LitElement {
 
     dialog.classList.toggle('invisible', true);
 
-    assertIsDefined(this.overlay, 'overlay');
-    this.overlay.close();
+    assertIsDefined(this.modal, 'modal');
+    this.modal.close();
   }
 
   private readonly handleDialogCancel = (e: Event) => {
@@ -429,9 +431,9 @@ export class GrEditControls extends LitElement {
     assertIsDefined(this.patchNum, 'patchset number');
     const url = createEditUrl({
       changeNum: this.change._number,
-      project: this.change.project,
-      path: this.path,
+      repo: this.change.project,
       patchNum: this.patchNum,
+      editView: {path: this.path},
     });
 
     this.getNavigation().setUrl(url);
@@ -452,7 +454,7 @@ export class GrEditControls extends LitElement {
           return;
         }
         this.closeDialog(this.openDialog);
-        fireReload(this, true);
+        this.getChangeModel().navigateToChangeResetReload();
       });
   }
 
@@ -472,7 +474,7 @@ export class GrEditControls extends LitElement {
           return;
         }
         this.closeDialog(dialog);
-        fireReload(this, true);
+        this.getChangeModel().navigateToChangeResetReload();
       });
   };
 
@@ -490,7 +492,7 @@ export class GrEditControls extends LitElement {
           return;
         }
         this.closeDialog(dialog);
-        fireReload(this, true);
+        this.getChangeModel().navigateToChangeResetReload();
       });
   };
 
@@ -508,7 +510,7 @@ export class GrEditControls extends LitElement {
           return;
         }
         this.closeDialog(dialog);
-        fireReload(this, true);
+        this.getChangeModel().navigateToChangeResetReload();
       });
   };
 
@@ -516,7 +518,12 @@ export class GrEditControls extends LitElement {
     assertIsDefined(this.change, 'this.change');
     assertIsDefined(this.patchNum, 'this.patchNum');
     return this.restApiService
-      .queryChangeFiles(this.change._number, this.patchNum, input)
+      .queryChangeFiles(
+        this.change._number,
+        this.patchNum,
+        input,
+        throwingErrorCallback
+      )
       .then(res => {
         if (!res)
           throw new Error('Failed to retrieve files. Response not set.');

@@ -5,45 +5,46 @@
  */
 import {ChangeComments} from '../../elements/diff/gr-comment-api/gr-comment-api';
 import {
-  CommentBasics,
   CommentInfo,
   NumericChangeId,
   PatchSetNum,
   RevisionId,
   UrlEncodedCommentId,
-  PathToCommentsInfoMap,
   RobotCommentInfo,
   PathToRobotCommentsInfoMap,
   AccountInfo,
+  DraftInfo,
+  Comment,
+  SavingState,
+  isSaving,
+  isError,
+  isDraft,
+  isNew,
 } from '../../types/common';
 import {
   addPath,
-  DraftInfo,
-  isDraft,
+  createNew,
+  createNewPatchsetLevel,
+  id,
   isDraftThread,
-  isUnsaved,
+  isNewThread,
   reportingDetails,
-  UnsavedInfo,
 } from '../../utils/comment-util';
 import {deepEqual} from '../../utils/deep-util';
 import {select} from '../../utils/observable-util';
-import {RouterModel} from '../../services/router/router-model';
-import {Finalizable} from '../../services/registry';
 import {define} from '../dependency';
 import {combineLatest, forkJoin, from, Observable, of} from 'rxjs';
-import {fire, fireAlert, fireEvent} from '../../utils/event-util';
+import {fire, fireAlert} from '../../utils/event-util';
 import {CURRENT} from '../../utils/patch-set-util';
 import {RestApiService} from '../../services/gr-rest-api/gr-rest-api';
 import {ChangeModel} from '../change/change-model';
 import {Interaction, Timing} from '../../constants/reporting';
-import {assertIsDefined} from '../../utils/common-util';
+import {assert, assertIsDefined} from '../../utils/common-util';
 import {debounce, DelayedTask} from '../../utils/async-util';
-import {pluralize} from '../../utils/string-util';
 import {ReportingService} from '../../services/gr-reporting/gr-reporting';
 import {Model} from '../model';
 import {Deduping} from '../../api/reporting';
 import {extractMentionedUsers, getUserId} from '../../utils/account-util';
-import {EventType} from '../../types/events';
 import {SpecialFilePath} from '../../constants/constants';
 import {AccountsModel} from '../accounts-model/accounts-model';
 import {
@@ -52,24 +53,24 @@ import {
   shareReplay,
   switchMap,
 } from 'rxjs/operators';
-import {notUndefined} from '../../types/types';
+import {isDefined} from '../../types/types';
+import {ChangeViewModel} from '../views/change';
+import {NavigationService} from '../../elements/core/gr-navigation/gr-navigation';
 
 export interface CommentState {
   /** undefined means 'still loading' */
-  comments?: PathToCommentsInfoMap;
+  comments?: {[path: string]: CommentInfo[]};
   /** undefined means 'still loading' */
   robotComments?: {[path: string]: RobotCommentInfo[]};
-  // All drafts are DraftInfo objects and have __draft = true set.
-  // Drafts have an id and are known to the backend. Unsaved drafts
-  // (see UnsavedInfo) do NOT belong in the application model.
+  // All drafts are DraftInfo objects and have `state` state set.
   /** undefined means 'still loading' */
   drafts?: {[path: string]: DraftInfo[]};
   // Ported comments only affect `CommentThread` properties, not individual
   // comments.
   /** undefined means 'still loading' */
-  portedComments?: PathToCommentsInfoMap;
+  portedComments?: {[path: string]: CommentInfo[]};
   /** undefined means 'still loading' */
-  portedDrafts?: PathToCommentsInfoMap;
+  portedDrafts?: {[path: string]: DraftInfo[]};
   /**
    * If a draft is discarded by the user, then we temporarily keep it in this
    * array in case the user decides to Undo the discard operation and bring the
@@ -96,7 +97,7 @@ function getSavingMessage(numPending: number, requestFailed?: boolean) {
   if (numPending === 0) {
     return 'All changes saved';
   }
-  return `Saving ${pluralize(numPending, 'draft')}...`;
+  return undefined;
 }
 
 // Private but used in tests.
@@ -110,6 +111,35 @@ export function setComments(
   if (deepEqual(comments, nextState.comments)) return state;
   nextState.comments = addPath(comments) || {};
   return nextState;
+}
+
+/** Updates a single comment in a state. */
+export function updateComment(
+  state: CommentState,
+  comment: CommentInfo
+): CommentState {
+  if (!comment.path || !state.comments) {
+    return state;
+  }
+  const newCommentsAtPath = [...state.comments[comment.path]];
+  for (let i = 0; i < newCommentsAtPath.length; ++i) {
+    if (newCommentsAtPath[i].id === comment.id) {
+      // TODO: In "delete comment" the returned comment is missing some of the
+      // fields (for example patch_set), which would throw errors when
+      // rendering. Remove merging with the old comment, once that is fixed in
+      // server code.
+      newCommentsAtPath[i] = {...newCommentsAtPath[i], ...comment};
+
+      return {
+        ...state,
+        comments: {
+          ...state.comments,
+          [comment.path]: newCommentsAtPath,
+        },
+      };
+    }
+  }
+  throw new Error('Comment to be updated does not exist');
 }
 
 // Private but used in tests.
@@ -139,7 +169,7 @@ export function setDrafts(
 // Private but used in tests.
 export function setPortedComments(
   state: CommentState,
-  portedComments?: PathToCommentsInfoMap
+  portedComments?: {[path: string]: CommentInfo[]}
 ): CommentState {
   if (deepEqual(portedComments, state.portedComments)) return state;
   const nextState = {...state};
@@ -150,7 +180,7 @@ export function setPortedComments(
 // Private but used in tests.
 export function setPortedDrafts(
   state: CommentState,
-  portedDrafts?: PathToCommentsInfoMap
+  portedDrafts?: {[path: string]: DraftInfo[]}
 ): CommentState {
   if (deepEqual(portedDrafts, state.portedDrafts)) return state;
   const nextState = {...state};
@@ -175,7 +205,7 @@ export function deleteDiscardedDraft(
 ): CommentState {
   const nextState = {...state};
   const drafts = [...nextState.discardedDrafts];
-  const index = drafts.findIndex(d => d.id === draftID);
+  const index = drafts.findIndex(draft => id(draft) === draftID);
   if (index === -1) {
     throw new Error('discarded draft not found');
   }
@@ -187,15 +217,14 @@ export function deleteDiscardedDraft(
 /** Adds or updates a draft. */
 export function setDraft(state: CommentState, draft: DraftInfo): CommentState {
   const nextState = {...state};
-  if (!draft.path) throw new Error('draft path undefined');
-  if (!isDraft(draft)) throw new Error('draft is not a draft');
-  if (isUnsaved(draft)) throw new Error('unsaved drafts dont belong to model');
+  assert(!!draft.path, 'draft without path');
+  assert(isDraft(draft), 'draft is not a draft');
 
   nextState.drafts = {...nextState.drafts};
   const drafts = nextState.drafts;
   if (!drafts[draft.path]) drafts[draft.path] = [] as DraftInfo[];
   else drafts[draft.path] = [...drafts[draft.path]];
-  const index = drafts[draft.path].findIndex(d => d.id && d.id === draft.id);
+  const index = drafts[draft.path].findIndex(d => id(d) === id(draft));
   if (index !== -1) {
     drafts[draft.path][index] = draft;
   } else {
@@ -209,14 +238,12 @@ export function deleteDraft(
   draft: DraftInfo
 ): CommentState {
   const nextState = {...state};
-  if (!draft.path) throw new Error('draft path undefined');
-  if (!isDraft(draft)) throw new Error('draft is not a draft');
-  if (isUnsaved(draft)) throw new Error('unsaved drafts dont belong to model');
+  assert(!!draft.path, 'draft without path');
+  assert(isDraft(draft), 'draft is not a draft');
+
   nextState.drafts = {...nextState.drafts};
   const drafts = nextState.drafts;
-  const index = (drafts[draft.path] || []).findIndex(
-    d => d.id && d.id === draft.id
-  );
+  const index = (drafts[draft.path] || []).findIndex(d => id(d) === id(draft));
   if (index === -1) return state;
   const discardedDraft = drafts[draft.path][index];
   drafts[draft.path] = [...drafts[draft.path]];
@@ -225,7 +252,7 @@ export function deleteDraft(
 }
 
 export const commentsModelToken = define<CommentsModel>('comments-model');
-export class CommentsModel extends Model<CommentState> implements Finalizable {
+export class CommentsModel extends Model<CommentState> {
   public readonly commentsLoading$ = select(
     this.state$,
     commentState =>
@@ -254,9 +281,22 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
     commentState => commentState.drafts
   );
 
-  public readonly draftsCount$ = select(
+  public readonly draftsLoading$ = select(
     this.drafts$,
-    drafts => Object.values(drafts ?? {}).flat().length
+    drafts => drafts === undefined
+  );
+
+  public readonly draftsArray$ = select(this.drafts$, drafts =>
+    Object.values(drafts ?? {}).flat()
+  );
+
+  public readonly draftsSaved$ = select(this.draftsArray$, drafts =>
+    drafts.filter(d => !isNew(d))
+  );
+
+  public readonly draftsCount$ = select(
+    this.draftsSaved$,
+    drafts => drafts.length
   );
 
   public readonly portedComments$ = select(
@@ -269,21 +309,26 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
     commentState => commentState.discardedDrafts
   );
 
-  public readonly patchsetLevelDrafts$ = select(this.drafts$, drafts =>
-    Object.values(drafts ?? {})
-      .flat()
-      .filter(
-        draft =>
-          draft.path === SpecialFilePath.PATCHSET_LEVEL_COMMENTS &&
-          !draft.in_reply_to
-      )
+  public readonly savingInProgress$ = select(this.draftsArray$, drafts =>
+    drafts.some(isSaving)
+  );
+
+  public readonly savingError$ = select(this.draftsArray$, drafts =>
+    drafts.some(isError)
+  );
+
+  public readonly patchsetLevelDrafts$ = select(this.draftsArray$, drafts =>
+    drafts.filter(
+      draft =>
+        draft.path === SpecialFilePath.PATCHSET_LEVEL_COMMENTS &&
+        !draft.in_reply_to
+    )
   );
 
   public readonly mentionedUsersInDrafts$: Observable<AccountInfo[]> =
-    this.drafts$.pipe(
-      switchMap(drafts => {
+    this.draftsArray$.pipe(
+      switchMap(comments => {
         const users: AccountInfo[] = [];
-        const comments = Object.values(drafts ?? {}).flat();
         for (const comment of comments) {
           users.push(...extractMentionedUsers(comment.message));
         }
@@ -299,18 +344,16 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
           uniqueUsers.map(user => from(this.accountsModel.fillDetails(user)));
         return forkJoin(filledUsers$);
       }),
-      map(users => users.filter(notUndefined)),
+      map(users => users.filter(isDefined)),
       distinctUntilChanged(deepEqual),
       shareReplay(1)
     );
 
   public readonly mentionedUsersInUnresolvedDrafts$: Observable<AccountInfo[]> =
-    this.drafts$.pipe(
+    this.draftsArray$.pipe(
       switchMap(drafts => {
         const users: AccountInfo[] = [];
-        const comments = Object.values(drafts ?? {})
-          .flat()
-          .filter(c => c.unresolved);
+        const comments = drafts.filter(c => c.unresolved);
         for (const comment of comments) {
           users.push(...extractMentionedUsers(comment.message));
         }
@@ -326,7 +369,7 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
           uniqueUsers.map(user => from(this.accountsModel.fillDetails(user)));
         return forkJoin(filledUsers$);
       }),
-      map(users => users.filter(notUndefined)),
+      map(users => users.filter(isDefined)),
       distinctUntilChanged(deepEqual),
       shareReplay(1)
     );
@@ -349,8 +392,12 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
     changeComments.getAllThreadsForChange()
   );
 
-  public readonly draftThreads$ = select(this.threads$, threads =>
-    threads.filter(isDraftThread)
+  public readonly threadsSaved$ = select(this.threads$, threads =>
+    threads.filter(t => !isNewThread(t))
+  );
+
+  public readonly draftThreadsSaved$ = select(this.threads$, threads =>
+    threads.filter(t => !isNewThread(t) && isDraftThread(t))
   );
 
   public readonly commentedPaths$ = select(
@@ -376,8 +423,6 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
 
   private patchNum?: PatchSetNum;
 
-  private readonly reloadListener: () => void;
-
   private drafts: {[path: string]: DraftInfo[]} = {};
 
   private draftToastTask?: DelayedTask;
@@ -385,13 +430,32 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
   private discardedDrafts: DraftInfo[] = [];
 
   constructor(
-    readonly routerModel: RouterModel,
-    readonly changeModel: ChangeModel,
-    readonly accountsModel: AccountsModel,
-    readonly restApiService: RestApiService,
-    readonly reporting: ReportingService
+    private readonly changeViewModel: ChangeViewModel,
+    private readonly changeModel: ChangeModel,
+    private readonly accountsModel: AccountsModel,
+    private readonly restApiService: RestApiService,
+    private readonly reporting: ReportingService,
+    private readonly navigation: NavigationService
   ) {
     super(initialState);
+    this.subscriptions.push(
+      this.savingInProgress$.subscribe(savingInProgress => {
+        if (savingInProgress) {
+          this.navigation.blockNavigation('draft comment still saving');
+        } else {
+          this.navigation.releaseNavigation('draft comment still saving');
+        }
+      })
+    );
+    this.subscriptions.push(
+      this.savingError$.subscribe(savingError => {
+        if (savingError) {
+          this.navigation.blockNavigation('draft comment failed to save');
+        } else {
+          this.navigation.releaseNavigation('draft comment failed to save');
+        }
+      })
+    );
     this.subscriptions.push(
       this.discardedDrafts$.subscribe(x => (this.discardedDrafts = x))
     );
@@ -402,7 +466,17 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
       this.changeModel.patchNum$.subscribe(x => (this.patchNum = x))
     );
     this.subscriptions.push(
-      this.routerModel.routerChangeNum$.subscribe(changeNum => {
+      combineLatest([
+        this.draftsLoading$,
+        this.patchsetLevelDrafts$,
+        this.changeModel.latestPatchNum$,
+      ]).subscribe(([loading, plDraft, latestPatchNum]) => {
+        if (loading || plDraft.length > 0 || !latestPatchNum) return;
+        this.addNewDraft(createNewPatchsetLevel(latestPatchNum, '', false));
+      })
+    );
+    this.subscriptions.push(
+      this.changeViewModel.changeNum$.subscribe(changeNum => {
         this.changeNum = changeNum;
         this.setState({...initialState});
         this.reloadAllComments();
@@ -418,16 +492,6 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
         this.reloadAllPortedComments();
       })
     );
-    this.reloadListener = () => {
-      this.reloadAllComments();
-      this.reloadAllPortedComments();
-    };
-    document.addEventListener('reload', this.reloadListener);
-  }
-
-  override finalize() {
-    document.removeEventListener('reload', this.reloadListener);
-    super.finalize();
   }
 
   // Note that this does *not* reload ported comments.
@@ -522,107 +586,150 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
     this.modifyState(s => setPortedDrafts(s, portedDrafts));
   }
 
-  async restoreDraft(id: UrlEncodedCommentId) {
-    const found = this.discardedDrafts?.find(d => d.id === id);
+  async restoreDraft(draftId: UrlEncodedCommentId) {
+    const found = this.discardedDrafts?.find(d => id(d) === draftId);
     if (!found) throw new Error('discarded draft not found');
-    const newDraft = {
+    const newDraft: DraftInfo = {
       ...found,
-      id: undefined,
-      updated: undefined,
-      __draft: undefined,
-      __unsaved: true,
+      ...createNew(),
     };
     await this.saveDraft(newDraft);
-    this.modifyState(s => deleteDiscardedDraft(s, id));
+    this.modifyState(s => deleteDiscardedDraft(s, draftId));
+  }
+
+  /**
+   * Adds a new draft without saving it.
+   *
+   * There is no equivalent `removeNewDraft()` method, because
+   * `discardDraft()` can be used.
+   */
+  addNewDraft(draft: DraftInfo) {
+    assert(isNew(draft), 'draft must be new');
+    this.modifyState(s => setDraft(s, draft));
   }
 
   /**
    * Saves a new or updates an existing draft.
-   * The model will only be updated when a successful response comes back.
+   *
+   * `draft.message` must not be empty: Use `discardDraft()` instead.
+   *
+   * Draft must not be in `SAVING` state already.
    */
-  async saveDraft(
-    draft: DraftInfo | UnsavedInfo,
-    showToast = true
-  ): Promise<DraftInfo> {
+  async saveDraft(draft: DraftInfo, showToast = true): Promise<DraftInfo> {
     assertIsDefined(this.changeNum, 'change number');
     assertIsDefined(draft.patch_set, 'patchset number of comment draft');
-    if (!draft.message?.trim()) throw new Error('Cannot save empty draft.');
+    assert(!!draft.message?.trim(), 'cannot save empty draft');
+    assert(!isSaving(draft), 'saving already in progress');
+
+    // optimistic update
+    const draftSaving: DraftInfo = {...draft, savingState: SavingState.SAVING};
+    this.modifyState(s => setDraft(s, draftSaving));
 
     // Saving the change number as to make sure that the response is still
     // relevant when it comes back. The user maybe have navigated away.
     const changeNum = this.changeNum;
     this.report(Interaction.SAVE_COMMENT, draft);
     if (showToast) this.showStartRequest();
-    const timing = isUnsaved(draft) ? Timing.DRAFT_CREATE : Timing.DRAFT_UPDATE;
+    const timing = isNew(draft) ? Timing.DRAFT_CREATE : Timing.DRAFT_UPDATE;
     const timer = this.reporting.getTimer(timing);
-    const result = await this.restApiService.saveDiffDraft(
-      changeNum,
-      draft.patch_set,
-      draft
-    );
-    if (changeNum !== this.changeNum) throw new Error('change changed');
-    if (!result.ok) {
-      if (showToast) this.handleFailedDraftRequest();
-      throw new Error(
-        `Failed to save draft comment: ${JSON.stringify(result)}`
+
+    let savedComment;
+    try {
+      const result = await this.restApiService.saveDiffDraft(
+        changeNum,
+        draft.patch_set,
+        draft
       );
+      if (changeNum !== this.changeNum) return draft;
+      if (!result.ok) throw new Error('request failed');
+      savedComment = (await this.restApiService.getResponseObject(
+        result
+      )) as unknown as CommentInfo;
+    } catch (error) {
+      if (showToast) this.handleFailedDraftRequest();
+      const draftError: DraftInfo = {...draft, savingState: SavingState.ERROR};
+      this.modifyState(s => setDraft(s, draftError));
+      return draftError;
     }
-    const obj = await this.restApiService.getResponseObject(result);
-    const savedComment = obj as unknown as CommentInfo;
-    const updatedDraft = {
+
+    const draftSaved: DraftInfo = {
       ...draft,
       id: savedComment.id,
       updated: savedComment.updated,
-      __draft: true,
-      __unsaved: undefined,
+      savingState: SavingState.OK,
     };
-    timer.end({id: updatedDraft.id});
+    timer.end({id: draftSaved.id});
     if (showToast) this.showEndRequest();
-    this.modifyState(s => setDraft(s, updatedDraft));
-    this.report(Interaction.COMMENT_SAVED, updatedDraft);
-    return updatedDraft;
+    this.modifyState(s => setDraft(s, draftSaved));
+    this.report(Interaction.COMMENT_SAVED, draftSaved);
+    return draftSaved;
   }
 
   async discardDraft(draftId: UrlEncodedCommentId) {
     const draft = this.lookupDraft(draftId);
-    assertIsDefined(this.changeNum, 'change number');
     assertIsDefined(draft, `draft not found by id ${draftId}`);
     assertIsDefined(draft.patch_set, 'patchset number of comment draft');
+    assert(!isSaving(draft), 'saving already in progress');
 
-    if (!draft.message?.trim()) throw new Error('saved draft cant be empty');
-    // Saving the change number as to make sure that the response is still
-    // relevant when it comes back. The user maybe have navigated away.
-    const changeNum = this.changeNum;
-    this.report(Interaction.DISCARD_COMMENT, draft);
-    this.showStartRequest();
-    const timer = this.reporting.getTimer(Timing.DRAFT_DISCARD);
-    const result = await this.restApiService.deleteDiffDraft(
-      changeNum,
-      draft.patch_set,
-      {id: draft.id}
-    );
-    timer.end({id: draft.id});
-    if (changeNum !== this.changeNum) throw new Error('change changed');
-    if (!result.ok) {
-      this.handleFailedDraftRequest();
-      throw new Error(
-        `Failed to discard draft comment: ${JSON.stringify(result)}`
-      );
-    }
-    this.showEndRequest();
+    // optimistic update
     this.modifyState(s => deleteDraft(s, draft));
+
+    // For "unsaved" drafts there is nothing to discard on the server side.
+    if (draft.id) {
+      if (!draft.message?.trim()) throw new Error('empty draft');
+      // Saving the change number as to make sure that the response is still
+      // relevant when it comes back. The user maybe have navigated away.
+      assertIsDefined(this.changeNum, 'change number');
+      const changeNum = this.changeNum;
+      this.report(Interaction.DISCARD_COMMENT, draft);
+      this.showStartRequest();
+      const timer = this.reporting.getTimer(Timing.DRAFT_DISCARD);
+      const result = await this.restApiService.deleteDiffDraft(
+        changeNum,
+        draft.patch_set,
+        {id: draft.id}
+      );
+      timer.end({id: draft.id});
+      if (changeNum !== this.changeNum) throw new Error('change changed');
+      if (!result.ok) {
+        this.handleFailedDraftRequest();
+        await this.restoreDraft(draftId);
+        throw new Error(
+          `Failed to discard draft comment: ${JSON.stringify(result)}`
+        );
+      }
+      this.showEndRequest();
+    }
+
     // We don't store empty discarded drafts and don't need an UNDO then.
     if (draft.message?.trim()) {
-      fire(document, EventType.SHOW_ALERT, {
+      fire(document, 'show-alert', {
         message: 'Draft Discarded',
         action: 'Undo',
-        callback: () => this.restoreDraft(draft.id),
+        callback: () => this.restoreDraft(draftId),
       });
     }
     this.report(Interaction.COMMENT_DISCARDED, draft);
   }
 
-  private report(interaction: Interaction, comment: CommentBasics) {
+  async deleteComment(
+    changeNum: NumericChangeId,
+    comment: Comment,
+    reason: string
+  ) {
+    assertIsDefined(comment.patch_set, 'comment.patch_set');
+    assert(!isDraft(comment), 'Admin deletion is only for published comments.');
+
+    const newComment = await this.restApiService.deleteComment(
+      changeNum,
+      comment.patch_set,
+      comment.id,
+      reason
+    );
+    this.modifyState(s => updateComment(s, newComment));
+  }
+
+  private report(interaction: Interaction, comment: Comment) {
     const details = reportingDetails(comment);
     this.reporting.reportInteraction(interaction, details);
   }
@@ -644,28 +751,24 @@ export class CommentsModel extends Model<CommentState> implements Finalizable {
 
   private updateRequestToast(requestFailed?: boolean) {
     if (this.numPendingDraftRequests === 0 && !requestFailed) {
-      fireEvent(document, 'hide-alert');
+      fire(document, 'hide-alert', {});
       return;
     }
     const message = getSavingMessage(
       this.numPendingDraftRequests,
       requestFailed
     );
+    if (!message) return;
     this.draftToastTask = debounce(
       this.draftToastTask,
-      () => {
-        // Note: the event is fired on the body rather than this element because
-        // this element may not be attached by the time this executes, in which
-        // case the event would not bubble.
-        fireAlert(document.body, message);
-      },
+      () => fireAlert(document.body, message),
       TOAST_DEBOUNCE_INTERVAL
     );
   }
 
-  private lookupDraft(id: UrlEncodedCommentId): DraftInfo | undefined {
+  private lookupDraft(commentId: UrlEncodedCommentId): DraftInfo | undefined {
     return Object.values(this.drafts)
       .flat()
-      .find(d => d.id === id);
+      .find(draft => id(draft) === commentId);
   }
 }

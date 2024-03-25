@@ -327,6 +327,8 @@ module.exports = {
           'error',
           {argsIgnorePattern: '^_'},
         ],
+        // https://github.com/mysticatea/eslint-plugin-node/blob/master/docs/rules/no-unsupported-features/es-builtins.md
+        'node/no-unsupported-features/es-builtins': 'off',
         // https://github.com/mysticatea/eslint-plugin-node/blob/master/docs/rules/no-unsupported-features/node-builtins.md
         'node/no-unsupported-features/node-builtins': 'off',
         // Disable no-invalid-this for ts files, because it incorrectly reports
@@ -396,19 +398,6 @@ module.exports = {
         // Settings for samples. You can add globals here if you want to use it
         Gerrit: 'readonly',
         Polymer: 'readonly',
-      },
-    },
-    {
-      files: ['test/functional/**/*.js'],
-      // Settings for functional tests. These scripts are node scripts.
-      // Turn off "no-undef" to allow any global variable
-      env: {
-        browser: false,
-        node: true,
-        es6: false,
-      },
-      rules: {
-        'no-undef': 'off',
       },
     },
     {

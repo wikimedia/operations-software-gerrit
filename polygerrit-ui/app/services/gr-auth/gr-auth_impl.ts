@@ -3,11 +3,11 @@
  * Copyright 2017 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import {AuthRequestInit} from '../../types/types';
+import {fire} from '../../utils/event-util';
 import {getBaseUrl} from '../../utils/url-util';
-import {EventEmitterService} from '../gr-event-interface/gr-event-interface';
 import {Finalizable} from '../registry';
 import {
-  AuthRequestInit,
   AuthService,
   AuthStatus,
   AuthType,
@@ -67,11 +67,8 @@ export class Auth implements AuthService, Finalizable {
 
   private getToken: GetTokenCallback;
 
-  public eventEmitter: EventEmitterService;
-
-  constructor(eventEmitter: EventEmitterService) {
+  constructor() {
     this.getToken = () => Promise.resolve(this.cachedTokenPromise);
-    this.eventEmitter = eventEmitter;
   }
 
   get baseUrl() {
@@ -130,7 +127,7 @@ export class Auth implements AuthService, Finalizable {
     if (this._status === status) return;
 
     if (this._status === AuthStatus.AUTHED) {
-      this.eventEmitter.emit('auth-error', {
+      fire(document, 'auth-error', {
         message: Auth.CREDS_EXPIRED_MSG,
         action: 'Refresh credentials',
       });
@@ -165,18 +162,18 @@ export class Auth implements AuthService, Finalizable {
   /**
    * Perform network fetch with authentication.
    */
-  fetch(url: string, opt_options?: AuthRequestInit): Promise<Response> {
-    const options: AuthRequestInitWithHeaders = {
+  fetch(url: string, options?: AuthRequestInit): Promise<Response> {
+    const optionsWithHeaders: AuthRequestInitWithHeaders = {
       headers: new Headers(),
       ...this.defaultOptions,
-      ...opt_options,
+      ...options,
     };
     if (this.type === AuthType.ACCESS_TOKEN) {
       return this._getAccessToken().then(accessToken =>
-        this._fetchWithAccessToken(url, options, accessToken)
+        this._fetchWithAccessToken(url, optionsWithHeaders, accessToken)
       );
     } else {
-      return this._fetchWithXsrfToken(url, options);
+      return this._fetchWithXsrfToken(url, optionsWithHeaders);
     }
   }
 

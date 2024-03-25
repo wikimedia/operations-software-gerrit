@@ -187,21 +187,19 @@ public class DeleteReviewerOp extends ReviewerOp {
       if (input.notify == null
           && currChange.isWorkInProgress()
           && !oldApprovals.isEmpty()
-          && notify.handling().compareTo(NotifyHandling.OWNER) < 0) {
+          && notify.handling().equals(NotifyHandling.NONE)) {
         // Override NotifyHandling from the context to notify owner if votes were removed on a WIP
         // change.
         notify = notify.withHandling(NotifyHandling.OWNER);
       }
       try {
-        if (notify.shouldNotify()) {
-          emailReviewers(
-              ctx.getProject(),
-              currChange,
-              mailMessage,
-              Timestamp.from(ctx.getWhen()),
-              notify,
-              ctx.getRepoView());
-        }
+        emailReviewers(
+            ctx.getProject(),
+            currChange,
+            mailMessage,
+            Timestamp.from(ctx.getWhen()),
+            notify,
+            ctx.getRepoView());
       } catch (Exception err) {
         logger.atSevere().withCause(err).log(
             "Cannot email update for change %s", currChange.getId());

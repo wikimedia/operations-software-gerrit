@@ -29,7 +29,7 @@ public class AndSourceTest extends PredicateTest {
     TestDataSourcePredicate p1 = new TestDataSourcePredicate("predicate1", "foo", 10, 10);
     TestDataSourcePredicate p2 = new TestDataSourcePredicate("predicate2", "foo", 1, 10);
     AndSource<String> andSource = new AndSource<>(Lists.newArrayList(p1, p2), null);
-    andSource.match("bar");
+    assertFalse(andSource.match("bar"));
     assertFalse(p1.ranMatch);
     assertTrue(p2.ranMatch);
   }

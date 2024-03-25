@@ -16,10 +16,10 @@ package com.google.gerrit.server.restapi.change;
 
 import static com.google.common.base.MoreObjects.firstNonNull;
 import static com.google.gerrit.server.project.ProjectCache.noSuchProject;
+import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.CHANGE_MODIFICATION;
 
 import com.google.auto.value.AutoValue;
 import com.google.common.base.Strings;
-import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableSet;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
@@ -31,9 +31,7 @@ import com.google.gerrit.extensions.api.changes.CherryPickInput;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.MergeConflictException;
-import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
 import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.IdentifiedUser;
@@ -44,8 +42,10 @@ import com.google.gerrit.server.change.NotifyResolver;
 import com.google.gerrit.server.change.PatchSetInserter;
 import com.google.gerrit.server.change.ResetCherryPickOp;
 import com.google.gerrit.server.change.SetCherryPickOp;
+import com.google.gerrit.server.change.ValidationOptionsUtil;
 import com.google.gerrit.server.git.CodeReviewCommit;
 import com.google.gerrit.server.git.CodeReviewCommit.CodeReviewRevWalk;
+import com.google.gerrit.server.git.CommitUtil;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.GroupCollector;
 import com.google.gerrit.server.git.MergeUtil;
@@ -63,6 +63,7 @@ import com.google.gerrit.server.submit.IntegrationConflictException;
 import com.google.gerrit.server.submit.MergeIdenticalTreeException;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.UpdateException;
+import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.gerrit.server.util.CommitMessageUtil;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.inject.Inject;
@@ -73,11 +74,8 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import org.eclipse.jgit.errors.ConfigInvalidException;
-import org.eclipse.jgit.errors.InvalidObjectIdException;
-import org.eclipse.jgit.errors.MissingObjectException;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.ObjectReader;
@@ -85,7 +83,6 @@ import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
-import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.util.ChangeIdUtil;
 
 @Singleton
@@ -267,7 +264,9 @@ public class CherryPickChange {
             String.format("Branch %s does not exist.", dest.branch()));
       }
 
-      RevCommit baseCommit = getBaseCommit(destRef, project.get(), revWalk, input.base);
+      RevCommit baseCommit =
+          CommitUtil.getBaseCommit(
+              project.get(), queryProvider.get(), revWalk, destRef, input.base);
 
       CodeReviewCommit commitToCherryPick = revWalk.parseCommit(sourceCommit);
 
@@ -334,105 +333,55 @@ public class CherryPickChange {
       } catch (MergeIdenticalTreeException | MergeConflictException e) {
         throw new IntegrationConflictException("Cherry pick failed: " + e.getMessage(), e);
       }
-
-      try (BatchUpdate bu = batchUpdateFactory.create(project, identifiedUser, timestamp)) {
-        bu.setRepository(git, revWalk, oi);
-        bu.setNotify(resolveNotify(input));
-        Change.Id changeId;
-        String newTopic = null;
-        if (input.topic != null) {
-          newTopic = Strings.emptyToNull(input.topic.trim());
+      try (RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
+        try (BatchUpdate bu = batchUpdateFactory.create(project, identifiedUser, timestamp)) {
+          bu.setRepository(git, revWalk, oi);
+          bu.setNotify(resolveNotify(input));
+          Change.Id changeId;
+          String newTopic = null;
+          if (input.topic != null) {
+            newTopic = Strings.emptyToNull(input.topic.trim());
+          }
+          if (newTopic == null
+              && sourceChange != null
+              && !Strings.isNullOrEmpty(sourceChange.getTopic())) {
+            newTopic = sourceChange.getTopic() + "-" + dest.shortName();
+          }
+          if (destChange != null) {
+            // The change key exists on the destination branch. The cherry pick
+            // will be added as a new patch set.
+            changeId =
+                insertPatchSet(
+                    bu,
+                    git,
+                    destChange.notes(),
+                    cherryPickCommit,
+                    sourceChange,
+                    newTopic,
+                    input,
+                    workInProgress);
+          } else {
+            // Change key not found on destination branch. We can create a new
+            // change.
+            changeId =
+                createNewChange(
+                    bu,
+                    cherryPickCommit,
+                    dest.branch(),
+                    newTopic,
+                    project,
+                    sourceChange,
+                    sourceCommit,
+                    input,
+                    revertedChange,
+                    idForNewChange,
+                    workInProgress);
+          }
+          bu.execute();
+          return Result.create(changeId, cherryPickCommit.getFilesWithGitConflicts());
         }
-        if (newTopic == null
-            && sourceChange != null
-            && !Strings.isNullOrEmpty(sourceChange.getTopic())) {
-          newTopic = sourceChange.getTopic() + "-" + dest.shortName();
-        }
-        if (destChange != null) {
-          // The change key exists on the destination branch. The cherry pick
-          // will be added as a new patch set.
-          changeId =
-              insertPatchSet(
-                  bu,
-                  git,
-                  destChange.notes(),
-                  cherryPickCommit,
-                  sourceChange,
-                  newTopic,
-                  input,
-                  workInProgress);
-        } else {
-          // Change key not found on destination branch. We can create a new
-          // change.
-          changeId =
-              createNewChange(
-                  bu,
-                  cherryPickCommit,
-                  dest.branch(),
-                  newTopic,
-                  project,
-                  sourceChange,
-                  sourceCommit,
-                  input,
-                  revertedChange,
-                  idForNewChange,
-                  workInProgress);
-        }
-        bu.execute();
-        return Result.create(changeId, cherryPickCommit.getFilesWithGitConflicts());
       }
     }
-  }
-
-  private RevCommit getBaseCommit(Ref destRef, String project, RevWalk revWalk, String base)
-      throws RestApiException, IOException {
-    RevCommit destRefTip = revWalk.parseCommit(destRef.getObjectId());
-    // The tip commit of the destination ref is the default base for the newly created change.
-    if (Strings.isNullOrEmpty(base)) {
-      return destRefTip;
-    }
-
-    ObjectId baseObjectId;
-    try {
-      baseObjectId = ObjectId.fromString(base);
-    } catch (InvalidObjectIdException e) {
-      throw new BadRequestException(
-          String.format("Base %s doesn't represent a valid SHA-1", base), e);
-    }
-
-    RevCommit baseCommit;
-    try {
-      baseCommit = revWalk.parseCommit(baseObjectId);
-    } catch (MissingObjectException e) {
-      throw new UnprocessableEntityException(
-          String.format("Base %s doesn't exist", baseObjectId.name()), e);
-    }
-
-    InternalChangeQuery changeQuery = queryProvider.get();
-    changeQuery.enforceVisibility(true);
-    List<ChangeData> changeDatas = changeQuery.byBranchCommit(project, destRef.getName(), base);
-
-    if (changeDatas.isEmpty()) {
-      if (revWalk.isMergedInto(baseCommit, destRefTip)) {
-        // The base commit is a merged commit with no change associated.
-        return baseCommit;
-      }
-      throw new UnprocessableEntityException(
-          String.format("Commit %s does not exist on branch %s", base, destRef.getName()));
-    } else if (changeDatas.size() != 1) {
-      throw new ResourceConflictException("Multiple changes found for commit " + base);
-    }
-
-    Change change = changeDatas.get(0).change();
-    if (!change.isAbandoned()) {
-      // The base commit is a valid change revision.
-      return baseCommit;
-    }
-
-    throw new ResourceConflictException(
-        String.format(
-            "Change %s with commit %s is %s",
-            change.getChangeId(), base, ChangeUtil.status(change)));
   }
 
   private Change.Id insertPatchSet(
@@ -456,7 +405,8 @@ public class CherryPickChange {
     if (shouldSetToReady(cherryPickCommit, destNotes, workInProgress)) {
       inserter.setWorkInProgress(false);
     }
-    inserter.setValidationOptions(getValidateOptionsAsMultimap(input.validationOptions));
+    inserter.setValidationOptions(
+        ValidationOptionsUtil.getValidateOptionsAsMultimap(input.validationOptions));
     bu.addOp(destChange.getId(), inserter);
     PatchSet.Id sourcePatchSetId = sourceChange == null ? null : sourceChange.currentPatchSetId();
     // If sourceChange is not provided, reset cherryPickOf to avoid stale value.
@@ -507,7 +457,8 @@ public class CherryPickChange {
           (sourceChange != null && sourceChange.isWorkInProgress())
               || !cherryPickCommit.getFilesWithGitConflicts().isEmpty());
     }
-    ins.setValidationOptions(getValidateOptionsAsMultimap(input.validationOptions));
+    ins.setValidationOptions(
+        ValidationOptionsUtil.getValidateOptionsAsMultimap(input.validationOptions));
     BranchNameKey sourceBranch = sourceChange == null ? null : sourceChange.getDest();
     PatchSet.Id sourcePatchSetId = sourceChange == null ? null : sourceChange.currentPatchSetId();
     ins.setMessage(
@@ -529,7 +480,7 @@ public class CherryPickChange {
       reviewers.remove(user.get().getAccountId());
       Set<Account.Id> ccs = new HashSet<>(reviewerSet.byState(ReviewerStateInternal.CC));
       ccs.remove(user.get().getAccountId());
-      ins.setReviewersAndCcs(reviewers, ccs);
+      ins.setReviewersAndCcsIgnoreVisibility(reviewers, ccs);
     }
     // If there is a base, and the base is not merged, the groups will be overridden by the base's
     // groups.
@@ -551,20 +502,6 @@ public class CherryPickChange {
     }
     bu.insertChange(ins);
     return changeId;
-  }
-
-  private static ImmutableListMultimap<String, String> getValidateOptionsAsMultimap(
-      @Nullable Map<String, String> validationOptions) {
-    if (validationOptions == null) {
-      return ImmutableListMultimap.of();
-    }
-
-    ImmutableListMultimap.Builder<String, String> validationOptionsBuilder =
-        ImmutableListMultimap.builder();
-    validationOptions
-        .entrySet()
-        .forEach(e -> validationOptionsBuilder.put(e.getKey(), e.getValue()));
-    return validationOptionsBuilder.build();
   }
 
   private NotifyResolver.Result resolveNotify(CherryPickInput input)

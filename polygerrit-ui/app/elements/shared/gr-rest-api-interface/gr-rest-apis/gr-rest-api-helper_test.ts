@@ -9,14 +9,15 @@ import {
   FetchPromisesCache,
   GrRestApiHelper,
 } from './gr-rest-api-helper';
-import {getAppContext} from '../../../../services/app-context';
-import {stubAuth, waitEventLoop} from '../../../../test/test-utils';
+import {assertFails, waitEventLoop} from '../../../../test/test-utils';
 import {FakeScheduler} from '../../../../services/scheduler/fake-scheduler';
 import {RetryScheduler} from '../../../../services/scheduler/retry-scheduler';
 import {ParsedJSON} from '../../../../types/common';
 import {HttpMethod} from '../../../../api/rest-api';
 import {SinonFakeTimers} from 'sinon';
 import {assert} from '@open-wc/testing';
+import {AuthService} from '../../../../services/gr-auth/gr-auth';
+import {GrAuthMock} from '../../../../services/gr-auth/gr-auth_mock';
 
 function makeParsedJSON<T>(val: T): ParsedJSON {
   return val as unknown as ParsedJSON;
@@ -32,6 +33,7 @@ suite('gr-rest-api-helper tests', () => {
   let authFetchStub: sinon.SinonStub;
   let readScheduler: FakeScheduler<Response>;
   let writeScheduler: FakeScheduler<Response>;
+  let authService: AuthService;
 
   setup(() => {
     clock = sinon.useFakeTimers();
@@ -42,7 +44,8 @@ suite('gr-rest-api-helper tests', () => {
     window.CANONICAL_PATH = 'testhelper';
 
     const testJSON = ')]}\'\n{"hello": "bonjour"}';
-    authFetchStub = stubAuth('fetch').returns(
+    authService = new GrAuthMock();
+    authFetchStub = sinon.stub(authService, 'fetch').returns(
       Promise.resolve({
         ...new Response(),
         ok: true,
@@ -57,7 +60,7 @@ suite('gr-rest-api-helper tests', () => {
 
     helper = new GrRestApiHelper(
       cache,
-      getAppContext().authService,
+      authService,
       fetchPromisesCache,
       readScheduler,
       writeScheduler
@@ -226,6 +229,79 @@ suite('gr-rest-api-helper tests', () => {
     assert.isTrue(cancelCalled);
   });
 
+  suite('throwing in errFn', () => {
+    function throwInPromise(response?: Response | null, _?: Error) {
+      return response?.text().then(text => {
+        throw new Error(text);
+      });
+    }
+
+    function throwImmediately(_1?: Response | null, _2?: Error) {
+      throw new Error('Error Callback error');
+    }
+
+    setup(() => {
+      authFetchStub.returns(
+        Promise.resolve({
+          ...new Response(),
+          status: 400,
+          ok: false,
+          text() {
+            return Promise.resolve('Nope');
+          },
+        })
+      );
+    });
+
+    test('errFn with Promise throw cause send to reject on error', async () => {
+      const promise = helper.send({
+        method: HttpMethod.GET,
+        url: '/dummy/url',
+        parseResponse: false,
+        errFn: throwInPromise,
+      });
+      await assertReadRequest();
+
+      const err = await assertFails(promise);
+      assert.equal((err as Error).message, 'Nope');
+    });
+
+    test('errFn with Promise throw cause fetchJSON to reject on error', async () => {
+      const promise = helper.fetchJSON({
+        url: '/dummy/url',
+        errFn: throwInPromise,
+      });
+      await assertReadRequest();
+
+      const err = await assertFails(promise);
+      assert.equal((err as Error).message, 'Nope');
+    });
+
+    test('errFn with immediate throw cause send to reject on error', async () => {
+      const promise = helper.send({
+        method: HttpMethod.GET,
+        url: '/dummy/url',
+        parseResponse: false,
+        errFn: throwImmediately,
+      });
+      await assertReadRequest();
+
+      const err = await assertFails(promise);
+      assert.equal((err as Error).message, 'Error Callback error');
+    });
+
+    test('errFn with immediate Promise cause fetchJSON to reject on error', async () => {
+      const promise = helper.fetchJSON({
+        url: '/dummy/url',
+        errFn: throwImmediately,
+      });
+      await assertReadRequest();
+
+      const err = await assertFails(promise);
+      assert.equal((err as Error).message, 'Error Callback error');
+    });
+  });
+
   suite('429 errors', () => {
     setup(() => {
       authFetchStub.returns(
@@ -270,7 +346,7 @@ suite('gr-rest-api-helper tests', () => {
     test('are retried', async () => {
       helper = new GrRestApiHelper(
         cache,
-        getAppContext().authService,
+        authService,
         fetchPromisesCache,
         new RetryScheduler<Response>(readScheduler, 1, 50),
         writeScheduler

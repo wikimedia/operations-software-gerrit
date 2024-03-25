@@ -6,7 +6,7 @@
 import {css, html, LitElement} from 'lit';
 import {customElement, property} from 'lit/decorators.js';
 import {sharedStyles} from '../../../styles/shared-styles';
-import {BranchName, RepoName} from '../../../types/common';
+import {BranchName, ChangeActionDialog, RepoName} from '../../../types/common';
 import {getAppContext} from '../../../services/app-context';
 import '../../shared/gr-autocomplete/gr-autocomplete';
 import '../../shared/gr-dialog/gr-dialog';
@@ -14,11 +14,16 @@ import '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
 import {Key, Modifier} from '../../../utils/dom-util';
 import {ValueChangedEvent} from '../../../types/events';
 import {ShortcutController} from '../../lit/shortcut-controller';
+import {throwingErrorCallback} from '../../shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
+import {fireNoBubble} from '../../../utils/event-util';
 
 const SUGGESTIONS_LIMIT = 15;
 
 @customElement('gr-confirm-move-dialog')
-export class GrConfirmMoveDialog extends LitElement {
+export class GrConfirmMoveDialog
+  extends LitElement
+  implements ChangeActionDialog
+{
   /**
    * Fired when the confirm button is pressed.
    *
@@ -138,23 +143,13 @@ export class GrConfirmMoveDialog extends LitElement {
   private handleConfirmTap(e: Event) {
     e.preventDefault();
     e.stopPropagation();
-    this.dispatchEvent(
-      new CustomEvent('confirm', {
-        composed: true,
-        bubbles: false,
-      })
-    );
+    fireNoBubble(this, 'confirm', {});
   }
 
   private handleCancelTap(e: Event) {
     e.preventDefault();
     e.stopPropagation();
-    this.dispatchEvent(
-      new CustomEvent('cancel', {
-        composed: true,
-        bubbles: false,
-      })
-    );
+    fireNoBubble(this, 'cancel', {});
   }
 
   private getProjectBranchesSuggestions(input: string) {
@@ -163,7 +158,13 @@ export class GrConfirmMoveDialog extends LitElement {
       input = input.substring('refs/heads/'.length);
     }
     return this.restApiService
-      .getRepoBranches(input, this.project, SUGGESTIONS_LIMIT)
+      .getRepoBranches(
+        input,
+        this.project,
+        SUGGESTIONS_LIMIT,
+        /* offest=*/ undefined,
+        throwingErrorCallback
+      )
       .then(response => {
         if (!response) return [];
         const branches: Array<{name: BranchName}> = [];

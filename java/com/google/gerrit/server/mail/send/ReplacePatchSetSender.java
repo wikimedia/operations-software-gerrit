@@ -123,12 +123,12 @@ public class ReplacePatchSetSender extends ReplyToChangeSender {
       reviewers.remove(fromId);
     }
     if (args.settings.sendNewPatchsetEmails) {
-      if (notify.handling() == NotifyHandling.ALL
-          || notify.handling() == NotifyHandling.OWNER_REVIEWERS) {
-        reviewers.stream().forEach(r -> add(RecipientType.TO, r));
-        extraCC.stream().forEach(cc -> add(RecipientType.CC, cc));
+      if (notify.handling().equals(NotifyHandling.ALL)
+          || notify.handling().equals(NotifyHandling.OWNER_REVIEWERS)) {
+        reviewers.stream().forEach(r -> addByAccountId(RecipientType.TO, r));
+        extraCC.stream().forEach(cc -> addByAccountId(RecipientType.CC, cc));
       }
-      rcptToAuthors(RecipientType.CC);
+      addAuthors(RecipientType.CC);
     }
     bccStarredBy();
     includeWatchers(NotifyType.NEW_PATCHSETS, !change.isWorkInProgress() && !change.isPrivate());
@@ -142,6 +142,7 @@ public class ReplacePatchSetSender extends ReplyToChangeSender {
     }
   }
 
+  @Nullable
   public ImmutableList<String> getReviewerNames() {
     List<String> names = new ArrayList<>();
     for (Account.Id id : reviewers) {
