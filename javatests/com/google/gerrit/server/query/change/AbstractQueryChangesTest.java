@@ -3448,6 +3448,14 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     assertQuery("reviewer:self", change);
     assertThat(indexer.reindexIfStale(project, change.getId()).get()).isTrue();
     assertQuery("reviewer:self");
+
+    // Index is not stale when a draft comment exists
+    DraftInput in = new DraftInput();
+    in.line = 1;
+    in.message = "nit: trailing whitespace";
+    in.path = Patch.COMMIT_MSG;
+    gApi.changes().id(project.get(), change.getId().get()).current().createDraft(in);
+    assertThat(indexer.reindexIfStale(project, change.getId()).get()).isFalse();
   }
 
   @Test
@@ -3475,6 +3483,23 @@ public abstract class AbstractQueryChangesTest extends GerritServerTests {
     resetUser();
 
     assertQuery("is:watched", change1);
+  }
+
+  @Test
+  public void watched_projectWatchThatUsesIsWatchedIsIgnored() throws Exception {
+    createProject("repo");
+    insert("repo", newChangeWithStatus("repo", Change.Status.NEW));
+
+    List<ProjectWatchInfo> projectsToWatch = new ArrayList<>();
+    ProjectWatchInfo pwi = new ProjectWatchInfo();
+    pwi.project = "repo";
+    pwi.filter = "is:watched";
+    pwi.notifyNewChanges = true;
+    projectsToWatch.add(pwi);
+    gApi.accounts().self().setWatchedProjects(projectsToWatch);
+    resetUser();
+
+    assertQuery("is:watched");
   }
 
   @Test

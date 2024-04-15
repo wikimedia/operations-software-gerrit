@@ -113,7 +113,7 @@ public class LuceneChangeIndex implements ChangeIndex {
   private static final String CHANGE_FIELD = ChangeField.CHANGE_SPEC.getName();
 
   static Term idTerm(ChangeData cd) {
-    return idTerm(cd.getVirtualId());
+    return idTerm(cd.virtualId());
   }
 
   static Term idTerm(Change.Id id) {
@@ -400,11 +400,11 @@ public class LuceneChangeIndex implements ChangeIndex {
       IndexSearcher[] searchers = new IndexSearcher[indexes.size()];
       Map<ChangeSubIndex, ScoreDoc> searchAfterBySubIndex = new HashMap<>();
       try {
-        int realPageSize = opts.start() + opts.pageSize();
-        if (Integer.MAX_VALUE - opts.pageSize() < opts.start()) {
-          realPageSize = Integer.MAX_VALUE;
+        int pageLimit = AbstractLuceneIndex.getLimitBasedOnPaginationType(opts, opts.pageSize());
+        int queryLimit = opts.start() + pageLimit;
+        if (Integer.MAX_VALUE - pageLimit < opts.start()) {
+          queryLimit = Integer.MAX_VALUE;
         }
-        int queryLimit = AbstractLuceneIndex.getLimitBasedOnPaginationType(opts, realPageSize);
         List<TopFieldDocs> hits = new ArrayList<>();
         int searchAfterHitsCount = 0;
         for (int i = 0; i < indexes.size(); i++) {
@@ -412,7 +412,7 @@ public class LuceneChangeIndex implements ChangeIndex {
           searchers[i] = subIndex.acquire();
           if (isSearchAfterPagination) {
             ScoreDoc searchAfter = getSearchAfter(subIndex);
-            int maxRemainingHits = realPageSize - searchAfterHitsCount;
+            int maxRemainingHits = queryLimit - searchAfterHitsCount;
             if (maxRemainingHits > 0) {
               TopFieldDocs subIndexHits =
                   searchers[i].searchAfter(
@@ -549,7 +549,13 @@ public class LuceneChangeIndex implements ChangeIndex {
     IndexableField cb = Iterables.getFirst(doc.get(CHANGE_FIELD), null);
     if (cb != null) {
       BytesRef proto = cb.binaryValue();
-      cd = changeDataFactory.create(parseProtoFrom(proto, ChangeProtoConverter.INSTANCE));
+      // pass the id field value (which is the change virtual id for the imported changes) when
+      // available
+      IndexableField f = Iterables.getFirst(doc.get(idFieldName), null);
+      cd =
+          changeDataFactory.create(
+              parseProtoFrom(proto, ChangeProtoConverter.INSTANCE),
+              f != null ? Change.id(Integer.valueOf(f.stringValue())) : null);
     } else {
       IndexableField f = Iterables.getFirst(doc.get(idFieldName), null);
 
@@ -560,7 +566,7 @@ public class LuceneChangeIndex implements ChangeIndex {
     }
 
     for (SchemaField<ChangeData, ?> field : getSchema().getSchemaFields().values()) {
-      if (fields.contains(field.getName()) && doc.get(field.getName()) != null) {
+      if (fields.contains(field.getName())) {
         field.setIfPossible(cd, new LuceneStoredValue(doc.get(field.getName())));
       }
     }

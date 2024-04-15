@@ -65,7 +65,6 @@ import com.google.gerrit.server.ReviewerByEmailSet;
 import com.google.gerrit.server.ReviewerSet;
 import com.google.gerrit.server.StarredChangesUtil;
 import com.google.gerrit.server.cache.proto.Cache;
-import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.index.change.StalenessChecker.RefStatePattern;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
 import com.google.gerrit.server.notedb.SubmitRequirementProtoConverter;
@@ -128,7 +127,7 @@ public class ChangeField {
           .required()
           // The numeric change id is integer in string form
           .size(10)
-          .build(cd -> String.valueOf(cd.getVirtualId().get()));
+          .build(cd -> String.valueOf(cd.virtualId().get()));
 
   public static final IndexedField<ChangeData, String>.SearchSpec NUMERIC_ID_STR_SPEC =
       NUMERIC_ID_STR_FIELD.exact("legacy_id_str");
