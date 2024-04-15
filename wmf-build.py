@@ -27,7 +27,7 @@ import sys
 
 # Base URL to Google upstream repositories, used to clone the plugins bundled
 # if Gerrit core has submodules having a relative URL.
-UPSTREAM_GERRIT_URL = 'https://gerrit.googlesource.com'
+UPSTREAM_GERRIT_URL = 'https://gerrit.googlesource.com/gerrit'
 
 # Dependencies definitions which might be present in a plugin repository. In
 # order to build the plugin from the Gerrit source tree, those files have to be
@@ -104,34 +104,10 @@ def submodule_update(paths, options=[]):
 
 phase('git updates')
 
-# Check whether a remote is defined which is used by git submodule to resolve
-# submodule relative URL
-remote = subprocess.run(
-    shlex.split('git config --get remote.origin.url'),
-    capture_output=True
-    )
-
-if remote.returncode == 0:
-    # We have a remote, git would resolve the relative URLs to our Gerrit
-    # Wikimedia instance which do not have the jgit or plugins repositories.
-    # We just rewrite the submodules URL resolved by git from our Gerrit to
-    # Google upstream Gerrit.
-    our_base_url = os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__)))
-    submodule_options = [
-        '-c', f'url."{UPSTREAM_GERRIT_URL}".insteadOf={our_base_url}']
-else:
-    # CI does not define a remote since it just inits and fetches. git requires
-    # one to be defined in order to resolve submodules relative paths. Point
-    # the remote to upstream to let git resolves relative submodules to
-    # upstream.
-    submodule_options = [
-        '-c', f'remote.origin.url={UPSTREAM_GERRIT_URL}/gerrit']
-
 print("Updating jgit and upstream plugins")
 submodule_update(
     [path for path, module in submodules() if module['is_relative']],
-    options=submodule_options
+    options=['-c', 'remote.origin.url=%s' % UPSTREAM_GERRIT_URL]
 )
 
 print("Updating WMF extra plugins")
