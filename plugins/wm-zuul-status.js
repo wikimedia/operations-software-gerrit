@@ -373,7 +373,8 @@ class ZuulStatusChecksProvider {
         checkName: checkName,
         // RUNNABLE / RUNNING / SCHEDULED / COMPLETED  check active?
         status: runStatus,
-        statusLink: `https://integration.wikimedia.org/zuul/#q=${status.id}`,
+        // Link to the Zuul status page filter by the change number
+        statusLink: `https://integration.wikimedia.org/zuul/#q=${status.id.split(',')[0]}`,
         // labelName: 'Verified',
         scheduledTimestamp: new Date(status.enqueue_time),
         statusDescription: this.categoriesSummary(checkResults),

@@ -102,6 +102,7 @@ QUnit.module( '[wm-zuul-status]', () => {
       const checkRun = zuul.parse(
         [
           {
+            id: '1234,99',
             jobs: [
               { result: 'SUCCESS',
                 pipeline: 'test' },
@@ -109,6 +110,7 @@ QUnit.module( '[wm-zuul-status]', () => {
             ]
           },
           {
+            id: '1234,99',
             jobs: [
               { result: 'SUCCESS',
                 pipeline: 'gate-and-submit' },
@@ -144,6 +146,7 @@ QUnit.module( '[wm-zuul-status]', () => {
           // We can't determinate the pipeline for a job that has no builds yet
           {
             live: true,
+            id: '12345,88',
             jobs: [
               {
                 name: 'mwext-codehealth-master-non-voting',
@@ -154,6 +157,7 @@ QUnit.module( '[wm-zuul-status]', () => {
           // Another pipeline did process the change
           {
             live: true,
+            id: '12345,88',
             jobs: [
               { result: 'SUCCESS',
                 pipeline: 'test' },
@@ -181,6 +185,7 @@ QUnit.module( '[wm-zuul-status]', () => {
         [
           {
             live: true,
+            id: '12345,77',
             jobs: [
               // First job hasn't started yet
               {
@@ -201,6 +206,24 @@ QUnit.module( '[wm-zuul-status]', () => {
         status: 'RUNNING',
         statusDescription: 'PENDING: 2',
       });
+    } );
+
+    QUnit.test( 'parse() links to Zuul status page with change number', assert => {
+      const changeNumber = 12345;
+      const checkRun = zuul.parse(
+        [
+          {
+            live: true,
+            id: `${changeNumber},66`,
+            jobs: [
+            ]
+          }
+        ]
+      );
+      assert.propContains(checkRun[0], {
+        statusLink: `https://integration.wikimedia.org/zuul/#q=${changeNumber}`,
+      });
+
     } );
 
     const hasCompletedCheckTestCases = {
