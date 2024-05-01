@@ -8,9 +8,15 @@ class MockChecksPluginApi {
 class MockHookApi {
   onAttached( /** callback */ ) {}
 }
+// Mock for `plugin.restApi().post()`
+class MockRestPluginApi {
+  post( ) {}
+}
+
 class MockPluginApi {
   checks() { return new MockChecksPluginApi(); }
   hook() { return new MockHookApi(); }
+  restApi() { return new MockRestPluginApi(); }
   registerCustomComponent() {}
 }
 class MockGerrit {
