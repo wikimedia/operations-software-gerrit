@@ -225,13 +225,28 @@ QUnit.module( '[wm-pcc]', () => {
             }
           }
         );
+        assert.propContains(response, { responseCode: 'OK' } );
+        assert.deepEqual(response.runs.filter( run => run.status !== 'RUNNABLE' ), []);
+      });
 
-        assert.deepEqual(response, {
-          responseCode: 'OK',
-          runs: []
-        } );
-
-      } );
+      QUnit.test( 'emptyResponse has a runnable action', async assert => {
+        const response = await provider.fetch(
+          { // ChangeData
+            changeInfo: {
+              project: 'operations/puppet',
+              messages: [],
+            }
+          }
+        );
+        assert.propContains(response.runs[0], {
+          checkName: 'Puppet Compiler [CI]',
+          status: 'RUNNABLE',
+        });
+        assert.propContains(response.actions[0], {
+          name: 'Run Puppet Compiler',
+          summary: true,
+        });
+      });
 
       QUnit.test( 'full response', async assert => {
         const response = await provider.fetch(
