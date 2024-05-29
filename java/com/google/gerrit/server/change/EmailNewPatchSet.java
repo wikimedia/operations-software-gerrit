@@ -14,6 +14,8 @@
 
 package com.google.gerrit.server.change;
 
+import static com.google.gerrit.server.mail.EmailFactories.NEW_PATCHSET_ADDED;
+
 import com.google.common.collect.ImmutableSet;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
@@ -28,9 +30,12 @@ import com.google.gerrit.extensions.client.ChangeKind;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.config.SendEmailExecutor;
+import com.google.gerrit.server.mail.EmailFactories;
+import com.google.gerrit.server.mail.send.ChangeEmail;
 import com.google.gerrit.server.mail.send.MessageIdGenerator;
 import com.google.gerrit.server.mail.send.MessageIdGenerator.MessageId;
-import com.google.gerrit.server.mail.send.ReplacePatchSetSender;
+import com.google.gerrit.server.mail.send.OutgoingEmail;
+import com.google.gerrit.server.mail.send.ReplacePatchSetChangeEmailDecorator;
 import com.google.gerrit.server.patch.PatchSetInfoFactory;
 import com.google.gerrit.server.update.PostUpdateContext;
 import com.google.gerrit.server.util.RequestContext;
@@ -71,7 +76,7 @@ public class EmailNewPatchSet {
   EmailNewPatchSet(
       @SendEmailExecutor ExecutorService sendEmailExecutor,
       ThreadLocalRequestContext threadLocalRequestContext,
-      ReplacePatchSetSender.Factory replacePatchSetFactory,
+      EmailFactories emailFactories,
       PatchSetInfoFactory patchSetInfoFactory,
       MessageIdGenerator messageIdGenerator,
       @Assisted PostUpdateContext postUpdateContext,
@@ -107,7 +112,7 @@ public class EmailNewPatchSet {
     this.asyncSender =
         new AsyncSender(
             postUpdateContext.getIdentifiedUser(),
-            replacePatchSetFactory,
+            emailFactories,
             patchSetInfoFactory,
             messageId,
             postUpdateContext.getNotify(changeId),
@@ -153,7 +158,7 @@ public class EmailNewPatchSet {
    */
   private static class AsyncSender implements Runnable, RequestContext {
     private final IdentifiedUser user;
-    private final ReplacePatchSetSender.Factory replacePatchSetFactory;
+    private final EmailFactories emailFactories;
     private final PatchSetInfoFactory patchSetInfoFactory;
     private final MessageId messageId;
     private final NotifyResolver.Result notify;
@@ -172,7 +177,7 @@ public class EmailNewPatchSet {
 
     AsyncSender(
         IdentifiedUser user,
-        ReplacePatchSetSender.Factory replacePatchSetFactory,
+        EmailFactories emailFactories,
         PatchSetInfoFactory patchSetInfoFactory,
         MessageId messageId,
         NotifyResolver.Result notify,
@@ -188,7 +193,7 @@ public class EmailNewPatchSet {
         ObjectId preUpdateMetaId,
         Map<SubmitRequirement, SubmitRequirementResult> postUpdateSubmitRequirementResults) {
       this.user = user;
-      this.replacePatchSetFactory = replacePatchSetFactory;
+      this.emailFactories = emailFactories;
       this.patchSetInfoFactory = patchSetInfoFactory;
       this.messageId = messageId;
       this.notify = notify;
@@ -208,22 +213,26 @@ public class EmailNewPatchSet {
     @Override
     public void run() {
       try {
-        ReplacePatchSetSender emailSender =
-            replacePatchSetFactory.create(
+        ReplacePatchSetChangeEmailDecorator replacePatchSetEmail =
+            emailFactories.createReplacePatchSetChangeEmail(
                 projectName,
                 changeId,
                 changeKind,
                 preUpdateMetaId,
                 postUpdateSubmitRequirementResults);
-        emailSender.setFrom(user.getAccountId());
-        emailSender.setPatchSet(patchSet, patchSetInfoFactory.get(projectName, patchSet));
-        emailSender.setChangeMessage(message, timestamp);
-        emailSender.setNotify(notify);
-        emailSender.addReviewers(reviewers);
-        emailSender.addExtraCC(extraCcs);
-        emailSender.addOutdatedApproval(outdatedApprovals);
-        emailSender.setMessageId(messageId);
-        emailSender.send();
+        replacePatchSetEmail.addReviewers(reviewers);
+        replacePatchSetEmail.addExtraCC(extraCcs);
+        replacePatchSetEmail.addOutdatedApproval(outdatedApprovals);
+        ChangeEmail changeEmail =
+            emailFactories.createChangeEmail(projectName, changeId, replacePatchSetEmail);
+        changeEmail.setPatchSet(patchSet, patchSetInfoFactory.get(projectName, patchSet));
+        changeEmail.setChangeMessage(message, timestamp);
+        OutgoingEmail outgoingEmail =
+            emailFactories.createOutgoingEmail(NEW_PATCHSET_ADDED, changeEmail);
+        outgoingEmail.setFrom(user.getAccountId());
+        outgoingEmail.setNotify(notify);
+        outgoingEmail.setMessageId(messageId);
+        outgoingEmail.send();
       } catch (Exception e) {
         logger.atSevere().withCause(e).log("Cannot send email for new patch set %s", patchSet.id());
       }

@@ -14,7 +14,10 @@
 
 package com.google.gerrit.server.mail.send;
 
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.UsedAt;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.registration.DynamicItem;
 import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.server.AnonymousUser;
@@ -49,55 +52,58 @@ import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import com.google.template.soy.jbcsrc.api.SoySauce;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.List;
+import org.apache.http.client.utils.URIBuilder;
 import org.eclipse.jgit.lib.Config;
+import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
 
 /**
  * Arguments used for sending notification emails.
  *
- * <p>Notification emails are sent by out by {@link OutgoingEmail} and it's subclasses, so called
- * senders. To construct an email the sender class needs to get various other classes injected.
- * Instead of injecting these classes into the sender classes directly, they only get {@code
- * EmailArguments} injected and {@code EmailArguments} provides them all dependencies that they
- * need.
+ * <p>Notification emails are sent by out by {@link OutgoingEmail} . To construct an email class (or
+ * its decorators) needs to get various other classes injected. Instead of injecting these classes
+ * into the sender classes directly, they only get {@code EmailArguments} injected and {@code
+ * EmailArguments} provides them all dependencies that they need.
  *
  * <p>This class is public because plugins need access to it for sending emails.
  */
 @Singleton
 @UsedAt(UsedAt.Project.PLUGINS_ALL)
 public class EmailArguments {
-  final GitRepositoryManager server;
-  final ProjectCache projectCache;
-  final PermissionBackend permissionBackend;
-  final GroupBackend groupBackend;
-  final AccountCache accountCache;
-  final DiffOperations diffOperations;
-  final PatchSetUtil patchSetUtil;
-  final ApprovalsUtil approvalsUtil;
-  final Provider<FromAddressGenerator> fromAddressGenerator;
-  final EmailSender emailSender;
-  final PatchSetInfoFactory patchSetInfoFactory;
-  final IdentifiedUser.GenericFactory identifiedUserFactory;
-  final ChangeNotes.Factory changeNotesFactory;
-  final Provider<AnonymousUser> anonymousUser;
-  final String anonymousCowardName;
-  final Provider<PersonIdent> gerritPersonIdent;
-  final DynamicItem<UrlFormatter> urlFormatter;
-  final AllProjectsName allProjectsName;
-  final List<String> sshAddresses;
-  final SitePaths site;
-  final Provider<ChangeQueryBuilder> queryBuilder;
-  final ChangeData.Factory changeDataFactory;
-  final Provider<SoySauce> soySauce;
-  final EmailSettings settings;
-  final DynamicSet<OutgoingEmailValidationListener> outgoingEmailValidationListeners;
-  final Provider<InternalAccountQuery> accountQueryProvider;
-  final OutgoingEmailValidator validator;
-  final boolean addInstanceNameInSubject;
-  final Provider<String> instanceNameProvider;
-  final Provider<CurrentUser> currentUserProvider;
-  final RetryHelper retryHelper;
+  public final GitRepositoryManager server;
+  public final ProjectCache projectCache;
+  public final PermissionBackend permissionBackend;
+  public final GroupBackend groupBackend;
+  public final AccountCache accountCache;
+  public final DiffOperations diffOperations;
+  public final PatchSetUtil patchSetUtil;
+  public final ApprovalsUtil approvalsUtil;
+  public final Provider<FromAddressGenerator> fromAddressGenerator;
+  public final EmailSender emailSender;
+  public final PatchSetInfoFactory patchSetInfoFactory;
+  public final IdentifiedUser.GenericFactory identifiedUserFactory;
+  public final ChangeNotes.Factory changeNotesFactory;
+  public final Provider<AnonymousUser> anonymousUser;
+  public final String anonymousCowardName;
+  public final Provider<PersonIdent> gerritPersonIdent;
+  public final DynamicItem<UrlFormatter> urlFormatter;
+  public final AllProjectsName allProjectsName;
+  public final List<String> sshAddresses;
+  public final SitePaths site;
+  public final Provider<ChangeQueryBuilder> queryBuilder;
+  public final ChangeData.Factory changeDataFactory;
+  public final Provider<SoySauce> soySauce;
+  public final EmailSettings settings;
+  public final DynamicSet<OutgoingEmailValidationListener> outgoingEmailValidationListeners;
+  public final Provider<InternalAccountQuery> accountQueryProvider;
+  public final OutgoingEmailValidator validator;
+  public final boolean addInstanceNameInSubject;
+  public final Provider<String> instanceNameProvider;
+  public final Provider<CurrentUser> currentUserProvider;
+  public final RetryHelper retryHelper;
 
   @Inject
   EmailArguments(
@@ -163,5 +169,25 @@ public class EmailArguments {
     this.addInstanceNameInSubject = cfg.getBoolean("sendemail", "addInstanceNameInSubject", false);
     this.currentUserProvider = currentUserProvider;
     this.retryHelper = retryHelper;
+  }
+
+  /** Fetch ChangeData for the specified change. */
+  public ChangeData newChangeData(Project.NameKey project, Change.Id id) {
+    return changeDataFactory.create(project, id);
+  }
+
+  /** Fetch ChangeData for specified change and revision. */
+  public ChangeData newChangeData(Project.NameKey project, Change.Id id, ObjectId metaId) {
+    return changeDataFactory.create(changeNotesFactory.createChecked(project, id, metaId));
+  }
+
+  @Nullable
+  public static String addUspParam(String url) {
+    try {
+      URI uri = new URIBuilder(url).addParameter("usp", "email").build();
+      return uri.toString();
+    } catch (URISyntaxException e) {
+      return null;
+    }
   }
 }

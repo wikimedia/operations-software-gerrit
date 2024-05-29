@@ -3,11 +3,17 @@
  * Copyright 2023 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import '../../shared/gr-button/gr-button';
+import '../../shared/gr-icon/gr-icon';
+import '../../shared/gr-copy-clipboard/gr-copy-clipboard';
+import '../gr-suggestion-diff-preview/gr-suggestion-diff-preview';
 import {css, html, LitElement, nothing} from 'lit';
-import {customElement} from 'lit/decorators.js';
-import {getAppContext} from '../../../services/app-context';
-import {KnownExperimentId} from '../../../services/flags/flags';
+import {customElement, state} from 'lit/decorators.js';
 import {fire} from '../../../utils/event-util';
+import {getDocUrl} from '../../../utils/url-util';
+import {subscribe} from '../../lit/subscription-controller';
+import {resolve} from '../../../models/dependency';
+import {configModelToken} from '../../../models/config/config-model';
 
 declare global {
   interface HTMLElementEventMap {
@@ -22,58 +28,52 @@ export interface OpenUserSuggestionPreviewEventDetail {
 }
 
 @customElement('gr-user-suggestion-fix')
-export class GrUserSuggetionFix extends LitElement {
-  private readonly flagsService = getAppContext().flagsService;
+export class GrUserSuggestionsFix extends LitElement {
+  @state() private docsBaseUrl = '';
 
-  static override styles = [
-    css`
-      .header {
-        background-color: var(--background-color-primary);
-        border: 1px solid var(--border-color);
-        padding: var(--spacing-xs) var(--spacing-xl);
-        display: flex;
-        align-items: center;
-        border-top-left-radius: var(--border-radius);
-        border-top-right-radius: var(--border-radius);
-      }
-      .header .title {
-        flex: 1;
-      }
-      .copyButton {
-        margin-right: var(--spacing-l);
-      }
-      code {
-        max-width: var(--gr-formatted-text-prose-max-width, none);
-        background-color: var(--background-color-secondary);
-        border: 1px solid var(--border-color);
-        border-top: 0;
-        display: block;
-        font-family: var(--monospace-font-family);
-        font-size: var(--font-size-code);
-        line-height: var(--line-height-mono);
-        margin-bottom: var(--spacing-m);
-        padding: var(--spacing-xxs) var(--spacing-s);
-        overflow-x: auto;
-        /* Pre will preserve whitespace and line breaks but not wrap */
-        white-space: pre;
-        border-bottom-left-radius: var(--border-radius);
-        border-bottom-right-radius: var(--border-radius);
-      }
-    `,
-  ];
+  private readonly getConfigModel = resolve(this, configModelToken);
+
+  constructor() {
+    super();
+    subscribe(
+      this,
+      () => this.getConfigModel().docsBaseUrl$,
+      docsBaseUrl => (this.docsBaseUrl = docsBaseUrl)
+    );
+  }
+
+  static override get styles() {
+    return [
+      css`
+        .header {
+          background-color: var(--background-color-primary);
+          border: 1px solid var(--border-color);
+          padding: var(--spacing-xs) var(--spacing-xl);
+          display: flex;
+          align-items: center;
+          border-top-left-radius: var(--border-radius);
+          border-top-right-radius: var(--border-radius);
+        }
+        .header .title {
+          flex: 1;
+        }
+        .copyButton {
+          margin-right: var(--spacing-l);
+        }
+      `,
+    ];
+  }
 
   override render() {
-    if (!this.flagsService.isEnabled(KnownExperimentId.SUGGEST_EDIT)) {
-      return nothing;
-    }
     if (!this.textContent) return nothing;
     const code = this.textContent;
     return html`<div class="header">
         <div class="title">
           <span>Suggested edit</span>
           <a
-            href="https://gerrit-review.googlesource.com/Documentation/user-suggest-edits.html"
+            href=${getDocUrl(this.docsBaseUrl, 'user-suggest-edits.html')}
             target="_blank"
+            rel="noopener noreferrer"
             ><gr-icon icon="help" title="read documentation"></gr-icon
           ></a>
         </div>
@@ -81,6 +81,7 @@ export class GrUserSuggetionFix extends LitElement {
           <gr-copy-clipboard
             hideInput=""
             text=${code}
+            multiline
             copyTargetName="Suggested edit"
           ></gr-copy-clipboard>
         </div>
@@ -95,7 +96,9 @@ export class GrUserSuggetionFix extends LitElement {
           </gr-button>
         </div>
       </div>
-      <code>${code}</code>`;
+      <gr-suggestion-diff-preview
+        .suggestion=${this.textContent}
+      ></gr-suggestion-diff-preview>`;
   }
 
   handleShowFix() {
@@ -106,6 +109,6 @@ export class GrUserSuggetionFix extends LitElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    'gr-user-suggestion-fix': GrUserSuggetionFix;
+    'gr-user-suggestion-fix': GrUserSuggestionsFix;
   }
 }

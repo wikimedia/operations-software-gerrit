@@ -17,8 +17,10 @@ package com.google.gerrit.server.permissions;
 import static com.google.gerrit.server.permissions.AbstractLabelPermission.ForUser.ON_BEHALF_OF;
 import static com.google.gerrit.server.permissions.DefaultPermissionMappings.labelPermissionName;
 
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Permission;
@@ -36,6 +38,8 @@ import java.util.Set;
 
 /** Access control management for a user accessing a single change. */
 class ChangeControl {
+  private static final FluentLogger logger = FluentLogger.forEnclosingClass();
+
   private final RefControl refControl;
   private final ChangeData changeData;
 
@@ -136,7 +140,7 @@ class ChangeControl {
   /** Is this user a reviewer for the change? */
   private boolean isReviewer(ChangeData cd) {
     if (getUser().isIdentifiedUser()) {
-      Collection<Account.Id> results = cd.reviewers().all();
+      ImmutableSet<Account.Id> results = cd.reviewers().all();
       return results.contains(getUser().getAccountId());
     }
     return false;
@@ -184,11 +188,43 @@ class ChangeControl {
         || getProjectControl().isAdmin();
   }
 
+  /** Can this user edit the custom keyed values? */
+  private boolean canEditCustomKeyedValues() {
+    return isOwner() // owner (aka creator) of the change can edit custom keyed values
+        || getProjectControl().isAdmin();
+  }
+
   private boolean isPrivateVisible(ChangeData cd) {
-    return isOwner()
-        || isReviewer(cd)
-        || refControl.canPerform(Permission.VIEW_PRIVATE_CHANGES)
-        || getUser().isInternalUser();
+    if (isOwner()) {
+      logger.atFine().log(
+          "%s can see private change %s because this user is the change owner",
+          getUser().getLoggableName(), cd.getId());
+      return true;
+    }
+
+    if (isReviewer(cd)) {
+      logger.atFine().log(
+          "%s can see private change %s because this user is a reviewer",
+          getUser().getLoggableName(), cd.getId());
+      return true;
+    }
+
+    if (refControl.canPerform(Permission.VIEW_PRIVATE_CHANGES)) {
+      logger.atFine().log(
+          "%s can see private change %s because this user can view private changes",
+          getUser().getLoggableName(), cd.getId());
+      return true;
+    }
+
+    if (getUser().isInternalUser()) {
+      logger.atFine().log(
+          "%s can see private change %s because this user is an internal user",
+          getUser().getLoggableName(), cd.getId());
+      return true;
+    }
+
+    logger.atFine().log("%s cannot see private change %s", getUser().getLoggableName(), cd.getId());
+    return false;
   }
 
   private class ForChangeImpl extends ForChange {
@@ -262,6 +298,8 @@ class ChangeControl {
             return canEditDescription();
           case EDIT_HASHTAGS:
             return canEditHashtags();
+          case EDIT_CUSTOM_KEYED_VALUES:
+            return canEditCustomKeyedValues();
           case EDIT_TOPIC_NAME:
             return canEditTopicName();
           case REBASE:

@@ -21,20 +21,26 @@ import static com.google.gerrit.extensions.client.ListChangesOption.CURRENT_COMM
 import static com.google.gerrit.extensions.client.ListChangesOption.CURRENT_FILES;
 import static com.google.gerrit.extensions.client.ListChangesOption.CURRENT_REVISION;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
-import static com.google.gerrit.server.patch.DiffUtil.cleanPatch;
+import static com.google.gerrit.server.patch.DiffUtil.normalizePatchForComparison;
 import static com.google.gerrit.server.patch.DiffUtil.removePatchHeader;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.eclipse.jgit.lib.Constants.HEAD;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.hash.Hashing;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.RestResponse;
+import com.google.gerrit.acceptance.testsuite.account.AccountOperations;
+import com.google.gerrit.acceptance.testsuite.change.ChangeOperations;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Permission;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.accounts.AccountInput;
 import com.google.gerrit.extensions.api.changes.ApplyPatchInput;
 import com.google.gerrit.extensions.api.changes.ApplyPatchPatchSetInput;
@@ -46,10 +52,14 @@ import com.google.gerrit.extensions.common.DiffInfo;
 import com.google.gerrit.extensions.common.GitPerson;
 import com.google.gerrit.extensions.common.testing.GitPersonSubject;
 import com.google.gerrit.extensions.restapi.AuthException;
+import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.BinaryResult;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
+import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.inject.Inject;
+import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
+import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.util.Base64;
 import org.junit.Test;
@@ -59,7 +69,7 @@ public class ApplyPatchIT extends AbstractDaemonTest {
   private static final String DESTINATION_BRANCH = "destBranch";
 
   private static final String ADDED_FILE_NAME = "a_new_file.txt";
-  private static final String ADDED_FILE_CONTENT = "First added line\nSecond added line\n";
+  private static final String ADDED_FILE_CONTENT = "First added line\nSecond added line";
   private static final String ADDED_FILE_DIFF =
       "diff --git a/a_new_file.txt b/a_new_file.txt\n"
           + "new file mode 100644\n"
@@ -67,10 +77,13 @@ public class ApplyPatchIT extends AbstractDaemonTest {
           + "+++ b/a_new_file.txt\n"
           + "@@ -0,0 +1,2 @@\n"
           + "+First added line\n"
-          + "+Second added line\n";
+          + "+Second added line\n"
+          + "\\ No newline at end of file\n";
 
   @Inject private ProjectOperations projectOperations;
   @Inject private RequestScopeOperations requestScopeOperations;
+  @Inject private ChangeOperations changeOperations;
+  @Inject private AccountOperations accountOperations;
 
   @Test
   public void applyAddedFilePatch_success() throws Exception {
@@ -81,6 +94,27 @@ public class ApplyPatchIT extends AbstractDaemonTest {
 
     DiffInfo diff = fetchDiffForFile(result, ADDED_FILE_NAME);
     assertDiffForNewFile(diff, result.currentRevision, ADDED_FILE_NAME, ADDED_FILE_CONTENT);
+  }
+
+  @Test
+  public void applyAddedFilePatchAfterUpdatingPreferredEmail() throws Exception {
+    String emailOne = "email1@example.com";
+    Account.Id testUser = accountOperations.newAccount().preferredEmail(emailOne).create();
+
+    // Create change
+    Change.Id change = changeOperations.newChange().project(project).owner(testUser).create();
+
+    // Change preferred email for the user
+    String emailTwo = "email2@example.com";
+    accountOperations.account(testUser).forUpdate().preferredEmail(emailTwo).update();
+    requestScopeOperations.setApiUser(testUser);
+
+    // Apply patch
+    ApplyPatchPatchSetInput in = buildInput(ADDED_FILE_DIFF);
+    in.responseFormatOptions = ImmutableList.of(CURRENT_REVISION, CURRENT_COMMIT);
+    ChangeInfo result = gApi.changes().id(change.get()).applyPatch(in);
+
+    assertThat(result.getCurrentRevision().commit.committer.email).isEqualTo(emailOne);
   }
 
   private static final String MODIFIED_FILE_NAME = "modified_file.txt";
@@ -95,6 +129,13 @@ public class ApplyPatchIT extends AbstractDaemonTest {
           + "-First original line\n"
           + "-Second original line\n"
           + "+Modified line\n";
+
+  @Test
+  public void applyPatchWithoutProvidingPatch_badRequest() throws Exception {
+    initBaseWithFile(MODIFIED_FILE_NAME, MODIFIED_FILE_ORIGINAL_CONTENT);
+    Throwable error = assertThrows(BadRequestException.class, () -> applyPatch(buildInput(null)));
+    assertThat(error).hasMessageThat().isEqualTo("patch required");
+  }
 
   @Test
   public void applyModifiedFilePatch_success() throws Exception {
@@ -157,6 +198,28 @@ public class ApplyPatchIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void applyValidTraditionalPatch_success() throws Exception {
+    final String fileName = "file_name.txt";
+    final String originalContent = "original line";
+    final String newContent = "new line\n";
+    final String diff =
+        "diff file_name.txt file_name.txt\n"
+            + "--- file_name.txt\n"
+            + "+++ file_name.txt\n"
+            + "@@ -1 +1 @@\n"
+            + "-original line\n"
+            + "+new line\n";
+    initBaseWithFile(fileName, originalContent);
+    ApplyPatchPatchSetInput in = buildInput(diff);
+
+    ChangeInfo result = applyPatch(in);
+
+    DiffInfo fileDiff = fetchDiffForFile(result, fileName);
+    assertDiffForFullyModifiedFile(
+        fileDiff, result.currentRevision, fileName, originalContent, newContent);
+  }
+
+  @Test
   public void applyGerritBasedPatchWithSingleFile_success() throws Exception {
     String head = getHead(repo(), HEAD).name();
     createBranchWithRevision(BranchNameKey.create(project, "branch"), head);
@@ -169,7 +232,8 @@ public class ApplyPatchIT extends AbstractDaemonTest {
     ChangeInfo result = applyPatch(in);
 
     BinaryResult resultPatch = gApi.changes().id(result.id).current().patch();
-    assertThat(cleanPatch(resultPatch)).isEqualTo(cleanPatch(originalPatch));
+    assertThat(normalizePatchForComparison(resultPatch))
+        .isEqualTo(normalizePatchForComparison(originalPatch));
   }
 
   @Test
@@ -191,7 +255,8 @@ public class ApplyPatchIT extends AbstractDaemonTest {
     ChangeInfo result = applyPatch(in);
 
     BinaryResult resultPatch = gApi.changes().id(result.id).current().patch();
-    assertThat(cleanPatch(resultPatch)).isEqualTo(cleanPatch(originalPatch));
+    assertThat(normalizePatchForComparison(resultPatch))
+        .isEqualTo(normalizePatchForComparison(originalPatch));
   }
 
   @Test
@@ -214,7 +279,8 @@ public class ApplyPatchIT extends AbstractDaemonTest {
 
     resp.assertOK();
     BinaryResult resultPatch = gApi.changes().id(destChange.getChangeId()).current().patch();
-    assertThat(cleanPatch(resultPatch)).isEqualTo(cleanPatch(originalPatch));
+    assertThat(normalizePatchForComparison(resultPatch))
+        .isEqualTo(normalizePatchForComparison(originalPatch));
   }
 
   @Test
@@ -238,7 +304,8 @@ public class ApplyPatchIT extends AbstractDaemonTest {
 
     resp.assertOK();
     BinaryResult resultPatch = gApi.changes().id(destChange.getChangeId()).current().patch();
-    assertThat(cleanPatch(resultPatch)).isEqualTo(cleanPatch(originalDecodedPatch));
+    assertThat(normalizePatchForComparison(resultPatch))
+        .isEqualTo(normalizePatchForComparison(originalDecodedPatch));
   }
 
   @Test
@@ -258,6 +325,46 @@ public class ApplyPatchIT extends AbstractDaemonTest {
                 + MODIFIED_FILE_NAME
                 + ", hunk HunkHeader[1,2->1,1]: Hunk cannot be applied\n\nOriginal patch:\n "
                 + removePatchHeader(patch)
+                + "\n\nChange-Id: "
+                + result.changeId
+                + "\n");
+    // Error in MODIFIED_FILE should not affect ADDED_FILE results.
+    DiffInfo diff = fetchDiffForFile(result, ADDED_FILE_NAME);
+    assertDiffForNewFile(diff, result.currentRevision, ADDED_FILE_NAME, ADDED_FILE_CONTENT);
+  }
+
+  @Test
+  public void applyPatchWithConflict_appendErrorsToCommitMessageWithLargeOriginalPatch()
+      throws Exception {
+    initBaseWithFile(MODIFIED_FILE_NAME, "Unexpected base content");
+    String modifiedFileDiff =
+        "diff --git a/modified_file.txt b/modified_file.txt\n"
+            + "--- a/modified_file.txt\n"
+            + "+++ b/modified_file.txt\n"
+            + "@@ -1,2 +1,1001 @@\n"
+            + "-First original line\n"
+            + "-Second original line\n"
+            + "+Modified line\n"
+            + "+1000 additional lines\n".repeat(1000);
+    String patch = ADDED_FILE_DIFF + modifiedFileDiff;
+    ApplyPatchPatchSetInput in = buildInput(patch);
+    in.commitMessage = "subject";
+
+    ChangeInfo result = applyPatch(in);
+
+    assertThat(gApi.changes().id(result.id).current().commit(false).message)
+        .isEqualTo(
+            in.commitMessage
+                + "\n\nNOTE FOR REVIEWERS - errors occurred while applying the patch."
+                + "\nPLEASE REVIEW CAREFULLY.\nErrors:\nError applying patch in "
+                + MODIFIED_FILE_NAME
+                + ", hunk HunkHeader[1,2->1,1001]: Hunk cannot be applied\n\nOriginal patch:\n "
+                + removePatchHeader(patch).substring(0, 1024)
+                + "\n[[[Original patch trimmed due to size. Decoded string size: "
+                + removePatchHeader(patch).length()
+                + ". Decoded string SHA1: "
+                + Hashing.sha1().hashString(removePatchHeader(patch), UTF_8)
+                + ".]]]"
                 + "\n\nChange-Id: "
                 + result.changeId
                 + "\n");
@@ -428,7 +535,8 @@ public class ApplyPatchIT extends AbstractDaemonTest {
         .isEqualTo(inputParent.getCommit().name());
 
     BinaryResult resultPatch = gApi.changes().id(dest.getChangeId()).current().patch();
-    assertThat(cleanPatch(resultPatch)).isEqualTo(cleanPatch(ADDED_FILE_DIFF));
+    assertThat(normalizePatchForComparison(resultPatch))
+        .isEqualTo(normalizePatchForComparison(ADDED_FILE_DIFF));
   }
 
   @Test
@@ -466,6 +574,38 @@ public class ApplyPatchIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void commitMessage_providedMessageWithCorrectChangeId() throws Exception {
+    initDestBranch();
+    String originalChangeId =
+        gApi.changes()
+            .create(new ChangeInput(project.get(), DESTINATION_BRANCH, "Default commit message"))
+            .info()
+            .changeId;
+    ApplyPatchPatchSetInput in = buildInput(ADDED_FILE_DIFF);
+    in.commitMessage = "custom commit message\n\nChange-Id: " + originalChangeId + "\n";
+
+    ChangeInfo result = gApi.changes().id(originalChangeId).applyPatch(in);
+
+    ChangeInfo info = get(result.changeId, CURRENT_REVISION, CURRENT_COMMIT);
+    assertThat(info.revisions.get(info.currentRevision).commit.message).isEqualTo(in.commitMessage);
+  }
+
+  @Test
+  public void commitMessage_providedMessageWithWrongChangeId() throws Exception {
+    initDestBranch();
+    String originalChangeId =
+        gApi.changes()
+            .create(new ChangeInput(project.get(), DESTINATION_BRANCH, "Default commit message"))
+            .info()
+            .changeId;
+    ApplyPatchPatchSetInput in = buildInput(ADDED_FILE_DIFF);
+    in.commitMessage = "custom commit message\n\nChange-Id: " + "I1234567890" + "\n";
+
+    assertThrows(
+        ResourceConflictException.class, () -> gApi.changes().id(originalChangeId).applyPatch(in));
+  }
+
+  @Test
   public void commitMessage_defaultMessageAndPatchHeader() throws Exception {
     initDestBranch();
     ApplyPatchPatchSetInput in = buildInput("Patch header\n" + ADDED_FILE_DIFF);
@@ -487,6 +627,154 @@ public class ApplyPatchIT extends AbstractDaemonTest {
     ChangeInfo info = get(result.changeId, CURRENT_REVISION, CURRENT_COMMIT);
     assertThat(info.revisions.get(info.currentRevision).commit.message)
         .isEqualTo("Default commit message\n\nChange-Id: " + result.changeId + "\n");
+  }
+
+  @Test
+  public void amendCommitWithValidTraditionalPatch_success() throws Exception {
+    final String fileName = "file_name.txt";
+    final String originalContent = "original line";
+    final String newContent = "new line\n";
+    final String diff =
+        "diff file_name.txt file_name.txt\n"
+            + "--- file_name.txt\n"
+            + "+++ file_name.txt\n"
+            + "@@ -1 +1 @@\n"
+            + "-original line\n"
+            + "+new line\n";
+
+    PushOneCommit push = pushFactory.create(admin.newIdent(), testRepo, "Test", fileName, "foo");
+    PushOneCommit.Result base = push.to("refs/heads/foo");
+    base.assertOkStatus();
+
+    PushOneCommit.Result firstPatchSet =
+        createChange(
+            testRepo, "foo", "Add original file: " + fileName, fileName, originalContent, null);
+    firstPatchSet.assertOkStatus();
+
+    ApplyPatchPatchSetInput in = new ApplyPatchPatchSetInput();
+    in.patch = new ApplyPatchInput();
+    in.patch.patch = diff;
+    in.amend = true;
+    in.responseFormatOptions =
+        ImmutableList.of(ListChangesOption.CURRENT_REVISION, ListChangesOption.CURRENT_COMMIT);
+
+    ChangeInfo result = gApi.changes().id(firstPatchSet.getChangeId()).applyPatch(in);
+
+    // Parent of patch set 2 = parent of patch set 1, so we actually amended
+    assertThat(result.revisions.get(result.currentRevision).commit.parents.get(0).commit)
+        .isEqualTo(base.getCommit().getId().getName());
+    DiffInfo fileDiff = gApi.changes().id(result.id).current().file(fileName).diff();
+    assertDiffForFullyModifiedFile(fileDiff, result.currentRevision, fileName, "foo", newContent);
+    assertThat(gApi.changes().id(firstPatchSet.getChangeId()).current().commit(false).message)
+        .isEqualTo(firstPatchSet.getCommit().getFullMessage());
+  }
+
+  @Test
+  public void amendCantBeUsedWithBase() throws Exception {
+    final String diff =
+        "diff file_name.txt file_name.txt\n"
+            + "--- file_name.txt\n"
+            + "+++ file_name.txt\n"
+            + "@@ -1 +1 @@\n"
+            + "-original line\n"
+            + "+new line\n";
+    PushOneCommit.Result change = createChange();
+    ApplyPatchPatchSetInput in = new ApplyPatchPatchSetInput();
+    in.patch = new ApplyPatchInput();
+    in.patch.patch = diff;
+    in.amend = true;
+    in.base = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+
+    BadRequestException thrown =
+        assertThrows(
+            BadRequestException.class,
+            () -> gApi.changes().id(change.getChangeId()).applyPatch(in));
+    assertThat(thrown)
+        .hasMessageThat()
+        .isEqualTo("amend only works with existing revisions. omit base.");
+  }
+
+  @Test
+  public void amendCommitWithConflict_appendErrorsToCommitMessage() throws Exception {
+    final String fileName = "file_name.txt";
+    final String originalContent = "original line";
+    final String diff =
+        "diff file_name.txt file_name.txt\n"
+            + "--- file_name.txt\n"
+            + "+++ file_name.txt\n"
+            + "@@ -1 +1 @@\n"
+            + "-xxx line\n"
+            + "+new line\n";
+
+    PushOneCommit push = pushFactory.create(admin.newIdent(), testRepo, "Test", fileName, "foo");
+    PushOneCommit.Result base = push.to("refs/heads/foo");
+    base.assertOkStatus();
+
+    PushOneCommit.Result firstPatchSet =
+        createChange(
+            testRepo, "foo", "Add original file: " + fileName, fileName, originalContent, null);
+    firstPatchSet.assertOkStatus();
+
+    ApplyPatchPatchSetInput in = new ApplyPatchPatchSetInput();
+    in.patch = new ApplyPatchInput();
+    in.patch.patch = diff;
+    in.amend = true;
+    in.responseFormatOptions =
+        ImmutableList.of(ListChangesOption.CURRENT_REVISION, ListChangesOption.CURRENT_COMMIT);
+
+    ChangeInfo result = gApi.changes().id(firstPatchSet.getChangeId()).applyPatch(in);
+    assertThat(gApi.changes().id(result.id).current().commit(false).message)
+        .startsWith(
+            "Add original file: file_name.txt\n"
+                + "\n"
+                + "NOTE FOR REVIEWERS - errors occurred while applying the patch.\n"
+                + "PLEASE REVIEW CAREFULLY.\n"
+                + "Errors:\n"
+                + "Error applying patch in file_name.txt, hunk HunkHeader[1,1->1,1]: Hunk cannot be applied\n"
+                + "\n"
+                + "Original patch:\n"
+                + " diff file_name.txt file_name.txt\n"
+                + "--- file_name.txt\n"
+                + "+++ file_name.txt\n"
+                + "@@ -1 +1 @@\n"
+                + "-xxx line\n"
+                + "+new line");
+  }
+
+  @Test
+  public void amendCommitWithValidTraditionalPatchEmptyRepo_resourceNotFound() throws Exception {
+    final String fileName = "file_name.txt";
+    final String originalContent = "original line";
+    final String diff =
+        "diff file_name.txt file_name.txt\n"
+            + "--- file_name.txt\n"
+            + "+++ file_name.txt\n"
+            + "@@ -1 +1 @@\n"
+            + "-original line\n"
+            + "+new line\n";
+
+    Project.NameKey emptyProject = projectOperations.newProject().noEmptyCommit().create();
+    TestRepository<InMemoryRepository> emptyClone = cloneProject(emptyProject);
+    PushOneCommit.Result firstPatchSet =
+        createChange(
+            emptyClone,
+            "master",
+            "Add original file: " + fileName,
+            fileName,
+            originalContent,
+            null);
+    firstPatchSet.assertOkStatus();
+
+    ApplyPatchPatchSetInput in = new ApplyPatchPatchSetInput();
+    in.patch = new ApplyPatchInput();
+    in.patch.patch = diff;
+    in.amend = true;
+
+    Throwable error =
+        assertThrows(
+            ResourceNotFoundException.class,
+            () -> gApi.changes().id(firstPatchSet.getChangeId()).applyPatch(in));
+    assertThat(error).hasMessageThat().contains("Branch refs/heads/master does not exist");
   }
 
   private void initDestBranch() throws Exception {

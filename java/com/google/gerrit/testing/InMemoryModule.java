@@ -16,6 +16,7 @@ package com.google.gerrit.testing;
 
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.util.concurrent.MoreExecutors.newDirectExecutorService;
+import static com.google.gerrit.server.Sequence.LightweightGroups;
 import static com.google.inject.Scopes.SINGLETON;
 
 import com.google.common.base.Strings;
@@ -44,7 +45,11 @@ import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.GerritPersonIdentProvider;
 import com.google.gerrit.server.LibModuleType;
 import com.google.gerrit.server.PluginUser;
+import com.google.gerrit.server.Sequence;
+import com.google.gerrit.server.account.AccountCacheImpl;
 import com.google.gerrit.server.account.GroupBackend;
+import com.google.gerrit.server.account.storage.notedb.AccountNoteDbReadStorageModule;
+import com.google.gerrit.server.account.storage.notedb.AccountNoteDbWriteStorageModule;
 import com.google.gerrit.server.api.GerritApiModule;
 import com.google.gerrit.server.api.PluginApiModule;
 import com.google.gerrit.server.api.projects.ProjectQueryBuilderModule;
@@ -85,7 +90,6 @@ import com.google.gerrit.server.git.ChangesByProjectCache;
 import com.google.gerrit.server.git.GarbageCollection;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.PerThreadRequestScope;
-import com.google.gerrit.server.git.WorkQueue;
 import com.google.gerrit.server.git.WorkQueue.WorkQueueModule;
 import com.google.gerrit.server.group.testing.TestGroupBackend;
 import com.google.gerrit.server.index.account.AccountSchemaDefinitions;
@@ -95,7 +99,10 @@ import com.google.gerrit.server.index.change.ChangeSchemaDefinitions;
 import com.google.gerrit.server.index.group.AllGroupsIndexer;
 import com.google.gerrit.server.index.group.GroupIndexCollection;
 import com.google.gerrit.server.index.group.GroupSchemaDefinitions;
+import com.google.gerrit.server.mail.EmailModule;
 import com.google.gerrit.server.mail.SignedTokenEmailTokenVerifier.SignedTokenEmailTokenVerifierModule;
+import com.google.gerrit.server.notedb.RepoSequence.DisabledGitRefUpdatedRepoGroupsSequenceProvider;
+import com.google.gerrit.server.notedb.RepoSequence.RepoSequenceModule;
 import com.google.gerrit.server.patch.DiffExecutor;
 import com.google.gerrit.server.permissions.DefaultPermissionBackendModule;
 import com.google.gerrit.server.plugins.ServerInformationImpl;
@@ -143,7 +150,6 @@ public class InMemoryModule extends FactoryModule {
     cfg.setString(
         "accountPatchReviewDb", null, "url", JdbcAccountPatchReviewStore.TEST_IN_MEMORY_URL);
     cfg.setEnum("auth", null, "type", AuthType.DEVELOPMENT_BECOME_ANY_ACCOUNT);
-    cfg.setString("gerrit", null, "allProjects", "Test-Projects");
     cfg.setString("gerrit", null, "basePath", "git");
     cfg.setString("gerrit", null, "canonicalWebUrl", "http://test/");
     cfg.setString("user", null, "name", "Gerrit Code Review");
@@ -151,6 +157,7 @@ public class InMemoryModule extends FactoryModule {
     cfg.unset("cache", null, "directory");
     cfg.setBoolean("index", "lucene", "testInmemory", true);
     cfg.setInt("sendemail", null, "threadPoolSize", 0);
+    cfg.setInt("execution", null, "fanOutThreadPoolSize", 0);
     cfg.setBoolean("receive", null, "enableSignedPush", false);
     cfg.setString("receive", null, "certNonceSeed", "sekret");
   }
@@ -190,7 +197,12 @@ public class InMemoryModule extends FactoryModule {
             });
     bind(GerritRuntime.class).toInstance(GerritRuntime.DAEMON);
     bind(MetricMaker.class).to(DisabledMetricMaker.class);
+
+    install(cfgInjector.getInstance(AccountCacheImpl.AccountCacheModule.class));
     install(cfgInjector.getInstance(GerritGlobalModule.class));
+    install(new AccountNoteDbWriteStorageModule());
+    install(new AccountNoteDbReadStorageModule());
+    install(new RepoSequenceModule());
 
     AuthConfig authConfig = cfgInjector.getInstance(AuthConfig.class);
     install(new AuthModule(authConfig));
@@ -249,6 +261,7 @@ public class InMemoryModule extends FactoryModule {
         });
     install(new DefaultMemoryCacheModule());
     install(new H2CacheModule());
+    install(new EmailModule());
     install(new FakeEmailSenderModule());
     install(new SignedTokenEmailTokenVerifierModule());
     install(new GpgModule(cfg));
@@ -304,6 +317,9 @@ public class InMemoryModule extends FactoryModule {
           .toProvider(AnonymousCowardNameProvider.class);
 
       bind(GroupIndexCollection.class);
+      bind(Sequence.class)
+          .annotatedWith(LightweightGroups.class)
+          .toProvider(DisabledGitRefUpdatedRepoGroupsSequenceProvider.class);
       bind(SchemaCreator.class).to(SchemaCreatorImpl.class);
     }
 
@@ -342,8 +358,8 @@ public class InMemoryModule extends FactoryModule {
   @Provides
   @Singleton
   @FanOutExecutor
-  public ExecutorService createFanOutExecutor(WorkQueue queues) {
-    return queues.createQueue(2, "FanOut");
+  public ExecutorService createFanOutExecutor() {
+    return newDirectExecutorService();
   }
 
   @Provides

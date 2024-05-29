@@ -552,8 +552,7 @@ public abstract class AbstractLuceneIndex<K, V> implements Index<K, V> {
                 (long) getLimitBasedOnPaginationType(opts, opts.pageSize()) + opts.start());
         TopFieldDocs docs =
             opts.searchAfter() != null
-                ? searcher.searchAfter(
-                    (ScoreDoc) opts.searchAfter(), query, realLimit, sort, false, false)
+                ? searcher.searchAfter((ScoreDoc) opts.searchAfter(), query, realLimit, sort, false)
                 : searcher.search(query, realLimit, sort);
         ImmutableList.Builder<T> b = ImmutableList.builderWithExpectedSize(docs.scoreDocs.length);
         for (int i = opts.start(); i < docs.scoreDocs.length; i++) {

@@ -3,7 +3,6 @@
  * Copyright 2020 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {Finalizable} from '../registry';
 import {NumericChangeId} from '../../types/common';
 import {EventDetails, ReportingOptions} from '../../api/reporting';
 import {PluginApi} from '../../api/plugin';
@@ -13,6 +12,7 @@ import {
   LifeCycle,
   Timing,
 } from '../../constants/reporting';
+import {Finalizable} from '../../types/types';
 
 export type EventValue = string | number | {error?: Error};
 
@@ -34,6 +34,7 @@ export interface ReportingService extends Finalizable {
 
   appStarted(): void;
   onVisibilityChange(): void;
+  onFocusChange(): void;
   beforeLocationChanged(): void;
   locationChanged(page: string): void;
   dashboardDisplayed(): void;

@@ -9,7 +9,6 @@ import {hasOwnProperty} from '../../utils/common-util';
 import {NumericChangeId} from '../../types/common';
 import {Deduping, EventDetails, ReportingOptions} from '../../api/reporting';
 import {PluginApi} from '../../api/plugin';
-import {Finalizable} from '../registry';
 import {
   Execution,
   Interaction,
@@ -18,6 +17,7 @@ import {
 } from '../../constants/reporting';
 import {onCLS, onFID, onLCP, Metric, onINP} from 'web-vitals';
 import {getEventPath, isElementTarget} from '../../utils/dom-util';
+import {Finalizable} from '../../types/types';
 
 // Latency reporting constants.
 
@@ -87,6 +87,9 @@ const STARTUP_TIMERS: {[name: string]: number} = {
   // WebComponentsReady timer is triggered from gr-router.
   [Timing.WEB_COMPONENTS_READY]: 0,
 };
+
+// List of timers that should NOT be reset before a location change.
+const LOCATION_CHANGE_OK_TIMERS: (string | Timing)[] = [Timing.SEND_REPLY];
 
 const SLOW_RPC_THRESHOLD = 500;
 
@@ -185,6 +188,12 @@ export function initVisibilityReporter(reportingService: ReportingService) {
   document.addEventListener('visibilitychange', () => {
     reportingService.onVisibilityChange();
   });
+  window.addEventListener('blur', () => {
+    reportingService.onFocusChange();
+  });
+  window.addEventListener('focus', () => {
+    reportingService.onFocusChange();
+  });
 }
 
 export function initClickReporter(reportingService: ReportingService) {
@@ -201,6 +210,62 @@ export function initClickReporter(reportingService: ReportingService) {
       text: anchorEl.innerText,
     });
   });
+}
+
+/**
+ * Reports generic user interaction every x seconds to detect, if the user is
+ * present and is using the application somehow. If you just look at
+ * `document.visibilityState`, then the user may have left the browser open
+ * without locking the screen. So it helps to know whether some interaction is
+ * actually happening.
+ */
+export class InteractionReporter implements Finalizable {
+  /** Accumulates event names until the next round of interaction reporting. */
+  private interactionEvents = new Set<string>();
+
+  /** Allows clearing the interval timer. Mostly useful for tests. */
+  private intervalId?: number;
+
+  constructor(
+    private readonly reportingService: ReportingService,
+    private readonly reportingIntervalMs = 10 * 1000
+  ) {
+    const events = ['mousemove', 'scroll', 'wheel', 'keydown', 'pointerdown'];
+    for (const eventName of events) {
+      document.addEventListener(eventName, () =>
+        this.interactionEvents.add(eventName)
+      );
+    }
+
+    this.intervalId = window.setInterval(
+      () => this.report(),
+      this.reportingIntervalMs
+    );
+  }
+
+  finalize() {
+    window.clearInterval(this.intervalId);
+  }
+
+  private report() {
+    const active = this.interactionEvents.size > 0;
+    if (active) {
+      this.reportingService.reportInteraction(Interaction.USER_ACTIVE, {
+        events: [...this.interactionEvents],
+      });
+    } else if (document.visibilityState === 'visible') {
+      this.reportingService.reportInteraction(Interaction.USER_PASSIVE, {});
+    }
+    this.interactionEvents.clear();
+  }
+}
+
+let interactionReporter: InteractionReporter;
+
+export function initInteractionReporter(reportingService: ReportingService) {
+  if (!interactionReporter) {
+    interactionReporter = new InteractionReporter(reportingService);
+  }
 }
 
 export function initWebVitals(reportingService: ReportingService) {
@@ -470,6 +535,20 @@ export class GrReporting implements ReportingService, Finalizable {
     this._reportNavResTimes();
   }
 
+  onFocusChange() {
+    this.reporter(
+      LIFECYCLE.TYPE,
+      LIFECYCLE.CATEGORY.VISIBILITY,
+      LifeCycle.FOCUS,
+      undefined,
+      {
+        isVisible: document.visibilityState === 'visible',
+        hasFocus: document.hasFocus(),
+      },
+      false
+    );
+  }
+
   onVisibilityChange() {
     this.hiddenDurationTimer.onVisibilityChange();
     let eventName;
@@ -486,6 +565,8 @@ export class GrReporting implements ReportingService, Finalizable {
         undefined,
         {
           hiddenDurationMs: this.hiddenDurationTimer.hiddenDurationMs,
+          isVisible: document.visibilityState === 'visible',
+          hasFocus: document.hasFocus(),
         },
         false
       );
@@ -522,6 +603,7 @@ export class GrReporting implements ReportingService, Finalizable {
 
   beforeLocationChanged() {
     for (const prop of Object.keys(this._baselines)) {
+      if (LOCATION_CHANGE_OK_TIMERS.includes(prop)) continue;
       delete this._baselines[prop];
     }
     this.time(Timing.CHANGE_DISPLAYED);

@@ -6,16 +6,16 @@
 import {DiffLayer} from '../../../types/types';
 import {GrDiffLine, Side, TokenHighlightListener} from '../../../api/diff';
 import {assertIsDefined} from '../../../utils/common-util';
-import {GrAnnotation} from '../gr-diff-highlight/gr-annotation';
+import {
+  GrAnnotationImpl,
+  getStringLength,
+} from '../gr-diff-highlight/gr-annotation';
 import {debounce, DelayedTask} from '../../../utils/async-util';
-
 import {getLineElByChild, getSideByLineEl} from '../gr-diff/gr-diff-utils';
-
 import {
   getLineNumberByChild,
   lineNumberToNumber,
 } from '../gr-diff/gr-diff-utils';
-import {GrDiff} from '../gr-diff/gr-diff';
 
 const tokenMatcher = new RegExp(/[\w]+/g);
 
@@ -117,18 +117,6 @@ export class TokenHighlightLayer implements DiffLayer {
     this.getTokenQueryContainer = getTokenQueryContainer;
   }
 
-  static createTokenHighlightContainer(
-    container: HTMLElement,
-    getGrDiff: () => GrDiff,
-    tokenHighlightListener?: TokenHighlightListener
-  ): TokenHighlightLayer {
-    return new TokenHighlightLayer(
-      container,
-      tokenHighlightListener,
-      () => getGrDiff().diffTable!
-    );
-  }
-
   annotate(el: HTMLElement, _1: HTMLElement, _2: GrDiffLine, _3: Side): void {
     const text = el.textContent;
     if (!text) return;
@@ -147,8 +135,8 @@ export class TokenHighlightLayer implements DiffLayer {
       // This is to correctly count surrogate pairs in text and token.
       // If the index calculation becomes a hotspot, we could precompute a code
       // unit to code point index map for text before iterating over the results
-      const index = GrAnnotation.getStringLength(text.slice(0, match.index));
-      const length = GrAnnotation.getStringLength(token);
+      const index = getStringLength(text.slice(0, match.index));
+      const length = getStringLength(token);
 
       atLeastOneTokenMatched = true;
       const highlightTypeClass =
@@ -158,7 +146,7 @@ export class TokenHighlightLayer implements DiffLayer {
       // We add the TOKEN_TEXT_PREFIX class so that we can look up the token later easily
       // even if the token element was split up into multiple smaller nodes.
       // All parts of a single token will share a common TOKEN_INDEX_PREFIX class within the line of code.
-      GrAnnotation.annotateElement(
+      GrAnnotationImpl.annotateElement(
         el,
         index,
         length,
@@ -222,7 +210,12 @@ export class TokenHighlightLayer implements DiffLayer {
       token: newHighlight,
       element,
     } = this.findTokenAncestor(e?.target);
-    if (!newHighlight || newHighlight === this.currentHighlight) return;
+    if (
+      !newHighlight ||
+      (this.currentHighlight === newHighlight &&
+        this.currentHighlightLineNumber === line)
+    )
+      return;
     this.hoveredElement = element;
     this.updateTokenTask = debounce(
       this.updateTokenTask,
@@ -345,7 +338,7 @@ export class TokenHighlightLayer implements DiffLayer {
       start_line: line,
       start_column: index + 1, // 1-based inclusive
       end_line: line,
-      end_column: index + GrAnnotation.getStringLength(token), // 1-based inclusive
+      end_column: index + getStringLength(token), // 1-based inclusive
     };
     this.tokenHighlightListener({token, element, side, range});
   }

@@ -5,7 +5,6 @@
  */
 import '../../../styles/gr-a11y-styles';
 import '../../../styles/shared-styles';
-import '../../../embed/diff/gr-diff-cursor/gr-diff-cursor';
 import '../../diff/gr-diff-host/gr-diff-host';
 import '../../diff/gr-diff-preferences-dialog/gr-diff-preferences-dialog';
 import '../../edit/gr-edit-file-controls/gr-edit-file-controls';
@@ -16,6 +15,7 @@ import '../../shared/gr-select/gr-select';
 import '../../shared/gr-tooltip-content/gr-tooltip-content';
 import '../../shared/gr-copy-clipboard/gr-copy-clipboard';
 import '../../shared/gr-file-status/gr-file-status';
+import '../gr-comments-summary/gr-comments-summary';
 import {assertIsDefined} from '../../../utils/common-util';
 import {asyncForeach} from '../../../utils/async-util';
 import {FilesExpandedState} from '../gr-file-list-constants';
@@ -28,7 +28,7 @@ import {
   ScrollMode,
   SpecialFilePath,
 } from '../../../constants/constants';
-import {descendedFromClass, Key, toggleClass} from '../../../utils/dom-util';
+import {descendedFromClass, Key} from '../../../utils/dom-util';
 import {
   computeDisplayPath,
   computeTruncatedPath,
@@ -126,7 +126,7 @@ interface SizeBarLayout {
   maxDeleted: number;
   maxAdditionWidth: number;
   maxDeletionWidth: number;
-  deletionOffset: number;
+  additionOffset: number;
 }
 
 function createDefaultSizeBarLayout(): SizeBarLayout {
@@ -137,7 +137,7 @@ function createDefaultSizeBarLayout(): SizeBarLayout {
     maxDeleted: 0,
     maxAdditionWidth: 0,
     maxDeletionWidth: 0,
-    deletionOffset: 0,
+    additionOffset: 0,
   };
 }
 
@@ -246,16 +246,10 @@ export class GrFileList extends LitElement {
   @state()
   diffPrefs?: DiffPreferencesInfo;
 
-  @state() numFilesShown = DEFAULT_NUM_FILES_SHOWN;
+  @state() numFilesShown = 0;
 
   @state()
   fileListIncrement: number = DEFAULT_NUM_FILES_SHOWN;
-
-  // Private but used in tests.
-  shownFiles: NormalizedFileInfo[] = [];
-
-  @state()
-  private reportinShownFilesIncrement = 0;
 
   // Private but used in tests.
   @state()
@@ -422,7 +416,6 @@ export class GrFileList extends LitElement {
           text-align: center;
         }
         .path {
-          cursor: pointer;
           flex: 1;
           /* Wrap it into multiple lines if too long. */
           white-space: normal;
@@ -466,12 +459,12 @@ export class GrFileList extends LitElement {
         }
         .added {
           color: var(--positive-green-text-color);
-        }
-        .removed {
-          color: var(--negative-red-text-color);
           text-align: left;
           min-width: 4em;
           padding-left: var(--spacing-s);
+        }
+        .removed {
+          color: var(--negative-red-text-color);
         }
         .drafts {
           color: var(--error-foreground);
@@ -673,7 +666,7 @@ export class GrFileList extends LitElement {
     );
     this.shortcutsController.addAbstract(
       Shortcut.TOGGLE_HIDE_ALL_COMMENT_THREADS,
-      _ => toggleClass(this, 'hideComments')
+      _ => this.classList.toggle('hideComments')
     );
     this.shortcutsController.addAbstract(
       Shortcut.CURSOR_NEXT_FILE,
@@ -837,15 +830,14 @@ export class GrFileList extends LitElement {
     }
     if (changedProperties.has('files')) {
       this.filesChanged();
-    }
-    if (
-      changedProperties.has('files') ||
-      changedProperties.has('numFilesShown')
-    ) {
-      this.shownFiles = this.computeFilesShown();
+      this.numFilesShown = Math.min(this.files.length, DEFAULT_NUM_FILES_SHOWN);
+      fire(this, 'files-shown-changed', {length: this.numFilesShown});
     }
     if (changedProperties.has('expandedFiles')) {
       this.expandedFilesChanged(changedProperties.get('expandedFiles'));
+    }
+    if (changedProperties.has('numFilesShown')) {
+      fire(this, 'files-shown-changed', {length: this.numFilesShown});
     }
   }
 
@@ -1006,7 +998,10 @@ export class GrFileList extends LitElement {
           class="extra-col"
           .name=${headerEndpoint}
           role="columnheader"
-        ></gr-endpoint-decorator>
+        >
+          <gr-endpoint-param name="change" .value=${this.change}>
+          </gr-endpoint-param>
+        </gr-endpoint-decorator>
       `
     );
   }
@@ -1018,7 +1013,7 @@ export class GrFileList extends LitElement {
     const sizeBarLayout = this.computeSizeBarLayout();
 
     return incrementalRepeat({
-      values: this.shownFiles,
+      values: this.files,
       mapFn: (f, i) =>
         this.renderFileRow(
           f as NormalizedFileInfo,
@@ -1029,6 +1024,8 @@ export class GrFileList extends LitElement {
         ),
       initialCount: this.fileListIncrement,
       targetFrameRate: 1,
+      startAt: 0,
+      endAt: this.numFilesShown,
     });
   }
 
@@ -1039,8 +1036,7 @@ export class GrFileList extends LitElement {
     showDynamicColumns: boolean,
     showPrependedDynamicColumns: boolean
   ) {
-    this.reportRenderedRow(index);
-    const previousFileName = this.shownFiles[index - 1]?.__path;
+    const previousFileName = this.files[index - 1]?.__path;
     const patchSetFile = this.computePatchSetFile(file);
     return html` <div class="stickyArea">
       <div
@@ -1317,18 +1313,18 @@ export class GrFileList extends LitElement {
       <div class=${this.computeSizeBarsClass(file.__path)} aria-hidden="true">
         <svg width="61" height="8">
           <rect
-            x=${this.computeBarAdditionX(file, sizeBarLayout)}
-            y="0"
-            height="8"
-            fill="var(--positive-green-text-color)"
-            width=${this.computeBarAdditionWidth(file, sizeBarLayout)}
-          ></rect>
-          <rect
-            x=${this.computeBarDeletionX(sizeBarLayout)}
+            x=${this.computeBarDeletionX(file, sizeBarLayout)}
             y="0"
             height="8"
             fill="var(--negative-red-text-color)"
             width=${this.computeBarDeletionWidth(file, sizeBarLayout)}
+          ></rect>
+          <rect
+            x=${this.computeBarAdditionX(sizeBarLayout)}
+            y="0"
+            height="8"
+            fill="var(--positive-green-text-color)"
+            width=${this.computeBarAdditionWidth(file, sizeBarLayout)}
           ></rect>
         </svg>
       </div>
@@ -1344,20 +1340,20 @@ export class GrFileList extends LitElement {
         -->
       <div class=${this.computeClass('', file.__path)}>
         <span
-          class="added"
-          tabindex="0"
-          aria-label=${`${file.lines_inserted} added`}
-          ?hidden=${file.binary}
-        >
-          +${file.lines_inserted}
-        </span>
-        <span
           class="removed"
           tabindex="0"
           aria-label=${`${file.lines_deleted} removed`}
           ?hidden=${file.binary}
         >
           -${file.lines_deleted}
+        </span>
+        <span
+          class="added"
+          tabindex="0"
+          aria-label=${`${file.lines_inserted} added`}
+          ?hidden=${file.binary}
+        >
+          +${file.lines_inserted}
         </span>
         <span
           class=${ifDefined(this.computeBinaryClass(file.size_delta))}
@@ -1538,18 +1534,18 @@ export class GrFileList extends LitElement {
         <div class="total-stats">
           <div>
             <span
-              class="added"
-              tabindex="0"
-              aria-label="Total ${patchChange.inserted} lines added"
-            >
-              +${patchChange.inserted}
-            </span>
-            <span
               class="removed"
               tabindex="0"
               aria-label="Total ${patchChange.deleted} lines removed"
             >
               -${patchChange.deleted}
+            </span>
+            <span
+              class="added"
+              tabindex="0"
+              aria-label="Total ${patchChange.inserted} lines added"
+            >
+              +${patchChange.inserted}
             </span>
           </div>
         </div>
@@ -1582,16 +1578,6 @@ export class GrFileList extends LitElement {
       <div class="row totalChanges">
         <div class="total-stats">
           <span
-            class="added"
-            aria-label="Total bytes inserted: ${deltaInserted}"
-          >
-            ${deltaInserted}
-            ${this.formatPercentage(
-              patchChange.total_size,
-              patchChange.size_delta_inserted
-            )}
-          </span>
-          <span
             class="removed"
             aria-label="Total bytes removed: ${deltaDeleted}"
           >
@@ -1599,6 +1585,16 @@ export class GrFileList extends LitElement {
             ${this.formatPercentage(
               patchChange.total_size,
               patchChange.size_delta_deleted
+            )}
+          </span>
+          <span
+            class="added"
+            aria-label="Total bytes inserted: ${deltaInserted}"
+          >
+            ${deltaInserted}
+            ${this.formatPercentage(
+              patchChange.total_size,
+              patchChange.size_delta_inserted
             )}
           </span>
         </div>
@@ -1794,10 +1790,10 @@ export class GrFileList extends LitElement {
     // expanded list.
     const newFiles: PatchSetFile[] = [];
     let path: string;
-    for (let i = 0; i < this.shownFiles.length; i++) {
-      path = this.shownFiles[i].__path;
+    for (let i = 0; i < this.numFilesShown; i++) {
+      path = this.files[i].__path;
       if (!this.expandedFiles.some(f => f.path === path)) {
-        newFiles.push(this.computePatchSetFile(this.shownFiles[i]));
+        newFiles.push(this.computePatchSetFile(this.files[i]));
       }
     }
 
@@ -1806,37 +1802,6 @@ export class GrFileList extends LitElement {
 
   collapseAllDiffs() {
     this.expandedFiles = [];
-  }
-
-  /**
-   * Computes a string with the number of comments and unresolved comments.
-   */
-  computeCommentsString(file?: NormalizedFileInfo) {
-    if (
-      this.changeComments === undefined ||
-      this.patchRange === undefined ||
-      file?.__path === undefined
-    ) {
-      return '';
-    }
-    return this.changeComments.computeCommentsString(
-      this.patchRange,
-      file.__path,
-      file
-    );
-  }
-
-  /**
-   * Computes a string with the number of drafts.
-   */
-  computeDraftsString(file?: NormalizedFileInfo) {
-    if (this.changeComments === undefined) return '';
-    const draftCount = this.changeComments.computeDraftCountForFile(
-      this.patchRange,
-      file
-    );
-    if (draftCount === 0) return '';
-    return pluralize(Number(draftCount), 'draft');
   }
 
   /**
@@ -2251,26 +2216,6 @@ export class GrFileList extends LitElement {
     );
   }
 
-  private computeFilesShown(): NormalizedFileInfo[] {
-    const previousNumFilesShown = this.shownFiles ? this.shownFiles.length : 0;
-
-    const filesShown = this.files.slice(0, this.numFilesShown);
-    fire(this, 'files-shown-changed', {length: filesShown.length});
-
-    // Start the timer for the rendering work here because this is where the
-    // shownFiles property is being set, and shownFiles is used in the
-    // dom-repeat binding.
-    this.reporting.time(Timing.FILE_RENDER);
-
-    // How many more files are being shown (if it's an increase).
-    this.reportinShownFilesIncrement = Math.max(
-      0,
-      filesShown.length - previousNumFilesShown
-    );
-
-    return filesShown;
-  }
-
   // Private but used in tests.
   updateDiffCursor() {
     // Overwrite the cursor's list of diffs:
@@ -2290,6 +2235,9 @@ export class GrFileList extends LitElement {
 
   private incrementNumFilesShown() {
     this.numFilesShown += this.fileListIncrement;
+    if (this.numFilesShown > this.files.length) {
+      this.numFilesShown = this.files.length;
+    }
   }
 
   private computeFileListControlClass() {
@@ -2363,13 +2311,6 @@ export class GrFileList extends LitElement {
    * Private but used in tests.
    */
   async expandedFilesChanged(oldFiles: Array<PatchSetFile>) {
-    // Clear content for any diffs that are not open so if they get re-opened
-    // the stale content does not flash before it is cleared and reloaded.
-    const collapsedDiffs = this.diffs.filter(
-      diff => this.expandedFiles.findIndex(f => f.path === diff.path) === -1
-    );
-    this.clearCollapsedDiffs(collapsedDiffs);
-
     this.filesExpanded = this.computeExpandedFiles();
 
     const newFiles = this.expandedFiles.filter(
@@ -2384,14 +2325,6 @@ export class GrFileList extends LitElement {
     }
     this.updateDiffCursor();
     this.diffCursor?.reInitAndUpdateStops();
-  }
-
-  // private but used in test
-  clearCollapsedDiffs(collapsedDiffs: GrDiffHost[]) {
-    for (const diff of collapsedDiffs) {
-      diff.cancel();
-      diff.clearDiffContent();
-    }
   }
 
   /**
@@ -2476,7 +2409,6 @@ export class GrFileList extends LitElement {
     if (this.cancelForEachDiff) {
       this.cancelForEachDiff();
     }
-    this.forEachDiff(d => d.cancel());
   }
 
   /**
@@ -2497,7 +2429,8 @@ export class GrFileList extends LitElement {
    */
   computeSizeBarLayout() {
     const stats: SizeBarLayout = createDefaultSizeBarLayout();
-    this.shownFiles
+    this.files
+      .slice(0, this.numFilesShown)
       .filter(f => !isMagicPath(f.__path))
       .forEach(f => {
         if (f.lines_inserted) {
@@ -2513,7 +2446,7 @@ export class GrFileList extends LitElement {
         (SIZE_BAR_MAX_WIDTH - SIZE_BAR_GAP_WIDTH) * ratio;
       stats.maxDeletionWidth =
         SIZE_BAR_MAX_WIDTH - SIZE_BAR_GAP_WIDTH - stats.maxAdditionWidth;
-      stats.deletionOffset = stats.maxAdditionWidth + SIZE_BAR_GAP_WIDTH;
+      stats.additionOffset = stats.maxDeletionWidth + SIZE_BAR_GAP_WIDTH;
     }
     return stats;
   }
@@ -2541,9 +2474,8 @@ export class GrFileList extends LitElement {
    * Get the x-offset of the addition bar for a file.
    * Private but used in tests.
    */
-  computeBarAdditionX(file?: NormalizedFileInfo, stats?: SizeBarLayout) {
-    if (!file || !stats) return;
-    return stats.maxAdditionWidth - this.computeBarAdditionWidth(file, stats);
+  computeBarAdditionX(stats: SizeBarLayout) {
+    return stats.additionOffset;
   }
 
   /**
@@ -2567,9 +2499,11 @@ export class GrFileList extends LitElement {
 
   /**
    * Get the x-offset of the deletion bar for a file.
+   * Private but used in tests.
    */
-  private computeBarDeletionX(stats: SizeBarLayout) {
-    return stats.deletionOffset;
+  computeBarDeletionX(file?: NormalizedFileInfo, stats?: SizeBarLayout) {
+    if (!file || !stats) return;
+    return stats.maxDeletionWidth - this.computeBarDeletionWidth(file, stats);
   }
 
   // Private but used in tests.
@@ -2621,24 +2555,6 @@ export class GrFileList extends LitElement {
    */
   noDiffsExpanded() {
     return this.filesExpanded === FilesExpandedState.NONE;
-  }
-
-  /**
-   * Method to call via binding when each file list row is rendered. This
-   * allows approximate detection of when the dom-repeat has completed
-   * rendering.
-   *
-   * @param index The index of the row being rendered.
-   * Private but used in tests.
-   */
-  reportRenderedRow(index: number) {
-    if (index === this.shownFiles.length - 1) {
-      setTimeout(() => {
-        this.reporting.timeEnd(Timing.FILE_RENDER, {
-          count: this.reportinShownFilesIncrement,
-        });
-      }, 1);
-    }
   }
 
   private getOldPath(file: NormalizedFileInfo) {

@@ -100,13 +100,16 @@ public class DeleteZombieDraftIT extends AbstractDaemonTest {
     // Run the cleanup logic. The zombie draft is cleared. The published comment is untouched.
     DeleteZombieCommentsRefs worker =
         deleteZombieDraftsFactory.create(/* cleanupPercentage= */ 100, dryRun);
-    assertThat(worker.deleteDraftCommentsThatAreAlsoPublished()).isEqualTo(1);
+    worker.setup();
+    assertThat(worker.listDraftCommentsThatAreAlsoPublished()).hasSize(1);
+    int deletedDrafts = worker.execute();
     if (dryRun) {
       assertThat(getDraftsByParsingDraftRef(draftRef.getName(), revId)).hasSize(1);
     } else {
       assertThat(getDraftsByParsingDraftRef(draftRef.getName(), revId)).isEmpty();
     }
     assertNumPublishedComments(changeId, 1);
+    assertThat(deletedDrafts).isEqualTo(1);
   }
 
   @Test
@@ -136,7 +139,9 @@ public class DeleteZombieDraftIT extends AbstractDaemonTest {
     // Run the zombie cleanup logic. Zombie draft ref for PS2 will be removed.
     DeleteZombieCommentsRefs worker =
         deleteZombieDraftsFactory.create(/* cleanupPercentage= */ 100, dryRun);
-    assertThat(worker.deleteDraftCommentsThatAreAlsoPublished()).isEqualTo(1);
+    worker.setup();
+    assertThat(worker.listDraftCommentsThatAreAlsoPublished()).hasSize(1);
+    int deletedDrafts = worker.execute();
     assertThat(getDraftsByParsingDraftRef(draftRef.getName(), r1.getCommit().name())).hasSize(1);
     if (dryRun) {
       assertThat(getDraftsByParsingDraftRef(draftRef.getName(), r2.getCommit().name())).hasSize(1);
@@ -144,10 +149,13 @@ public class DeleteZombieDraftIT extends AbstractDaemonTest {
       assertThat(getDraftsByParsingDraftRef(draftRef.getName(), r2.getCommit().name())).isEmpty();
     }
     assertNumPublishedComments(changeId, 1);
+    assertThat(deletedDrafts).isEqualTo(1);
 
     // Re-run the worker: nothing happens.
-    assertThat(worker.deleteDraftCommentsThatAreAlsoPublished()).isEqualTo(dryRun ? 1 : 0);
+    assertThat(worker.listDraftCommentsThatAreAlsoPublished()).hasSize(dryRun ? 1 : 0);
+    deletedDrafts = worker.execute();
     assertNumDrafts(changeId, 1);
+    assertThat(deletedDrafts).isEqualTo(dryRun ? 1 : 0);
     assertThat(getDraftsByParsingDraftRef(draftRef.getName(), r1.getCommit().name())).hasSize(1);
     if (dryRun) {
       assertThat(getDraftsByParsingDraftRef(draftRef.getName(), r2.getCommit().name())).hasSize(1);

@@ -9,6 +9,7 @@ import {LitElement, css, html, PropertyValues, nothing} from 'lit';
 import {customElement, property, state} from 'lit/decorators.js';
 import {RunResult} from '../../models/checks/checks-model';
 import {
+  computeIsExpandable,
   createFixAction,
   createPleaseFixComment,
   iconFor,
@@ -54,6 +55,9 @@ export class GrDiffCheckResult extends LitElement {
       fontStyles,
       css`
         .container {
+          /* Allows hiding the check results along with the comments
+             when the user presses the keyboard shortcut 'h'. */
+          display: var(--gr-comment-thread-display, block);
           font-family: var(--font-family);
           margin: 0 var(--spacing-s) var(--spacing-s);
           background-color: var(--unresolved-comment-background-color);
@@ -209,7 +213,7 @@ export class GrDiffCheckResult extends LitElement {
   private renderActions() {
     if (!this.isExpanded) return nothing;
     return html`<div class="actions">
-      ${this.renderPleaseFixButton()}${this.renderShowFixButton()}
+      ${this.renderShowFixButton()}${this.renderPleaseFixButton()}
     </div>`;
   }
 
@@ -244,9 +248,9 @@ export class GrDiffCheckResult extends LitElement {
     `;
   }
 
-  override updated(changedProperties: PropertyValues) {
+  override willUpdate(changedProperties: PropertyValues) {
     if (changedProperties.has('result')) {
-      this.isExpandable = !!this.result?.summary && !!this.result?.message;
+      this.isExpandable = computeIsExpandable(this.result);
     }
   }
 

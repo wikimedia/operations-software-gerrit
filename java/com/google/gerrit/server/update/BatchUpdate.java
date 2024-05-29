@@ -19,6 +19,7 @@ import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMultiset.toImmutableMultiset;
 import static com.google.common.flogger.LazyArgs.lazy;
+import static com.google.gerrit.common.UsedAt.Project.GOOGLE;
 import static java.util.Comparator.comparing;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toMap;
@@ -31,6 +32,7 @@ import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.MultimapBuilder;
 import com.google.common.collect.Multiset;
@@ -39,6 +41,7 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.common.UsedAt;
 import com.google.gerrit.entities.AttentionSetUpdate;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
@@ -52,14 +55,14 @@ import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestApiException;
+import com.google.gerrit.server.AccessPath;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.RefLogIdentityProvider;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.change.NotifyResolver;
-import com.google.gerrit.server.experiments.ExperimentFeatures;
-import com.google.gerrit.server.experiments.ExperimentFeaturesConstants;
+import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.extensions.events.AttentionSetObserver;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
@@ -93,6 +96,7 @@ import java.util.Optional;
 import java.util.TreeMap;
 import java.util.function.Function;
 import org.eclipse.jgit.lib.BatchRefUpdate;
+import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Repository;
@@ -182,7 +186,7 @@ public class BatchUpdate implements AutoCloseable {
       // Fire ref update events only after all mutations are finished, since callers may assume a
       // patch set ref being created means the change was created, or a branch advancing meaning
       // some changes were closed.
-      updates.forEach(BatchUpdate::fireRefChangeEvent);
+      updates.forEach(BatchUpdate::fireRefChangeEvents);
 
       if (!dryrun) {
         for (BatchUpdate u : updates) {
@@ -425,10 +429,10 @@ public class BatchUpdate implements AutoCloseable {
   private final Map<Change.Id, Change> newChanges = new HashMap<>();
   private final List<OpData<RepoOnlyOp>> repoOnlyOps = new ArrayList<>();
   private final Map<Change.Id, NotifyHandling> perChangeNotifyHandling = new HashMap<>();
-  private final ExperimentFeatures experimentFeatures;
+  private final Config gerritConfig;
 
   private RepoView repoView;
-  private BatchRefUpdate batchRefUpdate;
+  private ImmutableMultimap<Project.NameKey, BatchRefUpdate> batchRefUpdate;
   private ImmutableListMultimap<ProjectChangeKey, AttentionSetUpdate> attentionSetUpdates;
 
   private boolean executed;
@@ -452,10 +456,11 @@ public class BatchUpdate implements AutoCloseable {
       GitReferenceUpdated gitRefUpdated,
       RefLogIdentityProvider refLogIdentityProvider,
       AttentionSetObserver attentionSetObserver,
-      ExperimentFeatures experimentFeatures,
+      @GerritServerConfig Config gerritConfig,
       @Assisted Project.NameKey project,
       @Assisted CurrentUser user,
       @Assisted Instant when) {
+    this.gerritConfig = gerritConfig;
     this.repoManager = repoManager;
     this.accountCache = accountCache;
     this.changeDataFactory = changeDataFactory;
@@ -466,7 +471,6 @@ public class BatchUpdate implements AutoCloseable {
     this.gitRefUpdated = gitRefUpdated;
     this.refLogIdentityProvider = refLogIdentityProvider;
     this.attentionSetObserver = attentionSetObserver;
-    this.experimentFeatures = experimentFeatures;
     this.project = project;
     this.user = user;
     this.when = when;
@@ -666,15 +670,17 @@ public class BatchUpdate implements AutoCloseable {
     }
   }
 
+  // For upstream implementation, AccessPath.WEB_BROWSER is never set, so the method will always
+  // return false.
+  @UsedAt(GOOGLE)
   private boolean indexAsync() {
-    return experimentFeatures.isFeatureEnabled(
-        ExperimentFeaturesConstants.GERRIT_BACKEND_FEATURE_DO_NOT_AWAIT_CHANGE_INDEXING);
+    return user.getAccessPath().equals(AccessPath.WEB_BROWSER)
+        && gerritConfig.getBoolean("index", "indexChangesAsync", false);
   }
 
-  private void fireRefChangeEvent() {
-    if (batchRefUpdate != null) {
-      gitRefUpdated.fire(project, batchRefUpdate, getAccount().orElse(null));
-    }
+  private void fireRefChangeEvents() {
+    batchRefUpdate.forEach(
+        (projectName, bru) -> gitRefUpdated.fire(projectName, bru, getAccount().orElse(null)));
   }
 
   private void fireAttentionSetUpdateEvents(Map<Change.Id, ChangeData> changeDatas) {
@@ -721,11 +727,14 @@ public class BatchUpdate implements AutoCloseable {
     boolean requiresReindex() {
       // We do not need to reindex changes if there are no ref updates, or if updated refs
       // are all draft comment refs (since draft fields are not stored in the change index).
-      BatchRefUpdate bru = BatchUpdate.this.batchRefUpdate;
-      return !(bru == null
-          || bru.getCommands().isEmpty()
-          || bru.getCommands().stream()
-              .allMatch(cmd -> RefNames.isRefsDraftsComments(cmd.getRefName())));
+      ImmutableMultimap<Project.NameKey, BatchRefUpdate> bru = BatchUpdate.this.batchRefUpdate;
+      return !(bru.isEmpty()
+          || bru.values().stream()
+              .allMatch(
+                  batchRefUpdate ->
+                      batchRefUpdate.getCommands().isEmpty()
+                          || batchRefUpdate.getCommands().stream()
+                              .allMatch(cmd -> RefNames.isRefsDraftsComments(cmd.getRefName()))));
     }
 
     ImmutableList<ListenableFuture<ChangeData>> startIndexFutures() {
@@ -751,13 +760,19 @@ public class BatchUpdate implements AutoCloseable {
         }
       }
       if (indexAsync) {
+        logger.atFine().log(
+            "Asynchronously reindexing changes, %s in project %s", results.keySet(), project.get());
         // We want to index asynchronously. However, the callers will await all
         // index futures. This allows us to - even in synchronous case -
         // parallelize indexing changes.
         // Returning immediate futures for newly-created change data objects
         // while letting the actual futures go will make actual indexing
         // asynchronous.
-        return results.keySet().stream()
+        // Only return results for the change modifications (ChangeResult.DELETE and
+        // ChangeResult.SKIPPED are filtered out). For sync path, they are filtered out later on.
+        return results.entrySet().stream()
+            .filter(e -> e.getValue().equals(ChangeResult.UPSERTED))
+            .map(Map.Entry::getKey)
             .map(cId -> Futures.immediateFuture(changeDataFactory.create(project, cId)))
             .collect(toImmutableList());
       }
@@ -778,7 +793,7 @@ public class BatchUpdate implements AutoCloseable {
     ChangesHandle handle =
         new ChangesHandle(
             updateManagerFactory
-                .create(project)
+                .create(project, user)
                 .setBatchUpdateListeners(batchUpdateListeners)
                 .setChangeRepo(
                     repo, repoView.getRevWalk(), repoView.getInserter(), repoView.getCommands()),

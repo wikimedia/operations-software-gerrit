@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import {html, LitElement} from 'lit';
-import {customElement, property, state} from 'lit/decorators.js';
+import {property, queryAll, state} from 'lit/decorators.js';
 import {
   DiffInfo,
   DiffLayer,
@@ -15,11 +15,7 @@ import {
   DiffPreferencesInfo,
 } from '../../../api/diff';
 import {GrDiffGroup, GrDiffGroupType} from '../gr-diff/gr-diff-group';
-import {
-  countLines,
-  diffClasses,
-  getResponsiveMode,
-} from '../gr-diff/gr-diff-utils';
+import {diffClasses, getResponsiveMode} from '../gr-diff/gr-diff-utils';
 import {GrDiffRow} from './gr-diff-row';
 import '../gr-context-controls/gr-context-controls-section';
 import '../gr-context-controls/gr-context-controls';
@@ -27,23 +23,38 @@ import '../gr-range-header/gr-range-header';
 import './gr-diff-row';
 import {when} from 'lit/directives/when.js';
 import {fire} from '../../../utils/event-util';
+import {countLines} from '../../../utils/diff-util';
+import {resolve} from '../../../models/dependency';
+import {
+  ColumnsToShow,
+  diffModelToken,
+  NO_COLUMNS,
+} from '../gr-diff-model/gr-diff-model';
+import {subscribe} from '../../../elements/lit/subscription-controller';
 
-@customElement('gr-diff-section')
 export class GrDiffSection extends LitElement {
+  @queryAll('gr-diff-row')
+  diffRows?: NodeListOf<GrDiffRow>;
+
   @property({type: Object})
   group?: GrDiffGroup;
 
-  @property({type: Object})
+  @state()
   diff?: DiffInfo;
 
-  @property({type: Object})
+  @state()
   renderPrefs?: RenderPreferences;
 
-  @property({type: Object})
+  @state()
   diffPrefs?: DiffPreferencesInfo;
 
-  @property({type: Object})
+  @state()
   layers: DiffLayer[] = [];
+
+  @state()
+  lineLength = 100;
+
+  @state() columns: ColumnsToShow = NO_COLUMNS;
 
   /**
    * Semantic DOM diff testing does not work with just table fragments, so when
@@ -52,6 +63,49 @@ export class GrDiffSection extends LitElement {
    */
   @state()
   addTableWrapperForTesting = false;
+
+  @state() viewMode: DiffViewMode = DiffViewMode.SIDE_BY_SIDE;
+
+  private readonly getDiffModel = resolve(this, diffModelToken);
+
+  constructor() {
+    super();
+    subscribe(
+      this,
+      () => this.getDiffModel().lineLength$,
+      lineLength => (this.lineLength = lineLength)
+    );
+    subscribe(
+      this,
+      () => this.getDiffModel().viewMode$,
+      viewMode => (this.viewMode = viewMode)
+    );
+    subscribe(
+      this,
+      () => this.getDiffModel().diff$,
+      diff => (this.diff = diff)
+    );
+    subscribe(
+      this,
+      () => this.getDiffModel().renderPrefs$,
+      renderPrefs => (this.renderPrefs = renderPrefs)
+    );
+    subscribe(
+      this,
+      () => this.getDiffModel().diffPrefs$,
+      diffPrefs => (this.diffPrefs = diffPrefs)
+    );
+    subscribe(
+      this,
+      () => this.getDiffModel().layers$,
+      layers => (this.layers = layers)
+    );
+    subscribe(
+      this,
+      () => this.getDiffModel().columnsToShow$,
+      columnsToShow => (this.columns = columnsToShow)
+    );
+  }
 
   /**
    * The browser API for handling selection does not (yet) work for selection
@@ -62,6 +116,13 @@ export class GrDiffSection extends LitElement {
    */
   override createRenderRoot() {
     return this;
+  }
+
+  protected override async getUpdateComplete(): Promise<boolean> {
+    const result = await super.getUpdateComplete();
+    const rows = [...(this.diffRows ?? [])];
+    await Promise.all(rows.map(row => row.updateComplete));
+    return result;
   }
 
   override render() {
@@ -84,11 +145,11 @@ export class GrDiffSection extends LitElement {
       <tbody class=${diffClasses(...extras)}>
         ${this.renderContextControls()} ${this.renderMoveControls()}
         ${pairs.map(pair => {
-          const leftCl = `left-${pair.left.lineNumber(Side.LEFT)}`;
-          const rightCl = `right-${pair.right.lineNumber(Side.RIGHT)}`;
+          const leftClass = `left-${pair.left.lineNumber(Side.LEFT)}`;
+          const rightClass = `right-${pair.right.lineNumber(Side.RIGHT)}`;
           return html`
             <gr-diff-row
-              class="${leftCl} ${rightCl}"
+              class="${leftClass} ${rightClass}"
               .left=${pair.left}
               .right=${pair.right}
               .layers=${this.layers}
@@ -112,7 +173,7 @@ export class GrDiffSection extends LitElement {
   }
 
   private isUnifiedDiff() {
-    return this.renderPrefs?.view_mode === DiffViewMode.UNIFIED;
+    return this.viewMode === DiffViewMode.UNIFIED;
   }
 
   getLinePairs() {
@@ -165,10 +226,6 @@ export class GrDiffSection extends LitElement {
     if (!this.group?.moveDetails) return;
     const movedIn = this.group.adds.length > 0;
     const plainCell = html`<td class=${diffClasses()}></td>`;
-    const signCell = html`<td class=${diffClasses('sign')}></td>`;
-    const lineNumberCell = html`
-      <td class=${diffClasses('moveControlsLineNumCol')}></td>
-    `;
     const moveCell = html`
       <td class=${diffClasses('moveHeader')}>
         <gr-range-header class=${diffClasses()} icon="move_item">
@@ -181,11 +238,30 @@ export class GrDiffSection extends LitElement {
         class=${diffClasses('moveControls', movedIn ? 'movedIn' : 'movedOut')}
       >
         ${when(
-          this.isUnifiedDiff(),
-          () => html`${lineNumberCell} ${lineNumberCell} ${moveCell}`,
-          () => html`${lineNumberCell} ${signCell}
-          ${movedIn ? plainCell : moveCell} ${lineNumberCell} ${signCell}
-          ${movedIn ? moveCell : plainCell}`
+          this.columns.blame,
+          () => html`<td class=${diffClasses('blame')}></td>`
+        )}
+        ${when(
+          this.columns.leftNumber,
+          () => html`<td class=${diffClasses('moveControlsLineNumCol')}></td>`
+        )}
+        ${when(
+          this.columns.leftSign,
+          () => html`<td class=${diffClasses('sign')}></td>`
+        )}
+        ${when(this.columns.leftContent, () =>
+          movedIn ? plainCell : moveCell
+        )}
+        ${when(
+          this.columns.rightNumber,
+          () => html`<td class=${diffClasses('moveControlsLineNumCol')}></td>`
+        )}
+        ${when(
+          this.columns.rightSign,
+          () => html`<td class=${diffClasses('sign')}></td>`
+        )}
+        ${when(this.columns.rightContent, () =>
+          movedIn || this.isUnifiedDiff() ? moveCell : plainCell
         )}
       </tr>
     `;
@@ -242,6 +318,8 @@ export class GrDiffSection extends LitElement {
     });
   }
 }
+
+customElements.define('gr-diff-section', GrDiffSection);
 
 declare global {
   interface HTMLElementTagNameMap {

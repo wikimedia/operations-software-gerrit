@@ -32,7 +32,6 @@ import static com.google.gerrit.gpg.testing.TestKeys.allValidKeys;
 import static com.google.gerrit.gpg.testing.TestKeys.validKeyWithExpiration;
 import static com.google.gerrit.gpg.testing.TestKeys.validKeyWithSecondUserId;
 import static com.google.gerrit.gpg.testing.TestKeys.validKeyWithoutExpiration;
-import static com.google.gerrit.server.StarredChangesUtil.DEFAULT_LABEL;
 import static com.google.gerrit.server.account.AccountProperties.ACCOUNT;
 import static com.google.gerrit.server.account.AccountProperties.ACCOUNT_CONFIG;
 import static com.google.gerrit.server.account.externalids.ExternalId.SCHEME_GPGKEY;
@@ -65,6 +64,7 @@ import com.google.common.io.BaseEncoding;
 import com.google.common.truth.Correspondence;
 import com.google.common.util.concurrent.AtomicLongMap;
 import com.google.common.util.concurrent.Runnables;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.AccountIndexedCounter;
 import com.google.gerrit.acceptance.ExtensionRegistry;
@@ -83,6 +83,8 @@ import com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.acceptance.testsuite.request.SshSessionFactory;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.common.RawInputUtil;
+import com.google.gerrit.common.UsedAt;
 import com.google.gerrit.common.data.GlobalCapability;
 import com.google.gerrit.entities.AccessSection;
 import com.google.gerrit.entities.Account;
@@ -131,6 +133,8 @@ import com.google.gerrit.gpg.PublicKeyStore;
 import com.google.gerrit.gpg.testing.TestKey;
 import com.google.gerrit.httpd.CacheBasedWebSession;
 import com.google.gerrit.server.ExceptionHook;
+import com.google.gerrit.server.Sequence;
+import com.google.gerrit.server.Sequences;
 import com.google.gerrit.server.ServerInitiated;
 import com.google.gerrit.server.account.AccountControl;
 import com.google.gerrit.server.account.AccountProperties;
@@ -141,17 +145,18 @@ import com.google.gerrit.server.account.GroupMembership;
 import com.google.gerrit.server.account.VersionedAuthorizedKeys;
 import com.google.gerrit.server.account.externalids.DuplicateExternalIdKeyException;
 import com.google.gerrit.server.account.externalids.ExternalId;
-import com.google.gerrit.server.account.externalids.ExternalIdFactory;
 import com.google.gerrit.server.account.externalids.ExternalIdKeyFactory;
-import com.google.gerrit.server.account.externalids.ExternalIdNotes;
-import com.google.gerrit.server.account.externalids.ExternalIds;
+import com.google.gerrit.server.account.externalids.storage.notedb.ExternalIdFactoryNoteDbImpl;
+import com.google.gerrit.server.account.externalids.storage.notedb.ExternalIdNotes;
+import com.google.gerrit.server.account.externalids.storage.notedb.ExternalIdsNoteDbImpl;
+import com.google.gerrit.server.account.storage.notedb.AccountsUpdateNoteDbImpl;
+import com.google.gerrit.server.change.AccountPatchReviewStore;
 import com.google.gerrit.server.config.AuthConfig;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.group.testing.TestGroupBackend;
 import com.google.gerrit.server.index.account.AccountIndexer;
 import com.google.gerrit.server.index.account.StalenessChecker;
-import com.google.gerrit.server.notedb.Sequences;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.project.RefPattern;
 import com.google.gerrit.server.query.account.InternalAccountQuery;
@@ -175,6 +180,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -228,12 +235,16 @@ public class AccountIT extends AbstractDaemonTest {
     return cfg;
   }
 
+  @Inject protected ProjectOperations projectOperations;
+  @Inject protected Emails emails;
+
+  @Inject protected GroupOperations groupOperations;
+
   @Inject private @ServerInitiated Provider<AccountsUpdate> accountsUpdateProvider;
   @Inject private AccountIndexer accountIndexer;
   @Inject private ExternalIdNotes.Factory extIdNotesFactory;
-  @Inject private ExternalIds externalIds;
+  @Inject private ExternalIdsNoteDbImpl externalIds;
   @Inject private GitReferenceUpdated gitReferenceUpdated;
-  @Inject private ProjectOperations projectOperations;
   @Inject private Provider<InternalAccountQuery> accountQueryProvider;
   @Inject private Provider<MetaDataUpdate.InternalFactory> metaDataUpdateInternalFactory;
   @Inject private Provider<PublicKeyStore> publicKeyStoreProvider;
@@ -245,15 +256,12 @@ public class AccountIT extends AbstractDaemonTest {
   @Inject private ExtensionRegistry extensionRegistry;
   @Inject private PluginSetContext<ExceptionHook> exceptionHooks;
   @Inject private ExternalIdKeyFactory externalIdKeyFactory;
-  @Inject private ExternalIdFactory externalIdFactory;
+  @Inject private ExternalIdFactoryNoteDbImpl externalIdFactory;
   @Inject private AuthConfig authConfig;
   @Inject private AccountControl.Factory accountControlFactory;
-
-  @Inject protected Emails emails;
-
   @Inject private AccountOperations accountOperations;
 
-  @Inject protected GroupOperations groupOperations;
+  @Inject private AccountPatchReviewStore accountPatchReviewStore;
 
   private BasicCookieStore httpCookieStore;
   private CloseableHttpClient httpclient;
@@ -325,7 +333,7 @@ public class AccountIT extends AbstractDaemonTest {
       refUpdateCounter.assertRefUpdateFor(
           RefUpdateCounter.projectRef(allUsers, RefNames.refsUsers(accountId)),
           RefUpdateCounter.projectRef(allUsers, RefNames.REFS_EXTERNAL_IDS),
-          RefUpdateCounter.projectRef(allUsers, RefNames.REFS_SEQUENCES + Sequences.NAME_ACCOUNTS));
+          RefUpdateCounter.projectRef(allUsers, RefNames.REFS_SEQUENCES + Sequence.NAME_ACCOUNTS));
     }
   }
 
@@ -344,7 +352,8 @@ public class AccountIT extends AbstractDaemonTest {
     assertThrows(ResourceNotFoundException.class, () -> gApi.accounts().id(input.username).get());
   }
 
-  private Account.Id createByAccountCreator(int expectedAccountReindexCalls) throws Exception {
+  @UsedAt(UsedAt.Project.GOOGLE)
+  protected Account.Id createByAccountCreator(int expectedAccountReindexCalls) throws Exception {
     AccountIndexedCounter accountIndexedCounter = new AccountIndexedCounter();
     try (Registration registration =
         extensionRegistry.newRegistration().add(accountIndexedCounter)) {
@@ -579,25 +588,27 @@ public class AccountIT extends AbstractDaemonTest {
     AccountIndexedCounter accountIndexedCounter = new AccountIndexedCounter();
     try (Registration registration =
         extensionRegistry.newRegistration().add(accountIndexedCounter)) {
-      int id = gApi.accounts().id("user").get()._accountId;
-      assertThat(gApi.accounts().id("user").getActive()).isTrue();
-      gApi.accounts().id("user").setActive(false);
+      int id = gApi.accounts().id(user.username()).get()._accountId;
+      assertThat(gApi.accounts().id(user.username()).getActive()).isTrue();
+      gApi.accounts().id(user.username()).setActive(false);
       accountIndexedCounter.assertReindexOf(user);
 
       // Inactive users may only be resolved by ID.
       ResourceNotFoundException thrown =
-          assertThrows(ResourceNotFoundException.class, () -> gApi.accounts().id("user"));
+          assertThrows(ResourceNotFoundException.class, () -> gApi.accounts().id(user.username()));
       assertThat(thrown)
           .hasMessageThat()
           .isEqualTo(
-              "Account 'user' only matches inactive accounts. To use an inactive account, retry"
+              "Account '"
+                  + user.username()
+                  + "' only matches inactive accounts. To use an inactive account, retry"
                   + " with one of the following exact account IDs:\n"
                   + id
                   + ": User1 <user1@example.com>");
       assertThat(gApi.accounts().id(id).getActive()).isFalse();
 
       gApi.accounts().id(id).setActive(true);
-      assertThat(gApi.accounts().id("user").getActive()).isTrue();
+      assertThat(gApi.accounts().id(user.username()).getActive()).isTrue();
       accountIndexedCounter.assertReindexOf(user);
     }
   }
@@ -767,9 +778,9 @@ public class AccountIT extends AbstractDaemonTest {
 
   @Test
   public void deactivateNotActive() throws Exception {
-    int id = gApi.accounts().id("user").get()._accountId;
-    assertThat(gApi.accounts().id("user").getActive()).isTrue();
-    gApi.accounts().id("user").setActive(false);
+    int id = gApi.accounts().id(user.username()).get()._accountId;
+    assertThat(gApi.accounts().id(user.username()).getActive()).isTrue();
+    gApi.accounts().id(user.username()).setActive(false);
     assertThat(gApi.accounts().id(id).getActive()).isFalse();
     ResourceConflictException thrown =
         assertThrows(
@@ -791,7 +802,6 @@ public class AccountIT extends AbstractDaemonTest {
       gApi.accounts().self().starChange(triplet);
       ChangeInfo change = info(triplet);
       assertThat(change.starred).isTrue();
-      assertThat(change.stars).contains(DEFAULT_LABEL);
       refUpdateCounter.assertRefUpdateFor(
           RefUpdateCounter.projectRef(
               allUsers, RefNames.refsStarredChanges(Change.id(change._number), admin.id())));
@@ -799,7 +809,6 @@ public class AccountIT extends AbstractDaemonTest {
       gApi.accounts().self().unstarChange(triplet);
       change = info(triplet);
       assertThat(change.starred).isNull();
-      assertThat(change.stars).isNull();
       refUpdateCounter.assertRefUpdateFor(
           RefUpdateCounter.projectRef(
               allUsers, RefNames.refsStarredChanges(Change.id(change._number), admin.id())));
@@ -843,7 +852,7 @@ public class AccountIT extends AbstractDaemonTest {
     List<Message> messages2 = sender.getMessages();
     assertThat(messages2).hasSize(1);
     Message message2 = messages2.get(0);
-    assertThat(message2.rcpt()).containsExactly(user.getNameEmail(), user2.getNameEmail());
+    assertThat(message2.rcpt()).containsExactly(user2.getNameEmail());
     assertMailReplyTo(message, admin.email());
 
     sender.clear();
@@ -888,7 +897,7 @@ public class AccountIT extends AbstractDaemonTest {
     List<Message> messages2 = sender.getMessages();
     assertThat(messages2).hasSize(1);
     Message message2 = messages2.get(0);
-    assertThat(message2.rcpt()).containsExactly(user.getNameEmail(), user2.getNameEmail());
+    assertThat(message2.rcpt()).containsExactly(user2.getNameEmail());
     assertMailReplyTo(message2, admin.email());
 
     sender.clear();
@@ -1186,7 +1195,7 @@ public class AccountIT extends AbstractDaemonTest {
     AccountIndexedCounter accountIndexedCounter = new AccountIndexedCounter();
     try (Registration registration =
         extensionRegistry.newRegistration().add(accountIndexedCounter)) {
-      String previous = gApi.accounts().self().get().email;
+      ImmutableSet<String> previous = getEmails();
       String email = "foo.bar.baz@example.com";
       EmailInput input = new EmailInput();
       input.email = email;
@@ -1206,7 +1215,7 @@ public class AccountIT extends AbstractDaemonTest {
       accountIndexedCounter.assertReindexOf(admin);
 
       requestScopeOperations.resetCurrentApiUser();
-      assertThat(getEmails()).containsExactly(previous);
+      assertThat(getEmails()).isEqualTo(previous);
       assertThat(gApi.accounts().self().get().email).isNull();
     }
   }
@@ -1260,13 +1269,13 @@ public class AccountIT extends AbstractDaemonTest {
           .containsAtLeast(extId1, extId2);
 
       requestScopeOperations.resetCurrentApiUser();
-      assertThat(getEmails()).contains(email);
+      assertThat(getExtIdsEmail()).contains(email);
 
       gApi.accounts().self().deleteEmail(email);
       accountIndexedCounter.assertReindexOf(admin);
 
       requestScopeOperations.resetCurrentApiUser();
-      assertThat(getEmails()).doesNotContain(email);
+      assertThat(getExtIdsEmail()).doesNotContain(email);
       assertThat(
               gApi.accounts().self().getExternalIds().stream()
                   .map(e -> e.identity)
@@ -1290,8 +1299,12 @@ public class AccountIT extends AbstractDaemonTest {
                     externalIdFactory.createWithEmail(
                         externalIdKeyFactory.parse(ldapExternalId), admin.id(), ldapEmail)));
     assertThat(
-            gApi.accounts().self().getExternalIds().stream().map(e -> e.identity).collect(toSet()))
+            gApi.accounts().self().getExternalIds().stream()
+                .map(e -> e.identity)
+                .collect(toImmutableSet()))
         .contains(ldapExternalId);
+
+    assertThat(getExtIdsEmail()).contains(ldapEmail);
 
     requestScopeOperations.resetCurrentApiUser();
     assertThat(getEmails()).contains(ldapEmail);
@@ -1334,12 +1347,12 @@ public class AccountIT extends AbstractDaemonTest {
         .containsAtLeast(ldapExternalId, nonLdapExternalId);
 
     requestScopeOperations.resetCurrentApiUser();
-    assertThat(getEmails()).containsAtLeast(ldapEmail, nonLdapEMail);
+    assertThat(getExtIdsEmail()).containsAtLeast(ldapEmail, nonLdapEMail);
 
     gApi.accounts().self().deleteEmail(nonLdapEMail);
 
     requestScopeOperations.resetCurrentApiUser();
-    assertThat(getEmails()).doesNotContain(nonLdapEMail);
+    assertThat(getExtIdsEmail()).doesNotContain(nonLdapEMail);
     assertThat(
             gApi.accounts().self().getExternalIds().stream().map(e -> e.identity).collect(toSet()))
         .contains(ldapExternalId);
@@ -2087,7 +2100,7 @@ public class AccountIT extends AbstractDaemonTest {
     List<GroupInfo> groups = gApi.accounts().id(admin.username()).getGroups();
     assertThat(groups)
         .comparingElementsUsing(getGroupToNameCorrespondence())
-        .containsExactly("Anonymous Users", "Registered Users", "Administrators");
+        .containsAtLeast("Anonymous Users", "Registered Users", "Administrators");
   }
 
   @Test
@@ -2164,26 +2177,8 @@ public class AccountIT extends AbstractDaemonTest {
     String status = "happy";
     String fullName = "Foo";
     AtomicBoolean doneBgUpdate = new AtomicBoolean(false);
-    PersonIdent ident = serverIdent.get();
     AccountsUpdate update =
-        new AccountsUpdate(
-            repoManager,
-            gitReferenceUpdated,
-            Optional.empty(),
-            allUsers,
-            externalIds,
-            metaDataUpdateInternalFactory,
-            new RetryHelper(
-                cfg,
-                retryMetrics,
-                null,
-                null,
-                null,
-                exceptionHooks,
-                r -> r.withBlockStrategy(noSleepBlockStrategy)),
-            extIdNotesFactory,
-            ident,
-            ident,
+        getAccountsUpdate(
             () -> {
               if (!doneBgUpdate.getAndSet(true)) {
                 try {
@@ -2220,28 +2215,8 @@ public class AccountIT extends AbstractDaemonTest {
     List<String> status = ImmutableList.of("foo", "bar", "baz");
     String fullName = "Foo";
     AtomicInteger bgCounter = new AtomicInteger(0);
-    PersonIdent ident = serverIdent.get();
     AccountsUpdate update =
-        new AccountsUpdate(
-            repoManager,
-            gitReferenceUpdated,
-            Optional.empty(),
-            allUsers,
-            externalIds,
-            metaDataUpdateInternalFactory,
-            new RetryHelper(
-                cfg,
-                retryMetrics,
-                null,
-                null,
-                null,
-                exceptionHooks,
-                r ->
-                    r.withStopStrategy(StopStrategies.stopAfterAttempt(status.size()))
-                        .withBlockStrategy(noSleepBlockStrategy)),
-            extIdNotesFactory,
-            ident,
-            ident,
+        getAccountsUpdate(
             () -> {
               try {
                 accountsUpdateProvider
@@ -2254,7 +2229,17 @@ public class AccountIT extends AbstractDaemonTest {
                 // Ignore, the expected exception is asserted later
               }
             },
-            Runnables.doNothing());
+            Runnables.doNothing(),
+            new RetryHelper(
+                cfg,
+                retryMetrics,
+                null,
+                null,
+                null,
+                exceptionHooks,
+                r ->
+                    r.withStopStrategy(StopStrategies.stopAfterAttempt(status.size()))
+                        .withBlockStrategy(noSleepBlockStrategy)));
     assertThat(bgCounter.get()).isEqualTo(0);
     AccountInfo accountInfo = gApi.accounts().id(admin.id().get()).get();
     assertThat(accountInfo.status).isNull();
@@ -2280,26 +2265,8 @@ public class AccountIT extends AbstractDaemonTest {
 
     AtomicInteger bgCounterA1 = new AtomicInteger(0);
     AtomicInteger bgCounterA2 = new AtomicInteger(0);
-    PersonIdent ident = serverIdent.get();
     AccountsUpdate update =
-        new AccountsUpdate(
-            repoManager,
-            gitReferenceUpdated,
-            Optional.empty(),
-            allUsers,
-            externalIds,
-            metaDataUpdateInternalFactory,
-            new RetryHelper(
-                cfg,
-                retryMetrics,
-                null,
-                null,
-                null,
-                exceptionHooks,
-                r -> r.withBlockStrategy(noSleepBlockStrategy)),
-            extIdNotesFactory,
-            ident,
-            ident,
+        getAccountsUpdate(
             Runnables.doNothing(),
             () -> {
               try {
@@ -2354,27 +2321,9 @@ public class AccountIT extends AbstractDaemonTest {
 
     AtomicInteger bgCounterA1 = new AtomicInteger(0);
     AtomicInteger bgCounterA2 = new AtomicInteger(0);
-    PersonIdent ident = serverIdent.get();
     ExternalId extIdA2 = externalIdFactory.create("foo", "A-2", accountId);
     AccountsUpdate update =
-        new AccountsUpdate(
-            repoManager,
-            gitReferenceUpdated,
-            Optional.empty(),
-            allUsers,
-            externalIds,
-            metaDataUpdateInternalFactory,
-            new RetryHelper(
-                cfg,
-                retryMetrics,
-                null,
-                null,
-                null,
-                exceptionHooks,
-                r -> r.withBlockStrategy(noSleepBlockStrategy)),
-            extIdNotesFactory,
-            ident,
-            ident,
+        getAccountsUpdate(
             Runnables.doNothing(),
             () -> {
               try {
@@ -3042,7 +2991,7 @@ public class AccountIT extends AbstractDaemonTest {
 
     ExternalId externalId =
         externalIdFactory.createWithEmail(
-            SCHEME_USERNAME, "admin", admin.id(), "secondary@example.com");
+            SCHEME_USERNAME, admin.username(), admin.id(), "secondary@example.com");
     accountsUpdateProvider
         .get()
         .update(
@@ -3050,7 +2999,9 @@ public class AccountIT extends AbstractDaemonTest {
             admin.id(),
             (a, u) ->
                 u.replaceExternalId(
-                    externalIds.get(externalIdKeyFactory.create(SCHEME_USERNAME, "admin")).get(),
+                    externalIds
+                        .get(externalIdKeyFactory.create(SCHEME_USERNAME, admin.username()))
+                        .get(),
                     externalId));
     assertExternalIds(admin.id(), ImmutableSet.of("mailto:admin@example.com", "username:admin"));
 
@@ -3155,8 +3106,7 @@ public class AccountIT extends AbstractDaemonTest {
 
     // Configure an external group backend that has a single group that contains all users.
     TestGroupBackend testGroupBackend = createTestGroupBackendWithAllUsersGroup("AllUsers");
-    try (ExtensionRegistry.Registration registration =
-        extensionRegistry.newRegistration().add(testGroupBackend)) {
+    try (Registration registration = extensionRegistry.newRegistration().add(testGroupBackend)) {
       // user and user2 cannot see each other although the external AllUsers group contains both
       // users. That's because this group is not detected as relevant and hence its memberships are
       // not checked.
@@ -3211,8 +3161,8 @@ public class AccountIT extends AbstractDaemonTest {
 
     // Configure an external group backend that has a single group that contains all users.
     TestGroupBackend testGroupBackend = createTestGroupBackendWithAllUsersGroup("AllUsers");
-    try (ExtensionRegistry.Registration registration =
-        extensionRegistry.newRegistration().add(testGroupBackend)) {
+
+    try (Registration registration = extensionRegistry.newRegistration().add(testGroupBackend)) {
       // user and user2 can see each other since the external AllUsers that contains both users has
       // been configured as a relevant group.
       assertThat(
@@ -3222,6 +3172,225 @@ public class AccountIT extends AbstractDaemonTest {
               accountControlFactory.get(identifiedUserFactory.create(user2.id())).canSee(user.id()))
           .isTrue();
     }
+  }
+
+  @Test
+  public void deleteAccount_deletesAccountIdentifiers() throws Exception {
+    TestAccount deleted = accountCreator.createValid(name("deleted"));
+    String secondaryEmail = "secondary@email.com";
+    gApi.accounts().id(deleted.id().get()).addEmail(newEmailInput(secondaryEmail));
+
+    requestScopeOperations.setApiUser(deleted.id());
+    gApi.accounts().self().delete();
+
+    requestScopeOperations.setApiUser(admin.id());
+    assertThrows(
+        ResourceNotFoundException.class, () -> gApi.accounts().id(deleted.id().get()).get());
+    assertThrows(NoSuchElementException.class, () -> accountCache.get(deleted.id()).get());
+
+    // Verifies the account is not queryable
+    assertThat(gApi.accounts().query(deleted.id().toString()).get()).isEmpty();
+    assertThat(gApi.accounts().query(deleted.username()).get()).isEmpty();
+    assertThat(gApi.accounts().query(deleted.fullName()).get()).isEmpty();
+    assertThat(gApi.accounts().query(deleted.displayName()).get()).isEmpty();
+    assertThat(gApi.accounts().query(deleted.email()).get()).isEmpty();
+    assertThat(gApi.accounts().query(secondaryEmail).get()).isEmpty();
+
+    // Clean up the test framework
+    accountCreator.evict(deleted.id());
+  }
+
+  @Test
+  public void deleteAccount_deletesAccountExternalIds() throws Exception {
+    TestAccount deleted =
+        accountCreator.create("deleted", "deleted@internal.com", "Full Name", "Display");
+    requestScopeOperations.setApiUser(deleted.id());
+    addExternalIdEmail(deleted, "deleted@external.com");
+    assertExternalEmails(
+        deleted.id(), ImmutableSet.of("deleted@internal.com", "deleted@external.com"));
+
+    gApi.accounts().self().delete();
+
+    requestScopeOperations.setApiUser(admin.id());
+    assertThat(externalIds.byEmails("deleted@internal.com", "deleted@external.com")).isEmpty();
+
+    // Clean up the test framework
+    accountCreator.evict(deleted.id());
+  }
+
+  @Test
+  @UseSsh
+  public void deleteAccount_deletesSshKeys() throws Exception {
+    TestAccount deleted = accountCreator.createValid(name("deleted"));
+    requestScopeOperations.setApiUser(deleted.id());
+    String newKey = TestSshKeys.publicKey(SshSessionFactory.genSshKey(), deleted.email());
+    gApi.accounts().self().addSshKey(newKey);
+    assertThat(gApi.accounts().self().listSshKeys()).hasSize(1);
+    assertThat(authorizedKeys.getKeys(deleted.id())).hasSize(1);
+
+    gApi.accounts().self().delete();
+
+    requestScopeOperations.setApiUser(admin.id());
+    assertThat(authorizedKeys.getKeys(deleted.id())).isEmpty();
+
+    // Clean up the test framework
+    accountCreator.evict(deleted.id());
+  }
+
+  @Test
+  public void deleteAccount_deletesGpgKeys() throws Exception {
+    TestAccount deleted = accountCreator.createValid(name("deleted"));
+
+    requestScopeOperations.setApiUser(deleted.id());
+    addExternalIdEmail(
+        deleted,
+        PushCertificateIdent.parse(validKeyWithoutExpiration().getFirstUserId()).getEmailAddress());
+    TestKey key = validKeyWithoutExpiration();
+    addGpgKey(deleted, key.getPublicKeyArmored());
+    assertKeys(key);
+    assertIteratorSize(1, getOnlyKeyFromStore(key).getUserIDs());
+
+    gApi.accounts().self().delete();
+
+    requestScopeOperations.setApiUser(admin.id());
+    try (PublicKeyStore store = publicKeyStoreProvider.get()) {
+      Iterable<PGPPublicKeyRing> keys = store.get(key.getKeyId());
+      assertThat(keys).isEmpty();
+    }
+
+    // Clean up the test framework
+    accountCreator.evict(deleted.id());
+  }
+
+  @Test
+  public void deleteAccount_deletesStarredChanges() throws Exception {
+    TestAccount deleted = accountCreator.createValid(name("deleted"));
+    PushOneCommit.Result r = createChange();
+    String triplet = project.get() + "~master~" + r.getChangeId();
+
+    requestScopeOperations.setApiUser(deleted.id());
+
+    gApi.accounts().self().starChange(triplet);
+    try (Repository repo = repoManager.openRepository(allUsers)) {
+      assertThat(
+              repo.getRefDatabase()
+                  .getRefsByPrefix(RefNames.refsStarredChangesPrefix(r.getChange().getId())))
+          .hasSize(1);
+
+      gApi.accounts().self().delete();
+    }
+
+    // Reopen the repo to refresh RefDb
+    try (Repository repo = repoManager.openRepository(allUsers)) {
+      assertThat(
+              repo.getRefDatabase()
+                  .getRefsByPrefix(RefNames.refsStarredChangesPrefix(r.getChange().getId())))
+          .isEmpty();
+    }
+
+    // Clean up the test framework
+    accountCreator.evict(deleted.id());
+  }
+
+  @Test
+  public void deleteAccount_deletesChangeEdits() throws Exception {
+    TestAccount deleted = accountCreator.createValid(name("deleted"));
+    PushOneCommit.Result r = createChange();
+
+    requestScopeOperations.setApiUser(deleted.id());
+
+    gApi.changes().id(r.getChangeId()).edit().create();
+    gApi.changes()
+        .id(r.getChangeId())
+        .edit()
+        .modifyFile(PushOneCommit.FILE_NAME, RawInputUtil.create("foo".getBytes(UTF_8)));
+    try (Repository repo = repoManager.openRepository(r.getChange().change().getProject())) {
+      assertThat(repo.getRefDatabase().getRefsByPrefix(RefNames.refsEditPrefix(deleted.id())))
+          .hasSize(1);
+
+      gApi.accounts().self().delete();
+    }
+
+    // Reopen the repo to refresh RefDb
+    try (Repository repo = repoManager.openRepository(r.getChange().change().getProject())) {
+      assertThat(repo.getRefDatabase().getRefsByPrefix(RefNames.refsEditPrefix(deleted.id())))
+          .isEmpty();
+    }
+
+    // Clean up the test framework
+    accountCreator.evict(deleted.id());
+  }
+
+  @Test
+  public void deleteAccount_deletesDraftComments() throws Exception {
+    TestAccount deleted = accountCreator.createValid(name("deleted"));
+    PushOneCommit.Result r = createChange();
+
+    requestScopeOperations.setApiUser(deleted.id());
+
+    createDraft(r, PushOneCommit.FILE_NAME, "draft");
+    try (Repository repo = repoManager.openRepository(allUsers)) {
+      assertThat(
+              repo.getRefDatabase()
+                  .getRefsByPrefix(RefNames.refsDraftCommentsPrefix(r.getChange().getId())))
+          .hasSize(1);
+
+      gApi.accounts().self().delete();
+    }
+
+    // Reopen the repo to refresh RefDb
+    try (Repository repo = repoManager.openRepository(allUsers)) {
+      assertThat(
+              repo.getRefDatabase()
+                  .getRefsByPrefix(RefNames.refsDraftCommentsPrefix(r.getChange().getId())))
+          .isEmpty();
+    }
+
+    // Clean up the test framework
+    accountCreator.evict(deleted.id());
+  }
+
+  @Test
+  @SuppressWarnings("unused")
+  public void deleteAccount_deletesReviewedFlags() throws Exception {
+    PushOneCommit.Result r = createChange();
+    TestAccount deleted = accountCreator.createValid(name("deleted"));
+    ReviewerInput in = new ReviewerInput();
+    in.reviewer = deleted.email();
+    gApi.changes().id(r.getChangeId()).addReviewer(in);
+
+    requestScopeOperations.setApiUser(deleted.id());
+
+    var unused =
+        accountPatchReviewStore.markReviewed(
+            r.getPatchSetId(), deleted.id(), PushOneCommit.FILE_NAME);
+    assertThat(accountPatchReviewStore.findReviewed(r.getPatchSetId(), deleted.id())).isPresent();
+
+    gApi.accounts().self().delete();
+
+    assertThat(accountPatchReviewStore.findReviewed(r.getPatchSetId(), deleted.id())).isEmpty();
+
+    // Clean up the test framework
+    accountCreator.evict(deleted.id());
+  }
+
+  @Test
+  public void deleteAccount_appliesForSelfById() throws Exception {
+    TestAccount deleted = accountCreator.createValid(name("deleted"));
+    requestScopeOperations.setApiUser(deleted.id());
+    gApi.accounts().id(deleted.id().get()).delete();
+
+    // Clean up the test framework
+    accountCreator.evict(deleted.id());
+  }
+
+  @Test
+  public void deleteAccount_throwsForOtherUsers() throws Exception {
+    TestAccount deleted = accountCreator.createValid(name("deleted"));
+    requestScopeOperations.setApiUser(user.id());
+    AuthException thrown =
+        assertThrows(AuthException.class, () -> gApi.accounts().id(deleted.id().get()).delete());
+    assertThat(thrown).hasMessageThat().isEqualTo("Delete account is only permitted for self");
   }
 
   private TestGroupBackend createTestGroupBackendWithAllUsersGroup(String nameOfAllUsersGroup)
@@ -3272,11 +3441,21 @@ public class AccountIT extends AbstractDaemonTest {
     return testGroupBackend;
   }
 
-  private void assertExternalIds(Account.Id accountId, ImmutableSet<String> extIds)
+  protected void assertExternalIds(Account.Id accountId, ImmutableSet<String> extIds)
       throws Exception {
     assertThat(
             gApi.accounts().id(accountId.get()).getExternalIds().stream()
                 .map(e -> e.identity)
+                .collect(toImmutableSet()))
+        .isEqualTo(extIds);
+  }
+
+  private void assertExternalEmails(Account.Id accountId, ImmutableSet<String> extIds)
+      throws Exception {
+    assertThat(
+            gApi.accounts().id(accountId.get()).getExternalIds().stream()
+                .map(e -> e.emailAddress)
+                .filter(Objects::nonNull)
                 .collect(toImmutableSet()))
         .isEqualTo(extIds);
   }
@@ -3358,7 +3537,9 @@ public class AccountIT extends AbstractDaemonTest {
 
     // Check raw stored keys.
     for (TestKey key : expected) {
-      getOnlyKeyFromStore(key);
+      try (PublicKeyStore store = publicKeyStoreProvider.get()) {
+        assertThat(store.get(key.getKeyId())).hasSize(1);
+      }
     }
   }
 
@@ -3395,10 +3576,12 @@ public class AccountIT extends AbstractDaemonTest {
     }
   }
 
+  @CanIgnoreReturnValue
   private Map<String, GpgKeyInfo> addGpgKey(String armored) throws Exception {
     return addGpgKey(admin, armored);
   }
 
+  @CanIgnoreReturnValue
   private Map<String, GpgKeyInfo> addGpgKey(TestAccount account, String armored) throws Exception {
     return testRefAction(
         () -> {
@@ -3431,8 +3614,15 @@ public class AccountIT extends AbstractDaemonTest {
     assertThat(info.status).isEqualTo(expectedStatus);
   }
 
-  private Set<String> getEmails() throws RestApiException {
-    return gApi.accounts().self().getEmails().stream().map(e -> e.email).collect(toSet());
+  private ImmutableSet<String> getEmails() throws RestApiException {
+    return gApi.accounts().self().getEmails().stream().map(e -> e.email).collect(toImmutableSet());
+  }
+
+  private ImmutableSet<String> getExtIdsEmail() throws RestApiException {
+    return gApi.accounts().self().getExternalIds().stream()
+        .map(e -> e.emailAddress)
+        .filter(Objects::nonNull)
+        .collect(toImmutableSet());
   }
 
   private void assertEmail(Set<Account.Id> accounts, TestAccount expectedAccount) {
@@ -3457,6 +3647,36 @@ public class AccountIT extends AbstractDaemonTest {
         "login?account_id=" + accountId, HttpServletResponse.SC_MOVED_TEMPORARILY);
   }
 
+  private AccountsUpdate getAccountsUpdate(Runnable afterReadRevision, Runnable beforeCommit) {
+    return getAccountsUpdate(
+        afterReadRevision,
+        beforeCommit,
+        new RetryHelper(
+            cfg,
+            retryMetrics,
+            null,
+            null,
+            null,
+            exceptionHooks,
+            r -> r.withBlockStrategy(noSleepBlockStrategy)));
+  }
+
+  private AccountsUpdate getAccountsUpdate(
+      Runnable afterReadRevision, Runnable beforeCommit, RetryHelper retryHelper) {
+    return new AccountsUpdateNoteDbImpl(
+        repoManager,
+        gitReferenceUpdated,
+        Optional.empty(),
+        allUsers,
+        externalIds,
+        extIdNotesFactory,
+        metaDataUpdateInternalFactory,
+        retryHelper,
+        serverIdent.get(),
+        afterReadRevision,
+        beforeCommit);
+  }
+
   private void httpGetAndAssertStatus(String urlPath, int expectedHttpStatus)
       throws ClientProtocolException, IOException {
     HttpGet httpGet = new HttpGet(canonicalWebUrl.get() + urlPath);
@@ -3464,10 +3684,12 @@ public class AccountIT extends AbstractDaemonTest {
     assertThat(loginResponse.getStatusLine().getStatusCode()).isEqualTo(expectedHttpStatus);
   }
 
-  private static class RefUpdateCounter implements GitReferenceUpdatedListener {
+  @UsedAt(UsedAt.Project.GOOGLE)
+  public static class RefUpdateCounter implements GitReferenceUpdatedListener {
     private final AtomicLongMap<String> countsByProjectRefs = AtomicLongMap.create();
 
-    static String projectRef(Project.NameKey project, String ref) {
+    @UsedAt(UsedAt.Project.GOOGLE)
+    public static String projectRef(Project.NameKey project, String ref) {
       return projectRef(project.get(), ref);
     }
 
@@ -3484,7 +3706,8 @@ public class AccountIT extends AbstractDaemonTest {
       countsByProjectRefs.clear();
     }
 
-    void assertRefUpdateFor(String... projectRefs) {
+    @UsedAt(UsedAt.Project.GOOGLE)
+    public void assertRefUpdateFor(String... projectRefs) {
       Map<String, Long> expectedRefUpdateCounts = new HashMap<>();
       for (String projectRef : projectRefs) {
         expectedRefUpdateCounts.put(projectRef, 1L);

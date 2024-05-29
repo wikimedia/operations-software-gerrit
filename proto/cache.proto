@@ -78,7 +78,7 @@ message ChangeNotesKeyProto {
 // Instead, we just take the tedious yet simple approach of having a "has_foo"
 // field for each nullable field "foo", indicating whether or not foo is null.
 //
-// Next ID: 28
+// Next ID: 29
 message ChangeNotesStateProto {
   // Effectively required, even though the corresponding ChangeNotesState field
   // is optional, since the field is only absent when NoteDb is disabled, in
@@ -141,6 +141,8 @@ message ChangeNotesStateProto {
   reserved 4; // past_assignee
 
   repeated string hashtag = 5;
+
+  map<string, string> custom_keyed_values = 28;
 
   repeated devtools.gerritcodereview.PatchSet patch_set = 6;
 
@@ -250,7 +252,7 @@ message TagSetHolderProto {
     // Next ID: 3
     message TagProto {
       bytes id = 1;
-      bytes flags = 2;
+      bytes flags = 2; // org.roaringbitmap.RoaringBitmap serialized as ByteString
     }
     repeated TagProto tag = 3;
   }
@@ -321,6 +323,15 @@ message ProjectWatchProto {
   repeated string notify_type = 3;
 }
 
+// Serialized user preferences.
+// Next ID: 3
+message CachedPreferencesProto {
+  oneof Preferences {
+    devtools.gerritcodereview.UserPreferences user_preferences = 1;
+    string legacy_git_config = 2;
+  }
+}
+
 // Serialized form of
 // com.google.gerrit.entities.Account.
 // Next ID: 9
@@ -343,11 +354,12 @@ message AccountKeyProto {
 }
 
 // Serialized form of com.google.gerrit.server.account.CachedAccountDetails.
-// Next ID: 4
+// Next ID: 5
 message AccountDetailsProto {
   AccountProto account = 1;
   repeated ProjectWatchProto project_watch_proto = 2;
-  string user_preferences = 3;
+  CachedPreferencesProto user_preferences = 4;
+  reserved 3;
 }
 
 // Serialized form of com.google.gerrit.entities.Project.

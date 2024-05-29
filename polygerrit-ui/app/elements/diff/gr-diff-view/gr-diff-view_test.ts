@@ -54,10 +54,9 @@ import {SinonFakeTimers, SinonStub, SinonStubbedMember} from 'sinon';
 import {
   changeModelToken,
   ChangeModel,
-  LoadingStatus,
 } from '../../../models/change/change-model';
 import {assertIsDefined} from '../../../utils/common-util';
-import {GrDiffModeSelector} from '../../../embed/diff/gr-diff-mode-selector/gr-diff-mode-selector';
+import {GrDiffModeSelector} from '../gr-diff-mode-selector/gr-diff-mode-selector';
 import {fixture, html, assert} from '@open-wc/testing';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {testResolver} from '../../../test/common-test-setup';
@@ -77,6 +76,7 @@ import {
 import {FileNameToNormalizedFileInfoMap} from '../../../models/change/files-model';
 import {RestApiService} from '../../../services/gr-rest-api/gr-rest-api';
 import {GrDiffCursor} from '../../../embed/diff/gr-diff-cursor/gr-diff-cursor';
+import {LoadingStatus} from '../../../types/types';
 
 function createComment(
   id: string,
@@ -270,6 +270,12 @@ suite('gr-diff-view tests', () => {
                 </span>
               </div>
               <div class="rightControls">
+                <div class="sidebarTriggerContainer">
+                  <gr-endpoint-decorator name="sidebarTrigger">
+                    <gr-endpoint-param name="onTrigger"></gr-endpoint-param>
+                    <gr-endpoint-param name="openSidebar"></gr-endpoint-param>
+                  </gr-endpoint-decorator>
+                </div>
                 <span class="blameLoader show">
                   <gr-button
                     aria-disabled="false"
@@ -348,9 +354,12 @@ suite('gr-diff-view tests', () => {
                 >
               </a>
             </div>
+            <div class="sidebarAnchor"></div>
           </div>
           <h2 class="assistive-tech-only">Diff view</h2>
-          <gr-diff-host id="diffHost"> </gr-diff-host>
+          <div class="diffContainer">
+            <gr-diff-host id="diffHost"> </gr-diff-host>
+          </div>
           <gr-apply-fix-dialog id="applyFixDialog"> </gr-apply-fix-dialog>
           <gr-diff-preferences-dialog id="diffPreferencesDialog">
           </gr-diff-preferences-dialog>
@@ -806,9 +815,7 @@ suite('gr-diff-view tests', () => {
       element.patchNum = 1 as RevisionPatchSetNum;
       element.basePatchNum = PARENT;
       assertIsDefined(element.cursor);
-      sinon
-        .stub(element.cursor, 'getAddress')
-        .returns({number: lineNumber, leftSide: false});
+      sinon.stub(element.cursor, 'getTargetLineNumber').returns(lineNumber);
       await element.updateComplete;
       const editBtn = queryAndAssert<GrButton>(
         element,
@@ -818,7 +825,7 @@ suite('gr-diff-view tests', () => {
       editBtn.click();
       assert.equal(navToEditStub.callCount, 1);
       assert.deepEqual(navToEditStub.lastCall.args, [
-        {path: 't.txt', lineNum: 42},
+        {path: 't.txt', lineNum: lineNumber},
       ]);
     });
 
@@ -1428,9 +1435,6 @@ suite('gr-diff-view tests', () => {
     test('onLineSelected', () => {
       const replaceStateStub = sinon.stub(history, 'replaceState');
       assertIsDefined(element.cursor);
-      sinon
-        .stub(element.cursor, 'getAddress')
-        .returns({number: 123, leftSide: false});
 
       element.changeNum = 321 as NumericChangeId;
       element.change = {
@@ -1450,9 +1454,6 @@ suite('gr-diff-view tests', () => {
     test('line selected on left side', () => {
       const replaceStateStub = sinon.stub(history, 'replaceState');
       assertIsDefined(element.cursor);
-      sinon
-        .stub(element.cursor, 'getAddress')
-        .returns({number: 123, leftSide: true});
 
       element.changeNum = 321 as NumericChangeId;
       element.change = {

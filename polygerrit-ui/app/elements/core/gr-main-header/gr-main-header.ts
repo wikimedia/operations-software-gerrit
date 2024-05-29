@@ -3,14 +3,12 @@
  * Copyright 2016 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {Subscription} from 'rxjs';
-import {map, distinctUntilChanged} from 'rxjs/operators';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../shared/gr-dropdown/gr-dropdown';
 import '../../shared/gr-icon/gr-icon';
 import '../gr-account-dropdown/gr-account-dropdown';
 import '../gr-smart-search/gr-smart-search';
-import {getBaseUrl} from '../../../utils/url-util';
+import {getBaseUrl, getDocUrl} from '../../../utils/url-util';
 import {getAdminLinks, NavLink} from '../../../models/views/admin';
 import {
   AccountDetailInfo,
@@ -30,6 +28,7 @@ import {resolve} from '../../../models/dependency';
 import {configModelToken} from '../../../models/config/config-model';
 import {userModelToken} from '../../../models/user/user-model';
 import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
+import {subscribe} from '../../lit/subscription-controller';
 
 type MainHeaderLink = RequireProperties<DropdownLink, 'url' | 'name'>;
 
@@ -86,6 +85,18 @@ const DOCUMENTATION_LINKS: MainHeaderLink[] = [
   },
 ];
 
+// visible for testing
+export function getDocLinks(docBaseUrl: string, docLinks: MainHeaderLink[]) {
+  if (!docBaseUrl) return [];
+  return docLinks.map(link => {
+    return {
+      url: getDocUrl(docBaseUrl, link.url),
+      name: link.name,
+      target: '_blank',
+    };
+  });
+}
+
 // Set of authentication methods that can provide custom registration page.
 const AUTH_TYPES_WITH_REGISTER_URL: Set<AuthType> = new Set([
   AuthType.LDAP,
@@ -110,11 +121,9 @@ export class GrMainHeader extends LitElement {
   @property({type: Boolean, reflect: true})
   loading?: boolean;
 
-  @property({type: String})
-  loginUrl = '/login';
+  @state() loginUrl = '';
 
-  @property({type: String})
-  loginText = 'Sign in';
+  @state() loginText = '';
 
   @property({type: Boolean})
   mobileSearchHidden = false;
@@ -124,7 +133,7 @@ export class GrMainHeader extends LitElement {
 
   @state() private adminLinks: NavLink[] = [];
 
-  @state() private docBaseUrl: string | null = null;
+  @state() private docsBaseUrl = '';
 
   @state() private userLinks: MainHeaderLink[] = [];
 
@@ -148,40 +157,42 @@ export class GrMainHeader extends LitElement {
 
   private readonly getConfigModel = resolve(this, configModelToken);
 
-  private subscriptions: Subscription[] = [];
+  constructor() {
+    super();
+    subscribe(
+      this,
+      () => this.getUserModel().myMenuItems$,
+      items => (this.userLinks = items.map(this.createHeaderLink))
+    );
+    subscribe(
+      this,
+      () => this.getConfigModel().loginUrl$,
+      loginUrl => (this.loginUrl = loginUrl)
+    );
+    subscribe(
+      this,
+      () => this.getConfigModel().loginText$,
+      loginText => (this.loginText = loginText)
+    );
+    subscribe(
+      this,
+      () => this.getConfigModel().docsBaseUrl$,
+      docsBaseUrl => (this.docsBaseUrl = docsBaseUrl)
+    );
+    subscribe(
+      this,
+      () => this.getConfigModel().serverConfig$,
+      config => {
+        if (!config) return;
+        this.retrieveFeedbackURL(config);
+        this.retrieveRegisterURL(config);
+      }
+    );
+  }
 
   override connectedCallback() {
     super.connectedCallback();
     this.loadAccount();
-
-    this.subscriptions.push(
-      this.getUserModel()
-        .preferences$.pipe(
-          map(preferences => preferences?.my ?? []),
-          distinctUntilChanged()
-        )
-        .subscribe(items => {
-          this.userLinks = items.map(this.createHeaderLink);
-        })
-    );
-    this.subscriptions.push(
-      this.getConfigModel().serverConfig$.subscribe(config => {
-        if (!config) return;
-        this.retrieveFeedbackURL(config);
-        this.retrieveRegisterURL(config);
-        this.restApiService.getDocsBaseUrl(config).then(docBaseUrl => {
-          this.docBaseUrl = docBaseUrl;
-        });
-      })
-    );
-  }
-
-  override disconnectedCallback() {
-    for (const s of this.subscriptions) {
-      s.unsubscribe();
-    }
-    this.subscriptions = [];
-    super.disconnectedCallback();
   }
 
   static override get styles() {
@@ -368,12 +379,9 @@ export class GrMainHeader extends LitElement {
       </gr-endpoint-decorator>
     </a>
     <ul class="links">
-      ${this.computeLinks(
-        this.userLinks,
-        this.adminLinks,
-        this.topMenus,
-        this.docBaseUrl
-      ).map(linkGroup => this.renderLinkGroup(linkGroup))}
+      ${this.computeLinks(this.userLinks, this.adminLinks, this.topMenus).map(
+        linkGroup => this.renderLinkGroup(linkGroup)
+      )}
     </ul>
     <div class="rightItems">
       <gr-endpoint-decorator
@@ -421,6 +429,7 @@ export class GrMainHeader extends LitElement {
         title="File a bug"
         aria-label="File a bug"
         target="_blank"
+        rel="noopener noreferrer"
         role="button"
       >
         <gr-icon icon="bug_report" filled></gr-icon>
@@ -445,7 +454,9 @@ export class GrMainHeader extends LitElement {
           ></gr-icon>
         </div>
         ${this.renderRegister()}
-        <a class="loginButton" href=${this.loginUrl}>${this.loginText}</a>
+        <gr-endpoint-decorator name="auth-link">
+          <a class="loginButton" href=${this.loginUrl}>${this.loginText}</a>
+        </gr-endpoint-decorator>
         <a
           class="settingsButton"
           href="${getBaseUrl()}/settings/"
@@ -494,15 +505,13 @@ export class GrMainHeader extends LitElement {
     userLinks?: MainHeaderLink[],
     adminLinks?: NavLink[],
     topMenus?: TopMenuEntryInfo[],
-    docBaseUrl?: string | null,
     // defaultLinks parameter is used in tests only
     defaultLinks = DEFAULT_LINKS
   ) {
     if (
       userLinks === undefined ||
       adminLinks === undefined ||
-      topMenus === undefined ||
-      docBaseUrl === undefined
+      topMenus === undefined
     ) {
       return [];
     }
@@ -519,7 +528,7 @@ export class GrMainHeader extends LitElement {
         links: userLinks.slice(),
       });
     }
-    const docLinks = this.getDocLinks(docBaseUrl, DOCUMENTATION_LINKS);
+    const docLinks = getDocLinks(this.docsBaseUrl, DOCUMENTATION_LINKS);
     if (docLinks.length) {
       links.push({
         title: 'Documentation',
@@ -553,24 +562,6 @@ export class GrMainHeader extends LitElement {
       }
     }
     return links;
-  }
-
-  // private but used in test
-  getDocLinks(docBaseUrl: string | null, docLinks: MainHeaderLink[]) {
-    if (!docBaseUrl) {
-      return [];
-    }
-    return docLinks.map(link => {
-      let url = docBaseUrl;
-      if (url && url[url.length - 1] === '/') {
-        url = url.substring(0, url.length - 1);
-      }
-      return {
-        url: url + link.url,
-        name: link.name,
-        target: '_blank',
-      };
-    });
   }
 
   // private but used in test

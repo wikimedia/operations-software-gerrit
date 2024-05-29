@@ -121,10 +121,6 @@ suite('gr-settings-view tests', () => {
   });
 
   test('renders', async () => {
-    sinon
-      .stub(element, 'getFilterDocsLink')
-      .returns('https://test.com/user-notify.html');
-    element.docsBaseUrl = 'https://test.com';
     await element.updateComplete;
     // this cannot be formatted with /* HTML */, because it breaks test
     assert.shadowDom.equal(
@@ -148,7 +144,6 @@ suite('gr-settings-view tests', () => {
             <li><a href="#EmailAddresses"> Email Addresses </a></li>
             <li><a href="#Groups"> Groups </a></li>
             <li><a href="#Identities"> Identities </a></li>
-            <li><a href="#MailFilters"> Mail Filters </a></li>
             <gr-endpoint-decorator name="settings-menu-item">
             </gr-endpoint-decorator>
           </ul>
@@ -166,6 +161,37 @@ suite('gr-settings-view tests', () => {
             >
               Save changes
             </gr-button>
+            <gr-button
+              aria-disabled="false"
+              class="delete-account-button"
+              role="button"
+              tabindex="0"
+            >
+              Delete Account
+            </gr-button>
+            <dialog id="confirm-account-deletion">
+            <gr-dialog role="dialog">
+              <div
+                class="confirm-account-deletion-header"
+                slot="header"
+              >
+              Are you sure you wish to delete your account?
+              </div>
+              <div
+                class="confirm-account-deletion-main"
+                slot="main"
+              >
+                <ul>
+                  <li>
+                    Deleting your account is not reversible.
+                  </li>
+                  <li>
+                    Deleting your account will not delete your changes.
+                  </li>
+                </ul>
+              </div>
+            </gr-dialog>
+          </dialog>
           </fieldset>
           <h2 id="Preferences">Preferences</h2>
           <fieldset id="preferences">
@@ -416,98 +442,12 @@ suite('gr-settings-view tests', () => {
             >
               Send verification
             </gr-button>
-          </fieldset> 
+          </fieldset>
           <h2 id="Groups">Groups</h2>
           <fieldset><gr-group-list id="groupList"> </gr-group-list></fieldset>
           <h2 id="Identities">Identities</h2>
           <fieldset>
             <gr-identities id="identities"> </gr-identities>
-          </fieldset>
-          <h2 id="MailFilters">Mail Filters</h2>
-          <fieldset class="filters">
-            <p>
-              Gerrit emails include metadata about the change to support writing
-              mail filters.
-            </p>
-            <p>
-              Here are some example Gmail queries that can be used for filters
-              or for searching through archived messages. View the
-              <a
-                href="https://test.com/user-notify.html"
-                rel="nofollow"
-                target="_blank"
-              >
-                Gerrit documentation
-              </a>
-              for the complete set of footers.
-            </p>
-            <table>
-              <tbody>
-                <tr>
-                  <th>Name</th>
-                  <th>Query</th>
-                </tr>
-                <tr>
-                  <td>Changes requesting my review</td>
-                  <td>
-                    <code class="queryExample">
-                      "Gerrit-Reviewer: <em> Your Name </em> <
-                      <em> your.email@example.com </em> >"
-                    </code>
-                  </td>
-                </tr>
-                <tr>
-                  <td>Changes requesting my attention</td>
-                  <td>
-                    <code class="queryExample">
-                      "Gerrit-Attention: <em> Your Name </em> <
-                      <em> your.email@example.com </em> >"
-                    </code>
-                  </td>
-                </tr>
-                <tr>
-                  <td>Changes from a specific owner</td>
-                  <td>
-                    <code class="queryExample">
-                      "Gerrit-Owner: <em> Owner name </em> <
-                      <em> owner.email@example.com </em> >"
-                    </code>
-                  </td>
-                </tr>
-                <tr>
-                  <td>Changes targeting a specific branch</td>
-                  <td>
-                    <code class="queryExample">
-                      "Gerrit-Branch: <em> branch-name </em> "
-                    </code>
-                  </td>
-                </tr>
-                <tr>
-                  <td>Changes in a specific project</td>
-                  <td>
-                    <code class="queryExample">
-                      "Gerrit-Project: <em> project-name </em> "
-                    </code>
-                  </td>
-                </tr>
-                <tr>
-                  <td>Messages related to a specific Change ID</td>
-                  <td>
-                    <code class="queryExample">
-                      "Gerrit-Change-Id: <em> Change ID </em> "
-                    </code>
-                  </td>
-                </tr>
-                <tr>
-                  <td>Messages related to a specific change number</td>
-                  <td>
-                    <code class="queryExample">
-                      "Gerrit-Change-Number: <em> change number </em> "
-                    </code>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
           </fieldset>
           <gr-endpoint-decorator name="settings-screen">
           </gr-endpoint-decorator>
@@ -529,8 +469,9 @@ suite('gr-settings-view tests', () => {
             Allow browser notifications
           </label>
           <a
-            href="https://gerrit-review.googlesource.com/Documentation/user-attention-set.html#_browser_notifications"
+            href="/Documentation/user-attention-set.html#_browser_notifications"
             target="_blank"
+            rel="noopener noreferrer"
           >
             <gr-icon icon="help" title="read documentation"> </gr-icon>
           </a>
@@ -830,45 +771,6 @@ suite('gr-settings-view tests', () => {
     element.serverConfig = undefined;
     await element.updateComplete;
     assert.isFalse(element.showHttpAuth());
-  });
-
-  suite('getFilterDocsLink', () => {
-    test('with http: docs base URL', () => {
-      const base = 'http://example.com/';
-      const result = element.getFilterDocsLink(base);
-      assert.equal(result, 'http://example.com/user-notify.html');
-    });
-
-    test('with http: docs base URL without slash', () => {
-      const base = 'http://example.com';
-      const result = element.getFilterDocsLink(base);
-      assert.equal(result, 'http://example.com/user-notify.html');
-    });
-
-    test('with https: docs base URL', () => {
-      const base = 'https://example.com/';
-      const result = element.getFilterDocsLink(base);
-      assert.equal(result, 'https://example.com/user-notify.html');
-    });
-
-    test('without docs base URL', () => {
-      const result = element.getFilterDocsLink(null);
-      assert.equal(
-        result,
-        'https://gerrit-review.googlesource.com/' +
-          'Documentation/user-notify.html'
-      );
-    });
-
-    test('ignores non HTTP links', () => {
-      const base = 'javascript://alert("evil");';
-      const result = element.getFilterDocsLink(base);
-      assert.equal(
-        result,
-        'https://gerrit-review.googlesource.com/' +
-          'Documentation/user-notify.html'
-      );
-    });
   });
 
   suite('when email verification token is provided', () => {

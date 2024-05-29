@@ -15,9 +15,11 @@
 package com.google.gerrit.server.git;
 
 import static com.google.common.base.MoreObjects.firstNonNull;
+import static com.google.gerrit.server.mail.EmailFactories.CHANGE_REVERTED;
 import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.CHANGE_MODIFICATION;
 
 import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableList;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
@@ -37,17 +39,19 @@ import com.google.gerrit.server.CommonConverters;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.ReviewerSet;
+import com.google.gerrit.server.Sequences;
 import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.change.ChangeInserter;
 import com.google.gerrit.server.change.ChangeMessages;
 import com.google.gerrit.server.change.NotifyResolver;
 import com.google.gerrit.server.change.ValidationOptionsUtil;
 import com.google.gerrit.server.extensions.events.ChangeReverted;
+import com.google.gerrit.server.mail.EmailFactories;
+import com.google.gerrit.server.mail.send.ChangeEmail;
 import com.google.gerrit.server.mail.send.MessageIdGenerator;
-import com.google.gerrit.server.mail.send.RevertedSender;
+import com.google.gerrit.server.mail.send.OutgoingEmail;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
-import com.google.gerrit.server.notedb.Sequences;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
 import com.google.gerrit.server.update.BatchUpdate;
@@ -67,6 +71,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.errors.InvalidObjectIdException;
 import org.eclipse.jgit.errors.MissingObjectException;
@@ -93,7 +98,7 @@ public class CommitUtil {
   private final ApprovalsUtil approvalsUtil;
   private final ChangeInserter.Factory changeInserterFactory;
   private final NotifyResolver notifyResolver;
-  private final RevertedSender.Factory revertedSenderFactory;
+  private final EmailFactories emailFactories;
   private final ChangeMessagesUtil cmUtil;
   private final ChangeNotes.Factory changeNotesFactory;
   private final ChangeReverted changeReverted;
@@ -108,7 +113,7 @@ public class CommitUtil {
       ApprovalsUtil approvalsUtil,
       ChangeInserter.Factory changeInserterFactory,
       NotifyResolver notifyResolver,
-      RevertedSender.Factory revertedSenderFactory,
+      EmailFactories emailFactories,
       ChangeMessagesUtil cmUtil,
       ChangeNotes.Factory changeNotesFactory,
       ChangeReverted changeReverted,
@@ -120,7 +125,7 @@ public class CommitUtil {
     this.approvalsUtil = approvalsUtil;
     this.changeInserterFactory = changeInserterFactory;
     this.notifyResolver = notifyResolver;
-    this.revertedSenderFactory = revertedSenderFactory;
+    this.emailFactories = emailFactories;
     this.cmUtil = cmUtil;
     this.changeNotesFactory = changeNotesFactory;
     this.changeReverted = changeReverted;
@@ -209,7 +214,7 @@ public class CommitUtil {
    * @param oi ObjectInserter for inserting the newly created commit.
    * @param authorIdent of the new commit
    * @param committerIdent of the new commit
-   * @param parentCommit of the new commit. Can be null.
+   * @param parents of the new commit. Can be empty.
    * @param commitMessage for the new commit.
    * @param treeId of the content for the new commit.
    * @return the newly created commit.
@@ -219,16 +224,14 @@ public class CommitUtil {
       ObjectInserter oi,
       PersonIdent authorIdent,
       PersonIdent committerIdent,
-      @Nullable RevCommit parentCommit,
+      List<RevCommit> parents,
       String commitMessage,
       ObjectId treeId)
       throws IOException {
     logger.atFine().log("Creating commit with tree: %s", treeId.getName());
     CommitBuilder commit = new CommitBuilder();
     commit.setTreeId(treeId);
-    if (parentCommit != null) {
-      commit.setParentId(parentCommit);
-    }
+    commit.setParentIds(parents.stream().map(RevCommit::getId).collect(Collectors.toList()));
     commit.setAuthor(authorIdent);
     commit.setCommitter(committerIdent);
     commit.setMessage(commitMessage);
@@ -291,7 +294,12 @@ public class CommitUtil {
     }
 
     return createCommitWithTree(
-        oi, authorIdent, committerIdent, commitToRevert, message, parentToCommitToRevert.getTree());
+        oi,
+        authorIdent,
+        committerIdent,
+        ImmutableList.of(commitToRevert),
+        message,
+        parentToCommitToRevert.getTree());
   }
 
   private Change.Id createRevertChangeFromCommit(
@@ -381,14 +389,19 @@ public class CommitUtil {
           ctx.getChangeData(changeNotesFactory.createChecked(ctx.getProject(), revertingChangeId));
       changeReverted.fire(revertedChange, revertingChange, ctx.getWhen());
       try {
-        RevertedSender emailSender =
-            revertedSenderFactory.create(ctx.getProject(), revertedChange.getId());
-        emailSender.setFrom(ctx.getAccountId());
-        emailSender.setNotify(ctx.getNotify(revertedChangeId));
-        emailSender.setMessageId(
+        ChangeEmail changeEmail =
+            emailFactories.createChangeEmail(
+                ctx.getProject(),
+                revertedChange.getId(),
+                emailFactories.createRevertedChangeEmail());
+        OutgoingEmail outgoingEmail =
+            emailFactories.createOutgoingEmail(CHANGE_REVERTED, changeEmail);
+        outgoingEmail.setFrom(ctx.getAccountId());
+        outgoingEmail.setNotify(ctx.getNotify(revertedChangeId));
+        outgoingEmail.setMessageId(
             messageIdGenerator.fromChangeUpdate(
                 ctx.getRepoView(), revertedChange.currentPatchSet().id()));
-        emailSender.send();
+        outgoingEmail.send();
       } catch (Exception err) {
         logger.atSevere().withCause(err).log(
             "Cannot send email for revert change %s", revertedChangeId);

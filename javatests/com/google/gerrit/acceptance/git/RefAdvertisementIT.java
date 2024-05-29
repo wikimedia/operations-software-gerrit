@@ -49,11 +49,11 @@ import com.google.gerrit.extensions.api.changes.DraftInput;
 import com.google.gerrit.extensions.api.groups.GroupInput;
 import com.google.gerrit.extensions.api.projects.BranchInput;
 import com.google.gerrit.extensions.restapi.RestApiException;
+import com.google.gerrit.server.Sequence;
 import com.google.gerrit.server.account.ServiceUserClassifier;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.git.receive.ReceiveCommitsAdvertiseRefsHookChain;
 import com.google.gerrit.server.git.receive.testing.TestRefAdvertiser;
-import com.google.gerrit.server.notedb.Sequences;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackend.RefFilterOptions;
 import com.google.gerrit.server.query.change.ChangeData;
@@ -875,6 +875,47 @@ public class RefAdvertisementIT extends AbstractDaemonTest {
         "refs/tags/new-tag");
   }
 
+  // rcMaster (c1 master master-tag) <- rcBranch (c2 branch branch-tag) <- rcBranch (c2 branch) <-
+  // newcommit1 <- newcommit2 (new-branch)
+  @Test
+  public void uploadPackReachableTagVisibleFromLeafBranch() throws Exception {
+    try (Repository repo = repoManager.openRepository(project)) {
+      // rcBranch (c2 branch) <- newcommit1 (new-branch)
+      PushOneCommit.Result r =
+          pushFactory
+              .create(admin.newIdent(), testRepo)
+              .setParent(rcBranch)
+              .to("refs/heads/new-branch");
+      r.assertOkStatus();
+      RevCommit branchRc = r.getCommit();
+
+      // rcBranch (c2) <- newcommit1 <- newcommit2 (new-branch)
+      r =
+          pushFactory
+              .create(admin.newIdent(), testRepo)
+              .setParent(branchRc)
+              .to("refs/heads/new-branch");
+      r.assertOkStatus();
+    }
+
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(deny(Permission.READ).ref("refs/heads/master").group(REGISTERED_USERS))
+        .add(deny(Permission.READ).ref("refs/heads/branch").group(REGISTERED_USERS))
+        .add(allow(Permission.READ).ref("refs/heads/new-branch").group(REGISTERED_USERS))
+        .update();
+
+    requestScopeOperations.setApiUser(user.id());
+    assertUploadPackRefs(
+        "refs/heads/new-branch",
+        // 'master' and 'branch' branches are not visible but 'master-tag' and 'branch-tag' are
+        // reachable from new-branch (since PushOneCommit always bases changes on each other).
+        "refs/tags/branch-tag",
+        "refs/tags/master-tag");
+    // tree-tag not visible. See comment in subsetOfBranchesVisibleIncludingHead.
+  }
+
   // first  ls-remote: rcBranch (c2 branch)               <- newcommit1 (updated-tag)
   // second ls-remote: rcBranch (c2 branch updated-tag)
   @Test
@@ -1372,8 +1413,8 @@ public class RefAdvertisementIT extends AbstractDaemonTest {
             RefNames.REFS_GROUPNAMES,
             RefNames.refsGroups(admins),
             RefNames.refsGroups(nonInteractiveUsers),
-            RefNames.REFS_SEQUENCES + Sequences.NAME_ACCOUNTS,
-            RefNames.REFS_SEQUENCES + Sequences.NAME_GROUPS,
+            RefNames.REFS_SEQUENCES + Sequence.NAME_ACCOUNTS,
+            RefNames.REFS_SEQUENCES + Sequence.NAME_GROUPS,
             RefNames.REFS_CONFIG,
             Constants.HEAD);
 

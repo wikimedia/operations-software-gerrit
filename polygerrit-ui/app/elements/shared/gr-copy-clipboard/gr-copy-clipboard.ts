@@ -6,6 +6,7 @@
 import '@polymer/iron-input/iron-input';
 import '../gr-button/gr-button';
 import '../gr-icon/gr-icon';
+import '../gr-tooltip-content/gr-tooltip-content';
 import {
   assertIsDefined,
   copyToClipbard,
@@ -17,6 +18,10 @@ import {LitElement, css, html} from 'lit';
 import {customElement, property, query} from 'lit/decorators.js';
 import {GrButton} from '../gr-button/gr-button';
 import {GrIcon} from '../gr-icon/gr-icon';
+import {getAppContext} from '../../../services/app-context';
+import {Timing} from '../../../constants/reporting';
+import {when} from 'lit/directives/when.js';
+import {formStyles} from '../../../styles/form-styles';
 
 const COPY_TIMEOUT_MS = 1000;
 
@@ -39,20 +44,44 @@ export class GrCopyClipboard extends LitElement {
   @property({type: Boolean})
   hideInput = false;
 
+  @property({type: String})
+  label?: string;
+
+  @property({type: String})
+  shortcut?: string;
+
   // Optional property for toast to announce correct name of target that was copied
   @property({type: String, reflect: true})
   copyTargetName?: string;
 
+  @property({type: Boolean})
+  multiline = false;
+
   @query('#icon')
   iconEl!: GrIcon;
 
+  private readonly reporting = getAppContext().reportingService;
+
   static override get styles() {
     return [
+      formStyles,
       css`
         .text {
           align-items: center;
           display: flex;
           flex-wrap: wrap;
+        }
+        :host([nowrap]) .text {
+          flex-wrap: nowrap;
+        }
+        .text label {
+          flex: 0 0 120px;
+          color: var(--deemphasized-text-color);
+        }
+        .text .shortcut {
+          width: 27px;
+          margin: 0 var(--spacing-m);
+          color: var(--deemphasized-text-color);
         }
         .copyText {
           flex-grow: 1;
@@ -87,22 +116,44 @@ export class GrCopyClipboard extends LitElement {
   override render() {
     return html`
       <div class="text">
+        ${when(
+          this.label,
+          () => html`<label for="input">${this.label}</label>`
+        )}
         <iron-input
           class="copyText"
           @click=${this._handleInputClick}
           .bindValue=${this.text ?? ''}
+          part="text-container-wrapper-style"
         >
-          <input
-            id="input"
-            is="iron-input"
-            class=${classMap({hideInput: this.hideInput})}
-            type="text"
-            @click=${this._handleInputClick}
-            readonly=""
-            .value=${this.text ?? ''}
-            part="text-container-style"
-          />
+          ${when(
+            this.multiline,
+            () => html`<textarea
+              id="input"
+              is="iron-input"
+              class=${classMap({hideInput: this.hideInput})}
+              @click=${this._handleInputClick}
+              readonly=""
+              .value=${this.text ?? ''}
+              part="text-container-style"
+            >
+            </textarea>`,
+            () => html`<input
+              id="input"
+              is="iron-input"
+              class=${classMap({hideInput: this.hideInput})}
+              type="text"
+              @click=${this._handleInputClick}
+              readonly=""
+              .value=${this.text ?? ''}
+              part="text-container-style"
+            />`
+          )}
         </iron-input>
+        ${when(
+          this.shortcut,
+          () => html`<span class="shortcut">${this.shortcut}</span>`
+        )}
         <gr-tooltip-content
           ?has-tooltip=${this.hasTooltip}
           title=${ifDefined(this.buttonTitle)}
@@ -141,7 +192,12 @@ export class GrCopyClipboard extends LitElement {
     this.text = queryAndAssert<HTMLInputElement>(this, '#input').value;
     assertIsDefined(this.text, 'text');
     this.iconEl.icon = 'check';
-    copyToClipbard(this.text, this.copyTargetName ?? 'Link');
+    this.reporting.time(Timing.COPY_TO_CLIPBOARD);
+    copyToClipbard(this.text, this.copyTargetName ?? 'Link').finally(() => {
+      this.reporting.timeEnd(Timing.COPY_TO_CLIPBOARD, {
+        copyTargetName: this.copyTargetName,
+      });
+    });
     setTimeout(() => (this.iconEl.icon = 'content_copy'), COPY_TIMEOUT_MS);
   }
 }

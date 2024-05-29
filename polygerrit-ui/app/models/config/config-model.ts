@@ -9,8 +9,12 @@ import {switchMap} from 'rxjs/operators';
 import {RestApiService} from '../../services/gr-rest-api/gr-rest-api';
 import {ChangeModel} from '../change/change-model';
 import {select} from '../../utils/observable-util';
-import {Model} from '../model';
+import {Model} from '../base/model';
 import {define} from '../dependency';
+import {getBaseUrl, loginUrl} from '../../utils/url-util';
+
+export const PROBE_PATH = '/Documentation/index.html';
+export const DOCS_BASE_PATH = '/Documentation';
 
 export interface ConfigState {
   repoConfig?: ConfigInfo;
@@ -34,6 +38,20 @@ export class ConfigModel extends Model<ConfigState> {
     configState => configState.serverConfig
   );
 
+  public download$ = select(
+    this.serverConfig$,
+    serverConfig => serverConfig?.download
+  );
+
+  public loginUrl$ = select(this.serverConfig$, serverConfig =>
+    loginUrl(serverConfig?.auth)
+  );
+
+  public loginText$ = select(
+    this.serverConfig$,
+    serverConfig => serverConfig?.auth.login_text ?? 'Sign in'
+  );
+
   public mergeabilityComputationBehavior$ = select(
     this.serverConfig$,
     serverConfig => serverConfig?.change?.mergeability_computation_behavior
@@ -41,9 +59,7 @@ export class ConfigModel extends Model<ConfigState> {
 
   public docsBaseUrl$ = select(
     this.serverConfig$.pipe(
-      switchMap(serverConfig =>
-        from(this.restApiService.getDocsBaseUrl(serverConfig))
-      )
+      switchMap(serverConfig => from(this.getDocsBaseUrl(serverConfig)))
     ),
     url => url
   );
@@ -59,7 +75,7 @@ export class ConfigModel extends Model<ConfigState> {
       }),
       this.changeModel.repo$
         .pipe(
-          switchMap((repo?: RepoName) => {
+          switchMap((repo: RepoName | undefined) => {
             if (repo === undefined) return of(undefined);
             return from(this.restApiService.getProjectConfig(repo));
           })
@@ -68,6 +84,16 @@ export class ConfigModel extends Model<ConfigState> {
           this.updateRepoConfig(repoConfig);
         }),
     ];
+  }
+
+  // visible for testing
+  async getDocsBaseUrl(config: ServerInfo | undefined): Promise<string> {
+    if (config?.gerrit?.doc_url) return config.gerrit.doc_url;
+
+    const ok = await this.restApiService.probePath(getBaseUrl() + PROBE_PATH);
+    if (ok) return getBaseUrl() + DOCS_BASE_PATH;
+
+    return 'https://gerrit-review.googlesource.com/Documentation';
   }
 
   // visible for testing

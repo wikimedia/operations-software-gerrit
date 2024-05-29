@@ -10,11 +10,11 @@ import {
   CommentRangeLayer,
   GrRangedCommentLayer,
 } from './gr-ranged-comment-layer';
-import {GrAnnotation} from '../gr-diff-highlight/gr-annotation';
-import {GrDiffLine, GrDiffLineType} from '../gr-diff/gr-diff-line';
-import {Side} from '../../../api/diff';
+import {GrDiffLine} from '../gr-diff/gr-diff-line';
+import {GrDiffLineType, Side} from '../../../api/diff';
 import {SinonStub} from 'sinon';
 import {assert} from '@open-wc/testing';
+import {GrAnnotationImpl} from '../gr-diff-highlight/gr-annotation';
 
 const rangeA: CommentRangeLayer = {
   side: Side.LEFT,
@@ -24,7 +24,7 @@ const rangeA: CommentRangeLayer = {
     start_character: 6,
     start_line: 36,
   },
-  rootId: 'a',
+  id: 'a',
 };
 
 const rangeB: CommentRangeLayer = {
@@ -35,7 +35,7 @@ const rangeB: CommentRangeLayer = {
     start_character: 10,
     start_line: 10,
   },
-  rootId: 'b',
+  id: 'b',
 };
 
 const rangeC: CommentRangeLayer = {
@@ -56,7 +56,7 @@ const rangeD: CommentRangeLayer = {
     start_character: 32,
     start_line: 55,
   },
-  rootId: 'd',
+  id: 'd',
 };
 
 const rangeE: CommentRangeLayer = {
@@ -130,7 +130,7 @@ suite('gr-ranged-comment-layer', () => {
     }
 
     setup(() => {
-      annotateElementStub = sinon.stub(GrAnnotation, 'annotateElement');
+      annotateElementStub = sinon.stub(GrAnnotationImpl, 'annotateElement');
       el = document.createElement('div');
       el.setAttribute('data-side', Side.LEFT);
       line = new GrDiffLine(GrDiffLineType.BOTH);

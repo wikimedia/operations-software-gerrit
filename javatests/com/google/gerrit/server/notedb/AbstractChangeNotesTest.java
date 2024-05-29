@@ -17,6 +17,7 @@ package com.google.gerrit.server.notedb;
 import static com.google.gerrit.testing.TestActionRefUpdateContext.testRefAction;
 import static com.google.inject.Scopes.SINGLETON;
 import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.mockito.Mockito.mock;
 
 import com.google.common.collect.ImmutableList;
 import com.google.gerrit.entities.Account;
@@ -30,6 +31,7 @@ import com.google.gerrit.entities.SubmitRecord;
 import com.google.gerrit.extensions.config.FactoryModule;
 import com.google.gerrit.metrics.DisabledMetricMaker;
 import com.google.gerrit.metrics.MetricMaker;
+import com.google.gerrit.server.ChangeDraftUpdate;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.DefaultRefLogIdentityProvider;
 import com.google.gerrit.server.FanOutExecutor;
@@ -41,8 +43,8 @@ import com.google.gerrit.server.account.FakeRealm;
 import com.google.gerrit.server.account.GroupBackend;
 import com.google.gerrit.server.account.Realm;
 import com.google.gerrit.server.account.ServiceUserClassifier;
-import com.google.gerrit.server.account.externalids.DisabledExternalIdCache;
 import com.google.gerrit.server.account.externalids.ExternalIdCache;
+import com.google.gerrit.server.account.externalids.storage.notedb.DisabledExternalIdCache;
 import com.google.gerrit.server.approval.PatchSetApprovalUuidGenerator;
 import com.google.gerrit.server.approval.testing.TestPatchSetApprovalUuidGenerator;
 import com.google.gerrit.server.config.AllUsersName;
@@ -115,6 +117,7 @@ public abstract class AbstractChangeNotesTest {
   protected RevWalk rw;
   protected TestRepository<InMemoryRepository> tr;
   protected AssertableExecutorService assertableFanOutExecutor;
+  protected GitReferenceUpdated gitReferenceUpdated;
 
   @Inject protected IdentifiedUser.GenericFactory userFactory;
 
@@ -161,6 +164,7 @@ public abstract class AbstractChangeNotesTest {
     ou.setPreferredEmail("other@account.com");
     accountCache.put(ou.build());
     assertableFanOutExecutor = new AssertableExecutorService();
+    gitReferenceUpdated = mock(GitReferenceUpdated.class);
     changeOwnerId = co.id();
     otherUserId = ou.id();
     internalUser = new InternalUser();
@@ -205,7 +209,7 @@ public abstract class AbstractChangeNotesTest {
             bind(GroupBackend.class).to(SystemGroupBackend.class).in(SINGLETON);
             bind(AccountCache.class).toInstance(accountCache);
             bind(PersonIdent.class).annotatedWith(GerritPersonIdent.class).toInstance(serverIdent);
-            bind(GitReferenceUpdated.class).toInstance(GitReferenceUpdated.DISABLED);
+            bind(GitReferenceUpdated.class).toInstance(gitReferenceUpdated);
             bind(MetricMaker.class).to(DisabledMetricMaker.class);
             bind(ExecutorService.class)
                 .annotatedWith(FanOutExecutor.class)
@@ -217,6 +221,8 @@ public abstract class AbstractChangeNotesTest {
                       throw new UnsupportedOperationException();
                     });
             bind(PatchSetApprovalUuidGenerator.class).to(TestPatchSetApprovalUuidGenerator.class);
+            bind(ChangeDraftUpdate.ChangeDraftUpdateFactory.class)
+                .to(ChangeDraftNotesUpdate.Factory.class);
           }
         });
   }

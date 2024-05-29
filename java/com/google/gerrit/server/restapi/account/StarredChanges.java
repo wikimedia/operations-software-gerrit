@@ -20,10 +20,8 @@ import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.common.Input;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ChildCollection;
 import com.google.gerrit.extensions.restapi.IdString;
-import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
@@ -35,9 +33,8 @@ import com.google.gerrit.extensions.restapi.TopLevelResource;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
-import com.google.gerrit.server.StarredChangesUtil;
-import com.google.gerrit.server.StarredChangesUtil.IllegalLabelException;
-import com.google.gerrit.server.StarredChangesUtil.MutuallyExclusiveLabelsException;
+import com.google.gerrit.server.StarredChangesReader;
+import com.google.gerrit.server.StarredChangesWriter;
 import com.google.gerrit.server.account.AccountResource;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.permissions.PermissionBackendException;
@@ -55,16 +52,16 @@ public class StarredChanges
 
   private final ChangesCollection changes;
   private final DynamicMap<RestView<AccountResource.StarredChange>> views;
-  private final StarredChangesUtil starredChangesUtil;
+  private final StarredChangesReader starredChangesReader;
 
   @Inject
   StarredChanges(
       ChangesCollection changes,
       DynamicMap<RestView<AccountResource.StarredChange>> views,
-      StarredChangesUtil starredChangesUtil) {
+      StarredChangesReader starredChangesReader) {
     this.changes = changes;
     this.views = views;
-    this.starredChangesUtil = starredChangesUtil;
+    this.starredChangesReader = starredChangesReader;
   }
 
   @Override
@@ -72,9 +69,7 @@ public class StarredChanges
       throws RestApiException, PermissionBackendException, IOException {
     IdentifiedUser user = parent.getUser();
     ChangeResource change = changes.parse(TopLevelResource.INSTANCE, id);
-    if (starredChangesUtil
-        .getLabels(user.getAccountId(), change.getVirtualId())
-        .contains(StarredChangesUtil.DEFAULT_LABEL)) {
+    if (starredChangesReader.isStarred(user.getAccountId(), change.getVirtualId())) {
       return new AccountResource.StarredChange(user, change);
     }
     throw new ResourceNotFoundException(id);
@@ -100,16 +95,16 @@ public class StarredChanges
       implements RestCollectionCreateView<AccountResource, AccountResource.StarredChange, Input> {
     private final Provider<CurrentUser> self;
     private final ChangesCollection changes;
-    private final StarredChangesUtil starredChangesUtil;
+    private final StarredChangesWriter starredChangesWriter;
 
     @Inject
     Create(
         Provider<CurrentUser> self,
         ChangesCollection changes,
-        StarredChangesUtil starredChangesUtil) {
+        StarredChangesWriter starredChangesWriter) {
       this.self = self;
       this.changes = changes;
-      this.starredChangesUtil = starredChangesUtil;
+      this.starredChangesWriter = starredChangesWriter;
     }
 
     @Override
@@ -130,12 +125,7 @@ public class StarredChanges
       }
 
       try {
-        starredChangesUtil.star(
-            self.get().getAccountId(), change.getVirtualId(), StarredChangesUtil.Operation.ADD);
-      } catch (MutuallyExclusiveLabelsException e) {
-        throw new ResourceConflictException(e.getMessage());
-      } catch (IllegalLabelException e) {
-        throw new BadRequestException(e.getMessage());
+        starredChangesWriter.star(self.get().getAccountId(), change.getVirtualId());
       } catch (DuplicateKeyException e) {
         return Response.none();
       }
@@ -164,22 +154,21 @@ public class StarredChanges
   @Singleton
   public static class Delete implements RestModifyView<AccountResource.StarredChange, Input> {
     private final Provider<CurrentUser> self;
-    private final StarredChangesUtil starredChangesUtil;
+    private final StarredChangesWriter starredChangesWriter;
 
     @Inject
-    Delete(Provider<CurrentUser> self, StarredChangesUtil starredChangesUtil) {
+    Delete(Provider<CurrentUser> self, StarredChangesWriter starredChangesWriter) {
       this.self = self;
-      this.starredChangesUtil = starredChangesUtil;
+      this.starredChangesWriter = starredChangesWriter;
     }
 
     @Override
     public Response<?> apply(AccountResource.StarredChange rsrc, Input in)
-        throws AuthException, IOException, IllegalLabelException {
+        throws AuthException, IOException {
       if (!self.get().hasSameAccountId(rsrc.getUser())) {
         throw new AuthException("not allowed remove starred change");
       }
-      starredChangesUtil.star(
-          self.get().getAccountId(), rsrc.getVirtualId(), StarredChangesUtil.Operation.REMOVE);
+      starredChangesWriter.unstar(self.get().getAccountId(), rsrc.getVirtualId());
       return Response.none();
     }
   }

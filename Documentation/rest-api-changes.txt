@@ -161,6 +161,15 @@ need to be reindexed. Without this parameter query results the user has no permi
 are filtered out. REST requests with the skip-visibility option are rejected when the current
 user doesn't have the ADMINISTRATE_SERVER capability.
 
+The `allow-incomplete-results` query parameter can be used. This is a boolean
+parameter that can optionally be set to true. If set, the server can tolerate
+handling faulty records when parsed from the change index, for example if a
+field contained a value of a wrong format. For faulty records, the server
+will return a canonical empty record where only the fields {project, branch,
+change_id, _number, owner} are set and the subject will be set to
+"\*\**ERROR***". All other fields will be empty.
+Note that the handling of this parameter is up to the index implementation.
+
 Clients are allowed to specify more than one query by setting the `q`
 parameter multiple times. In this case the result is an array of
 arrays, one per query in the same order the queries were given in.
@@ -379,11 +388,24 @@ link:#approval-info[ApprovalInfo] of the `all` attribute.
   as link:#tracking-id-info[TrackingIdInfo].
 --
 
+[[custom-keyed-values]]
+--
+* `CUSTOM_KEYED_VALUES`: include the custom key-value map
+--
+
 [[star]]
 --
 * `STAR`: include the `starred` field in
    link:#change-info[ChangeInfo], which indicates if the change is starred
    by the current user or not.
+--
+
+[[parents-data]]
+--
+* `PARENTS`: include the `parents_data` field in
+   link:#revision-info[RevisionInfo], which provides information of whether the
+   parent commit of this revision, e.g. if it's merged in the target branch
+   and whether it points to a patch-set of another change.
 --
 
 .Request
@@ -973,6 +995,10 @@ Gerrit will create a merge commit based on the information of
 MergePatchSetInput and add a new patch set to the change corresponding
 to the new merge commit.
 
+If one of the secondary emails associated with the user performing the operation was used as the
+committer email in the current patch set, the same email will be used as the committer email in the
+new patch set; otherwise, the user's preferred email will be used.
+
 .Request
 ----
   POST /changes/test~master~Ic5466d107c5294414710935a8ef3b0180fb848dc/merge  HTTP/1.0
@@ -1025,6 +1051,10 @@ returned that describes the resulting change.
 --
 
 Creates a new patch set with a new commit message.
+
+If one of the secondary emails associated with the user performing the operation was used as the
+committer email in the current patch set, the same email will be used as the committer email in the
+new patch set; otherwise, the user's preferred email will be used.
 
 The new commit message must be provided in the request body inside a
 link:#commit-message-input[CommitMessageInput] entity. If a Change-Id
@@ -1173,7 +1203,7 @@ Abandons a change.
 The request body does not need to include a link:#abandon-input[
 AbandonInput] entity if no review comment is added.
 
-Abandoning a change also removes all users from the link:#attention-set[attention set].
+Abandoning a change also removes all users from the link:user-attention-set.html[attention set].
 
 .Request
 ----
@@ -1301,6 +1331,10 @@ the error message is contained in the response body.
 
 Rebases a change.
 
+If one of the secondary emails associated with the user performing the operation was used as the
+committer email in the current patch set, the same email will be used as the committer email in the
+new patch set; otherwise, the user's preferred email will be used.
+
 Optionally, the parent revision can be changed to another patch set through the
 link:#rebase-input[RebaseInput] entity.
 
@@ -1427,12 +1461,19 @@ change (as approvals of the uploader are ignored).
 
 Rebases an ancestry chain of changes.
 
+If one of the secondary emails associated with the user performing the operation was used as the
+committer email in the current patch set, the same email will be used as the committer email in the
+new patch set; otherwise, the user's preferred email will be used.
+
 The operated change is treated as the chain tip. All unsubmitted ancestors are rebased.
 
 Requires a linear ancestry relation (single parenting throughout the chain).
 
 Optionally, the parent revision (of the oldest ancestor to be rebased) can be changed to another
 change, revision or branch through the link:#rebase-input[RebaseInput] entity.
+
+Providing a `committer_email` through the link:#rebase-input[RebaseInput] entity is not supported
+when rebasing a chain.
 
 If the chain is outdated, i.e., there's a change that depends on an old revision of its parent, the
 result is the same as individually rebasing all outdated changes on top of their parent's latest
@@ -1906,10 +1947,15 @@ message is contained in the response body.
 
 Submits a change.
 
+If the submission results in a new patch set (due to a rebase or cherry-pick merge method), the
+committer email will remain the same as the one used in the previous commit, provided that one of
+the secondary emails associated with the user performing the operation was used as the committer
+email in the previous commit. Otherwise, the user's preferred email will be used.
+
 The request body only needs to include a link:#submit-input[
 SubmitInput] entity if submitting on behalf of another user.
 
-Submitting a change also removes all users from the link:#attention-set[attention set].
+Submitting a change also removes all users from the link:user-attention-set.html[attention set].
 
 .Request
 ----
@@ -2262,6 +2308,10 @@ otherwise only by administrators.
 --
 
 Creates a new patch set on a destination change from the provided patch.
+
+If one of the secondary emails associated with the user performing the operation was used as the
+committer email in the current patch set, the same email will be used as the committer email in the
+new patch set; otherwise, the user's preferred email will be used.
 
 The patch must be provided in the request body, inside a
 link:#applypatchpatchset-input[ApplyPatchPatchSetInput] entity.
@@ -2655,7 +2705,7 @@ is added. Actions that create a new patch set in a WIP change default to
 notifying *OWNER* instead of *ALL*.
 
 Marking a change work in progress also removes all users from the
-link:#attention-set[attention set].
+link:user-attention-set.html[attention set].
 
 .Request
 ----
@@ -2686,7 +2736,7 @@ to include a link:#work-in-progress-input[WorkInProgressInput] entity
 if no review comment is added.
 
 Marking a change ready for review also adds all of the reviewers of the change
-to the link:#attention-set[attention set].
+to the link:user-attention-set.html[attention set].
 
 .Request
 ----
@@ -2838,6 +2888,81 @@ As response the change's hashtags are returned as a list of strings.
     "hashtag3"
   ]
 ----
+
+[[get-custom-keyed-values]]
+=== Get Custom Keyed Values
+--
+'GET /changes/link:#change-id[\{change-id\}]/custom_keyed_values'
+--
+
+Gets the custom keyed values associated with a change.
+
+.Request
+----
+  GET /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/custom_keyed_values HTTP/1.0
+----
+
+As response the change's custom keyed values are returned as a map of strings.
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Disposition: attachment
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    "key1": "value1",
+    "key2": "value2"
+  }
+----
+
+[[set-custom-keyed-values]]
+=== Set Custom Keyed Values
+--
+'POST /changes/link:#change-id[\{change-id\}]/custom_keyed_values'
+--
+
+Adds and/or removes custom keyed values from a change.
+
+The custom keyed values to add or remove must be provided in the request body
+inside a link:#custom-keyed-values-input[CustomKeyedValuesInput] entity.
+
+Note that custom keyed values are expected to be small in both key and value.
+A typical use-case would be storing the ID to some external system, in which
+case the key would be something unique to that system and the value would be
+the ID.
+
+.Request
+----
+  POST /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/custom_keyed_values HTTP/1.0
+  Content-Type: application/json; charset=UTF-8
+
+  {
+    "add" : {
+      "key1": "value1"
+    },
+    "remove" : [
+      "key2"
+    ]
+  }
+----
+
+As response the change's custom keyed values are returned as a map of strings to strings.
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Disposition: attachment
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    "key1": "value1",
+    "key3": "value3"
+  }
+----
+
 
 [[list-change-messages]]
 === List Change Messages
@@ -3100,10 +3225,14 @@ provided fetch info map is also included.
 [[put-edit-file]]
 === Change file content in Change Edit
 --
-'PUT /changes/link:#change-id[\{change-id\}]/edit/path%2fto%2ffile
+'PUT /changes/link:#change-id[\{change-id\}]/edit/path%2fto%2ffile'
 --
 
 Put content of a file to a change edit.
+
+If one of the secondary emails associated with the user performing the operation was used as the
+committer email in the latest patch set, the same email will be used as the committer email in the
+new change edit commit; otherwise, the user's preferred email will be used.
 
 .Request
 ----
@@ -3151,13 +3280,17 @@ content that the file already has, '409 no changes were made' is returned.
 [[post-edit]]
 === Restore file content or rename files in Change Edit
 --
-'POST /changes/link:#change-id[\{change-id\}]/edit
+'POST /changes/link:#change-id[\{change-id\}]/edit'
 --
 
 Creates empty change edit, restores file content or renames files in change
 edit. The request body needs to include a
 link:#change-edit-input[ChangeEditInput] entity when a file within change
 edit should be restored or old and new file names to rename a file.
+
+If one of the secondary emails associated with the user performing the operation was used as the
+committer email in the latest patch set, the same email will be used as the committer email in the
+new change edit commit; otherwise, the user's preferred email will be used.
 
 .Request
 ----
@@ -3195,12 +3328,16 @@ old and new file names are provided, the file is renamed. As response
 [[put-change-edit-message]]
 === Change commit message in Change Edit
 --
-'PUT /changes/link:#change-id[\{change-id\}]/edit:message
+'PUT /changes/link:#change-id[\{change-id\}]/edit:message'
 --
 
 Modify commit message. The request body needs to include a
 link:#change-edit-message-input[ChangeEditMessageInput]
 entity.
+
+If one of the secondary emails associated with the user performing the operation was used as the
+committer email in the latest patch set, the same email will be used as the committer email in the
+new change edit commit; otherwise, the user's preferred email will be used.
 
 .Request
 ----
@@ -3229,6 +3366,10 @@ response "`204 No Content`" is returned.
 Deletes a file from a change edit. This deletes the file from the repository
 completely. This is not the same as reverting or restoring a file to its
 previous contents.
+
+If one of the secondary emails associated with the user performing the operation was used as the
+committer email in the latest patch set, the same email will be used as the committer email in the
+new change edit commit; otherwise, the user's preferred email will be used.
 
 .Request
 ----
@@ -3397,10 +3538,14 @@ As response "`204 No Content`" is returned.
 [[rebase-edit]]
 === Rebase Change Edit
 --
-'POST /changes/link:#change-id[\{change-id\}]/edit:rebase
+'POST /changes/link:#change-id[\{change-id\}]/edit:rebase'
 --
 
 Rebases change edit on top of latest patch set.
+
+If one of the secondary emails associated with the user performing the operation was used as the
+committer email in the latest patch set, the same email will be used as the committer email in the
+new change edit commit; otherwise, the user's preferred email will be used.
 
 .Request
 ----
@@ -4324,32 +4469,8 @@ If the labels are set, the user sending the request will automatically be
 added as a reviewer, otherwise (if they only commented) they are added to
 the CC list.
 
-Some updates to the attention set occur here. If more than one update should
-occur, only the first update in the order of the below documentation occurs:
-
-If a user is part of remove_from_attention_set, the user will be explicitly
-removed from the attention set.
-
-If a user is part of add_to_attention_set, the user will be explicitly
-added to the attention set.
-
-If the boolean ignore_default_attention_set_rules is set to true, all
-other rules below will be ignored:
-
-The user who created the review is removed from the attention set.
-
-If the change is ready for review, the following also apply:
-
-When the uploader replies, the owner is added to the attention set.
-
-When the owner or uploader replies, all the reviewers are added to
-the attention set.
-
-When neither the owner nor the uploader replies, add the owner and the
-uploader to the attention set.
-
-Then, new reviewers are added to the attention set, and removed reviewers
-(by becoming CC) are removed from the attention set.
+Posting a review usually updates the link:user-attention-set.html[attention
+set].
 
 A review cannot be set on a change edit. Trying to post a review for a
 change edit fails with `409 Conflict`.
@@ -4677,7 +4798,7 @@ body.
 --
 
 Submits a revision.
-Submitting a change also removes all users from the link:#attention-set[attention set].
+Submitting a change also removes all users from the link:user-attention-set.html[attention set].
 
 .Request
 ----
@@ -5511,6 +5632,10 @@ it will be updated accordingly. A fix can only be applied if no change edit
 exists and the fix refers to the current patch set, or the fix refers to the
 patch set on which the change edit is based.
 
+If one of the secondary emails associated with the user performing the operation was used as the
+committer email in the current patch set, the same email will be used as the committer email in the
+new change edit commit; otherwise, the user's preferred email will be used.
+
 .Request
 ----
   POST /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/revisions/674ac754f91e64a0efb8087e59a176484bd534d1/fixes/8f605a55_f6aa4ecc/apply HTTP/1.0
@@ -5576,6 +5701,10 @@ Applies a list of <<fix-replacement-info,FixReplacementInfo>> loaded from the
 <<apply-provided-fix-input,ApplyProvidedFixInput>> entity. The fixes are passed as part of the request body. The
 application of the fixes creates a new change edit. `Apply Provided Fix` can only be applied on the current
 patchset.
+
+If one of the secondary emails associated with the user performing the operation was used as the
+committer email in the current patch set, the same email will be used as the committer email in the
+new change edit commit; otherwise, the user's preferred email will be used.
 
 .Request
 ----
@@ -6232,6 +6361,10 @@ Deletes the reviewed flag of the calling user from a file of a revision.
 
 Cherry picks a revision to a destination branch.
 
+If one of the secondary emails associated with the user performing the operation was used as the
+committer email in the original revision, the same email will be used as the committer email
+in the new patch set; otherwise, the user's preferred email will be used.
+
 To cherry pick a commit with no change-id associated with it, see
 link:rest-api-projects.html#cherry-pick-commit[CherryPickCommit].
 
@@ -6548,40 +6681,6 @@ the same user as in the request header.
   HTTP/1.1 204 No Content
 ----
 
-[[attention-set]]
-== Attention Set
-Attention Set is the set of users that should perform some action on the
-change. E.g, reviewers should review the change, owner/uploader should
-add a new patchset or respond to comments.
-
-Users are added to the attention set if one the following apply:
-
-* They are manually added in link:#review-input[ReviewInput] in
- add_to_attention_set.
-* They are added as reviewers.
-* The change is marked ready for review.
-* As an owner/uploader, when someone replies on your change.
-* As a reviewer, when the owner/uploader replies.
-* When the user's vote is deleted by another user.
-* The rules above (except manually adding to the attention set) don't apply
- for changes that are work in progress.
-
-Users are removed from the attention set if one the following apply:
-
-* They are manually removed in link:#review-input[ReviewInput] in
- remove_from_attention_set.
-* They are removed from reviewers.
-* The change is marked work in progress, abandoned, or submitted.
-* When the user replies on a change.
-
-If the ignore_default_attention_set_rules in link:#review-input[ReviewInput]
-is set to true, no other changes to the attention set will occur during the
-link:#set-review[set-review].
-Also, users specified in the list will occur instead of any of the implicit
-changes to the attention set. E.g, if a user is added by add_to_attention_set
-in link:#review-input[ReviewInput], but also the change is marked work in
-progress, the user will still be added.
-
 [[ids]]
 == IDs
 
@@ -6593,22 +6692,22 @@ progress, the user will still be added.
 [[change-id]]
 === \{change-id\}
 Identifier that uniquely identifies one change. It contains the URL-encoded
-project name as well as the change number: "'$$<project>~<changeNumber>$$'"
+project name as well as the change number: "<project>~<changeNumber>"
 
 ==== Alternative identifiers
 Gerrit also supports an array of other change identifiers.
 
 [NOTE]
 Even though these identifiers will work in the majority of cases it is highly
-recommended to use "'$$<project>~<changeNumber>$$'" whenever possible.
+recommended to use "<project>~<changeNumber>" whenever possible.
 Since these identifiers require additional lookups from index and caches, to
-be translated to the "'$$<project>~<changeNumber>$$'" identifier, they
+be translated to the "<project>~<changeNumber>" identifier, they
 may result in both false-positives and false-negatives.
 Furthermore the additional lookup mean that they come with a performance penalty.
 
-* an ID of the change in the format "'$$<project>~<branch>~<Change-Id>$$'",
+* an ID of the change in the format "<project>\~<branch>~<Change-Id>",
   where for the branch the `refs/heads/` prefix can be omitted
-  ("$$myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940$$")
+  ("myProject\~master~I8473b95934b5732ac55d26311a706c9c2bde9940")
 * a Change-Id if it uniquely identifies one change
   ("I8473b95934b5732ac55d26311a706c9c2bde9940")
 * a change number if it uniquely identifies one change ("4247")
@@ -6800,6 +6899,10 @@ This field does not affect the owner of the change, which will continue to use t
 caller.
 |`response_format_options`     |optional|
 List of link:#query-options[query options] to format the response.
+|`amend`              |optional|
+If true, the revision from the URL will be amended by the patch. This will use the tree of the
+revision, apply the patch and create a new commit whose tree is the resulting tree of the operation
+and whose parent(s) are the parent(s) of the revision. Cannot be used together with `base`.
 |=================================
 
 
@@ -6839,7 +6942,7 @@ If true, this vote was made after the change was submitted.
 [[attention-set-info]]
 === AttentionSetInfo
 The `AttentionSetInfo` entity contains details of users that are in
-the link:#attention-set[attention set].
+the link:user-attention-set.html[attention set].
 
 [options="header",cols="1,^1,5"]
 |===========================
@@ -6858,7 +6961,7 @@ link:rest-api-accounts.html#account-info[AccountInfo] of the user who caused the
 [[attention-set-input]]
 === AttentionSetInput
 The `AttentionSetInput` entity contains details for adding users to the
-link:#attention-set[attention set] and removing them from it.
+link:user-attention-set.html[attention set] and removing them from it.
 
 [options="header",cols="1,^1,5"]
 |===========================
@@ -6926,6 +7029,9 @@ The `ChangeInfo` entity contains information about a change.
 |==================================
 |Field Name           ||Description
 |`id`                 ||
+The ID of the change. The format is "'<project>\~<_number>'".
+'project' and '_number' are URL encoded. The callers must not rely on the format.
+|`triplet_id`         ||
 The ID of the change in the format "'<project>\~<branch>~<Change-Id>'",
 where 'project' and 'branch' are URL encoded. For 'branch' the
 `refs/heads/` prefix is omitted.
@@ -6946,6 +7052,10 @@ link:#attention-set-info[AttentionSetInfo] is the latest and most recent removal
  of the account from the attention set.
 |`hashtags`           |optional|
 List of hashtags that are set on the change.
+|`custom_keyed_values`       |optional|
+A map that maps custom keys to custom values that are tied to a specific change,
+both in the form of strings. Only set if link:#custom-keyed-values[custom keyed
+values] are requested.
 |`change_id`          ||The Change-Id of the change.
 |`subject`            ||
 The subject of the change (header line of the commit message).
@@ -6964,11 +7074,8 @@ submitted.
 The user who submitted the change, as an
 link:rest-api-accounts.html#account-info[ AccountInfo] entity.
 |`starred`            |not set if `false`|
-Whether the calling user has starred this change with the default label.
+Whether the calling user has starred this change.
 Only set if link:#star[requested].
-|`stars`              |optional|
-A list of star labels that are applied by the calling user to this
-change. The labels are lexicographically sorted.
 |`reviewed`           |not set if `false`|
 Whether the change was reviewed by the calling user.
 Only set if link:#reviewed[reviewed] is requested.
@@ -7174,6 +7281,8 @@ Gerrit core doesn't support any validation options, but commit validation
 listeners that are implemented in plugins may. Please refer to the
 documentation of the installed plugins to learn whether they support validation
 options. Unknown validation options are silently ignored.
+|`custom_keyed_values`|optional|Custom keyed values as a
+map from custom keys to values.
 |`merge`              |optional|
 The detail of a merge commit as a link:#merge-input[MergeInput] entity.
 If set, the target branch (see  `branch` field) must exist (it is not
@@ -7223,9 +7332,10 @@ The link:rest-api.html#timestamp[timestamp] this message was posted.
 |`message`            ||
 The text left by the user or Gerrit system. Accounts are served as account IDs
 inlined in the text as `<GERRIT_ACCOUNT_18419>`.
-All accounts, used in message, can be found in `accountsInMessage`
+All accounts, used in message, can be found in `accounts_in_message`
 field.
-|`accountsInMessage`            ||Accounts, used in `message`.
+|`accounts_in_message` ||
+link:rest-api-accounts.html#account-info[AccountInfo] list, used in `message`.
 |`tag`                 |optional|
 Value of the `tag` field from link:#review-input[ReviewInput] set
 while posting the review. Votes/comments that contain `tag` with
@@ -7283,6 +7393,12 @@ topic will be overridden.
 If `true`, the cherry-pick succeeds also if the created commit will be empty.
 If `false`, a cherry-pick that would create an empty commit fails without creating
 the commit.
+|`committer_email`|optional|
+Cherry-pick is committed using this email address. Only the registered emails
+of the calling user are considered valid. Defaults to source commit's committer
+email if it is a registered email of the calling user, else defaults to calling
+user's preferred email.
+
 |`validation_options`|optional|
 Map with key-value pairs that are forwarded as options to the commit validation
 listeners (e.g. can be used to skip certain validations). Which validation
@@ -7558,7 +7674,7 @@ of link:user-notify.html#recipient-types[recipient type] to
 link:#notify-info[NotifyInfo] entity.
 |`ignore_automatic_attention_set_rules`|optional|
 If set to true, ignore all automatic attention set rules described in the
-link:#attention-set[attention set]. When not set, the default is false.
+link:user-attention-set.html[attention set]. When not set, the default is false.
 |`reason`         |optional|
 The reason why this vote is deleted. Will +
 go into the change message.
@@ -7693,6 +7809,19 @@ Whether the web link should be shown on the unified diff screen.
 [[apply-provided-fix-input]]
 === ApplyProvidedFixInput
 The `ApplyProvidedFixInput` entity contains the fixes to be applied on a review.
+
+[[custom-keyed-values-input]]
+=== CustomKeyedValuesInput
+
+The `CustomKeyedValuesInput` entity contains information about custom keyed values
+to add to, and/or remove from, a change.
+
+[options="header",cols="1,^1,5"]
+|=======================
+|Field Name||Description
+|`add`     |optional|The map of custom keyed values to be added to the change.
+|`remove`  |optional|The list of custom keys to be removed from the change.
+|=======================
 
 [options="header",cols="1,6"]
 |=======================
@@ -8031,6 +8160,14 @@ the `name` and `email` fields set.
 The caller needs "Forge Author" permission when using this field.
 This field does not affect the owner or the committer of the change, which will
 continue to use the identity of the caller.
+|`validation_options`   |optional|
+Map with key-value pairs that are forwarded as options to the commit validation
+listeners (e.g. can be used to skip certain validations). Which validation
+options are supported depends on the installed commit validation listeners.
+Gerrit core doesn't support any validation options, but commit validation
+listeners that are implemented in plugins may. Please refer to the
+documentation of the installed plugins to learn whether they support validation
+options. Unknown validation options are silently ignored.
 |==================================
 
 [[move-input]]
@@ -8065,6 +8202,34 @@ link:user-notify.html#recipient-types[recipient type].
 |`accounts`|optional|
 A list of link:rest-api-accounts.html#account-id[account IDs] that
 identify the accounts that should be should be notified.
+|=======================
+
+[[parent-info]]
+=== ParentInfo
+The `ParentInfo` entity contains information about the parent commit of a
+patch-set.
+
+[options="header",cols="1,^1,5"]
+|=======================
+|Field Name||Description
+|`branch_name` |optional|Name of the target branch into which the parent commit
+is merged.
+|`commit_id` |optional|The commit SHA-1 of the parent commit, or null if the
+current commit is root.
+|`is_merged_in_target_branch` |optional, default to false| Set to true if the
+parent commit is merged into the target branch.
+|`change_id` |optional| If the parent commit is a patch-set of another gerrit
+change, this field will hold the change ID of the parent change. Otherwise,
+will be null.
+|`change_number` |optional|If the parent commit is a patch-set of another gerrit
+change, this field will hold the change number of the parent change. Otherwise,
+will be null.
+|`patch_set_number` |optional|If the parent commit is a patch-set of another gerrit
+change, this field will hold the patch-set number of the parent change. Otherwise,
+will be null.
+|`change_status` |optional|If the parent commit is a patch-set of another gerrit
+change, this field will hold the change status of the parent change. Otherwise,
+will be null.
 |=======================
 
 [[private-input]]
@@ -8167,6 +8332,9 @@ Alternatively, a change number can be specified, in which case the current
 patch set is inferred. +
 Empty string is used for rebasing directly on top of the target branch,
 which effectively breaks dependency towards a parent change.
+|`strategy`       |optional|
+The strategy of the merge, can be `recursive`, `resolve`,
+`simple-two-way-in-core`, `ours` or `theirs`, default will use project settings.
 |`allow_conflicts`      |optional, defaults to false|
 If `true`, the rebase also succeeds if there are conflicts. +
 If there are conflicts the file contents of the rebased patch set contain
@@ -8184,6 +8352,10 @@ This means this option cannot be combined with the `allow_conflicts` option. +
 In addition, rebasing on behalf of the uploader is only supported for the
 current patch set of a change. +
 If the caller is the uploader this flag is ignored and a normal rebase is done.
+|`committer_email`|optional|
+Rebase is committed using this email address. Only the registered emails
+of the calling user or uploader (when `on_behalf_of_uploader` is `true`) are
+considered valid. This option is not supported when rebasing a chain.
 |`validation_options`   |optional|
 Map with key-value pairs that are forwarded as options to the commit validation
 listeners (e.g. can be used to skip certain validations). Which validation
@@ -8430,15 +8602,17 @@ If true, mark the change as work in progress. It is an error for both
 `ready` and `work_in_progress` to be true.
 |`add_to_attention_set`                |optional|
 list of link:#attention-set-input[AttentionSetInput] entities to add
-to the link:#attention-set[attention set]. Users that are not reviewers,
+to the link:user-attention-set.html[attention set]. Users that are not reviewers,
 ccs, owner, or uploader are silently ignored.
 |`remove_from_attention_set`           |optional|
 list of link:#attention-set-input[AttentionSetInput] entities to remove
-from the link:#attention-set[attention set].
+from the link:user-attention-set.html[attention set].
 |`ignore_automatic_attention_set_rules`|optional|
 If set to true, ignore all automatic attention set rules described in the
-link:#attention-set[attention set]. Updates in add_to_attention_set
+link:user-attention-set.html[attention set]. Updates in add_to_attention_set
 and remove_from_attention_set are not ignored.
+|`response_format_options`     |optional|
+List of link:#query-options[query options] to format the response.
 |============================
 
 [[review-result]]
@@ -8462,6 +8636,9 @@ If true, the change was moved from WIP to ready for review as a result of this
 action. Not set if false.
 |`error`                  |optional|
 Error message for non-200 responses.
+|`change_info`            |optional|
+Post-update change information. Only set if `response_format_options` were
+set.
 |============================
 
 [[reviewer-info]]
@@ -8587,6 +8764,19 @@ link:intro-project-owner.html#download-commands[download commands]
 interface is installed.
 |`commit`      |optional|The commit of the patch set as
 link:#commit-info[CommitInfo] entity.
+|`parents_data`     |optional|
+The parent commits of this patch-set commit as a list of
+link:#parent-info[ParentInfo] entities. In each parent, we include the target
+branch name if the parent is a merged commit in the target branch. Otherwise,
+we include the change and patch-set numbers of the parent change. +
+Only set if the `PARENTS` option is set.
+|`branch`      | optional|The name of the target branch that this revision is
+set to be merged into. +
+Note that if the change is moved with the link:#move-change[Move Change]
+endpoint, this field can be different for different patchsets. For example,
+if the change is moved and a new patchset is uploaded afterwards, the
+link:#revision-info[RevisionInfo] of the previous patchset will contain the old
+`branch`, but the newer patchset will contain the new `branch`.
 |`files`       |optional|
 The files of the patch set as a map that maps the file names to
 link:#file-info[FileInfo] entities. Only set if

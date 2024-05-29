@@ -16,7 +16,7 @@ import {
 import {AutocompleteQuery} from '../../shared/gr-autocomplete/gr-autocomplete';
 import {getAppContext} from '../../../services/app-context';
 import {convertToString} from '../../../utils/string-util';
-import {formStyles} from '../../../styles/gr-form-styles';
+import {grFormStyles} from '../../../styles/gr-form-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, css, html} from 'lit';
 import {customElement, query, property, state} from 'lit/decorators.js';
@@ -26,6 +26,9 @@ import {createRepoUrl} from '../../../models/views/repo';
 import {resolve} from '../../../models/dependency';
 import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {ValueChangedEvent} from '../../../types/events';
+import {subscribe} from '../../lit/subscription-controller';
+import {configModelToken} from '../../../models/config/config-model';
+import {branchName} from '../../../utils/patch-set-util';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -54,7 +57,7 @@ export class GrCreateRepoDialog extends LitElement {
   };
 
   /* private but used in test */
-  @state() defaultBranch?: BranchName;
+  @state() selectedDefaultBranch?: BranchName;
 
   /* private but used in test */
   @state() repoCreated = false;
@@ -65,6 +68,8 @@ export class GrCreateRepoDialog extends LitElement {
   /* private but used in test */
   @state() repoOwnerId?: GroupId;
 
+  @state() private defaultBranch = 'master';
+
   private readonly query: AutocompleteQuery;
 
   private readonly queryGroups: AutocompleteQuery;
@@ -73,15 +78,26 @@ export class GrCreateRepoDialog extends LitElement {
 
   private readonly getNavigation = resolve(this, navigationToken);
 
+  private readonly configModel = resolve(this, configModelToken);
+
   constructor() {
     super();
     this.query = (input: string) => this.getRepoSuggestions(input);
     this.queryGroups = (input: string) => this.getGroupSuggestions(input);
+    subscribe(
+      this,
+      () => this.configModel().serverConfig$,
+      config => {
+        this.defaultBranch = branchName(
+          config?.gerrit?.default_branch ?? 'master'
+        );
+      }
+    );
   }
 
   static override get styles() {
     return [
-      formStyles,
+      grFormStyles,
       sharedStyles,
       css`
         :host {
@@ -112,12 +128,15 @@ export class GrCreateRepoDialog extends LitElement {
           </section>
           <section>
             <span class="title">Default Branch</span>
-            <iron-input
-              .bindValue=${convertToString(this.defaultBranch)}
-              @bind-value-changed=${this.handleBranchNameBindValueChanged}
-            >
-              <input id="defaultBranchNameInput" autocomplete="off" />
-            </iron-input>
+            <span class="value">
+              <gr-autocomplete
+                id="defaultBranchNameInput"
+                .text=${convertToString(this.selectedDefaultBranch)}
+                .placeholder=${`Optional, defaults to '${this.defaultBranch}'`}
+                @text-changed=${this.handleBranchNameBindValueChanged}
+              >
+              </gr-autocomplete>
+            </span>
           </section>
           <section>
             <span class="title">Rights inherit from</span>
@@ -190,7 +209,8 @@ export class GrCreateRepoDialog extends LitElement {
   }
 
   async handleCreateRepo() {
-    if (this.defaultBranch) this.repoConfig.branches = [this.defaultBranch];
+    if (this.selectedDefaultBranch)
+      this.repoConfig.branches = [this.selectedDefaultBranch];
     if (this.repoOwnerId) this.repoConfig.owners = [this.repoOwnerId];
     const repoRegistered = await this.restApiService.createRepo(
       this.repoConfig
@@ -255,7 +275,7 @@ export class GrCreateRepoDialog extends LitElement {
   }
 
   private handleBranchNameBindValueChanged(e: ValueChangedEvent) {
-    this.defaultBranch = e.detail.value as BranchName;
+    this.selectedDefaultBranch = e.detail.value as BranchName;
   }
 
   private handleCreateEmptyCommitBindValueChanged(

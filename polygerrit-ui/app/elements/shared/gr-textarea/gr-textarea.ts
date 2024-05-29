@@ -30,6 +30,7 @@ import {assert} from '../../../utils/common-util';
 import {ShortcutController} from '../../lit/shortcut-controller';
 import {getAccountDisplayName} from '../../../utils/display-name-util';
 import {configModelToken} from '../../../models/config/config-model';
+import {formStyles} from '../../../styles/form-styles';
 
 const MAX_ITEMS_DROPDOWN = 10;
 
@@ -122,9 +123,11 @@ export class GrTextarea extends LitElement {
 
   private changeNum?: NumericChangeId;
 
+  // Represents the current location of the ':' or '@' that triggered a drop-down.
   // private but used in tests
   specialCharIndex = -1;
 
+  // Represents the current search string being used to query either emoji or mention suggestions.
   // private but used in tests
   currentSearchString?: string;
 
@@ -175,53 +178,56 @@ export class GrTextarea extends LitElement {
     }
   }
 
-  static override styles = [
-    sharedStyles,
-    css`
-      :host {
-        display: flex;
-        position: relative;
-      }
-      :host(.monospace) {
-        font-family: var(--monospace-font-family);
-        font-size: var(--font-size-mono);
-        line-height: var(--line-height-mono);
-        font-weight: var(--font-weight-normal);
-      }
-      :host(.code) {
-        font-family: var(--monospace-font-family);
-        font-size: var(--font-size-code);
-        /* usually 16px = 12px + 4px */
-        line-height: calc(var(--font-size-code) + var(--spacing-s));
-        font-weight: var(--font-weight-normal);
-      }
-      #emojiSuggestions {
-        font-family: var(--font-family);
-      }
-      #textarea {
-        background-color: var(--view-background-color);
-        width: 100%;
-      }
-      #hiddenText #emojiSuggestions {
-        visibility: visible;
-        white-space: normal;
-      }
-      iron-autogrow-textarea {
-        position: relative;
-      }
-      #textarea.noBorder {
-        border: none;
-      }
-      #hiddenText {
-        display: block;
-        float: left;
-        position: absolute;
-        visibility: hidden;
-        width: 100%;
-        white-space: pre-wrap;
-      }
-    `,
-  ];
+  static override get styles() {
+    return [
+      formStyles,
+      sharedStyles,
+      css`
+        :host {
+          display: flex;
+          position: relative;
+        }
+        :host(.monospace) {
+          font-family: var(--monospace-font-family);
+          font-size: var(--font-size-mono);
+          line-height: var(--line-height-mono);
+          font-weight: var(--font-weight-normal);
+        }
+        :host(.code) {
+          font-family: var(--monospace-font-family);
+          font-size: var(--font-size-code);
+          /* usually 16px = 12px + 4px */
+          line-height: calc(var(--font-size-code) + var(--spacing-s));
+          font-weight: var(--font-weight-normal);
+        }
+        #emojiSuggestions {
+          font-family: var(--font-family);
+        }
+        #textarea {
+          background-color: var(--view-background-color);
+          width: 100%;
+        }
+        #hiddenText #emojiSuggestions {
+          visibility: visible;
+          white-space: normal;
+        }
+        iron-autogrow-textarea {
+          position: relative;
+        }
+        #textarea.noBorder {
+          border: none;
+        }
+        #hiddenText {
+          display: block;
+          float: left;
+          position: absolute;
+          visibility: hidden;
+          width: 100%;
+          white-space: pre-wrap;
+        }
+      `,
+    ];
+  }
 
   override render() {
     return html`
@@ -278,8 +284,7 @@ export class GrTextarea extends LitElement {
       this.fireChangedEvents();
       // Add to updated because we want this.textarea.selectionStart and
       // this.textarea is null in the willUpdate lifecycle
-      this.computeSpecialCharIndex();
-      this.computeCurrentSearchString();
+      this.computeIndexAndSearchString();
       this.handleTextChanged();
     }
   }
@@ -295,6 +300,8 @@ export class GrTextarea extends LitElement {
   }
 
   override focus() {
+    // Note that this may not work as intended, because the textarea is not
+    // rendered yet.
     this.textarea?.textarea.focus();
   }
 
@@ -369,6 +376,13 @@ export class GrTextarea extends LitElement {
       return;
     }
 
+    const selection = this.getVisibleDropdown().getCurrentText();
+    if (selection === '') {
+      // Nothing was selected, so treat this like a newline and reset the dropdown.
+      this.indent(e);
+      this.resetDropdown();
+      return;
+    }
     e.preventDefault();
     e.stopPropagation();
     this.setValue(this.getVisibleDropdown().getCurrentText());
@@ -386,30 +400,33 @@ export class GrTextarea extends LitElement {
       return;
     }
     const specialCharIndex = this.specialCharIndex;
+    let move = 0;
     if (this.isEmojiDropdownActive()) {
       this.text = this.addValueToText(text);
       this.reporting.reportInteraction('select-emoji', {type: text});
     } else {
       this.text = this.addValueToText('@' + text);
       this.reporting.reportInteraction('select-mention', {type: text});
+      move = 1;
     }
     // iron-autogrow-textarea unfortunately sets the cursor at the end when
     // it's value is changed, which means the setting of selectionStart
     // below needs to happen after iron-autogrow-textarea has set the
     // incorrect value.
     await this.updateComplete;
-    this.textarea!.selectionStart = specialCharIndex + 1;
-    this.textarea!.selectionEnd = specialCharIndex + 1;
+    this.textarea!.selectionStart = specialCharIndex + text.length + move;
+    this.textarea!.selectionEnd = specialCharIndex + text.length + move;
     this.resetDropdown();
   }
 
   private addValueToText(value: string) {
     if (!this.text) return '';
-    return (
-      this.text.substr(0, this.specialCharIndex ?? 0) +
-      value +
-      this.text.substr(this.textarea!.selectionStart)
+    const specialCharIndex = this.specialCharIndex ?? 0;
+    const beforeSearchString = this.text.substring(0, specialCharIndex);
+    const afterSearchString = this.text.substring(
+      specialCharIndex + 1 + (this.currentSearchString?.length ?? 0)
     );
+    return beforeSearchString + value + afterSearchString;
   }
 
   /**
@@ -421,7 +438,7 @@ export class GrTextarea extends LitElement {
    */
   updateCaratPosition() {
     if (typeof this.textarea!.value === 'string') {
-      this.hiddenText!.textContent = this.textarea!.value.substr(
+      this.hiddenText!.textContent = this.textarea!.value.substring(
         0,
         this.textarea!.selectionStart
       );
@@ -432,12 +449,7 @@ export class GrTextarea extends LitElement {
     return caratSpan;
   }
 
-  private shouldResetDropdown(
-    text: string,
-    charIndex: number,
-    suggestions?: Item[],
-    char?: string
-  ) {
+  private shouldResetDropdown(text: string, charIndex: number, char?: string) {
     // Under any of the following conditions, close and reset the dropdown:
     // - The cursor is no longer at the end of the current search string
     // - The search string is an space or new line
@@ -448,30 +460,8 @@ export class GrTextarea extends LitElement {
         (this.currentSearchString ?? '').length + charIndex + 1 ||
       this.currentSearchString === ' ' ||
       this.currentSearchString === '\n' ||
-      !(text[charIndex] === char) ||
-      !suggestions ||
-      !suggestions.length
+      !(text[charIndex] === char)
     );
-  }
-
-  // When special char is detected, set index. We are interested only on
-  // special char after space or in beginning of textarea
-  // In case of mentions we are interested if previous char is '\n' as well
-  private getSpecialCharIndex(text: string) {
-    const charAtCursor = text[this.textarea!.selectionStart - 1];
-    if (
-      this.textarea!.selectionStart < 2 ||
-      text[this.textarea!.selectionStart - 2] === ' '
-    ) {
-      return this.textarea!.selectionStart - 1;
-    }
-    if (
-      charAtCursor === '@' &&
-      text[this.textarea!.selectionStart - 2] === '\n'
-    ) {
-      return this.textarea!.selectionStart - 1;
-    }
-    return -1;
   }
 
   private async computeSuggestions() {
@@ -509,7 +499,6 @@ export class GrTextarea extends LitElement {
       this.shouldResetDropdown(
         this.text,
         this.specialCharIndex,
-        this.suggestions,
         this.text[this.specialCharIndex]
       )
     ) {
@@ -535,26 +524,20 @@ export class GrTextarea extends LitElement {
     );
   }
 
-  private computeSpecialCharIndex() {
-    const charAtCursor = this.text[this.textarea!.selectionStart - 1];
-
-    if (charAtCursor === '@' && this.specialCharIndex === -1) {
-      this.specialCharIndex = this.getSpecialCharIndex(this.text);
-    }
-    if (charAtCursor === ':' && this.specialCharIndex === -1) {
-      this.specialCharIndex = this.getSpecialCharIndex(this.text);
-    }
-  }
-
-  private computeCurrentSearchString() {
-    if (this.specialCharIndex === -1) {
+  private computeIndexAndSearchString() {
+    const currentCarat = this.textarea?.selectionStart ?? this.text.length;
+    const m = this.text
+      .substring(0, currentCarat)
+      .match(/(?:^|\s)([:@][\S]*)$/);
+    if (!m) {
+      this.specialCharIndex = -1;
       this.currentSearchString = undefined;
       return;
     }
-    this.currentSearchString = this.text.substr(
-      this.specialCharIndex + 1,
-      this.textarea!.selectionStart - this.specialCharIndex - 1
-    );
+    this.currentSearchString = m[1].substring(1);
+    if (this.specialCharIndex !== -1) return;
+
+    this.specialCharIndex = currentCarat - m[1].length;
   }
 
   // Private but used in tests.
@@ -627,7 +610,7 @@ export class GrTextarea extends LitElement {
     this.currentSearchString = '';
     this.closeDropdown();
     this.specialCharIndex = -1;
-    this.textarea?.textarea.focus();
+    this.focus();
   }
 
   private fireChangedEvents() {
@@ -641,7 +624,7 @@ export class GrTextarea extends LitElement {
     // When nothing is selected, selectionStart is the caret position. We want
     // the indentation level of the current line, not the end of the text which
     // may be different.
-    const currentLine = this.textarea!.textarea.value.substr(
+    const currentLine = this.textarea!.textarea.value.substring(
       0,
       this.textarea!.selectionStart
     )

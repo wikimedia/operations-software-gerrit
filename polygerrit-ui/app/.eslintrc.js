@@ -176,8 +176,6 @@ module.exports = {
     'jsdoc/implements-on-classes': 2,
     // https://github.com/gajus/eslint-plugin-jsdoc#eslint-plugin-jsdoc-rules-match-description
     'jsdoc/match-description': 0,
-    // https://github.com/gajus/eslint-plugin-jsdoc#eslint-plugin-jsdoc-rules-newline-after-description
-    'jsdoc/newline-after-description': 2,
     // https://github.com/gajus/eslint-plugin-jsdoc#eslint-plugin-jsdoc-rules-no-types
     'jsdoc/no-types': 0,
     // https://github.com/gajus/eslint-plugin-jsdoc#eslint-plugin-jsdoc-rules-no-undefined-types
@@ -236,19 +234,6 @@ module.exports = {
     ],
   },
 
-  // List of allowed globals in all files
-  globals: {
-    // Polygerrit global variables.
-    // You must not add anything new in this list!
-    // Instead export variables from modules
-    // TODO(dmfilippov): Remove global variables from polygerrit
-    // Global variables from 3rd party libraries.
-    // You should not add anything in this list, always try to import
-    // If import is not possible - you can extend this list
-    ShadyCSS: 'readonly',
-    linkify: 'readonly',
-    security: 'readonly',
-  },
   overrides: [
     {
       files: ['.eslintrc.js', '.eslintrc-bazel.js'],

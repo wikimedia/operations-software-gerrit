@@ -14,11 +14,7 @@
 
 package com.google.gerrit.index.query;
 
-import static com.google.common.base.Preconditions.checkArgument;
-
-import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterables;
 import com.google.common.collect.Ordering;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.index.IndexConfig;
@@ -27,18 +23,10 @@ import com.google.gerrit.index.QueryOptions;
 import java.util.ArrayList;
 import java.util.List;
 
-public class PaginatingSource<T> implements DataSource<T> {
-  protected final DataSource<T> source;
-  private final int start;
-  private final int cardinality;
-  private final IndexConfig indexConfig;
+public class PaginatingSource<T> extends FilteredSource<T> {
 
   public PaginatingSource(DataSource<T> source, int start, IndexConfig indexConfig) {
-    checkArgument(start >= 0, "negative start: %s", start);
-    this.source = source;
-    this.start = start;
-    this.cardinality = source.getCardinality();
-    this.indexConfig = indexConfig;
+    super(source, start, indexConfig);
   }
 
   @Override
@@ -70,48 +58,28 @@ public class PaginatingSource<T> implements DataSource<T> {
             Paginated<T> p = (Paginated<T>) source;
             QueryOptions opts = p.getOptions();
             final int limit = opts.limit();
-
-            // TODO: this fix is only for the stable branches and the real refactoring would be to
-            // restore the logic
-            // for the filtering in AndSource (L58 - 64) as per
-            // https://gerrit-review.googlesource.com/c/gerrit/+/345634/9
-            if (!indexConfig.paginationType().equals(PaginationType.NONE)) {
-              int pageSize = opts.pageSize();
-              int pageSizeMultiplier = opts.pageSizeMultiplier();
-              Object searchAfter = resultSet.searchAfter();
-              int nextStart = pageResultSize;
-              while (pageResultSize == pageSize && r.size() <= limit) { // get 1 more than the limit
-                pageSize = getNextPageSize(pageSize, pageSizeMultiplier);
-                ResultSet<T> next =
-                    indexConfig.paginationType().equals(PaginationType.SEARCH_AFTER)
-                        ? p.restart(searchAfter, pageSize)
-                        : p.restart(nextStart, pageSize);
-                pageResultSize = 0;
-                for (T data : buffer(next)) {
-                  if (match(data)) {
-                    r.add(data);
-                  }
-                  pageResultSize++;
-                  if (r.size() > limit) {
-                    break;
-                  }
+            int pageSize = opts.pageSize();
+            int pageSizeMultiplier = opts.pageSizeMultiplier();
+            Object searchAfter = resultSet.searchAfter();
+            int nextStart = pageResultSize;
+            while (pageResultSize == pageSize && r.size() <= limit) { // get 1 more than the limit
+              pageSize = getNextPageSize(pageSize, pageSizeMultiplier);
+              ResultSet<T> next =
+                  indexConfig.paginationType().equals(PaginationType.SEARCH_AFTER)
+                      ? p.restart(searchAfter, pageSize)
+                      : p.restart(nextStart, pageSize);
+              pageResultSize = 0;
+              for (T data : buffer(next)) {
+                if (match(data)) {
+                  r.add(data);
                 }
-                nextStart += pageResultSize;
-                searchAfter = next.searchAfter();
-              }
-            } else {
-              int nextStart = pageResultSize;
-              while (pageResultSize == limit && r.size() < limit) {
-                ResultSet<T> next = p.restart(nextStart);
-                pageResultSize = 0;
-                for (T data : buffer(next)) {
-                  if (match(data)) {
-                    r.add(data);
-                  }
-                  pageResultSize++;
+                pageResultSize++;
+                if (r.size() > limit) {
+                  break;
                 }
-                nextStart += pageResultSize;
               }
+              nextStart += pageResultSize;
+              searchAfter = next.searchAfter();
             }
           }
 
@@ -128,34 +96,6 @@ public class PaginatingSource<T> implements DataSource<T> {
   public ResultSet<FieldBundle> readRaw() {
     // TODO(hiesel): Implement
     throw new UnsupportedOperationException("not implemented");
-  }
-
-  private Iterable<T> buffer(ResultSet<T> scanner) {
-    return FluentIterable.from(Iterables.partition(scanner, 50))
-        .transformAndConcat(this::transformBuffer);
-  }
-
-  /**
-   * Checks whether the given object matches.
-   *
-   * @param object the object to be matched
-   * @return whether the given object matches
-   */
-  protected boolean match(T object) {
-    return true;
-  }
-
-  protected boolean isMatchable() {
-    return true;
-  }
-
-  protected List<T> transformBuffer(List<T> buffer) {
-    return buffer;
-  }
-
-  @Override
-  public int getCardinality() {
-    return cardinality;
   }
 
   private int getNextPageSize(int pageSize, int pageSizeMultiplier) {

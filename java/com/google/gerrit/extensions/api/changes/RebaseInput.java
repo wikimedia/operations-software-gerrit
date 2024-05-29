@@ -20,6 +20,13 @@ public class RebaseInput {
   public String base;
 
   /**
+   * {@code strategy} name of the merge strategy.
+   *
+   * @see org.eclipse.jgit.merge.MergeStrategy
+   */
+  public String strategy;
+
+  /**
    * Whether the rebase should succeed if there are conflicts.
    *
    * <p>If there are conflicts the file contents of the rebased change contain git conflict markers
@@ -44,4 +51,12 @@ public class RebaseInput {
   public boolean onBehalfOfUploader;
 
   public Map<String, String> validationOptions;
+
+  /**
+   * Rebase will be committed using this email address. Only the registered emails of the calling
+   * user or uploader (when onBehalfOfUploader is true) are considered valid.
+   *
+   * <p>This option is not supported when rebasing a chain.
+   */
+  public String committerEmail;
 }

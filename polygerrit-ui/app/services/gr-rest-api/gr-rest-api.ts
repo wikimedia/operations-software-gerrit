@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import {HttpMethod} from '../../constants/constants';
-import {Finalizable} from '../registry';
 import {
   AccountCapabilityInfo,
   AccountDetailInfo,
@@ -91,13 +90,14 @@ import {
   UrlEncodedCommentId,
   UserId,
   DraftInfo,
+  ReviewResult,
 } from '../../types/common';
 import {
   DiffInfo,
   DiffPreferencesInfo,
   IgnoreWhitespaceType,
 } from '../../types/diff';
-import {ParsedChangeInfo} from '../../types/types';
+import {Finalizable, ParsedChangeInfo} from '../../types/types';
 import {ErrorCallback} from '../../api/rest';
 
 export type CancelConditionCallback = () => boolean;
@@ -123,6 +123,7 @@ export interface RestApiService extends Finalizable {
   ): Promise<AccountCapabilityInfo | undefined>;
   getExternalIds(): Promise<AccountExternalIdInfo[] | undefined>;
   deleteAccountIdentity(id: string[]): Promise<unknown>;
+  deleteAccount(): Promise<unknown>;
   getRepos(
     filter: string | undefined,
     reposPerPage: number,
@@ -204,11 +205,16 @@ export interface RestApiService extends Finalizable {
 
   /**
    * Given a changeNum, gets the change.
+   *
+   * If the project is known for the specified changeNum uses
+   * /changes/{project}~{change} api.
+   * Otherwise, calls /changes/q={changeNum}. In this case the result can be
+   * stale as this API uses index.
    */
   getChange(
     changeNum: ChangeId | NumericChangeId,
     errFn?: ErrorCallback
-  ): Promise<ChangeInfo | null>;
+  ): Promise<ChangeInfo | undefined>;
 
   savePreferences(
     prefs: PreferencesInput
@@ -223,6 +229,10 @@ export interface RestApiService extends Finalizable {
   saveEditPreferences(prefs: EditPreferencesInfo): Promise<Response>;
 
   getAccountEmails(): Promise<EmailInfo[] | undefined>;
+  getAccountEmailsFor(
+    email: string,
+    errFn?: ErrorCallback
+  ): Promise<EmailInfo[] | undefined>;
   deleteAccountEmail(email: string): Promise<Response>;
   setPreferredAccountEmail(email: string): Promise<void>;
 
@@ -351,20 +361,10 @@ export interface RestApiService extends Finalizable {
   saveChangeReview(
     changeNum: ChangeId | NumericChangeId,
     patchNum: RevisionId,
-    review: ReviewInput
-  ): Promise<Response>;
-  saveChangeReview(
-    changeNum: ChangeId | NumericChangeId,
-    patchNum: RevisionId,
     review: ReviewInput,
-    errFn: ErrorCallback
-  ): Promise<Response | undefined>;
-  saveChangeReview(
-    changeNum: ChangeId | NumericChangeId,
-    patchNum: RevisionId,
-    review: ReviewInput,
-    errFn?: ErrorCallback
-  ): Promise<Response>;
+    errFn?: ErrorCallback,
+    fetch_detail?: boolean
+  ): Promise<ReviewResult | undefined>;
 
   getChangeEdit(changeNum?: NumericChangeId): Promise<EditInfo | undefined>;
 
@@ -373,8 +373,6 @@ export interface RestApiService extends Finalizable {
     patchNum: PatchSetNum | undefined,
     endpoint: string
   ): Promise<string>;
-
-  getDocsBaseUrl(config?: ServerInfo): Promise<string | null>;
 
   createChange(
     repo: RepoName,

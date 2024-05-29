@@ -23,12 +23,14 @@ public class EventTypes {
   private static final Map<String, Class<?>> typesByString = new HashMap<>();
 
   static {
+    register(BatchRefUpdateEvent.TYPE, BatchRefUpdateEvent.class);
     register(ChangeAbandonedEvent.TYPE, ChangeAbandonedEvent.class);
     register(ChangeDeletedEvent.TYPE, ChangeDeletedEvent.class);
     register(ChangeMergedEvent.TYPE, ChangeMergedEvent.class);
     register(ChangeRestoredEvent.TYPE, ChangeRestoredEvent.class);
     register(CommentAddedEvent.TYPE, CommentAddedEvent.class);
     register(CommitReceivedEvent.TYPE, CommitReceivedEvent.class);
+    register(CustomKeyedValuesChangedEvent.TYPE, CustomKeyedValuesChangedEvent.class);
     register(HashtagsChangedEvent.TYPE, HashtagsChangedEvent.class);
     register(PatchSetCreatedEvent.TYPE, PatchSetCreatedEvent.class);
     register(PrivateStateChangedEvent.TYPE, PrivateStateChangedEvent.class);

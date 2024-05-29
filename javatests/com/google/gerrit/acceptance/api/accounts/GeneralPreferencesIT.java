@@ -43,7 +43,7 @@ import org.junit.Test;
 public class GeneralPreferencesIT extends AbstractDaemonTest {
   @Inject private ExtensionRegistry extensionRegistry;
 
-  private TestAccount user42;
+  protected TestAccount user42;
 
   @Before
   public void setUp() throws Exception {
@@ -84,6 +84,7 @@ public class GeneralPreferencesIT extends AbstractDaemonTest {
     i.muteCommonPathPrefixes ^= true;
     i.signedOffBy ^= true;
     i.allowBrowserNotifications ^= false;
+    i.diffPageSidebar = "plugin-insight";
     i.diffView = DiffView.UNIFIED_DIFF;
     i.my = new ArrayList<>();
     i.my.add(new MenuItem("name", "url"));
@@ -96,6 +97,7 @@ public class GeneralPreferencesIT extends AbstractDaemonTest {
     assertThat(o.changeTable).containsExactlyElementsIn(i.changeTable);
     assertThat(o.theme).isEqualTo(i.theme);
     assertThat(o.allowBrowserNotifications).isEqualTo(i.allowBrowserNotifications);
+    assertThat(o.diffPageSidebar).isEqualTo(i.diffPageSidebar);
     assertThat(o.disableKeyboardShortcuts).isEqualTo(i.disableKeyboardShortcuts);
   }
 

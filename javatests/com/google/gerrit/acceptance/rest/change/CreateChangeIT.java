@@ -44,6 +44,7 @@ import com.google.gerrit.acceptance.PushOneCommit.Result;
 import com.google.gerrit.acceptance.RestResponse;
 import com.google.gerrit.acceptance.UseClockStep;
 import com.google.gerrit.acceptance.UseSystemTime;
+import com.google.gerrit.acceptance.config.GerritConfig;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.entities.BranchNameKey;
@@ -189,6 +190,16 @@ public class CreateChangeIT extends AbstractDaemonTest {
     requestScopeOperations.setApiUserAnonymous();
     assertCreateFails(
         newChangeInput(ChangeStatus.NEW), AuthException.class, "Authentication required");
+  }
+
+  @Test
+  @GerritConfig(name = "change.topicLimit", value = "3")
+  public void createNewChange_exceedsTopicLimit() throws Exception {
+    assertCreateSucceeds(newChangeWithTopic("limited"));
+    assertCreateSucceeds(newChangeWithTopic("limited"));
+    assertCreateSucceeds(newChangeWithTopic("limited"));
+    ChangeInput ci = newChangeWithTopic("limited");
+    assertCreateFails(ci, BadRequestException.class, "topicLimit");
   }
 
   @Test
@@ -1296,6 +1307,19 @@ public class CreateChangeIT extends AbstractDaemonTest {
     }
   }
 
+  @Test
+  public void createChangeWithCustomKeyedValues() throws Exception {
+    ChangeInput changeInput = new ChangeInput();
+    changeInput.project = project.get();
+    changeInput.branch = "master";
+    changeInput.subject = "A change";
+    changeInput.status = ChangeStatus.NEW;
+    changeInput.customKeyedValues = ImmutableMap.of("key", "value");
+
+    ChangeInfo result = assertCreateSucceeds(changeInput);
+    assertThat(result.customKeyedValues).containsExactly("key", "value");
+  }
+
   private ChangeInput newChangeInput(ChangeStatus status) {
     ChangeInput in = new ChangeInput();
     in.project = project.get();
@@ -1303,6 +1327,12 @@ public class CreateChangeIT extends AbstractDaemonTest {
     in.subject = "Empty change";
     in.topic = "support-gerrit-workflow-in-browser";
     in.status = status;
+    return in;
+  }
+
+  private ChangeInput newChangeWithTopic(String topic) {
+    ChangeInput in = newChangeInput(ChangeStatus.NEW);
+    in.topic = topic;
     return in;
   }
 

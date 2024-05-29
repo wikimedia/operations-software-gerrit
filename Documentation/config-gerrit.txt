@@ -886,6 +886,7 @@ Default is 1024 for most caches, except:
 +
 If set to 0 the cache is disabled; entries are loaded but not stored
 in-memory.
+
 +
 **NOTE**: When the cache is disabled, there is no locking when accessing
 the same key/value, and therefore multiple threads may
@@ -1416,6 +1417,13 @@ The value must be positive.
 +
 The default limit is 16kiB.
 
+[[change.topicLimit]]change.topicLimit::
++
+Maximum allowed number of changes with the same topic. 0 or negative values
+mean "unlimited".
++
+By default 5,000.
+
 [[change.cumulativeCommentSizeLimit]]change.cumulativeCommentSizeLimit::
 +
 Maximum allowed size in characters of all comments (including robot comments)
@@ -1440,9 +1448,20 @@ By default 5,000.
 [[change.maxFiles]]change.maxFiles::
 +
 Maximum number of files allowed per change. Larger changes are rejected and must
-be split up.
+be split up. For merge changes we are comparing against the auto-merge commit,
+so we allow large merges, if they merge cleanly.
 +
 By default 100,000.
+
+[[change.maxFileSizeDownload]]change.maxFileSizeDownload::
++
+The link:rest-api-changes.html#get-content[GetContent] and
+link:rest-api-changes.html#get-safe-content[DownloadContent] REST APIs will
+refuse to load files larger than this limit (in bytes). 0 or negative values
+mean "unlimited".
+
++
+By default 0 (unlimited).
 
 [[change.maxPatchSets]]change.maxPatchSets::
 +
@@ -1544,6 +1563,21 @@ Are robot comments enabled in the Gerrit UI? This setting allows phasing out
 robot comments.
 +
 By default true.
+
+[[change.propagateSubmitRequirementErrors]]change.propagateSubmitRequirementErrors::
++
+If a SubmitRequirement evaluation for a given change results in an
+ERROR status, abort the REST response with an HTTP 500 error.
++
+The ERROR status can occur if a SubmitRequirement uses a
+plugin-provided predicate (and the plugin is not available), due to
+bugs, or due to bypassing the validation that normally happens when
+updating `refs/meta/config`.
++
+Enabling this flag  makes gerrit unusuable under such conditions, so
+it is generally not recommended. However, this makes the
+application-specific ERROR status into a generic HTTP error, and can
+thus be acted on by automated deployment and monitoring infrastructure.
 
 [[change.robotCommentSizeLimit]]change.robotCommentSizeLimit::
 +
@@ -1649,6 +1683,23 @@ If 0 the update polling is disabled.
 +
 Default is 5 minutes.
 
+[[change.diff3ConflictView]]change.diff3ConflictView::
++
+Use the diff3 formatter for merge commits with conflicts. With diff3 when
+the conflicts are shown in the "Auto Merge" view, the base section from the
+common parents will be shown as well.
+This setting takes effect when generating the automerge, which happens on upload.
+Changing the setting leaves existing changes unaffected.
++
+Default is false.
+
+[[change.maxFileSizeDiff]]change.maxFileSizeDiff::
++
+The threshold of file sizes in megabytes beyond which a
+link:rest-api-changes.html#get-diff[file diff] request will fail.
++
+If not set or set to zero, no limits are applied on file sizes.
+
 [[change.skipCurrentRulesEvaluationOnClosedChanges]]
 +
 If false, Gerrit will always take latest project configuration to
@@ -1731,6 +1782,54 @@ change cleanups.
 link:#schedule-configuration-examples[Schedule examples] can be found
 in the link:#schedule-configuration[Schedule Configuration] section.
 
+[[attentionSet]]
+=== Section attentionSet
+
+This section allows to configure readding of change owners and schedules them to
+run periodically.
+
+[[attentionSet.readdAfter]]attentionSet.readdAfter::
++
+Period of inactivity after which open no-WIP/private changes should have change owner
+added to attention-set automatically (if they are not already).
++
+By default `0`, never readd change owner.
++
+[WARNING] Auto-readding change owners may confuse/annoy users. When
+enabling this, make sure to choose a reasonably large grace period and
+inform users in advance.
++
+The following suffixes are supported to define the time unit:
++
+* `d, day, days`
+* `w, week, weeks` (`1 week` is treated as `7 days`)
+* `mon, month, months` (`1 month` is treated as `30 days`)
+* `y, year, years` (`1 year` is treated as `365 days`)
+
+[[attentionSet.readdMessage]]attentionSet.readdMessage::
++
+Attention-set message that should be shown as reason when an change owner is readded.
++
+'${URL}' can be used as a placeholder for the Gerrit web URL.
++
+By default "Owner readded to attention-set due to inactivity, see
+${URL}Documentation/user-attention-set.html#auto-readd-owner\n\n
+If you do not want to be readded to the attention-set when the timer has counted down.
+Set this change as WIP or private.".
+
+[[attentionSet.startTime]]attentionSet.startTime::
++
+The link:#schedule-configuration-startTime[start time] for running
+readd owner to attention-set.
+
+[[attentionSet.interval]]attentionSet.interval::
++
+The link:#schedule-configuration-interval[interval] for running
+readd owner to attention-set.
+
+link:#schedule-configuration-examples[Schedule examples] can be found
+in the link:#schedule-configuration[Schedule Configuration] section.
+
 [[commentlink]]
 === Section commentlink
 
@@ -1752,7 +1851,7 @@ commentlinks to be immediately available in the UI.
 ----
 [commentlink "changeid"]
   match = (I[0-9a-f]{8,40})
-  link = "#/q/$1"
+  link = "/q/$1"
 
 [commentlink "bugzilla"]
   match = "(^|\\s)(bug\\s+#?)(\\d+)($|\\s)"
@@ -2408,7 +2507,7 @@ Example:
 [gerrit]
   installIndexModule = com.google.gerrit.elasticsearch.ElasticIndexModule
 ----
-+
+
 [[gerrit.installModule]]gerrit.installModule::
 +
 Repeatable list of class name of additional Guice modules to load at
@@ -2741,6 +2840,21 @@ Valid values are `true` and `false`. The default is `true`.
 
 [[groups]]
 === Section groups
+
+[[groups.auditLog.ignoreRecordsFromUnidentifiedUsers]]groups.auditLog.ignoreRecordsFromUnidentifiedUsers::
++
+Controls whether AuditLogReader should ignore commits created by unidentified users.
+If true, then AuditLogReader ignores commits in the refs/groups/* made by unidentified users (i.e.
+when the author of a commit can't be parsed as account id).
++
+The current version of Gerrit writes identified users as authors for new refs/groups/* commits.
+However, some old versions used a server identity as the author (e.g. "Gerrit Code Review
+<server@googlesource.com>") for such commits. Such string can't be converted to account id but
+usually the commit shouldn't be ignored.
++
+By default, false.
++
+Setting it to true may lead to some unexpected results in audit log and must be set carefully.
 
 [[groups.includeExternalUsersInRegisteredUsersGroup]]groups.includeExternalUsersInRegisteredUsersGroup::
 +
@@ -3336,6 +3450,15 @@ advantage of new search features without restarting the server.
 +
 Defaults to true.
 
+[[index.excludeProjectFromChangeReindex]]index.excludeProjectFromChangeReindex::
++
+A list of projects that will be excluded from reindexing. This can be used
+to exclude projects which are expensive to reindex to prioritize the other
+projects.
++
+Excluded projects can later be reindexed by for example using the
+link:cmd-index-changes-in-project.html[index changes in project command].
+
 [[index.paginationType]]index.paginationType::
 +
 The pagination type to use when index queries are repeated to
@@ -3368,6 +3491,15 @@ Bear in mind that some indexing backends may not support unbounded queries;
 therefore, the NONE option is unavailable._
 +
 Defaults to `OFFSET`.
+
+[[index.defaultLimit]]index.defaultLimit::
++
+Default limit, if the user does not provide a limit. If this is not set or set
+to 0, then index queries are executed with the maximum permitted limit for the
+user, which may be really high and cause too much load on the index. Thus
+setting this default limit to something smaller like 100 allows you to control
+the load, while not taking away any permission from the user. If the user
+provides a limit themselves, then `defaultLimit` is ignored.
 
 [[index.maxLimit]]index.maxLimit::
 +
@@ -3447,6 +3579,16 @@ Whether to automatically check if a document became stale in the index
 immediately after indexing it. If false, there is a race condition during two
 simultaneous writes that may cause one of the writes to not be reflected in the
 index. The check to avoid this does consume some resources.
++
+Defaults to false.
+
+[[index.indexChangesAsync]]index.indexChangesAsync::
++
+On BatchUpdate, do not await indexing completion before returning the request
+to the user (WEB_BROWSER requests only).
+This has an advantage of faster UI (because indexing latency does not contribute
+to the write request latency) and disadvantage that the indexing result might not be
+immediately available after the write request.
 +
 Defaults to false.
 
@@ -3654,6 +3796,37 @@ depend on this feature to trigger change verification.
 +
 By default, true.
 
+[[event.stream-events.enableRefUpdatedEvents]]event.stream-events.enableRefUpdatedEvents::
++
+Enable streaming of `ref-updated` event which represents a single ref update operation.
+Batch ref updates are represented as a series of `ref-updated` events.
+This allows event listeners to react on a ref update.
+Please consider switching to `batch-ref-updated` event which provides better control on grouping and
+preserving order of the ref updates.
++
+By default, true.
+
+[[event.stream-events.enableBatchRefUpdatedEvents]]event.stream-events.enableBatchRefUpdatedEvents::
++
+Enable streaming of `batch-ref-updated` event which represents group of
+refs updated during a single batch ref update operation.
+Single ref updates are also streamed as a `batch-ref-updated` events with a single ref specified.
+This allows event listeners to react on all ref updated events and disable individual `ref-updated`
+events by setting <<event.stream-events.enableRefUpdatedEvents, event.stream-events.enableRefUpdatedEvents>> to false.
++
+By default, false.
+
+[[event.stream-events.enableDraftCommentEvents]]event.stream-events.enableDraftCommentEvents::
++
+Enable streaming of `ref-updated` events for `refs/draft-comments` refs.
+Enable this flag in case listeners in your system are supposed to react on draft operations.
++
+NOTE: Due to the nature of drafts, the amount of `ref-updated` events created on draft operations could be high.
+The extra amount of events depends on the usage pattern of the installation. It is worth evaluating
+the amount of extra events produced before enabling this flag by counting the calls to the draft APIs.
++
+By default, false.
+
 [[experiments]]
 === Section experiments
 
@@ -3850,11 +4023,12 @@ Attribute values may be concatenated with literal strings.  For
 example to join given name and surname together, use the pattern
 `${givenName} ${SN}`.
 +
-If set, users will be unable to modify their full name field, as
-Gerrit will populate it only from the LDAP data.
-+
 Default is `displayName` for FreeIPA and RFC 2307 servers,
 and `${givenName} ${sn}` for Active Directory.
++
+A non-empty or default value prevents users from modifying their full
+name field.  To allow edits to the full name field, set to the empty
+string.
 
 [[ldap.accountEmailAddress]]ldap.accountEmailAddress::
 +
@@ -3992,6 +4166,9 @@ Default is `cn`.
 +
 All users must be a member of this group to allow account creation or
 authentication.
++
+For example, setting to `ldap/gerritaccess` limits account creation or
+authentication to members of the ldap group `gerritaccess`.
 +
 Setting mandatoryGroup implies enabling of `ldap.fetchMemberOfEagerly`
 +
@@ -4590,6 +4767,35 @@ link:https://www.gnupg.org/documentation/manuals/gnupg/OpenPGP-Key-Management.ht
 +
 If no keys are specified, web-of-trust checks are disabled. This is the
 default behavior.
+
+[[receive.enableChangeIdLinkFooters]]receive.enableChangeIdLinkFooters::
++
+Enables a `Link` footer to be used as an alternative change ID footer.
++
+In some projects it may be desirable for the footer to contain a link to
+the Gerrit review page so that it is convenient to access the review
+page starting from the commit message. The `Link` footer is a standard
+footer used for inserting links in the commit message (e.g. used by the
+Linux kernel).
++
+This option makes Gerrit interoperate well with `Link` footers. If
+change ID `Link` footers are enabled Gerrit recognizes footers of the
+form:
++
+----
+  Link: https://<host>/id/<change-ID>
+----
++
+Example:
+----
+  Link: https://gerrit-review.googlesource.com/id/I78e884a944cedb5144f661a057e4829c8f84e933
+----
++
+For Gerrit to recognize the change ID, the part of the URL before the
+'/id/' part must match with the link:#gerrit.canonicalWebUrl[canonical
+web URL].
++
+Default is `true`.
 
 [[repository]]
 === Section repository
@@ -5537,18 +5743,6 @@ dependent on which plugin is used.
 +
 By default, false.
 
-[[tracing.exportPerformanceMetrics]]tracing.exportPerformanceMetrics::
-+
-Whether to export performance metrics.
-+
-Performace logged when link:#tracing.performanceLogging[`performanceLogging`] is
-enabled, can be exported as metrics.
-+
-NOTE: Since the payload returned could be of tens of thousands metrics,
-assess the latency of the metrics endpoint before enabling this option.
-+
-By default, false.
-
 [[tracing.traceid]]
 ==== Subsection tracing.<trace-id>
 
@@ -5585,11 +5779,41 @@ Regular expression to match request URIs for which request tracing
 should not be enabled even if they match
 link:#tracing.traceid.requestUriPattern[requestUriPattern].
 Request URIs are only available for REST requests. Request URIs never include
-the '/a' prefix.
+the '/a' prefix and don't contain the query string with the request parameters.
 +
 May be specified multiple times.
 +
 By default, unset (no request URIs are excluded).
+
+[[tracing.traceid.requestQueryStringPattern]]tracing.<trace-id>.requestQueryStringPattern::
++
+Regular expression to match request query strings for which request tracing
+should be enabled. The query string is the portion of the URL that contains
+the request parameters.
++
+May be specified multiple times.
++
+Example:
+----
+  requestQueryStringPattern = .*limit=.*
+----
++
+By default, unset (all request query strings are matched).
+
+[[tracing.traceid.headerPattern]]tracing.<trace-id>.headerPattern::
++
+Regular expression to match headers for which request tracing should be
+enabled. The regular expression is matched against the headers in the
+format '<header-name>=<header-value>'.
++
+May be specified multiple times.
++
+Example:
+----
+  requestQueryStringPattern = User-Agent=foo-.*
+----
++
+By default, unset (all headers are matched).
 
 [[tracing.traceid.account]]tracing.<trace-id>.account::
 +

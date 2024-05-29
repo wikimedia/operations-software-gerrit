@@ -36,6 +36,7 @@ import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.entities.Address;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.GroupDescription;
 import com.google.gerrit.entities.GroupReference;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.Project;
@@ -55,8 +56,9 @@ import com.google.gerrit.index.query.QueryParseException;
 import com.google.gerrit.index.query.QueryRequiresAuthException;
 import com.google.gerrit.server.CommentsUtil;
 import com.google.gerrit.server.CurrentUser;
+import com.google.gerrit.server.DraftCommentsReader;
 import com.google.gerrit.server.IdentifiedUser;
-import com.google.gerrit.server.StarredChangesUtil;
+import com.google.gerrit.server.StarredChangesReader;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountResolver;
 import com.google.gerrit.server.account.AccountResolver.UnresolvableAccountException;
@@ -87,6 +89,7 @@ import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.project.ChildProjects;
 import com.google.gerrit.server.project.ProjectCache;
+import com.google.gerrit.server.query.change.ChangePredicates.EditByPredicateProvider;
 import com.google.gerrit.server.query.change.PredicateArgs.ValOp;
 import com.google.gerrit.server.rules.SubmitRule;
 import com.google.gerrit.server.submit.SubmitDryRun;
@@ -165,6 +168,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   public static final String FIELD_COMMENTBY = "commentby";
   public static final String FIELD_COMMIT = "commit";
   public static final String FIELD_COMMITTER = "committer";
+  public static final String FIELD_CUSTOM_KEYED_VALUES = "custom_keyed_values";
   public static final String FIELD_DIRECTORY = "directory";
   public static final String FIELD_EXACTCOMMITTER = "exactcommitter";
   public static final String FIELD_EXTENSION = "extension";
@@ -255,6 +259,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     final ChangeIndex index;
     final ChangeIndexRewriter rewriter;
     final CommentsUtil commentsUtil;
+    final DraftCommentsReader draftCommentsReader;
     final ConflictsCache conflictsCache;
     final DynamicMap<ChangeHasOperandFactory> hasOperands;
     final DynamicMap<ChangeIsOperandFactory> isOperands;
@@ -267,7 +272,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     final ProjectCache projectCache;
     final Provider<InternalChangeQuery> queryProvider;
     final ChildProjects childProjects;
-    final StarredChangesUtil starredChangesUtil;
+    final StarredChangesReader starredChangesReader;
     final SubmitDryRun submitDryRun;
     final GroupMembers groupMembers;
     final ChangeIsVisibleToPredicate.Factory changeIsVisbleToPredicateFactory;
@@ -279,6 +284,8 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     final PluginSetContext<SubmitRule> submitRules;
 
     private final Provider<CurrentUser> self;
+
+    private final EditByPredicateProvider editByPredicateProvider;
 
     @Inject
     @VisibleForTesting
@@ -293,6 +300,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
         PermissionBackend permissionBackend,
         ChangeData.Factory changeDataFactory,
         CommentsUtil commentsUtil,
+        DraftCommentsReader draftCommentsReader,
         AccountResolver accountResolver,
         GroupBackend groupBackend,
         AllProjectsName allProjectsName,
@@ -305,7 +313,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
         SubmitDryRun submitDryRun,
         ConflictsCache conflictsCache,
         IndexConfig indexConfig,
-        StarredChangesUtil starredChangesUtil,
+        StarredChangesReader starredChangesReader,
         AccountCache accountCache,
         GroupMembers groupMembers,
         OperatorAliasConfig operatorAliasConfig,
@@ -313,7 +321,8 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
         ExperimentFeatures experimentFeatures,
         HasOperandAliasConfig hasOperandAliasConfig,
         ChangeIsVisibleToPredicate.Factory changeIsVisbleToPredicateFactory,
-        PluginSetContext<SubmitRule> submitRules) {
+        PluginSetContext<SubmitRule> submitRules,
+        EditByPredicateProvider editByPredicateProvider) {
       this(
           queryProvider,
           rewriter,
@@ -325,6 +334,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
           permissionBackend,
           changeDataFactory,
           commentsUtil,
+          draftCommentsReader,
           accountResolver,
           groupBackend,
           allProjectsName,
@@ -337,7 +347,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
           conflictsCache,
           indexes != null ? indexes.getSearchIndex() : null,
           indexConfig,
-          starredChangesUtil,
+          starredChangesReader,
           accountCache,
           groupMembers,
           operatorAliasConfig,
@@ -346,7 +356,8 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
           experimentFeatures,
           hasOperandAliasConfig,
           changeIsVisbleToPredicateFactory,
-          submitRules);
+          submitRules,
+          editByPredicateProvider);
     }
 
     private Arguments(
@@ -360,6 +371,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
         PermissionBackend permissionBackend,
         ChangeData.Factory changeDataFactory,
         CommentsUtil commentsUtil,
+        DraftCommentsReader draftCommentsReader,
         AccountResolver accountResolver,
         GroupBackend groupBackend,
         AllProjectsName allProjectsName,
@@ -372,7 +384,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
         ConflictsCache conflictsCache,
         ChangeIndex index,
         IndexConfig indexConfig,
-        StarredChangesUtil starredChangesUtil,
+        StarredChangesReader starredChangesReader,
         AccountCache accountCache,
         GroupMembers groupMembers,
         OperatorAliasConfig operatorAliasConfig,
@@ -381,7 +393,8 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
         ExperimentFeatures experimentFeatures,
         HasOperandAliasConfig hasOperandAliasConfig,
         ChangeIsVisibleToPredicate.Factory changeIsVisbleToPredicateFactory,
-        PluginSetContext<SubmitRule> submitRules) {
+        PluginSetContext<SubmitRule> submitRules,
+        EditByPredicateProvider editByPredicateProvider) {
       this.queryProvider = queryProvider;
       this.rewriter = rewriter;
       this.opFactories = opFactories;
@@ -390,6 +403,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
       this.permissionBackend = permissionBackend;
       this.changeDataFactory = changeDataFactory;
       this.commentsUtil = commentsUtil;
+      this.draftCommentsReader = draftCommentsReader;
       this.accountResolver = accountResolver;
       this.groupBackend = groupBackend;
       this.allProjectsName = allProjectsName;
@@ -402,7 +416,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
       this.conflictsCache = conflictsCache;
       this.index = index;
       this.indexConfig = indexConfig;
-      this.starredChangesUtil = starredChangesUtil;
+      this.starredChangesReader = starredChangesReader;
       this.accountCache = accountCache;
       this.hasOperands = hasOperands;
       this.isOperands = isOperands;
@@ -414,6 +428,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
       this.experimentFeatures = experimentFeatures;
       this.hasOperandAliasConfig = hasOperandAliasConfig;
       this.submitRules = submitRules;
+      this.editByPredicateProvider = editByPredicateProvider;
     }
 
     public Arguments asUser(CurrentUser otherUser) {
@@ -428,6 +443,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
           permissionBackend,
           changeDataFactory,
           commentsUtil,
+          draftCommentsReader,
           accountResolver,
           groupBackend,
           allProjectsName,
@@ -440,7 +456,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
           conflictsCache,
           index,
           indexConfig,
-          starredChangesUtil,
+          starredChangesReader,
           accountCache,
           groupMembers,
           operatorAliasConfig,
@@ -449,7 +465,8 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
           experimentFeatures,
           hasOperandAliasConfig,
           changeIsVisbleToPredicateFactory,
-          submitRules);
+          submitRules,
+          editByPredicateProvider);
     }
 
     Arguments asUser(Account.Id otherId) {
@@ -492,8 +509,8 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
   protected final Arguments args;
   protected Map<String, String> hasOperandAliases = Collections.emptyMap();
-  private final Map<Account.Id, DestinationList> destinationListByAccount = new HashMap<>();
-  private final Map<Account.Id, QueryList> queryListByAccount = new HashMap<>();
+  private final Map<BranchNameKey, DestinationList> destinationListByBranch = new HashMap<>();
+  private final Map<BranchNameKey, QueryList> queryListByBranch = new HashMap<>();
 
   private static final Splitter RULE_SPLITTER = Splitter.on("=");
   private static final Splitter PLUGIN_SPLITTER = Splitter.on("_");
@@ -641,7 +658,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     }
 
     if ("edit".equalsIgnoreCase(value)) {
-      return ChangePredicates.editBy(self());
+      return this.args.editByPredicateProvider.editBy(self());
     }
 
     if ("attention".equalsIgnoreCase(value)) {
@@ -1152,6 +1169,21 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   }
 
   @Operator
+  public Predicate<ChangeData> d(String text) throws QueryParseException {
+    return message(text);
+  }
+
+  @Operator
+  public Predicate<ChangeData> description(String text) throws QueryParseException {
+    return message(text);
+  }
+
+  @Operator
+  public Predicate<ChangeData> m(String text) throws QueryParseException {
+    return message(text);
+  }
+
+  @Operator
   public Predicate<ChangeData> message(String text) throws QueryParseException {
     if (text.startsWith("^")) {
       checkFieldAvailable(
@@ -1176,11 +1208,11 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   }
 
   private Predicate<ChangeData> starredBySelf() throws QueryParseException {
-    return ChangePredicates.starBy(args.starredChangesUtil, self());
+    return ChangePredicates.starBy(args.starredChangesReader, self());
   }
 
   private Predicate<ChangeData> draftBySelf() throws QueryParseException {
-    return ChangePredicates.draftBy(args.commentsUtil, self());
+    return ChangePredicates.draftBy(args.draftCommentsReader, self());
   }
 
   @Operator
@@ -1416,11 +1448,16 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
   @Operator
   public Predicate<ChangeData> query(String value) throws QueryParseException {
-    // [name=]<name>[,user=<user>] || [user=<user>,][name=]<name>
+    // [name=]NAME[,user=USER|,group=GROUP]
     PredicateArgs inputArgs = new PredicateArgs(value);
     String name = null;
     Account.Id account = null;
+    GroupDescription.Internal group = null;
 
+    if (inputArgs.keyValue.containsKey(ARG_ID_USER)
+        && inputArgs.keyValue.containsKey(ARG_ID_GROUP)) {
+      throw new QueryParseException("User and group arguments are mutually exclusive");
+    }
     // [name=]<name>
     if (inputArgs.keyValue.containsKey(ARG_ID_NAME)) {
       name = inputArgs.keyValue.get(ARG_ID_NAME).value();
@@ -1444,7 +1481,23 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
         account = self();
       }
 
-      String query = getQueryList(account).getQuery(name);
+      // [,group=<group>]
+      if (inputArgs.keyValue.containsKey(ARG_ID_GROUP)) {
+        AccountGroup.UUID groupId =
+            parseGroup(inputArgs.keyValue.get(ARG_ID_GROUP).value()).getUUID();
+        GroupDescription.Basic backendGroup = args.groupBackend.get(groupId);
+        if (!(backendGroup instanceof GroupDescription.Internal)) {
+          throw error(backendGroup.getName() + " is not an Internal group");
+        }
+        group = (GroupDescription.Internal) backendGroup;
+      }
+
+      BranchNameKey branch = BranchNameKey.create(args.allUsersName, RefNames.refsUsers(account));
+      if (group != null) {
+        branch = BranchNameKey.create(args.allUsersName, RefNames.refsGroups(group.getGroupUUID()));
+      }
+
+      String query = getQueryList(branch).getQuery(name);
       if (query != null) {
         return parse(query);
       }
@@ -1457,17 +1510,19 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     throw new QueryParseException("Unknown named query: " + name);
   }
 
-  protected QueryList getQueryList(Account.Id account) throws ConfigInvalidException, IOException {
-    QueryList ql = queryListByAccount.get(account);
+  protected QueryList getQueryList(BranchNameKey branch)
+      throws ConfigInvalidException, IOException {
+    QueryList ql = queryListByBranch.get(branch);
     if (ql == null) {
-      ql = loadQueryList(account);
-      queryListByAccount.put(account, ql);
+      ql = loadQueryList(branch);
+      queryListByBranch.put(branch, ql);
     }
     return ql;
   }
 
-  protected QueryList loadQueryList(Account.Id account) throws ConfigInvalidException, IOException {
-    VersionedAccountQueries q = VersionedAccountQueries.forUser(account);
+  protected QueryList loadQueryList(BranchNameKey branch)
+      throws ConfigInvalidException, IOException {
+    VersionedAccountQueries q = VersionedAccountQueries.forBranch(branch);
     try (Repository git = args.repoManager.openRepository(args.allUsersName)) {
       q.load(args.allUsersName, git);
     }
@@ -1482,11 +1537,16 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
   @Operator
   public Predicate<ChangeData> destination(String value) throws QueryParseException {
-    // [name=]<name>[,user=<user>] || [user=<user>,][name=]<name>
+    // [name=]<name>[,user=<user>|,group=<group>] || [group=<group>,|user=<user>,][name=]<name>
     PredicateArgs inputArgs = new PredicateArgs(value);
     String name = null;
     Account.Id account = null;
+    GroupDescription.Internal group = null;
 
+    if (inputArgs.keyValue.containsKey(ARG_ID_USER)
+        && inputArgs.keyValue.containsKey(ARG_ID_GROUP)) {
+      throw new QueryParseException("User and group arguments are mutually exclusive");
+    }
     // [name=]<name>
     if (inputArgs.keyValue.containsKey(ARG_ID_NAME)) {
       name = inputArgs.keyValue.get(ARG_ID_NAME).value();
@@ -1510,7 +1570,23 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
         account = self();
       }
 
-      Set<BranchNameKey> destinations = getDestinationList(account).getDestinations(name);
+      // [,group=<group>]
+      if (inputArgs.keyValue.containsKey(ARG_ID_GROUP)) {
+        AccountGroup.UUID groupId =
+            parseGroup(inputArgs.keyValue.get(ARG_ID_GROUP).value()).getUUID();
+        GroupDescription.Basic backendGroup = args.groupBackend.get(groupId);
+        if (!(backendGroup instanceof GroupDescription.Internal)) {
+          throw error(backendGroup.getName() + " is not an Internal group");
+        }
+        group = (GroupDescription.Internal) backendGroup;
+      }
+
+      BranchNameKey branch = BranchNameKey.create(args.allUsersName, RefNames.refsUsers(account));
+      if (group != null) {
+        branch = BranchNameKey.create(args.allUsersName, RefNames.refsGroups(group.getGroupUUID()));
+      }
+      Set<BranchNameKey> destinations = getDestinationList(branch).getDestinations(name);
+
       if (destinations != null && !destinations.isEmpty()) {
         return new BranchSetIndexPredicate(FIELD_DESTINATION + ":" + value, destinations);
       }
@@ -1523,19 +1599,19 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     throw new QueryParseException("Unknown named destination: " + name);
   }
 
-  protected DestinationList getDestinationList(Account.Id account)
+  protected DestinationList getDestinationList(BranchNameKey branch)
       throws ConfigInvalidException, RepositoryNotFoundException, IOException {
-    DestinationList dl = destinationListByAccount.get(account);
+    DestinationList dl = destinationListByBranch.get(branch);
     if (dl == null) {
-      dl = loadDestinationList(account);
-      destinationListByAccount.put(account, dl);
+      dl = loadDestinationList(branch);
+      destinationListByBranch.put(branch, dl);
     }
     return dl;
   }
 
-  protected DestinationList loadDestinationList(Account.Id account)
+  protected DestinationList loadDestinationList(BranchNameKey branch)
       throws ConfigInvalidException, RepositoryNotFoundException, IOException {
-    VersionedAccountDestinations d = VersionedAccountDestinations.forUser(account);
+    VersionedAccountDestinations d = VersionedAccountDestinations.forBranch(branch);
     try (Repository git = args.repoManager.openRepository(args.allUsersName)) {
       d.load(args.allUsersName, git);
     }
@@ -1798,7 +1874,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   }
 
   /** Returns {@link com.google.gerrit.entities.Account.Id} of the identified calling user. */
-  public Account.Id self() throws QueryParseException {
+  private Account.Id self() throws QueryParseException {
     return args.getIdentifiedUser().getAccountId();
   }
 

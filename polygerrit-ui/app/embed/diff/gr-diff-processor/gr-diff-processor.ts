@@ -3,13 +3,7 @@
  * Copyright 2016 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {
-  GrDiffLine,
-  GrDiffLineType,
-  FILE,
-  Highlights,
-  LineNumber,
-} from '../gr-diff/gr-diff-line';
+import {GrDiffLine, Highlights} from '../gr-diff/gr-diff-line';
 import {
   GrDiffGroup,
   GrDiffGroupType,
@@ -18,10 +12,10 @@ import {
 import {DiffContent} from '../../../types/diff';
 import {Side} from '../../../constants/constants';
 import {debounce, DelayedTask} from '../../../utils/async-util';
-import {assert, assertIsDefined} from '../../../utils/common-util';
-import {GrAnnotation} from '../gr-diff-highlight/gr-annotation';
-
-const WHOLE_FILE = -1;
+import {assert} from '../../../utils/common-util';
+import {getStringLength} from '../gr-diff-highlight/gr-annotation';
+import {GrDiffLineType, LineNumber} from '../../../api/diff';
+import {FULL_CONTEXT, KeyLocations} from '../gr-diff/gr-diff-utils';
 
 // visible for testing
 export interface State {
@@ -35,11 +29,6 @@ export interface State {
 interface ChunkEnd {
   offset: number;
   keyLocation: boolean;
-}
-
-export interface KeyLocations {
-  left: {[key: string]: boolean};
-  right: {[key: string]: boolean};
 }
 
 /**
@@ -59,6 +48,14 @@ function calcMaxGroupSize(asyncThreshold?: number): number {
 export interface GroupConsumer {
   addGroup(group: GrDiffGroup): void;
   clearGroups(): void;
+}
+
+/** Interface for listening to the output of the processor. */
+export interface ProcessingOptions {
+  context: number;
+  keyLocations?: KeyLocations;
+  asyncThreshold?: number;
+  isBinary?: boolean;
 }
 
 /**
@@ -87,13 +84,15 @@ export interface GroupConsumer {
  *    the rest is not.
  */
 export class GrDiffProcessor {
-  context = 3;
+  // visible for testing
+  context: number;
 
-  consumer?: GroupConsumer;
+  // visible for testing
+  keyLocations: KeyLocations;
 
-  keyLocations: KeyLocations = {left: {}, right: {}};
+  private asyncThreshold: number;
 
-  asyncThreshold = 64;
+  private isBinary: boolean;
 
   // visible for testing
   isScrolling?: boolean;
@@ -105,6 +104,15 @@ export class GrDiffProcessor {
   private isCancelled = false;
 
   private resetIsScrollingTask?: DelayedTask;
+
+  private readonly groups: GrDiffGroup[] = [];
+
+  constructor(options: ProcessingOptions) {
+    this.context = options.context;
+    this.asyncThreshold = options.asyncThreshold ?? 64;
+    this.keyLocations = options.keyLocations ?? {left: {}, right: {}};
+    this.isBinary = options.isBinary ?? false;
+  }
 
   private readonly handleWindowScroll = () => {
     this.isScrolling = true;
@@ -122,70 +130,74 @@ export class GrDiffProcessor {
    * @return A promise that resolves with an
    * array of GrDiffGroups when the diff is completely processed.
    */
-  process(chunks: DiffContent[], isBinary: boolean) {
+  async process(chunks: DiffContent[]): Promise<GrDiffGroup[]> {
     assert(this.isStarted === false, 'diff processor cannot be started twice');
-    this.isStarted = true;
 
     window.addEventListener('scroll', this.handleWindowScroll);
 
-    assertIsDefined(this.consumer, 'consumer');
-    this.consumer.clearGroups();
-    this.consumer.addGroup(this.makeGroup('LOST'));
-    this.consumer.addGroup(this.makeGroup(FILE));
+    this.groups.push(this.makeGroup('LOST'));
+    this.groups.push(this.makeGroup('FILE'));
 
-    if (isBinary) return Promise.resolve();
-
-    return new Promise<void>(resolve => {
-      const state = {
-        lineNums: {left: 0, right: 0},
-        chunkIndex: 0,
-      };
-
-      chunks = this.splitLargeChunks(chunks);
-      chunks = this.splitCommonChunksWithKeyLocations(chunks);
-
-      let currentBatch = 0;
-      const nextStep = () => {
-        if (this.isCancelled || state.chunkIndex >= chunks.length) {
-          resolve();
-          return;
-        }
-        if (this.isScrolling) {
-          window.setTimeout(nextStep, 100);
-          return;
-        }
-
-        const stateUpdate = this.processNext(state, chunks);
-        for (const group of stateUpdate.groups) {
-          this.consumer?.addGroup(group);
-          currentBatch += group.lines.length;
-        }
-        state.lineNums.left += stateUpdate.lineDelta.left;
-        state.lineNums.right += stateUpdate.lineDelta.right;
-
-        state.chunkIndex = stateUpdate.newChunkIndex;
-        if (currentBatch >= this.asyncThreshold) {
-          currentBatch = 0;
-          window.setTimeout(nextStep, 1);
-        } else {
-          nextStep.call(this);
-        }
-      };
-
-      nextStep.call(this);
-    }).finally(() => {
+    if (this.isBinary) return this.groups;
+    try {
+      await this.processChunks(chunks);
+    } finally {
       this.finish();
-    });
+    }
+    return this.groups;
   }
 
   finish() {
-    this.consumer = undefined;
     window.removeEventListener('scroll', this.handleWindowScroll);
   }
 
   cancel() {
     this.isCancelled = true;
     this.finish();
+  }
+
+  async processChunks(chunks: DiffContent[]) {
+    let completed = () => {};
+    const promise = new Promise<void>(resolve => (completed = resolve));
+
+    const state = {
+      lineNums: {left: 0, right: 0},
+      chunkIndex: 0,
+    };
+
+    chunks = this.splitLargeChunks(chunks);
+    chunks = this.splitCommonChunksWithKeyLocations(chunks);
+
+    let currentBatch = 0;
+    const nextStep = () => {
+      if (this.isCancelled || state.chunkIndex >= chunks.length) {
+        completed();
+        return;
+      }
+      if (this.isScrolling) {
+        window.setTimeout(nextStep, 100);
+        return;
+      }
+
+      const stateUpdate = this.processNext(state, chunks);
+      for (const group of stateUpdate.groups) {
+        this.groups.push(group);
+        currentBatch += group.lines.length;
+      }
+      state.lineNums.left += stateUpdate.lineDelta.left;
+      state.lineNums.right += stateUpdate.lineDelta.right;
+
+      state.chunkIndex = stateUpdate.newChunkIndex;
+      if (currentBatch >= this.asyncThreshold) {
+        currentBatch = 0;
+        window.setTimeout(nextStep, 1);
+      } else {
+        nextStep.call(this);
+      }
+    };
+
+    nextStep.call(this);
+    await promise;
   }
 
   /**
@@ -276,7 +288,7 @@ export class GrDiffProcessor {
     );
 
     const hasSkippedGroup = !!groups.find(g => g.skip);
-    if (this.context !== WHOLE_FILE || hasSkippedGroup) {
+    if (this.context !== FULL_CONTEXT || hasSkippedGroup) {
       const contextNumLines = this.context > 0 ? this.context : 0;
       const hiddenStart = state.chunkIndex === 0 ? 0 : contextNumLines;
       const hiddenEnd =
@@ -467,7 +479,10 @@ export class GrDiffProcessor {
       // enabled for any other context preference because manipulating the
       // chunks in this way violates assumptions by the context grouper logic.
       const MAX_GROUP_SIZE = calcMaxGroupSize(this.asyncThreshold);
-      if (this.context === -1 && chunk.ab.length > MAX_GROUP_SIZE * 2) {
+      if (
+        this.context === FULL_CONTEXT &&
+        chunk.ab.length > MAX_GROUP_SIZE * 2
+      ) {
         // Split large shared chunks in two, where the first is the maximum
         // group size.
         newChunks.push({ab: chunk.ab.slice(0, MAX_GROUP_SIZE)});
@@ -618,7 +633,7 @@ export class GrDiffProcessor {
     intralineInfos: number[][]
   ): Highlights[] {
     // +1 to account for the \n that is not part of the rows passed here
-    const lineLengths = rows.map(r => GrAnnotation.getStringLength(r) + 1);
+    const lineLengths = rows.map(r => getStringLength(r) + 1);
 
     let rowIndex = 0;
     let idx = 0;

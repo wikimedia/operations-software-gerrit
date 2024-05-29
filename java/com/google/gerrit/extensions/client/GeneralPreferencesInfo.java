@@ -14,23 +14,15 @@
 
 package com.google.gerrit.extensions.client;
 
+import com.google.common.base.MoreObjects;
 import java.util.List;
+import java.util.Objects;
 
 /** Preferences about a single user. */
 public class GeneralPreferencesInfo {
 
   /** Default number of items to display per page. */
   public static final int DEFAULT_PAGESIZE = 25;
-
-  /** Preferred method to download a change. */
-  public enum DownloadCommand {
-    PULL,
-    CHECKOUT,
-    CHERRY_PICK,
-    FORMAT_PATCH,
-    BRANCH,
-    RESET,
-  }
 
   public enum DateFormat {
     /** US style dates: Apr 27, Feb 14, 2010 */
@@ -150,6 +142,13 @@ public class GeneralPreferencesInfo {
   public List<MenuItem> my;
   public List<String> changeTable;
   public Boolean allowBrowserNotifications;
+  /**
+   * The sidebar section that the user prefers to have open on the diff page, or "NONE" if all
+   * sidebars should be closed.
+   *
+   * <p>Sidebars supplied by plugins are prefixed with "plugin-".
+   */
+  public String diffPageSidebar;
 
   public DateFormat getDateFormat() {
     if (dateFormat == null) {
@@ -186,6 +185,94 @@ public class GeneralPreferencesInfo {
     return emailFormat;
   }
 
+  @Override
+  public boolean equals(Object obj) {
+    if (!(obj instanceof GeneralPreferencesInfo)) {
+      return false;
+    }
+    GeneralPreferencesInfo other = (GeneralPreferencesInfo) obj;
+    return Objects.equals(this.changesPerPage, other.changesPerPage)
+        && Objects.equals(this.downloadScheme, other.downloadScheme)
+        && Objects.equals(this.theme, other.theme)
+        && Objects.equals(this.dateFormat, other.dateFormat)
+        && Objects.equals(this.timeFormat, other.timeFormat)
+        && Objects.equals(this.expandInlineDiffs, other.expandInlineDiffs)
+        && Objects.equals(this.relativeDateInChangeTable, other.relativeDateInChangeTable)
+        && Objects.equals(this.diffView, other.diffView)
+        && Objects.equals(this.sizeBarInChangeTable, other.sizeBarInChangeTable)
+        && Objects.equals(this.legacycidInChangeTable, other.legacycidInChangeTable)
+        && Objects.equals(this.muteCommonPathPrefixes, other.muteCommonPathPrefixes)
+        && Objects.equals(this.signedOffBy, other.signedOffBy)
+        && Objects.equals(this.emailStrategy, other.emailStrategy)
+        && Objects.equals(this.emailFormat, other.emailFormat)
+        && Objects.equals(this.defaultBaseForMerges, other.defaultBaseForMerges)
+        && Objects.equals(this.publishCommentsOnPush, other.publishCommentsOnPush)
+        && Objects.equals(this.disableKeyboardShortcuts, other.disableKeyboardShortcuts)
+        && Objects.equals(this.disableTokenHighlighting, other.disableTokenHighlighting)
+        && Objects.equals(this.workInProgressByDefault, other.workInProgressByDefault)
+        && Objects.equals(this.my, other.my)
+        && Objects.equals(this.changeTable, other.changeTable)
+        && Objects.equals(this.allowBrowserNotifications, other.allowBrowserNotifications)
+        && Objects.equals(this.diffPageSidebar, other.diffPageSidebar);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(
+        changesPerPage,
+        downloadScheme,
+        theme,
+        dateFormat,
+        timeFormat,
+        expandInlineDiffs,
+        relativeDateInChangeTable,
+        diffView,
+        sizeBarInChangeTable,
+        legacycidInChangeTable,
+        muteCommonPathPrefixes,
+        signedOffBy,
+        emailStrategy,
+        emailFormat,
+        defaultBaseForMerges,
+        publishCommentsOnPush,
+        disableKeyboardShortcuts,
+        disableTokenHighlighting,
+        workInProgressByDefault,
+        my,
+        changeTable,
+        allowBrowserNotifications,
+        diffPageSidebar);
+  }
+
+  @Override
+  public String toString() {
+    return MoreObjects.toStringHelper("GeneralPreferencesInfo")
+        .add("changesPerPage", changesPerPage)
+        .add("downloadScheme", downloadScheme)
+        .add("theme", theme)
+        .add("dateFormat", dateFormat)
+        .add("timeFormat", timeFormat)
+        .add("expandInlineDiffs", expandInlineDiffs)
+        .add("relativeDateInChangeTable", relativeDateInChangeTable)
+        .add("diffView", diffView)
+        .add("sizeBarInChangeTable", sizeBarInChangeTable)
+        .add("legacycidInChangeTable", legacycidInChangeTable)
+        .add("muteCommonPathPrefixes", muteCommonPathPrefixes)
+        .add("signedOffBy", signedOffBy)
+        .add("emailStrategy", emailStrategy)
+        .add("emailFormat", emailFormat)
+        .add("defaultBaseForMerges", defaultBaseForMerges)
+        .add("publishCommentsOnPush", publishCommentsOnPush)
+        .add("disableKeyboardShortcuts", disableKeyboardShortcuts)
+        .add("disableTokenHighlighting", disableTokenHighlighting)
+        .add("workInProgressByDefault", workInProgressByDefault)
+        .add("my", my)
+        .add("changeTable", changeTable)
+        .add("allowBrowserNotifications", allowBrowserNotifications)
+        .add("diffPageSidebar", diffPageSidebar)
+        .toString();
+  }
+
   public static GeneralPreferencesInfo defaults() {
     GeneralPreferencesInfo p = new GeneralPreferencesInfo();
     p.changesPerPage = DEFAULT_PAGESIZE;
@@ -208,6 +295,7 @@ public class GeneralPreferencesInfo {
     p.disableTokenHighlighting = false;
     p.workInProgressByDefault = false;
     p.allowBrowserNotifications = true;
+    p.diffPageSidebar = "NONE";
     return p;
   }
 }

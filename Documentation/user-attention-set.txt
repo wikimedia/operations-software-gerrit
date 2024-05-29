@@ -97,21 +97,21 @@ uploader) to the attention set, if it comes along with a negative vote.
 
 === Dashboard
 
-The default *dashboard* contains a new section at the top called "Your Turn". It
+The default *dashboard* contains a new section at the top called "Your turn". It
 lists all changes where the logged-in user is in the attention set. When you are
 a reviewer, the change is highlighted and is shown at the top of the section.
 The "Waiting" column indicates how long the owner has already been waiting for
 you to act.
 
-image::images/user-attention-set-dashboard.png["dashboard with Your Turn section", align="center"]
+image::images/user-attention-set-dashboard.png["dashboard with Your turn section", align="center"]
 
 As an active developer, one of your daily goals will be to iterate over this
 list and clear it.
 
-image::images/user-attention-set-dashboard-empty.png["dashboard with empty Your Turn section", align="center"]
+image::images/user-attention-set-dashboard-empty.png["dashboard with empty Your turn section", align="center"]
 
 Note that you can also navigate to other users' dashboards to check their
-"Your Turn" section.
+"Your turn" section.
 
 === Emails
 
@@ -188,3 +188,18 @@ Part of link:index.html[Gerrit Code Review]
 
 SEARCHBOX
 ---------
+
+=== Auto readd owner [[auto-readd-owner]]
+
+This job automatically readds the change owner to the attention-set for open non-WIP/private
+changes that have been inactive for a defined time. Gerrit administrators may configure
+link:config-gerrit.html#auto-readd[this]
+
+Readding the owner to the attention-set of an inactive change has the advantages:
+
+* It signals the change owner that the review is not progressing and that the owner
+may need to adjust the attention-set or indicate a need for a priority review.
+* It may prevent changes where no one is in the attention-set from getting forgotten.
+* It makes people set changes in WIP or private for changes that should not
+be actively reviewed.
+

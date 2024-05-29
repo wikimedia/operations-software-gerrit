@@ -32,6 +32,7 @@ import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.DynamicOptions;
 import com.google.gerrit.server.DynamicOptions.DynamicBean;
+import com.google.gerrit.server.Sequences;
 import com.google.gerrit.server.account.AccountLimits;
 import com.google.gerrit.server.change.ChangePluginDefinedInfoFactory;
 import com.google.gerrit.server.change.PluginDefinedAttributesFactories;
@@ -40,7 +41,6 @@ import com.google.gerrit.server.index.change.ChangeIndexCollection;
 import com.google.gerrit.server.index.change.ChangeIndexRewriter;
 import com.google.gerrit.server.index.change.ChangeSchemaDefinitions;
 import com.google.gerrit.server.index.change.IndexedChangeQuery;
-import com.google.gerrit.server.notedb.Sequences;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -124,9 +124,16 @@ public class ChangeQueryProcessor extends QueryProcessor<ChangeData>
       int pageSize,
       int pageSizeMultiplier,
       int limit,
+      boolean allowIncompleteResults,
       Set<String> requestedFields) {
     return IndexedChangeQuery.createOptions(
-        indexConfig, start, pageSize, pageSizeMultiplier, limit, requestedFields);
+        indexConfig,
+        start,
+        pageSize,
+        pageSizeMultiplier,
+        limit,
+        allowIncompleteResults,
+        requestedFields);
   }
 
   @Override

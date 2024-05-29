@@ -23,10 +23,12 @@ import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.git.ObjectIds;
 import com.google.gerrit.index.query.Predicate;
-import com.google.gerrit.server.CommentsUtil;
-import com.google.gerrit.server.StarredChangesUtil;
+import com.google.gerrit.index.query.QueryParseException;
+import com.google.gerrit.server.DraftCommentsReader;
+import com.google.gerrit.server.StarredChangesReader;
 import com.google.gerrit.server.change.HashtagsUtil;
 import com.google.gerrit.server.index.change.ChangeField;
+import com.google.inject.ImplementedBy;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -61,21 +63,35 @@ public class ChangePredicates {
     return new ChangeIndexPredicate(ChangeField.COMMENTBY_SPEC, id.toString());
   }
 
+  @ImplementedBy(IndexEditByPredicateProvider.class)
+  public interface EditByPredicateProvider {
+
+    /**
+     * Returns a predicate that matches changes where the provided {@link
+     * com.google.gerrit.entities.Account.Id} has a pending change edit.
+     */
+    Predicate<ChangeData> editBy(Account.Id id) throws QueryParseException;
+  }
+
   /**
-   * Returns a predicate that matches changes where the provided {@link
-   * com.google.gerrit.entities.Account.Id} has a pending change edit.
+   * A default implementation of {@link EditByPredicateProvider}, based on th {@link
+   * ChangeField#EDITBY_SPEC} index field.
    */
-  public static Predicate<ChangeData> editBy(Account.Id id) {
-    return new ChangeIndexPredicate(ChangeField.EDITBY_SPEC, id.toString());
+  public static class IndexEditByPredicateProvider implements EditByPredicateProvider {
+    @Override
+    public Predicate<ChangeData> editBy(Account.Id id) {
+      return new ChangeIndexPredicate(ChangeField.EDITBY_SPEC, id.toString());
+    }
   }
 
   /**
    * Returns a predicate that matches changes where the provided {@link
    * com.google.gerrit.entities.Account.Id} has a pending draft comment.
    */
-  public static Predicate<ChangeData> draftBy(CommentsUtil commentsUtil, Account.Id id) {
+  public static Predicate<ChangeData> draftBy(
+      DraftCommentsReader draftCommentsReader, Account.Id id) {
     Set<Predicate<ChangeData>> changeIdPredicates =
-        commentsUtil.getChangesWithDrafts(id).stream()
+        draftCommentsReader.getChangesWithDrafts(id).stream()
             .map(ChangePredicates::idStr)
             .collect(toImmutableSet());
     return changeIdPredicates.isEmpty()
@@ -87,9 +103,10 @@ public class ChangePredicates {
    * Returns a predicate that matches changes where the provided {@link
    * com.google.gerrit.entities.Account.Id} has starred changes with {@code label}.
    */
-  public static Predicate<ChangeData> starBy(StarredChangesUtil starredChangesUtil, Account.Id id) {
+  public static Predicate<ChangeData> starBy(
+      StarredChangesReader starredChangesReader, Account.Id id) {
     Set<Predicate<ChangeData>> starredChanges =
-        starredChangesUtil.byAccountId(id).stream()
+        starredChangesReader.byAccountId(id).stream()
             .map(ChangePredicates::idStr)
             .collect(toImmutableSet());
     return starredChanges.isEmpty() ? ChangeIndexPredicate.none() : Predicate.or(starredChanges);

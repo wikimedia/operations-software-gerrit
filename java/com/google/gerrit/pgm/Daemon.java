@@ -60,15 +60,19 @@ import com.google.gerrit.server.LibModuleLoader;
 import com.google.gerrit.server.LibModuleType;
 import com.google.gerrit.server.ModuleOverloader;
 import com.google.gerrit.server.StartupChecks.StartupChecksModule;
+import com.google.gerrit.server.account.AccountCacheImpl;
 import com.google.gerrit.server.account.AccountDeactivator.AccountDeactivatorModule;
 import com.google.gerrit.server.account.InternalAccountDirectory.InternalAccountDirectoryModule;
-import com.google.gerrit.server.account.externalids.ExternalIdCaseSensitivityMigrator;
+import com.google.gerrit.server.account.externalids.storage.notedb.ExternalIdCaseSensitivityMigrator;
+import com.google.gerrit.server.account.storage.notedb.AccountNoteDbReadStorageModule;
+import com.google.gerrit.server.account.storage.notedb.AccountNoteDbWriteStorageModule;
 import com.google.gerrit.server.api.GerritApiModule;
 import com.google.gerrit.server.api.PluginApiModule;
 import com.google.gerrit.server.api.projects.ProjectQueryBuilderModule;
 import com.google.gerrit.server.audit.AuditModule;
 import com.google.gerrit.server.cache.h2.H2CacheModule;
 import com.google.gerrit.server.cache.mem.DefaultMemoryCacheModule;
+import com.google.gerrit.server.change.AttentionSetOwnerAdder.AttentionSetOwnerAdderModule;
 import com.google.gerrit.server.change.ChangeCleanupRunner.ChangeCleanupRunnerModule;
 import com.google.gerrit.server.config.AuthConfig;
 import com.google.gerrit.server.config.AuthConfigModule;
@@ -94,10 +98,12 @@ import com.google.gerrit.server.index.IndexModule;
 import com.google.gerrit.server.index.OnlineUpgrader.OnlineUpgraderModule;
 import com.google.gerrit.server.index.VersionManager;
 import com.google.gerrit.server.index.options.AutoFlush;
+import com.google.gerrit.server.mail.EmailModule;
 import com.google.gerrit.server.mail.SignedTokenEmailTokenVerifier.SignedTokenEmailTokenVerifierModule;
 import com.google.gerrit.server.mail.receive.MailReceiver.MailReceiverModule;
 import com.google.gerrit.server.mail.send.SmtpEmailSender.SmtpEmailSenderModule;
 import com.google.gerrit.server.mime.MimeUtil2Module;
+import com.google.gerrit.server.notedb.RepoSequence.RepoSequenceModule;
 import com.google.gerrit.server.patch.DiffExecutorModule;
 import com.google.gerrit.server.permissions.DefaultPermissionBackendModule;
 import com.google.gerrit.server.plugins.PluginGuiceEnvironment;
@@ -450,7 +456,7 @@ public class Daemon extends SiteProgram {
     modules.add(new SubscriptionGraphModule());
     modules.add(new SuperprojectUpdateSubmissionListenerModule());
     modules.add(new WorkQueueModule());
-    modules.add(new StreamEventsApiListenerModule());
+    modules.add(new StreamEventsApiListenerModule(config));
     modules.add(new EventBrokerModule());
     if (accountPatchReviewStoreModule != null) {
       modules.add(accountPatchReviewStoreModule);
@@ -460,6 +466,11 @@ public class Daemon extends SiteProgram {
     modules.add(new SysExecutorModule());
     modules.add(new DiffExecutorModule());
     modules.add(new MimeUtil2Module());
+    modules.add(cfgInjector.getInstance(AccountCacheImpl.AccountCacheModule.class));
+
+    modules.add(new AccountNoteDbWriteStorageModule());
+    modules.add(new AccountNoteDbReadStorageModule());
+    modules.add(new RepoSequenceModule());
     modules.add(cfgInjector.getInstance(GerritGlobalModule.class));
     modules.add(new GerritApiModule());
     modules.add(new ProjectQueryBuilderModule());
@@ -475,6 +486,7 @@ public class Daemon extends SiteProgram {
     modules.add(new DefaultMemoryCacheModule());
     modules.add(new H2CacheModule());
     modules.add(cfgInjector.getInstance(MailReceiverModule.class));
+    modules.add(new EmailModule());
     if (emailModule != null) {
       modules.add(emailModule);
     } else {
@@ -538,6 +550,7 @@ public class Daemon extends SiteProgram {
       modules.add(new PeriodicGroupIndexerModule());
     } else {
       modules.add(new AccountDeactivatorModule());
+      modules.add(new AttentionSetOwnerAdderModule());
       modules.add(new ChangeCleanupRunnerModule());
     }
     modules.add(new LocalMergeSuperSetComputationModule());

@@ -23,7 +23,6 @@ import {
   iconForRun,
   PRIMARY_STATUS_ACTIONS,
   primaryRunAction,
-  worstCategory,
 } from '../../models/checks/checks-util';
 import {
   CheckRun,
@@ -58,11 +57,13 @@ import {Interaction} from '../../constants/reporting';
 import {Deduping} from '../../api/reporting';
 import {when} from 'lit/directives/when.js';
 import {changeViewModelToken} from '../../models/views/change';
+import {formStyles} from '../../styles/form-styles';
 
 @customElement('gr-checks-run')
 export class GrChecksRun extends LitElement {
   static override get styles() {
     return [
+      formStyles,
       sharedStyles,
       css`
         :host {
@@ -331,7 +332,11 @@ export class GrChecksRun extends LitElement {
     const link = this.run.statusLink;
     if (!link) return;
     return html`
-      <a href=${link} target="_blank" @click=${this.onLinkClick}
+      <a
+        href=${link}
+        target="_blank"
+        rel="noopener noreferrer"
+        @click=${this.onLinkClick}
         ><gr-icon
           icon="open_in_new"
           class="statusLinkIcon"
@@ -362,7 +367,7 @@ export class GrChecksRun extends LitElement {
    */
   renderAdditionalIcon() {
     if (this.run.status !== RunStatus.RUNNING) return nothing;
-    const category = worstCategory(this.run);
+    const category = this.run.worstCategory;
     if (!category) return nothing;
     const icon = iconFor(category);
     return html`

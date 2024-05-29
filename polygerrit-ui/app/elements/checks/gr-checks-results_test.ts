@@ -66,7 +66,10 @@ suite('gr-result-row test', () => {
         <div class="space"></div>
       </div>
         <div class="summary-cell">
-          <a class="link" href="https://www.google.com" target="_blank">
+          <a class="link"
+             href="https://www.google.com"
+             target="_blank"
+             rel="noopener noreferrer">
             <gr-icon
               icon="open_in_new"
               aria-label="external link to details"
@@ -194,7 +197,11 @@ suite('gr-checks-results test', () => {
               </div>
             </div>
             <div class="right">
-              <a href="https://www.google.com" target="_blank">
+              <a
+                href="https://www.google.com"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
                 <gr-icon
                   icon="bug_report"
                   filled
@@ -203,7 +210,11 @@ suite('gr-checks-results test', () => {
                 ></gr-icon>
                 <paper-tooltip offset="5"> </paper-tooltip>
               </a>
-              <a href="https://www.google.com" target="_blank">
+              <a
+                href="https://www.google.com"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
                 <gr-icon
                   icon="open_in_new"
                   aria-label="Fake Link 1"
@@ -211,12 +222,20 @@ suite('gr-checks-results test', () => {
                 ></gr-icon>
                 <paper-tooltip offset="5"> </paper-tooltip>
               </a>
-              <a href="https://www.google.com" target="_blank">
+              <a
+                href="https://www.google.com"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
                 <gr-icon icon="code" aria-label="Fake Code Link" class="link">
                 </gr-icon>
                 <paper-tooltip offset="5"> </paper-tooltip>
               </a>
-              <a href="https://www.google.com" target="_blank">
+              <a
+                href="https://www.google.com"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
                 <gr-icon
                   icon="image"
                   filled

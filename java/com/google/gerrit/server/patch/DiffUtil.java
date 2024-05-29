@@ -168,13 +168,14 @@ public class DiffUtil {
     }
   }
 
-  public static String cleanPatch(final String patch) {
+  public static String normalizePatchForComparison(final String patch) {
     String res = removePatchHeader(patch);
     return res
-        // Remove "index NN..NN" lines
-        .replaceAll("(?m)^index.*", "")
-        // Remove hunk-headers lines
-        .replaceAll("(?m)^@@ .*", "")
+        // Remove any lines which are not diff lines or file header lines - such index,
+        // hunk-headers, and context lines.
+        .replaceAll("(?m)^[^+-].*", "")
+        .replaceAll("(?m)^[+]{3} [ab]/", "+++ ")
+        .replaceAll("(?m)^-{3} [ab]/", "--- ")
         // Remove empty lines
         .replaceAll("\n+", "\n")
         // Trim
@@ -184,21 +185,21 @@ public class DiffUtil {
   public static String removePatchHeader(final String patch) {
     String res = patch.trim();
     if (!res.startsWith("diff --") && res.contains("\ndiff --")) {
-      return res.substring(patch.indexOf("\ndiff --"), patch.length() - 1);
+      return res.substring(res.indexOf("\ndiff --"));
     }
     return res;
   }
 
   public static Optional<String> getPatchHeader(final String patch) {
-    if (patch.startsWith("diff --")) {
+    String res = patch.trim();
+    if (res.startsWith("diff ")) {
       return Optional.empty();
     }
-    return Optional.ofNullable(
-        Strings.emptyToNull(patch.trim().substring(0, patch.indexOf("\ndiff --git"))));
+    return Optional.ofNullable(Strings.emptyToNull(res.substring(0, res.indexOf("\ndiff "))));
   }
 
-  public static String cleanPatch(BinaryResult bin) throws IOException {
-    return cleanPatch(bin.asString());
+  public static String normalizePatchForComparison(BinaryResult bin) throws IOException {
+    return normalizePatchForComparison(bin.asString());
   }
 
   private static boolean isRootOrMergeCommit(RevCommit commit) {

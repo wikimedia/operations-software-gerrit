@@ -313,11 +313,17 @@ suite('gr-comment tests', () => {
                 <gr-formatted-text class="message"></gr-formatted-text>
                 <gr-endpoint-slot name="above-actions"></gr-endpoint-slot>
                 <div class="actions">
-                  <div class="action resolve">
-                    <label>
-                      <input checked="" id="resolvedCheckbox" type="checkbox" />
-                      Resolved
-                    </label>
+                  <div class="leftActions">
+                    <div class="action resolve">
+                      <label>
+                        <input
+                          checked=""
+                          id="resolvedCheckbox"
+                          type="checkbox"
+                        />
+                        Resolved
+                      </label>
+                    </div>
                   </div>
                   <div class="rightActions">
                     <gr-button
@@ -378,6 +384,17 @@ suite('gr-comment tests', () => {
                   </gr-tooltip-content>
                 </div>
                 <div class="headerMiddle"></div>
+                <gr-button
+                  aria-disabled="false"
+                  class="action suggestEdit"
+                  link=""
+                  role="button"
+                  tabindex="0"
+                  title="This button copies the text to make a suggestion"
+                >
+                  <gr-icon filled="" icon="edit" id="icon"> </gr-icon>
+                  Suggest edit
+                </gr-button>
                 <span class="patchset-text">Patchset 1</span>
                 <span class="separator"></span>
                 <span class="date" tabindex="0">
@@ -402,11 +419,17 @@ suite('gr-comment tests', () => {
                 </gr-textarea>
                 <gr-endpoint-slot name="above-actions"></gr-endpoint-slot>
                 <div class="actions">
-                  <div class="action resolve">
-                    <label>
-                      <input checked="" id="resolvedCheckbox" type="checkbox" />
-                      Resolved
-                    </label>
+                  <div class="leftActions">
+                    <div class="action resolve">
+                      <label>
+                        <input
+                          checked=""
+                          id="resolvedCheckbox"
+                          type="checkbox"
+                        />
+                        Resolved
+                      </label>
+                    </div>
                   </div>
                   <div class="rightActions">
                     <gr-button

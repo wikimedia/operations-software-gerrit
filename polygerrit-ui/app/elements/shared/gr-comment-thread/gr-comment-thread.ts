@@ -44,10 +44,9 @@ import {
   UrlEncodedCommentId,
 } from '../../../types/common';
 import {CommentEditingChangedDetail, GrComment} from '../gr-comment/gr-comment';
-import {FILE} from '../../../embed/diff/gr-diff/gr-diff-line';
 import {GrButton} from '../gr-button/gr-button';
 import {DiffInfo, DiffPreferencesInfo} from '../../../types/diff';
-import {DiffLayer, RenderPreferences} from '../../../api/diff';
+import {DiffLayer, FILE, RenderPreferences} from '../../../api/diff';
 import {
   assert,
   assertIsDefined,
@@ -56,7 +55,7 @@ import {
 import {fire} from '../../../utils/event-util';
 import {GrSyntaxLayerWorker} from '../../../embed/diff/gr-syntax-layer/gr-syntax-layer-worker';
 import {TokenHighlightLayer} from '../../../embed/diff/gr-diff-builder/token-highlight-layer';
-import {anyLineTooLong} from '../../../embed/diff/gr-diff/gr-diff-utils';
+import {anyLineTooLong} from '../../../utils/diff-util';
 import {getUserName} from '../../../utils/display-name-util';
 import {generateAbsoluteUrl} from '../../../utils/url-util';
 import {sharedStyles} from '../../../styles/shared-styles';
@@ -74,6 +73,7 @@ import {whenRendered} from '../../../utils/dom-util';
 import {createChangeUrl, createDiffUrl} from '../../../models/views/change';
 import {userModelToken} from '../../../models/user/user-model';
 import {highlightServiceToken} from '../../../services/highlight/highlight-service';
+import {noAwait, waitUntil} from '../../../utils/async-util';
 
 declare global {
   interface HTMLElementEventMap {
@@ -111,6 +111,9 @@ export class GrCommentThread extends LitElement {
 
   @query('.comment-box')
   commentBox?: HTMLElement;
+
+  @query('gr-comment.draft')
+  draftElement?: GrComment;
 
   @queryAll('gr-comment')
   commentElements?: NodeList;
@@ -311,6 +314,8 @@ export class GrCommentThread extends LitElement {
           font-size: var(--font-size-normal);
           font-weight: var(--font-weight-normal);
           line-height: var(--line-height-normal);
+        }
+        gr-diff#diff {
           /* Explicitly set the background color of the diff. We
            * cannot use the diff content type ab because of the skip chunk preceding
            * it, diff processor assumes the chunk of type skip/ab can be collapsed
@@ -419,6 +424,14 @@ export class GrCommentThread extends LitElement {
     ];
   }
 
+  override connectedCallback(): void {
+    super.connectedCallback();
+    // Add a default click-handler so that clicks don't bubble from a comment to gr-diff-rows.
+    this.addEventListener('click', e => {
+      e.stopPropagation();
+    });
+  }
+
   override render() {
     if (!this.thread) return;
     const dynamicBoxClasses = {
@@ -495,6 +508,7 @@ export class GrCommentThread extends LitElement {
         : !this.unresolved);
     return html`
       <gr-comment
+        class=${classMap({draft: isDraft(comment)})}
         .comment=${comment}
         .comments=${this.thread!.comments}
         ?initially-collapsed=${initiallyCollapsed}
@@ -646,6 +660,15 @@ export class GrCommentThread extends LitElement {
         }, 500);
       });
     }
+    if (this.thread && isDraft(this.getFirstComment())) {
+      const msg = this.getFirstComment()?.message ?? '';
+      if (msg.length === 0) this.editDraft();
+    }
+  }
+
+  private async editDraft() {
+    await waitUntil(() => !!this.draftElement);
+    this.draftElement!.edit();
   }
 
   private isDraft() {
@@ -797,6 +820,7 @@ export class GrCommentThread extends LitElement {
     const newReply = createNewReply(replyingTo, content, unresolved);
     if (userWantsToEdit) {
       this.getCommentsModel().addNewDraft(newReply);
+      noAwait(this.editDraft());
     } else {
       try {
         this.saving = true;

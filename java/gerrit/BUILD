@@ -9,6 +9,7 @@ java_library(
         "//java/com/google/gerrit/entities",
         "//java/com/google/gerrit/extensions:api",
         "//java/com/google/gerrit/server",
+        "//java/com/google/gerrit/server/rules/prolog",
         "//lib:jgit",
         "//lib/flogger:api",
         "//lib/prolog:runtime",

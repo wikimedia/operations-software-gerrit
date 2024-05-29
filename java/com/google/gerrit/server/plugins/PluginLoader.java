@@ -62,6 +62,7 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
+import java.util.jar.JarFile;
 import org.eclipse.jgit.internal.storage.file.FileSnapshot;
 import org.eclipse.jgit.lib.Config;
 
@@ -193,7 +194,9 @@ public class PluginLoader implements LifecycleListener {
       try {
         Plugin plugin = runPlugin(name, dst, active);
         if (active == null) {
-          logger.atInfo().log("Installed plugin %s", plugin.getName());
+          logger.atInfo().log(
+              "Installed plugin %s%s",
+              plugin.getName(), plugin.getApiModule().isPresent() ? " (w/ ApiModule)" : "");
         }
       } catch (PluginInstallException e) {
         Files.deleteIfExists(dst);
@@ -217,7 +220,7 @@ public class PluginLoader implements LifecycleListener {
     toCleanup.add(plugin);
   }
 
-  public void disablePlugins(Set<String> names) {
+  public void disablePlugins(Set<String> names) throws PluginInstallException {
     if (!isRemoteAdminEnabled()) {
       logger.atWarning().log(
           "Remote plugin administration is disabled, ignoring disablePlugins(%s)", names);
@@ -229,6 +232,12 @@ public class PluginLoader implements LifecycleListener {
         Plugin active = running.get(name);
         if (active == null) {
           continue;
+        }
+
+        if (active.getApiModule().isPresent()) {
+          throw new PluginInstallException(
+              String.format(
+                  "Plugin %s has registered an ApiModule therefore it cannot be disabled", name));
         }
 
         if (mandatoryPlugins.contains(name)) {
@@ -350,7 +359,6 @@ public class PluginLoader implements LifecycleListener {
       disabled.clear();
       broken.clear();
       if (!toCleanup.isEmpty()) {
-        System.gc();
         processPendingCleanups();
       }
     }
@@ -378,8 +386,14 @@ public class PluginLoader implements LifecycleListener {
         try {
           logger.atInfo().log("Reloading plugin %s", name);
           Plugin newPlugin = runPlugin(name, active.getSrcFile(), active);
-          logger.atInfo().log(
-              "Reloaded plugin %s, version %s", newPlugin.getName(), newPlugin.getVersion());
+
+          if (newPlugin != active) {
+            logger.atInfo().log(
+                "Reloaded plugin %s%s, version %s",
+                newPlugin.getName(),
+                newPlugin.getApiModule().isPresent() ? " (w/ ApiModule)" : "",
+                newPlugin.getVersion());
+          }
         } catch (PluginInstallException e) {
           logger.atWarning().withCause(e.getCause()).log("Cannot reload plugin %s", name);
           throw e;
@@ -398,7 +412,7 @@ public class PluginLoader implements LifecycleListener {
       syncDisabledPlugins(pluginsFiles);
 
       Map<String, Path> activePlugins = filterDisabled(pluginsFiles);
-      for (Map.Entry<String, Path> entry : jarsFirstSortedPluginsSet(activePlugins)) {
+      for (Map.Entry<String, Path> entry : jarsApiFirstSortedPluginsSet(activePlugins)) {
         String name = entry.getKey();
         Path path = entry.getValue();
         String fileName = path.getFileName().toString();
@@ -428,9 +442,10 @@ public class PluginLoader implements LifecycleListener {
           if (!loadedPlugin.isDisabled()) {
             loadedPlugins.add(name);
             logger.atInfo().log(
-                "%s plugin %s, version %s",
+                "%s plugin %s%s, version %s",
                 active == null ? "Loaded" : "Reloaded",
                 loadedPlugin.getName(),
+                loadedPlugin.getApiModule().isPresent() ? " (w/ ApiModule)" : "",
                 loadedPlugin.getVersion());
           }
         } catch (PluginInstallException e) {
@@ -455,7 +470,7 @@ public class PluginLoader implements LifecycleListener {
     }
   }
 
-  private TreeSet<Map.Entry<String, Path>> jarsFirstSortedPluginsSet(
+  private TreeSet<Map.Entry<String, Path>> jarsApiFirstSortedPluginsSet(
       Map<String, Path> activePlugins) {
     TreeSet<Map.Entry<String, Path>> sortedPlugins =
         Sets.newTreeSet(
@@ -464,14 +479,34 @@ public class PluginLoader implements LifecycleListener {
               public int compare(Map.Entry<String, Path> e1, Map.Entry<String, Path> e2) {
                 Path n1 = e1.getValue().getFileName();
                 Path n2 = e2.getValue().getFileName();
-                return ComparisonChain.start()
-                    .compareTrueFirst(isJar(n1), isJar(n2))
-                    .compare(n1, n2)
-                    .result();
+
+                try {
+                  boolean e1IsApi = isApi(e1.getValue());
+                  boolean e2IsApi = isApi(e2.getValue());
+                  return ComparisonChain.start()
+                      .compareTrueFirst(e1IsApi, e2IsApi)
+                      .compareTrueFirst(isJar(n1), isJar(n2))
+                      .compare(n1, n2)
+                      .result();
+                } catch (IOException ioe) {
+                  logger.atSevere().withCause(ioe).log("Unable to compare %s and %s", n1, n2);
+                  return 0;
+                }
               }
 
-              private boolean isJar(Path n1) {
-                return n1.toString().endsWith(".jar");
+              private boolean isJar(Path pluginPath) {
+                return pluginPath.toString().endsWith(".jar");
+              }
+
+              private boolean isApi(Path pluginPath) throws IOException {
+                return isJar(pluginPath) && hasApiModuleEntryInManifest(pluginPath);
+              }
+
+              private boolean hasApiModuleEntryInManifest(Path pluginPath) throws IOException {
+                try (JarFile jarFile = new JarFile(pluginPath.toFile())) {
+                  return !Strings.isNullOrEmpty(
+                      jarFile.getManifest().getMainAttributes().getValue(ServerPlugin.API_MODULE));
+                }
               }
             });
 
@@ -492,6 +527,13 @@ public class PluginLoader implements LifecycleListener {
       if (restartRequired && mandatoryPlugins.contains(name)) {
         logger.atWarning().log("Restarting mandatory plugin %s not allowed", name);
         return oldPlugin;
+      }
+
+      if (oldPlugin != null && oldPlugin.getApiModule().isPresent()) {
+        throw new PluginInstallException(
+            String.format(
+                "Plugin %s has registered an ApiModule therefore its restart/reload is not allowed",
+                name));
       }
 
       Plugin newPlugin = loadPlugin(name, plugin, snapshot);
@@ -545,7 +587,13 @@ public class PluginLoader implements LifecycleListener {
       }
     }
     for (String name : unload) {
-      unloadPlugin(running.get(name));
+      Plugin runningPlugin = running.get(name);
+
+      if (runningPlugin.getApiModule().isPresent()) {
+        logger.atWarning().log("Cannot remove plugin %s as it has registered an ApiModule", name);
+      } else {
+        unloadPlugin(running.get(name));
+      }
     }
   }
 

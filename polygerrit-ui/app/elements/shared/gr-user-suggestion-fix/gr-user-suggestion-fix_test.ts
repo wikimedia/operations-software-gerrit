@@ -6,18 +6,32 @@
 import '../../../test/common-test-setup';
 import './gr-user-suggestion-fix';
 import {fixture, html, assert} from '@open-wc/testing';
-import {GrUserSuggetionFix} from './gr-user-suggestion-fix';
+import {GrUserSuggestionsFix} from './gr-user-suggestion-fix';
+import {
+  CommentModel,
+  commentModelToken,
+} from '../gr-comment-model/gr-comment-model';
+import {wrapInProvider} from '../../../models/di-provider-element';
+import {createComment} from '../../../test/test-data-generators';
 import {getAppContext} from '../../../services/app-context';
 
 suite('gr-user-suggestion-fix tests', () => {
-  let element: GrUserSuggetionFix;
+  let element: GrUserSuggestionsFix;
 
   setup(async () => {
-    const flagsService = getAppContext().flagsService;
-    sinon.stub(flagsService, 'isEnabled').returns(true);
-    element = await fixture<GrUserSuggetionFix>(html`
-      <gr-user-suggestion-fix>Hello World</gr-user-suggestion-fix>
-    `);
+    const commentModel = new CommentModel(getAppContext().restApiService);
+    commentModel.updateState({
+      comment: createComment(),
+    });
+    element = (
+      await fixture<GrUserSuggestionsFix>(
+        wrapInProvider(
+          html` <gr-user-suggestion-fix>Hello World</gr-user-suggestion-fix> `,
+          commentModelToken,
+          commentModel
+        )
+      )
+    ).querySelector<GrUserSuggestionsFix>('gr-user-suggestion-fix')!;
     await element.updateComplete;
   });
 
@@ -30,7 +44,8 @@ suite('gr-user-suggestion-fix tests', () => {
           <div class="title">
             <span>Suggested edit</span>
             <a
-              href="https://gerrit-review.googlesource.com/Documentation/user-suggest-edits.html"
+              href="/Documentation/user-suggest-edits.html"
+              rel="noopener noreferrer"
               target="_blank"
               ><gr-icon icon="help" title="read documentation"></gr-icon
             ></a>
@@ -38,17 +53,24 @@ suite('gr-user-suggestion-fix tests', () => {
           <div class="copyButton">
             <gr-copy-clipboard
               hideinput=""
+              multiline=""
               text="Hello World"
               copytargetname="Suggested edit"
             ></gr-copy-clipboard>
           </div>
           <div>
-            <gr-button class="action show-fix" secondary="" flatten=""
+            <gr-button
+              aria-disabled="false"
+              class="action show-fix"
+              secondary=""
+              role="button"
+              tabindex="0"
+              flatten=""
               >Show edit</gr-button
             >
           </div>
         </div>
-        <code>Hello World</code>`
+        <gr-suggestion-diff-preview></gr-suggestion-diff-preview>`
     );
   });
 });

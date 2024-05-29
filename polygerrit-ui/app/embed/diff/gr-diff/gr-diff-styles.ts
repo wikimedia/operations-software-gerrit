@@ -6,16 +6,6 @@
 import {css} from 'lit';
 
 export const grDiffStyles = css`
-  /* This is used to hide all left side of the diff (e.g. diffs besides
-     comments in the change log). Since we want to remove the first 4
-     cells consistently in all rows except context buttons (.dividerRow). */
-  :host(.no-left) .sideBySide colgroup col:nth-child(-n + 4),
-  :host(.no-left) .sideBySide tr:not(.dividerRow) td:nth-child(-n + 4) {
-    display: none;
-  }
-  :host(.disable-context-control-buttons) {
-    --context-control-display: none;
-  }
   :host(.disable-context-control-buttons) .section {
     border-right: none;
   }
@@ -46,7 +36,8 @@ export const grDiffStyles = css`
     border-collapse: collapse;
     table-layout: fixed;
   }
-  td.lineNum {
+  td.lineNum,
+  td.blankLineNum {
     /* Enforces background whenever lines wrap */
     background-color: var(--diff-blank-background-color);
   }
@@ -375,7 +366,7 @@ export const grDiffStyles = css`
 
   /* Context controls */
   .contextControl {
-    display: var(--context-control-display, table-row-group);
+    display: table-row-group;
     background-color: transparent;
     border: none;
     --divider-height: var(--spacing-s);
@@ -402,6 +393,16 @@ export const grDiffStyles = css`
     /* One line of background behind the context expanders which they can
        render on top of, plus some padding. */
     height: calc(var(--line-height-normal) + var(--spacing-s));
+  }
+
+  /* Hide the actual context control buttons */
+  :host(.disable-context-control-buttons) .contextControl gr-context-controls {
+    display: none;
+  }
+  /* Maintain a small amount of padding at the edges of diff chunks */
+  :host(.disable-context-control-buttons) .contextControl .contextBackground {
+    height: var(--spacing-s);
+    border-right: none;
   }
 
   .dividerCell {
@@ -461,7 +462,7 @@ export const grDiffStyles = css`
     color: var(--link-color);
     padding: var(--spacing-m) 0 var(--spacing-m) 48px;
   }
-  #diffTable {
+  gr-diff-element {
     /* for gr-selection-action-box positioning */
     position: relative;
   }
@@ -498,18 +499,6 @@ export const grDiffStyles = css`
     color: var(--blue-700);
   }
 
-  col.sign,
-  td.sign {
-    display: none;
-  }
-
-  /* Sign column should only be shown in high-contrast mode. */
-  :host(.with-sign-col) col.sign {
-    display: table-column;
-  }
-  :host(.with-sign-col) td.sign {
-    display: table-cell;
-  }
   col.blame {
     display: none;
   }
@@ -658,7 +647,7 @@ export const grDiffStyles = css`
   gr-selection-action-box {
     /* Needs z-index to appear above wrapped content, since it's inserted
        into DOM before it. */
-    z-index: 10;
+    z-index: 120;
   }
 
   gr-diff-image-new,

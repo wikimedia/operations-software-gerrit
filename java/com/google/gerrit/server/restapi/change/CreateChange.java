@@ -22,6 +22,7 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
@@ -55,6 +56,7 @@ import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.PatchSetUtil;
+import com.google.gerrit.server.Sequences;
 import com.google.gerrit.server.change.ChangeFinder;
 import com.google.gerrit.server.change.ChangeInserter;
 import com.google.gerrit.server.change.ChangeJson;
@@ -69,7 +71,6 @@ import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.MergeUtil;
 import com.google.gerrit.server.git.MergeUtilFactory;
 import com.google.gerrit.server.notedb.ChangeNotes;
-import com.google.gerrit.server.notedb.Sequences;
 import com.google.gerrit.server.permissions.ChangePermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
@@ -421,7 +422,12 @@ public class CreateChange
           c =
               rw.parseCommit(
                   CommitUtil.createCommitWithTree(
-                      oi, author, committer, mergeTip, appliedPatchCommitMessage, treeId));
+                      oi,
+                      author,
+                      committer,
+                      ImmutableList.of(mergeTip),
+                      appliedPatchCommitMessage,
+                      treeId));
         } else {
           // create an empty commit.
           c = createEmptyCommit(oi, rw, author, committer, mergeTip, commitMessage);
@@ -445,6 +451,15 @@ public class CreateChange
               .entrySet()
               .forEach(e -> validationOptions.put(e.getKey(), e.getValue()));
           ins.setValidationOptions(validationOptions.build());
+        }
+
+        if (input.customKeyedValues != null) {
+          ImmutableMap.Builder<String, String> customKeyedValues = ImmutableMap.builder();
+          input
+              .customKeyedValues
+              .entrySet()
+              .forEach(e -> customKeyedValues.put(e.getKey(), e.getValue()));
+          ins.setCustomKeyedValues(customKeyedValues.build());
         }
 
         try (BatchUpdate bu = updateFactory.create(projectState.getNameKey(), me, now)) {
@@ -540,7 +555,8 @@ public class CreateChange
           }
           parentCommit = null;
         } else {
-          throw new BadRequestException("Destination branch does not exist");
+          throw new BadRequestException(
+              String.format("Destination branch does not exist %s", inputBranch));
         }
       }
     }
@@ -585,14 +601,15 @@ public class CreateChange
       CodeReviewRevWalk rw,
       PersonIdent authorIdent,
       PersonIdent committerIdent,
-      RevCommit mergeTip,
+      @Nullable RevCommit mergeTip,
       String commitMessage)
       throws IOException {
     logger.atFine().log("Creating empty commit");
     ObjectId treeID = mergeTip == null ? emptyTreeId(oi) : mergeTip.getTree().getId();
+    List<RevCommit> parents = mergeTip == null ? ImmutableList.of() : ImmutableList.of(mergeTip);
     return rw.parseCommit(
         CommitUtil.createCommitWithTree(
-            oi, authorIdent, committerIdent, mergeTip, commitMessage, treeID));
+            oi, authorIdent, committerIdent, parents, commitMessage, treeID));
   }
 
   private static ObjectId emptyTreeId(ObjectInserter inserter) throws IOException {

@@ -25,7 +25,6 @@ import {
 import {
   changeIsOpen,
   isOwner,
-  ListChangesOption,
   listChangesOptionsToHex,
 } from '../../../utils/change-util';
 import {
@@ -42,13 +41,13 @@ import {
   BranchName,
   ChangeActionDialog,
   ChangeInfo,
-  ChangeViewChangeInfo,
   CherryPickInput,
   CommitId,
   InheritedBooleanInfo,
   isDetailedLabelInfo,
   isQuickLabelInfo,
   LabelInfo,
+  ListChangesOption,
   NumericChangeId,
   PatchSetNumber,
   RequestPayload,
@@ -100,7 +99,7 @@ import {resolve} from '../../../models/dependency';
 import {changeModelToken} from '../../../models/change/change-model';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {LitElement, PropertyValues, css, html, nothing} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators.js';
+import {customElement, query, state} from 'lit/decorators.js';
 import {ifDefined} from 'lit/directives/if-defined.js';
 import {assertIsDefined, queryAll, uuid} from '../../../utils/common-util';
 import {Interaction} from '../../../constants/reporting';
@@ -113,6 +112,9 @@ import {whenVisible} from '../../../utils/dom-util';
 import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {modalStyles} from '../../../styles/gr-modal-styles';
 import {subscribe} from '../../lit/subscription-controller';
+import {userModelToken} from '../../../models/user/user-model';
+import {ParsedChangeInfo} from '../../../types/types';
+import {configModelToken} from '../../../models/config/config-model';
 
 const ERR_BRANCH_EMPTY = 'The destination branch can’t be empty.';
 const ERR_COMMIT_EMPTY = 'The commit message can’t be empty.';
@@ -377,76 +379,54 @@ export class GrChangeActions
 
   RevisionActions = RevisionActions;
 
-  @property({type: Object})
-  change?: ChangeViewChangeInfo;
+  @state() change?: ParsedChangeInfo;
 
-  @state()
-  actions: ActionNameToActionInfoMap = {};
+  @state() actions: ActionNameToActionInfoMap = {};
 
-  @property({type: Array})
-  primaryActionKeys: PrimaryActionKey[] = [
+  @state() primaryActionKeys: PrimaryActionKey[] = [
     ChangeActions.READY,
     RevisionActions.SUBMIT,
   ];
 
-  @property({type: Boolean})
-  disableEdit = false;
-
-  // private but used in test
   @state() _hideQuickApproveAction = false;
 
-  @property({type: Object})
-  account?: AccountInfo;
+  @state() account?: AccountInfo;
 
-  @property({type: String})
-  changeNum?: NumericChangeId;
+  @state() changeNum?: NumericChangeId;
 
-  @property({type: String})
-  changeStatus?: ChangeStatus;
+  @state() changeStatus?: ChangeStatus;
 
-  @property({type: String})
-  commitNum?: CommitId;
+  @state() commitNum?: CommitId;
 
   @state() latestPatchNum?: PatchSetNumber;
 
-  @property({type: String})
-  commitMessage = '';
+  @state() commitMessage = '';
 
-  @property({type: Object})
-  revisionActions: ActionNameToActionInfoMap = {};
+  @state() revisionActions: ActionNameToActionInfoMap = {};
 
-  @state() private revisionSubmitAction?: ActionInfo | null;
+  @state() revisionSubmitAction?: ActionInfo | null;
 
-  // used as a proprty type so cannot be private
   @state() revisionRebaseAction?: ActionInfo | null;
 
-  @property({type: String})
-  privateByDefault?: InheritedBooleanInfo;
+  @state() privateByDefault?: InheritedBooleanInfo;
 
-  // private but used in test
   @state() loading = true;
 
-  // private but used in test
   @state() actionLoadingMessage = '';
 
-  @state() private inProgressActionKeys = new Set<string>();
+  @state() inProgressActionKeys = new Set<string>();
 
-  // _computeAllActions always returns an array
-  // private but used in test
   @state() allActionValues: UIActionInfo[] = [];
 
-  // private but used in test
   @state() topLevelActions?: UIActionInfo[];
 
-  // private but used in test
   @state() topLevelPrimaryActions?: UIActionInfo[];
 
-  // private but used in test
   @state() topLevelSecondaryActions?: UIActionInfo[];
 
-  @state() private menuActions?: MenuAction[];
+  @state() menuActions?: MenuAction[];
 
-  @state() private overflowActions: OverflowAction[] = [
+  @state() overflowActions: OverflowAction[] = [
     {
       type: ActionType.CHANGE,
       key: ChangeActions.WIP,
@@ -493,35 +473,31 @@ export class GrChangeActions
     },
   ];
 
-  @state() private actionPriorityOverrides: ActionPriorityOverride[] = [];
+  @state() actionPriorityOverrides: ActionPriorityOverride[] = [];
 
-  @state() private additionalActions: UIActionInfo[] = [];
+  @state() additionalActions: UIActionInfo[] = [];
 
-  // private but used in test
   @state() hiddenActions: string[] = [];
 
-  // private but used in test
   @state() disabledMenuActions: string[] = [];
 
-  // private but used in test
-  @state()
-  editPatchsetLoaded = false;
+  @state() editPatchsetLoaded = false;
 
-  @property({type: Boolean})
-  editMode = false;
+  @state() editMode = false;
 
-  // private but used in test
-  @state()
-  editBasedOnCurrentPatchSet = true;
+  @state() editBasedOnCurrentPatchSet = true;
 
-  @property({type: Boolean})
-  loggedIn = false;
+  @state() loggedIn = false;
 
   private readonly restApiService = getAppContext().restApiService;
 
   private readonly reporting = getAppContext().reportingService;
 
   private readonly getPluginLoader = resolve(this, pluginLoaderToken);
+
+  private readonly getUserModel = resolve(this, userModelToken);
+
+  private readonly getConfigModel = resolve(this, configModelToken);
 
   private readonly getChangeModel = resolve(this, changeModelToken);
 
@@ -545,6 +521,51 @@ export class GrChangeActions
       this,
       () => this.getChangeModel().patchNum$,
       x => (this.editPatchsetLoaded = x === 'edit')
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().changeNum$,
+      x => (this.changeNum = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().change$,
+      x => (this.change = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().status$,
+      x => (this.changeStatus = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().editMode$,
+      x => (this.editMode = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().revision$,
+      rev => (this.commitNum = rev?.commit?.commit)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().latestRevision$,
+      rev => (this.commitMessage = rev?.commit?.message ?? '')
+    );
+    subscribe(
+      this,
+      () => this.getUserModel().account$,
+      x => (this.account = x)
+    );
+    subscribe(
+      this,
+      () => this.getUserModel().loggedIn$,
+      x => (this.loggedIn = x)
+    );
+    subscribe(
+      this,
+      () => this.getConfigModel().repoConfig$,
+      config => (this.privateByDefault = config?.private_by_default)
     );
   }
 
@@ -865,7 +886,7 @@ export class GrChangeActions
 
         this.revisionActions = revisionActions;
         this.sendShowRevisionActions({
-          change,
+          change: change as ChangeInfo,
           revisionActions,
         });
         this.handleLoadingComplete();
@@ -1025,18 +1046,7 @@ export class GrChangeActions
   }
 
   private editStatusChanged() {
-    // Hide change edits if not logged in
-    if (this.change === undefined || !this.loggedIn) {
-      return;
-    }
-    if (this.disableEdit) {
-      delete this.actions.rebaseEdit;
-      delete this.actions.publishEdit;
-      delete this.actions.deleteEdit;
-      delete this.actions.stopEdit;
-      delete this.actions.edit;
-      return;
-    }
+    if (!this.change || !this.loggedIn) return;
     if (this.editPatchsetLoaded) {
       // Only show actions that mutate an edit if an actual edit patch set
       // is loaded.
@@ -1115,7 +1125,7 @@ export class GrChangeActions
     if (!this.change || !this.change.labels || !this.change.permitted_labels) {
       return null;
     }
-    if (this.change && this.change.status === ChangeStatus.MERGED) {
+    if (this.change?.status === ChangeStatus.MERGED) {
       return null;
     }
     let result;
@@ -1317,18 +1327,18 @@ export class GrChangeActions
 
   // private but used in test
   canSubmitChange() {
-    if (!this.change) {
-      return false;
-    }
+    if (!this.change) return false;
+    const change = this.change as ChangeInfo;
+    const revision = this.getRevision(change, this.latestPatchNum);
     return this.getPluginLoader().jsApiService.canSubmitChange(
-      this.change,
-      this.getRevision(this.change, this.latestPatchNum)
+      change,
+      revision
     );
   }
 
   // private but used in test
-  getRevision(change: ChangeViewChangeInfo, patchNum?: PatchSetNumber) {
-    for (const rev of Object.values(change.revisions)) {
+  getRevision(change: ChangeInfo, patchNum?: PatchSetNumber) {
+    for (const rev of Object.values(change.revisions ?? {})) {
       if (rev._number === patchNum) {
         return rev;
       }
@@ -1553,6 +1563,7 @@ export class GrChangeActions
       base: e.detail.base,
       allow_conflicts: e.detail.allowConflicts,
       on_behalf_of_uploader: e.detail.onBehalfOfUploader,
+      committer_email: e.detail.committerEmail,
     };
     const rebaseChain = !!e.detail.rebaseChain;
     this.fireAction(
@@ -1600,6 +1611,7 @@ export class GrChangeActions
         base: el.baseCommit ? el.baseCommit : null,
         message: el.message,
         allow_conflicts: conflicts,
+        committer_email: el.committerEmail ? el.committerEmail : null,
       }
     );
   }
@@ -1799,7 +1811,7 @@ export class GrChangeActions
     if (dialog.init) dialog.init();
     dialog.hidden = false;
     assertIsDefined(this.actionsModal, 'actionsModal');
-    this.actionsModal.showModal();
+    if (this.actionsModal.isConnected) this.actionsModal.showModal();
     whenVisible(dialog, () => {
       if (dialog.resetFocus) {
         dialog.resetFocus();
@@ -1812,7 +1824,7 @@ export class GrChangeActions
   // private but used in test
   setReviewOnRevert(newChangeId: NumericChangeId) {
     const review = this.getPluginLoader().jsApiService.getReviewPostRevert(
-      this.change
+      this.change as ChangeInfo
     );
     if (!review) {
       return Promise.resolve(undefined);
@@ -1821,67 +1833,77 @@ export class GrChangeActions
   }
 
   // private but used in test
-  handleResponse(action: UIActionInfo, response?: Response) {
+  async handleResponse(action: UIActionInfo, response?: Response) {
     if (!response) {
       return;
     }
     // response is guaranteed to be ok (due to semantics of rest-api methods)
-    return this.restApiService.getResponseObject(response).then(obj => {
-      switch (action.__key) {
-        case ChangeActions.REVERT: {
-          const revertChangeInfo: ChangeInfo = obj as unknown as ChangeInfo;
-          this.waitForChangeReachable(revertChangeInfo._number)
-            .then(() => this.setReviewOnRevert(revertChangeInfo._number))
-            .then(() => {
-              this.getNavigation().setUrl(
-                createChangeUrl({change: revertChangeInfo})
-              );
-            });
-          break;
-        }
-        case RevisionActions.CHERRYPICK: {
-          const cherrypickChangeInfo: ChangeInfo = obj as unknown as ChangeInfo;
-          this.waitForChangeReachable(cherrypickChangeInfo._number).then(() => {
-            this.getNavigation().setUrl(
-              createChangeUrl({change: cherrypickChangeInfo})
-            );
-          });
-          break;
-        }
-        case ChangeActions.DELETE:
-          if (action.__type === ActionType.CHANGE) {
-            this.getNavigation().setUrl(rootUrl());
-          }
-          break;
-        case ChangeActions.WIP:
-        case ChangeActions.DELETE_EDIT:
-        case ChangeActions.PUBLISH_EDIT:
-        case ChangeActions.REBASE_EDIT:
-        case ChangeActions.REBASE:
-        case ChangeActions.SUBMIT:
-          // Hide rebase dialog only if the action succeeds
-          this.actionsModal?.close();
-          this.hideAllDialogs();
-          this.getChangeModel().navigateToChangeResetReload();
-          break;
-        case ChangeActions.REVERT_SUBMISSION: {
-          const revertSubmistionInfo = obj as unknown as RevertSubmissionInfo;
-          if (
-            !revertSubmistionInfo.revert_changes ||
-            !revertSubmistionInfo.revert_changes.length
-          )
-            return;
-          /* If there is only 1 change then gerrit will automatically
-            redirect to that change */
-          const topic = revertSubmistionInfo.revert_changes[0].topic;
-          this.getNavigation().setUrl(createSearchUrl({topic}));
-          break;
-        }
-        default:
-          this.getChangeModel().navigateToChangeResetReload();
-          break;
+    const obj = await this.restApiService.getResponseObject(response);
+    switch (action.__key) {
+      case ChangeActions.REVERT: {
+        const revertChangeInfo: ChangeInfo = obj as unknown as ChangeInfo;
+        this.restApiService.setInProjectLookup(
+          revertChangeInfo._number,
+          revertChangeInfo.project
+        );
+        const reachable = await this.waitForChangeReachable(
+          revertChangeInfo._number
+        );
+        if (!reachable) return;
+        await this.setReviewOnRevert(revertChangeInfo._number);
+        this.getNavigation().setUrl(
+          createChangeUrl({change: revertChangeInfo})
+        );
+        break;
       }
-    });
+      case RevisionActions.CHERRYPICK: {
+        const cherrypickChangeInfo: ChangeInfo = obj as unknown as ChangeInfo;
+        this.restApiService.setInProjectLookup(
+          cherrypickChangeInfo._number,
+          cherrypickChangeInfo.project
+        );
+        const reachable = this.waitForChangeReachable(
+          cherrypickChangeInfo._number
+        );
+        if (!reachable) return;
+        this.getNavigation().setUrl(
+          createChangeUrl({change: cherrypickChangeInfo})
+        );
+        break;
+      }
+      case ChangeActions.DELETE:
+        if (action.__type === ActionType.CHANGE) {
+          this.getNavigation().setUrl(rootUrl());
+        }
+        break;
+      case ChangeActions.WIP:
+      case ChangeActions.DELETE_EDIT:
+      case ChangeActions.PUBLISH_EDIT:
+      case ChangeActions.REBASE_EDIT:
+      case ChangeActions.REBASE:
+      case ChangeActions.SUBMIT:
+        // Hide rebase dialog only if the action succeeds
+        this.actionsModal?.close();
+        this.hideAllDialogs();
+        this.getChangeModel().navigateToChangeResetReload();
+        break;
+      case ChangeActions.REVERT_SUBMISSION: {
+        const revertSubmistionInfo = obj as unknown as RevertSubmissionInfo;
+        if (
+          !revertSubmistionInfo.revert_changes ||
+          !revertSubmistionInfo.revert_changes.length
+        )
+          return;
+        /* If there is only 1 change then gerrit will automatically
+          redirect to that change */
+        const topic = revertSubmistionInfo.revert_changes[0].topic;
+        this.getNavigation().setUrl(createSearchUrl({topic}));
+        break;
+      }
+      default:
+        this.getChangeModel().navigateToChangeResetReload();
+        break;
+    }
   }
 
   // private but used in test
@@ -1973,18 +1995,27 @@ export class GrChangeActions
   }
 
   // private but used in test
-  handleCherrypickTap() {
+  async handleCherrypickTap() {
     if (!this.change) {
       throw new Error('The change property must be set');
     }
     assertIsDefined(this.confirmCherrypick, 'confirmCherrypick');
     this.confirmCherrypick.branch = '' as BranchName;
+    const changes = await this.getCherryPickChanges();
+    if (!changes.length) return;
+    this.confirmCherrypick.updateChanges(changes);
+    this.showActionDialog(this.confirmCherrypick);
+  }
+
+  private async getCherryPickChanges() {
+    if (!this.change) return [];
+    if (!this.change.topic) return [this.change];
     const query = `topic: "${this.change.topic}"`;
     const options = listChangesOptionsToHex(
       ListChangesOption.MESSAGES,
       ListChangesOption.ALL_REVISIONS
     );
-    this.restApiService
+    return this.restApiService
       .getChanges(0, query, undefined, options)
       .then(changes => {
         if (!changes) {
@@ -1992,10 +2023,9 @@ export class GrChangeActions
             'Change Actions',
             new Error('getChanges returns undefined')
           );
-          return;
+          return [];
         }
-        this.confirmCherrypick!.updateChanges(changes);
-        this.showActionDialog(this.confirmCherrypick!);
+        return changes;
       });
   }
 
@@ -2176,14 +2206,15 @@ export class GrChangeActions
    *
    * private but used in test
    */
-  waitForChangeReachable(changeNum: NumericChangeId) {
+  waitForChangeReachable(changeNum: NumericChangeId): Promise<boolean> {
     let attemptsRemaining = AWAIT_CHANGE_ATTEMPTS;
     return new Promise(resolve => {
       const check = () => {
         attemptsRemaining--;
-        // Pass a no-op error handler to avoid the "not found" error toast.
+        // Pass a no-op error handler to avoid the "not found" error toast,
+        // unless it's the last attempt
         this.restApiService
-          .getChange(changeNum, () => {})
+          .getChange(changeNum, attemptsRemaining !== 0 ? () => {} : undefined)
           .then(response => {
             // If the response is 404, the response will be undefined.
             if (response) {

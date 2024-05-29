@@ -28,6 +28,7 @@ import {
   SavingState,
   NewDraftInfo,
   isNew,
+  CommentInput,
 } from '../types/common';
 import {CommentSide, SpecialFilePath} from '../constants/constants';
 import {parseDate} from './date-util';
@@ -36,6 +37,7 @@ import {DiffInfo} from '../types/diff';
 import {FormattedReviewerUpdateInfo} from '../types/types';
 import {extractMentionedUsers} from './account-util';
 import {assertIsDefined, uuid} from './common-util';
+import {FILE} from '../api/diff';
 
 export function isFormattedReviewerUpdate(
   message: ChangeMessage
@@ -173,7 +175,7 @@ export function createCommentThreads(comments: Comment[]) {
       rootId: id(comment),
     };
     if (!comment.line && !comment.range) {
-      newThread.line = 'FILE';
+      newThread.line = FILE;
     }
     threads.push(newThread);
     if (id(comment)) idThreadMap[id(comment)] = newThread;
@@ -555,4 +557,37 @@ export function findComment(
     comment = comment || comments[path].find(c => c.id === commentId);
   }
   return comment;
+}
+
+export function convertToCommentInput(comment: Comment): CommentInput {
+  const output: CommentInput = {
+    message: comment.message,
+    unresolved: comment.unresolved,
+  };
+
+  if (comment.id) {
+    output.id = comment.id;
+  }
+  if (comment.path) {
+    output.path = comment.path;
+  }
+  if (comment.side) {
+    output.side = comment.side;
+  }
+  if (comment.line) {
+    output.line = comment.line;
+  }
+  if (comment.range) {
+    output.range = comment.range;
+  }
+  if (comment.in_reply_to) {
+    output.in_reply_to = comment.in_reply_to;
+  }
+  if (comment.updated) {
+    output.updated = comment.updated;
+  }
+  if (comment.tag) {
+    output.tag = comment.tag;
+  }
+  return output;
 }

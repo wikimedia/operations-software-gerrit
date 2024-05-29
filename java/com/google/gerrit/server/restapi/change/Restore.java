@@ -14,6 +14,7 @@
 
 package com.google.gerrit.server.restapi.change;
 
+import static com.google.gerrit.server.mail.EmailFactories.CHANGE_RESTORED;
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
 import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.CHANGE_MODIFICATION;
 
@@ -35,9 +36,10 @@ import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.change.ChangeJson;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.extensions.events.ChangeRestored;
+import com.google.gerrit.server.mail.EmailFactories;
+import com.google.gerrit.server.mail.send.ChangeEmail;
 import com.google.gerrit.server.mail.send.MessageIdGenerator;
-import com.google.gerrit.server.mail.send.ReplyToChangeSender;
-import com.google.gerrit.server.mail.send.RestoredSender;
+import com.google.gerrit.server.mail.send.OutgoingEmail;
 import com.google.gerrit.server.notedb.ChangeUpdate;
 import com.google.gerrit.server.permissions.ChangePermission;
 import com.google.gerrit.server.permissions.PermissionBackendException;
@@ -60,7 +62,7 @@ public class Restore
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
   private final BatchUpdate.Factory updateFactory;
-  private final RestoredSender.Factory restoredSenderFactory;
+  private final EmailFactories emailFactories;
   private final ChangeJson.Factory json;
   private final ChangeMessagesUtil cmUtil;
   private final PatchSetUtil psUtil;
@@ -71,7 +73,7 @@ public class Restore
   @Inject
   Restore(
       BatchUpdate.Factory updateFactory,
-      RestoredSender.Factory restoredSenderFactory,
+      EmailFactories emailFactories,
       ChangeJson.Factory json,
       ChangeMessagesUtil cmUtil,
       PatchSetUtil psUtil,
@@ -79,7 +81,7 @@ public class Restore
       ProjectCache projectCache,
       MessageIdGenerator messageIdGenerator) {
     this.updateFactory = updateFactory;
-    this.restoredSenderFactory = restoredSenderFactory;
+    this.emailFactories = emailFactories;
     this.json = json;
     this.cmUtil = cmUtil;
     this.psUtil = psUtil;
@@ -151,13 +153,16 @@ public class Restore
     @Override
     public void postUpdate(PostUpdateContext ctx) {
       try {
-        ReplyToChangeSender emailSender =
-            restoredSenderFactory.create(ctx.getProject(), change.getId());
-        emailSender.setFrom(ctx.getAccountId());
-        emailSender.setChangeMessage(mailMessage, ctx.getWhen());
-        emailSender.setMessageId(
+        ChangeEmail changeEmail =
+            emailFactories.createChangeEmail(
+                ctx.getProject(), change.getId(), emailFactories.createRestoredChangeEmail());
+        changeEmail.setChangeMessage(mailMessage, ctx.getWhen());
+        OutgoingEmail outgoingEmail =
+            emailFactories.createOutgoingEmail(CHANGE_RESTORED, changeEmail);
+        outgoingEmail.setFrom(ctx.getAccountId());
+        outgoingEmail.setMessageId(
             messageIdGenerator.fromChangeUpdate(ctx.getRepoView(), change.currentPatchSetId()));
-        emailSender.send();
+        outgoingEmail.send();
       } catch (Exception e) {
         logger.atSevere().withCause(e).log("Cannot email update for change %s", change.getId());
       }

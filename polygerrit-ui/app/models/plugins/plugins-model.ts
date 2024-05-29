@@ -10,9 +10,10 @@ import {
   ChecksApiConfig,
   ChecksProvider,
 } from '../../api/checks';
-import {Model} from '../model';
+import {Model} from '../base/model';
 import {select} from '../../utils/observable-util';
-import {CoverageProvider} from '../../api/annotation';
+import {CoverageProvider, TokenHoverListener} from '../../api/annotation';
+import {SuggestionsProvider} from '../../api/suggestions';
 
 export interface CoveragePlugin {
   pluginName: string;
@@ -23,6 +24,16 @@ export interface ChecksPlugin {
   pluginName: string;
   provider: ChecksProvider;
   config: ChecksApiConfig;
+}
+
+export interface SuggestionPlugin {
+  pluginName: string;
+  provider: SuggestionsProvider;
+}
+
+export interface TokenHoverListenerPlugin {
+  pluginName: string;
+  listener: TokenHoverListener;
 }
 
 export interface ChecksUpdate {
@@ -41,6 +52,17 @@ interface PluginsState {
    * List of plugins that have called checks().register().
    */
   checksPlugins: ChecksPlugin[];
+
+  /**
+   * List of plugins that have called suggestions().register().
+   */
+  suggestionsPlugins: SuggestionPlugin[];
+
+  /**
+   * List of plugins that have called
+   * annotationApi().addTokenHoverListener().
+   */
+  tokenHighlightPlugins: TokenHoverListenerPlugin[];
 }
 
 export class PluginsModel extends Model<PluginsState> {
@@ -66,6 +88,8 @@ export class PluginsModel extends Model<PluginsState> {
     super({
       coveragePlugins: [],
       checksPlugins: [],
+      suggestionsPlugins: [],
+      tokenHighlightPlugins: [],
     });
   }
 
@@ -98,6 +122,38 @@ export class PluginsModel extends Model<PluginsState> {
       return;
     }
     nextState.checksPlugins.push(plugin);
+    this.setState(nextState);
+  }
+
+  suggestionsRegister(plugin: SuggestionPlugin) {
+    const nextState = {...this.getState()};
+    nextState.suggestionsPlugins = [...nextState.suggestionsPlugins];
+    const alreadyRegistered = nextState.suggestionsPlugins.some(
+      p => p.pluginName === plugin.pluginName
+    );
+    if (alreadyRegistered) {
+      console.warn(
+        `${plugin.pluginName} tried to register twice as a suggestion provider. Ignored.`
+      );
+      return;
+    }
+    nextState.suggestionsPlugins.push(plugin);
+    this.setState(nextState);
+  }
+
+  tokenHoverListenerRegister(plugin: TokenHoverListenerPlugin) {
+    const nextState = {...this.getState()};
+    nextState.tokenHighlightPlugins = [...nextState.tokenHighlightPlugins];
+    const alreadyRegistered = nextState.tokenHighlightPlugins.some(
+      p => p.pluginName === plugin.pluginName
+    );
+    if (alreadyRegistered) {
+      console.warn(
+        `${plugin.pluginName} tried to register twice as a hover callback. Ignored.`
+      );
+      return;
+    }
+    nextState.tokenHighlightPlugins.push(plugin);
     this.setState(nextState);
   }
 

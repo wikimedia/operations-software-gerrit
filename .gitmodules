@@ -1,3 +1,7 @@
+[submodule "modules/java-prettify"]
+	path = modules/java-prettify
+	url = ../java-prettify
+
 [submodule "modules/jgit"]
 	path = modules/jgit
 	url = ../jgit
@@ -69,7 +73,7 @@
 [submodule "plugins/healthcheck"]
 	path = plugins/healthcheck
 	url = https://gerrit.googlesource.com/plugins/healthcheck
-	branch = stable-3.8
+	branch = stable-3.9
 [submodule "plugins/its-phabricator"]
 	path = plugins/its-phabricator
 	url = https://gerrit.googlesource.com/plugins/its-phabricator
@@ -88,7 +92,7 @@
 [submodule "plugins/rename-project"]
 	path = plugins/rename-project
 	url = https://gerrit.googlesource.com/plugins/rename-project
-  branch = stable-3.8
+  branch = stable-3.9
 [submodule "plugins/reviewers"]
 	path = plugins/reviewers
 	url = https://gerrit.googlesource.com/plugins/reviewers

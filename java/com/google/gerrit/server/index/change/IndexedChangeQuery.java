@@ -21,7 +21,6 @@ import static com.google.gerrit.server.index.change.ChangeField.PROJECT_SPEC;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.index.IndexConfig;
@@ -52,10 +51,6 @@ import java.util.Set;
  */
 public class IndexedChangeQuery extends IndexedQuery<Change.Id, ChangeData>
     implements ChangeDataSource, Matchable<ChangeData> {
-  public static QueryOptions oneResult() {
-    IndexConfig config = IndexConfig.createDefault();
-    return createOptions(config, 0, 1, config.pageSizeMultiplier(), 1, ImmutableSet.of());
-  }
 
   public static QueryOptions createOptions(
       IndexConfig config, int start, int limit, Set<String> fields) {
@@ -69,6 +64,24 @@ public class IndexedChangeQuery extends IndexedQuery<Change.Id, ChangeData>
       int pageSizeMultiplier,
       int limit,
       Set<String> fields) {
+    return createOptions(
+        config,
+        start,
+        pageSize,
+        pageSizeMultiplier,
+        limit,
+        /* allowIncompleteResults= */ false,
+        fields);
+  }
+
+  public static QueryOptions createOptions(
+      IndexConfig config,
+      int start,
+      int pageSize,
+      int pageSizeMultiplier,
+      int limit,
+      boolean allowIncompleteResults,
+      Set<String> fields) {
     // Always include project and change id since both are needed to load the change from NoteDb.
     if (!fields.contains(CHANGE_SPEC.getName())
         && !(fields.contains(PROJECT_SPEC.getName())
@@ -77,7 +90,8 @@ public class IndexedChangeQuery extends IndexedQuery<Change.Id, ChangeData>
       fields.add(PROJECT_SPEC.getName());
       fields.add(NUMERIC_ID_STR_SPEC.getName());
     }
-    return QueryOptions.create(config, start, pageSize, pageSizeMultiplier, limit, fields);
+    return QueryOptions.create(
+        config, start, pageSize, pageSizeMultiplier, limit, allowIncompleteResults, fields);
   }
 
   @VisibleForTesting
@@ -89,6 +103,7 @@ public class IndexedChangeQuery extends IndexedQuery<Change.Id, ChangeData>
         opts.pageSize(),
         opts.pageSizeMultiplier(),
         opts.limit(),
+        opts.allowIncompleteResults(),
         opts.fields());
   }
 
@@ -157,6 +172,12 @@ public class IndexedChangeQuery extends IndexedQuery<Change.Id, ChangeData>
 
   @Override
   public boolean match(ChangeData cd) {
+    if (index.getIndexFilter().isPresent()) {
+      // Evaluate the filter. If we pass the filter, then evaluate everything else.
+      if (!index.getIndexFilter().get().match(cd)) {
+        return false;
+      }
+    }
     Predicate<ChangeData> pred = getChild(0);
     if (source != null && fromSource.get(cd) == source && postIndexMatch(pred, cd)) {
       return true;

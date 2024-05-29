@@ -32,6 +32,8 @@ import com.google.gerrit.pgm.util.BatchProgramModule;
 import com.google.gerrit.pgm.util.SiteProgram;
 import com.google.gerrit.server.LibModuleLoader;
 import com.google.gerrit.server.ModuleOverloader;
+import com.google.gerrit.server.account.storage.notedb.AccountNoteDbReadStorageModule;
+import com.google.gerrit.server.account.storage.notedb.AccountNoteDbWriteStorageModule;
 import com.google.gerrit.server.cache.CacheDisplay;
 import com.google.gerrit.server.cache.CacheInfo;
 import com.google.gerrit.server.change.ChangeResource;
@@ -42,6 +44,7 @@ import com.google.gerrit.server.index.change.ChangeSchemaDefinitions;
 import com.google.gerrit.server.index.options.AutoFlush;
 import com.google.gerrit.server.index.options.BuildBloomFilter;
 import com.google.gerrit.server.index.options.IsFirstInsertForEntry;
+import com.google.gerrit.server.notedb.RepoSequence.RepoSequenceModule;
 import com.google.gerrit.server.plugins.PluginGuiceEnvironment;
 import com.google.gerrit.server.util.ReplicaUtil;
 import com.google.inject.AbstractModule;
@@ -224,6 +227,9 @@ public class Reindex extends SiteProgram {
             factory(ChangeResource.Factory.class);
           }
         });
+    modules.add(new AccountNoteDbWriteStorageModule());
+    modules.add(new AccountNoteDbReadStorageModule());
+    modules.add(new RepoSequenceModule());
 
     return dbInjector.createChildInjector(
         ModuleOverloader.override(

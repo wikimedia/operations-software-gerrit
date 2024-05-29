@@ -18,6 +18,8 @@ import {
   PatchSetNumber,
   ReviewInputTag,
   PARENT,
+  RevisionInfo,
+  CommitId,
 } from '../types/common';
 import {
   _testOnly_computeWipForPatchSets,
@@ -29,6 +31,7 @@ import {
   isMergeParent,
   sortRevisions,
 } from './patch-set-util';
+import {EditRevisionInfo} from '../types/types';
 
 suite('gr-patch-set-util tests', () => {
   test('getRevisionByPatchNum', () => {
@@ -73,7 +76,7 @@ suite('gr-patch-set-util tests', () => {
         }
       }
       const patchSets = Array.from(tagsByRevision.keys()).map(rev => {
-        return {num: rev, desc: 'test', sha: `rev${rev}`};
+        return {num: rev, desc: 'test', sha: `rev${rev}` as CommitId};
       });
       const patchNums = _testOnly_computeWipForPatchSets(change, patchSets);
       const verifier = {
@@ -159,7 +162,11 @@ suite('gr-patch-set-util tests', () => {
   });
 
   test('findEditParentRevision', () => {
-    const revisions = [createRevision(0), createRevision(1), createRevision(2)];
+    const revisions: Array<RevisionInfo | EditRevisionInfo> = [
+      createRevision(0),
+      createRevision(1),
+      createRevision(2),
+    ];
     assert.strictEqual(findEditParentRevision(revisions), null);
 
     revisions.push({
@@ -173,7 +180,11 @@ suite('gr-patch-set-util tests', () => {
   });
 
   test('findEditParentPatchNum', () => {
-    const revisions = [createRevision(0), createRevision(1), createRevision(2)];
+    const revisions: Array<RevisionInfo | EditRevisionInfo> = [
+      createRevision(0),
+      createRevision(1),
+      createRevision(2),
+    ];
     assert.equal(findEditParentPatchNum(revisions), -1);
 
     revisions.push(
@@ -187,8 +198,16 @@ suite('gr-patch-set-util tests', () => {
   });
 
   test('sortRevisions', () => {
-    const revisions = [createRevision(0), createRevision(2), createRevision(1)];
-    const sorted = [createRevision(2), createRevision(1), createRevision(0)];
+    const revisions: Array<RevisionInfo | EditRevisionInfo> = [
+      createRevision(0),
+      createRevision(2),
+      createRevision(1),
+    ];
+    const sorted: Array<RevisionInfo | EditRevisionInfo> = [
+      createRevision(2),
+      createRevision(1),
+      createRevision(0),
+    ];
 
     assert.deepEqual(sortRevisions(revisions), sorted);
 
@@ -203,8 +222,8 @@ suite('gr-patch-set-util tests', () => {
     });
     assert.deepEqual(sortRevisions(revisions), sorted);
 
-    revisions[0].basePatchNum = 0 as BasePatchSetNum;
-    const edit = sorted.shift()!;
+    (revisions[0] as EditRevisionInfo).basePatchNum = 0 as BasePatchSetNum;
+    const edit = sorted.shift() as EditRevisionInfo;
     edit.basePatchNum = 0 as BasePatchSetNum;
     // Edit patchset should be at index 2.
     sorted.splice(2, 0, edit);
@@ -217,10 +236,10 @@ suite('gr-patch-set-util tests', () => {
 
   test('computeAllPatchSets', () => {
     const expected = [
-      {num: 4 as PatchSetNumber, desc: 'test', sha: 'rev4'},
-      {num: 3 as PatchSetNumber, desc: 'test', sha: 'rev3'},
-      {num: 2 as PatchSetNumber, desc: 'test', sha: 'rev2'},
-      {num: 1 as PatchSetNumber, desc: 'test', sha: 'rev1'},
+      {num: 4 as PatchSetNumber, desc: 'test', sha: 'rev4' as CommitId},
+      {num: 3 as PatchSetNumber, desc: 'test', sha: 'rev3' as CommitId},
+      {num: 2 as PatchSetNumber, desc: 'test', sha: 'rev2' as CommitId},
+      {num: 1 as PatchSetNumber, desc: 'test', sha: 'rev1' as CommitId},
     ];
     const patchNums = computeAllPatchSets({
       ...createChange(),

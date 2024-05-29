@@ -60,11 +60,10 @@ import {
 import {GrEditControls} from '../../edit/gr-edit-controls/gr-edit-controls';
 import {SinonFakeTimers} from 'sinon';
 import {GerritView} from '../../../services/router/router-model';
-import {ParsedChangeInfo} from '../../../types/types';
+import {LoadingStatus, ParsedChangeInfo} from '../../../types/types';
 import {
   ChangeModel,
   changeModelToken,
-  LoadingStatus,
 } from '../../../models/change/change-model';
 import {FocusTarget} from '../gr-reply-dialog/gr-reply-dialog';
 import {GrChangeStar} from '../../shared/gr-change-star/gr-change-star';
@@ -74,7 +73,7 @@ import {fixture, html, assert} from '@open-wc/testing';
 import {Modifier} from '../../../utils/dom-util';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {GrCopyLinks} from '../gr-copy-links/gr-copy-links';
-import {ChangeChildView, ChangeViewState} from '../../../models/views/change';
+import {ChangeChildView} from '../../../models/views/change';
 import {rootUrl} from '../../../utils/url-util';
 import {testResolver} from '../../../test/common-test-setup';
 import {UserModel, userModelToken} from '../../../models/user/user-model';
@@ -366,7 +365,7 @@ suite('gr-change-view tests', () => {
       element,
       /* HTML */ `
         <div class="container loading">Loading...</div>
-        <div aria-hidden="false" class="container" hidden="" id="mainContent">
+        <div class="container" hidden="" id="mainContent">
           <section class="changeInfoSection">
             <div class="header">
               <h1 class="assistive-tech-only">Change :</h1>
@@ -1319,10 +1318,9 @@ suite('gr-change-view tests', () => {
     });
   });
 
-  test('header class computation', () => {
+  test('header class computation', async () => {
     assert.equal(element.computeHeaderClass(), 'header');
-    assertIsDefined(element.viewState);
-    element.viewState.edit = true;
+    element.editMode = true;
     assert.equal(element.computeHeaderClass(), 'header editMode');
   });
 
@@ -1341,38 +1339,6 @@ suite('gr-change-view tests', () => {
     await element.maybeScrollToMessage('#message-TEST');
     assert.isTrue(scrollStub.called);
     assert.equal(scrollStub.lastCall.args[0], 'TEST');
-  });
-
-  test('computeEditMode', async () => {
-    const callCompute = async (viewState: ChangeViewState) => {
-      element.viewState = viewState;
-      element.patchNum = viewState.patchNum;
-      element.basePatchNum = viewState.basePatchNum ?? PARENT;
-      await element.updateComplete;
-      return element.getEditMode();
-    };
-    assert.isTrue(
-      await callCompute({
-        ...createChangeViewState(),
-        edit: true,
-        basePatchNum: PARENT,
-        patchNum: 1 as RevisionPatchSetNum,
-      })
-    );
-    assert.isFalse(
-      await callCompute({
-        ...createChangeViewState(),
-        basePatchNum: PARENT,
-        patchNum: 1 as RevisionPatchSetNum,
-      })
-    );
-    assert.isTrue(
-      await callCompute({
-        ...createChangeViewState(),
-        basePatchNum: 1 as BasePatchSetNum,
-        patchNum: EDIT,
-      })
-    );
   });
 
   test('file-action-tap handling', async () => {

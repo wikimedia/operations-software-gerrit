@@ -107,8 +107,8 @@ public abstract class LuceneQueryChangesTest extends AbstractQueryChangesTest {
 
     Change invisibleChange1 = insert("repo", newChangeWithStatus(repo, Change.Status.NEW), user2);
     Change invisibleChange2 = insert("repo", newChangeWithStatus(repo, Change.Status.NEW), user2);
-    gApi.changes().id(invisibleChange1.getChangeId()).setPrivate(true, null);
-    gApi.changes().id(invisibleChange2.getChangeId()).setPrivate(true, null);
+    gApi.changes().id(invisibleChange1.getKey().get()).setPrivate(true, null);
+    gApi.changes().id(invisibleChange2.getKey().get()).setPrivate(true, null);
 
     // pagination should back-fill when the results skipped because of the visibility
     assertQuery(newQuery("status:new").withLimit(1), expected);

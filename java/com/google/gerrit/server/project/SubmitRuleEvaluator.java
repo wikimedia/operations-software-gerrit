@@ -33,7 +33,7 @@ import com.google.gerrit.server.logging.CallerFinder;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.rules.DefaultSubmitRule;
-import com.google.gerrit.server.rules.PrologRule;
+import com.google.gerrit.server.rules.PrologSubmitRuleUtil;
 import com.google.gerrit.server.rules.SubmitRule;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
@@ -76,7 +76,7 @@ public class SubmitRuleEvaluator {
   }
 
   private final ProjectCache projectCache;
-  private final PrologRule prologRule;
+  private final PrologSubmitRuleUtil prologSubmitRuleUtil;
   private final PluginSetContext<SubmitRule> submitRules;
   private final Metrics metrics;
   private final SubmitRuleOptions opts;
@@ -85,12 +85,12 @@ public class SubmitRuleEvaluator {
   @Inject
   private SubmitRuleEvaluator(
       ProjectCache projectCache,
-      PrologRule prologRule,
+      PrologSubmitRuleUtil prologSubmitRuleUtil,
       PluginSetContext<SubmitRule> submitRules,
       Metrics metrics,
       @Assisted SubmitRuleOptions options) {
     this.projectCache = projectCache;
-    this.prologRule = prologRule;
+    this.prologSubmitRuleUtil = prologSubmitRuleUtil;
     this.submitRules = submitRules;
     this.metrics = metrics;
 
@@ -121,6 +121,15 @@ public class SubmitRuleEvaluator {
         throw new StorageException("Change not found");
       }
 
+      ProjectState projectState =
+          projectCache
+              .get(cd.project())
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "Unable to find project while evaluating submit rule",
+                          new NoSuchProjectException(cd.project())));
+
       if (cd.change().isClosed()
           && (!opts.recomputeOnClosedChanges() || OnlineReindexMode.isActive())) {
         return cd.notes().getSubmitRecords().stream()
@@ -135,15 +144,6 @@ public class SubmitRuleEvaluator {
                 })
             .collect(toImmutableList());
       }
-
-      ProjectState projectState =
-          projectCache
-              .get(cd.project())
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Unable to find project while evaluating submit rule",
-                          new NoSuchProjectException(cd.project())));
 
       // We evaluate all the plugin-defined evaluators,
       // and then we collect the results in one list.
@@ -190,7 +190,7 @@ public class SubmitRuleEvaluator {
         throw new IllegalStateException("Unable to find project while evaluating submit rule", e);
       }
 
-      return prologRule.getSubmitType(cd);
+      return prologSubmitRuleUtil.getSubmitType(cd);
     }
   }
 }

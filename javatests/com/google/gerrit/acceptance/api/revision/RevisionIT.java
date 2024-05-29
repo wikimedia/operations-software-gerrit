@@ -49,6 +49,8 @@ import com.google.gerrit.acceptance.TestAccount;
 import com.google.gerrit.acceptance.TestProjectInput;
 import com.google.gerrit.acceptance.UseClockStep;
 import com.google.gerrit.acceptance.config.GerritConfig;
+import com.google.gerrit.acceptance.testsuite.account.AccountOperations;
+import com.google.gerrit.acceptance.testsuite.change.ChangeOperations;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.entities.Account;
@@ -58,6 +60,7 @@ import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.LabelId;
 import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.Permission;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.changes.ChangeApi;
 import com.google.gerrit.extensions.api.changes.CherryPickInput;
@@ -70,7 +73,9 @@ import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput.CommentInput;
 import com.google.gerrit.extensions.api.changes.RevisionApi;
 import com.google.gerrit.extensions.api.projects.BranchInput;
+import com.google.gerrit.extensions.api.projects.ConfigInput;
 import com.google.gerrit.extensions.client.ChangeStatus;
+import com.google.gerrit.extensions.client.ListChangesOption;
 import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.client.SubmitType;
 import com.google.gerrit.extensions.common.AccountInfo;
@@ -84,6 +89,7 @@ import com.google.gerrit.extensions.common.GitPerson;
 import com.google.gerrit.extensions.common.LabelInfo;
 import com.google.gerrit.extensions.common.MergeableInfo;
 import com.google.gerrit.extensions.common.RevisionInfo;
+import com.google.gerrit.extensions.common.RevisionInfo.ParentInfo;
 import com.google.gerrit.extensions.common.WebLinkInfo;
 import com.google.gerrit.extensions.events.ChangeIndexedListener;
 import com.google.gerrit.extensions.restapi.AuthException;
@@ -108,6 +114,7 @@ import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -128,6 +135,8 @@ public class RevisionIT extends AbstractDaemonTest {
   @Inject private ProjectOperations projectOperations;
   @Inject private RequestScopeOperations requestScopeOperations;
   @Inject private ExtensionRegistry extensionRegistry;
+  @Inject private AccountOperations accountOperations;
+  @Inject private ChangeOperations changeOperations;
 
   @Test
   public void reviewTriplet() throws Exception {
@@ -346,6 +355,40 @@ public class RevisionIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void cherryPickAfterUpdatingPreferredEmail() throws Exception {
+    String emailOne = "email1@example.com";
+    Account.Id testUser = accountOperations.newAccount().preferredEmail(emailOne).create();
+
+    // Create target branch to cherry-pick to
+    String branch = "foo";
+    gApi.projects().name(project.get()).branch(branch).create(new BranchInput());
+
+    // Create change to cherry-pick
+    Change.Id changeId =
+        changeOperations
+            .newChange()
+            .project(project)
+            .file("file")
+            .content("content")
+            .owner(testUser)
+            .create();
+
+    // Change preferred email for the user
+    String emailTwo = "email2@example.com";
+    accountOperations.account(testUser).forUpdate().preferredEmail(emailTwo).update();
+    requestScopeOperations.setApiUser(testUser);
+
+    // Cherry-pick the change
+    String commit = gApi.changes().id(changeId.get()).get().getCurrentRevision().commit.commit;
+    CherryPickInput input = new CherryPickInput();
+    input.destination = branch;
+    input.message = "cherry-pick to foo branch";
+    ChangeInfo changeInfo =
+        gApi.changes().id(changeId.get()).revision(commit).cherryPick(input).get();
+    assertThat(changeInfo.getCurrentRevision().commit.committer.email).isEqualTo(emailOne);
+  }
+
+  @Test
   public void cherryPickWithoutMessage() throws Exception {
     String branch = "foo";
 
@@ -396,6 +439,62 @@ public class RevisionIT extends AbstractDaemonTest {
     assertThat(changeInfo.changeId).isEqualTo(id);
     assertThat(revInfo).isNotNull();
     assertThat(revInfo.commit.message.trim()).endsWith(id);
+  }
+
+  @Test
+  public void cherryPickWithUnRegisteredCommitterEmail() throws Exception {
+    // Create change to cherry-pick
+    PushOneCommit.Result r = pushTo("refs/for/master");
+
+    // Create target branch to cherry-pick to
+    String destination = "foo";
+    gApi.projects().name(project.get()).branch(destination).create(new BranchInput());
+
+    // Cherry-pick the change
+    CherryPickInput in = new CherryPickInput();
+    in.destination = destination;
+    in.message = "it goes to foo branch";
+    in.committerEmail = "secondary@example.org";
+    BadRequestException thrown =
+        assertThrows(
+            BadRequestException.class,
+            () -> gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).cherryPick(in));
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains(
+            "Cannot cherry-pick using committer email "
+                + in.committerEmail
+                + ", as it is not among the registered emails of account "
+                + admin.id().get());
+  }
+
+  @Test
+  public void cherryPickWithNonPreferredCommitterEmail() throws Exception {
+    // Create change to cherry-pick
+    PushOneCommit.Result r = pushTo("refs/for/master");
+
+    // Create target branch to cherry-pick to
+    String destination = "foo";
+    gApi.projects().name(project.get()).branch(destination).create(new BranchInput());
+
+    // Create a user with secondary email
+    Account.Id userWithSecondaryEmail =
+        accountOperations
+            .newAccount()
+            .preferredEmail("preferred@example.org")
+            .addSecondaryEmail("secondary@example.org")
+            .create();
+    requestScopeOperations.setApiUser(userWithSecondaryEmail);
+
+    // Cherry-pick the change
+    CherryPickInput in = new CherryPickInput();
+    in.destination = destination;
+    in.message = "it goes to foo branch";
+    in.committerEmail = "secondary@example.org";
+    ChangeApi cherry =
+        gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).cherryPick(in);
+    assertThat(cherry.get().getCurrentRevision().commit.committer.email)
+        .isEqualTo(in.committerEmail);
   }
 
   @Test
@@ -1640,6 +1739,37 @@ public class RevisionIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void targetBranch_isSetForEachPatchSet() throws Exception {
+    createBranch(BranchNameKey.create(project, "foo"));
+    createBranch(BranchNameKey.create(project, "bar"));
+
+    // Upload five patch-sets: patch-set 1 is destined for branch master, patch-set 2 destined for
+    // branch foo, patch-set 3 with no change, and patch-set 4 for branch bar and patch-set 5 with
+    // no change in branch. Make sure the targetBranch field is set correctly on each revision.
+
+    // PS1 - branch = master
+    PushOneCommit.Result r1 = createChange();
+    // PS2 - branch = foo
+    PushOneCommit.Result r2 = amendChange(r1.getChangeId());
+    move(r1.getChangeId(), "foo");
+    // PS3 - branch = foo
+    PushOneCommit.Result r3 = amendChange(r1.getChangeId(), "refs/for/foo", admin, testRepo);
+    // PS4 - branch = bar
+    PushOneCommit.Result r4 = amendChange(r1.getChangeId(), "refs/for/foo", admin, testRepo);
+    move(r1.getChangeId(), "bar");
+    // PS5 - branch = bar
+    PushOneCommit.Result r5 = amendChange(r1.getChangeId(), "refs/for/bar", admin, testRepo);
+
+    Map<String, RevisionInfo> revisions = gApi.changes().id(r1.getChangeId()).get().revisions;
+    assertThat(revisions).hasSize(5);
+    assertThat(revisions.get(r1.getCommit().name()).branch).isEqualTo("refs/heads/master");
+    assertThat(revisions.get(r2.getCommit().name()).branch).isEqualTo("refs/heads/foo");
+    assertThat(revisions.get(r3.getCommit().name()).branch).isEqualTo("refs/heads/foo");
+    assertThat(revisions.get(r4.getCommit().name()).branch).isEqualTo("refs/heads/bar");
+    assertThat(revisions.get(r5.getCommit().name()).branch).isEqualTo("refs/heads/bar");
+  }
+
+  @Test
   public void setDescriptionNotAllowedWithoutPermission() throws Exception {
     PushOneCommit.Result r = createChange();
     assertDescription(r, "");
@@ -1679,6 +1809,34 @@ public class RevisionIT extends AbstractDaemonTest {
     PushOneCommit.Result r = createChange();
     assertContent(r, FILE_NAME, FILE_CONTENT);
     assertContent(r, COMMIT_MSG, r.getCommit().getFullMessage());
+  }
+
+  @Test
+  @GerritConfig(name = "change.maxFileSizeDownload", value = "10")
+  public void content_maxFileSizeDownload() throws Exception {
+    Map<String, String> files =
+        ImmutableMap.of("dir/file1.txt", " 9 bytes ", "dir/file2.txt", "11 bytes xx");
+    PushOneCommit.Result result =
+        pushFactory.create(admin.newIdent(), testRepo, SUBJECT, files).to("refs/for/master");
+    result.assertOkStatus();
+
+    // 9 bytes should be fine, because the limit is 10 bytes.
+    assertContent(result, "dir/file1.txt", " 9 bytes ");
+
+    // 11 bytes should throw, because the limit is 10 bytes.
+    BadRequestException exception =
+        assertThrows(
+            BadRequestException.class,
+            () ->
+                gApi.changes()
+                    .id(result.getChangeId())
+                    .revision(result.getCommit().name())
+                    .file("dir/file2.txt")
+                    .content());
+    assertThat(exception)
+        .hasMessageThat()
+        .isEqualTo(
+            "File too big. File size: 11 bytes. Configured 'maxFileSizeDownload' limit: 10 bytes.");
   }
 
   @Test
@@ -2113,14 +2271,267 @@ public class RevisionIT extends AbstractDaemonTest {
     assertThat(m.body()).contains(admin.fullName() + " has uploaded a new patch set (#2).");
   }
 
+  @Test
+  public void parentData_notPopulatedIfParentsChangeOptionIsNotSet() throws Exception {
+    PushOneCommit.Result r = createChange();
+    List<ParentInfo> parentsData =
+        getRevisionWithoutParents(r.getChangeId(), /* patchSetNumber= */ 1).parentsData;
+    assertThat(parentsData).isNull();
+  }
+
+  @Test
+  public void parentData_parentIsATargetBranch() throws Exception {
+    RevCommit initialCommit = getHead(repo(), "HEAD");
+    PushOneCommit.Result r = createChange();
+    List<ParentInfo> parentsData =
+        getRevisionWithParents(r.getChangeId(), /* patchSetNumber= */ 1).parentsData;
+    assertThat(parentsData).hasSize(1);
+    assertParentIsInTargetBranch(
+        parentsData.get(0), "refs/heads/master", initialCommit.getId().name());
+  }
+
+  @Test
+  public void parentData_parentIsATargetBranch_changeMoved() throws Exception {
+    createBranch(BranchNameKey.create(project, "foo"));
+
+    // PS1 was set to be merged in refs/heads/master
+    RevCommit initialCommit = getHead(repo(), "HEAD");
+    PushOneCommit.Result r = createChange();
+
+    // Create PS2, and set target branch to refs/heads/foo
+    amendChange(r.getChangeId());
+    move(r.getChangeId(), "foo");
+
+    // PS1 is based on refs/heads/master
+    List<ParentInfo> parentsData =
+        getRevisionWithParents(r.getChangeId(), /* patchSetNumber= */ 1).parentsData;
+    assertThat(parentsData).hasSize(1);
+    assertParentIsInTargetBranch(parentsData.get(0), "refs/heads/master", initialCommit.name());
+
+    // PS2 is based on refs/heads/foo
+    parentsData = getRevisionWithParents(r.getChangeId(), /* patchSetNumber= */ 2).parentsData;
+    assertThat(parentsData).hasSize(1);
+    assertParentIsInTargetBranch(parentsData.get(0), "refs/heads/foo", initialCommit.name());
+  }
+
+  @Test
+  public void parentData_parentIsAPendingChange() throws Exception {
+    PushOneCommit.Result r1 = createChange();
+    PushOneCommit.Result r2 = createChange();
+
+    List<ParentInfo> parentsData =
+        getRevisionWithParents(r2.getChangeId(), /* patchSetNumber= */ 1).parentsData;
+    assertThat(parentsData).hasSize(1);
+    assertParentIsChange(
+        parentsData.get(0),
+        r1.getCommit().getId(),
+        r1.getChangeId(),
+        r1.getChange().change().getChangeId(),
+        /* patchSetNumber= */ 1,
+        /* parentChangeStatus= */ "NEW",
+        /* isParentCommitMergedInTargetBranch= */ false);
+  }
+
+  @Test
+  public void parentData_parentIsANonLastPatchSet_parentIsPending() throws Exception {
+    PushOneCommit.Result r1 = createChange();
+    PushOneCommit.Result r2 = createChange();
+
+    // Create PS2 of the first change
+    testRepo.reset(r1.getCommit());
+    amendChange(r1.getChangeId());
+    assertThat(gApi.changes().id(r1.getChangeId()).get().revisions).hasSize(2);
+
+    List<ParentInfo> parentsData =
+        getRevisionWithParents(r2.getChangeId(), /* patchSetNumber= */ 1).parentsData;
+    assertThat(parentsData).hasSize(1);
+    assertParentIsChange(
+        parentsData.get(0),
+        r1.getCommit().getId(),
+        r1.getChangeId(),
+        r1.getChange().change().getChangeId(),
+        /* patchSetNumber= */ 1,
+        /* parentChangeStatus= */ "NEW",
+        /* isParentCommitMergedInTargetBranch= */ false);
+  }
+
+  @Test
+  public void parentData_parentIsALastPatchSet_parentIsPending() throws Exception {
+    // Create two patch-sets of change 1, and base change 2 on the second PS of change 1.
+    PushOneCommit.Result r1 = createChange();
+    PushOneCommit.Result r12 = amendChange(r1.getChangeId());
+    assertThat(gApi.changes().id(r1.getChangeId()).get().revisions).hasSize(2);
+    PushOneCommit.Result r2 = createChange();
+
+    List<ParentInfo> parentsData =
+        getRevisionWithParents(r2.getChangeId(), /* patchSetNumber= */ 1).parentsData;
+    assertThat(parentsData).hasSize(1);
+    assertParentIsChange(
+        parentsData.get(0),
+        r12.getCommit().getId(),
+        r1.getChangeId(),
+        r1.getChange().change().getChangeId(),
+        /* patchSetNumber= */ 2,
+        /* parentChangeStatus= */ "NEW",
+        /* isParentCommitMergedInTargetBranch= */ false);
+  }
+
+  @Test
+  public void parentData_parentIsANonLastPatchSet_parentIsMerged() throws Exception {
+    PushOneCommit.Result r1 = createChange();
+    PushOneCommit.Result r2 = createChange();
+
+    // Create PS2 of the first change, and merge it.
+    testRepo.reset(r1.getCommit());
+    amendChange(r1.getChangeId());
+    approve(r1.getChangeId());
+    gApi.changes().id(r1.getChangeId()).current().submit();
+
+    List<ParentInfo> parentsData =
+        getRevisionWithParents(r2.getChangeId(), /* patchSetNumber= */ 1).parentsData;
+    assertThat(parentsData).hasSize(1);
+    assertParentIsChange(
+        parentsData.get(0),
+        r1.getCommit().getId(),
+        r1.getChangeId(),
+        r1.getChange().change().getChangeId(),
+        /* patchSetNumber= */ 1,
+        /* parentChangeStatus= */ "MERGED",
+        /* isParentCommitMergedInTargetBranch= */ false);
+  }
+
+  @Test
+  public void parentData_parentIsLastPatchSet_parentIsMerged_fastForwardSubmitStrategy()
+      throws Exception {
+    updateSubmitType(project, SubmitType.FAST_FORWARD_ONLY);
+
+    PushOneCommit.Result r11 = createChange();
+    PushOneCommit.Result r12 = amendChange(r11.getChangeId());
+    PushOneCommit.Result r2 = createChange();
+
+    // Merge the first change
+    approve(r11.getChangeId());
+    gApi.changes().id(r11.getChangeId()).current().submit();
+
+    List<ParentInfo> parentsData =
+        getRevisionWithParents(r2.getChangeId(), /* patchSetNumber= */ 1).parentsData;
+    assertThat(parentsData).hasSize(1);
+
+    // The second change is based on the last patch-set of the first change. But since the first
+    // change is merged and the submit strategy is fast-forward, PS2 of change 1 is now included
+    // in the target branch, hence the parent data reflects that.
+    assertParentIsInTargetBranch(
+        parentsData.get(0), "refs/heads/master", r12.getCommit().getId().name());
+    assertParentIsChange(
+        parentsData.get(0),
+        r12.getCommit().getId(),
+        r11.getChangeId(),
+        r11.getChange().change().getChangeId(),
+        /* patchSetNumber= */ 2,
+        /* parentChangeStatus= */ "MERGED",
+        /* isParentCommitMergedInTargetBranch= */ true);
+  }
+
+  @Test
+  public void parentData_parentIsLastPatchSet_parentIsMerged_rebaseAlwaysSubmitStrategy()
+      throws Exception {
+    updateSubmitType(project, SubmitType.REBASE_ALWAYS);
+
+    PushOneCommit.Result r11 = createChange();
+    PushOneCommit.Result r12 = amendChange(r11.getChangeId());
+    PushOneCommit.Result r2 = createChange();
+
+    // Merge the first change
+    approve(r11.getChangeId());
+    gApi.changes().id(r11.getChangeId()).current().submit();
+
+    List<ParentInfo> parentsData =
+        getRevisionWithParents(r2.getChangeId(), /* patchSetNumber= */ 1).parentsData;
+    assertThat(parentsData).hasSize(1);
+
+    // The second change is based on the last patch-set of the first change. But since the first
+    // change is merged and the submit strategy is rebase-always, PS2 of change 1 is not included
+    // in the target branch and there is another commit that got rebased in the target branch. The
+    // parent of change 2 is patch-set 2 of change 1.
+    assertParentIsChange(
+        parentsData.get(0),
+        r12.getCommit().getId(),
+        r11.getChangeId(),
+        r11.getChange().change().getChangeId(),
+        /* patchSetNumber= */ 2,
+        /* parentChangeStatus= */ "MERGED",
+        /* isParentCommitMergedInTargetBranch= */ false);
+  }
+
+  private RevisionInfo getRevisionWithParents(String changeId, int patchSetNumber)
+      throws Exception {
+    return getRevision(
+        changeId,
+        patchSetNumber,
+        EnumSet.complementOf(EnumSet.of(ListChangesOption.CHECK, ListChangesOption.SKIP_DIFFSTAT)));
+  }
+
+  private RevisionInfo getRevisionWithoutParents(String changeId, int patchSetNumber)
+      throws Exception {
+    return getRevision(
+        changeId,
+        patchSetNumber,
+        EnumSet.complementOf(
+            EnumSet.of(
+                ListChangesOption.PARENTS,
+                ListChangesOption.CHECK,
+                ListChangesOption.SKIP_DIFFSTAT)));
+  }
+
+  private RevisionInfo getRevision(
+      String changeId, int patchSetNumber, EnumSet<ListChangesOption> options) throws Exception {
+    ChangeInfo changeInfo = gApi.changes().id(changeId).get(options);
+    return changeInfo.revisions.values().stream()
+        .filter(revision -> revision._number == patchSetNumber)
+        .findAny()
+        .get();
+  }
+
+  private void updateSubmitType(Project.NameKey project, SubmitType submitType) throws Exception {
+    ConfigInput input = new ConfigInput();
+    input.submitType = submitType;
+    gApi.projects().name(project.get()).config(input);
+  }
+
+  private void assertParentIsInTargetBranch(ParentInfo info, String branchName, String commitId) {
+    assertThat(info.branchName).isEqualTo(branchName);
+    assertThat(info.commitId).isEqualTo(commitId);
+    assertThat(info.isMergedInTargetBranch).isTrue();
+  }
+
+  private void assertParentIsChange(
+      ParentInfo info,
+      ObjectId parentCommitId,
+      String changeId,
+      Integer changeNumber,
+      Integer patchSetNumber,
+      String parentChangeStatus,
+      boolean isParentCommitMergedInTargetBranch) {
+    assertThat(info.commitId).isEqualTo(parentCommitId.name());
+    assertThat(info.changeStatus).isEqualTo(parentChangeStatus);
+    assertThat(info.changeNumber).isEqualTo(changeNumber);
+    assertThat(info.changeId).isEqualTo(changeId);
+    assertThat(info.patchSetNumber).isEqualTo(patchSetNumber);
+    assertThat(info.isMergedInTargetBranch).isEqualTo(isParentCommitMergedInTargetBranch);
+  }
+
   private static void assertCherryPickResult(
-      ChangeInfo changeInfo, CherryPickInput input, String srcChangeId) throws Exception {
+      ChangeInfo changeInfo, CherryPickInput input, String srcChangeId) {
     assertThat(changeInfo.changeId).isEqualTo(srcChangeId);
     assertThat(changeInfo.revisions.keySet()).containsExactly(changeInfo.currentRevision);
     RevisionInfo revisionInfo = changeInfo.revisions.get(changeInfo.currentRevision);
     assertThat(revisionInfo.commit.message).isEqualTo(input.message);
     assertThat(revisionInfo.commit.parents).hasSize(1);
     assertThat(revisionInfo.commit.parents.get(0).commit).isEqualTo(input.base);
+  }
+
+  private void move(String changeId, String destination) throws Exception {
+    gApi.changes().id(changeId).move(destination);
   }
 
   private PushOneCommit.Result updateChange(PushOneCommit.Result r, String content)

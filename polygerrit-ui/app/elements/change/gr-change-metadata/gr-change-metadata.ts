@@ -82,6 +82,13 @@ import {createSearchUrl} from '../../../models/views/search';
 import {createChangeUrl} from '../../../models/views/change';
 import {getChangeWeblinks} from '../../../utils/weblink-util';
 import {throwingErrorCallback} from '../../shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
+import {subscribe} from '../../lit/subscription-controller';
+import {userModelToken} from '../../../models/user/user-model';
+import {resolve} from '../../../models/dependency';
+import {configModelToken} from '../../../models/config/config-model';
+import {changeModelToken} from '../../../models/change/change-model';
+import {relatedChangesModelToken} from '../../../models/change/related-changes-model';
+import {truncatePath} from '../../../utils/path-list-util';
 
 const HASHTAG_ADD_MESSAGE = 'Add Hashtag';
 
@@ -118,156 +125,194 @@ interface PushCertificateValidationInfo {
 export class GrChangeMetadata extends LitElement {
   @query('#webLinks') webLinks?: HTMLElement;
 
-  @property({type: Object}) change?: ParsedChangeInfo;
-
-  @property({type: Object}) revertedChange?: ChangeInfo;
-
-  @property({type: Object}) account?: AccountDetailInfo;
-
-  @property({type: Object}) revision?: RevisionInfo | EditRevisionInfo;
-
-  // TODO: Just use `revision.commit` instead.
-  @property({type: Object}) commitInfo?: CommitInfoWithRequiredCommit;
-
-  @property({type: Object}) serverConfig?: ServerInfo;
-
+  // TODO: Convert to @state. That requires the change model to keep track of
+  // current revision actions. Then we can also get rid of the
+  // `revision-actions-changed` event.
   @property({type: Boolean}) parentIsCurrent?: boolean;
 
-  @property({type: Object}) repoConfig?: ConfigInfo;
+  @state() change?: ParsedChangeInfo;
 
-  // private but used in test
+  @state() revertedChange?: ChangeInfo;
+
+  @state() account?: AccountDetailInfo;
+
+  @state() revision?: RevisionInfo | EditRevisionInfo;
+
+  @state() serverConfig?: ServerInfo;
+
+  @state() repoConfig?: ConfigInfo;
+
   @state() mutable = false;
 
-  @state() private readonly notCurrentMessage = NOT_CURRENT_MESSAGE;
+  @state() readonly notCurrentMessage = NOT_CURRENT_MESSAGE;
 
-  // private but used in test
   @state() topicReadOnly = true;
 
-  // private but used in test
   @state() hashtagReadOnly = true;
 
-  @state() private pushCertificateValidation?: PushCertificateValidationInfo;
+  @state() pushCertificateValidation?: PushCertificateValidationInfo;
 
-  // private but used in test
   @state() settingTopic = false;
 
-  // private but used in test
   @state() currentParents: ParentCommitInfo[] = [];
 
-  @state() private showAllSections = false;
+  @state() showAllSections = false;
 
-  @state() private queryTopic?: AutocompleteQuery;
+  @state() queryTopic?: AutocompleteQuery;
 
-  @state() private queryHashtag?: AutocompleteQuery;
+  @state() queryHashtag?: AutocompleteQuery;
 
   private restApiService = getAppContext().restApiService;
 
   private readonly reporting = getAppContext().reportingService;
 
+  private readonly getUserModel = resolve(this, userModelToken);
+
+  private readonly getConfigModel = resolve(this, configModelToken);
+
+  private readonly getChangeModel = resolve(this, changeModelToken);
+
+  private readonly getRelatedChangesModel = resolve(
+    this,
+    relatedChangesModelToken
+  );
+
   constructor() {
     super();
+    subscribe(
+      this,
+      () => this.getConfigModel().serverConfig$,
+      serverConfig => (this.serverConfig = serverConfig)
+    );
+    subscribe(
+      this,
+      () => this.getConfigModel().repoConfig$,
+      repoConfig => (this.repoConfig = repoConfig)
+    );
+    subscribe(
+      this,
+      () => this.getUserModel().account$,
+      account => (this.account = account)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().change$,
+      change => (this.change = change)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().revision$,
+      revision => (this.revision = revision)
+    );
+    subscribe(
+      this,
+      () => this.getRelatedChangesModel().revertingChange$,
+      revertingChange => (this.revertedChange = revertingChange)
+    );
     this.queryTopic = (input: string) => this.getTopicSuggestions(input);
     this.queryHashtag = (input: string) => this.getHashtagSuggestions(input);
   }
 
-  static override styles = [
-    sharedStyles,
-    fontStyles,
-    changeMetadataStyles,
-    css`
-      :host {
-        display: table;
-      }
-      gr-submit-requirements {
-        --requirements-horizontal-padding: var(--metadata-horizontal-padding);
-      }
-      gr-editable-label {
-        max-width: 9em;
-      }
-      gr-weblink {
-        display: block;
-      }
-      gr-account-chip[disabled],
-      gr-linked-chip[disabled] {
-        opacity: 0;
-        pointer-events: none;
-      }
-      .hashtagChip {
-        padding-bottom: var(--spacing-s);
-      }
-      /* consistent with section .title, .value */
-      .hashtagChip:not(last-of-type) {
-        padding-bottom: var(--spacing-s);
-      }
-      .hashtagChip:last-of-type {
-        display: inline;
-        vertical-align: top;
-      }
-      .parentList.merge {
-        list-style-type: decimal;
-        padding-left: var(--spacing-l);
-      }
-      .parentList gr-commit-info {
-        display: inline-block;
-      }
-      .hideDisplay,
-      #parentNotCurrentMessage {
-        display: none;
-      }
-      .icon {
-        margin: -3px 0;
-      }
-      .icon.help,
-      .icon.notTrusted {
-        color: var(--warning-foreground);
-      }
-      .icon.invalid {
-        color: var(--negative-red-text-color);
-      }
-      .icon.trusted {
-        color: var(--positive-green-text-color);
-      }
-      .parentList.notCurrent.nonMerge #parentNotCurrentMessage {
-        --arrow-color: var(--warning-foreground);
-        display: inline-block;
-      }
-      .oldSeparatedSection {
-        margin-top: var(--spacing-l);
-        padding: var(--spacing-m) 0;
-      }
-      .separatedSection {
-        padding: var(--spacing-m) 0;
-      }
-      .hashtag gr-linked-chip,
-      .topic gr-linked-chip {
-        --linked-chip-text-color: var(--link-color);
-      }
-      gr-reviewer-list {
-        --account-max-length: 100px;
-        max-width: 285px;
-      }
-      .metadata-title {
-        color: var(--deemphasized-text-color);
-        padding-left: var(--metadata-horizontal-padding);
-      }
-      .metadata-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-end;
-        /* The goal is to achieve alignment of the owner account chip and the
+  static override get styles() {
+    return [
+      sharedStyles,
+      fontStyles,
+      changeMetadataStyles,
+      css`
+        :host {
+          display: table;
+        }
+        gr-submit-requirements {
+          --requirements-horizontal-padding: var(--metadata-horizontal-padding);
+        }
+        gr-editable-label {
+          max-width: 9em;
+        }
+        gr-weblink {
+          display: block;
+        }
+        gr-account-chip[disabled],
+        gr-linked-chip[disabled] {
+          opacity: 0;
+          pointer-events: none;
+        }
+        .hashtagChip {
+          padding-bottom: var(--spacing-s);
+        }
+        /* consistent with section .title, .value */
+        .hashtagChip:not(last-of-type) {
+          padding-bottom: var(--spacing-s);
+        }
+        .hashtagChip:last-of-type {
+          display: inline;
+          vertical-align: top;
+        }
+        .parentList.merge {
+          list-style-type: decimal;
+          padding-left: var(--spacing-l);
+        }
+        .parentList gr-commit-info {
+          display: inline-block;
+        }
+        .hideDisplay,
+        #parentNotCurrentMessage {
+          display: none;
+        }
+        .icon {
+          margin: -3px 0;
+        }
+        .icon.help,
+        .icon.notTrusted {
+          color: var(--warning-foreground);
+        }
+        .icon.invalid {
+          color: var(--negative-red-text-color);
+        }
+        .icon.trusted {
+          color: var(--positive-green-text-color);
+        }
+        .parentList.notCurrent.nonMerge #parentNotCurrentMessage {
+          --arrow-color: var(--warning-foreground);
+          display: inline-block;
+        }
+        .oldSeparatedSection {
+          margin-top: var(--spacing-l);
+          padding: var(--spacing-m) 0;
+        }
+        .separatedSection {
+          padding: var(--spacing-m) 0;
+        }
+        .hashtag gr-linked-chip,
+        .topic gr-linked-chip {
+          --linked-chip-text-color: var(--link-color);
+        }
+        gr-reviewer-list {
+          --account-max-length: 100px;
+          max-width: 285px;
+        }
+        .metadata-title {
+          color: var(--deemphasized-text-color);
+          padding-left: var(--metadata-horizontal-padding);
+        }
+        .metadata-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
+          /* The goal is to achieve alignment of the owner account chip and the
          commit message box. Their top border should be on the same line. */
-        margin-bottom: var(--spacing-s);
-      }
-      .show-all-button gr-icon {
-        color: inherit;
-        font-size: 18px;
-      }
-      gr-vote-chip {
-        --gr-vote-chip-width: 14px;
-        --gr-vote-chip-height: 14px;
-      }
-    `,
-  ];
+          margin-bottom: var(--spacing-s);
+        }
+        .show-all-button gr-icon {
+          color: inherit;
+          font-size: 18px;
+        }
+        gr-vote-chip {
+          --gr-vote-chip-width: 14px;
+          --gr-vote-chip-height: 14px;
+        }
+      `,
+    ];
+  }
 
   override render() {
     if (!this.change) return nothing;
@@ -283,7 +328,7 @@ export class GrChangeMetadata extends LitElement {
       ${this.renderCCs()} ${this.renderProjectBranch()} ${this.renderParent()}
       ${this.renderMergedAs()} ${this.renderShowRevertCreatedAs()}
       ${this.renderTopic()} ${this.renderCherryPickOf()}
-      ${this.renderStrategy()} ${this.renderHashTags()}
+      ${this.renderRevertOf()} ${this.renderStrategy()} ${this.renderHashTags()}
       ${this.renderSubmitRequirements()} ${this.renderWeblinks()}
       <gr-endpoint-decorator name="change-metadata-item">
         <gr-endpoint-param
@@ -495,11 +540,11 @@ export class GrChangeMetadata extends LitElement {
             </gr-tooltip-content>
           </span>
           <span class="value">
-            <a href=${this.computeProjectUrl(change.project)}>
-              <gr-limited-text
-                limit="40"
-                .text=${change.project}
-              ></gr-limited-text>
+            <a
+              href=${this.computeProjectUrl(change.project)}
+              .title=${change.project}
+            >
+              ${truncatePath(change.project, 3)}
             </a>
           </span>
         </section>
@@ -643,6 +688,23 @@ export class GrChangeMetadata extends LitElement {
     </section>`;
   }
 
+  private renderRevertOf() {
+    if (!this.change?.revert_of) return nothing;
+    return html` <section class=${this.computeDisplayState(Metadata.REVERT_OF)}>
+      <span class="title">Revert of</span>
+      <span class="value">
+        <a
+          href=${createChangeUrl({
+            changeNum: this.change.revert_of,
+            repo: this.change.project,
+            usp: 'metadata',
+          })}
+          >${this.change.revert_of}</a
+        >
+      </span>
+    </section>`;
+  }
+
   private renderStrategy() {
     if (!changeIsOpen(this.change)) return nothing;
     return html`<section
@@ -735,7 +797,10 @@ export class GrChangeMetadata extends LitElement {
 
   // private but used in test
   computeWebLinks(): WebLinkInfo[] {
-    return getChangeWeblinks(this.commitInfo?.web_links, this.serverConfig);
+    return getChangeWeblinks(
+      this.revision?.commit?.web_links,
+      this.serverConfig
+    );
   }
 
   private computeStrategy() {

@@ -43,6 +43,7 @@ import {assertIsDefined} from '../../../utils/common-util';
 import {Shortcut} from '../../../services/shortcuts/shortcuts-config';
 import {ShortcutController} from '../../lit/shortcut-controller';
 import {
+  DashboardType,
   dashboardViewModelToken,
   DashboardViewState,
 } from '../../../models/views/dashboard';
@@ -79,7 +80,7 @@ export class GrDashboardView extends LitElement {
   protected confirmDeleteModal?: HTMLDialogElement;
 
   @property({type: Object})
-  account?: AccountDetailInfo;
+  loggedInUser?: AccountDetailInfo;
 
   @property({type: Object})
   preferences?: PreferencesInput;
@@ -126,7 +127,14 @@ export class GrDashboardView extends LitElement {
     subscribe(
       this,
       () => this.getUserModel().account$,
-      x => (this.account = x)
+      x => (this.loggedInUser = x)
+    );
+    subscribe(
+      this,
+      () => this.getUserModel().preferences$,
+      prefs => {
+        this.preferences = prefs ?? {};
+      }
     );
     subscribe(
       this,
@@ -154,7 +162,6 @@ export class GrDashboardView extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
-    this.loadPreferences();
     document.addEventListener(
       'visibilitychange',
       this.visibilityChangeListener
@@ -280,7 +287,8 @@ export class GrDashboardView extends LitElement {
         ${this.renderUserHeader()}
         <h1 class="assistive-tech-only">Dashboard</h1>
         <gr-change-list
-          .account=${this.account}
+          .loggedInUser=${this.loggedInUser}
+          .dashboardUser=${this.viewState?.user}
           .preferences=${this.preferences}
           .sections=${this.results}
           .usp=${'dashboard'}
@@ -323,18 +331,6 @@ export class GrDashboardView extends LitElement {
         }}
       ></gr-create-change-help>
     `;
-  }
-
-  private loadPreferences() {
-    return this.restApiService.getLoggedIn().then(loggedIn => {
-      if (loggedIn) {
-        this.restApiService.getPreferences().then(preferences => {
-          this.preferences = preferences;
-        });
-      } else {
-        this.preferences = {};
-      }
-    });
   }
 
   // private but used in test
@@ -391,26 +387,30 @@ export class GrDashboardView extends LitElement {
     this.firstTimeLoad = false;
 
     this.loading = true;
-    const {project, dashboard, title, user, sections} = this.viewState;
+    const {project, type, dashboard, title, user, sections} = this.viewState;
 
     const dashboardPromise: Promise<UserDashboard | undefined> = project
       ? this.getRepositoryDashboard(project, dashboard)
       : Promise.resolve(
           getUserDashboard(user, sections, title || this.computeTitle(user))
         );
-    // Checking `this.account` to make sure that the user is logged in.
+    // Checking `this.loggedInUser` to make sure that the user is logged in.
     // Otherwise sending a query for 'owner:self' will result in an error.
-    const checkForNewUser = !project && !!this.account && user === 'self';
+    const isLoggedInUserDashboard =
+      !project && !!this.loggedInUser && user === 'self';
     return dashboardPromise
       .then(res => {
         if (res && res.title) {
           fireTitleChange(res.title);
         }
-        return this.fetchDashboardChanges(res, checkForNewUser);
+        return this.fetchDashboardChanges(res, isLoggedInUserDashboard);
       })
       .then(() => {
         this.maybeShowDraftsBanner();
-        this.reporting.dashboardDisplayed();
+        // Only report the metric for the default personal dashboard.
+        if (type === DashboardType.USER && isLoggedInUserDashboard) {
+          this.reporting.dashboardDisplayed();
+        }
       })
       .catch(err => {
         fireTitleChange(title || this.computeTitle(user));
@@ -429,7 +429,7 @@ export class GrDashboardView extends LitElement {
    */
   fetchDashboardChanges(
     res: UserDashboard | undefined,
-    checkForNewUser: boolean
+    isLoggedInUserDashboard: boolean
   ): Promise<void> {
     if (!res) {
       return Promise.resolve();
@@ -448,7 +448,8 @@ export class GrDashboardView extends LitElement {
           : section.query
       );
 
-      if (checkForNewUser) {
+      if (isLoggedInUserDashboard) {
+        // The query to check if the user created any changes yet.
         queries.push('owner:self limit:1');
       }
     }
@@ -459,8 +460,9 @@ export class GrDashboardView extends LitElement {
         if (!changes) {
           throw new Error('getChanges returns undefined');
         }
-        if (checkForNewUser) {
-          // Last set of results is not meant for dashboard display.
+        if (isLoggedInUserDashboard) {
+          // Last query ('owner:self limit:1') is only for evaluation if
+          // the user is "New" ie. haven't created any changes yet.
           const lastResultSet = changes.pop();
           this.showNewUserHelp = lastResultSet!.length === 0;
         }
@@ -486,19 +488,24 @@ export class GrDashboardView extends LitElement {
 
   /**
    * Usually we really want to stick to the sorting that the backend provides,
-   * but for the "Your Turn" section it is important to put the changes at the
+   * but for the "Your turn" section it is important to put the changes at the
    * top where the current user is a reviewer. Owned changes are less important.
    * And then we want to emphasize the changes where the waiting time is larger.
    */
   private maybeSortResults(name: string, results: ChangeInfo[]) {
-    const userId = this.account?._account_id;
+    // TODO: viewState?.user can be an Email Address. In this case the
+    // attention_set lookups will return undefined.
+    const userId =
+      this.viewState?.user === 'self'
+        ? this.loggedInUser?._account_id
+        : this.viewState?.user;
     const sortedResults = [...results];
     if (name === YOUR_TURN.name && userId) {
       sortedResults.sort((c1, c2) => {
         const c1Owner = c1.owner._account_id === userId;
         const c2Owner = c2.owner._account_id === userId;
         if (c1Owner !== c2Owner) return c1Owner ? 1 : -1;
-        // Should never happen, because the change is in the 'Your Turn'
+        // Should never happen, because the change is in the 'Your turn'
         // section, so the userId should be found in the attention set of both.
         if (!c1.attention_set || !c1.attention_set[userId]) return 0;
         if (!c2.attention_set || !c2.attention_set[userId]) return 0;

@@ -19,12 +19,11 @@ import {CommentLinks, EmailAddress} from '../../../api/rest-api';
 import {linkifyUrlsAndApplyRewrite} from '../../../utils/link-util';
 import '../gr-account-chip/gr-account-chip';
 import '../gr-user-suggestion-fix/gr-user-suggestion-fix';
-import {KnownExperimentId} from '../../../services/flags/flags';
-import {getAppContext} from '../../../services/app-context';
 import {
   getUserSuggestionFromString,
   USER_SUGGESTION_INFO_STRING,
 } from '../../../utils/comment-util';
+import {sameOrigin} from '../../../utils/url-util';
 
 /**
  * This element optionally renders markdown and also applies some regex
@@ -41,8 +40,6 @@ export class GrFormattedText extends LitElement {
   @state()
   private repoCommentLinks: CommentLinks = {};
 
-  private readonly flagsService = getAppContext().flagsService;
-
   private readonly getConfigModel = resolve(this, configModelToken);
 
   // Private const but used in tests.
@@ -55,67 +52,70 @@ export class GrFormattedText extends LitElement {
    * Note: Do not use sharedStyles or other styles here that should not affect
    * the generated HTML of the markdown.
    */
-  static override styles = [
-    css`
-      a {
-        color: var(--link-color);
-      }
-      p,
-      ul,
-      code,
-      blockquote {
-        margin: 0 0 var(--spacing-m) 0;
-        max-width: var(--gr-formatted-text-prose-max-width, none);
-      }
-      p:last-child,
-      ul:last-child,
-      blockquote:last-child,
-      pre:last-child {
-        margin: 0;
-      }
-      blockquote {
-        border-left: var(--spacing-xxs) solid var(--comment-quote-marker-color);
-        padding: 0 var(--spacing-m);
-      }
-      code {
-        background-color: var(--background-color-secondary);
-        border: var(--spacing-xxs) solid var(--border-color);
-        display: block;
-        font-family: var(--monospace-font-family);
-        font-size: var(--font-size-code);
-        line-height: var(--line-height-mono);
-        margin: var(--spacing-m) 0;
-        padding: var(--spacing-xxs) var(--spacing-s);
-        overflow-x: auto;
-        /* Pre will preserve whitespace and line breaks but not wrap */
-        white-space: pre;
-      }
-      /* Non-multiline code elements need display:inline to shrink and not take
+  static override get styles() {
+    return [
+      css`
+        a {
+          color: var(--link-color);
+        }
+        p,
+        ul,
+        code,
+        blockquote {
+          margin: 0 0 var(--spacing-m) 0;
+          max-width: var(--gr-formatted-text-prose-max-width, none);
+        }
+        p:last-child,
+        ul:last-child,
+        blockquote:last-child,
+        pre:last-child {
+          margin: 0;
+        }
+        blockquote {
+          border-left: var(--spacing-xxs) solid
+            var(--comment-quote-marker-color);
+          padding: 0 var(--spacing-m);
+        }
+        code {
+          background-color: var(--background-color-secondary);
+          border: var(--spacing-xxs) solid var(--border-color);
+          display: block;
+          font-family: var(--monospace-font-family);
+          font-size: var(--font-size-code);
+          line-height: var(--line-height-mono);
+          margin: var(--spacing-m) 0;
+          padding: var(--spacing-xxs) var(--spacing-s);
+          overflow-x: auto;
+          /* Pre will preserve whitespace and line breaks but not wrap */
+          white-space: pre;
+        }
+        /* Non-multiline code elements need display:inline to shrink and not take
          a whole row */
-      :not(pre) > code {
-        display: inline;
-      }
-      li {
-        margin-left: var(--spacing-xl);
-      }
-      gr-account-chip {
-        display: inline;
-      }
-      .plaintext {
-        font: inherit;
-        white-space: var(--linked-text-white-space, pre-wrap);
-        word-wrap: var(--linked-text-word-wrap, break-word);
-      }
-      .markdown-html {
-        /* code overrides white-space to pre, everything else should wrap as
+        :not(pre) > code {
+          display: inline;
+        }
+        li {
+          margin-left: var(--spacing-xl);
+        }
+        gr-account-chip {
+          display: inline;
+        }
+        .plaintext {
+          font: inherit;
+          white-space: var(--linked-text-white-space, pre-wrap);
+          word-wrap: var(--linked-text-word-wrap, break-word);
+        }
+        .markdown-html {
+          /* code overrides white-space to pre, everything else should wrap as
            normal. */
-        white-space: normal;
-        /* prose will automatically wrap but inline <code> blocks won't and we
+          white-space: normal;
+          /* prose will automatically wrap but inline <code> blocks won't and we
            should overflow in that case rather than wrapping or leaking out */
-        overflow-x: auto;
-      }
-    `,
-  ];
+          overflow-x: auto;
+        }
+      `,
+    ];
+  }
 
   constructor() {
     super();
@@ -154,10 +154,6 @@ export class GrFormattedText extends LitElement {
   }
 
   private renderAsMarkdown() {
-    // Need to find out here, since customRender is not arrow function
-    const suggestEditsEnable = this.flagsService.isEnabled(
-      KnownExperimentId.SUGGEST_EDIT
-    );
     // Bind `this` via closure.
     const boundRewriteText = (text: string) => {
       const nonAsteriskRewrites = Object.fromEntries(
@@ -203,9 +199,8 @@ export class GrFormattedText extends LitElement {
         /* HTML */
         `<a
           href="${href}"
-          target="_blank"
+          ${sameOrigin(href) ? '' : 'target="_blank" rel="noopener noreferrer"'}
           ${title ? `title="${title}"` : ''}
-          rel="noopener"
           >${text}</a
         >`;
       renderer['image'] = (href: string, _title: string, text: string) =>
@@ -213,7 +208,7 @@ export class GrFormattedText extends LitElement {
       renderer['codespan'] = (text: string) =>
         `<code>${unescapeHTML(text)}</code>`;
       renderer['code'] = (text: string, infostring: string) => {
-        if (suggestEditsEnable && infostring === USER_SUGGESTION_INFO_STRING) {
+        if (infostring === USER_SUGGESTION_INFO_STRING) {
           // default santizer in markedjs is very restrictive, we need to use
           // existing html element to mark element. We cannot use css class for
           // it. Therefore we pick mark - as not frequently used html element to
@@ -272,9 +267,7 @@ export class GrFormattedText extends LitElement {
   override updated() {
     // Look for @mentions and replace them with an account-label chip.
     this.convertEmailsToAccountChips();
-    if (this.flagsService.isEnabled(KnownExperimentId.SUGGEST_EDIT)) {
-      this.convertCodeToSuggestions();
-    }
+    this.convertCodeToSuggestions();
   }
 
   private convertEmailsToAccountChips() {

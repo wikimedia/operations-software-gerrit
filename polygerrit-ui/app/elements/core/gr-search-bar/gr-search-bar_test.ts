@@ -81,29 +81,13 @@ suite('gr-search-bar tests', () => {
               slot="suffix"
               tabindex="-1"
               target="_blank"
+              rel="noopener noreferrer"
             >
               <gr-icon icon="help" title="read documentation"></gr-icon>
             </a>
           </gr-autocomplete>
         </form>
       `
-    );
-  });
-
-  test('falls back to gerrit docs url', async () => {
-    const configWithoutDocsUrl = createServerInfo();
-    configWithoutDocsUrl.gerrit.doc_url = undefined;
-
-    configModel.updateServerConfig(configWithoutDocsUrl);
-    await waitUntilObserved(
-      configModel.docsBaseUrl$,
-      docsBaseUrl => docsBaseUrl === 'https://mydocumentationurl.google.com/'
-    );
-    await element.updateComplete;
-
-    assert.equal(
-      queryAndAssert<HTMLAnchorElement>(element, 'a')!.href,
-      'https://mydocumentationurl.google.com/user-search.html'
     );
   });
 
@@ -300,31 +284,6 @@ suite('gr-search-bar tests', () => {
         assert.equal(s[1].name, '-is:mergeable');
         assert.equal(s[1].value, '-is:mergeable');
       });
-    });
-  });
-
-  suite('doc url', () => {
-    setup(async () => {
-      element = await fixture(html`<gr-search-bar></gr-search-bar>`);
-    });
-
-    test('compute help doc url with correct path', async () => {
-      element.docsBaseUrl = 'https://doc.com/';
-      await element.updateComplete;
-      assert.equal(
-        element.computeHelpDocLink(),
-        'https://doc.com/user-search.html'
-      );
-    });
-
-    test('compute help doc url fallback to gerrit url', async () => {
-      element.docsBaseUrl = null;
-      await element.updateComplete;
-      assert.equal(
-        element.computeHelpDocLink(),
-        'https://gerrit-review.googlesource.com/Documentation/' +
-          'user-search.html'
-      );
     });
   });
 });

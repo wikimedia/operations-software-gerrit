@@ -19,6 +19,7 @@ import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdate
 
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.Iterables;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
@@ -73,6 +74,7 @@ import java.io.IOException;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Optional;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.ObjectReader;
@@ -185,6 +187,14 @@ public class CreateMergePatchSet implements RestModifyView<ChangeResource, Merge
           in.author == null
               ? me.newCommitterIdent(now, serverZoneId)
               : new PersonIdent(in.author.name, in.author.email, now, serverZoneId);
+      RevCommit commit = rw.parseCommit(ps.commitId());
+      PersonIdent committer =
+          Optional.ofNullable(commit.getCommitterIdent())
+              .map(
+                  ident ->
+                      me.newCommitterIdent(ident.getEmailAddress(), now, serverZoneId)
+                          .orElseGet(() -> me.newCommitterIdent(now, serverZoneId)))
+              .orElseGet(() -> me.newCommitterIdent(now, serverZoneId));
       CodeReviewCommit newCommit =
           createMergeCommit(
               in,
@@ -196,6 +206,7 @@ public class CreateMergePatchSet implements RestModifyView<ChangeResource, Merge
               currentPsCommit,
               sourceCommit,
               author,
+              committer,
               ObjectId.fromString(change.getKey().get().substring(1)));
       oi.flush();
 
@@ -210,6 +221,16 @@ public class CreateMergePatchSet implements RestModifyView<ChangeResource, Merge
               .setMessage(messageForChange(nextPsId, newCommit))
               .setWorkInProgress(!newCommit.getFilesWithGitConflicts().isEmpty())
               .setCheckAddPatchSetPermission(false);
+
+          if (in.validationOptions != null) {
+            ImmutableListMultimap.Builder<String, String> validationOptions =
+                ImmutableListMultimap.builder();
+            in.validationOptions
+                .entrySet()
+                .forEach(e -> validationOptions.put(e.getKey(), e.getValue()));
+            psInserter.setValidationOptions(validationOptions.build());
+          }
+
           if (groups != null) {
             psInserter.setGroups(groups);
           }
@@ -253,6 +274,7 @@ public class CreateMergePatchSet implements RestModifyView<ChangeResource, Merge
       RevCommit currentPsCommit,
       RevCommit sourceCommit,
       PersonIdent author,
+      PersonIdent committer,
       ObjectId changeId)
       throws ResourceNotFoundException, MergeIdenticalTreeException, MergeConflictException,
           IOException {
@@ -295,6 +317,7 @@ public class CreateMergePatchSet implements RestModifyView<ChangeResource, Merge
         mergeStrategy,
         in.merge.allowConflicts,
         author,
+        committer,
         commitMsg,
         rw);
   }

@@ -33,10 +33,10 @@ load("//tools:deps.bzl", "CAFFEINE_VERS", "java_dependencies")
 
 http_archive(
     name = "platforms",
-    sha256 = "379113459b0feaf6bfbb584a91874c065078aa673222846ac765f86661c27407",
+    sha256 = "3a561c99e7bdbe9173aa653fd579fe849f1d8d67395780ab4770b1f381431d51",
     urls = [
-        "https://mirror.bazel.build/github.com/bazelbuild/platforms/releases/download/0.0.5/platforms-0.0.5.tar.gz",
-        "https://github.com/bazelbuild/platforms/releases/download/0.0.5/platforms-0.0.5.tar.gz",
+        "https://mirror.bazel.build/github.com/bazelbuild/platforms/releases/download/0.0.7/platforms-0.0.7.tar.gz",
+        "https://github.com/bazelbuild/platforms/releases/download/0.0.7/platforms-0.0.7.tar.gz",
     ],
 )
 
@@ -65,8 +65,8 @@ protobuf_deps()
 
 http_archive(
     name = "build_bazel_rules_nodejs",
-    sha256 = "c29944ba9b0b430aadcaf3bf2570fece6fc5ebfb76df145c6cdad40d65c20811",
-    urls = ["https://github.com/bazelbuild/rules_nodejs/releases/download/5.7.0/rules_nodejs-5.7.0.tar.gz"],
+    sha256 = "94070eff79305be05b7699207fbac5d2608054dd53e6109f7d00d923919ff45a",
+    urls = ["https://github.com/bazelbuild/rules_nodejs/releases/download/5.8.2/rules_nodejs-5.8.2.tar.gz"],
 )
 
 load("@build_bazel_rules_nodejs//:repositories.bzl", "build_bazel_rules_nodejs_dependencies")
@@ -102,6 +102,12 @@ browser_repositories(
 register_toolchains("//tools:error_prone_warnings_toolchain_java11_definition")
 
 register_toolchains("//tools:error_prone_warnings_toolchain_java17_definition")
+
+# Java-Prettify external repository consumed from git submodule
+local_repository(
+    name = "java-prettify",
+    path = "modules/java-prettify",
+)
 
 # JGit external repository consumed from git submodule
 local_repository(

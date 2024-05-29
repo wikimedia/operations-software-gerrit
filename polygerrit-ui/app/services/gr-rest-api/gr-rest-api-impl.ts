@@ -20,12 +20,8 @@ import {
 import {GrReviewerUpdatesParser} from '../../elements/shared/gr-rest-api-interface/gr-reviewer-updates-parser';
 import {parseDate} from '../../utils/date-util';
 import {getBaseUrl} from '../../utils/url-util';
-import {Finalizable} from '../registry';
 import {getParentIndex, isMergeParent} from '../../utils/patch-set-util';
-import {
-  ListChangesOption,
-  listChangesOptionsToHex,
-} from '../../utils/change-util';
+import {listChangesOptionsToHex} from '../../utils/change-util';
 import {assertNever, hasOwnProperty} from '../../utils/common-util';
 import {AuthService} from '../gr-auth/gr-auth';
 import {
@@ -119,6 +115,8 @@ import {
   UrlEncodedCommentId,
   FixReplacementInfo,
   DraftInfo,
+  ListChangesOption,
+  ReviewResult,
 } from '../../types/common';
 import {
   DiffInfo,
@@ -140,16 +138,19 @@ import {
   ReviewerState,
 } from '../../constants/constants';
 import {firePageError, fireServerError} from '../../utils/event-util';
-import {AuthRequestInit, ParsedChangeInfo} from '../../types/types';
+import {
+  AuthRequestInit,
+  Finalizable,
+  ParsedChangeInfo,
+} from '../../types/types';
 import {ErrorCallback} from '../../api/rest';
 import {addDraftProp} from '../../utils/comment-util';
 import {BaseScheduler, Scheduler} from '../scheduler/scheduler';
 import {MaxInFlightScheduler} from '../scheduler/max-in-flight-scheduler';
 import {escapeAndWrapSearchOperatorValue} from '../../utils/string-util';
+import {FlagsService, KnownExperimentId} from '../flags/flags';
 
 const MAX_PROJECT_RESULTS = 25;
-export const PROBE_PATH = '/Documentation/index.html';
-export const DOCS_BASE_PATH = '/Documentation';
 
 const Requests = {
   SEND_DIFF_DRAFT: 'sendDiffDraft',
@@ -167,6 +168,7 @@ let siteBasedCache = new SiteBasedCache(); // Shared across instances.
 let fetchPromisesCache = new FetchPromisesCache(); // Shared across instances.
 let pendingRequest: {[promiseName: string]: Array<Promise<unknown>>} = {}; // Shared across instances.
 let grEtagDecorator = new GrEtagDecorator(); // Shared across instances.
+// TODO: consider changing this to Map()
 let projectLookup: {[changeNum: string]: Promise<RepoName | undefined>} = {}; // Shared across instances.
 
 function suppress404s(res?: Response | null) {
@@ -286,8 +288,6 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
 
   readonly _etags = grEtagDecorator; // Shared across instances.
 
-  getDocsBaseUrlCachedPromise: Promise<string | null> | undefined;
-
   // readonly, but set in tests.
   _projectLookup = projectLookup; // Shared across instances.
 
@@ -298,7 +298,10 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   // Used to serialize requests for certain RPCs
   readonly _serialScheduler: Scheduler<Response>;
 
-  constructor(private readonly authService: AuthService) {
+  constructor(
+    private readonly authService: AuthService,
+    private readonly flagService: FlagsService
+  ) {
     this._restApiHelper = new GrRestApiHelper(
       this._cache,
       this.authService,
@@ -311,7 +314,9 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
 
   finalize() {}
 
-  _fetchSharedCacheURL(req: FetchJSONRequest): Promise<ParsedJSON | undefined> {
+  _fetchSharedCacheURL(
+    req: FetchJSONRequest
+  ): Promise<AccountDetailInfo | ParsedJSON | undefined> {
     // Cache is shared across instances
     return this._restApiHelper.fetchCacheURL(req);
   }
@@ -762,6 +767,14 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     }) as Promise<AccountExternalIdInfo[] | undefined>;
   }
 
+  deleteAccount() {
+    return this._restApiHelper.send({
+      method: HttpMethod.DELETE,
+      url: '/accounts/self',
+      reportUrlAsIs: true,
+    });
+  }
+
   deleteAccountIdentity(id: string[]) {
     return this._restApiHelper.send({
       method: HttpMethod.POST,
@@ -783,11 +796,35 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     }) as Promise<AccountDetailInfo | undefined>;
   }
 
-  getAccountEmails() {
-    return this._fetchSharedCacheURL({
-      url: '/accounts/self/emails',
-      reportUrlAsIs: true,
-    }) as Promise<EmailInfo[] | undefined>;
+  async getAccountEmails() {
+    const isloggedIn = await this.getLoggedIn();
+    if (isloggedIn) {
+      return this._fetchSharedCacheURL({
+        url: '/accounts/self/emails',
+        reportUrlAsIs: true,
+      }) as Promise<EmailInfo[] | undefined>;
+    } else return;
+  }
+
+  getAccountEmailsFor(email: string, errFn?: ErrorCallback) {
+    return this.getLoggedIn()
+      .then(isLoggedIn => {
+        if (isLoggedIn) {
+          return this.getAccountCapabilities();
+        } else {
+          return undefined;
+        }
+      })
+      .then((capabilities: AccountCapabilityInfo | undefined) => {
+        if (capabilities && capabilities.viewSecondaryEmails) {
+          return this._fetchSharedCacheURL({
+            url: '/accounts/' + email + '/emails',
+            reportUrlAsIs: true,
+            errFn,
+          }) as Promise<EmailInfo[] | undefined>;
+        }
+        return undefined;
+      });
   }
 
   addAccountEmail(email: string): Promise<Response> {
@@ -1025,7 +1062,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   /**
    * Construct the uri to get list of changes.
    *
-   * If options is undefined then default options (see _getChangesOptionsHex) is
+   * If options is undefined then default options (see getListChangesOptionsHex) is
    * used.
    */
   getRequestForGetChanges(
@@ -1034,7 +1071,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     offset?: 'n,z' | number,
     options?: string
   ) {
-    options = options || this._getChangesOptionsHex();
+    options = options || this.getListChangesOptionsHex();
     if (offset === 'n,z') {
       offset = 0;
     }
@@ -1050,7 +1087,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     }
     const request = {
       url: '/changes/',
-      params,
+      params: {...params, 'allow-incomplete-results': true},
       reportUrlAsIs: true,
     };
     return request;
@@ -1059,7 +1096,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   /**
    * For every query fetches the matching changes.
    *
-   * If options is undefined then default options (see _getChangesOptionsHex) is
+   * If options is undefined then default options (see getListChangesOptionsHex) is
    * used.
    */
   getChangesForMultipleQueries(
@@ -1106,7 +1143,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   /**
    * Fetches changes that match the query.
    *
-   * If options is undefined then default options (see _getChangesOptionsHex) is
+   * If options is undefined then default options (see getListChangesOptionsHex) is
    * used.
    */
   getChanges(
@@ -1181,28 +1218,27 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     );
   }
 
-  getChangeDetail(
+  async getChangeDetail(
     changeNum?: NumericChangeId,
     errFn?: ErrorCallback,
     cancelCondition?: CancelConditionCallback
   ): Promise<ParsedChangeInfo | undefined> {
-    if (!changeNum) return Promise.resolve(undefined);
-    return this.getConfig(false).then(config => {
-      const optionsHex = this._getChangeOptionsHex(config);
-      return this._getChangeDetail(
-        changeNum,
-        optionsHex,
-        errFn,
-        cancelCondition
-      ).then(detail =>
-        // detail has ChangeViewChangeInfo type because the optionsHex always
-        // includes ALL_REVISIONS flag.
-        GrReviewerUpdatesParser.parse(detail as ChangeViewChangeInfo)
-      );
-    });
+    if (!changeNum) return;
+    const optionsHex = await this.getChangeOptionsHex();
+
+    return this._getChangeDetail(
+      changeNum,
+      optionsHex,
+      errFn,
+      cancelCondition
+    ).then(detail =>
+      // detail has ChangeViewChangeInfo type because the optionsHex always
+      // includes ALL_REVISIONS flag.
+      GrReviewerUpdatesParser.parse(detail as ChangeViewChangeInfo)
+    );
   }
 
-  _getChangesOptionsHex() {
+  private getListChangesOptionsHex() {
     if (
       window.DEFAULT_DETAIL_HEXES &&
       window.DEFAULT_DETAIL_HEXES.dashboardPage
@@ -1219,21 +1255,24 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     return listChangesOptionsToHex(...options);
   }
 
-  _getChangeOptionsHex(config?: ServerInfo) {
-    if (
-      window.DEFAULT_DETAIL_HEXES &&
-      window.DEFAULT_DETAIL_HEXES.changePage &&
-      (!config || !(config.receive && config.receive.enable_signed_push))
-    ) {
+  async getChangeOptionsHex(): Promise<string> {
+    if (window.DEFAULT_DETAIL_HEXES && window.DEFAULT_DETAIL_HEXES.changePage) {
       return window.DEFAULT_DETAIL_HEXES.changePage;
     }
+    return listChangesOptionsToHex(...(await this.getChangeOptions()));
+  }
+
+  async getChangeOptions(): Promise<number[]> {
+    const config = await this.getConfig(false);
 
     // This list MUST be kept in sync with
-    // ChangeIT#changeDetailsDoesNotRequireIndex
+    // ChangeIT#changeDetailsDoesNotRequireIndex and IndexPreloadingUtil#CHANGE_DETAIL_OPTIONS
+    // This list MUST be kept in sync with getResponseFormatOptions
     const options = [
       ListChangesOption.ALL_COMMITS,
       ListChangesOption.ALL_REVISIONS,
       ListChangesOption.CHANGE_ACTIONS,
+      ListChangesOption.DETAILED_ACCOUNTS,
       ListChangesOption.DETAILED_LABELS,
       ListChangesOption.DOWNLOAD_COMMANDS,
       ListChangesOption.MESSAGES,
@@ -1242,10 +1281,41 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
       ListChangesOption.SKIP_DIFFSTAT,
       ListChangesOption.SUBMIT_REQUIREMENTS,
     ];
+    if (this.flagService.isEnabled(KnownExperimentId.REVISION_PARENTS_DATA)) {
+      options.push(ListChangesOption.PARENTS);
+    }
     if (config?.receive?.enable_signed_push) {
       options.push(ListChangesOption.PUSH_CERTIFICATES);
     }
-    return listChangesOptionsToHex(...options);
+    return options;
+  }
+
+  async getResponseFormatOptions(): Promise<string[]> {
+    const config = await this.getConfig(false);
+
+    // This list MUST be kept in sync with
+    // ChangeIT#changeDetailsDoesNotRequireIndex and IndexPreloadingUtil#CHANGE_DETAIL_OPTIONS
+    // This list MUST be kept in sync with getChangeOptions
+    const options = [
+      'ALL_COMMITS',
+      'ALL_REVISIONS',
+      'CHANGE_ACTIONS',
+      'DETAILED_LABELS',
+      'DETAILED_ACCOUNTS',
+      'DOWNLOAD_COMMANDS',
+      'MESSAGES',
+      'SUBMITTABLE',
+      'WEB_LINKS',
+      'SKIP_DIFFSTAT',
+      'SUBMIT_REQUIREMENTS',
+    ];
+    if (this.flagService.isEnabled(KnownExperimentId.REVISION_PARENTS_DATA)) {
+      options.push('PARENTS');
+    }
+    if (config?.receive?.enable_signed_push) {
+      options.push('PUSH_CERTIFICATES');
+    }
+    return options;
   }
 
   /**
@@ -1714,7 +1784,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     });
   }
 
-  getSuggestedAccounts(
+  async getSuggestedAccounts(
     inputVal: string,
     n?: number,
     canSee?: NumericChangeId,
@@ -1732,7 +1802,8 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
       queryParams.push(`${escapeAndWrapSearchOperatorValue(inputVal)}`);
     }
     if (canSee) {
-      queryParams.push(`cansee:${canSee}`);
+      const project = await this.getFromProjectLookup(canSee);
+      queryParams.push(`cansee:${project}~${canSee}`);
     }
     if (filterActive) {
       queryParams.push('is:active');
@@ -1954,37 +2025,36 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     });
   }
 
-  saveChangeReview(
-    changeNum: NumericChangeId,
-    patchNum: PatchSetNum,
-    review: ReviewInput
-  ): Promise<Response>;
-
-  saveChangeReview(
+  async saveChangeReview(
     changeNum: NumericChangeId,
     patchNum: PatchSetNum,
     review: ReviewInput,
-    errFn: ErrorCallback
-  ): Promise<Response | undefined>;
-
-  saveChangeReview(
-    changeNum: NumericChangeId,
-    patchNum: PatchSetNum,
-    review: ReviewInput,
-    errFn?: ErrorCallback
+    errFn?: ErrorCallback,
+    fetchDetail?: boolean
   ) {
+    if (fetchDetail) {
+      review.response_format_options = await this.getResponseFormatOptions();
+    }
     const promises: [Promise<void>, Promise<string>] = [
       this.awaitPendingDiffDrafts(),
       this.getChangeActionURL(changeNum, patchNum, '/review'),
     ];
-    return Promise.all(promises).then(([, url]) =>
-      this._restApiHelper.send({
-        method: HttpMethod.POST,
-        url,
-        body: review,
-        errFn,
-      })
-    );
+    return Promise.all(promises)
+      .then(([, url]) =>
+        this._restApiHelper.send({
+          method: HttpMethod.POST,
+          url,
+          body: review,
+          errFn,
+          parseResponse: true,
+        })
+      )
+      .then(payload => {
+        if (!payload) {
+          return undefined;
+        }
+        return payload as unknown as ReviewResult;
+      });
   }
 
   getChangeEdit(changeNum?: NumericChangeId): Promise<EditInfo | undefined> {
@@ -3088,24 +3158,38 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
   getChange(
     changeNum: ChangeId | NumericChangeId,
     errFn: ErrorCallback
-  ): Promise<ChangeInfo | null> {
-    // Cannot use _changeBaseURL, as this function is used by _projectLookup.
-    return this._restApiHelper
-      .fetchJSON(
-        {
-          url: `/changes/?q=change:${changeNum}`,
-          errFn,
-          anonymizedUrl: '/changes/?q=change:*',
-        },
-        /* noAcceptHeader */ true
-      )
-      .then(res => {
-        const changeInfos = res as ChangeInfo[] | undefined;
-        if (!changeInfos || !changeInfos.length) {
-          return null;
-        }
-        return changeInfos[0];
-      });
+  ): Promise<ChangeInfo | undefined> {
+    if (changeNum in this._projectLookup) {
+      // _projectLookup can only store NumericChangeId, so we are sure that
+      // changeNum is NumericChangeId in this case.
+      return this._changeBaseURL(changeNum as NumericChangeId).then(url =>
+        this._restApiHelper.fetchJSON(
+          {
+            url,
+            errFn,
+            anonymizedUrl: '/changes/*~*',
+          },
+          /* noAcceptHeader */ true
+        )
+      ) as Promise<ChangeInfo | undefined>;
+    } else {
+      return this._restApiHelper
+        .fetchJSON(
+          {
+            url: `/changes/?q=change:${changeNum}`,
+            errFn,
+            anonymizedUrl: '/changes/?q=change:*',
+          },
+          /* noAcceptHeader */ true
+        )
+        .then(res => {
+          const changeInfos = res as ChangeInfo[] | undefined;
+          if (!changeInfos || !changeInfos.length) {
+            return undefined;
+          }
+          return changeInfos[0];
+        });
+    }
   }
 
   /**
@@ -3317,26 +3401,6 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
       errFn,
       anonymizedUrl: '/projects/*/dashboards/*',
     }) as Promise<DashboardInfo | undefined>;
-  }
-
-  /**
-   * Get the docs base URL from either the server config or by probing.
-   *
-   * @return A promise that resolves with the docs base URL.
-   */
-  getDocsBaseUrl(config: ServerInfo | undefined): Promise<string | null> {
-    if (!this.getDocsBaseUrlCachedPromise) {
-      this.getDocsBaseUrlCachedPromise = new Promise(resolve => {
-        if (config?.gerrit?.doc_url) {
-          resolve(config.gerrit.doc_url);
-        } else {
-          this.probePath(getBaseUrl() + PROBE_PATH).then(ok => {
-            resolve(ok ? getBaseUrl() + DOCS_BASE_PATH : null);
-          });
-        }
-      });
-    }
-    return this.getDocsBaseUrlCachedPromise;
   }
 
   getDocumentationSearches(filter: string): Promise<DocResult[] | undefined> {

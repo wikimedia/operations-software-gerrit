@@ -59,6 +59,7 @@ import com.google.gerrit.extensions.validators.CommentValidator;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.CommentsUtil;
+import com.google.gerrit.server.DraftCommentsReader;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.PublishCommentUtil;
@@ -96,7 +97,7 @@ import java.util.stream.Stream;
 import org.eclipse.jgit.lib.Config;
 
 public class PostReviewOp implements BatchUpdateOp {
-  interface Factory {
+  public interface Factory {
     PostReviewOp create(
         ProjectState projectState, PatchSet.Id psId, ReviewInput in, Account.Id reviewerId);
   }
@@ -183,6 +184,7 @@ public class PostReviewOp implements BatchUpdateOp {
   private final ApprovalsUtil approvalsUtil;
   private final ChangeMessagesUtil cmUtil;
   private final CommentsUtil commentsUtil;
+  private final DraftCommentsReader draftCommentsReader;
   private final PublishCommentUtil publishCommentUtil;
   private final PatchSetUtil psUtil;
   private final EmailReviewComments.Factory email;
@@ -214,6 +216,7 @@ public class PostReviewOp implements BatchUpdateOp {
       ApprovalsUtil approvalsUtil,
       ChangeMessagesUtil cmUtil,
       CommentsUtil commentsUtil,
+      DraftCommentsReader draftCommentsReader,
       PublishCommentUtil publishCommentUtil,
       PatchSetUtil psUtil,
       EmailReviewComments.Factory email,
@@ -230,6 +233,7 @@ public class PostReviewOp implements BatchUpdateOp {
     this.psUtil = psUtil;
     this.cmUtil = cmUtil;
     this.commentsUtil = commentsUtil;
+    this.draftCommentsReader = draftCommentsReader;
     this.email = email;
     this.commentAdded = commentAdded;
     this.commentValidators = commentValidators;
@@ -402,7 +406,7 @@ public class PostReviewOp implements BatchUpdateOp {
                   inputComment.unresolved,
                   parent);
         } else {
-          // In ChangeUpdate#putComment() the draft with the same ID will be deleted.
+          // In ChangeUpdate#putDraftComment() the draft with the same ID will be deleted.
           comment.writtenOn = Timestamp.from(ctx.getWhen());
           comment.side = inputComment.side();
           comment.message = inputComment.message;
@@ -552,12 +556,14 @@ public class PostReviewOp implements BatchUpdateOp {
   }
 
   private Map<String, HumanComment> changeDrafts(ChangeContext ctx) {
-    return commentsUtil.draftByChangeAuthor(ctx.getNotes(), user.getAccountId()).stream()
+    return draftCommentsReader.getDraftsByChangeAndDraftAuthor(ctx.getNotes(), user.getAccountId())
+        .stream()
         .collect(Collectors.toMap(c -> c.key.uuid, c -> c));
   }
 
   private Map<String, HumanComment> patchSetDrafts(ChangeContext ctx) {
-    return commentsUtil.draftByPatchSetAuthor(psId, user.getAccountId(), ctx.getNotes()).stream()
+    return draftCommentsReader
+        .getDraftsByPatchSetAndDraftAuthor(ctx.getNotes(), psId, user.getAccountId()).stream()
         .collect(Collectors.toMap(c -> c.key.uuid, c -> c));
   }
 
@@ -649,8 +655,8 @@ public class PostReviewOp implements BatchUpdateOp {
           del.add(c);
           update.putApproval(normName, (short) 0);
         }
-        // Only allow voting again the values are different, if the real account differs or if the
-        // vote is copied over from a past patch-set.
+        // Only allow voting again if the values are different, if the real account differs or if
+        // the vote is copied over from a past patch-set.
       } else if (c != null
           && (c.value() != ent.getValue()
               || !c.realAccountId().equals(reviewerId)

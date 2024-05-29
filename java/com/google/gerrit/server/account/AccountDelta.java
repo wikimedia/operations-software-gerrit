@@ -18,6 +18,7 @@ import com.google.auto.value.AutoValue;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.NotifyConfig.NotifyType;
@@ -161,6 +162,15 @@ public abstract class AccountDelta {
    */
   public abstract Optional<EditPreferencesInfo> getEditPreferences();
 
+  /**
+   * Returns whether the delta for this account is deleting the account.
+   *
+   * <p>If set to true, deletion takes precedence on any other change in this delta.
+   *
+   * @return whether the account should be deleted.
+   */
+  public abstract Optional<Boolean> getShouldDeleteAccount();
+
   public boolean hasExternalIdUpdates() {
     return !this.getCreatedExternalIds().isEmpty()
         || !this.getDeletedExternalIds().isEmpty()
@@ -182,6 +192,7 @@ public abstract class AccountDelta {
      *
      * @param fullName the new full name, if {@code null} or empty string the full name is unset
      */
+    @CanIgnoreReturnValue
     public abstract Builder setFullName(@Nullable String fullName);
 
     /**
@@ -190,6 +201,7 @@ public abstract class AccountDelta {
      * @param displayName the new display name, if {@code null} or empty string the display name is
      *     unset
      */
+    @CanIgnoreReturnValue
     public abstract Builder setDisplayName(@Nullable String displayName);
 
     /**
@@ -198,6 +210,7 @@ public abstract class AccountDelta {
      * @param preferredEmail the new preferred email, if {@code null} or empty string the preferred
      *     email is unset
      */
+    @CanIgnoreReturnValue
     public abstract Builder setPreferredEmail(@Nullable String preferredEmail);
 
     /**
@@ -206,6 +219,7 @@ public abstract class AccountDelta {
      * @param active {@code true} if the account should be set to active, {@code false} if the
      *     account should be set to inactive
      */
+    @CanIgnoreReturnValue
     public abstract Builder setActive(boolean active);
 
     /**
@@ -213,6 +227,7 @@ public abstract class AccountDelta {
      *
      * @param status the new status, if {@code null} or empty string the status is unset
      */
+    @CanIgnoreReturnValue
     public abstract Builder setStatus(@Nullable String status);
 
     /**
@@ -234,6 +249,7 @@ public abstract class AccountDelta {
      * @param extId external ID that should be added
      * @return the builder
      */
+    @CanIgnoreReturnValue
     public Builder addExternalId(ExternalId extId) {
       return addExternalIds(ImmutableSet.of(extId));
     }
@@ -250,6 +266,7 @@ public abstract class AccountDelta {
      * @param extIds external IDs that should be added
      * @return the builder
      */
+    @CanIgnoreReturnValue
     public Builder addExternalIds(Collection<ExternalId> extIds) {
       createdExternalIdsBuilder().addAll(extIds);
       return this;
@@ -273,6 +290,7 @@ public abstract class AccountDelta {
      * @param extId external ID that should be updated
      * @return the builder
      */
+    @CanIgnoreReturnValue
     public Builder updateExternalId(ExternalId extId) {
       return updateExternalIds(ImmutableSet.of(extId));
     }
@@ -289,6 +307,7 @@ public abstract class AccountDelta {
      * @param extIds external IDs that should be updated
      * @return the builder
      */
+    @CanIgnoreReturnValue
     public Builder updateExternalIds(Collection<ExternalId> extIds) {
       updatedExternalIdsBuilder().addAll(extIds);
       return this;
@@ -312,6 +331,7 @@ public abstract class AccountDelta {
      * @param extId external ID that should be deleted
      * @return the builder
      */
+    @CanIgnoreReturnValue
     public Builder deleteExternalId(ExternalId extId) {
       return deleteExternalIds(ImmutableSet.of(extId));
     }
@@ -327,6 +347,7 @@ public abstract class AccountDelta {
      * @param extIds external IDs that should be deleted
      * @return the builder
      */
+    @CanIgnoreReturnValue
     public Builder deleteExternalIds(Collection<ExternalId> extIds) {
       deletedExternalIdsBuilder().addAll(extIds);
       return this;
@@ -339,6 +360,7 @@ public abstract class AccountDelta {
      * @param extIdToAdd external ID that should be added
      * @return the builder
      */
+    @CanIgnoreReturnValue
     public Builder replaceExternalId(ExternalId extIdToDelete, ExternalId extIdToAdd) {
       return replaceExternalIds(ImmutableSet.of(extIdToDelete), ImmutableSet.of(extIdToAdd));
     }
@@ -350,6 +372,7 @@ public abstract class AccountDelta {
      * @param extIdsToAdd external IDs that should be added
      * @return the builder
      */
+    @CanIgnoreReturnValue
     public Builder replaceExternalIds(
         Collection<ExternalId> extIdsToDelete, Collection<ExternalId> extIdsToAdd) {
       return deleteExternalIds(extIdsToDelete).addExternalIds(extIdsToAdd);
@@ -371,6 +394,7 @@ public abstract class AccountDelta {
      * @param notifyTypes the notify types that should be set for the project watch
      * @return the builder
      */
+    @CanIgnoreReturnValue
     public Builder updateProjectWatch(
         ProjectWatchKey projectWatchKey, Set<NotifyType> notifyTypes) {
       return updateProjectWatches(ImmutableMap.of(projectWatchKey, notifyTypes));
@@ -385,6 +409,7 @@ public abstract class AccountDelta {
      * @param projectWatches project watches that should be updated
      * @return the builder
      */
+    @CanIgnoreReturnValue
     public Builder updateProjectWatches(Map<ProjectWatchKey, Set<NotifyType>> projectWatches) {
       updatedProjectWatchesBuilder().putAll(projectWatches);
       return this;
@@ -405,6 +430,7 @@ public abstract class AccountDelta {
      * @param projectWatch project watch that should be deleted
      * @return the builder
      */
+    @CanIgnoreReturnValue
     public Builder deleteProjectWatch(ProjectWatchKey projectWatch) {
       return deleteProjectWatches(ImmutableSet.of(projectWatch));
     }
@@ -417,6 +443,7 @@ public abstract class AccountDelta {
      * @param projectWatches project watches that should be deleted
      * @return the builder
      */
+    @CanIgnoreReturnValue
     public Builder deleteProjectWatches(Collection<ProjectWatchKey> projectWatches) {
       deletedProjectWatchesBuilder().addAll(projectWatches);
       return this;
@@ -430,6 +457,7 @@ public abstract class AccountDelta {
      * @param generalPreferences the general preferences that should be set
      * @return the builder
      */
+    @CanIgnoreReturnValue
     public abstract Builder setGeneralPreferences(GeneralPreferencesInfo generalPreferences);
 
     /**
@@ -440,6 +468,7 @@ public abstract class AccountDelta {
      * @param diffPreferences the diff preferences that should be set
      * @return the builder
      */
+    @CanIgnoreReturnValue
     public abstract Builder setDiffPreferences(DiffPreferencesInfo diffPreferences);
 
     /**
@@ -450,7 +479,24 @@ public abstract class AccountDelta {
      * @param editPreferences the edit preferences that should be set
      * @return the builder
      */
+    @CanIgnoreReturnValue
     public abstract Builder setEditPreferences(EditPreferencesInfo editPreferences);
+
+    @CanIgnoreReturnValue
+    public abstract Builder setShouldDeleteAccount(boolean shouldDelete);
+
+    /**
+     * Builds an AccountDelta that deletes all data.
+     *
+     * @param extIdsToDelete external IDs that should be deleted
+     * @return the builder
+     */
+    @CanIgnoreReturnValue
+    public Builder deleteAccount(Collection<ExternalId> extIdsToDelete) {
+      deleteExternalIds(extIdsToDelete);
+      setShouldDeleteAccount(true);
+      return this;
+    }
 
     /** Builds the instance. */
     public abstract AccountDelta build();
@@ -600,6 +646,12 @@ public abstract class AccountDelta {
       @Override
       public Builder setEditPreferences(EditPreferencesInfo editPreferences) {
         delegate.setEditPreferences(editPreferences);
+        return this;
+      }
+
+      @Override
+      public Builder setShouldDeleteAccount(boolean shouldDelete) {
+        delegate.setShouldDeleteAccount(shouldDelete);
         return this;
       }
     }

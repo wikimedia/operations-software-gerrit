@@ -24,7 +24,7 @@ import {DiffLayer, ParsedChangeInfo} from '../../../types/types';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {TokenHighlightLayer} from '../../../embed/diff/gr-diff-builder/token-highlight-layer';
 import {css, html, LitElement, nothing} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators.js';
+import {customElement, query, state} from 'lit/decorators.js';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {subscribe} from '../../lit/subscription-controller';
 import {assert} from '../../../utils/common-util';
@@ -35,11 +35,13 @@ import {userModelToken} from '../../../models/user/user-model';
 import {modalStyles} from '../../../styles/gr-modal-styles';
 import {GrSyntaxLayerWorker} from '../../../embed/diff/gr-syntax-layer/gr-syntax-layer-worker';
 import {highlightServiceToken} from '../../../services/highlight/highlight-service';
-import {anyLineTooLong} from '../../../embed/diff/gr-diff/gr-diff-utils';
+import {anyLineTooLong} from '../../../utils/diff-util';
 import {fireReload} from '../../../utils/event-util';
 import {when} from 'lit/directives/when.js';
+import {Timing} from '../../../constants/reporting';
+import {changeModelToken} from '../../../models/change/change-model';
 
-interface FilePreview {
+export interface FilePreview {
   filepath: string;
   preview: DiffInfo;
 }
@@ -61,10 +63,10 @@ export class GrApplyFixDialog extends LitElement {
   @query('#nextFix')
   nextFix?: GrButton;
 
-  @property({type: Object})
+  @state()
   change?: ParsedChangeInfo;
 
-  @property({type: Number})
+  @state()
   changeNum?: NumericChangeId;
 
   @state()
@@ -101,7 +103,11 @@ export class GrApplyFixDialog extends LitElement {
 
   private readonly getUserModel = resolve(this, userModelToken);
 
+  private readonly getChangeModel = resolve(this, changeModelToken);
+
   private readonly getNavigation = resolve(this, navigationToken);
+
+  private readonly reporting = getAppContext().reportingService;
 
   private readonly syntaxLayer = new GrSyntaxLayerWorker(
     resolve(this, highlightServiceToken),
@@ -130,32 +136,52 @@ export class GrApplyFixDialog extends LitElement {
         this.syntaxLayer.setEnabled(!!this.diffPrefs.syntax_highlighting);
       }
     );
+    subscribe(
+      this,
+      () => this.getChangeModel().change$,
+      change => (this.change = change)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().changeNum$,
+      changeNum => (this.changeNum = changeNum)
+    );
   }
 
-  static override styles = [
-    sharedStyles,
-    modalStyles,
-    css`
-      .diffContainer {
-        padding: var(--spacing-l) 0;
-        border-bottom: 1px solid var(--border-color);
-      }
-      .file-name {
-        display: block;
-        padding: var(--spacing-s) var(--spacing-l);
-        background-color: var(--background-color-secondary);
-        border-bottom: 1px solid var(--border-color);
-      }
-      gr-button {
-        margin-left: var(--spacing-m);
-      }
-      .fix-picker {
-        display: flex;
-        align-items: center;
-        margin-right: var(--spacing-l);
-      }
-    `,
-  ];
+  static override get styles() {
+    return [
+      sharedStyles,
+      modalStyles,
+      css`
+        .diffContainer {
+          padding: var(--spacing-l) 0;
+          border-bottom: 1px solid var(--border-color);
+        }
+        .file-name {
+          display: block;
+          padding: var(--spacing-s) var(--spacing-l);
+          background-color: var(--background-color-secondary);
+          border-bottom: 1px solid var(--border-color);
+        }
+        gr-button {
+          margin-left: var(--spacing-m);
+        }
+        .fix-picker {
+          display: flex;
+          align-items: center;
+          margin-right: var(--spacing-l);
+        }
+        .info {
+          background-color: var(--info-background);
+          padding: var(--spacing-l) var(--spacing-xl);
+        }
+        .info gr-icon {
+          color: var(--selected-foreground);
+          margin-right: var(--spacing-xl);
+        }
+      `,
+    ];
+  }
 
   override render() {
     return html`
@@ -246,7 +272,9 @@ export class GrApplyFixDialog extends LitElement {
 
   private renderWarning(message: string) {
     if (!message) return nothing;
-    return html`<span><gr-icon icon="info"></gr-icon>${message}</span>`;
+    return html`<span class="info"
+      ><gr-icon icon="info"></gr-icon>${message}</span
+    >`;
   }
 
   /**
@@ -266,7 +294,9 @@ export class GrApplyFixDialog extends LitElement {
   private async showSelectedFixSuggestion(fixSuggestion: FixSuggestionInfo) {
     this.currentFix = fixSuggestion;
     this.loading = true;
+    this.reporting.time(Timing.PREVIEW_FIX_LOAD);
     await this.fetchFixPreview(fixSuggestion);
+    this.reporting.timeEnd(Timing.PREVIEW_FIX_LOAD);
     this.loading = false;
   }
 
@@ -376,6 +406,7 @@ export class GrApplyFixDialog extends LitElement {
       throw new Error('Not all required properties are set.');
     }
     this.isApplyFixLoading = true;
+    this.reporting.time(Timing.APPLY_FIX_LOAD);
     let res;
     if (this.fixSuggestions?.[0].fix_id === PROVIDED_FIX_ID) {
       res = await this.restApiService.applyFixSuggestion(
@@ -401,6 +432,7 @@ export class GrApplyFixDialog extends LitElement {
       this.close(true);
     }
     this.isApplyFixLoading = false;
+    this.reporting.timeEnd(Timing.APPLY_FIX_LOAD);
   }
 }
 

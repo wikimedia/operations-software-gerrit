@@ -100,6 +100,22 @@ public class RebaseChainOnBehalfOfUploaderIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void cannotRebaseOnBehalfOfUploaderWithCommitterEmail() throws Exception {
+    Account.Id uploader = accountOperations.newAccount().create();
+    Change.Id changeId = changeOperations.newChange().owner(uploader).create();
+    RebaseInput rebaseInput = new RebaseInput();
+    rebaseInput.onBehalfOfUploader = true;
+    rebaseInput.committerEmail = "admin@example.com";
+    BadRequestException exception =
+        assertThrows(
+            BadRequestException.class,
+            () -> gApi.changes().id(changeId.get()).rebaseChain(rebaseInput));
+    assertThat(exception)
+        .hasMessageThat()
+        .isEqualTo("committer_email is not supported when rebasing a chain");
+  }
+
+  @Test
   public void rebaseChangeOnBehalfOfUploader_withRebasePermission() throws Exception {
     testRebaseChainOnBehalfOfUploader(Permission.REBASE);
   }
@@ -206,6 +222,76 @@ public class RebaseChainOnBehalfOfUploaderIT extends AbstractDaemonTest {
     assertRebase(changeToBeRebased2, 2, uploader2, rebaser);
     assertRebase(changeToBeRebased3, 2, uploader3, rebaser);
     assertRebase(changeToBeRebased4, 2, uploader4, rebaser);
+  }
+
+  @Test
+  public void rebaseChainOnBehalfOfUploaderAfterUpdatingPreferredEmailForUploader()
+      throws Exception {
+    // Create a chain of changes for being rebased
+    String uploaderEmailOne = "uploader1@example.com";
+    Account.Id uploader = accountOperations.newAccount().preferredEmail(uploaderEmailOne).create();
+    Change.Id changeToBeRebased1 =
+        changeOperations.newChange().project(project).owner(uploader).create();
+
+    Change.Id changeToBeRebased2 =
+        changeOperations
+            .newChange()
+            .project(project)
+            .childOf()
+            .change(changeToBeRebased1)
+            .owner(uploader)
+            .create();
+
+    Change.Id changeToBeRebased3 =
+        changeOperations
+            .newChange()
+            .project(project)
+            .childOf()
+            .change(changeToBeRebased2)
+            .owner(uploader)
+            .create();
+
+    // Change preferred email for the uploader
+    String uploaderEmailTwo = "uploader2@example.com";
+    accountOperations.account(uploader).forUpdate().preferredEmail(uploaderEmailTwo).update();
+
+    // Create, approve and submit the change that will be the new base for the chain that will be
+    // rebased
+    Change.Id changeToBeTheNewBase = changeOperations.newChange().project(project).create();
+    gApi.changes().id(changeToBeTheNewBase.get()).current().review(ReviewInput.approve());
+    gApi.changes().id(changeToBeTheNewBase.get()).current().submit();
+
+    // Rebase the chain on behalf of the uploader through changeToBeRebased3
+    RebaseInput rebaseInput = new RebaseInput();
+    rebaseInput.onBehalfOfUploader = true;
+    gApi.changes().id(changeToBeRebased3.get()).rebaseChain(rebaseInput);
+    assertThat(
+            gApi.changes()
+                .id(changeToBeRebased1.get())
+                .get()
+                .getCurrentRevision()
+                .commit
+                .committer
+                .email)
+        .isEqualTo(uploaderEmailOne);
+    assertThat(
+            gApi.changes()
+                .id(changeToBeRebased2.get())
+                .get()
+                .getCurrentRevision()
+                .commit
+                .committer
+                .email)
+        .isEqualTo(uploaderEmailOne);
+    assertThat(
+            gApi.changes()
+                .id(changeToBeRebased3.get())
+                .get()
+                .getCurrentRevision()
+                .commit
+                .committer
+                .email)
+        .isEqualTo(uploaderEmailOne);
   }
 
   @Test

@@ -123,6 +123,10 @@ public class ActionJson {
         changeInfo.removedFromAttentionSet == null
             ? null
             : ImmutableMap.copyOf(changeInfo.removedFromAttentionSet);
+    copy.customKeyedValues =
+        changeInfo.customKeyedValues == null
+            ? null
+            : ImmutableMap.copyOf(changeInfo.customKeyedValues);
     copy.hashtags = changeInfo.hashtags;
     copy.changeId = changeInfo.changeId;
     copy.submitType = changeInfo.submitType;
@@ -141,12 +145,12 @@ public class ActionJson {
     copy.revertOf = changeInfo.revertOf;
     copy.submissionId = changeInfo.submissionId;
     copy.starred = changeInfo.starred;
-    copy.stars = changeInfo.stars;
     copy.submitted = changeInfo.submitted;
     copy.submitter = changeInfo.submitter;
     copy.unresolvedCommentCount = changeInfo.unresolvedCommentCount;
     copy.workInProgress = changeInfo.workInProgress;
     copy.id = changeInfo.id;
+    copy.tripletId = changeInfo.tripletId;
     copy.cherryPickOfChange = changeInfo.cherryPickOfChange;
     copy.cherryPickOfPatchSet = changeInfo.cherryPickOfPatchSet;
     return copy;
@@ -163,6 +167,7 @@ public class ActionJson {
     copy.isCurrent = revisionInfo.isCurrent;
     copy._number = revisionInfo._number;
     copy.ref = revisionInfo.ref;
+    copy.branch = revisionInfo.branch;
     copy.created = revisionInfo.created;
     copy.uploader = revisionInfo.uploader;
     copy.realUploader = revisionInfo.realUploader;

@@ -4,16 +4,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import './gr-avatar';
-import {AccountInfo} from '../../../types/common';
-import {LitElement, css, html} from 'lit';
+import '../gr-hovercard-account/gr-hovercard-account';
+import {AccountInfo, ServerInfo} from '../../../types/common';
+import {LitElement, PropertyValues, css, html} from 'lit';
 import {customElement, property, state} from 'lit/decorators.js';
 import {
+  isDetailedAccount,
   uniqueAccountId,
   uniqueDefinedAvatar,
 } from '../../../utils/account-util';
 import {resolve} from '../../../models/dependency';
 import {configModelToken} from '../../../models/config/config-model';
 import {subscribe} from '../../lit/subscription-controller';
+import {getDisplayName} from '../../../utils/display-name-util';
+import {accountsModelToken} from '../../../models/accounts-model/accounts-model';
+import {isDefined} from '../../../types/types';
+import {when} from 'lit/directives/when.js';
 
 /**
  * This elements draws stack of avatars overlapped with each other.
@@ -33,6 +39,9 @@ export class GrAvatarStack extends LitElement {
   @property({type: Array})
   accounts: AccountInfo[] = [];
 
+  @state()
+  detailedAccounts: AccountInfo[] = [];
+
   /**
    * The size of requested image in px.
    *
@@ -42,18 +51,23 @@ export class GrAvatarStack extends LitElement {
   imageSize = 16;
 
   /**
+   * Whether a hover-card should be shown for each avatar when hovered
+   */
+  @property({type: Boolean})
+  enableHover = false;
+
+  /**
    * In gr-app, gr-account-chip is in charge of loading a full account, so
    * avatars will be set. However, code-owners will create gr-avatars with a
    * bare account-id. To enable fetching of those avatars, a flag is added to
-   * gr-avatar that will disregard the absence of avatar urls.
+   * gr-avatar-stack that will fetch the accounts on demand
    */
   @property({type: Boolean})
   forceFetch = false;
 
-  /**
-   * Reflects plugins.has_avatars value of server configuration.
-   */
-  @state() private hasAvatars = false;
+  private readonly getAccountsModel = resolve(this, accountsModelToken);
+
+  @state() config?: ServerInfo;
 
   static override get styles() {
     return [
@@ -79,20 +93,44 @@ export class GrAvatarStack extends LitElement {
     subscribe(
       this,
       () => this.getConfigModel().serverConfig$,
-      config => {
-        this.hasAvatars = Boolean(config?.plugin?.has_avatars);
-      }
+      config => (this.config = config)
     );
+  }
+
+  override updated(changedProperties: PropertyValues) {
+    if (changedProperties.has('accounts')) {
+      if (
+        this.forceFetch &&
+        this.accounts.length > 0 &&
+        this.accounts.some(a => !isDetailedAccount(a))
+      ) {
+        Promise.all(
+          this.accounts.map(account =>
+            this.getAccountsModel().fillDetails(account)
+          )
+        ).then(accounts => {
+          // Only keep the detailed accounts as only those will be shown.
+          // It is possible for the server to return an empty account with just an account-id.
+          // This could be due to the fact that the user does not have permission to see this account.
+          this.detailedAccounts = accounts.filter(
+            a => isDefined(a) && isDetailedAccount(a)
+          );
+        });
+      } else {
+        this.detailedAccounts = this.accounts;
+      }
+    }
   }
 
   override render() {
     const uniqueAvatarAccounts = this.forceFetch
-      ? this.accounts.filter(uniqueAccountId)
-      : this.accounts
+      ? this.detailedAccounts.filter(uniqueAccountId)
+      : this.detailedAccounts
           .filter(account => !!account?.avatars?.[0]?.url)
           .filter(uniqueDefinedAvatar);
+    const hasAvatars = this.config?.plugin?.has_avatars ?? false;
     if (
-      !this.hasAvatars ||
+      !hasAvatars ||
       uniqueAvatarAccounts.length === 0 ||
       uniqueAvatarAccounts.length > GrAvatarStack.MAX_STACK
     ) {
@@ -101,10 +139,17 @@ export class GrAvatarStack extends LitElement {
     return uniqueAvatarAccounts.map(
       account =>
         html`<gr-avatar
-          .forceFetch=${this.forceFetch}
           .account=${account}
           .imageSize=${this.imageSize}
+          aria-label=${getDisplayName(this.config, account)}
         >
+          ${when(
+            this.enableHover,
+            () =>
+              html`<gr-hovercard-account
+                .account=${account}
+              ></gr-hovercard-account>`
+          )}
         </gr-avatar>`
     );
   }

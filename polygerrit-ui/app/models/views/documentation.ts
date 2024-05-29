@@ -6,7 +6,7 @@
 import {GerritView} from '../../services/router/router-model';
 import {getBaseUrl} from '../../utils/url-util';
 import {define} from '../dependency';
-import {Model} from '../model';
+import {Model} from '../base/model';
 import {ViewState} from './base';
 
 export interface DocumentationViewState extends ViewState {
@@ -14,6 +14,10 @@ export interface DocumentationViewState extends ViewState {
   filter: string;
 }
 
+/**
+ * This is just for documentation *searches*, not for static documentation
+ * URLs. See `getDocUrl()` in url-util.ts.
+ */
 export function createDocumentationUrl() {
   return `${getBaseUrl()}/Documentation`;
 }

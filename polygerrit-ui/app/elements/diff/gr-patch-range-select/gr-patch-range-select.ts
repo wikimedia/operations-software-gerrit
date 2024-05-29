@@ -16,6 +16,9 @@ import {
   isMergeParent,
   PatchSet,
   convertToPatchSetNum,
+  getParentInfoString,
+  shorten,
+  getParentCommit,
 } from '../../../utils/patch-set-util';
 import {ReportingService} from '../../../services/gr-reporting/gr-reporting';
 import {
@@ -47,13 +50,10 @@ import {ValueChangedEvent} from '../../../types/events';
 import {changeModelToken} from '../../../models/change/change-model';
 import {changeViewModelToken} from '../../../models/views/change';
 import {fireNoBubbleNoCompose} from '../../../utils/event-util';
+import {FlagsService, KnownExperimentId} from '../../../services/flags/flags';
 
 // Maximum length for patch set descriptions.
 const PATCH_DESC_MAX_LENGTH = 500;
-
-function getShaForPatch(patch: PatchSet) {
-  return patch.sha.substring(0, 10);
-}
 
 export interface PatchRangeChangeDetail {
   patchNum?: RevisionPatchSetNum;
@@ -118,6 +118,8 @@ export class GrPatchRangeSelect extends LitElement {
 
   private readonly reporting: ReportingService =
     getAppContext().reportingService;
+
+  private readonly flags: FlagsService = getAppContext().flagsService;
 
   private readonly getCommentsModel = resolve(this, commentsModelToken);
 
@@ -255,6 +257,7 @@ export class GrPatchRangeSelect extends LitElement {
     const maxParents = this.revisionInfo.getMaxParents();
     const isMerge = this.revisionInfo.isMergeCommit(this.patchNum);
     const parentCount = this.revisionInfo.getParentCount(this.patchNum);
+    const rev = getRevisionByPatchNum(this.sortedRevisions, this.patchNum);
 
     const dropdownContent: DropdownItem[] = [];
     for (const basePatch of this.availablePatches) {
@@ -262,7 +265,7 @@ export class GrPatchRangeSelect extends LitElement {
       const entry: DropdownItem = this.createDropdownEntry(
         basePatchNum,
         'Patchset ',
-        getShaForPatch(basePatch)
+        shorten(basePatch.sha)!
       );
       dropdownContent.push({
         ...entry,
@@ -270,8 +273,14 @@ export class GrPatchRangeSelect extends LitElement {
       });
     }
 
+    const showParentsData = this.flags.isEnabled(
+      KnownExperimentId.REVISION_PARENTS_DATA
+    );
     dropdownContent.push({
-      text: isMerge ? 'Auto Merge' : 'Base',
+      triggerText: isMerge ? 'Auto Merge' : 'Base',
+      text: isMerge ? 'Auto Merge' : `Base | ${getParentCommit(rev, 0)}`,
+      bottomText:
+        showParentsData && !isMerge ? getParentInfoString(rev, 0) : undefined,
       value: PARENT,
     });
 
@@ -279,7 +288,8 @@ export class GrPatchRangeSelect extends LitElement {
       dropdownContent.push({
         disabled: idx >= parentCount,
         triggerText: `Parent ${idx + 1}`,
-        text: `Parent ${idx + 1}`,
+        text: `Parent ${idx + 1} | ${getParentCommit(rev, idx)}`,
+        bottomText: showParentsData ? getParentInfoString(rev, idx) : undefined,
         mobileText: `Parent ${idx + 1}`,
         value: -(idx + 1),
       });
@@ -312,7 +322,7 @@ export class GrPatchRangeSelect extends LitElement {
       const entry = this.createDropdownEntry(
         patchNum,
         patchNum === EDIT ? '' : 'Patchset ',
-        getShaForPatch(patch)
+        shorten(patch.sha)!
       );
       dropdownContent.push({
         ...entry,

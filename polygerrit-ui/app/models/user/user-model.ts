@@ -14,19 +14,29 @@ import {
   AccountDetailInfo,
   EditPreferencesInfo,
   PreferencesInfo,
+  TopMenuItemInfo,
 } from '../../types/common';
 import {
   createDefaultPreferences,
   createDefaultDiffPrefs,
   createDefaultEditPrefs,
   AppTheme,
+  ColumnNames,
 } from '../../constants/constants';
 import {RestApiService} from '../../services/gr-rest-api/gr-rest-api';
 import {DiffPreferencesInfo} from '../../types/diff';
 import {select} from '../../utils/observable-util';
 import {define} from '../dependency';
-import {Model} from '../model';
+import {Model} from '../base/model';
 import {isDefined} from '../../types/types';
+
+export function changeTablePrefs(prefs: Partial<PreferencesInfo>) {
+  const cols = prefs.change_table ?? [];
+  if (cols.length === 0) return Object.values(ColumnNames);
+  return cols
+    .map(column => (column === 'Project' ? ColumnNames.REPO : column))
+    .map(column => (column === ' Status ' ? ColumnNames.STATUS : column));
+}
 
 export interface UserState {
   /**
@@ -123,6 +133,11 @@ export class UserModel extends Model<UserState> {
     preference => preference.theme
   );
 
+  readonly myMenuItems$: Observable<TopMenuItemInfo[]> = select(
+    this.preferences$,
+    preference => preference?.my ?? []
+  );
+
   readonly preferenceChangesPerPage$: Observable<number> = select(
     this.preferences$,
     preference => preference.changes_per_page
@@ -182,6 +197,10 @@ export class UserModel extends Model<UserState> {
   }
 
   updatePreferences(prefs: Partial<PreferencesInfo>) {
+    this.setPreferences({
+      ...(this.getState().preferences ?? createDefaultPreferences()),
+      ...prefs,
+    });
     return this.restApiService
       .savePreferences(prefs)
       .then((newPrefs: PreferencesInfo | undefined) => {

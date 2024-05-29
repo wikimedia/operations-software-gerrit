@@ -8,7 +8,7 @@ import '../../shared/gr-button/gr-button';
 import {PreferencesInfo, TopMenuItemInfo} from '../../../types/common';
 import {css, html, LitElement} from 'lit';
 import {sharedStyles} from '../../../styles/shared-styles';
-import {formStyles} from '../../../styles/gr-form-styles';
+import {grFormStyles} from '../../../styles/gr-form-styles';
 import {state, customElement} from 'lit/decorators.js';
 import {BindValueChangeEvent} from '../../../types/events';
 import {subscribe} from '../../lit/subscription-controller';
@@ -48,31 +48,33 @@ export class GrMenuEditor extends LitElement {
     );
   }
 
-  static override styles = [
-    formStyles,
-    sharedStyles,
-    fontStyles,
-    menuPageStyles,
-    css`
-      .buttonColumn {
-        width: 2em;
-      }
-      .moveUpButton,
-      .moveDownButton {
-        width: 100%;
-      }
-      tbody tr:first-of-type td .moveUpButton,
-      tbody tr:last-of-type td .moveDownButton {
-        display: none;
-      }
-      td.urlCell {
-        word-break: break-word;
-      }
-      .newUrlInput {
-        min-width: 23em;
-      }
-    `,
-  ];
+  static override get styles() {
+    return [
+      grFormStyles,
+      sharedStyles,
+      fontStyles,
+      menuPageStyles,
+      css`
+        .buttonColumn {
+          width: 2em;
+        }
+        .moveUpButton,
+        .moveDownButton {
+          width: 100%;
+        }
+        tbody tr:first-of-type td .moveUpButton,
+        tbody tr:last-of-type td .moveDownButton {
+          display: none;
+        }
+        td.urlCell {
+          word-break: break-word;
+        }
+        .newUrlInput {
+          min-width: 23em;
+        }
+      `,
+    ];
+  }
 
   override render() {
     const unchanged = deepEqual(this.menuItems, this.originalPrefs.my);

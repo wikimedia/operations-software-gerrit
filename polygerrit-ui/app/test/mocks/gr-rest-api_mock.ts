@@ -68,20 +68,15 @@ import {
   createCommit,
   createConfig,
   createMergeable,
-  createPreferences,
   createServerInfo,
   createSubmittedTogetherInfo,
 } from '../test-data-generators';
 import {
   createDefaultDiffPrefs,
   createDefaultEditPrefs,
+  createDefaultPreferences,
 } from '../../constants/constants';
 import {ParsedChangeInfo} from '../../types/types';
-import {getBaseUrl} from '../../utils/url-util';
-import {
-  DOCS_BASE_PATH,
-  PROBE_PATH,
-} from '../../services/gr-rest-api/gr-rest-api-impl';
 
 export const grRestApiMock: RestApiService = {
   addAccountEmail(): Promise<Response> {
@@ -121,6 +116,9 @@ export const grRestApiMock: RestApiService = {
     return Promise.resolve(new Response());
   },
   createRepoTag(): Promise<Response> {
+    return Promise.resolve(new Response());
+  },
+  deleteAccount(): Promise<Response> {
     return Promise.resolve(new Response());
   },
   deleteAccountEmail(): Promise<Response> {
@@ -188,6 +186,9 @@ export const grRestApiMock: RestApiService = {
   getAccountEmails(): Promise<EmailInfo[] | undefined> {
     return Promise.resolve([]);
   },
+  getAccountEmailsFor(): Promise<EmailInfo[] | undefined> {
+    return Promise.resolve([]);
+  },
   getAccountGPGKeys(): Promise<Record<string, GpgKeyInfo>> {
     return Promise.resolve({});
   },
@@ -209,7 +210,7 @@ export const grRestApiMock: RestApiService = {
   getCapabilities(): Promise<CapabilityInfoMap | undefined> {
     return Promise.resolve({});
   },
-  getChange(): Promise<ChangeInfo | null> {
+  getChange(): Promise<ChangeInfo | undefined> {
     throw new Error('getChange() not implemented by RestApiMock.');
   },
   getChangeActionURL(): Promise<string> {
@@ -311,16 +312,6 @@ export const grRestApiMock: RestApiService = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return Promise.resolve({}) as any;
   },
-  getDocsBaseUrl(config?: ServerInfo): Promise<string | null> {
-    if (config?.gerrit?.doc_url) {
-      return Promise.resolve(config.gerrit.doc_url);
-    } else {
-      return this.probePath(getBaseUrl() + PROBE_PATH).then(ok =>
-        Promise.resolve(ok ? getBaseUrl() + DOCS_BASE_PATH : null)
-      );
-    }
-    return Promise.resolve('');
-  },
   getDocumentationSearches(): Promise<DocResult[] | undefined> {
     return Promise.resolve([]);
   },
@@ -378,8 +369,7 @@ export const grRestApiMock: RestApiService = {
     return Promise.resolve({});
   },
   getPreferences(): Promise<PreferencesInfo | undefined> {
-    // TODO: Use createDefaultPreferences() instead.
-    return Promise.resolve(createPreferences());
+    return Promise.resolve(createDefaultPreferences());
   },
   getProjectConfig(): Promise<ConfigInfo | undefined> {
     return Promise.resolve(createConfig());
@@ -479,7 +469,7 @@ export const grRestApiMock: RestApiService = {
     return Promise.resolve(new Response());
   },
   saveChangeReview() {
-    return Promise.resolve(new Response());
+    return Promise.resolve({});
   },
   saveChangeStarred(): Promise<Response> {
     return Promise.resolve(new Response());

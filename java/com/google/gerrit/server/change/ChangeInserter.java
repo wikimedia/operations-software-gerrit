@@ -19,6 +19,8 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.gerrit.entities.Change.INITIAL_PATCH_SET_ID;
 import static com.google.gerrit.server.change.ReviewerModifier.newReviewerInputFromCommitIdentity;
+import static com.google.gerrit.server.mail.EmailFactories.REVIEW_REQUESTED;
+import static com.google.gerrit.server.notedb.ChangeUpdate.MAX_CUSTOM_KEYED_VALUES;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.REVIEWER;
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
 import static java.util.Objects.requireNonNull;
@@ -26,6 +28,7 @@ import static java.util.Objects.requireNonNull;
 import com.google.common.base.MoreObjects;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Streams;
 import com.google.common.flogger.FluentLogger;
@@ -43,7 +46,6 @@ import com.google.gerrit.entities.PatchSetInfo;
 import com.google.gerrit.entities.SubmissionId;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.client.ReviewerState;
-import com.google.gerrit.extensions.registration.DynamicItem;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.RestApiException;
@@ -56,15 +58,18 @@ import com.google.gerrit.server.change.ReviewerModifier.InternalReviewerInput;
 import com.google.gerrit.server.change.ReviewerModifier.ReviewerModification;
 import com.google.gerrit.server.change.ReviewerModifier.ReviewerModificationList;
 import com.google.gerrit.server.config.SendEmailExecutor;
-import com.google.gerrit.server.config.UrlFormatter;
 import com.google.gerrit.server.events.CommitReceivedEvent;
 import com.google.gerrit.server.extensions.events.CommentAdded;
 import com.google.gerrit.server.extensions.events.RevisionCreated;
 import com.google.gerrit.server.git.GroupCollector;
 import com.google.gerrit.server.git.validators.CommitValidationException;
 import com.google.gerrit.server.git.validators.CommitValidators;
-import com.google.gerrit.server.mail.send.CreateChangeSender;
+import com.google.gerrit.server.git.validators.TopicValidator;
+import com.google.gerrit.server.mail.EmailFactories;
+import com.google.gerrit.server.mail.send.ChangeEmail;
 import com.google.gerrit.server.mail.send.MessageIdGenerator;
+import com.google.gerrit.server.mail.send.OutgoingEmail;
+import com.google.gerrit.server.mail.send.StartReviewChangeEmailDecorator;
 import com.google.gerrit.server.notedb.ChangeUpdate;
 import com.google.gerrit.server.patch.AutoMerger;
 import com.google.gerrit.server.patch.PatchSetInfoFactory;
@@ -110,15 +115,16 @@ public class ChangeInserter implements InsertChangeOp {
   private final PatchSetUtil psUtil;
   private final ApprovalsUtil approvalsUtil;
   private final ChangeMessagesUtil cmUtil;
-  private final CreateChangeSender.Factory createChangeSenderFactory;
+  private final EmailFactories emailFactories;
   private final ExecutorService sendEmailExecutor;
   private final CommitValidators.Factory commitValidatorsFactory;
+  private final TopicValidator topicValidator;
   private final RevisionCreated revisionCreated;
   private final CommentAdded commentAdded;
   private final ReviewerModifier reviewerModifier;
   private final MessageIdGenerator messageIdGenerator;
-  private final DynamicItem<UrlFormatter> urlFormatter;
   private final AutoMerger autoMerger;
+  private final ChangeUtil changeUtil;
 
   private final Change.Id changeId;
   private final PatchSet.Id psId;
@@ -135,6 +141,7 @@ public class ChangeInserter implements InsertChangeOp {
   private boolean workInProgress;
   private List<String> groups = Collections.emptyList();
   private ImmutableListMultimap<String, String> validationOptions = ImmutableListMultimap.of();
+  private ImmutableMap<String, String> customKeyedValues = ImmutableMap.of();
   private boolean validate = true;
   private Map<String, Short> approvals;
   private RequestScopePropagator requestScopePropagator;
@@ -162,15 +169,16 @@ public class ChangeInserter implements InsertChangeOp {
       PatchSetUtil psUtil,
       ApprovalsUtil approvalsUtil,
       ChangeMessagesUtil cmUtil,
-      CreateChangeSender.Factory createChangeSenderFactory,
+      EmailFactories emailFactories,
       @SendEmailExecutor ExecutorService sendEmailExecutor,
       CommitValidators.Factory commitValidatorsFactory,
+      TopicValidator topicValidator,
       CommentAdded commentAdded,
       RevisionCreated revisionCreated,
       ReviewerModifier reviewerModifier,
       MessageIdGenerator messageIdGenerator,
-      DynamicItem<UrlFormatter> urlFormatter,
       AutoMerger autoMerger,
+      ChangeUtil changeUtil,
       @Assisted Change.Id changeId,
       @Assisted ObjectId commitId,
       @Assisted String refName) {
@@ -180,15 +188,16 @@ public class ChangeInserter implements InsertChangeOp {
     this.psUtil = psUtil;
     this.approvalsUtil = approvalsUtil;
     this.cmUtil = cmUtil;
-    this.createChangeSenderFactory = createChangeSenderFactory;
+    this.emailFactories = emailFactories;
     this.sendEmailExecutor = sendEmailExecutor;
     this.commitValidatorsFactory = commitValidatorsFactory;
+    this.topicValidator = topicValidator;
     this.revisionCreated = revisionCreated;
     this.commentAdded = commentAdded;
     this.reviewerModifier = reviewerModifier;
     this.messageIdGenerator = messageIdGenerator;
-    this.urlFormatter = urlFormatter;
     this.autoMerger = autoMerger;
+    this.changeUtil = changeUtil;
 
     this.changeId = changeId;
     this.psId = PatchSet.id(changeId, INITIAL_PATCH_SET_ID);
@@ -223,7 +232,7 @@ public class ChangeInserter implements InsertChangeOp {
   private Change.Key getChangeKey(RevWalk rw) throws IOException {
     RevCommit commit = rw.parseCommit(commitId);
     rw.parseBody(commit);
-    List<String> idList = ChangeUtil.getChangeIdsFromFooter(commit, urlFormatter.get());
+    List<String> idList = changeUtil.getChangeIdsFromFooter(commit);
     if (!idList.isEmpty()) {
       return Change.key(idList.get(idList.size() - 1).trim());
     }
@@ -343,6 +352,13 @@ public class ChangeInserter implements InsertChangeOp {
   }
 
   @CanIgnoreReturnValue
+  public ChangeInserter setCustomKeyedValues(ImmutableMap<String, String> customKeyedValues) {
+    requireNonNull(customKeyedValues, "customKeyedValues may not be null");
+    this.customKeyedValues = customKeyedValues;
+    return this;
+  }
+
+  @CanIgnoreReturnValue
   public ChangeInserter setValidationOptions(
       ImmutableListMultimap<String, String> validationOptions) {
     requireNonNull(validationOptions, "validationOptions may not be null");
@@ -457,9 +473,21 @@ public class ChangeInserter implements InsertChangeOp {
     update.setSubjectForCommit("Create change");
     update.setBranch(change.getDest().branch());
     try {
-      update.setTopic(change.getTopic());
+      update.setTopic(change.getTopic(), topicValidator);
     } catch (ValidationException ex) {
       throw new BadRequestException(ex.getMessage());
+    }
+    if (customKeyedValues != null) {
+      try {
+        if (customKeyedValues.entrySet().size() > MAX_CUSTOM_KEYED_VALUES) {
+          throw new ValidationException("Too many custom keyed values");
+        }
+        for (Map.Entry<String, String> entry : customKeyedValues.entrySet()) {
+          update.addCustomKeyedValue(entry.getKey(), entry.getValue());
+        }
+      } catch (ValidationException ex) {
+        throw new BadRequestException(ex.getMessage());
+      }
     }
     update.setPsDescription(patchSetDescription);
     update.setPrivate(isPrivate);
@@ -531,24 +559,30 @@ public class ChangeInserter implements InsertChangeOp {
             @Override
             public void run() {
               try {
-                CreateChangeSender emailSender =
-                    createChangeSenderFactory.create(change.getProject(), change.getId());
-                emailSender.setFrom(change.getOwner());
-                emailSender.setPatchSet(patchSet, patchSetInfo);
-                emailSender.setNotify(notify);
-                emailSender.addReviewers(
+                StartReviewChangeEmailDecorator startReviewEmail =
+                    emailFactories.createStartReviewChangeEmail();
+                startReviewEmail.markAsCreateChange();
+                startReviewEmail.addReviewers(
                     reviewerAdditions.flattenResults(ReviewerOp.Result::addedReviewers).stream()
                         .map(PatchSetApproval::accountId)
                         .collect(toImmutableSet()));
-                emailSender.addReviewersByEmail(
+                startReviewEmail.addReviewersByEmail(
                     reviewerAdditions.flattenResults(ReviewerOp.Result::addedReviewersByEmail));
-                emailSender.addExtraCC(
+                startReviewEmail.addExtraCC(
                     reviewerAdditions.flattenResults(ReviewerOp.Result::addedCCs));
-                emailSender.addExtraCCByEmail(
+                startReviewEmail.addExtraCCByEmail(
                     reviewerAdditions.flattenResults(ReviewerOp.Result::addedCCsByEmail));
-                emailSender.setMessageId(
+                ChangeEmail changeEmail =
+                    emailFactories.createChangeEmail(
+                        change.getProject(), change.getId(), startReviewEmail);
+                changeEmail.setPatchSet(patchSet, patchSetInfo);
+                OutgoingEmail outgoingEmail =
+                    emailFactories.createOutgoingEmail(REVIEW_REQUESTED, changeEmail);
+                outgoingEmail.setFrom(change.getOwner());
+                outgoingEmail.setNotify(notify);
+                outgoingEmail.setMessageId(
                     messageIdGenerator.fromChangeUpdate(ctx.getRepoView(), patchSet.id()));
-                emailSender.send();
+                outgoingEmail.send();
               } catch (Exception e) {
                 logger.atSevere().withCause(e).log(
                     "Cannot send email for new change %s", change.getId());
@@ -659,20 +693,20 @@ public class ChangeInserter implements InsertChangeOp {
     }
     return Streams.concat(
             reviewerInputs.stream(),
-            Streams.stream(
-                newReviewerInputFromCommitIdentity(
-                    change,
-                    patchSetInfo.getCommitId(),
-                    patchSetInfo.getAuthor().getAccount(),
-                    NotifyHandling.NONE,
-                    change.getOwner())),
-            Streams.stream(
-                newReviewerInputFromCommitIdentity(
-                    change,
-                    patchSetInfo.getCommitId(),
-                    patchSetInfo.getCommitter().getAccount(),
-                    NotifyHandling.NONE,
-                    change.getOwner())))
+            newReviewerInputFromCommitIdentity(
+                change,
+                patchSetInfo.getCommitId(),
+                patchSetInfo.getAuthor().getAccount(),
+                NotifyHandling.NONE,
+                change.getOwner())
+                .stream(),
+            newReviewerInputFromCommitIdentity(
+                change,
+                patchSetInfo.getCommitId(),
+                patchSetInfo.getCommitter().getAccount(),
+                NotifyHandling.NONE,
+                change.getOwner())
+                .stream())
         .collect(toImmutableList());
   }
 }

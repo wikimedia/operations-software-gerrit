@@ -36,6 +36,7 @@ import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.ReviewerSet;
+import com.google.gerrit.server.Sequences;
 import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.change.ChangeInserter;
 import com.google.gerrit.server.change.NotifyResolver;
@@ -52,7 +53,6 @@ import com.google.gerrit.server.git.MergeUtil;
 import com.google.gerrit.server.git.MergeUtilFactory;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
-import com.google.gerrit.server.notedb.Sequences;
 import com.google.gerrit.server.project.InvalidChangeOperationException;
 import com.google.gerrit.server.project.NoSuchProjectException;
 import com.google.gerrit.server.project.ProjectCache;
@@ -74,6 +74,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.ObjectId;
@@ -174,7 +175,8 @@ public class CherryPickChange {
         null,
         null,
         null,
-        null);
+        null,
+        Optional.empty());
   }
 
   /**
@@ -205,7 +207,17 @@ public class CherryPickChange {
       throws IOException, InvalidChangeOperationException, UpdateException, RestApiException,
           ConfigInvalidException, NoSuchProjectException {
     return cherryPick(
-        sourceChange, project, sourceCommit, input, dest, TimeUtil.now(), null, null, null, null);
+        sourceChange,
+        project,
+        sourceCommit,
+        input,
+        dest,
+        TimeUtil.now(),
+        null,
+        null,
+        null,
+        null,
+        Optional.empty());
   }
 
   /**
@@ -227,13 +239,17 @@ public class CherryPickChange {
    * @param idForNewChange The ID that the new change of the cherry pick will have. If provided and
    *     the cherry-pick doesn't result in creating a new change, then
    *     InvalidChangeOperationException is thrown.
+   * @param verifiedBaseCommit - base commit for the cherry-pick, which is guaranteed to be
+   *     associated with exactly one change and belong to a {@code dest} branch. This is currently
+   *     only used when this base commit was created in the same API call.
    * @return Result object that describes the cherry pick.
    * @throws IOException Unable to open repository or read from the database.
    * @throws InvalidChangeOperationException Parent or branch don't exist, or two changes with same
    *     key exist in the branch. Also thrown when idForNewChange is not null but cherry-pick only
    *     creates a new patchset rather than a new change.
    * @throws UpdateException Problem updating the database using batchUpdateFactory.
-   * @throws RestApiException Error such as invalid SHA1
+   * @throws RestApiException Error such as invalid SHA1, or {@code input.committerEmail} is not
+   *     among the registered emails of the current user.
    * @throws ConfigInvalidException Can't find account to notify.
    * @throws NoSuchProjectException Can't find project state.
    */
@@ -247,7 +263,8 @@ public class CherryPickChange {
       @Nullable Change.Id revertedChange,
       @Nullable ObjectId changeIdForNewChange,
       @Nullable Change.Id idForNewChange,
-      @Nullable Boolean workInProgress)
+      @Nullable Boolean workInProgress,
+      Optional<RevCommit> verifiedBaseCommit)
       throws IOException, InvalidChangeOperationException, UpdateException, RestApiException,
           ConfigInvalidException, NoSuchProjectException {
     IdentifiedUser identifiedUser = user.get();
@@ -264,9 +281,14 @@ public class CherryPickChange {
             String.format("Branch %s does not exist.", dest.branch()));
       }
 
-      RevCommit baseCommit =
-          CommitUtil.getBaseCommit(
-              project.get(), queryProvider.get(), revWalk, destRef, input.base);
+      RevCommit baseCommit;
+      if (verifiedBaseCommit.isPresent()) {
+        baseCommit = verifiedBaseCommit.get();
+      } else {
+        baseCommit =
+            CommitUtil.getBaseCommit(
+                project.get(), queryProvider.get(), revWalk, destRef, input.base);
+      }
 
       CodeReviewCommit commitToCherryPick = revWalk.parseCommit(sourceCommit);
 
@@ -306,7 +328,30 @@ public class CherryPickChange {
       CodeReviewCommit cherryPickCommit;
       ProjectState projectState =
           projectCache.get(dest.project()).orElseThrow(noSuchProject(dest.project()));
-      PersonIdent committerIdent = identifiedUser.newCommitterIdent(timestamp, serverZoneId);
+
+      PersonIdent committerIdent;
+      if (input.committerEmail == null) {
+        committerIdent =
+            Optional.ofNullable(commitToCherryPick.getCommitterIdent())
+                .map(
+                    ident ->
+                        identifiedUser
+                            .newCommitterIdent(ident.getEmailAddress(), timestamp, serverZoneId)
+                            .orElseGet(
+                                () -> identifiedUser.newCommitterIdent(timestamp, serverZoneId)))
+                .orElseGet(() -> identifiedUser.newCommitterIdent(timestamp, serverZoneId));
+      } else {
+        committerIdent =
+            identifiedUser
+                .newCommitterIdent(input.committerEmail, timestamp, serverZoneId)
+                .orElseThrow(
+                    () ->
+                        new BadRequestException(
+                            String.format(
+                                "Cannot cherry-pick using committer email %s, "
+                                    + "as it is not among the registered emails of account %s",
+                                input.committerEmail, identifiedUser.getAccountId().get())));
+      }
 
       try {
         MergeUtil mergeUtil;

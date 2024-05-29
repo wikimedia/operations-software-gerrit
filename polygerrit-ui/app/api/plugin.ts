@@ -15,6 +15,7 @@ import {ChangeActionsPluginApi} from './change-actions';
 import {RestPluginApi} from './rest';
 import {HookApi, RegisterOptions} from './hook';
 import {StylePluginApi} from './styles';
+import {SuggestionsPluginApi} from './suggestions';
 
 export enum TargetElement {
   CHANGE_ACTIONS = 'changeactions',
@@ -32,6 +33,7 @@ export enum EventType {
   REVERT_SUBMISSION = 'revert_submission',
   POST_REVERT = 'postrevert',
   ADMIN_MENU_LINKS = 'admin-menu-links',
+  SHOW_DIFF = 'showdiff',
 }
 
 export declare interface PluginApi {
@@ -57,6 +59,7 @@ export declare interface PluginApi {
   changeActions(): ChangeActionsPluginApi;
   changeReply(): ChangeReplyPluginApi;
   checks(): ChecksPluginApi;
+  suggestions(): SuggestionsPluginApi;
   eventHelper(element: Node): EventHelperPluginApi;
   getPluginName(): string;
   hook<T extends HTMLElement>(

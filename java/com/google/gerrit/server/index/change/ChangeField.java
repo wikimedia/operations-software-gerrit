@@ -16,7 +16,6 @@ package com.google.gerrit.server.index.change;
 
 import static com.google.common.base.MoreObjects.firstNonNull;
 import static com.google.common.collect.ImmutableList.toImmutableList;
-import static com.google.common.collect.ImmutableListMultimap.toImmutableListMultimap;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.gerrit.server.util.AttentionSetUtil.additionsOnly;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -24,6 +23,7 @@ import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
 
+import com.google.auto.value.AutoValue;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Splitter;
 import com.google.common.collect.HashBasedTable;
@@ -36,6 +36,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Table;
 import com.google.common.flogger.FluentLogger;
 import com.google.common.io.Files;
+import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
 import com.google.common.reflect.TypeToken;
 import com.google.gerrit.common.Nullable;
@@ -63,7 +64,6 @@ import com.google.gerrit.json.OutputFormat;
 import com.google.gerrit.proto.Entities;
 import com.google.gerrit.server.ReviewerByEmailSet;
 import com.google.gerrit.server.ReviewerSet;
-import com.google.gerrit.server.StarredChangesUtil;
 import com.google.gerrit.server.cache.proto.Cache;
 import com.google.gerrit.server.index.change.StalenessChecker.RefStatePattern;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
@@ -80,6 +80,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -801,7 +802,7 @@ public class ChangeField {
   public static final IndexedField<ChangeData, Iterable<String>>.SearchSpec LABEL_SPEC =
       LABEL_FIELD.exact("label2");
 
-  private static Iterable<String> getLabels(ChangeData cd) {
+  private static Set<String> getLabels(ChangeData cd) {
     Set<String> allApprovals = new HashSet<>();
     Set<String> distinctApprovals = new HashSet<>();
     Table<String, Short, Integer> voteCounts = HashBasedTable.create();
@@ -1266,21 +1267,19 @@ public class ChangeField {
   public static final IndexedField<ChangeData, Iterable<Integer>>.SearchSpec COMMENTBY_SPEC =
       COMMENTBY_FIELD.integer(ChangeQueryBuilder.FIELD_COMMENTBY);
 
-  /** Star labels on this change in the format: &lt;account-id&gt;:&lt;label&gt; */
+  /** Star labels on this change in the format: &lt;account-id&gt; */
   public static final IndexedField<ChangeData, Iterable<String>> STAR_FIELD =
       IndexedField.<ChangeData>iterableStringBuilder("Star")
           .stored()
           .build(
               cd ->
                   Iterables.transform(
-                      cd.stars().entries(),
-                      e ->
-                          StarredChangesUtil.StarField.create(e.getKey(), e.getValue()).toString()),
+                      cd.stars(), accountId -> StarField.create(accountId).toString()),
               (cd, field) ->
                   cd.setStars(
                       StreamSupport.stream(field.spliterator(), false)
-                          .map(f -> StarredChangesUtil.StarField.parse(f))
-                          .collect(toImmutableListMultimap(e -> e.accountId(), e -> e.label()))));
+                          .map(f -> StarField.parse(f).accountId())
+                          .collect(toImmutableList())));
 
   public static final IndexedField<ChangeData, Iterable<String>>.SearchSpec STAR_SPEC =
       STAR_FIELD.exact(ChangeQueryBuilder.FIELD_STAR);
@@ -1288,7 +1287,7 @@ public class ChangeField {
   /** Users that have starred the change with any label. */
   public static final IndexedField<ChangeData, Iterable<Integer>> STARBY_FIELD =
       IndexedField.<ChangeData>iterableIntegerBuilder("StarBy")
-          .build(cd -> Iterables.transform(cd.stars().keySet(), Account.Id::get));
+          .build(cd -> Iterables.transform(cd.stars(), Account.Id::get));
 
   public static final IndexedField<ChangeData, Iterable<Integer>>.SearchSpec STARBY_SPEC =
       STARBY_FIELD.integer(ChangeQueryBuilder.FIELD_STARBY);
@@ -1538,7 +1537,7 @@ public class ChangeField {
     return Lists.transform(records, r -> GSON.toJson(new StoredSubmitRecord(r)).getBytes(UTF_8));
   }
 
-  private static Iterable<byte[]> storedSubmitRecords(ChangeData cd, SubmitRuleOptions opts) {
+  private static List<byte[]> storedSubmitRecords(ChangeData cd, SubmitRuleOptions opts) {
     return storedSubmitRecords(cd.submitRecords(opts));
   }
 
@@ -1703,6 +1702,30 @@ public class ChangeField {
   public static final IndexedField<ChangeData, Iterable<byte[]>>.SearchSpec REF_STATE_PATTERN_SPEC =
       REF_STATE_PATTERN_FIELD.storedOnly("ref_state_pattern");
 
+  public static final IndexedField<ChangeData, Iterable<String>> CUSTOM_KEYED_VALUES_FIELD =
+      IndexedField.<ChangeData>iterableStringBuilder("CustomKeyedValues")
+          .stored()
+          .build(
+              cd ->
+                  cd.customKeyedValues().entrySet().stream()
+                      .map(e -> e.getKey() + "=" + e.getValue())
+                      .collect(toList()),
+              (cd, field) -> {
+                Map<String, String> ckv = new HashMap<>();
+                for (String entry : field) {
+                  int splitPoint = entry.indexOf('=');
+                  if (splitPoint < 0) {
+                    continue;
+                  }
+                  ckv.put(entry.substring(0, splitPoint), entry.substring(splitPoint + 1));
+                }
+                cd.setCustomKeyedValues(ckv);
+              });
+
+  public static final IndexedField<ChangeData, Iterable<String>>.SearchSpec
+      CUSTOM_KEYED_VALUES_SPEC =
+          CUSTOM_KEYED_VALUES_FIELD.prefix(ChangeQueryBuilder.FIELD_CUSTOM_KEYED_VALUES);
+
   @Nullable
   private static String getTopic(ChangeData cd) {
     Change c = cd.change();
@@ -1780,5 +1803,46 @@ public class ChangeField {
       return new String(Arrays.copyOfRange(strBytes, 0, maxBytes), UTF_8);
     }
     return str;
+  }
+
+  @AutoValue
+  abstract static class StarField {
+    private static final String SEPARATOR = ":";
+
+    @Nullable
+    static StarField parse(String s) {
+      Integer id;
+      int p = s.indexOf(SEPARATOR);
+      if (p >= 0) {
+        id = Ints.tryParse(s.substring(0, p));
+      } else {
+        // NOTE: This code branch should not be removed. This code is used internally by Google and
+        // must not be changed without approval from a Google contributor. In
+        // 992877d06d3492f78a3b189eb5579ddb86b9f0da we accidentally changed index writing to write
+        // <account_id> instead of <account_id>:star. As some servers have picked that up and wrote
+        // index entries with the short format, we should keep support its parsing.
+        id = Ints.tryParse(s);
+      }
+      if (id == null) {
+        return null;
+      }
+      return create(Account.id(id));
+    }
+
+    static StarField create(Account.Id accountId) {
+      return new AutoValue_ChangeField_StarField(accountId);
+    }
+
+    public abstract Account.Id accountId();
+
+    @Override
+    public final String toString() {
+      // NOTE: The ":star" addition is used internally by Google and must not be removed without
+      // approval from a Google contributor. This method is used for writing change index data.
+      // Historically, we supported different kinds of labels, which were stored in this
+      // format, with "star" being the only label in use. This label addition stayed in order to
+      // keep the index format consistent while removing the star-label support.
+      return accountId() + SEPARATOR + "star";
+    }
   }
 }

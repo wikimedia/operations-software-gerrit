@@ -104,7 +104,7 @@ import {
   SubmitRequirementStatus,
 } from '../api/rest-api';
 import {CheckResult, CheckRun, RunResult} from '../models/checks/checks-model';
-import {Category, RunStatus} from '../api/checks';
+import {Category, Fix, Link, LinkIcon, RunStatus} from '../api/checks';
 import {DiffInfo} from '../api/diff';
 import {SearchViewState} from '../models/views/search';
 import {ChangeChildView, ChangeViewState} from '../models/views/change';
@@ -112,7 +112,7 @@ import {NormalizedFileInfo} from '../models/change/files-model';
 import {GroupViewState} from '../models/views/group';
 import {RepoDetailView, RepoViewState} from '../models/views/repo';
 import {AdminChildView, AdminViewState} from '../models/views/admin';
-import {DashboardViewState} from '../models/views/dashboard';
+import {DashboardType, DashboardViewState} from '../models/views/dashboard';
 
 const TEST_DEFAULT_EXPRESSION = 'label:Verified=MAX -label:Verified=MIN';
 export const TEST_PROJECT_NAME: RepoName = 'test-project' as RepoName;
@@ -744,6 +744,7 @@ export function createSearchViewState(): SearchViewState {
 export function createDashboardViewState(): DashboardViewState {
   return {
     view: GerritView.DASHBOARD,
+    type: DashboardType.USER,
     user: 'self',
   };
 }
@@ -1129,6 +1130,8 @@ export function createRunResult(): RunResult {
     pluginName: 'test-plugin-name',
     summary: 'This is the test summary.',
     message: 'This is the test message.',
+    status: RunStatus.COMPLETED,
+    attemptDetails: [{attempt: 'latest'}],
   };
 }
 
@@ -1139,6 +1142,29 @@ export function createCheckResult(
     category: Category.ERROR,
     summary: 'error',
     internalResultId: 'test-internal-result-id',
+    ...partial,
+  };
+}
+
+export function createCheckFix(partial: Partial<Fix> = {}): Fix {
+  return {
+    description: 'this is a test fix',
+    replacements: [
+      {
+        path: 'testpath',
+        range: createRange(),
+        replacement: 'testreplacement',
+      },
+    ],
+    ...partial,
+  };
+}
+
+export function createCheckLink(partial: Partial<Link> = {}): Link {
+  return {
+    url: 'http://test/url',
+    primary: true,
+    icon: LinkIcon.EXTERNAL,
     ...partial,
   };
 }

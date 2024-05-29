@@ -15,6 +15,7 @@
 package com.google.gerrit.server.mail.receive;
 
 import static com.google.gerrit.entities.Patch.PATCHSET_LEVEL;
+import static com.google.gerrit.server.mail.EmailFactories.INBOUND_EMAIL_REJECTED;
 import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.CHANGE_MODIFICATION;
 import static java.util.stream.Collectors.toList;
 
@@ -56,10 +57,11 @@ import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.change.EmailReviewComments;
 import com.google.gerrit.server.config.UrlFormatter;
 import com.google.gerrit.server.extensions.events.CommentAdded;
+import com.google.gerrit.server.mail.EmailFactories;
 import com.google.gerrit.server.mail.MailFilter;
-import com.google.gerrit.server.mail.send.InboundEmailRejectionSender;
-import com.google.gerrit.server.mail.send.InboundEmailRejectionSender.InboundEmailError;
+import com.google.gerrit.server.mail.send.InboundEmailRejectionEmailDecorator.InboundEmailError;
 import com.google.gerrit.server.mail.send.MessageIdGenerator;
+import com.google.gerrit.server.mail.send.OutgoingEmail;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.query.change.ChangeData;
@@ -79,7 +81,6 @@ import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -108,7 +109,7 @@ public class MailProcessor {
                   CommentForValidation.CommentType.INLINE_COMMENT);
 
   private final Emails emails;
-  private final InboundEmailRejectionSender.Factory emailRejectionSender;
+  private final EmailFactories emailFactories;
   private final RetryHelper retryHelper;
   private final ChangeMessagesUtil changeMessagesUtil;
   private final CommentsUtil commentsUtil;
@@ -127,7 +128,7 @@ public class MailProcessor {
   @Inject
   public MailProcessor(
       Emails emails,
-      InboundEmailRejectionSender.Factory emailRejectionSender,
+      EmailFactories emailFactories,
       RetryHelper retryHelper,
       ChangeMessagesUtil changeMessagesUtil,
       CommentsUtil commentsUtil,
@@ -143,7 +144,7 @@ public class MailProcessor {
       PluginSetContext<CommentValidator> commentValidators,
       MessageIdGenerator messageIdGenerator) {
     this.emails = emails;
-    this.emailRejectionSender = emailRejectionSender;
+    this.emailFactories = emailFactories;
     this.retryHelper = retryHelper;
     this.changeMessagesUtil = changeMessagesUtil;
     this.commentsUtil = commentsUtil;
@@ -228,10 +229,13 @@ public class MailProcessor {
 
   private void sendRejectionEmail(MailMessage message, InboundEmailError reason) {
     try {
-      InboundEmailRejectionSender emailSender =
-          emailRejectionSender.create(message.from(), message.id(), reason);
-      emailSender.setMessageId(messageIdGenerator.fromMailMessage(message));
-      emailSender.send();
+      OutgoingEmail email =
+          emailFactories.createOutgoingEmail(
+              INBOUND_EMAIL_REJECTED,
+              emailFactories.createInboundEmailRejectionEmail(
+                  message.from(), message.id(), reason));
+      email.setMessageId(messageIdGenerator.fromMailMessage(message));
+      email.send();
     } catch (Exception e) {
       logger.atSevere().withCause(e).log("Cannot send email to warn for an error");
     }
@@ -268,7 +272,7 @@ public class MailProcessor {
       // Get all comments; filter and sort them to get the original list of
       // comments from the outbound email.
       // TODO(hiesel) Also filter by original comment author.
-      Collection<HumanComment> comments =
+      List<HumanComment> comments =
           cd.publishedComments().stream()
               .filter(c -> (c.writtenOn.getTime() / 1000) == (metadata.timestamp.getTime() / 1000))
               .sorted(CommentsUtil.COMMENT_ORDER)

@@ -3,25 +3,19 @@
  * Copyright 2016 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {GrAnnotation} from '../gr-diff-highlight/gr-annotation';
-import {GrDiffLine, GrDiffLineType} from '../gr-diff/gr-diff-line';
+import {GrAnnotationImpl} from '../gr-diff-highlight/gr-annotation';
+import {GrDiffLine} from '../gr-diff/gr-diff-line';
 import {strToClassName} from '../../../utils/dom-util';
 import {Side} from '../../../constants/constants';
 import {CommentRange} from '../../../types/common';
 import {DiffLayer, DiffLayerListener} from '../../../types/types';
 import {isLongCommentRange} from '../gr-diff/gr-diff-utils';
+import {GrDiffLineType} from '../../../api/diff';
 
-/**
- * Enhanced CommentRange by UI state. Interface for incoming ranges set from the
- * outside.
- *
- * TODO(TS): Unify with what is used in gr-diff when these objects are created.
- */
 export interface CommentRangeLayer {
+  id?: string;
   side: Side;
   range: CommentRange;
-  // New drafts don't have a rootId.
-  rootId?: string;
 }
 
 /** Can be used for array functions like `some()`. */
@@ -30,7 +24,7 @@ function equals(a: CommentRangeLayer) {
 }
 
 function id(r: CommentRangeLayer): string {
-  if (r.rootId) return r.rootId;
+  if (r.id) return r.id;
   return `${r.side}-${r.range.start_line}-${r.range.start_character}-${r.range.end_line}-${r.range.end_character}`;
 }
 
@@ -93,7 +87,7 @@ export class GrRangedCommentLayer implements DiffLayer {
     }
 
     for (const range of ranges) {
-      GrAnnotation.annotateElement(
+      GrAnnotationImpl.annotateElement(
         el,
         range.start,
         range.end - range.start,
@@ -192,7 +186,7 @@ export class GrRangedCommentLayer implements DiffLayer {
   // visible for testing
   getRangesForLine(line: GrDiffLine, side: Side): CommentRangeLineLayer[] {
     const lineNum = side === Side.LEFT ? line.beforeNumber : line.afterNumber;
-    if (lineNum === 'FILE' || lineNum === 'LOST') return [];
+    if (typeof lineNum !== 'number') return [];
     const ranges: CommentRangeLineLayer[] = this.rangesMap[side][lineNum] || [];
     return ranges.map(range => {
       // Make a copy, so that the normalization below does not mess with

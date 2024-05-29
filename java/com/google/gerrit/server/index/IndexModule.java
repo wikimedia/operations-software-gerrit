@@ -75,6 +75,7 @@ import org.eclipse.jgit.lib.Config;
  * <p>This module should not be used directly except by specific secondary indexer implementations
  * (e.g. Lucene).
  */
+@SuppressWarnings("ProvidesMethodOutsideOfModule")
 public class IndexModule extends LifecycleModule {
   public static final ImmutableCollection<SchemaDefinitions<?>> ALL_SCHEMA_DEFS =
       ImmutableList.of(
@@ -171,7 +172,7 @@ public class IndexModule extends LifecycleModule {
       return ImmutableList.of(groups);
     }
 
-    Collection<IndexDefinition<?, ?, ?>> result =
+    ImmutableList<IndexDefinition<?, ?, ?>> result =
         ImmutableList.of(accounts, groups, changes, projects);
     Set<String> expected =
         FluentIterable.from(ALL_SCHEMA_DEFS).transform(SchemaDefinitions::getName).toSet();

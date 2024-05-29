@@ -3,7 +3,6 @@ load("//tools/bzl:maven_jar.bzl", "GERRIT", "maven_jar")
 CAFFEINE_VERS = "2.9.2"
 ANTLR_VERS = "3.5.2"
 COMMONMARK_VERSION = "0.21.0"
-FLEXMARK_VERS = "0.50.50"
 GREENMAIL_VERS = "1.5.5"
 MAIL_VERS = "1.6.0"
 MIME4J_VERS = "0.8.1"
@@ -14,14 +13,15 @@ AUTO_VALUE_VERSION = "1.7.4"
 AUTO_VALUE_GSON_VERSION = "1.3.1"
 PROLOG_VERS = "1.4.4"
 PROLOG_REPO = GERRIT
-GITILES_VERS = "1.1.0"
+GITILES_VERS = "1.3.0"
 GITILES_REPO = GERRIT
 
 # When updating Bouncy Castle, also update it in bazlets.
 BC_VERS = "1.72"
 HTTPCOMP_VERS = "4.5.2"
 JETTY_VERS = "9.4.53.v20231009"
-BYTE_BUDDY_VERSION = "1.10.7"
+BYTE_BUDDY_VERSION = "1.14.9"
+ROARING_BITMAP_VERSION = "0.9.44"
 
 def java_dependencies():
     maven_jar(
@@ -65,6 +65,12 @@ def java_dependencies():
         name = "servlet-api",
         artifact = "javax.servlet:javax.servlet-api:3.1.0",
         sha1 = "3cd63d075497751784b2fa84be59432f4905bf7c",
+    )
+
+    maven_jar(
+        name = "jakarta-inject-api",
+        artifact = "jakarta.inject:jakarta.inject-api:2.0.1",
+        sha1 = "4c28afe1991a941d7702fe1362c365f0a8641d1e",
     )
 
     # JGit's transitive dependencies
@@ -191,157 +197,15 @@ def java_dependencies():
     maven_jar(
         name = "gfm-tables",
         artifact = "org.commonmark:commonmark-ext-gfm-tables:" + COMMONMARK_VERSION,
+        attach_source = False,
         sha1 = "fb7d65fa89a4cfcd2f51535d2549b570cf1dbd1a",
     )
 
     maven_jar(
-        name = "flexmark",
-        artifact = "com.vladsch.flexmark:flexmark:" + FLEXMARK_VERS,
-        sha1 = "7f61e190cff7e1bea64906408ccfa583b5ac9fc2",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-abbreviation",
-        artifact = "com.vladsch.flexmark:flexmark-ext-abbreviation:" + FLEXMARK_VERS,
-        sha1 = "8f62f49cfaf8d33391e48a3b79e941d94e444e50",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-anchorlink",
-        artifact = "com.vladsch.flexmark:flexmark-ext-anchorlink:" + FLEXMARK_VERS,
-        sha1 = "1d530e44b4439abf53ce9dcc784ffa5b9fd6ce89",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-autolink",
-        artifact = "com.vladsch.flexmark:flexmark-ext-autolink:" + FLEXMARK_VERS,
-        sha1 = "4026aa60fd6e146c2d4931acb19b2409c6a79b8a",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-definition",
-        artifact = "com.vladsch.flexmark:flexmark-ext-definition:" + FLEXMARK_VERS,
-        sha1 = "bb74d36459e8e34653761aaa0095220b8b7b6cb6",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-emoji",
-        artifact = "com.vladsch.flexmark:flexmark-ext-emoji:" + FLEXMARK_VERS,
-        sha1 = "36d36cb227f831b81b636d3f901f07db06b8d84d",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-escaped-character",
-        artifact = "com.vladsch.flexmark:flexmark-ext-escaped-character:" + FLEXMARK_VERS,
-        sha1 = "09f0cef3260b6f6371d6066cf32ce6a7dc2a7922",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-footnotes",
-        artifact = "com.vladsch.flexmark:flexmark-ext-footnotes:" + FLEXMARK_VERS,
-        sha1 = "cdf0b79f026b09c6b87d91e61eb29ada1577aa5c",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-gfm-issues",
-        artifact = "com.vladsch.flexmark:flexmark-ext-gfm-issues:" + FLEXMARK_VERS,
-        sha1 = "e40d347e242e35d4344553120cb9e69c1c975f41",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-gfm-strikethrough",
-        artifact = "com.vladsch.flexmark:flexmark-ext-gfm-strikethrough:" + FLEXMARK_VERS,
-        sha1 = "a6948f6e4fc2ec1059d6b53e73d4a30c24f6e05d",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-gfm-tables",
-        artifact = "com.vladsch.flexmark:flexmark-ext-gfm-tables:" + FLEXMARK_VERS,
-        sha1 = "92d3eb0c5dc79924448c186d89717f1df853aaa0",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-gfm-tasklist",
-        artifact = "com.vladsch.flexmark:flexmark-ext-gfm-tasklist:" + FLEXMARK_VERS,
-        sha1 = "e6fb4d9e46c96e61a07fbb40cf653db58ed95a95",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-gfm-users",
-        artifact = "com.vladsch.flexmark:flexmark-ext-gfm-users:" + FLEXMARK_VERS,
-        sha1 = "44c83bdccfd41a399f3f7b11ba72728382dd3f5a",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-ins",
-        artifact = "com.vladsch.flexmark:flexmark-ext-ins:" + FLEXMARK_VERS,
-        sha1 = "b0d174d86ac2348420993dc2c997fad5f02c68fa",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-jekyll-front-matter",
-        artifact = "com.vladsch.flexmark:flexmark-ext-jekyll-front-matter:" + FLEXMARK_VERS,
-        sha1 = "2bfb31c67fd10af058b90f1b364f881f6276de80",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-superscript",
-        artifact = "com.vladsch.flexmark:flexmark-ext-superscript:" + FLEXMARK_VERS,
-        sha1 = "d210b007b46339082f79b6caf632b19ac8efc341",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-tables",
-        artifact = "com.vladsch.flexmark:flexmark-ext-tables:" + FLEXMARK_VERS,
-        sha1 = "be77790470aa9bd90011067221504162a1d7b083",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-toc",
-        artifact = "com.vladsch.flexmark:flexmark-ext-toc:" + FLEXMARK_VERS,
-        sha1 = "91d6d63ff5b70c3ebae98867bd7a346d71cb0ce1",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-typographic",
-        artifact = "com.vladsch.flexmark:flexmark-ext-typographic:" + FLEXMARK_VERS,
-        sha1 = "f51e247df80628df509a3af92a1efa1efb83d746",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-wikilink",
-        artifact = "com.vladsch.flexmark:flexmark-ext-wikilink:" + FLEXMARK_VERS,
-        sha1 = "d14aeb078dbaf3e166621ae9499595a4a57b22ab",
-    )
-
-    maven_jar(
-        name = "flexmark-ext-yaml-front-matter",
-        artifact = "com.vladsch.flexmark:flexmark-ext-yaml-front-matter:" + FLEXMARK_VERS,
-        sha1 = "aba328b70e15f2553aac0a74e391edab37bf7b30",
-    )
-
-    maven_jar(
-        name = "flexmark-formatter",
-        artifact = "com.vladsch.flexmark:flexmark-formatter:" + FLEXMARK_VERS,
-        sha1 = "3e4ad3b1be29d41e8c35cadb70761768505f2164",
-    )
-
-    maven_jar(
-        name = "flexmark-html-parser",
-        artifact = "com.vladsch.flexmark:flexmark-html-parser:" + FLEXMARK_VERS,
-        sha1 = "3c59b0061c50c9a8a48c46d4f4498d8eba249921",
-    )
-
-    maven_jar(
-        name = "flexmark-profile-pegdown",
-        artifact = "com.vladsch.flexmark:flexmark-profile-pegdown:" + FLEXMARK_VERS,
-        sha1 = "c01a2c2eebe06230858956d45847cee233790d7c",
-    )
-
-    maven_jar(
-        name = "flexmark-util",
-        artifact = "com.vladsch.flexmark:flexmark-util:" + FLEXMARK_VERS,
-        sha1 = "fdfce72f5eb9ec53085804fd0c8d15f3680ae359",
+        name = "flexmark-all-lib",
+        artifact = "com.vladsch.flexmark:flexmark-all:0.64.0:lib",
+        attach_source = False,
+        sha1 = "de92cef20c1f61681a3c8f64dd5975fbd3125049",
     )
 
     # Transitive dependency of flexmark and gitiles
@@ -527,21 +391,14 @@ def java_dependencies():
         artifact = "com.google.gitiles:blame-cache:" + GITILES_VERS,
         attach_source = False,
         repository = GITILES_REPO,
-        sha1 = "31c1a6e5d92b57bb2f9db24e1032145961c09a8d",
+        sha1 = "d0f5c98207648503b225501e84f529fa88651ebe",
     )
 
     maven_jar(
         name = "gitiles-servlet",
         artifact = "com.google.gitiles:gitiles-servlet:" + GITILES_VERS,
         repository = GITILES_REPO,
-        sha1 = "c6550362c5c22d8e07edd4e2151ee12594082e76",
-    )
-
-    # prettify must match the version used in Gitiles
-    maven_jar(
-        name = "prettify",
-        artifact = "com.github.twalcari:java-prettify:1.2.2",
-        sha1 = "b8ba1c1eb8b2e45cfd465d01218c6060e887572e",
+        sha1 = "b4ce5bc26e6a2674728d0d3c72c21e0b3443666d",
     )
 
     maven_jar(
@@ -686,24 +543,36 @@ def java_dependencies():
 
     maven_jar(
         name = "mockito",
-        artifact = "org.mockito:mockito-core:3.3.3",
-        sha1 = "4878395d4e63173f3825e17e5e0690e8054445f1",
+        artifact = "org.mockito:mockito-core:5.6.0",
+        sha1 = "550b7a0eb22e1d72d33dcc2e5ef6954f73100d76",
     )
 
     maven_jar(
         name = "bytebuddy",
         artifact = "net.bytebuddy:byte-buddy:" + BYTE_BUDDY_VERSION,
-        sha1 = "1eefb7dd1b032b33c773ca0a17d5cc9e6b56ea1a",
+        sha1 = "b69e7fff6c473d3ed2b489cdfd673a091fd94226",
     )
 
     maven_jar(
         name = "bytebuddy-agent",
         artifact = "net.bytebuddy:byte-buddy-agent:" + BYTE_BUDDY_VERSION,
-        sha1 = "c472fad33f617228601172682aa64f8b78508045",
+        sha1 = "dfb8707031008535048bad2b69735f46d0b6c5e5",
     )
 
     maven_jar(
         name = "objenesis",
         artifact = "org.objenesis:objenesis:3.0.1",
         sha1 = "11cfac598df9dc48bb9ed9357ed04212694b7808",
+    )
+
+    maven_jar(
+        name = "roaringbitmap",
+        artifact = "org.roaringbitmap:RoaringBitmap:" + ROARING_BITMAP_VERSION,
+        sha1 = "d25b4bcb67193d587f6e0617da2c6f84e2d02a9c",
+    )
+
+    maven_jar(
+        name = "roaringbitmap-shims",
+        artifact = "org.roaringbitmap:shims:" + ROARING_BITMAP_VERSION,
+        sha1 = "e22be0d690a99c046bf9f57106065a77edad1eda",
     )

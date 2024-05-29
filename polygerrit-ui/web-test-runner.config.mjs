@@ -2,6 +2,24 @@ import { esbuildPlugin } from "@web/dev-server-esbuild";
 import { defaultReporter, summaryReporter } from "@web/test-runner";
 import { visualRegressionPlugin } from "@web/test-runner-visual-regression/plugin";
 
+function testRunnerHtmlFactory() {
+  return (testFramework) => `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <link rel="stylesheet" href="polygerrit-ui/app/styles/main.css">
+        <link rel="stylesheet" href="polygerrit-ui/app/styles/fonts.css">
+        <link
+          rel="stylesheet"
+          href="polygerrit-ui/app/styles/material-icons.css">
+      </head>
+      <body>
+        <script type="module" src="${testFramework}"></script>
+      </body>
+    </html>
+  `;
+}
+
 /** @type {import('@web/test-runner').TestRunnerConfig} */
 const config = {
   files: [
@@ -42,20 +60,6 @@ const config = {
       await next();
     },
   ],
-  testRunnerHtml: (testFramework) => `
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <link rel="stylesheet" href="polygerrit-ui/app/styles/main.css">
-        <link rel="stylesheet" href="polygerrit-ui/app/styles/fonts.css">
-        <link
-          rel="stylesheet"
-          href="polygerrit-ui/app/styles/material-icons.css">
-      </head>
-      <body>
-        <script type="module" src="${testFramework}"></script>
-      </body>
-    </html>
-  `,
+  testRunnerHtml: testRunnerHtmlFactory(),
 };
 export default config;

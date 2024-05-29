@@ -44,6 +44,7 @@ import com.google.gerrit.extensions.events.ChangeMergedListener;
 import com.google.gerrit.extensions.events.ChangeRestoredListener;
 import com.google.gerrit.extensions.events.ChangeRevertedListener;
 import com.google.gerrit.extensions.events.CommentAddedListener;
+import com.google.gerrit.extensions.events.CustomKeyedValuesEditedListener;
 import com.google.gerrit.extensions.events.GarbageCollectorListener;
 import com.google.gerrit.extensions.events.GitBatchRefUpdateListener;
 import com.google.gerrit.extensions.events.GitReferenceUpdatedListener;
@@ -80,6 +81,7 @@ import com.google.gerrit.extensions.webui.TagWebLink;
 import com.google.gerrit.extensions.webui.TopMenu;
 import com.google.gerrit.extensions.webui.WebUiPlugin;
 import com.google.gerrit.server.AnonymousUser;
+import com.google.gerrit.server.ChangeDraftUpdate;
 import com.google.gerrit.server.CmdLineParserModule;
 import com.google.gerrit.server.CreateGroupPermissionSyncer;
 import com.google.gerrit.server.DeadlineChecker;
@@ -88,10 +90,8 @@ import com.google.gerrit.server.ExceptionHook;
 import com.google.gerrit.server.ExceptionHookImpl;
 import com.google.gerrit.server.ExternalUser;
 import com.google.gerrit.server.IdentifiedUser;
-import com.google.gerrit.server.PerformanceMetrics;
 import com.google.gerrit.server.RequestListener;
 import com.google.gerrit.server.TraceRequestListener;
-import com.google.gerrit.server.account.AccountCacheImpl;
 import com.google.gerrit.server.account.AccountControl;
 import com.google.gerrit.server.account.AccountDeactivator;
 import com.google.gerrit.server.account.AccountExternalIdCreator;
@@ -106,9 +106,8 @@ import com.google.gerrit.server.account.GroupControl;
 import com.google.gerrit.server.account.GroupIncludeCacheImpl;
 import com.google.gerrit.server.account.ServiceUserClassifierImpl;
 import com.google.gerrit.server.account.VersionedAuthorizedKeys;
-import com.google.gerrit.server.account.externalids.ExternalIdCacheModule;
 import com.google.gerrit.server.account.externalids.ExternalIdModule;
-import com.google.gerrit.server.account.externalids.ExternalIdUpsertPreprocessor;
+import com.google.gerrit.server.account.externalids.storage.notedb.ExternalIdCacheModule;
 import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.auth.AuthBackend;
 import com.google.gerrit.server.auth.UniversalAuthBackend;
@@ -164,20 +163,21 @@ import com.google.gerrit.server.group.db.GroupDbModule;
 import com.google.gerrit.server.index.change.ReindexAfterRefUpdate;
 import com.google.gerrit.server.logging.PerformanceLogger;
 import com.google.gerrit.server.mail.AutoReplyMailFilter;
-import com.google.gerrit.server.mail.EmailModule;
 import com.google.gerrit.server.mail.ListMailFilter;
 import com.google.gerrit.server.mail.MailFilter;
 import com.google.gerrit.server.mail.send.FromAddressGenerator;
 import com.google.gerrit.server.mail.send.FromAddressGeneratorProvider;
-import com.google.gerrit.server.mail.send.InboundEmailRejectionSender;
 import com.google.gerrit.server.mail.send.MailSoySauceModule;
 import com.google.gerrit.server.mail.send.MailSoyTemplateProvider;
 import com.google.gerrit.server.mime.FileTypeRegistry;
 import com.google.gerrit.server.mime.MimeUtilFileTypeRegistry;
+import com.google.gerrit.server.notedb.ChangeDraftNotesUpdate;
 import com.google.gerrit.server.notedb.DeleteZombieCommentsRefs;
 import com.google.gerrit.server.notedb.NoteDbModule;
 import com.google.gerrit.server.notedb.StoreSubmitRequirementsOp;
+import com.google.gerrit.server.patch.DiffFileSizeValidator;
 import com.google.gerrit.server.patch.DiffOperationsImpl;
+import com.google.gerrit.server.patch.DiffValidator;
 import com.google.gerrit.server.patch.PatchListCacheImpl;
 import com.google.gerrit.server.patch.PatchScriptFactory;
 import com.google.gerrit.server.patch.PatchScriptFactoryForAutoFix;
@@ -200,14 +200,14 @@ import com.google.gerrit.server.query.change.ChangeIsVisibleToPredicate;
 import com.google.gerrit.server.query.change.ChangeQueryBuilder;
 import com.google.gerrit.server.query.change.ConflictsCacheImpl;
 import com.google.gerrit.server.quota.QuotaEnforcer;
+import com.google.gerrit.server.restapi.RestModule;
 import com.google.gerrit.server.restapi.change.OnPostReview;
 import com.google.gerrit.server.restapi.change.SuggestReviewers;
 import com.google.gerrit.server.restapi.group.GroupModule;
 import com.google.gerrit.server.rules.DefaultSubmitRule.DefaultSubmitRuleModule;
 import com.google.gerrit.server.rules.IgnoreSelfApprovalRule.IgnoreSelfApprovalRuleModule;
-import com.google.gerrit.server.rules.PrologModule;
-import com.google.gerrit.server.rules.RulesCache;
 import com.google.gerrit.server.rules.SubmitRule;
+import com.google.gerrit.server.rules.prolog.PrologModule;
 import com.google.gerrit.server.ssh.SshAddressesModule;
 import com.google.gerrit.server.submit.ConfiguredSubscriptionGraphFactory;
 import com.google.gerrit.server.submit.GitModules;
@@ -222,10 +222,12 @@ import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.util.IdGenerator;
 import com.google.gerrit.server.util.ThreadLocalRequestContext;
 import com.google.gerrit.server.validators.AccountActivationValidationListener;
+import com.google.gerrit.server.validators.CustomKeyedValueValidationListener;
 import com.google.gerrit.server.validators.GroupCreationValidationListener;
 import com.google.gerrit.server.validators.HashtagValidationListener;
 import com.google.gerrit.server.validators.OutgoingEmailValidationListener;
 import com.google.gerrit.server.validators.ProjectCreationValidationListener;
+import com.google.gerrit.server.version.VersionInfoModule;
 import com.google.gitiles.blame.cache.BlameCache;
 import com.google.gitiles.blame.cache.BlameCacheImpl;
 import com.google.inject.Inject;
@@ -252,9 +254,7 @@ public class GerritGlobalModule extends FactoryModule {
     bind(EmailExpander.class).toProvider(EmailExpanderProvider.class).in(SINGLETON);
 
     bind(IdGenerator.class);
-    bind(RulesCache.class);
     bind(BlameCache.class).to(BlameCacheImpl.class);
-    install(AccountCacheImpl.module());
     install(BatchUpdate.module());
     install(ChangeKindCacheImpl.module());
     install(ChangeFinder.module());
@@ -277,7 +277,6 @@ public class GerritGlobalModule extends FactoryModule {
     install(new AccessControlModule());
     install(new AccountModule());
     install(new CmdLineParserModule());
-    install(new EmailModule());
     install(new ExternalIdCacheModule());
     install(new ExternalIdModule());
     install(new GitModule());
@@ -288,11 +287,13 @@ public class GerritGlobalModule extends FactoryModule {
     install(new DefaultSubmitRuleModule());
     install(new IgnoreSelfApprovalRuleModule());
     install(new ReceiveCommitsModule());
+    install(new RestModule());
     install(new SshAddressesModule());
     install(new FileInfoJsonModule());
     install(ThreadLocalRequestContext.module());
     install(new ApprovalModule());
     install(new MailSoySauceModule());
+    install(new VersionInfoModule());
     install(new SkipCurrentRulesEvaluationOnClosedChangesModule());
 
     factory(CapabilityCollection.Factory.class);
@@ -308,7 +309,6 @@ public class GerritGlobalModule extends FactoryModule {
     factory(PatchScriptFactoryForAutoFix.Factory.class);
     factory(ProjectState.Factory.class);
     factory(RevisionJson.Factory.class);
-    factory(InboundEmailRejectionSender.Factory.class);
     factory(ExternalUser.Factory.class);
     bind(PermissionCollection.Factory.class);
     bind(AccountVisibility.class).toProvider(AccountVisibilityProvider.class).in(SINGLETON);
@@ -334,6 +334,7 @@ public class GerritGlobalModule extends FactoryModule {
     DynamicSet.setOf(binder(), GerritConfigListener.class);
 
     bind(ChangeCleanupConfig.class);
+    bind(AttentionSetConfig.class);
     bind(AccountDeactivator.class);
 
     bind(ApprovalsUtil.class);
@@ -364,6 +365,7 @@ public class GerritGlobalModule extends FactoryModule {
     DynamicSet.setOf(binder(), ChangeDeletedListener.class);
     DynamicSet.setOf(binder(), CommentAddedListener.class);
     DynamicSet.setOf(binder(), HashtagsEditedListener.class);
+    DynamicSet.setOf(binder(), CustomKeyedValuesEditedListener.class);
     DynamicSet.setOf(binder(), ChangeMergedListener.class);
     bind(ChangeMergedListener.class)
         .annotatedWith(Exports.named("CreateGroupPermissionSyncer"))
@@ -405,6 +407,8 @@ public class GerritGlobalModule extends FactoryModule {
         .to(SubmitRequirementConfigValidator.class);
     DynamicSet.bind(binder(), CommitValidationListener.class).to(PrologRulesWarningValidator.class);
     DynamicSet.setOf(binder(), CommentValidator.class);
+    DynamicSet.setOf(binder(), DiffValidator.class);
+    DynamicSet.bind(binder(), DiffValidator.class).to(DiffFileSizeValidator.class);
     DynamicSet.setOf(binder(), ChangeMessageModifier.class);
     DynamicSet.setOf(binder(), RefOperationValidationListener.class);
     DynamicSet.setOf(binder(), OnSubmitValidationListener.class);
@@ -414,6 +418,7 @@ public class GerritGlobalModule extends FactoryModule {
     DynamicSet.setOf(binder(), HashtagValidationListener.class);
     DynamicSet.setOf(binder(), OutgoingEmailValidationListener.class);
     DynamicSet.setOf(binder(), AccountActivationValidationListener.class);
+    DynamicSet.setOf(binder(), CustomKeyedValueValidationListener.class);
     DynamicItem.itemOf(binder(), AvatarProvider.class);
     DynamicSet.setOf(binder(), LifecycleListener.class);
     DynamicSet.setOf(binder(), TopMenu.class);
@@ -448,9 +453,6 @@ public class GerritGlobalModule extends FactoryModule {
     DynamicSet.setOf(binder(), SubmitRequirement.class);
     DynamicSet.setOf(binder(), QuotaEnforcer.class);
     DynamicSet.setOf(binder(), PerformanceLogger.class);
-    if (cfg.getBoolean("tracing", "exportPerformanceMetrics", false)) {
-      DynamicSet.bind(binder(), PerformanceLogger.class).to(PerformanceMetrics.class);
-    }
     DynamicSet.setOf(binder(), RequestListener.class);
     DynamicSet.bind(binder(), RequestListener.class).to(TraceRequestListener.class);
     DynamicSet.setOf(binder(), ChangeETagComputation.class);
@@ -479,6 +481,7 @@ public class GerritGlobalModule extends FactoryModule {
     bind(CommentValidator.class)
         .annotatedWith(Exports.named(CommentCumulativeSizeValidator.class.getSimpleName()))
         .to(CommentCumulativeSizeValidator.class);
+    bind(ChangeDraftUpdate.ChangeDraftUpdateFactory.class).to(ChangeDraftNotesUpdate.Factory.class);
 
     DynamicMap.mapOf(binder(), DynamicOptions.DynamicBean.class);
     DynamicMap.mapOf(binder(), ChangeQueryBuilder.ChangeOperatorFactory.class);
@@ -513,7 +516,6 @@ public class GerritGlobalModule extends FactoryModule {
     bind(ReloadPluginListener.class)
         .annotatedWith(UniqueAnnotations.create())
         .to(PluginConfigFactory.class);
-    DynamicMap.mapOf(binder(), ExternalIdUpsertPreprocessor.class);
 
     bind(AttentionSetObserver.class);
   }

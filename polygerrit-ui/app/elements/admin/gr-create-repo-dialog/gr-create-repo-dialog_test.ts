@@ -39,9 +39,9 @@ suite('gr-create-repo-dialog tests', () => {
             </section>
             <section>
               <span class="title"> Default Branch </span>
-              <iron-input>
-                <input autocomplete="off" id="defaultBranchNameInput" />
-              </iron-input>
+              <span class="value">
+                <gr-autocomplete id="defaultBranchNameInput"> </gr-autocomplete>
+              </span>
             </section>
             <section>
               <span class="title"> Rights inherit from </span>
@@ -118,7 +118,7 @@ suite('gr-create-repo-dialog tests', () => {
 
     element.repoOwner = 'test';
     element.repoOwnerId = 'testId' as GroupId;
-    element.defaultBranch = 'main' as BranchName;
+    element.selectedDefaultBranch = 'main' as BranchName;
 
     const repoNameInput = queryAndAssert<HTMLInputElement>(
       element,

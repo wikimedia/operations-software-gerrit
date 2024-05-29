@@ -23,10 +23,9 @@ import java.util.List;
 import java.util.Map;
 
 /** Contains utils for email notification related to the events on project+branch. */
-class BranchEmailUtils {
-
+public class BranchEmailUtils {
   /** Set a reasonable list id so that filters can be used to sort messages. */
-  static void setListIdHeader(OutgoingEmail email, BranchNameKey branch) {
+  public static void setListIdHeader(OutgoingEmail email, BranchNameKey branch) {
     email.setHeader(
         "List-Id",
         "<gerrit-" + branch.project().get().replace('/', '-') + "." + email.getGerritHost() + ">");
@@ -36,26 +35,23 @@ class BranchEmailUtils {
   }
 
   /** Add branch information to soy template params. */
-  static void addBranchData(OutgoingEmail email, EmailArguments args, BranchNameKey branch) {
-    Map<String, Object> soyContext = email.getSoyContext();
-    Map<String, Object> soyContextEmailData = email.getSoyContextEmailData();
-
+  public static void addBranchData(OutgoingEmail email, EmailArguments args, BranchNameKey branch) {
     String projectName = branch.project().get();
-    soyContext.put("projectName", projectName);
+    email.addSoyParam("projectName", projectName);
     // shortProjectName is the project name with the path abbreviated.
-    soyContext.put("shortProjectName", getShortProjectName(projectName));
+    email.addSoyParam("shortProjectName", getShortProjectName(projectName));
 
     // instanceAndProjectName is the instance's name followed by the abbreviated project path
-    soyContext.put(
+    email.addSoyParam(
         "instanceAndProjectName",
         getInstanceAndProjectName(args.instanceNameProvider.get(), projectName));
-    soyContext.put("addInstanceNameInSubject", args.addInstanceNameInSubject);
+    email.addSoyParam("addInstanceNameInSubject", args.addInstanceNameInSubject);
 
-    soyContextEmailData.put("sshHost", getSshHost(email.getGerritHost(), args.sshAddresses));
+    email.addSoyEmailDataParam("sshHost", getSshHost(email.getGerritHost(), args.sshAddresses));
 
     Map<String, String> branchData = new HashMap<>();
     branchData.put("shortName", branch.shortName());
-    soyContext.put("branch", branchData);
+    email.addSoyParam("branch", branchData);
 
     email.addFooter(MailHeader.PROJECT.withDelimiter() + branch.project().get());
     email.addFooter(MailHeader.BRANCH.withDelimiter() + branch.shortName());
@@ -74,7 +70,7 @@ class BranchEmailUtils {
   }
 
   /** Shortens project/repo name to only show part after the last '/'. */
-  static String getShortProjectName(String projectName) {
+  public static String getShortProjectName(String projectName) {
     int lastIndexSlash = projectName.lastIndexOf('/');
     if (lastIndexSlash == 0) {
       return projectName.substring(1); // Remove the first slash
@@ -87,7 +83,7 @@ class BranchEmailUtils {
   }
 
   /** Returns a project/repo name that includes instance as prefix. */
-  static String getInstanceAndProjectName(String instanceName, String projectName) {
+  public static String getInstanceAndProjectName(String instanceName, String projectName) {
     if (instanceName == null || instanceName.isEmpty()) {
       return getShortProjectName(projectName);
     }

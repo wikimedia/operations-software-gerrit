@@ -13,7 +13,7 @@ import {
   GroupInfo,
   Hashtag,
 } from '../../api/rest-api';
-import {Model} from '../model';
+import {Model} from '../base/model';
 import {RestApiService} from '../../services/gr-rest-api/gr-rest-api';
 import {define} from '../dependency';
 import {select} from '../../utils/observable-util';
@@ -22,6 +22,7 @@ import {
   ReviewerInput,
   AttentionSetInput,
   RelatedChangeAndCommitInfo,
+  ReviewResult,
 } from '../../types/common';
 import {getUserId} from '../../utils/account-util';
 import {getChangeNumber} from '../../utils/change-util';
@@ -164,7 +165,7 @@ export class BulkActionsModel extends Model<BulkActionsState> {
   addReviewers(
     changedReviewers: Map<ReviewerState, (AccountInfo | GroupInfo)[]>,
     reason: string
-  ): Promise<Response>[] {
+  ): Promise<ReviewResult | undefined>[] {
     const current = this.getState();
     const changes = current.selectedChangeNums.map(
       changeNum => current.allChanges.get(changeNum)!
@@ -177,7 +178,7 @@ export class BulkActionsModel extends Model<BulkActionsState> {
         this.getNewReviewersToChange(change, state, changedReviewers)
       );
       if (reviewersNewToChange.length === 0) {
-        return Promise.resolve(new Response());
+        return Promise.resolve(undefined);
       }
       const attentionSetUpdates: AttentionSetInput[] = reviewersNewToChange
         .filter(reviewerInput => reviewerInput.state === ReviewerState.REVIEWER)

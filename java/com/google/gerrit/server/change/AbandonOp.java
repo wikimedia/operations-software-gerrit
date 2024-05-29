@@ -14,6 +14,8 @@
 
 package com.google.gerrit.server.change;
 
+import static com.google.gerrit.server.mail.EmailFactories.CHANGE_ABANDONED;
+
 import com.google.common.base.Strings;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
@@ -25,9 +27,10 @@ import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.extensions.events.ChangeAbandoned;
-import com.google.gerrit.server.mail.send.AbandonedSender;
+import com.google.gerrit.server.mail.EmailFactories;
+import com.google.gerrit.server.mail.send.ChangeEmail;
 import com.google.gerrit.server.mail.send.MessageIdGenerator;
-import com.google.gerrit.server.mail.send.ReplyToChangeSender;
+import com.google.gerrit.server.mail.send.OutgoingEmail;
 import com.google.gerrit.server.notedb.ChangeUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
@@ -38,7 +41,7 @@ import com.google.inject.assistedinject.Assisted;
 public class AbandonOp implements BatchUpdateOp {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
-  private final AbandonedSender.Factory abandonedSenderFactory;
+  private final EmailFactories emailFactories;
   private final ChangeMessagesUtil cmUtil;
   private final PatchSetUtil psUtil;
   private final ChangeAbandoned changeAbandoned;
@@ -58,14 +61,14 @@ public class AbandonOp implements BatchUpdateOp {
 
   @Inject
   AbandonOp(
-      AbandonedSender.Factory abandonedSenderFactory,
+      EmailFactories emailFactories,
       ChangeMessagesUtil cmUtil,
       PatchSetUtil psUtil,
       ChangeAbandoned changeAbandoned,
       MessageIdGenerator messageIdGenerator,
       @Assisted @Nullable AccountState accountState,
       @Assisted @Nullable String msgTxt) {
-    this.abandonedSenderFactory = abandonedSenderFactory;
+    this.emailFactories = emailFactories;
     this.cmUtil = cmUtil;
     this.psUtil = psUtil;
     this.changeAbandoned = changeAbandoned;
@@ -111,16 +114,17 @@ public class AbandonOp implements BatchUpdateOp {
   public void postUpdate(PostUpdateContext ctx) {
     NotifyResolver.Result notify = ctx.getNotify(change.getId());
     try {
-      ReplyToChangeSender emailSender =
-          abandonedSenderFactory.create(ctx.getProject(), change.getId());
+      ChangeEmail changeEmail =
+          emailFactories.createChangeEmail(
+              ctx.getProject(), change.getId(), emailFactories.createAbandonedChangeEmail());
+      changeEmail.setChangeMessage(mailMessage, ctx.getWhen());
+      OutgoingEmail email = emailFactories.createOutgoingEmail(CHANGE_ABANDONED, changeEmail);
       if (accountState != null) {
-        emailSender.setFrom(accountState.account().id());
+        email.setFrom(accountState.account().id());
       }
-      emailSender.setChangeMessage(mailMessage, ctx.getWhen());
-      emailSender.setNotify(notify);
-      emailSender.setMessageId(
-          messageIdGenerator.fromChangeUpdate(ctx.getRepoView(), patchSet.id()));
-      emailSender.send();
+      email.setNotify(notify);
+      email.setMessageId(messageIdGenerator.fromChangeUpdate(ctx.getRepoView(), patchSet.id()));
+      email.send();
     } catch (Exception e) {
       logger.atSevere().withCause(e).log("Cannot email update for change %s", change.getId());
     }

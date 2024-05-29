@@ -18,18 +18,21 @@ import static com.google.common.truth.OptionalSubject.optionals;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.common.truth.Truth8.assertThat;
+import static com.google.gerrit.entities.RefNames.REFS_EXTERNAL_IDS;
 import static com.google.gerrit.server.account.externalids.ExternalId.SCHEME_GOOGLE_OAUTH;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static com.google.gerrit.testing.TestActionRefUpdateContext.openTestRefUpdateContext;
 import static java.util.stream.Collectors.toSet;
 
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.config.GerritConfig;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.client.AccountFieldName;
 import com.google.gerrit.server.IdentifiedUser;
+import com.google.gerrit.server.Sequences;
 import com.google.gerrit.server.ServerInitiated;
 import com.google.gerrit.server.account.AccountException;
 import com.google.gerrit.server.account.AccountManager;
@@ -41,17 +44,20 @@ import com.google.gerrit.server.account.SetInactiveFlag;
 import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.account.externalids.ExternalIdFactory;
 import com.google.gerrit.server.account.externalids.ExternalIdKeyFactory;
-import com.google.gerrit.server.account.externalids.ExternalIdNotes;
 import com.google.gerrit.server.account.externalids.ExternalIds;
+import com.google.gerrit.server.account.externalids.storage.notedb.ExternalIdNotes;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.group.db.GroupsUpdate;
-import com.google.gerrit.server.notedb.Sequences;
 import com.google.gerrit.server.ssh.SshKeyCache;
 import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.inject.Inject;
 import com.google.inject.util.Providers;
+import java.io.IOException;
 import java.util.Optional;
 import java.util.Set;
+import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.junit.Test;
 
@@ -779,6 +785,39 @@ public class AccountManagerIT extends AbstractDaemonTest {
     AuthResult result = accountManager.link(accountId, who);
     assertThat(result.isNew()).isFalse();
     assertThat(result.getAccountId().get()).isEqualTo(accountId.get());
+  }
+
+  @Test
+  public void updateLinkInSingleCommit() throws Exception {
+    String username = "baz";
+    String email1 = "baz@foo.com";
+    String email2 = "baz@bar.com";
+
+    ExternalId.Key mailExtIdKey = externalIdKeyFactory.create(ExternalId.SCHEME_MAILTO, username);
+    Account.Id accountId = Account.id(seq.nextAccountId());
+    accountsUpdate.insert(
+        "Create Test Account",
+        accountId,
+        u -> u.addExternalId(externalIdFactory.create(mailExtIdKey, accountId)));
+
+    accountManager.link(accountId, authRequestFactory.createForEmail(email1));
+
+    try (Repository allUsersRepo = repoManager.openRepository(allUsers);
+        Git git = new Git(allUsersRepo)) {
+      int initialCommits = getCommitsInExternalIds(git, allUsersRepo);
+
+      accountManager.updateLink(accountId, authRequestFactory.createForEmail(email2));
+
+      int afterUpdateCommits = getCommitsInExternalIds(git, allUsersRepo);
+
+      assertThat(afterUpdateCommits).isEqualTo(initialCommits + 1);
+    }
+  }
+
+  private static int getCommitsInExternalIds(Git git, Repository allUsersRepo)
+      throws GitAPIException, IOException {
+    ObjectId refsMetaExternalIdsHead = allUsersRepo.exactRef(REFS_EXTERNAL_IDS).getObjectId();
+    return Iterables.size(git.log().add(refsMetaExternalIdsHead).call());
   }
 
   private void assertNoSuchExternalIds(ExternalId.Key... extIdKeys) throws Exception {

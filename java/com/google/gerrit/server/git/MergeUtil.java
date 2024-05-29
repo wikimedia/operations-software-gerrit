@@ -143,6 +143,7 @@ public class MergeUtil {
   private final boolean useContentMerge;
   private final boolean useRecursiveMerge;
   private final PluggableCommitMessageGenerator commitMessageGenerator;
+  private final ChangeUtil changeUtil;
 
   MergeUtil(
       @Provided @GerritServerConfig Config serverConfig,
@@ -150,6 +151,7 @@ public class MergeUtil {
       @Provided DynamicItem<UrlFormatter> urlFormatter,
       @Provided ApprovalsUtil approvalsUtil,
       @Provided PluggableCommitMessageGenerator commitMessageGenerator,
+      @Provided ChangeUtil changeUtil,
       ProjectState project) {
     this(
         serverConfig,
@@ -157,6 +159,7 @@ public class MergeUtil {
         urlFormatter,
         approvalsUtil,
         commitMessageGenerator,
+        changeUtil,
         project,
         project.is(BooleanProjectConfig.USE_CONTENT_MERGE));
   }
@@ -167,12 +170,14 @@ public class MergeUtil {
       @Provided DynamicItem<UrlFormatter> urlFormatter,
       @Provided ApprovalsUtil approvalsUtil,
       @Provided PluggableCommitMessageGenerator commitMessageGenerator,
+      @Provided ChangeUtil changeUtil,
       ProjectState project,
       boolean useContentMerge) {
     this.identifiedUserFactory = identifiedUserFactory;
     this.urlFormatter = urlFormatter;
     this.approvalsUtil = approvalsUtil;
     this.commitMessageGenerator = commitMessageGenerator;
+    this.changeUtil = changeUtil;
     this.project = project;
     this.useContentMerge = useContentMerge;
     this.useRecursiveMerge = useRecursiveMerge(serverConfig);
@@ -281,7 +286,6 @@ public class MergeUtil {
     return commit;
   }
 
-  @SuppressWarnings("resource") // TemporaryBuffer requires calling close before reading.
   public static ObjectId mergeWithConflicts(
       RevWalk rw,
       ObjectInserter ins,
@@ -291,6 +295,21 @@ public class MergeUtil {
       String theirsName,
       RevCommit theirs,
       Map<String, MergeResult<? extends Sequence>> mergeResults)
+      throws IOException {
+    return mergeWithConflicts(rw, ins, dc, oursName, ours, theirsName, theirs, mergeResults, false);
+  }
+
+  @SuppressWarnings("resource") // TemporaryBuffer requires calling close before reading.
+  public static ObjectId mergeWithConflicts(
+      RevWalk rw,
+      ObjectInserter ins,
+      DirCache dc,
+      String oursName,
+      RevCommit ours,
+      String theirsName,
+      RevCommit theirs,
+      Map<String, MergeResult<? extends Sequence>> mergeResults,
+      boolean diff3Format)
       throws IOException {
     rw.parseBody(ours);
     rw.parseBody(theirs);
@@ -319,7 +338,11 @@ public class MergeUtil {
       try {
         // TODO(dborowitz): Respect inCoreLimit here.
         buf = new TemporaryBuffer.LocalFile(null, 10 * 1024 * 1024);
-        fmt.formatMerge(buf, p, "BASE", oursNameFormatted, theirsNameFormatted, UTF_8);
+        if (diff3Format) {
+          fmt.formatMergeDiff3(buf, p, "BASE", oursNameFormatted, theirsNameFormatted, UTF_8);
+        } else {
+          fmt.formatMerge(buf, p, "BASE", oursNameFormatted, theirsNameFormatted, UTF_8);
+        }
         buf.close(); // Flush file and close for writes, but leave available for reading.
 
         try (InputStream in = buf.openInputStream()) {
@@ -529,7 +552,7 @@ public class MergeUtil {
       msgbuf.append('\n');
     }
 
-    if (ChangeUtil.getChangeIdsFromFooter(n, urlFormatter.get()).isEmpty()) {
+    if (changeUtil.getChangeIdsFromFooter(n).isEmpty()) {
       msgbuf.append(FooterConstants.CHANGE_ID.getName());
       msgbuf.append(": ");
       msgbuf.append(c.getKey().get());

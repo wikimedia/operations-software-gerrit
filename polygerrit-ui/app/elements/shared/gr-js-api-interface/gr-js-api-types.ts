@@ -11,16 +11,22 @@ import {
   ReviewInput,
   RevisionInfo,
 } from '../../../types/common';
-import {Finalizable} from '../../../services/registry';
 import {EventType, TargetElement} from '../../../api/plugin';
-import {ParsedChangeInfo} from '../../../types/types';
+import {Finalizable, ParsedChangeInfo} from '../../../types/types';
 import {MenuLink} from '../../../api/admin';
+import {FileRange, PatchRange} from '../../../api/diff';
 
 export interface ShowChangeDetail {
   change?: ParsedChangeInfo;
   basePatchNum?: BasePatchSetNum;
   patchNum?: PatchSetNum;
   info: {mergeable: boolean | null};
+}
+
+export interface ShowDiffDetail {
+  change: ChangeInfo;
+  patchRange: PatchRange;
+  fileRange: FileRange;
 }
 
 export interface ShowRevisionActionsDetail {
@@ -52,4 +58,5 @@ export interface JsApiService extends Finalizable {
   handleCommitMessage(change: ChangeInfo | ParsedChangeInfo, msg: string): void;
   canSubmitChange(change: ChangeInfo, revision?: RevisionInfo | null): boolean;
   getReviewPostRevert(change?: ChangeInfo): ReviewInput;
+  handleShowDiff(detail: ShowDiffDetail): void;
 }

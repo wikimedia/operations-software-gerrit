@@ -13,7 +13,7 @@ import {fire} from '../../../utils/event-util';
 import {LitElement, css, html, PropertyValues} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
 import {sharedStyles} from '../../../styles/shared-styles';
-import {formStyles} from '../../../styles/gr-form-styles';
+import {grFormStyles} from '../../../styles/gr-form-styles';
 import {when} from 'lit/directives/when.js';
 import {ifDefined} from 'lit/directives/if-defined.js';
 import {BindValueChangeEvent} from '../../../types/events';
@@ -68,50 +68,52 @@ export class GrRegistrationDialog extends LitElement {
     }
   }
 
-  static override styles = [
-    sharedStyles,
-    formStyles,
-    css`
-      :host {
-        display: block;
-      }
-      main {
-        max-width: 46em;
-      }
-      :host(.loading) main {
-        display: none;
-      }
-      .loadingMessage {
-        display: none;
-        font-style: italic;
-      }
-      :host(.loading) .loadingMessage {
-        display: block;
-      }
-      hr {
-        margin-top: var(--spacing-l);
-        margin-bottom: var(--spacing-l);
-      }
-      header {
-        border-bottom: 1px solid var(--border-color);
-        font-weight: var(--font-weight-bold);
-        margin-bottom: var(--spacing-l);
-      }
-      .container {
-        padding: var(--spacing-m) var(--spacing-xl);
-      }
-      footer {
-        display: flex;
-        justify-content: flex-end;
-      }
-      footer gr-button {
-        margin-left: var(--spacing-l);
-      }
-      input {
-        width: 20em;
-      }
-    `,
-  ];
+  static override get styles() {
+    return [
+      sharedStyles,
+      grFormStyles,
+      css`
+        :host {
+          display: block;
+        }
+        main {
+          max-width: 46em;
+        }
+        :host(.loading) main {
+          display: none;
+        }
+        .loadingMessage {
+          display: none;
+          font-style: italic;
+        }
+        :host(.loading) .loadingMessage {
+          display: block;
+        }
+        hr {
+          margin-top: var(--spacing-l);
+          margin-bottom: var(--spacing-l);
+        }
+        header {
+          border-bottom: 1px solid var(--border-color);
+          font-weight: var(--font-weight-bold);
+          margin-bottom: var(--spacing-l);
+        }
+        .container {
+          padding: var(--spacing-m) var(--spacing-xl);
+        }
+        footer {
+          display: flex;
+          justify-content: flex-end;
+        }
+        footer gr-button {
+          margin-left: var(--spacing-l);
+        }
+        input {
+          width: 20em;
+        }
+      `,
+    ];
+  }
 
   override render() {
     return html`<div class="container gr-form-styles">

@@ -7,7 +7,7 @@ import {ReportingService, Timer} from './gr-reporting';
 import {EventDetails} from '../../api/reporting';
 import {PluginApi} from '../../api/plugin';
 import {Execution, Interaction} from '../../constants/reporting';
-import {Finalizable} from '../registry';
+import {Finalizable} from '../../types/types';
 
 export class MockTimer implements Timer {
   end(): this {
@@ -43,6 +43,9 @@ export const grReportingMock: ReportingService & Finalizable = {
   },
   onVisibilityChange: () => {
     log('onVisibilityChange');
+  },
+  onFocusChange: () => {
+    log('onFocusChange');
   },
   pluginLoaded: () => {},
   pluginsLoaded: () => {},

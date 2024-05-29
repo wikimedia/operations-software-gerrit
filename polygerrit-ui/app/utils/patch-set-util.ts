@@ -7,6 +7,8 @@ import {
   PatchSetNumber,
   BasePatchSetNum,
   RevisionPatchSetNum,
+  BranchName,
+  CommitId,
 } from '../types/common';
 import {EditRevisionInfo, ParsedChangeInfo} from '../types/types';
 import {assert} from './common-util';
@@ -31,7 +33,7 @@ export const CURRENT = 'current';
 export interface PatchSet {
   num: RevisionPatchSetNum;
   desc: string | undefined;
-  sha: string;
+  sha: CommitId;
   wip?: boolean;
 }
 
@@ -197,7 +199,7 @@ export function computeAllPatchSets(
       return {
         num: e._number,
         desc: e.description,
-        sha: e.sha,
+        sha: e.sha as CommitId,
       };
     });
   }
@@ -307,9 +309,50 @@ export function findSortedIndex(
 /**
  * Convert parent indexes from patch range expressions to numbers.
  * For example, in a patch range expression `"-3"` becomes `3`.
- *
  */
-
 export function getParentIndex(rangeBase: PatchSetNum) {
   return -Number(`${rangeBase}`);
+}
+
+export function shorten(sha?: string) {
+  // Using the first 7 characters of the 40 chars commit sha is standard Git convention.
+  return sha?.substring(0, 7);
+}
+
+export function branchName(branch?: string | BranchName): BranchName {
+  if (!branch) return '' as BranchName;
+  if (branch.startsWith('refs/heads/')) {
+    return branch.substring('refs/heads/'.length) as BranchName;
+  }
+  return branch as BranchName;
+}
+
+export function getParentCommit(
+  rev?: RevisionInfo | EditRevisionInfo,
+  index?: number
+) {
+  const parents = rev?.parents_data ?? [];
+  const parent = parents[index ?? 0];
+  if (!parent) return '';
+  return shorten(parent.commit_id) ?? '';
+}
+
+export function getParentInfoString(
+  rev?: RevisionInfo | EditRevisionInfo,
+  index?: number
+) {
+  const parents = rev?.parents_data ?? [];
+  const parent = parents[index ?? 0];
+  if (!parent || parent.is_merged_in_target_branch) return '';
+
+  if (index === 0) {
+    if (parent.change_number) {
+      return `Patchset ${parent.patch_set_number} of Change ${parent.change_number}`;
+    } else {
+      return 'Warning: The base commit is not known (aka reachable) in the target branch.';
+    }
+  } else {
+    // For merge changes the parents with index > 0 are expected to be from a different branch.
+    return 'Other branch';
+  }
 }

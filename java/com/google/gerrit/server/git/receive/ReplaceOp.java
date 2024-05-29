@@ -40,7 +40,6 @@ import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.api.changes.ReviewerInput;
 import com.google.gerrit.extensions.client.ChangeKind;
 import com.google.gerrit.extensions.client.ReviewerState;
-import com.google.gerrit.extensions.registration.DynamicItem;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
@@ -61,11 +60,11 @@ import com.google.gerrit.server.change.ReviewerModifier.ReviewerModification;
 import com.google.gerrit.server.change.ReviewerModifier.ReviewerModificationList;
 import com.google.gerrit.server.change.ReviewerOp;
 import com.google.gerrit.server.config.AnonymousCowardName;
-import com.google.gerrit.server.config.UrlFormatter;
 import com.google.gerrit.server.extensions.events.CommentAdded;
 import com.google.gerrit.server.extensions.events.RevisionCreated;
 import com.google.gerrit.server.git.MergedByPushOp;
 import com.google.gerrit.server.git.receive.ReceiveCommits.MagicBranchInput;
+import com.google.gerrit.server.git.validators.TopicValidator;
 import com.google.gerrit.server.mail.MailUtil.MailRecipients;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ChangeUpdate;
@@ -134,7 +133,8 @@ public class ReplaceOp implements BatchUpdateOp {
   private final PatchSetUtil psUtil;
   private final ProjectCache projectCache;
   private final ReviewerModifier reviewerModifier;
-  private final DynamicItem<UrlFormatter> urlFormatter;
+  private final ChangeUtil changeUtil;
+  private final TopicValidator topicValidator;
 
   private final ProjectState projectState;
   private final Change change;
@@ -179,7 +179,8 @@ public class ReplaceOp implements BatchUpdateOp {
       ProjectCache projectCache,
       EmailNewPatchSet.Factory emailNewPatchSetFactory,
       ReviewerModifier reviewerModifier,
-      DynamicItem<UrlFormatter> urlFormatter,
+      ChangeUtil changeUtil,
+      TopicValidator topicValidator,
       @Assisted ProjectState projectState,
       @Assisted Change change,
       @Assisted boolean checkMergedInto,
@@ -207,7 +208,8 @@ public class ReplaceOp implements BatchUpdateOp {
     this.projectCache = projectCache;
     this.emailNewPatchSetFactory = emailNewPatchSetFactory;
     this.reviewerModifier = reviewerModifier;
-    this.urlFormatter = urlFormatter;
+    this.changeUtil = changeUtil;
+    this.topicValidator = topicValidator;
 
     this.projectState = projectState;
     this.change = change;
@@ -287,7 +289,7 @@ public class ReplaceOp implements BatchUpdateOp {
       }
       if (magicBranch.topic != null && !magicBranch.topic.equals(ctx.getChange().getTopic())) {
         try {
-          update.setTopic(magicBranch.topic);
+          update.setTopic(magicBranch.topic, topicValidator);
         } catch (ValidationException ex) {
           throw new BadRequestException(ex.getMessage());
         }
@@ -371,20 +373,20 @@ public class ReplaceOp implements BatchUpdateOp {
     // bulk new change email.
     Stream<ReviewerInput> inputs =
         Streams.concat(
-            Streams.stream(
-                newReviewerInputFromCommitIdentity(
-                    change,
-                    psInfo.getCommitId(),
-                    psInfo.getAuthor().getAccount(),
-                    NotifyHandling.NONE,
-                    newPatchSet.uploader())),
-            Streams.stream(
-                newReviewerInputFromCommitIdentity(
-                    change,
-                    psInfo.getCommitId(),
-                    psInfo.getCommitter().getAccount(),
-                    NotifyHandling.NONE,
-                    newPatchSet.uploader())));
+            newReviewerInputFromCommitIdentity(
+                change,
+                psInfo.getCommitId(),
+                psInfo.getAuthor().getAccount(),
+                NotifyHandling.NONE,
+                newPatchSet.uploader())
+                .stream(),
+            newReviewerInputFromCommitIdentity(
+                change,
+                psInfo.getCommitId(),
+                psInfo.getCommitter().getAccount(),
+                NotifyHandling.NONE,
+                newPatchSet.uploader())
+                .stream());
     if (magicBranch != null) {
       inputs =
           Streams.concat(
@@ -496,7 +498,7 @@ public class ReplaceOp implements BatchUpdateOp {
     change.setStatus(Change.Status.NEW);
     change.setCurrentPatchSet(info);
 
-    List<String> idList = ChangeUtil.getChangeIdsFromFooter(commit, urlFormatter.get());
+    List<String> idList = changeUtil.getChangeIdsFromFooter(commit);
     change.setKey(Change.key(idList.get(idList.size() - 1).trim()));
   }
 

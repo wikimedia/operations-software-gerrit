@@ -106,10 +106,10 @@ public abstract class FakeQueryChangesTest extends AbstractQueryChangesTest {
     Change invisibleChange3 = insert("repo", newChangeWithStatus(repo, Change.Status.NEW), user2);
     Change invisibleChange4 = insert("repo", newChangeWithStatus(repo, Change.Status.NEW), user2);
     Change invisibleChange5 = insert("repo", newChangeWithStatus(repo, Change.Status.NEW), user2);
-    gApi.changes().id(invisibleChange2.getChangeId()).setPrivate(true, null);
-    gApi.changes().id(invisibleChange3.getChangeId()).setPrivate(true, null);
-    gApi.changes().id(invisibleChange4.getChangeId()).setPrivate(true, null);
-    gApi.changes().id(invisibleChange5.getChangeId()).setPrivate(true, null);
+    gApi.changes().id(invisibleChange2.getKey().get()).setPrivate(true, null);
+    gApi.changes().id(invisibleChange3.getKey().get()).setPrivate(true, null);
+    gApi.changes().id(invisibleChange4.getKey().get()).setPrivate(true, null);
+    gApi.changes().id(invisibleChange5.getKey().get()).setPrivate(true, null);
 
     AbstractFakeIndex<?, ?, ?> idx =
         (AbstractFakeIndex<?, ?, ?>) changeIndexCollection.getSearchIndex();
@@ -213,13 +213,12 @@ public abstract class FakeQueryChangesTest extends AbstractQueryChangesTest {
     // 2 index searches are expected. The first index search will run with size 3 (i.e.
     // the configured query-limit+1), and then we will paginate to get the remaining
     // changes with the second index search.
-    queryProvider.get().query(queryBuilder.parse("status:new"));
+    executeQuery("status:new");
     assertThat(idx.getQueryCount()).isEqualTo(LIMIT);
   }
 
   @Test
   @UseClockStep
-  @SuppressWarnings("unchecked")
   public void internalQueriesDoNotPaginateWithNonePaginationType() throws Exception {
     assumeTrue(PaginationType.NONE == getCurrentPaginationType());
 
@@ -229,8 +228,9 @@ public abstract class FakeQueryChangesTest extends AbstractQueryChangesTest {
     assertThatSearchQueryWasNotPaginated(idx.getQueryCount());
   }
 
+  @SuppressWarnings("unused")
   private void executeQuery(String query) throws QueryParseException {
-    queryProvider.get().query(queryBuilder.parse(query));
+    List<ChangeData> unused = queryProvider.get().query(queryBuilder.parse(query));
   }
 
   private void assertThatSearchQueryWasNotPaginated(int queryCount) {

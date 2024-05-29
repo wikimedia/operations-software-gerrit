@@ -34,6 +34,7 @@ junit_tests(
     ],
     deps = [
         ":custom-truth-subjects",
+        "//java/com/google/gerrit/acceptance/config",
         "//java/com/google/gerrit/acceptance/testsuite/project",
         "//java/com/google/gerrit/common:annotations",
         "//java/com/google/gerrit/common:server",
@@ -77,6 +78,7 @@ junit_tests(
         "//lib:jgit",
         "//lib:jgit-junit",
         "//lib:protobuf",
+        "//lib:roaringbitmap",
         "//lib:soy",
         "//lib/auto:auto-value",
         "//lib/auto:auto-value-annotations",

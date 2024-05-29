@@ -9,7 +9,6 @@ import {
   SubmitType,
   InheritedBooleanInfoConfiguredValue,
   PermissionAction,
-  CommentSide,
   AppTheme,
   DateFormat,
   TimeFormat,
@@ -42,8 +41,10 @@ import {
   ChangeMessageId,
   ChangeMessageInfo,
   ChangeSubmissionId,
+  CommentInfo,
   CommentLinkInfo,
   CommentLinks,
+  CommentSide,
   CommitId,
   CommitInfo,
   ConfigArrayParameterInfo,
@@ -51,7 +52,10 @@ import {
   ConfigListParameterInfo,
   ConfigParameterInfo,
   ConfigParameterInfoBase,
+  ContextLine,
   ContributorAgreementInfo,
+  CustomKey,
+  CustomKeyedValues,
   DetailedLabelInfo,
   DownloadInfo,
   DownloadSchemeInfo,
@@ -106,6 +110,7 @@ import {
   SuggestInfo,
   Timestamp,
   TopicName,
+  UrlEncodedCommentId,
   UrlEncodedRepoName,
   UserConfigInfo,
   VotingRangeInfo,
@@ -116,7 +121,7 @@ import {
   CommentRange,
 } from '../api/rest-api';
 import {DiffInfo, IgnoreWhitespaceType} from './diff';
-import {LineNumber} from '../api/diff';
+import {PatchRange, LineNumber} from '../api/diff';
 
 export type {
   AccountId,
@@ -139,6 +144,7 @@ export type {
   ChangeMessageId,
   ChangeMessageInfo,
   ChangeSubmissionId,
+  CommentInfo,
   CommentLinkInfo,
   CommentLinks,
   CommentRange,
@@ -149,6 +155,7 @@ export type {
   ConfigListParameterInfo,
   ConfigParameterInfo,
   ConfigParameterInfoBase,
+  ContextLine,
   ContributorAgreementInfo,
   DetailedLabelInfo,
   DownloadInfo,
@@ -177,6 +184,7 @@ export type {
   MaxObjectSizeLimitInfo,
   NumericChangeId,
   ParentCommitInfo,
+  PatchRange,
   PatchSetNum,
   PatchSetNumber,
   PluginConfigInfo,
@@ -200,6 +208,7 @@ export type {
   SuggestInfo,
   Timestamp,
   TopicName,
+  UrlEncodedCommentId,
   UrlEncodedRepoName,
   UserConfigInfo,
   VotingRangeInfo,
@@ -231,9 +240,6 @@ export type RevisionId = 'current' | CommitId | PatchSetNum;
 // The UUID of the suggested fix.
 export type FixId = BrandType<string, '_fixId'>;
 
-// The URL encoded UUID of the comment
-export type UrlEncodedCommentId = BrandType<string, '_urlEncodedCommentId'>;
-
 // The ID of the dashboard, in the form of '<ref>:<path>'
 export type DashboardId = BrandType<string, '_dahsboardId'>;
 
@@ -246,6 +252,87 @@ export type LabelName = BrandType<string, '_labelName'>;
 export type EncodedGroupId = BrandType<string, '_encodedGroupId'>;
 
 export type UserId = AccountId | GroupId | EmailAddress;
+
+export type DiffPageSidebar = 'NONE' | `plugin-${string}`;
+
+// Must be kept in sync with the ListChangesOption enum.
+// See: java/com/google/gerrit/extensions/client/ListChangesOption.java
+export const ListChangesOption = {
+  LABELS: 0,
+  DETAILED_LABELS: 8,
+
+  // Return information on the current patch set of the change.
+  CURRENT_REVISION: 1,
+  ALL_REVISIONS: 2,
+
+  // If revisions are included, parse the commit object.
+  CURRENT_COMMIT: 3,
+  ALL_COMMITS: 4,
+
+  // If a patch set is included, include the files of the patch set.
+  CURRENT_FILES: 5,
+  ALL_FILES: 6,
+
+  // If accounts are included, include detailed account info.
+  DETAILED_ACCOUNTS: 7,
+
+  // Include messages associated with the change.
+  MESSAGES: 9,
+
+  // Include allowed actions client could perform.
+  CURRENT_ACTIONS: 10,
+
+  // Set the reviewed boolean for the caller.
+  REVIEWED: 11,
+
+  // Include download commands for the caller.
+  DOWNLOAD_COMMANDS: 13,
+
+  // Include patch set weblinks.
+  WEB_LINKS: 14,
+
+  // Include consistency check results.
+  CHECK: 15,
+
+  // Include allowed change actions client could perform.
+  CHANGE_ACTIONS: 16,
+
+  // Include a copy of commit messages including review footers.
+  COMMIT_FOOTERS: 17,
+
+  // Include push certificate information along with any patch sets.
+  PUSH_CERTIFICATES: 18,
+
+  // Include change's reviewer updates.
+  REVIEWER_UPDATES: 19,
+
+  // Set the submittable boolean.
+  SUBMITTABLE: 20,
+
+  // If tracking ids are included, include detailed tracking ids info.
+  TRACKING_IDS: 21,
+
+  // Skip mergeability data.
+  SKIP_MERGEABLE: 22,
+
+  // Skip diffstat computation that compute the insertions field (number of lines inserted) and
+  // deletions field (number of lines deleted)
+  SKIP_DIFFSTAT: 23,
+
+  // Include the evaluated submit requirements for the caller.
+  SUBMIT_REQUIREMENTS: 24,
+
+  // Include custom keyed values.
+  CUSTOM_KEYED_VALUES: 25,
+
+  // Include the 'starred' field, that is if the change is starred by the
+  // current user.
+  STAR: 26,
+
+  // Include the `parents_data` field in each revision, e.g. if it's merged in the target branch and
+  // whether it points to a patch-set of another change.
+  PARENTS: 27,
+};
 
 // https://gerrit-review.googlesource.com/Documentation/rest-api-accounts.html#contributor-agreement-input
 export interface ContributorAgreementInput {
@@ -690,7 +777,11 @@ export enum ChangeStates {
   MERGED = 'Merged',
   PRIVATE = 'Private',
   READY_TO_SUBMIT = 'Ready to submit',
+  /** This change is a revert of another change. */
+  REVERT = 'Revert',
+  /** A revert of this change was created. */
   REVERT_CREATED = 'Revert Created',
+  /** A revert of this change was submitted. */
   REVERT_SUBMITTED = 'Revert Submitted',
   WIP = 'WIP',
 }
@@ -834,40 +925,6 @@ export interface ChangeMessage extends ChangeMessageInfo {
   type: string;
   expanded: boolean;
   commentThreads: CommentThread[];
-}
-
-/**
- * The CommentInfo entity contains information about an inline comment.
- * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#comment-info
- */
-export interface CommentInfo {
-  id: UrlEncodedCommentId;
-  updated: Timestamp;
-  // TODO(TS): Make this required. Every comment must have patch_set set.
-  patch_set?: RevisionPatchSetNum;
-  path?: string;
-  side?: CommentSide;
-  parent?: number;
-  line?: number;
-  range?: CommentRange;
-  in_reply_to?: UrlEncodedCommentId;
-  message?: string;
-  author?: AccountInfo;
-  tag?: string;
-  unresolved?: boolean;
-  change_message_id?: string;
-  commit_id?: string;
-  context_lines?: ContextLine[];
-  source_content_type?: string;
-}
-
-/**
- * The ContextLine entity contains the line number and line text of a single line of the source file content..
- * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#context-line
- */
-export interface ContextLine {
-  line_number: number;
-  context_line: string;
 }
 
 export type NameToProjectInfoMap = {[projectName: string]: ProjectInfo};
@@ -1112,21 +1169,21 @@ export interface SshKeyInfo {
 }
 
 /**
+ * The CustomKeyedValuesInput entity contains information about hashtags to add to, and/or remove from, a change
+ * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#custom-keyed-values-input
+ */
+export interface CustomKeyedValuesInput {
+  add?: CustomKeyedValues;
+  remove?: CustomKey[];
+}
+
+/**
  * The HashtagsInput entity contains information about hashtags to add to, and/or remove from, a change
  * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#hashtags-input
  */
 export interface HashtagsInput {
   add?: Hashtag[];
   remove?: Hashtag[];
-}
-
-/**
- * Defines a patch ranges. Used as input for gr-rest-api methods,
- * doesn't exist in Rest API
- */
-export interface PatchRange {
-  patchNum: RevisionPatchSetNum;
-  basePatchNum: BasePatchSetNum;
 }
 
 /**
@@ -1237,6 +1294,7 @@ export interface AccountCapabilityInfo {
   viewConnections?: boolean;
   viewPlugins?: boolean;
   viewQueue?: boolean;
+  viewSecondaryEmails?: boolean;
 }
 
 /**
@@ -1266,6 +1324,7 @@ export interface PreferencesInfo {
   mute_common_path_prefixes?: boolean;
   signed_off_by?: boolean;
   my: TopMenuItemInfo[];
+  // Do not use directly, but use changeTablePrefs() in user model to map/filter legacy columns.
   change_table: string[];
   email_strategy: EmailStrategy;
   default_base_for_merges: DefaultBase;
@@ -1276,6 +1335,7 @@ export interface PreferencesInfo {
   // The email_format doesn't mentioned in doc, but exists in Java class GeneralPreferencesInfo
   email_format?: EmailFormat;
   allow_browser_notifications?: boolean;
+  diff_page_sidebar?: DiffPageSidebar;
 }
 
 /**
@@ -1317,6 +1377,7 @@ export interface ReviewInput {
   add_to_attention_set?: AttentionSetInput[];
   remove_from_attention_set?: AttentionSetInput[];
   ignore_automatic_attention_set_rules?: boolean;
+  response_format_options?: string[];
 }
 
 /**
@@ -1328,6 +1389,7 @@ export interface ReviewResult {
   labels?: unknown;
   reviewers?: {[key: UserId]: AddReviewerResult};
   ready?: boolean;
+  change_info?: ChangeInfo;
 }
 
 /**

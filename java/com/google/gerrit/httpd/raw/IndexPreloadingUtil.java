@@ -95,13 +95,15 @@ public class IndexPreloadingUtil {
           ListChangesOption.ALL_COMMITS,
           ListChangesOption.ALL_REVISIONS,
           ListChangesOption.CHANGE_ACTIONS,
+          ListChangesOption.DETAILED_ACCOUNTS,
           ListChangesOption.DETAILED_LABELS,
           ListChangesOption.DOWNLOAD_COMMANDS,
           ListChangesOption.MESSAGES,
           ListChangesOption.SUBMITTABLE,
           ListChangesOption.WEB_LINKS,
           ListChangesOption.SKIP_DIFFSTAT,
-          ListChangesOption.SUBMIT_REQUIREMENTS);
+          ListChangesOption.SUBMIT_REQUIREMENTS,
+          ListChangesOption.PARENTS);
 
   @Nullable
   public static String getPath(@Nullable String requestedURL) throws URISyntaxException {

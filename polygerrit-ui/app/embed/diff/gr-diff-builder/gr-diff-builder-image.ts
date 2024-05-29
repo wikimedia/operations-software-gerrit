@@ -4,84 +4,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import {ImageInfo} from '../../../types/common';
-import {DiffInfo, DiffPreferencesInfo} from '../../../types/diff';
-import {RenderPreferences, Side} from '../../../api/diff';
+import {Side} from '../../../api/diff';
 import '../gr-diff-image-viewer/gr-image-viewer';
 import {html, LitElement, nothing} from 'lit';
-import {customElement, property, query, state} from 'lit/decorators.js';
-import {GrDiffBuilder} from './gr-diff-builder';
-import {createElementDiff} from '../gr-diff/gr-diff-utils';
-import {GrDiffGroup} from '../gr-diff/gr-diff-group';
+import {property, query, state} from 'lit/decorators.js';
 
 // MIME types for images we allow showing. Do not include SVG, it can contain
 // arbitrary JavaScript.
 const IMAGE_MIME_PATTERN = /^image\/(bmp|gif|x-icon|jpeg|jpg|png|tiff|webp)$/;
 
-export class GrDiffBuilderImage extends GrDiffBuilder {
-  constructor(
-    diff: DiffInfo,
-    prefs: DiffPreferencesInfo,
-    outputEl: HTMLElement,
-    private readonly baseImage: ImageInfo | null,
-    private readonly revisionImage: ImageInfo | null,
-    renderPrefs?: RenderPreferences,
-    private readonly useNewImageDiffUi: boolean = false
-  ) {
-    super(diff, prefs, outputEl, [], renderPrefs);
-  }
-
-  override buildSectionElement(group: GrDiffGroup): HTMLElement {
-    const section = createElementDiff('tbody');
-    // Do not create a diff row for 'LOST'.
-    if (group.lines[0].beforeNumber !== 'FILE') return section;
-    return super.buildSectionElement(group);
-  }
-
-  public renderImageDiff() {
-    const imageDiff = this.useNewImageDiffUi
-      ? this.createImageDiffNew()
-      : this.createImageDiffOld();
-    this.outputEl.appendChild(imageDiff);
-  }
-
-  private createImageDiffNew() {
-    const imageDiff = document.createElement('gr-diff-image-new');
-    imageDiff.automaticBlink = this.autoBlink();
-    imageDiff.baseImage = this.baseImage ?? undefined;
-    imageDiff.revisionImage = this.revisionImage ?? undefined;
-    return imageDiff;
-  }
-
-  private createImageDiffOld() {
-    const imageDiff = document.createElement('gr-diff-image-old');
-    imageDiff.baseImage = this.baseImage ?? undefined;
-    imageDiff.revisionImage = this.revisionImage ?? undefined;
-    return imageDiff;
-  }
-
-  private autoBlink(): boolean {
-    return !!this.renderPrefs?.image_diff_prefs?.automatic_blink;
-  }
-
-  override updateRenderPrefs(renderPrefs: RenderPreferences) {
-    this.renderPrefs = renderPrefs;
-
-    // We have to update `imageDiff.automaticBlink` manually, because `this` is
-    // not a LitElement.
-    const imageDiff = this.outputEl.querySelector(
-      'gr-diff-image-new'
-    ) as GrDiffImageNew;
-    if (imageDiff) imageDiff.automaticBlink = this.autoBlink();
-  }
-}
-
-@customElement('gr-diff-image-new')
 class GrDiffImageNew extends LitElement {
   @property() baseImage?: ImageInfo;
 
   @property() revisionImage?: ImageInfo;
 
   @property() automaticBlink = false;
+
+  @property() columnCount = 0;
 
   /**
    * The browser API for handling selection does not (yet) work for selection
@@ -98,7 +37,7 @@ class GrDiffImageNew extends LitElement {
     return html`
       <tbody class="gr-diff image-diff">
         <tr class="gr-diff">
-          <td class="gr-diff" colspan="4">
+          <td class="gr-diff" colspan=${this.columnCount}>
             <gr-image-viewer
               class="gr-diff"
               .baseUrl=${imageSrc(this.baseImage)}
@@ -113,11 +52,12 @@ class GrDiffImageNew extends LitElement {
   }
 }
 
-@customElement('gr-diff-image-old')
 class GrDiffImageOld extends LitElement {
   @property() baseImage?: ImageInfo;
 
   @property() revisionImage?: ImageInfo;
+
+  @property() columnCount = 0;
 
   @query('img.left') baseImageEl?: HTMLImageElement;
 
@@ -151,7 +91,7 @@ class GrDiffImageOld extends LitElement {
     return html`
       <tbody class="gr-diff endpoint">
         <tr class="gr-diff">
-          <td class="gr-diff" colspan="4">
+          <td class="gr-diff" colspan=${this.columnCount}>
             <gr-endpoint-decorator class="gr-diff" name="image-diff">
               ${this.renderEndpointParam('baseImage', this.baseImage)}
               ${this.renderEndpointParam('revisionImage', this.revisionImage)}
@@ -263,6 +203,9 @@ function imageSrc(image?: ImageInfo): string {
     ? `data:${image.type};base64,${image.body}`
     : '';
 }
+
+customElements.define('gr-diff-image-new', GrDiffImageNew);
+customElements.define('gr-diff-image-old', GrDiffImageOld);
 
 declare global {
   interface HTMLElementTagNameMap {

@@ -14,6 +14,8 @@
 
 package com.google.gerrit.server.git;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
 import com.google.common.collect.ImmutableSet;
@@ -26,8 +28,9 @@ import com.google.gerrit.server.cache.proto.Cache.TagSetHolderProto.TagSetProto.
 import com.google.gerrit.server.cache.proto.Cache.TagSetHolderProto.TagSetProto.TagProto;
 import com.google.gerrit.server.cache.serialize.ObjectIdConverter;
 import com.google.protobuf.ByteString;
+import java.io.DataOutputStream;
 import java.io.IOException;
-import java.util.BitSet;
+import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -40,8 +43,10 @@ import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefDatabase;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevFlag;
 import org.eclipse.jgit.revwalk.RevSort;
 import org.eclipse.jgit.revwalk.RevWalk;
+import org.roaringbitmap.RoaringBitmap;
 
 /**
  * Builds a set of tags, and tracks which tags are reachable from which non-tag, non-special refs.
@@ -67,7 +72,7 @@ class TagSet {
 
   /**
    * refName => ref. CachedRef is a ref that has an integer identity, used for indexing into
-   * BitSets.
+   * RoaringBitmaps.
    */
   private final Map<String, CachedRef> refs;
 
@@ -145,7 +150,7 @@ class TagSet {
         // The reference has not been moved. It can be used as-is.
         ObjectId savedObjectId = savedRef.get();
         if (currentRef.getObjectId().equals(savedObjectId)) {
-          m.mask.set(savedRef.flag);
+          m.mask.add(savedRef.flag);
           continue;
         }
 
@@ -162,7 +167,7 @@ class TagSet {
           if (rw.isMergedInto(savedCommit, currentCommit)) {
             // Fast-forward. Safely update the reference in-place.
             savedRef.compareAndSet(savedObjectId, currentRef.getObjectId());
-            m.mask.set(savedRef.flag);
+            m.mask.add(savedRef.flag);
             continue;
           }
 
@@ -176,7 +181,7 @@ class TagSet {
           RevCommit c;
           while ((c = rw.next()) != null) {
             Tag tag = tags.get(c);
-            if (tag != null && tag.refFlags.get(savedRef.flag)) {
+            if (tag != null && tag.refFlags.contains(savedRef.flag)) {
               m.lostRefs.add(new TagMatcher.LostRef(tag, savedRef.flag));
               err = true;
             }
@@ -184,7 +189,7 @@ class TagSet {
           if (!err) {
             // All of the tags are still reachable. Update in-place.
             savedRef.compareAndSet(savedObjectId, currentRef.getObjectId());
-            m.mask.set(savedRef.flag);
+            m.mask.add(savedRef.flag);
           }
 
         } catch (IOException err) {
@@ -207,6 +212,7 @@ class TagSet {
 
     try (TagWalk rw = new TagWalk(git)) {
       rw.setRetainBody(false);
+      RevFlag isTag = rw.newFlag("tag");
       for (Ref ref :
           git.getRefDatabase()
               .getRefsByPrefixWithExclusions(RefDatabase.ALL, SKIPPABLE_REF_PREFIXES)) {
@@ -216,9 +222,9 @@ class TagSet {
         } else if (isTag(ref)) {
           // For a tag, remember where it points to.
           try {
-            addTag(rw, git.getRefDatabase().peel(ref));
+            addTag(rw, git.getRefDatabase().peel(ref), isTag);
           } catch (IOException e) {
-            addTag(rw, ref);
+            addTag(rw, ref, isTag);
           }
 
         } else {
@@ -227,17 +233,10 @@ class TagSet {
         }
       }
 
-      // Traverse the complete history. Copy any flags from a commit to
-      // all of its ancestors. This automatically updates any Tag object
-      // as the TagCommit and the stored Tag object share the same
-      // underlying bit set.
+      // Traverse the complete history and propagate reachability to parents.
       TagCommit c;
       while ((c = (TagCommit) rw.next()) != null) {
-        BitSet mine = c.refFlags;
-        int pCnt = c.getParentCount();
-        for (int pIdx = 0; pIdx < pCnt; pIdx++) {
-          ((TagCommit) c.getParent(pIdx)).refFlags.or(mine);
-        }
+        c.propagateReachabilityToParents(isTag);
       }
     } catch (IOException e) {
       logger.atWarning().withCause(e).log("Error building tags for repository %s", projectName);
@@ -257,11 +256,16 @@ class TagSet {
     proto
         .getTagList()
         .forEach(
-            t ->
-                tags.add(
-                    new Tag(
-                        idConverter.fromByteString(t.getId()),
-                        BitSet.valueOf(t.getFlags().asReadOnlyByteBuffer()))));
+            t -> {
+              RoaringBitmap flags = new RoaringBitmap();
+              ByteBuffer in = ByteBuffer.wrap(t.getFlags().toByteArray());
+              try {
+                flags.deserialize(in);
+              } catch (IOException e) {
+                logger.atSevere().withCause(e).log();
+              }
+              tags.add(new Tag(idConverter.fromByteString(t.getId()), flags));
+            });
     return new TagSet(Project.nameKey(proto.getProjectName()), refs, tags);
   }
 
@@ -277,12 +281,20 @@ class TagSet {
                     .setFlag(cr.flag)
                     .build()));
     tags.forEach(
-        t ->
-            b.addTag(
-                TagProto.newBuilder()
-                    .setId(idConverter.toByteString(t))
-                    .setFlags(ByteString.copyFrom(t.refFlags.toByteArray()))
-                    .build()));
+        t -> {
+          t.refFlags.runOptimize();
+          ByteString.Output out = ByteString.newOutput(t.refFlags.serializedSizeInBytes());
+          try {
+            t.refFlags.serialize(new DataOutputStream(out));
+          } catch (IOException e) {
+            logger.atSevere().withCause(e).log();
+          }
+          b.addTag(
+              TagProto.newBuilder()
+                  .setId(idConverter.toByteString(t))
+                  .setFlags(out.toByteString())
+                  .build());
+        });
     return b.build();
   }
 
@@ -328,8 +340,8 @@ class TagSet {
       refs.put(newRef.getName(), new CachedRef(newRef, newFlag));
 
       for (Tag tag : tags) {
-        if (tag.refFlags.get(srcFlag)) {
-          tag.refFlags.set(newFlag);
+        if (tag.refFlags.contains(srcFlag)) {
+          tag.refFlags.add(newFlag);
         }
       }
     }
@@ -341,34 +353,37 @@ class TagSet {
     refs.putAll(old.refs);
 
     for (Tag srcTag : old.tags) {
-      BitSet mine = new BitSet();
-      mine.or(srcTag.refFlags);
-      tags.add(new Tag(srcTag, mine));
+      tags.add(new Tag(srcTag));
     }
 
     for (TagMatcher.LostRef lost : m.lostRefs) {
       Tag mine = tags.get(lost.tag);
       if (mine != null) {
-        mine.refFlags.clear(lost.flag);
+        mine.refFlags.remove(lost.flag);
       }
     }
   }
 
-  private void addTag(TagWalk rw, Ref ref) {
+  private void addTag(TagWalk rw, Ref ref, RevFlag isTag) {
     ObjectId id = ref.getPeeledObjectId();
     if (id == null) {
       id = ref.getObjectId();
     }
 
     if (!tags.contains(id)) {
-      BitSet flags;
+      RoaringBitmap flags;
       try {
-        flags = ((TagCommit) rw.parseCommit(id)).refFlags;
+        TagCommit commit = ((TagCommit) rw.parseCommit(id));
+        commit.add(isTag);
+        if (commit.refFlags == null) {
+          commit.refFlags = new RoaringBitmap();
+        }
+        flags = commit.refFlags;
       } catch (IncorrectObjectTypeException notCommit) {
-        flags = new BitSet();
+        flags = new RoaringBitmap();
       } catch (IOException e) {
         logger.atWarning().withCause(e).log("Error on %s of %s", ref.getName(), projectName);
-        flags = new BitSet();
+        flags = new RoaringBitmap();
       }
       tags.add(new Tag(id, flags));
     }
@@ -380,7 +395,10 @@ class TagSet {
       rw.markStart(commit);
 
       int flag = refs.size();
-      commit.refFlags.set(flag);
+      if (commit.refFlags == null) {
+        commit.refFlags = new RoaringBitmap();
+      }
+      commit.refFlags.add(flag);
       refs.put(ref.getName(), new CachedRef(ref, flag));
     } catch (IncorrectObjectTypeException notCommit) {
       // No need to spam the logs.
@@ -414,16 +432,21 @@ class TagSet {
   static final class Tag extends ObjectIdOwnerMap.Entry {
 
     // a RefCache.flag => isVisible map. This reference is aliased to the
-    // bitset in TagCommit.refFlags.
-    @VisibleForTesting final BitSet refFlags;
+    // RoaringBitmap in TagCommit.refFlags.
+    @VisibleForTesting final RoaringBitmap refFlags;
 
-    Tag(AnyObjectId id, BitSet flags) {
+    Tag(Tag src) {
+      this(src, src.refFlags.clone());
+    }
+
+    Tag(AnyObjectId id, RoaringBitmap flags) {
       super(id);
+      checkNotNull(flags);
       this.refFlags = flags;
     }
 
-    boolean has(BitSet mask) {
-      return refFlags.intersects(mask);
+    boolean has(RoaringBitmap mask) {
+      return RoaringBitmap.intersects(refFlags, mask);
     }
 
     @Override
@@ -431,7 +454,7 @@ class TagSet {
       return MoreObjects.toStringHelper(this).addValue(name()).add("refFlags", refFlags).toString();
     }
   }
-  /** A ref along with its index into BitSet. */
+  /** A ref along with its index into RoaringBitmap. */
   @VisibleForTesting
   static final class CachedRef extends AtomicReference<ObjectId> {
     private static final long serialVersionUID = 1L;
@@ -470,13 +493,50 @@ class TagSet {
   }
 
   // TODO(hanwen): this would be better named as CommitWithReachability, as it also holds non-tags.
+  // However, non-tags will have a null refFlags field.
   private static final class TagCommit extends RevCommit {
     /** CachedRef.flag => isVisible, indicating if this commit is reachable from the ref. */
-    final BitSet refFlags;
+    RoaringBitmap refFlags;
 
     TagCommit(AnyObjectId id) {
       super(id);
-      refFlags = new BitSet();
+    }
+
+    /**
+     * Copy any flags from this commit to all of its ancestors.
+     *
+     * <p>Do not maintain a reference to the flags on non-tag commits after copying their flags to
+     * their ancestors. The flag copying automatically updates any Tag object as the TagCommit and
+     * the stored Tag object share the same underlying RoaringBitmap.
+     *
+     * @param isTag {@code RevFlag} indicating if this TagCommit is a tag
+     */
+    void propagateReachabilityToParents(RevFlag isTag) {
+      RoaringBitmap mine = refFlags;
+      if (mine != null) {
+        boolean canMoveBitmap = false;
+        if (!has(isTag)) {
+          refFlags = null;
+          canMoveBitmap = true;
+        }
+        int pCnt = getParentCount();
+        for (int pIdx = 0; pIdx < pCnt; pIdx++) {
+          TagCommit commit = (TagCommit) getParent(pIdx);
+          RoaringBitmap parentFlags = commit.refFlags;
+          if (parentFlags == null) {
+            if (canMoveBitmap) {
+              // This commit is not itself a Tag, so in order to reduce cloning overhead, migrate
+              // its refFlags object to its first parent with null refFlags
+              commit.refFlags = mine;
+              canMoveBitmap = false;
+            } else {
+              commit.refFlags = mine.clone();
+            }
+          } else {
+            parentFlags.or(mine);
+          }
+        }
+      }
     }
   }
 }

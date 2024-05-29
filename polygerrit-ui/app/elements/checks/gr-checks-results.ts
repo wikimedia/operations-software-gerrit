@@ -47,9 +47,10 @@ import {
   otherPrimaryLinks,
   secondaryLinks,
   tooltipForLink,
+  computeIsExpandable,
 } from '../../models/checks/checks-util';
 import {assertIsDefined, assert, unique} from '../../utils/common-util';
-import {modifierPressed, toggleClass, whenVisible} from '../../utils/dom-util';
+import {modifierPressed, whenVisible} from '../../utils/dom-util';
 import {durationString} from '../../utils/date-util';
 import {charsOnly} from '../../utils/string-util';
 import {isAttemptSelected, matches} from './gr-checks-util';
@@ -78,6 +79,7 @@ import {when} from 'lit/directives/when.js';
 import {DropdownItem} from '../shared/gr-dropdown-list/gr-dropdown-list';
 import './gr-checks-attempt';
 import {createDiffUrl, changeViewModelToken} from '../../models/views/change';
+import {formStyles} from '../../styles/form-styles';
 
 /**
  * Firing this event sets the regular expression of the results filter.
@@ -322,18 +324,10 @@ export class GrResultRow extends LitElement {
     ];
   }
 
-  override updated(changedProperties: PropertyValues) {
+  override willUpdate(changedProperties: PropertyValues) {
     if (changedProperties.has('result')) {
-      this.isExpandable = this.computeIsExpandable();
+      this.isExpandable = computeIsExpandable(this.result);
     }
-  }
-
-  private computeIsExpandable() {
-    const hasSummary = !!this.result?.summary;
-    const hasMessage = !!this.result?.message;
-    const hasMultipleLinks = (this.result?.links ?? []).length > 1;
-    const hasPointers = (this.result?.codePointers ?? []).length > 0;
-    return hasSummary && (hasMessage || hasMultipleLinks || hasPointers);
   }
 
   override focus() {
@@ -529,7 +523,11 @@ export class GrResultRow extends LitElement {
     if (!link) return;
     const tooltipText = link.tooltip ?? tooltipForLink(link.icon);
     const icon = iconForLink(link.icon);
-    return html`<a href=${link.url} class="link" target="_blank"
+    return html`<a
+      href=${link.url}
+      class="link"
+      target="_blank"
+      rel="noopener noreferrer"
       ><gr-icon
         icon=${icon.name}
         ?filled=${icon.filled}
@@ -560,7 +558,7 @@ export class GrResultRow extends LitElement {
         horizontal-align="right"
         @tap-item=${this.handleAction}
         @opened-changed=${(e: ValueChangedEvent<boolean>) =>
-          toggleClass(this, 'dropdown-open', e.detail.value)}
+          this.classList.toggle('dropdown-open', e.detail.value)}
         ?hidden=${overflowItems.length === 0}
         .items=${overflowItems}
         .disabledIds=${disabledItems}
@@ -717,6 +715,7 @@ class GrResultExpanded extends LitElement {
           changeNum: change._number,
           repo: change.project,
           patchNum: patchset,
+          checksPatchset: patchset,
           diffView: {path, lineNum: line},
         }),
         primary: true,
@@ -732,7 +731,11 @@ class GrResultExpanded extends LitElement {
     const text = link.tooltip ?? tooltipForLink(link.icon);
     const target = targetBlank ? '_blank' : undefined;
     const icon = iconForLink(link.icon);
-    return html`<a href=${link.url} target=${ifDefined(target)}>
+    return html`<a
+      href=${link.url}
+      target=${ifDefined(target)}
+      rel="noopener noreferrer"
+    >
       <gr-icon icon=${icon.name} class="link" ?filled=${icon.filled}></gr-icon>
       <span>${text}</span>
     </a>`;
@@ -866,6 +869,7 @@ export class GrChecksResults extends LitElement {
 
   static override get styles() {
     return [
+      formStyles,
       sharedStyles,
       spinnerStyles,
       fontStyles,
@@ -1128,8 +1132,8 @@ export class GrChecksResults extends LitElement {
               ></gr-dropdown-list>`
             )}
             <gr-dropdown-list
-              value=${this.checksPatchsetNumber ??
-              this.latestPatchsetNumber ??
+              value=${(this.checksPatchsetNumber ||
+                this.latestPatchsetNumber) ??
               0}
               .items=${this.createPatchsetDropdownItems()}
               @value-change=${this.onPatchsetSelected}
@@ -1198,7 +1202,7 @@ export class GrChecksResults extends LitElement {
     if (!link) return;
     const tooltipText = link.tooltip ?? tooltipForLink(link.icon);
     const icon = iconForLink(link.icon);
-    return html`<a href=${link.url} target="_blank"
+    return html`<a href=${link.url} target="_blank" rel="noopener noreferrer"
       ><gr-icon
         icon=${icon.name}
         aria-label=${tooltipText}

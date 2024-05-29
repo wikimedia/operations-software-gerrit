@@ -285,7 +285,9 @@ public abstract class AbstractDaemonTest {
   @Inject protected TestTicker testTicker;
 
   protected EventRecorder eventRecorder;
+
   protected GerritServer server;
+
   protected Project.NameKey project;
   protected RestSession adminRestSession;
   protected RestSession userRestSession;
@@ -316,6 +318,101 @@ public abstract class AbstractDaemonTest {
   private List<Repository> toClose;
   private String systemTimeZone;
   private SystemReader oldSystemReader;
+
+  /**
+   * The Getters and Setters below are needed for tests that run on custom {@link GerritServer}
+   * (that can be set up via {@link #initServer} and {@link #setUpDatabase} methods. Because tests
+   * inherit directly from {@link AbstractDaemonTest}, the set up has to be delegated to some other
+   * class that can share the set up logic across different test classes.
+   *
+   * <p>E.g, we need to be able to do something like:
+   *
+   * <pre>{@code
+   * public class AccountIT extends AbstractDaemonTest {...}
+   *
+   * public class AbstractDaemonTestAdapter {
+   *
+   *   protected void initServer() {...}
+   *
+   *   ...
+   *
+   * }
+   *
+   * public class CustomAccountIT extends AccountIT {
+   *
+   *   AbstractDaemonTestAdapter testAdapter;
+   *
+   *   {@literal @Override}
+   *   protected void initServer() {
+   *         testAdapter.initServer();
+   *   }
+   *   ...
+   * }
+   *
+   * public class CustomChangeIT extends ChangeIT {
+   *
+   *   AbstractDaemonTestAdapter testAdapter;
+   *
+   *   {@literal @Override}
+   *   protected void initServer() {
+   *         testAdapter.initServer();
+   *   }
+   *   ...
+   * }
+   *
+   * }</pre>
+   */
+  public String getResourcePrefix() {
+    return resourcePrefix;
+  }
+
+  public void setResourcePrefix(String resourcePrefix) {
+    this.resourcePrefix = resourcePrefix;
+  }
+
+  public Description getDescription() {
+    return description;
+  }
+
+  public TestRepository<InMemoryRepository> getTestRepo() {
+    return testRepo;
+  }
+
+  public void setTestRepo(TestRepository<InMemoryRepository> testRepo) {
+    this.testRepo = testRepo;
+  }
+
+  public TestAccount getUser() {
+    return user;
+  }
+
+  public void setUser(TestAccount user) {
+    this.user = user;
+  }
+
+  public TestAccount getAdmin() {
+    return admin;
+  }
+
+  public void setAdmin(TestAccount admin) {
+    this.admin = admin;
+  }
+
+  public Project.NameKey getProject() {
+    return project;
+  }
+
+  public void setProject(Project.NameKey project) {
+    this.project = project;
+  }
+
+  public GerritServer getServer() {
+    return server;
+  }
+
+  public void setServer(GerritServer server) {
+    this.server = server;
+  }
 
   @Before
   public void clearSender() {
@@ -408,7 +505,7 @@ public abstract class AbstractDaemonTest {
     initSsh();
   }
 
-  protected void reindexAccount(Account.Id accountId) {
+  public void reindexAccount(Account.Id accountId) {
     accountIndexer.index(accountId);
   }
 
@@ -456,6 +553,52 @@ public abstract class AbstractDaemonTest {
 
     baseConfig.setInt("index", null, "batchThreads", -1);
 
+    initServer(classDesc, methodDesc);
+
+    server.getTestInjector().injectMembers(this);
+    Transport.register(inProcessProtocol);
+    toClose = Collections.synchronizedList(new ArrayList<>());
+
+    setUpDatabase(classDesc);
+
+    // Set the clock step last, so that the test setup isn't consuming any timestamps after the
+    // clock has been set.
+    setTimeSettings(classDesc.useSystemTime(), classDesc.useClockStep(), classDesc.useTimezone());
+    setTimeSettings(
+        methodDesc.useSystemTime(), methodDesc.useClockStep(), methodDesc.useTimezone());
+  }
+
+  protected void setUpDatabase(GerritServer.Description classDesc) throws Exception {
+    admin = accountCreator.admin();
+    user = accountCreator.user1();
+
+    // Evict and reindex accounts in case tests modify them.
+    reindexAccount(admin.id());
+    reindexAccount(user.id());
+
+    adminRestSession = new RestSession(server, admin);
+    userRestSession = new RestSession(server, user);
+    anonymousRestSession = new RestSession(server, null);
+
+    initSsh();
+
+    String testMethodName = description.getMethodName();
+    resourcePrefix =
+        UNSAFE_PROJECT_NAME
+            .matcher(description.getClassName() + "_" + testMethodName + "_")
+            .replaceAll("");
+
+    setRequestScope(admin);
+    ProjectInput in = projectInput(description);
+    gApi.projects().create(in);
+    project = Project.nameKey(in.name);
+    if (!classDesc.skipProjectClone()) {
+      testRepo = cloneProject(project, getCloneAsAccount(description));
+    }
+  }
+
+  protected void initServer(GerritServer.Description classDesc, GerritServer.Description methodDesc)
+      throws Exception {
     Module module = createModule();
     Module auditModule = createAuditModule();
     Module sshModule = createSshModule();
@@ -471,43 +614,6 @@ public abstract class AbstractDaemonTest {
           GerritServer.initAndStart(
               temporaryFolder, methodDesc, baseConfig, module, auditModule, sshModule);
     }
-
-    server.getTestInjector().injectMembers(this);
-    Transport.register(inProcessProtocol);
-    toClose = Collections.synchronizedList(new ArrayList<>());
-
-    admin = accountCreator.admin();
-    user = accountCreator.user1();
-
-    // Evict and reindex accounts in case tests modify them.
-    reindexAccount(admin.id());
-    reindexAccount(user.id());
-
-    adminRestSession = new RestSession(server, admin);
-    userRestSession = new RestSession(server, user);
-    anonymousRestSession = new RestSession(server, null);
-
-    initSsh();
-
-    resourcePrefix =
-        UNSAFE_PROJECT_NAME
-            .matcher(description.getClassName() + "_" + description.getMethodName() + "_")
-            .replaceAll("");
-
-    Context ctx = newRequestContext(admin);
-    atrScope.set(ctx);
-    ProjectInput in = projectInput(description);
-    gApi.projects().create(in);
-    project = Project.nameKey(in.name);
-    if (!classDesc.skipProjectClone()) {
-      testRepo = cloneProject(project, getCloneAsAccount(description));
-    }
-
-    // Set the clock step last, so that the test setup isn't consuming any timestamps after the
-    // clock has been set.
-    setTimeSettings(classDesc.useSystemTime(), classDesc.useClockStep(), classDesc.useTimezone());
-    setTimeSettings(
-        methodDesc.useSystemTime(), methodDesc.useClockStep(), methodDesc.useTimezone());
   }
 
   private static SystemReader setFakeSystemReader(File tempDir) {
@@ -589,13 +695,13 @@ public abstract class AbstractDaemonTest {
     }
   }
 
-  private TestAccount getCloneAsAccount(Description description) {
+  protected TestAccount getCloneAsAccount(Description description) {
     TestProjectInput ann = description.getAnnotation(TestProjectInput.class);
     return accountCreator.get(ann != null ? ann.cloneAs() : "admin");
   }
 
   /** Generate default project properties based on test description */
-  private ProjectInput projectInput(Description description) {
+  public ProjectInput projectInput(Description description) {
     ProjectInput in = new ProjectInput();
     TestProjectInput ann = description.getAnnotation(TestProjectInput.class);
     in.name = name("project");
@@ -628,7 +734,7 @@ public abstract class AbstractDaemonTest {
     // Default implementation does nothing.
   }
 
-  private static final Pattern UNSAFE_PROJECT_NAME = Pattern.compile("[^a-zA-Z0-9._/-]+");
+  public static final Pattern UNSAFE_PROJECT_NAME = Pattern.compile("[^a-zA-Z0-9._/-]+");
 
   protected Git git() {
     return testRepo.git();
@@ -944,10 +1050,11 @@ public abstract class AbstractDaemonTest {
       String subject,
       String fileName,
       String content,
-      String topic)
+      @Nullable String topic)
       throws Exception {
     PushOneCommit push = pushFactory.create(admin.newIdent(), repo, subject, fileName, content);
-    return push.to("refs/for/" + branch + "%topic=" + name(topic));
+    return push.to(
+        "refs/for/" + branch + (Strings.isNullOrEmpty(topic) ? "" : "%topic=" + name(topic)));
   }
 
   protected BranchApi createBranch(BranchNameKey branch) throws Exception {
@@ -1051,7 +1158,13 @@ public abstract class AbstractDaemonTest {
     return gApi.changes().query(q).get();
   }
 
-  private Context newRequestContext(TestAccount account) {
+  /** Sets up {@code account} as a caller in tests. */
+  public void setRequestScope(TestAccount account) {
+    Context ctx = newRequestContext(account);
+    atrScope.set(ctx);
+  }
+
+  protected Context newRequestContext(TestAccount account) {
     requestScopeOperations.setApiUser(account.id());
     return atrScope.get();
   }

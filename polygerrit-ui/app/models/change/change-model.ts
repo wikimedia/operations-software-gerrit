@@ -15,10 +15,17 @@ import {
   RevisionPatchSetNum,
   PatchSetNumber,
   CommitId,
+  RevisionInfo,
 } from '../../types/common';
 import {ChangeStatus, DefaultBase} from '../../constants/constants';
 import {combineLatest, from, Observable, forkJoin, of} from 'rxjs';
-import {map, filter, withLatestFrom, switchMap} from 'rxjs/operators';
+import {
+  map,
+  filter,
+  withLatestFrom,
+  switchMap,
+  catchError,
+} from 'rxjs/operators';
 import {
   computeAllPatchSets,
   computeLatestPatchNum,
@@ -26,12 +33,12 @@ import {
   findEdit,
   sortRevisions,
 } from '../../utils/patch-set-util';
-import {isDefined, ParsedChangeInfo} from '../../types/types';
+import {isDefined, LoadingStatus, ParsedChangeInfo} from '../../types/types';
 import {fireAlert, fireTitleChange} from '../../utils/event-util';
 import {RestApiService} from '../../services/gr-rest-api/gr-rest-api';
 import {select} from '../../utils/observable-util';
 import {assertIsDefined} from '../../utils/common-util';
-import {Model} from '../model';
+import {Model} from '../base/model';
 import {UserModel} from '../user/user-model';
 import {define} from '../dependency';
 import {isOwner} from '../../utils/change-util';
@@ -49,19 +56,12 @@ import {PluginLoader} from '../../elements/shared/gr-js-api-interface/gr-plugin-
 import {ReportingService} from '../../services/gr-reporting/gr-reporting';
 import {Timing} from '../../constants/reporting';
 
-export enum LoadingStatus {
-  NOT_LOADED = 'NOT_LOADED',
-  LOADING = 'LOADING',
-  RELOADING = 'RELOADING',
-  LOADED = 'LOADED',
-}
-
 const ERR_REVIEW_STATUS = 'Couldn’t change file review status.';
 
 export interface ChangeState {
   /**
    * If `change` is undefined, this must be either NOT_LOADED or LOADING.
-   * If `change` is defined, this must be either LOADED or RELOADING.
+   * If `change` is defined, this must be either LOADED.
    */
   loadingStatus: LoadingStatus;
   change?: ParsedChangeInfo;
@@ -183,7 +183,13 @@ const initialState: ChangeState = {
 };
 
 export const changeModelToken = define<ChangeModel>('change-model');
-
+/**
+ * Change model maintains information about the current change.
+ *
+ * The "current" change is defined by ChangeViewModel. This model tracks part of
+ * the current view. As such it's a singleton global state. It's NOT meant to
+ * keep the state of an arbitrary change.
+ */
 export class ChangeModel extends Model<ChangeState> {
   private change?: ParsedChangeInfo;
 
@@ -205,8 +211,7 @@ export class ChangeModel extends Model<ChangeState> {
 
   public readonly loading$ = select(
     this.changeLoadingStatus$,
-    status =>
-      status === LoadingStatus.LOADING || status === LoadingStatus.RELOADING
+    status => status === LoadingStatus.LOADING
   );
 
   public readonly reviewedFiles$ = select(
@@ -254,6 +259,11 @@ export class ChangeModel extends Model<ChangeState> {
     change => change?.revisions[change.current_revision]?.uploader
   );
 
+  public readonly latestCommitter$ = select(
+    this.change$,
+    change => change?.revisions[change.current_revision]?.commit?.committer
+  );
+
   /**
    * Emits the current patchset number. If the route does not define the current
    * patchset num, then this selector waits for the change to be defined and
@@ -282,6 +292,12 @@ export class ChangeModel extends Model<ChangeState> {
       ([viewModelState, _changeState, latestPatchN]) =>
         viewModelState?.patchNum || latestPatchN
     );
+
+  /** The user can enter edit mode without an `EDIT` patchset existing yet. */
+  public readonly editMode$ = select(
+    combineLatest([this.viewModel.edit$, this.patchNum$]),
+    ([edit, patchNum]) => !!edit || patchNum === EDIT
+  );
 
   /**
    * Emits the base patchset number. This is identical to the
@@ -318,12 +334,12 @@ export class ChangeModel extends Model<ChangeState> {
     );
 
   private selectRevision(
-    revisionNum$: Observable<RevisionPatchSetNum | undefined>
+    revisionNum$: Observable<RevisionPatchSetNum | BasePatchSetNum | undefined>
   ) {
     return select(
       combineLatest([this.revisions$, revisionNum$]),
       ([revisions, patchNum]) => {
-        if (!revisions || !patchNum) return undefined;
+        if (!revisions || !patchNum || patchNum === PARENT) return undefined;
         return Object.values(revisions).find(
           revision => revision._number === patchNum
         );
@@ -332,6 +348,10 @@ export class ChangeModel extends Model<ChangeState> {
   }
 
   public readonly revision$ = this.selectRevision(this.patchNum$);
+
+  public readonly baseRevision$ = this.selectRevision(
+    this.basePatchNum$
+  ) as Observable<RevisionInfo | undefined>;
 
   public readonly latestRevision$ = this.selectRevision(this.latestPatchNum$);
 
@@ -363,7 +383,6 @@ export class ChangeModel extends Model<ChangeState> {
       this.setDiffTitle(),
       this.setEditTitle(),
       this.reportChangeReload(),
-      this.reportSendReply(),
       this.fireShowChange(),
       this.refuseEditForOpenChange(),
       this.refuseEditForClosedChange(),
@@ -378,22 +397,9 @@ export class ChangeModel extends Model<ChangeState> {
     ];
   }
 
-  private reportSendReply() {
-    return this.changeLoadingStatus$.subscribe(loadingStatus => {
-      // We are ending the timer on each change load, because ending a timer
-      // that was not started is a no-op. :-)
-      if (loadingStatus === LoadingStatus.LOADED) {
-        this.reporting.timeEnd(Timing.SEND_REPLY);
-      }
-    });
-  }
-
   private reportChangeReload() {
     return this.changeLoadingStatus$.subscribe(loadingStatus => {
-      if (
-        loadingStatus === LoadingStatus.LOADING ||
-        loadingStatus === LoadingStatus.RELOADING
-      ) {
+      if (loadingStatus === LoadingStatus.LOADING) {
         this.reporting.time(Timing.CHANGE_RELOAD);
       }
       if (
@@ -407,7 +413,6 @@ export class ChangeModel extends Model<ChangeState> {
 
   private fireShowChange() {
     return combineLatest([
-      this.viewModel.childView$,
       this.change$,
       this.basePatchNum$,
       this.patchNum$,
@@ -415,15 +420,11 @@ export class ChangeModel extends Model<ChangeState> {
     ])
       .pipe(
         filter(
-          ([childView, change, basePatchNum, patchNum, mergeable]) =>
-            childView === ChangeChildView.OVERVIEW &&
-            !!change &&
-            !!basePatchNum &&
-            !!patchNum &&
-            mergeable !== undefined
+          ([change, basePatchNum, patchNum, mergeable]) =>
+            !!change && !!basePatchNum && !!patchNum && mergeable !== undefined
         )
       )
-      .subscribe(([_, change, basePatchNum, patchNum, mergeable]) => {
+      .subscribe(([change, basePatchNum, patchNum, mergeable]) => {
         this.pluginLoader.jsApiService.handleShowChange({
           change,
           basePatchNum,
@@ -564,16 +565,21 @@ export class ChangeModel extends Model<ChangeState> {
     return this.viewModel.changeNum$
       .pipe(
         switchMap(changeNum => {
-          if (changeNum !== undefined) this.updateStateLoading(changeNum);
-          const change = from(this.restApiService.getChangeDetail(changeNum));
-          const edit = from(this.restApiService.getChangeEdit(changeNum));
+          this.updateStateLoading(changeNum);
+          // if changeNum is undefined restApi calls return undefined.
+          const change = this.restApiService.getChangeDetail(changeNum);
+          const edit = this.restApiService.getChangeEdit(changeNum);
           return forkJoin([change, edit]);
         }),
         withLatestFrom(this.viewModel.patchNum$),
         map(([[change, edit], patchNum]) =>
           updateChangeWithEdit(change, edit, patchNum)
         ),
-        map(updateRevisionsWithCommitShas)
+        catchError(err => {
+          // Reset loading state and re-throw.
+          this.updateState({loadingStatus: LoadingStatus.NOT_LOADED});
+          throw err;
+        })
       )
       .subscribe(change => {
         // The change service is currently a singleton, so we have to be
@@ -759,25 +765,33 @@ export class ChangeModel extends Model<ChangeState> {
   /**
    * Called when change detail loading is initiated.
    *
-   * If the change number matches the current change in the state, then
-   * this is a reload. If not, then we not just want to set the state to
-   * LOADING instead of RELOADING, but we also want to set the change to
+   * We want to set the state to LOADING, but we also want to set the change to
    * undefined right away. Otherwise components could see inconsistent state:
    * a new change number, but an old change.
    */
-  private updateStateLoading(changeNum: NumericChangeId) {
-    const current = this.getState();
-    const reloading = current.change?._number === changeNum;
+  private updateStateLoading(changeNum?: NumericChangeId) {
     this.updateState({
-      change: reloading ? current.change : undefined,
-      loadingStatus: reloading
-        ? LoadingStatus.RELOADING
-        : LoadingStatus.LOADING,
+      change: undefined,
+      loadingStatus: changeNum
+        ? LoadingStatus.LOADING
+        : LoadingStatus.NOT_LOADED,
     });
   }
 
   // Private but used in tests.
+  /**
+   * Update the change information in the state.
+   *
+   * Since the ChangeModel must maintain consistency with ChangeViewModel
+   * The update is only allowed, if the new change has the same number as the
+   * current change or if the current change is not set (it was reset to
+   * undefined when ChangeViewModel.changeNum updated).
+   */
   updateStateChange(change?: ParsedChangeInfo) {
+    if (this.change && change?._number !== this.change?._number) {
+      return;
+    }
+    change = updateRevisionsWithCommitShas(change);
     this.updateState({
       change,
       loadingStatus:

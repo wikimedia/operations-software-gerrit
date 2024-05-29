@@ -27,6 +27,7 @@ import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.LabelTypes;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.common.ApprovalInfo;
@@ -37,6 +38,8 @@ import com.google.gerrit.extensions.events.ChangeDeletedListener;
 import com.google.gerrit.extensions.events.ChangeMergedListener;
 import com.google.gerrit.extensions.events.ChangeRestoredListener;
 import com.google.gerrit.extensions.events.CommentAddedListener;
+import com.google.gerrit.extensions.events.CustomKeyedValuesEditedListener;
+import com.google.gerrit.extensions.events.GitBatchRefUpdateListener;
 import com.google.gerrit.extensions.events.GitReferenceUpdatedListener;
 import com.google.gerrit.extensions.events.HashtagsEditedListener;
 import com.google.gerrit.extensions.events.HeadUpdatedListener;
@@ -50,10 +53,12 @@ import com.google.gerrit.extensions.events.VoteDeletedListener;
 import com.google.gerrit.extensions.events.WorkInProgressStateChangedListener;
 import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.server.PatchSetUtil;
+import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.data.AccountAttribute;
 import com.google.gerrit.server.data.ApprovalAttribute;
 import com.google.gerrit.server.data.ChangeAttribute;
 import com.google.gerrit.server.data.PatchSetAttribute;
+import com.google.gerrit.server.data.RefUpdateAttribute;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.plugincontext.PluginItemContext;
@@ -65,7 +70,10 @@ import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevWalk;
@@ -80,7 +88,9 @@ public class StreamEventsApiListener
         PrivateStateChangedListener,
         CommentAddedListener,
         GitReferenceUpdatedListener,
+        GitBatchRefUpdateListener,
         HashtagsEditedListener,
+        CustomKeyedValuesEditedListener,
         NewProjectCreatedListener,
         ReviewerAddedListener,
         ReviewerDeletedListener,
@@ -91,6 +101,13 @@ public class StreamEventsApiListener
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
   public static class StreamEventsApiListenerModule extends AbstractModule {
+
+    private Config config;
+
+    public StreamEventsApiListenerModule(Config config) {
+      this.config = config;
+    }
+
     @Override
     protected void configure() {
       DynamicSet.bind(binder(), ChangeAbandonedListener.class).to(StreamEventsApiListener.class);
@@ -98,9 +115,17 @@ public class StreamEventsApiListener
       DynamicSet.bind(binder(), ChangeMergedListener.class).to(StreamEventsApiListener.class);
       DynamicSet.bind(binder(), ChangeRestoredListener.class).to(StreamEventsApiListener.class);
       DynamicSet.bind(binder(), CommentAddedListener.class).to(StreamEventsApiListener.class);
-      DynamicSet.bind(binder(), GitReferenceUpdatedListener.class)
-          .to(StreamEventsApiListener.class);
+      if (config.getBoolean("event", "stream-events", "enableRefUpdatedEvents", true)) {
+        DynamicSet.bind(binder(), GitReferenceUpdatedListener.class)
+            .to(StreamEventsApiListener.class);
+      }
+      if (config.getBoolean("event", "stream-events", "enableBatchRefUpdatedEvents", false)) {
+        DynamicSet.bind(binder(), GitBatchRefUpdateListener.class)
+            .to(StreamEventsApiListener.class);
+      }
       DynamicSet.bind(binder(), HashtagsEditedListener.class).to(StreamEventsApiListener.class);
+      DynamicSet.bind(binder(), CustomKeyedValuesEditedListener.class)
+          .to(StreamEventsApiListener.class);
       DynamicSet.bind(binder(), NewProjectCreatedListener.class).to(StreamEventsApiListener.class);
       DynamicSet.bind(binder(), PrivateStateChangedListener.class)
           .to(StreamEventsApiListener.class);
@@ -121,6 +146,7 @@ public class StreamEventsApiListener
   private final GitRepositoryManager repoManager;
   private final PatchSetUtil psUtil;
   private final ChangeNotes.Factory changeNotesFactory;
+  private final boolean enableDraftCommentEvents;
 
   @Inject
   StreamEventsApiListener(
@@ -129,13 +155,16 @@ public class StreamEventsApiListener
       ProjectCache projectCache,
       GitRepositoryManager repoManager,
       PatchSetUtil psUtil,
-      ChangeNotes.Factory changeNotesFactory) {
+      ChangeNotes.Factory changeNotesFactory,
+      @GerritServerConfig Config config) {
     this.dispatcher = dispatcher;
     this.eventFactory = eventFactory;
     this.projectCache = projectCache;
     this.repoManager = repoManager;
     this.psUtil = psUtil;
     this.changeNotesFactory = changeNotesFactory;
+    this.enableDraftCommentEvents =
+        config.getBoolean("event", "stream-events", "enableDraftCommentEvents", false);
   }
 
   private ChangeNotes getNotes(ChangeInfo info) {
@@ -233,9 +262,9 @@ public class StreamEventsApiListener
   }
 
   @Nullable
-  String[] hashtagArray(Collection<String> hashtags) {
-    if (hashtags != null && !hashtags.isEmpty()) {
-      return Sets.newHashSet(hashtags).toArray(new String[hashtags.size()]);
+  String[] hashArray(Collection<String> collection) {
+    if (collection != null && !collection.isEmpty()) {
+      return Sets.newHashSet(collection).toArray(new String[collection.size()]);
     }
     return null;
   }
@@ -342,9 +371,28 @@ public class StreamEventsApiListener
 
       event.change = changeAttributeSupplier(change, notes);
       event.editor = accountAttributeSupplier(ev.getWho());
-      event.hashtags = hashtagArray(ev.getHashtags());
-      event.added = hashtagArray(ev.getAddedHashtags());
-      event.removed = hashtagArray(ev.getRemovedHashtags());
+      event.hashtags = hashArray(ev.getHashtags());
+      event.added = hashArray(ev.getAddedHashtags());
+      event.removed = hashArray(ev.getRemovedHashtags());
+
+      dispatcher.run(d -> d.postEvent(change, event));
+    } catch (StorageException e) {
+      logger.atSevere().withCause(e).log("Failed to dispatch event");
+    }
+  }
+
+  @Override
+  public void onCustomKeyedValuesEdited(CustomKeyedValuesEditedListener.Event ev) {
+    try {
+      ChangeNotes notes = getNotes(ev.getChange());
+      Change change = notes.getChange();
+      CustomKeyedValuesChangedEvent event = new CustomKeyedValuesChangedEvent(change);
+
+      event.change = changeAttributeSupplier(change, notes);
+      event.editor = accountAttributeSupplier(ev.getWho());
+      event.customKeyedValues = ev.getCustomKeyedValues();
+      event.added = ev.getAddedCustomKeyedValues();
+      event.removed = hashArray(ev.getRemovedCustomKeys());
 
       dispatcher.run(d -> d.postEvent(change, event));
     } catch (StorageException e) {
@@ -366,7 +414,34 @@ public class StreamEventsApiListener
                     ObjectId.fromString(ev.getOldObjectId()),
                     ObjectId.fromString(ev.getNewObjectId()),
                     refName));
-    dispatcher.run(d -> d.postEvent(refName, event));
+
+    if (enableDraftCommentEvents || !RefNames.isRefsDraftsComments(event.getRefName())) {
+      dispatcher.run(d -> d.postEvent(refName, event));
+    }
+  }
+
+  @Override
+  public void onGitBatchRefUpdate(GitBatchRefUpdateListener.Event ev) {
+    Project.NameKey projectName = Project.nameKey(ev.getProjectName());
+    Supplier<List<RefUpdateAttribute>> refUpdates =
+        Suppliers.memoize(
+            () ->
+                ev.getUpdatedRefs().stream()
+                    .filter(
+                        refUpdate ->
+                            enableDraftCommentEvents
+                                || !RefNames.isRefsDraftsComments(refUpdate.getRefName()))
+                    .map(
+                        ru ->
+                            eventFactory.asRefUpdateAttribute(
+                                ObjectId.fromString(ru.getOldObjectId()),
+                                ObjectId.fromString(ru.getNewObjectId()),
+                                BranchNameKey.create(ev.getProjectName(), ru.getRefName())))
+                    .collect(Collectors.toList()));
+
+    Supplier<AccountAttribute> submitterSupplier = accountAttributeSupplier(ev.getUpdater());
+    BatchRefUpdateEvent event = new BatchRefUpdateEvent(projectName, refUpdates, submitterSupplier);
+    dispatcher.run(d -> d.postEvent(projectName, event));
   }
 
   @Override

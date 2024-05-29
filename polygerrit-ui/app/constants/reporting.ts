@@ -10,6 +10,7 @@ export enum LifeCycle {
   STARTED_AS_GUEST = 'Started as guest',
   VISIBILILITY_HIDDEN = 'Visibility changed to hidden',
   VISIBILILITY_VISIBLE = 'Visibility changed to visible',
+  FOCUS = 'Focus changed',
   EXTENSION_DETECTED = 'Extension detected',
   PLUGINS_INSTALLED = 'Plugins installed',
   PLUGINS_FAILED = 'Some plugins failed to load',
@@ -95,6 +96,12 @@ export enum Timing {
   LCP = 'LCP',
   // WebVitals - Interaction to Next Paint (INP): measures responsiveness
   INP = 'INP',
+  // Time to load preview for a user suggested edit or a fix from checks
+  PREVIEW_FIX_LOAD = 'PreviewFixLoad',
+  // Time to apply fix for a user suggested edit or a fix from checks
+  APPLY_FIX_LOAD = 'ApplyFixLoad',
+  // Time to copy target to clipboard
+  COPY_TO_CLIPBOARD = 'CopyToClipboard',
 }
 
 export enum Interaction {
@@ -127,4 +134,16 @@ export enum Interaction {
   CHANGE_ACTION_FIRED = 'change-action-fired',
   BUTTON_CLICK = 'button-click',
   LINK_CLICK = 'link-click',
+  USER_ACTIVE = 'user-active',
+  USER_PASSIVE = 'user-passive',
+  // User added generated suggestion to comment
+  GENERATE_SUGGESTION_ADDED = 'generate_suggestion_added',
+  // Request for generating suggestion (usually after user typed draft comment)
+  GENERATE_SUGGESTION_REQUEST = 'generate_suggestion_request',
+  // Response with suggestions
+  GENERATE_SUGGESTION_RESPONSE = 'generate_suggestion_response',
+  // User enabled generating suggestions (enabled is default)
+  GENERATE_SUGGESTION_ENABLED = 'generate_suggestion_enabled',
+  // User disabled generating suggestions
+  GENERATE_SUGGESTION_DISABLED = 'generate_suggestion_disabled',
 }

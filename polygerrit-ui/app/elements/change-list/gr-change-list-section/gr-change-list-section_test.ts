@@ -56,7 +56,7 @@ suite('gr-change-list section', () => {
     };
     element = await fixture<GrChangeListSection>(
       html`<gr-change-list-section
-        .account=${createAccountDetailWithId(1)}
+        .loggedInUser=${createAccountDetailWithId(1)}
         .config=${createServerInfo()}
         .visibleChangeTableColumns=${Object.values(ColumnNames)}
         .changeSection=${changeSection}
@@ -75,7 +75,7 @@ suite('gr-change-list section', () => {
         <input class="selection-checkbox" type="checkbox"/>
       </td>
       #
-              SubjectStatusOwnerReviewersCommentsRepoBranchUpdatedSize Status
+              SubjectOwnerReviewersRepoBranchUpdatedSizeStatus
       <gr-change-list-item
         aria-label="Test subject, section: test"
         role="button"

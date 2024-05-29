@@ -52,6 +52,7 @@ import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.Permission;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.changes.AttentionSetInput;
+import com.google.gerrit.extensions.api.changes.CustomKeyedValuesInput;
 import com.google.gerrit.extensions.api.changes.DeleteReviewerInput;
 import com.google.gerrit.extensions.api.changes.DeleteVoteInput;
 import com.google.gerrit.extensions.api.changes.HashtagsInput;
@@ -67,6 +68,7 @@ import com.google.gerrit.extensions.common.GroupInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.server.account.ServiceUserClassifier;
+import com.google.gerrit.server.change.ReaddOwnerUtil;
 import com.google.gerrit.server.project.testing.TestLabels;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
@@ -102,6 +104,7 @@ public class AttentionSetIT extends AbstractDaemonTest {
   @Inject private Provider<InternalChangeQuery> changeQueryProvider;
   @Inject private ProjectOperations projectOperations;
   @Inject private GetAttentionSet getAttentionSet;
+  @Inject private ReaddOwnerUtil readdOwnerUtil;
 
   /** Simulates a fake clock. Uses second granularity. */
   private static class FakeClock implements LongSupplier {
@@ -687,9 +690,9 @@ public class AttentionSetIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void reviewersAreNotAddedForNoReasonBecauseOfAnUpdate() throws Exception {
+  public void reviewersAreNotAddedForNoReasonBecauseOfAHashtagUpdate() throws Exception {
     PushOneCommit.Result r = createChange();
-    // implictly adds the user to the attention set when adding as reviewer
+    // implicitly adds the user to the attention set when adding as reviewer
     change(r).addReviewer(user.email());
 
     change(r).attention(user.id().toString()).remove(new AttentionSetInput("removed"));
@@ -697,6 +700,24 @@ public class AttentionSetIT extends AbstractDaemonTest {
     HashtagsInput hashtagsInput = new HashtagsInput();
     hashtagsInput.add = ImmutableSet.of("tag");
     change(r).setHashtags(hashtagsInput);
+
+    AttentionSetUpdate attentionSet = Iterables.getOnlyElement(r.getChange().attentionSet());
+    assertThat(attentionSet).hasAccountIdThat().isEqualTo(user.id());
+    assertThat(attentionSet).hasOperationThat().isEqualTo(AttentionSetUpdate.Operation.REMOVE);
+    assertThat(attentionSet).hasReasonThat().isEqualTo("removed");
+  }
+
+  @Test
+  public void reviewersAreNotAddedForNoReasonBecauseOfACustomKeyedValuesUpdate() throws Exception {
+    PushOneCommit.Result r = createChange();
+    // implicitly adds the user to the attention set when adding as reviewer
+    change(r).addReviewer(user.email());
+
+    change(r).attention(user.id().toString()).remove(new AttentionSetInput("removed"));
+
+    CustomKeyedValuesInput customKeyedValuesInput = new CustomKeyedValuesInput();
+    customKeyedValuesInput.add = ImmutableMap.of("key1", "value1");
+    change(r).setCustomKeyedValues(customKeyedValuesInput);
 
     AttentionSetUpdate attentionSet = Iterables.getOnlyElement(r.getChange().attentionSet());
     assertThat(attentionSet).hasAccountIdThat().isEqualTo(user.id());
@@ -2808,6 +2829,44 @@ public class AttentionSetIT extends AbstractDaemonTest {
     assertThat(message.body()).contains("\nPatch Set 2: Code-Review-2\n");
     assertThat(message.body())
         .contains("The change is no longer submittable: Code-Review is unsatisfied now.\n");
+  }
+
+  @Test
+  @GerritConfig(name = "attentionSet.readdOwnerAfter", value = "1w")
+  @GerritConfig(name = "attentionSet.readdOwnerMessage", value = "Owner has been added")
+  public void readdOwnerForInactiveOpenChanges() throws Exception {
+    // create 2 changes where the owner will be added to the attention-set
+    PushOneCommit.Result r1 = createChange();
+    PushOneCommit.Result r2 = createChange();
+
+    // ... because they are older than 1 week
+    fakeClock.advance(Duration.ofDays(7));
+
+    // create 1 change where the owner should not be added to the attention-set
+    PushOneCommit.Result r3 = createChange();
+
+    assertThat(r1.getChange().attentionSet()).isEmpty();
+    assertThat(r2.getChange().attentionSet()).isEmpty();
+    assertThat(r3.getChange().attentionSet()).isEmpty();
+
+    sender.clear();
+    readdOwnerUtil.readdOwnerForInactiveOpenChanges(batchUpdateFactory);
+    assertThat(r1.getChange().attentionSet())
+        .containsExactly(
+            AttentionSetUpdate.createFromRead(
+                fakeClock.now(),
+                admin.id(),
+                AttentionSetUpdate.Operation.ADD,
+                "Owner has been added"));
+    assertThat(r2.getChange().attentionSet())
+        .containsExactly(
+            AttentionSetUpdate.createFromRead(
+                fakeClock.now(),
+                admin.id(),
+                AttentionSetUpdate.Operation.ADD,
+                "Owner has been added"));
+    assertThat(r3.getChange().attentionSet()).isEmpty();
+    assertThat(sender.getMessages()).hasSize(2);
   }
 
   private void setEmailStrategyForUser(EmailStrategy es) throws Exception {

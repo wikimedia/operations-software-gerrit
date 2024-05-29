@@ -23,6 +23,7 @@ import {
 } from '../../types/common';
 import {
   addPath,
+  convertToCommentInput,
   createNew,
   createNewPatchsetLevel,
   id,
@@ -42,7 +43,7 @@ import {Interaction, Timing} from '../../constants/reporting';
 import {assert, assertIsDefined} from '../../utils/common-util';
 import {debounce, DelayedTask} from '../../utils/async-util';
 import {ReportingService} from '../../services/gr-reporting/gr-reporting';
-import {Model} from '../model';
+import {Model} from '../base/model';
 import {Deduping} from '../../api/reporting';
 import {extractMentionedUsers, getUserId} from '../../utils/account-util';
 import {SpecialFilePath} from '../../constants/constants';
@@ -638,7 +639,7 @@ export class CommentsModel extends Model<CommentState> {
       const result = await this.restApiService.saveDiffDraft(
         changeNum,
         draft.patch_set,
-        draft
+        convertToCommentInput(draft)
       );
       if (changeNum !== this.changeNum) return draft;
       if (!result.ok) throw new Error('request failed');

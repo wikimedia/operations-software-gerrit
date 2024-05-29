@@ -9,7 +9,7 @@ import {ChangeListSection} from '../gr-change-list/gr-change-list';
 import '../gr-change-list-action-bar/gr-change-list-action-bar';
 import {CLOSED, YOUR_TURN} from '../../../utils/dashboard-util';
 import {getAppContext} from '../../../services/app-context';
-import {ChangeInfo, ServerInfo, AccountInfo} from '../../../api/rest-api';
+import {ChangeInfo, AccountInfo} from '../../../api/rest-api';
 import {changeListStyles} from '../../../styles/gr-change-list-styles';
 import {fontStyles} from '../../../styles/gr-font-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
@@ -24,6 +24,7 @@ import {createSearchUrl} from '../../../models/views/search';
 import {userModelToken} from '../../../models/user/user-model';
 import {subscribe} from '../../lit/subscription-controller';
 import {classMap} from 'lit/directives/class-map.js';
+import {formStyles} from '../../../styles/form-styles';
 
 const NUMBER_FIXED_COLUMNS = 4;
 const LABEL_PREFIX_INVALID_PROLOG = 'Invalid-Prolog-Rules-Label-Name--';
@@ -67,9 +68,6 @@ export class GrChangeListSection extends LitElement {
   @property({type: Object})
   changeSection!: ChangeListSection;
 
-  @property({type: Object})
-  config?: ServerInfo;
-
   @property({type: Boolean})
   isCursorMoving = false;
 
@@ -78,7 +76,14 @@ export class GrChangeListSection extends LitElement {
    * in.
    */
   @property({type: Object})
-  account: AccountInfo | undefined = undefined;
+  loggedInUser?: AccountInfo;
+
+  /**
+   * When the list is part of the dashboard, the user for which the dashboard is
+   * generated.
+   */
+  @property({type: String})
+  dashboardUser?: string;
 
   @property({type: String})
   usp?: string;
@@ -110,6 +115,7 @@ export class GrChangeListSection extends LitElement {
     return [
       changeListStyles,
       fontStyles,
+      formStyles,
       sharedStyles,
       css`
         :host {
@@ -322,10 +328,10 @@ export class GrChangeListSection extends LitElement {
     return html`
       <gr-change-list-item
         tabindex="0"
-        .account=${this.account}
+        .loggedInUser=${this.loggedInUser}
+        .dashboardUser=${this.dashboardUser}
         .selected=${selected}
         .change=${change}
-        .config=${this.config}
         .sectionName=${this.changeSection.name}
         .visibleChangeTableColumns=${columns}
         .showNumber=${this.showNumber}

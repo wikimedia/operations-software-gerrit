@@ -15,6 +15,8 @@ import {BindValueChangeEvent} from '../../../types/events';
 import {resolve} from '../../../models/dependency';
 import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {createSearchUrl} from '../../../models/views/search';
+import {ParsedChangeInfo} from '../../../types/types';
+import {formStyles} from '../../../styles/form-styles';
 
 const ERR_COMMIT_NOT_FOUND = 'Unable to find the commit hash of this change.';
 const INSERT_REASON_STRING = '<INSERT REASONING HERE>';
@@ -65,43 +67,46 @@ export class GrConfirmRevertDialog
 
   private readonly getPluginLoader = resolve(this, pluginLoaderToken);
 
-  static override styles = [
-    sharedStyles,
-    css`
-      :host {
-        display: block;
-      }
-      :host([disabled]) {
-        opacity: 0.5;
-        pointer-events: none;
-      }
-      label {
-        cursor: pointer;
-        display: block;
-        width: 100%;
-      }
-      .revertSubmissionLayout {
-        display: flex;
-        align-items: center;
-      }
-      .label {
-        margin-left: var(--spacing-m);
-      }
-      iron-autogrow-textarea {
-        font-family: var(--monospace-font-family);
-        font-size: var(--font-size-mono);
-        line-height: var(--line-height-mono);
-        width: 73ch; /* Add a char to account for the border. */
-      }
-      .error {
-        color: var(--error-text-color);
-        margin-bottom: var(--spacing-m);
-      }
-      label[for='messageInput'] {
-        margin-top: var(--spacing-m);
-      }
-    `,
-  ];
+  static override get styles() {
+    return [
+      formStyles,
+      sharedStyles,
+      css`
+        :host {
+          display: block;
+        }
+        :host([disabled]) {
+          opacity: 0.5;
+          pointer-events: none;
+        }
+        label {
+          cursor: pointer;
+          display: block;
+          width: 100%;
+        }
+        .revertSubmissionLayout {
+          display: flex;
+          align-items: center;
+        }
+        .label {
+          margin-left: var(--spacing-m);
+        }
+        iron-autogrow-textarea {
+          font-family: var(--monospace-font-family);
+          font-size: var(--font-size-mono);
+          line-height: var(--line-height-mono);
+          width: 73ch; /* Add a char to account for the border. */
+        }
+        .error {
+          color: var(--error-text-color);
+          margin-bottom: var(--spacing-m);
+        }
+        label[for='messageInput'] {
+          margin-top: var(--spacing-m);
+        }
+      `,
+    ];
+  }
 
   override render() {
     return html`
@@ -170,15 +175,23 @@ export class GrConfirmRevertDialog
     return this.revertType === RevertType.REVERT_SUBMISSION;
   }
 
-  modifyRevertMsg(change: ChangeInfo, commitMessage: string, message: string) {
+  modifyRevertMsg(
+    change: ParsedChangeInfo,
+    commitMessage: string,
+    message: string
+  ) {
     return this.getPluginLoader().jsApiService.modifyRevertMsg(
-      change,
+      change as ChangeInfo,
       message,
       commitMessage
     );
   }
 
-  populate(change: ChangeInfo, commitMessage: string, changesCount: number) {
+  populate(
+    change: ParsedChangeInfo,
+    commitMessage: string,
+    changesCount: number
+  ) {
     this.changesCount = changesCount;
     // The option to revert a single change is always available
     this.populateRevertSingleChangeMessage(
@@ -190,13 +203,22 @@ export class GrConfirmRevertDialog
   }
 
   populateRevertSingleChangeMessage(
-    change: ChangeInfo,
+    change: ParsedChangeInfo,
     commitMessage: string,
     commitHash?: CommitId
   ) {
     // Figure out what the revert title should be.
     const originalTitle = (commitMessage || '').split('\n')[0];
-    const revertTitle = `Revert "${originalTitle}"`;
+    let revertTitle = `Revert "${originalTitle}"`;
+    const match = originalTitle.match(/^Revert(?:\^([0-9]+))? "(.*)"$/);
+    if (match) {
+      let revertNum = 2;
+      if (match[1]) {
+        revertNum = Number(match[1]) + 1;
+      }
+      revertTitle = `Revert^${revertNum} "${match[2]}"`;
+    }
+
     if (!commitHash) {
       fireAlert(this, ERR_COMMIT_NOT_FOUND);
       return;
@@ -215,18 +237,21 @@ export class GrConfirmRevertDialog
   }
 
   private modifyRevertSubmissionMsg(
-    change: ChangeInfo,
+    change: ParsedChangeInfo,
     msg: string,
     commitMessage: string
   ) {
     return this.getPluginLoader().jsApiService.modifyRevertSubmissionMsg(
-      change,
+      change as ChangeInfo,
       msg,
       commitMessage
     );
   }
 
-  populateRevertSubmissionMessage(change: ChangeInfo, commitMessage: string) {
+  populateRevertSubmissionMessage(
+    change: ParsedChangeInfo,
+    commitMessage: string
+  ) {
     // Follow the same convention of the revert
     const commitHash = change.current_revision;
     if (!commitHash) {

@@ -20,6 +20,7 @@ import static com.google.common.base.Preconditions.checkState;
 import com.google.common.collect.ImmutableList;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.Optional;
 
 /**
  * Passes additional information about an operation to the {@code BatchRefUpdate#execute} method.
@@ -126,7 +127,15 @@ public class RefUpdateContext implements AutoCloseable {
   /** Opens a context of a give type. */
   public static RefUpdateContext open(RefUpdateType updateType) {
     checkArgument(updateType != RefUpdateType.OTHER, "The OTHER type is for internal use only.");
-    return open(new RefUpdateContext(updateType));
+    checkArgument(
+        updateType != RefUpdateType.DIRECT_PUSH,
+        "openDirectPush method with justification must be used to open DIRECT_PUSH context.");
+    return open(new RefUpdateContext(updateType, Optional.empty()));
+  }
+
+  /** Opens a direct push context with an optional justification. */
+  public static RefUpdateContext openDirectPush(Optional<String> justification) {
+    return open(new RefUpdateContext(RefUpdateType.DIRECT_PUSH, justification));
   }
 
   /** Returns the list of opened contexts; the first element is the outermost context. */
@@ -140,13 +149,15 @@ public class RefUpdateContext implements AutoCloseable {
   }
 
   private final RefUpdateType updateType;
+  private final Optional<String> justification;
 
-  private RefUpdateContext(RefUpdateType updateType) {
+  private RefUpdateContext(RefUpdateType updateType, Optional<String> justification) {
     this.updateType = updateType;
+    this.justification = justification;
   }
 
-  protected RefUpdateContext() {
-    this(RefUpdateType.OTHER);
+  protected RefUpdateContext(Optional<String> justification) {
+    this(RefUpdateType.OTHER, justification);
   }
 
   protected static final Deque<RefUpdateContext> getCurrent() {
@@ -161,10 +172,16 @@ public class RefUpdateContext implements AutoCloseable {
   /**
    * Returns the type of {@link RefUpdateContext}.
    *
-   * <p>For descendants, always return {@link RefUpdateType#OTHER}
+   * <p>For descendants, always return {@link RefUpdateType#OTHER} (except known descendants defined
+   * as nested classes).
    */
   public final RefUpdateType getUpdateType() {
     return updateType;
+  }
+
+  /** Returns the justification for the operation. */
+  public final Optional<String> getJustification() {
+    return justification;
   }
 
   /** Closes the current context. */

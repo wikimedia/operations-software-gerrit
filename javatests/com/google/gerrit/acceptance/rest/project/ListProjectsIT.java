@@ -43,7 +43,7 @@ import com.google.gerrit.extensions.common.ProjectInfo;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.json.OutputFormat;
 import com.google.gerrit.server.project.ProjectCacheImpl;
-import com.google.gerrit.server.restapi.project.ListProjects;
+import com.google.gerrit.server.restapi.project.ListProjectsImpl;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.inject.Inject;
@@ -59,7 +59,7 @@ import org.junit.Test;
 public class ListProjectsIT extends AbstractDaemonTest {
   @Inject private ProjectOperations projectOperations;
   @Inject private RequestScopeOperations requestScopeOperations;
-  @Inject private ListProjects listProjects;
+  @Inject private ListProjectsImpl listProjects;
 
   @Test
   public void listProjects() throws Exception {
@@ -140,6 +140,33 @@ public class ListProjectsIT extends AbstractDaemonTest {
   }
 
   @Test
+  @GerritConfig(name = "gerrit.listProjectsFromIndex", value = "true")
+  public void listProjectsSetsMoreProjectsIfLimited_indexEnabled() throws Exception {
+    testListProjectsSetsMoreProjectsIfLimited();
+  }
+
+  @Test
+  @GerritConfig(name = "gerrit.listProjectsFromIndex", value = "false")
+  public void listProjectsSetsMoreProjectsIfLimited_indexDisabled() throws Exception {
+    testListProjectsSetsMoreProjectsIfLimited();
+  }
+
+  private void testListProjectsSetsMoreProjectsIfLimited() throws Exception {
+    for (int i = 0; i < 3; i++) {
+      projectOperations.newProject().name("prefix-" + i).create();
+    }
+
+    List<ProjectInfo> result = gApi.projects().list().withPrefix("prefix").get();
+    assertThat(Iterables.getLast(result)._moreProjects).isNull();
+
+    result = gApi.projects().list().withPrefix("prefix").withLimit(Integer.MAX_VALUE).get();
+    assertThat(Iterables.getLast(result)._moreProjects).isNull();
+
+    result = gApi.projects().list().withPrefix("prefix").withLimit(2).get();
+    assertThat(Iterables.getLast(result)._moreProjects).isTrue();
+  }
+
+  @Test
   public void listProjectsToOutputStream() throws Exception {
     int numInitialProjects = gApi.projects().list().get().size();
     int numTestProjects = 5;
@@ -159,7 +186,8 @@ public class ListProjectsIT extends AbstractDaemonTest {
 
   @Test
   public void listProjectsAsJsonMultilineToOutputStream() throws Exception {
-    listProjectsAsJsonToOutputStream(OutputFormat.JSON);
+    String jsonOutput = listProjectsAsJsonToOutputStream(OutputFormat.JSON);
+    assertThat(jsonOutput).contains("\n");
   }
 
   @Test
@@ -198,7 +226,18 @@ public class ListProjectsIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void listProjectsWithPrefix() throws Exception {
+  @GerritConfig(name = "gerrit.listProjectsFromIndex", value = "true")
+  public void listProjectsWithPrefix_indexEnabled() throws Exception {
+    testListProjectsWithPrefix();
+  }
+
+  @Test
+  @GerritConfig(name = "gerrit.listProjectsFromIndex", value = "false")
+  public void listProjectsWithPrefix_indexDisabled() throws Exception {
+    testListProjectsWithPrefix();
+  }
+
+  private void testListProjectsWithPrefix() throws Exception {
     Project.NameKey someProject = projectOperations.newProject().name("listtest-p1").create();
     Project.NameKey someOtherProject = projectOperations.newProject().name("listtest-p2").create();
     projectOperations.newProject().name("other-prefix-project").create();

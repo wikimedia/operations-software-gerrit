@@ -12,7 +12,7 @@ import {AuthType} from '../../../constants/constants';
 import {LitElement, css, html, PropertyValues} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
 import {sharedStyles} from '../../../styles/shared-styles';
-import {formStyles} from '../../../styles/gr-form-styles';
+import {grFormStyles} from '../../../styles/gr-form-styles';
 import {classMap} from 'lit/directives/class-map.js';
 import {when} from 'lit/directives/when.js';
 import {assertIsDefined} from '../../../utils/common-util';
@@ -36,37 +36,39 @@ export class GrIdentities extends LitElement {
 
   private readonly restApiService = getAppContext().restApiService;
 
-  static override styles = [
-    sharedStyles,
-    formStyles,
-    modalStyles,
-    css`
-      tr th.emailAddressHeader,
-      tr th.identityHeader {
-        width: 15em;
-        padding: 0 10px;
-      }
-      tr td.statusColumn,
-      tr td.emailAddressColumn,
-      tr td.identityColumn {
-        word-break: break-word;
-      }
-      tr td.emailAddressColumn,
-      tr td.identityColumn {
-        padding: 4px 10px;
-        width: 15em;
-      }
-      .deleteButton {
-        float: right;
-      }
-      .deleteButton:not(.show) {
-        display: none;
-      }
-      .space {
-        margin-bottom: var(--spacing-l);
-      }
-    `,
-  ];
+  static override get styles() {
+    return [
+      sharedStyles,
+      grFormStyles,
+      modalStyles,
+      css`
+        tr th.emailAddressHeader,
+        tr th.identityHeader {
+          width: 15em;
+          padding: 0 10px;
+        }
+        tr td.statusColumn,
+        tr td.emailAddressColumn,
+        tr td.identityColumn {
+          word-break: break-word;
+        }
+        tr td.emailAddressColumn,
+        tr td.identityColumn {
+          padding: 4px 10px;
+          width: 15em;
+        }
+        .deleteButton {
+          float: right;
+        }
+        .deleteButton:not(.show) {
+          display: none;
+        }
+        .space {
+          margin-bottom: var(--spacing-l);
+        }
+      `,
+    ];
+  }
 
   override render() {
     return html`<div class="gr-form-styles">

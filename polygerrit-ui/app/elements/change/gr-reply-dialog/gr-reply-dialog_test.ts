@@ -13,6 +13,7 @@ import {
   query,
   queryAll,
   queryAndAssert,
+  stubReporting,
   stubRestApi,
   waitUntilVisible,
 } from '../../../test/test-utils';
@@ -21,7 +22,6 @@ import {
   DraftsAction,
   ReviewerState,
 } from '../../../constants/constants';
-import {JSON_PREFIX} from '../../shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
 import {StandardLabels} from '../../../utils/label-util';
 import {
   createAccountWithEmail,
@@ -70,6 +70,7 @@ import {
 } from '../../../models/comments/comments-model';
 import {isOwner} from '../../../utils/change-util';
 import {createNewPatchsetLevel} from '../../../utils/comment-util';
+import {Timing} from '../../../constants/reporting';
 
 function cloneableResponse(status: number, text: string) {
   return {
@@ -170,14 +171,7 @@ suite('gr-reply-dialog tests', () => {
         new Promise((resolve, reject) => {
           try {
             const result = jsonResponseProducer(review) || {};
-            const resultStr = JSON_PREFIX + JSON.stringify(result);
-            resolve({
-              ...new Response(),
-              ok: true,
-              text() {
-                return Promise.resolve(resultStr);
-              },
-            });
+            resolve(result);
           } catch (err) {
             reject(err);
           }
@@ -263,33 +257,28 @@ suite('gr-reply-dialog tests', () => {
                 <div class="attentionSummary">
                   <div>
                     <span> No changes to the attention set. </span>
-                    <gr-tooltip-content
-                      has-tooltip=""
-                      title="Modify the attention set by adding a comment or use the account hovercard in the change page."
-                    >
-                      <gr-button
-                        aria-disabled="true"
-                        disabled=""
-                        class="edit-attention-button"
-                        data-action-key="edit"
-                        data-action-type="change"
-                        data-label="Edit"
-                        link=""
-                        position-below=""
-                        role="button"
-                        tabindex="-1"
-                      >
-                        <div>
-                          <gr-icon icon="edit" filled small></gr-icon>
-                          <span>Modify</span>
-                        </div>
-                      </gr-button>
-                    </gr-tooltip-content>
                   </div>
                   <div>
+                    <gr-button
+                      aria-disabled="false"
+                      class="edit-attention-button"
+                      data-action-key="edit"
+                      data-action-type="change"
+                      data-label="Edit"
+                      link=""
+                      position-below=""
+                      role="button"
+                      tabindex="0"
+                    >
+                      <div>
+                        <gr-icon icon="edit" filled small></gr-icon>
+                        <span>Modify</span>
+                      </div>
+                    </gr-button>
                     <a
-                      href="https://gerrit-review.googlesource.com/Documentation/user-attention-set.html"
+                      href="/Documentation/user-attention-set.html"
                       target="_blank"
+                      rel="noopener noreferrer"
                     >
                       <gr-icon icon="help" title="read documentation"></gr-icon>
                     </a>
@@ -447,6 +436,28 @@ suite('gr-reply-dialog tests', () => {
       </section>
     `
     );
+  });
+
+  test('save review fires sendReply metric', async () => {
+    const timeEndStub = stubReporting('timeEnd');
+
+    // Async tick is needed because iron-selector content is distributed and
+    // distributed content requires an observer to be set up.
+    await element.updateComplete;
+    element.patchsetLevelDraftMessage = 'I wholeheartedly disapprove';
+    element.draftCommentThreads = [createCommentThread([createComment()])];
+
+    element.includeComments = true;
+
+    // This is needed on non-Blink engines most likely due to the ways in
+    // which the dom-repeat elements are stamped.
+    await element.updateComplete;
+    queryAndAssert<GrButton>(element, '.send').click();
+
+    await interceptSaveReview();
+    await element.updateComplete;
+
+    await waitUntil(() => timeEndStub.calledWith(Timing.SEND_REPLY));
   });
 
   test('default to publishing draft comments with reply', async () => {
@@ -1521,62 +1532,6 @@ suite('gr-reply-dialog tests', () => {
     assert.isTrue(element.reviewersMutated);
   });
 
-  test('400 converts to human-readable server-error', async () => {
-    stubRestApi('saveChangeReview').callsFake(
-      (_changeNum, _patchNum, _review, errFn) => {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-        errFn!(
-          cloneableResponse(
-            400,
-            '....{"reviewers":{"id1":{"error":"human readable"}}}'
-          ) as Response
-        );
-        return Promise.resolve(new Response());
-      }
-    );
-
-    const promise = mockPromise();
-    const listener = (event: Event) => {
-      if (event.target !== document) return;
-      (event as CustomEvent).detail.response.text().then((body: string) => {
-        if (body === 'human readable') {
-          promise.resolve();
-        }
-      });
-    };
-    addListenerForTest(document, 'server-error', listener);
-
-    await element.updateComplete;
-    element.send(false, false);
-    await promise;
-  });
-
-  test('non-json 400 is treated as a normal server-error', async () => {
-    stubRestApi('saveChangeReview').callsFake(
-      (_changeNum, _patchNum, _review, errFn) => {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-        errFn!(cloneableResponse(400, 'Comment validation error!') as Response);
-        return Promise.resolve(new Response());
-      }
-    );
-    const promise = mockPromise();
-    const listener = (event: Event) => {
-      if (event.target !== document) return;
-      (event as CustomEvent).detail.response.text().then((body: string) => {
-        if (body === 'Comment validation error!') {
-          promise.resolve();
-        }
-      });
-    };
-    addListenerForTest(document, 'server-error', listener);
-
-    // Async tick is needed because iron-selector content is distributed and
-    // distributed content requires an observer to be set up.
-    await element.updateComplete;
-    element.send(false, false);
-    await promise;
-  });
-
   test('filterReviewerSuggestion', () => {
     const owner = makeAccount();
     const reviewer1 = makeAccount();
@@ -1775,15 +1730,6 @@ suite('gr-reply-dialog tests', () => {
 
     await element.updateComplete;
 
-    assert.isFalse(element.attentionExpanded);
-
-    element.patchsetLevelDraftMessage = 'a test comment';
-    await element.updateComplete;
-
-    modifyButton.click();
-
-    await element.updateComplete;
-
     assert.isTrue(element.attentionExpanded);
 
     let accountLabels = Array.from(
@@ -1795,18 +1741,16 @@ suite('gr-reply-dialog tests', () => {
     element._ccs = [...element.ccs, makeAccount()];
     await element.updateComplete;
 
-    // The 'attention modified' section collapses and resets when reviewers or
-    // ccs change.
-    assert.isFalse(element.attentionExpanded);
-
-    queryAndAssert<GrButton>(element, '.edit-attention-button').click();
-    await element.updateComplete;
-
     assert.isTrue(element.attentionExpanded);
     accountLabels = Array.from(
       queryAll(element, '.attention-detail gr-account-label')
     );
     assert.equal(accountLabels.length, 7);
+
+    // Verify that toggling the attention-set-button collapses.
+    queryAndAssert<GrButton>(element, '.edit-attention-button').click();
+    await element.updateComplete;
+    assert.isFalse(element.attentionExpanded);
 
     element.reviewers.pop();
     element.reviewers.pop();
@@ -2489,6 +2433,7 @@ suite('gr-reply-dialog tests', () => {
       await waitUntil(
         () => element.patchsetLevelDraftMessage === 'hello world'
       );
+      await element.updateComplete;
 
       const saveReviewPromise = interceptSaveReview();
 
@@ -2498,7 +2443,7 @@ suite('gr-reply-dialog tests', () => {
 
       const review = await saveReviewPromise;
 
-      assert.deepEqual(autoSaveStub.callCount, 1);
+      assert.deepEqual(autoSaveStub.callCount, 0);
 
       assert.deepEqual(review, {
         drafts: DraftsAction.PUBLISH_ALL_REVISIONS,
@@ -2513,6 +2458,65 @@ suite('gr-reply-dialog tests', () => {
             user: 999 as UserId,
           },
         ],
+        comments: {
+          '/PATCHSET_LEVEL': [
+            {
+              message: 'hello world',
+              path: '/PATCHSET_LEVEL',
+              unresolved: false,
+            },
+          ],
+        },
+        remove_from_attention_set: [],
+        ignore_automatic_attention_set_rules: true,
+      });
+    });
+
+    test('sending waits for inflight autosave', async () => {
+      const patchsetLevelComment = queryAndAssert<GrComment>(
+        element,
+        '#patchsetLevelComment'
+      );
+
+      const waitForPendingDiffDrafts = stubRestApi(
+        'awaitPendingDiffDrafts'
+      ).returns(Promise.resolve());
+
+      patchsetLevelComment.messageText = 'hello world';
+      await waitUntil(
+        () => element.patchsetLevelDraftMessage === 'hello world'
+      );
+      await element.updateComplete;
+
+      const saveReviewPromise = interceptSaveReview();
+
+      queryAndAssert<GrButton>(element, '.send').click();
+
+      const review = await saveReviewPromise;
+      assert.deepEqual(waitForPendingDiffDrafts.callCount, 1);
+
+      assert.deepEqual(review, {
+        drafts: DraftsAction.PUBLISH_ALL_REVISIONS,
+        labels: {
+          'Code-Review': 0,
+          Verified: 0,
+        },
+        reviewers: [],
+        add_to_attention_set: [
+          {
+            reason: '<GERRIT_ACCOUNT_1> replied on the change',
+            user: 999 as UserId,
+          },
+        ],
+        comments: {
+          '/PATCHSET_LEVEL': [
+            {
+              message: 'hello world',
+              path: '/PATCHSET_LEVEL',
+              unresolved: false,
+            },
+          ],
+        },
         remove_from_attention_set: [],
         ignore_automatic_attention_set_rules: true,
       });
@@ -2557,6 +2561,59 @@ suite('gr-reply-dialog tests', () => {
 
       assert.deepEqual(element.draftCommentThreads[0].comments[0], draft);
     });
+  });
+
+  test('manually added users are not lost when view updates.', async () => {
+    assert.sameMembers([...element.newAttentionSet], []);
+
+    element.reviewers = [
+      createAccountWithId(1),
+      createAccountWithId(2),
+      createAccountWithId(3),
+    ];
+    element.patchsetLevelDraftMessage = 'abc';
+
+    await element.updateComplete;
+    assert.sameMembers(
+      [...element.newAttentionSet],
+      [2 as AccountId, 3 as AccountId, 999 as AccountId]
+    );
+
+    const modifyButton = queryAndAssert<GrButton>(
+      element,
+      '.edit-attention-button'
+    );
+
+    modifyButton.click();
+    assert.isTrue(element.attentionExpanded);
+    await element.updateComplete;
+
+    const accountsChips = Array.from(
+      queryAll<GrAccountLabel>(element, '.attention-detail gr-account-label')
+    );
+    assert.equal(accountsChips.length, 4);
+    for (let i = 0; i < 4; ++i) {
+      if (accountsChips[i].account?._account_id === 1) {
+        accountsChips[i].click();
+        break;
+      }
+    }
+
+    await element.updateComplete;
+
+    assert.sameMembers(
+      [...element.newAttentionSet],
+      [1 as AccountId, 2 as AccountId, 3 as AccountId, 999 as AccountId]
+    );
+
+    // Doesn't get reset when message changes.
+    element.patchsetLevelDraftMessage = 'def';
+    await element.updateComplete;
+
+    assert.sameMembers(
+      [...element.newAttentionSet],
+      [1 as AccountId, 2 as AccountId, 3 as AccountId, 999 as AccountId]
+    );
   });
 
   suite('mention users', () => {
@@ -2695,6 +2752,13 @@ suite('gr-reply-dialog tests', () => {
       await element.updateComplete;
 
       assert.sameMembers([...element.newAttentionSet], [999 as AccountId]);
+
+      // Random update
+      element.patchsetLevelDraftMessage = 'abc';
+      await element.updateComplete;
+
+      assert.sameMembers([...element.newAttentionSet], [999 as AccountId]);
+      element.patchsetLevelDraftMessage = 'abc';
     });
 
     test('mention user who is already CCed', async () => {

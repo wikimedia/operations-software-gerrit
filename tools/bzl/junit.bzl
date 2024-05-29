@@ -70,12 +70,7 @@ _gen_suite = rule(
 POST_JDK8_OPTS = [
     # Enforce JDK 8 compatibility on Java 9, see
     # https://docs.oracle.com/javase/9/intl/internationalization-enhancements-jdk-9.htm#JSINT-GUID-AF5AECA7-07C1-4E7D-BC10-BC7E73DC6C7F
-    "-Djava.locale.providers=COMPAT,CLDR,SPI",
-]
-
-POST_JDK17_OPTS = [
-    # https://github.com/bazelbuild/bazel/issues/14502
-    "-Djava.security.manager=allow",
+    "-Djava.locale.providers=COMPAT",
 ]
 
 def junit_tests(name, srcs, **kwargs):
@@ -86,10 +81,7 @@ def junit_tests(name, srcs, **kwargs):
         outname = s_name,
     )
     jvm_flags = kwargs.get("jvm_flags", []) + POST_JDK8_OPTS
-    jvm_flags = jvm_flags + select({
-        "//:java17": POST_JDK8_OPTS + POST_JDK17_OPTS,
-        "//conditions:default": POST_JDK8_OPTS,
-    })
+    jvm_flags = jvm_flags + POST_JDK8_OPTS
     java_test(
         name = name,
         test_class = s_name,

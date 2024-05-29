@@ -46,6 +46,7 @@ import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.AttentionSetUpdate;
 import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.LabelFunction;
 import com.google.gerrit.entities.LabelId;
 import com.google.gerrit.entities.LabelType;
 import com.google.gerrit.entities.PatchSet;
@@ -58,6 +59,7 @@ import com.google.gerrit.extensions.api.changes.ReviewInput.CommentInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput.DraftHandling;
 import com.google.gerrit.extensions.api.changes.ReviewInput.RobotCommentInput;
 import com.google.gerrit.extensions.api.changes.ReviewResult;
+import com.google.gerrit.extensions.client.ListChangesOption;
 import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.client.Side;
 import com.google.gerrit.extensions.common.AccountInfo;
@@ -246,7 +248,10 @@ public class PostReviewIT extends AbstractDaemonTest {
     input.drafts = DraftHandling.PUBLISH;
 
     gApi.changes().id(r.getChangeId()).current().review(input);
-    assertValidatorCalledWith(CHANGE_MESSAGE_FOR_VALIDATION, INLINE_COMMENT_FOR_VALIDATION);
+    // Comment validators called twice: first when the draft was created, and second when it was
+    // published.
+    assertValidatorCalledWith(
+        /* numInvocations= */ 2, CHANGE_MESSAGE_FOR_VALIDATION, INLINE_COMMENT_FOR_VALIDATION);
     assertThat(testCommentHelper.getPublishedComments(r.getChangeId())).hasSize(1);
   }
 
@@ -259,16 +264,11 @@ public class PostReviewIT extends AbstractDaemonTest {
     DraftInput draft =
         testCommentHelper.newDraft(
             r.getChange().currentFilePaths().get(0), Side.REVISION, 1, COMMENT_TEXT);
-    testCommentHelper.addDraft(r.getChangeId(), r.getCommit().getName(), draft);
-    assertThat(testCommentHelper.getPublishedComments(r.getChangeId())).isEmpty();
-
-    ReviewInput input = new ReviewInput().message(COMMENT_TEXT);
-    input.drafts = DraftHandling.PUBLISH;
     BadRequestException badRequestException =
         assertThrows(
             BadRequestException.class,
-            () -> gApi.changes().id(r.getChangeId()).current().review(input));
-    assertValidatorCalledWith(CHANGE_MESSAGE_FOR_VALIDATION, INLINE_COMMENT_FOR_VALIDATION);
+            () -> testCommentHelper.addDraft(r.getChangeId(), r.getCommit().getName(), draft));
+    assertValidatorCalledWith(INLINE_COMMENT_FOR_VALIDATION);
     assertThat(badRequestException.getCause()).isInstanceOf(CommentsRejectedException.class);
     assertThat(
             Iterables.getOnlyElement(
@@ -600,6 +600,50 @@ public class PostReviewIT extends AbstractDaemonTest {
       gApi.changes().id(r.getChangeId()).current().review(input);
       testOnPostReview.assertUser(user);
     }
+  }
+
+  @Test
+  public void onPostReviewApprovedIsReturnedForLabelsAndDetailedLabels() throws Exception {
+    // Create Verify label with NO_BLOCK function and allow voting on it.
+    // When the NO_BLOCK function is used for a label, the "approved" is set by the
+    // LabelsJson.setLabelScores method instead of LabelsJson.initLabels method.
+    try (ProjectConfigUpdate u = updateProject(project)) {
+      LabelType.Builder verified =
+          labelBuilder(
+                  LabelId.VERIFIED, value(1, "Passes"), value(0, "No score"), value(-1, "Failed"))
+              .setFunction(LabelFunction.NO_BLOCK);
+      u.getConfig().upsertLabelType(verified.build());
+      u.save();
+    }
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            allowLabel(LabelId.VERIFIED)
+                .ref(RefNames.REFS_HEADS + "*")
+                .group(REGISTERED_USERS)
+                .range(-1, 1))
+        .update();
+    PushOneCommit.Result r = createChange();
+    ReviewInput input = new ReviewInput().label(LabelId.CODE_REVIEW, 2).label(LabelId.VERIFIED, 1);
+    gApi.changes().id(r.getChangeId()).current().review(input);
+
+    input = new ReviewInput();
+    input.message = "first message";
+    input.responseFormatOptions = ImmutableList.of(ListChangesOption.DETAILED_LABELS);
+    ReviewResult reviewResult = gApi.changes().id(r.getChangeId()).current().review(input);
+    assertThat(reviewResult.changeInfo.labels.keySet())
+        .containsExactly(LabelId.CODE_REVIEW, LabelId.VERIFIED);
+    assertThat(reviewResult.changeInfo.labels.get(LabelId.CODE_REVIEW).approved).isNotNull();
+    assertThat(reviewResult.changeInfo.labels.get(LabelId.VERIFIED).approved).isNotNull();
+
+    input = new ReviewInput();
+    input.message = "second message";
+    input.responseFormatOptions = ImmutableList.of(ListChangesOption.LABELS);
+    reviewResult = gApi.changes().id(r.getChangeId()).current().review(input);
+    assertThat(reviewResult.changeInfo.labels).containsKey(LabelId.CODE_REVIEW);
+    assertThat(reviewResult.changeInfo.labels.get(LabelId.CODE_REVIEW).approved).isNotNull();
+    assertThat(reviewResult.changeInfo.labels.get(LabelId.VERIFIED).approved).isNotNull();
   }
 
   @Test
@@ -1044,7 +1088,12 @@ public class PostReviewIT extends AbstractDaemonTest {
   }
 
   private void assertValidatorCalledWith(CommentForValidation... commentsForValidation) {
-    assertThat(captor.getAllValues()).hasSize(1);
+    assertValidatorCalledWith(/* numInvocations= */ 1, commentsForValidation);
+  }
+
+  private void assertValidatorCalledWith(
+      int numInvocations, CommentForValidation... commentsForValidation) {
+    assertThat(captor.getAllValues()).hasSize(numInvocations);
     assertThat(captor.getValue())
         .comparingElementsUsing(COMMENT_CORRESPONDENCE)
         .containsExactly(commentsForValidation);

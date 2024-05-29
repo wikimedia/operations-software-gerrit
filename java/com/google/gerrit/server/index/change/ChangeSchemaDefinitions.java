@@ -239,12 +239,22 @@ public class ChangeSchemaDefinitions extends SchemaDefinitions<ChangeData> {
           .build();
 
   /** Remove assignee field. */
-  @SuppressWarnings("deprecation")
+  @Deprecated
   static final Schema<ChangeData> V82 =
       new Schema.Builder<ChangeData>()
           .add(V81)
           .remove(ChangeField.ASSIGNEE_SPEC)
           .remove(ChangeField.ASSIGNEE_FIELD)
+          .build();
+
+  /** Upgrade Lucene to 8.x requires reindexing. */
+  @Deprecated static final Schema<ChangeData> V83 = schema(V82);
+
+  static final Schema<ChangeData> V84 =
+      new Schema.Builder<ChangeData>()
+          .add(V83)
+          .addIndexedFields(ChangeField.CUSTOM_KEYED_VALUES_FIELD)
+          .addSearchSpecs(ChangeField.CUSTOM_KEYED_VALUES_SPEC)
           .build();
 
   /**

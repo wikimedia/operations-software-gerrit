@@ -10,7 +10,7 @@
  */
 
 import {CursorMoveResult} from './core';
-import {CommentRange} from './rest-api';
+import {BasePatchSetNum, CommentRange, RevisionPatchSetNum} from './rest-api';
 
 /**
  * Diff type in preferences
@@ -251,6 +251,10 @@ export declare interface RenderPreferences {
    * property on <gr-diff>. TODO: Migrate usages to RenderPreferences.
    */
   view_mode?: DiffViewMode;
+  can_comment?: boolean;
+  show_newline_warning_left?: boolean;
+  show_newline_warning_right?: boolean;
+  use_new_image_diff_ui?: boolean;
 }
 
 /**
@@ -302,10 +306,24 @@ export declare interface CoverageRange {
   code_range: LineRange;
 }
 
-/** LOST LineNumber is for ported comments without a range, they have their own
- *  line number and are added on top of the FILE row in gr-diff
+export interface FileRange {
+  basePath?: string;
+  path: string;
+}
+
+export interface PatchRange {
+  patchNum: RevisionPatchSetNum;
+  basePatchNum: BasePatchSetNum;
+}
+
+/**
+ * LOST LineNumber is for ported comments without a range, they have their own
+ * line number and are added on top of the FILE row in <gr-diff>.
  */
 export declare type LineNumber = number | 'FILE' | 'LOST';
+
+export const FILE: LineNumber = 'FILE';
+export const LOST: LineNumber = 'LOST';
 
 /** The detail of the 'create-comment' event dispatched by gr-diff. */
 export declare interface CreateCommentEventDetail {
@@ -360,6 +378,7 @@ export enum ContextButtonType {
 export declare interface DiffContextExpandedExternalDetail {
   expandedLines: number;
   buttonType: ContextButtonType;
+  numLines: number;
 }
 
 /**

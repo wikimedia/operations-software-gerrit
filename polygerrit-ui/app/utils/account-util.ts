@@ -16,12 +16,19 @@ import {
   ReviewerInput,
   ServerInfo,
   UserId,
+  Suggestion,
+  isReviewerAccountSuggestion,
+  isReviewerGroupSuggestion,
   SuggestedReviewerAccountInfo,
   SuggestedReviewerGroupInfo,
 } from '../types/common';
 import {AccountTag, ReviewerState} from '../constants/constants';
 import {assertNever, hasOwnProperty} from './common-util';
-import {getDisplayName} from './display-name-util';
+import {
+  getAccountDisplayName,
+  getDisplayName,
+  getGroupDisplayName,
+} from './display-name-util';
 import {getApprovalInfo} from './label-util';
 import {ParsedChangeInfo} from '../types/types';
 
@@ -133,10 +140,10 @@ export function uniqueAccountId(
 
 export function isDetailedAccount(account?: AccountInfo) {
   // In case ChangeInfo is requested without DetailedAccount option, the
-  // reviewer entry is returned as just {_account_id: 123}
-  // This object should also be treated as not detailed account if they have
-  // an AccountId and no email
-  return !!account?.email && !!account?._account_id;
+  // reviewer entry is returned as just {_account_id: 123}.
+  // At least a name or an email must be set for the account to be treated as
+  // "detailed".
+  return (!!account?.email || !!account?.name) && !!account?._account_id;
 }
 
 /**
@@ -263,4 +270,51 @@ export function toReviewInput(
     };
   }
   throw new Error('Must be either an account or a group.');
+}
+
+export function isAccountSuggestion(s: Suggestion): s is AccountInfo {
+  return (s as AccountInfo)._account_id !== undefined;
+}
+
+export function getSuggestedReviewerName(
+  suggestion: Suggestion,
+  config?: ServerInfo
+) {
+  if (isAccountSuggestion(suggestion)) {
+    // Reviewer is an account suggestion from getSuggestedAccounts.
+    return getAccountDisplayName(config, suggestion);
+  }
+
+  if (isReviewerAccountSuggestion(suggestion)) {
+    // Reviewer is an account suggestion from getChangeSuggestedReviewers.
+    return getAccountDisplayName(config, suggestion.account);
+  }
+
+  if (isReviewerGroupSuggestion(suggestion)) {
+    // Reviewer is a group suggestion from getChangeSuggestedReviewers.
+    return getGroupDisplayName(suggestion.group);
+  }
+
+  assertNever(suggestion, 'Received an incorrect suggestion');
+}
+
+export function getSuggestedReviewerID(suggestion: Suggestion) {
+  if (isAccountSuggestion(suggestion)) {
+    // Reviewer is an account suggestion from getSuggestedAccounts.
+    return suggestion.email;
+  }
+
+  if (isReviewerAccountSuggestion(suggestion)) {
+    // Reviewer is an account suggestion from getChangeSuggestedReviewers.
+    return suggestion.account.email;
+  }
+
+  if (isReviewerGroupSuggestion(suggestion)) {
+    // Reviewer is a group suggestion from getChangeSuggestedReviewers.
+    // Groups are special users in Gerrit that do not have an email associated
+    // with them but instead have a groupID.
+    // Adding a group adds all members of that group as reviewer.
+    return suggestion.group.id;
+  }
+  return '';
 }

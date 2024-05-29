@@ -70,6 +70,7 @@ import {
   createDiffUrl,
 } from '../../../models/views/change';
 import {
+  DashboardType,
   DashboardViewModel,
   DashboardViewState,
   PROJECT_DASHBOARD_ROUTE,
@@ -79,7 +80,6 @@ import {
   SettingsViewState,
 } from '../../../models/views/settings';
 import {define} from '../../../models/dependency';
-import {Finalizable} from '../../../services/registry';
 import {ReportingService} from '../../../services/gr-reporting/gr-reporting';
 import {RestApiService} from '../../../services/gr-rest-api/gr-rest-api';
 import {
@@ -96,14 +96,16 @@ import {
   getPatchRangeForCommentUrl,
   isInBaseOfPatchRange,
 } from '../../../utils/comment-util';
-import {isFileUnchanged} from '../../../embed/diff/gr-diff/gr-diff-utils';
+import {isFileUnchanged} from '../../../utils/diff-util';
 import {Route, ViewState} from '../../../models/views/base';
-import {Model} from '../../../models/model';
+import {Model} from '../../../models/base/model';
 import {
   InteractivePromise,
   interactivePromise,
+  noAwait,
   timeoutPromise,
 } from '../../../utils/async-util';
+import {Finalizable} from '../../../types/types';
 
 // TODO: Move all patterns to view model files and use the `Route` interface,
 // which will enforce using `RegExp` in its `urlPattern` property.
@@ -194,10 +196,6 @@ const RoutePattern = {
   QUERY_LEGACY_SUFFIX: /^\/q\/.+,n,z$/,
 
   CHANGE_ID_QUERY: /^\/id\/(I[0-9a-f]{40})$/,
-
-  // Matches /c/<changeNum>/[*][/].
-  CHANGE_LEGACY: /^\/c\/(\d+)\/?(.*)$/,
-  CHANGE_NUMBER_LEGACY: /^\/(\d+)\/?/,
 
   // Matches
   // /c/<project>/+/<changeNum>/[<basePatchNum|edit>..][<patchNum|edit>].
@@ -506,9 +504,8 @@ export class GrRouter implements Finalizable, NavigationService {
 
   /**  gr-page middleware that warms the REST API's logged-in cache line. */
   private loadUserMiddleware(_: PageContext, next: PageNextCallback) {
-    this.restApiService.getLoggedIn().then(() => {
-      next();
-    });
+    noAwait(this.restApiService.getLoggedIn());
+    next();
   }
 
   /**
@@ -849,12 +846,6 @@ export class GrRouter implements Finalizable, NavigationService {
     );
 
     this.mapRoute(
-      RoutePattern.CHANGE_NUMBER_LEGACY,
-      'handleChangeNumberLegacyRoute',
-      ctx => this.handleChangeNumberLegacyRoute(ctx)
-    );
-
-    this.mapRoute(
       RoutePattern.DIFF_EDIT,
       'handleDiffEditRoute',
       ctx => this.handleDiffEditRoute(ctx),
@@ -882,10 +873,6 @@ export class GrRouter implements Finalizable, NavigationService {
 
     this.mapRoute(RoutePattern.CHANGE, 'handleChangeRoute', ctx =>
       this.handleChangeRoute(ctx)
-    );
-
-    this.mapRoute(RoutePattern.CHANGE_LEGACY, 'handleChangeLegacyRoute', ctx =>
-      this.handleChangeLegacyRoute(ctx)
     );
 
     this.mapRoute(
@@ -1020,6 +1007,7 @@ export class GrRouter implements Finalizable, NavigationService {
       } else {
         const state: DashboardViewState = {
           view: GerritView.DASHBOARD,
+          type: DashboardType.USER,
           user: ctx.params[0],
         };
         // Note that router model view must be updated before view models.
@@ -1055,6 +1043,7 @@ export class GrRouter implements Finalizable, NavigationService {
 
     const state: DashboardViewState = {
       view: GerritView.DASHBOARD,
+      type: DashboardType.CUSTOM,
       user: 'self',
       sections,
       title,
@@ -1305,14 +1294,6 @@ export class GrRouter implements Finalizable, NavigationService {
     this.redirect(ctx.path.replace(LEGACY_QUERY_SUFFIX_PATTERN, ''));
   }
 
-  handleChangeNumberLegacyRoute(ctx: PageContext) {
-    this.redirect(
-      '/c/' +
-        ctx.params[0] +
-        (ctx.querystring.length > 0 ? `?${ctx.querystring}` : '')
-    );
-  }
-
   handleChangeRoute(ctx: PageContext) {
     // Parameter order is based on the regex group number matched.
     const changeNum = Number(ctx.params[1]) as NumericChangeId;
@@ -1358,6 +1339,7 @@ export class GrRouter implements Finalizable, NavigationService {
     const repo = ctx.params[0] as RepoName;
     const commentId = ctx.params[2] as UrlEncodedCommentId;
 
+    this.restApiService.setInProjectLookup(changeNum, repo);
     const [comments, robotComments, drafts, change] = await Promise.all([
       this.restApiService.getDiffComments(changeNum),
       this.restApiService.getDiffRobotComments(changeNum),
@@ -1446,6 +1428,10 @@ export class GrRouter implements Finalizable, NavigationService {
       diffView: {path: ctx.params[8]},
     };
     const queryMap = new URLSearchParams(ctx.querystring);
+    const checksPatchset = Number(queryMap.get('checksPatchset'));
+    if (Number.isInteger(checksPatchset) && checksPatchset > 0) {
+      state.checksPatchset = checksPatchset as PatchSetNumber;
+    }
     if (queryMap.has('forceReload')) state.forceReload = true;
     const address = this.parseLineAddress(ctx.hash);
     if (address) {
@@ -1458,26 +1444,6 @@ export class GrRouter implements Finalizable, NavigationService {
     // Note that router model view must be updated before view models.
     this.setState(state);
     this.changeViewModel.setState(state);
-  }
-
-  handleChangeLegacyRoute(ctx: PageContext) {
-    const changeNum = Number(ctx.params[0]) as NumericChangeId;
-    if (!changeNum) {
-      this.show404();
-      return;
-    }
-    this.restApiService.getFromProjectLookup(changeNum).then(project => {
-      // Show a 404 and terminate if the lookup request failed. Attempting
-      // to redirect after failing to get the project loops infinitely.
-      if (!project) {
-        this.show404();
-        return;
-      }
-      this.redirect(
-        `/c/${project}/+/${changeNum}/${ctx.params[1]}` +
-          (ctx.querystring.length > 0 ? `?${ctx.querystring}` : '')
-      );
-    });
   }
 
   handleLegacyLinenum(ctx: PageContext) {

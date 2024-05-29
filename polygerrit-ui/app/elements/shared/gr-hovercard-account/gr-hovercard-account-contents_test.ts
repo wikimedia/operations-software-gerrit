@@ -35,6 +35,7 @@ suite('gr-hovercard-account-contents tests', () => {
   const ACCOUNT: AccountDetailInfo = {
     ...createAccountDetailWithId(31),
     email: 'kermit@gmail.com' as EmailAddress,
+    display_name: 'Just Kermit',
     username: 'kermit',
     name: 'Kermit The Frog',
     status: '  I am a frog  ',
@@ -76,6 +77,10 @@ suite('gr-hovercard-account-contents tests', () => {
           <span class="title">About me:</span>
           <span class="value">I am a frog</span>
         </div>
+        <div class="displayName">
+          <span class="title">Display name:</span>
+          <span class="value">Just Kermit</span>
+        </div>
         <div class="links">
           <gr-icon icon="link" class="linkIcon"></gr-icon>
           <a href="/q/owner:kermit@gmail.com">Changes</a>
@@ -110,6 +115,10 @@ suite('gr-hovercard-account-contents tests', () => {
         <div class="status">
           <span class="title"> About me: </span>
           <span class="value"> I am a frog </span>
+        </div>
+        <div class="displayName">
+          <span class="title">Display name:</span>
+          <span class="value">Just Kermit</span>
         </div>
         <div class="links">
           <gr-icon class="linkIcon" icon="link"> </gr-icon>
@@ -229,7 +238,7 @@ suite('gr-hovercard-account-contents tests', () => {
     };
     await element.updateComplete;
     const saveReviewStub = stubRestApi('saveChangeReview').returns(
-      Promise.resolve({...new Response(), ok: true})
+      Promise.resolve({})
     );
     stubRestApi('removeChangeReviewer').returns(
       Promise.resolve({...new Response(), ok: true})
@@ -257,7 +266,7 @@ suite('gr-hovercard-account-contents tests', () => {
     };
     await element.updateComplete;
     const saveReviewStub = stubRestApi('saveChangeReview').returns(
-      Promise.resolve({...new Response(), ok: true})
+      Promise.resolve({})
     );
     stubRestApi('removeChangeReviewer').returns(
       Promise.resolve({...new Response(), ok: true})

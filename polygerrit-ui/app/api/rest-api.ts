@@ -367,6 +367,7 @@ export declare interface ChangeInfo {
   topic?: TopicName;
   attention_set?: IdToAttentionSetMap;
   hashtags?: Hashtag[];
+  custom_keyed_values?: CustomKeyedValues;
   change_id: ChangeId;
   subject: string;
   status: ChangeStatus;
@@ -375,7 +376,6 @@ export declare interface ChangeInfo {
   submitted?: Timestamp;
   submitter?: AccountInfo;
   starred?: boolean; // not set if false
-  stars?: StarLabel[];
   submit_type?: SubmitType;
   mergeable?: boolean;
   submittable?: boolean;
@@ -463,6 +463,7 @@ export declare interface CommentLinks {
   [name: string]: CommentLinkInfo;
 }
 
+/** 40 char string, see shorten() util, if you want 7 chars. */
 export type CommitId = BrandType<string, '_commitId'>;
 
 /**
@@ -516,6 +517,31 @@ export declare interface ConfigInfo {
 }
 
 /**
+ * The CommentInfo entity contains information about an inline comment.
+ * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#comment-info
+ */
+export interface CommentInfo {
+  id: UrlEncodedCommentId;
+  updated: Timestamp;
+  // TODO(TS): Make this required. Every comment must have patch_set set.
+  patch_set?: RevisionPatchSetNum;
+  path?: string;
+  side?: CommentSide;
+  parent?: number;
+  line?: number;
+  range?: CommentRange;
+  in_reply_to?: UrlEncodedCommentId;
+  message?: string;
+  author?: AccountInfo;
+  tag?: string;
+  unresolved?: boolean;
+  change_message_id?: string;
+  commit_id?: string;
+  context_lines?: ContextLine[];
+  source_content_type?: string;
+}
+
+/**
  * The CommentRange entity describes the range of an inline comment.
  * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#comment-range
  *
@@ -540,6 +566,15 @@ export declare interface CommentRange {
 
   /** The character position in the end line. (0-based) */
   end_character: number;
+}
+
+/**
+ * The side on which the comment was added
+ * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#comment-info
+ */
+export enum CommentSide {
+  REVISION = 'REVISION',
+  PARENT = 'PARENT',
 }
 
 export declare interface ConfigListParameterInfo
@@ -569,6 +604,15 @@ export declare interface ConfigParameterInfoBase {
   inheritable?: boolean;
   configured_value?: string;
   inherited_value?: string;
+}
+
+/**
+ * The ContextLine entity contains the line number and line text of a single line of the source file content.
+ * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#context-line
+ */
+export interface ContextLine {
+  line_number: number;
+  context_line: string;
 }
 
 // https://gerrit-review.googlesource.com/Documentation/rest-api-accounts.html#contributor-agreement-info
@@ -664,6 +708,7 @@ export declare interface GerritInfo {
   // The following property is missed in doc
   primary_weblink_name?: string;
   instance_id?: string;
+  default_branch?: string;
 }
 
 export type GitRef = BrandType<string, '_gitRef'>;
@@ -731,6 +776,12 @@ export declare interface GroupOptionsInfo {
 }
 
 export type Hashtag = BrandType<string, '_hashtag'>;
+
+export type CustomKey = BrandType<string, '_custom_key'>;
+export type CustomValue = BrandType<string, '_custom_value'>;
+
+// A map from CustomKey to CustomValue
+export type CustomKeyedValues = {[key: CustomKey]: CustomValue};
 
 export type IdToAttentionSetMap = {[accountId: string]: AttentionSetInfo};
 
@@ -975,7 +1026,6 @@ export type ReviewInputTag = BrandType<string, '_reviewInputTag'>;
  * fields are returned by default.  Additional fields can be obtained by
  * adding o parameters as described in Query Changes.
  * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#revision-info
- * basePatchNum is present in case RevisionInfo is of type 'edit'
  */
 export declare interface RevisionInfo {
   kind: RevisionKind;
@@ -990,7 +1040,22 @@ export declare interface RevisionInfo {
   commit_with_footers?: string;
   push_certificate?: PushCertificateInfo;
   description?: string;
-  basePatchNum?: BasePatchSetNum;
+  parents_data?: ParentInfo[];
+}
+
+/**
+ * The ParentInfo entity contains detailed information the parent commit of a revision.
+ * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#parent-info
+ * basePatchNum is present in case RevisionInfo is of type 'edit'
+ */
+export declare interface ParentInfo {
+  branch_name?: string;
+  commit_id?: CommitId;
+  is_merged_in_target_branch?: boolean;
+  change_id?: ChangeId;
+  change_number?: NumericChangeId;
+  patch_set_number?: PatchSetNumber;
+  change_status?: ChangeStatus;
 }
 
 export type SchemesInfoMap = {[name: string]: DownloadSchemeInfo};
@@ -1026,7 +1091,6 @@ export declare interface ServerInfo {
  */
 export type SshdInfo = {};
 
-export type StarLabel = BrandType<string, '_startLabel'>;
 // Timestamps are given in UTC and have the format
 // "'yyyy-mm-dd hh:mm:ss.fffffffff'"
 // where "'ffffffffff'" represents nanoseconds.
@@ -1224,3 +1288,6 @@ export function isBase64FileContent(
 ): res is Base64FileContent {
   return (res as Base64FileContent).ok;
 }
+
+// The URL encoded UUID of the comment
+export type UrlEncodedCommentId = BrandType<string, '_urlEncodedCommentId'>;

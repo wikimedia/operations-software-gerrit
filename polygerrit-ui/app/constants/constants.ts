@@ -13,6 +13,7 @@ import {EditPreferencesInfo, PreferencesInfo} from '../types/common';
 import {
   AuthType,
   ChangeStatus,
+  CommentSide,
   ConfigParameterInfoType,
   DefaultDisplayNameConfig,
   EditableAccountField,
@@ -32,6 +33,7 @@ import {
 export {
   AuthType,
   ChangeStatus,
+  CommentSide,
   ConfigParameterInfoType,
   DefaultDisplayNameConfig,
   EditableAccountField,
@@ -92,16 +94,13 @@ export enum ProgressStatus {
 
 export enum ColumnNames {
   SUBJECT = 'Subject',
-  // TODO(milutin) - remove once Submit Requirements are rolled out.
-  STATUS = 'Status',
   OWNER = 'Owner',
   REVIEWERS = 'Reviewers',
-  COMMENTS = 'Comments',
   REPO = 'Repo',
   BRANCH = 'Branch',
   UPDATED = 'Updated',
   SIZE = 'Size',
-  STATUS2 = ' Status ', // spaces to differentiate from old 'Status'
+  STATUS = 'Status',
 }
 
 /**
@@ -157,15 +156,6 @@ export enum PermissionAction {
 export enum UserPriority {
   BATCH = 'BATCH',
   INTERACTIVE = 'INTERACTIVE',
-}
-
-/**
- * The side on which the comment was added
- * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#comment-info
- */
-export enum CommentSide {
-  REVISION = 'REVISION',
-  PARENT = 'PARENT',
 }
 
 /**
@@ -273,6 +263,7 @@ export function createDefaultPreferences(): PreferencesInfo {
     email_strategy: EmailStrategy.ATTENTION_SET_ONLY,
     default_base_for_merges: DefaultBase.AUTO_MERGE,
     allow_browser_notifications: false,
+    diff_page_sidebar: 'NONE',
   };
 }
 

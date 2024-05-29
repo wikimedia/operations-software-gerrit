@@ -3,7 +3,8 @@
  * Copyright 2020 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {Finalizable} from '../registry';
+
+import {Finalizable} from '../../types/types';
 
 export interface FlagsService extends Finalizable {
   isEnabled(experimentId: string): boolean;
@@ -18,5 +19,6 @@ export enum KnownExperimentId {
   CHECKS_DEVELOPER = 'UiFeature__checks_developer',
   PUSH_NOTIFICATIONS_DEVELOPER = 'UiFeature__push_notifications_developer',
   PUSH_NOTIFICATIONS = 'UiFeature__push_notifications',
-  SUGGEST_EDIT = 'UiFeature__suggest_edit',
+  ML_SUGGESTED_EDIT = 'UiFeature__ml_suggested_edit',
+  REVISION_PARENTS_DATA = 'UiFeature__revision_parents_data',
 }

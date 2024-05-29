@@ -29,6 +29,7 @@ import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.project.ProjectCacheImpl;
 import com.google.gerrit.server.project.ProjectConfig;
 import com.google.inject.name.Named;
+import java.util.Optional;
 import javax.inject.Inject;
 import org.eclipse.jgit.storage.file.FileBasedConfig;
 import org.eclipse.jgit.util.FS;
@@ -39,7 +40,7 @@ public class ProjectCacheIT extends AbstractDaemonTest {
 
   @Inject
   @Named(ProjectCacheImpl.CACHE_NAME)
-  private LoadingCache<Project.NameKey, CachedProjectConfig> inMemoryProjectCache;
+  private LoadingCache<Project.NameKey, Optional<CachedProjectConfig>> inMemoryProjectCache;
 
   @Inject private SitePaths sitePaths;
 
@@ -87,6 +88,35 @@ public class ProjectCacheIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void pluginConfig_inheritanceCanOverrideValuesAndKeepsRest() throws Exception {
+    try (AbstractDaemonTest.ProjectConfigUpdate u = updateProject(allProjects)) {
+      u.getConfig()
+          .updatePluginConfig(
+              "important-plugin2",
+              cfg -> {
+                cfg.setString("key", "kept");
+                cfg.setString("key2", "my-plugin-value2");
+              });
+      u.save();
+    }
+
+    try (AbstractDaemonTest.ProjectConfigUpdate u = updateProject(project)) {
+      u.getConfig()
+          .updatePluginConfig(
+              "important-plugin2",
+              cfg -> {
+                cfg.setString("key2", "overridden");
+              });
+      u.save();
+    }
+
+    PluginConfig pluginConfig =
+        pluginConfigFactory.getFromProjectConfigWithInheritance(project, "important-plugin2");
+    assertThat(pluginConfig.getString("key")).isEqualTo("kept");
+    assertThat(pluginConfig.getString("key2")).isEqualTo("overridden");
+  }
+
+  @Test
   public void allProjectsProjectsConfig_ChangeInFileInvalidatesPersistedCache() throws Exception {
     assertThat(projectCache.getAllProjects().getConfig().getCheckReceivedObjects()).isTrue();
     // Change etc/All-Projects-project.config
@@ -103,5 +133,27 @@ public class ProjectCacheIT extends AbstractDaemonTest {
     // Invalidate only the in-memory cache
     inMemoryProjectCache.invalidate(allProjects);
     assertThat(projectCache.getAllProjects().getConfig().getCheckReceivedObjects()).isFalse();
+  }
+
+  @Test
+  public void cachesNegativeLookup() throws Exception {
+    long initialNumMisses = inMemoryProjectCache.stats().missCount();
+    assertThat(inMemoryProjectCache.get(Project.nameKey("foo"))).isEmpty();
+    assertThat(inMemoryProjectCache.stats().missCount()).isEqualTo(initialNumMisses + 1);
+    inMemoryProjectCache.get(Project.nameKey("foo")); // Another invocation
+    assertThat(inMemoryProjectCache.stats().missCount()).isEqualTo(initialNumMisses + 1);
+  }
+
+  @Test
+  public void invalidatesNegativeCachingAfterProjectCreation() throws Exception {
+    long initialNumMisses = inMemoryProjectCache.stats().missCount();
+    assertThat(inMemoryProjectCache.get(Project.nameKey(name("foo")))).isEmpty();
+    assertThat(inMemoryProjectCache.stats().missCount())
+        .isEqualTo(initialNumMisses + 1); // Negative voting cached
+    Project.NameKey newProjectName =
+        createProjectOverAPI("foo", allProjects, true, /* submitType= */ null);
+    assertThat(inMemoryProjectCache.get(newProjectName)).isPresent(); // Another invocation
+    assertThat(inMemoryProjectCache.stats().missCount())
+        .isEqualTo(initialNumMisses + 3); // Two eviction happened during the project creation
   }
 }

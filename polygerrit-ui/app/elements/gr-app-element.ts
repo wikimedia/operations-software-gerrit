@@ -21,14 +21,12 @@ import './core/gr-smart-search/gr-smart-search';
 import './diff/gr-diff-view/gr-diff-view';
 import './edit/gr-editor-view/gr-editor-view';
 import './plugins/gr-endpoint-decorator/gr-endpoint-decorator';
-import './plugins/gr-endpoint-param/gr-endpoint-param';
-import './plugins/gr-endpoint-slot/gr-endpoint-slot';
 import './plugins/gr-plugin-host/gr-plugin-host';
+import './plugins/gr-plugin-screen/gr-plugin-screen';
 import './settings/gr-cla-view/gr-cla-view';
 import './settings/gr-registration-dialog/gr-registration-dialog';
 import './settings/gr-settings-view/gr-settings-view';
 import './core/gr-notifications-prompt/gr-notifications-prompt';
-import {loginUrl} from '../utils/url-util';
 import {navigationToken} from './core/gr-navigation/gr-navigation';
 import {getAppContext} from '../services/app-context';
 import {routerToken} from './core/gr-router/gr-router';
@@ -46,7 +44,6 @@ import {
 import {GrMainHeader} from './core/gr-main-header/gr-main-header';
 import {GrSettingsView} from './settings/gr-settings-view/gr-settings-view';
 import {
-  DialogChangeEventDetail,
   PageErrorEventDetail,
   RpcLogEvent,
   TitleChangeEventDetail,
@@ -67,27 +64,23 @@ import './gr-css-mixins';
 import {isDarkTheme, prefersDarkColorScheme} from '../utils/theme-util';
 import {AppTheme} from '../constants/constants';
 import {subscribe} from './lit/subscription-controller';
-import {PluginViewState} from '../models/views/plugin';
 import {createSearchUrl} from '../models/views/search';
 import {createSettingsUrl} from '../models/views/settings';
-import {createDashboardUrl} from '../models/views/dashboard';
+import {DashboardType, createDashboardUrl} from '../models/views/dashboard';
 import {userModelToken} from '../models/user/user-model';
 import {modalStyles} from '../styles/gr-modal-styles';
 import {AdminChildView, createAdminUrl} from '../models/views/admin';
 import {ChangeChildView, changeViewModelToken} from '../models/views/change';
-import {configModelToken} from '../models/config/config-model';
+import {
+  ALLOW_LISTED_FULL_SCREEN_PLUGINS,
+  pluginViewModelToken,
+} from '../models/views/plugin';
 
 interface ErrorInfo {
   text: string;
   emoji?: string;
   moreInfo?: string;
 }
-
-/**
- * This is simple hacky way for allowing certain plugin screens to hide the
- * header and the footer of the Gerrit page.
- */
-const WHITE_LISTED_FULL_SCREEN_PLUGINS = ['git_source_editor/screen/edit'];
 
 // TODO(TS): implement AppElement interface from gr-app-types.ts
 @customElement('gr-app-element')
@@ -119,7 +112,7 @@ export class GrAppElement extends LitElement {
 
   @state() private version?: string;
 
-  @state() private view?: GerritView;
+  @state() view?: GerritView;
 
   // TODO: Introduce a wrapper element for CHANGE, DIFF, EDIT view.
   @state() private childView?: ChangeChildView;
@@ -140,20 +133,11 @@ export class GrAppElement extends LitElement {
 
   @state() private loadKeyboardShortcutsDialog = false;
 
-  // TODO(milutin) - remove once new gr-dialog will do it out of the box
-  // This removes footer, header from a11y tree, when a dialog on view
-  // (e.g. reply dialog) is open
-  @state() private footerHeaderAriaHidden = false;
-
-  // TODO(milutin) - remove once new gr-dialog will do it out of the box
-  // This removes main page from a11y tree, when a dialog on gr-app-element
-  // (e.g. shortcut dialog) is open
-  @state() private mainAriaHidden = false;
-
   @state() private theme = AppTheme.AUTO;
 
-  @state()
-  serverConfig?: ServerInfo;
+  @state() private pluginScreenName = '';
+
+  @state() serverConfig?: ServerInfo;
 
   readonly getRouter = resolve(this, routerToken);
 
@@ -173,7 +157,7 @@ export class GrAppElement extends LitElement {
 
   private readonly getChangeViewModel = resolve(this, changeViewModelToken);
 
-  private readonly getConfigModel = resolve(this, configModelToken);
+  private readonly getPluginViewModel = resolve(this, pluginViewModelToken);
 
   constructor() {
     super();
@@ -184,16 +168,15 @@ export class GrAppElement extends LitElement {
     document.addEventListener('title-change', e => {
       this.handleTitleChange(e);
     });
-    this.addEventListener('dialog-change', e => {
-      this.handleDialogChange(e as CustomEvent<DialogChangeEventDetail>);
-    });
     document.addEventListener('location-change', () => this.requestUpdate());
     document.addEventListener('gr-rpc-log', e => this.handleRpcLog(e));
     this.shortcuts.addAbstract(Shortcut.OPEN_SHORTCUT_HELP_DIALOG, () =>
       this.showKeyboardShortcuts()
     );
     this.shortcuts.addAbstract(Shortcut.GO_TO_USER_DASHBOARD, () =>
-      this.getNavigation().setUrl(createDashboardUrl({user: 'self'}))
+      this.getNavigation().setUrl(
+        createDashboardUrl({type: DashboardType.USER, user: 'self'})
+      )
     );
     this.shortcuts.addAbstract(Shortcut.GO_TO_OPENED_CHANGES, () =>
       this.getNavigation().setUrl(createSearchUrl({statuses: ['open']}))
@@ -222,14 +205,6 @@ export class GrAppElement extends LitElement {
 
     subscribe(
       this,
-      () => this.getConfigModel().serverConfig$,
-      config => {
-        this.serverConfig = config;
-      }
-    );
-
-    subscribe(
-      this,
       () => this.getUserModel().preferenceTheme$,
       theme => {
         this.theme = theme;
@@ -243,6 +218,11 @@ export class GrAppElement extends LitElement {
         this.view = view;
         if (view) this.errorView?.classList.remove('show');
       }
+    );
+    subscribe(
+      this,
+      () => this.getPluginViewModel().screenName$,
+      screenName => (this.pluginScreenName = screenName)
     );
     subscribe(
       this,
@@ -317,11 +297,11 @@ export class GrAppElement extends LitElement {
           border-left: 0;
           border-top: 0;
           box-shadow: var(--header-box-shadow);
-          /* Make sure the header is above the main content, to preserve box-shadow
-            visibility. We need 2 here instead of 1, because dropdowns in the
+          /* Make sure the header is above the main content, to preserve
+            box-shadow visibility. We need 111 here 1, because dropdowns in the
             header should be shown on top of the sticky diff header, which has a
-            z-index of 1. */
-          z-index: 2;
+            z-index of 110. */
+          z-index: 111;
         }
         footer {
           background: var(
@@ -378,7 +358,7 @@ export class GrAppElement extends LitElement {
       <gr-css-mixins></gr-css-mixins>
       <gr-endpoint-decorator name="banner"></gr-endpoint-decorator>
       ${this.renderHeader()}
-      <main ?aria-hidden=${this.mainAriaHidden}>
+      <main>
         ${this.renderMobileSearch()} ${this.renderChangeListView()}
         ${this.renderDashboardView()}
         ${
@@ -406,11 +386,7 @@ export class GrAppElement extends LitElement {
       ${this.renderRegistrationDialog()}
       <gr-notifications-prompt></gr-notifications-prompt>
       <gr-endpoint-decorator name="plugin-overlay"></gr-endpoint-decorator>
-      <gr-error-manager
-        id="errorManager"
-        .loginUrl=${loginUrl(this.serverConfig?.auth)}
-        .loginText=${this.serverConfig?.auth.login_text ?? 'Sign in'}
-      ></gr-error-manager>
+      <gr-error-manager id="errorManager"></gr-error-manager>
       <gr-plugin-host id="plugins"></gr-plugin-host>
     `;
   }
@@ -423,9 +399,6 @@ export class GrAppElement extends LitElement {
         @mobile-search=${this.mobileSearchToggle}
         @show-keyboard-shortcuts=${this.showKeyboardShortcuts}
         .mobileSearchHidden=${!this.mobileSearch}
-        .loginUrl=${loginUrl(this.serverConfig?.auth)}
-        .loginText=${this.serverConfig?.auth.login_text ?? 'Sign in'}
-        ?aria-hidden=${this.footerHeaderAriaHidden}
       >
       </gr-main-header>
     `;
@@ -434,12 +407,12 @@ export class GrAppElement extends LitElement {
   private renderFooter() {
     if (this.hideHeaderAndFooter()) return nothing;
     return html`
-      <footer ?aria-hidden=${this.footerHeaderAriaHidden}>
+      <footer>
         <div>
           Powered by
           <a
             href="https://www.gerritcodereview.com/"
-            rel="noopener"
+            rel="noopener noreferrer"
             target="_blank"
             >Gerrit Code Review</a
           >
@@ -457,7 +430,7 @@ export class GrAppElement extends LitElement {
   private hideHeaderAndFooter() {
     return (
       this.view === GerritView.PLUGIN_SCREEN &&
-      WHITE_LISTED_FULL_SCREEN_PLUGINS.includes(this.computePluginScreenName())
+      ALLOW_LISTED_FULL_SCREEN_PLUGINS.includes(this.pluginScreenName)
     );
   }
 
@@ -552,19 +525,7 @@ export class GrAppElement extends LitElement {
 
   private renderPluginScreen() {
     if (this.view !== GerritView.PLUGIN_SCREEN) return nothing;
-    const pluginViewState = this.params as PluginViewState;
-    const pluginScreenName = this.computePluginScreenName();
-    return keyed(
-      pluginScreenName,
-      html`
-        <gr-endpoint-decorator .name=${pluginScreenName}>
-          <gr-endpoint-param
-            name="token"
-            .value=${pluginViewState.screen}
-          ></gr-endpoint-param>
-        </gr-endpoint-decorator>
-      `
-    );
+    return html`<gr-plugin-screen></gr-plugin-screen>`;
   }
 
   private renderCLAView() {
@@ -580,11 +541,7 @@ export class GrAppElement extends LitElement {
   private renderKeyboardShortcutsDialog() {
     if (!this.loadKeyboardShortcutsDialog) return nothing;
     return html`
-      <dialog
-        id="keyboardShortcuts"
-        tabindex="-1"
-        @close=${this.onModalCanceled}
-      >
+      <dialog id="keyboardShortcuts" tabindex="-1">
         <gr-keyboard-shortcuts-dialog
           @close=${this.handleKeyboardShortcutDialogClose}
         ></gr-keyboard-shortcuts-dialog>
@@ -707,14 +664,6 @@ export class GrAppElement extends LitElement {
     }
   }
 
-  private handleDialogChange(e: CustomEvent<DialogChangeEventDetail>) {
-    if (e.detail.canceled) {
-      this.footerHeaderAriaHidden = false;
-    } else if (e.detail.opened) {
-      this.footerHeaderAriaHidden = true;
-    }
-  }
-
   private async showKeyboardShortcuts() {
     this.loadKeyboardShortcutsDialog = true;
     await this.updateComplete;
@@ -724,19 +673,12 @@ export class GrAppElement extends LitElement {
       this.keyboardShortcuts.close();
       return;
     }
-    this.footerHeaderAriaHidden = true;
-    this.mainAriaHidden = true;
     this.keyboardShortcuts.showModal();
   }
 
   private handleKeyboardShortcutDialogClose() {
     assertIsDefined(this.keyboardShortcuts, 'keyboardShortcuts');
     this.keyboardShortcuts.close();
-  }
-
-  onModalCanceled() {
-    this.footerHeaderAriaHidden = false;
-    this.mainAriaHidden = false;
   }
 
   private handleAccountDetailUpdate() {
@@ -750,14 +692,6 @@ export class GrAppElement extends LitElement {
     (this.params as AppElementJustRegisteredParams).justRegistered = false;
     assertIsDefined(this.registrationModal, 'registrationModal');
     this.registrationModal.close();
-  }
-
-  private computePluginScreenName() {
-    if (this.view !== GerritView.PLUGIN_SCREEN) return '';
-    if (this.params === undefined) return '';
-    const pluginViewState = this.params as PluginViewState;
-    if (!pluginViewState.plugin || !pluginViewState.screen) return '';
-    return `${pluginViewState.plugin}-screen-${pluginViewState.screen}`;
   }
 
   private logWelcome() {

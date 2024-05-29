@@ -15,6 +15,7 @@
 package com.google.gerrit.server.change;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.gerrit.server.mail.EmailFactories.REVIEW_REQUESTED;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.flogger.FluentLogger;
@@ -24,8 +25,11 @@ import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.config.SendEmailExecutor;
+import com.google.gerrit.server.mail.EmailFactories;
+import com.google.gerrit.server.mail.send.ChangeEmail;
 import com.google.gerrit.server.mail.send.MessageIdGenerator;
-import com.google.gerrit.server.mail.send.ModifyReviewerSender;
+import com.google.gerrit.server.mail.send.OutgoingEmail;
+import com.google.gerrit.server.mail.send.StartReviewChangeEmailDecorator;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.util.Collection;
@@ -36,16 +40,16 @@ import java.util.concurrent.Future;
 public class ModifyReviewersEmail {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
-  private final ModifyReviewerSender.Factory addReviewerSenderFactory;
+  private final EmailFactories emailFactories;
   private final ExecutorService sendEmailsExecutor;
   private final MessageIdGenerator messageIdGenerator;
 
   @Inject
   ModifyReviewersEmail(
-      ModifyReviewerSender.Factory addReviewerSenderFactory,
+      EmailFactories emailFactories,
       @SendEmailExecutor ExecutorService sendEmailsExecutor,
       MessageIdGenerator messageIdGenerator) {
-    this.addReviewerSenderFactory = addReviewerSenderFactory;
+    this.emailFactories = emailFactories;
     this.sendEmailsExecutor = sendEmailsExecutor;
     this.messageIdGenerator = messageIdGenerator;
   }
@@ -90,20 +94,24 @@ public class ModifyReviewersEmail {
         sendEmailsExecutor.submit(
             () -> {
               try {
-                ModifyReviewerSender emailSender =
-                    addReviewerSenderFactory.create(projectNameKey, cId);
-                emailSender.setNotify(notify);
-                emailSender.setFrom(userId);
-                emailSender.addReviewers(immutableToMail);
-                emailSender.addReviewersByEmail(immutableAddedByEmail);
-                emailSender.addExtraCC(immutableToCopy);
-                emailSender.addExtraCCByEmail(immutableCopiedByEmail);
-                emailSender.addRemovedReviewers(immutableToRemove);
-                emailSender.addRemovedByEmailReviewers(immutableRemovedByEmail);
-                emailSender.setMessageId(
+                StartReviewChangeEmailDecorator startReviewEmail =
+                    emailFactories.createStartReviewChangeEmail();
+                startReviewEmail.addReviewers(immutableToMail);
+                startReviewEmail.addReviewersByEmail(immutableAddedByEmail);
+                startReviewEmail.addExtraCC(immutableToCopy);
+                startReviewEmail.addExtraCCByEmail(immutableCopiedByEmail);
+                startReviewEmail.addRemovedReviewers(immutableToRemove);
+                startReviewEmail.addRemovedByEmailReviewers(immutableRemovedByEmail);
+                ChangeEmail changeEmail =
+                    emailFactories.createChangeEmail(projectNameKey, cId, startReviewEmail);
+                OutgoingEmail outgoingEmail =
+                    emailFactories.createOutgoingEmail(REVIEW_REQUESTED, changeEmail);
+                outgoingEmail.setNotify(notify);
+                outgoingEmail.setFrom(userId);
+                outgoingEmail.setMessageId(
                     messageIdGenerator.fromChangeUpdate(
                         change.getProject(), change.currentPatchSetId()));
-                emailSender.send();
+                outgoingEmail.send();
               } catch (Exception err) {
                 logger.atSevere().withCause(err).log(
                     "Cannot send email to new reviewers of change %s", change.getId());

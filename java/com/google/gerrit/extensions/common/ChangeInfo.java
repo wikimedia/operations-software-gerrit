@@ -37,6 +37,8 @@ public class ChangeInfo {
   // protected by any ListChangesOption.
 
   public String id;
+  public String tripletId;
+
   public String project;
   public String branch;
   public String topic;
@@ -48,6 +50,8 @@ public class ChangeInfo {
   public Map<Integer, AttentionSetInfo> attentionSet;
 
   public Map<Integer, AttentionSetInfo> removedFromAttentionSet;
+
+  public Map<String, String> customKeyedValues;
 
   public Collection<String> hashtags;
   public String changeId;

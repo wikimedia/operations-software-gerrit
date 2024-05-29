@@ -1,36 +1,37 @@
 {
   "name": "gerrit",
-  "version": "3.1.0-SNAPSHOT",
+  "version": "3.9.0-SNAPSHOT",
   "description": "Gerrit Code Review",
   "dependencies": {
-    "@bazel/concatjs": "^5.5.0",
-    "@bazel/rollup": "^5.5.0",
-    "@bazel/terser": "^5.5.0",
-    "@bazel/typescript": "^5.5.0"
+    "@bazel/concatjs": "^5.8.1",
+    "@bazel/rollup": "^5.8.1",
+    "@bazel/terser": "^5.8.1",
+    "@bazel/typescript": "^5.8.1",
+    "@typescript-eslint/parser": "^5.62.0"
   },
   "devDependencies": {
-    "@koa/cors": "^3.3.0",
-    "@types/page": "^1.11.5",
-    "@typescript-eslint/eslint-plugin": "^5.27.0",
-    "@web/dev-server": "^0.1.33",
-    "@web/dev-server-esbuild": "^0.3.2",
-    "eslint": "^8.16.0",
+    "@koa/cors": "^3.4.3",
+    "@types/page": "^1.11.6",
+    "@typescript-eslint/eslint-plugin": "^5.62.0",
+    "@web/dev-server": "^0.1.38",
+    "@web/dev-server-esbuild": "^0.3.6",
+    "eslint": "^8.49.0",
     "eslint-config-google": "^0.14.0",
-    "eslint-plugin-html": "^6.2.0",
-    "eslint-plugin-import": "^2.26.0",
-    "eslint-plugin-jsdoc": "^39.6.4",
-    "eslint-plugin-lit": "^1.6.1",
+    "eslint-plugin-html": "^7.1.0",
+    "eslint-plugin-import": "^2.28.1",
+    "eslint-plugin-jsdoc": "^44.2.7",
+    "eslint-plugin-lit": "^1.9.1",
     "eslint-plugin-node": "^11.1.0",
-    "eslint-plugin-prettier": "^4.0.0",
-    "eslint-plugin-regex": "^1.9.0",
-    "gts": "^3.1.0",
+    "eslint-plugin-prettier": "^4.2.1",
+    "eslint-plugin-regex": "^1.10.0",
+    "gts": "^3.1.1",
     "lit-analyzer": "^1.2.1",
     "npm-run-all": "^4.1.5",
-    "prettier": "2.6.2",
-    "rollup": "^2.45.2",
-    "terser": "^5.6.1",
+    "prettier": "^2.8.8",
+    "rollup": "^2.79.1",
+    "terser": "~5.8.0",
     "ts-lit-plugin": "^1.2.1",
-    "typescript": "^4.7.2"
+    "typescript": "^4.9.5"
   },
   "scripts": {
     "setup": "yarn && yarn --cwd=polygerrit-ui && yarn --cwd=polygerrit-ui/app",
@@ -58,9 +59,9 @@
     "url": "https://gerrit.googlesource.com/gerrit"
   },
   "resolutions": {
-    "eslint": "^8.16.0",
-    "@typescript-eslint/eslint-plugin": "^5.27.0",
-    "@typescript-eslint/parser": "^5.27.0"
+    "eslint": "^8.49.0",
+    "@typescript-eslint/eslint-plugin": "^5.62.0",
+    "@typescript-eslint/parser": "^5.62.0"
   },
   "author": "",
   "license": "Apache-2.0"

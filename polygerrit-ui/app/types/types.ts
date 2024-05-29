@@ -12,10 +12,18 @@ import {
   CommitInfo,
   EditPatchSet,
   PatchSetNum,
+  PatchSetNumber,
   ReviewerUpdateInfo,
   RevisionInfo,
+  RevisionPatchSetNum,
   Timestamp,
 } from './common';
+
+// A finalizable object has a single method `finalize` that is called when
+// the object is no longer needed and should clean itself up.
+export interface Finalizable {
+  finalize(): void;
+}
 
 export function isDefined<T>(x: T): x is NonNullable<T> {
   return x !== undefined && x !== null;
@@ -28,6 +36,12 @@ export enum ErrorType {
   AUTH = 'AUTH',
   NETWORK = 'NETWORK',
   GENERIC = 'GENERIC',
+}
+
+export enum LoadingStatus {
+  NOT_LOADED = 'NOT_LOADED',
+  LOADING = 'LOADING',
+  LOADED = 'LOADED',
 }
 
 export interface AuthRequestInit extends RequestInit {
@@ -89,9 +103,15 @@ export function isPatchSetFile(
   return !!(x as PatchSetFile).path;
 }
 
-export interface FileRange {
-  basePath?: string;
-  path: string;
+export function isPatchSetNumber(
+  x?:
+    | PatchSetNum
+    | PatchSetNumber
+    | RevisionPatchSetNum
+    | BasePatchSetNum
+    | null
+): x is PatchSetNumber {
+  return !!x && Number.isInteger(x) && (x as number) > 0;
 }
 
 export interface FetchRequest {
@@ -108,8 +128,12 @@ export interface FormattedReviewerUpdateInfo {
   updates: {message: string; reviewers: AccountInfo[]}[];
 }
 
+/**
+ * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#edit-info
+ */
 export interface EditRevisionInfo extends Partial<RevisionInfo> {
   // EditRevisionInfo has less required properties then RevisionInfo
+  // TODO: Explicitly list which props are required and optional here.
   _number: EditPatchSet;
   basePatchNum: BasePatchSetNum;
   commit: CommitInfo;

@@ -49,7 +49,6 @@ import static com.google.gerrit.extensions.client.ListChangesOption.TRACKING_IDS
 import static com.google.gerrit.extensions.client.ReviewerState.CC;
 import static com.google.gerrit.extensions.client.ReviewerState.REMOVED;
 import static com.google.gerrit.extensions.client.ReviewerState.REVIEWER;
-import static com.google.gerrit.server.StarredChangesUtil.DEFAULT_LABEL;
 import static com.google.gerrit.server.group.SystemGroupBackend.ANONYMOUS_USERS;
 import static com.google.gerrit.server.group.SystemGroupBackend.CHANGE_OWNER;
 import static com.google.gerrit.server.group.SystemGroupBackend.PROJECT_OWNERS;
@@ -90,6 +89,7 @@ import com.google.gerrit.acceptance.api.change.ChangeIT.TestAttentionSetListener
 import com.google.gerrit.acceptance.config.GerritConfig;
 import com.google.gerrit.acceptance.server.change.CommentsUtil;
 import com.google.gerrit.acceptance.testsuite.account.AccountOperations;
+import com.google.gerrit.acceptance.testsuite.change.ChangeOperations;
 import com.google.gerrit.acceptance.testsuite.change.IndexOperations;
 import com.google.gerrit.acceptance.testsuite.group.GroupOperations;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
@@ -238,6 +238,7 @@ public class ChangeIT extends AbstractDaemonTest {
   @Inject private ExtensionRegistry extensionRegistry;
   @Inject private IndexOperations.Change changeIndexOperations;
   @Inject private AccountControl.Factory accountControlFactory;
+  @Inject private ChangeOperations changeOperations;
 
   @Inject
   @Named("diff_intraline")
@@ -248,11 +249,14 @@ public class ChangeIT extends AbstractDaemonTest {
   private Cache<DiffSummaryKey, DiffSummary> diffSummaryCache;
 
   @Test
+  @GerritConfig(
+      name = "experiments.enabled",
+      value = "GerritBackendFeature__return_new_change_info_id")
   public void get() throws Exception {
     PushOneCommit.Result r = createChange();
-    String triplet = project.get() + "~master~" + r.getChangeId();
-    ChangeInfo c = info(triplet);
-    assertThat(c.id).isEqualTo(triplet);
+    String id = project.get() + "~" + r.getChange().getId().get();
+    ChangeInfo c = info(id);
+    assertThat(c.id).isEqualTo(id);
     assertThat(c.project).isEqualTo(project.get());
     assertThat(c.branch).isEqualTo("master");
     assertThat(c.status).isEqualTo(ChangeStatus.NEW);
@@ -439,7 +443,7 @@ public class ChangeIT extends AbstractDaemonTest {
     List<ChangeMessageInfo> sourceMessages =
         new ArrayList<>(gApi.changes().id(r.getChangeId()).get().messages);
     assertThat(sourceMessages).hasSize(4);
-    String expectedMessage = String.format("Created a revert of this change as I%s", changeId);
+    String expectedMessage = String.format("Created a revert of this change as %s", changeId);
     assertThat(sourceMessages.get(3).message).isEqualTo(expectedMessage);
   }
 
@@ -505,6 +509,7 @@ public class ChangeIT extends AbstractDaemonTest {
             .reviewer("byemail3@example.com", CC, false)
             .reviewer("byemail4@example.com", CC, false);
     ReviewResult result = gApi.changes().id(changeId).current().review(in);
+    assertThat(result.changeInfo).isNull();
     assertThat(result.reviewers).isNotEmpty();
     ChangeInfo info = gApi.changes().id(changeId).get();
     Function<Collection<AccountInfo>, Collection<String>> toEmails =
@@ -678,6 +683,53 @@ public class ChangeIT extends AbstractDaemonTest {
     in = ReviewInput.noScore().reviewer(Integer.toString(user.id().get()), REMOVED, false);
 
     gApi.changes().id(r.getChangeId()).current().review(in);
+    ChangeInfo info = gApi.changes().id(r.getChangeId()).get();
+    assertThat(info.reviewers.get(REVIEWER).stream().map(ai -> ai._accountId).collect(toList()))
+        .containsExactly(admin.id().get());
+  }
+
+  @Test
+  public void removeReviewerWithoutPermissionsOnChangePostReview_allowed() throws Exception {
+    PushOneCommit.Result r = createChange();
+    ReviewInput in = ReviewInput.approve().reviewer(user.email());
+    gApi.changes().id(r.getChangeId()).current().review(in);
+    AccountGroup.UUID restrictedGroup =
+        groupOperations.newGroup().name("restricted-group").addMember(user.id()).create();
+
+    // revoke permissions to see the change from the reviewer
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.READ).ref("refs/*").group(restrictedGroup))
+        .update();
+
+    in = ReviewInput.noScore().reviewer(Integer.toString(user.id().get()), REMOVED, false);
+
+    requestScopeOperations.setApiUser(admin.id());
+    gApi.changes().id(r.getChangeId()).current().review(in);
+    ChangeInfo info = gApi.changes().id(r.getChangeId()).get();
+    assertThat(info.reviewers.get(REVIEWER).stream().map(ai -> ai._accountId).collect(toList()))
+        .containsExactly(admin.id().get());
+  }
+
+  @Test
+  public void removeReviewerWithoutPermissionsOnChange_allowed() throws Exception {
+
+    PushOneCommit.Result r = createChange();
+    ReviewInput in = ReviewInput.approve().reviewer(user.email());
+    gApi.changes().id(r.getChangeId()).current().review(in);
+    AccountGroup.UUID restrictedGroup =
+        groupOperations.newGroup().name("restricted-group").addMember(user.id()).create();
+
+    // revoke permissions to see the change from the reviewer
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.READ).ref("refs/*").group(restrictedGroup))
+        .update();
+
+    requestScopeOperations.setApiUser(admin.id());
+    gApi.changes().id(r.getChangeId()).reviewer(user.id().toString()).remove();
     ChangeInfo info = gApi.changes().id(r.getChangeId()).get();
     assertThat(info.reviewers.get(REVIEWER).stream().map(ai -> ai._accountId).collect(toList()))
         .containsExactly(admin.id().get());
@@ -2642,11 +2694,27 @@ public class ChangeIT extends AbstractDaemonTest {
 
   @Test
   public void queryChangesLimit() throws Exception {
-    createChange();
-    PushOneCommit.Result r2 = createChange();
-    List<ChangeInfo> results = gApi.changes().query().withLimit(1).get();
-    assertThat(results).hasSize(1);
-    assertThat(Iterables.getOnlyElement(results).changeId).isEqualTo(r2.getChangeId());
+    for (int i = 0; i < 3; i++) {
+      createChange();
+    }
+    List<ChangeInfo> resultsLimited = gApi.changes().query().withLimit(1).get();
+    List<ChangeInfo> resultsUnlimited = gApi.changes().query().get();
+    assertThat(resultsLimited).hasSize(1);
+    assertThat(resultsUnlimited.size()).isAtLeast(3);
+  }
+
+  @Test
+  @GerritConfig(name = "index.defaultLimit", value = "2")
+  public void queryChangesLimitDefault() throws Exception {
+    for (int i = 0; i < 4; i++) {
+      createChange();
+    }
+    List<ChangeInfo> resultsLimited = gApi.changes().query().withLimit(1).get();
+    List<ChangeInfo> resultsUnlimited = gApi.changes().query().get();
+    List<ChangeInfo> resultsLimitedAboveDefault = gApi.changes().query().withLimit(3).get();
+    assertThat(resultsLimited).hasSize(1);
+    assertThat(resultsUnlimited).hasSize(2);
+    assertThat(resultsLimitedAboveDefault).hasSize(3);
   }
 
   @Test
@@ -2842,6 +2910,23 @@ public class ChangeIT extends AbstractDaemonTest {
     assertThat(gApi.changes().id(r.getChangeId()).topic()).isEqualTo("mytopic");
     gApi.changes().id(r.getChangeId()).topic("");
     assertThat(gApi.changes().id(r.getChangeId()).topic()).isEqualTo("");
+  }
+
+  @Test
+  @GerritConfig(name = "change.topicLimit", value = "3")
+  public void topicSizeLimit() throws Exception {
+    for (int i = 0; i < 3; i++) {
+      createChangeWithTopic(testRepo, "limitedTopic", "message", "a.txt", "content\n");
+    }
+    PushOneCommit.Result rLimited =
+        pushFactory
+            .create(user.newIdent(), testRepo)
+            .to("refs/for/master%topic=" + name("limitedTopic"));
+    rLimited.assertErrorStatus("topicLimit");
+
+    PushOneCommit.Result rOther =
+        createChangeWithTopic(testRepo, "otherTopic", "message", "a.txt", "content\n");
+    assertThat(gApi.changes().id(rOther.getChangeId()).topic()).contains("otherTopic");
   }
 
   @Test
@@ -3927,6 +4012,28 @@ public class ChangeIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void changeCommitMessageAfterUpdatingPreferredEmail() throws Exception {
+    String emailOne = "email1@example.com";
+    Account.Id testUser = accountOperations.newAccount().preferredEmail(emailOne).create();
+
+    // Create change
+    Change.Id change = changeOperations.newChange().project(project).owner(testUser).create();
+
+    // Change preferred email for the user
+    String emailTwo = "email2@example.com";
+    accountOperations.account(testUser).forUpdate().preferredEmail(emailTwo).update();
+    requestScopeOperations.setApiUser(testUser);
+
+    // Change commit message
+    ChangeInfo changeInfo = gApi.changes().id(change.get()).get();
+    String msg = String.format("New commit message\n\nChange-Id: %s\n", changeInfo.changeId);
+    gApi.changes().id(change.get()).setMessage(msg);
+
+    assertThat(gApi.changes().id(change.get()).get().getCurrentRevision().commit.committer.email)
+        .isEqualTo(emailOne);
+  }
+
+  @Test
   public void changeCommitMessageFromChangeIdToLinkFooter() throws Exception {
     PushOneCommit.Result r = createChange();
     r.assertOkStatus();
@@ -4367,14 +4474,12 @@ public class ChangeIT extends AbstractDaemonTest {
       gApi.accounts().self().starChange(triplet);
       ChangeInfo change = info(triplet);
       assertThat(change.starred).isTrue();
-      assertThat(change.stars).contains(DEFAULT_LABEL);
       // change was not re-indexed
       changeIndexedCounter.assertReindexOf(change, 0);
 
       gApi.accounts().self().unstarChange(triplet);
       change = info(triplet);
       assertThat(change.starred).isNull();
-      assertThat(change.stars).isNull();
       // change was not re-indexed
       changeIndexedCounter.assertReindexOf(change, 0);
     }
@@ -4594,6 +4699,18 @@ public class ChangeIT extends AbstractDaemonTest {
     testEmailSubjectContainsChangeSizeBucket(250, "L");
     testEmailSubjectContainsChangeSizeBucket(999, "L");
     testEmailSubjectContainsChangeSizeBucket(1000, "XL");
+  }
+
+  @Test
+  public void requestFormattedChangeInReview() throws Exception {
+    PushOneCommit.Result r = createChange();
+    assertThat(r.getChange().change().isWorkInProgress()).isFalse();
+
+    ReviewInput in = ReviewInput.approve().reviewer(user.email()).label(LabelId.CODE_REVIEW, 1);
+    in.responseFormatOptions = ImmutableList.of(ListChangesOption.CURRENT_REVISION);
+    ReviewResult result = gApi.changes().id(r.getChangeId()).current().review(in);
+    assertThat(result.changeInfo).isNotNull();
+    assertThat(result.changeInfo.currentRevision).isNotNull();
   }
 
   private void testEmailSubjectContainsChangeSizeBucket(

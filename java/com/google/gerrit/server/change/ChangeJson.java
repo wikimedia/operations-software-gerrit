@@ -23,6 +23,7 @@ import static com.google.gerrit.extensions.client.ListChangesOption.COMMIT_FOOTE
 import static com.google.gerrit.extensions.client.ListChangesOption.CURRENT_ACTIONS;
 import static com.google.gerrit.extensions.client.ListChangesOption.CURRENT_COMMIT;
 import static com.google.gerrit.extensions.client.ListChangesOption.CURRENT_REVISION;
+import static com.google.gerrit.extensions.client.ListChangesOption.CUSTOM_KEYED_VALUES;
 import static com.google.gerrit.extensions.client.ListChangesOption.DETAILED_ACCOUNTS;
 import static com.google.gerrit.extensions.client.ListChangesOption.DETAILED_LABELS;
 import static com.google.gerrit.extensions.client.ListChangesOption.LABELS;
@@ -96,7 +97,7 @@ import com.google.gerrit.server.GpgException;
 import com.google.gerrit.server.ReviewerByEmailSet;
 import com.google.gerrit.server.ReviewerSet;
 import com.google.gerrit.server.ReviewerStatusUpdate;
-import com.google.gerrit.server.StarredChangesUtil;
+import com.google.gerrit.server.StarredChangesReader;
 import com.google.gerrit.server.account.AccountInfoComparator;
 import com.google.gerrit.server.account.AccountLoader;
 import com.google.gerrit.server.cancellation.RequestCancelledException;
@@ -231,7 +232,7 @@ public class ChangeJson {
   private final AccountLoader.Factory accountLoaderFactory;
   private final ImmutableSet<ListChangesOption> options;
   private final ChangeMessagesUtil cmUtil;
-  private final StarredChangesUtil starredChangesUtil;
+  private final StarredChangesReader starredChangesreader;
   private final Provider<ConsistencyChecker> checkerProvider;
   private final ActionJson actionJson;
   private final ChangeNotes.Factory notesFactory;
@@ -257,7 +258,7 @@ public class ChangeJson {
       ChangeData.Factory cdf,
       AccountLoader.Factory ailf,
       ChangeMessagesUtil cmUtil,
-      StarredChangesUtil starredChangesUtil,
+      StarredChangesReader starredChangesreader,
       Provider<ConsistencyChecker> checkerProvider,
       ActionJson actionJson,
       ChangeNotes.Factory notesFactory,
@@ -276,7 +277,7 @@ public class ChangeJson {
     this.permissionBackend = permissionBackend;
     this.accountLoaderFactory = ailf;
     this.cmUtil = cmUtil;
-    this.starredChangesUtil = starredChangesUtil;
+    this.starredChangesreader = starredChangesreader;
     this.checkerProvider = checkerProvider;
     this.actionJson = actionJson;
     this.notesFactory = notesFactory;
@@ -372,8 +373,8 @@ public class ChangeJson {
     return format(cd, Optional.empty(), true, getPluginInfos(cd));
   }
 
-  private static Collection<LegacySubmitRequirementInfo> requirementsFor(ChangeData cd) {
-    Collection<LegacySubmitRequirementInfo> reqInfos = new ArrayList<>();
+  private static List<LegacySubmitRequirementInfo> requirementsFor(ChangeData cd) {
+    List<LegacySubmitRequirementInfo> reqInfos = new ArrayList<>();
     for (SubmitRecord submitRecord : cd.submitRecords(SUBMIT_RULE_OPTIONS_STRICT)) {
       if (submitRecord.requirements == null) {
         continue;
@@ -385,7 +386,7 @@ public class ChangeJson {
     return reqInfos;
   }
 
-  private Collection<SubmitRecordInfo> submitRecordsFor(ChangeData cd) {
+  private List<SubmitRecordInfo> submitRecordsFor(ChangeData cd) {
     List<SubmitRecordInfo> submitRecordInfos = new ArrayList<>();
     for (SubmitRecord record : cd.submitRecords(SUBMIT_RULE_OPTIONS_STRICT)) {
       submitRecordInfos.add(submitRecordToInfo(record));
@@ -393,8 +394,8 @@ public class ChangeJson {
     return submitRecordInfos;
   }
 
-  private Collection<SubmitRequirementResultInfo> submitRequirementsFor(ChangeData cd) {
-    Collection<SubmitRequirementResultInfo> reqInfos = new ArrayList<>();
+  private List<SubmitRequirementResultInfo> submitRequirementsFor(ChangeData cd) {
+    List<SubmitRequirementResultInfo> reqInfos = new ArrayList<>();
     cd.submitRequirementsIncludingLegacy().entrySet().stream()
         .filter(entry -> !entry.getValue().isHidden())
         .forEach(
@@ -436,9 +437,11 @@ public class ChangeJson {
   }
 
   private static void finish(ChangeInfo info) {
-    info.id =
+    info.tripletId =
         Joiner.on('~')
             .join(Url.encode(info.project), Url.encode(info.branch), Url.encode(info.changeId));
+    info.id =
+        Joiner.on('~').join(Url.encode(info.project), Url.encode(String.valueOf(info._number)));
   }
 
   private static boolean containsAnyOf(
@@ -518,6 +521,13 @@ public class ChangeJson {
         // (2) Reusing
         boolean isCacheable = cacheQueryResultsByChangeNum && (i != changes.size() - 1);
         ChangeData cd = changes.get(i);
+        if (cd.hasFailedParsingFromIndex()) {
+          Optional<ChangeInfo> faultyChangeInfo = createFaultyChangeInfo(cd);
+          if (faultyChangeInfo.isPresent()) {
+            changeInfos.add(faultyChangeInfo.get());
+          }
+          continue;
+        }
         ChangeInfo info = cache.get(cd.getId());
         if (info != null && isCacheable) {
           changeInfos.add(info);
@@ -636,6 +646,9 @@ public class ChangeJson {
                       a -> a.account().get(),
                       a -> AttentionSetUtil.createAttentionSetInfo(a, accountLoader)));
     }
+    if (has(CUSTOM_KEYED_VALUES)) {
+      out.customKeyedValues = cd.customKeyedValues();
+    }
     out.hashtags = cd.hashtags();
     out.changeId = in.getKey().get();
     if (in.isNew()) {
@@ -679,10 +692,8 @@ public class ChangeJson {
     }
 
     if (user.isIdentifiedUser()) {
-      Collection<String> stars = cd.stars(user.getAccountId());
-      out.starred = stars.contains(StarredChangesUtil.DEFAULT_LABEL) ? true : null;
-      if (!stars.isEmpty()) {
-        out.stars = stars;
+      if (cd.isStarred(user.getAccountId())) {
+        out.starred = true;
       }
     }
 
@@ -750,14 +761,13 @@ public class ChangeJson {
 
     // This block must come after the ChangeInfo is mostly populated, since
     // it will be passed to ActionVisitors as-is.
+
     if (needRevisions) {
       out.revisions = revisionJson.getRevisions(accountLoader, cd, src, limitToPsId, out);
-      if (out.revisions != null) {
-        for (Map.Entry<String, RevisionInfo> entry : out.revisions.entrySet()) {
-          if (entry.getValue().isCurrent) {
-            out.currentRevision = entry.getKey();
-            break;
-          }
+      for (Map.Entry<String, RevisionInfo> entry : out.revisions.entrySet()) {
+        if (entry.getValue().isCurrent) {
+          out.currentRevision = entry.getKey();
+          break;
         }
       }
     }
@@ -795,7 +805,7 @@ public class ChangeJson {
     return reviewerMap;
   }
 
-  private Collection<ReviewerUpdateInfo> reviewerUpdates(ChangeData cd) {
+  private List<ReviewerUpdateInfo> reviewerUpdates(ChangeData cd) {
     List<ReviewerStatusUpdate> reviewerUpdates = cd.reviewerUpdates();
     List<ReviewerUpdateInfo> result = new ArrayList<>(reviewerUpdates.size());
     for (ReviewerStatusUpdate c : reviewerUpdates) {
@@ -836,7 +846,7 @@ public class ChangeJson {
     return ImmutableList.copyOf(result);
   }
 
-  private Collection<AccountInfo> removableReviewers(ChangeData cd, ChangeInfo out)
+  private List<AccountInfo> removableReviewers(ChangeData cd, ChangeInfo out)
       throws PermissionBackendException {
     // Although this is called removableReviewers, this method also determines
     // which CCs are removable.
@@ -919,14 +929,14 @@ public class ChangeJson {
     return result;
   }
 
-  private Collection<AccountInfo> toAccountInfo(Collection<Account.Id> accounts) {
+  private List<AccountInfo> toAccountInfo(Collection<Account.Id> accounts) {
     return accounts.stream()
         .map(accountLoader::get)
         .sorted(AccountInfoComparator.ORDER_NULLS_FIRST)
         .collect(toList());
   }
 
-  private Collection<AccountInfo> toAccountInfoByEmail(Collection<Address> addresses) {
+  private List<AccountInfo> toAccountInfoByEmail(Collection<Address> addresses) {
     return addresses.stream()
         .map(a -> new AccountInfo(a.name(), a.email()))
         .sorted(AccountInfoComparator.ORDER_NULLS_FIRST)
@@ -969,7 +979,7 @@ public class ChangeJson {
       List<Change.Id> changeIds =
           changeInfos.stream().map(c -> Change.id(c.virtualIdNumber)).collect(Collectors.toList());
       Set<Change.Id> starredChanges =
-          starredChangesUtil.areStarred(
+          starredChangesreader.areStarred(
               allUsersRepo, changeIds, userProvider.get().asIdentifiedUser().getAccountId());
       if (starredChanges.isEmpty()) {
         return;
@@ -991,5 +1001,26 @@ public class ChangeJson {
       return pluginDefinedInfosFactory.get().createPluginDefinedInfos(cds);
     }
     return ImmutableListMultimap.of();
+  }
+
+  /**
+   * Create an empty {@link ChangeInfo} designating a faulty record if {@link
+   * ChangeData#hasFailedParsingFromIndex()} is true.
+   *
+   * <p>Few fields are populated: project, branch, changeId, _number, subject, owner.
+   */
+  private static Optional<ChangeInfo> createFaultyChangeInfo(ChangeData cd) {
+    ChangeInfo info = new ChangeInfo();
+    Change c = cd.change();
+    if (c == null) {
+      return Optional.empty();
+    }
+    info.project = c.getProject().get();
+    info.branch = c.getDest().shortName();
+    info.changeId = c.getKey().get();
+    info._number = c.getId().get();
+    info.subject = "***ERROR***";
+    info.owner = new AccountInfo(c.getOwner().get());
+    return Optional.of(info);
   }
 }

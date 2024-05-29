@@ -8,7 +8,9 @@ import './gr-diff-row';
 import {GrDiffRow} from './gr-diff-row';
 import {fixture, html, assert} from '@open-wc/testing';
 import {GrDiffLine} from '../gr-diff/gr-diff-line';
-import {GrDiffLineType} from '../../../api/diff';
+import {DiffViewMode, GrDiffLineType} from '../../../api/diff';
+import {diffModelToken} from '../gr-diff-model/gr-diff-model';
+import {testResolver} from '../../../test/common-test-setup';
 
 suite('gr-diff-row test', () => {
   let element: GrDiffRow;
@@ -49,17 +51,14 @@ suite('gr-diff-row test', () => {
                   1
                 </button>
               </td>
-              <td class="gr-diff left no-intraline-info sign"></td>
               <td class="both content gr-diff left no-intraline-info">
                 <div
                   class="contentText gr-diff"
                   data-side="left"
                   id="left-content-1"
                 >
-                  <gr-diff-text> lorem ipsum </gr-diff-text>
+                  <gr-diff-text data-side="left"> lorem ipsum </gr-diff-text>
                 </div>
-                <div class="thread-group" data-side="left">
-                  <slot name="left-1"> </slot>
                 </div>
               </td>
               <td class="gr-diff lineNum right" data-value="1">
@@ -73,17 +72,13 @@ suite('gr-diff-row test', () => {
                   1
                 </button>
               </td>
-              <td class="gr-diff no-intraline-info right sign"></td>
               <td class="both content gr-diff no-intraline-info right">
                 <div
                   class="contentText gr-diff"
                   data-side="right"
                   id="right-content-1"
                 >
-                  <gr-diff-text> lorem ipsum </gr-diff-text>
-                </div>
-                <div class="thread-group" data-side="right">
-                  <slot name="right-1"> </slot>
+                  <gr-diff-text data-side="right"> lorem ipsum </gr-diff-text>
                 </div>
               </td>
             </tr>
@@ -100,6 +95,8 @@ suite('gr-diff-row test', () => {
     line.text = 'lorem ipsum';
     element.left = line;
     element.right = line;
+    const diffModel = testResolver(diffModelToken);
+    diffModel.updateState({renderPrefs: {view_mode: DiffViewMode.UNIFIED}});
     element.unifiedDiff = true;
     await element.updateComplete;
     assert.lightDom.equal(
@@ -141,11 +138,7 @@ suite('gr-diff-row test', () => {
                   data-side="right"
                   id="right-content-1"
                 >
-                  <gr-diff-text> lorem ipsum </gr-diff-text>
-                </div>
-                <div class="thread-group" data-side="right">
-                  <slot name="right-1"> </slot>
-                  <slot name="left-1"> </slot>
+                  <gr-diff-text data-side="right"> lorem ipsum </gr-diff-text>
                 </div>
               </td>
             </tr>
@@ -177,7 +170,6 @@ suite('gr-diff-row test', () => {
             >
               <td class="blame gr-diff" data-line-number="0"></td>
               <td class="blankLineNum gr-diff left"></td>
-              <td class="blank gr-diff left no-intraline-info sign"></td>
               <td class="blank gr-diff left no-intraline-info">
                 <div class="contentText gr-diff" data-side="left"></div>
               </td>
@@ -192,17 +184,13 @@ suite('gr-diff-row test', () => {
                   1
                 </button>
               </td>
-              <td class="add gr-diff no-intraline-info right sign">+</td>
               <td class="add content gr-diff no-intraline-info right">
                 <div
                   class="contentText gr-diff"
                   data-side="right"
                   id="right-content-1"
                 >
-                  <gr-diff-text> lorem ipsum </gr-diff-text>
-                </div>
-                <div class="thread-group" data-side="right">
-                  <slot name="right-1"> </slot>
+                  <gr-diff-text data-side="right"> lorem ipsum </gr-diff-text>
                 </div>
               </td>
               <slot name="post-right-line-1"></slot>
@@ -243,21 +231,16 @@ suite('gr-diff-row test', () => {
                   1
                 </button>
               </td>
-              <td class="gr-diff left no-intraline-info remove sign">-</td>
               <td class="content gr-diff left no-intraline-info remove">
                 <div
                   class="contentText gr-diff"
                   data-side="left"
                   id="left-content-1"
                 >
-                  <gr-diff-text> lorem ipsum </gr-diff-text>
-                </div>
-                <div class="thread-group" data-side="left">
-                  <slot name="left-1"> </slot>
+                  <gr-diff-text data-side="left"> lorem ipsum </gr-diff-text>
                 </div>
               </td>
               <td class="blankLineNum gr-diff right"></td>
-              <td class="blank gr-diff no-intraline-info right sign"></td>
               <td class="blank gr-diff no-intraline-info right">
                 <div class="contentText gr-diff" data-side="right"></div>
               </td>

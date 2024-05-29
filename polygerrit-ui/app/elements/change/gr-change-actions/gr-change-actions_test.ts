@@ -129,6 +129,7 @@ suite('gr-change-actions tests', () => {
       element = await fixture<GrChangeActions>(html`
         <gr-change-actions></gr-change-actions>
       `);
+      element.changeStatus = ChangeStatus.NEW;
       element.change = {
         ...createChangeViewChange(),
         actions: {
@@ -155,7 +156,7 @@ suite('gr-change-actions tests', () => {
       await element.reload();
     });
 
-    test('render', () => {
+    test('render', async () => {
       assert.shadowDom.equal(
         element,
         /* HTML */ `
@@ -198,6 +199,24 @@ suite('gr-change-actions tests', () => {
                 >
                   <gr-icon icon="rebase"> </gr-icon>
                   Rebase
+                </gr-button>
+              </gr-tooltip-content>
+              <gr-tooltip-content
+                has-tooltip=""
+                position-below=""
+                title="Edit this change"
+              >
+                <gr-button
+                  aria-disabled="false"
+                  class="edit"
+                  data-action-key="edit"
+                  data-label="Edit"
+                  link=""
+                  role="button"
+                  tabindex="0"
+                >
+                  <gr-icon filled="" icon="edit"> </gr-icon>
+                  Edit
                 </gr-button>
               </gr-tooltip-content>
             </section>
@@ -610,6 +629,7 @@ suite('gr-change-actions tests', () => {
             allowConflicts: false,
             rebaseChain: false,
             onBehalfOfUploader: true,
+            committerEmail: 'test@default.org',
           },
         })
       );
@@ -617,7 +637,12 @@ suite('gr-change-actions tests', () => {
         '/rebase',
         assertUIActionInfo(rebaseAction),
         true,
-        {base: '1234', allow_conflicts: false, on_behalf_of_uploader: true},
+        {
+          base: '1234',
+          allow_conflicts: false,
+          on_behalf_of_uploader: true,
+          committer_email: 'test@default.org',
+        },
         {allow_conflicts: false, on_behalf_of_uploader: true},
       ]);
     });
@@ -692,7 +717,7 @@ suite('gr-change-actions tests', () => {
         )
         .returns(review);
       const saveStub = stubRestApi('saveChangeReview').returns(
-        Promise.resolve(new Response())
+        Promise.resolve({})
       );
       const setReviewOnRevert = element.setReviewOnRevert(changeId) as Promise<
         undefined | Response
@@ -705,29 +730,6 @@ suite('gr-change-actions tests', () => {
     });
 
     suite('change edits', () => {
-      test('disableEdit', async () => {
-        element.editMode = false;
-        element.editBasedOnCurrentPatchSet = false;
-        element.change = {
-          ...createChangeViewChange(),
-          status: ChangeStatus.NEW,
-        };
-        element.disableEdit = true;
-        await element.updateComplete;
-
-        assert.isNotOk(
-          query(element, 'gr-button[data-action-key="publishEdit"]')
-        );
-        assert.isNotOk(
-          query(element, 'gr-button[data-action-key="rebaseEdit"]')
-        );
-        assert.isNotOk(
-          query(element, 'gr-button[data-action-key="deleteEdit"]')
-        );
-        assert.isNotOk(query(element, 'gr-button[data-action-key="edit"]'));
-        assert.isNotOk(query(element, 'gr-button[data-action-key="stopEdit"]'));
-      });
-
       test('shows confirm dialog for delete edit', async () => {
         element.loggedIn = true;
         element.editMode = true;
@@ -1004,6 +1006,7 @@ suite('gr-change-actions tests', () => {
             base: null,
             message: 'foo message',
             allow_conflicts: false,
+            committer_email: null,
           },
         ]);
       });
@@ -1052,6 +1055,7 @@ suite('gr-change-actions tests', () => {
             base: null,
             message: 'foo message',
             allow_conflicts: true,
+            committer_email: null,
           },
         ]);
       });
@@ -1093,8 +1097,9 @@ suite('gr-change-actions tests', () => {
           },
         ];
         setup(async () => {
+          element.change!.topic = 'T' as TopicName;
           stubRestApi('getChanges').returns(Promise.resolve(changes));
-          element.handleCherrypickTap();
+          await element.handleCherrypickTap();
           await element.updateComplete;
           const confirmCherrypick = queryAndAssert<GrConfirmCherrypickDialog>(
             element,
@@ -2365,7 +2370,7 @@ suite('gr-change-actions tests', () => {
             });
           } else {
             numTries--;
-            return Promise.resolve(null);
+            return Promise.resolve(undefined);
           }
         };
 
@@ -2462,42 +2467,18 @@ suite('gr-change-actions tests', () => {
           );
         });
 
-        suite('show revert submission dialog', () => {
-          setup(async () => {
-            element.change!.submission_id = '199' as ChangeSubmissionId;
-            element.change!.current_revision = '2000' as CommitId;
-            stubRestApi('getChanges').returns(
-              Promise.resolve([
-                {
-                  ...createChangeViewChange(),
-                  change_id: '12345678901234' as ChangeId,
-                  topic: 'T' as TopicName,
-                  subject: 'random',
-                },
-                {
-                  ...createChangeViewChange(),
-                  change_id: '23456' as ChangeId,
-                  topic: 'T' as TopicName,
-                  subject: 'a'.repeat(100),
-                },
-              ])
-            );
-            await element.updateComplete;
-          });
-        });
-
         suite('single changes revert', () => {
           let setUrlStub: sinon.SinonStub;
           setup(() => {
+            setUrlStub = sinon.stub(testResolver(navigationToken), 'setUrl');
+          });
+
+          test('revert submission single change', async () => {
             getResponseObjectStub.returns(
               Promise.resolve({
                 revert_changes: [{change_id: 12345, topic: 'T'}],
               })
             );
-            setUrlStub = sinon.stub(testResolver(navigationToken), 'setUrl');
-          });
-
-          test('revert submission single change', async () => {
             await element.send(
               HttpMethod.POST,
               {message: 'Revert submission'},
@@ -2516,6 +2497,37 @@ suite('gr-change-actions tests', () => {
             );
             assert.isTrue(setUrlStub.called);
             assert.equal(setUrlStub.lastCall.args[0], '/q/topic:"T"');
+          });
+
+          test('revert single change', async () => {
+            getResponseObjectStub.returns(
+              Promise.resolve({
+                change_id: 12345,
+                project: 'projectId',
+                _number: 12345,
+              })
+            );
+            stubRestApi('getChange').returns(
+              Promise.resolve(createChangeViewChange())
+            );
+            await element.send(
+              HttpMethod.POST,
+              {message: 'Revert'},
+              '/revert',
+              false,
+              cleanup,
+              {} as UIActionInfo
+            );
+            await element.handleResponse(
+              {
+                __key: 'revert',
+                __type: ActionType.CHANGE,
+                label: 'l',
+              },
+              new Response()
+            );
+            assert.isTrue(setUrlStub.called);
+            assert.equal(setUrlStub.lastCall.args[0], '/c/projectId/+/12345');
           });
         });
 
@@ -2639,6 +2651,66 @@ suite('gr-change-actions tests', () => {
               assert.isTrue(sendStub.calledOnce);
               assert.isTrue(handleErrorStub.called);
             });
+        });
+
+        test('revert single change change not reachable', async () => {
+          stubRestApi('getChangeDetail').returns(
+            Promise.resolve({
+              ...createChangeViewChange(),
+              // element has latest info
+              revisions: createRevisions(element.latestPatchNum as number),
+              messages: createChangeMessages(1),
+            })
+          );
+          getResponseObjectStub = stubRestApi('getResponseObject');
+          const setUrlStub = sinon.stub(
+            testResolver(navigationToken),
+            'setUrl'
+          );
+          const setReviewOnRevertStub = sinon.stub(
+            element,
+            'setReviewOnRevert'
+          );
+          getResponseObjectStub.returns(
+            Promise.resolve({
+              change_id: 12345,
+              project: 'projectId',
+              _number: 12345,
+            })
+          );
+          let errorFired = false;
+          // Mimics the behaviour of gr-rest-api-impl: If errFn is passed call
+          // it and return undefined, otherwise call fireNetworkError or
+          // fireServerError.
+          stubRestApi('getChange').callsFake((_, errFn) => {
+            if (errFn) {
+              errFn.call(undefined);
+            } else {
+              errorFired = true;
+            }
+            return Promise.resolve(undefined);
+          });
+
+          await element.send(
+            HttpMethod.POST,
+            {message: 'Revert'},
+            '/revert',
+            false,
+            cleanup,
+            {} as UIActionInfo
+          );
+          await element.handleResponse(
+            {
+              __key: 'revert',
+              __type: ActionType.CHANGE,
+              label: 'l',
+            },
+            new Response()
+          );
+
+          assert.isTrue(errorFired);
+          assert.isFalse(setUrlStub.called);
+          assert.isFalse(setReviewOnRevertStub.called);
         });
       });
     });

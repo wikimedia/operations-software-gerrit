@@ -23,6 +23,7 @@ import static com.google.gerrit.server.logging.TraceContext.newTimer;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
+import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.MultimapBuilder;
 import com.google.gerrit.common.Nullable;
@@ -34,6 +35,7 @@ import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.git.RefUpdateUtil;
 import com.google.gerrit.metrics.Timer0;
+import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.cancellation.RequestStateContext;
 import com.google.gerrit.server.cancellation.RequestStateContext.NonCancellableOperationContext;
@@ -80,7 +82,7 @@ public class NoteDbUpdateManager implements AutoCloseable {
   private static final int MAX_PATCH_SETS_DEFAULT = 1000;
 
   public interface Factory {
-    NoteDbUpdateManager create(Project.NameKey projectName);
+    NoteDbUpdateManager create(Project.NameKey projectName, CurrentUser currentUser);
   }
 
   private final Provider<PersonIdent> serverIdent;
@@ -90,8 +92,9 @@ public class NoteDbUpdateManager implements AutoCloseable {
   private final Project.NameKey projectName;
   private final int maxUpdates;
   private final int maxPatchSets;
+  private final CurrentUser currentUser;
   private final ListMultimap<String, ChangeUpdate> changeUpdates;
-  private final ListMultimap<String, ChangeDraftUpdate> draftUpdates;
+  private final ListMultimap<String, ChangeDraftNotesUpdate> draftUpdates;
   private final ListMultimap<String, RobotCommentUpdate> robotCommentUpdates;
   private final ListMultimap<String, NoteDbRewriter> rewriters;
   private final Set<Change.Id> changesToDelete;
@@ -113,7 +116,8 @@ public class NoteDbUpdateManager implements AutoCloseable {
       AllUsersName allUsersName,
       NoteDbMetrics metrics,
       AllUsersAsyncUpdate updateAllUsersAsync,
-      @Assisted Project.NameKey projectName) {
+      @Assisted Project.NameKey projectName,
+      @Assisted CurrentUser currentUser) {
     this.serverIdent = serverIdent;
     this.repoManager = repoManager;
     this.allUsersName = allUsersName;
@@ -122,6 +126,7 @@ public class NoteDbUpdateManager implements AutoCloseable {
     this.projectName = projectName;
     maxUpdates = cfg.getInt("change", null, "maxUpdates", MAX_UPDATES_DEFAULT);
     maxPatchSets = cfg.getInt("change", null, "maxPatchSets", MAX_PATCH_SETS_DEFAULT);
+    this.currentUser = currentUser;
     changeUpdates = MultimapBuilder.hashKeys().arrayListValues().build();
     draftUpdates = MultimapBuilder.hashKeys().arrayListValues().build();
     robotCommentUpdates = MultimapBuilder.hashKeys().arrayListValues().build();
@@ -241,9 +246,10 @@ public class NoteDbUpdateManager implements AutoCloseable {
         "cannot update & rewrite ref %s in one BatchUpdate",
         update.getRefName());
 
-    ChangeDraftUpdate du = update.getDraftUpdate();
-    if (du != null) {
-      draftUpdates.put(du.getRefName(), du);
+    Optional<ChangeDraftNotesUpdate> du =
+        ChangeDraftNotesUpdate.asChangeDraftNotesUpdate(update.getDraftUpdate());
+    if (du.isPresent()) {
+      draftUpdates.put(du.get().getRefName(), du.get());
     }
     RobotCommentUpdate rcu = update.getRobotCommentUpdate();
     if (rcu != null) {
@@ -281,7 +287,7 @@ public class NoteDbUpdateManager implements AutoCloseable {
     changeUpdates.put(update.getRefName(), update);
   }
 
-  public void add(ChangeDraftUpdate draftUpdate) {
+  public void add(ChangeDraftNotesUpdate draftUpdate) {
     checkNotExecuted();
     draftUpdates.put(draftUpdate.getRefName(), draftUpdate);
   }
@@ -310,23 +316,24 @@ public class NoteDbUpdateManager implements AutoCloseable {
     }
   }
 
-  @Nullable
-  public BatchRefUpdate execute() throws IOException {
+  public ImmutableMultimap<Project.NameKey, BatchRefUpdate> execute() throws IOException {
     return execute(false);
   }
 
-  @Nullable
-  public BatchRefUpdate execute(boolean dryrun) throws IOException {
+  public ImmutableMultimap<Project.NameKey, BatchRefUpdate> execute(boolean dryrun)
+      throws IOException {
     checkNotExecuted();
+    ImmutableMultimap.Builder<Project.NameKey, BatchRefUpdate> resultBuilder =
+        ImmutableMultimap.builder();
     if (isEmpty()) {
       executed = true;
-      return null;
+      return resultBuilder.build();
     }
     try (Timer0.Context timer = metrics.updateLatency.start();
         NonCancellableOperationContext nonCancellableOperationContext =
             RequestStateContext.startNonCancellableOperation()) {
       stage();
-      // ChangeUpdates must execute before ChangeDraftUpdates.
+      // ChangeUpdates must execute before ChangeDraftNotesUpdates.
       //
       // ChangeUpdate will automatically delete draft comments for any published
       // comments, but the updates to the two repos don't happen atomically.
@@ -334,24 +341,23 @@ public class NoteDbUpdateManager implements AutoCloseable {
       // we may have stale draft comments. Doing it in this order allows stale
       // comments to be filtered out by ChangeNotes, reflecting the fact that
       // comments can only go from DRAFT to PUBLISHED, not vice versa.
-      BatchRefUpdate result;
       try (TraceContext.TraceTimer ignored =
           newTimer("NoteDbUpdateManager#updateRepo", Metadata.empty())) {
-        result = execute(changeRepo, dryrun, pushCert);
+        execute(changeRepo, dryrun, pushCert).ifPresent(bru -> resultBuilder.put(projectName, bru));
       }
       try (TraceContext.TraceTimer ignored =
           newTimer("NoteDbUpdateManager#updateAllUsersSync", Metadata.empty())) {
-        execute(allUsersRepo, dryrun, null);
+        execute(allUsersRepo, dryrun, null).ifPresent(bru -> resultBuilder.put(allUsersName, bru));
       }
       if (!dryrun) {
         // Only execute the asynchronous operation if we are not in dry-run mode: The dry run would
         // have to run synchronous to be of any value at all. For the removal of draft comments from
         // All-Users we don't care much of the operation succeeds, so we are skipping the dry run
         // altogether.
-        updateAllUsersAsync.execute(refLogIdent, refLogMessage, pushCert);
+        updateAllUsersAsync.execute(refLogIdent, refLogMessage, pushCert, currentUser);
       }
       executed = true;
-      return result;
+      return resultBuilder.build();
     } finally {
       close();
     }
@@ -365,11 +371,10 @@ public class NoteDbUpdateManager implements AutoCloseable {
                 cu -> cu.getAttentionSetUpdates().stream()));
   }
 
-  @Nullable
-  private BatchRefUpdate execute(OpenRepo or, boolean dryrun, @Nullable PushCertificate pushCert)
-      throws IOException {
+  private Optional<BatchRefUpdate> execute(
+      OpenRepo or, boolean dryrun, @Nullable PushCertificate pushCert) throws IOException {
     if (or == null || or.cmds.isEmpty()) {
-      return null;
+      return Optional.empty();
     }
     if (!dryrun) {
       or.flush();
@@ -398,13 +403,14 @@ public class NoteDbUpdateManager implements AutoCloseable {
     if (!dryrun) {
       RefUpdateUtil.executeChecked(bru, or.rw);
     }
-    return bru;
+    return Optional.of(bru);
   }
 
   private void addCommands() throws IOException {
     changeRepo.addUpdates(changeUpdates, Optional.of(maxUpdates), Optional.of(maxPatchSets));
     if (!draftUpdates.isEmpty()) {
-      boolean publishOnly = draftUpdates.values().stream().allMatch(ChangeDraftUpdate::canRunAsync);
+      boolean publishOnly =
+          draftUpdates.values().stream().allMatch(ChangeDraftNotesUpdate::canRunAsync);
       if (publishOnly) {
         updateAllUsersAsync.setDraftUpdates(draftUpdates);
       } else {

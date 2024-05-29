@@ -4,10 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import '../../../test/common-test-setup';
-import {Side, TokenHighlightEventDetails} from '../../../api/diff';
-import {GrDiffLine, GrDiffLineType} from '../gr-diff/gr-diff-line';
+import {
+  GrDiffLineType,
+  Side,
+  TokenHighlightEventDetails,
+} from '../../../api/diff';
+import {GrDiffLine} from '../gr-diff/gr-diff-line';
 import {HOVER_DELAY_MS, TokenHighlightLayer} from './token-highlight-layer';
-import {GrAnnotation} from '../gr-diff-highlight/gr-annotation';
+import {GrAnnotationImpl} from '../gr-diff-highlight/gr-annotation';
 import {html, render} from 'lit';
 import {_testOnly_allTasks} from '../../../utils/async-util';
 import {queryAndAssert} from '../../../test/test-utils';
@@ -119,10 +123,13 @@ suite('token-highlight-layer', () => {
     }
 
     test('annotate adds css token', () => {
-      const annotateElementStub = sinon.stub(GrAnnotation, 'annotateElement');
+      const annotateElementStub = sinon.stub(
+        GrAnnotationImpl,
+        'annotateElement'
+      );
       const el = createLine('these are words');
       annotate(el);
-      assert.isTrue(annotateElementStub.calledThrice);
+      assert.equal(annotateElementStub.callCount, 3);
       assertAnnotation(annotateElementStub.args[0], {
         parent: el,
         offset: 0,
@@ -144,7 +151,10 @@ suite('token-highlight-layer', () => {
     });
 
     test('annotate adds css tokens w/ emojis', () => {
-      const annotateElementStub = sinon.stub(GrAnnotation, 'annotateElement');
+      const annotateElementStub = sinon.stub(
+        GrAnnotationImpl,
+        'annotateElement'
+      );
       const el = createLine('these 💩 are 👨‍👩‍👧‍👦 words');
 
       annotate(el);

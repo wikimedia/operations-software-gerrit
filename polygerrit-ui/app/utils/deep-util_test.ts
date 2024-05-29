@@ -39,6 +39,7 @@ suite('compare-util tests', () => {
     assert.isFalse(deepEqual({}, null));
     assert.isFalse(deepEqual({}, {x: 'y'}));
     assert.isFalse(deepEqual({x: 'y'}, {x: 'z'}));
+    assert.isFalse(deepEqual({a: 'y'}, {b: 'y'}));
     assert.isFalse(deepEqual({x: 'y'}, {z: 'y'}));
     assert.isFalse(deepEqual({x: {y: 'y'}}, {x: {y: 'z'}}));
   });
@@ -97,5 +98,70 @@ suite('compare-util tests', () => {
 
   test('deepEqual nested', () => {
     assert.isFalse(deepEqual({foo: new Set([])}, {foo: new Map([])}));
+  });
+
+  test('deepEqual recursive', () => {
+    const a = {};
+    const b = {a};
+    (a as any)['b'] = b;
+    const c = {};
+    const d = {a: c};
+    (c as any)['b'] = d;
+
+    assert.isTrue(deepEqual(a, c));
+  });
+
+  test('deepEqual map recursive', () => {
+    const a = new Map();
+    const b = {a};
+    a.set('b', b);
+
+    const c = new Map();
+    const d = {a: c};
+    c.set('b', d);
+
+    assert.isTrue(deepEqual(a, c));
+  });
+
+  test('deepEqual direct map recursive', () => {
+    const a = new Map();
+    const b = new Map();
+    b.set('a', a);
+    a.set('b', b);
+
+    const c = new Map();
+    const d = new Map();
+    d.set('a', c);
+    c.set('b', d);
+
+    assert.isTrue(deepEqual(a, c));
+  });
+
+  test('deepEqual direct self recursion', () => {
+    const a = {value: 3};
+    (a as any).self = a;
+    const b = {value: 3};
+    (b as any).self = b;
+
+    assert.isTrue(deepEqual(a, b));
+  });
+
+  test('deepEqual through of sets containing Symbols', () => {
+    const asymbol = Symbol('a');
+    const bsymbol = asymbol;
+
+    const a = new Set([asymbol]);
+    const b = new Set([bsymbol]);
+    assert.isTrue(deepEqual(a, b));
+  });
+
+  test('deepEqual recursively deeper', () => {
+    const a: {link?: any} = {};
+    const b: {link?: any} = {};
+    const c: {link?: any} = {};
+    a.link = b;
+    b.link = c;
+    c.link = a;
+    deepEqual(a, c);
   });
 });

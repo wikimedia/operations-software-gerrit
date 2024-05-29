@@ -3,13 +3,10 @@
  * Copyright 2016 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {BLANK_LINE, GrDiffLine, GrDiffLineType} from './gr-diff-line';
-import {LineRange, Side} from '../../../api/diff';
-import {LineNumber} from './gr-diff-line';
+import {BLANK_LINE, GrDiffLine} from './gr-diff-line';
+import {GrDiffLineType, LineNumber, LineRange, Side} from '../../../api/diff';
 import {assertIsDefined, assert} from '../../../utils/common-util';
-import {untilRendered} from '../../../utils/dom-util';
 import {isDefined} from '../../../types/types';
-import {LitElement} from 'lit';
 
 export enum GrDiffGroupType {
   /** Unchanged context. */
@@ -133,12 +130,10 @@ function splitGroupInTwo(
     for (const line of group.lines) {
       if (
         (line.beforeNumber &&
-          line.beforeNumber !== 'FILE' &&
-          line.beforeNumber !== 'LOST' &&
+          typeof line.beforeNumber === 'number' &&
           line.beforeNumber < leftSplit) ||
         (line.afterNumber &&
-          line.afterNumber !== 'FILE' &&
-          line.afterNumber !== 'LOST' &&
+          typeof line.afterNumber === 'number' &&
           line.afterNumber < rightSplit)
       ) {
         before.push(line);
@@ -321,11 +316,6 @@ export class GrDiffGroup {
    */
   readonly keyLocation: boolean = false;
 
-  /**
-   * Once rendered the diff builder sets this to the diff section element.
-   */
-  element?: HTMLElement;
-
   readonly lines: GrDiffLine[] = [];
 
   readonly adds: GrDiffLine[] = [];
@@ -435,7 +425,7 @@ export class GrDiffGroup {
   }
 
   containsLine(side: Side, line: LineNumber) {
-    if (line === 'FILE' || line === 'LOST') {
+    if (typeof line !== 'number') {
       // For FILE and LOST, beforeNumber and afterNumber are the same
       return this.lines[0]?.beforeNumber === line;
     }
@@ -462,14 +452,8 @@ export class GrDiffGroup {
   }
 
   private _updateRangeWithNewLine(line: GrDiffLine) {
-    if (
-      line.beforeNumber === 'FILE' ||
-      line.afterNumber === 'FILE' ||
-      line.beforeNumber === 'LOST' ||
-      line.afterNumber === 'LOST'
-    ) {
-      return;
-    }
+    if (typeof line.beforeNumber !== 'number') return;
+    if (typeof line.afterNumber !== 'number') return;
 
     if (line.type === GrDiffLineType.ADD || line.type === GrDiffLineType.BOTH) {
       if (
@@ -499,23 +483,6 @@ export class GrDiffGroup {
     }
   }
 
-  async waitUntilRendered() {
-    const lineNumber = this.lines[0]?.beforeNumber;
-    // The LOST or FILE lines may be hidden and thus never resolve an
-    // untilRendered() promise.
-    if (
-      this.skip !== undefined ||
-      lineNumber === 'LOST' ||
-      lineNumber === 'FILE' ||
-      this.type === GrDiffGroupType.CONTEXT_CONTROL
-    ) {
-      return Promise.resolve();
-    }
-    assertIsDefined(this.element);
-    await (this.element as LitElement).updateComplete;
-    await untilRendered(this.element.firstElementChild as HTMLElement);
-  }
-
   /**
    * Determines whether the group is either totally an addition or totally
    * a removal.
@@ -526,5 +493,11 @@ export class GrDiffGroup {
       (!this.adds.length || !this.removes.length) &&
       !(!this.adds.length && !this.removes.length)
     );
+  }
+
+  id() {
+    return `${this.type} ${this.startLine(Side.LEFT)}  ${this.startLine(
+      Side.RIGHT
+    )}`;
   }
 }

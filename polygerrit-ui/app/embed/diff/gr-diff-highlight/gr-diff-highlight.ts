@@ -5,22 +5,21 @@
  */
 import '../../../styles/shared-styles';
 import '../gr-selection-action-box/gr-selection-action-box';
-import {GrAnnotation} from './gr-annotation';
+import {getLength} from './gr-annotation';
 import {normalize} from './gr-range-normalizer';
 import {strToClassName} from '../../../utils/dom-util';
 import {Side} from '../../../constants/constants';
 import {CommentRange} from '../../../types/common';
 import {GrSelectionActionBox} from '../gr-selection-action-box/gr-selection-action-box';
-import {FILE} from '../gr-diff/gr-diff-line';
 import {
   getLineElByChild,
   getLineNumberByChild,
   getSideByLineEl,
-  GrDiffThreadElement,
+  GrDiffCommentThread,
 } from '../gr-diff/gr-diff-utils';
 import {debounce, DelayedTask} from '../../../utils/async-util';
 import {assertIsDefined, queryAndAssert} from '../../../utils/common-util';
-import {fire} from '../../../utils/event-util';
+import {DiffModel} from '../gr-diff-model/gr-diff-model';
 
 interface SidedRange {
   side: Side;
@@ -45,6 +44,7 @@ interface NormalizedRange {
  */
 export interface DiffBuilderInterface {
   getContentTdByLineEl(lineEl?: Element): Element | undefined;
+  diffModel: DiffModel;
 }
 
 /**
@@ -135,64 +135,31 @@ export class GrDiffHighlight {
     );
   }
 
-  private getThreadEl(e: Event): GrDiffThreadElement | null {
-    for (const pathEl of e.composedPath()) {
-      if (
-        pathEl instanceof HTMLElement &&
-        pathEl.classList.contains('comment-thread')
-      ) {
-        return pathEl as GrDiffThreadElement;
-      }
-    }
-    return null;
-  }
-
   private toggleRangeElHighlight(
-    threadEl: GrDiffThreadElement | null,
+    thread: GrDiffCommentThread,
     highlightRange = false
   ) {
-    const rootId = threadEl?.rootId;
+    const rootId = thread?.rootId;
     if (!rootId) return;
     if (!this.diffTable) return;
-    if (highlightRange) {
-      const selector = `.range.${strToClassName(rootId)}`;
-      const rangeNodes = this.diffTable.querySelectorAll(selector);
-      rangeNodes.forEach(rangeNode => {
-        rangeNode.classList.add('rangeHoverHighlight');
-      });
-      const hintNode = this.diffTable.querySelector(
-        `gr-ranged-comment-hint[threadElRootId="${rootId}"]`
-      );
-      hintNode?.shadowRoot
-        ?.querySelectorAll('.rangeHighlight')
-        .forEach(highlightNode =>
-          highlightNode.classList.add('rangeHoverHighlight')
-        );
-    } else {
-      const selector = `.rangeHoverHighlight.${strToClassName(rootId)}`;
-      const rangeNodes = this.diffTable.querySelectorAll(selector);
-      rangeNodes.forEach(rangeNode => {
-        rangeNode.classList.remove('rangeHoverHighlight');
-      });
-      const hintNode = this.diffTable.querySelector(
-        `gr-ranged-comment-hint[threadElRootId="${rootId}"]`
-      );
-      hintNode?.shadowRoot
-        ?.querySelectorAll('.rangeHoverHighlight')
-        .forEach(highlightNode =>
-          highlightNode.classList.remove('rangeHoverHighlight')
-        );
+    const highlightClass = highlightRange ? 'range' : 'rangeHoverHighlight';
+    const selector = `.${highlightClass}.${strToClassName(rootId)}`;
+    const rangeNodes = this.diffTable.querySelectorAll(selector);
+    for (const rangeNode of rangeNodes) {
+      rangeNode.classList.toggle('rangeHoverHighlight', highlightRange);
     }
   }
 
-  private handleCommentThreadMouseenter = (e: Event) => {
-    const threadEl = this.getThreadEl(e);
-    this.toggleRangeElHighlight(threadEl, /* highlightRange= */ true);
+  private handleCommentThreadMouseenter = (
+    e: CustomEvent<GrDiffCommentThread>
+  ) => {
+    this.toggleRangeElHighlight(e.detail, /* highlightRange= */ true);
   };
 
-  private handleCommentThreadMouseleave = (e: Event) => {
-    const threadEl = this.getThreadEl(e);
-    this.toggleRangeElHighlight(threadEl, /* highlightRange= */ false);
+  private handleCommentThreadMouseleave = (
+    e: CustomEvent<GrDiffCommentThread>
+  ) => {
+    this.toggleRangeElHighlight(e.detail, /* highlightRange= */ false);
   };
 
   /**
@@ -308,7 +275,7 @@ export class GrDiffHighlight {
     const side = getSideByLineEl(lineEl);
     if (!side) return null;
     const line = getLineNumberByChild(lineEl);
-    if (!line || line === FILE || line === 'LOST') return null;
+    if (typeof line !== 'number') return null;
     const contentTd = this.diffBuilder.getContentTdByLineEl(lineEl);
     if (!contentTd) return null;
     const contentText = contentTd.querySelector('.contentText');
@@ -408,7 +375,7 @@ export class GrDiffHighlight {
       // is empty to see that it's at the end of a line.
       const content = domRange.cloneContents().querySelector('.contentText');
       if (isMouseUp && this.getLength(content) === 0) {
-        this.fireCreateRangeComment(start.side, {
+        this.createRangeComment(start.side, {
           start_line: start.line,
           start_character: 0,
           end_line: start.line,
@@ -458,10 +425,9 @@ export class GrDiffHighlight {
     }
   }
 
-  private fireCreateRangeComment(side: Side, range: CommentRange) {
-    if (this.diffTable) {
-      fire(this.diffTable, 'create-range-comment', {side, range});
-    }
+  private createRangeComment(side: Side, range: CommentRange) {
+    assertIsDefined(this.diffBuilder, 'diffBuilder');
+    this.diffBuilder?.diffModel.createCommentOnRange(range, side);
     this.removeActionBox();
   }
 
@@ -469,7 +435,7 @@ export class GrDiffHighlight {
     e.stopPropagation();
     assertIsDefined(this.selectedRange, 'selectedRange');
     const {side, range} = this.selectedRange;
-    this.fireCreateRangeComment(side, range);
+    this.createRangeComment(side, range);
   };
 
   // visible for testing
@@ -509,18 +475,7 @@ export class GrDiffHighlight {
     if (node instanceof Element && node.classList.contains('content')) {
       return this.getLength(queryAndAssert(node, '.contentText'));
     } else {
-      return GrAnnotation.getLength(node);
+      return getLength(node);
     }
-  }
-}
-
-export interface CreateRangeCommentEventDetail {
-  side: Side;
-  range: CommentRange;
-}
-
-declare global {
-  interface HTMLElementEventMap {
-    'create-range-comment': CustomEvent<CreateRangeCommentEventDetail>;
   }
 }

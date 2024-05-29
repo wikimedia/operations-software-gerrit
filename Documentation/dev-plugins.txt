@@ -127,6 +127,74 @@ Gerrit-BatchModule: tld.example.project.CoreModuleClassName
 In this runtime, only the module designated by `Gerrit-BatchModule` is
 enabled, not `Gerrit-SysModule`.
 
+=== Cross-Plugin communication
+
+A plugin can optionally declare an API to be used by other plugins.
+
+---
+Gerrit-ApiModule: tld.example.project.APIClassName
+---
+
+Notably, when injecting 'DynamicItem,' 'DynamicSet,' or 'DynamicMap' defined by
+the API, a plugin can register new concrete implementations or replace existing
+ones.
+However, these are not the only classes available for consumption; API plugins
+can also define and provide interfaces and concrete classes for other plugins.
+
+This enables plugins to influence other plugins by customizing or extending the
+their behaviour.
+
+*Gotchas and Limitations*:
+
+- A `plugin A` depending on a `plugin B` (declaring a `Gerrit-ApiModule`),
+  should include `plugin B` as a `neverlink` library in its BUILD file, as
+  follows:
+
+  ```
+  java_library(
+      name = "gerrit-pluginB-neverlink",
+      neverlink = True,
+      exports = ["//plugins/pluginB"],
+  )
+  ```
+
+  The reason is that the `plugin B` dependency should not be included as a
+  shaded jar of the plugin: Gerrit will load the dependency dynamically at
+  runtime instead of packaging it in the consumer plugin fat jar.
+
+- Removing/renaming the plugin jar that defines the classes declared in the
+  `Gerrit-ApiModule` is currently not supported.
+  The behaviour in this case is unpredictable and depends on the specifics of
+  the classes involved.
+
+- An API plugin cannot depend on another API plugin.
+
+*Gerrit CI and Validation*:
+
+To build this as part of the gerrit-ci the plugin Api (in our example,
+`plugin B`) needs to be added as a dependency via the `extra-plugins` property.
+For example:
+
+```
+ project:
+    name: plugin-A
+    jobs:
+      - 'plugin-{name}-bazel-{branch}':
+          extra-plugins: 'plugin-B'
+          branch:
+            - master
+```
+
+Additionally, for `plugin A` to be verified by the gerrit-ci, the `Jenkinsfile`
+also needs to be inclusive of the API dependency, as such:
+
+```
+pluginPipeline(
+  formatCheckId: 'gerritforge:plugin-A-format-3852e64366bb37d13b8baf8af9b15cfd38eb9227',
+  buildCheckId: 'gerritforge:plugin-A-3852e64366bb37d13b8baf8af9b15cfd38eb9227',
+  extraPlugins: ['plugin-B'])
+```
+
 [[plugin_name]]
 === Plugin Name
 
@@ -456,6 +524,10 @@ Garbage collection ran on a project
 * `com.google.gerrit.server.extensions.events.ChangeIndexedListener`:
 +
 Update of the change secondary index
+
+* `com.google.gerrit.server.extensions.events.CustomKeyedValueValidationListener`:
++
+Updates to custom keyed values
 
 * `com.google.gerrit.server.extensions.events.AccountIndexedListener`:
 +
@@ -2213,15 +2285,18 @@ import com.google.gerrit.extensions.webui.PatchSetWebLink;;
 @Listen
 public class MyWeblinkPlugin implements PatchSetWebLink {
   private String name = "MyLink";
-  private String placeHolderUrlProjectCommit = "http://my.tool.com/project=%s/commit=%s";
+  private String placeHolderUrlProjectCommit =
+  "http://my.tool.com/project=%s/commit=%s/changeKey=%s/numericChangeId=%s";
   private String imageUrl = "http://placehold.it/16x16.gif";
 
   @Override
   public WebLinkInfo getPatchSetWebLink(String projectName, String commit,
-   String commitMessage, String branchName) {
+   String commitMessage, String branchName, String changeKey, int
+   numericChangeId) {
     return new WebLinkInfo(name,
         imageUrl,
-        String.format(placeHolderUrlProjectCommit, project, commit));
+        String.format(placeHolderUrlProjectCommit, project, commit, changeKey,
+	numericChangeId));
   }
 }
 ----
@@ -3032,6 +3107,43 @@ execution times into a performance log for further analysis.
 
 `com.google.gerrit.server.RequestListener` is an extension point that is
 invoked each time the server executes a request from a user.
+
+[[custom-keyed-values]]
+== Custom Keyed values
+
+It is possible to associate custom keyed values with a change. This is a map
+from string to string, allowing for the storage of small keys and values. An
+example would be for storing an associated workspace with the given change.
+
+As an example:
+```
+  private void setWorkspace(ChangeResource rsrc, String workspaceId)
+      throws RestApiException, UpdateException {
+    try (RefUpdateContext pluginCtx = RefUpdateContext.open(PLUGIN);
+        RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION);
+        BatchUpdate bu =
+            updateFactory.create(rsrc.getChange().getProject(), rsrc.getUser(), TimeUtil.now())) {
+      SetCustomKeyedValuesOp op =
+          customKeyedValuesFactory.create(
+              new CustomKeyedValuesInput(ImmutableMap.of("workspace", workspaceId)));
+      bu.addOp(rsrc.getId(), op);
+      bu.execute();
+    }
+  }
+```
+
+These custom-keyed-values can be fetched by passing the option `o=CUSTOM_KEYED_VALUES`
+to a change details fetch.
+
+[[diff-validators]]
+== Diff Validators
+
+`com.google.gerrit.server.patch.DiffValidator` is an extension point that is
+invoked after the file diff is computed through the
+link:rest-api-changes.html#get-diff[Get Diff] REST endpoint.
+
+Implementors can write logic to validate the diff before it's returned on the
+API.
 
 == SEE ALSO
 

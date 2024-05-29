@@ -28,11 +28,15 @@ import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.restapi.Url;
+import com.google.gerrit.extensions.validators.CommentValidator;
 import com.google.gerrit.server.CommentsUtil;
+import com.google.gerrit.server.DraftCommentsReader;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.change.DraftCommentResource;
+import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ChangeUpdate;
 import com.google.gerrit.server.permissions.PermissionBackendException;
+import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
@@ -51,21 +55,30 @@ public class PutDraftComment implements RestModifyView<DraftCommentResource, Dra
   private final BatchUpdate.Factory updateFactory;
   private final DeleteDraftComment delete;
   private final CommentsUtil commentsUtil;
+  private final DraftCommentsReader draftCommentsReader;
   private final PatchSetUtil psUtil;
   private final Provider<CommentJson> commentJson;
+  private final ChangeNotes.Factory changeNotesFactory;
+  private final PluginSetContext<CommentValidator> commentValidators;
 
   @Inject
   PutDraftComment(
       BatchUpdate.Factory updateFactory,
       DeleteDraftComment delete,
       CommentsUtil commentsUtil,
+      DraftCommentsReader draftCommentsReader,
       PatchSetUtil psUtil,
-      Provider<CommentJson> commentJson) {
+      Provider<CommentJson> commentJson,
+      ChangeNotes.Factory changeNotesFactory,
+      PluginSetContext<CommentValidator> commentValidators) {
     this.updateFactory = updateFactory;
     this.delete = delete;
     this.commentsUtil = commentsUtil;
+    this.draftCommentsReader = draftCommentsReader;
     this.psUtil = psUtil;
     this.commentJson = commentJson;
+    this.changeNotesFactory = changeNotesFactory;
+    this.commentValidators = commentValidators;
   }
 
   @Override
@@ -88,6 +101,8 @@ public class PutDraftComment implements RestModifyView<DraftCommentResource, Dra
       throw new BadRequestException(
           String.format("Invalid inReplyTo, comment %s not found", in.inReplyTo));
     }
+    CreateDraftComment.validateDraftComment(
+        rsrc.getRevisionResource(), in, changeNotesFactory, commentValidators, commentsUtil);
     try (RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
       try (BatchUpdate bu =
           updateFactory.create(rsrc.getChange().getProject(), rsrc.getUser(), TimeUtil.now())) {
@@ -114,7 +129,7 @@ public class PutDraftComment implements RestModifyView<DraftCommentResource, Dra
     @Override
     public boolean updateChange(ChangeContext ctx) throws ResourceNotFoundException {
       Optional<HumanComment> maybeComment =
-          commentsUtil.getDraft(ctx.getNotes(), ctx.getIdentifiedUser(), key);
+          draftCommentsReader.getDraftComment(ctx.getNotes(), ctx.getIdentifiedUser(), key);
       if (!maybeComment.isPresent()) {
         // Disappeared out from under us. Can't easily fall back to insert,
         // because the input might be missing required fields. Just give up.

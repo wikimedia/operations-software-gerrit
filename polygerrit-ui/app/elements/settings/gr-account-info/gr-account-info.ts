@@ -19,9 +19,14 @@ import {fire} from '../../../utils/event-util';
 import {LitElement, css, html, nothing, PropertyValues} from 'lit';
 import {customElement, property, state} from 'lit/decorators.js';
 import {sharedStyles} from '../../../styles/shared-styles';
-import {formStyles} from '../../../styles/gr-form-styles';
+import {grFormStyles} from '../../../styles/gr-form-styles';
 import {when} from 'lit/directives/when.js';
 import {BindValueChangeEvent, ValueChangedEvent} from '../../../types/events';
+import {formStyles} from '../../../styles/form-styles';
+import {getDocUrl} from '../../../utils/url-util';
+import {subscribe} from '../../lit/subscription-controller';
+import {resolve} from '../../../models/dependency';
+import {configModelToken} from '../../../models/config/config-model';
 
 @customElement('gr-account-info')
 export class GrAccountInfo extends LitElement {
@@ -58,43 +63,59 @@ export class GrAccountInfo extends LitElement {
 
   @state() private avatarChangeUrl = '';
 
+  @state() private docsBaseUrl = '';
+
   private readonly restApiService = getAppContext().restApiService;
 
-  static override styles = [
-    sharedStyles,
-    formStyles,
-    css`
-      gr-avatar {
-        height: 120px;
-        width: 120px;
-        margin-right: var(--spacing-xs);
-        vertical-align: -0.25em;
-      }
-      div section.hide {
-        display: none;
-      }
-      gr-hovercard-account-contents {
-        display: block;
-        max-width: 600px;
-        margin-top: var(--spacing-m);
-        background: var(--dialog-background-color);
-        border: 1px solid var(--border-color);
-        border-radius: var(--border-radius);
-        box-shadow: var(--elevation-level-5);
-      }
-      iron-autogrow-textarea {
-        background-color: var(--view-background-color);
-        color: var(--primary-text-color);
-      }
-      .lengthCounter {
-        font-weight: var(--font-weight-normal);
-      }
-      p {
-        max-width: 65ch;
-        margin-bottom: var(--spacing-m);
-      }
-    `,
-  ];
+  private readonly getConfigModel = resolve(this, configModelToken);
+
+  static override get styles() {
+    return [
+      sharedStyles,
+      grFormStyles,
+      formStyles,
+      css`
+        gr-avatar {
+          height: 120px;
+          width: 120px;
+          margin-right: var(--spacing-xs);
+          vertical-align: -0.25em;
+        }
+        div section.hide {
+          display: none;
+        }
+        gr-hovercard-account-contents {
+          display: block;
+          max-width: 600px;
+          margin-top: var(--spacing-m);
+          background: var(--dialog-background-color);
+          border: 1px solid var(--border-color);
+          border-radius: var(--border-radius);
+          box-shadow: var(--elevation-level-5);
+        }
+        iron-autogrow-textarea {
+          background-color: var(--view-background-color);
+          color: var(--primary-text-color);
+        }
+        .lengthCounter {
+          font-weight: var(--font-weight-normal);
+        }
+        p {
+          max-width: 65ch;
+          margin-bottom: var(--spacing-m);
+        }
+      `,
+    ];
+  }
+
+  constructor() {
+    super();
+    subscribe(
+      this,
+      () => this.getConfigModel().docsBaseUrl$,
+      docsBaseUrl => (this.docsBaseUrl = docsBaseUrl)
+    );
+  }
 
   override render() {
     if (!this.account || this.loading) return nothing;
@@ -103,8 +124,7 @@ export class GrAccountInfo extends LitElement {
         All profile fields below may be publicly displayed to others, including
         on changes you are associated with, as well as in search and
         autocompletion.
-        <a
-          href="https://gerrit-review.googlesource.com/Documentation/user-privacy.html"
+        <a href=${getDocUrl(this.docsBaseUrl, 'user-privacy.html')}
           >Learn more</a
         >
       </p>
@@ -225,7 +245,7 @@ export class GrAccountInfo extends LitElement {
         <span class="value">
           <iron-autogrow-textarea
             id="statusInput"
-            .name=${'statusInput'}
+            .label=${'statusInput'}
             ?disabled=${this.saving}
             maxlength="140"
             .value=${this.account?.status}
@@ -337,6 +357,10 @@ export class GrAccountInfo extends LitElement {
         this.saving = false;
         fire(this, 'account-detail-update', {});
       });
+  }
+
+  delete() {
+    return this.restApiService.deleteAccount();
   }
 
   private maybeSetName() {

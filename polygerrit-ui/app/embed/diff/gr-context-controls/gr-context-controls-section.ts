@@ -5,15 +5,21 @@
  */
 import '../../../elements/shared/gr-button/gr-button';
 import {html, LitElement} from 'lit';
-import {customElement, property, state} from 'lit/decorators.js';
+import {property, state} from 'lit/decorators.js';
 import {DiffInfo, DiffViewMode, RenderPreferences} from '../../../api/diff';
 import {GrDiffGroup, GrDiffGroupType} from '../gr-diff/gr-diff-group';
 import {diffClasses} from '../gr-diff/gr-diff-utils';
 import {getShowConfig} from './gr-context-controls';
 import {ifDefined} from 'lit/directives/if-defined.js';
 import {when} from 'lit/directives/when.js';
+import {subscribe} from '../../../elements/lit/subscription-controller';
+import {resolve} from '../../../models/dependency';
+import {
+  ColumnsToShow,
+  diffModelToken,
+  NO_COLUMNS,
+} from '../gr-diff-model/gr-diff-model';
 
-@customElement('gr-context-controls-section')
 export class GrContextControlsSection extends LitElement {
   /** Should context controls be rendered for expanding above the section? */
   @property({type: Boolean}) showAbove = false;
@@ -39,6 +45,33 @@ export class GrContextControlsSection extends LitElement {
   @state()
   addTableWrapperForTesting = false;
 
+  @state() viewMode: DiffViewMode = DiffViewMode.SIDE_BY_SIDE;
+
+  @state() columns: ColumnsToShow = NO_COLUMNS;
+
+  @state() columnCount = 0;
+
+  private readonly getDiffModel = resolve(this, diffModelToken);
+
+  constructor() {
+    super();
+    subscribe(
+      this,
+      () => this.getDiffModel().viewMode$,
+      viewMode => (this.viewMode = viewMode)
+    );
+    subscribe(
+      this,
+      () => this.getDiffModel().columnsToShow$,
+      columnsToShow => (this.columns = columnsToShow)
+    );
+    subscribe(
+      this,
+      () => this.getDiffModel().columnCount$,
+      columnCount => (this.columnCount = columnCount)
+    );
+  }
+
   /**
    * The browser API for handling selection does not (yet) work for selection
    * across multiple shadow DOM elements. So we are rendering gr-diff components
@@ -63,39 +96,54 @@ export class GrContextControlsSection extends LitElement {
         left-type=${ifDefined(type)}
         right-type=${ifDefined(type)}
       >
-        <td class=${diffClasses('blame')} data-line-number="0"></td>
-        <td class=${diffClasses('contextLineNum')}></td>
         ${when(
-          this.isSideBySide(),
-          () => html`
-            <td class=${diffClasses('sign')}></td>
-            <td class=${diffClasses()}></td>
-          `
+          this.columns.blame,
+          () =>
+            html`<td class=${diffClasses('blame')} data-line-number="0"></td>`
         )}
-        <td class=${diffClasses('contextLineNum')}></td>
         ${when(
-          this.isSideBySide(),
+          this.columns.leftNumber,
+          () => html`<td class=${diffClasses('contextLineNum')}></td>`
+        )}
+        ${when(
+          this.columns.leftSign,
           () => html`<td class=${diffClasses('sign')}></td>`
         )}
-        <td class=${diffClasses()}></td>
+        ${when(
+          this.columns.leftContent,
+          () => html`<td class=${diffClasses()}></td>`
+        )}
+        ${when(
+          this.columns.rightNumber,
+          () => html`<td class=${diffClasses('contextLineNum')}></td>`
+        )}
+        ${when(
+          this.columns.rightSign,
+          () => html`<td class=${diffClasses('sign')}></td>`
+        )}
+        ${when(
+          this.columns.rightContent,
+          () => html`<td class=${diffClasses()}></td>`
+        )}
       </tr>
     `;
   }
 
   private isSideBySide() {
-    return this.renderPrefs?.view_mode !== DiffViewMode.UNIFIED;
+    return this.viewMode !== DiffViewMode.UNIFIED;
   }
 
   private createContextControlRow() {
-    // Note that <td> table cells that have `display: none` don't count!
-    const colspan = this.renderPrefs?.show_sign_col ? '5' : '3';
+    // Span all columns, but not the blame column.
+    let colspan = this.columnCount;
+    if (this.columns.blame) colspan--;
     const showConfig = getShowConfig(this.showAbove, this.showBelow);
     return html`
       <tr class=${diffClasses('dividerRow', `show-${showConfig}`)}>
-        <td class=${diffClasses('blame')} data-line-number="0"></td>
         ${when(
-          this.isSideBySide(),
-          () => html`<td class=${diffClasses()}></td>`
+          this.columns.blame,
+          () =>
+            html`<td class=${diffClasses('blame')} data-line-number="0"></td>`
         )}
         <td class=${diffClasses('dividerCell')} colspan=${colspan}>
           <gr-context-controls
@@ -124,6 +172,8 @@ export class GrContextControlsSection extends LitElement {
     return rows;
   }
 }
+
+customElements.define('gr-context-controls-section', GrContextControlsSection);
 
 declare global {
   interface HTMLElementTagNameMap {

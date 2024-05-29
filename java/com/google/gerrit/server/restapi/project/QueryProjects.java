@@ -16,6 +16,7 @@ package com.google.gerrit.server.restapi.project;
 
 import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.extensions.common.ProjectInfo;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
@@ -25,6 +26,7 @@ import com.google.gerrit.extensions.restapi.TopLevelResource;
 import com.google.gerrit.index.project.ProjectData;
 import com.google.gerrit.index.project.ProjectIndex;
 import com.google.gerrit.index.project.ProjectIndexCollection;
+import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
 import com.google.gerrit.index.query.QueryResult;
 import com.google.gerrit.server.project.ProjectJson;
@@ -47,6 +49,7 @@ public class QueryProjects implements RestReadView<TopLevelResource> {
   private int limit;
   private int start;
 
+  @CanIgnoreReturnValue
   @Option(
       name = "--query",
       aliases = {"-q"},
@@ -56,6 +59,7 @@ public class QueryProjects implements RestReadView<TopLevelResource> {
     return this;
   }
 
+  @CanIgnoreReturnValue
   @Option(
       name = "--limit",
       aliases = {"-n"},
@@ -66,6 +70,7 @@ public class QueryProjects implements RestReadView<TopLevelResource> {
     return this;
   }
 
+  @CanIgnoreReturnValue
   @Option(
       name = "--start",
       aliases = {"-S"},
@@ -95,10 +100,6 @@ public class QueryProjects implements RestReadView<TopLevelResource> {
   }
 
   public List<ProjectInfo> apply() throws BadRequestException, MethodNotAllowedException {
-    if (Strings.isNullOrEmpty(query)) {
-      throw new BadRequestException("missing query field");
-    }
-
     ProjectIndex searchIndex = indexes.getSearchIndex();
     if (searchIndex == null) {
       throw new MethodNotAllowedException("no project index");
@@ -119,16 +120,21 @@ public class QueryProjects implements RestReadView<TopLevelResource> {
     }
 
     try {
-      QueryResult<ProjectData> result = queryProcessor.query(queryBuilder.parse(query));
+      QueryResult<ProjectData> result =
+          queryProcessor.query(
+              !Strings.isNullOrEmpty(query) ? queryBuilder.parse(query) : Predicate.any());
       List<ProjectData> pds = result.entities();
 
       ArrayList<ProjectInfo> projectInfos = Lists.newArrayListWithCapacity(pds.size());
       for (ProjectData pd : pds) {
         projectInfos.add(json.format(pd.getProject()));
       }
+      if (!projectInfos.isEmpty() && result.more()) {
+        projectInfos.get(projectInfos.size() - 1)._moreProjects = true;
+      }
       return projectInfos;
     } catch (QueryParseException e) {
-      throw new BadRequestException(e.getMessage());
+      throw new BadRequestException(e.getMessage(), e);
     }
   }
 }

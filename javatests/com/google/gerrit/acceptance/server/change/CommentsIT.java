@@ -29,6 +29,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
+import com.google.gerrit.acceptance.ExtensionRegistry;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.testsuite.account.AccountOperations;
@@ -54,6 +55,7 @@ import com.google.gerrit.extensions.client.Side;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.ChangeInput;
 import com.google.gerrit.extensions.common.CommentInfo;
+import com.google.gerrit.extensions.events.GitReferenceUpdatedListener;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.IdString;
@@ -89,6 +91,8 @@ import org.junit.Test;
 @NoHttpd
 public class CommentsIT extends AbstractDaemonTest {
   @Inject private ChangeNoteUtil noteUtil;
+
+  @Inject private ExtensionRegistry extensionRegistry;
   @Inject private FakeEmailSender email;
   @Inject private ProjectOperations projectOperations;
   @Inject private Provider<ChangesCollection> changes;
@@ -96,6 +100,21 @@ public class CommentsIT extends AbstractDaemonTest {
   @Inject private ChangeOperations changeOperations;
   @Inject private AccountOperations accountOperations;
   @Inject private RequestScopeOperations requestScopeOperations;
+
+  private static class TestGitReferenceUpdatedListener implements GitReferenceUpdatedListener {
+
+    private GitReferenceUpdatedListener.Event lastReferenceUpdatedEvent;
+
+    @Override
+    public void onGitReferenceUpdated(GitReferenceUpdatedListener.Event event) {
+      lastReferenceUpdatedEvent = event;
+    }
+
+    public GitReferenceUpdatedListener.Event getLastReferenceUpdatedEvent() {
+      assertThat(lastReferenceUpdatedEvent).isNotNull();
+      return lastReferenceUpdatedEvent;
+    }
+  }
 
   private final Integer[] lines = {0, 1};
 
@@ -132,6 +151,38 @@ public class CommentsIT extends AbstractDaemonTest {
       assertThat(list).hasSize(1);
       actual = list.get(0);
       assertThat(comment).isEqualTo(infoToDraft(path).apply(actual));
+    }
+  }
+
+  @Test
+  public void fireEventsForOperationsOnDrafts() throws Exception {
+    TestGitReferenceUpdatedListener listener = new TestGitReferenceUpdatedListener();
+    requestScopeOperations.setApiUser(user.id());
+    try (ExtensionRegistry.Registration registration =
+        extensionRegistry.newRegistration().add(listener)) {
+      PushOneCommit.Result r = createChange();
+      String changeId = r.getChangeId();
+      String revId = r.getCommit().getName();
+      String path = "file1";
+      DraftInput comment =
+          CommentsUtil.newDraftWithOnlyMandatoryFields(PATCHSET_LEVEL, "comment 1");
+      CommentInfo ci = addDraft(changeId, revId, comment);
+
+      List<CommentInfo> list = getDraftCommentsAsList(changeId);
+      assertThat(list).hasSize(1);
+
+      assertDraftAddedEvent(listener);
+
+      Map<String, List<CommentInfo>> results = getDraftComments(changeId, revId);
+      DraftInput update = CommentsUtil.newDraft(path, Side.REVISION, 1, "comment 2");
+      update.id = Iterables.getOnlyElement(results.get(PATCHSET_LEVEL)).id;
+      update.line = 1;
+
+      updateDraft(changeId, revId, update, ci.id);
+      assertDraftUpdatedEvent(listener);
+
+      deleteDraft(changeId, revId, ci.id);
+      assertDraftDeletedEvent(listener);
     }
   }
 
@@ -629,6 +680,51 @@ public class CommentsIT extends AbstractDaemonTest {
       Ref ref = repo.exactRef(draftRefName);
       assertThat(ref).isNull();
     }
+  }
+
+  @Test
+  public void updateAndPublishDraftCommentOnOldPatchSet() throws Exception {
+    // create a change
+    String file = "file";
+    PushOneCommit push =
+        pushFactory.create(admin.newIdent(), testRepo, "first subject", "file", "l1\nl2\n");
+    String dest = "refs/for/master";
+    PushOneCommit.Result r1 = push.to(dest);
+    r1.assertOkStatus();
+    String changeId = r1.getChangeId();
+    String revId = r1.getCommit().getName();
+
+    // create a second patch set
+    PushOneCommit.Result r2 = amendChange(r1.getChangeId());
+    r2.assertOkStatus();
+
+    // create a draft comment on the first patch set
+    String draftRefName = RefNames.refsDraftComments(r1.getChange().getId(), admin.id());
+    DraftInput draft = CommentsUtil.newDraft(file, Side.REVISION, 1, "comment");
+    CommentInfo draftInfo = addDraft(changeId, "1", draft);
+
+    // update the draft comment and publish it at the same time via PUBLISH_ALL_REVISIONS
+    ReviewInput reviewInput = new ReviewInput();
+    reviewInput.message = "bar";
+    CommentInput comment = CommentsUtil.newComment(file, Side.REVISION, 1, "comment", false);
+    comment.id = draftInfo.id;
+    reviewInput.comments = new HashMap<>();
+    reviewInput.comments.put(comment.path, ImmutableList.of(comment));
+    reviewInput.drafts = DraftHandling.PUBLISH_ALL_REVISIONS;
+    gApi.changes().id(r1.getChangeId()).revision(2).review(reviewInput);
+
+    // check that the draft comment is no longer present
+    Map<String, List<CommentInfo>> drafts = getDraftComments(changeId, revId);
+    assertThat(drafts.isEmpty()).isTrue();
+    try (Repository repo = repoManager.openRepository(allUsers)) {
+      Ref ref = repo.exactRef(draftRefName);
+      assertThat(ref).isNull();
+    }
+
+    // check that the draft comment is published on the old patch set now
+    CommentInfo publishedComment = Iterables.getOnlyElement(getPublishedCommentsAsList(changeId));
+    assertThat(publishedComment.id).isEqualTo(draftInfo.id);
+    assertThat(publishedComment.patchSet).isEqualTo(1);
   }
 
   @Test
@@ -1262,6 +1358,7 @@ public class CommentsIT extends AbstractDaemonTest {
                 + c
                 + "/comment/"
                 + ps1List.get(0).id
+                + "?usp=email"
                 + " :\n"
                 + "PS1, Line 1: initial\n"
                 + "what happened to this?\n"
@@ -1274,6 +1371,7 @@ public class CommentsIT extends AbstractDaemonTest {
                 + c
                 + "/comment/"
                 + ps1List.get(1).id
+                + "?usp=email"
                 + " :\n"
                 + "PS1, Line 1: boring\n"
                 + "Is it that bad?\n"
@@ -1288,6 +1386,7 @@ public class CommentsIT extends AbstractDaemonTest {
                 + c
                 + "/comment/"
                 + ps2List.get(0).id
+                + "?usp=email"
                 + " :\n"
                 + "PS2, Line 1: initial content\n"
                 + "comment 1 on base\n"
@@ -1300,6 +1399,7 @@ public class CommentsIT extends AbstractDaemonTest {
                 + c
                 + "/comment/"
                 + ps2List.get(1).id
+                + "?usp=email"
                 + " :\n"
                 + "PS2, Line 2: \n"
                 + "comment 2 on base\n"
@@ -1312,6 +1412,7 @@ public class CommentsIT extends AbstractDaemonTest {
                 + c
                 + "/comment/"
                 + ps2List.get(2).id
+                + "?usp=email"
                 + " :\n"
                 + "PS2, Line 1: interesting\n"
                 + "better now\n"
@@ -1324,6 +1425,7 @@ public class CommentsIT extends AbstractDaemonTest {
                 + c
                 + "/comment/"
                 + ps2List.get(3).id
+                + "?usp=email"
                 + " :\n"
                 + "PS2, Line 2: cntent\n"
                 + "typo: content\n"
@@ -2161,5 +2263,32 @@ public class CommentsIT extends AbstractDaemonTest {
     in.newBranch = true;
     in.subject = "New changes";
     return gApi.changes().create(in).get();
+  }
+
+  private GitReferenceUpdatedListener.Event assertDraftEvent(
+      TestGitReferenceUpdatedListener listener) {
+    GitReferenceUpdatedListener.Event event = listener.getLastReferenceUpdatedEvent();
+    assertThat(event.getRefName()).startsWith("refs/draft-comments/");
+    assertThat(event.getProjectName()).isEqualTo(allUsers.get());
+    assertThat(event.getUpdater()._accountId).isEqualTo(user.id().get());
+    return event;
+  }
+
+  private void assertDraftAddedEvent(TestGitReferenceUpdatedListener listener) {
+    GitReferenceUpdatedListener.Event event = assertDraftEvent(listener);
+    assertThat(event.isCreate()).isTrue();
+    assertThat(event.isDelete()).isFalse();
+  }
+
+  private void assertDraftUpdatedEvent(TestGitReferenceUpdatedListener listener) {
+    GitReferenceUpdatedListener.Event event = assertDraftEvent(listener);
+    assertThat(event.isCreate()).isFalse();
+    assertThat(event.isDelete()).isFalse();
+  }
+
+  private void assertDraftDeletedEvent(TestGitReferenceUpdatedListener listener) {
+    GitReferenceUpdatedListener.Event event = assertDraftEvent(listener);
+    assertThat(event.isCreate()).isFalse();
+    assertThat(event.isDelete()).isTrue();
   }
 }

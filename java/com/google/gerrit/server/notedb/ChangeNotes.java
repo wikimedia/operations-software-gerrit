@@ -16,6 +16,7 @@ package com.google.gerrit.server.notedb;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.gerrit.entities.RefNames.changeMetaRef;
 import static java.util.Comparator.comparing;
 
@@ -29,7 +30,6 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.ListMultimap;
-import com.google.common.collect.Multimaps;
 import com.google.common.collect.Ordering;
 import com.google.common.flogger.FluentLogger;
 import com.google.errorprone.annotations.FormatMethod;
@@ -389,6 +389,7 @@ public class ChangeNotes extends AbstractChangeNotes<ChangeNotes> {
 
   // Lazy defensive copies of mutable ReviewDb types, to avoid polluting the
   // ChangeNotesCache from handlers.
+  private ImmutableSortedMap<String, String> customKeyedValues;
   private ImmutableSortedMap<PatchSet.Id, PatchSet> patchSets;
   private PatchSetApprovals approvals;
   private ImmutableSet<Comment.Key> commentKeys;
@@ -472,6 +473,16 @@ public class ChangeNotes extends AbstractChangeNotes<ChangeNotes> {
     return state.allAttentionSetUpdates();
   }
 
+  /** Returns the key-value pairs that are attached to this change */
+  public ImmutableSortedMap<String, String> getCustomKeyedValues() {
+    if (customKeyedValues == null) {
+      ImmutableSortedMap.Builder<String, String> b = ImmutableSortedMap.naturalOrder();
+      b.putAll(state.customKeyedValues());
+      customKeyedValues = b.build();
+    }
+    return customKeyedValues;
+  }
+
   /**
    * Returns the evaluated submit requirements for the change. We only intend to store submit
    * requirements in NoteDb for closed changes. For closed changes, the results represent the state
@@ -538,24 +549,27 @@ public class ChangeNotes extends AbstractChangeNotes<ChangeNotes> {
     return Optional.ofNullable(state.mergedOn());
   }
 
-  public ImmutableListMultimap<ObjectId, HumanComment> getDraftComments(Account.Id author) {
+  public ImmutableList<HumanComment> getDraftComments(Account.Id author) {
     return getDraftComments(author, null, null);
   }
 
-  public ImmutableListMultimap<ObjectId, HumanComment> getDraftComments(
-      Account.Id author, @Nullable Change.Id virtualId) {
+  public ImmutableList<HumanComment> getDraftComments(Account.Id author, Ref ref) {
+    return getDraftComments(author, null, ref);
+  }
+
+  public ImmutableList<HumanComment> getDraftComments(Account.Id author, Change.Id virtualId) {
     return getDraftComments(author, virtualId, null);
   }
 
-  public ImmutableListMultimap<ObjectId, HumanComment> getDraftComments(
+  ImmutableList<HumanComment> getDraftComments(
       Account.Id author, @Nullable Change.Id virtualId, @Nullable Ref ref) {
     loadDraftComments(author, virtualId, ref);
     // Filter out any zombie draft comments. These are drafts that are also in
     // the published map, and arise when the update to All-Users to delete them
     // during the publish operation failed.
-    return ImmutableListMultimap.copyOf(
-        Multimaps.filterEntries(
-            draftCommentNotes.getComments(), e -> !getCommentKeys().contains(e.getValue().key)));
+    return draftCommentNotes.getComments().stream()
+        .filter(d -> !getCommentKeys().contains(d.key))
+        .collect(toImmutableList());
   }
 
   public ImmutableListMultimap<ObjectId, RobotComment> getRobotComments() {

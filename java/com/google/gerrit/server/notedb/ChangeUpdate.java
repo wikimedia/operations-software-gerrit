@@ -25,6 +25,7 @@ import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_CHERRY_PI
 import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_COMMIT;
 import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_COPIED_LABEL;
 import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_CURRENT;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_CUSTOM_KEYED_VALUE;
 import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_GROUPS;
 import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_HASHTAGS;
 import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_LABEL;
@@ -75,10 +76,12 @@ import com.google.gerrit.entities.SubmitRecord;
 import com.google.gerrit.entities.SubmitRequirementResult;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.client.ReviewerState;
+import com.google.gerrit.server.ChangeDraftUpdate;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.account.ServiceUserClassifier;
 import com.google.gerrit.server.approval.PatchSetApprovalUuidGenerator;
+import com.google.gerrit.server.git.validators.TopicValidator;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.gerrit.server.util.AttentionSetUtil;
@@ -100,6 +103,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.eclipse.jgit.errors.ConfigInvalidException;
@@ -138,8 +142,12 @@ public class ChangeUpdate extends AbstractChangeUpdate {
         ChangeNotes notes, CurrentUser user, Instant when, Comparator<String> labelNameComparator);
   }
 
+  public static final int MAX_CUSTOM_KEY_LENGTH = 100;
+  public static final int MAX_CUSTOM_KEYED_VALUE_LENGTH = 1000;
+  public static final int MAX_CUSTOM_KEYED_VALUES = 100;
+
   private final NoteDbUpdateManager.Factory updateManagerFactory;
-  private final ChangeDraftUpdate.Factory draftUpdateFactory;
+  private final ChangeDraftUpdate.ChangeDraftUpdateFactory draftUpdateFactory;
   private final RobotCommentUpdate.Factory robotCommentUpdateFactory;
   private final DeleteCommentRewriter.Factory deleteCommentRewriterFactory;
   private final ServiceUserClassifier serviceUserClassifier;
@@ -163,10 +171,11 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   private Map<Account.Id, AttentionSetUpdate> plannedAttentionSetUpdates;
   private boolean ignoreFurtherAttentionSetUpdates;
   private Set<String> hashtags;
+  private TreeMap<String, String> customKeyedValues = new TreeMap<>();
   private String changeMessage;
   private String tag;
   private PatchSetState psState;
-  private Iterable<String> groups;
+  private List<String> groups;
   private String pushCert;
   private boolean isAllowWriteToNewtRef;
   private String psDescription;
@@ -187,12 +196,14 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   private ImmutableList.Builder<AttentionSetUpdate> attentionSetUpdatesBuilder =
       ImmutableList.builder();
 
+  private final CurrentUser user;
+
   @SuppressWarnings("UnusedMethod")
   @AssistedInject
   private ChangeUpdate(
       @GerritPersonIdent PersonIdent serverIdent,
       NoteDbUpdateManager.Factory updateManagerFactory,
-      ChangeDraftUpdate.Factory draftUpdateFactory,
+      ChangeDraftUpdate.ChangeDraftUpdateFactory draftUpdateFactory,
       RobotCommentUpdate.Factory robotCommentUpdateFactory,
       DeleteCommentRewriter.Factory deleteCommentRewriterFactory,
       ProjectCache projectCache,
@@ -230,7 +241,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   private ChangeUpdate(
       @GerritPersonIdent PersonIdent serverIdent,
       NoteDbUpdateManager.Factory updateManagerFactory,
-      ChangeDraftUpdate.Factory draftUpdateFactory,
+      ChangeDraftUpdate.ChangeDraftUpdateFactory draftUpdateFactory,
       RobotCommentUpdate.Factory robotCommentUpdateFactory,
       DeleteCommentRewriter.Factory deleteCommentRewriterFactory,
       ServiceUserClassifier serviceUserClassifier,
@@ -248,11 +259,13 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     this.serviceUserClassifier = serviceUserClassifier;
     this.patchSetApprovalUuidGenerator = patchSetApprovalUuidGenerator;
     this.approvals = approvals(labelNameComparator);
+    this.user = user;
   }
 
   public ObjectId commit() throws IOException {
     try (RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
-      try (NoteDbUpdateManager updateManager = updateManagerFactory.create(getProjectName())) {
+      try (NoteDbUpdateManager updateManager =
+          updateManagerFactory.create(getProjectName(), user)) {
         updateManager.add(this);
         updateManager.execute();
       }
@@ -381,10 +394,10 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     verifyComment(c);
     createDraftUpdateIfNull();
     if (status == HumanComment.Status.DRAFT) {
-      draftUpdate.putComment(c);
+      draftUpdate.putDraftComment(c);
     } else {
       comments.add(c);
-      draftUpdate.markCommentPublished(c);
+      draftUpdate.markDraftCommentAsPublished(c);
     }
   }
 
@@ -396,7 +409,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
 
   public void deleteComment(HumanComment c) {
     verifyComment(c);
-    createDraftUpdateIfNull().deleteComment(c);
+    createDraftUpdateIfNull().addDraftCommentForDeletion(c);
   }
 
   public void deleteCommentByRewritingHistory(String uuid, String newMessage) {
@@ -438,8 +451,8 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     }
   }
 
-  public void setTopic(String topic) throws ValidationException {
-
+  public void setTopic(String topic, TopicValidator validator) throws ValidationException {
+    validator.validateSize(topic);
     if (isIllegalTopic(topic)) {
       throw new ValidationException("topic can't contain quotation marks.");
     }
@@ -460,6 +473,23 @@ public class ChangeUpdate extends AbstractChangeUpdate {
 
   public void setHashtags(Set<String> hashtags) {
     this.hashtags = hashtags;
+  }
+
+  public void addCustomKeyedValue(String key, String value) throws ValidationException {
+    if (key.length() > MAX_CUSTOM_KEY_LENGTH) {
+      throw new ValidationException("Custom Key is too long.");
+    }
+    if (value.length() > MAX_CUSTOM_KEYED_VALUE_LENGTH) {
+      throw new ValidationException("Custom Keyed value is too long.");
+    }
+    this.customKeyedValues.put(key, value);
+  }
+
+  public void deleteCustomKeyedValue(String key) throws ValidationException {
+    if (key.length() > MAX_CUSTOM_KEY_LENGTH) {
+      throw new ValidationException("Custom Key is too long.");
+    }
+    this.customKeyedValues.put(key, "");
   }
 
   /**
@@ -637,28 +667,30 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       Map<ObjectId, RevisionNoteBuilder> toUpdate) {
     // Prohibit various kinds of illegal operations on comments.
     Set<Comment.Key> existing = new HashSet<>();
+    List<Comment> draftsToFix = new ArrayList<>();
     for (ChangeRevisionNote rn : existingNotes.values()) {
       for (Comment c : rn.getEntities()) {
         existing.add(c.key);
-        if (draftUpdate != null) {
-          // Take advantage of an existing update on All-Users to prune any
-          // published comments from drafts. NoteDbUpdateManager takes care of
-          // ensuring that this update is applied before its dependent draft
-          // update.
-          //
-          // Deleting aggressively in this way, combined with filtering out
-          // duplicate published/draft comments in ChangeNotes#getDraftComments,
-          // makes up for the fact that updates between the change repo and
-          // All-Users are not atomic.
-          //
-          // TODO(dborowitz): We might want to distinguish between deleted
-          // drafts that we're fixing up after the fact by putting them in a
-          // separate commit. But note that we don't care much about the commit
-          // graph of the draft ref, particularly because the ref is completely
-          // deleted when all drafts are gone.
-          draftUpdate.deleteComment(c.getCommitId(), c.key);
-        }
+        draftsToFix.add(c);
       }
+    }
+    if (draftUpdate != null) {
+      // Take advantage of an existing update on All-Users to prune any
+      // published comments from drafts. NoteDbUpdateManager takes care of
+      // ensuring that this update is applied before its dependent draft
+      // update.
+      //
+      // Deleting aggressively in this way, combined with filtering out
+      // duplicate published/draft comments in ChangeNotes#getDraftsByChangeAndDraftAuthor,
+      // makes up for the fact that updates between the change repo and
+      // All-Users are not atomic.
+      //
+      // TODO(dborowitz): We might want to distinguish between deleted
+      // drafts that we're fixing up after the fact by putting them in a
+      // separate commit. But note that we don't care much about the commit
+      // graph of the draft ref, particularly because the ref is completely
+      // deleted when all drafts are gone.
+      draftUpdate.addAllDraftCommentsForDeletion(draftsToFix);
     }
 
     for (RevisionNoteBuilder b : toUpdate.values()) {
@@ -762,6 +794,10 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     Joiner comma = Joiner.on(',');
     if (hashtags != null) {
       addFooter(msg, FOOTER_HASHTAGS, comma.join(hashtags));
+    }
+
+    for (Map.Entry<String, String> entry : customKeyedValues.entrySet()) {
+      addFooter(msg, FOOTER_CUSTOM_KEYED_VALUE, entry.getKey() + "=" + entry.getValue());
     }
 
     if (tag != null) {
@@ -1159,6 +1195,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
         && submissionId == null
         && submitRecords == null
         && hashtags == null
+        && customKeyedValues.isEmpty()
         && topic == null
         && commit == null
         && psState == null

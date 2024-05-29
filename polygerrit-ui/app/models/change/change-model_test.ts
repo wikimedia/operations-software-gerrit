@@ -22,6 +22,7 @@ import {
   waitUntilObserved,
 } from '../../test/test-utils';
 import {
+  BasePatchSetNum,
   CommitId,
   EDIT,
   NumericChangeId,
@@ -29,11 +30,14 @@ import {
   PatchSetNum,
   PatchSetNumber,
 } from '../../types/common';
-import {ParsedChangeInfo} from '../../types/types';
+import {
+  EditRevisionInfo,
+  LoadingStatus,
+  ParsedChangeInfo,
+} from '../../types/types';
 import {getAppContext} from '../../services/app-context';
 import {
   ChangeState,
-  LoadingStatus,
   updateChangeWithEdit,
   updateRevisionsWithCommitShas,
 } from './change-model';
@@ -74,7 +78,9 @@ suite('updateChangeWithEdit() tests', () => {
     let change: ParsedChangeInfo | undefined = createParsedChange();
     const edit = createEditInfo();
     change = updateChangeWithEdit(change, edit);
-    const editRev = change?.revisions[`${edit.commit.commit}`];
+    const editRev = change?.revisions[
+      `${edit.commit.commit}`
+    ] as EditRevisionInfo;
     assert.isDefined(editRev);
     assert.equal(editRev?._number, EDIT);
     assert.equal(editRev?.basePatchNum, edit.base_patch_set_number);
@@ -221,7 +227,7 @@ suite('change model tests', () => {
     });
   });
 
-  test('fireShowChange', async () => {
+  test('fireShowChange from overview', async () => {
     await waitForLoadingStatus(LoadingStatus.NOT_LOADED);
     const pluginLoader = testResolver(pluginLoaderToken);
     const jsApiService = pluginLoader.jsApiService;
@@ -229,6 +235,30 @@ suite('change model tests', () => {
 
     changeViewModel.updateState({
       childView: ChangeChildView.OVERVIEW,
+      basePatchNum: 2 as BasePatchSetNum,
+      patchNum: 3 as PatchSetNumber,
+    });
+    changeModel.updateState({
+      change: createParsedChange(),
+      mergeable: true,
+    });
+
+    assert.isTrue(showChangeStub.calledOnce);
+    const detail: ShowChangeDetail = showChangeStub.lastCall.firstArg;
+    assert.equal(detail.change?._number, createParsedChange()._number);
+    assert.equal(detail.patchNum, 3 as PatchSetNumber);
+    assert.equal(detail.basePatchNum, 2 as BasePatchSetNum);
+    assert.equal(detail.info.mergeable, true);
+  });
+
+  test('fireShowChange from diff', async () => {
+    await waitForLoadingStatus(LoadingStatus.NOT_LOADED);
+    const pluginLoader = testResolver(pluginLoaderToken);
+    const jsApiService = pluginLoader.jsApiService;
+    const showChangeStub = sinon.stub(jsApiService, 'handleShowChange');
+
+    changeViewModel.updateState({
+      childView: ChangeChildView.DIFF,
       patchNum: 1 as PatchSetNumber,
     });
     changeModel.updateState({
@@ -276,11 +306,11 @@ suite('change model tests', () => {
 
     // Reloading same change
     document.dispatchEvent(new CustomEvent('reload'));
-    state = await waitForLoadingStatus(LoadingStatus.RELOADING);
+    state = await waitForLoadingStatus(LoadingStatus.LOADING);
     assert.equal(stub.callCount, 3);
     assert.equal(stub.getCall(1).firstArg, undefined);
     assert.equal(stub.getCall(2).firstArg, TEST_NUMERIC_CHANGE_ID);
-    assert.deepEqual(state?.change, updateRevisionsWithCommitShas(knownChange));
+    assert.deepEqual(state?.change, undefined);
 
     promise.resolve(knownChange);
     state = await waitForLoadingStatus(LoadingStatus.LOADED);

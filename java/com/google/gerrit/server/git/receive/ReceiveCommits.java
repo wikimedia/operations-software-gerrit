@@ -34,7 +34,6 @@ import static com.google.gerrit.server.git.validators.CommitValidators.NEW_PATCH
 import static com.google.gerrit.server.mail.MailUtil.getRecipientsFromFooters;
 import static com.google.gerrit.server.project.ProjectCache.illegalState;
 import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.CHANGE_MODIFICATION;
-import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.DIRECT_PUSH;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.joining;
@@ -110,9 +109,9 @@ import com.google.gerrit.metrics.Field;
 import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.server.CancellationMetrics;
 import com.google.gerrit.server.ChangeUtil;
-import com.google.gerrit.server.CommentsUtil;
 import com.google.gerrit.server.CreateGroupPermissionSyncer;
 import com.google.gerrit.server.DeadlineChecker;
+import com.google.gerrit.server.DraftCommentsReader;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.InvalidDeadlineException;
 import com.google.gerrit.server.PatchSetUtil;
@@ -120,6 +119,7 @@ import com.google.gerrit.server.PublishCommentUtil;
 import com.google.gerrit.server.PublishCommentsOp;
 import com.google.gerrit.server.RequestInfo;
 import com.google.gerrit.server.RequestListener;
+import com.google.gerrit.server.Sequences;
 import com.google.gerrit.server.account.AccountResolver;
 import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.cancellation.RequestCancelledException;
@@ -134,7 +134,6 @@ import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.PluginConfig;
 import com.google.gerrit.server.config.ProjectConfigEntry;
-import com.google.gerrit.server.config.UrlFormatter;
 import com.google.gerrit.server.edit.ChangeEdit;
 import com.google.gerrit.server.edit.ChangeEditUtil;
 import com.google.gerrit.server.git.BanCommit;
@@ -161,7 +160,6 @@ import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.gerrit.server.mail.MailUtil.MailRecipients;
 import com.google.gerrit.server.notedb.ChangeNotes;
-import com.google.gerrit.server.notedb.Sequences;
 import com.google.gerrit.server.patch.AutoMerger;
 import com.google.gerrit.server.patch.PatchSetInfoFactory;
 import com.google.gerrit.server.permissions.ChangePermission;
@@ -260,9 +258,9 @@ import org.kohsuke.args4j.Option;
  *
  * <p>Conceptually, most use of Gerrit is a push of some commits to refs/for/BRANCH. However, the
  * receive-pack protocol that this is based on allows multiple ref updates to be processed at once.
- * So we have to be prepared to also handle normal pushes (refs/heads/BRANCH), and legacy pushes
- * (refs/changes/CHANGE). It is hard to split this class up further, because normal pushes can also
- * result in updates to reviews, through the autoclose mechanism.
+ * So we have to be prepared to also handle normal pushes (refs/heads/BRANCH). It is hard to split
+ * this class up further, because normal pushes can also result in updates to reviews, through the
+ * autoclose mechanism.
  */
 class ReceiveCommits {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -271,6 +269,8 @@ class ReceiveCommits {
   private static final String CANNOT_DELETE_CONFIG =
       "Cannot delete project configuration from '" + RefNames.REFS_CONFIG + "'";
   private static final String INTERNAL_SERVER_ERROR = "internal server error";
+
+  public static final String DIRECT_PUSH_JUSTIFICATION_OPTION = "push-justification";
 
   interface Factory {
     ReceiveCommits create(
@@ -371,8 +371,9 @@ class ReceiveCommits {
   private final ChangeInserter.Factory changeInserterFactory;
   private final ChangeNotes.Factory notesFactory;
   private final ChangeReportFormatter changeFormatter;
+  private final ChangeUtil changeUtil;
   private final CmdLineParser.Factory optionParserFactory;
-  private final CommentsUtil commentsUtil;
+  private final DraftCommentsReader draftCommentsReader;
   private final PluginSetContext<CommentValidator> commentValidators;
   private final BranchCommitValidator.Factory commitValidatorFactory;
   private final Config config;
@@ -407,7 +408,6 @@ class ReceiveCommits {
   private final ProjectConfig.Factory projectConfigFactory;
   private final SetPrivateOp.Factory setPrivateOpFactory;
   private final ReplyAttentionSetUpdates replyAttentionSetUpdates;
-  private final DynamicItem<UrlFormatter> urlFormatter;
   private final AutoMerger autoMerger;
 
   // Assisted injected fields.
@@ -424,7 +424,6 @@ class ReceiveCommits {
   private final Repository repo;
 
   // Collections populated during processing.
-  private final List<UpdateGroupsRequest> updateGroups;
   private final Queue<ValidationMessage> messages;
   /** Multimap of error text to refnames that produced that error. */
   private final ListMultimap<String, String> errors;
@@ -461,8 +460,9 @@ class ReceiveCommits {
       ChangeInserter.Factory changeInserterFactory,
       ChangeNotes.Factory notesFactory,
       DynamicItem<ChangeReportFormatter> changeFormatterProvider,
+      ChangeUtil changeUtil,
       CmdLineParser.Factory optionParserFactory,
-      CommentsUtil commentsUtil,
+      DraftCommentsReader draftCommentsReader,
       BranchCommitValidator.Factory commitValidatorFactory,
       CreateGroupPermissionSyncer createGroupPermissionSyncer,
       CreateRefControl createRefControl,
@@ -496,7 +496,6 @@ class ReceiveCommits {
       TagCache tagCache,
       SetPrivateOp.Factory setPrivateOpFactory,
       ReplyAttentionSetUpdates replyAttentionSetUpdates,
-      DynamicItem<UrlFormatter> urlFormatter,
       AutoMerger autoMerger,
       @Assisted ProjectState projectState,
       @Assisted IdentifiedUser user,
@@ -511,8 +510,9 @@ class ReceiveCommits {
     this.batchUpdateFactory = batchUpdateFactory;
     this.cancellationMetrics = cancellationMetrics;
     this.changeFormatter = changeFormatterProvider.get();
+    this.changeUtil = changeUtil;
     this.changeInserterFactory = changeInserterFactory;
-    this.commentsUtil = commentsUtil;
+    this.draftCommentsReader = draftCommentsReader;
     this.commentValidators = commentValidators;
     this.commitValidatorFactory = commitValidatorFactory;
     this.config = config;
@@ -551,7 +551,6 @@ class ReceiveCommits {
     this.projectConfigFactory = projectConfigFactory;
     this.setPrivateOpFactory = setPrivateOpFactory;
     this.replyAttentionSetUpdates = replyAttentionSetUpdates;
-    this.urlFormatter = urlFormatter;
     this.autoMerger = autoMerger;
 
     // Assisted injected fields.
@@ -573,7 +572,6 @@ class ReceiveCommits {
     messages = new ConcurrentLinkedQueue<>();
     pushOptions = LinkedListMultimap.create();
     replaceByChange = new LinkedHashMap<>();
-    updateGroups = new ArrayList<>();
 
     used = false;
 
@@ -763,7 +761,9 @@ class ReceiveCommits {
         String pushKind = magicBranch != null && magicBranch.submit ? "direct_submit" : "magic";
         metrics.pushCount.increment(pushKind, project.getName(), getUpdateType(magicCommands));
       }
-      try (RefUpdateContext ctx = RefUpdateContext.open(DIRECT_PUSH)) {
+      Optional<String> justification =
+          pushOptions.get(DIRECT_PUSH_JUSTIFICATION_OPTION).stream().findFirst();
+      try (RefUpdateContext ctx = RefUpdateContext.openDirectPush(justification)) {
         if (!regularCommands.isEmpty()) {
           metrics.pushCount.increment("direct", project.getName(), getUpdateType(regularCommands));
         }
@@ -1115,7 +1115,8 @@ class ReceiveCommits {
               continue;
             }
             List<HumanComment> drafts =
-                commentsUtil.draftByChangeAuthor(changeNotes.get(), user.getAccountId());
+                draftCommentsReader.getDraftsByChangeAndDraftAuthor(
+                    changeNotes.get(), user.getAccountId());
             if (drafts.isEmpty()) {
               // If no comments, attention set shouldn't update since the user
               // didn't reply.
@@ -1131,9 +1132,6 @@ class ReceiveCommits {
       for (CreateRequest create : newChanges) {
         create.addOps(bu);
       }
-
-      logger.atFine().log("Adding %d group update requests", newChanges.size());
-      updateGroups.forEach(r -> r.addOps(bu));
 
       logger.atFine().log("Executing batch");
       try {
@@ -2257,7 +2255,7 @@ class ReceiveCommits {
 
       if (magicBranch != null && magicBranch.shouldPublishComments()) {
         List<HumanComment> drafts =
-            commentsUtil.draftByChangeAuthor(
+            draftCommentsReader.getDraftsByChangeAndDraftAuthor(
                 notesFactory.createChecked(change), user.getAccountId());
         ImmutableList<CommentForValidation> draftsForValidation =
             drafts.stream()
@@ -2296,7 +2294,7 @@ class ReceiveCommits {
       } catch (IOException e) {
         throw new StorageException("Can't parse commit", e);
       }
-      List<String> idList = ChangeUtil.getChangeIdsFromFooter(create.commit, urlFormatter.get());
+      List<String> idList = changeUtil.getChangeIdsFromFooter(create.commit);
 
       if (idList.isEmpty()) {
         messages.add(
@@ -2366,27 +2364,12 @@ class ReceiveCommits {
           boolean commitAlreadyTracked = !existingPatchSets.isEmpty();
           if (commitAlreadyTracked) {
             alreadyTracked++;
-            // Corner cases where an existing commit might need a new group:
-            // A) Existing commit has a null group; wasn't assigned during schema
-            //    upgrade, or schema upgrade is performed on a running server.
-            // B) Let A<-B<-C, then:
-            //      1. Push A to refs/heads/master
-            //      2. Push B to refs/for/master
-            //      3. Force push A~ to refs/heads/master
-            //      4. Push C to refs/for/master.
-            //      B will be in existing so we aren't replacing the patch set. It
-            //      used to have its own group, but now needs to to be changed to
-            //      A's group.
-            // C) Commit is a PatchSet of a pre-existing change uploaded with a
-            //    different target branch.
-            existingPatchSets.stream()
-                .forEach(i -> updateGroups.add(new UpdateGroupsRequest(i, c)));
             if (!(newChangeForAllNotInTarget || magicBranch.base != null)) {
               continue;
             }
           }
 
-          List<String> idList = ChangeUtil.getChangeIdsFromFooter(c, urlFormatter.get());
+          List<String> idList = changeUtil.getChangeIdsFromFooter(c);
           if (!idList.isEmpty()) {
             pending.put(c, lookupByChangeKey(c, Change.key(idList.get(idList.size() - 1).trim())));
           } else {
@@ -2560,9 +2543,6 @@ class ReceiveCommits {
       }
       for (ReplaceRequest replace : replaceByChange.values()) {
         replace.groups = ImmutableList.copyOf(groups.get(replace.newCommitId));
-      }
-      for (UpdateGroupsRequest update : updateGroups) {
-        update.groups = ImmutableList.copyOf(groups.get(update.commit));
       }
       logger.atFine().log("Finished updating groups from GroupCollector");
       return ImmutableList.copyOf(newChanges);
@@ -3262,42 +3242,6 @@ class ReceiveCommits {
     }
   }
 
-  private class UpdateGroupsRequest {
-    final PatchSet.Id psId;
-    final RevCommit commit;
-    List<String> groups = ImmutableList.of();
-
-    UpdateGroupsRequest(PatchSet.Id psId, RevCommit commit) {
-      this.psId = psId;
-      this.commit = commit;
-    }
-
-    private void addOps(BatchUpdate bu) {
-      bu.addOp(
-          psId.changeId(),
-          new BatchUpdateOp() {
-            @Override
-            public boolean updateChange(ChangeContext ctx) {
-              PatchSet ps = psUtil.get(ctx.getNotes(), psId);
-              List<String> oldGroups = ps.groups();
-              if (oldGroups == null) {
-                if (groups == null) {
-                  return false;
-                }
-              } else if (sameGroups(oldGroups, groups)) {
-                return false;
-              }
-              ctx.getUpdate(psId).setGroups(groups);
-              return true;
-            }
-          });
-    }
-
-    private boolean sameGroups(List<String> a, List<String> b) {
-      return Sets.newHashSet(a).equals(Sets.newHashSet(b));
-    }
-  }
-
   private class UpdateOneRefOp implements RepoOnlyOp {
     final ReceiveCommand cmd;
 
@@ -3548,8 +3492,7 @@ class ReceiveCommits {
                         }
                       }
 
-                      for (String changeId :
-                          ChangeUtil.getChangeIdsFromFooter(c, urlFormatter.get())) {
+                      for (String changeId : changeUtil.getChangeIdsFromFooter(c)) {
                         if (changeDataByKey == null) {
                           changeDataByKey =
                               retryHelper

@@ -57,6 +57,8 @@ import {fixture, html, assert} from '@open-wc/testing';
 import {Modifier} from '../../../utils/dom-util';
 import {testResolver} from '../../../test/common-test-setup';
 import {FileMode} from '../../../utils/file-util';
+import {SinonStubbedMember} from 'sinon';
+import {GrDiffCursor} from '../../../embed/diff/gr-diff-cursor/gr-diff-cursor';
 
 suite('gr-diff a11y test', () => {
   test('audit', async () => {
@@ -74,7 +76,6 @@ function createFiles(
 
 suite('gr-file-list tests', () => {
   let element: GrFileList;
-
   let saveStub: sinon.SinonStub;
 
   suite('basic tests', async () => {
@@ -104,11 +105,9 @@ suite('gr-file-list tests', () => {
       element.numFilesShown = 200;
       element.basePatchNum = PARENT;
       element.patchNum = 2 as RevisionPatchSetNum;
-      saveStub = sinon
-        .stub(element, '_saveReviewedState')
-        .callsFake(() => Promise.resolve());
-      await element.updateComplete;
+      saveStub = sinon.stub(element, '_saveReviewedState').resolves();
       element.showSizeBars = true;
+      await element.updateComplete;
       // Wait for expandedFilesChanged to complete.
       await waitEventLoop();
     });
@@ -205,14 +204,16 @@ suite('gr-file-list tests', () => {
             </div>
           </div>
           <div class="desktop" role="gridcell">
-            <div aria-hidden="true" class="sizeBars"></div>
+            <div aria-hidden="true" class="sizeBars">
+              <svg><!-- contents asserted separately below --></svg>
+            </div>
           </div>
           <div class="stats" role="gridcell">
             <div>
-              <span aria-label="9 added" class="added" tabindex="0"> +9 </span>
               <span aria-label="0 removed" class="removed" tabindex="0">
                 -0
               </span>
+              <span aria-label="9 added" class="added" tabindex="0"> +9 </span>
               <span hidden=""> +/-0 B </span>
             </div>
           </div>
@@ -259,6 +260,31 @@ suite('gr-file-list tests', () => {
             </span>
           </div>
         </div>`
+      );
+      // <svg> and contents are ignored by assert.dom.equal() above, so we need
+      // a separate assert.lightDom.equal() for it here.
+      const sizeBarsSVG = queryAndAssert<SVGSVGElement>(
+        element,
+        '.sizeBars > svg'
+      );
+      assert.lightDom.equal(
+        sizeBarsSVG,
+        /* HTML */ `
+          <rect
+            height="8"
+            width="0"
+            x="0"
+            y="0"
+            fill="var(--negative-red-text-color)"
+          ></rect>
+          <rect
+            height="8"
+            width="60"
+            x="1"
+            y="0"
+            fill="var(--positive-green-text-color)"
+          ></rect>
+        `
       );
     });
 
@@ -396,6 +422,7 @@ suite('gr-file-list tests', () => {
       element.files = createFiles(250);
       await element.updateComplete;
       await waitEventLoop();
+      assert.equal(200, element.numFilesShown);
 
       assert.equal(
         queryAll<HTMLDivElement>(element, '.file-row').length,
@@ -420,17 +447,7 @@ suite('gr-file-list tests', () => {
       await waitEventLoop();
 
       assert.equal(element.numFilesShown, 250);
-      assert.equal(element.shownFiles.length, 250);
       assert.isTrue(controlRow.classList.contains('invisible'));
-    });
-
-    test('rendering each row calls the reportRenderedRow method', async () => {
-      const renderedStub = sinon.stub(element, 'reportRenderedRow');
-      element.files = createFiles(10);
-      await element.updateComplete;
-
-      assert.equal(queryAll<HTMLDivElement>(element, '.file-row').length, 10);
-      assert.equal(renderedStub.callCount, 10);
     });
 
     test('calculate totals for patch number', async () => {
@@ -723,28 +740,6 @@ suite('gr-file-list tests', () => {
       element.basePatchNum = PARENT;
       element.patchNum = 1 as RevisionPatchSetNum;
       assert.equal(
-        element.computeDraftsString({
-          __path: 'unresolved.file',
-          size: 0,
-          size_delta: 0,
-        }),
-        '1 draft'
-      );
-
-      element.basePatchNum = 1 as BasePatchSetNum;
-      element.patchNum = 2 as RevisionPatchSetNum;
-      assert.equal(
-        element.computeDraftsString({
-          __path: 'unresolved.file',
-          size: 0,
-          size_delta: 0,
-        }),
-        '1 draft'
-      );
-
-      element.basePatchNum = PARENT;
-      element.patchNum = 1 as RevisionPatchSetNum;
-      assert.equal(
         element.computeDraftsStringMobile({
           __path: 'unresolved.file',
           size: 0,
@@ -789,28 +784,6 @@ suite('gr-file-list tests', () => {
       element.basePatchNum = PARENT;
       element.patchNum = 1 as RevisionPatchSetNum;
       assert.equal(
-        element.computeDraftsString({
-          __path: 'myfile.txt',
-          size: 0,
-          size_delta: 0,
-        }),
-        ''
-      );
-
-      element.basePatchNum = 1 as BasePatchSetNum;
-      element.patchNum = 2 as RevisionPatchSetNum;
-      assert.equal(
-        element.computeDraftsString({
-          __path: 'myfile.txt',
-          size: 0,
-          size_delta: 0,
-        }),
-        ''
-      );
-
-      element.basePatchNum = PARENT;
-      element.patchNum = 1 as RevisionPatchSetNum;
-      assert.equal(
         element.computeDraftsStringMobile({
           __path: 'myfile.txt',
           size: 0,
@@ -845,28 +818,6 @@ suite('gr-file-list tests', () => {
       element.patchNum = 2 as RevisionPatchSetNum;
       assert.equal(
         element.computeCommentsStringMobile({
-          __path: 'file_added_in_rev2.txt',
-          size: 0,
-          size_delta: 0,
-        }),
-        ''
-      );
-
-      element.basePatchNum = PARENT;
-      element.patchNum = 1 as RevisionPatchSetNum;
-      assert.equal(
-        element.computeDraftsString({
-          __path: 'file_added_in_rev2.txt',
-          size: 0,
-          size_delta: 0,
-        }),
-        ''
-      );
-
-      element.basePatchNum = 1 as BasePatchSetNum;
-      element.patchNum = 2 as RevisionPatchSetNum;
-      assert.equal(
-        element.computeDraftsString({
           __path: 'file_added_in_rev2.txt',
           size: 0,
           size_delta: 0,
@@ -916,28 +867,6 @@ suite('gr-file-list tests', () => {
           size_delta: 0,
         }),
         '3c'
-      );
-
-      element.basePatchNum = PARENT;
-      element.patchNum = 1 as RevisionPatchSetNum;
-      assert.equal(
-        element.computeDraftsString({
-          __path: '/COMMIT_MSG',
-          size: 0,
-          size_delta: 0,
-        }),
-        '2 drafts'
-      );
-
-      element.basePatchNum = 1 as BasePatchSetNum;
-      element.patchNum = 2 as RevisionPatchSetNum;
-      assert.equal(
-        element.computeDraftsString({
-          __path: '/COMMIT_MSG',
-          size: 0,
-          size_delta: 0,
-        }),
-        '2 drafts'
       );
 
       element.basePatchNum = PARENT;
@@ -1444,7 +1373,6 @@ suite('gr-file-list tests', () => {
       await waitEventLoop();
 
       const renderSpy = sinon.spy(element, 'renderInOrder');
-      const collapseStub = sinon.stub(element, 'clearCollapsedDiffs');
 
       assert.equal(
         queryAndAssert<GrIcon>(element, 'gr-icon').icon,
@@ -1456,7 +1384,6 @@ suite('gr-file-list tests', () => {
       // Wait for expandedFilesChanged to finish.
       await waitEventLoop();
 
-      assert.equal(collapseStub.lastCall.args[0].length, 0);
       assert.equal(
         queryAndAssert<GrIcon>(element, 'gr-icon').icon,
         'expand_less'
@@ -1475,11 +1402,9 @@ suite('gr-file-list tests', () => {
       );
       assert.equal(renderSpy.callCount, 1);
       assert.isFalse(element.expandedFiles.some(f => f.path === path));
-      assert.equal(collapseStub.lastCall.args[0].length, 1);
     });
 
     test('expandAllDiffs and collapseAllDiffs', async () => {
-      const collapseStub = sinon.stub(element, 'clearCollapsedDiffs');
       assertIsDefined(element.diffCursor);
       const reInitStub = sinon.stub(element.diffCursor, 'reInitAndUpdateStops');
 
@@ -1494,7 +1419,6 @@ suite('gr-file-list tests', () => {
       await waitEventLoop();
       assert.equal(element.filesExpanded, FilesExpandedState.ALL);
       assert.isTrue(reInitStub.calledTwice);
-      assert.equal(collapseStub.lastCall.args[0].length, 0);
 
       element.collapseAllDiffs();
       await element.updateComplete;
@@ -1502,7 +1426,6 @@ suite('gr-file-list tests', () => {
       await waitEventLoop();
       assert.equal(element.expandedFiles.length, 0);
       assert.equal(element.filesExpanded, FilesExpandedState.NONE);
-      assert.equal(collapseStub.lastCall.args[0].length, 1);
     });
 
     test('expandedFilesChanged', async () => {
@@ -1536,19 +1459,6 @@ suite('gr-file-list tests', () => {
       await element.updateComplete;
       await waitEventLoop();
       await promise;
-    });
-
-    test('clearCollapsedDiffs', () => {
-      // Have to type as any because the type is 'GrDiffHost'
-      // which would require stubbing so many different
-      // methods / properties that it isn't worth it.
-      const diff = {
-        cancel: sinon.stub(),
-        clearDiffContent: sinon.stub(),
-      } as any;
-      element.clearCollapsedDiffs([diff]);
-      assert.isTrue(diff.cancel.calledOnce);
-      assert.isTrue(diff.clearDiffContent.calledOnce);
     });
 
     test('filesExpanded value updates to correct enum', async () => {
@@ -1858,7 +1768,7 @@ suite('gr-file-list tests', () => {
         maxDeleted: 0,
         maxAdditionWidth: 0,
         maxDeletionWidth: 0,
-        deletionOffset: 0,
+        additionOffset: 0,
       };
 
       element.files = [];
@@ -1906,7 +1816,7 @@ suite('gr-file-list tests', () => {
         maxDeleted: 0,
         maxAdditionWidth: 60,
         maxDeletionWidth: 0,
-        deletionOffset: 60,
+        additionOffset: 60,
       };
 
       // Uses half the space when file is half the largest addition and there
@@ -1934,22 +1844,33 @@ suite('gr-file-list tests', () => {
       assert.equal(element.computeBarAdditionWidth(file, stats), 1.5);
     });
 
-    test('_computeBarAdditionX', () => {
+    test('computeBarDeletionX', () => {
       const file = {
         __path: 'foo/bar.baz',
-        lines_inserted: 5,
-        lines_deleted: 0,
+        lines_inserted: 0,
+        lines_deleted: 5,
         size: 0,
         size_delta: 0,
       };
+      const stats = {
+        maxInserted: 0,
+        maxDeleted: 10,
+        maxAdditionWidth: 0,
+        maxDeletionWidth: 60,
+        additionOffset: 60,
+      };
+      assert.equal(element.computeBarDeletionX(file, stats), 30);
+    });
+
+    test('computeBarAdditionX', () => {
       const stats = {
         maxInserted: 10,
         maxDeleted: 0,
         maxAdditionWidth: 60,
         maxDeletionWidth: 0,
-        deletionOffset: 60,
+        additionOffset: 60,
       };
-      assert.equal(element.computeBarAdditionX(file, stats), 30);
+      assert.equal(element.computeBarAdditionX(stats), 60);
     });
 
     test('computeBarDeletionWidth', () => {
@@ -1965,7 +1886,7 @@ suite('gr-file-list tests', () => {
         maxDeleted: 10,
         maxAdditionWidth: 30,
         maxDeletionWidth: 30,
-        deletionOffset: 31,
+        additionOffset: 31,
       };
 
       // Uses a quarter the space when file is half the largest deletions and
@@ -1993,7 +1914,7 @@ suite('gr-file-list tests', () => {
       assert.equal(element.computeBarDeletionWidth(file, stats), 1.5);
     });
 
-    test('_computeSizeBarsClass', () => {
+    test('computeSizeBarsClass', () => {
       element.showSizeBars = false;
       assert.equal(
         element.computeSizeBarsClass('foo/bar.baz'),
@@ -2240,7 +2161,7 @@ suite('gr-file-list tests', () => {
 
     suite('n key presses', () => {
       let nextCommentStub: sinon.SinonStub;
-      let nextChunkStub: sinon.SinonStub;
+      let nextChunkStub: SinonStubbedMember<GrDiffCursor['moveToNextChunk']>;
       let fileRows: NodeListOf<HTMLDivElement>;
 
       setup(() => {

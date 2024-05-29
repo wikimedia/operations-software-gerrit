@@ -906,7 +906,7 @@ Change owner, server administrators and project owners can always flip
 the Work In Progress bit of the change (even without having the
 `Toggle Work In Progress state` access right assigned).
 
-Must be assigned on the target branch ref (i.e. on 'refs/heads/*', not on
+Must be assigned on the target branch ref (i.e. on 'refs/heads/\*', not on
 'refs/for/*').
 
 [[category_delete_own_changes]]
@@ -951,6 +951,20 @@ The change owner, branch owners, project owners, and site administrators
 can always edit or remove hashtags (even without having the `Edit Hashtags`
 access right assigned).
 
+
+[[category_edit_custom_keyed_values]]
+=== Edit Custom Keyed Values
+
+This category permits users to add or remove
+custom keyed values on a change that is uploaded for review. Custom Keyed Values
+are used by plugins to store extra data. They are not surfaced in the UI, unless
+a plugin explicitly does so.
+
+The change owner and site administrators can always edit or remove custom
+keyed values (even without having the `Edit Custom Keyed Values` access right
+assigned).
+
+
 [[example_roles]]
 == Examples of typical roles in a project
 
@@ -970,7 +984,7 @@ any changes.
 
 Suggested access rights to grant:
 
-* xref:category_read[`Read`] on 'refs/heads/\*'
+* xref:category_read[`Read`] on 'refs/heads/*'
 * xref:category_push[`Push`] to 'refs/for/refs/heads/*'
 * link:config-labels.html#label_Code-Review[`Code-Review`] with range '-1' to '+1' for 'refs/heads/*'
 
@@ -998,7 +1012,7 @@ exclusively.
 
 Suggested access rights to grant:
 
-* xref:category_read[`Read`] on 'refs/heads/\*'
+* xref:category_read[`Read`] on 'refs/heads/*'
 * xref:category_push[`Push`] to 'refs/for/refs/heads/*'
 * xref:category_push_merge[`Push merge commit`] to 'refs/for/refs/heads/*'
 * xref:category_forge_author[`Forge Author Identity`] to 'refs/heads/*'
@@ -1053,7 +1067,7 @@ and so the push right can be found under the optional section.
 
 Suggested access rights to grant, that won't block changes:
 
-* xref:category_read[`Read`] on 'refs/heads/\*'
+* xref:category_read[`Read`] on 'refs/heads/*'
 * link:config-labels.html#label_Code-Review[`Label: Code-Review`] with range '-1' to '0' for 'refs/heads/*'
 * link:config-labels.html#label_Verified[`Label: Verified`] with range '0' to '+1' for 'refs/heads/*'
 
@@ -1076,7 +1090,7 @@ Suggested access rights to grant:
 * <<examples_developer,Developer rights>>
 * <<category_push,`Push`>> to 'refs/heads/*'
 * <<category_push_merge,`Push merge commit`>> to 'refs/heads/*'
-* <<category_forge_committer,`Forge Committer Identity`>> to 'refs/for/refs/heads/*'
+* <<category_forge_committer,`Forge Committer Identity`>> to 'refs/heads/*'
 * <<category_create,`Create Reference`>> to 'refs/heads/*'
 * <<category_create_annotated,`Create Annotated Tag`>> to 'refs/tags/*'
 

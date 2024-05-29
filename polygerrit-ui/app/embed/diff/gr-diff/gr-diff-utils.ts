@@ -3,16 +3,19 @@
  * Copyright 2020 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import {BlameInfo, CommentRange} from '../../../types/common';
-import {FILE, LineNumber} from './gr-diff-line';
-import {Side} from '../../../constants/constants';
-import {DiffInfo} from '../../../types/diff';
+import {CommentRange} from '../../../types/common';
+import {Side, SpecialFilePath} from '../../../constants/constants';
 import {
+  DiffContextExpandedExternalDetail,
   DiffPreferencesInfo,
   DiffResponsiveMode,
+  DisplayLine,
+  FILE,
+  LOST,
+  LineNumber,
   RenderPreferences,
 } from '../../../api/diff';
-import {getBaseUrl} from '../../../utils/url-util';
+import {GrDiffGroup} from './gr-diff-group';
 
 /**
  * In JS, unicode code points above 0xFFFF occupy two elements of a string.
@@ -35,24 +38,6 @@ import {getBaseUrl} from '../../../utils/url-util';
  *   A proposed JS API: https://github.com/tc39/proposal-intl-segmenter
  */
 export const REGEX_TAB_OR_SURROGATE_PAIR = /\t|[\uD800-\uDBFF][\uDC00-\uDFFF]/;
-
-// If any line of the diff is more than the character limit, then disable
-// syntax highlighting for the entire file.
-export const SYNTAX_MAX_LINE_LENGTH = 500;
-
-export function countLines(diff?: DiffInfo, side?: Side) {
-  if (!diff?.content || !side) return 0;
-  return diff.content.reduce((sum, chunk) => {
-    const sideChunk = side === Side.LEFT ? chunk.a : chunk.b;
-    return sum + (sideChunk?.length ?? chunk.ab?.length ?? chunk.skip ?? 0);
-  }, 0);
-}
-
-export function isFileUnchanged(diff: DiffInfo) {
-  return !diff.content.some(
-    content => (content.a && !content.common) || (content.b && !content.common)
-  );
-}
 
 export function getResponsiveMode(
   prefs?: DiffPreferencesInfo,
@@ -103,9 +88,7 @@ export function getLineNumberByChild(node?: Node) {
 }
 
 export function lineNumberToNumber(lineNumber?: LineNumber | null): number {
-  if (!lineNumber) return 0;
-  if (lineNumber === 'LOST') return 0;
-  if (lineNumber === 'FILE') return 0;
+  if (typeof lineNumber !== 'number') return 0;
   return lineNumber;
 }
 
@@ -138,15 +121,15 @@ export function getLineNumber(lineEl?: Element | null): LineNumber | null {
   const lineNumberStr = lineEl.getAttribute('data-value');
   if (!lineNumberStr) return null;
   if (lineNumberStr === FILE) return FILE;
-  if (lineNumberStr === 'LOST') return 'LOST';
+  if (lineNumberStr === LOST) return LOST;
   const lineNumber = Number(lineNumberStr);
   return Number.isInteger(lineNumber) ? lineNumber : null;
 }
 
 export function getLine(threadEl: HTMLElement): LineNumber {
   const lineAtt = threadEl.getAttribute('line-num');
-  if (lineAtt === 'LOST') return lineAtt;
-  if (!lineAtt || lineAtt === 'FILE') return FILE;
+  if (lineAtt === LOST) return lineAtt;
+  if (!lineAtt || lineAtt === FILE) return FILE;
   const line = Number(lineAtt);
   if (isNaN(line)) throw new Error(`cannot parse line number: ${lineAtt}`);
   if (line < 1) throw new Error(`line number smaller than 1: ${line}`);
@@ -172,34 +155,164 @@ export function getRange(threadEl: HTMLElement): CommentRange | undefined {
   return range;
 }
 
+/**
+ * This is all the data that gr-diff extracts from comment thread elements,
+ * see `GrDiffThreadElement`. Otherwise gr-diff treats such elements as a black
+ * box.
+ */
+export interface GrDiffCommentThread {
+  side: Side;
+  line: LineNumber;
+  range?: CommentRange;
+  rootId?: string;
+}
+
+/**
+ * Retrieves all the data from a comment thread element that the gr-diff API
+ * contract defines for such elements.
+ */
+export function getDataFromCommentThreadEl(
+  threadEl?: EventTarget | null
+): GrDiffCommentThread | undefined {
+  if (!isThreadEl(threadEl)) return undefined;
+  const side = getSide(threadEl);
+  const line = getLine(threadEl);
+  const range = getRange(threadEl);
+  if (!side) return undefined;
+  if (!line) return undefined;
+  return {side, line, range, rootId: threadEl.rootId};
+}
+
+export interface KeyLocations {
+  left: {[key: string]: boolean};
+  right: {[key: string]: boolean};
+}
+
+/**
+ * "Context" is the number of lines that we are showing around diff chunks and
+ * commented lines. This typically comes from a user preference and is set to
+ * something like 3 or 10.
+ *
+ * `FULL_CONTEXT` means that the user wants to see the entire file. We could
+ * also call this "infinite context".
+ */
+export const FULL_CONTEXT = -1;
+
+export enum FullContext {
+  /** User has opted into showing the full context. */
+  YES = 'YES',
+  /** User has opted into showing only limited context. */
+  NO = 'NO',
+  /**
+   * User has not decided yet. Will see a warning message with two options then,
+   * if the file is too large.
+   */
+  UNDECIDED = 'UNDECIDED',
+}
+
+export function computeContext(
+  prefsContext: number | undefined,
+  showFullContext: FullContext,
+  defaultContext: number
+) {
+  if (showFullContext === FullContext.YES) {
+    return FULL_CONTEXT;
+  }
+  if (
+    prefsContext !== undefined &&
+    !(showFullContext === FullContext.NO && prefsContext === FULL_CONTEXT)
+  ) {
+    return prefsContext;
+  }
+  return defaultContext;
+}
+
+export function computeLineLength(
+  prefs: DiffPreferencesInfo,
+  path: string | undefined
+): number {
+  if (path === SpecialFilePath.COMMIT_MESSAGE) {
+    return 72;
+  }
+  const lineLength = prefs.line_length;
+  if (Number.isInteger(lineLength) && lineLength > 0) {
+    return lineLength;
+  }
+  return 100;
+}
+
+export function computeKeyLocations(
+  lineOfInterest: DisplayLine | undefined,
+  comments: GrDiffCommentThread[]
+) {
+  const keyLocations: KeyLocations = {left: {}, right: {}};
+
+  if (lineOfInterest) {
+    keyLocations[lineOfInterest.side][lineOfInterest.lineNum] = true;
+  }
+
+  for (const comment of comments) {
+    keyLocations[comment.side][comment.line] = true;
+    if (comment.range?.start_line) {
+      keyLocations[comment.side][comment.range.start_line] = true;
+    }
+  }
+
+  return keyLocations;
+}
+
+export function compareComments(
+  c1: GrDiffCommentThread,
+  c2: GrDiffCommentThread
+): number {
+  if (c1.side !== c2.side) {
+    return c1.side === Side.RIGHT ? 1 : -1;
+  }
+
+  if (c1.line !== c2.line) {
+    if (c1.line === FILE && c2.line !== FILE) return -1;
+    if (c1.line !== FILE && c2.line === FILE) return 1;
+    if (c1.line === LOST && c2.line !== LOST) return -1;
+    if (c1.line !== LOST && c2.line === LOST) return 1;
+    return (c1.line as number) - (c2.line as number);
+  }
+
+  if (c1.rootId !== c2.rootId) {
+    if (!c1.rootId) return -1;
+    if (!c2.rootId) return 1;
+    return c1.rootId > c2.rootId ? 1 : -1;
+  }
+
+  if (c1.range && c2.range) {
+    const r1 = JSON.stringify(c1.range);
+    const r2 = JSON.stringify(c2.range);
+    return r1 > r2 ? 1 : -1;
+  }
+  if (c1.range) return 1;
+  if (c2.range) return -1;
+
+  return 0;
+}
+
 // TODO: This type should be exposed to gr-diff clients in a separate type file.
 // For Gerrit these are instances of GrCommentThread, but other gr-diff users
 // have different HTML elements in use for comment threads.
 // TODO: Also document the required HTML attributes that thread elements must
-// have, e.g. 'diff-side', 'range', 'line-num'.
+// have, e.g. 'diff-side', 'range' (optional), 'line-num'.
+// Comment widgets are also required to have `comment-thread` in their css
+// class list.
 export interface GrDiffThreadElement extends HTMLElement {
   rootId: string;
 }
 
-export function isThreadEl(node: Node): node is GrDiffThreadElement {
+export function isThreadEl(
+  node?: Node | EventTarget | null
+): node is GrDiffThreadElement {
   return (
-    node.nodeType === Node.ELEMENT_NODE &&
+    !!node &&
+    (node as Node).nodeType === Node.ELEMENT_NODE &&
     (node as Element).classList.contains('comment-thread')
   );
-}
-
-/**
- * @return whether any of the lines in diff are longer
- * than SYNTAX_MAX_LINE_LENGTH.
- */
-export function anyLineTooLong(diff?: DiffInfo) {
-  if (!diff) return false;
-  return diff.content.some(section => {
-    const lines = section.ab
-      ? section.ab
-      : (section.a || []).concat(section.b || []);
-    return lines.some(line => line.length >= SYNTAX_MAX_LINE_LENGTH);
-  });
 }
 
 /**
@@ -342,56 +455,10 @@ export function formatText(
   return contentText;
 }
 
-/**
- * Given the number of a base line and the BlameInfo create a <span> element
- * with a hovercard. This is supposed to be put into a <td> cell of the diff.
- */
-export function createBlameElement(
-  lineNum: LineNumber,
-  commit: BlameInfo
-): HTMLElement {
-  const isStartOfRange = commit.ranges.some(r => r.start === lineNum);
-
-  const date = new Date(commit.time * 1000).toLocaleDateString();
-  const blameNode = createElementDiff(
-    'span',
-    isStartOfRange ? 'startOfRange' : ''
-  );
-
-  const shaNode = createElementDiff('a', 'blameDate');
-  shaNode.innerText = `${date}`;
-  shaNode.setAttribute('href', `${getBaseUrl()}/q/${commit.id}`);
-  blameNode.appendChild(shaNode);
-
-  const shortName = commit.author.split(' ')[0];
-  const authorNode = createElementDiff('span', 'blameAuthor');
-  authorNode.innerText = ` ${shortName}`;
-  blameNode.appendChild(authorNode);
-
-  const hoverCardFragment = createElementDiff('span', 'blameHoverCard');
-  hoverCardFragment.innerText = `Commit ${commit.id}
-Author: ${commit.author}
-Date: ${date}
-
-${commit.commit_msg}`;
-  const hovercard = createElementDiff('gr-hovercard');
-  hovercard.appendChild(hoverCardFragment);
-  blameNode.appendChild(hovercard);
-
-  return blameNode;
-}
-
-/**
- * Get the approximate length of the diff as the sum of the maximum
- * length of the chunks.
- */
-export function getDiffLength(diff?: DiffInfo) {
-  if (!diff) return 0;
-  return diff.content.reduce((sum, sec) => {
-    if (sec.ab) {
-      return sum + sec.ab.length;
-    } else {
-      return sum + Math.max(sec.a?.length ?? 0, sec.b?.length ?? 0);
-    }
-  }, 0);
+export interface DiffContextExpandedEventDetail
+  extends DiffContextExpandedExternalDetail {
+  /** The context control group that should be replaced by `groups`. */
+  contextGroup: GrDiffGroup;
+  groups: GrDiffGroup[];
+  numLines: number;
 }

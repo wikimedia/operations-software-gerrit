@@ -24,10 +24,12 @@ import static com.google.gerrit.extensions.common.testing.DiffInfoSubject.assert
 import static com.google.gerrit.extensions.common.testing.FileInfoSubject.assertThat;
 import static com.google.gerrit.git.ObjectIds.abbreviateName;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toMap;
 
 import com.google.common.base.Joiner;
+import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
@@ -36,8 +38,10 @@ import com.google.gerrit.acceptance.ExtensionRegistry.Registration;
 import com.google.gerrit.acceptance.GitUtil;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.PushOneCommit.Result;
+import com.google.gerrit.acceptance.testsuite.change.ChangeOperations;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.common.RawInputUtil;
+import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Patch;
 import com.google.gerrit.entities.Permission;
 import com.google.gerrit.extensions.api.changes.FileApi;
@@ -47,6 +51,7 @@ import com.google.gerrit.extensions.common.ChangeType;
 import com.google.gerrit.extensions.common.DiffInfo;
 import com.google.gerrit.extensions.common.FileInfo;
 import com.google.gerrit.extensions.common.WebLinkInfo;
+import com.google.gerrit.extensions.common.testing.ContentEntrySubject;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.BinaryResult;
 import com.google.gerrit.extensions.webui.EditWebLink;
@@ -91,6 +96,7 @@ public class RevisionDiffIT extends AbstractDaemonTest {
 
   @Inject private ExtensionRegistry extensionRegistry;
   @Inject private DiffOperations diffOperations;
+  @Inject private ChangeOperations changeOperations;
   @Inject private ProjectOperations projectOperations;
 
   private boolean intraline;
@@ -3032,6 +3038,145 @@ public class RevisionDiffIT extends AbstractDaemonTest {
             BadRequestException.class,
             () -> getDiffRequest(changeId, CURRENT, FILE_NAME).withBase("0").get());
     assertThat(e).hasMessageThat().isEqualTo("edit not allowed as base");
+  }
+
+  @Test
+  public void diffForAddedBinaryFile() throws Exception {
+    String imageFileName = "an_image.png";
+    byte[] imageBytes = createRgbImage(255, 0, 0);
+    Change.Id changeId =
+        changeOperations
+            .newChange()
+            .file(imageFileName)
+            .content(new String(imageBytes, UTF_8))
+            .create();
+
+    DiffInfo diffInfo = gApi.changes().id(changeId.get()).current().file(imageFileName).diff();
+
+    assertThat(diffInfo).binary().isTrue();
+    assertThat(diffInfo).content().isEmpty();
+    assertThat(diffInfo).diffHeader().contains("Binary files differ");
+    assertThat(diffInfo).metaA().isNull();
+    assertThat(diffInfo).metaB().isNotNull();
+    assertThat(diffInfo).webLinks().isNull();
+  }
+
+  @Test
+  public void diffForModifiedBinaryFile() throws Exception {
+    String imageFileName = "an_image.png";
+    byte[] imageBytes = createRgbImage(255, 0, 0);
+    Change.Id changeId1 =
+        changeOperations
+            .newChange()
+            .file(imageFileName)
+            .content(new String(imageBytes, UTF_8))
+            .create();
+
+    byte[] newImageBytes = createRgbImage(0, 255, 0);
+    Change.Id changeId2 =
+        changeOperations
+            .newChange()
+            .childOf()
+            .change(changeId1)
+            .file(imageFileName)
+            .content(new String(newImageBytes, UTF_8))
+            .create();
+
+    DiffInfo diffInfo = gApi.changes().id(changeId2.get()).current().file(imageFileName).diff();
+
+    assertThat(diffInfo).binary().isTrue();
+
+    // All fields in the contentEntry are null, except the 'skip' field. It's probably a bug that
+    // this is set for binary files.
+    ContentEntrySubject contentEntry = assertThat(diffInfo).content().onlyElement();
+    contentEntry.linesOfA().isNull();
+    contentEntry.linesOfB().isNull();
+    contentEntry.commonLines().isNull();
+
+    assertThat(diffInfo).diffHeader().contains("Binary files differ");
+    assertThat(diffInfo).metaA().isNotNull();
+    assertThat(diffInfo).metaB().isNotNull();
+    assertThat(diffInfo).webLinks().isNull();
+  }
+
+  @Test
+  public void diffForDeletedBinaryFile() throws Exception {
+    String imageFileName = "an_image.png";
+    byte[] imageBytes = createRgbImage(255, 0, 0);
+    Change.Id changeId1 =
+        changeOperations
+            .newChange()
+            .file(imageFileName)
+            .content(new String(imageBytes, UTF_8))
+            .create();
+
+    Change.Id changeId2 =
+        changeOperations
+            .newChange()
+            .childOf()
+            .change(changeId1)
+            .file(imageFileName)
+            .delete()
+            .create();
+
+    DiffInfo diffInfo = gApi.changes().id(changeId2.get()).current().file(imageFileName).diff();
+
+    assertThat(diffInfo).binary().isTrue();
+
+    // All fields in the contentEntry are null, except the 'skip' field. It's probably a bug that
+    // this is set for binary files.
+    ContentEntrySubject contentEntry = assertThat(diffInfo).content().onlyElement();
+    contentEntry.linesOfA().isNull();
+    contentEntry.linesOfB().isNull();
+    contentEntry.commonLines().isNull();
+
+    assertThat(diffInfo).diffHeader().contains("Binary files differ");
+    assertThat(diffInfo).metaA().isNotNull();
+    assertThat(diffInfo).metaB().isNull();
+    assertThat(diffInfo).webLinks().isNull();
+  }
+
+  @Test
+  public void diffForBinaryFileThatIsNotTouchedInTheChange() throws Exception {
+    String imageFileName1 = "an_image.png";
+    byte[] imageBytes1 = createRgbImage(255, 0, 0);
+    String imageContent1 = new String(imageBytes1, UTF_8);
+    Change.Id changeId1 =
+        changeOperations.newChange().file(imageFileName1).content(imageContent1).create();
+
+    String imageFileName2 = "another_image.png";
+    byte[] imageBytes2 = createRgbImage(0, 255, 0);
+    Change.Id changeId2 =
+        changeOperations
+            .newChange()
+            .childOf()
+            .change(changeId1)
+            .file(imageFileName2)
+            .content(new String(imageBytes2, UTF_8))
+            .create();
+
+    // Since file imageFileName1 was not touched in the second change, trying to get the diff for it
+    // should probably fail with '404 Not Found'.
+    DiffInfo diffInfo = gApi.changes().id(changeId2.get()).current().file(imageFileName1).diff();
+
+    // This should be detected as a binary file, but it isn't.
+    assertThat(diffInfo).binary().isNull();
+
+    // For binary files linesOfA, linesOfB and commonLines are expected to be null, but the content
+    // of the binary file is returned as common lines.
+    ContentEntrySubject contentEntry = assertThat(diffInfo).content().onlyElement();
+    contentEntry.linesOfA().isNull();
+    contentEntry.linesOfB().isNull();
+    contentEntry
+        .commonLines()
+        .containsExactlyElementsIn(Splitter.on("\n").splitToList(imageContent1));
+
+    // For binary file the header list should contain "Binary files differ", but it doesn't.
+    assertThat(diffInfo).diffHeader().isNull();
+
+    assertThat(diffInfo).metaA().isNotNull();
+    assertThat(diffInfo).metaB().isNotNull();
+    assertThat(diffInfo).webLinks().isNull();
   }
 
   private Registration newEditWebLink() {

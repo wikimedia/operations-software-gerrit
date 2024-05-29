@@ -26,13 +26,11 @@ import com.google.gerrit.entities.NotifyConfig.NotifyType;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.exceptions.DuplicateKeyException;
 import com.google.gerrit.server.account.ProjectWatches.ProjectWatchKey;
-import com.google.gerrit.server.account.externalids.ExternalIds;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.config.CachedPreferences;
 import com.google.gerrit.server.git.ValidationError;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.git.meta.VersionedMetaData;
-import com.google.gerrit.server.util.time.TimeUtil;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -95,7 +93,7 @@ public class AccountConfig extends VersionedMetaData implements ValidationError.
   }
 
   @Override
-  protected String getRefName() {
+  public String getRefName() {
     return ref;
   }
 
@@ -125,7 +123,8 @@ public class AccountConfig extends VersionedMetaData implements ValidationError.
    * Returns the revision of the {@code refs/meta/external-ids} branch.
    *
    * <p>This revision can be used to load the external IDs of the loaded account lazily via {@link
-   * ExternalIds#byAccount(com.google.gerrit.entities.Account.Id, ObjectId)}.
+   * com.google.gerrit.server.account.externalids.storage.notedb.ExternalIdsNoteDbImpl#byAccount(com.google.gerrit.entities.Account.Id,
+   * ObjectId)}.
    *
    * @return revision of the {@code refs/meta/external-ids} branch, {@link Optional#empty()} if no
    *     {@code refs/meta/external-ids} branch exists
@@ -176,17 +175,7 @@ public class AccountConfig extends VersionedMetaData implements ValidationError.
    * @return the new account
    * @throws DuplicateKeyException if the user branch already exists
    */
-  public Account getNewAccount() throws DuplicateKeyException {
-    return getNewAccount(TimeUtil.now());
-  }
-
-  /**
-   * Creates a new account.
-   *
-   * @return the new account
-   * @throws DuplicateKeyException if the user branch already exists
-   */
-  Account getNewAccount(Instant registeredOn) throws DuplicateKeyException {
+  public Account getNewAccount(Instant registeredOn) throws DuplicateKeyException {
     checkLoaded();
     if (revision != null) {
       throw new DuplicateKeyException(String.format("account %s already exists", accountId));
@@ -205,9 +194,9 @@ public class AccountConfig extends VersionedMetaData implements ValidationError.
    * Returns the content of the {@code preferences.config} file wrapped as {@link
    * CachedPreferences}.
    */
-  CachedPreferences asCachedPreferences() {
+  public CachedPreferences asCachedPreferences() {
     checkLoaded();
-    return CachedPreferences.fromConfig(preferences.getRaw());
+    return CachedPreferences.fromLegacyConfig(preferences.getRaw());
   }
 
   @Override

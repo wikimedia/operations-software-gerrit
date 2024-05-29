@@ -36,7 +36,7 @@ import {getAppContext} from '../../../services/app-context';
 import {fire} from '../../../utils/event-util';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {paperStyles} from '../../../styles/gr-paper-styles';
-import {formStyles} from '../../../styles/gr-form-styles';
+import {grFormStyles} from '../../../styles/gr-form-styles';
 import {menuPageStyles} from '../../../styles/gr-menu-page-styles';
 import {when} from 'lit/directives/when.js';
 import {
@@ -127,8 +127,9 @@ export class GrPermission extends LitElement {
   }
 
   override willUpdate(changedProperties: PropertyValues<GrPermission>): void {
-    if (changedProperties.has('editing')) {
-      this.handleEditingChanged(changedProperties.get('editing'));
+    const oldEditing = changedProperties.get('editing');
+    if (oldEditing !== null && oldEditing !== undefined) {
+      this.handleEditingChanged(oldEditing);
     }
     if (
       changedProperties.has('permission') ||
@@ -141,65 +142,67 @@ export class GrPermission extends LitElement {
     }
   }
 
-  static override styles = [
-    sharedStyles,
-    paperStyles,
-    formStyles,
-    menuPageStyles,
-    css`
-      :host {
-        display: block;
-        margin-bottom: var(--spacing-m);
-      }
-      .header {
-        align-items: baseline;
-        display: flex;
-        justify-content: space-between;
-        margin: var(--spacing-s) var(--spacing-m);
-      }
-      .rules {
-        background: var(--table-header-background-color);
-        border: 1px solid var(--border-color);
-        border-bottom: 0;
-      }
-      .editing .rules {
-        border-bottom: 1px solid var(--border-color);
-      }
-      .title {
-        margin-bottom: var(--spacing-s);
-      }
-      #addRule,
-      #removeBtn {
-        display: none;
-      }
-      .right {
-        display: flex;
-        align-items: center;
-      }
-      .editing #removeBtn {
-        display: block;
-        margin-left: var(--spacing-xl);
-      }
-      .editing #addRule {
-        display: block;
-        padding: var(--spacing-m);
-      }
-      #deletedContainer,
-      .deleted #mainContainer {
-        display: none;
-      }
-      .deleted #deletedContainer {
-        align-items: baseline;
-        border: 1px solid var(--border-color);
-        display: flex;
-        justify-content: space-between;
-        padding: var(--spacing-m);
-      }
-      #mainContainer {
-        display: block;
-      }
-    `,
-  ];
+  static override get styles() {
+    return [
+      sharedStyles,
+      paperStyles,
+      grFormStyles,
+      menuPageStyles,
+      css`
+        :host {
+          display: block;
+          margin-bottom: var(--spacing-m);
+        }
+        .header {
+          align-items: baseline;
+          display: flex;
+          justify-content: space-between;
+          margin: var(--spacing-s) var(--spacing-m);
+        }
+        .rules {
+          background: var(--table-header-background-color);
+          border: 1px solid var(--border-color);
+          border-bottom: 0;
+        }
+        .editing .rules {
+          border-bottom: 1px solid var(--border-color);
+        }
+        .title {
+          margin-bottom: var(--spacing-s);
+        }
+        #addRule,
+        #removeBtn {
+          display: none;
+        }
+        .right {
+          display: flex;
+          align-items: center;
+        }
+        .editing #removeBtn {
+          display: block;
+          margin-left: var(--spacing-xl);
+        }
+        .editing #addRule {
+          display: block;
+          padding: var(--spacing-m);
+        }
+        #deletedContainer,
+        .deleted #mainContainer {
+          display: none;
+        }
+        .deleted #deletedContainer {
+          align-items: baseline;
+          border: 1px solid var(--border-color);
+          display: flex;
+          justify-content: space-between;
+          padding: var(--spacing-m);
+        }
+        #mainContainer {
+          display: block;
+        }
+      `,
+    ];
+  }
 
   override render() {
     if (!this.section || !this.permission) {

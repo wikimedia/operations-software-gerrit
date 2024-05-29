@@ -15,6 +15,7 @@
 package com.google.gerrit.server.notedb;
 
 import static com.google.common.base.MoreObjects.firstNonNull;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_ATTENTION;
 import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_BRANCH;
 import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_CHANGE_ID;
@@ -22,6 +23,7 @@ import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_CHERRY_PI
 import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_COMMIT;
 import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_COPIED_LABEL;
 import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_CURRENT;
+import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_CUSTOM_KEYED_VALUE;
 import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_GROUPS;
 import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_HASHTAGS;
 import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_LABEL;
@@ -45,8 +47,10 @@ import static java.util.stream.Collectors.joining;
 import com.google.common.base.Enums;
 import com.google.common.base.Splitter;
 import com.google.common.collect.HashBasedTable;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.ImmutableTable;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
@@ -86,7 +90,6 @@ import java.nio.charset.Charset;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -98,6 +101,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -166,11 +170,15 @@ class ChangeNotesParser {
   private final Set<PatchSet.Id> deletedPatchSets;
   private final Map<PatchSet.Id, PatchSetState> patchSetStates;
   private final List<PatchSet.Id> currentPatchSets;
+  private final TreeMap<String, String> customKeyedValues;
   private final Map<PatchSetApproval.Key, PatchSetApproval.Builder> approvals;
   private final List<PatchSetApproval.Builder> bufferedApprovals;
   private final List<ChangeMessage> allChangeMessages;
 
+  private final Set<Account.Id> removedReviewers;
+
   // Non-final private members filled in during the parsing process.
+  private Map<PatchSet.Id, String> branchByPatchSet;
   private String branch;
   private Change.Status status;
   private String topic;
@@ -222,6 +230,7 @@ class ChangeNotesParser {
     allPastReviewers = new ArrayList<>();
     reviewerUpdates = new ArrayList<>();
     latestAttentionStatus = new HashMap<>();
+    branchByPatchSet = new HashMap<>();
     allAttentionSetUpdates = new ArrayList<>();
     submitRecords = Lists.newArrayListWithExpectedSize(1);
     allChangeMessages = new ArrayList<>();
@@ -231,6 +240,8 @@ class ChangeNotesParser {
     deletedPatchSets = new HashSet<>();
     patchSetStates = new HashMap<>();
     currentPatchSets = new ArrayList<>();
+    customKeyedValues = new TreeMap<>();
+    removedReviewers = new HashSet<>();
   }
 
   ChangeNotesState parseAll() throws ConfigInvalidException, IOException {
@@ -261,6 +272,7 @@ class ChangeNotesParser {
       checkMandatoryFooters();
     }
 
+    pruneEmptyCustomKeyedValues();
     return buildState();
   }
 
@@ -285,6 +297,7 @@ class ChangeNotesParser {
         submissionId,
         status,
         firstNonNull(hashtags, ImmutableSet.of()),
+        ImmutableSortedMap.copyOfSorted(customKeyedValues),
         buildPatchSets(),
         buildApprovals(),
         ReviewerSet.fromTable(Tables.transpose(reviewers)),
@@ -312,7 +325,11 @@ class ChangeNotesParser {
     Map<PatchSet.Id, PatchSet> result = Maps.newHashMapWithExpectedSize(patchSets.size());
     for (Map.Entry<PatchSet.Id, PatchSet.Builder> e : patchSets.entrySet()) {
       try {
-        PatchSet ps = e.getValue().build();
+        PatchSet.Builder psBuilder = e.getValue();
+        if (branchByPatchSet.containsKey(e.getKey())) {
+          psBuilder.branch(Optional.of(branchByPatchSet.get(e.getKey())));
+        }
+        PatchSet ps = psBuilder.build();
         result.put(ps.id(), ps);
       } catch (Exception ex) {
         ConfigInvalidException cie = parseException("Error building patch set %s", e.getKey());
@@ -396,10 +413,10 @@ class ChangeNotesParser {
         continue;
       }
       // Search for an approval for this label on the max previous patch-set and copy the approval.
-      Collection<PatchSetApproval> userApprovals =
+      ImmutableList<PatchSetApproval> userApprovals =
           approvalsByUser.get(appliedBy).stream()
               .filter(approval -> approval.label().equals(labelName))
-              .collect(Collectors.toList());
+              .collect(toImmutableList());
       if (userApprovals.isEmpty()) {
         continue;
       }
@@ -444,10 +461,6 @@ class ChangeNotesParser {
     createdOn = commitTimestamp;
     parseTag(commit);
 
-    if (branch == null) {
-      branch = parseBranch(commit);
-    }
-
     PatchSet.Id psId = parsePatchSetId(commit);
     PatchSetState psState = parsePatchSetState(commit);
     if (psState != null) {
@@ -456,6 +469,35 @@ class ChangeNotesParser {
       }
       if (psState == PatchSetState.DELETED) {
         deletedPatchSets.add(psId);
+      }
+    }
+
+    String currentBranch = parseBranch(commit);
+
+    if (branch == null) {
+      // The per-change branch is set from the latest change notes commit that has the branch footer
+      // only.
+      branch = currentBranch;
+    }
+
+    if (currentBranch != null) {
+      // Set current branch for this and later revisions
+      if (patchSets != null) {
+        // Change notes commits are parsed from the tip of the meta ref (which points at the
+        // last state of the change) backwards to the first commit.
+        // The branch footer is stored in the first change notes commit, then stored again if the
+        // change is moved. For example if a change has five patch-sets and the change was moved
+        // in PS2, then change notes commits will have the 'branch' footer at two of the commits
+        // representing PS1 and PS2.
+        // Due to our backwards traversal, once we have a value for 'branch', we propagate its
+        // value to the current and later patch-sets.
+        patchSets.keySet().stream()
+            .filter(p -> !branchByPatchSet.containsKey(p))
+            .forEach(p -> branchByPatchSet.put(p, currentBranch));
+      }
+      // Current patch-set is not yet available in patchSets. Check it as well.
+      if (!branchByPatchSet.containsKey(psId)) {
+        branchByPatchSet.put(psId, currentBranch);
       }
     }
 
@@ -488,6 +530,7 @@ class ChangeNotesParser {
     }
 
     parseHashtags(commit);
+    parseCustomKeyedValues(commit);
     parseAttentionSetUpdates(commit);
 
     parseSubmission(commit, commitTimestamp);
@@ -716,6 +759,30 @@ class ChangeNotesParser {
       hashtags = ImmutableSet.of();
     } else {
       hashtags = Sets.newHashSet(HASHTAG_SPLITTER.split(hashtagsLines.get(0)));
+    }
+  }
+
+  private void parseCustomKeyedValues(ChangeNotesCommit commit) {
+    for (String customKeyedValueLine : commit.getFooterLineValues(FOOTER_CUSTOM_KEYED_VALUE)) {
+      String[] parts = customKeyedValueLine.split("=", 2);
+      String key = parts[0];
+      String value = parts[1];
+      // Commits are parsed in reverse order and only the last set of values
+      // should be used.  An empty value for a key means it's a deletion.
+      customKeyedValues.putIfAbsent(key, value);
+    }
+  }
+
+  private void pruneEmptyCustomKeyedValues() {
+    List<String> toRemove = new ArrayList<>();
+    for (Map.Entry<String, String> entry : customKeyedValues.entrySet()) {
+      if (entry.getValue().length() == 0) {
+        toRemove.add(entry.getKey());
+      }
+    }
+
+    for (String key : toRemove) {
+      customKeyedValues.remove(key);
     }
   }
 
@@ -1019,11 +1086,18 @@ class ChangeNotesParser {
       throw pe;
     }
 
+    // The ChangeNotesParser parses updates from newest to oldest.
+    // The removedReviewers stores all reviewers which were removed in the newer change notes. Their
+    // votes should be ignored (i.e. set to 0) because their votes should be removed together with
+    // reviewer.
+    // The value is set to 0 (instead of skipping it) similar to the parseRemoveApproval:
+    // the ChangeNotesParser uses putIfAbsent to put a new approval into the approvals; storing 0
+    // as a value prevents any updates of the approval by an older noteDb's commit.
     PatchSetApproval.Builder psa =
         PatchSetApproval.builder()
             .key(PatchSetApproval.key(psId, approverId, LabelId.create(l.label())))
             .uuid(parsedPatchSetApproval.uuid().map(PatchSetApproval::uuid))
-            .value(l.value())
+            .value(removedReviewers.contains(approverId) ? 0 : l.value())
             .granted(ts)
             .tag(Optional.ofNullable(tag));
     if (!Objects.equals(realAccountId, committerId)) {
@@ -1159,7 +1233,12 @@ class ChangeNotesParser {
       throw invalidFooter(state.getFooterKey(), line);
     }
     Account.Id accountId = parseIdent(ident);
-    reviewerUpdates.add(ReviewerStatusUpdate.create(ts, ownerId, accountId, state));
+    ReviewerStatusUpdate update = ReviewerStatusUpdate.create(ts, ownerId, accountId, state);
+    reviewerUpdates.add(update);
+    if (update.state() == ReviewerStateInternal.REMOVED) {
+      removedReviewers.add(accountId);
+    }
+
     if (!reviewers.containsRow(accountId)) {
       reviewers.put(accountId, state, ts);
     }

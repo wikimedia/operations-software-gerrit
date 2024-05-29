@@ -20,6 +20,10 @@ export function isElement(node: Node): node is Element {
   return node.nodeType === 1;
 }
 
+export function isHtmlElement(node: Node): node is HTMLElement {
+  return isElement(node) && node instanceof HTMLElement;
+}
+
 export function isElementTarget(
   target: EventTarget | null | undefined
 ): target is Element {
@@ -281,20 +285,6 @@ export function whenVisible(
     {rootMargin: `${marginPx}px`}
   );
   observer.observe(element);
-}
-
-/**
- * Toggles a CSS class on or off for an element.
- */
-export function toggleClass(el: Element, className: string, bool?: boolean) {
-  if (bool === undefined) {
-    bool = !el.classList.contains(className);
-  }
-  if (bool) {
-    el.classList.add(className);
-  } else {
-    el.classList.remove(className);
-  }
 }
 
 /**

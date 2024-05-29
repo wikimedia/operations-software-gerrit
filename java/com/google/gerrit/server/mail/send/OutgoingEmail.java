@@ -18,10 +18,13 @@ import static com.google.gerrit.extensions.client.GeneralPreferencesInfo.EmailSt
 import static com.google.gerrit.extensions.client.GeneralPreferencesInfo.EmailStrategy.DISABLED;
 import static java.util.Objects.requireNonNull;
 
+import com.google.auto.factory.AutoFactory;
+import com.google.auto.factory.Provided;
 import com.google.common.base.Throwables;
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.common.UsedAt;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Address;
 import com.google.gerrit.entities.EmailHeader;
@@ -39,6 +42,7 @@ import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.update.RetryableAction.ActionType;
 import com.google.gerrit.server.validators.OutgoingEmailValidationListener;
 import com.google.gerrit.server.validators.ValidationException;
+import com.google.template.soy.data.SanitizedContent;
 import com.google.template.soy.jbcsrc.api.SoySauce;
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -57,43 +61,124 @@ import org.apache.james.mime4j.dom.field.FieldName;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.util.SystemReader;
 
-/** Sends an email to one or more interested parties. */
-public abstract class OutgoingEmail {
+/** Represents an email notification for some event that can be sent to interested parties. */
+@AutoFactory
+public final class OutgoingEmail {
+
+  /** Provides content, recipients and any customizations of the email. */
+  public interface EmailDecorator {
+    /**
+     * Stores the reference to the email for the subsequent calls.
+     *
+     * <p>Both init and populateEmailContent can be called multiply times in case of retries. Init
+     * is therefore responsible for clearing up any changes which are not idempotent and
+     * initializing data for use in populateEmailContent.
+     *
+     * <p>Can be used to adjust any of the behaviour of the {@link
+     * OutgoingEmail#populateEmailContent}.
+     */
+    void init(OutgoingEmail email) throws EmailException;
+
+    /**
+     * Populate headers, recipients and body of the email.
+     *
+     * <p>Method operates on the email provided in the init method.
+     *
+     * <p>By default, all the contents and parameters of the email should be set in this method.
+     */
+    void populateEmailContent() throws EmailException;
+
+    /** If returns false email is not sent to any recipients. */
+    default boolean shouldSendMessage() {
+      return true;
+    }
+
+    /**
+     * Evaluates whether account can be added to the list of recipients.
+     *
+     * @param rcpt the recipient for which it should be checker whether it can be added to the list
+     *     of recipients
+     * @throws PermissionBackendException thrown if checking permissions fails
+     */
+    default boolean isRecipientAllowed(Account.Id rcpt) throws PermissionBackendException {
+      return true;
+    }
+
+    /**
+     * Evaluates whether email can be added to the list of recipients.
+     *
+     * @param rcpt the recipient for which it should be checker whether it can be added to the list
+     *     of recipients
+     * @throws PermissionBackendException thrown if checking permissions fails
+     */
+    default boolean isRecipientAllowed(Address rcpt) throws PermissionBackendException {
+      return true;
+    }
+  }
+
   private static final String SOY_TEMPLATE_NAMESPACE = "com.google.gerrit.server.mail.template";
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
-  protected String messageClass;
+  private String messageClass;
   private final Set<Account.Id> rcptTo = new HashSet<>();
-  private final Map<String, EmailHeader> headers;
+  private final Map<String, EmailHeader> headers = new LinkedHashMap<>();
   private final Set<Address> smtpRcptTo = new HashSet<>();
   private final Set<Address> smtpBccRcptTo = new HashSet<>();
   private Address smtpFromAddress;
   private StringBuilder textBody;
-  private StringBuilder htmlBody;
+  private ArrayList<SanitizedContent> htmlBodySections;
   private MessageIdGenerator.MessageId messageId;
-  protected Map<String, Object> soyContext;
-  protected Map<String, Object> soyContextEmailData;
-  protected List<String> footers;
-  protected final EmailArguments args;
-  protected Account.Id fromId;
-  protected NotifyResolver.Result notify = NotifyResolver.Result.all();
+  private Map<String, Object> soyContext;
+  private Map<String, Object> soyContextEmailData;
+  private List<String> footers;
+  private final EmailArguments args;
+  private Account.Id fromId;
+  private NotifyResolver.Result notify = NotifyResolver.Result.all();
+  private final EmailDecorator templateProvider;
+  private ArrayList<EmailResource> htmlResources;
 
-  protected OutgoingEmail(EmailArguments args, String messageClass) {
+  public OutgoingEmail(
+      @Provided EmailArguments args, String messageClass, EmailDecorator templateProvider) {
     this.args = args;
     this.messageClass = messageClass;
-    this.headers = new LinkedHashMap<>();
+    this.templateProvider = templateProvider;
   }
 
+  /** Specify the account that triggered the notification. */
   public void setFrom(Account.Id id) {
     fromId = id;
   }
 
+  /** Get the account that triggered the notification. */
+  public Account.Id getFrom() {
+    return fromId;
+  }
+
+  /** Set how widely the email notification is allowed to be sent. */
   public void setNotify(NotifyResolver.Result notify) {
     this.notify = requireNonNull(notify);
   }
 
+  /** Returns the setting that controls how widely the email notification is allowed to be sent. */
+  public NotifyResolver.Result getNotify() {
+    return this.notify;
+  }
+
+  /** Set identifier for the email. Every email must have one. */
   public void setMessageId(MessageIdGenerator.MessageId messageId) {
     this.messageId = messageId;
+  }
+
+  private String constructTextEmail() {
+    soyContext.put("body", textBody.toString());
+    soyContext.put("footer", textTemplate("Footer"));
+    return textTemplate("Email");
+  }
+
+  private String constructHtmlEmail() {
+    soyContext.put("body_sections_html", htmlBodySections);
+    soyContext.put("footer_html", soyHtmlTemplate("FooterHtml"));
+    return soyHtmlTemplate("EmailHtml").toString();
   }
 
   /** Format and enqueue the message for delivery. */
@@ -125,19 +210,14 @@ public abstract class OutgoingEmail {
       return;
     }
 
+    init();
     if (!notify.shouldNotify()) {
       logger.atFine().log("Not sending '%s': Notify handling is NONE", messageClass);
       return;
     }
-
-    init();
+    populateEmailContent();
     if (messageId == null) {
       throw new IllegalStateException("All emails must have a messageId");
-    }
-    format();
-    appendText(textTemplate("Footer"));
-    if (useHtml()) {
-      appendHtml(soyHtmlTemplate("FooterHtml"));
     }
 
     Set<Address> smtpRcptToPlaintextOnly = new HashSet<>();
@@ -238,16 +318,15 @@ public abstract class OutgoingEmail {
         setHeader(FieldName.REPLY_TO, j.toString());
       }
 
-      String textPart = textBody.toString();
       OutgoingEmailValidationListener.Args va = new OutgoingEmailValidationListener.Args();
       va.messageClass = messageClass;
       va.smtpFromAddress = smtpFromAddress;
       va.smtpRcptTo = smtpRcptTo;
       va.headers = headers;
-      va.body = textPart;
+      va.body = constructTextEmail();
 
       if (useHtml()) {
-        va.htmlBody = htmlBody.toString();
+        va.htmlBody = constructHtmlEmail();
       } else {
         va.htmlBody = null;
       }
@@ -263,7 +342,8 @@ public abstract class OutgoingEmail {
         logger.atFine().log(
             "Sending multipart '%s' from %s to %s",
             messageClass, va.smtpFromAddress, va.smtpRcptTo);
-        args.emailSender.send(va.smtpFromAddress, va.smtpRcptTo, va.headers, va.body, va.htmlBody);
+        args.emailSender.send(
+            va.smtpFromAddress, va.smtpRcptTo, va.headers, va.body, va.htmlBody, htmlResources);
       }
       if (!smtpRcptToPlaintextOnly.isEmpty()) {
         addMessageId(va, "-PLAIN");
@@ -275,7 +355,7 @@ public abstract class OutgoingEmail {
         shallowCopy.remove(FieldName.CC);
         for (Address a : smtpRcptToPlaintextOnly) {
           // Add new To
-          EmailHeader.AddressList to = new EmailHeader.AddressList();
+          AddressList to = new AddressList();
           to.add(a);
           shallowCopy.put(FieldName.TO, to);
         }
@@ -311,39 +391,37 @@ public abstract class OutgoingEmail {
     }
   }
 
-  /** Format the message body by calling {@link #appendText(String)}. */
-  protected abstract void format() throws EmailException;
-
   /**
    * Setup the message headers and envelope (TO, CC, BCC).
    *
    * @throws EmailException if an error occurred.
    */
-  protected void init() throws EmailException {
-    setupSoyContext();
+  public void init() throws EmailException {
+    soyContext = new HashMap<>();
+    footers = new ArrayList<>();
+    soyContextEmailData = new HashMap<>();
+    htmlResources = new ArrayList<>();
 
     smtpFromAddress = args.fromAddressGenerator.get().from(fromId);
     setHeader(FieldName.DATE, Instant.now());
-    headers.put(FieldName.FROM, new EmailHeader.AddressList(smtpFromAddress));
-    headers.put(FieldName.TO, new EmailHeader.AddressList());
-    headers.put(FieldName.CC, new EmailHeader.AddressList());
+    headers.put(FieldName.FROM, new AddressList(smtpFromAddress));
+    headers.put(FieldName.TO, new AddressList());
+    headers.put(FieldName.CC, new AddressList());
     setHeader(MailHeader.AUTO_SUBMITTED.fieldName(), "auto-generated");
 
-    for (RecipientType recipientType : notify.accounts().keySet()) {
-      notify.accounts().get(recipientType).stream().forEach(a -> addByAccountId(recipientType, a));
-    }
-
     setHeader(MailHeader.MESSAGE_TYPE.fieldName(), messageClass);
-    footers.add(MailHeader.MESSAGE_TYPE.withDelimiter() + messageClass);
+    addFooter(MailHeader.MESSAGE_TYPE.withDelimiter() + messageClass);
     textBody = new StringBuilder();
-    htmlBody = new StringBuilder();
+    htmlBodySections = new ArrayList<>();
 
     if (fromId != null && args.fromAddressGenerator.get().isGenericAddress(fromId)) {
       appendText(getFromLine());
     }
+
+    templateProvider.init(this);
   }
 
-  protected String getFromLine() {
+  private String getFromLine() {
     StringBuilder f = new StringBuilder();
     Optional<Account> account = args.accountCache.get(fromId).map(AccountState::account);
     if (account.isPresent()) {
@@ -364,9 +442,10 @@ public abstract class OutgoingEmail {
   }
 
   public String getGerritHost() {
-    if (getGerritUrl() != null) {
+    Optional<String> gerritUrl = args.urlFormatter.get().getWebUrl();
+    if (gerritUrl.isPresent()) {
       try {
-        return new URL(getGerritUrl()).getHost();
+        return new URL(gerritUrl.get()).getHost();
       } catch (MalformedURLException e) {
         // Try something else.
       }
@@ -381,44 +460,49 @@ public abstract class OutgoingEmail {
 
   @Nullable
   public String getSettingsUrl() {
-    return args.urlFormatter.get().getSettingsUrl().orElse(null);
+    return args.urlFormatter.get().getSettingsUrl().map(EmailArguments::addUspParam).orElse(null);
   }
 
   @Nullable
-  private String getGerritUrl() {
-    return args.urlFormatter.get().getWebUrl().orElse(null);
+  public String getSettingsUrl(String section) {
+    return args.urlFormatter
+        .get()
+        .getSettingsUrl(section)
+        .map(EmailArguments::addUspParam)
+        .orElse(null);
   }
 
   /** Set a header in the outgoing message. */
-  protected void setHeader(String name, String value) {
+  public void setHeader(String name, String value) {
     headers.put(name, new StringEmailHeader(value));
   }
 
   /** Remove a header from the outgoing message. */
-  protected void removeHeader(String name) {
+  public void removeHeader(String name) {
     headers.remove(name);
   }
 
-  protected void setHeader(String name, Instant date) {
+  /** Set a date header in the outgoing message. */
+  public void setHeader(String name, Instant date) {
     headers.put(name, new EmailHeader.Date(date));
   }
 
   /** Append text to the outgoing email body. */
-  protected void appendText(String text) {
+  public void appendText(String text) {
     if (text != null) {
       textBody.append(text);
     }
   }
 
   /** Append html to the outgoing email body. */
-  protected void appendHtml(String html) {
+  public void appendHtml(SanitizedContent html) {
     if (html != null) {
-      htmlBody.append(html);
+      htmlBodySections.add(html);
     }
   }
 
   /** Lookup a human readable name for an account, usually the "full name". */
-  protected String getNameFor(@Nullable Account.Id accountId) {
+  public String getNameFor(@Nullable Account.Id accountId) {
     if (accountId == null) {
       return args.gerritPersonIdent.get().getName();
     }
@@ -444,7 +528,7 @@ public abstract class OutgoingEmail {
    * @param accountId user to fetch.
    * @return name/email of account, or Anonymous Coward if unset.
    */
-  protected String getNameEmailFor(@Nullable Account.Id accountId) {
+  public String getNameEmailFor(@Nullable Account.Id accountId) {
     if (accountId == null) {
       PersonIdent gerritIdent = args.gerritPersonIdent.get();
       return gerritIdent.getName() + " <" + gerritIdent.getEmailAddress() + ">";
@@ -473,7 +557,7 @@ public abstract class OutgoingEmail {
    * @return name/email of account, username, or null if unset or the accountId is null.
    */
   @Nullable
-  protected String getUserNameEmailFor(@Nullable Account.Id accountId) {
+  public String getUserNameEmailFor(@Nullable Account.Id accountId) {
     if (accountId == null) {
       return null;
     }
@@ -496,7 +580,7 @@ public abstract class OutgoingEmail {
     return accountState.get().userName().orElse(null);
   }
 
-  protected boolean shouldSendMessage() {
+  private boolean shouldSendMessage() {
     if (textBody.length() == 0) {
       // If we have no message body, don't send.
       logger.atFine().log("Not sending '%s': No message body", messageClass);
@@ -521,7 +605,7 @@ public abstract class OutgoingEmail {
       return false;
     }
 
-    return true;
+    return templateProvider.shouldSendMessage();
   }
 
   /**
@@ -559,8 +643,8 @@ public abstract class OutgoingEmail {
    * @throws PermissionBackendException thrown if checking a permission fails due to an error in the
    *     permission backend
    */
-  protected boolean isRecipientAllowed(Address addr) throws PermissionBackendException {
-    return true;
+  public boolean isRecipientAllowed(Address addr) throws PermissionBackendException {
+    return templateProvider.isRecipientAllowed(addr);
   }
 
   /**
@@ -569,7 +653,7 @@ public abstract class OutgoingEmail {
    * @param rt category of recipient (TO, CC, BCC)
    * @param to Gerrit Account of the recipient.
    */
-  protected void addByAccountId(RecipientType rt, Account.Id to) {
+  public void addByAccountId(RecipientType rt, Account.Id to) {
     addByAccountId(rt, to, false);
   }
 
@@ -581,12 +665,18 @@ public abstract class OutgoingEmail {
    * @param override if the recipient was added previously and override is false no change is made
    *     regardless of {@code rt}.
    */
-  protected void addByAccountId(RecipientType rt, Account.Id to, boolean override) {
+  public void addByAccountId(RecipientType rt, Account.Id to, boolean override) {
     try {
-      if (!rcptTo.contains(to) && isRecipientAllowed(to)) {
-        rcptTo.add(to);
-        add(rt, toAddress(to), override);
+      if (rcptTo.contains(to) || !isRecipientAllowed(to)) {
+        return;
       }
+      Address addr = toAddress(to);
+      if (addr == null) {
+        logger.atFine().log("Not emailing account %s because user has no preferred email", to);
+        return;
+      }
+      rcptTo.add(to);
+      add(rt, addr, override);
     } catch (PermissionBackendException e) {
       logger.atSevere().withCause(e).log("Error checking permissions for account: %s", to);
     }
@@ -599,8 +689,8 @@ public abstract class OutgoingEmail {
    * @throws PermissionBackendException thrown if checking a permission fails due to an error in the
    *     permission backend
    */
-  protected boolean isRecipientAllowed(Account.Id to) throws PermissionBackendException {
-    return true;
+  public boolean isRecipientAllowed(Account.Id to) throws PermissionBackendException {
+    return templateProvider.isRecipientAllowed(to);
   }
 
   private final void add(RecipientType rt, Address addr, boolean override) {
@@ -612,16 +702,16 @@ public abstract class OutgoingEmail {
           if (!override) {
             return;
           }
-          ((EmailHeader.AddressList) headers.get(FieldName.TO)).remove(addr.email());
-          ((EmailHeader.AddressList) headers.get(FieldName.CC)).remove(addr.email());
+          ((AddressList) headers.get(FieldName.TO)).remove(addr.email());
+          ((AddressList) headers.get(FieldName.CC)).remove(addr.email());
           smtpBccRcptTo.remove(addr);
         }
         switch (rt) {
           case TO:
-            ((EmailHeader.AddressList) headers.get(FieldName.TO)).add(addr);
+            ((AddressList) headers.get(FieldName.TO)).add(addr);
             break;
           case CC:
-            ((EmailHeader.AddressList) headers.get(FieldName.CC)).add(addr);
+            ((AddressList) headers.get(FieldName.CC)).add(addr);
             break;
           case BCC:
             smtpBccRcptTo.add(addr);
@@ -631,8 +721,9 @@ public abstract class OutgoingEmail {
     }
   }
 
+  /** Returns preferred email address for the account. */
   @Nullable
-  private Address toAddress(Account.Id id) {
+  public Address toAddress(Account.Id id) {
     Optional<Account> accountState = args.accountCache.get(id).map(AccountState::account);
     if (!accountState.isPresent()) {
       return null;
@@ -646,31 +737,35 @@ public abstract class OutgoingEmail {
     return Address.create(account.fullName(), e);
   }
 
-  protected void setupSoyContext() {
-    soyContext = new HashMap<>();
-    footers = new ArrayList<>();
-
-    soyContext.put("messageClass", messageClass);
-    soyContext.put("footers", footers);
-
-    soyContextEmailData = new HashMap<>();
-    soyContextEmailData.put("settingsUrl", getSettingsUrl());
-    soyContextEmailData.put("instanceName", getInstanceName());
-    soyContextEmailData.put("gerritHost", getGerritHost());
-    soyContextEmailData.put("gerritUrl", getGerritUrl());
-    soyContext.put("email", soyContextEmailData);
+  /** Returns the type of notification being sent. */
+  public String getMessageClass() {
+    return messageClass;
   }
 
-  /** Mutable map of parameters passed into email templates when rendering. */
-  public Map<String, Object> getSoyContext() {
-    return this.soyContext;
+  /** Set recipients, headers, body of the email. */
+  public void populateEmailContent() throws EmailException {
+    for (RecipientType recipientType : notify.accounts().keySet()) {
+      notify.accounts().get(recipientType).stream().forEach(a -> addByAccountId(recipientType, a));
+    }
+
+    addSoyParam("messageClass", messageClass);
+    addSoyParam("footers", footers);
+    addSoyEmailDataParam("settingsUrl", getSettingsUrl());
+    addSoyEmailDataParam("instanceName", getInstanceName());
+    addSoyEmailDataParam("gerritHost", getGerritHost());
+    addSoyParam("email", soyContextEmailData);
+
+    templateProvider.populateEmailContent();
   }
 
-  // TODO: It's not clear why we need this explicit separation. Probably worth
-  // simplifying.
-  /** Mutable content of `email` parameter in the templates. */
-  public Map<String, Object> getSoyContextEmailData() {
-    return this.soyContextEmailData;
+  /** Adds param to the data map passed into soy when rendering templates. */
+  public void addSoyParam(String key, Object value) {
+    soyContext.put(key, value);
+  }
+
+  /** Adds entry to the `email` param passed to the soy when rendering templates. */
+  public void addSoyEmailDataParam(String key, Object value) {
+    soyContextEmailData.put(key, value);
   }
 
   /**
@@ -681,18 +776,31 @@ public abstract class OutgoingEmail {
     footers.add(footer);
   }
 
+  /**
+   * Add a resource that can be referenced in HTML code using their {@link EmailResource#contentId}.
+   */
+  public void addHtmlResource(EmailResource resource) {
+    htmlResources.add(resource);
+  }
+
   private String getInstanceName() {
     return args.instanceNameProvider.get();
   }
 
   /** Renders a soy template of kind="text". */
-  protected String textTemplate(String name) {
+  public String textTemplate(String name) {
     return configureRenderer(name).renderText().get();
   }
 
   /** Renders a soy template of kind="html". */
-  protected String soyHtmlTemplate(String name) {
-    return configureRenderer(name).renderHtml().get().toString();
+  public SanitizedContent soyHtmlTemplate(String name) {
+    return configureRenderer(name).renderHtml().get();
+  }
+
+  /** Renders a soy template of kind="css". */
+  @UsedAt(UsedAt.Project.GOOGLE)
+  public SanitizedContent soyCssTemplate(String name) {
+    return configureRenderer(name).renderCss().get();
   }
 
   /** Configures a soy renderer for the given template name and rendering data map. */
@@ -715,7 +823,8 @@ public abstract class OutgoingEmail {
     return soySauce.renderTemplate(fullTemplateName).setData(soyContext);
   }
 
-  protected void removeUser(Account user) {
+  /** Remove user from the multipart email recipients. */
+  private void removeUser(Account user) {
     String fromEmail = user.preferredEmail();
     for (Iterator<Address> j = smtpRcptTo.iterator(); j.hasNext(); ) {
       if (j.next().email().equals(fromEmail)) {
@@ -730,7 +839,8 @@ public abstract class OutgoingEmail {
     }
   }
 
-  protected final boolean useHtml() {
+  /** Return true, if the email should include html body. */
+  public boolean useHtml() {
     return args.settings.html;
   }
 }

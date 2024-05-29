@@ -18,6 +18,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.gerrit.index.query.Predicate.and;
 import static com.google.gerrit.index.query.Predicate.not;
 import static com.google.gerrit.index.query.Predicate.or;
+import static com.google.gerrit.server.query.change.ChangePredicates.EditByPredicateProvider;
 import static com.google.gerrit.server.query.change.ChangeStatusPredicate.open;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -27,6 +28,7 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.gerrit.common.UsedAt;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Project;
@@ -34,6 +36,8 @@ import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.index.IndexConfig;
 import com.google.gerrit.index.query.InternalQuery;
 import com.google.gerrit.index.query.Predicate;
+import com.google.gerrit.index.query.QueryParseException;
+import com.google.gerrit.server.index.change.ChangeField;
 import com.google.gerrit.server.index.change.ChangeIndexCollection;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.inject.Inject;
@@ -73,12 +77,17 @@ public class InternalChangeQuery extends InternalQuery<ChangeData, InternalChang
     return ChangeStatusPredicate.forStatus(status);
   }
 
+  private Predicate<ChangeData> editBy(Account.Id accountId) throws QueryParseException {
+    return editByPredicateProvider.editBy(accountId);
+  }
+
   private static Predicate<ChangeData> commit(String id) {
     return ChangePredicates.commitPrefix(id);
   }
 
   private final ChangeData.Factory changeDataFactory;
   private final ChangeNotes.Factory notesFactory;
+  private final EditByPredicateProvider editByPredicateProvider;
 
   @Inject
   InternalChangeQuery(
@@ -86,10 +95,12 @@ public class InternalChangeQuery extends InternalQuery<ChangeData, InternalChang
       ChangeIndexCollection indexes,
       IndexConfig indexConfig,
       ChangeData.Factory changeDataFactory,
-      ChangeNotes.Factory notesFactory) {
+      ChangeNotes.Factory notesFactory,
+      EditByPredicateProvider editByPredicateProvider) {
     super(queryProcessor, indexes, indexConfig);
     this.changeDataFactory = changeDataFactory;
     this.notesFactory = notesFactory;
+    this.editByPredicateProvider = editByPredicateProvider;
   }
 
   public List<ChangeData> byKey(Change.Key key) {
@@ -111,6 +122,11 @@ public class InternalChangeQuery extends InternalQuery<ChangeData, InternalChang
       preds.add(ChangePredicates.idStr(id));
     }
     return query(or(preds));
+  }
+
+  @UsedAt(UsedAt.Project.GOOGLE)
+  public List<ChangeData> byCustomKeyedValue(String keyValue) {
+    return query(new ChangeIndexPredicate(ChangeField.CUSTOM_KEYED_VALUES_SPEC, keyValue));
   }
 
   public List<ChangeData> byBranchKey(BranchNameKey branch, Change.Key key) {
@@ -153,7 +169,7 @@ public class InternalChangeQuery extends InternalQuery<ChangeData, InternalChang
     return byCommitsOnBranchNotMergedFromIndex(branch, hashes);
   }
 
-  private Iterable<ChangeData> byCommitsOnBranchNotMergedFromDatabase(
+  private List<ChangeData> byCommitsOnBranchNotMergedFromDatabase(
       Repository repo, BranchNameKey branch, Collection<String> hashes) throws IOException {
     Set<Change.Id> changeIds = Sets.newHashSetWithExpectedSize(hashes.size());
     String lastPrefix = null;
@@ -184,7 +200,7 @@ public class InternalChangeQuery extends InternalQuery<ChangeData, InternalChang
     return Lists.transform(notes, n -> changeDataFactory.create(n));
   }
 
-  private Iterable<ChangeData> byCommitsOnBranchNotMergedFromIndex(
+  private List<ChangeData> byCommitsOnBranchNotMergedFromIndex(
       BranchNameKey branch, Collection<String> hashes) {
     return query(
         and(
@@ -208,6 +224,10 @@ public class InternalChangeQuery extends InternalQuery<ChangeData, InternalChang
 
   public List<ChangeData> byTopicOpen(String topic) {
     return query(and(ChangePredicates.exactTopic(topic), open()));
+  }
+
+  public List<ChangeData> byOpenEditByUser(Account.Id accountId) throws QueryParseException {
+    return query(editBy(accountId));
   }
 
   public List<ChangeData> byCommit(ObjectId id) {

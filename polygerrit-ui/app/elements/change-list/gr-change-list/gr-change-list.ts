@@ -8,7 +8,6 @@ import '../gr-change-list-item/gr-change-list-item';
 import '../gr-change-list-section/gr-change-list-section';
 import {GrChangeListItem} from '../gr-change-list-item/gr-change-list-item';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
-import {getAppContext} from '../../../services/app-context';
 import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {GrCursorManager} from '../../shared/gr-cursor-manager/gr-cursor-manager';
 import {
@@ -19,7 +18,10 @@ import {
 } from '../../../types/common';
 import {fire, fireReload} from '../../../utils/event-util';
 import {ColumnNames, ScrollMode} from '../../../constants/constants';
-import {getRequirements} from '../../../utils/label-util';
+import {
+  getRequirements,
+  orderSubmitRequirements,
+} from '../../../utils/label-util';
 import {Key} from '../../../utils/dom-util';
 import {assertIsDefined, unique} from '../../../utils/common-util';
 import {changeListStyles} from '../../../styles/gr-change-list-styles';
@@ -30,11 +32,16 @@ import {customElement, property, state} from 'lit/decorators.js';
 import {Shortcut, ShortcutController} from '../../lit/shortcut-controller';
 import {queryAll} from '../../../utils/common-util';
 import {GrChangeListSection} from '../gr-change-list-section/gr-change-list-section';
-import {Execution} from '../../../constants/reporting';
 import {ValueChangedEvent} from '../../../types/events';
 import {resolve} from '../../../models/dependency';
 import {createChangeUrl} from '../../../models/views/change';
 import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
+import {subscribe} from '../../lit/subscription-controller';
+import {
+  changeTablePrefs,
+  userModelToken,
+} from '../../../models/user/user-model';
+import {configModelToken} from '../../../models/config/config-model';
 
 export interface ChangeListSection {
   countLabel?: string;
@@ -81,7 +88,14 @@ export class GrChangeList extends LitElement {
    * in.
    */
   @property({type: Object})
-  account: AccountInfo | undefined = undefined;
+  loggedInUser?: AccountInfo;
+
+  /**
+   * When the list is part of the dashboard, the user for which the dashboard is
+   * generated.
+   */
+  @property({type: String})
+  dashboardUser?: string;
 
   @property({type: Array})
   changes?: ChangeInfo[];
@@ -112,7 +126,7 @@ export class GrChangeList extends LitElement {
   @property({type: Array})
   visibleChangeTableColumns?: string[];
 
-  @property({type: Object})
+  @state()
   preferences?: PreferencesInput;
 
   @property({type: Boolean})
@@ -121,17 +135,15 @@ export class GrChangeList extends LitElement {
   // private but used in test
   @state() config?: ServerInfo;
 
-  private readonly flagsService = getAppContext().flagsService;
-
-  private readonly restApiService = getAppContext().restApiService;
-
-  private readonly reporting = getAppContext().reportingService;
-
   private readonly shortcuts = new ShortcutController(this);
+
+  private readonly getConfigModel = resolve(this, configModelToken);
 
   private readonly getPluginLoader = resolve(this, pluginLoaderToken);
 
   private readonly getNavigation = resolve(this, navigationToken);
+
+  private readonly getUserModel = resolve(this, userModelToken);
 
   private cursor = new GrCursorManager();
 
@@ -158,13 +170,22 @@ export class GrChangeList extends LitElement {
       this.toggleCheckbox()
     );
     this.shortcuts.addGlobal({key: Key.ENTER}, () => this.openChange());
+    subscribe(
+      this,
+      () => this.getUserModel().preferences$,
+      x => (this.preferences = x)
+    );
+    subscribe(
+      this,
+      () => this.getConfigModel().serverConfig$,
+      config => {
+        this.config = config;
+      }
+    );
   }
 
   override connectedCallback() {
     super.connectedCallback();
-    this.restApiService.getConfig().then(config => {
-      this.config = config;
-    });
     this.getPluginLoader()
       .awaitPluginsLoaded()
       .then(() => {
@@ -248,8 +269,8 @@ export class GrChangeList extends LitElement {
         .labelNames=${labelNames}
         .dynamicHeaderEndpoints=${this.dynamicHeaderEndpoints}
         .isCursorMoving=${this.isCursorMoving}
-        .config=${this.config}
-        .account=${this.account}
+        .loggedInUser=${this.loggedInUser}
+        .dashboardUser=${this.dashboardUser}
         .selectedIndex=${computeRelativeIndex(
           this.selectedIndex,
           sectionIndex,
@@ -276,7 +297,7 @@ export class GrChangeList extends LitElement {
 
   override willUpdate(changedProperties: PropertyValues) {
     if (
-      changedProperties.has('account') ||
+      changedProperties.has('loggedInUser') ||
       changedProperties.has('preferences') ||
       changedProperties.has('config') ||
       changedProperties.has('sections')
@@ -324,44 +345,15 @@ export class GrChangeList extends LitElement {
 
     this.changeTableColumns = Object.values(ColumnNames);
     this.showNumber = false;
-    this.visibleChangeTableColumns = this.changeTableColumns.filter(col =>
-      this.isColumnEnabled(col, this.config)
-    );
-    if (this.account && this.preferences) {
+    this.visibleChangeTableColumns = Object.values(ColumnNames);
+    if (this.loggedInUser && this.preferences) {
       this.showNumber = !!this.preferences?.legacycid_in_change_table;
-      if (
-        this.preferences?.change_table &&
-        this.preferences.change_table.length > 0
-      ) {
-        const prefColumns = this.preferences.change_table
-          .map(column => (column === 'Project' ? ColumnNames.REPO : column))
-          .map(column =>
-            column === ColumnNames.STATUS ? ColumnNames.STATUS2 : column
-          );
-        this.reporting.reportExecution(Execution.USER_PREFERENCES_COLUMNS, {
-          statusColumn: prefColumns.includes(ColumnNames.STATUS2),
-        });
-        // Order visible column names by columnNames, filter only one that
-        // are in prefColumns and enabled by config
-        this.visibleChangeTableColumns = Object.values(ColumnNames)
-          .filter(col => prefColumns.includes(col))
-          .filter(col => this.isColumnEnabled(col, this.config));
-      }
+      const prefColumns = changeTablePrefs(this.preferences);
+      // This is for sorting `prefColumns` as in `ColumnNames`:
+      this.visibleChangeTableColumns = Object.values(ColumnNames).filter(col =>
+        prefColumns.includes(col)
+      );
     }
-  }
-
-  /**
-   * Is the column disabled by a server config or experiment?
-   */
-  isColumnEnabled(column: string, config?: ServerInfo) {
-    if (!Object.values(ColumnNames).includes(column as unknown as ColumnNames))
-      return false;
-    if (!config || !config.change) return true;
-    if (column === 'Comments')
-      return this.flagsService.isEnabled('comments-column');
-    if (column === 'Status') return false;
-    if (column === ColumnNames.STATUS2) return true;
-    return true;
   }
 
   // private but used in test
@@ -372,7 +364,7 @@ export class GrChangeList extends LitElement {
     }
     const changes = sections.map(section => section.results).flat();
     const labels = (changes ?? [])
-      .map(change => getRequirements(change))
+      .map(change => orderSubmitRequirements(getRequirements(change)))
       .flat()
       .map(requirement => requirement.name)
       .filter(unique);

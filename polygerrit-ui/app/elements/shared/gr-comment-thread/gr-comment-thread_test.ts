@@ -120,7 +120,11 @@ suite('gr-comment-thread tests', () => {
               robot-button-disabled=""
               show-patchset=""
             ></gr-comment>
-            <gr-comment robot-button-disabled="" show-patchset=""></gr-comment>
+            <gr-comment
+              class="draft"
+              robot-button-disabled=""
+              show-patchset=""
+            ></gr-comment>
           </div>
         </div>
       `
@@ -145,7 +149,11 @@ suite('gr-comment-thread tests', () => {
         <div id="container">
           <h3 class="assistive-tech-only">Draft Comment thread by Yoda</h3>
           <div class="comment-box" tabindex="0">
-            <gr-comment robot-button-disabled="" show-patchset=""></gr-comment>
+            <gr-comment
+              class="draft"
+              robot-button-disabled=""
+              show-patchset=""
+            ></gr-comment>
           </div>
         </div>
       `
@@ -289,7 +297,7 @@ suite('gr-comment-thread tests', () => {
       /* HTML */ `
         <div class="diff-container">
           <gr-diff
-            class="disable-context-control-buttons hide-line-length-indicator no-left"
+            class="disable-context-control-buttons hide-line-length-indicator"
             id="diff"
             style="--line-limit-marker:100ch; --content-width:none; --diff-max-width:none; --font-size:12px;"
           >

@@ -94,6 +94,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
@@ -220,7 +221,7 @@ public class GerritServer implements AutoCloseable {
 
     abstract boolean sandboxed();
 
-    abstract boolean skipProjectClone();
+    public abstract boolean skipProjectClone();
 
     abstract boolean useSshAnnotation();
 
@@ -468,10 +469,11 @@ public class GerritServer implements AutoCloseable {
             bind(TestTicker.class).toInstance(testTicker);
           }
         });
-    daemon.setEnableHttpd(desc.httpd());
-    // Assure that SSHD is enabled if HTTPD is not required, otherwise the Gerrit server would not
-    // even start.
-    daemon.setEnableSshd(!desc.httpd() || desc.useSsh());
+    // Assure that HTTPD is enabled if SSHD is not required. If both are disabled the Gerrit server
+    // does not start. Alternatively we could assure that SSHD is enabled if HTTPD is not required,
+    // but this would break the tests at Google, because they don't have support for SSHD.
+    daemon.setEnableHttpd(desc.httpd() || !desc.useSsh());
+    daemon.setEnableSshd(desc.useSsh());
     daemon.setReplica(
         ReplicaUtil.isReplica(baseConfig) || ReplicaUtil.isReplica(desc.buildConfig(baseConfig)));
 
@@ -529,7 +531,7 @@ public class GerritServer implements AutoCloseable {
     daemon.addAdditionalSysModuleForTesting(
         new ReindexProjectsAtStartupModule(), new ReindexGroupsAtStartupModule());
     daemon.start();
-    return new GerritServer(desc, null, createTestInjector(daemon), daemon, null);
+    return new GerritServer(desc, null, createTestInjector(daemon), Optional.of(daemon), null);
   }
 
   private static AbstractIndexModule createIndexModule(
@@ -579,7 +581,8 @@ public class GerritServer implements AutoCloseable {
     }
     System.out.println("Gerrit Server Started");
 
-    return new GerritServer(desc, site, createTestInjector(daemon), daemon, daemonService);
+    return new GerritServer(
+        desc, site, createTestInjector(daemon), Optional.of(daemon), daemonService);
   }
 
   private static void mergeTestConfig(Config cfg) {
@@ -600,6 +603,7 @@ public class GerritServer implements AutoCloseable {
     cfg.setString("gerrit", null, "basePath", "git");
     cfg.setBoolean("sendemail", null, "enable", true);
     cfg.setInt("sendemail", null, "threadPoolSize", 0);
+    cfg.setInt("execution", null, "fanOutThreadPoolSize", 0);
     cfg.setInt("plugins", null, "checkFrequency", 0);
 
     cfg.setInt("sshd", null, "threads", 1);
@@ -628,7 +632,7 @@ public class GerritServer implements AutoCloseable {
             factory(PerCommentOperationsImpl.Factory.class);
             factory(PerDraftCommentOperationsImpl.Factory.class);
             factory(PerRobotCommentOperationsImpl.Factory.class);
-            factory(PushOneCommit.Factory.class);
+            install(new PushOneCommit.Module());
             install(InProcessProtocol.module());
             install(new NoSshModule());
             install(new AsyncReceiveCommitsModule());
@@ -667,17 +671,17 @@ public class GerritServer implements AutoCloseable {
   private final Description desc;
   private final Path sitePath;
 
-  private Daemon daemon;
-  private ExecutorService daemonService;
-  private Injector testInjector;
-  private String url;
-  private InetSocketAddress httpAddress;
+  private final Optional<Daemon> daemon;
+  private final ExecutorService daemonService;
+  protected final Injector testInjector;
+  private final String url;
+  private final Optional<InetSocketAddress> httpAddress;
 
-  private GerritServer(
+  protected GerritServer(
       Description desc,
       @Nullable Path sitePath,
       Injector testInjector,
-      Daemon daemon,
+      Optional<Daemon> daemon,
       @Nullable ExecutorService daemonService) {
     this.desc = requireNonNull(desc);
     this.sitePath = sitePath;
@@ -687,15 +691,20 @@ public class GerritServer implements AutoCloseable {
 
     Config cfg = testInjector.getInstance(Key.get(Config.class, GerritServerConfig.class));
     url = cfg.getString("gerrit", null, "canonicalWebUrl");
-    URI uri = URI.create(url);
-    httpAddress = new InetSocketAddress(uri.getHost(), uri.getPort());
+
+    if (daemon.isPresent()) {
+      URI uri = URI.create(url);
+      httpAddress = Optional.of(new InetSocketAddress(uri.getHost(), uri.getPort()));
+    } else {
+      httpAddress = Optional.empty();
+    }
   }
 
   public String getUrl() {
     return url;
   }
 
-  InetSocketAddress getHttpAddress() {
+  Optional<InetSocketAddress> getHttpAddress() {
     return httpAddress;
   }
 
@@ -703,8 +712,8 @@ public class GerritServer implements AutoCloseable {
     return testInjector;
   }
 
-  public Injector getHttpdInjector() {
-    return daemon.getHttpdInjector();
+  public Optional<Injector> getHttpdInjector() {
+    return daemon.map(Daemon::getHttpdInjector);
   }
 
   Description getDescription() {
@@ -725,7 +734,7 @@ public class GerritServer implements AutoCloseable {
     }
 
     server.close();
-    server.daemon.stop();
+    server.daemon.ifPresent(Daemon::stop);
     return start(server.desc, cfg, site, null, null, null, inMemoryRepoManager);
   }
 
@@ -742,7 +751,7 @@ public class GerritServer implements AutoCloseable {
     }
 
     server.close();
-    server.daemon.stop();
+    server.daemon.ifPresent(Daemon::stop);
     return start(server.desc, cfg, site, testSysModule, null, testSshModule, inMemoryRepoManager);
   }
 
@@ -752,7 +761,7 @@ public class GerritServer implements AutoCloseable {
 
   @Override
   public void close() throws Exception {
-    daemon.getLifecycleManager().stop();
+    daemon.ifPresent(d -> d.getLifecycleManager().stop());
     if (daemonService != null) {
       System.out.println("Gerrit Server Shutdown");
       daemonService.shutdownNow();
@@ -771,6 +780,6 @@ public class GerritServer implements AutoCloseable {
   }
 
   public boolean isReplica() {
-    return daemon.isReplica();
+    return daemon.map(Daemon::isReplica).orElse(false);
   }
 }

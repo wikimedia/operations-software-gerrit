@@ -42,9 +42,13 @@ import {subscribe} from '../../lit/subscription-controller';
 import {resolve} from '../../../models/dependency';
 import {configModelToken} from '../../../models/config/config-model';
 import {createSearchUrl} from '../../../models/views/search';
-import {createDashboardUrl} from '../../../models/views/dashboard';
+import {
+  DashboardType,
+  createDashboardUrl,
+} from '../../../models/views/dashboard';
 import {fire, fireReload} from '../../../utils/event-util';
 import {userModelToken} from '../../../models/user/user-model';
+import {getDocUrl} from '../../../utils/url-util';
 
 @customElement('gr-hovercard-account-contents')
 export class GrHovercardAccountContents extends LitElement {
@@ -73,6 +77,8 @@ export class GrHovercardAccountContents extends LitElement {
   @state()
   serverConfig?: ServerInfo;
 
+  @state() private docsBaseUrl = '';
+
   private readonly restApiService = getAppContext().restApiService;
 
   private readonly reporting = getAppContext().reportingService;
@@ -95,6 +101,11 @@ export class GrHovercardAccountContents extends LitElement {
         this.serverConfig = config;
       }
     );
+    subscribe(
+      this,
+      () => this.getConfigModel().docsBaseUrl$,
+      docsBaseUrl => (this.docsBaseUrl = docsBaseUrl)
+    );
   }
 
   static override get styles() {
@@ -105,6 +116,7 @@ export class GrHovercardAccountContents extends LitElement {
         .top,
         .attention,
         .status,
+        .displayName,
         .voteable {
           padding: var(--spacing-s) var(--spacing-l);
         }
@@ -181,7 +193,8 @@ export class GrHovercardAccountContents extends LitElement {
         </div>
       </div>
       ${this.renderAccountStatusPlugins()} ${this.renderAccountStatus()}
-      ${this.renderLinks()} ${this.renderChangeRelatedInfoAndActions()}
+      ${this.renderDisplayName()} ${this.renderLinks()}
+      ${this.renderChangeRelatedInfoAndActions()}
     `;
   }
 
@@ -255,9 +268,8 @@ export class GrHovercardAccountContents extends LitElement {
         @enter=${() => {
           fire(this, 'link-clicked', {});
         }}
+        >Changes</a
       >
-        Changes
-      </a>
       ·
       <a
         href=${ifDefined(this.computeOwnerDashboardLink())}
@@ -267,9 +279,8 @@ export class GrHovercardAccountContents extends LitElement {
         @enter=${() => {
           fire(this, 'link-clicked', {});
         }}
+        >Dashboard</a
       >
-        Dashboard
-      </a>
     </div>`;
   }
 
@@ -279,6 +290,16 @@ export class GrHovercardAccountContents extends LitElement {
       <div class="status">
         <span class="title">About me:</span>
         <span class="value">${this.account.status.trim()}</span>
+      </div>
+    `;
+  }
+
+  private renderDisplayName() {
+    if (!this.account.display_name) return nothing;
+    return html`
+      <div class="displayName">
+        <span class="title">Display name:</span>
+        <span class="value">${this.account.display_name.trim()}</span>
       </div>
     `;
   }
@@ -297,8 +318,9 @@ export class GrHovercardAccountContents extends LitElement {
           ></gr-icon>
           <span> ${this.computePronoun()} turn to take action. </span>
           <a
-            href="https://gerrit-review.googlesource.com/Documentation/user-attention-set.html"
+            href=${getDocUrl(this.docsBaseUrl, 'user-attention-set.html')}
             target="_blank"
+            rel="noopener noreferrer"
           >
             <gr-icon icon="help" title="read documentation"></gr-icon>
           </a>
@@ -373,9 +395,15 @@ export class GrHovercardAccountContents extends LitElement {
   computeOwnerDashboardLink() {
     if (!this.account) return undefined;
     if (this.account._account_id)
-      return createDashboardUrl({user: `${this.account._account_id}`});
+      return createDashboardUrl({
+        type: DashboardType.USER,
+        user: `${this.account._account_id}`,
+      });
     if (this.account.email)
-      return createDashboardUrl({user: this.account.email});
+      return createDashboardUrl({
+        type: DashboardType.USER,
+        user: this.account.email,
+      });
     return undefined;
   }
 
@@ -439,7 +467,7 @@ export class GrHovercardAccountContents extends LitElement {
     this.restApiService
       .saveChangeReview(this.change._number, CURRENT, reviewInput)
       .then(response => {
-        if (!response || !response.ok) {
+        if (!response) {
           throw new Error(
             'something went wrong when toggling' +
               this.getReviewerState(this.change!)

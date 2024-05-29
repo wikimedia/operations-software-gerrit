@@ -139,7 +139,7 @@ public class ListTags implements RestReadView<ProjectResource> {
     tags.sort(comparing(t -> t.ref));
 
     return Response.ok(
-        new RefFilter<TagInfo>(Constants.R_TAGS)
+        new RefFilter<>(Constants.R_TAGS, (TagInfo tag) -> tag.ref)
             .start(start)
             .limit(limit)
             .subString(matchSubstring)
@@ -181,7 +181,9 @@ public class ListTags implements RestReadView<ProjectResource> {
     if (!isConfigRef(ref.getName())) {
       // Never allow to delete the meta config branch.
       canDelete =
-          perm.testOrFalse(RefPermission.DELETE) && projectState.statePermitsWrite() ? true : null;
+          (perm.testOrFalse(RefPermission.DELETE) && projectState.statePermitsWrite())
+              ? true
+              : null;
     }
 
     ImmutableList<WebLinkInfo> webLinks = links.getTagLinks(projectState.getName(), ref.getName());

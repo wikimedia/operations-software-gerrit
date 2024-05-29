@@ -23,6 +23,7 @@ import '../gr-identities/gr-identities';
 import '../gr-menu-editor/gr-menu-editor';
 import '../gr-ssh-editor/gr-ssh-editor';
 import '../gr-watched-projects-editor/gr-watched-projects-editor';
+import '../../shared/gr-dialog/gr-dialog';
 import {GrAccountInfo} from '../gr-account-info/gr-account-info';
 import {GrWatchedProjectsEditor} from '../gr-watched-projects-editor/gr-watched-projects-editor';
 import {GrGroupList} from '../gr-group-list/gr-group-list';
@@ -39,7 +40,6 @@ import {GrEmailEditor} from '../gr-email-editor/gr-email-editor';
 import {fireAlert, fireTitleChange} from '../../../utils/event-util';
 import {getAppContext} from '../../../services/app-context';
 import {
-  ColumnNames,
   DateFormat,
   DefaultBase,
   DiffViewMode,
@@ -57,19 +57,20 @@ import {fontStyles} from '../../../styles/gr-font-styles';
 import {when} from 'lit/directives/when.js';
 import {pageNavStyles} from '../../../styles/gr-page-nav-styles';
 import {menuPageStyles} from '../../../styles/gr-menu-page-styles';
-import {formStyles} from '../../../styles/gr-form-styles';
+import {grFormStyles} from '../../../styles/gr-form-styles';
 import {KnownExperimentId} from '../../../services/flags/flags';
 import {subscribe} from '../../lit/subscription-controller';
 import {resolve} from '../../../models/dependency';
 import {settingsViewModelToken} from '../../../models/views/settings';
 import {areNotificationsEnabled} from '../../../utils/worker-util';
-import {userModelToken} from '../../../models/user/user-model';
-
-const GERRIT_DOCS_BASE_URL =
-  'https://gerrit-review.googlesource.com/' + 'Documentation';
-const GERRIT_DOCS_FILTER_PATH = '/user-notify.html';
-const ABSOLUTE_URL_PATTERN = /^https?:/;
-const TRAILING_SLASH_PATTERN = /\/$/;
+import {
+  changeTablePrefs,
+  userModelToken,
+} from '../../../models/user/user-model';
+import {modalStyles} from '../../../styles/gr-modal-styles';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
+import {getDocUrl, rootUrl} from '../../../utils/url-util';
+import {configModelToken} from '../../../models/config/config-model';
 
 const HTTP_AUTH = ['HTTP', 'HTTP_LDAP'];
 
@@ -87,6 +88,9 @@ export class GrSettingsView extends LitElement {
    */
 
   @query('#accountInfo', true) accountInfo!: GrAccountInfo;
+
+  @query('#confirm-account-deletion')
+  private deleteAccountConfirmationDialog?: HTMLDialogElement;
 
   @query('#watchedProjectsEditor', true)
   watchedProjectsEditor!: GrWatchedProjectsEditor;
@@ -178,9 +182,6 @@ export class GrSettingsView extends LitElement {
   // private but used in test
   @state() serverConfig?: ServerInfo;
 
-  // private but used in test
-  @state() docsBaseUrl?: string | null;
-
   @state() private emailsChanged = false;
 
   // private but used in test
@@ -190,6 +191,10 @@ export class GrSettingsView extends LitElement {
   @state() showNumber?: boolean;
 
   @state() account?: AccountDetailInfo;
+
+  @state() isDeletingAccount = false;
+
+  @state() private docsBaseUrl = '';
 
   // private but used in test
   public _testOnly_loadingPromise?: Promise<void>;
@@ -202,6 +207,10 @@ export class GrSettingsView extends LitElement {
   readonly flagsService = getAppContext().flagsService;
 
   private readonly getViewModel = resolve(this, settingsViewModelToken);
+
+  private readonly getNavigation = resolve(this, navigationToken);
+
+  private readonly getConfigModel = resolve(this, configModelToken);
 
   constructor() {
     super();
@@ -231,13 +240,13 @@ export class GrSettingsView extends LitElement {
         this.showNumber = !!prefs.legacycid_in_change_table;
         this.copyPrefs(CopyPrefsDirection.PrefsToLocalPrefs);
         this.prefsChanged = false;
-        this.localChangeTableColumns =
-          prefs.change_table.length === 0
-            ? Object.values(ColumnNames)
-            : prefs.change_table.map(column =>
-                column === 'Project' ? 'Repo' : column
-              );
+        this.localChangeTableColumns = changeTablePrefs(prefs);
       }
+    );
+    subscribe(
+      this,
+      () => this.getConfigModel().docsBaseUrl$,
+      docsBaseUrl => (this.docsBaseUrl = docsBaseUrl)
     );
   }
 
@@ -283,12 +292,6 @@ export class GrSettingsView extends LitElement {
           );
         }
 
-        configPromises.push(
-          this.restApiService.getDocsBaseUrl(config).then(baseUrl => {
-            this.docsBaseUrl = baseUrl;
-          })
-        );
-
         return Promise.all(configPromises);
       })
     );
@@ -303,43 +306,53 @@ export class GrSettingsView extends LitElement {
     });
   }
 
-  static override styles = [
-    sharedStyles,
-    paperStyles,
-    fontStyles,
-    formStyles,
-    menuPageStyles,
-    pageNavStyles,
-    css`
-      :host {
-        color: var(--primary-text-color);
-      }
-      h2 {
-        font-family: var(--header-font-family);
-        font-size: var(--font-size-h2);
-        font-weight: var(--font-weight-h2);
-        line-height: var(--line-height-h2);
-      }
-      .newEmailInput {
-        width: 20em;
-      }
-      #email {
-        margin-bottom: var(--spacing-l);
-      }
-      .filters p {
-        margin-bottom: var(--spacing-l);
-      }
-      .queryExample em {
-        color: violet;
-      }
-      .toggle {
-        align-items: center;
-        display: flex;
-        margin-bottom: var(--spacing-l);
-        margin-right: var(--spacing-l);
-      }
-    `,
-  ];
+  static override get styles() {
+    return [
+      sharedStyles,
+      paperStyles,
+      fontStyles,
+      grFormStyles,
+      modalStyles,
+      menuPageStyles,
+      pageNavStyles,
+      css`
+        :host {
+          color: var(--primary-text-color);
+        }
+        h2 {
+          font-family: var(--header-font-family);
+          font-size: var(--font-size-h2);
+          font-weight: var(--font-weight-h2);
+          line-height: var(--line-height-h2);
+        }
+        .newEmailInput {
+          width: 20em;
+        }
+        #email {
+          margin-bottom: var(--spacing-l);
+        }
+        .filters p {
+          margin-bottom: var(--spacing-l);
+        }
+        .queryExample em {
+          color: violet;
+        }
+        .toggle {
+          align-items: center;
+          display: flex;
+          margin-bottom: var(--spacing-l);
+          margin-right: var(--spacing-l);
+        }
+        .delete-account-button {
+          margin-left: var(--spacing-l);
+        }
+        .confirm-account-deletion-main ul {
+          list-style: disc inside;
+          margin-left: var(--spacing-l);
+        }
+      `,
+    ];
+  }
 
   override render() {
     const isLoading = this.loading || this.loading === undefined;
@@ -374,7 +387,6 @@ export class GrSettingsView extends LitElement {
               this.serverConfig?.auth.use_contributor_agreements,
               () => html`<li><a href="#Agreements">Agreements</a></li>`
             )}
-            <li><a href="#MailFilters">Mail Filters</a></li>
             <gr-endpoint-decorator name="settings-menu-item">
             </gr-endpoint-decorator>
           </ul>
@@ -402,6 +414,32 @@ export class GrSettingsView extends LitElement {
               ?disabled=${!this.accountInfoChanged}
               >Save changes</gr-button
             >
+            <gr-button
+              class="delete-account-button"
+              @click=${() => {
+                this.confirmDeleteAccount();
+              }}
+              >Delete Account</gr-button
+            >
+            <dialog id="confirm-account-deletion">
+              <gr-dialog
+                @cancel=${() => this.deleteAccountConfirmationDialog?.close()}
+                @confirm=${() => this.deleteAccount()}
+                .loading=${this.isDeletingAccount}
+                .loadingLabel=${'Deleting account'}
+                .confirmLabel=${'Delete account'}
+              >
+                <div class="confirm-account-deletion-header" slot="header">
+                  Are you sure you wish to delete your account?
+                </div>
+                <div class="confirm-account-deletion-main" slot="main">
+                  <ul>
+                    <li>Deleting your account is not reversible.</li>
+                    <li>Deleting your account will not delete your changes.</li>
+                  </ul>
+                </div>
+              </gr-dialog>
+            </dialog>
           </fieldset>
           <h2
             id="Preferences"
@@ -633,91 +671,6 @@ export class GrSettingsView extends LitElement {
                 <gr-agreements-list id="agreementsList"></gr-agreements-list>
               </fieldset>`
           )}
-          <h2 id="MailFilters">Mail Filters</h2>
-          <fieldset class="filters">
-            <p>
-              Gerrit emails include metadata about the change to support writing
-              mail filters.
-            </p>
-            <p>
-              Here are some example Gmail queries that can be used for filters
-              or for searching through archived messages. View the
-              <a
-                href=${this.getFilterDocsLink(this.docsBaseUrl)}
-                target="_blank"
-                rel="nofollow"
-                >Gerrit documentation</a
-              >
-              for the complete set of footers.
-            </p>
-            <table>
-              <tbody>
-                <tr>
-                  <th>Name</th>
-                  <th>Query</th>
-                </tr>
-                <tr>
-                  <td>Changes requesting my review</td>
-                  <td>
-                    <code class="queryExample">
-                      "Gerrit-Reviewer: <em>Your Name</em>
-                      &lt;<em>your.email@example.com</em>&gt;"
-                    </code>
-                  </td>
-                </tr>
-                <tr>
-                  <td>Changes requesting my attention</td>
-                  <td>
-                    <code class="queryExample">
-                      "Gerrit-Attention: <em>Your Name</em>
-                      &lt;<em>your.email@example.com</em>&gt;"
-                    </code>
-                  </td>
-                </tr>
-                <tr>
-                  <td>Changes from a specific owner</td>
-                  <td>
-                    <code class="queryExample">
-                      "Gerrit-Owner: <em>Owner name</em>
-                      &lt;<em>owner.email@example.com</em>&gt;"
-                    </code>
-                  </td>
-                </tr>
-                <tr>
-                  <td>Changes targeting a specific branch</td>
-                  <td>
-                    <code class="queryExample">
-                      "Gerrit-Branch: <em>branch-name</em>"
-                    </code>
-                  </td>
-                </tr>
-                <tr>
-                  <td>Changes in a specific project</td>
-                  <td>
-                    <code class="queryExample">
-                      "Gerrit-Project: <em>project-name</em>"
-                    </code>
-                  </td>
-                </tr>
-                <tr>
-                  <td>Messages related to a specific Change ID</td>
-                  <td>
-                    <code class="queryExample">
-                      "Gerrit-Change-Id: <em>Change ID</em>"
-                    </code>
-                  </td>
-                </tr>
-                <tr>
-                  <td>Messages related to a specific change number</td>
-                  <td>
-                    <code class="queryExample">
-                      "Gerrit-Change-Number: <em>change number</em>"
-                    </code>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </fieldset>
           <gr-endpoint-decorator name="settings-screen">
           </gr-endpoint-decorator>
         </div>
@@ -888,8 +841,12 @@ export class GrSettingsView extends LitElement {
             >Allow browser notifications</label
           >
           <a
-            href="https://gerrit-review.googlesource.com/Documentation/user-attention-set.html#_browser_notifications"
+            href=${getDocUrl(
+              this.docsBaseUrl,
+              'user-attention-set.html#_browser_notifications'
+            )}
             target="_blank"
+            rel="noopener noreferrer"
           >
             <gr-icon icon="help" title="read documentation"></gr-icon>
           </a>
@@ -1197,17 +1154,16 @@ export class GrSettingsView extends LitElement {
     });
   }
 
-  // private but used in test
-  getFilterDocsLink(docsBaseUrl?: string | null) {
-    let base = docsBaseUrl;
-    if (!base || !ABSOLUTE_URL_PATTERN.test(base)) {
-      base = GERRIT_DOCS_BASE_URL;
-    }
+  private confirmDeleteAccount() {
+    this.deleteAccountConfirmationDialog?.showModal();
+  }
 
-    // Remove any trailing slash, since it is in the GERRIT_DOCS_FILTER_PATH.
-    base = base.replace(TRAILING_SLASH_PATTERN, '');
-
-    return base + GERRIT_DOCS_FILTER_PATH;
+  private async deleteAccount() {
+    this.isDeletingAccount = true;
+    await this.accountInfo.delete();
+    this.isDeletingAccount = false;
+    this.deleteAccountConfirmationDialog?.close();
+    this.getNavigation().setUrl(rootUrl());
   }
 
   // private but used in test

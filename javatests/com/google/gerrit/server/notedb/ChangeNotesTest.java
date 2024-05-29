@@ -29,11 +29,13 @@ import static com.google.gerrit.testing.TestActionRefUpdateContext.testRefAction
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Comparator.comparing;
 import static org.eclipse.jgit.lib.Constants.OBJ_BLOB;
+import static org.mockito.Mockito.mock;
 
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.ImmutableTable;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.ListMultimap;
@@ -55,8 +57,10 @@ import com.google.gerrit.entities.SubmissionId;
 import com.google.gerrit.entities.SubmitRecord;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.server.CurrentUser;
+import com.google.gerrit.server.DraftCommentsReader;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.ReviewerSet;
+import com.google.gerrit.server.git.validators.TopicValidator;
 import com.google.gerrit.server.notedb.ChangeNotesCommit.ChangeNotesRevWalk;
 import com.google.gerrit.server.util.AccountTemplateUtil;
 import com.google.gerrit.server.util.time.TimeUtil;
@@ -67,6 +71,8 @@ import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.TreeMap;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
@@ -74,12 +80,20 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.notes.NoteMap;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
+import org.junit.Before;
 import org.junit.Test;
 
 public class ChangeNotesTest extends AbstractChangeNotesTest {
-  @Inject private DraftCommentNotes.Factory draftNotesFactory;
-
   @Inject private ChangeNoteJson changeNoteJson;
+
+  @Inject private DraftCommentsReader draftCommentsReader;
+
+  private TopicValidator topicValidator;
+
+  @Before
+  public void setUp() throws Exception {
+    topicValidator = mock(TopicValidator.class);
+  }
 
   @Test
   public void tagChangeMessage() throws Exception {
@@ -225,6 +239,47 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     assertThat(messages.get(0).getTag()).isEqualTo(integrationTag);
     assertThat(messages.get(1).getTag()).isEqualTo(coverageTag);
     assertThat(messages.get(2).getTag()).isEqualTo(ipTag);
+  }
+
+  @Test
+  public void multipleTargetBranches() throws Exception {
+    Change c = newChange();
+
+    // PS1 with target branch = refs/heads/master
+    ChangeUpdate update = newUpdate(c, changeOwner);
+    update.putApproval(LabelId.VERIFIED, (short) 1);
+    update.commit();
+
+    // PS2 with target branch = refs/heads/foo
+    incrementPatchSet(c);
+    update = newUpdate(c, changeOwner);
+    update.setBranch("refs/heads/foo");
+    update.commit();
+
+    // PS3 with no change
+    incrementPatchSet(c);
+
+    // PS4 with target branch = refs/heads/bar
+    incrementPatchSet(c);
+    update = newUpdate(c, changeOwner);
+    update.setBranch("refs/heads/bar");
+    update.commit();
+
+    // PS5 with no change
+    incrementPatchSet(c);
+
+    ChangeNotes notes = newNotes(c);
+    ImmutableSortedMap<PatchSet.Id, PatchSet> patchSets = notes.getPatchSets();
+    assertThat(patchSets.get(PatchSet.id(c.getId(), 1)).branch())
+        .isEqualTo(Optional.of("refs/heads/master"));
+    assertThat(patchSets.get(PatchSet.id(c.getId(), 2)).branch())
+        .isEqualTo(Optional.of("refs/heads/foo"));
+    assertThat(patchSets.get(PatchSet.id(c.getId(), 3)).branch())
+        .isEqualTo(Optional.of("refs/heads/foo"));
+    assertThat(patchSets.get(PatchSet.id(c.getId(), 4)).branch())
+        .isEqualTo(Optional.of("refs/heads/bar"));
+    assertThat(patchSets.get(PatchSet.id(c.getId(), 5)).branch())
+        .isEqualTo(Optional.of("refs/heads/bar"));
   }
 
   @Test
@@ -1259,7 +1314,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
     ChangeUpdate update = newUpdate(c, changeOwner);
     // Make sure unrelevent update does not set mergedOn.
-    update.setTopic("topic");
+    update.setTopic("topic", topicValidator);
     update.commit();
     assertThat(newNotes(c).getMergedOn()).isEmpty();
   }
@@ -1504,6 +1559,78 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
   }
 
   @Test
+  public void customKeyedValuesCommit() throws Exception {
+    Change c = newChange();
+    ChangeUpdate update = newUpdate(c, changeOwner);
+    update.addCustomKeyedValue("key1", "value1");
+    update.addCustomKeyedValue("key2", "value2");
+    update.commit();
+    try (RevWalk walk = new RevWalk(repo)) {
+      RevCommit commit = walk.parseCommit(update.getResult());
+      walk.parseBody(commit);
+      assertThat(commit.getFullMessage()).contains("Custom-Keyed-Value: key1=value1\n");
+      assertThat(commit.getFullMessage()).contains("Custom-Keyed-Value: key2=value2\n");
+    }
+  }
+
+  @Test
+  public void customKeyedValuesChangeNotes() throws Exception {
+    Change c = newChange();
+    ChangeUpdate update = newUpdate(c, changeOwner);
+    update.addCustomKeyedValue("key1", "value\n1");
+    update.addCustomKeyedValue("key2", "value2=value3");
+    update.addCustomKeyedValue("key3", "value3: value4");
+    update.commit();
+
+    TreeMap<String, String> customKeyedValues = new TreeMap<>();
+    customKeyedValues.put("key1", "value 1");
+    customKeyedValues.put("key2", "value2=value3");
+    customKeyedValues.put("key3", "value3: value4");
+    ChangeNotes notes = newNotes(c);
+    assertThat(notes.getCustomKeyedValues())
+        .isEqualTo(ImmutableSortedMap.copyOfSorted(customKeyedValues));
+  }
+
+  @Test
+  public void customKeyedValuesChangeNotes_Override() throws Exception {
+    Change c = newChange();
+    ChangeUpdate update = newUpdate(c, changeOwner);
+    update.addCustomKeyedValue("key1", "value1");
+    update.addCustomKeyedValue("key2", "value2");
+    update.commit();
+
+    update = newUpdate(c, changeOwner);
+    update.addCustomKeyedValue("key1", "value3");
+    update.commit();
+
+    TreeMap<String, String> customKeyedValues = new TreeMap<>();
+    customKeyedValues.put("key1", "value3");
+    customKeyedValues.put("key2", "value2");
+    ChangeNotes notes = newNotes(c);
+    assertThat(notes.getCustomKeyedValues())
+        .isEqualTo(ImmutableSortedMap.copyOfSorted(customKeyedValues));
+  }
+
+  @Test
+  public void customKeyedValuesChangeNotes_Deletion() throws Exception {
+    Change c = newChange();
+    ChangeUpdate update = newUpdate(c, changeOwner);
+    update.addCustomKeyedValue("key1", "value1");
+    update.addCustomKeyedValue("key2", "value2");
+    update.commit();
+
+    update = newUpdate(c, changeOwner);
+    update.deleteCustomKeyedValue("key1");
+    update.commit();
+
+    TreeMap<String, String> customKeyedValues = new TreeMap<>();
+    customKeyedValues.put("key2", "value2");
+    ChangeNotes notes = newNotes(c);
+    assertThat(notes.getCustomKeyedValues())
+        .isEqualTo(ImmutableSortedMap.copyOfSorted(customKeyedValues));
+  }
+
+  @Test
   public void topicChangeNotes() throws Exception {
     Change c = newChange();
 
@@ -1514,14 +1641,14 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     // set topic
     String topic = "myTopic";
     ChangeUpdate update = newUpdate(c, changeOwner);
-    update.setTopic(topic);
+    update.setTopic(topic, topicValidator);
     update.commit();
     notes = newNotes(c);
     assertThat(notes.getChange().getTopic()).isEqualTo(topic);
 
     // clear topic by setting empty string
     update = newUpdate(c, changeOwner);
-    update.setTopic("");
+    update.setTopic("", topicValidator);
     update.commit();
     notes = newNotes(c);
     assertThat(notes.getChange().getTopic()).isNull();
@@ -1529,21 +1656,21 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     // set other topic
     topic = "otherTopic";
     update = newUpdate(c, changeOwner);
-    update.setTopic(topic);
+    update.setTopic(topic, topicValidator);
     update.commit();
     notes = newNotes(c);
     assertThat(notes.getChange().getTopic()).isEqualTo(topic);
 
     // clear topic by setting null
     update = newUpdate(c, changeOwner);
-    update.setTopic(null);
+    update.setTopic(null, topicValidator);
     update.commit();
     notes = newNotes(c);
     assertThat(notes.getChange().getTopic()).isNull();
 
     // check invalid topic
     ChangeUpdate failingUpdate = newUpdate(c, changeOwner);
-    assertThrows(ValidationException.class, () -> failingUpdate.setTopic("\""));
+    assertThrows(ValidationException.class, () -> failingUpdate.setTopic("\"", topicValidator));
   }
 
   @Test
@@ -1555,7 +1682,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
     // An update doesn't affect the Change-Id
     ChangeUpdate update = newUpdate(c, changeOwner);
-    update.setTopic("topic"); // Change something to get a new commit.
+    update.setTopic("topic", topicValidator); // Change something to get a new commit.
     update.commit();
     assertThat(notes.getChange().getKey()).isEqualTo(c.getKey());
 
@@ -1584,7 +1711,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
     // An update doesn't affect the branch
     ChangeUpdate update = newUpdate(c, changeOwner);
-    update.setTopic("topic"); // Change something to get a new commit.
+    update.setTopic("topic", topicValidator); // Change something to get a new commit.
     update.commit();
     assertThat(newNotes(c).getChange().getDest()).isEqualTo(expectedBranch);
 
@@ -1605,7 +1732,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
     // An update doesn't affect the owner
     ChangeUpdate update = newUpdate(c, otherUser);
-    update.setTopic("topic"); // Change something to get a new commit.
+    update.setTopic("topic", topicValidator); // Change something to get a new commit.
     update.commit();
     assertThat(newNotes(c).getChange().getOwner()).isEqualTo(changeOwner.getAccountId());
   }
@@ -1619,7 +1746,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
     // An update doesn't affect the createdOn timestamp.
     ChangeUpdate update = newUpdate(c, changeOwner);
-    update.setTopic("topic"); // Change something to get a new commit.
+    update.setTopic("topic", topicValidator); // Change something to get a new commit.
     update.commit();
     assertThat(newNotes(c).getChange().getCreatedOn()).isEqualTo(createdOn);
   }
@@ -1634,7 +1761,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
     // Various kinds of updates that update the timestamp.
     ChangeUpdate update = newUpdate(c, changeOwner);
-    update.setTopic("topic"); // Change something to get a new commit.
+    update.setTopic("topic", topicValidator); // Change something to get a new commit.
     update.commit();
     Instant ts2 = newNotes(c).getChange().getLastUpdatedOn();
     assertThat(ts2).isGreaterThan(ts1);
@@ -1934,7 +2061,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     ChangeUpdate update2 = newUpdate(c, otherUser);
     update2.putApproval(LabelId.CODE_REVIEW, (short) 2);
 
-    try (NoteDbUpdateManager updateManager = updateManagerFactory.create(project)) {
+    try (NoteDbUpdateManager updateManager = updateManagerFactory.create(project, otherUser)) {
       updateManager.add(update1);
       updateManager.add(update2);
       testRefAction(() -> updateManager.execute());
@@ -1963,7 +2090,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     Instant time1 = TimeUtil.now();
     PatchSet.Id psId = c.currentPatchSetId();
     RevCommit tipCommit;
-    try (NoteDbUpdateManager updateManager = updateManagerFactory.create(project)) {
+    try (NoteDbUpdateManager updateManager = updateManagerFactory.create(project, otherUser)) {
       HumanComment comment1 =
           newComment(
               psId,
@@ -2043,7 +2170,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     Ref initial2 = repo.exactRef(update2.getRefName());
     assertThat(initial2).isNotNull();
 
-    try (NoteDbUpdateManager updateManager = updateManagerFactory.create(project)) {
+    try (NoteDbUpdateManager updateManager = updateManagerFactory.create(project, otherUser)) {
       updateManager.add(update1);
       updateManager.add(update2);
       testRefAction(() -> updateManager.execute());
@@ -2740,8 +2867,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     update.commit();
 
     ChangeNotes notes = newNotes(c);
-    assertThat(notes.getDraftComments(otherUserId))
-        .containsExactlyEntriesIn(ImmutableListMultimap.of(commitId, comment1));
+    assertThat(notes.getDraftComments(otherUserId)).containsExactly(comment1);
     assertThat(notes.getHumanComments()).isEmpty();
 
     update = newUpdate(c, otherUser);
@@ -2804,12 +2930,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     update.commit();
 
     ChangeNotes notes = newNotes(c);
-    assertThat(notes.getDraftComments(otherUserId))
-        .containsExactlyEntriesIn(
-            ImmutableListMultimap.of(
-                commitId, comment1,
-                commitId, comment2))
-        .inOrder();
+    assertThat(notes.getDraftComments(otherUserId)).containsExactly(comment1, comment2).inOrder();
     assertThat(notes.getHumanComments()).isEmpty();
 
     // Publish first draft.
@@ -2819,8 +2940,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     update.commit();
 
     notes = newNotes(c);
-    assertThat(notes.getDraftComments(otherUserId))
-        .containsExactlyEntriesIn(ImmutableListMultimap.of(commitId, comment2));
+    assertThat(notes.getDraftComments(otherUserId)).containsExactly(comment2);
     assertThat(notes.getHumanComments())
         .containsExactlyEntriesIn(ImmutableListMultimap.of(commitId, comment1));
   }
@@ -2875,11 +2995,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     update.commit();
 
     ChangeNotes notes = newNotes(c);
-    assertThat(notes.getDraftComments(otherUserId))
-        .containsExactlyEntriesIn(
-            ImmutableListMultimap.of(
-                commitId1, baseComment,
-                commitId2, psComment));
+    assertThat(notes.getDraftComments(otherUserId)).containsExactly(baseComment, psComment);
     assertThat(notes.getHumanComments()).isEmpty();
 
     // Publish both comments.
@@ -3271,8 +3387,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     update.commit();
 
     ChangeNotes notes = newNotes(c);
-    assertThat(notes.getDraftComments(otherUserId).get(commitId1))
-        .containsExactly(comment1, comment2);
+    assertThat(notes.getDraftComments(otherUserId)).containsExactly(comment1, comment2);
     assertThat(notes.getHumanComments()).isEmpty();
 
     update = newUpdate(c, otherUser);
@@ -3281,7 +3396,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     update.commit();
 
     notes = newNotes(c);
-    assertThat(notes.getDraftComments(otherUserId).get(commitId1)).containsExactly(comment1);
+    assertThat(notes.getDraftComments(otherUserId)).containsExactly(comment1);
     assertThat(notes.getHumanComments().get(commitId1)).containsExactly(comment2);
   }
 
@@ -3357,20 +3472,24 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     // Re-add draft version of comment2 back to draft ref without updating
     // change ref. Simulates the case where deleting the draft failed
     // non-atomically after adding the published comment succeeded.
-    ChangeDraftUpdate draftUpdate = newUpdate(c, otherUser).createDraftUpdateIfNull();
-    draftUpdate.putComment(comment2);
-    try (NoteDbUpdateManager manager = updateManagerFactory.create(c.getProject())) {
-      manager.add(draftUpdate);
-      testRefAction(() -> manager.execute());
+    Optional<ChangeDraftNotesUpdate> draftUpdate =
+        ChangeDraftNotesUpdate.asChangeDraftNotesUpdate(
+            newUpdate(c, otherUser).createDraftUpdateIfNull());
+    if (draftUpdate.isPresent()) {
+      draftUpdate.get().putDraftComment(comment2);
+      try (NoteDbUpdateManager manager = updateManagerFactory.create(c.getProject(), otherUser)) {
+        manager.add(draftUpdate.get());
+        testRefAction(() -> manager.execute());
+      }
     }
 
     // Looking at drafts directly shows the zombie comment.
-    DraftCommentNotes draftNotes = draftNotesFactory.create(c.getId(), otherUserId);
-    assertThat(draftNotes.load().getComments().get(commitId1)).containsExactly(comment1, comment2);
+    assertThat(draftCommentsReader.getDraftsByChangeAndDraftAuthor(c.getId(), otherUserId))
+        .containsExactly(comment1, comment2);
 
     // Zombie comment is filtered out of drafts via ChangeNotes.
     ChangeNotes notes = newNotes(c);
-    assertThat(notes.getDraftComments(otherUserId).get(commitId1)).containsExactly(comment1);
+    assertThat(notes.getDraftComments(otherUserId)).containsExactly(comment1);
     assertThat(notes.getHumanComments().get(commitId1)).containsExactly(comment2);
 
     update = newUpdate(c, otherUser);
@@ -3422,7 +3541,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
             false);
     update2.putComment(HumanComment.Status.PUBLISHED, comment2);
 
-    try (NoteDbUpdateManager manager = updateManagerFactory.create(project)) {
+    try (NoteDbUpdateManager manager = updateManagerFactory.create(project, otherUser)) {
       manager.add(update1);
       manager.add(update2);
       testRefAction(() -> manager.execute());

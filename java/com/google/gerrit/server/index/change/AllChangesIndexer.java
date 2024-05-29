@@ -22,7 +22,7 @@ import static com.google.gerrit.server.git.QueueProvider.QueueType.BATCH;
 import com.google.auto.value.AutoValue;
 import com.google.common.base.Stopwatch;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSortedSet;
+import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
@@ -31,6 +31,7 @@ import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.index.SiteIndexer;
+import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.MultiProgressMonitor;
 import com.google.gerrit.server.git.MultiProgressMonitor.Task;
@@ -46,10 +47,13 @@ import com.google.inject.Inject;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
+import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ProgressMonitor;
 import org.eclipse.jgit.lib.Repository;
@@ -82,6 +86,7 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
   private final ChangeIndexer.Factory indexerFactory;
   private final ChangeNotes.Factory notesFactory;
   private final ProjectCache projectCache;
+  private final Set<Project.NameKey> projectsToSkip;
 
   @Inject
   AllChangesIndexer(
@@ -91,7 +96,8 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
       @IndexExecutor(BATCH) ListeningExecutorService executor,
       ChangeIndexer.Factory indexerFactory,
       ChangeNotes.Factory notesFactory,
-      ProjectCache projectCache) {
+      ProjectCache projectCache,
+      @GerritServerConfig Config config) {
     this.multiProgressMonitorFactory = multiProgressMonitorFactory;
     this.changeDataFactory = changeDataFactory;
     this.repoManager = repoManager;
@@ -99,6 +105,11 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
     this.indexerFactory = indexerFactory;
     this.notesFactory = notesFactory;
     this.projectCache = projectCache;
+    this.projectsToSkip =
+        Sets.newHashSet(config.getStringList("index", null, "excludeProjectFromChangeReindex"))
+            .stream()
+            .map(p -> Project.NameKey.parse(p))
+            .collect(Collectors.toSet());
   }
 
   @AutoValue
@@ -225,19 +236,32 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
 
     @Override
     public Void call() throws Exception {
-      OnlineReindexMode.begin();
-      // Order of scanning changes is undefined. This is ok if we assume that packfile locality is
-      // not important for indexing, since sites should have a fully populated DiffSummary cache.
-      // It does mean that reindexing after invalidating the DiffSummary cache will be expensive,
-      // but the goal is to invalidate that cache as infrequently as we possibly can. And besides,
-      // we don't have concrete proof that improving packfile locality would help.
-      notesFactory
-          .scan(
-              projectSlice.metaIdByChange(),
-              projectSlice.name(),
-              id -> (id.get() % projectSlice.slices()) == projectSlice.slice())
-          .forEach(r -> index(r));
-      OnlineReindexMode.end();
+      String oldThreadName = Thread.currentThread().getName();
+      try {
+        Thread.currentThread()
+            .setName(
+                oldThreadName
+                    + "["
+                    + projectSlice.name().toString()
+                    + "-"
+                    + projectSlice.slice()
+                    + "]");
+        OnlineReindexMode.begin();
+        // Order of scanning changes is undefined. This is ok if we assume that packfile locality is
+        // not important for indexing, since sites should have a fully populated DiffSummary cache.
+        // It does mean that reindexing after invalidating the DiffSummary cache will be expensive,
+        // but the goal is to invalidate that cache as infrequently as we possibly can. And besides,
+        // we don't have concrete proof that improving packfile locality would help.
+        notesFactory
+            .scan(
+                projectSlice.metaIdByChange(),
+                projectSlice.name(),
+                id -> (id.get() % projectSlice.slices()) == projectSlice.slice())
+            .forEach(r -> index(r));
+        OnlineReindexMode.end();
+      } finally {
+        Thread.currentThread().setName(oldThreadName);
+      }
       return null;
     }
 
@@ -302,7 +326,7 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
     }
 
     private List<ListenableFuture<?>> schedule() throws ProjectsCollectionFailure {
-      ImmutableSortedSet<Project.NameKey> projects = projectCache.all();
+      Set<Project.NameKey> projects = Sets.difference(projectCache.all(), projectsToSkip);
       int projectCount = projects.size();
       slicingProjects = mpm.beginSubTask("Slicing projects", projectCount);
       for (Project.NameKey name : projects) {

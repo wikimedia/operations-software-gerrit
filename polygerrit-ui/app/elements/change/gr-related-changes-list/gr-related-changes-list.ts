@@ -25,7 +25,7 @@ import {ParsedChangeInfo} from '../../../types/types';
 import {truncatePath} from '../../../utils/path-list-util';
 import {pluralize} from '../../../utils/string-util';
 import {getChangeNumber, getRevisionKey} from '../../../utils/change-util';
-import {DEFALT_NUM_CHANGES_WHEN_COLLAPSED} from './gr-related-collapse';
+import {DEFAULT_NUM_CHANGES_WHEN_COLLAPSED} from './gr-related-collapse';
 import {createChangeUrl} from '../../../models/views/change';
 import {subscribe} from '../../lit/subscription-controller';
 import {resolve} from '../../../models/dependency';
@@ -130,10 +130,30 @@ export class GrRelatedChangesList extends LitElement {
         section {
           margin-bottom: var(--spacing-l);
         }
+        gr-related-collapse .relatedChangeLine:first-child {
+          border-top-left-radius: var(--border-radius);
+          border-top-right-radius: var(--border-radius);
+        }
+        gr-related-collapse .relatedChangeLine:last-child {
+          border-bottom-left-radius: var(--border-radius);
+          border-bottom-right-radius: var(--border-radius);
+          border-bottom: 1px solid var(--border-color);
+        }
         .relatedChangeLine {
+          background-color: var(--background-color-primary);
           display: flex;
+          width: 100%;
           visibility: visible;
           height: auto;
+          padding-bottom: 2px;
+          padding-top: 2px;
+          border-left: 1px solid var(--border-color);
+          border-right: 1px solid var(--border-color);
+          border-top: 1px solid var(--border-color);
+          padding-right: var(--spacing-m);
+        }
+        .relatedChangeLine.selected {
+          background-color: var(--selection-background-color);
         }
         .marker.arrow {
           visibility: hidden;
@@ -168,6 +188,17 @@ export class GrRelatedChangesList extends LitElement {
         gr-related-collapse[collapsed] .relatedChangeLine.show-when-collapsed {
           visibility: visible;
           height: auto;
+          padding-bottom: 2px;
+          padding-top: 2px;
+          border-top: 1px solid var(--border-color);
+        }
+        gr-related-collapse[collapsed]
+          .relatedChangeLine.show-when-collapsed:last-child {
+          border-bottom: 1px solid var(--border-color);
+        }
+        gr-related-collapse[collapsed]
+          .relatedChangeLine.show-when-collapsed.bottom {
+          border-bottom: 1px solid var(--border-color);
         }
         /* keep width, so width of section and position of show all button
          * are set according to width of all (even hidden) elements
@@ -175,6 +206,10 @@ export class GrRelatedChangesList extends LitElement {
         gr-related-collapse[collapsed] .relatedChangeLine {
           visibility: hidden;
           height: 0px;
+          padding-top: 0px;
+          padding-bottom: 0px;
+          border-bottom: none;
+          border-top: none;
         }
       `,
     ];
@@ -252,6 +287,10 @@ export class GrRelatedChangesList extends LitElement {
             html`<div
               class=${classMap({
                 ['relatedChangeLine']: true,
+                ['selected']:
+                  relatedChangesMarkersPredicate(index).showCurrentChangeArrow,
+                ['bottom']:
+                  relatedChangesMarkersPredicate(index).showBottomArrow,
                 ['show-when-collapsed']:
                   relatedChangesMarkersPredicate(index).showWhenCollapsed,
               })}
@@ -271,7 +310,9 @@ export class GrRelatedChangesList extends LitElement {
                   : ''}
                 show-change-status
                 show-submittable-check
-                >${change.commit.subject}</gr-related-change
+                ><span slot="name"
+                  >${change.commit.subject}</span
+                ></gr-related-change
               >
             </div>`
         )}
@@ -311,6 +352,11 @@ export class GrRelatedChangesList extends LitElement {
             html`<div
               class=${classMap({
                 ['relatedChangeLine']: true,
+                ['selected']:
+                  submittedTogetherMarkersPredicate(index)
+                    .showCurrentChangeArrow,
+                ['bottom']:
+                  submittedTogetherMarkersPredicate(index).showBottomArrow,
                 ['show-when-collapsed']:
                   submittedTogetherMarkersPredicate(index).showWhenCollapsed,
               })}
@@ -335,10 +381,12 @@ export class GrRelatedChangesList extends LitElement {
         .change=${change}
         .href=${createChangeUrl({change, usp: 'submitted-together'})}
         show-submittable-check
-        >${change.subject}</gr-related-change
+        ><span slot="name">${change.subject}</span
+        ><span slot="extra"
+          ><span class="repo" .title=${change.project}>${truncatedRepo}</span
+          ><span class="branch">&nbsp;|&nbsp;${change.branch}&nbsp;</span></span
+        ></gr-related-change
       >
-      <span class="repo" .title=${change.project}>${truncatedRepo}</span
-      ><span class="branch">&nbsp;|&nbsp;${change.branch}&nbsp;</span>
     `;
   }
 
@@ -367,6 +415,9 @@ export class GrRelatedChangesList extends LitElement {
             html`<div
               class=${classMap({
                 ['relatedChangeLine']: true,
+                ['selected']:
+                  sameTopicMarkersPredicate(index).showCurrentChangeArrow,
+                ['bottom']: sameTopicMarkersPredicate(index).showBottomArrow,
                 ['show-when-collapsed']:
                   sameTopicMarkersPredicate(index).showWhenCollapsed,
               })}
@@ -404,6 +455,10 @@ export class GrRelatedChangesList extends LitElement {
             html`<div
               class=${classMap({
                 ['relatedChangeLine']: true,
+                ['selected']:
+                  mergeConflictsMarkersPredicate(index).showCurrentChangeArrow,
+                ['bottom']:
+                  mergeConflictsMarkersPredicate(index).showBottomArrow,
                 ['show-when-collapsed']:
                   mergeConflictsMarkersPredicate(index).showWhenCollapsed,
               })}
@@ -413,7 +468,7 @@ export class GrRelatedChangesList extends LitElement {
               )}<gr-related-change
                 .change=${change}
                 .href=${createChangeUrl({change, usp: 'merge-conflict'})}
-                >${change.subject}</gr-related-change
+                ><span slot="name">${change.subject}</span></gr-related-change
               >
             </div>`
         )}
@@ -455,7 +510,9 @@ export class GrRelatedChangesList extends LitElement {
                 .change=${change}
                 .href=${createChangeUrl({change, usp: 'cherry-pick'})}
                 show-change-status
-                >${change.branch}: ${change.subject}</gr-related-change
+                ><span slot="name"
+                  >${change.branch}: ${change.subject}</span
+                ></gr-related-change
               >
             </div>`
         )}
@@ -475,7 +532,7 @@ export class GrRelatedChangesList extends LitElement {
     cherryPicksLen: number
   ) {
     const calcDefaultSize = (length: number) =>
-      Math.min(length, DEFALT_NUM_CHANGES_WHEN_COLLAPSED);
+      Math.min(length, DEFAULT_NUM_CHANGES_WHEN_COLLAPSED);
 
     const sectionSizes = [
       {
@@ -527,14 +584,14 @@ export class GrRelatedChangesList extends LitElement {
     return (section: Section) => {
       const sizeObj = sectionSizes.find(sizeObj => sizeObj.section === section);
       if (sizeObj) return sizeObj.size;
-      return DEFALT_NUM_CHANGES_WHEN_COLLAPSED;
+      return DEFAULT_NUM_CHANGES_WHEN_COLLAPSED;
     };
   }
 
   markersPredicateFactory(
     length: number,
     highlightIndex: number,
-    numChangesShownWhenCollapsed = DEFALT_NUM_CHANGES_WHEN_COLLAPSED
+    numChangesShownWhenCollapsed = DEFAULT_NUM_CHANGES_WHEN_COLLAPSED
   ): (index: number) => ChangeMarkersInList {
     const showWhenCollapsedPredicate = (index: number) => {
       if (highlightIndex === -1) return index < numChangesShownWhenCollapsed;

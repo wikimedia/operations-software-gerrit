@@ -58,6 +58,7 @@ import {
   Suggestion,
   UserId,
   isDraft,
+  ChangeViewChangeInfo,
 } from '../../../types/common';
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {GrLabelScores} from '../gr-label-scores/gr-label-scores';
@@ -99,11 +100,7 @@ import {
 import {RestApiService} from '../../../services/gr-rest-api/gr-rest-api';
 import {resolve} from '../../../models/dependency';
 import {changeModelToken} from '../../../models/change/change-model';
-import {
-  ConfigInfo,
-  LabelNameToValuesMap,
-  PatchSetNumber,
-} from '../../../api/rest-api';
+import {LabelNameToValuesMap, PatchSetNumber} from '../../../api/rest-api';
 import {css, html, PropertyValues, LitElement, nothing} from 'lit';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {when} from 'lit/directives/when.js';
@@ -130,6 +127,10 @@ import {accountsModelToken} from '../../../models/accounts-model/accounts-model'
 import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {modalStyles} from '../../../styles/gr-modal-styles';
 import {ironAnnouncerRequestAvailability} from '../../polymer-util';
+import {GrReviewerUpdatesParser} from '../../shared/gr-rest-api-interface/gr-reviewer-updates-parser';
+import {formStyles} from '../../../styles/form-styles';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
+import {getDocUrl} from '../../../utils/url-util';
 
 export enum FocusTarget {
   ANY = 'any',
@@ -189,9 +190,6 @@ export class GrReplyDialog extends LitElement {
   @property({type: Object})
   permittedLabels?: LabelNameToValuesMap;
 
-  @property({type: Object})
-  projectConfig?: ConfigInfo;
-
   @query('#patchsetLevelComment') patchsetLevelGrComment?: GrComment;
 
   @query('#reviewers') reviewersList?: GrAccountList;
@@ -210,6 +208,8 @@ export class GrReplyDialog extends LitElement {
   @state() latestPatchNum?: PatchSetNumber;
 
   @state() serverConfig?: ServerInfo;
+
+  @state() private docsBaseUrl = '';
 
   @state()
   patchsetLevelDraftMessage = '';
@@ -328,6 +328,12 @@ export class GrReplyDialog extends LitElement {
   newAttentionSet: Set<UserId> = new Set();
 
   @state()
+  manuallyAddedAttentionSet: Set<UserId> = new Set();
+
+  @state()
+  manuallyDeletedAttentionSet: Set<UserId> = new Set();
+
+  @state()
   patchsetLevelDraftIsResolved = true;
 
   @state()
@@ -347,229 +353,236 @@ export class GrReplyDialog extends LitElement {
 
   private readonly getUserModel = resolve(this, userModelToken);
 
+  private readonly getNavigation = resolve(this, navigationToken);
+
   storeTask?: DelayedTask;
 
   private isLoggedIn = false;
 
   private readonly shortcuts = new ShortcutController(this);
 
-  static override styles = [
-    sharedStyles,
-    modalStyles,
-    css`
-      :host {
-        background-color: var(--dialog-background-color);
-        display: block;
-        max-height: 90vh;
-        --label-score-padding-left: var(--spacing-xl);
-      }
-      :host([disabled]) {
-        pointer-events: none;
-      }
-      :host([disabled]) .container {
-        opacity: 0.5;
-      }
-      section {
-        border-top: 1px solid var(--border-color);
-        flex-shrink: 0;
-        padding: var(--spacing-m) var(--spacing-xl);
-        width: 100%;
-      }
-      section.labelsContainer {
-        /* We want the :hover highlight to extend to the border of the dialog. */
-        padding: var(--spacing-m) 0;
-      }
-      .stickyBottom {
-        background-color: var(--dialog-background-color);
-        box-shadow: 0px 0px 8px 0px rgba(60, 64, 67, 0.15);
-        margin-top: var(--spacing-s);
-        bottom: 0;
-        position: sticky;
-        /* @see Issue 8602 */
-        z-index: 1;
-      }
-      .stickyBottom.newReplyDialog {
-        margin-top: unset;
-      }
-      .actions {
-        display: flex;
-        justify-content: space-between;
-      }
-      .actions .right gr-button {
-        margin-left: var(--spacing-l);
-      }
-      .peopleContainer,
-      .labelsContainer {
-        flex-shrink: 0;
-      }
-      .peopleContainer {
-        border-top: none;
-        display: table;
-      }
-      .peopleList {
-        display: flex;
-      }
-      .peopleListLabel {
-        color: var(--deemphasized-text-color);
-        margin-top: var(--spacing-xs);
-        min-width: 6em;
-        padding-right: var(--spacing-m);
-      }
-      gr-account-list {
-        display: flex;
-        flex-wrap: wrap;
-        flex: 1;
-      }
-      #reviewerConfirmationModal {
-        padding: var(--spacing-l);
-        text-align: center;
-      }
-      .reviewerConfirmationButtons {
-        margin-top: var(--spacing-l);
-      }
-      .groupName {
-        font-weight: var(--font-weight-bold);
-      }
-      .groupSize {
-        font-style: italic;
-      }
-      .textareaContainer {
-        min-height: 12em;
-        position: relative;
-      }
-      .newReplyDialog.textareaContainer {
-        min-height: unset;
-      }
-      textareaContainer,
-      gr-endpoint-decorator[name='reply-text'] {
-        display: flex;
-        width: 100%;
-      }
-      gr-endpoint-decorator[name='reply-text'] {
-        flex-direction: column;
-      }
-      #checkingStatusLabel,
-      #notLatestLabel {
-        margin-left: var(--spacing-l);
-      }
-      #checkingStatusLabel {
-        color: var(--deemphasized-text-color);
-        font-style: italic;
-      }
-      #notLatestLabel,
-      #savingLabel {
-        color: var(--error-text-color);
-      }
-      #savingLabel {
-        display: none;
-      }
-      #savingLabel.saving {
-        display: inline;
-      }
-      #pluginMessage {
-        color: var(--deemphasized-text-color);
-        margin-left: var(--spacing-l);
-        margin-bottom: var(--spacing-m);
-      }
-      #pluginMessage:empty {
-        display: none;
-      }
-      .attention .edit-attention-button {
-        vertical-align: top;
-        --gr-button-padding: 0px 4px;
-      }
-      .attention .edit-attention-button gr-icon {
-        color: inherit;
-        /* The line-height:26px hack (see below) requires us to do this.
+  static override get styles() {
+    return [
+      formStyles,
+      sharedStyles,
+      modalStyles,
+      css`
+        :host {
+          background-color: var(--dialog-background-color);
+          display: block;
+          max-height: 90vh;
+          --label-score-padding-left: var(--spacing-xl);
+        }
+        :host([disabled]) {
+          pointer-events: none;
+        }
+        :host([disabled]) .container {
+          opacity: 0.5;
+        }
+        section {
+          border-top: 1px solid var(--border-color);
+          flex-shrink: 0;
+          padding: var(--spacing-m) var(--spacing-xl);
+          width: 100%;
+        }
+        section.labelsContainer {
+          /* We want the :hover highlight to extend to the border of the dialog. */
+          padding: var(--spacing-m) 0;
+        }
+        .stickyBottom {
+          background-color: var(--dialog-background-color);
+          box-shadow: 0px 0px 8px 0px rgba(60, 64, 67, 0.15);
+          margin-top: var(--spacing-s);
+          bottom: 0;
+          position: sticky;
+          /* @see Issue 8602 */
+          z-index: 1;
+        }
+        .stickyBottom.newReplyDialog {
+          margin-top: unset;
+        }
+        .actions {
+          display: flex;
+          justify-content: space-between;
+        }
+        .actions .right gr-button {
+          margin-left: var(--spacing-l);
+        }
+        .peopleContainer,
+        .labelsContainer {
+          flex-shrink: 0;
+        }
+        .peopleContainer {
+          border-top: none;
+          display: table;
+        }
+        .peopleList {
+          display: flex;
+        }
+        .peopleListLabel {
+          color: var(--deemphasized-text-color);
+          margin-top: var(--spacing-xs);
+          min-width: 6em;
+          padding-right: var(--spacing-m);
+        }
+        gr-account-list {
+          display: flex;
+          flex-wrap: wrap;
+          flex: 1;
+        }
+        #reviewerConfirmationModal {
+          padding: var(--spacing-l);
+          text-align: center;
+        }
+        .reviewerConfirmationButtons {
+          margin-top: var(--spacing-l);
+        }
+        .groupName {
+          font-weight: var(--font-weight-bold);
+        }
+        .groupSize {
+          font-style: italic;
+        }
+        .textareaContainer {
+          min-height: 12em;
+          position: relative;
+        }
+        .newReplyDialog.textareaContainer {
+          min-height: unset;
+        }
+        textareaContainer,
+        gr-endpoint-decorator[name='reply-text'] {
+          display: flex;
+          width: 100%;
+        }
+        gr-endpoint-decorator[name='reply-text'] {
+          flex-direction: column;
+        }
+        #checkingStatusLabel,
+        #notLatestLabel {
+          margin-left: var(--spacing-l);
+        }
+        #checkingStatusLabel {
+          color: var(--deemphasized-text-color);
+          font-style: italic;
+        }
+        #notLatestLabel,
+        #savingLabel {
+          color: var(--error-text-color);
+        }
+        #savingLabel {
+          display: none;
+        }
+        #savingLabel.saving {
+          display: inline;
+        }
+        #pluginMessage {
+          color: var(--deemphasized-text-color);
+          margin-left: var(--spacing-l);
+          margin-bottom: var(--spacing-m);
+        }
+        #pluginMessage:empty {
+          display: none;
+        }
+        .edit-attention-button {
+          vertical-align: top;
+          --gr-button-padding: 0px 4px;
+        }
+        .edit-attention-button gr-icon {
+          color: inherit;
+        }
+        .attentionSummary .edit-attention-button gr-icon {
+          /* The line-height:26px hack (see below) requires us to do this.
            Normally the gr-icon would account for a proper positioning
            within the standard line-height:20px context. */
-        top: 5px;
-      }
-      .attention a,
-      .attention-detail a {
-        text-decoration: none;
-      }
-      .attentionSummary {
-        display: flex;
-        justify-content: space-between;
-      }
-      .attentionSummary {
-        /* The account label for selection is misbehaving currently: It consumes
+          top: 5px;
+        }
+        .attention a,
+        .attention-detail a {
+          text-decoration: none;
+        }
+        .attentionSummary {
+          display: flex;
+          justify-content: space-between;
+        }
+        .attentionSummary {
+          /* The account label for selection is misbehaving currently: It consumes
           26px height instead of 20px, which is the default line-height and thus
           the max that can be nicely fit into an inline layout flow. We
           acknowledge that using a fixed 26px value here is a hack and not a
           great solution. */
-        line-height: 26px;
-      }
-      .attentionSummary gr-account-label,
-      .attention-detail gr-account-label {
-        --account-max-length: 120px;
-        display: inline-block;
-        padding: var(--spacing-xs) var(--spacing-m);
-        user-select: none;
-        --label-border-radius: 8px;
-      }
-      .attentionSummary gr-account-label {
-        margin: 0 var(--spacing-xs);
-        line-height: var(--line-height-normal);
-        vertical-align: top;
-      }
-      .attention-detail .peopleListValues {
-        line-height: calc(var(--line-height-normal) + 10px);
-      }
-      .attention-detail gr-account-label {
-        line-height: var(--line-height-normal);
-      }
-      .attentionSummary gr-account-label:focus,
-      .attention-detail gr-account-label:focus {
-        outline: none;
-      }
-      .attentionSummary gr-account-label:hover,
-      .attention-detail gr-account-label:hover {
-        box-shadow: var(--elevation-level-1);
-        cursor: pointer;
-      }
-      .attention-detail .attentionDetailsTitle {
-        display: flex;
-        justify-content: space-between;
-      }
-      .attention-detail .selectUsers {
-        color: var(--deemphasized-text-color);
-        margin-bottom: var(--spacing-m);
-      }
-      .attentionTip {
-        padding: var(--spacing-m);
-        border: 1px solid var(--border-color);
-        border-radius: var(--border-radius);
-        margin-top: var(--spacing-m);
-        background-color: var(--line-item-highlight-color);
-      }
-      .attentionTip div gr-icon {
-        margin-right: var(--spacing-s);
-      }
-      .patchsetLevelContainer {
-        width: 80ch;
-        border-radius: var(--border-radius);
-        box-shadow: var(--elevation-level-2);
-      }
-      .patchsetLevelContainer.resolved {
-        background-color: var(--comment-background-color);
-      }
-      .patchsetLevelContainer.unresolved {
-        background-color: var(--unresolved-comment-background-color);
-      }
-      .privateVisiblityInfo {
-        display: flex;
-        justify-content: center;
-        background-color: var(--info-background);
-        padding: var(--spacing-s) 0;
-      }
-      .privateVisiblityInfo gr-icon {
-        margin-right: var(--spacing-m);
-        color: var(--info-foreground);
-      }
-    `,
-  ];
+          line-height: 26px;
+        }
+        .attentionSummary gr-account-label,
+        .attention-detail gr-account-label {
+          --account-max-length: 120px;
+          display: inline-block;
+          padding: var(--spacing-xs) var(--spacing-m);
+          user-select: none;
+          --label-border-radius: 8px;
+        }
+        .attentionSummary gr-account-label {
+          margin: 0 var(--spacing-xs);
+          line-height: var(--line-height-normal);
+          vertical-align: top;
+        }
+        .attention-detail .peopleListValues {
+          line-height: calc(var(--line-height-normal) + 10px);
+        }
+        .attention-detail gr-account-label {
+          line-height: var(--line-height-normal);
+        }
+        .attentionSummary gr-account-label:focus,
+        .attention-detail gr-account-label:focus {
+          outline: none;
+        }
+        .attentionSummary gr-account-label:hover,
+        .attention-detail gr-account-label:hover {
+          box-shadow: var(--elevation-level-1);
+          cursor: pointer;
+        }
+        .attention-detail .attentionDetailsTitle {
+          display: flex;
+          justify-content: space-between;
+        }
+        .attention-detail .selectUsers {
+          color: var(--deemphasized-text-color);
+          margin-bottom: var(--spacing-m);
+        }
+        .attentionTip {
+          padding: var(--spacing-m);
+          border: 1px solid var(--border-color);
+          border-radius: var(--border-radius);
+          margin-top: var(--spacing-m);
+          background-color: var(--line-item-highlight-color);
+        }
+        .attentionTip div gr-icon {
+          margin-right: var(--spacing-s);
+        }
+        .patchsetLevelContainer {
+          width: calc(min(80ch, 100%));
+          border-radius: var(--border-radius);
+          box-shadow: var(--elevation-level-2);
+        }
+        .patchsetLevelContainer.resolved {
+          background-color: var(--comment-background-color);
+        }
+        .patchsetLevelContainer.unresolved {
+          background-color: var(--unresolved-comment-background-color);
+        }
+        .privateVisiblityInfo {
+          display: flex;
+          justify-content: center;
+          background-color: var(--info-background);
+          padding: var(--spacing-s) 0;
+        }
+        .privateVisiblityInfo gr-icon {
+          margin-right: var(--spacing-m);
+          color: var(--info-foreground);
+        }
+      `,
+    ];
+  }
 
   constructor() {
     super();
@@ -594,10 +607,22 @@ export class GrReplyDialog extends LitElement {
     );
     subscribe(
       this,
+      () => this.getUserModel().account$,
+      account => {
+        this.account = account;
+      }
+    );
+    subscribe(
+      this,
       () => this.getConfigModel().serverConfig$,
       config => {
         this.serverConfig = config;
       }
+    );
+    subscribe(
+      this,
+      () => this.getConfigModel().docsBaseUrl$,
+      docsBaseUrl => (this.docsBaseUrl = docsBaseUrl)
     );
     subscribe(
       this,
@@ -655,10 +680,6 @@ export class GrReplyDialog extends LitElement {
       TargetElement.REPLY_DIALOG,
       this
     );
-
-    this.restApiService.getAccount().then(account => {
-      if (account) this.account = account;
-    });
 
     this.addEventListener(
       'comment-editing-changed',
@@ -992,33 +1013,13 @@ export class GrReplyDialog extends LitElement {
                 )}
               `
             )}
-            <gr-tooltip-content
-              has-tooltip
-              title=${this.computeAttentionButtonTitle()}
-            >
-              <gr-button
-                class="edit-attention-button"
-                @click=${this.handleAttentionModify}
-                ?disabled=${this.isSendDisabled()}
-                link
-                position-below
-                data-label="Edit"
-                data-action-type="change"
-                data-action-key="edit"
-                role="button"
-                tabindex="0"
-              >
-                <div>
-                  <gr-icon icon="edit" filled small></gr-icon>
-                  <span>Modify</span>
-                </div>
-              </gr-button>
-            </gr-tooltip-content>
           </div>
           <div>
+            ${this.renderModifyAttentionSetButton()}
             <a
-              href="https://gerrit-review.googlesource.com/Documentation/user-attention-set.html"
+              href=${getDocUrl(this.docsBaseUrl, 'user-attention-set.html')}
               target="_blank"
+              rel="noopener noreferrer"
             >
               <gr-icon icon="help" title="read documentation"></gr-icon>
             </a>
@@ -1026,6 +1027,29 @@ export class GrReplyDialog extends LitElement {
         </div>
       </section>
     `;
+  }
+
+  private renderModifyAttentionSetButton() {
+    return html` <gr-button
+      class="edit-attention-button"
+      @click=${this.toggleAttentionModify}
+      link
+      position-below
+      data-label="Edit"
+      data-action-type="change"
+      data-action-key="edit"
+      role="button"
+      tabindex="0"
+    >
+      <div>
+        <gr-icon
+          icon=${this.attentionExpanded ? 'expand_circle_up' : 'edit'}
+          filled
+          small
+        ></gr-icon>
+        <span>${this.attentionExpanded ? 'Collapse' : 'Modify'}</span>
+      </div>
+    </gr-button>`;
   }
 
   private renderAttentionDetailsSection() {
@@ -1036,11 +1060,14 @@ export class GrReplyDialog extends LitElement {
           <div>
             <span>Modify attention to</span>
           </div>
+
           <div></div>
           <div>
+            ${this.renderModifyAttentionSetButton()}
             <a
-              href="https://gerrit-review.googlesource.com/Documentation/user-attention-set.html"
+              href=${getDocUrl(this.docsBaseUrl, 'user-attention-set.html')}
               target="_blank"
+              rel="noopener noreferrer"
             >
               <gr-icon icon="help" title="read documentation"></gr-icon>
             </a>
@@ -1128,7 +1155,7 @@ export class GrReplyDialog extends LitElement {
           `
         )}
         ${when(
-          this.computeShowAttentionTip(),
+          this.computeShowAttentionTip(3),
           () => html`
             <div class="attentionTip">
               <gr-icon icon="lightbulb"></gr-icon>
@@ -1336,7 +1363,8 @@ export class GrReplyDialog extends LitElement {
 
   // visible for testing
   async send(includeComments: boolean, startReview: boolean) {
-    // The change model will end this timing when the change was reloaded.
+    // ChangeModel will be updated once the reply returns at which point the
+    // timer will be ended.
     this.reporting.time(Timing.SEND_REPLY);
     const labels = this.getLabelScores().getLabelValues();
 
@@ -1404,23 +1432,29 @@ export class GrReplyDialog extends LitElement {
       reviewInput.remove_from_attention_set
     );
 
-    await this.patchsetLevelGrComment?.save();
+    if (this.patchsetLevelGrComment) {
+      this.patchsetLevelGrComment.disableAutoSaving = true;
+      await this.restApiService.awaitPendingDiffDrafts();
+      const comment = this.patchsetLevelGrComment.convertToCommentInput();
+      if (comment && comment.path && comment.message) {
+        reviewInput.comments ??= {};
+        reviewInput.comments[comment.path] ??= [];
+        reviewInput.comments[comment.path].push(comment);
+      }
+    }
 
     assertIsDefined(this.change, 'change');
     reviewInput.reviewers = this.computeReviewers();
 
     const errFn = (r?: Response | null) => this.handle400Error(r);
+    this.getNavigation().blockNavigation('sending review');
     return this.saveReview(reviewInput, errFn)
-      .then(response => {
-        if (!response) {
-          // Null or undefined response indicates that an error handler
-          // took responsibility, so just return.
-          return;
-        }
-        if (!response.ok) {
-          fireServerError(response);
-          return;
-        }
+      .then(result => {
+        this.getChangeModel().updateStateChange(
+          GrReviewerUpdatesParser.parse(
+            result?.change_info as ChangeViewChangeInfo
+          )
+        );
 
         this.patchsetLevelDraftMessage = '';
         this.includeComments = true;
@@ -1428,13 +1462,15 @@ export class GrReplyDialog extends LitElement {
         fireIronAnnounce(this, 'Reply sent');
         return;
       })
-      .then(result => {
+      .then(result => result)
+      .finally(() => {
+        this.getNavigation().releaseNavigation('sending review');
         this.disabled = false;
-        return result;
-      })
-      .catch(err => {
-        this.disabled = false;
-        throw err;
+        if (this.patchsetLevelGrComment) {
+          this.patchsetLevelGrComment.disableAutoSaving = false;
+        }
+        // By this point in time the change has loaded, we're only waiting for the comments.
+        this.reporting.timeEnd(Timing.SEND_REPLY);
       });
   }
 
@@ -1522,21 +1558,14 @@ export class GrReplyDialog extends LitElement {
     this.reviewers = getAccounts(ReviewerState.REVIEWER);
   }
 
-  handleAttentionModify() {
-    this.attentionExpanded = true;
+  toggleAttentionModify() {
+    this.attentionExpanded = !this.attentionExpanded;
   }
 
   onAttentionExpandedChange() {
     // If the attention-detail section is expanded without dispatching this
     // event, then the dialog may expand beyond the screen's bottom border.
     fire(this, 'iron-resize', {});
-  }
-
-  computeAttentionButtonTitle() {
-    return this.isSendDisabled()
-      ? 'Modify the attention set by adding a comment or use the account ' +
-          'hovercard in the change page.'
-      : 'Edit attention set changes';
   }
 
   handleAttentionClick(e: Event) {
@@ -1550,11 +1579,15 @@ export class GrReplyDialog extends LitElement {
 
     if (this.newAttentionSet.has(id)) {
       this.newAttentionSet.delete(id);
+      this.manuallyAddedAttentionSet.delete(id);
+      this.manuallyDeletedAttentionSet.add(id);
       this.reporting.reportInteraction(Interaction.ATTENTION_SET_CHIP, {
         action: `REMOVE${self}${role}`,
       });
     } else {
       this.newAttentionSet.add(id);
+      this.manuallyAddedAttentionSet.add(id);
+      this.manuallyDeletedAttentionSet.delete(id);
       this.reporting.reportInteraction(Interaction.ATTENTION_SET_CHIP, {
         action: `ADD${self}${role}`,
       });
@@ -1644,18 +1677,24 @@ export class GrReplyDialog extends LitElement {
       .map(a => getUserId(a))
       .filter(id => !!id);
     this.newAttentionSet = new Set([
-      ...[...newAttention].filter(id => allAccountIds.includes(id)),
+      ...this.manuallyAddedAttentionSet,
+      ...[...newAttention].filter(
+        id =>
+          allAccountIds.includes(id) &&
+          !this.manuallyDeletedAttentionSet.has(id)
+      ),
     ]);
-
-    this.attentionExpanded = this.computeShowAttentionTip();
+    // Possibly expand if need be, never collapse as this is jarring to the user.
+    this.attentionExpanded =
+      this.attentionExpanded || this.computeShowAttentionTip(1);
   }
 
-  computeShowAttentionTip() {
+  computeShowAttentionTip(minimum: number) {
     if (!this.currentAttentionSet || !this.newAttentionSet) return false;
     const addedIds = [...this.newAttentionSet].filter(
       id => !this.currentAttentionSet.has(id)
     );
-    return this.isOwner && addedIds.length > 2;
+    return this.isOwner && addedIds.length >= minimum;
   }
 
   computeCommentAccounts(threads: CommentThread[]) {
@@ -1832,7 +1871,8 @@ export class GrReplyDialog extends LitElement {
       this.change._number,
       this.latestPatchNum,
       review,
-      errFn
+      errFn,
+      true
     );
   }
 

@@ -31,6 +31,7 @@ import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.BooleanProjectConfig;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Patch;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.config.ConsistencyCheckInfo.ConsistencyProblemInfo;
 import com.google.gerrit.extensions.registration.DynamicItem;
@@ -38,6 +39,7 @@ import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.IdentifiedUser;
+import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.externalids.ExternalIdsConsistencyChecker;
 import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.server.config.AllUsersName;
@@ -49,7 +51,10 @@ import com.google.gerrit.server.git.ValidationError;
 import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
+import com.google.gerrit.server.patch.DiffNotAvailableException;
 import com.google.gerrit.server.patch.DiffOperations;
+import com.google.gerrit.server.patch.DiffOptions;
+import com.google.gerrit.server.patch.filediff.FileDiffOutput;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.permissions.RefPermission;
@@ -69,10 +74,10 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Pattern;
-import org.eclipse.jgit.diff.DiffEntry;
-import org.eclipse.jgit.diff.DiffFormatter;
+import java.util.stream.Collectors;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -83,7 +88,6 @@ import org.eclipse.jgit.revwalk.FooterLine;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.util.SystemReader;
-import org.eclipse.jgit.util.io.DisabledOutputStream;
 
 /**
  * Represents a list of {@link CommitValidationListener}s to run for a push to one branch of one
@@ -105,10 +109,12 @@ public class CommitValidators {
     private final AllProjectsName allProjects;
     private final ExternalIdsConsistencyChecker externalIdsConsistencyChecker;
     private final AccountValidator accountValidator;
+    private final AccountCache accountCache;
     private final ProjectCache projectCache;
     private final ProjectConfig.Factory projectConfigFactory;
     private final DiffOperations diffOperations;
     private final Config config;
+    private final ChangeUtil changeUtil;
 
     @Inject
     Factory(
@@ -121,9 +127,11 @@ public class CommitValidators {
         AllProjectsName allProjects,
         ExternalIdsConsistencyChecker externalIdsConsistencyChecker,
         AccountValidator accountValidator,
+        AccountCache accountCache,
         ProjectCache projectCache,
         ProjectConfig.Factory projectConfigFactory,
-        DiffOperations diffOperations) {
+        DiffOperations diffOperations,
+        ChangeUtil changeUtil) {
       this.gerritIdent = gerritIdent;
       this.urlFormatter = urlFormatter;
       this.config = config;
@@ -133,9 +141,11 @@ public class CommitValidators {
       this.allProjects = allProjects;
       this.externalIdsConsistencyChecker = externalIdsConsistencyChecker;
       this.accountValidator = accountValidator;
+      this.accountCache = accountCache;
       this.projectCache = projectCache;
       this.projectConfigFactory = projectConfigFactory;
       this.diffOperations = diffOperations;
+      this.changeUtil = changeUtil;
     }
 
     public CommitValidators forReceiveCommits(
@@ -156,16 +166,16 @@ public class CommitValidators {
           .add(new ProjectStateValidationListener(projectState))
           .add(new AmendedGerritMergeCommitValidationListener(perm, gerritIdent))
           .add(new AuthorUploaderValidator(user, perm, urlFormatter.get()))
-          .add(new FileCountValidator(repoManager, config))
+          .add(new FileCountValidator(config, urlFormatter.get(), diffOperations))
           .add(new CommitterUploaderValidator(user, perm, urlFormatter.get()))
           .add(new SignedOffByValidator(user, perm, projectState))
           .add(
               new ChangeIdValidator(
-                  projectState, user, urlFormatter.get(), config, sshInfo, change))
+                  changeUtil, projectState, user, urlFormatter.get(), config, sshInfo, change))
           .add(new ConfigValidator(projectConfigFactory, branch, user, rw, allUsers, allProjects))
           .add(new BannedCommitsValidator(rejectCommits))
           .add(new PluginCommitValidationListener(pluginValidators, skipValidation))
-          .add(new ExternalIdUpdateListener(allUsers, externalIdsConsistencyChecker))
+          .add(new ExternalIdUpdateListener(allUsers, externalIdsConsistencyChecker, accountCache))
           .add(new AccountCommitValidator(repoManager, allUsers, accountValidator))
           .add(new GroupCommitValidator(allUsers))
           .add(new LabelConfigValidator(diffOperations));
@@ -188,14 +198,14 @@ public class CommitValidators {
           .add(new ProjectStateValidationListener(projectState))
           .add(new AmendedGerritMergeCommitValidationListener(perm, gerritIdent))
           .add(new AuthorUploaderValidator(user, perm, urlFormatter.get()))
-          .add(new FileCountValidator(repoManager, config))
+          .add(new FileCountValidator(config, urlFormatter.get(), diffOperations))
           .add(new SignedOffByValidator(user, perm, projectState))
           .add(
               new ChangeIdValidator(
-                  projectState, user, urlFormatter.get(), config, sshInfo, change))
+                  changeUtil, projectState, user, urlFormatter.get(), config, sshInfo, change))
           .add(new ConfigValidator(projectConfigFactory, branch, user, rw, allUsers, allProjects))
           .add(new PluginCommitValidationListener(pluginValidators))
-          .add(new ExternalIdUpdateListener(allUsers, externalIdsConsistencyChecker))
+          .add(new ExternalIdUpdateListener(allUsers, externalIdsConsistencyChecker, accountCache))
           .add(new AccountCommitValidator(repoManager, allUsers, accountValidator))
           .add(new GroupCommitValidator(allUsers))
           .add(new LabelConfigValidator(diffOperations));
@@ -280,6 +290,7 @@ public class CommitValidators {
 
     private static final Pattern CHANGE_ID = Pattern.compile(CHANGE_ID_PATTERN);
 
+    private final ChangeUtil changeUtil;
     private final ProjectState projectState;
     private final UrlFormatter urlFormatter;
     private final String installCommitMsgHookCommand;
@@ -288,12 +299,14 @@ public class CommitValidators {
     private final Change change;
 
     public ChangeIdValidator(
+        ChangeUtil changeUtil,
         ProjectState projectState,
         IdentifiedUser user,
         UrlFormatter urlFormatter,
         Config config,
         SshInfo sshInfo,
         Change change) {
+      this.changeUtil = changeUtil;
       this.projectState = projectState;
       this.user = user;
       this.urlFormatter = urlFormatter;
@@ -310,7 +323,7 @@ public class CommitValidators {
       }
       RevCommit commit = receiveEvent.commit;
       List<CommitValidationMessage> messages = new ArrayList<>();
-      List<String> idList = ChangeUtil.getChangeIdsFromFooter(commit, urlFormatter);
+      List<String> idList = changeUtil.getChangeIdsFromFooter(commit);
 
       if (idList.isEmpty()) {
         String shortMsg = commit.getShortMessage();
@@ -382,7 +395,8 @@ public class CommitValidators {
 
       String httpHook =
           String.format(
-              "f=\"$(git rev-parse --git-dir)/hooks/commit-msg\"; curl -o \"$f\" %stools/hooks/commit-msg ; chmod +x \"$f\"",
+              "f=\"$(git rev-parse --git-dir)/hooks/commit-msg\"; curl -o \"$f\""
+                  + " %stools/hooks/commit-msg ; chmod +x \"$f\"",
               webUrl.get());
 
       if (hostKeys.isEmpty()) {
@@ -416,7 +430,8 @@ public class CommitValidators {
 
       String sshHook =
           String.format(
-              "gitdir=$(git rev-parse --git-dir); scp -p -P %d %s@%s:hooks/commit-msg ${gitdir}/hooks/",
+              "gitdir=$(git rev-parse --git-dir); scp -p -P %d %s@%s:hooks/commit-msg"
+                  + " ${gitdir}/hooks/",
               sshPort, user.getUserName().orElse("<USERNAME>"), sshHost);
       return String.format("  %s\n%s\nor, for http(s):\n  %s", sshHook, scpFlagHint, httpHook);
     }
@@ -425,11 +440,15 @@ public class CommitValidators {
   /** Limits the number of files per change. */
   private static class FileCountValidator implements CommitValidationListener {
 
-    private final GitRepositoryManager repoManager;
-    private final int maxFileCount;
+    private static final int FILE_COUNT_WARNING_THRESHOLD = 10_000;
 
-    FileCountValidator(GitRepositoryManager repoManager, Config config) {
-      this.repoManager = repoManager;
+    private final int maxFileCount;
+    private final UrlFormatter urlFormatter;
+    private final DiffOperations diffOperations;
+
+    FileCountValidator(Config config, UrlFormatter urlFormatter, DiffOperations diffOperations) {
+      this.urlFormatter = urlFormatter;
+      this.diffOperations = diffOperations;
       maxFileCount = config.getInt("change", null, "maxFiles", 100_000);
     }
 
@@ -457,7 +476,14 @@ public class CommitValidators {
                   "Exceeding maximum number of files per change (%d > %d)",
                   changedFiles, maxFileCount));
         }
-      } catch (IOException e) {
+        if (changedFiles > FILE_COUNT_WARNING_THRESHOLD) {
+          String host = getGerritHost(urlFormatter.getWebUrl().orElse(null));
+          String project = receiveEvent.project.getNameKey().get();
+          logger.atWarning().log(
+              "Warning: Change with %d files on host %s, project %s, ref %s",
+              changedFiles, host, project, refName);
+        }
+      } catch (DiffNotAvailableException e) {
         // This happens e.g. for cherrypicks.
         if (!receiveEvent.command.getRefName().startsWith(REFS_CHANGES)) {
           logger.atWarning().withCause(e).log(
@@ -467,20 +493,18 @@ public class CommitValidators {
       return Collections.emptyList();
     }
 
-    private long countChangedFiles(CommitReceivedEvent receiveEvent) throws IOException {
-      try (Repository repository = repoManager.openRepository(receiveEvent.project.getNameKey());
-          DiffFormatter diffFormatter = new DiffFormatter(DisabledOutputStream.INSTANCE)) {
-        diffFormatter.setRepository(repository);
-        // Do not detect renames; that would require reading file contents, which is slow for large
-        // files.
-        diffFormatter.setDetectRenames(false);
-        // For merge commits, i.e. >1 parents, we use parent #0 by convention.
-        List<DiffEntry> diffEntries =
-            diffFormatter.scan(
-                receiveEvent.commit.getParentCount() > 0 ? receiveEvent.commit.getParent(0) : null,
-                receiveEvent.commit);
-        return diffEntries.stream().map(DiffEntry::getNewPath).distinct().count();
-      }
+    private int countChangedFiles(CommitReceivedEvent receiveEvent)
+        throws DiffNotAvailableException {
+      // For merge commits this will compare against auto-merge.
+      Map<String, FileDiffOutput> modifiedFiles =
+          diffOperations.listModifiedFilesAgainstParent(
+              receiveEvent.getProjectNameKey(), receiveEvent.commit, 0, DiffOptions.DEFAULTS);
+      // We don't want to count the COMMIT_MSG and MERGE_LIST files.
+      List<FileDiffOutput> modifiedFilesList =
+          modifiedFiles.values().stream()
+              .filter(p -> !Patch.isMagic(p.newPath().orElse("")))
+              .collect(Collectors.toList());
+      return modifiedFilesList.size();
     }
   }
 
@@ -809,12 +833,16 @@ public class CommitValidators {
   /** Validates updates to refs/meta/external-ids. */
   public static class ExternalIdUpdateListener implements CommitValidationListener {
     private final AllUsersName allUsers;
+    private final AccountCache accountCache;
     private final ExternalIdsConsistencyChecker externalIdsConsistencyChecker;
 
     public ExternalIdUpdateListener(
-        AllUsersName allUsers, ExternalIdsConsistencyChecker externalIdsConsistencyChecker) {
+        AllUsersName allUsers,
+        ExternalIdsConsistencyChecker externalIdsConsistencyChecker,
+        AccountCache accountCache) {
       this.externalIdsConsistencyChecker = externalIdsConsistencyChecker;
       this.allUsers = allUsers;
+      this.accountCache = accountCache;
     }
 
     @Override
@@ -824,7 +852,7 @@ public class CommitValidators {
           && RefNames.REFS_EXTERNAL_IDS.equals(receiveEvent.refName)) {
         try {
           List<ConsistencyProblemInfo> problems =
-              externalIdsConsistencyChecker.check(receiveEvent.commit);
+              externalIdsConsistencyChecker.check(accountCache, receiveEvent.commit);
           List<CommitValidationMessage> msgs =
               problems.stream()
                   .map(

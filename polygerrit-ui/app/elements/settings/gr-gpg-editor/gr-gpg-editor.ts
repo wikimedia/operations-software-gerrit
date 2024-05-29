@@ -12,12 +12,13 @@ import {IronAutogrowTextareaElement} from '@polymer/iron-autogrow-textarea';
 import {getAppContext} from '../../../services/app-context';
 import {css, html, LitElement} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
-import {formStyles} from '../../../styles/gr-form-styles';
+import {grFormStyles} from '../../../styles/gr-form-styles';
 import {sharedStyles} from '../../../styles/shared-styles';
 import {assertIsDefined} from '../../../utils/common-util';
 import {BindValueChangeEvent} from '../../../types/events';
 import {fire} from '../../../utils/event-util';
 import {modalStyles} from '../../../styles/gr-modal-styles';
+import {formStyles} from '../../../styles/form-styles';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -49,34 +50,37 @@ export class GrGpgEditor extends LitElement {
 
   private readonly restApiService = getAppContext().restApiService;
 
-  static override styles = [
-    formStyles,
-    sharedStyles,
-    modalStyles,
-    css`
-      .keyHeader {
-        width: 9em;
-      }
-      .userIdHeader {
-        width: 15em;
-      }
-      #viewKeyModal {
-        padding: var(--spacing-xxl);
-        width: 50em;
-      }
-      .closeButton {
-        bottom: 2em;
-        position: absolute;
-        right: 2em;
-      }
-      #existing {
-        margin-bottom: var(--spacing-l);
-      }
-      iron-autogrow-textarea {
-        background-color: var(--view-background-color);
-      }
-    `,
-  ];
+  static override get styles() {
+    return [
+      grFormStyles,
+      formStyles,
+      sharedStyles,
+      modalStyles,
+      css`
+        .keyHeader {
+          width: 9em;
+        }
+        .userIdHeader {
+          width: 15em;
+        }
+        #viewKeyModal {
+          padding: var(--spacing-xxl);
+          width: 50em;
+        }
+        .closeButton {
+          bottom: 2em;
+          position: absolute;
+          right: 2em;
+        }
+        #existing {
+          margin-bottom: var(--spacing-l);
+        }
+        iron-autogrow-textarea {
+          background-color: var(--view-background-color);
+        }
+      `,
+    ];
+  }
 
   override render() {
     return html`

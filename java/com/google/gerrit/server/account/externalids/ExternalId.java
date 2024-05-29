@@ -27,7 +27,6 @@ import com.google.common.hash.Hashing;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.client.AuthType;
-import com.google.gerrit.git.ObjectIds;
 import java.io.Serializable;
 import java.util.Collection;
 import java.util.Locale;
@@ -100,10 +99,10 @@ public abstract class ExternalId implements Serializable {
 
   private static final long serialVersionUID = 1L;
 
-  static final String EXTERNAL_ID_SECTION = "externalId";
-  static final String ACCOUNT_ID_KEY = "accountId";
-  static final String EMAIL_KEY = "email";
-  static final String PASSWORD_KEY = "password";
+  public static final String EXTERNAL_ID_SECTION = "externalId";
+  public static final String ACCOUNT_ID_KEY = "accountId";
+  public static final String EMAIL_KEY = "email";
+  public static final String PASSWORD_KEY = "password";
 
   /**
    * Scheme used to label accounts created, when using the LDAP-based authentication types {@link
@@ -175,7 +174,6 @@ public abstract class ExternalId implements Serializable {
      *
      * @return the parsed external ID key
      */
-    @VisibleForTesting
     public static Key parse(String externalId, boolean isCaseInsensitive) {
       int c = externalId.indexOf(':');
       if (c < 1 || c >= externalId.length() - 1) {
@@ -254,7 +252,6 @@ public abstract class ExternalId implements Serializable {
     }
   }
 
-  @VisibleForTesting
   public static ExternalId create(
       Key key,
       Account.Id accountId,
@@ -292,15 +289,6 @@ public abstract class ExternalId implements Serializable {
 
   public boolean isScheme(String scheme) {
     return key().isScheme(scheme);
-  }
-
-  public byte[] toByteArray() {
-    checkState(blobId() != null, "Missing blobId in external ID %s", key().get());
-    byte[] b = new byte[2 * ObjectIds.STR_LEN + 1];
-    key().sha1().copyTo(b, 0);
-    b[ObjectIds.STR_LEN] = ':';
-    blobId().copyTo(b, ObjectIds.STR_LEN + 1);
-    return b;
   }
 
   /**

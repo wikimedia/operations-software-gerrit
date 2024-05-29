@@ -116,6 +116,7 @@ export class GrDropdownList extends LitElement {
         }
         .bottomContent {
           color: var(--deemphasized-text-color);
+          white-space: pre-wrap;
         }
         .bottomContent,
         .topContent {
@@ -143,6 +144,7 @@ export class GrDropdownList extends LitElement {
         iron-dropdown {
           max-width: none;
           pointer-events: none;
+          z-index: 120;
         }
         paper-listbox {
           pointer-events: auto;
@@ -171,7 +173,7 @@ export class GrDropdownList extends LitElement {
         }
         @media only screen and (max-width: 50em) {
           gr-select {
-            display: var(--gr-select-style-display, inline);
+            display: var(--gr-select-style-display, inline-block);
             width: var(--gr-select-style-width);
           }
           gr-button,

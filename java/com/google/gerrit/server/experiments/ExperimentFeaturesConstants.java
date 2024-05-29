@@ -25,8 +25,4 @@ public class ExperimentFeaturesConstants {
 
   /** Features, enabled by default in the current release. */
   public static final ImmutableSet<String> DEFAULT_ENABLED_FEATURES = ImmutableSet.of();
-
-  /** On BatchUpdate, do not await index completion before returning to the user */
-  public static String GERRIT_BACKEND_FEATURE_DO_NOT_AWAIT_CHANGE_INDEXING =
-      "GerritBackendFeature__do_not_await_change_indexing";
 }

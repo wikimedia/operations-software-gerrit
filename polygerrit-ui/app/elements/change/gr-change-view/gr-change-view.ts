@@ -24,6 +24,7 @@ import '../gr-commit-info/gr-commit-info';
 import '../gr-download-dialog/gr-download-dialog';
 import '../gr-file-list-header/gr-file-list-header';
 import '../gr-file-list/gr-file-list';
+import '../gr-revision-parents/gr-revision-parents';
 import '../gr-included-in-dialog/gr-included-in-dialog';
 import '../gr-messages-list/gr-messages-list';
 import '../gr-related-changes-list/gr-related-changes-list';
@@ -60,7 +61,6 @@ import {
   BasePatchSetNum,
   ChangeInfo,
   CommentThread,
-  ConfigInfo,
   DetailedLabelInfo,
   EDIT,
   LabelNameToInfoMap,
@@ -88,7 +88,11 @@ import {GrEditControls} from '../../edit/gr-edit-controls/gr-edit-controls';
 import {isUnresolved} from '../../../utils/comment-util';
 import {PaperTabsElement} from '@polymer/paper-tabs/paper-tabs';
 import {GrFileList} from '../gr-file-list/gr-file-list';
-import {EditRevisionInfo, ParsedChangeInfo} from '../../../types/types';
+import {
+  EditRevisionInfo,
+  LoadingStatus,
+  ParsedChangeInfo,
+} from '../../../types/types';
 import {
   EditableContentSaveEvent,
   FileActionTapEvent,
@@ -101,12 +105,7 @@ import {
 import {GrButton} from '../../shared/gr-button/gr-button';
 import {GrMessagesList} from '../gr-messages-list/gr-messages-list';
 import {GrThreadList} from '../gr-thread-list/gr-thread-list';
-import {
-  fireAlert,
-  fireDialogChange,
-  fire,
-  fireReload,
-} from '../../../utils/event-util';
+import {fireAlert, fire, fireReload} from '../../../utils/event-util';
 import {
   debounce,
   DelayedTask,
@@ -125,7 +124,6 @@ import {
   ShortcutSection,
   shortcutsServiceToken,
 } from '../../../services/shortcuts/shortcuts-service';
-import {LoadingStatus} from '../../../models/change/change-model';
 import {commentsModelToken} from '../../../models/comments/comments-model';
 import {resolve} from '../../../models/dependency';
 import {checksModelToken} from '../../../models/checks/checks-model';
@@ -154,10 +152,12 @@ import {userModelToken} from '../../../models/user/user-model';
 import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
 import {modalStyles} from '../../../styles/gr-modal-styles';
 import {relatedChangesModelToken} from '../../../models/change/related-changes-model';
+import {KnownExperimentId} from '../../../services/flags/flags';
 
 const MIN_LINES_FOR_COMMIT_COLLAPSE = 18;
 
 const REVIEWERS_REGEX = /^(R|CC)=/gm;
+
 const MIN_CHECK_INTERVAL_SECS = 0;
 
 const ACCIDENTAL_STARRING_LIMIT_MS = 10 * 1000;
@@ -166,6 +166,8 @@ const TRAILING_WHITESPACE_REGEX = /[ \t]+$/gm;
 
 const PREFIX = '#message-';
 
+const ROBOT_COMMENTS_LIMIT = 10;
+
 const ReloadToastMessage = {
   NEWER_REVISION: 'A newer patch set has been uploaded',
   RESTORED: 'This change has been restored',
@@ -173,9 +175,6 @@ const ReloadToastMessage = {
   MERGED: 'This change has been merged',
   NEW_MESSAGE: 'There are new messages on this change',
 };
-
-// Making the tab names more unique in case a plugin adds one with same name
-const ROBOT_COMMENTS_LIMIT = 10;
 
 @customElement('gr-change-view')
 export class GrChangeView extends LitElement {
@@ -264,12 +263,7 @@ export class GrChangeView extends LitElement {
   private account?: AccountDetailInfo;
 
   canStartReview() {
-    return !!(
-      this.change &&
-      this.change.actions &&
-      this.change.actions.ready &&
-      this.change.actions.ready.enabled
-    );
+    return !!this.change?.actions?.ready?.enabled;
   }
 
   // Use change getter/setter instead.
@@ -323,9 +317,6 @@ export class GrChangeView extends LitElement {
   loading?: boolean;
 
   @state()
-  private projectConfig?: ConfigInfo;
-
-  @state()
   private shownFileCount?: number;
 
   // Private but used in tests.
@@ -335,10 +326,7 @@ export class GrChangeView extends LitElement {
   @state()
   private updateCheckTimerHandle?: number | null;
 
-  // Private but used in tests.
-  getEditMode(): boolean {
-    return !!this.viewState?.edit || this.patchNum === EDIT;
-  }
+  @state() editMode = false;
 
   isSubmitEnabled(): boolean {
     return !!(
@@ -374,11 +362,6 @@ export class GrChangeView extends LitElement {
 
   @state()
   private currentRobotCommentsPatchSet?: PatchSetNum;
-
-  // TODO(milutin) - remove once new gr-dialog will do it out of the box
-  // This removes rest of page from a11y tree, when reply dialog is open
-  @state()
-  private changeViewAriaHidden = false;
 
   /**
    * This can be a string only for plugin provided tabs.
@@ -429,6 +412,8 @@ export class GrChangeView extends LitElement {
   readonly reporting = getAppContext().reportingService;
 
   private readonly getChecksModel = resolve(this, checksModelToken);
+
+  readonly flagService = getAppContext().flagsService;
 
   readonly restApiService = getAppContext().restApiService;
 
@@ -664,6 +649,11 @@ export class GrChangeView extends LitElement {
     );
     subscribe(
       this,
+      () => this.getChangeModel().editMode$,
+      editMode => (this.editMode = editMode)
+    );
+    subscribe(
+      this,
       () => this.getChangeModel().patchNum$,
       patchNum => (this.patchNum = patchNum)
     );
@@ -716,13 +706,6 @@ export class GrChangeView extends LitElement {
       config => {
         this.serverConfig = config;
         this.replyDisabled = false;
-      }
-    );
-    subscribe(
-      this,
-      () => this.getConfigModel().repoConfig$,
-      config => {
-        this.projectConfig = config;
       }
     );
     subscribe(
@@ -877,7 +860,7 @@ export class GrChangeView extends LitElement {
           margin-left: var(--spacing-xs);
         }
         gr-reply-dialog {
-          width: 60em;
+          width: calc(min(60em, 90vw));
         }
         .changeStatus {
           text-transform: capitalize;
@@ -1092,9 +1075,8 @@ export class GrChangeView extends LitElement {
             margin: 0;
           }
           gr-reply-dialog {
-            height: 100vh;
-            min-width: initial;
-            width: 100vw;
+            height: 90vh;
+            width: initial;
           }
         }
         .patch-set-dropdown {
@@ -1123,34 +1105,22 @@ export class GrChangeView extends LitElement {
 
   private renderMainContent() {
     return html`
-      <div
-        id="mainContent"
-        class="container"
-        ?hidden=${this.loading}
-        aria-hidden=${this.changeViewAriaHidden ? 'true' : 'false'}
-      >
+      <div id="mainContent" class="container" ?hidden=${this.loading}>
         ${this.renderChangeInfoSection()}
         <h2 class="assistive-tech-only">Files and Comments tabs</h2>
         ${this.renderTabHeaders()} ${this.renderTabContent()}
         ${this.renderChangeLog()}
       </div>
-      <gr-apply-fix-dialog
-        id="applyFixDialog"
-        .change=${this.change}
-        .changeNum=${this.changeNum}
-      ></gr-apply-fix-dialog>
+      <gr-apply-fix-dialog id="applyFixDialog"></gr-apply-fix-dialog>
       <dialog id="downloadModal" tabindex="-1">
         <gr-download-dialog
           id="downloadDialog"
-          .change=${this.change}
-          .config=${this.serverConfig?.download}
           @close=${this.handleDownloadDialogClose}
         ></gr-download-dialog>
       </dialog>
       <dialog id="includedInModal" tabindex="-1">
         <gr-included-in-dialog
           id="includedInDialog"
-          .changeNum=${this.changeNum}
           @close=${this.handleIncludedInDialogClose}
         ></gr-included-in-dialog>
       </dialog>
@@ -1161,7 +1131,6 @@ export class GrChangeView extends LitElement {
             <gr-reply-dialog
               id="replyDialog"
               .permittedLabels=${this.change?.permitted_labels}
-              .projectConfig=${this.projectConfig}
               .canBeStarted=${this.canStartReview()}
               @send=${this.handleReplySent}
               @cancel=${this.handleReplyCancel}
@@ -1270,7 +1239,7 @@ export class GrChangeView extends LitElement {
       {
         label: 'Change-Id',
         shortcut: 'd',
-        value: `${this.change?.id.split('~').pop()}`,
+        value: `${this.change?.change_id}`,
       },
     ];
     if (
@@ -1287,27 +1256,18 @@ export class GrChangeView extends LitElement {
   }
 
   private renderCommitActions() {
-    return html` <div class="commitActions">
-      <!-- always show gr-change-actions regardless if logged in or not -->
-      <gr-change-actions
-        id="actions"
-        .change=${this.change}
-        .disableEdit=${false}
-        .account=${this.account}
-        .changeNum=${this.changeNum}
-        .changeStatus=${this.change?.status}
-        .commitNum=${this.revision?.commit?.commit}
-        .commitMessage=${this.latestCommitMessage}
-        .editMode=${this.getEditMode()}
-        .privateByDefault=${this.projectConfig?.private_by_default}
-        .loggedIn=${this.loggedIn}
-        @edit-tap=${() => this.handleEditTap()}
-        @stop-edit-tap=${() => this.handleStopEditTap()}
-        @download-tap=${() => this.handleOpenDownloadDialog()}
-        @included-tap=${() => this.handleOpenIncludedInDialog()}
-        @revision-actions-changed=${this.handleRevisionActionsChanged}
-      ></gr-change-actions>
-    </div>`;
+    return html`
+      <div class="commitActions">
+        <gr-change-actions
+          id="actions"
+          @edit-tap=${() => this.handleEditTap()}
+          @stop-edit-tap=${() => this.handleStopEditTap()}
+          @download-tap=${() => this.handleOpenDownloadDialog()}
+          @included-tap=${() => this.handleOpenIncludedInDialog()}
+          @revision-actions-changed=${this.handleRevisionActionsChanged}
+        ></gr-change-actions>
+      </div>
+    `;
   }
 
   private renderChangeInfo() {
@@ -1315,20 +1275,13 @@ export class GrChangeView extends LitElement {
       this.loggedIn,
       this.editingCommitMessage,
       this.change,
-      this.getEditMode()
+      this.editMode
     );
     return html` <div class="changeInfo">
       <div class="changeInfo-column changeMetadata">
         <gr-change-metadata
           id="metadata"
-          .change=${this.change}
-          .revertedChange=${this.revertingChange}
-          .account=${this.account}
-          .revision=${this.revision}
-          .commitInfo=${this.revision?.commit}
-          .serverConfig=${this.serverConfig}
           .parentIsCurrent=${this.isParentCurrent()}
-          .repoConfig=${this.projectConfig}
           @show-reply-dialog=${this.handleShowReplyDialog}
         >
         </gr-change-metadata>
@@ -1419,7 +1372,7 @@ export class GrChangeView extends LitElement {
         )}
         ${this.pluginTabsHeaderEndpoints.map(
           tabHeader => html`
-            <paper-tab data-name=${tabHeader}>
+            <paper-tab data-name=${tabHeader} @click=${this.onPaperTabClick}>
               <gr-endpoint-decorator name=${tabHeader}>
                 <gr-endpoint-param name="change" .value=${this.change}>
                 </gr-endpoint-param>
@@ -1458,10 +1411,9 @@ export class GrChangeView extends LitElement {
           id="fileListHeader"
           .account=${this.account}
           .change=${this.change}
-          .changeNum=${this.changeNum}
           .commitInfo=${this.revision?.commit}
           .changeUrl=${this.computeChangeUrl()}
-          .editMode=${this.getEditMode()}
+          .editMode=${this.editMode}
           .loggedIn=${this.loggedIn}
           .shownFileCount=${this.shownFileCount}
           .filesExpanded=${this.fileList?.filesExpanded}
@@ -1471,11 +1423,15 @@ export class GrChangeView extends LitElement {
           @collapse-diffs=${this.collapseAllDiffs}
         >
         </gr-file-list-header>
+        ${when(
+          this.flagService.isEnabled(KnownExperimentId.REVISION_PARENTS_DATA),
+          () => html`<gr-revision-parents></gr-revision-parents>`
+        )}
         <gr-file-list
           id="fileList"
           .change=${this.change}
           .changeNum=${this.changeNum}
-          .editMode=${this.getEditMode()}
+          .editMode=${this.editMode}
           @files-shown-changed=${(e: CustomEvent<{length: number}>) => {
             this.shownFileCount = e.detail.length;
           }}
@@ -1727,7 +1683,6 @@ export class GrChangeView extends LitElement {
 
     const options = {
       mergeable: this.mergeable,
-      submitEnabled: !!this.isSubmitEnabled(),
       revertingChangeStatus: this.revertingChange?.status,
     };
     return changeStatuses(this.change as ChangeInfo, options);
@@ -1843,8 +1798,6 @@ export class GrChangeView extends LitElement {
   }
 
   private onReplyModalCanceled() {
-    fireDialogChange(this, {canceled: true});
-    this.changeViewAriaHidden = false;
     this.replyModalOpened = false;
   }
 
@@ -1898,7 +1851,7 @@ export class GrChangeView extends LitElement {
   handleReplySent() {
     assertIsDefined(this.replyModal);
     this.replyModal.close();
-    this.getChangeModel().navigateToChangeResetReload();
+    this.getCommentsModel().reloadAllComments();
   }
 
   private handleReplyCancel() {
@@ -1957,7 +1910,7 @@ export class GrChangeView extends LitElement {
       change: this.change,
       patchNum: this.patchNum,
       basePatchNum: this.basePatchNum,
-      edit: this.getEditMode(),
+      edit: this.editMode,
       messageHash: hash,
     });
     history.replaceState(null, '', url);
@@ -2089,7 +2042,7 @@ export class GrChangeView extends LitElement {
           fire(this, 'hide-alert', {});
         });
     }
-    this.change = newChange;
+    this.getChangeModel().updateStateChange(newChange);
   }
 
   // Private but used in tests.
@@ -2249,8 +2202,6 @@ export class GrChangeView extends LitElement {
       assertIsDefined(this.replyDialog, 'replyDialog');
       this.replyDialog.open(focusTarget);
     });
-    fireDialogChange(this, {opened: true});
-    this.changeViewAriaHidden = true;
   }
 
   // Private but used in tests.
@@ -2329,14 +2280,8 @@ export class GrChangeView extends LitElement {
   }
 
   private startUpdateCheckTimer() {
-    if (
-      !this.serverConfig ||
-      !this.serverConfig.change ||
-      this.serverConfig.change.update_delay === undefined ||
-      this.serverConfig.change.update_delay <= MIN_CHECK_INTERVAL_SECS
-    ) {
-      return;
-    }
+    const delay = this.serverConfig?.change?.update_delay ?? 0;
+    if (delay <= MIN_CHECK_INTERVAL_SECS) return;
 
     this.updateCheckTimerHandle = window.setTimeout(() => {
       if (!this.isViewCurrent || !this.change) {
@@ -2388,7 +2333,7 @@ export class GrChangeView extends LitElement {
             callback: () => this.getChangeModel().navigateToChangeResetReload(),
           });
         });
-    }, this.serverConfig.change.update_delay * 1000);
+    }, delay * 1000);
   }
 
   private cancelUpdateCheckTimer() {
@@ -2409,7 +2354,7 @@ export class GrChangeView extends LitElement {
   // Private but used in tests.
   computeHeaderClass() {
     const classes = ['header'];
-    if (this.getEditMode()) {
+    if (this.editMode) {
       classes.push('editMode');
     }
     return classes.join(' ');
