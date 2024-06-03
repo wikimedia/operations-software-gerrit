@@ -43,6 +43,9 @@ PLUGIN_DEP_FILES = [
 # We do need core plugins to be build in order to build some of our plugins.
 GERRIT_TARGETS = ['release']
 
+# The Bazel configuration to use for building
+GERRIT_BAZEL_CONFIG = 'java17'
+
 
 def phase(name):
     '''Helper to output some progress report'''
@@ -132,10 +135,10 @@ for f in os.scandir(log_dir):
 # directory at the end of execution.
 artifacts = []
 
-phase('build gerrit')
+phase('build gerrit [config=%s]' % GERRIT_BAZEL_CONFIG)
 
 subprocess.run(
-    [bazel(), 'build'] + GERRIT_TARGETS,
+    [bazel(), 'build', '--config=%s' % GERRIT_BAZEL_CONFIG] + GERRIT_TARGETS,
     check=True)
 
 # We are solely interested in the targets .war file(s)
@@ -152,13 +155,15 @@ artifacts.extend([
 def build_plugin(path):
     '''bazel build a plugin after injecting the dependencies files'''
     name = os.path.basename(path)
-    print(f'\nBuilding {name}')
+    print(f'\nBuilding {name} [config=%s]' % GERRIT_BAZEL_CONFIG)
     for dep_file in PLUGIN_DEP_FILES:
         f_path = os.path.join(path, dep_file)
         if os.path.exists(f_path):
             print(f'Injecting {dep_file} in ./plugins')
             shutil.copy(f_path, 'plugins')
-    build_result = subprocess.run([bazel(), 'build', path], check=False)
+    build_result = subprocess.run(
+        [bazel(), 'build', '--config=%s' % GERRIT_BAZEL_CONFIG, path],
+        check=False)
 
     # restore Gerrit ./plugins state
     for dep_file in PLUGIN_DEP_FILES:
