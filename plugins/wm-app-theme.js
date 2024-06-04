@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-Gerrit.install(plugin => {
+window.Gerrit.install(plugin => {
 
   const lightRules = `
     html.lightTheme {
