@@ -1,4 +1,4 @@
-Gerrit.install(plugin => {
+window.Gerrit.install(plugin => {
   plugin.hook('footer-left').onAttached(element => {
 
     element.appendChild(document.createTextNode(' | '));
