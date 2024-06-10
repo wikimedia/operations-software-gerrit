@@ -187,10 +187,7 @@ class ZuulStatusChecksProvider {
         dismissOnNavigation: true,
         showDismiss: true,
         action: 'Reload',
-        callback: () => document.querySelector('gr-app')
-          .shadowRoot.querySelector('gr-app-element')
-          .shadowRoot.querySelector('gr-change-view')
-          .dispatchEvent(new Event('reload')),
+        callback: () => document.dispatchEvent(new Event('reload')),
       },
     }));
   }
