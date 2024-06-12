@@ -119,12 +119,19 @@ ${patchesList}
         return resp.text();
       })
       .then(resp => {
-        return this.parse(resp, change);
+        try {
+          return this.parse(resp, change);
+        } catch (parseError) {
+          console.error('[wm-patch-demo] failed to parse response: %s, from: %s', parseError, url);
+          return {
+            responseCode: /** @type {ResponseCode} */ ('OK'),
+          };
+        }
       })
       .catch( fetchError => {
+        console.error('[wm-patch-demo] failed to fetch: %s, from: %s', fetchError, url);
         return {
-          responseCode: /** @type {ResponseCode} */ ('ERROR'),
-          errorMessage: fetchError,
+          responseCode: /** @type {ResponseCode} */ ('OK'),
         };
       });
   }
