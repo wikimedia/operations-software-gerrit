@@ -119,6 +119,9 @@ import {
   isQuickLabelInfo,
   Base64FileContent,
   CommentRange,
+  FixReplacementInfo,
+  FixSuggestionInfo,
+  FixId,
 } from '../api/rest-api';
 import {DiffInfo, IgnoreWhitespaceType} from './diff';
 import {PatchRange, LineNumber} from '../api/diff';
@@ -144,8 +147,8 @@ export type {
   ChangeMessageId,
   ChangeMessageInfo,
   ChangeSubmissionId,
-  CommentInfo,
   CommentLinkInfo,
+  CommentInfo,
   CommentLinks,
   CommentRange,
   CommitId,
@@ -163,6 +166,8 @@ export type {
   EditPatchSet,
   EmailAddress,
   FileInfo,
+  FixId,
+  FixSuggestionInfo,
   GerritInfo,
   GitPersonInfo,
   GitRef,
@@ -236,9 +241,6 @@ export type RobotRunId = BrandType<string, '_robotRunId'>;
 // RevisionId '0' is the same as 'current'. However, we want to avoid '0'
 // in our code, so it is not added here as a possible value.
 export type RevisionId = 'current' | CommitId | PatchSetNum;
-
-// The UUID of the suggested fix.
-export type FixId = BrandType<string, '_fixId'>;
 
 // The ID of the dashboard, in the form of '<ref>:<path>'
 export type DashboardId = BrandType<string, '_dahsboardId'>;
@@ -815,6 +817,10 @@ export type DraftInfo = Omit<CommentInfo, 'id' | 'updated'> & {
   // Must be set for new drafts created in this session.
   // Use the id() utility function for uniquely identifying drafts.
   client_id?: UrlEncodedCommentId;
+  // Must be set for new drafts created in this session.
+  // Timestamp in milliseconds (Date.now()) of when this draft was created in
+  // this session. Allows stable sorting of new comments on the same range.
+  client_created_ms?: number;
   // Must be set for drafts known to the backend.
   // Use the id() utility function for uniquely identifying drafts.
   id?: UrlEncodedCommentId;
@@ -825,6 +831,7 @@ export type DraftInfo = Omit<CommentInfo, 'id' | 'updated'> & {
 
 export interface NewDraftInfo extends DraftInfo {
   client_id: UrlEncodedCommentId;
+  client_created_ms: number;
   id: undefined;
   updated: undefined;
 }
@@ -871,7 +878,7 @@ export function isError<T extends Comment>(
  */
 export function isNew<T extends Comment>(
   x: T | DraftInfo | undefined
-): boolean {
+): x is NewDraftInfo {
   return !!x && !!(x as DraftInfo).client_id && !(x as DraftInfo).id;
 }
 
@@ -1201,6 +1208,7 @@ export interface CommentInput {
   message?: string;
   tag?: string;
   unresolved?: boolean;
+  fix_suggestions?: FixSuggestionInfo[];
 }
 
 /**
@@ -1335,6 +1343,7 @@ export interface PreferencesInfo {
   // The email_format doesn't mentioned in doc, but exists in Java class GeneralPreferencesInfo
   email_format?: EmailFormat;
   allow_browser_notifications?: boolean;
+  allow_suggest_code_while_commenting?: boolean;
   diff_page_sidebar?: DiffPageSidebar;
 }
 
@@ -1428,24 +1437,8 @@ export interface RobotCommentInfo extends CommentInfo {
   robot_run_id: RobotRunId;
   url?: string;
   properties: {[propertyName: string]: string};
-  fix_suggestions: FixSuggestionInfo[];
 }
 export type PathToRobotCommentsInfoMap = {[path: string]: RobotCommentInfo[]};
-
-/**
- * The FixSuggestionInfo entity represents a suggested fix
- * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#fix-suggestion-info
- */
-export interface FixSuggestionInfoInput {
-  description: string;
-  replacements: FixReplacementInfo[];
-}
-
-export interface FixSuggestionInfo extends FixSuggestionInfoInput {
-  fix_id: FixId;
-  description: string;
-  replacements: FixReplacementInfo[];
-}
 
 /**
  * The ApplyProvidedFixInput entity contains information for applying fixes, provided in the
@@ -1454,16 +1447,6 @@ export interface FixSuggestionInfo extends FixSuggestionInfoInput {
  */
 export interface ApplyProvidedFixInput {
   fix_replacement_infos: FixReplacementInfo[];
-}
-
-/**
- * The FixReplacementInfo entity describes how the content of a file should be replaced by another content
- * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#fix-replacement-info
- */
-export interface FixReplacementInfo {
-  path: string;
-  range: CommentRange;
-  replacement: string;
 }
 
 /**

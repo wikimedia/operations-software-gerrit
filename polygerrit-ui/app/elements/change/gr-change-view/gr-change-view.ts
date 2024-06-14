@@ -153,6 +153,7 @@ import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-load
 import {modalStyles} from '../../../styles/gr-modal-styles';
 import {relatedChangesModelToken} from '../../../models/change/related-changes-model';
 import {KnownExperimentId} from '../../../services/flags/flags';
+import {assign} from '../../../utils/location-util';
 
 const MIN_LINES_FOR_COMMIT_COLLAPSE = 18;
 
@@ -408,6 +409,10 @@ export class GrChangeView extends LitElement {
   @state()
   replyModalOpened = false;
 
+  @state() private loginUrl = '';
+
+  @state() private loginText = '';
+
   // Accessed in tests.
   readonly reporting = getAppContext().reportingService;
 
@@ -488,6 +493,7 @@ export class GrChangeView extends LitElement {
     // TODO: Do we still need docOnly bindings?
     this.shortcutsController.addAbstract(Shortcut.EMOJI_DROPDOWN, () => {}); // docOnly
     this.shortcutsController.addAbstract(Shortcut.MENTIONS_DROPDOWN, () => {}); // docOnly
+    this.shortcutsController.addAbstract(Shortcut.SAVE_COMMENT, () => {}); // docOnly
     this.shortcutsController.addAbstract(Shortcut.REFRESH_CHANGE, () =>
       this.getChangeModel().navigateToChangeResetReload()
     );
@@ -707,6 +713,16 @@ export class GrChangeView extends LitElement {
         this.serverConfig = config;
         this.replyDisabled = false;
       }
+    );
+    subscribe(
+      this,
+      () => this.getConfigModel().loginUrl$,
+      loginUrl => (this.loginUrl = loginUrl)
+    );
+    subscribe(
+      this,
+      () => this.getConfigModel().loginText$,
+      loginText => (this.loginText = loginText)
     );
     subscribe(
       this,
@@ -1274,8 +1290,7 @@ export class GrChangeView extends LitElement {
     const hideEditCommitMessage = this.computeHideEditCommitMessage(
       this.loggedIn,
       this.editingCommitMessage,
-      this.change,
-      this.editMode
+      this.change
     );
     return html` <div class="changeInfo">
       <div class="changeInfo-column changeMetadata">
@@ -1298,7 +1313,6 @@ export class GrChangeView extends LitElement {
                   Shortcut.OPEN_REPLY_DIALOG,
                   ShortcutSection.ACTIONS
                 )}
-                ?hidden=${!this.loggedIn}
                 primary=""
                 .disabled=${this.replyDisabled}
                 @click=${this.handleReplyTap}
@@ -1649,6 +1663,7 @@ export class GrChangeView extends LitElement {
     if (!this.commitMessageEditor || this.commitMessageEditor.disabled) return;
     // Trim trailing whitespace from each line.
     const message = e.detail.content.replace(TRAILING_WHITESPACE_REGEX, '');
+    const committerEmail = e.detail.committerEmail;
 
     this.getPluginLoader().jsApiService.handleCommitMessage(
       this.change,
@@ -1657,7 +1672,7 @@ export class GrChangeView extends LitElement {
 
     this.commitMessageEditor.disabled = true;
     this.restApiService
-      .putChangeCommitMessage(this.changeNum, message)
+      .putChangeCommitMessage(this.changeNum, message, committerEmail)
       .then(resp => {
         assertIsDefined(this.commitMessageEditor);
         this.commitMessageEditor.disabled = false;
@@ -1692,14 +1707,12 @@ export class GrChangeView extends LitElement {
   computeHideEditCommitMessage(
     loggedIn: boolean,
     editing: boolean,
-    change?: ParsedChangeInfo,
-    editMode?: boolean
+    change?: ParsedChangeInfo
   ) {
     if (
       !loggedIn ||
       editing ||
-      (change && change.status === ChangeStatus.MERGED) ||
-      editMode
+      (change && change.status === ChangeStatus.MERGED)
     ) {
       return true;
     }
@@ -1792,9 +1805,15 @@ export class GrChangeView extends LitElement {
     );
   }
 
-  private handleReplyTap(e: MouseEvent) {
-    e.preventDefault();
-    this.openReplyDialog(FocusTarget.ANY);
+  private handleReplyTap() {
+    if (this.loggedIn) {
+      this.openReplyDialog(FocusTarget.ANY);
+    } else {
+      // We are not using `this.getNavigation().setUrl()`, because the login
+      // page is served directly from the backend and is not part of the web
+      // app.
+      assign(window.location, this.loginUrl);
+    }
   }
 
   private onReplyModalCanceled() {
@@ -1983,6 +2002,9 @@ export class GrChangeView extends LitElement {
 
   // Private but used in tests.
   computeReplyButtonLabel() {
+    if (!this.loggedIn) {
+      return this.loginText;
+    }
     let label = this.canStartReview() ? 'Start Review' : 'Reply';
     if (this.draftCount > 0) {
       label += ` (${this.draftCount})`;

@@ -14,9 +14,12 @@
 
 package com.google.gerrit.extensions.api.config;
 
+import com.google.common.collect.ImmutableMap;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.extensions.client.DiffPreferencesInfo;
 import com.google.gerrit.extensions.client.EditPreferencesInfo;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo;
+import com.google.gerrit.extensions.common.ExperimentInfo;
 import com.google.gerrit.extensions.common.ServerInfo;
 import com.google.gerrit.extensions.restapi.NotImplementedException;
 import com.google.gerrit.extensions.restapi.RestApiException;
@@ -31,19 +34,41 @@ public interface Server {
 
   GeneralPreferencesInfo getDefaultPreferences() throws RestApiException;
 
+  @CanIgnoreReturnValue
   GeneralPreferencesInfo setDefaultPreferences(GeneralPreferencesInfo in) throws RestApiException;
 
   DiffPreferencesInfo getDefaultDiffPreferences() throws RestApiException;
 
+  @CanIgnoreReturnValue
   DiffPreferencesInfo setDefaultDiffPreferences(DiffPreferencesInfo in) throws RestApiException;
 
   EditPreferencesInfo getDefaultEditPreferences() throws RestApiException;
 
+  @CanIgnoreReturnValue
   EditPreferencesInfo setDefaultEditPreferences(EditPreferencesInfo in) throws RestApiException;
 
   ConsistencyCheckInfo checkConsistency(ConsistencyCheckInput in) throws RestApiException;
 
   List<TopMenu.MenuEntry> topMenus() throws RestApiException;
+
+  ExperimentApi experiment(String name) throws RestApiException;
+
+  ListExperimentsRequest listExperiments() throws RestApiException;
+
+  abstract class ListExperimentsRequest {
+    private boolean enabledOnly;
+
+    public abstract ImmutableMap<String, ExperimentInfo> get() throws RestApiException;
+
+    public ListExperimentsRequest enabledOnly() {
+      enabledOnly = true;
+      return this;
+    }
+
+    public boolean getEnabledOnly() {
+      return enabledOnly;
+    }
+  }
 
   /**
    * A default implementation which allows source compatibility when adding new methods to the
@@ -100,6 +125,16 @@ public interface Server {
 
     @Override
     public List<TopMenu.MenuEntry> topMenus() throws RestApiException {
+      throw new NotImplementedException();
+    }
+
+    @Override
+    public ExperimentApi experiment(String name) throws RestApiException {
+      throw new NotImplementedException();
+    }
+
+    @Override
+    public ListExperimentsRequest listExperiments() throws RestApiException {
       throw new NotImplementedException();
     }
   }

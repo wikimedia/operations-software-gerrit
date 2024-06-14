@@ -51,6 +51,7 @@ import com.google.common.io.BaseEncoding;
 import com.google.common.io.CountingOutputStream;
 import com.google.common.math.IntMath;
 import com.google.common.net.HttpHeaders;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.RawInputUtil;
 import com.google.gerrit.entities.Project;
@@ -520,6 +521,7 @@ public class RestApiServlet extends HttpServlet {
                       (RestReadView<RestResource>) viewData.view,
                       rsrc);
             } else if (viewData.view instanceof RestModifyView<?, ?>) {
+              @SuppressWarnings("unchecked")
               RestModifyView<RestResource, Object> m =
                   (RestModifyView<RestResource, Object>) viewData.view;
 
@@ -535,6 +537,7 @@ public class RestApiServlet extends HttpServlet {
                 }
               }
             } else if (viewData.view instanceof RestCollectionCreateView<?, ?, ?>) {
+              @SuppressWarnings("unchecked")
               RestCollectionCreateView<RestResource, RestResource, Object> m =
                   (RestCollectionCreateView<RestResource, RestResource, Object>) viewData.view;
 
@@ -549,6 +552,7 @@ public class RestApiServlet extends HttpServlet {
                 }
               }
             } else if (viewData.view instanceof RestCollectionDeleteMissingView<?, ?, ?>) {
+              @SuppressWarnings("unchecked")
               RestCollectionDeleteMissingView<RestResource, RestResource, Object> m =
                   (RestCollectionDeleteMissingView<RestResource, RestResource, Object>)
                       viewData.view;
@@ -564,6 +568,7 @@ public class RestApiServlet extends HttpServlet {
                 }
               }
             } else if (viewData.view instanceof RestCollectionModifyView<?, ?, ?>) {
+              @SuppressWarnings("unchecked")
               RestCollectionModifyView<RestResource, RestResource, Object> m =
                   (RestCollectionModifyView<RestResource, RestResource, Object>) viewData.view;
 
@@ -1306,6 +1311,7 @@ public class RestApiServlet extends HttpServlet {
    * @param result the object that should be formatted as JSON
    * @return the length of the response
    */
+  @CanIgnoreReturnValue
   public static long replyJson(
       @Nullable HttpServletRequest req,
       HttpServletResponse res,
@@ -1397,6 +1403,7 @@ public class RestApiServlet extends HttpServlet {
   }
 
   @SuppressWarnings("resource")
+  @CanIgnoreReturnValue
   static long replyBinaryResult(
       @Nullable HttpServletRequest req, HttpServletResponse res, BinaryResult bin)
       throws IOException {
@@ -1698,9 +1705,21 @@ public class RestApiServlet extends HttpServlet {
     if (rootCollection instanceof ProjectsCollection) {
       requestInfo.project(Project.nameKey(resourceId));
     } else if (rootCollection instanceof ChangesCollection) {
-      Optional<ChangeNotes> changeNotes = globals.changeFinder.findOne(resourceId);
-      if (changeNotes.isPresent()) {
-        requestInfo.project(changeNotes.get().getProjectName());
+      try {
+        Optional<ChangeNotes> changeNotes =
+            globals
+                .retryHelper
+                .action(
+                    ActionType.INDEX_QUERY,
+                    "find-change",
+                    () -> globals.changeFinder.findOne(resourceId))
+                .call();
+        if (changeNotes.isPresent()) {
+          requestInfo.project(changeNotes.get().getProjectName());
+        }
+      } catch (Exception e) {
+        logger.atWarning().withCause(e).log(
+            "failed looking up change %s to populate project in request info", resourceId);
       }
     }
     return requestInfo.build();
@@ -1828,6 +1847,7 @@ public class RestApiServlet extends HttpServlet {
     return uri;
   }
 
+  @CanIgnoreReturnValue
   public static long replyError(
       HttpServletRequest req,
       HttpServletResponse res,
@@ -1838,6 +1858,7 @@ public class RestApiServlet extends HttpServlet {
     return replyError(req, res, statusCode, msg, CacheControl.NONE, err);
   }
 
+  @CanIgnoreReturnValue
   public static long replyError(
       HttpServletRequest req,
       HttpServletResponse res,
@@ -1866,6 +1887,7 @@ public class RestApiServlet extends HttpServlet {
    * @param text the text reply
    * @return the length of the response
    */
+  @CanIgnoreReturnValue
   static long replyText(
       @Nullable HttpServletRequest req, HttpServletResponse res, boolean allowTracing, String text)
       throws IOException {

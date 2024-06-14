@@ -539,6 +539,7 @@ export interface CommentInfo {
   commit_id?: string;
   context_lines?: ContextLine[];
   source_content_type?: string;
+  fix_suggestions?: FixSuggestionInfo[];
 }
 
 /**
@@ -658,6 +659,7 @@ export declare interface DownloadInfo {
  */
 export declare interface DownloadSchemeInfo {
   url: string;
+  description?: string;
   is_auth_required: boolean;
   is_auth_supported: boolean;
   commands: string;
@@ -1291,3 +1293,30 @@ export function isBase64FileContent(
 
 // The URL encoded UUID of the comment
 export type UrlEncodedCommentId = BrandType<string, '_urlEncodedCommentId'>;
+
+/**
+ * The FixSuggestionInfo entity represents a suggested fix
+ * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#fix-suggestion-info
+ */
+export interface FixSuggestionInfoInput {
+  description: string;
+  replacements: FixReplacementInfo[];
+}
+
+/**
+ * The FixReplacementInfo entity describes how the content of a file should be replaced by another content
+ * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#fix-replacement-info
+ */
+export interface FixReplacementInfo {
+  path: string;
+  range: CommentRange;
+  replacement: string;
+}
+// The UUID of the suggested fix.
+export type FixId = BrandType<string, '_fixId'>;
+
+export interface FixSuggestionInfo extends FixSuggestionInfoInput {
+  fix_id: FixId;
+  description: string;
+  replacements: FixReplacementInfo[];
+}

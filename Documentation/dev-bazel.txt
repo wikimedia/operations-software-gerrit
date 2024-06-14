@@ -18,11 +18,11 @@ should generate a .war file under `bazel-bin/gerrit.war`.
 To build Gerrit from source, you need:
 
 * A Linux or macOS system (Windows is not supported at this time)
-* A JDK for Java 11 or Java 17
+* A JDK for Java 17 or Java 21
 * Python 3
 * link:https://github.com/nodesource/distributions/blob/master/README.md[Node.js (including npm),role=external,window=_blank]
-* Bower (`npm install -g bower`)
-* link:https://docs.bazel.build/versions/master/install.html[Bazel,role=external,window=_blank] -launched with
+* Yarn (`npm install -g yarn`)
+* link:https://bazel.build/install[Bazel,role=external,window=_blank] -launched with
 link:https://github.com/bazelbuild/bazelisk[Bazelisk,role=external,window=_blank]
 * Maven
 * zip, unzip
@@ -40,7 +40,7 @@ using Bazelisk is that you can jump between different versions of Gerrit and not
 worry about which version of Bazel you need.
 
 Bazelisk can be installed in different ways:
-link:https://docs.bazel.build/install-bazelisk.html[Bazelisk Installation,role=external,window=_blank].
+link:https://bazel.build/install/bazelisk[Bazelisk Installation,role=external,window=_blank].
 To execute the correct version of Bazel using Bazelisk you simply replace
 the `bazel` command with `bazelisk`.
 
@@ -54,13 +54,13 @@ To check the installed version of Java, open a terminal window and run:
 
 `java -version`
 
-[[java-11]]
-==== Java 11 support
+[[java-21]]
+==== Java 21 support
 
-To build Gerrit with Java 11 language level, run:
+To build Gerrit with Java 21 language level, run:
 
 ```
-  $ bazelisk build --config=java11 :release
+  $ bazelisk build --config=java21 :release
 ```
 
 [[java-17]]
@@ -393,6 +393,34 @@ execute Bazel with the appropriate target:
   bazelisk test //plugins/replication/...
 ----
 
+[[known-issues]]
+=== Known Issues
+
+[[byte-buddy-not-initialized-or-unavailable]]
+==== The Byte Buddy agent is not initialized or unavailable
+
+If running tests that make use of mocks fail with the exception below, set the
+`sandbox_tmpfs_path` flag for running tests in `.bazelrc` as described in this
+link:https://github.com/mockito/mockito/issues/1879#issuecomment-922459131[
+issue], e.g. add this line: `test --sandbox_tmpfs_path=/tmp`
+
+.Exception:
+----
+...
+Caused by: org.mockito.exceptions.base.MockitoInitializationException:
+Could not initialize inline Byte Buddy mock maker.
+
+It appears as if your JDK does not supply a working agent attachment mechanism.
+...
+Caused by: java.lang.IllegalStateException: The Byte Buddy agent is not initialized or unavailable
+at net.bytebuddy.agent.ByteBuddyAgent.getInstrumentation(ByteBuddyAgent.java:230)
+at net.bytebuddy.agent.ByteBuddyAgent.install(ByteBuddyAgent.java:617)
+at net.bytebuddy.agent.ByteBuddyAgent.install(ByteBuddyAgent.java:568)
+at net.bytebuddy.agent.ByteBuddyAgent.install(ByteBuddyAgent.java:545)
+at org.mockito.internal.creation.bytebuddy.InlineDelegateByteBuddyMockMaker.<clinit>(InlineDelegateByteBuddyMockMaker.java:115)
+... 47 more
+----
+
 [[debugging-tests]]
 == Debugging Unit Tests
 In some cases it may be necessary to debug a test while running it in bazel. For example, when we
@@ -664,26 +692,16 @@ gcloud alpha remote-build-execution worker-pools create default \
     --disk-size=200
 ```
 
-Due to outdated Git version in official RBE docker images, a custom RBE docker
-image must be used. To build custom docker imager, change to the directory
-`tools/platforms` and build and publish custom RBE docker image.
+Note, that we are using Ubuntu2204 docker image from bazel project:
 
-To build the custom RBE docker image, run:
 
 ```
-docker build -t gcr.io/api-project-164060093628/rbe-ubuntu18-04 .
+docker pull gcr.io/bazel-public/ubuntu2204-java17@sha256:ffe37746a34537d8e73cef5a20ccd3a4e3ec7af3e7410cba87387ba97c0e520f
 ```
 
-To publish the custom RBE docker image, run:
-
-```
-docker push gcr.io/api-project-164060093628/rbe-ubuntu18-04
-[...]
-latest: digest: sha256:de5186d4313630a6111f9a2449b72563d0bc59ec9fb60956f063b69a38a76834 size: 1584
-```
-
-Re-build rbe_autoconfig project conduct a new release and switch to using it
-in `WORKSPACE` file.
+Re-build rbe_autoconfig project, conduct a new release and switch to using it
+in `WORKSPACE` file. For more details see this
+link:https://github.com/davido/rbe_autoconfig[repository,role=external,window=_blank]
 
 Note, to authenticate to the gcr.io registry, the following command must be
 used:

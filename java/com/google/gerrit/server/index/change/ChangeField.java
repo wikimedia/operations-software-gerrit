@@ -17,6 +17,7 @@ package com.google.gerrit.server.index.change;
 import static com.google.common.base.MoreObjects.firstNonNull;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
+import static com.google.gerrit.server.query.change.ChangeQueryBuilder.FIELD_CHANGE_NUMBER;
 import static com.google.gerrit.server.util.AttentionSetUtil.additionsOnly;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.stream.Collectors.joining;
@@ -132,6 +133,15 @@ public class ChangeField {
 
   public static final IndexedField<ChangeData, String>.SearchSpec NUMERIC_ID_STR_SPEC =
       NUMERIC_ID_STR_FIELD.exact("legacy_id_str");
+
+  public static final IndexedField<ChangeData, Integer> CHANGENUM_FIELD =
+      IndexedField.<ChangeData>integerBuilder("ChangeNumber")
+          .stored()
+          .required()
+          .build(cd -> cd.getId().get());
+
+  public static final IndexedField<ChangeData, Integer>.SearchSpec CHANGENUM_SPEC =
+      CHANGENUM_FIELD.integer(FIELD_CHANGE_NUMBER);
 
   /** Newer style Change-Id key. */
   public static final IndexedField<ChangeData, String> CHANGE_ID_FIELD =
@@ -910,7 +920,7 @@ public class ChangeField {
     return SchemaUtil.getPersonParts(cd.getAuthor());
   }
 
-  public static Set<String> getAuthorNameAndEmail(ChangeData cd) {
+  public static ImmutableSet<String> getAuthorNameAndEmail(ChangeData cd) {
     return getNameAndEmail(cd.getAuthor());
   }
 
@@ -918,11 +928,11 @@ public class ChangeField {
     return SchemaUtil.getPersonParts(cd.getCommitter());
   }
 
-  public static Set<String> getCommitterNameAndEmail(ChangeData cd) {
+  public static ImmutableSet<String> getCommitterNameAndEmail(ChangeData cd) {
     return getNameAndEmail(cd.getCommitter());
   }
 
-  private static Set<String> getNameAndEmail(PersonIdent person) {
+  private static ImmutableSet<String> getNameAndEmail(PersonIdent person) {
     if (person == null) {
       return ImmutableSet.of();
     }
@@ -1740,14 +1750,14 @@ public class ChangeField {
     return converter.toProto(object);
   }
 
-  private static <V extends MessageLite, T> List<V> entitiesToProtos(
+  private static <V extends MessageLite, T> ImmutableList<V> entitiesToProtos(
       ProtoConverter<V, T> converter, Collection<T> objects) {
     return objects.stream()
         .map(object -> entityToProto(converter, object))
         .collect(toImmutableList());
   }
 
-  private static <V extends MessageLite, T> List<T> decodeProtosToEntities(
+  private static <V extends MessageLite, T> ImmutableList<T> decodeProtosToEntities(
       Iterable<V> raw, ProtoConverter<V, T> converter) {
     return StreamSupport.stream(raw.spliterator(), false)
         .map(proto -> decodeProtoToEntity(proto, converter))

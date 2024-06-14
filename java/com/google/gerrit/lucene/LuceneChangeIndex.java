@@ -17,6 +17,7 @@ package com.google.gerrit.lucene;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.gerrit.lucene.AbstractLuceneIndex.sortFieldName;
 import static com.google.gerrit.server.git.QueueProvider.QueueType.INTERACTIVE;
+import static com.google.gerrit.server.index.change.ChangeField.CHANGENUM_SPEC;
 import static com.google.gerrit.server.index.change.ChangeField.NUMERIC_ID_STR_SPEC;
 import static com.google.gerrit.server.index.change.ChangeField.PROJECT_SPEC;
 import static com.google.gerrit.server.index.change.ChangeIndexRewriter.CLOSED_STATUSES;
@@ -284,6 +285,11 @@ public class LuceneChangeIndex implements ChangeIndex {
     openIndex.markReady(ready);
   }
 
+  @Override
+  public boolean snapshot(String id) throws IOException {
+    return openIndex.snapshot(id) && closedIndex.snapshot(id);
+  }
+
   private Sort getSort() {
     return new Sort(
         new SortField(UPDATED_SORT_FIELD, SortField.Type.LONG, true),
@@ -417,13 +423,16 @@ public class LuceneChangeIndex implements ChangeIndex {
               TopFieldDocs subIndexHits =
                   searchers[i].searchAfter(
                       searchAfter, query, maxRemainingHits, sort, /* doDocScores= */ false);
+              assignShardIndexValues(subIndexHits, i);
               searchAfterHitsCount += subIndexHits.scoreDocs.length;
               hits.add(subIndexHits);
               searchAfterBySubIndex.put(
                   subIndex, Iterables.getLast(Arrays.asList(subIndexHits.scoreDocs), searchAfter));
             }
           } else {
-            hits.add(searchers[i].search(query, queryLimit, sort));
+            TopFieldDocs subIndexHits = searchers[i].search(query, queryLimit, sort);
+            assignShardIndexValues(subIndexHits, i);
+            hits.add(subIndexHits);
           }
         }
         TopDocs docs = TopDocs.merge(sort, queryLimit, hits.stream().toArray(TopFieldDocs[]::new));
@@ -444,6 +453,25 @@ public class LuceneChangeIndex implements ChangeIndex {
             }
           }
         }
+      }
+    }
+
+    /*
+     * Assign shard index values to the score documents.
+     *
+     * <p>TopDocs.merge()'s API has been changed to stop allowing passing in a parameter to
+     * indicate if it should set shard indices for hits as they are seen during the merge
+     * process. This is done to simplify the API to be more dynamic in terms of passing in
+     * custom tie breakers. If shard indices are to be used for tie breaking docs with equal
+     * scores during TopDocs.merge(), then it is mandatory that the input ScoreDocs have their
+     * shard indices set to valid values prior to calling merge().
+     *
+     * @param doc document
+     * @param shard index
+     */
+    private void assignShardIndexValues(TopFieldDocs doc, int shard) {
+      for (int docID = 0; docID < doc.scoreDocs.length; docID++) {
+        doc.scoreDocs[docID].shardIndex = shard;
       }
     }
 
@@ -501,7 +529,11 @@ public class LuceneChangeIndex implements ChangeIndex {
         ImmutableList.Builder<ChangeData> result =
             ImmutableList.builderWithExpectedSize(docs.size());
         for (Document doc : docs) {
-          result.add(toChangeData(fields(doc, fields), fields, NUMERIC_ID_STR_SPEC.getName()));
+          String fieldName =
+              doc.getField(CHANGENUM_SPEC.getName()) != null
+                  ? CHANGENUM_SPEC.getName()
+                  : NUMERIC_ID_STR_SPEC.getName();
+          result.add(toChangeData(fields(doc, fields), fields, fieldName));
         }
         return result.build();
       } catch (InterruptedException e) {
@@ -562,7 +594,8 @@ public class LuceneChangeIndex implements ChangeIndex {
 
     for (SchemaField<ChangeData, ?> field : getSchema().getSchemaFields().values()) {
       if (fields.contains(field.getName())) {
-        field.setIfPossible(cd, new LuceneStoredValue(doc.get(field.getName())));
+        @SuppressWarnings("unused")
+        var unused = field.setIfPossible(cd, new LuceneStoredValue(doc.get(field.getName())));
       }
     }
     return cd;

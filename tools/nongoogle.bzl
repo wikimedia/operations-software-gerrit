@@ -1,12 +1,55 @@
+"""
+Dependencies that are exempted from requiring a Library-Compliance approval
+from a Googler.
+"""
+
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+load("@bazel_tools//tools/build_defs/repo:utils.bzl", "maybe")
 load("//tools/bzl:maven_jar.bzl", "maven_jar")
 
-GUAVA_VERSION = "32.1.2-jre"
+GUAVA_VERSION = "33.0.0-jre"
 
-GUAVA_BIN_SHA1 = "5e64ec7e056456bef3a4bc4c6fdaef71e8ab6318"
+GUAVA_BIN_SHA1 = "161ba27964a62f241533807a46b8711b13c1d94b"
 
-GUAVA_TESTLIB_BIN_SHA1 = "c7a8a2c91b6809ff46373b1bc06185241801f6b5"
+GUAVA_TESTLIB_BIN_SHA1 = "cf21e00fcc92786094fb5b376500f50d06878b0b"
 
 GUAVA_DOC_URL = "https://google.github.io/guava/releases/" + GUAVA_VERSION + "/api/docs/"
+
+def archive_dependencies():
+    return [
+        {
+            "name": "com_google_protobuf",
+            "sha256": "9bd87b8280ef720d3240514f884e56a712f2218f0d693b48050c836028940a42",
+            "strip_prefix": "protobuf-25.1",
+            "urls": [
+                "https://github.com/protocolbuffers/protobuf/archive/v25.1.tar.gz",
+            ],
+        },
+        {
+            "name": "platforms",
+            "urls": [
+                "https://mirror.bazel.build/github.com/bazelbuild/platforms/releases/download/0.0.7/platforms-0.0.7.tar.gz",
+                "https://github.com/bazelbuild/platforms/releases/download/0.0.7/platforms-0.0.7.tar.gz",
+            ],
+            "sha256": "3a561c99e7bdbe9173aa653fd579fe849f1d8d67395780ab4770b1f381431d51",
+        },
+        {
+            "name": "rules_java",
+            "urls": [
+                "https://github.com/bazelbuild/rules_java/releases/download/7.3.1/rules_java-7.3.1.tar.gz",
+            ],
+            "sha256": "4018e97c93f97680f1650ffd2a7530245b864ac543fd24fae8c02ba447cb2864",
+        },
+        {
+            "name": "ubuntu2204_jdk17",
+            "strip_prefix": "rbe_autoconfig-5.1.0",
+            "urls": [
+                "https://gerrit-bazel.storage.googleapis.com/rbe_autoconfig/v5.1.0.tar.gz",
+                "https://github.com/davido/rbe_autoconfig/releases/download/v5.1.0/v5.1.0.tar.gz",
+            ],
+            "sha256": "8ea82b81c9707e535ff93ef5349d11e55b2a23c62bcc3b0faaec052144aed87d",
+        },
+    ]
 
 def declare_nongoogle_deps():
     """loads dependencies that are not used at Google.
@@ -16,10 +59,15 @@ def declare_nongoogle_deps():
     enforced by //lib:nongoogle_test.
     """
 
+    for dependency in archive_dependencies():
+        params = {}
+        params.update(**dependency)
+        maybe(http_archive, params.pop("name"), **params)
+
     maven_jar(
         name = "log4j",
-        artifact = "ch.qos.reload4j:reload4j:1.2.19",
-        sha1 = "4eae9978468c5e885a6fb44df7e2bbc07a20e6ce",
+        artifact = "ch.qos.reload4j:reload4j:1.2.25",
+        sha1 = "45921e383a1001c2a599fc4c6cf59af80cdd1cf1",
     )
 
     SLF4J_VERS = "1.7.36"
@@ -200,8 +248,8 @@ def declare_nongoogle_deps():
     # Keep this version of Soy synchronized with the version used in Gitiles.
     maven_jar(
         name = "soy",
-        artifact = "com.google.template:soy:2022-07-20",
-        sha1 = "f64eb90da6d91beddf11653865c90f26d26710cf",
+        artifact = "com.google.template:soy:2024-01-30",
+        sha1 = "6e9ccb00926325c7a9293ed05a2eaf56ea15d60e",
     )
 
     # Test-only dependencies below.
@@ -223,62 +271,62 @@ def declare_nongoogle_deps():
         sha1 = "48462eb319817c90c27d377341684b6b81372e08",
     )
 
-    TRUTH_VERS = "1.1"
+    TRUTH_VERS = "1.4.2"
 
     maven_jar(
         name = "truth",
         artifact = "com.google.truth:truth:" + TRUTH_VERS,
-        sha1 = "6a096a16646559c24397b03f797d0c9d75ee8720",
+        sha1 = "2322d861290bd84f84cbb178e43539725a4588fd",
     )
 
     maven_jar(
         name = "truth-java8-extension",
         artifact = "com.google.truth.extensions:truth-java8-extension:" + TRUTH_VERS,
-        sha1 = "258db6eb8df61832c5c059ed2bc2e1c88683e92f",
+        sha1 = "bfa44a01e1bb5a1df50bc9c678d6588b4d9eb73a",
     )
 
     maven_jar(
         name = "truth-liteproto-extension",
         artifact = "com.google.truth.extensions:truth-liteproto-extension:" + TRUTH_VERS,
-        sha1 = "bf65afa13aa03330e739bcaa5d795fe0f10fbf20",
+        sha1 = "062a2716b3b0ba9d8e72c913dad43a8139b12202",
     )
 
     maven_jar(
         name = "truth-proto-extension",
         artifact = "com.google.truth.extensions:truth-proto-extension:" + TRUTH_VERS,
-        sha1 = "64cba89cf87c1d84cb8c81d06f0b9c482f10b4dc",
+        sha1 = "53cfc94dfa435c5dcd6f8b6844b82b423ea0a5af",
     )
 
-    LUCENE_VERS = "8.11.2"
+    LUCENE_VERS = "9.8.0"
 
     maven_jar(
         name = "lucene-core",
         artifact = "org.apache.lucene:lucene-core:" + LUCENE_VERS,
-        sha1 = "57438c3f31e0e440de149294890eee88e030ea6d",
+        sha1 = "5e8421c5f8573bcf22e9265fc7e19469545a775a",
     )
 
     maven_jar(
         name = "lucene-analyzers-common",
-        artifact = "org.apache.lucene:lucene-analyzers-common:" + LUCENE_VERS,
-        sha1 = "07a74c5c2dd082b08c644a9016bc6ff66c8f27cc",
+        artifact = "org.apache.lucene:lucene-analysis-common:" + LUCENE_VERS,
+        sha1 = "36f0363325ca7bf62c180160d1ed5165c7c37795",
     )
 
     maven_jar(
-        name = "backward-codecs",
+        name = "lucene-backward-codecs",
         artifact = "org.apache.lucene:lucene-backward-codecs:" + LUCENE_VERS,
-        sha1 = "a5d0f0db405d607cc13265819b8d2ef0c81c0819",
+        sha1 = "e98fb408028f40170e6d87c16422bfdc0bb2e392",
     )
 
     maven_jar(
         name = "lucene-misc",
         artifact = "org.apache.lucene:lucene-misc:" + LUCENE_VERS,
-        sha1 = "9c7204f923465a96a20ac9e49cdca0cfcde64851",
+        sha1 = "9a57b049cf51a5e9c9c1909c420f645f1b6f9a54",
     )
 
     maven_jar(
         name = "lucene-queryparser",
         artifact = "org.apache.lucene:lucene-queryparser:" + LUCENE_VERS,
-        sha1 = "1886e3a27a8d4a73eb8fad54ea93a160b099bc60",
+        sha1 = "982faf2bfa55542bf57fbadef54c19ac00f57cae",
     )
 
     # JGit's transitive dependencies

@@ -18,7 +18,6 @@ import com.google.common.base.CharMatcher;
 import com.google.common.base.Joiner;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Strings;
-import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.LinkedHashMultimap;
@@ -27,6 +26,7 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.SetMultimap;
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.extensions.events.LifecycleListener;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
@@ -47,12 +47,10 @@ import java.io.InputStream;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.AbstractMap;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -62,7 +60,6 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
-import java.util.jar.JarFile;
 import org.eclipse.jgit.internal.storage.file.FileSnapshot;
 import org.eclipse.jgit.lib.Config;
 
@@ -93,6 +90,7 @@ public class PluginLoader implements LifecycleListener {
   private final MandatoryPluginsCollection mandatoryPlugins;
   private final UniversalServerPluginProvider serverPluginFactory;
   private final GerritRuntime gerritRuntime;
+  private final PluginOrderComparator pluginOrderComparator;
 
   @Inject
   public PluginLoader(
@@ -121,6 +119,10 @@ public class PluginLoader implements LifecycleListener {
     remoteAdmin = cfg.getBoolean("plugins", null, "allowRemoteAdmin", false);
     mandatoryPlugins = mpc;
     this.gerritRuntime = gerritRuntime;
+
+    ImmutableList<String> pluginOrderOverrides =
+        ImmutableList.copyOf(cfg.getStringList("plugins", null, "loadPriority"));
+    pluginOrderComparator = new PluginOrderComparator(pluginOrderOverrides);
 
     long checkFrequency =
         ConfigUtil.getTimeUnit(
@@ -164,6 +166,7 @@ public class PluginLoader implements LifecycleListener {
     return plugins;
   }
 
+  @CanIgnoreReturnValue
   public String installPluginFromStream(String originalName, InputStream in)
       throws IOException, PluginInstallException {
     checkRemoteInstall();
@@ -472,43 +475,7 @@ public class PluginLoader implements LifecycleListener {
 
   private TreeSet<Map.Entry<String, Path>> jarsApiFirstSortedPluginsSet(
       Map<String, Path> activePlugins) {
-    TreeSet<Map.Entry<String, Path>> sortedPlugins =
-        Sets.newTreeSet(
-            new Comparator<Map.Entry<String, Path>>() {
-              @Override
-              public int compare(Map.Entry<String, Path> e1, Map.Entry<String, Path> e2) {
-                Path n1 = e1.getValue().getFileName();
-                Path n2 = e2.getValue().getFileName();
-
-                try {
-                  boolean e1IsApi = isApi(e1.getValue());
-                  boolean e2IsApi = isApi(e2.getValue());
-                  return ComparisonChain.start()
-                      .compareTrueFirst(e1IsApi, e2IsApi)
-                      .compareTrueFirst(isJar(n1), isJar(n2))
-                      .compare(n1, n2)
-                      .result();
-                } catch (IOException ioe) {
-                  logger.atSevere().withCause(ioe).log("Unable to compare %s and %s", n1, n2);
-                  return 0;
-                }
-              }
-
-              private boolean isJar(Path pluginPath) {
-                return pluginPath.toString().endsWith(".jar");
-              }
-
-              private boolean isApi(Path pluginPath) throws IOException {
-                return isJar(pluginPath) && hasApiModuleEntryInManifest(pluginPath);
-              }
-
-              private boolean hasApiModuleEntryInManifest(Path pluginPath) throws IOException {
-                try (JarFile jarFile = new JarFile(pluginPath.toFile())) {
-                  return !Strings.isNullOrEmpty(
-                      jarFile.getManifest().getMainAttributes().getValue(ServerPlugin.API_MODULE));
-                }
-              }
-            });
+    TreeSet<Map.Entry<String, Path>> sortedPlugins = Sets.newTreeSet(pluginOrderComparator);
 
     addAllEntries(activePlugins, sortedPlugins);
     return sortedPlugins;
@@ -519,6 +486,7 @@ public class PluginLoader implements LifecycleListener {
     dropRemovedDisabledPlugins(jars);
   }
 
+  @CanIgnoreReturnValue
   private Plugin runPlugin(String name, Path plugin, Plugin oldPlugin)
       throws PluginInstallException {
     FileSnapshot snapshot = FileSnapshot.save(plugin.toFile());
@@ -611,6 +579,7 @@ public class PluginLoader implements LifecycleListener {
     }
   }
 
+  @CanIgnoreReturnValue
   synchronized int processPendingCleanups() {
     Iterator<Plugin> iterator = toCleanup.iterator();
     while (iterator.hasNext()) {
@@ -726,15 +695,15 @@ public class PluginLoader implements LifecycleListener {
       assert winner != null;
       // Disable all loser plugins by renaming their file names to
       // "file.disabled" and replace the disabled files in the multimap.
-      Collection<Path> elementsToRemove = new ArrayList<>();
-      Collection<Path> elementsToAdd = new ArrayList<>();
+      List<Path> elementsToRemove = new ArrayList<>();
+      List<Path> elementsToAdd = new ArrayList<>();
       for (Path loser : Iterables.skip(enabled, 1)) {
         logger.atWarning().log(
             "Plugin <%s> was disabled, because"
                 + " another plugin <%s>"
                 + " with the same name <%s> already exists",
             loser, winner, plugin);
-        Path disabledPlugin = Paths.get(loser + ".disabled");
+        Path disabledPlugin = Path.of(loser + ".disabled");
         elementsToAdd.add(disabledPlugin);
         elementsToRemove.add(loser);
         try {

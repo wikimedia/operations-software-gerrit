@@ -15,7 +15,6 @@
 package com.google.gerrit.acceptance.rest.account;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth8.assertThat;
 import static com.google.gerrit.acceptance.GitUtil.fetch;
 import static com.google.gerrit.acceptance.GitUtil.pushHead;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
@@ -110,7 +109,7 @@ public class ExternalIdIT extends AbstractDaemonTest {
 
   @Test
   public void getExternalIds() throws Exception {
-    Collection<ExternalId> expectedIds = getAccountState(user.id()).externalIds();
+    ImmutableSet<ExternalId> expectedIds = getAccountState(user.id()).externalIds();
     List<AccountExternalIdInfo> expectedIdInfos = toExternalIdInfos(expectedIds);
 
     RestResponse response = userRestSession.get("/accounts/self/external.ids");
@@ -125,7 +124,7 @@ public class ExternalIdIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void getExternalIdsOfOtherUserNotAllowed() {
+  public void getExternalIdsOfOtherUserNotAllowed() throws Exception {
     requestScopeOperations.setApiUser(user.id());
     AuthException thrown =
         assertThrows(
@@ -140,7 +139,7 @@ public class ExternalIdIT extends AbstractDaemonTest {
         .add(allowCapability(GlobalCapability.MODIFY_ACCOUNT).group(REGISTERED_USERS))
         .update();
 
-    Collection<ExternalId> expectedIds = getAccountState(admin.id()).externalIds();
+    ImmutableSet<ExternalId> expectedIds = getAccountState(admin.id()).externalIds();
     List<AccountExternalIdInfo> expectedIdInfos = toExternalIdInfos(expectedIds);
 
     RestResponse response = userRestSession.get("/accounts/" + admin.id() + "/external.ids");
@@ -510,11 +509,11 @@ public class ExternalIdIT extends AbstractDaemonTest {
     insertValidExternalIds();
     insertInvalidButParsableExternalIds();
 
-    Set<ExternalId> parseableExtIds = externalIds.all();
+    ImmutableSet<ExternalId> parseableExtIds = externalIds.all();
 
     insertNonParsableExternalIds();
 
-    Set<ExternalId> extIds = externalIds.all();
+    ImmutableSet<ExternalId> extIds = externalIds.all();
     assertThat(extIds).containsExactlyElementsIn(parseableExtIds);
 
     for (ExternalId parseableExtId : parseableExtIds) {

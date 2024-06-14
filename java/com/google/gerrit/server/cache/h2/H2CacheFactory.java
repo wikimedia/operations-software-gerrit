@@ -32,11 +32,13 @@ import com.google.gerrit.server.cache.h2.H2CacheImpl.SqlStore;
 import com.google.gerrit.server.cache.h2.H2CacheImpl.ValueHolder;
 import com.google.gerrit.server.config.ConfigUtil;
 import com.google.gerrit.server.config.GerritServerConfig;
+import com.google.gerrit.server.config.ScheduleConfig;
+import com.google.gerrit.server.config.ScheduleConfig.Schedule;
 import com.google.gerrit.server.config.SitePaths;
+import com.google.gerrit.server.git.WorkQueue;
 import com.google.gerrit.server.index.options.BuildBloomFilter;
 import com.google.gerrit.server.index.options.IsFirstInsertForEntry;
 import com.google.gerrit.server.logging.LoggingContextAwareExecutorService;
-import com.google.gerrit.server.logging.LoggingContextAwareScheduledExecutorService;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -59,6 +61,24 @@ import org.eclipse.jgit.lib.Config;
 class H2CacheFactory extends PersistentCacheBaseFactory implements LifecycleListener {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
+  static class PeriodicCachePruner implements Runnable {
+    private final H2CacheImpl<?, ?> cache;
+
+    PeriodicCachePruner(H2CacheImpl<?, ?> cache) {
+      this.cache = cache;
+    }
+
+    @Override
+    public String toString() {
+      return "Disk Cache Pruner (" + cache.getCacheName() + ")";
+    }
+
+    @Override
+    public void run() {
+      cache.prune();
+    }
+  }
+
   private final List<H2CacheImpl<?, ?>> caches;
   private final DynamicMap<Cache<?, ?>> cacheMap;
   private final ExecutorService executor;
@@ -67,6 +87,8 @@ class H2CacheFactory extends PersistentCacheBaseFactory implements LifecycleList
   private final boolean h2AutoServer;
   private final boolean isOfflineReindex;
   private final boolean buildBloomFilter;
+  private final boolean pruneOnStartup;
+  private final Schedule schedule;
 
   @Inject
   H2CacheFactory(
@@ -74,12 +96,18 @@ class H2CacheFactory extends PersistentCacheBaseFactory implements LifecycleList
       @GerritServerConfig Config cfg,
       SitePaths site,
       DynamicMap<Cache<?, ?>> cacheMap,
+      WorkQueue queue,
       @Nullable IsFirstInsertForEntry isFirstInsertForEntry,
       @Nullable BuildBloomFilter buildBloomFilter) {
     super(memCacheFactory, cfg, site);
     h2CacheSize = cfg.getLong("cache", null, "h2CacheSize", -1);
     h2AutoServer = cfg.getBoolean("cache", null, "h2AutoServer", false);
+    pruneOnStartup = cfg.getBoolean("cachePruning", null, "pruneOnStartup", true);
     caches = new ArrayList<>();
+    schedule =
+        ScheduleConfig.createSchedule(cfg, "cachePruning")
+            .orElseGet(() -> Schedule.createOrFail(Duration.ofDays(1).toMillis(), "01:00"));
+    logger.atInfo().log("Scheduling cache pruning with schedule %s", schedule);
     this.cacheMap = cacheMap;
     this.isOfflineReindex =
         isFirstInsertForEntry != null && isFirstInsertForEntry.equals(IsFirstInsertForEntry.YES);
@@ -92,16 +120,7 @@ class H2CacheFactory extends PersistentCacheBaseFactory implements LifecycleList
               Executors.newFixedThreadPool(
                   1, new ThreadFactoryBuilder().setNameFormat("DiskCache-Store-%d").build()));
 
-      cleanup =
-          isOfflineReindex
-              ? null
-              : new LoggingContextAwareScheduledExecutorService(
-                  Executors.newScheduledThreadPool(
-                      1,
-                      new ThreadFactoryBuilder()
-                          .setNameFormat("DiskCache-Prune-%d")
-                          .setDaemon(true)
-                          .build()));
+      cleanup = isOfflineReindex ? null : queue.createQueue(1, "DiskCache-Prune", true);
     } else {
       executor = null;
       cleanup = null;
@@ -114,9 +133,19 @@ class H2CacheFactory extends PersistentCacheBaseFactory implements LifecycleList
       for (H2CacheImpl<?, ?> cache : caches) {
         executor.execute(cache::start);
         if (cleanup != null) {
+          if (pruneOnStartup) {
+            @SuppressWarnings("unused")
+            Future<?> possiblyIgnoredError =
+                cleanup.schedule(new PeriodicCachePruner(cache), 30, TimeUnit.SECONDS);
+          }
+
           @SuppressWarnings("unused")
           Future<?> possiblyIgnoredError =
-              cleanup.schedule(() -> cache.prune(cleanup), 30, TimeUnit.SECONDS);
+              cleanup.scheduleAtFixedRate(
+                  new PeriodicCachePruner(cache),
+                  schedule.initialDelay(),
+                  schedule.interval(),
+                  TimeUnit.MILLISECONDS);
         }
       }
     }

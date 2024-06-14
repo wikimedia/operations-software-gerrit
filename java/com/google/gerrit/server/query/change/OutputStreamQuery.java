@@ -17,6 +17,7 @@ package com.google.gerrit.server.query.change;
 import static com.google.common.base.Preconditions.checkState;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.flogger.FluentLogger;
@@ -125,7 +126,7 @@ public class OutputStreamQuery {
   }
 
   void setLimit(int n) {
-    queryProcessor.setUserProvidedLimit(n);
+    queryProcessor.setUserProvidedLimit(n, /* applyDefaultLimit */ false);
   }
 
   public void setNoLimit(boolean on) {
@@ -348,7 +349,7 @@ public class OutputStreamQuery {
       eventFactory.addDependencies(rw, c, d.change(), d.currentPatchSet());
     }
 
-    List<PluginDefinedInfo> pluginInfos = pluginInfosByChange.get(d.getId());
+    ImmutableList<PluginDefinedInfo> pluginInfos = pluginInfosByChange.get(d.getId());
     if (!pluginInfos.isEmpty()) {
       c.plugins = pluginInfos;
     }

@@ -43,7 +43,8 @@ import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ChangeNotes.Factory.ChangeNotesResult;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.inject.Inject;
+import com.google.inject.assistedinject.Assisted;
+import com.google.inject.assistedinject.AssistedInject;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -52,6 +53,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ObjectId;
@@ -65,6 +67,13 @@ import org.eclipse.jgit.lib.Repository;
  */
 public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, ChangeIndex> {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
+
+  public interface Factory {
+    AllChangesIndexer create();
+
+    AllChangesIndexer create(boolean reuseExistingDocuments);
+  }
+
   private MultiProgressMonitor mpm;
   private VolatileTask doneTask;
   private Task failedTask;
@@ -84,25 +93,54 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
   private final GitRepositoryManager repoManager;
   private final ListeningExecutorService executor;
   private final ChangeIndexer.Factory indexerFactory;
+  private final StalenessChecker.Factory stalenessCheckerFactory;
   private final ChangeNotes.Factory notesFactory;
   private final ProjectCache projectCache;
   private final Set<Project.NameKey> projectsToSkip;
+  private final boolean reuseExistingDocuments;
 
-  @Inject
+  @AssistedInject
   AllChangesIndexer(
       MultiProgressMonitor.Factory multiProgressMonitorFactory,
       ChangeData.Factory changeDataFactory,
       GitRepositoryManager repoManager,
       @IndexExecutor(BATCH) ListeningExecutorService executor,
       ChangeIndexer.Factory indexerFactory,
+      StalenessChecker.Factory stalenessCheckerFactory,
       ChangeNotes.Factory notesFactory,
       ProjectCache projectCache,
       @GerritServerConfig Config config) {
+    this(
+        multiProgressMonitorFactory,
+        changeDataFactory,
+        repoManager,
+        executor,
+        indexerFactory,
+        stalenessCheckerFactory,
+        notesFactory,
+        projectCache,
+        config,
+        config.getBoolean("index", null, "reuseExistingDocuments", false));
+  }
+
+  @AssistedInject
+  AllChangesIndexer(
+      MultiProgressMonitor.Factory multiProgressMonitorFactory,
+      ChangeData.Factory changeDataFactory,
+      GitRepositoryManager repoManager,
+      @IndexExecutor(BATCH) ListeningExecutorService executor,
+      ChangeIndexer.Factory indexerFactory,
+      StalenessChecker.Factory stalenessCheckerFactory,
+      ChangeNotes.Factory notesFactory,
+      ProjectCache projectCache,
+      @GerritServerConfig Config config,
+      @Assisted boolean reuseExistingDocuments) {
     this.multiProgressMonitorFactory = multiProgressMonitorFactory;
     this.changeDataFactory = changeDataFactory;
     this.repoManager = repoManager;
     this.executor = executor;
     this.indexerFactory = indexerFactory;
+    this.stalenessCheckerFactory = stalenessCheckerFactory;
     this.notesFactory = notesFactory;
     this.projectCache = projectCache;
     this.projectsToSkip =
@@ -110,6 +148,7 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
             .stream()
             .map(p -> Project.NameKey.parse(p))
             .collect(Collectors.toSet());
+    this.reuseExistingDocuments = reuseExistingDocuments;
   }
 
   @AutoValue
@@ -138,6 +177,11 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
 
   @Override
   public Result indexAll(ChangeIndex index) {
+    return indexAll(index, true);
+  }
+
+  @Override
+  public Result indexAll(ChangeIndex index, boolean notifyListeners) {
     // The simplest approach to distribute indexing would be to let each thread grab a project
     // and index it fully. But if a site has one big project and 100s of small projects, then
     // in the beginning all CPUs would be busy reindexing projects. But soon enough all small
@@ -160,7 +204,7 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
     failedTask = mpm.beginSubTask("failed", MultiProgressMonitor.UNKNOWN);
     List<ListenableFuture<?>> futures;
     try {
-      futures = new SliceScheduler(index, ok).schedule();
+      futures = new SliceScheduler(index, ok, notifyListeners).schedule();
     } catch (ProjectsCollectionFailure e) {
       logger.atSevere().log("%s", e.getMessage());
       return Result.create(sw, false, 0, 0);
@@ -218,20 +262,27 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
   }
 
   private class ProjectSliceIndexer implements Callable<Void> {
-    private final ChangeIndexer indexer;
     private final ProjectSlice projectSlice;
     private final ProgressMonitor done;
     private final ProgressMonitor failed;
+    private final Consumer<ChangeData> indexAction;
 
     private ProjectSliceIndexer(
         ChangeIndexer indexer,
         ProjectSlice projectSlice,
         ProgressMonitor done,
         ProgressMonitor failed) {
-      this.indexer = indexer;
       this.projectSlice = projectSlice;
       this.done = done;
       this.failed = failed;
+      if (reuseExistingDocuments) {
+        indexAction =
+            cd -> {
+              var unused = indexer.reindexIfStale(cd);
+            };
+      } else {
+        indexAction = cd -> indexer.index(cd);
+      }
     }
 
     @Override
@@ -271,7 +322,7 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
         return;
       }
       try {
-        indexer.index(changeDataFactory.create(r.notes()));
+        indexAction.accept(changeDataFactory.create(r.notes()));
         done.update(1);
         verboseWriter.format(
             "Reindexed change %d (project: %s)\n", r.id().get(), r.notes().getProjectName().get());
@@ -313,6 +364,7 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
   private class SliceScheduler {
     final ChangeIndex index;
     final AtomicBoolean ok;
+    final boolean notifyListeners;
     final AtomicInteger changeCount = new AtomicInteger(0);
     final AtomicInteger projectsFailed = new AtomicInteger(0);
     final List<ListenableFuture<?>> sliceIndexerFutures = new ArrayList<>();
@@ -320,9 +372,10 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
     VolatileTask projTask = mpm.beginVolatileSubTask("project-slices");
     Task slicingProjects;
 
-    public SliceScheduler(ChangeIndex index, AtomicBoolean ok) {
+    public SliceScheduler(ChangeIndex index, AtomicBoolean ok, boolean notifyListeners) {
       this.index = index;
       this.ok = ok;
+      this.notifyListeners = notifyListeners;
     }
 
     private List<ListenableFuture<?>> schedule() throws ProjectsCollectionFailure {
@@ -330,7 +383,7 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
       int projectCount = projects.size();
       slicingProjects = mpm.beginSubTask("Slicing projects", projectCount);
       for (Project.NameKey name : projects) {
-        sliceCreationFutures.add(executor.submit(new ProjectSliceCreator(name)));
+        sliceCreationFutures.add(executor.submit(new ProjectSliceCreator(name, notifyListeners)));
       }
 
       try {
@@ -361,9 +414,11 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
 
     private class ProjectSliceCreator implements Callable<Void> {
       final Project.NameKey name;
+      final boolean notifyListeners;
 
-      public ProjectSliceCreator(Project.NameKey name) {
+      public ProjectSliceCreator(Project.NameKey name, boolean notifyListeners) {
         this.name = name;
+        this.notifyListeners = notifyListeners;
       }
 
       @Override
@@ -385,13 +440,16 @@ public class AllChangesIndexer extends SiteIndexer<Change.Id, ChangeData, Change
 
             for (int slice = 0; slice < slices; slice++) {
               ProjectSlice projectSlice = ProjectSlice.create(name, slice, slices, metaIdByChange);
+              ChangeIndexer indexer;
+              if (reuseExistingDocuments) {
+                indexer =
+                    indexerFactory.create(
+                        executor, index, stalenessCheckerFactory.create(index), notifyListeners);
+              } else {
+                indexer = indexerFactory.create(executor, index, notifyListeners);
+              }
               ListenableFuture<?> future =
-                  executor.submit(
-                      reindexProjectSlice(
-                          indexerFactory.create(executor, index),
-                          projectSlice,
-                          doneTask,
-                          failedTask));
+                  executor.submit(reindexProjectSlice(indexer, projectSlice, doneTask, failedTask));
               String description = "project " + name + " (" + slice + "/" + slices + ")";
               addErrorListener(future, description, projTask, ok);
               sliceIndexerFutures.add(future);

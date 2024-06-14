@@ -250,11 +250,23 @@ public class ChangeSchemaDefinitions extends SchemaDefinitions<ChangeData> {
   /** Upgrade Lucene to 8.x requires reindexing. */
   @Deprecated static final Schema<ChangeData> V83 = schema(V82);
 
+  @Deprecated
   static final Schema<ChangeData> V84 =
       new Schema.Builder<ChangeData>()
           .add(V83)
           .addIndexedFields(ChangeField.CUSTOM_KEYED_VALUES_FIELD)
           .addSearchSpecs(ChangeField.CUSTOM_KEYED_VALUES_SPEC)
+          .build();
+
+  /** Upgrade Lucene to 9.x requires reindexing. */
+  @Deprecated static final Schema<ChangeData> V85 = schema(V84);
+
+  /** Add ChangeNumber field */
+  static final Schema<ChangeData> V86 =
+      new Schema.Builder<ChangeData>()
+          .add(V85)
+          .addIndexedFields(ChangeField.CHANGENUM_FIELD)
+          .addSearchSpecs(ChangeField.CHANGENUM_SPEC)
           .build();
 
   /**

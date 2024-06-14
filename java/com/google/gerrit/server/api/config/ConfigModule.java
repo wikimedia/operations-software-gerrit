@@ -23,5 +23,7 @@ public class ConfigModule extends FactoryModule {
   protected void configure() {
     bind(Config.class).to(ConfigImpl.class);
     bind(Server.class).to(ServerImpl.class);
+
+    factory(ExperimentApiImpl.Factory.class);
   }
 }

@@ -1,32 +1,375 @@
 = Gerrit Code Review - Submit Requirements
 
-As part of the code review process, project owners need to configure rules that
-govern when changes become submittable. For example, an admin might want to
-prevent changes from being submittable until at least a “+2” vote on the
-“Code-Review” label is granted on a change. Admins can define submit
-requirements to enforce submittability rules for changes.
+Submit requirements are rules that define when a change can be submitted. This
+page describes how to configure them.
 
 [[configuring_submit_requirements]]
 == Configuring Submit Requirements
 
-Site administrators and project owners can define submit requirements in the
-link:config-project-config.html[project config]. A submit requirement has the
-following fields:
+Submit requirements are defined as link:#submit-requirement-subsection[
+submit-requirement] subsections in the
+link:config-project-config.html#file-project_config[project.config] file. The
+subsection name defines the name of the submit requirement.
 
+[NOTE]
+There are multiple options how to update `project.config` files, please refer
+to the link:config-project-config.html#update[project config documentation].
 
-[[submit_requirement_name]]
-=== submit-requirement.Name
+[TIP]
+When modifying submit requirements it's recommended to
+link:#test-submit-requirements[test] them before updating them in the project
+configuration.
 
-A name that uniquely identifies the submit requirement. Submit requirements
-can be overridden in child projects if they are defined with the same name in
-the child project. See the link:#inheritance[inheritance] section for more
-details.
+[WARNING]
+--
+When adding submit requirements think about whether they should apply to the
+link:config-project-config.html#refs-meta-config[refs/meta/config] branch
+(see the link:#submit_requirement_applicable_if[applicableIf] description on
+how to exempt the `refs/meta/config` branch from a submit requirement). Since
+submit requirements are stored as part of the project configuration in the
+`refs/meta/config` branch, changing them through code review requires to pass
+the submit requirements that apply to the `refs/meta/config` branch. Hence by
+misconfiguring submit requirements for the `refs/meta/config` branch you can
+make further updates to submit requirements through code review impossible.
+If this happens the submit requirements can be restored by a direct push to the
+`refs/meta/config` branch.
+
+[[restore-submit-requirements]]
+If direct pushes are disabled or not allowed project owners can directly update
+the submit requirements via the
+link:rest-api-projects.html#update-submit-requirement[Update Submit Requirement]
+REST endpoint.
+
+.Example:
+----
+  curl -X PUT --header "Content-Type: application/json" -d '{"name": "Foo-Review", "description": "At least one maximum vote for the Foo-Review label is required", "submittability_expression": "label:Foo-Review=MAX AND -label:Foo-Review=MIN", "applicability_expression": "-branch:refs/meta/config", "canOverrideInChildProjects": true}' "https://<HOST>/a/projects/My%2FProject/submit_requirements/Foo-Review"
+----
+
+Tip: Googlers should use `gob-curl` instead of `curl` so that authentication is
+handled automatically.
+--
+
+[[test-submit-requirements]]
+=== Testing Submit Requirements
+
+When modifying submit requirements it's recommended to test them before
+updating them in the project configuration.
+
+To test a submit requirement on a selected change
+link:rest-api-changes.html#change-id[project\~branch~changeId] use the
+link:rest-api-changes.html#check-submit-requirement[Check Submit Requirement]
+REST endpoint.
+
+.Request
+----
+  POST /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/check.submit_requirement HTTP/1.0
+  Content-Type: application/json; charset=UTF-8
+
+    {
+      "name": "Code-Review",
+      "submittability_expression": "label:Code-Review=+2"
+    }
+----
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Disposition: attachment
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    "name": "Code-Review",
+    "status": "SATISFIED",
+    "submittability_expression_result": {
+      "expression": "label:Code-Review=+2",
+      "fulfilled": true,
+      "passingAtoms": [
+        "label:Code-Review=+2"
+      ]
+    },
+    "is_legacy": false
+  }
+----
+
+Alternatively you can make a change that updates a submit requirement in the
+`project.config` file, upload it for review to the `refs/meta/config` branch
+and then load it from that change which is in review to test it against a
+change.
+
+Request
+----
+  POST /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/check.submit_requirement?sr-name=Code-Review&refs-config-change-id=myProject~refs/meta/config~Ibc1409aef8bf0a16a76f9fa9a928bd505228fa1d HTTP/1.0
+----
+
+In the above example `myProject\~master~I8473b95934b5732ac55d26311a706c9c2bde9940`
+is the change against which the submit requirement is tested, `Code Review` is
+the name of the submit requirement that is tested and
+`myProject\~refs/meta/config~Ibc1409aef8bf0a16a76f9fa9a928bd505228fa1d` is the
+change from which the `Code Review` submit requirement is loaded. Change
+`myProject~refs/meta/config~Ibc1409aef8bf0a16a76f9fa9a928bd505228fa1d` must be
+a change that touches the `project.config` file in the `refs/meta/config`
+branch and the `project.config` file must contain a submit requirement with the
+name `Code-Review`.
+
+[[dashboard]]
+=== Show Submit Requirements on Dashboards
+
+Gerrit offers dashboards that provide an overview over a set of changes (e.g.
+user dashboards shows changes that are relevant to the user, change list
+dashboards show changes that match a change query). To understand the state of
+the changes knowing the status of their submit requirements is important, but
+submit requirements are manifold and dashboards have only limited screen space
+available, so showing all submit requirements in dashboards is hardly possible.
+This is why administrators must decide which are the most important submit
+requirements that should be shown on dashboards. They can configure these
+submit requirements in `gerrit.config` by setting the
+link:config-gerrit.html#dashboard[dashboard.submitRequirementColumns] option.
+
+[NOTE]
+In order to save screen space submit requirement names on dashboards are
+abbreviated, e.g. a submit requirement called `Foo-Bar` is shown as `FB`.
+
+[[inheritance]]
+== Inheritance
+
+Submit requirements are inherited from parent projects. Child projects may
+override an inherited submit requirement by defining a submit requirement with
+the same name, but only if overriding the submit requirement is allowed (see
+link:#submit_requirement_can_override_in_child_projects[
+canOverrideInChildProjects] field). Overriding an inherited submit requirement
+always overrides the complete submit requirement definition, overriding single
+fields only is not possible.
+
+[NOTE]
+To remove an inherited submit requirement in a child project, set both the
+link:#submit_requirement_applicable_if[applicableIf] expression and the
+link:#submit_requirement_submittable_if[submittableIf] expression to
+`is:false`.
+
+[NOTE]
+If overriding a submit requirement is disallowed in a parent project, submit
+requirements with the same name in child projects, that would otherwise
+override the inherited submit requirement, are ignored.
+
+[[labels]]
+== Labels and Submit Requirements
+
+link:config-labels.html[Labels] define voting categories for reviewers to score
+changes. Often a label is accompanied by a submit requirement to check the votes
+on the label, e.g. with a link:#submit_requirement_submittable_if[submittableIf]
+expression that checks that:
+
+* the label was approved: `label:My-Label=MAX`
+* the label has no veto: `-label:My-Label=MIN`
+* the label was not self-approved: `label:My-Label=MAX,user=non_uploader`
+* the label was approved by multiple users: `label:My-Label,count>1`
+
+Submit requirements that check votes for a single label often have the same
+name as the label, e.g.:
+
+----
+[label "Code-Review"]
+  function = NoBlock
+  value = -2 This shall not be submitted
+  value = -1 I would prefer this is not merged as is
+  value = 0 No score
+  value = +1 Looks good to me, but someone else must approve
+  value = +2 Looks good to me, approved
+  defaultValue = 0
+[submit-requirement "Code-Review"]
+  description = At least one maximum vote for label 'Code-Review' is required
+  submittableIf = label:Code-Review=MAX,user=non_uploader AND -label:Code-Review=MIN
+  canOverrideInChildProjects = true
+----
+
+[[trigger-votes]]
+=== Trigger Votes
+
+Trigger votes are votes on labels that are not associated with any submit
+requirement expressions, i.e. the submittability of changes doesn't depend on
+these votes.
+
+Voting on labels that have no impact on the submittability of changes usually
+serves the purpose to trigger processes, e.g. a vote on a `Presubmit-Ready`
+label can be a signal to run presubmit integration tests. Hence these votes are
+called `trigger votes`.
+
+Trigger votes are displayed in a separate section in the change page.
+
+[[deprecated]]
+== Deprecated ways to control when changes can be submitted
+
+Using submit requirements is the recommended way to control when changes can be
+submitted. However, historically there are other ways for this, which are still
+working, although they are deprecated:
+
+[[label-functions]]
+* Label functions:
++
+link:config-labels.html#label_custom[Label definitions] can contain a
+link:config-labels.html#label_function[function] that impacts the
+submittability of changes (link:config-labels.html#MaxWithBlock[MaxWithBlock],
+link:config-labels.html#AnyWithBlock[AnyWithBlock],
+link:config-labels.html#MaxNoBlock[MaxNoBlock]). These functions are deprecated
+and setting them is no longer allowed, however if they are (already) set for
+existing label definitions they are still respected. For new labels the
+function should be set to link:config-labels.html#NoBlock[NoBlock] and then
+submit requirements should be used to control when changes can be submitted
+(using `submittableIf = label:My-Label=MAX AND -label:My-Label=MIN` is
+equivalent to `MaxWithBlock`, using `submittableIf = -label:My-Label=MIN` is
+equivalent to `AnyWithBlock`, using `submittableIf = label:My-Label=MAX` is
+equivalent to using `MaxNoBlock`).
+
+[[ignoreSelfApproval]]
+* `ignoreSelfApproval` flag on labels:
++
+Labels can be configured to link:config-labels.html#label_ignoreSelfApproval[
+ignore self approvals]. This flag only works in combination with the deprecated
+label functions (see link:#label-functions[above]) and hence it is deprecated
+as well. Instead use a `submittableIf` expression with the
+link:#operator_label[label] operator and the `user=non_uploader` argument. See
+the link:#code-review-example[Code Review] submit requirement example.
+
+[[prolog-rules]]
+* Prolog rules:
++
+Projects can define link:prolog-cookbook.html[prolog submit rules] that control
+when changes can be submitted. It's still possible to have Prolog submit rules,
+but they are deprecated and support for them will be dropped in future Gerrit
+releases. Hence it's recommended to use submit requirements instead.
+
+When checking whether changes can be submitted Gerrit takes results of label
+functions and Prolog submit rules into account, in addition to the submit
+requirements.
+
+[[plugin-submit-rules]]
+== Plugin provided submit rules
+
+Plugins can contribute submit rules by implementing the `SubmitRule` extension
+point (see link:dev-plugins.html#pre-submit-evaluator[Pre-submit Validation
+Plugins]).
+
+When checking whether changes can be submitted Gerrit takes results of
+plugin-provided submit rules into account, in addition to the submit
+requirements.
+
+[[evaluation]]
+== Submit Requirement Evaluation
+
+Submit requirements are evaluated whenever a change is updated. To decide
+whether changes can be submitted, the results of link:#label-functions[label
+functions], link:#prolog-rules[Prolog submit rules] and
+link:#plugin-submit-rules[plugin-provided submit rules] are taken into account,
+in addition to the submit requirements. For this the results of label
+functions, Prolog submit rules and plugin-provided submit rules are converted
+to submit requirement results.
+
+Submit requirement results are returned in the REST API when retrieving changes
+with the link:rest-api-changes.html#submit-requirements[SUBMIT_REQUIREMENTS]
+option (e.g. via the link:rest-api-changes.html#get-change-detail[Get Change
+Detail] REST endpoint or the link:rest-api-changes.html#list-changes[Query
+Changes] REST endpoint). If requested, submit requirements are included as
+link:rest-api-changes.html#submit-requirement-result-info[
+SubmitRequirementResultInfo] entities into
+link:rest-api-changes.html#change-info[ChangeInfo] (field
+`submit_requirements`).
+
+The `status` field of submit requirement results can be one of:
+
+[[status-not-applicable]]
+* `NOT_APPLICABLE`
++
+The link:#submit_requirement_applicable_if[applicableIf] expression evaluates
+to false for the change.
+
+[[status-unsatisfied]]
+* `UNSATISFIED`
++
+The submit requirement is applicable
+(link:#submit_requirement_applicable_if[applicableIf] evaluates to true), but
+the evaluation of the link:#submit_requirement_submittable_if[submittableIf] and
+link:#submit_requirement_override_if[overrideIf] expressions return false for
+the change.
+
+[[status-satisfied]]
+* `SATISFIED`
++
+The submit requirement is applicable
+(link:#submit_requirement_applicable_if[applicableIf] evaluates to true), the
+link:#submit_requirement_submittable_if[submittableIf] expression evaluates to
+true, and the link:#submit_requirement_override_if[overrideIf] evaluates to
+false for the change.
+
+[[status-overridden]]
+* `OVERRIDDEN`
++
+The submit requirement is applicable
+(link:#submit_requirement_applicable_if[applicableIf] evaluates to true) and the
+link:#submit_requirement_override_if[overrideIf] expression evaluates to true.
++
+Note that in this case, the submit requirement is overridden regardless of
+whether the link:#submit_requirement_submittable_if[submittableIf] expression
+evaluates to true or not.
+
+[[status-forced]]
+* `FORCED`
++
+The change was merged directly bypassing code review by supplying the
+link:user-upload.html#auto_merge[submit] push option while doing a git push.
+
+[[status-error]]
+* `ERROR`
++
+The evaluation of any of the
+link:#submit_requirement_applicable_if[applicableIf],
+link:#submit_requirement_submittable_if[submittableIf] or
+link:#submit_requirement_override_if[overrideIf] expressions resulted in an
+error, i.e. because the expression is not parseable.
+
+[NOTE]
+Gerrit can be configured to return a `500 internal server error` response
+instead of setting the status to `ERROR` (see the
+link:config-gerrit.html#change.propagateSubmitRequirementErrors[
+change.propagateSubmitRequirementErrors] option that can be set in
+`gerrit.config`).
+
+[[submit-requirement-subsection]]
+== submit-requirement subsection
+
+Each `submit-requirement` subsection defines a submit requirement.
+
+The name of the `submit-requirement` subsection defines the name that uniquely
+identifies the submit requirement. It is shown to the user in the web UI when
+the submit requirement is applicable.
+
+[NOTE]
+By using the same name as an inherited submit requirement, the inherited submit
+requirement can be overridden, if overriding is allowed (see
+link:#submit_requirement_can_override_in_child_projects[
+canOverrideInChildProjects] field). Details about overriding submit
+requirements are explained in the link:#inheritance[inheritance] section.
+
+Submit requirements must at least define a
+link:#submit_requirement_submittable_if[submittableIf] expression that defines
+when a change can be submitted.
+
+.Example:
+----
+[submit-requirement "Verified"]
+  description = CI result status for build and tests is passing
+  applicableIf = -branch:refs/meta/config
+  submittableIf = label:Verified=MAX AND -label:Verified=MIN
+  canOverrideInChildProjects = true
+----
+
+The fields that can be set for submit requirements are explained below.
 
 [[submit_requirement_description]]
 === submit-requirement.Name.description
 
 A detailed description of what the submit requirement is supposed to do. This
-field is optional. The description is visible to the users in the change page
+field is optional. The description is visible to the user in the change page
 upon hovering on the submit requirement to help them understand what the
 requirement is about and how it can be fulfilled.
 
@@ -34,18 +377,21 @@ requirement is about and how it can be fulfilled.
 === submit-requirement.Name.applicableIf
 
 A link:#query_expression_syntax[query expression] that determines if the submit
-requirement is applicable for a change. For example, administrators can exclude
-submit requirements for certain branch patterns. See the
-link:#exempt-branch-example[exempt branch] example.
+requirement is applicable for a change. If a submit requirement is not
+applicable it is hidden in the web UI. For example, this allows to
+link:#exempt-branch-example[exempt a branch] from the submit requirement.
 
+[TIP]
+--
 Often submit requirements should only apply to branches that contain source
-code. In this case this parameter can be used to exclude the
+code. In this case the `applicableIf` condition can be used to exclude the
 link:config-project-config.html#refs-meta-config[refs/meta/config] branch from
-a submit requirement:
+the submit requirement:
 
 ----
   applicableIf = -branch:refs/meta/config
 ----
+--
 
 This field is optional, and if not specified, the submit requirement is
 considered applicable for all changes in the project.
@@ -54,7 +400,7 @@ considered applicable for all changes in the project.
 === submit-requirement.Name.submittableIf
 
 A link:#query_expression_syntax[query expression] that determines when the
-change becomes submittable. This field is mandatory.
+change can be submitted. This field is mandatory.
 
 
 [[submit_requirement_override_if]]
@@ -64,9 +410,10 @@ A link:#query_expression_syntax[query expression] that controls when the
 submit requirement is overridden. When this expression is evaluated to true,
 the submit requirement state becomes `OVERRIDDEN` and the submit requirement
 is no longer blocking the change submission.
+
 This expression can be used to enable bypassing the requirement in some
-circumstances, for example if the change owner is a power user or to allow
-change submission in case of emergencies. +
+circumstances, for example if the uploader is a trusted bot user or to allow
+change submission in case of emergencies.
 
 This field is optional.
 
@@ -74,72 +421,9 @@ This field is optional.
 === submit-requirement.Name.canOverrideInChildProjects
 
 A boolean (true, false) that determines if child projects can override the
-submit requirement. +
+submit requirement.
 
 The default value is `false`.
-
-[[evaluation_results]]
-== Evaluation Results
-
-When submit requirements are configured, their results are returned for all
-changes requested by the REST API with the
-link:rest-api-changes.html#submit-requirement-result-info[SubmitRequirementResultInfo]
-entity. +
-
-Submit requirement results are produced from the evaluation of the submit
-requirements in the project config (
-See link:#configuring_submit_requirements[Configuring Submit Requirements])
-as well as the conversion of the results of the legacy submit rules to submit
-requirement results. Legacy submit rules are label functions
-(see link:config-labels.html[config labels]), custom and
-link:prolog-cookbook.html[prolog] submit rules.
-
-The `status` field can be one of:
-
-* `NOT_APPLICABLE`
-+
-The link:#submit_requirement_applicable_if[applicableIf] expression evaluates
-to false for the change.
-
-* `UNSATISFIED`
-+
-The submit requirement is applicable
-(link:#submit_requirement_applicable_if[applicableIf] evaluates to true), but
-the evaluation of the link:#submit_requirement_submittable_if[submittableIf] and
-link:#submit_requirement_override_if[overrideIf] expressions return false for
-the change.
-
-* `SATISFIED`
-+
-The submit requirement is applicable
-(link:#submit_requirement_applicable_if[applicableIf] evaluates to true), the
-link:#submit_requirement_submittable_if[submittableIf] expression evaluates to
-true, and the link:#submit_requirement_override_if[overrideIf] evaluates to
-false for the change.
-
-* `OVERRIDDEN`
-+
-The submit requirement is applicable
-(link:#submit_requirement_applicable_if[applicableIf] evaluates to true) and the
-link:#submit_requirement_override_if[overrideIf] expression evaluates to true.
-+
-Note that in this case, the change is overridden whether the
-link:#submit_requirement_submittable_if[submittableIf] expression evaluates to
-true or not.
-
-* `FORCED`
-+
-The change was merged directly bypassing code review by supplying the
-link:user-upload.html#auto_merge[submit] push option while doing a git push.
-
-* `ERROR`
-+
-The evaluation of any of the
-link:#submit_requirement_applicable_if[applicableIf],
-link:#submit_requirement_submittable_if[submittableIf] or
-link:#submit_requirement_override_if[overrideIf] expressions resulted in an
-error.
-
 
 [[query_expression_syntax]]
 == Query Expression Syntax
@@ -247,13 +531,17 @@ name contains the file pattern, or the edits of the file diff contain the edit
 pattern.
 
 [[operator_label]]
-label:labelName=+1,user=non_contributor::
+label:LabelExpression::
 +
-Submit requirements support an additional `user=non_contributor` argument for
-labels that returns true if the change has a label vote matching the specified
-value and the vote is applied from a gerrit account that's not the uploader,
-author or committer of the latest patchset. See the documentation for the labels
-operator in the link:user-search.html[user search] page.
+The `label` operator allows to match changes that have votes matching the given
+`LabelExpression`. The `LabelExpression` can be anything that's supported for
+the link:user-search.html#labels[label] query operator.
++
+If used in submit requirement expressions, this operator supports an additional
+`user=non_contributor` argument. This argument works similar to the
+link:user-search.html#non_uploader["user=non_uploader"] argument and returns
+true if the change has a matching label vote that is applied by a user that's
+not the uploader, author or committer of the latest patchset.
 
 [[unsupported_operators]]
 === Unsupported Operators
@@ -264,39 +552,6 @@ Some operators are not supported with submit requirement expressions.
 is:submittable::
 +
 Cannot be used since it will result in recursive evaluation of expressions.
-
-[[inheritance]]
-== Inheritance
-
-Child projects can override a submit requirement defined in any of their parent
-projects. Overriding a submit requirement overrides all of its properties and
-values. The overriding project needs to define all mandatory fields.
-
-Submit requirements are looked up from the current project up the inheritance
-hierarchy to “All-Projects”. The first project in the hierarchy chain that sets
-link:#submit_requirement_can_override_in_child_projects[canOverrideInChildProjects]
-to false prevents all descendant projects from overriding it.
-
-If a project disallows a submit requirement from being overridden in child
-projects, all definitions of this submit requirement in descendant projects are
-ignored.
-
-To remove a submit requirement in a child project, administrators can redefine
-the requirement with the same name in the child project and set the
-link:#submit_requirement_applicable_if[applicableIf] expression to `is:false`.
-Since the link:#submit_requirement_submittable_if[submittableIf] field is
-mandatory, administrators need to provide it in the child project but can set it
-to anything, for example `is:false` but it will have no effect anyway.
-
-
-[[trigger-votes]]
-== Trigger Votes
-
-Trigger votes are label votes that are not associated with any submit
-requirement expressions. Trigger votes are displayed in a separate section in
-the change page. For more about configuring labels, see the
-link:config-labels.html[config labels] documentation.
-
 
 [[examples]]
 == Examples
@@ -357,46 +612,6 @@ the commit message.
   description = Changes must include a 'Bug' footer
   applicableIf = -branch:refs/meta/config AND -hasfooter:\"Bug\"
   submittableIf = hasfooter:\"Bug\"
-----
-
-[[test-submit-requirements]]
-== Testing Submit Requirements
-
-The link:rest-api-changes.html#check-submit-requirement[Check Submit Requirement]
-change endpoint can be used to test submit requirements on any change. Users
-are encouraged to test submit requirements before adding them to the project
-to ensure they work as intended.
-
-.Request
-----
-  POST /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/check.submit_requirement HTTP/1.0
-  Content-Type: application/json; charset=UTF-8
-
-    {
-      "name": "Code-Review",
-      "submittability_expression": "label:Code-Review=+2"
-    }
-----
-
-.Response
-----
-  HTTP/1.1 200 OK
-  Content-Disposition: attachment
-  Content-Type: application/json; charset=UTF-8
-
-  )]}'
-  {
-    "name": "Code-Review",
-    "status": "SATISFIED",
-    "submittability_expression_result": {
-      "expression": "label:Code-Review=+2",
-      "fulfilled": true,
-      "passingAtoms": [
-        "label:Code-Review=+2"
-      ]
-    },
-    "is_legacy": false
-  }
 ----
 
 GERRIT

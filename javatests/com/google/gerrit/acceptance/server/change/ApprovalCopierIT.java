@@ -33,7 +33,7 @@ import com.google.common.truth.FailureMetadata;
 import com.google.common.truth.StandardSubjectBuilder;
 import com.google.common.truth.StringSubject;
 import com.google.common.truth.Subject;
-import com.google.common.truth.Truth8;
+import com.google.common.truth.Truth;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit;
@@ -49,9 +49,9 @@ import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.client.ChangeKind;
-import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.server.approval.ApprovalCopier;
 import com.google.gerrit.server.query.change.ChangeData;
+import com.google.gerrit.server.update.RepoView;
 import com.google.gerrit.truth.ListSubject;
 import com.google.gerrit.truth.NullAwareCorrespondence;
 import com.google.inject.Inject;
@@ -59,6 +59,8 @@ import java.io.IOException;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Predicate;
+import org.eclipse.jgit.lib.ObjectInserter;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.junit.Before;
@@ -122,10 +124,12 @@ public class ApprovalCopierIT extends AbstractDaemonTest {
   public void forInitialPatchSet_noApprovals() throws Exception {
     ChangeData changeData = createChange().getChange();
     try (Repository repo = repoManager.openRepository(project);
-        RevWalk revWalk = new RevWalk(repo)) {
+        ObjectInserter ins = repo.newObjectInserter();
+        ObjectReader reader = ins.newReader();
+        RevWalk revWalk = new RevWalk(reader)) {
       ApprovalCopier.Result approvalCopierResult =
           approvalCopier.forPatchSet(
-              changeData.notes(), changeData.currentPatchSet(), revWalk, repo.getConfig());
+              changeData.notes(), changeData.currentPatchSet(), new RepoView(repo, revWalk, ins));
       assertThat(approvalCopierResult.copiedApprovals()).isEmpty();
       assertThat(approvalCopierResult.outdatedApprovals()).isEmpty();
     }
@@ -436,7 +440,7 @@ public class ApprovalCopierIT extends AbstractDaemonTest {
   }
 
   private void vote(String changeId, TestAccount testAccount, String label, int value)
-      throws RestApiException {
+      throws Exception {
     requestScopeOperations.setApiUser(testAccount.id());
     gApi.changes().id(changeId).current().review(new ReviewInput().label(label, value));
     requestScopeOperations.setApiUser(admin.id());
@@ -453,9 +457,11 @@ public class ApprovalCopierIT extends AbstractDaemonTest {
     ChangeData changeData = changeDataFactory.create(project, changeId);
     assertThat(changeData.currentPatchSet().id().get()).isEqualTo(expectedCurrentPatchSetNum);
     try (Repository repo = repoManager.openRepository(project);
-        RevWalk revWalk = new RevWalk(repo)) {
+        ObjectInserter ins = repo.newObjectInserter();
+        ObjectReader reader = ins.newReader();
+        RevWalk revWalk = new RevWalk(reader)) {
       return approvalCopier.forPatchSet(
-          changeData.notes(), changeData.currentPatchSet(), revWalk, repo.getConfig());
+          changeData.notes(), changeData.currentPatchSet(), new RepoView(repo, revWalk, ins));
     }
   }
 
@@ -483,7 +489,7 @@ public class ApprovalCopierIT extends AbstractDaemonTest {
                       approvalData.patchSetApproval().label().equals(labelId)
                           && approvalData.patchSetApproval().accountId().equals(accountId))
               .findAny();
-      Truth8.assertThat(approvalDataForLabelAndAccount).isPresent();
+      Truth.assertThat(approvalDataForLabelAndAccount).isPresent();
       return assertAbout(approvalDatas()).that(approvalDataForLabelAndAccount.get());
     }
 

@@ -19,6 +19,7 @@ import static java.util.stream.Collectors.toList;
 
 import com.google.common.base.CaseFormat;
 import com.google.common.flogger.FluentLogger;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.events.LifecycleListener;
@@ -46,6 +47,7 @@ import java.util.concurrent.Delayed;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.RunnableScheduledFuture;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -90,8 +92,8 @@ public class WorkQueue {
     private final WorkQueue workQueue;
 
     @Inject
-    Lifecycle(WorkQueue workQeueue) {
-      this.workQueue = workQeueue;
+    Lifecycle(WorkQueue workQueue) {
+      this.workQueue = workQueue;
     }
 
     @Override
@@ -480,8 +482,9 @@ public class WorkQueue {
 
     @Override
     protected <V> RunnableScheduledFuture<V> decorateTask(
-        Callable<V> callable, RunnableScheduledFuture<V> task) {
-      throw new UnsupportedOperationException("Callable not implemented");
+        Callable<V> callable, RunnableScheduledFuture<V> r) {
+      FutureTask<V> ft = new FutureTask<>(callable);
+      return decorateTask(ft, r);
     }
 
     void remove(Task<?> task) {
@@ -501,11 +504,11 @@ public class WorkQueue {
     }
 
     public void onStart(Task<?> task) {
-      listeners.runEach(extension -> extension.getProvider().get().onStart(task));
+      listeners.runEach(extension -> extension.get().onStart(task));
     }
 
     public void onStop(Task<?> task) {
-      listeners.runEach(extension -> extension.getProvider().get().onStop(task));
+      listeners.runEach(extension -> extension.get().onStop(task));
     }
   }
 
@@ -621,6 +624,7 @@ public class WorkQueue {
     }
 
     @Override
+    @CanIgnoreReturnValue
     public boolean cancel(boolean mayInterruptIfRunning) {
       if (task.cancel(mayInterruptIfRunning)) {
         // Tiny abuse of runningState: if the task needs to know it

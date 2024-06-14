@@ -20,6 +20,7 @@ import static com.google.gerrit.httpd.restapi.RestApiServlet.X_GERRIT_UPDATED_RE
 import static com.google.gerrit.httpd.restapi.RestApiServlet.X_GERRIT_UPDATED_REF_ENABLED;
 import static org.apache.http.HttpStatus.SC_OK;
 
+import com.google.common.collect.ImmutableList;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.PushOneCommit.Result;
 import com.google.gerrit.acceptance.RestResponse;
@@ -32,9 +33,9 @@ import com.google.gerrit.extensions.client.ChangeStatus;
 import com.google.gerrit.extensions.restapi.Url;
 import com.google.gerrit.httpd.restapi.ParameterParser;
 import com.google.gerrit.httpd.restapi.RestApiServlet;
+import com.google.gerrit.server.query.change.ChangeData;
 import com.google.inject.Inject;
 import java.io.IOException;
-import java.util.List;
 import java.util.regex.Pattern;
 import org.apache.http.message.BasicHeader;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
@@ -202,7 +203,7 @@ public class RestApiServletIT extends AbstractDaemonTest {
             "/changes/" + change.getChangeId(), X_GERRIT_UPDATED_REF_ENABLED_HEADER);
     response.assertNoContent();
 
-    List<String> headers = response.getHeaders(X_GERRIT_UPDATED_REF);
+    ImmutableList<String> headers = response.getHeaders(X_GERRIT_UPDATED_REF);
 
     // The change was deleted, so the refs were deleted which means they are ObjectId.zeroId().
     assertThat(headers)
@@ -236,7 +237,7 @@ public class RestApiServletIT extends AbstractDaemonTest {
             "/changes/" + change.getChangeId(), X_GERRIT_UPDATED_REF_ENABLED_HEADER);
     response.assertNoContent();
 
-    List<String> headers = response.getHeaders(X_GERRIT_UPDATED_REF);
+    ImmutableList<String> headers = response.getHeaders(X_GERRIT_UPDATED_REF);
 
     // The change was deleted, so the refs were deleted which means they are ObjectId.zeroId().
     assertThat(headers)
@@ -286,7 +287,7 @@ public class RestApiServletIT extends AbstractDaemonTest {
       ObjectId firstMetaRefSha1 = getMetaRefSha1(change1);
       ObjectId secondMetaRefSha1 = getMetaRefSha1(change2);
 
-      List<String> headers = response.getHeaders(X_GERRIT_UPDATED_REF);
+      ImmutableList<String> headers = response.getHeaders(X_GERRIT_UPDATED_REF);
 
       String branch = change1.getChange().change().getDest().branch();
       String branchSha1 =
@@ -363,7 +364,7 @@ public class RestApiServletIT extends AbstractDaemonTest {
       ObjectId firstMetaRefSha1 = getMetaRefSha1(change1);
       ObjectId secondMetaRefSha1 = getMetaRefSha1(change2);
 
-      List<String> headers = response.getHeaders(X_GERRIT_UPDATED_REF);
+      ImmutableList<String> headers = response.getHeaders(X_GERRIT_UPDATED_REF);
 
       String branchSha1Project1 =
           repository1
@@ -449,6 +450,30 @@ public class RestApiServletIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void testNumericChangeIdWithPSRedirectWithPrefix() throws Exception {
+    ChangeData changeData = createChange().getChange();
+    int psNumber = changeData.currentPatchSet().id().get();
+    int changeNumber = changeData.getId().get();
+
+    String redirectUri = String.format("/c/%s/+/%d/%d", project.get(), changeNumber, psNumber);
+    anonymousRestSession
+        .get(String.format("/c/%d/%d", changeNumber, psNumber))
+        .assertTemporaryRedirect(redirectUri);
+  }
+
+  @Test
+  public void testNumericChangeIdWithPSAndSlashRedirectWithPrefix() throws Exception {
+    ChangeData changeData = createChange().getChange();
+    int psNumber = changeData.currentPatchSet().id().get();
+    int changeNumber = changeData.getId().get();
+
+    String redirectUri = String.format("/c/%s/+/%d/%d", project.get(), changeNumber, psNumber);
+    anonymousRestSession
+        .get(String.format("/c/%d/%d/", changeNumber, psNumber))
+        .assertTemporaryRedirect(redirectUri);
+  }
+
+  @Test
   public void testCommentLinkWithoutPrefixRedirects() throws Exception {
     int changeNumber = createChange().getChange().getId().get();
     String commentId = "ff3303fd_8341647b";
@@ -473,13 +498,10 @@ public class RestApiServletIT extends AbstractDaemonTest {
     return change.getChange().notes().getRevision();
   }
 
-  private RestResponse assertRestResponseWithParameters(int status, String k, String v)
-      throws Exception {
+  private void assertRestResponseWithParameters(int status, String k, String v) throws Exception {
     RestResponse response =
         adminRestSession.getWithHeaders(ANY_REST_API + "?" + k + "=" + v, ACCEPT_STAR_HEADER);
     assertThat(response.getStatusCode()).isEqualTo(status);
-
-    return response;
   }
 
   private RestResponse prettyJsonRestResponse(String ppArgument, int ppValue) throws Exception {

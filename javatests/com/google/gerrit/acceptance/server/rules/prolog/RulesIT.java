@@ -22,6 +22,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit;
+import com.google.gerrit.acceptance.config.GerritConfig;
 import com.google.gerrit.acceptance.testsuite.change.IndexOperations;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.entities.RefNames;
@@ -31,8 +32,7 @@ import com.google.gerrit.server.project.SubmitRuleOptions;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.inject.Inject;
 import java.util.Arrays;
-import java.util.Collection;
-import java.util.Map;
+import java.util.List;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.Repository;
 import org.junit.Test;
@@ -171,6 +171,29 @@ public class RulesIT extends AbstractDaemonTest {
     assertThat(statusForRuleAddFile("foo")).isEqualTo(SubmitRecord.Status.RULE_ERROR);
   }
 
+  @Test
+  @GerritConfig(name = "rules.enable", value = "false")
+  public void prologRule_noEffectWhenRulesDisabled() throws Exception {
+    modifySubmitRules("gerrit:commit_message_matches('foo.*')");
+    String changeId = createChange().getChangeId();
+    // Default rules don't allow submission
+    assertThat(gApi.changes().id(changeId).get().submittable).isFalse();
+    // Satisfy default rules
+    approve(changeId);
+
+    assertThat(gApi.changes().id(changeId).get().submittable).isTrue();
+  }
+
+  @Test
+  @GerritConfig(name = "rules.enable", value = "true")
+  public void prologRule_takesEffectWhenRulesEnabled() throws Exception {
+    modifySubmitRules("gerrit:commit_message_matches('foo.*')");
+    String changeId = createChange().getChangeId();
+    approve(changeId);
+
+    assertThat(gApi.changes().id(changeId).get().submittable).isFalse();
+  }
+
   private SubmitRecord.Status statusForRule() throws Exception {
     String oldHead = projectOperations.project(project).getHead("master").name();
     PushOneCommit.Result result =
@@ -180,7 +203,7 @@ public class RulesIT extends AbstractDaemonTest {
   }
 
   private SubmitRecord.Status statusForRuleAddFile(String... filenames) throws Exception {
-    Map<String, String> fileToContentMap =
+    ImmutableMap<String, String> fileToContentMap =
         Arrays.stream(filenames).collect(ImmutableMap.toImmutableMap(f -> f, f -> "file content"));
     String oldHead = projectOperations.project(project).getHead("master").name();
     PushOneCommit push =
@@ -243,7 +266,7 @@ public class RulesIT extends AbstractDaemonTest {
   private SubmitRecord.Status getStatus(PushOneCommit.Result result) throws Exception {
     ChangeData cd = result.getChange();
 
-    Collection<SubmitRecord> records;
+    List<SubmitRecord> records;
     try (AutoCloseable ignored1 = changeIndexOperations.disableReadsAndWrites();
         AutoCloseable ignored2 = accountIndexOperations.disableReadsAndWrites()) {
       SubmitRuleEvaluator ruleEvaluator = evaluatorFactory.create(SubmitRuleOptions.defaults());

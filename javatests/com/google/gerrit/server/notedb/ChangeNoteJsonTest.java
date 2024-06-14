@@ -15,7 +15,6 @@
 package com.google.gerrit.server.notedb;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth8.assertThat;
 
 import com.google.gson.Gson;
 import com.google.inject.TypeLiteral;
@@ -32,6 +31,18 @@ public class ChangeNoteJsonTest {
   static class Parent {
     Optional<Child> optionalChild;
   }
+
+  static class ParentWithoutField {}
+
+  static class ChildWithField extends ParentWithoutField {
+    String field;
+  }
+
+  static class ParentWithField {
+    String field;
+  }
+
+  static class ChildWithoutField extends ParentWithField {}
 
   @Test
   public void shouldSerializeAndDeserializeEmptyOptional() {
@@ -123,5 +134,40 @@ public class ChangeNoteJsonTest {
 
     assertThat(result.optionalChild).isPresent();
     assertThat(result.optionalChild.get().optionalValue).isEmpty();
+  }
+
+  @Test
+  public void ignoresUnknownField() {
+    Child fooChild = new Child();
+    fooChild.optionalValue = Optional.empty();
+    Parent parent = new Parent();
+    parent.optionalChild = Optional.of(fooChild);
+
+    String jsonWithUnknownField =
+        "{\n"
+            + "  \"unknown-field\": \"unknown-value\","
+            + "  \"optionalChild\": {\n"
+            + "    \"value\": {\n"
+            + "      \"optionalValue\": {}\n"
+            + "    }\n"
+            + "  }\n"
+            + "}";
+
+    Parent result = gson.fromJson(jsonWithUnknownField, new TypeLiteral<Parent>() {}.getType());
+
+    assertThat(result.optionalChild).isPresent();
+    assertThat(result.optionalChild.get().optionalValue).isEmpty();
+  }
+
+  @Test
+  public void fieldCanBeMovedFromChildToParentWithoutChangingSerializedRepresentation() {
+    ChildWithField c = new ChildWithField();
+    c.field = "test";
+    ChildWithoutField c2 = gson.fromJson(gson.toJson(c), ChildWithoutField.class);
+    assertThat(c2.field).isEqualTo("test");
+
+    String serialized = "" + "{\n" + "  \"field\": \"test\"\n" + "}";
+    assertThat(gson.toJson(c)).isEqualTo(serialized);
+    assertThat(gson.toJson(c2)).isEqualTo(serialized);
   }
 }

@@ -14,8 +14,10 @@
 
 package com.google.gerrit.server.change;
 
+import com.google.common.base.Supplier;
+import com.google.common.base.Suppliers;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
-import com.google.common.collect.ListMultimap;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.exceptions.StorageException;
@@ -40,7 +42,7 @@ public class AbandonUtil {
 
   private final ChangeCleanupConfig cfg;
   private final Provider<ChangeQueryProcessor> queryProvider;
-  private final ChangeQueryBuilder queryBuilder;
+  private final Supplier<ChangeQueryBuilder> queryBuilderSupplier;
   private final BatchAbandon batchAbandon;
   private final InternalUser internalUser;
 
@@ -49,11 +51,11 @@ public class AbandonUtil {
       ChangeCleanupConfig cfg,
       InternalUser.Factory internalUserFactory,
       Provider<ChangeQueryProcessor> queryProvider,
-      ChangeQueryBuilder queryBuilder,
+      Provider<ChangeQueryBuilder> queryBuilderProvider,
       BatchAbandon batchAbandon) {
     this.cfg = cfg;
     this.queryProvider = queryProvider;
-    this.queryBuilder = queryBuilder;
+    this.queryBuilderSupplier = Suppliers.memoize(queryBuilderProvider::get);
     this.batchAbandon = batchAbandon;
     internalUser = internalUserFactory.create();
   }
@@ -70,8 +72,12 @@ public class AbandonUtil {
         query += " -is:mergeable";
       }
 
-      List<ChangeData> changesToAbandon =
-          queryProvider.get().enforceVisibility(false).query(queryBuilder.parse(query)).entities();
+      ImmutableList<ChangeData> changesToAbandon =
+          queryProvider
+              .get()
+              .enforceVisibility(false)
+              .query(queryBuilderSupplier.get().parse(query))
+              .entities();
       ImmutableListMultimap.Builder<Project.NameKey, ChangeData> builder =
           ImmutableListMultimap.builder();
       for (ChangeData cd : changesToAbandon) {
@@ -79,10 +85,10 @@ public class AbandonUtil {
       }
 
       int count = 0;
-      ListMultimap<Project.NameKey, ChangeData> abandons = builder.build();
+      ImmutableListMultimap<Project.NameKey, ChangeData> abandons = builder.build();
       String message = cfg.getAbandonMessage();
       for (Project.NameKey project : abandons.keySet()) {
-        Collection<ChangeData> changes = getValidChanges(abandons.get(project), query);
+        List<ChangeData> changes = getValidChanges(abandons.get(project), query);
         try {
           batchAbandon.batchAbandon(updateFactory, project, internalUser, changes, message);
           count += changes.size();
@@ -102,16 +108,16 @@ public class AbandonUtil {
     }
   }
 
-  private Collection<ChangeData> getValidChanges(Collection<ChangeData> changes, String query)
+  private List<ChangeData> getValidChanges(Collection<ChangeData> changes, String query)
       throws QueryParseException {
     List<ChangeData> validChanges = new ArrayList<>();
     for (ChangeData cd : changes) {
       String newQuery = query + " change:" + cd.getId();
-      List<ChangeData> changesToAbandon =
+      ImmutableList<ChangeData> changesToAbandon =
           queryProvider
               .get()
               .enforceVisibility(false)
-              .query(queryBuilder.parse(newQuery))
+              .query(queryBuilderSupplier.get().parse(newQuery))
               .entities();
       if (!changesToAbandon.isEmpty()) {
         validChanges.add(cd);

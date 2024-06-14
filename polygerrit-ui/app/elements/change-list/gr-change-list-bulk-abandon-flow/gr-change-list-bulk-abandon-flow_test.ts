@@ -215,7 +215,7 @@ suite('gr-change-list-bulk-abandon-flow tests', () => {
       `Status: ${ProgressStatus.RUNNING}`
     );
 
-    executeChangeAction.resolve({...new Response(), status: 200});
+    executeChangeAction.resolve(new Response());
     await waitUntil(
       () =>
         element.progress.get(1 as NumericChangeId) === ProgressStatus.SUCCESSFUL

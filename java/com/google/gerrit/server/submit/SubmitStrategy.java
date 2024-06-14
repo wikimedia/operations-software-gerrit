@@ -264,7 +264,7 @@ public abstract class SubmitStrategy {
    *     place.
    */
   public final void addOps(BatchUpdate bu, Set<CodeReviewCommit> toMerge) {
-    List<SubmitStrategyOp> ops = buildOps(toMerge);
+    ImmutableList<SubmitStrategyOp> ops = buildOps(toMerge);
     Set<CodeReviewCommit> added = Sets.newHashSetWithExpectedSize(ops.size());
 
     for (SubmitStrategyOp op : ops) {

@@ -17,7 +17,6 @@ package com.google.gerrit.acceptance.api.change;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
-import static com.google.common.truth.Truth8.assertThat;
 import static com.google.gerrit.acceptance.GitUtil.assertPushOk;
 import static com.google.gerrit.acceptance.GitUtil.pushHead;
 import static com.google.gerrit.acceptance.PushOneCommit.FILE_CONTENT;
@@ -96,6 +95,7 @@ import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.common.FooterConstants;
 import com.google.gerrit.common.RawInputUtil;
+import com.google.gerrit.common.UsedAt;
 import com.google.gerrit.common.data.GlobalCapability;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.AccountGroup;
@@ -149,6 +149,7 @@ import com.google.gerrit.extensions.common.ChangeInput;
 import com.google.gerrit.extensions.common.ChangeMessageInfo;
 import com.google.gerrit.extensions.common.CommentInfo;
 import com.google.gerrit.extensions.common.CommitInfo;
+import com.google.gerrit.extensions.common.CommitMessageInfo;
 import com.google.gerrit.extensions.common.LabelInfo;
 import com.google.gerrit.extensions.common.RevisionInfo;
 import com.google.gerrit.extensions.common.TrackingIdInfo;
@@ -188,6 +189,7 @@ import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.gerrit.server.util.AccountTemplateUtil;
+import com.google.gerrit.server.util.CommitMessageUtil;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.gerrit.testing.FakeEmailSender.Message;
 import com.google.inject.AbstractModule;
@@ -215,6 +217,7 @@ import java.util.stream.Stream;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.RefUpdate.Result;
@@ -266,6 +269,7 @@ public class ChangeIT extends AbstractDaemonTest {
     assertThat(c.changeId).isEqualTo(r.getChangeId());
     assertThat(c.created).isEqualTo(c.updated);
     assertThat(c._number).isEqualTo(r.getChange().getId().get());
+    assertThat(c.currentRevisionNumber).isEqualTo(r.getPatchSetId().get());
 
     assertThat(c.owner._accountId).isEqualTo(admin.id().get());
     assertThat(c.owner.name).isNull();
@@ -306,7 +310,9 @@ public class ChangeIT extends AbstractDaemonTest {
     String triplet = project.get() + "~master~" + result.getChangeId();
     CacheStats startIntra = cloneStats(intraCache.stats());
     CacheStats startSummary = cloneStats(diffSummaryCache.stats());
-    gApi.changes().id(triplet).get(ImmutableList.of(ListChangesOption.SKIP_DIFFSTAT));
+
+    @SuppressWarnings("unused")
+    var unused = gApi.changes().id(triplet).get(ImmutableList.of(ListChangesOption.SKIP_DIFFSTAT));
 
     assertThat(intraCache.stats()).since(startIntra).hasMissCount(0);
     assertThat(intraCache.stats()).since(startIntra).hasHitCount(0);
@@ -509,7 +515,7 @@ public class ChangeIT extends AbstractDaemonTest {
             .reviewer("byemail3@example.com", CC, false)
             .reviewer("byemail4@example.com", CC, false);
     ReviewResult result = gApi.changes().id(changeId).current().review(in);
-    assertThat(result.changeInfo).isNull();
+    assertThat(result.changeInfo).isNotNull();
     assertThat(result.reviewers).isNotEmpty();
     ChangeInfo info = gApi.changes().id(changeId).get();
     Function<Collection<AccountInfo>, Collection<String>> toEmails =
@@ -821,7 +827,9 @@ public class ChangeIT extends AbstractDaemonTest {
   public void getAmbiguous() throws Exception {
     PushOneCommit.Result r1 = createChange();
     String changeId = r1.getChangeId();
-    gApi.changes().id(changeId).get();
+
+    @SuppressWarnings("unused")
+    var unused = gApi.changes().id(changeId).get();
 
     BranchInput b = new BranchInput();
     b.revision = repo().exactRef("HEAD").getObjectId().name();
@@ -1119,17 +1127,20 @@ public class ChangeIT extends AbstractDaemonTest {
     gApi.changes().id(r.getChangeId()).current().createDraft(dri);
     Change.Id num = r.getChange().getId();
 
-    try (Repository repo = repoManager.openRepository(allUsers)) {
-      assertThat(repo.getRefDatabase().getRefsByPrefix(RefNames.refsDraftComments(num, user.id())))
-          .isNotEmpty();
-    }
+    assertThat(getDraftsCountForChange(num, user.id())).isGreaterThan(0);
 
     requestScopeOperations.setApiUser(admin.id());
 
     gApi.changes().id(r.getChangeId()).delete();
+    assertThat(getDraftsCountForChange(num, user.id())).isEqualTo(0);
+  }
+
+  @UsedAt(UsedAt.Project.GOOGLE)
+  protected int getDraftsCountForChange(Change.Id changeId, Account.Id accountId) throws Exception {
     try (Repository repo = repoManager.openRepository(allUsers)) {
-      assertThat(repo.getRefDatabase().getRefsByPrefix(RefNames.refsDraftComments(num, user.id())))
-          .isEmpty();
+      return repo.getRefDatabase()
+          .getRefsByPrefix(RefNames.refsDraftComments(changeId, accountId))
+          .size();
     }
   }
 
@@ -1146,11 +1157,13 @@ public class ChangeIT extends AbstractDaemonTest {
         .modifyFile(FILE_NAME, RawInputUtil.create("foo".getBytes(UTF_8)));
 
     requestScopeOperations.setApiUser(admin.id());
+    String expected = RefNames.refsUsers(user.id()) + "/edit-" + result.getChange().getId() + "/1";
     try (Repository repo = repoManager.openRepository(project)) {
-      String expected =
-          RefNames.refsUsers(user.id()) + "/edit-" + result.getChange().getId() + "/1";
       assertThat(repo.getRefDatabase().getRefsByPrefix(expected)).isNotEmpty();
       gApi.changes().id(changeId).delete();
+    }
+    // On google infra, repo should be reopened for getting updated refs.
+    try (Repository repo = repoManager.openRepository(project)) {
       assertThat(repo.getRefDatabase().getRefsByPrefix(expected)).isEmpty();
     }
   }
@@ -1177,7 +1190,6 @@ public class ChangeIT extends AbstractDaemonTest {
   @Test
   public void attentionSetListener_firesOnChange() throws Exception {
     PushOneCommit.Result r1 = createChange();
-    AttentionSetInput addUser = new AttentionSetInput(user.email(), "some reason");
     TestAttentionSetListener attentionSetListener = new TestAttentionSetListener();
 
     try (Registration registration =
@@ -1191,12 +1203,24 @@ public class ChangeIT extends AbstractDaemonTest {
           .usersAdded()
           .forEach(u -> assertThat(u).isEqualTo(user.id().get()));
 
+      // Adding the user with the same reason doesn't fire an event.
+      AttentionSetInput addUser = new AttentionSetInput(user.email(), "Reviewer was added");
       gApi.changes().id(r1.getChangeId()).addToAttentionSet(addUser);
       assertThat(attentionSetListener.firedCount).isEqualTo(1);
 
-      gApi.changes().id(r1.getChangeId()).attention(user.username()).remove(addUser);
-
+      // Adding the user with a different reason fires an event.
+      addUser = new AttentionSetInput(user.email(), "some reason");
+      gApi.changes().id(r1.getChangeId()).addToAttentionSet(addUser);
       assertThat(attentionSetListener.firedCount).isEqualTo(2);
+      assertThat(attentionSetListener.lastEvent.usersAdded().size()).isEqualTo(1);
+      attentionSetListener
+          .lastEvent
+          .usersAdded()
+          .forEach(u -> assertThat(u).isEqualTo(user.id().get()));
+
+      // Removing the user fires an event.
+      gApi.changes().id(r1.getChangeId()).attention(user.username()).remove(addUser);
+      assertThat(attentionSetListener.firedCount).isEqualTo(3);
       assertThat(attentionSetListener.lastEvent.usersAdded()).isEmpty();
       assertThat(attentionSetListener.lastEvent.usersRemoved().size()).isEqualTo(1);
       attentionSetListener
@@ -1271,7 +1295,7 @@ public class ChangeIT extends AbstractDaemonTest {
     assertThat(reviewers.iterator().next()._accountId).isEqualTo(user.id().get());
     assertThat(change.reviewers.get(REVIEWER)).isNull();
 
-    List<Message> messages = sender.getMessages();
+    ImmutableList<Message> messages = sender.getMessages();
     assertThat(messages).hasSize(1);
     Message m = messages.get(0);
     assertThat(m.from().name()).isEqualTo("Administrator (Code Review)");
@@ -1341,7 +1365,7 @@ public class ChangeIT extends AbstractDaemonTest {
     assertThat(reviewers.iterator().next()._accountId).isEqualTo(user.id().get());
     assertThat(change.reviewers.get(CC)).isNull();
 
-    List<Message> messages = sender.getMessages();
+    ImmutableList<Message> messages = sender.getMessages();
     assertThat(messages).hasSize(1);
     Message m = messages.get(0);
     assertThat(m.rcpt()).containsExactly(user.getNameEmail());
@@ -1440,7 +1464,9 @@ public class ChangeIT extends AbstractDaemonTest {
     assertThat(r.reviewers).hasSize(1);
     ReviewerInfo reviewer = r.reviewers.get(0);
     assertThat(reviewer._accountId).isEqualTo(id.get());
-    assertThat(reviewer.username).isEqualTo(username);
+    if (server.isUsernameSupported()) {
+      assertThat(reviewer.username).isEqualTo(username);
+    }
   }
 
   @Test
@@ -1459,7 +1485,9 @@ public class ChangeIT extends AbstractDaemonTest {
     assertThat(r.reviewers).hasSize(1);
     ReviewerInfo reviewer = r.reviewers.get(0);
     assertThat(reviewer._accountId).isEqualTo(id.get());
-    assertThat(reviewer.username).isEqualTo(username);
+    if (server.isUsernameSupported()) {
+      assertThat(reviewer.username).isEqualTo(username);
+    }
   }
 
   @Test
@@ -1468,20 +1496,20 @@ public class ChangeIT extends AbstractDaemonTest {
     conf.enableReviewerByEmail = InheritableBoolean.TRUE;
     gApi.projects().name(project.get()).config(conf);
     PushOneCommit.Result result = createChange();
-    String username = "user@domain.com";
-    Account.Id id = accountOperations.newAccount().username(username).inactive().create();
+    String email = "user@domain.com";
+    Account.Id id = accountOperations.newAccount().preferredEmail(email).inactive().create();
 
     ReviewerInput in = new ReviewerInput();
-    in.reviewer = username;
+    in.reviewer = email;
     in.state = ReviewerState.CC;
     ReviewerResult r = gApi.changes().id(result.getChangeId()).addReviewer(in);
 
-    assertThat(r.input).isEqualTo(username);
+    assertThat(r.input).isEqualTo(email);
     assertThat(r.error).isNull();
     assertThat(r.ccs).hasSize(1);
     AccountInfo reviewer = r.ccs.get(0);
     assertThat(reviewer._accountId).isEqualTo(id.get());
-    assertThat(reviewer.username).isEqualTo(username);
+    assertThat(reviewer.email).isEqualTo(email);
   }
 
   @Test
@@ -1516,7 +1544,7 @@ public class ChangeIT extends AbstractDaemonTest {
 
     addReviewer.call(r.getChangeId(), user.email());
 
-    List<Message> messages = sender.getMessages();
+    ImmutableList<Message> messages = sender.getMessages();
     assertThat(messages).hasSize(1);
     Message m = messages.get(0);
     assertThat(m.rcpt()).containsExactly(user.getNameEmail());
@@ -1570,17 +1598,22 @@ public class ChangeIT extends AbstractDaemonTest {
 
     String username1 = name("user1");
     String email1 = username1 + "@example.com";
-    accountOperations
-        .newAccount()
-        .username(username1)
-        .preferredEmail(email1)
-        .fullname("User1")
-        .create();
+    Account.Id user1Id =
+        accountOperations
+            .newAccount()
+            .username(username1)
+            .preferredEmail(email1)
+            .fullname("User1")
+            .create();
     in.reviewer = email1;
     in.state = ReviewerState.CC;
     gApi.changes().id(r.getChangeId()).addReviewer(in);
-    assertThat(gApi.changes().id(r.getChangeId()).reviewers().stream().map(a -> a.username))
-        .containsExactly(user.username(), username1);
+    if (server.isUsernameSupported()) {
+      assertThat(gApi.changes().id(r.getChangeId()).reviewers().stream().map(a -> a.username))
+          .containsExactly(user.username(), username1);
+    }
+    assertThat(gApi.changes().id(r.getChangeId()).reviewers().stream().map(a -> a._accountId))
+        .containsExactly(user.id().get(), user1Id.get());
   }
 
   @Test
@@ -1644,7 +1677,7 @@ public class ChangeIT extends AbstractDaemonTest {
     in.reviewer = "abc";
     gApi.changes().id(r.getChangeId()).addReviewer(in.reviewer);
 
-    List<Message> messages = sender.getMessages();
+    ImmutableList<Message> messages = sender.getMessages();
     assertThat(messages).hasSize(1);
     Message m = messages.get(0);
     assertThat(m.rcpt()).containsExactly(Address.create(fullname, email));
@@ -1705,7 +1738,7 @@ public class ChangeIT extends AbstractDaemonTest {
     in.reviewer = testGroup;
     gApi.changes().id(r.getChangeId()).addReviewer(in.reviewer);
 
-    List<Message> messages = sender.getMessages();
+    ImmutableList<Message> messages = sender.getMessages();
     assertThat(messages).hasSize(1);
     Message m = messages.get(0);
     assertThat(m.rcpt()).containsExactly(Address.create(myGroupUserFullname, myGroupUserEmail));
@@ -1804,7 +1837,9 @@ public class ChangeIT extends AbstractDaemonTest {
   @Test
   public void implicitlyCcOnNonVotingReviewForUserWithoutUserNamePgStyle() throws Exception {
     com.google.gerrit.acceptance.TestAccount accountWithoutUsername = accountCreator.create();
-    assertThat(accountWithoutUsername.username()).isNull();
+    if (server.isUsernameSupported()) {
+      assertThat(accountWithoutUsername.username()).isNull();
+    }
     testImplicitlyCcOnNonVotingReviewPgStyle(accountWithoutUsername);
   }
 
@@ -2355,7 +2390,7 @@ public class ChangeIT extends AbstractDaemonTest {
         .reviewer(user.id().toString())
         .deleteVote(LabelId.CODE_REVIEW);
 
-    List<Message> messages = sender.getMessages();
+    ImmutableList<Message> messages = sender.getMessages();
     assertThat(messages).hasSize(1);
     Message msg = messages.get(0);
     assertThat(msg.rcpt()).containsExactly(user.getNameEmail());
@@ -2969,7 +3004,8 @@ public class ChangeIT extends AbstractDaemonTest {
     c = gApi.changes().id(r.getChangeId()).info();
     assertThat(c.submitted).isNotNull();
     assertThat(c.submitter).isNotNull();
-    assertThat(c.submitter._accountId).isEqualTo(atrScope.get().getUser().getAccountId().get());
+    assertThat(c.submitter._accountId)
+        .isEqualTo(localCtx.getContext().getUser().getAccountId().get());
   }
 
   @Test
@@ -3452,7 +3488,9 @@ public class ChangeIT extends AbstractDaemonTest {
     // permittedVotingRange is not served if DETAILED_LABELS is not requested.
     assertThat(codeReviewApproval.permittedVotingRange).isNull();
     assertThat(codeReviewApproval.value).isEqualTo(1);
-    assertThat(codeReviewApproval.username).isEqualTo(admin.username());
+    if (server.isUsernameSupported()) {
+      assertThat(codeReviewApproval.username).isEqualTo(admin.username());
+    }
 
     // Add another +1 vote as user
     requestScopeOperations.setApiUser(user.id());
@@ -3468,8 +3506,12 @@ public class ChangeIT extends AbstractDaemonTest {
         .containsExactly(null, null);
     assertThat(codeReviewApprovals.stream().map(a -> a.value).collect(toList()))
         .containsExactly(1, 1);
-    assertThat(codeReviewApprovals.stream().map(a -> a.username).collect(toList()))
-        .containsExactly(admin.username(), user.username());
+    if (server.isUsernameSupported()) {
+      assertThat(codeReviewApprovals.stream().map(a -> a.username).collect(toList()))
+          .containsExactly(admin.username(), user.username());
+    }
+    assertThat(codeReviewApprovals.stream().map(a -> a._accountId).collect(toList()))
+        .containsExactly(admin.id().get(), user.id().get());
   }
 
   @Test
@@ -3584,12 +3626,16 @@ public class ChangeIT extends AbstractDaemonTest {
 
     assertThat(codeReviewApprovals).hasSize(1);
     assertThat(codeReviewApprovals.get(0).value).isEqualTo(2);
-    assertThat(codeReviewApprovals.get(0).username).isEqualTo(admin.username());
+    if (server.isUsernameSupported()) {
+      assertThat(codeReviewApprovals.get(0).username).isEqualTo(admin.username());
+    }
     assertThat(codeReviewApprovals.get(0).permittedVotingRange).isNull();
 
     assertThat(verifiedApprovals).hasSize(1);
     assertThat(verifiedApprovals.get(0).value).isEqualTo(1);
-    assertThat(verifiedApprovals.get(0).username).isEqualTo(admin.username());
+    if (server.isUsernameSupported()) {
+      assertThat(verifiedApprovals.get(0).username).isEqualTo(admin.username());
+    }
     assertThat(codeReviewApprovals.get(0).permittedVotingRange).isNull();
   }
 
@@ -3738,7 +3784,6 @@ public class ChangeIT extends AbstractDaemonTest {
 
   @Test
   public void uploadingRulesPlIsNotAllowed() throws Exception {
-    projectOperations.project(project).getHead("master");
     GitUtil.fetch(testRepo, RefNames.REFS_CONFIG + ":config");
     testRepo.reset("config");
     PushOneCommit.Result pushResult =
@@ -3974,6 +4019,22 @@ public class ChangeIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void getCommitMessage() throws Exception {
+    String subject = "Change Subject";
+    String changeId = "I" + ObjectId.toString(CommitMessageUtil.generateChangeId());
+    String commitMessage =
+        String.format(
+            "%s\n\nFirst Paragraph.\n\nSecond Paragraph\n\nFoo: Bar\nChange-Id: %s\n",
+            subject, changeId);
+    changeOperations.newChange().project(project).commitMessage(commitMessage).create();
+
+    CommitMessageInfo commitMessageInfo = gApi.changes().id(changeId).getMessage();
+    assertThat(commitMessageInfo.subject).isEqualTo(subject);
+    assertThat(commitMessageInfo.fullMessage).isEqualTo(commitMessage);
+    assertThat(commitMessageInfo.footers).containsExactly("Foo", "Bar", "Change-Id", changeId);
+  }
+
+  @Test
   public void changeCommitMessage() throws Exception {
     // Tests mutating the commit message as both the owner of the change and a regular user with
     // addPatchSet permission. Asserts that both cases succeed.
@@ -4121,6 +4182,8 @@ public class ChangeIT extends AbstractDaemonTest {
     PushOneCommit push = pushFactory.create(user.newIdent(), userTestRepo);
     PushOneCommit.Result r = push.to("refs/for/master");
     r.assertOkStatus();
+    assertThat(gApi.changes().id(r.getChangeId()).info().owner._accountId)
+        .isEqualTo(user.id().get());
     // Try to change the commit message
     AuthException thrown =
         assertThrows(
@@ -4373,7 +4436,7 @@ public class ChangeIT extends AbstractDaemonTest {
   private void setChangeStatus(Change.Id id, Change.Status newStatus) throws Exception {
     try (RefUpdateContext ctx = openTestRefUpdateContext()) {
       try (BatchUpdate batchUpdate =
-          batchUpdateFactory.create(project, atrScope.get().getUser(), TimeUtil.now())) {
+          batchUpdateFactory.create(project, localCtx.getContext().getUser(), TimeUtil.now())) {
         batchUpdate.addOp(id, new ChangeStatusUpdateOp(newStatus));
         batchUpdate.execute();
       }
@@ -4513,7 +4576,7 @@ public class ChangeIT extends AbstractDaemonTest {
   @Test
   public void changeDetailsDoesNotRequireIndex() throws Exception {
     // This set of options must be kept in sync with gr-rest-api-interface.js
-    Set<ListChangesOption> options =
+    ImmutableSet<ListChangesOption> options =
         ImmutableSet.of(
             ListChangesOption.ALL_COMMITS,
             ListChangesOption.ALL_REVISIONS,
@@ -4734,7 +4797,7 @@ public class ChangeIT extends AbstractDaemonTest {
     }
     sender.clear();
     gApi.changes().id(change).addReviewer(user.email());
-    List<Message> messages = sender.getMessages();
+    ImmutableList<Message> messages = sender.getMessages();
     assertThat(messages).hasSize(1);
     assertThat(((StringEmailHeader) messages.get(0).headers().get("Subject")).getString())
         .contains("[" + expectedSizeBucket + "]");
@@ -4746,7 +4809,8 @@ public class ChangeIT extends AbstractDaemonTest {
 
   private ThrowableSubject assertThatQueryException(String query) throws Exception {
     try {
-      query(query);
+      @SuppressWarnings("unused")
+      var unused = query(query);
     } catch (BadRequestException e) {
       return assertThat(e);
     }

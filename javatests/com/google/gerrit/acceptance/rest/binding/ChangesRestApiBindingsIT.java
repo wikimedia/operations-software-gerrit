@@ -78,6 +78,7 @@ public class ChangesRestApiBindingsIT extends AbstractDaemonTest {
           RestCall.get("/changes/%s/meta_diff"),
           RestCall.post("/changes/%s/merge"),
           RestCall.get("/changes/%s/messages"),
+          RestCall.get("/changes/%s/message"),
           RestCall.put("/changes/%s/message"),
           RestCall.post("/changes/%s/move"),
           RestCall.post("/changes/%s/patch:apply"),
@@ -471,7 +472,10 @@ public class ChangesRestApiBindingsIT extends AbstractDaemonTest {
     RestApiCallHelper.execute(
         adminRestSession,
         CHANGE_EDIT_CREATE_ENDPOINTS,
-        () -> adminRestSession.delete("/changes/" + changeId + "/edit"),
+        () -> {
+          @SuppressWarnings("unused")
+          var unused = adminRestSession.delete("/changes/" + changeId + "/edit");
+        },
         changeId,
         FILENAME);
   }

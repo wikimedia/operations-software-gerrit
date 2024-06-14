@@ -18,10 +18,10 @@ import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.gerrit.server.group.testing.InternalGroupSubject.internalGroups;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
-import static com.google.gerrit.truth.OptionalSubject.assertThat;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.AccountGroup;
@@ -1063,7 +1063,7 @@ public class GroupConfigTest {
     groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
 
     PersonIdent committerIdent =
-        new PersonIdent("Jane", "Jane@gerritcodereview.com", committerTimestamp, zoneId);
+        new PersonIdent("Jane", "Jane@example.com", committerTimestamp, zoneId);
     try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
       metaDataUpdate.getCommitBuilder().setCommitter(committerIdent);
       groupConfig.commit(metaDataUpdate);
@@ -1094,8 +1094,7 @@ public class GroupConfigTest {
     GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
     groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
 
-    PersonIdent authorIdent =
-        new PersonIdent("Jane", "Jane@gerritcodereview.com", authorTimestamp, zoneId);
+    PersonIdent authorIdent = new PersonIdent("Jane", "Jane@example.com", authorTimestamp, zoneId);
     try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
       metaDataUpdate.getCommitBuilder().setAuthor(authorIdent);
       groupConfig.commit(metaDataUpdate);
@@ -1154,7 +1153,7 @@ public class GroupConfigTest {
     groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
 
     PersonIdent committerIdent =
-        new PersonIdent("Jane", "Jane@gerritcodereview.com", committerTimestamp, zoneId);
+        new PersonIdent("Jane", "Jane@example.com", committerTimestamp, zoneId);
     try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
       metaDataUpdate.getCommitBuilder().setCommitter(committerIdent);
       groupConfig.commit(metaDataUpdate);
@@ -1180,8 +1179,7 @@ public class GroupConfigTest {
     GroupConfig groupConfig = GroupConfig.loadForGroup(projectName, repository, groupUuid);
     groupConfig.setGroupDelta(groupDelta, auditLogFormatter);
 
-    PersonIdent authorIdent =
-        new PersonIdent("Jane", "Jane@gerritcodereview.com", authorTimestamp, zoneId);
+    PersonIdent authorIdent = new PersonIdent("Jane", "Jane@example.com", authorTimestamp, zoneId);
     try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
       metaDataUpdate.getCommitBuilder().setAuthor(authorIdent);
       groupConfig.commit(metaDataUpdate);
@@ -1499,6 +1497,7 @@ public class GroupConfigTest {
         .setId(groupId);
   }
 
+  @CanIgnoreReturnValue
   private Optional<InternalGroup> createGroup(InternalGroupCreation groupCreation)
       throws Exception {
     GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
@@ -1506,6 +1505,7 @@ public class GroupConfigTest {
     return groupConfig.getLoadedGroup();
   }
 
+  @CanIgnoreReturnValue
   private Optional<InternalGroup> createGroup(
       InternalGroupCreation groupCreation, GroupDelta groupDelta) throws Exception {
     GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
@@ -1514,11 +1514,13 @@ public class GroupConfigTest {
     return groupConfig.getLoadedGroup();
   }
 
+  @CanIgnoreReturnValue
   private Optional<InternalGroup> updateGroup(AccountGroup.UUID uuid, GroupDelta groupDelta)
       throws Exception {
     return updateGroup(uuid, groupDelta, auditLogFormatter);
   }
 
+  @CanIgnoreReturnValue
   private Optional<InternalGroup> updateGroup(
       AccountGroup.UUID uuid, GroupDelta groupDelta, AuditLogFormatter auditLogFormatter)
       throws Exception {
@@ -1541,7 +1543,7 @@ public class GroupConfigTest {
 
   private MetaDataUpdate createMetaDataUpdate() {
     PersonIdent serverIdent =
-        new PersonIdent("Gerrit Server", "noreply@gerritcodereview.com", TimeUtil.now(), zoneId);
+        new PersonIdent("Gerrit Server", "noreply@example.com", TimeUtil.now(), zoneId);
 
     MetaDataUpdate metaDataUpdate =
         new MetaDataUpdate(
@@ -1596,6 +1598,6 @@ public class GroupConfigTest {
 
   private static OptionalSubject<InternalGroupSubject, InternalGroup> assertThatGroup(
       Optional<InternalGroup> loadedGroup) {
-    return assertThat(loadedGroup, internalGroups());
+    return OptionalSubject.assertThat(loadedGroup, internalGroups());
   }
 }

@@ -14,6 +14,7 @@
 
 package com.google.gerrit.testing;
 
+import static com.google.gerrit.common.UsedAt.Project.GOOGLE;
 import static java.util.stream.Collectors.toList;
 
 import com.google.auto.value.AutoValue;
@@ -21,6 +22,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.common.UsedAt;
 import com.google.gerrit.entities.Address;
 import com.google.gerrit.entities.EmailHeader;
 import com.google.gerrit.exceptions.EmailException;
@@ -59,7 +61,8 @@ public class FakeEmailSender implements EmailSender {
 
   @AutoValue
   public abstract static class Message {
-    private static Message create(
+    @UsedAt(GOOGLE)
+    public static Message create(
         Address from,
         Collection<Address> rcpt,
         Map<String, EmailHeader> headers,
@@ -183,7 +186,8 @@ public class FakeEmailSender implements EmailSender {
     for (WorkQueue.Task<?> task : workQueue.getTasks()) {
       if (task.toString().contains("send-email")) {
         try {
-          task.get();
+          @SuppressWarnings("unused")
+          var unused = task.get();
         } catch (ExecutionException | InterruptedException e) {
           logger.atWarning().withCause(e).log("error finishing email task");
         }

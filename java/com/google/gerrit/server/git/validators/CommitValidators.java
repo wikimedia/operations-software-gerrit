@@ -25,6 +25,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.flogger.FluentLogger;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.FooterConstants;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
@@ -36,6 +37,10 @@ import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.config.ConsistencyCheckInfo.ConsistencyProblemInfo;
 import com.google.gerrit.extensions.registration.DynamicItem;
 import com.google.gerrit.extensions.restapi.AuthException;
+import com.google.gerrit.metrics.Counter2;
+import com.google.gerrit.metrics.Description;
+import com.google.gerrit.metrics.Field;
+import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.IdentifiedUser;
@@ -52,9 +57,7 @@ import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.gerrit.server.patch.DiffNotAvailableException;
-import com.google.gerrit.server.patch.DiffOperations;
-import com.google.gerrit.server.patch.DiffOptions;
-import com.google.gerrit.server.patch.filediff.FileDiffOutput;
+import com.google.gerrit.server.patch.gitdiff.ModifiedFile;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.permissions.RefPermission;
@@ -63,6 +66,7 @@ import com.google.gerrit.server.project.LabelConfigValidator;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectConfig;
 import com.google.gerrit.server.project.ProjectState;
+import com.google.gerrit.server.query.approval.ApprovalQueryBuilder;
 import com.google.gerrit.server.ssh.HostKey;
 import com.google.gerrit.server.ssh.SshInfo;
 import com.google.gerrit.server.util.MagicBranch;
@@ -112,9 +116,10 @@ public class CommitValidators {
     private final AccountCache accountCache;
     private final ProjectCache projectCache;
     private final ProjectConfig.Factory projectConfigFactory;
-    private final DiffOperations diffOperations;
     private final Config config;
     private final ChangeUtil changeUtil;
+    private final MetricMaker metricMaker;
+    private final ApprovalQueryBuilder approvalQueryBuilder;
 
     @Inject
     Factory(
@@ -130,8 +135,9 @@ public class CommitValidators {
         AccountCache accountCache,
         ProjectCache projectCache,
         ProjectConfig.Factory projectConfigFactory,
-        DiffOperations diffOperations,
-        ChangeUtil changeUtil) {
+        ChangeUtil changeUtil,
+        MetricMaker metricMaker,
+        ApprovalQueryBuilder approvalQueryBuilder) {
       this.gerritIdent = gerritIdent;
       this.urlFormatter = urlFormatter;
       this.config = config;
@@ -144,8 +150,9 @@ public class CommitValidators {
       this.accountCache = accountCache;
       this.projectCache = projectCache;
       this.projectConfigFactory = projectConfigFactory;
-      this.diffOperations = diffOperations;
       this.changeUtil = changeUtil;
+      this.metricMaker = metricMaker;
+      this.approvalQueryBuilder = approvalQueryBuilder;
     }
 
     public CommitValidators forReceiveCommits(
@@ -166,7 +173,7 @@ public class CommitValidators {
           .add(new ProjectStateValidationListener(projectState))
           .add(new AmendedGerritMergeCommitValidationListener(perm, gerritIdent))
           .add(new AuthorUploaderValidator(user, perm, urlFormatter.get()))
-          .add(new FileCountValidator(config, urlFormatter.get(), diffOperations))
+          .add(new FileCountValidator(config, urlFormatter.get(), metricMaker))
           .add(new CommitterUploaderValidator(user, perm, urlFormatter.get()))
           .add(new SignedOffByValidator(user, perm, projectState))
           .add(
@@ -178,7 +185,7 @@ public class CommitValidators {
           .add(new ExternalIdUpdateListener(allUsers, externalIdsConsistencyChecker, accountCache))
           .add(new AccountCommitValidator(repoManager, allUsers, accountValidator))
           .add(new GroupCommitValidator(allUsers))
-          .add(new LabelConfigValidator(diffOperations));
+          .add(new LabelConfigValidator(approvalQueryBuilder));
       return new CommitValidators(validators.build());
     }
 
@@ -198,7 +205,7 @@ public class CommitValidators {
           .add(new ProjectStateValidationListener(projectState))
           .add(new AmendedGerritMergeCommitValidationListener(perm, gerritIdent))
           .add(new AuthorUploaderValidator(user, perm, urlFormatter.get()))
-          .add(new FileCountValidator(config, urlFormatter.get(), diffOperations))
+          .add(new FileCountValidator(config, urlFormatter.get(), metricMaker))
           .add(new SignedOffByValidator(user, perm, projectState))
           .add(
               new ChangeIdValidator(
@@ -208,7 +215,7 @@ public class CommitValidators {
           .add(new ExternalIdUpdateListener(allUsers, externalIdsConsistencyChecker, accountCache))
           .add(new AccountCommitValidator(repoManager, allUsers, accountValidator))
           .add(new GroupCommitValidator(allUsers))
-          .add(new LabelConfigValidator(diffOperations));
+          .add(new LabelConfigValidator(approvalQueryBuilder));
       return new CommitValidators(validators.build());
     }
 
@@ -246,6 +253,7 @@ public class CommitValidators {
     this.validators = validators;
   }
 
+  @CanIgnoreReturnValue
   public List<CommitValidationMessage> validate(CommitReceivedEvent receiveEvent)
       throws CommitValidationException {
     List<CommitValidationMessage> messages = new ArrayList<>();
@@ -444,11 +452,20 @@ public class CommitValidators {
 
     private final int maxFileCount;
     private final UrlFormatter urlFormatter;
-    private final DiffOperations diffOperations;
+    private final Counter2<Integer, String> metricCountManyFilesPerChange;
 
-    FileCountValidator(Config config, UrlFormatter urlFormatter, DiffOperations diffOperations) {
+    FileCountValidator(Config config, UrlFormatter urlFormatter, MetricMaker metricMaker) {
       this.urlFormatter = urlFormatter;
-      this.diffOperations = diffOperations;
+      this.metricCountManyFilesPerChange =
+          metricMaker.newCounter(
+              "validation/file_count",
+              new Description("Count commits with many files per change."),
+              Field.ofInteger("file_count", (meta, value) -> {})
+                  .description("number of files in the patchset")
+                  .build(),
+              Field.ofString("host_repo", (meta, value) -> {})
+                  .description("host and repository of the change in the format 'host/repo'")
+                  .build());
       maxFileCount = config.getInt("change", null, "maxFiles", 100_000);
     }
 
@@ -482,6 +499,9 @@ public class CommitValidators {
           logger.atWarning().log(
               "Warning: Change with %d files on host %s, project %s, ref %s",
               changedFiles, host, project, refName);
+
+          this.metricCountManyFilesPerChange.increment(
+              Math.toIntExact(changedFiles), String.format("%s/%s", host, project));
         }
       } catch (DiffNotAvailableException e) {
         // This happens e.g. for cherrypicks.
@@ -496,11 +516,14 @@ public class CommitValidators {
     private int countChangedFiles(CommitReceivedEvent receiveEvent)
         throws DiffNotAvailableException {
       // For merge commits this will compare against auto-merge.
-      Map<String, FileDiffOutput> modifiedFiles =
-          diffOperations.listModifiedFilesAgainstParent(
-              receiveEvent.getProjectNameKey(), receiveEvent.commit, 0, DiffOptions.DEFAULTS);
+      Map<String, ModifiedFile> modifiedFiles =
+          receiveEvent.diffOperations.loadModifiedFilesAgainstParentIfNecessary(
+              receiveEvent.getProjectNameKey(),
+              receiveEvent.commit,
+              0,
+              /* enableRenameDetection= */ true);
       // We don't want to count the COMMIT_MSG and MERGE_LIST files.
-      List<FileDiffOutput> modifiedFilesList =
+      List<ModifiedFile> modifiedFilesList =
           modifiedFiles.values().stream()
               .filter(p -> !Patch.isMagic(p.newPath().orElse("")))
               .collect(Collectors.toList());
@@ -977,7 +1000,7 @@ public class CommitValidators {
     }
   }
 
-  private static CommitValidationMessage invalidEmail(
+  public static CommitValidationMessage invalidEmail(
       String type, PersonIdent who, IdentifiedUser currentUser, UrlFormatter urlFormatter) {
     StringBuilder sb = new StringBuilder();
 

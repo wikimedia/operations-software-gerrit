@@ -14,6 +14,7 @@
 
 package com.google.gerrit.acceptance;
 
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.entities.SubmitRequirement;
 import com.google.gerrit.extensions.api.changes.ActionVisitor;
 import com.google.gerrit.extensions.config.CapabilityDefinition;
@@ -45,6 +46,7 @@ import com.google.gerrit.extensions.webui.ResolveConflictsWebLink;
 import com.google.gerrit.server.ExceptionHook;
 import com.google.gerrit.server.account.GroupBackend;
 import com.google.gerrit.server.change.ChangeETagComputation;
+import com.google.gerrit.server.change.FilterIncludedIn;
 import com.google.gerrit.server.change.ReviewerSuggestion;
 import com.google.gerrit.server.config.ProjectConfigEntry;
 import com.google.gerrit.server.git.ChangeMessageModifier;
@@ -87,6 +89,7 @@ public class ExtensionRegistry {
   private final DynamicSet<GitReferenceUpdatedListener> refUpdatedListeners;
   private final DynamicSet<GitBatchRefUpdateListener> batchRefUpdateListeners;
   private final DynamicSet<FileHistoryWebLink> fileHistoryWebLinks;
+  private final DynamicSet<FilterIncludedIn> filterIncludedIns;
   private final DynamicSet<PatchSetWebLink> patchSetWebLinks;
   private final DynamicSet<ResolveConflictsWebLink> resolveConflictsWebLinks;
   private final DynamicSet<EditWebLink> editWebLinks;
@@ -133,6 +136,7 @@ public class ExtensionRegistry {
       DynamicSet<GitReferenceUpdatedListener> refUpdatedListeners,
       DynamicSet<GitBatchRefUpdateListener> batchRefUpdateListeners,
       DynamicSet<FileHistoryWebLink> fileHistoryWebLinks,
+      DynamicSet<FilterIncludedIn> filterIncludedIns,
       DynamicSet<PatchSetWebLink> patchSetWebLinks,
       DynamicSet<ResolveConflictsWebLink> resolveConflictsWebLinks,
       DynamicSet<EditWebLink> editWebLinks,
@@ -174,6 +178,7 @@ public class ExtensionRegistry {
     this.refUpdatedListeners = refUpdatedListeners;
     this.batchRefUpdateListeners = batchRefUpdateListeners;
     this.fileHistoryWebLinks = fileHistoryWebLinks;
+    this.filterIncludedIns = filterIncludedIns;
     this.patchSetWebLinks = patchSetWebLinks;
     this.editWebLinks = editWebLinks;
     this.fileWebLinks = fileWebLinks;
@@ -205,172 +210,219 @@ public class ExtensionRegistry {
   public class Registration implements AutoCloseable {
     private final List<RegistrationHandle> registrationHandles = new ArrayList<>();
 
+    @CanIgnoreReturnValue
     public Registration add(AccountIndexedListener accountIndexedListener) {
       return add(accountIndexedListeners, accountIndexedListener);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(ChangeIndexedListener changeIndexedListener) {
       return add(changeIndexedListeners, changeIndexedListener);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(GroupIndexedListener groupIndexedListener) {
       return add(groupIndexedListeners, groupIndexedListener);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(ProjectIndexedListener projectIndexedListener) {
       return add(projectIndexedListeners, projectIndexedListener);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(CommitValidationListener commitValidationListener) {
       return add(commitValidationListeners, commitValidationListener);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(TopicEditedListener topicEditedListener) {
       return add(topicEditedListeners, topicEditedListener);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(ExceptionHook exceptionHook) {
       return add(exceptionHooks, exceptionHook);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(PerformanceLogger performanceLogger) {
       return add(performanceLoggers, performanceLogger);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(ProjectCreationValidationListener projectCreationListener) {
       return add(projectCreationValidationListeners, projectCreationListener);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(SubmitRule submitRule) {
       return add(submitRules, submitRule);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(SubmitRequirement submitRequirement) {
       return add(submitRequirements, submitRequirement);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(ChangeHasOperandFactory hasOperand, String exportName) {
       return add(hasOperands, hasOperand, exportName);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(ChangeIsOperandFactory isOperand, String exportName) {
       return add(isOperands, isOperand, exportName);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(ChangeMessageModifier changeMessageModifier) {
       return add(changeMessageModifiers, changeMessageModifier);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(ChangeMessageModifier changeMessageModifier, String exportName) {
       return add(changeMessageModifiers, changeMessageModifier, exportName);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(ChangeETagComputation changeETagComputation) {
       return add(changeETagComputations, changeETagComputation);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(ActionVisitor actionVisitor) {
       return add(actionVisitors, actionVisitor);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(DownloadScheme downloadScheme, String exportName) {
       return add(downloadSchemes, downloadScheme, exportName);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(RefOperationValidationListener refOperationValidationListener) {
       return add(refOperationValidationListeners, refOperationValidationListener);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(CommentAddedListener commentAddedListener) {
       return add(commentAddedListeners, commentAddedListener);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(GitReferenceUpdatedListener refUpdatedListener) {
       return add(refUpdatedListeners, refUpdatedListener);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(GitBatchRefUpdateListener batchRefUpdateListener) {
       return add(batchRefUpdateListeners, batchRefUpdateListener);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(FileHistoryWebLink fileHistoryWebLink) {
       return add(fileHistoryWebLinks, fileHistoryWebLink);
     }
 
+    @CanIgnoreReturnValue
+    public Registration add(FilterIncludedIn filterIncludedIn) {
+      return add(filterIncludedIns, filterIncludedIn);
+    }
+
+    @CanIgnoreReturnValue
     public Registration add(PatchSetWebLink patchSetWebLink) {
       return add(patchSetWebLinks, patchSetWebLink);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(ResolveConflictsWebLink resolveConflictsWebLink) {
       return add(resolveConflictsWebLinks, resolveConflictsWebLink);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(EditWebLink editWebLink) {
       return add(editWebLinks, editWebLink);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(FileWebLink fileWebLink) {
       return add(fileWebLinks, fileWebLink);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(RevisionCreatedListener revisionCreatedListener) {
       return add(revisionCreatedListeners, revisionCreatedListener);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(GroupBackend groupBackend) {
       return add(groupBackends, groupBackend);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(
         AccountActivationValidationListener accountActivationValidationListener) {
       return add(accountActivationValidationListeners, accountActivationValidationListener);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(AccountActivationListener accountDeactivatedListener) {
       return add(accountActivationListeners, accountDeactivatedListener);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(OnSubmitValidationListener onSubmitValidationListener) {
       return add(onSubmitValidationListeners, onSubmitValidationListener);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(WorkInProgressStateChangedListener workInProgressStateChangedListener) {
       return add(workInProgressStateChangedListeners, workInProgressStateChangedListener);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(AttentionSetListener attentionSetListener) {
       return add(attentionSetListeners, attentionSetListener);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(CapabilityDefinition capabilityDefinition, String exportName) {
       return add(capabilityDefinitions, capabilityDefinition, exportName);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(
         PluginProjectPermissionDefinition pluginProjectPermissionDefinition, String exportName) {
       return add(pluginProjectPermissionDefinitions, pluginProjectPermissionDefinition, exportName);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(ProjectConfigEntry pluginConfigEntry, String exportName) {
       return add(pluginConfigEntries, pluginConfigEntry, exportName);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(PluginPushOption pluginPushOption) {
       return add(pluginPushOptions, pluginPushOption);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(OnPostReview onPostReview) {
       return add(onPostReviews, onPostReview);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(ReviewerAddedListener reviewerAddedListener) {
       return add(reviewerAddedListeners, reviewerAddedListener);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(ReviewerDeletedListener reviewerDeletedListener) {
       return add(reviewerDeletedListeners, reviewerDeletedListener);
     }
 
+    @CanIgnoreReturnValue
     public Registration add(ReviewerSuggestion reviewerSuggestion, String exportName) {
       return add(reviewerSuggestions, reviewerSuggestion, exportName);
     }

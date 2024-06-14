@@ -146,4 +146,14 @@ export enum Interaction {
   GENERATE_SUGGESTION_ENABLED = 'generate_suggestion_enabled',
   // User disabled generating suggestions
   GENERATE_SUGGESTION_DISABLED = 'generate_suggestion_disabled',
+  GENERATE_SUGGESTION_EDITED = 'generate_suggestion_edited',
+  START_REVIEW = 'start-review',
+  CODE_REVIEW_APPROVAL = 'code-review-approval',
+  FILE_LIST_DIFF_COLLAPSED = 'file-list-diff-collapsed',
+  FILE_LIST_DIFF_EXPANDED = 'file-list-diff-expanded',
+  FILE_LIST_ALL_DIFFS_COLLAPSED = 'file-list-all-diffs-collapsed',
+  FILE_LIST_ALL_DIFFS_EXPANDED = 'file-list-all-diffs-expanded',
+  // The very first reporting event with `ChangeId` set when visiting a change
+  // related page. Can be used as a starting point for user journeys.
+  CHANGE_ID_CHANGED = 'change-id-changed',
 }

@@ -15,7 +15,6 @@
 package com.google.gerrit.acceptance.api.project;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth8.assertThat;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.extensions.client.ListChangesOption.MESSAGES;
 import static com.google.gerrit.server.group.SystemGroupBackend.ANONYMOUS_USERS;
@@ -244,7 +243,8 @@ public class AccessIT extends AbstractDaemonTest {
       testRefAction(() -> assertThat(u.delete()).isEqualTo(Result.FORCED));
 
       // This should not crash.
-      pApi().access();
+      @SuppressWarnings("unused")
+      var unused = pApi().access();
     }
   }
 
@@ -465,9 +465,11 @@ public class AccessIT extends AbstractDaemonTest {
         .forUpdate()
         .add(allow(Permission.READ).ref(RefNames.REFS_CONFIG).group(REGISTERED_USERS))
         .update();
+
     // User can see the branch
     requestScopeOperations.setApiUser(user.id());
-    pApi().branch("refs/heads/master").get();
+    @SuppressWarnings("unused")
+    var unused = pApi().branch("refs/heads/master").get();
 
     ProjectAccessInput accessInput = newProjectAccessInput();
 
@@ -516,7 +518,7 @@ public class AccessIT extends AbstractDaemonTest {
 
     // Now it works again.
     requestScopeOperations.setApiUser(user.id());
-    pApi().branch("refs/heads/master").get();
+    unused = pApi().branch("refs/heads/master").get();
   }
 
   @Test

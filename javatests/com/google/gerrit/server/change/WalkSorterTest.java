@@ -19,6 +19,7 @@ import static com.google.common.truth.Truth.assertThat;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.PatchSet;
@@ -58,7 +59,7 @@ public class WalkSorterTest {
     ChangeData cd2 = newChange(p, c2_1);
     ChangeData cd3 = newChange(p, c3_1);
 
-    List<ChangeData> changes = ImmutableList.of(cd1, cd2, cd3);
+    ImmutableList<ChangeData> changes = ImmutableList.of(cd1, cd2, cd3);
     WalkSorter sorter = new WalkSorter(repoManager);
 
     assertSorted(
@@ -85,6 +86,114 @@ public class WalkSorterTest {
   }
 
   @Test
+  public void seriesOfMergeChangesInSpecialOrder() throws Exception {
+    TestRepository<Repo> p = newRepo("p");
+    // For this test, the RevWalk in the sortProject must return commits in the following order:
+    // c3, c1, c2, c4.
+    // To achieve this order, the commit timestamps must be set in a specific order - RevWalk
+    // returns them sorted by timestamp, starting from the newest one.
+
+    // timestamp: base + 3
+    RevCommit c1 = p.commit().tick(3).create();
+    // timestamp: base + 2
+    RevCommit c2 = p.commit().tick(-1).parent(c1).create();
+    // timestamp: base + 4
+    RevCommit c3 = p.commit().tick(2).parent(c1).parent(c2).create();
+    // timestamp: base + 1
+    RevCommit c4 = p.commit().tick(-3).parent(c3).create();
+
+    ChangeData cd1 = newChange(p, c1);
+    ChangeData cd2 = newChange(p, c2);
+    ChangeData cd3 = newChange(p, c3);
+    ChangeData cd4 = newChange(p, c4);
+
+    ImmutableList<ChangeData> changes = ImmutableList.of(cd1, cd2, cd3, cd4);
+    WalkSorter sorter = new WalkSorter(repoManager);
+
+    assertSorted(
+        sorter,
+        changes,
+        ImmutableList.of(
+            patchSetData(cd4, c4),
+            patchSetData(cd3, c3),
+            patchSetData(cd2, c2),
+            patchSetData(cd1, c1)));
+  }
+
+  @Test
+  public void seriesOfMergeChangesWorstCaseForTopoSorting() throws Exception {
+    TestRepository<Repo> p = newRepo("p");
+    // For this test, the RevWalk in the sortProject must return commits in the following order:
+    // c1, c2, c3, c4, c5, c6, c7.
+    // To achieve this order, the commit timestamps must be set in a specific order - RevWalk
+    // returns them sorted by timestamp, starting from the newest one.
+
+    // timestamp: base + 8
+    RevCommit c1 = p.commit().tick(8).create();
+    // timestamp: base + 7
+    RevCommit c2 = p.commit().tick(-1).parent(c1).create();
+    // timestamp: base + 6
+    RevCommit c3 = p.commit().tick(-1).parent(c1).parent(c2).create();
+    // timestamp: base + 5
+    RevCommit c4 = p.commit().tick(-1).parent(c1).parent(c2).parent(c3).create();
+    // timestamp: base + 4
+    RevCommit c5 = p.commit().tick(-1).parent(c1).parent(c2).parent(c3).parent(c4).create();
+    // timestamp: base + 3
+    RevCommit c6 =
+        p.commit().tick(-1).parent(c1).parent(c2).parent(c3).parent(c4).parent(c5).create();
+    // timestamp: base + 2
+    RevCommit c7 =
+        p.commit()
+            .tick(-1)
+            .parent(c1)
+            .parent(c2)
+            .parent(c3)
+            .parent(c4)
+            .parent(c5)
+            .parent(c6)
+            .create();
+    // timestamp: base + 1
+    RevCommit c8 =
+        p.commit()
+            .tick(-1)
+            .parent(c1)
+            .parent(c2)
+            .parent(c3)
+            .parent(c4)
+            .parent(c5)
+            .parent(c6)
+            .parent(c7)
+            .create();
+
+    ChangeData cd1 = newChange(p, c1);
+    ChangeData cd2 = newChange(p, c2);
+    ChangeData cd3 = newChange(p, c3);
+    ChangeData cd4 = newChange(p, c4);
+    ChangeData cd5 = newChange(p, c5);
+    ChangeData cd6 = newChange(p, c6);
+    ChangeData cd7 = newChange(p, c7);
+    ChangeData cd8 = newChange(p, c8);
+
+    ImmutableList<ChangeData> changes = ImmutableList.of(cd1, cd2, cd3, cd4, cd5, cd6, cd7, cd8);
+    WalkSorter sorter = new WalkSorter(repoManager);
+
+    // Do not use assertSorted because it tests all permutations. We don't need it for this test
+    // and total number of permutations is quite big.
+    assertThat(sorter.sort(changes))
+        .containsExactlyElementsIn(
+            ImmutableList.of(
+                patchSetData(cd8, c8),
+                patchSetData(cd7, c7),
+                patchSetData(cd6, c6),
+                patchSetData(cd5, c5),
+                patchSetData(cd4, c4),
+                patchSetData(cd3, c3),
+                patchSetData(cd2, c2),
+                patchSetData(cd1, c1)))
+        .inOrder();
+  }
+
+  @Test
   public void subsetOfSeriesOfChanges() throws Exception {
     TestRepository<Repo> p = newRepo("p");
     RevCommit c1_1 = p.commit().create();
@@ -94,7 +203,7 @@ public class WalkSorterTest {
     ChangeData cd1 = newChange(p, c1_1);
     ChangeData cd3 = newChange(p, c3_1);
 
-    List<ChangeData> changes = ImmutableList.of(cd1, cd3);
+    ImmutableList<ChangeData> changes = ImmutableList.of(cd1, cd3);
     WalkSorter sorter = new WalkSorter(repoManager);
 
     assertSorted(
@@ -121,7 +230,7 @@ public class WalkSorterTest {
     ChangeData cd3 = newChange(p, c3);
     ChangeData cd4 = newChange(p, c4);
 
-    List<ChangeData> changes = ImmutableList.of(cd1, cd2, cd3, cd4);
+    ImmutableList<ChangeData> changes = ImmutableList.of(cd1, cd2, cd3, cd4);
     WalkSorter sorter = new WalkSorter(repoManager);
 
     assertSorted(
@@ -154,7 +263,7 @@ public class WalkSorterTest {
     ChangeData cd3 = newChange(p, c3);
     ChangeData cd4 = newChange(p, c4);
 
-    List<ChangeData> changes = ImmutableList.of(cd1, cd2, cd3, cd4);
+    ImmutableList<ChangeData> changes = ImmutableList.of(cd1, cd2, cd3, cd4);
     WalkSorter sorter = new WalkSorter(repoManager);
 
     assertSorted(
@@ -186,9 +295,9 @@ public class WalkSorterTest {
     ChangeData cd2 = newChange(p, c2);
     ChangeData cd4 = newChange(p, c4);
 
-    List<ChangeData> changes = ImmutableList.of(cd1, cd2, cd4);
+    ImmutableList<ChangeData> changes = ImmutableList.of(cd1, cd2, cd4);
     WalkSorter sorter = new WalkSorter(repoManager);
-    List<PatchSetData> expected =
+    ImmutableList<PatchSetData> expected =
         ImmutableList.of(patchSetData(cd4, c4), patchSetData(cd2, c2), patchSetData(cd1, c1));
 
     for (List<ChangeData> list : permutations(changes)) {
@@ -217,7 +326,7 @@ public class WalkSorterTest {
     ChangeData cd3 = newChange(p, c3);
     ChangeData cd4 = newChange(p, c4);
 
-    List<ChangeData> changes = ImmutableList.of(cd1, cd2, cd3, cd4);
+    ImmutableList<ChangeData> changes = ImmutableList.of(cd1, cd2, cd3, cd4);
     WalkSorter sorter = new WalkSorter(repoManager);
 
     assertSorted(
@@ -270,7 +379,7 @@ public class WalkSorterTest {
     addPatchSet(cd1, c1_2);
     addPatchSet(cd2, c2_2);
 
-    List<ChangeData> changes = ImmutableList.of(cd1, cd2);
+    ImmutableList<ChangeData> changes = ImmutableList.of(cd1, cd2);
     WalkSorter sorter = new WalkSorter(repoManager);
 
     assertSorted(
@@ -293,7 +402,7 @@ public class WalkSorterTest {
     ChangeData cd1 = newChange(pa, c1);
     ChangeData cd2 = newChange(pb, c2);
 
-    List<ChangeData> changes = ImmutableList.of(cd1, cd2);
+    ImmutableList<ChangeData> changes = ImmutableList.of(cd1, cd2);
     WalkSorter sorter =
         new WalkSorter(repoManager).includePatchSets(ImmutableSet.of(cd1.currentPatchSet().id()));
 
@@ -306,7 +415,7 @@ public class WalkSorterTest {
     RevCommit c = p.commit().message("message").create();
     ChangeData cd = newChange(p, c);
 
-    List<ChangeData> changes = ImmutableList.of(cd);
+    ImmutableList<ChangeData> changes = ImmutableList.of(cd);
     RevCommit actual =
         new WalkSorter(repoManager).setRetainBody(true).sort(changes).iterator().next().commit();
     assertThat(actual.getRawBuffer()).isNotNull();
@@ -323,7 +432,7 @@ public class WalkSorterTest {
     RevCommit c = p.commit().create();
     ChangeData cd = newChange(p, c);
 
-    List<ChangeData> changes = ImmutableList.of(cd);
+    ImmutableList<ChangeData> changes = ImmutableList.of(cd);
     WalkSorter sorter = new WalkSorter(repoManager);
 
     assertSorted(sorter, changes, ImmutableList.of(patchSetData(cd, c)));
@@ -338,6 +447,7 @@ public class WalkSorterTest {
     return cd;
   }
 
+  @CanIgnoreReturnValue
   private PatchSet addPatchSet(ChangeData cd, ObjectId id) throws Exception {
     TestChanges.incrementPatchSet(cd.change());
     PatchSet ps = TestChanges.newPatchSet(cd.change().currentPatchSetId(), id.name(), userId);

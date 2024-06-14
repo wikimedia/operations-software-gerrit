@@ -40,7 +40,6 @@ import {
   FileNameToFileInfoMap,
   FilePathToDiffInfoMap,
   FixId,
-  FixReplacementInfo,
   GitRef,
   GpgKeyId,
   GpgKeyInfo,
@@ -99,8 +98,7 @@ import {
 } from '../../types/diff';
 import {Finalizable, ParsedChangeInfo} from '../../types/types';
 import {ErrorCallback} from '../../api/rest';
-
-export type CancelConditionCallback = () => boolean;
+import {FixReplacementInfo} from '../../api/rest-api';
 
 export interface GetDiffCommentsOutput {
   baseComments: CommentInfo[];
@@ -122,8 +120,8 @@ export interface RestApiService extends Finalizable {
     params?: string[]
   ): Promise<AccountCapabilityInfo | undefined>;
   getExternalIds(): Promise<AccountExternalIdInfo[] | undefined>;
-  deleteAccountIdentity(id: string[]): Promise<unknown>;
-  deleteAccount(): Promise<unknown>;
+  deleteAccountIdentity(id: string[]): Promise<Response>;
+  deleteAccount(): Promise<Response>;
   getRepos(
     filter: string | undefined,
     reposPerPage: number,
@@ -149,6 +147,11 @@ export interface RestApiService extends Finalizable {
     headers?: Record<string, string>
   ): Promise<Response | void>;
 
+  /**
+   * DEPRECATED: Use functions from gr-rest-api-helper directly.
+   *
+   * Preserved for plugins that use it.
+   */
   getResponseObject(response: Response): Promise<ParsedJSON>;
 
   getChangeSuggestedReviewers(
@@ -165,13 +168,14 @@ export interface RestApiService extends Finalizable {
    * Request list of accounts via https://gerrit-review.googlesource.com/Documentation/rest-api-accounts.html#query-account
    * Operators defined here https://gerrit-review.googlesource.com/Documentation/user-search-accounts.html#_search_operators
    */
-  getSuggestedAccounts(
+  queryAccounts(
     input: string,
     n?: number,
     canSee?: NumericChangeId,
     filterActive?: boolean,
     errFn?: ErrorCallback
   ): Promise<AccountInfo[] | undefined>;
+  getAccountSuggestions(input: string): Promise<AccountInfo[] | undefined>;
   getSuggestedGroups(
     input: string,
     project?: RepoName,
@@ -188,7 +192,7 @@ export interface RestApiService extends Finalizable {
     patchNum?: PatchSetNum,
     payload?: RequestPayload,
     errFn?: ErrorCallback
-  ): Promise<Response | undefined>;
+  ): Promise<Response>;
   getRepoBranches(
     filter: string,
     repo: RepoName,
@@ -199,8 +203,7 @@ export interface RestApiService extends Finalizable {
 
   getChangeDetail(
     changeNum?: number | string,
-    errFn?: ErrorCallback,
-    cancelCondition?: Function
+    errFn?: ErrorCallback
   ): Promise<ParsedChangeInfo | undefined>;
 
   /**
@@ -321,7 +324,7 @@ export interface RestApiService extends Finalizable {
   setRepoAccessRightsForReview(
     projectName: RepoName,
     projectInfo: ProjectAccessInput
-  ): Promise<ChangeInfo>;
+  ): Promise<ChangeInfo | undefined>;
 
   getGroups(
     filter: string,
@@ -390,14 +393,24 @@ export interface RestApiService extends Finalizable {
   ): Promise<IncludedInInfo | undefined>;
 
   /**
-   * Checks in projectLookup map shared across instances for the changeNum.
-   * If it exists, returns the project. If not, calls the restAPI to get the
-   * change, populates projectLookup with the project for that change, and
-   * returns the project.
+   * Looks up repo name in which change is located.
+   *
+   * Change -> repo association is cached. This will only make restAPI call (and
+   * cache the result) if the repo name for the change is not already known.
+   *
+   * addRepoNameToCache can be used to add entry to the cache manually.
+   *
+   * If the lookup fails the promise rejects and result is not cached.
    */
-  getFromProjectLookup(
-    changeNum: NumericChangeId
-  ): Promise<RepoName | undefined>;
+  getRepoName(changeNum: NumericChangeId): Promise<RepoName>;
+
+  /**
+   * Populates cache for the future getRepoName(changeNum) lookup.
+   *
+   * The repo name is used for constructing of url for all change-based
+   * endpoints.
+   */
+  addRepoNameToCache(changeNum: NumericChangeId, repo: RepoName): void;
 
   saveDiffDraft(
     changeNum: NumericChangeId,
@@ -505,7 +518,7 @@ export interface RestApiService extends Finalizable {
 
   saveAccountAgreement(name: ContributorAgreementInput): Promise<Response>;
 
-  generateAccountHttpPassword(): Promise<Password>;
+  generateAccountHttpPassword(): Promise<Password | undefined>;
 
   setAccountName(name: string): Promise<void>;
 
@@ -515,7 +528,7 @@ export interface RestApiService extends Finalizable {
 
   saveWatchedProjects(
     projects: ProjectWatchInfo[]
-  ): Promise<ProjectWatchInfo[]>;
+  ): Promise<ProjectWatchInfo[] | undefined>;
 
   deleteWatchedProjects(projects: ProjectWatchInfo[]): Promise<Response>;
 
@@ -558,7 +571,7 @@ export interface RestApiService extends Finalizable {
     patchNum: PatchSetNum,
     commentID: UrlEncodedCommentId,
     reason: string
-  ): Promise<CommentInfo>;
+  ): Promise<CommentInfo | undefined>;
   deleteDiffDraft(
     changeNum: NumericChangeId,
     patchNum: PatchSetNum,
@@ -589,7 +602,7 @@ export interface RestApiService extends Finalizable {
   saveGroupMember(
     groupName: GroupId | GroupName,
     groupMember: AccountId
-  ): Promise<AccountInfo>;
+  ): Promise<AccountInfo | undefined>;
 
   saveIncludedGroup(
     groupName: GroupId | GroupName,
@@ -784,10 +797,30 @@ export interface RestApiService extends Finalizable {
 
   setChangeHashtag(
     changeNum: NumericChangeId,
-    hashtag: HashtagsInput
-  ): Promise<Hashtag[]>;
+    hashtag: HashtagsInput,
+    errFn?: ErrorCallback
+  ): Promise<Hashtag[] | undefined>;
 
-  setChangeTopic(changeNum: NumericChangeId, topic?: string): Promise<string>;
+  /**
+   * Set change topic.
+   *
+   * Returns topic that the change has after the requests.
+   */
+  setChangeTopic(
+    changeNum: NumericChangeId,
+    topic?: string,
+    errFn?: ErrorCallback
+  ): Promise<string | undefined>;
+
+  /**
+   * Remove change topic.
+   *
+   * Returns topic that the change has after the requests. (ie. '' on success)
+   */
+  removeChangeTopic(
+    changeNum: NumericChangeId,
+    errFn?: ErrorCallback
+  ): Promise<string | undefined>;
 
   getChangeFiles(
     changeNum: NumericChangeId,
@@ -813,13 +846,20 @@ export interface RestApiService extends Finalizable {
 
   getTopMenus(): Promise<TopMenuEntryInfo[] | undefined>;
 
-  setInProjectLookup(changeNum: NumericChangeId, repo: RepoName): void;
   getMergeable(changeNum: NumericChangeId): Promise<MergeableInfo | undefined>;
 
   putChangeCommitMessage(
     changeNum: NumericChangeId,
-    message: string
+    message: string,
+    committerEmail: string | null
   ): Promise<Response>;
+
+  updateIdentityInChangeEdit(
+    changeNum: NumericChangeId,
+    name: string,
+    email: string,
+    type: string
+  ): Promise<Response | undefined>;
 
   getChangeCommitInfo(
     changeNum: NumericChangeId,

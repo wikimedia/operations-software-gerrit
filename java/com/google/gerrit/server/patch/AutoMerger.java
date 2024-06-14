@@ -42,7 +42,6 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.PersonIdent;
-import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.merge.ResolveMerger;
 import org.eclipse.jgit.merge.ThreeWayMergeStrategy;
@@ -137,15 +136,10 @@ public class AutoMerger {
    * @return auto-merge commit. Headers of the returned RevCommit are parsed.
    */
   public RevCommit lookupFromGitOrMergeInMemory(
-      Repository repo,
-      RevWalk rw,
-      InMemoryInserter ins,
-      RevCommit merge,
-      ThreeWayMergeStrategy mergeStrategy)
-      throws IOException {
+      Repository repo, RevWalk rw, InMemoryInserter ins, RevCommit merge) throws IOException {
     checkArgument(rw.getObjectReader().getCreatedFromInserter() == ins);
     Optional<RevCommit> existingCommit =
-        lookupCommit(repo, rw, RefNames.refsCacheAutomerge(merge.name()));
+        lookupCommit(new RepoView(repo, rw, ins), RefNames.refsCacheAutomerge(merge.name()));
     if (existingCommit.isPresent()) {
       counter.increment(OperationType.CACHE_LOAD);
       return existingCommit.get();
@@ -153,7 +147,8 @@ public class AutoMerger {
     counter.increment(OperationType.IN_MEMORY_WRITE);
     logger.atInfo().log("Computing in-memory AutoMerge for %s", merge.name());
     try (Timer1.Context<OperationType> ignored = latency.start(OperationType.IN_MEMORY_WRITE)) {
-      return rw.parseCommit(createAutoMergeCommit(repo.getConfig(), rw, ins, merge, mergeStrategy));
+      return rw.parseCommit(
+          createAutoMergeCommit(repo.getConfig(), rw, ins, merge, configuredMergeStrategy));
     }
   }
 
@@ -168,8 +163,7 @@ public class AutoMerger {
    *     auto merge commit.
    */
   public Optional<ReceiveCommand> createAutoMergeCommitIfNecessary(
-      RepoView repoView, RevWalk rw, ObjectInserter ins, RevCommit maybeMergeCommit)
-      throws IOException {
+      RepoView repoView, ObjectInserter ins, RevCommit maybeMergeCommit) throws IOException {
     if (maybeMergeCommit.getParentCount() != 2) {
       logger.atFine().log("AutoMerge not required");
       return Optional.empty();
@@ -182,14 +176,14 @@ public class AutoMerger {
     String automergeRef = RefNames.refsCacheAutomerge(maybeMergeCommit.name());
     logger.atFine().log("AutoMerge ref=%s, mergeCommit=%s", automergeRef, maybeMergeCommit.name());
     if (repoView.getRef(automergeRef).isPresent()) {
-      logger.atFine().log("AutoMerge alredy exists");
+      logger.atFine().log("AutoMerge already exists");
       return Optional.empty();
     }
 
     return Optional.of(
         new ReceiveCommand(
             ObjectId.zeroId(),
-            createAutoMergeCommit(repoView, rw, ins, maybeMergeCommit),
+            createAutoMergeCommit(repoView, ins, maybeMergeCommit),
             automergeRef));
   }
 
@@ -200,23 +194,26 @@ public class AutoMerger {
    *
    * @return An auto-merge commit. Headers of the returned RevCommit are parsed.
    */
-  ObjectId createAutoMergeCommit(
-      RepoView repoView, RevWalk rw, ObjectInserter ins, RevCommit mergeCommit) throws IOException {
+  ObjectId createAutoMergeCommit(RepoView repoView, ObjectInserter ins, RevCommit mergeCommit)
+      throws IOException {
     ObjectId autoMerge;
     try (Timer1.Context<OperationType> ignored = latency.start(OperationType.ON_DISK_WRITE)) {
       autoMerge =
           createAutoMergeCommit(
-              repoView.getConfig(), rw, ins, mergeCommit, configuredMergeStrategy);
+              repoView.getConfig(),
+              repoView.getRevWalk(),
+              ins,
+              mergeCommit,
+              configuredMergeStrategy);
     }
     counter.increment(OperationType.ON_DISK_WRITE);
-    logger.atFine().log("Added %s AutoMerge ref update for commit", autoMerge.name());
     return autoMerge;
   }
 
-  Optional<RevCommit> lookupCommit(Repository repo, RevWalk rw, String refName) throws IOException {
-    Ref ref = repo.getRefDatabase().exactRef(refName);
-    if (ref != null && ref.getObjectId() != null) {
-      RevObject obj = rw.parseAny(ref.getObjectId());
+  Optional<RevCommit> lookupCommit(RepoView repoView, String refName) throws IOException {
+    Optional<ObjectId> commit = repoView.getRef(refName);
+    if (commit.isPresent()) {
+      RevObject obj = repoView.getRevWalk().parseAny(commit.get());
       if (obj instanceof RevCommit) {
         return Optional.of((RevCommit) obj);
       }
@@ -236,25 +233,50 @@ public class AutoMerger {
       RevCommit merge,
       ThreeWayMergeStrategy mergeStrategy)
       throws IOException {
+    // Use a non-flushing inserter to do the merging and do the flushing explicitly when we are done
+    // with creating the AutoMerge commit.
+    ObjectInserter nonFlushingInserter =
+        ins instanceof InMemoryInserter ? ins : new NonFlushingWrapper(ins);
+
     rw.parseHeaders(merge);
-    ResolveMerger m = (ResolveMerger) mergeStrategy.newMerger(ins, repoConfig);
+    ResolveMerger m = (ResolveMerger) mergeStrategy.newMerger(nonFlushingInserter, repoConfig);
     DirCache dc = DirCache.newInCore();
     m.setDirCache(dc);
-    // If we don't plan on saving results, use a fully in-memory inserter.
-    // Using just a non-flushing wrapper is not sufficient, since in particular DfsInserter might
-    // try to write to storage after exceeding an internal buffer size.
-    m.setObjectInserter(ins instanceof InMemoryInserter ? new NonFlushingWrapper(ins) : ins);
 
     boolean couldMerge = m.merge(merge.getParents());
 
     ObjectId treeId;
     if (couldMerge) {
       treeId = m.getResultTreeId();
+      logger.atFine().log(
+          "AutoMerge treeId=%s (no conflicts, inserter: %s)", treeId.name(), m.getObjectInserter());
     } else {
+      if (m.getResultTreeId() != null) {
+        // Merging with conflicts below uses the same DirCache instance that has been used by the
+        // Merger to attempt the merge without conflicts.
+        //
+        // The Merger uses the DirCache to do the updates, and in particular to write the result
+        // tree. DirCache caches a single DirCacheTree instance that is used to write the result
+        // tree, but it writes the result tree only if there were no conflicts.
+        //
+        // Merging with conflicts uses the same DirCache instance to write the tree with conflicts
+        // that has been used by the Merger. This means if the Merger unexpectedly wrote a result
+        // tree although there had been conflicts, then merging with conflicts uses the same
+        // DirCacheTree instance to write the tree with conflicts. However DirCacheTree#writeTree
+        // writes a tree only once and then that tree is cached. Further invocations of
+        // DirCacheTree#writeTree have no effect and return the previously created tree. This means
+        // merging with conflicts can only successfully create the tree with conflicts if the Merger
+        // didn't write a result tree yet. Hence this is checked here and we log a warning if the
+        // result tree was already written.
+        logger.atWarning().log(
+            "result tree has already been written: %s (merge: %s, conflicts: %s, failed: %s)",
+            m, m.getResultTreeId().name(), m.getUnmergedPaths(), m.getFailingPaths());
+      }
+
       treeId =
           MergeUtil.mergeWithConflicts(
               rw,
-              ins,
+              nonFlushingInserter,
               dc,
               "HEAD",
               merge.getParent(0),
@@ -262,8 +284,9 @@ public class AutoMerger {
               merge.getParent(1),
               m.getMergeResults(),
               useDiff3);
+      logger.atFine().log(
+          "AutoMerge treeId=%s (with conflicts, inserter: %s)", treeId.name(), nonFlushingInserter);
     }
-    logger.atFine().log("AutoMerge treeId=%s", treeId.name());
 
     rw.parseHeaders(merge);
     // For maximum stability, choose a single ident using the committer time of
@@ -284,7 +307,6 @@ public class AutoMerger {
 
     ObjectId commitId = ins.insert(cb);
     logger.atFine().log("AutoMerge commitId=%s", commitId.name());
-    ins.flush();
 
     if (ins instanceof InMemoryInserter) {
       // When using an InMemoryInserter we need to read back the values from that inserter because
@@ -295,6 +317,8 @@ public class AutoMerger {
       }
     }
 
+    logger.atFine().log("flushing inserter %s", ins);
+    ins.flush();
     return rw.parseCommit(commitId);
   }
 
@@ -315,5 +339,10 @@ public class AutoMerger {
 
     @Override
     public void close() {}
+
+    @Override
+    public String toString() {
+      return String.format("%s (wrapped inserter: %s)", super.toString(), ins.toString());
+    }
   }
 }

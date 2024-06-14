@@ -21,9 +21,9 @@ import com.google.gerrit.entities.Project;
 import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.server.git.GitRepositoryManager;
+import com.google.gerrit.server.git.InMemoryInserter;
 import com.google.gerrit.server.patch.DiffNotAvailableException;
 import com.google.gerrit.server.patch.DiffOperations;
-import com.google.gerrit.server.patch.DiffOptions;
 import com.google.gerrit.server.patch.gitdiff.ModifiedFile;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
@@ -34,6 +34,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevWalk;
 
@@ -57,31 +58,31 @@ public class ListOfFilesUnchangedPredicate extends ApprovalPredicate {
 
     Integer parentNum =
         isInitialCommit(ctx.changeNotes().getProjectName(), targetPatchSet.commitId()) ? 0 : 1;
-    try {
+    try (ObjectInserter ins = new InMemoryInserter(ctx.repoView().getRevWalk().getObjectReader())) {
       Map<String, ModifiedFile> baseVsCurrent =
-          diffOperations.loadModifiedFilesAgainstParent(
+          diffOperations.loadModifiedFilesAgainstParentIfNecessary(
               ctx.changeNotes().getProjectName(),
               targetPatchSet.commitId(),
               parentNum,
-              DiffOptions.DEFAULTS,
-              ctx.revWalk(),
-              ctx.repoConfig());
+              ctx.repoView(),
+              ins,
+              /* enableRenameDetection= */ false);
       Map<String, ModifiedFile> baseVsPrior =
-          diffOperations.loadModifiedFilesAgainstParent(
+          diffOperations.loadModifiedFilesAgainstParentIfNecessary(
               ctx.changeNotes().getProjectName(),
               sourcePatchSet.commitId(),
               parentNum,
-              DiffOptions.DEFAULTS,
-              ctx.revWalk(),
-              ctx.repoConfig());
+              ctx.repoView(),
+              ins,
+              /* enableRenameDetection= */ false);
       Map<String, ModifiedFile> priorVsCurrent =
-          diffOperations.loadModifiedFiles(
+          diffOperations.loadModifiedFilesIfNecessary(
               ctx.changeNotes().getProjectName(),
               sourcePatchSet.commitId(),
               targetPatchSet.commitId(),
-              DiffOptions.DEFAULTS,
-              ctx.revWalk(),
-              ctx.repoConfig());
+              ctx.repoView().getRevWalk(),
+              ctx.repoView().getConfig(),
+              /* enableRenameDetection= */ false);
       return match(baseVsCurrent, baseVsPrior, priorVsCurrent);
     } catch (DiffNotAvailableException ex) {
       throw new StorageException(

@@ -15,7 +15,6 @@
 package com.google.gerrit.server.schema;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth8.assertThat;
 
 import com.google.common.collect.ImmutableList;
 import com.google.gerrit.entities.GroupReference;
@@ -110,7 +109,7 @@ public class SchemaCreatorImplTest {
 
   private boolean hasGroup(String name) throws Exception {
     try (Repository repo = repositoryManager.openRepository(allUsersName)) {
-      List<GroupReference> nameNotes = GroupNameNotes.loadAllGroups(repo);
+      ImmutableList<GroupReference> nameNotes = GroupNameNotes.loadAllGroups(repo);
       return nameNotes.stream().anyMatch(g -> g.getName().equals(name));
     }
   }

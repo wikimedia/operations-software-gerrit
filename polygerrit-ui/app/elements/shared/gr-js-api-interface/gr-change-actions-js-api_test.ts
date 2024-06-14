@@ -57,6 +57,7 @@ suite('gr-change-actions-js-api-interface tests', () => {
         <gr-change-actions></gr-change-actions>
       `);
       element.change = {} as ChangeViewChangeInfo;
+      element.revisionActions = {};
       window.Gerrit.install(
         p => {
           plugin = p;
@@ -67,14 +68,6 @@ suite('gr-change-actions-js-api-interface tests', () => {
       changeActions = plugin.changeActions();
       // Mimic all plugins loaded.
       testResolver(pluginLoaderToken).loadPlugins([]);
-    });
-
-    test('property existence', () => {
-      const properties = ['ActionType', 'ChangeActions', 'RevisionActions'];
-      for (const p of properties) {
-        // Have to type as any to prevent 'has no index signature.'
-        assert.deepEqual((changeActions as any)[p], (element as any)[p]);
-      }
     });
 
     test('add/remove primary action keys', () => {

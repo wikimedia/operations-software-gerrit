@@ -24,12 +24,14 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableTable;
 import com.google.common.collect.Iterables;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Address;
 import com.google.gerrit.entities.AttentionSetUpdate;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.entities.Comment;
+import com.google.gerrit.entities.FixSuggestion;
 import com.google.gerrit.entities.HumanComment;
 import com.google.gerrit.entities.LabelId;
 import com.google.gerrit.entities.LegacySubmitRequirement;
@@ -658,12 +660,12 @@ public class ChangeNotesStateTest {
         newBuilder()
             .reviewerUpdates(
                 ImmutableList.of(
-                    ReviewerStatusUpdate.create(
+                    ReviewerStatusUpdate.createForReviewer(
                         Instant.ofEpochMilli(1212L),
                         Account.id(1000),
                         Account.id(2002),
                         ReviewerStateInternal.CC),
-                    ReviewerStatusUpdate.create(
+                    ReviewerStatusUpdate.createForReviewer(
                         Instant.ofEpochMilli(3434L),
                         Account.id(1000),
                         Account.id(2001),
@@ -677,13 +679,53 @@ public class ChangeNotesStateTest {
                 ReviewerStatusUpdateProto.newBuilder()
                     .setTimestampMillis(1212L)
                     .setUpdatedBy(1000)
+                    .setHasReviewer(true)
                     .setReviewer(2002)
                     .setState("CC"))
             .addReviewerUpdate(
                 ReviewerStatusUpdateProto.newBuilder()
                     .setTimestampMillis(3434L)
                     .setUpdatedBy(1000)
+                    .setHasReviewer(true)
                     .setReviewer(2001)
+                    .setState("REVIEWER"))
+            .build());
+  }
+
+  @Test
+  public void serializeReviewerByEmailUpdates() throws Exception {
+    assertRoundTrip(
+        newBuilder()
+            .reviewerUpdates(
+                ImmutableList.of(
+                    ReviewerStatusUpdate.createForReviewerByEmail(
+                        Instant.ofEpochMilli(1212L),
+                        Account.id(1000),
+                        Address.parse("email1@example.com"),
+                        ReviewerStateInternal.CC),
+                    ReviewerStatusUpdate.createForReviewerByEmail(
+                        Instant.ofEpochMilli(3434L),
+                        Account.id(1000),
+                        Address.parse("email2@example.com"),
+                        ReviewerStateInternal.REVIEWER)))
+            .build(),
+        ChangeNotesStateProto.newBuilder()
+            .setMetaId(SHA_BYTES)
+            .setChangeId(ID.get())
+            .setColumns(colsProto)
+            .addReviewerUpdate(
+                ReviewerStatusUpdateProto.newBuilder()
+                    .setTimestampMillis(1212L)
+                    .setUpdatedBy(1000)
+                    .setHasReviewerByEmail(true)
+                    .setReviewerByEmail("email1@example.com")
+                    .setState("CC"))
+            .addReviewerUpdate(
+                ReviewerStatusUpdateProto.newBuilder()
+                    .setTimestampMillis(3434L)
+                    .setUpdatedBy(1000)
+                    .setHasReviewerByEmail(true)
+                    .setReviewerByEmail("email2@example.com")
                     .setState("REVIEWER"))
             .build());
   }
@@ -1069,7 +1111,8 @@ public class ChangeNotesStateTest {
             ImmutableMap.of(
                 "date", Instant.class,
                 "updatedBy", Account.Id.class,
-                "reviewer", Account.Id.class,
+                "reviewer", new TypeLiteral<Optional<Account.Id>>() {}.getType(),
+                "reviewerByEmail", new TypeLiteral<Optional<Address>>() {}.getType(),
                 "state", ReviewerStateInternal.class));
   }
 
@@ -1161,6 +1204,7 @@ public class ChangeNotesStateTest {
                 .put("revId", String.class)
                 .put("serverId", String.class)
                 .put("unresolved", boolean.class)
+                .put("fixSuggestions", new TypeLiteral<List<FixSuggestion>>() {}.getType())
                 .build());
   }
 
@@ -1181,6 +1225,7 @@ public class ChangeNotesStateTest {
     return ChangeNotesStateProto.parseFrom(Serializer.INSTANCE.serialize(state));
   }
 
+  @CanIgnoreReturnValue
   private static ChangeNotesState assertRoundTrip(
       ChangeNotesState state, ChangeNotesStateProto expectedProto) throws Exception {
     ChangeNotesStateProto actualProto = toProto(state);

@@ -22,6 +22,7 @@ import static org.junit.Assert.assertEquals;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Sets;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
@@ -93,6 +94,9 @@ public class PushOneCommit {
 
   public interface Factory {
     PushOneCommit create(PersonIdent i, TestRepository<?> testRepo);
+
+    PushOneCommit create(
+        PersonIdent i, TestRepository<?> testRepo, boolean insertChangeIdIfNotExist);
 
     PushOneCommit create(
         PersonIdent i, TestRepository<?> testRepo, @Assisted("changeId") String changeId);
@@ -172,7 +176,7 @@ public class PushOneCommit {
   private final TestRepository<?>.CommitBuilder commitBuilder;
 
   @AssistedInject
-  PushOneCommit(
+  public PushOneCommit(
       Result.Factory pushResultFactory,
       @Assisted PersonIdent i,
       @Assisted TestRepository<?> testRepo)
@@ -181,7 +185,24 @@ public class PushOneCommit {
   }
 
   @AssistedInject
-  PushOneCommit(
+  public PushOneCommit(
+      Result.Factory pushResultFactory,
+      @Assisted PersonIdent i,
+      @Assisted TestRepository<?> testRepo,
+      @Assisted boolean insertChangeIdIfNotExist)
+      throws Exception {
+    this(
+        pushResultFactory,
+        i,
+        testRepo,
+        SUBJECT,
+        ImmutableMap.of(FILE_NAME, FILE_CONTENT),
+        /* changeId= */ null,
+        insertChangeIdIfNotExist);
+  }
+
+  @AssistedInject
+  public PushOneCommit(
       Result.Factory pushResultFactory,
       @Assisted PersonIdent i,
       @Assisted TestRepository<?> testRepo,
@@ -191,7 +212,7 @@ public class PushOneCommit {
   }
 
   @AssistedInject
-  PushOneCommit(
+  public PushOneCommit(
       Result.Factory pushResultFactory,
       @Assisted PersonIdent i,
       @Assisted TestRepository<?> testRepo,
@@ -203,18 +224,19 @@ public class PushOneCommit {
   }
 
   @AssistedInject
-  PushOneCommit(
+  public PushOneCommit(
       Result.Factory pushResultFactory,
       @Assisted PersonIdent i,
       @Assisted TestRepository<?> testRepo,
       @Assisted String subject,
       @Assisted Map<String, String> files)
       throws Exception {
-    this(pushResultFactory, i, testRepo, subject, files, null);
+    this(
+        pushResultFactory, i, testRepo, subject, files, null, /* insertChangeIdIfNotExist= */ true);
   }
 
   @AssistedInject
-  PushOneCommit(
+  public PushOneCommit(
       Result.Factory pushResultFactory,
       @Assisted PersonIdent i,
       @Assisted TestRepository<?> testRepo,
@@ -223,17 +245,44 @@ public class PushOneCommit {
       @Assisted("content") String content,
       @Nullable @Assisted("changeId") String changeId)
       throws Exception {
-    this(pushResultFactory, i, testRepo, subject, ImmutableMap.of(fileName, content), changeId);
+    this(
+        pushResultFactory,
+        i,
+        testRepo,
+        subject,
+        ImmutableMap.of(fileName, content),
+        changeId,
+        /* insertChangeIdIfNotExist= */ true);
   }
 
   @AssistedInject
-  PushOneCommit(
+  public PushOneCommit(
       Result.Factory pushResultFactory,
       @Assisted PersonIdent i,
       @Assisted TestRepository<?> testRepo,
       @Assisted("subject") String subject,
       @Assisted Map<String, String> files,
       @Nullable @Assisted("changeId") String changeId)
+      throws Exception {
+    this(
+        pushResultFactory,
+        i,
+        testRepo,
+        subject,
+        files,
+        changeId,
+        /* insertChangeIdIfNotExist= */ true);
+  }
+
+  @AssistedInject
+  public PushOneCommit(
+      Result.Factory pushResultFactory,
+      @Assisted PersonIdent i,
+      @Assisted TestRepository<?> testRepo,
+      @Assisted("subject") String subject,
+      @Assisted Map<String, String> files,
+      @Nullable @Assisted("changeId") String changeId,
+      @Assisted boolean insertChangeIdIfNotExist)
       throws Exception {
     this.testRepo = testRepo;
     this.subject = subject;
@@ -242,16 +291,24 @@ public class PushOneCommit {
     this.pushResultFactory = pushResultFactory;
     if (changeId != null) {
       commitBuilder = testRepo.amendRef("HEAD").insertChangeId(changeId.substring(1));
-    } else {
+    } else if (insertChangeIdIfNotExist) {
       if (subject.contains("\nChange-Id: ")) {
         commitBuilder = testRepo.amendRef("HEAD");
       } else {
         commitBuilder = testRepo.branch("HEAD").commit().insertChangeId(nextChangeId());
       }
+    } else {
+      commitBuilder = testRepo.amendRef("HEAD");
     }
     commitBuilder.message(subject).author(i).committer(new PersonIdent(i, testRepo.getDate()));
   }
 
+  @UsedAt(Project.GOOGLE)
+  protected TestRepository<?> testRepository() {
+    return testRepo;
+  }
+
+  @CanIgnoreReturnValue
   public PushOneCommit setParents(List<RevCommit> parents) throws Exception {
     commitBuilder.noParents();
     for (RevCommit p : parents) {
@@ -266,17 +323,20 @@ public class PushOneCommit {
     return this;
   }
 
+  @CanIgnoreReturnValue
   public PushOneCommit setParent(RevCommit parent) throws Exception {
     commitBuilder.noParents();
     commitBuilder.parent(parent);
     return this;
   }
 
+  @CanIgnoreReturnValue
   public PushOneCommit noParent() {
     commitBuilder.noParents();
     return this;
   }
 
+  @CanIgnoreReturnValue
   public PushOneCommit addFile(String path, String content, int fileMode) throws Exception {
     RevBlob blobId = testRepo.blob(content);
     commitBuilder.edit(
@@ -290,6 +350,7 @@ public class PushOneCommit {
     return this;
   }
 
+  @CanIgnoreReturnValue
   public PushOneCommit addSymlink(String path, String target) throws Exception {
     RevBlob blobId = testRepo.blob(target);
     commitBuilder.edit(
@@ -303,6 +364,7 @@ public class PushOneCommit {
     return this;
   }
 
+  @CanIgnoreReturnValue
   public PushOneCommit addGitSubmodule(String modulePath, ObjectId commitId) {
     commitBuilder.edit(
         new PathEdit(modulePath) {
@@ -315,11 +377,13 @@ public class PushOneCommit {
     return this;
   }
 
+  @CanIgnoreReturnValue
   public PushOneCommit rmFile(String filename) {
     commitBuilder.rm(filename);
     return this;
   }
 
+  @CanIgnoreReturnValue
   public Result to(String ref) throws Exception {
     for (Map.Entry<String, String> e : files.entrySet()) {
       commitBuilder.add(e.getKey(), e.getValue());
@@ -327,6 +391,7 @@ public class PushOneCommit {
     return execute(ref);
   }
 
+  @CanIgnoreReturnValue
   public Result rm(String ref) throws Exception {
     for (String fileName : files.keySet()) {
       commitBuilder.rm(fileName);
@@ -334,10 +399,11 @@ public class PushOneCommit {
     return execute(ref);
   }
 
+  @CanIgnoreReturnValue
   public Result execute(String ref) throws Exception {
     RevCommit c = commitBuilder.create();
     if (changeId == null) {
-      changeId = GitUtil.getChangeId(testRepo, c).get();
+      changeId = GitUtil.getChangeId(testRepo, c).orElse(null);
     }
     if (tag != null) {
       TagCommand tagCommand = testRepo.git().tag().setName(tag.name);
@@ -387,7 +453,7 @@ public class PushOneCommit {
       Result create(
           @Assisted("ref") String ref,
           @Assisted("subject") String subject,
-          @Assisted("changeId") String changeId,
+          @Nullable @Assisted("changeId") String changeId,
           @Nullable PushResult resSubj,
           @Nullable RevCommit commit,
           @Nullable List<String> pushOptions);
@@ -413,7 +479,7 @@ public class PushOneCommit {
         Provider<InternalChangeQuery> queryProvider,
         @Assisted("ref") String ref,
         @Assisted("subject") String subject,
-        @Assisted("changeId") String changeId,
+        @Assisted("changeId") @Nullable String changeId,
         @Assisted @Nullable PushResult resSubj,
         @Assisted @Nullable RevCommit commit,
         @Assisted @Nullable List<String> pushOptions) {
@@ -473,7 +539,7 @@ public class PushOneCommit {
 
     private void assertReviewers(
         Change c, ReviewerStateInternal state, List<TestAccount> expectedReviewers) {
-      Iterable<Account.Id> actualIds =
+      ImmutableSet<Account.Id> actualIds =
           approvalsUtil.getReviewers(notesFactory.createChecked(c)).byState(state);
       assertThat(actualIds)
           .containsExactlyElementsIn(Sets.newHashSet(TestAccount.ids(expectedReviewers)));

@@ -142,7 +142,7 @@ public class SmtpEmailSender implements EmailSender {
   @Override
   public boolean canEmail(String address) {
     if (!isEnabled()) {
-      logger.atWarning().log("Not emailing %s (email is disabled)", address);
+      logger.atFine().log("Not emailing %s (email is disabled)", address);
       return false;
     }
 
@@ -163,7 +163,7 @@ public class SmtpEmailSender implements EmailSender {
     if (denyrcpt.contains(address)
         || denyrcpt.contains(domain)
         || denyrcpt.contains("@" + domain)) {
-      logger.atInfo().log("Not emailing %s (prohibited by sendemail.denyrcpt)", address);
+      logger.atFine().log("Not emailing %s (prohibited by sendemail.denyrcpt)", address);
       return true;
     }
 
@@ -182,7 +182,7 @@ public class SmtpEmailSender implements EmailSender {
       return true;
     }
 
-    logger.atWarning().log("Not emailing %s (prohibited by sendemail.allowrcpt)", address);
+    logger.atFine().log("Not emailing %s (prohibited by sendemail.allowrcpt)", address);
     return false;
   }
 
@@ -258,7 +258,8 @@ public class SmtpEmailSender implements EmailSender {
                 "Server " + smtpHost + " rejected message body: " + client.getReplyString());
           }
 
-          client.logout();
+          @SuppressWarnings("unused")
+          var unused = client.logout();
           if (rejected.length() > 0) {
             throw new EmailException(rejected.toString());
           }

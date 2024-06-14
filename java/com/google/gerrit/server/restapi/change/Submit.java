@@ -50,6 +50,7 @@ import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.account.AccountResolver;
 import com.google.gerrit.server.change.ChangeJson;
 import com.google.gerrit.server.change.ChangeResource;
+import com.google.gerrit.server.change.MergeabilityComputationBehavior;
 import com.google.gerrit.server.change.RevisionResource;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.git.GitRepositoryManager;
@@ -73,7 +74,7 @@ import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Map;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.eclipse.jgit.errors.ConfigInvalidException;
@@ -119,6 +120,8 @@ public class Submit
   private final PatchSetUtil psUtil;
   private final ProjectCache projectCache;
   private final ChangeJson.Factory json;
+
+  private final boolean useMergeabilityCheck;
 
   @Inject
   Submit(
@@ -166,6 +169,7 @@ public class Submit
     this.psUtil = psUtil;
     this.projectCache = projectCache;
     this.json = json;
+    this.useMergeabilityCheck = MergeabilityComputationBehavior.fromConfig(cfg).includeInApi();
   }
 
   @Override
@@ -278,6 +282,9 @@ public class Submit
         }
       }
 
+      if (!useMergeabilityCheck) {
+        return null;
+      }
       Collection<ChangeData> unmergeable = getUnmergeableChanges(cs);
       if (unmergeable == null) {
         return CLICK_FAILURE_TOOLTIP;
@@ -347,10 +354,10 @@ public class Submit
     // cd.setMergeable(null);
     // That was done in unmergeableChanges which was called by problemsForSubmittingChangeset, so
     // now it is safe to read from the cache, as it yields the same result.
-    Boolean enabled = cd.isMergeable();
+    Boolean enabled = useMergeabilityCheck ? cd.isMergeable() : true;
 
     if (treatWithTopic) {
-      Map<String, String> params =
+      ImmutableMap<String, String> params =
           ImmutableMap.of(
               "topicSize", String.valueOf(topicSize),
               "submitSize", String.valueOf(cs.size()));
@@ -360,7 +367,7 @@ public class Submit
           .setVisible(true)
           .setEnabled(Boolean.TRUE.equals(enabled));
     }
-    Map<String, String> params =
+    ImmutableMap<String, String> params =
         ImmutableMap.of(
             "patchSet", String.valueOf(resource.getPatchSet().number()),
             "branch", change.getDest().shortName(),
@@ -384,7 +391,7 @@ public class Submit
     }
     ListMultimap<BranchNameKey, ChangeData> cbb = cs.changesByBranch();
     for (BranchNameKey branch : cbb.keySet()) {
-      Collection<ChangeData> targetBranch = cbb.get(branch);
+      List<ChangeData> targetBranch = cbb.get(branch);
       HashMap<Change.Id, RevCommit> commits = mapToCommits(targetBranch, branch.project());
       Set<ObjectId> allParents =
           commits.values().stream()

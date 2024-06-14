@@ -348,7 +348,11 @@ export class GrChangeSummary extends LitElement {
             <gr-icon icon="info" filled></gr-icon>
           </div>
           <div class="right">
-            <div class="message" title=${m}>${m}</div>
+            <gr-formatted-text
+              class="message"
+              .markdown=${true}
+              .content=${m}
+            ></gr-formatted-text>
           </div>
         </div>
       `
@@ -534,11 +538,8 @@ export class GrChangeSummary extends LitElement {
           <tr>
             <td class="key">Comments</td>
             <td class="value">
-              ${when(
-                this.commentsLoading,
-                () => html`<span class="loadingSpin"></span>`
-              )}
               <gr-comments-summary
+                .commentsLoading=${this.commentsLoading}
                 .commentThreads=${this.commentThreads}
                 .draftCount=${this.draftCount}
                 .mentionCount=${this.mentionCount}

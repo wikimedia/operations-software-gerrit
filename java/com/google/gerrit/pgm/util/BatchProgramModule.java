@@ -27,7 +27,6 @@ import com.google.gerrit.extensions.config.FactoryModule;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.extensions.restapi.RestView;
-import com.google.gerrit.server.ChangeDraftUpdate;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.DefaultRefLogIdentityProvider;
 import com.google.gerrit.server.IdentifiedUser;
@@ -73,9 +72,9 @@ import com.google.gerrit.server.extensions.events.WorkInProgressStateChanged;
 import com.google.gerrit.server.git.ChangesByProjectCache;
 import com.google.gerrit.server.git.PureRevertCache;
 import com.google.gerrit.server.git.TagCache;
-import com.google.gerrit.server.notedb.ChangeDraftNotesUpdate;
 import com.google.gerrit.server.notedb.NoteDbModule;
 import com.google.gerrit.server.patch.DiffExecutorModule;
+import com.google.gerrit.server.patch.DiffOperationsForCommitValidation;
 import com.google.gerrit.server.patch.DiffOperationsImpl;
 import com.google.gerrit.server.patch.PatchListCacheImpl;
 import com.google.gerrit.server.permissions.DefaultPermissionBackendModule;
@@ -114,7 +113,7 @@ import org.eclipse.jgit.lib.Config;
 
 /** Module for programs that perform batch operations on a site. */
 public class BatchProgramModule extends FactoryModule {
-  private Injector parentInjector;
+  private final Injector parentInjector;
 
   public BatchProgramModule(Injector parentInjector) {
     this.parentInjector = parentInjector;
@@ -164,6 +163,7 @@ public class BatchProgramModule extends FactoryModule {
     bind(CurrentUser.class).to(InternalUser.class);
     factory(PatchSetInserter.Factory.class);
     factory(RebaseChangeOp.Factory.class);
+    factory(DiffOperationsForCommitValidation.Factory.class);
 
     bind(new TypeLiteral<ImmutableSet<GroupReference>>() {})
         .annotatedWith(AdministrateServerGroups.class)
@@ -185,6 +185,7 @@ public class BatchProgramModule extends FactoryModule {
     modules.add(new GroupModule());
     modules.add(new NoteDbModule());
     modules.add(AccountCacheImpl.module());
+    modules.add(AccountCacheImpl.bindingModule());
     modules.add(ConflictsCacheImpl.module());
     modules.add(DefaultPreferencesCacheImpl.module());
     modules.add(GroupCacheImpl.module());
@@ -204,7 +205,6 @@ public class BatchProgramModule extends FactoryModule {
     factory(DistinctVotersPredicate.Factory.class);
     factory(HasSubmoduleUpdatePredicate.Factory.class);
     factory(ProjectState.Factory.class);
-    bind(ChangeDraftUpdate.ChangeDraftUpdateFactory.class).to(ChangeDraftNotesUpdate.Factory.class);
 
     DynamicMap.mapOf(binder(), ChangeQueryBuilder.ChangeOperatorFactory.class);
     DynamicMap.mapOf(binder(), ChangeQueryBuilder.ChangeHasOperandFactory.class);

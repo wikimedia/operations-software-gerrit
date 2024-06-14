@@ -18,6 +18,7 @@ import com.google.auto.value.AutoValue;
 import com.google.common.cache.Cache;
 import com.google.common.cache.Weigher;
 import com.google.common.flogger.FluentLogger;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
@@ -93,7 +94,7 @@ public class ChangesByProjectCacheImpl implements ChangesByProjectCache {
     if (projectChanges != null) {
       return projectChanges
           .getUpdatedChangeDatas(
-              project, repo, cdFactory, ChangeNotes.Factory.scanChangeIds(repo), "Updating")
+              project, cdFactory, ChangeNotes.Factory.scanChangeIds(repo), "Updating")
           .stream();
     }
     if (UseIndex.TRUE.equals(useIndex)) {
@@ -113,19 +114,18 @@ public class ChangesByProjectCacheImpl implements ChangesByProjectCache {
     }
     return projectChanges.getUpdatedChangeDatas(
         project,
-        repo,
         cdFactory,
         ChangeNotes.Factory.scanChangeIds(repo),
         ours == projectChanges ? "Scanning" : "Updating");
   }
 
-  private Collection<ChangeData> queryChangeDatasAndLoad(Project.NameKey project) {
-    Collection<ChangeData> cds = queryChangeDatas(project);
+  private List<ChangeData> queryChangeDatasAndLoad(Project.NameKey project) {
+    List<ChangeData> cds = queryChangeDatas(project);
     cache.put(project, new CachedProjectChanges(cds));
     return cds;
   }
 
-  private Collection<ChangeData> queryChangeDatas(Project.NameKey project) {
+  private List<ChangeData> queryChangeDatas(Project.NameKey project) {
     try (TraceTimer timer =
         TraceContext.newTimer(
             "Querying changes of project", Metadata.builder().projectName(project.get()).build())) {
@@ -150,7 +150,6 @@ public class ChangesByProjectCacheImpl implements ChangesByProjectCache {
 
     public Collection<ChangeData> getUpdatedChangeDatas(
         Project.NameKey project,
-        Repository repo,
         ChangeData.Factory cdFactory,
         Map<Change.Id, ObjectId> metaObjectIdByChange,
         String operation) {
@@ -179,6 +178,7 @@ public class ChangesByProjectCacheImpl implements ChangesByProjectCache {
       }
     }
 
+    @CanIgnoreReturnValue
     public CachedProjectChanges update(ChangeData old, ChangeData updated) {
       if (old != null) {
         if (old.isPrivateOrThrow()) {
@@ -194,6 +194,7 @@ public class ChangesByProjectCacheImpl implements ChangesByProjectCache {
       return insert(updated);
     }
 
+    @CanIgnoreReturnValue
     public CachedProjectChanges insert(ChangeData cd) {
       if (cd.isPrivateOrThrow()) {
         privateChangeById.put(

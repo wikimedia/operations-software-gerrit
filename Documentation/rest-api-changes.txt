@@ -63,7 +63,8 @@ the resulting change.
     "_number": 4711,
     "owner": {
       "name": "John Doe"
-    }
+    },
+    "current_revision_number": 2
   }
 ----
 
@@ -126,6 +127,7 @@ Query for open changes of watched projects:
       "owner": {
         "name": "John Doe"
       },
+      "current_revision_number": 2
     },
     {
       "id": "demo~master~I09c8041b5867d5b33170316e2abc34b79bbb8501",
@@ -143,6 +145,7 @@ Query for open changes of watched projects:
       "owner": {
         "name": "John Doe"
       },
+      "current_revision_number": 2,
       "_more_changes": true
     }
   ]
@@ -214,7 +217,8 @@ Query that retrieves changes for a user's dashboard:
         "labels": {
           "Verified": {},
           "Code-Review": {}
-        }
+        },
+        "current_revision_number": 2
       }
     ],
     [],
@@ -437,6 +441,7 @@ link:#approval-info[ApprovalInfo] of the `all` attribute.
       "owner": {
         "name": "Shawn Pearce"
       },
+      "current_revision_number": 1,
       "current_revision": "184ebe53805e102605d11f6b143486d15c23a09c",
       "revisions": {
         "184ebe53805e102605d11f6b143486d15c23a09c": {
@@ -598,7 +603,8 @@ describes the change.
     "_number": 3965,
     "owner": {
       "name": "John Doe"
-    }
+    },
+    "current_revision_number": 2
   }
 ----
 
@@ -680,7 +686,8 @@ returned. Only fields that differ between the change's two states are returned.
       "_number": 3965,
       "owner": {
         "name": "John Doe"
-      }
+      },
+      "current_revision_number": 2
     },
     "new_change_info": {
       "id": "myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940",
@@ -709,7 +716,8 @@ returned. Only fields that differ between the change's two states are returned.
       "_number": 3965,
       "owner": {
         "name": "John Doe"
-      }
+      },
+      "current_revision_number": 2
     },
   }
 ----
@@ -978,7 +986,8 @@ REJECTED > APPROVED > DISLIKED > RECOMMENDED.
         "message": "Patch Set 1:\n\nThis is the second message.\n\nWith a line break.",
         "_revision_number": 1
       }
-    ]
+    ],
+    "current_revision_number": 2
   }
 ----
 
@@ -1040,7 +1049,41 @@ returned that describes the resulting change.
     "owner": {
       "_account_id": 1000000
     },
+    "current_revision_number": 1,
     "current_revision": "27cc4558b5a3d3387dd11ee2df7a117e7e581822"
+  }
+----
+
+[[get-message]]
+=== Get Commit Message
+--
+'GET /changes/link:#change-id[\{change-id\}]/message'
+--
+
+Returns the commit message of the change (from the current patch set).
+
+.Request
+----
+  GET /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/message HTTP/1.0
+----
+
+The commit message is returned as a link:#commit-message-info[
+CommitMessageInfo] entity.
+
+Response
+----
+  HTTP/1.1 200 OK
+  Content-Disposition: attachment
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    "subject": "Add feature X",
+    "full_message": "Add Feature X\n\nFeature X helps with foo.\n\nBug: 123\nChange-Id: I10394472cbd17dd12454f229e4f6de00b143a444\n",
+    "footers": {
+      "Bug": "123",
+      "Change-Id": "I10394472cbd17dd12454f229e4f6de00b143a444"
+    }
   }
 ----
 
@@ -1235,7 +1278,8 @@ describes the abandoned change.
     "_number": 3965,
     "owner": {
       "name": "John Doe"
-    }
+    },
+    "current_revision_number": 2
   }
 ----
 
@@ -1306,7 +1350,8 @@ describes the restored change.
     "_number": 3965,
     "owner": {
       "name": "John Doe"
-    }
+    },
+    "current_revision_number": 2
   }
 ----
 
@@ -1330,6 +1375,9 @@ the error message is contained in the response body.
 --
 
 Rebases a change.
+
+For merge commits always the first parent is rebased. This means the new base becomes the first
+parent of the rebased merge commit while the second parent stays intact.
 
 If one of the secondary emails associated with the user performing the operation was used as the
 committer email in the current patch set, the same email will be used as the committer email in the
@@ -1375,6 +1423,7 @@ is included.
     "owner": {
       "name": "John Doe"
     },
+    "current_revision_number": 2,
     "current_revision": "27cc4558b5a3d3387dd11ee2df7a117e7e581822",
     "revisions": {
       "27cc4558b5a3d3387dd11ee2df7a117e7e581822": {
@@ -1525,6 +1574,7 @@ are included.
         "owner": {
           "_account_id": 1000000
         },
+        "current_revision_number": 2,
         "current_revision": "c3b2ba222d42a56e05c90f88d4509a124620517d",
         "revisions": {
           "c3b2ba222d42a56e05c90f88d4509a124620517d": {
@@ -1602,6 +1652,7 @@ are included.
         "owner": {
           "_account_id": 1000000
         },
+        "current_revision_number": 2,
         "current_revision": "77eb17a9501a5c21963bc6af56085e60f281acbb",
         "revisions": {
           "77eb17a9501a5c21963bc6af56085e60f281acbb": {
@@ -1726,7 +1777,8 @@ describes the moved change.
     "_number": 3965,
     "owner": {
       "name": "John Doe"
-    }
+    },
+    "current_revision_number": 2
   }
 ----
 
@@ -1805,7 +1857,8 @@ describes the reverting change.
     "_number": 3965,
     "owner": {
       "name": "John Doe"
-    }
+    },
+    "current_revision_number": 2
   }
 ----
 
@@ -1899,7 +1952,8 @@ is returned. That entity describes the revert changes.
         "_number": 3965,
         "owner": {
           "name": "John Doe"
-        }
+        },
+        "current_revision_number": 2
       },
       {
         "id": "anyProject~master~1eee2c9d8f352483781e772f35dc586a69ff5646",
@@ -1917,7 +1971,8 @@ is returned. That entity describes the revert changes.
         "_number": 3966,
         "owner": {
           "name": "Jane Doe"
-        }
+        },
+        "current_revision_number": 2
       }
     ]
 ----
@@ -2002,7 +2057,8 @@ of *that* topic will also be submitted).
     "_number": 3965,
     "owner": {
       "name": "John Doe"
-    }
+    },
+    "current_revision_number": 2
   }
 ----
 
@@ -2155,6 +2211,7 @@ options `NON_VISIBLE_CHANGES` and `TOPIC_CLOSURE`.
           }
         ]
       },
+      "current_revision_number": 1,
       "current_revision": "9adb9f4c7b40eeee0646e235de818d09164d7379",
       "revisions": {
         "9adb9f4c7b40eeee0646e235de818d09164d7379": {
@@ -2252,6 +2309,7 @@ options `NON_VISIBLE_CHANGES` and `TOPIC_CLOSURE`.
           }
         ]
       },
+      "current_revision_number": 1,
       "current_revision": "1bd7c12a38854a2c6de426feec28800623f492c4",
       "revisions": {
         "1bd7c12a38854a2c6de426feec28800623f492c4": {
@@ -2361,6 +2419,7 @@ describes the destination change after applying the patch.
     "owner": {
       "name": "John Doe"
     },
+    "current_revision_number": 1,
     "current_revision": "184ebe53805e102605d11f6b143486d15c23a09c"
   }
 ----
@@ -2477,7 +2536,7 @@ only works if `enable-context` is set to true.
 ----
 
 [[list-change-robot-comments]]
-=== List Change Robot Comments
+=== List Change Robot Comments (deprecated)
 --
 'GET /changes/link:#change-id[\{change-id\}]/robotcomments'
 --
@@ -2625,6 +2684,7 @@ missing from the result. At least `id`, `project`, `branch`, and
     "owner": {
       "name": "John Doe"
     },
+    "current_revision_number": 2,
     "problems": [
       {
         "message": "Current patch set 1 not found"
@@ -2677,6 +2737,7 @@ Only the change owner, a project owner, or an administrator may fix changes.
     "owner": {
       "name": "John Doe"
     },
+    "current_revision_number": 2,
     "problems": [
       {
         "message": "Current patch set 2 not found"
@@ -3383,6 +3444,36 @@ When change edit doesn't exist for this change yet it is created.
   HTTP/1.1 204 No Content
 ----
 
+[[put-change-edit-committer-author-identity]]
+=== Change author or committer identity in Change Edit
+--
+'PUT /changes/link:#change-id[\{change-id\}]/edit:identity'
+--
+
+Modify author or committer identity. The request body needs to include a
+link:#change-edit-identity-input[ChangeEditIdentityInput]
+entity. Either `name` or `email` must be provided. `type` must be either `AUTHOR` or `COMMITTER`.
+
+.Request
+----
+  PUT /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/edit:identity HTTP/1.0
+  Content-Type: application/json; charset=UTF-8
+
+  {
+    "name": "John Doe",
+    "email": "john.doe@example.com",
+    "type": "COMMITTER"
+  }
+----
+
+If a change edit doesn't exist for this change yet, it is created. As
+response "`204 No Content`" is returned.
+
+.Response
+----
+  HTTP/1.1 204 No Content
+----
+
 [[get-edit-file]]
 === Retrieve file content from Change Edit
 --
@@ -3642,10 +3733,22 @@ limit is not passed, then the default 10 is used.
 This REST endpoint only suggests accounts that
 
 * are active
+
 * can see the change
-* are visible to the calling user
+
+* are visible to the calling user:
++
+Whether an account is visible to the calling user depends on the
+link:config-gerrit.html#accounts.visibility[accounts.visibility] setting of the
+server. Which account visibility is configured can be checked by opening
+`https://<HOST>/config/server/info?pp=1` in a browser (see field `accounts` >
+link:rest-api-config.html#accounts-config-info[visibility] in the returned
+JSON).
+
 * are not already reviewer on the change
+
 * don't own the change
+
 * are not service users (unless
   link:config.html#suggest.skipServiceUsers[skipServiceUsers] is set to `false`)
 
@@ -4349,6 +4452,7 @@ for the current patch set.
         }
       ]
     },
+    "current_revision_number": 2,
     "current_revision": "674ac754f91e64a0efb8087e59a176484bd534d1",
     "revisions": {
       "674ac754f91e64a0efb8087e59a176484bd534d1": {
@@ -4740,6 +4844,7 @@ is included.
     "owner": {
       "name": "John Doe"
     },
+    "current_revision_number": 2,
     "current_revision": "27cc4558b5a3d3387dd11ee2df7a117e7e581822",
     "revisions": {
       "27cc4558b5a3d3387dd11ee2df7a117e7e581822": {
@@ -4840,7 +4945,8 @@ of *that* topic will also be submitted).
     "_number": 3965,
     "owner": {
       "name": "John Doe"
-    }
+    },
+    "current_revision_number": 2
   }
 ----
 
@@ -5392,7 +5498,7 @@ describes the updated comment.
 ----
 
 [[list-robot-comments]]
-=== List Robot Comments
+=== List Robot Comments (deprecated)
 --
 'GET /changes/link:#change-id[\{change-id\}]/revisions/link:#revision-id[\{revision-id\}]/robotcomments/'
 --
@@ -5449,7 +5555,7 @@ map are sorted by file path.
 ----
 
 [[get-robot-comment]]
-=== Get Robot Comment
+=== Get Robot Comment (deprecated)
 --
 'GET /changes/link:#change-id[\{change-id\}]/revisions/link:#revision-id[\{revision-id\}]/robotcomments/link:#comment-id[\{comment-id\}]'
 --
@@ -5689,7 +5795,7 @@ is returned.
   Content-Disposition: attachment
   Content-Type: text/plain; charset=UTF-8
 
-  The existing change edit could not be merged with another tree.
+  Rebasing change edit onto another patchset results in merge conflicts. Download the edit patchset and rebase manually to preserve changes.
 ----
 
 [[apply-provided-fix]]
@@ -6413,7 +6519,8 @@ describes the resulting cherry-pick change.
     "_number": 3965,
     "owner": {
       "name": "John Doe"
-    }
+    },
+    "current_revision_number": 2
   }
 ----
 
@@ -7021,6 +7128,19 @@ the commit message within a change edit.
 |`message`     ||New commit message.
 |===========================
 
+[[change-edit-identity-input]]
+=== ChangeEditIdentityInput
+The `ChangeEditIdentityInput` entity contains information for changing
+the author or committer identity within a change edit.
+
+[options="header",cols="1,^1,5"]
+|===========================
+|Field Name    ||Description
+|`name`     |optional|The name of the author/committer. If not specified, the existing name will be used.
+|`email`    |optional|The email of the author/committer. If not specified, the existing email will be used.
+|`type`     ||Type of the identity being edited. Must be either `AUTHOR` or `COMMITTER`.
+|===========================
+
 [[change-info]]
 === ChangeInfo
 The `ChangeInfo` entity contains information about a change.
@@ -7150,11 +7270,9 @@ link:#detailed-labels[detailed labels] are requested.
 |`reviewers`          |optional|
 The reviewers as a map that maps a reviewer state to a list of
 link:rest-api-accounts.html#account-info[AccountInfo] entities.
-Possible reviewer states are `REVIEWER`, `CC` and `REMOVED`. +
+Possible reviewer states are `REVIEWER`, `CC`. +
 `REVIEWER`: Users with at least one non-zero vote on the change. +
 `CC`: Users that were added to the change, but have not voted. +
-`REMOVED`: Users that were previously reviewers on the change, but have
-been removed. +
 Only set if link:#labels[labels] or
 link:#detailed-labels[detailed labels] are requested.
 |`pending_reviewers`  |optional|
@@ -7164,6 +7282,11 @@ reviewer updates to report. These are reviewers who have not yet been
 notified about being added to or removed from the change. +
 Only set if link:#labels[labels] or
 link:#detailed-labels[detailed labels] are requested.
+Possible states are `REVIEWER`, `CC` and `REMOVED`. +
+`REVIEWER`: Users with at least one non-zero vote on the change. +
+`CC`: Users that were added to the change, but have not voted. +
+`REMOVED`: Users that were previously reviewers on the change, but have
+been removed.
 |`reviewer_updates`|optional|
 Updates to reviewers set for the change as
 link:#review-update-info[ReviewerUpdateInfo] entities.
@@ -7172,6 +7295,8 @@ Only set if link:#reviewer-updates[reviewer updates] are requested.
 Messages associated with the change as a list of
 link:#change-message-info[ChangeMessageInfo] entities. +
 Only set if link:#messages[messages] are requested.
+|`current_revision_number`||The number of the current patch set of this
+change. +
 |`current_revision`   |optional|
 The commit ID of the current patch set of this change. +
 Only set if link:#current-revision[the current revision] is requested
@@ -7471,7 +7596,8 @@ parameter (see link:#list-change-comments[List Change Comments]) is set.
 Mime type of the file where the comment is written. Available only if the
 "enable-context" parameter (see link:#list-change-comments[List Change Comments])
 is set.
-
+|`fix_suggestions`|optional|Suggested fixes for this comment as a list of
+<<fix-suggestion-info,FixSuggestionInfo>> entities.
 |===========================
 
 [[comment-input]]
@@ -7519,6 +7645,8 @@ link:#review-input[ReviewInput]. Votes/comments that contain `tag` with
 Whether or not the comment must be addressed by the user. This value will
 default to false if the comment is an orphan, or the value of the `in_reply_to`
 comment if it is supplied.
+|`fix_suggestions`|optional|Suggested fixes for this comment as a list of
+<<fix-suggestion-info,FixSuggestionInfo>> entities.
 |===========================
 
 [[comment-range]]
@@ -7585,6 +7713,21 @@ Links to the commit in external sites for resolving conflicts as a list of
 link:#web-link-info[WebLinkInfo] entities.
 |===========================
 
+[[commit-message-info]]
+=== CommitMessageInfo
+The `CommitMessageInfo` entity contains information about the commit
+message of a change.
+
+[options="header",cols="1,6"]
+|============================
+|Field Name     |Description
+|`subject`      |The subject of the change (first line of the commit
+message).
+|`full_message` |Full commit message of the change.
+|`footers`      |The footers from the commit message as a map of
+key-value pairs.
+|============================
+
 [[commit-message-input]]
 === CommitMessageInput
 The `CommitMessageInput` entity contains information for changing
@@ -7594,6 +7737,9 @@ the commit message of a change.
 |=============================
 |Field Name      ||Description
 |`message`       ||New commit message.
+|`committer_email`|optional|
+New message is committed using this email address. Only the
+registered emails of the calling user are considered valid.
 |`notify`        |optional|
 Notify handling that defines to whom email notifications should be sent
 after the commit message was updated. +
@@ -8527,8 +8673,10 @@ Timestamp of the update.
 The account which modified state of the reviewer in question as
 link:rest-api-accounts.html#account-info[AccountInfo] entity.
 |`reviewer`|
-The reviewer account added or removed from the change as an
-link:rest-api-accounts.html#account-info[AccountInfo] entity.
+The reviewer added or removed from the change as an
+link:rest-api-accounts.html#account-info[AccountInfo] entity. For
+reviewers by email the `AccountInfo` doesn't contain an account ID but
+only the email and optionally a name.
 |`state`|
 The reviewer state, one of `REVIEWER`, `CC` or `REMOVED`.
 |===========================
@@ -8557,7 +8705,7 @@ label names to the voting values.
 |`comments`                             |optional|
 The comments that should be added as a map that maps a file path to a
 list of link:#comment-input[CommentInput] entities.
-|`robot_comments`                       |optional|
+|`robot_comments`                       |optional, deprecated|
 The robot comments that should be added as a map that maps a file path
 to a list of link:#robot-comment-input[RobotCommentInput] entities.
 |`drafts`                               |optional|
@@ -8636,9 +8784,8 @@ If true, the change was moved from WIP to ready for review as a result of this
 action. Not set if false.
 |`error`                  |optional|
 Error message for non-200 responses.
-|`change_info`            |optional|
-Post-update change information. Only set if `response_format_options` were
-set.
+|`change_info`            ||
+Post-update change information.
 |============================
 
 [[reviewer-info]]
@@ -8807,7 +8954,7 @@ selector menu. May be null if no description is set.
 |===========================
 
 [[robot-comment-info]]
-=== RobotCommentInfo
+=== RobotCommentInfo (deprecated)
 The `RobotCommentInfo` entity contains information about a robot inline
 comment.
 
@@ -8823,12 +8970,10 @@ In addition `RobotCommentInfo` has the following fields:
 |`url`            |optional|URL to more information.
 |`properties`     |optional|Robot specific properties as map that maps arbitrary
 keys to values.
-|`fix_suggestions`|optional|Suggested fixes for this robot comment as a list of
-<<fix-suggestion-info,FixSuggestionInfo>> entities.
 |===========================
 
 [[robot-comment-input]]
-=== RobotCommentInput
+=== RobotCommentInput (deprecated)
 The `RobotCommentInput` entity contains information for creating an inline
 robot comment.
 
@@ -8858,8 +9003,6 @@ The comment message.
 |`url`            |optional|URL to more information.
 |`properties`     |optional|Robot specific properties as map that maps arbitrary
 keys to values.
-|`fix_suggestions`|optional|Suggested fixes for this robot comment as a list of
-<<fix-suggestion-info,FixSuggestionInfo>> entities.
 |===========================
 
 [[rule-input]]

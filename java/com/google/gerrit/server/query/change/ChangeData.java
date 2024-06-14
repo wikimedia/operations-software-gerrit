@@ -36,6 +36,7 @@ import com.google.common.collect.SetMultimap;
 import com.google.common.collect.Table;
 import com.google.common.flogger.FluentLogger;
 import com.google.common.primitives.Ints;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.UsedAt;
 import com.google.gerrit.entities.Account;
@@ -49,7 +50,6 @@ import com.google.gerrit.entities.LabelTypes;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.Project;
-import com.google.gerrit.entities.Project.NameKey;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.entities.RobotComment;
 import com.google.gerrit.entities.SubmitRecord;
@@ -167,7 +167,8 @@ public class ChangeData {
     }
 
     for (ChangeData cd : changes) {
-      cd.change();
+      @SuppressWarnings("unused")
+      var unused = cd.change();
     }
   }
 
@@ -178,7 +179,8 @@ public class ChangeData {
     }
 
     for (ChangeData cd : changes) {
-      cd.patchSets();
+      @SuppressWarnings("unused")
+      var unused = cd.patchSets();
     }
   }
 
@@ -189,7 +191,8 @@ public class ChangeData {
     }
 
     for (ChangeData cd : changes) {
-      cd.currentPatchSet();
+      @SuppressWarnings("unused")
+      var unused = cd.currentPatchSet();
     }
   }
 
@@ -200,7 +203,8 @@ public class ChangeData {
     }
 
     for (ChangeData cd : changes) {
-      cd.currentApprovals();
+      @SuppressWarnings("unused")
+      var unused = cd.currentApprovals();
     }
   }
 
@@ -211,7 +215,8 @@ public class ChangeData {
     }
 
     for (ChangeData cd : changes) {
-      cd.messages();
+      @SuppressWarnings("unused")
+      var unused = cd.messages();
     }
   }
 
@@ -227,7 +232,8 @@ public class ChangeData {
       ensureAllPatchSetsLoaded(pending);
       ensureMessagesLoaded(pending);
       for (ChangeData cd : pending) {
-        cd.reviewedBy();
+        @SuppressWarnings("unused")
+        var unused = cd.reviewedBy();
       }
     }
   }
@@ -437,7 +443,7 @@ public class ChangeData {
 
   private ImmutableList<Account.Id> stars;
   private Account.Id starredBy;
-  private ImmutableMap<Account.Id, Ref> starRefs;
+  private ImmutableList<Account.Id> starAccounts;
   private ReviewerSet reviewers;
   private ReviewerByEmailSet reviewersByEmail;
   private ReviewerSet pendingReviewers;
@@ -451,7 +457,7 @@ public class ChangeData {
   private Integer totalCommentCount;
   private LabelTypes labelTypes;
   private Optional<Instant> mergedOn;
-  private ImmutableSetMultimap<NameKey, RefState> refStates;
+  private ImmutableSetMultimap<Project.NameKey, RefState> refStates;
   private ImmutableList<byte[]> refStatePatterns;
   private String changeServerId;
   private ChangeNumberVirtualIdAlgorithm virtualIdFunc;
@@ -528,6 +534,7 @@ public class ChangeData {
    * lazyLoad} is on, the {@code ChangeData} object will load from the database ("lazily") when a
    * field accessor is called.
    */
+  @CanIgnoreReturnValue
   public ChangeData setStorageConstraint(StorageConstraint storageConstraint) {
     this.storageConstraint = storageConstraint;
     return this;
@@ -655,7 +662,7 @@ public class ChangeData {
     }
 
     for (ChangeData cd : changes) {
-      cd.changeServerId();
+      var unused = cd.changeServerId();
     }
   }
 
@@ -687,7 +694,9 @@ public class ChangeData {
         return BranchNameKey.create(project, branch);
       }
       throwIfNotLazyLoad("branch");
-      change();
+
+      @SuppressWarnings("unused")
+      var unused = change();
     }
     return change.getDest();
   }
@@ -698,36 +707,49 @@ public class ChangeData {
         return isPrivate;
       }
       throwIfNotLazyLoad("isPrivate");
-      change();
+
+      @SuppressWarnings("unused")
+      var unused = change();
     }
     return change.isPrivate();
   }
 
+  @CanIgnoreReturnValue
   public ChangeData setMetaRevision(ObjectId metaRevision) {
     this.metaRevision = metaRevision;
     return this;
   }
 
-  public ObjectId metaRevisionOrThrow() {
+  public Optional<ObjectId> metaRevision() {
     if (notes == null) {
       if (metaRevision != null) {
-        return metaRevision;
+        return Optional.of(metaRevision);
       }
       if (refStates != null) {
-        Set<RefState> refs = refStates.get(project);
+        ImmutableSet<RefState> refs = refStates.get(project);
         if (refs != null) {
           String metaRef = RefNames.changeMetaRef(getId());
           for (RefState r : refs) {
             if (r.ref().equals(metaRef)) {
-              return r.id();
+              return Optional.of(r.id());
             }
           }
         }
       }
-      throwIfNotLazyLoad("metaRevision");
-      notes();
+      if (!lazyload()) {
+        return Optional.empty();
+      }
+
+      @SuppressWarnings("unused")
+      var unused = notes();
     }
-    return notes.getRevision();
+    metaRevision = notes.getRevision();
+    return Optional.of(metaRevision);
+  }
+
+  public ObjectId metaRevisionOrThrow() {
+    return metaRevision()
+        .orElseThrow(() -> new IllegalStateException("'metaRevision' field not populated"));
   }
 
   boolean fastIsVisibleTo(CurrentUser user) {
@@ -738,6 +760,7 @@ public class ChangeData {
     visibleTo = user;
   }
 
+  @Nullable
   public Change change() {
     if (change == null && lazyload()) {
       loadChange();
@@ -749,11 +772,13 @@ public class ChangeData {
     change = c;
   }
 
+  @CanIgnoreReturnValue
   public Change reloadChange() {
     metaRevision = null;
     return loadChange();
   }
 
+  @CanIgnoreReturnValue
   private Change loadChange() {
     try {
       notes = notesFactory.createChecked(project, legacyId, metaRevision);
@@ -782,6 +807,7 @@ public class ChangeData {
       }
       notes = notesFactory.create(project(), legacyId, metaRevision);
       change = notes.getChange();
+      setPatchSets(null);
     }
     return notes;
   }
@@ -1166,7 +1192,7 @@ public class ChangeData {
    */
   public Map<SubmitRequirement, SubmitRequirementResult> submitRequirementsIncludingLegacy() {
     Map<SubmitRequirement, SubmitRequirementResult> projectConfigReqs = submitRequirements();
-    Map<SubmitRequirement, SubmitRequirementResult> legacyReqs =
+    ImmutableMap<SubmitRequirement, SubmitRequirementResult> legacyReqs =
         SubmitRequirementsAdapter.getLegacyRequirements(this);
     return submitRequirementsUtil.mergeLegacyAndNonLegacyRequirements(
         projectConfigReqs, legacyReqs, this);
@@ -1432,7 +1458,7 @@ public class ChangeData {
       if (!lazyload()) {
         return ImmutableList.of();
       }
-      return starRefs().keySet().asList();
+      return starAccounts();
     }
     return stars;
   }
@@ -1441,14 +1467,14 @@ public class ChangeData {
     this.stars = ImmutableList.copyOf(accountIds);
   }
 
-  private ImmutableMap<Account.Id, Ref> starRefs() {
-    if (starRefs == null) {
+  private ImmutableList<Account.Id> starAccounts() {
+    if (starAccounts == null) {
       if (!lazyload()) {
-        return ImmutableMap.of();
+        return ImmutableList.of();
       }
-      starRefs = requireNonNull(starredChangesReader).byChange(virtualId());
+      starAccounts = requireNonNull(starredChangesReader).byChange(virtualId());
     }
-    return starRefs;
+    return starAccounts;
   }
 
   public boolean isStarred(Account.Id accountId) {
@@ -1509,13 +1535,14 @@ public class ChangeData {
     }
   }
 
-  public SetMultimap<NameKey, RefState> getRefStates() {
+  public SetMultimap<Project.NameKey, RefState> getRefStates() {
     if (refStates == null) {
       if (!lazyload()) {
         return ImmutableSetMultimap.of();
       }
 
-      ImmutableSetMultimap.Builder<NameKey, RefState> result = ImmutableSetMultimap.builder();
+      ImmutableSetMultimap.Builder<Project.NameKey, RefState> result =
+          ImmutableSetMultimap.builder();
       for (Table.Cell<Account.Id, PatchSet.Id, Ref> edit : editRefs().cellSet()) {
         result.put(
             project,
@@ -1528,7 +1555,10 @@ public class ChangeData {
       // TODO: instantiating the notes is too much. We don't want to parse NoteDb, we just want the
       // refs.
       result.put(project, RefState.create(notes().getRefName(), notes().getMetaId()));
-      notes().getRobotComments(); // Force loading robot comments.
+
+      @SuppressWarnings("unused")
+      var unused = notes().getRobotComments(); // Force loading robot comments.
+
       RobotCommentNotes robotNotes = notes().getRobotCommentNotes();
       result.put(project, RefState.create(robotNotes.getRefName(), robotNotes.getMetaId()));
 

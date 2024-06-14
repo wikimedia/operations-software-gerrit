@@ -14,9 +14,12 @@
 
 package com.google.gerrit.acceptance.rest.auth;
 
+import static com.google.common.truth.Truth.assertThat;
+
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.RestResponse;
-import com.google.gerrit.acceptance.RestSession;
+import java.io.BufferedReader;
+import java.util.stream.Collectors;
 import org.junit.Test;
 
 public class AuthenticationCheckIT extends AbstractDaemonTest {
@@ -29,8 +32,17 @@ public class AuthenticationCheckIT extends AbstractDaemonTest {
 
   @Test
   public void authCheck_anonymousUser_returnsForbidden() throws Exception {
-    RestSession anonymous = new RestSession(server, null);
-    RestResponse r = anonymous.get("/auth-check");
+    RestResponse r = anonymousRestSession.get("/auth-check");
     r.assertForbidden();
+  }
+
+  @Test
+  public void authCheckSvg_loggedInUser_returnsOk() throws Exception {
+    RestResponse r = adminRestSession.get("/auth-check.svg");
+    r.assertOK();
+    BufferedReader br = new BufferedReader(r.getReader());
+    String content = br.lines().collect(Collectors.joining());
+    assertThat(content).contains("<svg xmlns");
+    assertThat(r.getHeader("Content-Type")).isEqualTo("image/svg+xml;charset=utf-8");
   }
 }

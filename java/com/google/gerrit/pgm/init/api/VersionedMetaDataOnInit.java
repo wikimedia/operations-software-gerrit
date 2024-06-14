@@ -14,6 +14,7 @@
 
 package com.google.gerrit.pgm.init.api;
 
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.GerritPersonIdentProvider;
 import com.google.gerrit.server.config.SitePaths;
@@ -54,6 +55,7 @@ public abstract class VersionedMetaDataOnInit extends VersionedMetaData {
     return ref;
   }
 
+  @CanIgnoreReturnValue
   public VersionedMetaDataOnInit load() throws IOException, ConfigInvalidException {
     File path = getPath();
     if (path != null) {
@@ -89,7 +91,9 @@ public abstract class VersionedMetaDataOnInit extends VersionedMetaData {
       commit.setCommitter(ident);
       commit.setMessage(msg);
 
-      onSave(commit);
+      if (!onSave(commit)) {
+        return;
+      }
 
       ObjectId res = newTree.writeTree(inserter);
       if (res.equals(srcTree)) {

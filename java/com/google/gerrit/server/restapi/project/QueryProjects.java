@@ -15,6 +15,7 @@
 package com.google.gerrit.server.restapi.project;
 
 import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.extensions.common.ProjectInfo;
@@ -115,15 +116,13 @@ public class QueryProjects implements RestReadView<TopLevelResource> {
       queryProcessor.setStart(start);
     }
 
-    if (limit != 0) {
-      queryProcessor.setUserProvidedLimit(limit);
-    }
+    queryProcessor.setUserProvidedLimit(limit, /* applyDefaultLimit */ true);
 
     try {
       QueryResult<ProjectData> result =
           queryProcessor.query(
               !Strings.isNullOrEmpty(query) ? queryBuilder.parse(query) : Predicate.any());
-      List<ProjectData> pds = result.entities();
+      ImmutableList<ProjectData> pds = result.entities();
 
       ArrayList<ProjectInfo> projectInfos = Lists.newArrayListWithCapacity(pds.size());
       for (ProjectData pd : pds) {

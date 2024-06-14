@@ -19,6 +19,7 @@ import static com.google.gerrit.server.util.AttentionSetUtil.additionsOnly;
 
 import com.google.auto.factory.AutoFactory;
 import com.google.auto.factory.Provided;
+import com.google.common.collect.ImmutableList;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
@@ -58,7 +59,6 @@ import java.text.MessageFormat;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -88,7 +88,7 @@ public class ChangeEmailImpl implements ChangeEmail {
 
   // Available after init or after being explicitly set.
   protected OutgoingEmail email;
-  private List<Account.Id> stars;
+  private ImmutableList<Account.Id> stars;
   protected PatchSet patchSet;
   protected PatchSetInfo patchSetInfo;
   private String changeMessage;
@@ -447,7 +447,7 @@ public class ChangeEmailImpl implements ChangeEmail {
     return watch.getWatchers(type, includeWatchersFromNotifyConfig);
   }
 
-  /** Any user who has published comments on this change. */
+  /** CC all users who are added as reviewer or cc to the change. */
   @Override
   public void ccAllApprovals() {
     if (!NotifyHandling.ALL.equals(email.getNotify().handling())
@@ -458,6 +458,9 @@ public class ChangeEmailImpl implements ChangeEmail {
     try {
       for (Account.Id id : changeData.reviewers().all()) {
         email.addByAccountId(RecipientType.CC, id);
+      }
+      for (Address addr : this.changeData.reviewersByEmail().all()) {
+        email.addByEmail(RecipientType.CC, addr);
       }
     } catch (StorageException err) {
       logger.atWarning().withCause(err).log("Cannot CC users that reviewed updated change");
@@ -475,6 +478,9 @@ public class ChangeEmailImpl implements ChangeEmail {
     try {
       for (Account.Id id : changeData.reviewers().byState(ReviewerStateInternal.REVIEWER)) {
         email.addByAccountId(RecipientType.CC, id);
+      }
+      for (Address addr : changeData.reviewersByEmail().byState(ReviewerStateInternal.REVIEWER)) {
+        email.addByEmail(RecipientType.CC, addr);
       }
     } catch (StorageException err) {
       logger.atWarning().withCause(err).log("Cannot CC users that commented on updated change");
@@ -619,17 +625,6 @@ public class ChangeEmailImpl implements ChangeEmail {
         currentAttentionSet.stream().map(email::getNameFor).sorted().collect(toImmutableList()));
 
     setChangeSubjectHeader();
-    if (email.getNotify().handling().equals(NotifyHandling.OWNER_REVIEWERS)
-        || email.getNotify().handling().equals(NotifyHandling.ALL)) {
-      try {
-        this.changeData.reviewersByEmail().byState(ReviewerStateInternal.CC).stream()
-            .forEach(address -> email.addByEmail(RecipientType.CC, address));
-        this.changeData.reviewersByEmail().byState(ReviewerStateInternal.REVIEWER).stream()
-            .forEach(address -> email.addByEmail(RecipientType.CC, address));
-      } catch (StorageException e) {
-        throw new EmailException("Failed to add unregistered CCs " + change.getChangeId(), e);
-      }
-    }
 
     if (email.useHtml()) {
       email.appendHtml(email.soyHtmlTemplate("ChangeHeaderHtml"));

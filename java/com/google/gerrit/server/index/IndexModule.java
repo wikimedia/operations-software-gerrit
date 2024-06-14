@@ -19,12 +19,13 @@ import static com.google.gerrit.server.git.QueueProvider.QueueType.INTERACTIVE;
 
 import com.google.common.base.Ticker;
 import com.google.common.collect.FluentIterable;
-import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.gerrit.extensions.events.LifecycleListener;
 import com.google.gerrit.extensions.registration.DynamicSet;
+import com.google.gerrit.index.IndexConfig;
 import com.google.gerrit.index.IndexDefinition;
 import com.google.gerrit.index.IndexType;
 import com.google.gerrit.index.SchemaDefinitions;
@@ -34,6 +35,7 @@ import com.google.gerrit.index.project.ProjectIndexer;
 import com.google.gerrit.index.project.ProjectSchemaDefinitions;
 import com.google.gerrit.lifecycle.LifecycleModule;
 import com.google.gerrit.server.config.GerritServerConfig;
+import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.MultiProgressMonitor;
 import com.google.gerrit.server.git.WorkQueue;
 import com.google.gerrit.server.index.account.AccountIndexCollection;
@@ -42,11 +44,13 @@ import com.google.gerrit.server.index.account.AccountIndexRewriter;
 import com.google.gerrit.server.index.account.AccountIndexer;
 import com.google.gerrit.server.index.account.AccountIndexerImpl;
 import com.google.gerrit.server.index.account.AccountSchemaDefinitions;
+import com.google.gerrit.server.index.change.AllChangesIndexer;
 import com.google.gerrit.server.index.change.ChangeIndexCollection;
 import com.google.gerrit.server.index.change.ChangeIndexDefinition;
 import com.google.gerrit.server.index.change.ChangeIndexRewriter;
 import com.google.gerrit.server.index.change.ChangeIndexer;
 import com.google.gerrit.server.index.change.ChangeSchemaDefinitions;
+import com.google.gerrit.server.index.change.StalenessChecker;
 import com.google.gerrit.server.index.group.GroupIndexCollection;
 import com.google.gerrit.server.index.group.GroupIndexDefinition;
 import com.google.gerrit.server.index.group.GroupIndexRewriter;
@@ -65,7 +69,6 @@ import com.google.inject.ProvisionException;
 import com.google.inject.Singleton;
 import com.google.inject.multibindings.OptionalBinder;
 import java.util.Collection;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.eclipse.jgit.lib.Config;
 
@@ -77,7 +80,7 @@ import org.eclipse.jgit.lib.Config;
  */
 @SuppressWarnings("ProvidesMethodOutsideOfModule")
 public class IndexModule extends LifecycleModule {
-  public static final ImmutableCollection<SchemaDefinitions<?>> ALL_SCHEMA_DEFS =
+  public static final ImmutableList<SchemaDefinitions<?>> ALL_SCHEMA_DEFS =
       ImmutableList.of(
           AccountSchemaDefinitions.INSTANCE,
           ChangeSchemaDefinitions.INSTANCE,
@@ -130,6 +133,8 @@ public class IndexModule extends LifecycleModule {
     bind(ChangeIndexCollection.class);
     listener().to(ChangeIndexCollection.class);
     factory(ChangeIndexer.Factory.class);
+    factory(StalenessChecker.Factory.class);
+    factory(AllChangesIndexer.Factory.class);
 
     bind(GroupIndexRewriter.class);
     // GroupIndexCollection is already bound very high up in SchemaModule.
@@ -174,9 +179,10 @@ public class IndexModule extends LifecycleModule {
 
     ImmutableList<IndexDefinition<?, ?, ?>> result =
         ImmutableList.of(accounts, groups, changes, projects);
-    Set<String> expected =
+    ImmutableSet<String> expected =
         FluentIterable.from(ALL_SCHEMA_DEFS).transform(SchemaDefinitions::getName).toSet();
-    Set<String> actual = FluentIterable.from(result).transform(IndexDefinition::getName).toSet();
+    ImmutableSet<String> actual =
+        FluentIterable.from(result).transform(IndexDefinition::getName).toSet();
     if (!expected.equals(actual)) {
       throw new ProvisionException(
           "need index definitions for all schemas: " + expected + " != " + actual);
@@ -253,6 +259,13 @@ public class IndexModule extends LifecycleModule {
       return MoreExecutors.newDirectExecutorService();
     }
     return MoreExecutors.listeningDecorator(workQueue.createQueue(threads, "Index-Batch", true));
+  }
+
+  @Provides
+  @Singleton
+  StalenessChecker getChangeStalenessChecker(
+      ChangeIndexCollection indexes, GitRepositoryManager repoManager, IndexConfig indexConfig) {
+    return new StalenessChecker(indexes, repoManager, indexConfig);
   }
 
   @Singleton

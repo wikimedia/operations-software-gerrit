@@ -4,7 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {CommentRange, NumericChangeId, RevisionPatchSetNum} from './rest-api';
+import {
+  ChangeInfo,
+  CommentRange,
+  RevisionPatchSetNum,
+  FixSuggestionInfo,
+} from './rest-api';
 
 export declare interface SuggestionsPluginApi {
   /**
@@ -15,7 +20,7 @@ export declare interface SuggestionsPluginApi {
 
 export declare interface SuggestCodeRequest {
   prompt: string;
-  changeNumber: NumericChangeId;
+  changeInfo: ChangeInfo;
   patchsetNumber: RevisionPatchSetNum;
   filePath: string;
   range?: CommentRange;
@@ -24,15 +29,40 @@ export declare interface SuggestCodeRequest {
 
 export declare interface SuggestionsProvider {
   /**
-   * Gerrit calls this method when ...
+   * Gerrit calls these methods when ...
    * - ... user types a comment draft
    */
-  suggestCode(commentData: SuggestCodeRequest): Promise<SuggestCodeResponse>;
+  suggestCode?(commentData: SuggestCodeRequest): Promise<SuggestCodeResponse>;
+  suggestFix?(commentData: SuggestCodeRequest): Promise<SuggestedFixResponse>;
+  /**
+   * Gets the title to display on the fix suggestion preview.
+   *
+   * @param fix_suggestions A list of suggested fixes.
+   * @return The title string or empty to use the default title.
+   */
+  getFixSuggestionTitle?(fix_suggestions?: FixSuggestionInfo[]): string;
+  /**
+   * Gets a link to documentation for icon help next to title
+   *
+   * @param fix_suggestions A list of suggested fixes.
+   * @return The documentation URL string or empty to use the default link to
+   * gerrit documentation about fix suggestions.
+   */
+  getDocumentationLink?(fix_suggestions?: FixSuggestionInfo[]): string;
+  /**
+   * List of supported file extensions. If undefined, all file extensions supported.
+   */
+  supportedFileExtensions?: string[];
 }
 
 export declare interface SuggestCodeResponse {
   responseCode: ResponseCode;
   suggestions: Suggestion[];
+}
+
+export declare interface SuggestedFixResponse {
+  responseCode: ResponseCode;
+  fix_suggestions: FixSuggestionInfo[];
 }
 
 export declare interface Suggestion {

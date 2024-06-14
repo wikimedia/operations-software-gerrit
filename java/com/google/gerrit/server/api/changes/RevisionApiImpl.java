@@ -339,7 +339,9 @@ class RevisionApiImpl extends RevisionApi.NotImplemented {
       } else {
         view = deleteReviewed;
       }
-      view.apply(files.parse(revision, IdString.fromDecoded(path)), new Input());
+
+      @SuppressWarnings("unused")
+      var unused = view.apply(files.parse(revision, IdString.fromDecoded(path)), new Input());
     } catch (Exception e) {
       throw asRestApiException("Cannot update reviewed flag", e);
     }
@@ -691,7 +693,8 @@ class RevisionApiImpl extends RevisionApi.NotImplemented {
     DescriptionInput in = new DescriptionInput();
     in.description = description;
     try {
-      putDescription.apply(revision, in);
+      @SuppressWarnings("unused")
+      var unused = putDescription.apply(revision, in);
     } catch (Exception e) {
       throw asRestApiException("Cannot set description", e);
     }

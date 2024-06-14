@@ -23,6 +23,7 @@ import static java.util.Objects.requireNonNull;
 
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableSet;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.PatchSet;
@@ -47,6 +48,7 @@ import com.google.gerrit.server.git.validators.TopicValidator;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ChangeUpdate;
 import com.google.gerrit.server.patch.AutoMerger;
+import com.google.gerrit.server.patch.DiffOperationsForCommitValidation;
 import com.google.gerrit.server.patch.PatchSetInfoFactory;
 import com.google.gerrit.server.permissions.ChangePermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
@@ -86,6 +88,7 @@ public class PatchSetInserter implements BatchUpdateOp {
   private final WorkInProgressStateChanged wipStateChanged;
   private final AutoMerger autoMerger;
   private final TopicValidator topicValidator;
+  private final DiffOperationsForCommitValidation.Factory diffOperationsForCommitValidationFactory;
 
   // Assisted-injected fields.
   private final PatchSet.Id psId;
@@ -135,6 +138,7 @@ public class PatchSetInserter implements BatchUpdateOp {
       WorkInProgressStateChanged wipStateChanged,
       AutoMerger autoMerger,
       TopicValidator topicValidator,
+      DiffOperationsForCommitValidation.Factory diffOperationsForCommitValidationFactory,
       @Assisted ChangeNotes notes,
       @Assisted PatchSet.Id psId,
       @Assisted ObjectId commitId) {
@@ -151,6 +155,7 @@ public class PatchSetInserter implements BatchUpdateOp {
     this.wipStateChanged = wipStateChanged;
     this.autoMerger = autoMerger;
     this.topicValidator = topicValidator;
+    this.diffOperationsForCommitValidationFactory = diffOperationsForCommitValidationFactory;
 
     this.origNotes = notes;
     this.psId = psId;
@@ -161,37 +166,44 @@ public class PatchSetInserter implements BatchUpdateOp {
     return psId;
   }
 
+  @CanIgnoreReturnValue
   public PatchSetInserter setMessage(String message) {
     this.message = message;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public PatchSetInserter setDescription(String description) {
     this.description = description;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public PatchSetInserter setWorkInProgress(boolean workInProgress) {
     this.workInProgress = workInProgress;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public PatchSetInserter setValidate(boolean validate) {
     this.validate = validate;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public PatchSetInserter setCheckAddPatchSetPermission(boolean checkAddPatchSetPermission) {
     this.checkAddPatchSetPermission = checkAddPatchSetPermission;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public PatchSetInserter setGroups(List<String> groups) {
     requireNonNull(groups, "groups may not be null");
     this.groups = groups;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public PatchSetInserter setValidationOptions(
       ImmutableListMultimap<String, String> validationOptions) {
     requireNonNull(validationOptions, "validationOptions may not be null");
@@ -199,21 +211,25 @@ public class PatchSetInserter implements BatchUpdateOp {
     return this;
   }
 
+  @CanIgnoreReturnValue
   public PatchSetInserter setFireRevisionCreated(boolean fireRevisionCreated) {
     this.fireRevisionCreated = fireRevisionCreated;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public PatchSetInserter setAllowClosed(boolean allowClosed) {
     this.allowClosed = allowClosed;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public PatchSetInserter setSendEmail(boolean sendEmail) {
     this.sendEmail = sendEmail;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public PatchSetInserter setTopic(String topic) {
     this.topic = topic;
     return this;
@@ -225,6 +241,7 @@ public class PatchSetInserter implements BatchUpdateOp {
    * cases, we already store the votes of the new patch-sets in SubmitStrategyOp#saveApprovals. We
    * should not also store the copied votes.
    */
+  @CanIgnoreReturnValue
   public PatchSetInserter setStoreCopiedVotes(boolean storeCopiedVotes) {
     this.storeCopiedVotes = storeCopiedVotes;
     return this;
@@ -256,10 +273,7 @@ public class PatchSetInserter implements BatchUpdateOp {
 
     Optional<ReceiveCommand> autoMerge =
         autoMerger.createAutoMergeCommitIfNecessary(
-            ctx.getRepoView(),
-            ctx.getRevWalk(),
-            ctx.getInserter(),
-            ctx.getRevWalk().parseCommit(commitId));
+            ctx.getRepoView(), ctx.getInserter(), ctx.getRevWalk().parseCommit(commitId));
     if (autoMerge.isPresent()) {
       ctx.addRefUpdate(autoMerge.get());
     }
@@ -320,7 +334,7 @@ public class PatchSetInserter implements BatchUpdateOp {
     if (storeCopiedVotes) {
       approvalCopierResult =
           approvalsUtil.copyApprovalsToNewPatchSet(
-              ctx.getNotes(), patchSet, ctx.getRevWalk(), ctx.getRepoView().getConfig(), update);
+              ctx.getNotes(), patchSet, ctx.getRepoView(), update);
     }
 
     mailMessage = insertChangeMessage(update, ctx);
@@ -424,7 +438,9 @@ public class PatchSetInserter implements BatchUpdateOp {
             ctx.getRepoView().getConfig(),
             ctx.getRevWalk().getObjectReader(),
             commitId,
-            ctx.getIdentifiedUser())) {
+            ctx.getIdentifiedUser(),
+            diffOperationsForCommitValidationFactory.create(
+                ctx.getRepoView(), ctx.getInserter()))) {
       commitValidatorsFactory
           .forGerritCommits(
               permissionBackend.user(ctx.getUser()).project(ctx.getProject()),

@@ -17,6 +17,7 @@ package com.google.gerrit.server.notedb;
 import static com.google.common.base.MoreObjects.firstNonNull;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static com.google.gerrit.entities.RefNames.changeMetaRef;
 import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_ATTENTION;
 import static com.google.gerrit.server.notedb.ChangeNoteFooters.FOOTER_BRANCH;
@@ -52,12 +53,15 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableTable;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Table;
 import com.google.common.collect.Table.Cell;
 import com.google.common.collect.TreeBasedTable;
+import com.google.common.flogger.FluentLogger;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Address;
@@ -81,6 +85,8 @@ import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.account.ServiceUserClassifier;
 import com.google.gerrit.server.approval.PatchSetApprovalUuidGenerator;
+import com.google.gerrit.server.experiments.ExperimentFeatures;
+import com.google.gerrit.server.experiments.ExperimentFeaturesConstants;
 import com.google.gerrit.server.git.validators.TopicValidator;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.update.context.RefUpdateContext;
@@ -135,6 +141,8 @@ import org.eclipse.jgit.revwalk.RevWalk;
  * the attached {@link ChangeRevisionNote}.
  */
 public class ChangeUpdate extends AbstractChangeUpdate {
+  private static final FluentLogger logger = FluentLogger.forEnclosingClass();
+
   public interface Factory {
     ChangeUpdate create(ChangeNotes notes, CurrentUser user, Instant when);
 
@@ -158,13 +166,14 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   private final Map<Account.Id, ReviewerStateInternal> reviewers = new LinkedHashMap<>();
   private final Map<Address, ReviewerStateInternal> reviewersByEmail = new LinkedHashMap<>();
   private final List<HumanComment> comments = new ArrayList<>();
+  private final ExperimentFeatures experimentFeatures;
 
   private String commitSubject;
   private String subject;
   private String changeId;
   private String branch;
   private Change.Status status;
-  private List<SubmitRecord> submitRecords;
+  private ImmutableList<SubmitRecord> submitRecords;
   private String submissionId;
   private String topic;
   private String commit;
@@ -209,6 +218,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       ProjectCache projectCache,
       ServiceUserClassifier serviceUserClassifier,
       PatchSetApprovalUuidGenerator patchSetApprovalUuidGenerator,
+      ExperimentFeatures experimentFeatures,
       @Assisted ChangeNotes notes,
       @Assisted CurrentUser user,
       @Assisted Instant when,
@@ -221,6 +231,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
         deleteCommentRewriterFactory,
         serviceUserClassifier,
         patchSetApprovalUuidGenerator,
+        experimentFeatures,
         notes,
         user,
         when,
@@ -246,6 +257,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       DeleteCommentRewriter.Factory deleteCommentRewriterFactory,
       ServiceUserClassifier serviceUserClassifier,
       PatchSetApprovalUuidGenerator patchSetApprovalUuidGenerator,
+      ExperimentFeatures experimentFeatures,
       @Assisted ChangeNotes notes,
       @Assisted CurrentUser user,
       @Assisted Instant when,
@@ -258,10 +270,12 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     this.deleteCommentRewriterFactory = deleteCommentRewriterFactory;
     this.serviceUserClassifier = serviceUserClassifier;
     this.patchSetApprovalUuidGenerator = patchSetApprovalUuidGenerator;
+    this.experimentFeatures = experimentFeatures;
     this.approvals = approvals(labelNameComparator);
     this.user = user;
   }
 
+  @CanIgnoreReturnValue
   public ObjectId commit() throws IOException {
     try (RefUpdateContext ctx = RefUpdateContext.open(CHANGE_MODIFICATION)) {
       try (NoteDbUpdateManager updateManager =
@@ -423,6 +437,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   }
 
   @VisibleForTesting
+  @CanIgnoreReturnValue
   ChangeDraftUpdate createDraftUpdateIfNull() {
     if (draftUpdate == null) {
       ChangeNotes notes = getNotes();
@@ -526,13 +541,9 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       plannedAttentionSetUpdates = new HashMap<>();
     }
 
-    Set<Account.Id> currentAccountUpdates =
-        plannedAttentionSetUpdates.values().stream()
-            .map(AttentionSetUpdate::account)
-            .collect(Collectors.toSet());
-    updates.stream()
-        .filter(u -> !currentAccountUpdates.contains(u.account()))
-        .forEach(u -> plannedAttentionSetUpdates.putIfAbsent(u.account(), u));
+    // Only add attention set updates for users for which no attention set update has been planned
+    // yet.
+    updates.stream().forEach(u -> plannedAttentionSetUpdates.putIfAbsent(u.account(), u));
   }
 
   public void addToPlannedAttentionSetUpdates(AttentionSetUpdate update) {
@@ -606,6 +617,10 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     RevisionNoteBuilder.Cache cache = new RevisionNoteBuilder.Cache(rnm);
     for (HumanComment c : comments) {
       c.tag = tag;
+      if (!experimentFeatures.isFeatureEnabled(
+          ExperimentFeaturesConstants.ALLOW_FIX_SUGGESTIONS_IN_COMMENTS)) {
+        checkState(c.fixSuggestions == null, "feature flag prohibits setting fixSuggestions");
+      }
       cache.get(c.getCommitId()).putComment(c);
     }
     if (submitRequirementResults != null) {
@@ -899,7 +914,10 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     try {
       ObjectId treeId = storeRevisionNotes(rw, ins, curr);
       if (treeId != null) {
+        logger.atFine().log("change meta tree ID: %s (inserter: %s)", treeId.name(), ins);
         cb.setTreeId(treeId);
+      } else {
+        logger.atFine().log("no revision notes to write, hence no change meta tree was created");
       }
     } catch (ConfigInvalidException e) {
       throw new StorageException(e);
@@ -997,7 +1015,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     }
 
     Set<AttentionSetUpdate> updates = new HashSet<>();
-    Set<Account.Id> currentReviewers =
+    ImmutableSet<Account.Id> currentReviewers =
         getNotes().getReviewers().byState(ReviewerStateInternal.REVIEWER);
     for (Map.Entry<Account.Id, ReviewerStateInternal> reviewer : reviewers.entrySet()) {
       Account.Id reviewerId = reviewer.getKey();
@@ -1049,10 +1067,9 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     if (plannedAttentionSetUpdates == null) {
       plannedAttentionSetUpdates = new HashMap<>();
     }
-    Set<Account.Id> currentUsersInAttentionSet =
+    ImmutableMap<Account.Id, String> reasonsForCurrentUsersInAttentionSet =
         AttentionSetUtil.additionsOnly(getNotes().getAttentionSet()).stream()
-            .map(AttentionSetUpdate::account)
-            .collect(Collectors.toSet());
+            .collect(toImmutableMap(AttentionSetUpdate::account, AttentionSetUpdate::reason));
 
     // Current reviewers/ccs are the reviewers/ccs before the update + the new reviewers/ccs - the
     // deleted reviewers/ccs.
@@ -1075,13 +1092,17 @@ public class ChangeUpdate extends AbstractChangeUpdate {
 
     for (AttentionSetUpdate attentionSetUpdate : plannedAttentionSetUpdates.values()) {
       if (attentionSetUpdate.operation() == AttentionSetUpdate.Operation.ADD
-          && currentUsersInAttentionSet.contains(attentionSetUpdate.account())) {
-        // Skip users that are already in the attention set: no need to re-add them.
+          && reasonsForCurrentUsersInAttentionSet.get(attentionSetUpdate.account()) != null
+          && reasonsForCurrentUsersInAttentionSet
+              .get(attentionSetUpdate.account())
+              .equals(attentionSetUpdate.reason())) {
+        // Skip users that are already in the attention set with the same reason: no need to re-add
+        // them.
         continue;
       }
 
       if (attentionSetUpdate.operation() == AttentionSetUpdate.Operation.REMOVE
-          && !currentUsersInAttentionSet.contains(attentionSetUpdate.account())) {
+          && !reasonsForCurrentUsersInAttentionSet.containsKey(attentionSetUpdate.account())) {
         // Skip users that are not in the attention set: no need to remove them.
         continue;
       }
@@ -1114,7 +1135,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   }
 
   private void removeInactiveUsersFromAttentionSet(Set<Account.Id> currentReviewers) {
-    Set<Account.Id> inActiveUsersInTheAttentionSet =
+    ImmutableSet<Account.Id> inActiveUsersInTheAttentionSet =
         // get the current attention set.
         getNotes().getAttentionSet().stream()
             .filter(a -> a.operation().equals(Operation.ADD))
@@ -1242,6 +1263,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     this.workInProgress = workInProgress;
   }
 
+  @CanIgnoreReturnValue
   private static StringBuilder addFooter(StringBuilder sb, FooterKey footer) {
     return sb.append(footer.getName()).append(": ");
   }

@@ -135,7 +135,7 @@ public abstract class AbstractFakeIndex<K, V, D> implements Index<K, V> {
 
   @Override
   public DataSource<V> getSource(Predicate<V> p, QueryOptions opts) {
-    List<V> results;
+    ImmutableList<V> results;
     synchronized (indexedDocuments) {
       Stream<V> valueStream =
           indexedDocuments.values().stream()
@@ -292,7 +292,10 @@ public abstract class AbstractFakeIndex<K, V, D> implements Index<K, V> {
                   Integer.valueOf((String) doc.get(ChangeField.NUMERIC_ID_STR_SPEC.getName()))));
       for (SchemaField<ChangeData, ?> field : getSchema().getSchemaFields().values()) {
         boolean isProtoField = SchemaFieldDefs.isProtoField(field);
-        field.setIfPossible(cd, new FakeStoredValue(doc.get(field.getName()), isProtoField));
+
+        @SuppressWarnings("unused")
+        var unused =
+            field.setIfPossible(cd, new FakeStoredValue(doc.get(field.getName()), isProtoField));
       }
       return cd;
     }

@@ -16,7 +16,6 @@ package com.google.gerrit.acceptance.rest.project;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
-import static com.google.common.truth.Truth8.assertThat;
 import static com.google.gerrit.acceptance.rest.project.ProjectAssert.assertProjectInfo;
 import static com.google.gerrit.acceptance.rest.project.ProjectAssert.assertProjectOwners;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowCapability;
@@ -351,7 +350,7 @@ public class CreateProjectIT extends AbstractDaemonTest {
   @GerritConfig(name = "gerrit.defaultBranch", value = "main")
   public void createProject_WhenDefaultBranchIsSet() throws Exception {
     String newProjectName = name("newProject");
-    gApi.projects().create(newProjectName).get();
+    gApi.projects().create(newProjectName);
     ImmutableMap<String, BranchInfo> branches = getProjectBranches(newProjectName);
     // HEAD symbolic ref is set to the default, but the actual ref is not created.
     assertThat(branches.keySet()).containsExactly("HEAD", "refs/meta/config");

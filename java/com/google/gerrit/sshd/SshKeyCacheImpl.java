@@ -154,7 +154,7 @@ public class SshKeyCacheImpl implements SshKeyCache {
         } else {
           markInvalid(k);
         }
-      } catch (Throwable e) {
+      } catch (Exception e) {
         markInvalid(k);
       }
     }

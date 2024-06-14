@@ -20,6 +20,8 @@ import static com.google.gerrit.testing.TestActionRefUpdateContext.testRefAction
 import static java.util.stream.Collectors.toSet;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMultimap;
+import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.MultimapBuilder;
 import com.google.common.collect.Sets;
@@ -137,19 +139,37 @@ public class ProjectResetter implements AutoCloseable {
   }
 
   public static class Config {
-    private final Multimap<Project.NameKey, String> refsByProject;
+    private final ImmutableMultimap<Project.NameKey, String> refsByProject;
 
-    public Config() {
-      this.refsByProject = MultimapBuilder.hashKeys().arrayListValues().build();
+    private Config(ImmutableMultimap<Project.NameKey, String> refsByProject) {
+      this.refsByProject = refsByProject;
     }
 
-    public Config reset(Project.NameKey project, String... refPatterns) {
-      List<String> refPatternList = Arrays.asList(refPatterns);
-      if (refPatternList.isEmpty()) {
-        refPatternList = ImmutableList.of(RefNames.REFS + "*");
+    public Builder toBuilder() {
+      Builder builder = new Builder();
+      builder.refsByProject.putAll(refsByProject);
+      return builder;
+    }
+
+    public static class Builder {
+      private final ListMultimap<Project.NameKey, String> refsByProject;
+
+      public Builder() {
+        this.refsByProject = MultimapBuilder.hashKeys().arrayListValues().build();
       }
-      refsByProject.putAll(project, refPatternList);
-      return this;
+
+      public Builder reset(Project.NameKey project, String... refPatterns) {
+        List<String> refPatternList = Arrays.asList(refPatterns);
+        if (refPatternList.isEmpty()) {
+          refPatternList = ImmutableList.of(RefNames.REFS + "*");
+        }
+        refsByProject.putAll(project, refPatternList);
+        return this;
+      }
+
+      public Config build() {
+        return new Config(ImmutableMultimap.copyOf(refsByProject));
+      }
     }
   }
 
@@ -166,12 +186,12 @@ public class ProjectResetter implements AutoCloseable {
   private final Multimap<Project.NameKey, String> refsPatternByProject;
 
   // State to which to reset to.
-  private final Multimap<Project.NameKey, RefState> savedRefStatesByProject;
+  private final ListMultimap<Project.NameKey, RefState> savedRefStatesByProject;
 
   // Results of the resetting
-  private Multimap<Project.NameKey, String> keptRefsByProject;
-  private Multimap<Project.NameKey, String> restoredRefsByProject;
-  private Multimap<Project.NameKey, String> deletedRefsByProject;
+  private ListMultimap<Project.NameKey, String> keptRefsByProject;
+  private ListMultimap<Project.NameKey, String> restoredRefsByProject;
+  private ListMultimap<Project.NameKey, String> deletedRefsByProject;
 
   private ProjectResetter(
       GitRepositoryManager repoManager,
@@ -212,13 +232,13 @@ public class ProjectResetter implements AutoCloseable {
   }
 
   /** Read the states of all matching refs. */
-  private Multimap<Project.NameKey, RefState> readRefStates() throws IOException {
-    Multimap<Project.NameKey, RefState> refStatesByProject =
+  private ListMultimap<Project.NameKey, RefState> readRefStates() throws IOException {
+    ListMultimap<Project.NameKey, RefState> refStatesByProject =
         MultimapBuilder.hashKeys().arrayListValues().build();
     for (Map.Entry<Project.NameKey, Collection<String>> e :
         refsPatternByProject.asMap().entrySet()) {
       try (Repository repo = repoManager.openRepository(e.getKey())) {
-        Collection<Ref> refs = repo.getRefDatabase().getRefs();
+        List<Ref> refs = repo.getRefDatabase().getRefs();
         for (String refPattern : e.getValue()) {
           RefPatternMatcher matcher = RefPatternMatcher.getMatcher(refPattern);
           for (Ref ref : refs) {
@@ -262,7 +282,7 @@ public class ProjectResetter implements AutoCloseable {
     for (Map.Entry<Project.NameKey, Collection<String>> e :
         refsPatternByProject.asMap().entrySet()) {
       try (Repository repo = repoManager.openRepository(e.getKey())) {
-        Collection<Ref> nonRestoredRefs =
+        Set<Ref> nonRestoredRefs =
             repo.getRefDatabase().getRefs().stream()
                 .filter(
                     r ->

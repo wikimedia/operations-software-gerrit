@@ -15,7 +15,6 @@
 package com.google.gerrit.acceptance.api.project;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth8.assertThat;
 import static com.google.gerrit.acceptance.GitUtil.pushHead;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block;
@@ -1140,6 +1139,10 @@ public class ProjectIT extends AbstractDaemonTest {
   }
 
   @Test
+  @GerritConfig(
+      name = "experiments.disabled",
+      // The test intentionally create an implicit merge change.
+      value = "GerritBackendFeature__reject_implicit_merges_on_merge")
   public void commitsIncludedInRefsMergedChangeNonTipCommit() throws Exception {
     String branchWithChange1 = R_HEADS + "branch-with-change1";
     String tagWithChange1 = R_TAGS + "tag-with-change1";

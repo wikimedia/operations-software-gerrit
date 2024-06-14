@@ -18,6 +18,8 @@ import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdate
 
 import com.google.common.base.CharMatcher;
 import com.google.common.base.Strings;
+import com.google.common.base.Supplier;
+import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
@@ -44,6 +46,7 @@ import com.google.gerrit.server.query.change.InternalChangeQuery;
 import com.google.gerrit.server.restapi.change.CommentJson;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
+import com.google.gerrit.server.update.BatchUpdates;
 import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.update.context.RefUpdateContext;
@@ -62,7 +65,8 @@ import java.util.Objects;
 @Singleton
 public class DeleteDraftCommentsUtil {
   private final BatchUpdate.Factory batchUpdateFactory;
-  private final ChangeQueryBuilder queryBuilder;
+  private final BatchUpdates batchUpdates;
+  private final Supplier<ChangeQueryBuilder> queryBuilderSupplier;
   private final Provider<InternalChangeQuery> queryProvider;
   private final ChangeData.Factory changeDataFactory;
   private final ChangeJson.Factory changeJsonFactory;
@@ -75,7 +79,8 @@ public class DeleteDraftCommentsUtil {
   @Inject
   public DeleteDraftCommentsUtil(
       BatchUpdate.Factory batchUpdateFactory,
-      ChangeQueryBuilder queryBuilder,
+      BatchUpdates batchUpdates,
+      Provider<ChangeQueryBuilder> queryBuilderProvider,
       Provider<InternalChangeQuery> queryProvider,
       ChangeData.Factory changeDataFactory,
       ChangeJson.Factory changeJsonFactory,
@@ -84,7 +89,8 @@ public class DeleteDraftCommentsUtil {
       DraftCommentsReader draftCommentsReader,
       PatchSetUtil psUtil) {
     this.batchUpdateFactory = batchUpdateFactory;
-    this.queryBuilder = queryBuilder;
+    this.batchUpdates = batchUpdates;
+    this.queryBuilderSupplier = Suppliers.memoize(queryBuilderProvider::get);
     this.queryProvider = queryProvider;
     this.changeDataFactory = changeDataFactory;
     this.changeJsonFactory = changeJsonFactory;
@@ -120,7 +126,7 @@ public class DeleteDraftCommentsUtil {
       // were,
       // all updates from this operation only happen in All-Users and thus are fully atomic, so
       // allowing partial failure would have little value.
-      BatchUpdate.execute(updates.values(), ImmutableList.of(), false);
+      batchUpdates.execute(updates.values(), ImmutableList.of(), false);
     }
     return ops.stream().map(Op::getResult).filter(Objects::nonNull).collect(toImmutableList());
   }
@@ -132,7 +138,7 @@ public class DeleteDraftCommentsUtil {
       return hasDraft;
     }
     try {
-      return Predicate.and(hasDraft, queryBuilder.parse(query));
+      return Predicate.and(hasDraft, queryBuilderSupplier.get().parse(query));
     } catch (QueryParseException e) {
       throw new BadRequestException("Invalid query: " + e.getMessage(), e);
     }

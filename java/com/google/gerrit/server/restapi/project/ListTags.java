@@ -15,12 +15,12 @@
 package com.google.gerrit.server.restapi.project;
 
 import static com.google.gerrit.entities.RefNames.isConfigRef;
-import static java.util.Comparator.comparing;
 
 import com.google.common.collect.ImmutableList;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.projects.ProjectApi.ListRefsRequest;
 import com.google.gerrit.extensions.api.projects.TagInfo;
+import com.google.gerrit.extensions.common.ListTagSortOption;
 import com.google.gerrit.extensions.common.WebLinkInfo;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
@@ -42,6 +42,7 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
 import org.eclipse.jgit.lib.Constants;
@@ -58,6 +59,7 @@ public class ListTags implements RestReadView<ProjectResource> {
   private final GitRepositoryManager repoManager;
   private final PermissionBackend permissionBackend;
   private final WebLinks links;
+  private final TagSorter tagSorter;
 
   @Option(
       name = "--limit",
@@ -78,6 +80,14 @@ public class ListTags implements RestReadView<ProjectResource> {
   }
 
   @Option(
+      name = "--descending",
+      aliases = {"-d"},
+      usage = "return the tags in descending order")
+  public void setDescendingOrder(boolean descendingOrder) {
+    this.descendingOrder = descendingOrder;
+  }
+
+  @Option(
       name = "--match",
       aliases = {"-m"},
       metaVar = "MATCH",
@@ -95,24 +105,40 @@ public class ListTags implements RestReadView<ProjectResource> {
     this.matchRegex = matchRegex;
   }
 
+  @Option(
+      name = "--sort-by",
+      aliases = {"-sortby"},
+      usage = "sort the tags")
+  private void setSortBy(ListTagSortOption sortBy) {
+    this.sortBy = sortBy;
+  }
+
   private int limit;
   private int start;
+  private boolean descendingOrder;
   private String matchSubstring;
   private String matchRegex;
+  private ListTagSortOption sortBy = ListTagSortOption.REF;
 
   @Inject
   public ListTags(
-      GitRepositoryManager repoManager, PermissionBackend permissionBackend, WebLinks webLinks) {
+      GitRepositoryManager repoManager,
+      PermissionBackend permissionBackend,
+      WebLinks webLinks,
+      TagSorter tagSorter) {
     this.repoManager = repoManager;
     this.permissionBackend = permissionBackend;
     this.links = webLinks;
+    this.tagSorter = tagSorter;
   }
 
   public ListTags request(ListRefsRequest<TagInfo> request) {
     this.setLimit(request.getLimit());
     this.setStart(request.getStart());
+    this.setDescendingOrder(request.getDescendingOrder());
     this.setMatchSubstring(request.getSubstring());
     this.setMatchRegex(request.getRegex());
+    this.setSortBy(request.getSortBy());
     return this;
   }
 
@@ -136,7 +162,10 @@ public class ListTags implements RestReadView<ProjectResource> {
       }
     }
 
-    tags.sort(comparing(t -> t.ref));
+    tagSorter.sort(sortBy, tags, descendingOrder);
+    if (descendingOrder) {
+      Collections.reverse(tags);
+    }
 
     return Response.ok(
         new RefFilter<>(Constants.R_TAGS, (TagInfo tag) -> tag.ref)

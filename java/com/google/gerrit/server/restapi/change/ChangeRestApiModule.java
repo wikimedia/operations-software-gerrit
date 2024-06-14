@@ -88,6 +88,7 @@ public class ChangeRestApiModule extends RestApiModule {
     put(CHANGE_EDIT_KIND, "/").to(ChangeEdits.Put.class);
     get(CHANGE_EDIT_KIND, "meta").to(ChangeEdits.GetMeta.class);
 
+    put(CHANGE_KIND, "edit:identity").to(ChangeEdits.EditIdentity.class);
     put(CHANGE_KIND, "edit:message").to(ChangeEdits.EditMessage.class);
     get(CHANGE_KIND, "edit:message").to(ChangeEdits.GetMessage.class);
     post(CHANGE_KIND, "edit:publish").to(PublishChangeEdit.class);
@@ -98,6 +99,7 @@ public class ChangeRestApiModule extends RestApiModule {
     post(CHANGE_KIND, "index").to(Index.class);
     get(CHANGE_KIND, "meta_diff").to(GetMetaDiff.class);
     post(CHANGE_KIND, "merge").to(CreateMergePatchSet.class);
+    get(CHANGE_KIND, "message").to(GetMessage.class);
     put(CHANGE_KIND, "message").to(PutMessage.class);
 
     child(CHANGE_KIND, "messages").to(ChangeMessages.class);

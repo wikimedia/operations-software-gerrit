@@ -106,6 +106,7 @@ import {
   timeoutPromise,
 } from '../../../utils/async-util';
 import {Finalizable} from '../../../types/types';
+import {assign} from '../../../utils/location-util';
 
 // TODO: Move all patterns to view model files and use the `Route` interface,
 // which will enforce using `RegExp` in its `urlPattern` property.
@@ -119,12 +120,6 @@ const RoutePattern = {
   AGREEMENTS: /^\/settings\/agreements\/?/,
   NEW_AGREEMENTS: /^\/settings\/new-agreement\/?/,
   REGISTER: /^\/register(\/.*)?$/,
-
-  // Pattern for login and logout URLs intended to be passed-through. May
-  // include a return URL.
-  // TODO: Maybe this pattern and its handler can just be removed, because
-  // passing through is what the default router would eventually do anyway.
-  LOG_IN_OR_OUT: /^\/log(in|out)(\/(.+))?$/,
 
   // Pattern for a catchall route when no other pattern is matched.
   DEFAULT: /.*/,
@@ -171,8 +166,6 @@ const RoutePattern = {
   // Matches /admin/repos/<repos>,access.
   REPO_DASHBOARDS: /^\/admin\/repos\/(.+),dashboards$/,
 
-  PLUGINS: /^\/plugins\/(.+)$/,
-
   // Matches /admin/plugins with optional filter and offset.
   PLUGIN_LIST: /^\/admin\/plugins\/?(?:\/q\/filter:(.*?))?(?:,(\d+))?$/,
   // Matches /admin/groups with optional filter and offset.
@@ -196,6 +189,10 @@ const RoutePattern = {
   QUERY_LEGACY_SUFFIX: /^\/q\/.+,n,z$/,
 
   CHANGE_ID_QUERY: /^\/id\/(I[0-9a-f]{40})$/,
+
+  // Matches /c/<changeNum>/[*][/].
+  CHANGE_LEGACY: /^\/c\/(\d+)\/?(.*)$/,
+  CHANGE_NUMBER_LEGACY: /^\/(\d+)\/?/,
 
   // Matches
   // /c/<project>/+/<changeNum>/[<basePatchNum|edit>..][<patchNum|edit>].
@@ -397,7 +394,7 @@ export class GrRouter implements Finalizable, NavigationService {
   setState(state: AppElementParams) {
     // TODO: Move this logic into the change model.
     if ('repo' in state && state.repo !== undefined && 'changeNum' in state)
-      this.restApiService.setInProjectLookup(state.changeNum, state.repo);
+      this.restApiService.addRepoNameToCache(state.changeNum, state.repo);
 
     this.routerModel.setState({view: state.view});
     // We are trying to reset the change (view) model when navigating to other
@@ -456,8 +453,14 @@ export class GrRouter implements Finalizable, NavigationService {
    */
   redirectToLogin(returnUrl: string) {
     const basePath = getBaseUrl() || '';
-    this.setUrl(
-      '/login/' + encodeURIComponent(returnUrl.substring(basePath.length))
+    // We are not using `this.getNavigation().setUrl()`, because the login
+    // page is served directly from the backend and is not part of the web
+    // app.
+    assign(
+      window.location,
+      `${basePath}/login/${encodeURIComponent(
+        returnUrl.substring(basePath.length)
+      )}`
     );
   }
 
@@ -579,6 +582,8 @@ export class GrRouter implements Finalizable, NavigationService {
    * page.show() eventually just calls `window.history.pushState()`.
    */
   setUrl(url: string) {
+    // TODO: Use window.location.assign() instead of page.show(), if the URL is
+    // external, i.e. not handled by the router.
     this.page.show(url);
   }
 
@@ -589,6 +594,8 @@ export class GrRouter implements Finalizable, NavigationService {
    * this.page.redirect() eventually just calls `window.history.replaceState()`.
    */
   replaceUrl(url: string) {
+    // TODO: Use window.location.replace() instead of page.redirect(), if the
+    // URL is external, i.e. not handled by the router.
     this.redirect(url);
   }
 
@@ -805,10 +812,6 @@ export class GrRouter implements Finalizable, NavigationService {
       this.handleRepoRoute(ctx)
     );
 
-    this.mapRoute(RoutePattern.PLUGINS, 'handlePassThroughRoute', () =>
-      this.handlePassThroughRoute()
-    );
-
     this.mapRoute(
       RoutePattern.PLUGIN_LIST,
       'handlePluginListFilterRoute',
@@ -846,6 +849,12 @@ export class GrRouter implements Finalizable, NavigationService {
     );
 
     this.mapRoute(
+      RoutePattern.CHANGE_NUMBER_LEGACY,
+      'handleChangeNumberLegacyRoute',
+      ctx => this.handleChangeNumberLegacyRoute(ctx)
+    );
+
+    this.mapRoute(
       RoutePattern.DIFF_EDIT,
       'handleDiffEditRoute',
       ctx => this.handleDiffEditRoute(ctx),
@@ -873,6 +882,10 @@ export class GrRouter implements Finalizable, NavigationService {
 
     this.mapRoute(RoutePattern.CHANGE, 'handleChangeRoute', ctx =>
       this.handleChangeRoute(ctx)
+    );
+
+    this.mapRoute(RoutePattern.CHANGE_LEGACY, 'handleChangeLegacyRoute', ctx =>
+      this.handleChangeLegacyRoute(ctx)
     );
 
     this.mapRoute(
@@ -905,10 +918,6 @@ export class GrRouter implements Finalizable, NavigationService {
 
     this.mapRoute(RoutePattern.REGISTER, 'handleRegisterRoute', ctx =>
       this.handleRegisterRoute(ctx)
-    );
-
-    this.mapRoute(RoutePattern.LOG_IN_OR_OUT, 'handlePassThroughRoute', () =>
-      this.handlePassThroughRoute()
     );
 
     this.mapRoute(
@@ -1294,6 +1303,14 @@ export class GrRouter implements Finalizable, NavigationService {
     this.redirect(ctx.path.replace(LEGACY_QUERY_SUFFIX_PATTERN, ''));
   }
 
+  handleChangeNumberLegacyRoute(ctx: PageContext) {
+    this.redirect(
+      '/c/' +
+        ctx.params[0] +
+        (ctx.querystring.length > 0 ? `?${ctx.querystring}` : '')
+    );
+  }
+
   handleChangeRoute(ctx: PageContext) {
     // Parameter order is based on the regex group number matched.
     const changeNum = Number(ctx.params[1]) as NumericChangeId;
@@ -1339,7 +1356,7 @@ export class GrRouter implements Finalizable, NavigationService {
     const repo = ctx.params[0] as RepoName;
     const commentId = ctx.params[2] as UrlEncodedCommentId;
 
-    this.restApiService.setInProjectLookup(changeNum, repo);
+    this.restApiService.addRepoNameToCache(changeNum, repo);
     const [comments, robotComments, drafts, change] = await Promise.all([
       this.restApiService.getDiffComments(changeNum),
       this.restApiService.getDiffRobotComments(changeNum),
@@ -1446,6 +1463,26 @@ export class GrRouter implements Finalizable, NavigationService {
     this.changeViewModel.setState(state);
   }
 
+  handleChangeLegacyRoute(ctx: PageContext) {
+    const changeNum = Number(ctx.params[0]) as NumericChangeId;
+    if (!changeNum) {
+      this.show404();
+      return;
+    }
+    this.restApiService.getRepoName(changeNum).then(project => {
+      // Show a 404 and terminate if the lookup request failed. Attempting
+      // to redirect after failing to get the project loops infinitely.
+      if (!project) {
+        this.show404();
+        return;
+      }
+      this.redirect(
+        `/c/${project}/+/${changeNum}/${ctx.params[1]}` +
+          (ctx.querystring.length > 0 ? `?${ctx.querystring}` : '')
+      );
+    });
+  }
+
   handleLegacyLinenum(ctx: PageContext) {
     this.redirect(ctx.path.replace(LEGACY_LINENUM_PATTERN, '#$1'));
   }
@@ -1547,14 +1584,6 @@ export class GrRouter implements Finalizable, NavigationService {
   }
 
   /**
-   * Handler for routes that should pass through the router and not be caught
-   * by the catchall _handleDefaultRoute handler.
-   */
-  handlePassThroughRoute() {
-    windowLocationReload();
-  }
-
-  /**
    * URL may sometimes have /+/ encoded to / /.
    * Context: Issue 6888, Issue 7100
    */
@@ -1609,8 +1638,13 @@ export class GrRouter implements Finalizable, NavigationService {
       this.show404();
     } else {
       // Route can be recognized by server, so we pass it to server.
-      this.handlePassThroughRoute();
+      this.windowReload();
     }
+  }
+
+  // Allows stubbing in tests.
+  windowReload() {
+    windowLocationReload();
   }
 
   private show404() {

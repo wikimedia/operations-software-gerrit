@@ -17,6 +17,7 @@ package com.google.gerrit.server.api.changes;
 import static com.google.gerrit.server.api.ApiUtil.asRestApiException;
 
 import com.google.gerrit.extensions.api.changes.ChangeEditApi;
+import com.google.gerrit.extensions.api.changes.ChangeEditIdentityType;
 import com.google.gerrit.extensions.api.changes.FileContentInput;
 import com.google.gerrit.extensions.api.changes.PublishChangeEditInput;
 import com.google.gerrit.extensions.client.ChangeEditDetailOption;
@@ -55,6 +56,7 @@ public class ChangeEditApiImpl implements ChangeEditApi {
   private final ChangeEdits.DeleteContent changeEditDeleteContent;
   private final Provider<ChangeEdits.GetMessage> getChangeEditCommitMessageProvider;
   private final ChangeEdits.EditMessage modifyChangeEditCommitMessage;
+  private final ChangeEdits.EditIdentity modifyIdentity;
   private final ChangeEdits changeEdits;
   private final ChangeResource changeResource;
 
@@ -70,6 +72,7 @@ public class ChangeEditApiImpl implements ChangeEditApi {
       ChangeEdits.DeleteContent changeEditDeleteContent,
       Provider<ChangeEdits.GetMessage> getChangeEditCommitMessageProvider,
       ChangeEdits.EditMessage modifyChangeEditCommitMessage,
+      ChangeEdits.EditIdentity modifyIdentity,
       ChangeEdits changeEdits,
       @Assisted ChangeResource changeResource) {
     this.editDetailProvider = editDetailProvider;
@@ -82,6 +85,7 @@ public class ChangeEditApiImpl implements ChangeEditApi {
     this.changeEditDeleteContent = changeEditDeleteContent;
     this.getChangeEditCommitMessageProvider = getChangeEditCommitMessageProvider;
     this.modifyChangeEditCommitMessage = modifyChangeEditCommitMessage;
+    this.modifyIdentity = modifyIdentity;
     this.changeEdits = changeEdits;
     this.changeResource = changeResource;
   }
@@ -127,7 +131,8 @@ public class ChangeEditApiImpl implements ChangeEditApi {
   @Override
   public void create() throws RestApiException {
     try {
-      changeEditsPost.apply(changeResource, null);
+      @SuppressWarnings("unused")
+      var unused = changeEditsPost.apply(changeResource, null);
     } catch (Exception e) {
       throw asRestApiException("Cannot create change edit", e);
     }
@@ -136,7 +141,8 @@ public class ChangeEditApiImpl implements ChangeEditApi {
   @Override
   public void delete() throws RestApiException {
     try {
-      deleteChangeEdit.apply(changeResource, new Input());
+      @SuppressWarnings("unused")
+      var unused = deleteChangeEdit.apply(changeResource, new Input());
     } catch (Exception e) {
       throw asRestApiException("Cannot delete change edit", e);
     }
@@ -145,7 +151,8 @@ public class ChangeEditApiImpl implements ChangeEditApi {
   @Override
   public void rebase() throws RestApiException {
     try {
-      rebaseChangeEdit.apply(changeResource, null);
+      @SuppressWarnings("unused")
+      var unused = rebaseChangeEdit.apply(changeResource, null);
     } catch (Exception e) {
       throw asRestApiException("Cannot rebase change edit", e);
     }
@@ -159,7 +166,8 @@ public class ChangeEditApiImpl implements ChangeEditApi {
   @Override
   public void publish(PublishChangeEditInput publishChangeEditInput) throws RestApiException {
     try {
-      publishChangeEdit.apply(changeResource, publishChangeEditInput);
+      @SuppressWarnings("unused")
+      var unused = publishChangeEdit.apply(changeResource, publishChangeEditInput);
     } catch (Exception e) {
       throw asRestApiException("Cannot publish change edit", e);
     }
@@ -182,7 +190,9 @@ public class ChangeEditApiImpl implements ChangeEditApi {
       ChangeEdits.Post.Input renameInput = new ChangeEdits.Post.Input();
       renameInput.oldPath = oldFilePath;
       renameInput.newPath = newFilePath;
-      changeEditsPost.apply(changeResource, renameInput);
+
+      @SuppressWarnings("unused")
+      var unused = changeEditsPost.apply(changeResource, renameInput);
     } catch (Exception e) {
       throw asRestApiException("Cannot rename file of change edit", e);
     }
@@ -193,7 +203,9 @@ public class ChangeEditApiImpl implements ChangeEditApi {
     try {
       ChangeEdits.Post.Input restoreInput = new ChangeEdits.Post.Input();
       restoreInput.restorePath = filePath;
-      changeEditsPost.apply(changeResource, restoreInput);
+
+      @SuppressWarnings("unused")
+      var unused = changeEditsPost.apply(changeResource, restoreInput);
     } catch (Exception e) {
       throw asRestApiException("Cannot restore file of change edit", e);
     }
@@ -202,7 +214,8 @@ public class ChangeEditApiImpl implements ChangeEditApi {
   @Override
   public void modifyFile(String filePath, FileContentInput input) throws RestApiException {
     try {
-      changeEditsPut.apply(changeResource, filePath, input);
+      @SuppressWarnings("unused")
+      var unused = changeEditsPut.apply(changeResource, filePath, input);
     } catch (Exception e) {
       throw asRestApiException("Cannot modify file of change edit", e);
     }
@@ -211,7 +224,8 @@ public class ChangeEditApiImpl implements ChangeEditApi {
   @Override
   public void deleteFile(String filePath) throws RestApiException {
     try {
-      changeEditDeleteContent.apply(changeResource, filePath);
+      @SuppressWarnings("unused")
+      var unused = changeEditDeleteContent.apply(changeResource, filePath);
     } catch (Exception e) {
       throw asRestApiException("Cannot delete file of change edit", e);
     }
@@ -234,9 +248,25 @@ public class ChangeEditApiImpl implements ChangeEditApi {
     ChangeEdits.EditMessage.Input input = new ChangeEdits.EditMessage.Input();
     input.message = newCommitMessage;
     try {
-      modifyChangeEditCommitMessage.apply(changeResource, input);
+      @SuppressWarnings("unused")
+      var unused = modifyChangeEditCommitMessage.apply(changeResource, input);
     } catch (Exception e) {
       throw asRestApiException("Cannot modify commit message of change edit", e);
+    }
+  }
+
+  @Override
+  public void modifyIdentity(String name, String email, ChangeEditIdentityType type)
+      throws RestApiException {
+    ChangeEdits.EditIdentity.Input input = new ChangeEdits.EditIdentity.Input();
+    input.name = name;
+    input.email = email;
+    input.type = type;
+    try {
+      @SuppressWarnings("unused")
+      var unused = modifyIdentity.apply(changeResource, input);
+    } catch (Exception e) {
+      throw asRestApiException("Cannot edit identity of change", e);
     }
   }
 

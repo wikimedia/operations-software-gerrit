@@ -17,6 +17,7 @@ import {
 } from '../../../test/test-data-generators';
 import {ChangeStatus, HttpMethod} from '../../../constants/constants';
 import {
+  makePrefixedJSON,
   mockPromise,
   query,
   queryAll,
@@ -39,7 +40,7 @@ import {
   ReviewInput,
   TopicName,
 } from '../../../types/common';
-import {ActionType} from '../../../api/change-actions';
+import {ActionType, RevisionActions} from '../../../api/change-actions';
 import {SinonFakeTimers, SinonStubbedMember} from 'sinon';
 import {IronAutogrowTextareaElement} from '@polymer/iron-autogrow-textarea';
 import {GrButton} from '../../shared/gr-button/gr-button';
@@ -98,29 +99,6 @@ suite('gr-change-actions tests', () => {
           },
         })
       );
-      stubRestApi('send').callsFake((method, url) => {
-        if (method !== 'POST') {
-          return Promise.reject(new Error('bad method'));
-        }
-        if (url === '/changes/test~42/revisions/2/submit') {
-          return Promise.resolve({
-            ...new Response(),
-            ok: true,
-            text() {
-              return Promise.resolve(")]}'\n{}");
-            },
-          });
-        } else if (url === '/changes/test~42/revisions/2/rebase') {
-          return Promise.resolve({
-            ...new Response(),
-            ok: true,
-            text() {
-              return Promise.resolve(")]}'\n{}");
-            },
-          });
-        }
-        return Promise.reject(new Error('bad url'));
-      });
 
       sinon
         .stub(testResolver(pluginLoaderToken), 'awaitPluginsLoaded')
@@ -142,6 +120,7 @@ suite('gr-change-actions tests', () => {
         },
       };
       element.changeNum = 42 as NumericChangeId;
+      element.mergeable = false;
       element.latestPatchNum = 2 as PatchSetNumber;
       element.account = {
         _account_id: 123 as AccountId,
@@ -299,9 +278,63 @@ suite('gr-change-actions tests', () => {
                 Do you really want to delete the edit?
               </div>
             </gr-dialog>
+            <gr-dialog
+              class="confirmDialog"
+              confirm-label="Publish"
+              confirm-on-enter=""
+              id="confirmPublishEditDialog"
+              role="dialog"
+            >
+              <div class="header" slot="header">Publish Change Edit</div>
+              <div class="main" slot="main">
+                Do you really want to publish the edit?
+              </div>
+            </gr-dialog>
           </dialog>
         `
       );
+    });
+
+    suite('isLoading', () => {
+      const isLoading = async () => {
+        await element.updateComplete;
+        const loadingButton = queryAndAssert(
+          element,
+          'div#mainContent > gr-button'
+        );
+        assert.equal(loadingButton.textContent, 'Loading actions...');
+        return loadingButton.getAttribute('hidden') === null;
+      };
+
+      test('change', async () => {
+        element.change = undefined;
+        await element.updateComplete;
+        assert.shadowDom.equal(element, '');
+      });
+
+      test('mergeable', async () => {
+        element.mergeable = undefined;
+        assert.isTrue(await isLoading());
+
+        element.mergeable = true;
+        assert.isFalse(await isLoading());
+      });
+
+      test('pluginsLoaded', async () => {
+        element.pluginsLoaded = false;
+        assert.isTrue(await isLoading());
+
+        element.pluginsLoaded = true;
+        assert.isFalse(await isLoading());
+      });
+
+      test('revisionActions', async () => {
+        element.revisionActions = undefined;
+        assert.isTrue(await isLoading());
+
+        element.revisionActions = {};
+        assert.isFalse(await isLoading());
+      });
     });
 
     test('show-revision-actions event should fire', async () => {
@@ -409,8 +442,8 @@ suite('gr-change-actions tests', () => {
       );
       assert.isOk(buttonEl);
       element.setActionHidden(
-        element.ActionType.REVISION,
-        element.RevisionActions.SUBMIT,
+        ActionType.REVISION,
+        RevisionActions.SUBMIT,
         true
       );
       assert.lengthOf(element.hiddenActions, 1);
@@ -419,8 +452,8 @@ suite('gr-change-actions tests', () => {
       assert.isNotOk(buttonEl);
 
       element.setActionHidden(
-        element.ActionType.REVISION,
-        element.RevisionActions.SUBMIT,
+        ActionType.REVISION,
+        RevisionActions.SUBMIT,
         false
       );
       await element.updateComplete;
@@ -429,7 +462,6 @@ suite('gr-change-actions tests', () => {
     });
 
     test('buttons exist', async () => {
-      element.loading = false;
       await element.updateComplete;
       const buttonEls = queryAll(element, 'gr-button');
       const menuItems = queryAndAssert<GrDropdown>(
@@ -496,9 +528,7 @@ suite('gr-change-actions tests', () => {
 
     test('submit change', async () => {
       const showSpy = sinon.spy(element, 'showActionDialog');
-      stubRestApi('getFromProjectLookup').returns(
-        Promise.resolve('test' as RepoName)
-      );
+      stubRestApi('getRepoName').returns(Promise.resolve('test' as RepoName));
       element.change = {
         ...createChangeViewChange(),
         revisions: {
@@ -532,9 +562,7 @@ suite('gr-change-actions tests', () => {
           'resetFocus'
         )
         .callsFake(() => submitted.resolve());
-      stubRestApi('getFromProjectLookup').returns(
-        Promise.resolve('test' as RepoName)
-      );
+      stubRestApi('getRepoName').returns(Promise.resolve('test' as RepoName));
       element.change = {
         ...createChangeViewChange(),
         revisions: {
@@ -576,7 +604,7 @@ suite('gr-change-actions tests', () => {
       assert.isTrue(fireStub.calledOnce);
       assert.deepEqual(fireStub.lastCall.args, [
         '/submit',
-        assertUIActionInfo(element.revisionActions.submit),
+        assertUIActionInfo(element.revisionActions?.submit),
         true,
       ]);
     });
@@ -1235,7 +1263,7 @@ suite('gr-change-actions tests', () => {
     test('custom actions', async () => {
       // Add a button with the same key as a server-based one to ensure
       // collisions are taken care of.
-      const key = element.addActionButton(element.ActionType.REVISION, 'Bork!');
+      const key = element.addActionButton(ActionType.REVISION, 'Bork!');
       const keyTapped = mockPromise();
       element.addEventListener(key + '-tap', async e => {
         assert.equal(
@@ -2306,7 +2334,7 @@ suite('gr-change-actions tests', () => {
     test('adds download revision action', async () => {
       const handler = sinon.stub();
       element.addEventListener('download-tap', handler);
-      assert.ok(element.revisionActions.download);
+      assert.ok(element.revisionActions?.download);
       element.handleDownloadTap();
       await element.updateComplete;
 
@@ -2408,7 +2436,6 @@ suite('gr-change-actions tests', () => {
       const payload = {foo: 'bar'};
       let onShowError: sinon.SinonStub;
       let onShowAlert: sinon.SinonStub;
-      let getResponseObjectStub: sinon.SinonStub;
 
       setup(async () => {
         cleanup = sinon.stub();
@@ -2429,7 +2456,7 @@ suite('gr-change-actions tests', () => {
       });
 
       suite('happy path', () => {
-        let sendStub: sinon.SinonStub;
+        let executeChangeActionStub: sinon.SinonStub;
         setup(() => {
           stubRestApi('getChangeDetail').returns(
             Promise.resolve({
@@ -2439,8 +2466,7 @@ suite('gr-change-actions tests', () => {
               messages: createChangeMessages(1),
             })
           );
-          getResponseObjectStub = stubRestApi('getResponseObject');
-          sendStub = stubRestApi('executeChangeAction').returns(
+          executeChangeActionStub = stubRestApi('executeChangeAction').returns(
             Promise.resolve(new Response())
           );
         });
@@ -2457,7 +2483,7 @@ suite('gr-change-actions tests', () => {
           assert.isFalse(onShowError.called);
           assert.isTrue(cleanup.calledOnce);
           assert.isTrue(
-            sendStub.calledWith(
+            executeChangeActionStub.calledWith(
               42,
               HttpMethod.DELETE,
               '/endpoint',
@@ -2474,11 +2500,12 @@ suite('gr-change-actions tests', () => {
           });
 
           test('revert submission single change', async () => {
-            getResponseObjectStub.returns(
-              Promise.resolve({
+            const response = new Response(
+              makePrefixedJSON({
                 revert_changes: [{change_id: 12345, topic: 'T'}],
               })
             );
+            executeChangeActionStub.resolves(response);
             await element.send(
               HttpMethod.POST,
               {message: 'Revert submission'},
@@ -2493,20 +2520,21 @@ suite('gr-change-actions tests', () => {
                 __type: ActionType.CHANGE,
                 label: 'l',
               },
-              new Response()
+              response
             );
             assert.isTrue(setUrlStub.called);
             assert.equal(setUrlStub.lastCall.args[0], '/q/topic:"T"');
           });
 
           test('revert single change', async () => {
-            getResponseObjectStub.returns(
-              Promise.resolve({
+            const response = new Response(
+              makePrefixedJSON({
                 change_id: 12345,
                 project: 'projectId',
                 _number: 12345,
               })
             );
+            executeChangeActionStub.resolves(response);
             stubRestApi('getChange').returns(
               Promise.resolve(createChangeViewChange())
             );
@@ -2524,7 +2552,7 @@ suite('gr-change-actions tests', () => {
                 __type: ActionType.CHANGE,
                 label: 'l',
               },
-              new Response()
+              response
             );
             assert.isTrue(setUrlStub.called);
             assert.equal(setUrlStub.lastCall.args[0], '/c/projectId/+/12345');
@@ -2534,15 +2562,17 @@ suite('gr-change-actions tests', () => {
         suite('multiple changes revert', () => {
           let showActionDialogStub: sinon.SinonStub;
           let setUrlStub: sinon.SinonStub;
+          let response: Response;
           setup(() => {
-            getResponseObjectStub.returns(
-              Promise.resolve({
+            response = new Response(
+              makePrefixedJSON({
                 revert_changes: [
                   {change_id: 12345, topic: 'T'},
                   {change_id: 23456, topic: 'T'},
                 ],
               })
             );
+            executeChangeActionStub.resolves(response);
             showActionDialogStub = sinon.stub(element, 'showActionDialog');
             setUrlStub = sinon.stub(testResolver(navigationToken), 'setUrl');
           });
@@ -2562,7 +2592,7 @@ suite('gr-change-actions tests', () => {
                 __type: ActionType.CHANGE,
                 label: 'l',
               },
-              new Response()
+              response
             );
             assert.isFalse(showActionDialogStub.called);
             assert.isTrue(setUrlStub.called);
@@ -2582,7 +2612,13 @@ suite('gr-change-actions tests', () => {
           assert.isFalse(onShowError.called);
           assert.isTrue(cleanup.calledOnce);
           assert.isTrue(
-            sendStub.calledWith(42, 'DELETE', '/endpoint', 12, payload)
+            executeChangeActionStub.calledWith(
+              42,
+              'DELETE',
+              '/endpoint',
+              12,
+              payload
+            )
           );
         });
       });
@@ -2599,7 +2635,7 @@ suite('gr-change-actions tests', () => {
               messages: createChangeMessages(1),
             })
           );
-          const sendStub = stubRestApi('executeChangeAction');
+          const executeChangeActionStub = stubRestApi('executeChangeAction');
 
           return element
             .send(
@@ -2614,7 +2650,7 @@ suite('gr-change-actions tests', () => {
               assert.isTrue(onShowAlert.calledOnce);
               assert.isFalse(onShowError.called);
               assert.isTrue(cleanup.calledOnce);
-              assert.isFalse(sendStub.called);
+              assert.isFalse(executeChangeActionStub.called);
             });
         });
 
@@ -2627,11 +2663,13 @@ suite('gr-change-actions tests', () => {
               messages: createChangeMessages(1),
             })
           );
-          const sendStub = stubRestApi('executeChangeAction').callsFake(
+          const executeChangeActionStub = stubRestApi(
+            'executeChangeAction'
+          ).callsFake(
             (_num, _method, _patchNum, _endpoint, _payload, onErr) => {
               // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
               onErr!();
-              return Promise.resolve(undefined);
+              return Promise.resolve(new Response());
             }
           );
           const handleErrorStub = sinon.stub(element, 'handleResponseError');
@@ -2648,7 +2686,7 @@ suite('gr-change-actions tests', () => {
             .then(() => {
               assert.isFalse(onShowError.called);
               assert.isTrue(cleanup.called);
-              assert.isTrue(sendStub.calledOnce);
+              assert.isTrue(executeChangeActionStub.calledOnce);
               assert.isTrue(handleErrorStub.called);
             });
         });
@@ -2662,7 +2700,6 @@ suite('gr-change-actions tests', () => {
               messages: createChangeMessages(1),
             })
           );
-          getResponseObjectStub = stubRestApi('getResponseObject');
           const setUrlStub = sinon.stub(
             testResolver(navigationToken),
             'setUrl'
@@ -2671,8 +2708,8 @@ suite('gr-change-actions tests', () => {
             element,
             'setReviewOnRevert'
           );
-          getResponseObjectStub.returns(
-            Promise.resolve({
+          const response = new Response(
+            makePrefixedJSON({
               change_id: 12345,
               project: 'projectId',
               _number: 12345,
@@ -2705,7 +2742,7 @@ suite('gr-change-actions tests', () => {
               __type: ActionType.CHANGE,
               label: 'l',
             },
-            new Response()
+            response
           );
 
           assert.isTrue(errorFired);
@@ -2761,12 +2798,12 @@ suite('gr-change-actions tests', () => {
       assert.strictEqual(
         queryAndAssert<GrConfirmSubmitDialog>(element, '#confirmSubmitDialog')
           .action,
-        null
+        undefined
       );
       assert.strictEqual(
         queryAndAssert<GrConfirmRebaseDialog>(element, '#confirmRebase')
           .rebaseOnCurrent,
-        null
+        false
       );
     });
   });

@@ -16,13 +16,13 @@ package com.google.gerrit.server.query.group;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
-import static com.google.common.truth.Truth8.assertThat;
 import static com.google.common.truth.TruthJUnit.assume;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.util.stream.Collectors.toList;
 import static org.junit.Assert.fail;
 
 import com.google.common.base.CharMatcher;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.AccountGroup;
@@ -144,7 +144,7 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
     Account.Id userId =
         createAccountOutsideRequestContext("user", "User", "user@example.com", true);
     user = userFactory.create(userId);
-    requestContext.setContext(newRequestContext(userId));
+    setRequestContextForUser(userId);
     currentUserInfo = gApi.accounts().id(userId.get()).get();
   }
 
@@ -156,7 +156,8 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
   }
 
   protected void setAnonymous() {
-    requestContext.setContext(anonymousUser::get);
+    @SuppressWarnings("unused")
+    var unused = requestContext.setContext(anonymousUser::get);
   }
 
   @After
@@ -165,7 +166,8 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
       lifecycle.stop();
     }
     if (requestContext != null) {
-      requestContext.setContext(null);
+      @SuppressWarnings("unused")
+      var unused = requestContext.setContext(null);
     }
   }
 
@@ -436,14 +438,22 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
     return gApi.accounts().create(accountInput).get();
   }
 
+  private void setRequestContextForUser(Account.Id userId) {
+    @SuppressWarnings("unused")
+    var unused = requestContext.setContext(newRequestContext(userId));
+  }
+
+  @CanIgnoreReturnValue
   protected GroupInfo createGroup(String name, AccountInfo... members) throws Exception {
     return createGroupWithDescription(name, null, members);
   }
 
+  @CanIgnoreReturnValue
   protected GroupInfo createGroup(GroupInput in) throws Exception {
     return gApi.groups().create(in).get();
   }
 
+  @CanIgnoreReturnValue
   protected GroupInfo createGroupWithDescription(
       String name, String description, AccountInfo... members) throws Exception {
     GroupInput in = new GroupInput();
@@ -454,6 +464,7 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
     return createGroup(in);
   }
 
+  @CanIgnoreReturnValue
   protected GroupInfo createGroupWithOwner(String name, GroupInfo ownerGroup) throws Exception {
     GroupInput in = new GroupInput();
     in.name = name;
@@ -461,6 +472,7 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
     return createGroup(in);
   }
 
+  @CanIgnoreReturnValue
   protected GroupInfo createGroupThatIsVisibleToAll(String name) throws Exception {
     GroupInput in = new GroupInput();
     in.name = name;
@@ -478,18 +490,21 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
     return gApi.groups().id(uuid.get()).get();
   }
 
+  @CanIgnoreReturnValue
   protected List<GroupInfo> assertQuery(Object query, GroupInfo... groups) throws Exception {
     return assertQuery(newQuery(query), groups);
   }
 
+  @CanIgnoreReturnValue
   protected List<GroupInfo> assertQuery(QueryRequest query, GroupInfo... groups) throws Exception {
     return assertQuery(query, Arrays.asList(groups));
   }
 
+  @CanIgnoreReturnValue
   protected List<GroupInfo> assertQuery(QueryRequest query, List<GroupInfo> groups)
       throws Exception {
     List<GroupInfo> result = query.get();
-    Iterable<String> uuids = uuids(result);
+    List<String> uuids = uuids(result);
     assertWithMessage(format(query, result, groups))
         .that(uuids)
         .containsExactlyElementsIn(uuids(groups))
@@ -562,11 +577,11 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
     return b == null ? false : b;
   }
 
-  protected static Iterable<String> ids(GroupInfo... groups) {
+  protected static List<String> ids(GroupInfo... groups) {
     return uuids(Arrays.asList(groups));
   }
 
-  protected static Iterable<String> uuids(List<GroupInfo> groups) {
+  protected static List<String> uuids(List<GroupInfo> groups) {
     return groups.stream().map(g -> g.id).sorted().collect(toList());
   }
 

@@ -14,6 +14,7 @@
 
 package com.google.gerrit.server.account.externalids.storage.notedb;
 
+import com.google.common.collect.ImmutableSet;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.account.externalids.ExternalIds;
@@ -26,7 +27,6 @@ import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import org.eclipse.jgit.errors.ConfigInvalidException;
@@ -81,7 +81,7 @@ public class OnlineExternalIdCaseSensivityMigrator {
     executor.execute(
         () -> {
           try {
-            Set<ExternalId> todo = externalIds.all();
+            ImmutableSet<ExternalId> todo = externalIds.all();
             try {
               monitor.beginTask("Converting external ID note names", todo.size());
               migratorFactory
@@ -93,7 +93,9 @@ public class OnlineExternalIdCaseSensivityMigrator {
             try {
               updateGerritConfig();
               monitor.beginTask("Reindex accounts", ProgressMonitor.UNKNOWN);
-              versionManager.startReindexer("accounts", true);
+
+              @SuppressWarnings("unused")
+              var unused = versionManager.startReindexer("accounts", true);
             } finally {
               monitor.endTask();
             }

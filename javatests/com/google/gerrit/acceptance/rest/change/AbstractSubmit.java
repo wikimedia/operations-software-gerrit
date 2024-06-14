@@ -17,7 +17,6 @@ package com.google.gerrit.acceptance.rest.change;
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
-import static com.google.common.truth.Truth8.assertThat;
 import static com.google.common.truth.TruthJUnit.assume;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowLabel;
@@ -38,6 +37,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import com.github.rholder.retry.RetryException;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
@@ -90,6 +90,7 @@ import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.webui.UiAction;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.approval.ApprovalsUtil;
+import com.google.gerrit.server.change.MergeabilityComputationBehavior;
 import com.google.gerrit.server.change.RevisionResource;
 import com.google.gerrit.server.change.TestSubmitInput;
 import com.google.gerrit.server.git.validators.OnSubmitValidationListener;
@@ -126,6 +127,7 @@ import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.transport.ReceiveCommand;
 import org.eclipse.jgit.transport.RefSpec;
+import org.junit.Before;
 import org.junit.Test;
 
 @NoHttpd
@@ -135,6 +137,17 @@ public abstract class AbstractSubmit extends AbstractDaemonTest {
   @ConfigSuite.Config
   public static Config submitWholeTopicEnabled() {
     return submitWholeTopicEnabledConfig();
+  }
+
+  @ConfigSuite.Config
+  public static Config mergeabilityCheckEnabled() {
+    Config cfg = new Config();
+    cfg.setEnum(
+        "change",
+        null,
+        "mergeabilityComputationBehavior",
+        MergeabilityComputationBehavior.API_REF_UPDATED_AND_CHANGE_REINDEX);
+    return cfg;
   }
 
   @Inject private ApprovalsUtil approvalsUtil;
@@ -147,7 +160,14 @@ public abstract class AbstractSubmit extends AbstractDaemonTest {
 
   @Inject private ChangeIndexer changeIndex;
 
+  protected MergeabilityComputationBehavior mcb;
+
   protected abstract SubmitType getSubmitType();
+
+  @Before
+  public void setUp() {
+    mcb = MergeabilityComputationBehavior.fromConfig(cfg);
+  }
 
   @Test
   @TestProjectInput(createEmptyCommit = false)
@@ -668,7 +688,17 @@ public abstract class AbstractSubmit extends AbstractDaemonTest {
 
     List<RevCommit> log = getRemoteLog();
     assertThat(log).contains(stable.getCommit());
-    assertThat(log).contains(mergeReview.getCommit());
+
+    if (getSubmitType() == SubmitType.REBASE_ALWAYS) {
+      // the merge commit has been rebased
+      RevCommit newHead = projectOperations.project(project).getHead("master");
+      assertThat(newHead.getParentCount()).isEqualTo(2);
+
+      assertThat(newHead.getParent(0).getId()).isEqualTo(master);
+      assertThat(newHead.getParent(1).getId()).isEqualTo(stable.getCommit());
+    } else {
+      assertThat(log).contains(mergeReview.getCommit());
+    }
   }
 
   @Test
@@ -712,7 +742,17 @@ public abstract class AbstractSubmit extends AbstractDaemonTest {
 
     List<RevCommit> log = getRemoteLog();
     assertThat(log).contains(s1.getCommit());
-    assertThat(log).contains(mergeReview.getCommit());
+
+    if (getSubmitType() == SubmitType.REBASE_ALWAYS) {
+      // the merge commit has been rebased
+      RevCommit newHead = projectOperations.project(project).getHead("master");
+      assertThat(newHead.getParentCount()).isEqualTo(2);
+
+      assertThat(newHead.getParent(0).getId()).isEqualTo(m.getCommit());
+      assertThat(newHead.getParent(1).getId()).isEqualTo(s1.getCommit());
+    } else {
+      assertThat(log).contains(mergeReview.getCommit());
+    }
   }
 
   @Test
@@ -941,9 +981,18 @@ public abstract class AbstractSubmit extends AbstractDaemonTest {
     assertMerged(mergeId);
     testRepo.git().fetch().call();
     RevWalk rw = testRepo.getRevWalk();
-    master = rw.parseCommit(projectOperations.project(project).getHead("master"));
-    assertThat(rw.isMergedInto(merge, master)).isTrue();
-    assertThat(rw.isMergedInto(fix, master)).isTrue();
+    RevCommit newMaster = rw.parseCommit(projectOperations.project(project).getHead("master"));
+    assertThat(rw.isMergedInto(fix, newMaster)).isTrue();
+
+    if (getSubmitType() == SubmitType.REBASE_ALWAYS) {
+      // the merge commit has been rebased
+      assertThat(newMaster.getParentCount()).isEqualTo(2);
+
+      assertThat(newMaster.getParent(0).getId()).isEqualTo(master);
+      assertThat(newMaster.getParent(1).getId()).isEqualTo(fix);
+    } else {
+      assertThat(rw.isMergedInto(merge, newMaster)).isTrue();
+    }
   }
 
   @Test
@@ -989,7 +1038,11 @@ public abstract class AbstractSubmit extends AbstractDaemonTest {
     testMetricMaker.reset();
 
     Throwable thrown = assertThrows(StorageException.class, () -> submit(id, input));
-    assertThat(thrown.getCause()).hasMessageThat().contains("missing from ChangeSet[][]");
+    assertThat(thrown.getCause()).hasMessageThat().contains("Computing mergeSuperset has failed");
+    assertThat(thrown.getCause()).hasCauseThat().isInstanceOf(RetryException.class);
+    assertThat(thrown.getCause().getCause().getCause())
+        .hasMessageThat()
+        .contains("missing from ChangeSet[][]");
 
     // We retried more than once before giving up
     assertThat(

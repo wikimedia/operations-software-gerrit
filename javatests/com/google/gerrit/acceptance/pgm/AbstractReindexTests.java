@@ -18,10 +18,10 @@ import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static com.google.common.truth.StreamSubject.streams;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
-import static com.google.common.truth.Truth8.assertThat;
 import static com.google.gerrit.extensions.client.ListGroupsOption.MEMBERS;
 
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.io.MoreFiles;
 import com.google.common.io.RecursiveDeleteOption;
 import com.google.gerrit.acceptance.NoHttpd;
@@ -30,6 +30,7 @@ import com.google.gerrit.acceptance.pgm.IndexUpgradeController.UpgradeAttempt;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.GerritApi;
+import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.common.ChangeInput;
 import com.google.gerrit.index.IndexDefinition;
 import com.google.gerrit.index.Schema;
@@ -45,7 +46,6 @@ import com.google.inject.Provider;
 import com.google.inject.TypeLiteral;
 import java.nio.file.Files;
 import java.util.Collection;
-import java.util.Set;
 import java.util.function.Consumer;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.storage.file.FileBasedConfig;
@@ -68,9 +68,45 @@ public abstract class AbstractReindexTests extends StandaloneSiteTest {
     Files.createDirectory(sitePaths.index_dir);
     assertServerStartupFails();
 
-    runGerrit("reindex", "-d", sitePaths.site_path.toString(), "--show-stack-trace");
+    runGerrit("reindex", "-d", sitePaths.site_path.toString(), "--show-stack-trace", "--verbose");
+    assertReady(ChangeSchemaDefinitions.INSTANCE.getLatest().getVersion());
+    assertIndexQueries();
+  }
+
+  @Test
+  public void reindexWithSkipExistingDocumentsEnabled() throws Exception {
+    updateConfig(config -> config.setBoolean("index", null, "reuseExistingDocuments", true));
+    setUpChange();
+
+    MoreFiles.deleteRecursively(sitePaths.index_dir, RecursiveDeleteOption.ALLOW_INSECURE);
+    Files.createDirectory(sitePaths.index_dir);
+    assertServerStartupFails();
+
+    runGerrit("reindex", "-d", sitePaths.site_path.toString(), "--show-stack-trace", "--verbose");
     assertReady(ChangeSchemaDefinitions.INSTANCE.getLatest().getVersion());
 
+    runGerrit("reindex", "-d", sitePaths.site_path.toString(), "--show-stack-trace", "--verbose");
+    assertIndexQueries();
+
+    Files.copy(sitePaths.index_dir, sitePaths.resolve("index-backup"));
+    try (ServerContext ctx = startServer()) {
+      GerritApi gApi = ctx.getInjector().getInstance(GerritApi.class);
+      gApi.changes().id(changeId).revision(1).review(ReviewInput.approve());
+      // Query change index
+      assertThat(gApi.changes().query("label:Code-Review+2").get().stream().map(c -> c.changeId))
+          .containsExactly(changeId);
+    }
+    MoreFiles.deleteRecursively(sitePaths.index_dir, RecursiveDeleteOption.ALLOW_INSECURE);
+    Files.copy(sitePaths.resolve("index-backup"), sitePaths.index_dir);
+    runGerrit("reindex", "-d", sitePaths.site_path.toString(), "--show-stack-trace", "--verbose");
+    try (ServerContext ctx = startServer()) {
+      GerritApi gApi = ctx.getInjector().getInstance(GerritApi.class);
+      assertThat(gApi.changes().query("label:Code-Review+2").get().stream().map(c -> c.changeId))
+          .containsExactly(changeId);
+    }
+  }
+
+  private void assertIndexQueries() throws Exception {
     try (ServerContext ctx = startServer()) {
       GerritApi gApi = ctx.getInjector().getInstance(GerritApi.class);
       // Query change index
@@ -290,7 +326,8 @@ public abstract class AbstractReindexTests extends StandaloneSiteTest {
   }
 
   private void assertReady(int expectedReady) throws Exception {
-    Set<Integer> allVersions = ChangeSchemaDefinitions.INSTANCE.getSchemas().keySet();
+    ImmutableSortedSet<Integer> allVersions =
+        ChangeSchemaDefinitions.INSTANCE.getSchemas().keySet();
     GerritIndexStatus status = new GerritIndexStatus(sitePaths);
     assertWithMessage("ready state for index versions")
         .that(

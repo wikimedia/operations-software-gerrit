@@ -15,21 +15,20 @@
 package com.google.gerrit.server.project;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.gerrit.server.project.ProjectCache.illegalState;
 
 import com.google.common.collect.Streams;
-import com.google.common.flogger.FluentLogger;
-import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.SubmitRecord;
 import com.google.gerrit.entities.SubmitTypeRecord;
 import com.google.gerrit.exceptions.StorageException;
-import com.google.gerrit.extensions.api.changes.ChangeApi;
 import com.google.gerrit.metrics.Description;
 import com.google.gerrit.metrics.Description.Units;
 import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.metrics.Timer0;
-import com.google.gerrit.server.change.ChangeJson;
 import com.google.gerrit.server.index.OnlineReindexMode;
-import com.google.gerrit.server.logging.CallerFinder;
+import com.google.gerrit.server.logging.Metadata;
+import com.google.gerrit.server.logging.TraceContext;
+import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.rules.DefaultSubmitRule;
@@ -46,8 +45,6 @@ import java.util.Optional;
  * the results through rules found in the parent projects, all the way up to All-Projects.
  */
 public class SubmitRuleEvaluator {
-  private static final FluentLogger logger = FluentLogger.forEnclosingClass();
-
   public interface Factory {
     /** Returns a new {@link SubmitRuleEvaluator} with the specified options */
     SubmitRuleEvaluator create(SubmitRuleOptions options);
@@ -80,7 +77,6 @@ public class SubmitRuleEvaluator {
   private final PluginSetContext<SubmitRule> submitRules;
   private final Metrics metrics;
   private final SubmitRuleOptions opts;
-  private final CallerFinder callerFinder;
 
   @Inject
   private SubmitRuleEvaluator(
@@ -95,14 +91,6 @@ public class SubmitRuleEvaluator {
     this.metrics = metrics;
 
     this.opts = options;
-
-    this.callerFinder =
-        CallerFinder.builder()
-            .addTarget(ChangeApi.class)
-            .addTarget(ChangeJson.class)
-            .addTarget(ChangeData.class)
-            .addTarget(SubmitRequirementsEvaluatorImpl.class)
-            .build();
   }
 
   /**
@@ -113,10 +101,11 @@ public class SubmitRuleEvaluator {
    * @param cd ChangeData to evaluate
    */
   public List<SubmitRecord> evaluate(ChangeData cd) {
-    logger.atFine().log(
-        "Evaluate submit rules for change %d (caller: %s)",
-        cd.change().getId().get(), callerFinder.findCallerLazy());
-    try (Timer0.Context ignored = metrics.submitRuleEvaluationLatency.start()) {
+    try (TraceTimer timer =
+            TraceContext.newTimer(
+                "Evaluate submit rules",
+                Metadata.builder().changeId(cd.change().getId().get()).build());
+        Timer0.Context ignored = metrics.submitRuleEvaluationLatency.start()) {
       if (cd.change() == null) {
         throw new StorageException("Change not found");
       }
@@ -151,7 +140,7 @@ public class SubmitRuleEvaluator {
           // Skip evaluating the default submit rule if the project has prolog rules.
           // Note that in this case, the prolog submit rule will handle labels for us
           .filter(
-              projectState.hasPrologRules()
+              projectState.hasPrologRules() && prologSubmitRuleUtil.isProjectRulesEnabled()
                   ? rule -> !(rule.get() instanceof DefaultSubmitRule)
                   : rule -> true)
           .map(
@@ -180,14 +169,10 @@ public class SubmitRuleEvaluator {
    */
   public SubmitTypeRecord getSubmitType(ChangeData cd) {
     try (Timer0.Context ignored = metrics.submitTypeEvaluationLatency.start()) {
-      try {
-        Project.NameKey name = cd.project();
-        Optional<ProjectState> project = projectCache.get(name);
-        if (!project.isPresent()) {
-          throw new NoSuchProjectException(name);
-        }
-      } catch (NoSuchProjectException e) {
-        throw new IllegalStateException("Unable to find project while evaluating submit rule", e);
+      ProjectState projectState =
+          projectCache.get(cd.project()).orElseThrow(illegalState(cd.project()));
+      if (!prologSubmitRuleUtil.isProjectRulesEnabled()) {
+        return SubmitTypeRecord.OK(projectState.getSubmitType());
       }
 
       return prologSubmitRuleUtil.getSubmitType(cd);

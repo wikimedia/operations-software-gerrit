@@ -1,3 +1,7 @@
+"""
+This module lists the external dependencies of the Gerrit project.
+"""
+
 load("//tools/bzl:maven_jar.bzl", "GERRIT", "maven_jar")
 
 CAFFEINE_VERS = "2.9.2"
@@ -9,21 +13,24 @@ MIME4J_VERS = "0.8.1"
 OW2_VERS = "9.2"
 AUTO_COMMON_VERSION = "1.2.1"
 AUTO_FACTORY_VERSION = "1.0.1"
-AUTO_VALUE_VERSION = "1.7.4"
+AUTO_VALUE_VERSION = "1.10.4"
 AUTO_VALUE_GSON_VERSION = "1.3.1"
 PROLOG_VERS = "1.4.4"
 PROLOG_REPO = GERRIT
-GITILES_VERS = "1.3.0"
+GITILES_VERS = "1.4.0"
 GITILES_REPO = GERRIT
 
 # When updating Bouncy Castle, also update it in bazlets.
 BC_VERS = "1.72"
-HTTPCOMP_VERS = "4.5.2"
+HTTPCOMP_VERS = "4.5.14"
 JETTY_VERS = "9.4.53.v20231009"
 BYTE_BUDDY_VERSION = "1.14.9"
 ROARING_BITMAP_VERSION = "0.9.44"
 
 def java_dependencies():
+    """
+    This method lists the maven jars used in the Gerrit project.
+    """
     maven_jar(
         name = "java-runtime",
         artifact = "org.antlr:antlr-runtime:" + ANTLR_VERS,
@@ -296,13 +303,13 @@ def java_dependencies():
     maven_jar(
         name = "auto-value",
         artifact = "com.google.auto.value:auto-value:" + AUTO_VALUE_VERSION,
-        sha1 = "6b126cb218af768339e4d6e95a9b0ae41f74e73d",
+        sha1 = "90f9629eaa123f88551cc26a64bc386967ee24cc",
     )
 
     maven_jar(
         name = "auto-value-annotations",
         artifact = "com.google.auto.value:auto-value-annotations:" + AUTO_VALUE_VERSION,
-        sha1 = "eff48ed53995db2dadf0456426cc1f8700136f86",
+        sha1 = "9679de8286eb0a151db6538ba297a8951c4a1224",
     )
 
     maven_jar(
@@ -391,14 +398,14 @@ def java_dependencies():
         artifact = "com.google.gitiles:blame-cache:" + GITILES_VERS,
         attach_source = False,
         repository = GITILES_REPO,
-        sha1 = "d0f5c98207648503b225501e84f529fa88651ebe",
+        sha1 = "005e9a8cfcfc15f232c796dbf1c8fb5499abff9c",
     )
 
     maven_jar(
         name = "gitiles-servlet",
         artifact = "com.google.gitiles:gitiles-servlet:" + GITILES_VERS,
         repository = GITILES_REPO,
-        sha1 = "b4ce5bc26e6a2674728d0d3c72c21e0b3443666d",
+        sha1 = "6fa0fe70154d09799ff7dc616727fec7342bb755",
     )
 
     maven_jar(
@@ -446,19 +453,19 @@ def java_dependencies():
     maven_jar(
         name = "fluent-hc",
         artifact = "org.apache.httpcomponents:fluent-hc:" + HTTPCOMP_VERS,
-        sha1 = "7bfdfa49de6d720ad3c8cedb6a5238eec564dfed",
+        sha1 = "81a16abc0d5acb5016d5b46d4b197b53c3d6eb93",
     )
 
     maven_jar(
         name = "httpclient",
         artifact = "org.apache.httpcomponents:httpclient:" + HTTPCOMP_VERS,
-        sha1 = "733db77aa8d9b2d68015189df76ab06304406e50",
+        sha1 = "1194890e6f56ec29177673f2f12d0b8e627dec98",
     )
 
     maven_jar(
         name = "httpcore",
-        artifact = "org.apache.httpcomponents:httpcore:4.4.4",
-        sha1 = "b31526a230871fbe285fbcbe2813f9c0839ae9b0",
+        artifact = "org.apache.httpcomponents:httpcore:4.4.16",
+        sha1 = "51cf043c87253c9f58b539c9f7e44c8894223850",
     )
 
     # Test-only dependencies below.

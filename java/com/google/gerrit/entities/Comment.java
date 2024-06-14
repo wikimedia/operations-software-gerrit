@@ -20,6 +20,7 @@ import com.google.gerrit.common.Nullable;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Objects;
 import org.eclipse.jgit.lib.AnyObjectId;
 import org.eclipse.jgit.lib.ObjectId;
@@ -216,7 +217,7 @@ public abstract class Comment {
   public int lineNbr;
 
   public Identity author;
-  protected Identity realAuthor;
+  public Identity realAuthor;
 
   // TODO(issue-15525): Migrate this field from Timestamp to Instant
   public Timestamp writtenOn;
@@ -226,6 +227,8 @@ public abstract class Comment {
   public String parentUuid;
   public Range range;
   public String tag;
+
+  @Nullable public List<FixSuggestion> fixSuggestions;
 
   /**
    * Hex commit SHA1 of the commit of the patchset to which this comment applies. Other classes call
@@ -300,7 +303,14 @@ public abstract class Comment {
         + (key != null ? nullableLength(key.filename, key.uuid) : 0);
   }
 
-  public abstract int getApproximateSize();
+  public int getApproximateSize() {
+    int approximateSize = getCommentFieldApproximateSize();
+    approximateSize +=
+        fixSuggestions != null
+            ? fixSuggestions.stream().mapToInt(FixSuggestion::getApproximateSize).sum()
+            : 0;
+    return approximateSize;
+  }
 
   static int nullableLength(String... strings) {
     int length = 0;
@@ -327,7 +337,8 @@ public abstract class Comment {
         && Objects.equals(range, c.range)
         && Objects.equals(tag, c.tag)
         && Objects.equals(revId, c.revId)
-        && Objects.equals(serverId, c.serverId);
+        && Objects.equals(serverId, c.serverId)
+        && Objects.equals(fixSuggestions, c.fixSuggestions);
   }
 
   @Override
@@ -344,7 +355,8 @@ public abstract class Comment {
         range,
         tag,
         revId,
-        serverId);
+        serverId,
+        fixSuggestions);
   }
 
   @Override
@@ -364,6 +376,7 @@ public abstract class Comment {
         .add("parentUuid", Objects.toString(parentUuid, ""))
         .add("range", Objects.toString(range, ""))
         .add("revId", Objects.toString(revId, ""))
-        .add("tag", Objects.toString(tag, ""));
+        .add("tag", Objects.toString(tag, ""))
+        .add("fixSuggestions", Objects.toString(fixSuggestions, ""));
   }
 }

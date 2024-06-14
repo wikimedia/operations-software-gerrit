@@ -76,10 +76,10 @@ public class AbandonIT extends AbstractDaemonTest {
 
   @Test
   public void batchAbandon() throws Exception {
-    CurrentUser user = atrScope.get().getUser();
+    CurrentUser user = localCtx.getContext().getUser();
     PushOneCommit.Result a = createChange();
     PushOneCommit.Result b = createChange();
-    List<ChangeData> list = ImmutableList.of(a.getChange(), b.getChange());
+    ImmutableList<ChangeData> list = ImmutableList.of(a.getChange(), b.getChange());
     batchAbandon.batchAbandon(batchUpdateFactory, a.getChange().project(), user, list, "deadbeef");
 
     ChangeInfo info = get(a.getChangeId(), MESSAGES);
@@ -106,10 +106,10 @@ public class AbandonIT extends AbstractDaemonTest {
     TestRepository<InMemoryRepository> project1 = cloneProject(Project.nameKey(project1Name));
     TestRepository<InMemoryRepository> project2 = cloneProject(Project.nameKey(project2Name));
 
-    CurrentUser user = atrScope.get().getUser();
+    CurrentUser user = localCtx.getContext().getUser();
     PushOneCommit.Result a = createChange(project1, "master", "x", "x", "x", "");
     PushOneCommit.Result b = createChange(project2, "master", "x", "x", "x", "");
-    List<ChangeData> list = ImmutableList.of(a.getChange(), b.getChange());
+    ImmutableList<ChangeData> list = ImmutableList.of(a.getChange(), b.getChange());
     ResourceConflictException thrown =
         assertThrows(
             ResourceConflictException.class,
@@ -177,8 +177,8 @@ public class AbandonIT extends AbstractDaemonTest {
     assertThat(query("is:abandoned")).isEmpty();
 
     // submit one of the conflicting changes
-    gApi.changes().id(id3).current().review(ReviewInput.approve());
-    gApi.changes().id(id3).current().submit();
+    gApi.changes().id(project.get(), id3).current().review(ReviewInput.approve());
+    gApi.changes().id(project.get(), id3).current().submit();
     assertThat(toChangeNumbers(query("is:merged"))).containsExactly(id3);
     assertThat(toChangeNumbers(query("-is:mergeable"))).containsExactly(id4);
 
@@ -221,8 +221,8 @@ public class AbandonIT extends AbstractDaemonTest {
     assertThat(query("is:abandoned")).isEmpty();
 
     // submit one of the conflicting changes
-    gApi.changes().id(id3).current().review(ReviewInput.approve());
-    gApi.changes().id(id3).current().submit();
+    gApi.changes().id(project.get(), id3).current().review(ReviewInput.approve());
+    gApi.changes().id(project.get(), id3).current().submit();
     assertThat(toChangeNumbers(query("is:merged"))).containsExactly(id3);
 
     BadRequestException thrown =

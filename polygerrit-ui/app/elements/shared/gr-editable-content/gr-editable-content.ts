@@ -10,10 +10,13 @@ import '../gr-icon/gr-icon';
 import '../../plugins/gr-endpoint-decorator/gr-endpoint-decorator';
 import '../../plugins/gr-endpoint-param/gr-endpoint-param';
 import '../../plugins/gr-endpoint-slot/gr-endpoint-slot';
+import {subscribe} from '../../lit/subscription-controller';
+import {changeModelToken} from '../../../models/change/change-model';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {fire, fireAlert} from '../../../utils/event-util';
 import {getAppContext} from '../../../services/app-context';
 import {debounce, DelayedTask} from '../../../utils/async-util';
-import {queryAndAssert} from '../../../utils/common-util';
+import {assertIsDefined, queryAndAssert} from '../../../utils/common-util';
 import {IronAutogrowTextareaElement} from '@polymer/iron-autogrow-textarea/iron-autogrow-textarea';
 import {Interaction} from '../../../constants/reporting';
 import {LitElement, html} from 'lit';
@@ -26,6 +29,13 @@ import {
   EditableContentSaveEvent,
   ValueChangedEvent,
 } from '../../../types/events';
+import {
+  EmailInfo,
+  GitPersonInfo,
+  NumericChangeId,
+  RepoName,
+  RevisionPatchSetNum,
+} from '../../../types/common';
 import {nothing} from 'lit';
 import {classMap} from 'lit/directives/class-map.js';
 import {when} from 'lit/directives/when.js';
@@ -33,6 +43,8 @@ import {fontStyles} from '../../../styles/gr-font-styles';
 import {storageServiceToken} from '../../../services/storage/gr-storage_impl';
 import {resolve} from '../../../models/dependency';
 import {formStyles} from '../../../styles/form-styles';
+import {createEditUrl} from '../../../models/views/change';
+import {SpecialFilePath} from '../../../constants/constants';
 
 const RESTORED_MESSAGE = 'Content restored from a previous edit.';
 const STORAGE_DEBOUNCE_INTERVAL_MS = 400;
@@ -89,12 +101,64 @@ export class GrEditableContent extends LitElement {
 
   @state() newContent = '';
 
+  @state()
+  emails: EmailInfo[] = [];
+
+  @state()
+  committerEmail?: string;
+
+  @state()
+  latestCommitter?: GitPersonInfo;
+
+  @state() editMode = false;
+
+  @state() repoName?: RepoName;
+
+  @state() changeNum?: NumericChangeId;
+
+  @state() patchNum?: RevisionPatchSetNum;
+
+  private readonly restApiService = getAppContext().restApiService;
+
+  private readonly getChangeModel = resolve(this, changeModelToken);
+
   private readonly getStorage = resolve(this, storageServiceToken);
 
   private readonly reporting = getAppContext().reportingService;
 
+  private readonly getNavigation = resolve(this, navigationToken);
+
   // Tests use this so needs to be non private
   storeTask?: DelayedTask;
+
+  constructor() {
+    super();
+    subscribe(
+      this,
+      () => this.getChangeModel().latestCommitter$,
+      x => (this.latestCommitter = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().editMode$,
+      editMode => (this.editMode = editMode)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().repo$,
+      x => (this.repoName = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().changeNum$,
+      x => (this.changeNum = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().patchNum$,
+      x => (this.patchNum = x)
+    );
+  }
 
   override disconnectedCallback() {
     this.storeTask?.flush();
@@ -148,7 +212,6 @@ export class GrEditableContent extends LitElement {
         .show-all-container {
           background-color: var(--view-background-color);
           display: flex;
-          justify-content: flex-end;
           border: 1px solid transparent;
           border-top-color: var(--border-color);
           border-radius: 0 0 4px 4px;
@@ -162,12 +225,24 @@ export class GrEditableContent extends LitElement {
         :host([editing]) .show-all-container {
           box-shadow: none;
           border: 1px solid var(--border-color);
+          justify-content: space-between;
+        }
+        :host(:not([editing])) .show-all-container {
+          justify-content: flex-end;
+        }
+        div:only-child {
+          align-self: flex-end;
+          margin-left: auto;
         }
         .flex-space {
           flex-grow: 1;
         }
         .show-all-container gr-icon {
           color: inherit;
+        }
+        .email-dropdown {
+          margin-left: var(--spacing-s);
+          align-self: center;
         }
         .cancel-button {
           margin-right: var(--spacing-l);
@@ -273,22 +348,33 @@ export class GrEditableContent extends LitElement {
         )}
         ${when(
           this.editing,
-          () => html` <div class="editButtons">
-            <gr-button
-              link
-              class="cancel-button"
-              @click=${this.handleCancel}
-              ?disabled=${this.disabled}
-              >Cancel</gr-button
+          () => html` ${when(
+              this.canShowEmailDropdown(),
+              () => html` <div class="email-dropdown" id="editMessageEmailDropdown">Committer Email
+            <gr-dropdown-list
+                .items=${this.getEmailDropdownItems()}
+                .value=${this.committerEmail}
+                @value-change=${this.setCommitterEmail}
             >
-            <gr-button
-              class="save-button"
-              primary=""
-              @click=${this.handleSave}
-              ?disabled=${this.computeSaveDisabled()}
-              >Save</gr-button
-            >
-          </div>`
+            </gr-dropdown-list>
+            <span></div>`
+            )}
+            <div class="editButtons">
+              <gr-button
+                link
+                class="cancel-button"
+                @click=${this.handleCancel}
+                ?disabled=${this.disabled}
+                >Cancel</gr-button
+              >
+              <gr-button
+                class="save-button"
+                primary=""
+                @click=${this.handleSave}
+                ?disabled=${this.computeSaveDisabled()}
+                >Save</gr-button
+              >
+            </div>`
         )}
         </div>
       </div>
@@ -384,7 +470,10 @@ export class GrEditableContent extends LitElement {
 
   handleSave(e: Event) {
     e.preventDefault();
-    fire(this, 'editable-content-save', {content: this.newContent});
+    fire(this, 'editable-content-save', {
+      content: this.newContent,
+      committerEmail: this.committerEmail ? this.committerEmail : null,
+    });
     // It would be nice, if we would set this.newContent = undefined here,
     // but we can only do that when we are sure that the save operation has
     // succeeded.
@@ -408,8 +497,57 @@ export class GrEditableContent extends LitElement {
   }
 
   async handleEditCommitMessage() {
+    if (this.editMode) {
+      assertIsDefined(this.changeNum, 'changeNum');
+      assertIsDefined(this.repoName, 'repoName');
+      this.getNavigation().setUrl(
+        createEditUrl({
+          changeNum: this.changeNum,
+          repo: this.repoName,
+          patchNum: this.patchNum,
+          editView: {path: SpecialFilePath.COMMIT_MESSAGE},
+        })
+      );
+
+      return;
+    }
+    await this.loadEmails();
     this.editing = true;
     await this.updateComplete;
     this.focusTextarea();
+  }
+
+  async loadEmails() {
+    const accountEmails: EmailInfo[] =
+      (await this.restApiService.getAccountEmails()) ?? [];
+    let selectedEmail: string | undefined;
+    accountEmails.forEach(e => {
+      if (e.preferred) {
+        selectedEmail = e.email;
+      }
+    });
+
+    if (accountEmails.some(e => e.email === this.latestCommitter?.email)) {
+      selectedEmail = this.latestCommitter?.email;
+    }
+    this.emails = accountEmails;
+    this.committerEmail = selectedEmail;
+  }
+
+  private canShowEmailDropdown() {
+    return this.emails.length > 1;
+  }
+
+  private getEmailDropdownItems() {
+    return this.emails.map(e => {
+      return {
+        text: e.email,
+        value: e.email,
+      };
+    });
+  }
+
+  private setCommitterEmail(e: CustomEvent<{value: string}>) {
+    this.committerEmail = e.detail.value;
   }
 }

@@ -24,6 +24,7 @@ import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS
 import static org.junit.Assume.assumeFalse;
 import static org.junit.Assume.assumeTrue;
 
+import com.google.common.collect.ImmutableList;
 import com.google.gerrit.acceptance.UseClockStep;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
@@ -67,17 +68,19 @@ public abstract class FakeQueryChangesTest extends AbstractQueryChangesTest {
   @UseClockStep
   public void stopQueryIfNoMoreResults() throws Exception {
     // create 2 visible changes
-    try (TestRepository<Repository> testRepo = createAndOpenProject("repo")) {
-      insert("repo", newChange(testRepo));
-      insert("repo", newChange(testRepo));
+    Project.NameKey project = Project.nameKey("repo");
+    try (TestRepository<Repository> testRepo = createAndOpenProject(project)) {
+      insert(project, newChange(testRepo));
+      insert(project, newChange(testRepo));
     }
 
     // create 2 invisible changes
-    try (TestRepository<Repository> hiddenProject = createAndOpenProject("hiddenProject")) {
-      insert("hiddenProject", newChange(hiddenProject));
-      insert("hiddenProject", newChange(hiddenProject));
+    Project.NameKey hiddenProject = Project.nameKey("hiddenProject");
+    try (TestRepository<Repository> hiddenRepo = createAndOpenProject(hiddenProject)) {
+      insert(hiddenProject, newChange(hiddenRepo));
+      insert(hiddenProject, newChange(hiddenRepo));
       projectOperations
-          .project(Project.nameKey("hiddenProject"))
+          .project(hiddenProject)
           .forUpdate()
           .add(block(Permission.READ).ref("refs/*").group(REGISTERED_USERS))
           .update();
@@ -85,7 +88,10 @@ public abstract class FakeQueryChangesTest extends AbstractQueryChangesTest {
 
     AbstractFakeIndex<?, ?, ?> idx =
         (AbstractFakeIndex<?, ?, ?>) changeIndexCollection.getSearchIndex();
-    newQuery("status:new").withLimit(5).get();
+
+    @SuppressWarnings("unused")
+    var unused = newQuery("status:new").withLimit(5).get();
+
     // Since the limit of the query (i.e. 5) is more than the total number of changes (i.e. 4),
     // only 1 index search is expected.
     assertThatSearchQueryWasNotPaginated(idx.getQueryCount());
@@ -94,18 +100,19 @@ public abstract class FakeQueryChangesTest extends AbstractQueryChangesTest {
   @Test
   @UseClockStep
   public void queryRightNumberOfTimes() throws Exception {
-    TestRepository<Repository> repo = createAndOpenProject("repo");
+    Project.NameKey project = Project.nameKey("repo");
+    TestRepository<Repository> repo = createAndOpenProject(project);
     Account.Id user2 =
         accountManager.authenticate(authRequestFactory.createForUser("anotheruser")).getAccountId();
 
     // create 1 visible change
-    Change visibleChange1 = insert("repo", newChangeWithStatus(repo, Change.Status.NEW));
+    Change visibleChange1 = insert(project, newChangeWithStatus(repo, Change.Status.NEW));
 
     // create 4 private changes
-    Change invisibleChange2 = insert("repo", newChangeWithStatus(repo, Change.Status.NEW), user2);
-    Change invisibleChange3 = insert("repo", newChangeWithStatus(repo, Change.Status.NEW), user2);
-    Change invisibleChange4 = insert("repo", newChangeWithStatus(repo, Change.Status.NEW), user2);
-    Change invisibleChange5 = insert("repo", newChangeWithStatus(repo, Change.Status.NEW), user2);
+    Change invisibleChange2 = insert(project, newChangeWithStatus(repo, Change.Status.NEW), user2);
+    Change invisibleChange3 = insert(project, newChangeWithStatus(repo, Change.Status.NEW), user2);
+    Change invisibleChange4 = insert(project, newChangeWithStatus(repo, Change.Status.NEW), user2);
+    Change invisibleChange5 = insert(project, newChangeWithStatus(repo, Change.Status.NEW), user2);
     gApi.changes().id(invisibleChange2.getKey().get()).setPrivate(true, null);
     gApi.changes().id(invisibleChange3.getKey().get()).setPrivate(true, null);
     gApi.changes().id(invisibleChange4.getKey().get()).setPrivate(true, null);
@@ -131,11 +138,12 @@ public abstract class FakeQueryChangesTest extends AbstractQueryChangesTest {
   public void noLimitQueryPaginates() throws Exception {
     assumeFalse(PaginationType.NONE == getCurrentPaginationType());
 
-    try (TestRepository<Repository> testRepo = createAndOpenProject("repo")) {
-      insert("repo", newChange(testRepo));
-      insert("repo", newChange(testRepo));
-      insert("repo", newChange(testRepo));
-      insert("repo", newChange(testRepo));
+    Project.NameKey project = Project.nameKey("repo");
+    try (TestRepository<Repository> testRepo = createAndOpenProject(project)) {
+      insert(project, newChange(testRepo));
+      insert(project, newChange(testRepo));
+      insert(project, newChange(testRepo));
+      insert(project, newChange(testRepo));
     }
     // Set queryLimit to 2
     projectOperations
@@ -150,7 +158,9 @@ public abstract class FakeQueryChangesTest extends AbstractQueryChangesTest {
     // 2 index searches are expected. The first index search will run with size 3 (i.e.
     // the configured query-limit+1), and then we will paginate to get the remaining
     // changes with the second index search.
-    newQuery("status:new").withNoLimit().get();
+    @SuppressWarnings("unused")
+    var unused = newQuery("status:new").withNoLimit().get();
+
     assertThatSearchQueryWasPaginated(idx.getQueryCount(), 2);
   }
 
@@ -158,8 +168,12 @@ public abstract class FakeQueryChangesTest extends AbstractQueryChangesTest {
   @UseClockStep
   public void noLimitQueryDoesNotPaginatesWithNonePaginationType() throws Exception {
     assumeTrue(PaginationType.NONE == getCurrentPaginationType());
+
     AbstractFakeIndex<?, ?, ?> idx = setupRepoWithFourChanges();
-    newQuery("status:new").withNoLimit().get();
+
+    @SuppressWarnings("unused")
+    var unused = newQuery("status:new").withNoLimit().get();
+
     assertThatSearchQueryWasNotPaginated(idx.getQueryCount());
   }
 
@@ -182,7 +196,9 @@ public abstract class FakeQueryChangesTest extends AbstractQueryChangesTest {
         .add(allowCapability(QUERY_LIMIT).group(ANONYMOUS_USERS).range(0, LIMIT))
         .update();
 
-    requestContext.setContext(anonymousUserProvider::get);
+    @SuppressWarnings("unused")
+    var unused = requestContext.setContext(anonymousUserProvider::get);
+
     List<ChangeInfo> result = newQuery("status:new").withLimit(LIMIT).get();
     assertThat(result.size()).isEqualTo(0);
     assertThatSearchQueryWasPaginated(idx.getQueryCount(), 2);
@@ -196,11 +212,12 @@ public abstract class FakeQueryChangesTest extends AbstractQueryChangesTest {
     assumeFalse(PaginationType.NONE == getCurrentPaginationType());
     final int LIMIT = 2;
 
-    try (TestRepository<Repository> testRepo = createAndOpenProject("repo")) {
-      insert("repo", newChange(testRepo));
-      insert("repo", newChange(testRepo));
-      insert("repo", newChange(testRepo));
-      insert("repo", newChange(testRepo));
+    Project.NameKey project = Project.nameKey("repo");
+    try (TestRepository<Repository> testRepo = createAndOpenProject(project)) {
+      insert(project, newChange(testRepo));
+      insert(project, newChange(testRepo));
+      insert(project, newChange(testRepo));
+      insert(project, newChange(testRepo));
     }
     // Set queryLimit to 2
     projectOperations
@@ -230,7 +247,8 @@ public abstract class FakeQueryChangesTest extends AbstractQueryChangesTest {
 
   @SuppressWarnings("unused")
   private void executeQuery(String query) throws QueryParseException {
-    List<ChangeData> unused = queryProvider.get().query(queryBuilder.parse(query));
+    ImmutableList<ChangeData> unused =
+        queryProvider.get().query(queryBuilderProvider.get().parse(query));
   }
 
   private void assertThatSearchQueryWasNotPaginated(int queryCount) {
@@ -242,11 +260,12 @@ public abstract class FakeQueryChangesTest extends AbstractQueryChangesTest {
   }
 
   private AbstractFakeIndex<?, ?, ?> setupRepoWithFourChanges() throws Exception {
-    try (TestRepository<Repository> testRepo = createAndOpenProject("repo")) {
-      insert("repo", newChange(testRepo));
-      insert("repo", newChange(testRepo));
-      insert("repo", newChange(testRepo));
-      insert("repo", newChange(testRepo));
+    Project.NameKey project = Project.nameKey("repo");
+    try (TestRepository<Repository> testRepo = createAndOpenProject(project)) {
+      insert(project, newChange(testRepo));
+      insert(project, newChange(testRepo));
+      insert(project, newChange(testRepo));
+      insert(project, newChange(testRepo));
     }
 
     // Set queryLimit to 2

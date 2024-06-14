@@ -329,7 +329,12 @@ export class GrTextarea extends LitElement {
   }
 
   private handleEscKey(e: KeyboardEvent) {
-    if (!this.isDropdownVisible()) {
+    // Esc should have normal behavior if the picker is closed, or "open" but
+    // with no results.
+    if (
+      !this.isDropdownVisible() ||
+      this.getVisibleDropdown().getCurrentText() === ''
+    ) {
       return;
     }
     e.preventDefault();
@@ -338,7 +343,12 @@ export class GrTextarea extends LitElement {
   }
 
   private handleUpKey(e: KeyboardEvent) {
-    if (!this.isDropdownVisible()) {
+    // Up should have normal behavior if the picker is closed, or "open" but
+    // with no results.
+    if (
+      !this.isDropdownVisible() ||
+      this.getVisibleDropdown().getCurrentText() === ''
+    ) {
       return;
     }
     e.preventDefault();
@@ -348,7 +358,12 @@ export class GrTextarea extends LitElement {
   }
 
   private handleDownKey(e: KeyboardEvent) {
-    if (!this.isDropdownVisible()) {
+    // Down should have normal behavior if the picker is closed, or "open" but
+    // with no results.
+    if (
+      !this.isDropdownVisible() ||
+      this.getVisibleDropdown().getCurrentText() === ''
+    ) {
       return;
     }
     e.preventDefault();
@@ -358,8 +373,12 @@ export class GrTextarea extends LitElement {
   }
 
   private handleTabKey(e: KeyboardEvent) {
-    // Tab should have normal behavior if the picker is closed.
-    if (!this.isDropdownVisible()) {
+    // Tab should have normal behavior if the picker is closed, or "open" but
+    // with no results.
+    if (
+      !this.isDropdownVisible() ||
+      this.getVisibleDropdown().getCurrentText() === ''
+    ) {
       return;
     }
     e.preventDefault();
@@ -587,7 +606,7 @@ export class GrTextarea extends LitElement {
   // TODO(dhruvsri): merge with getAccountSuggestions in account-util
   async computeReviewerSuggestions(): Promise<Item[]> {
     return (
-      (await this.restApiService.getSuggestedAccounts(
+      (await this.restApiService.queryAccounts(
         this.currentSearchString ?? '',
         /* number= */ 15,
         this.changeNum,

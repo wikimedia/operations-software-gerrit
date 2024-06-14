@@ -51,6 +51,7 @@ import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import java.io.IOException;
+import org.eclipse.jgit.errors.InvalidObjectIdException;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
@@ -252,18 +253,16 @@ public class RebaseUtil {
           String.format("Change %s is %s", change.getId(), ChangeUtil.status(change)));
     }
 
-    if (!hasOneParent(rw, patchSet)) {
+    if (!hasAtLeastOneParent(rw, patchSet)) {
       throw new ResourceConflictException(
           String.format(
-              "Error rebasing %s. Cannot rebase %s",
-              change.getId(),
-              countParents(rw, patchSet) > 1 ? "merge commits" : "commit with no ancestor"));
+              "Error rebasing %s. Cannot rebase commit with no ancestor", change.getId()));
     }
   }
 
-  public static boolean hasOneParent(RevWalk rw, PatchSet ps) throws IOException {
-    // Prevent rebase of exotic changes (merge commit, no ancestor).
-    return countParents(rw, ps) == 1;
+  public static boolean hasAtLeastOneParent(RevWalk rw, PatchSet ps) throws IOException {
+    // Prevent rebase of changes with no ancestor.
+    return countParents(rw, ps) >= 1;
   }
 
   private static int countParents(RevWalk rw, PatchSet ps) throws IOException {
@@ -346,7 +345,7 @@ public class RebaseUtil {
       }
     }
 
-    // Try parsing as SHA-1.
+    // Try parsing as SHA-1 based on the change-index.
     Base ret = null;
     for (ChangeData cd : queryProvider.get().byProjectCommit(rsrc.getProject(), base)) {
       for (PatchSet ps : cd.patchSets()) {
@@ -371,8 +370,8 @@ public class RebaseUtil {
   /**
    * Parse or find the commit onto which a patch set should be rebased.
    *
-   * <p>If a {@code rebaseInput.base} is provided, parse it. Otherwise, finds the latest patch set
-   * of the change corresponding to this commit's parent, or the destination branch tip in the case
+   * <p>If a {@code rebaseInput.base} is provided, parse it. Otherwise, find the latest patch set of
+   * the change corresponding to this commit's parent, or the destination branch tip in the case
    * where the parent's change is merged.
    *
    * @param git the repository.
@@ -413,11 +412,16 @@ public class RebaseUtil {
       throw new UnprocessableEntityException(
           String.format("Base change not found: %s", inputBase), e);
     }
-    if (base == null) {
-      throw new ResourceConflictException(
-          "base revision is missing from the destination branch: " + inputBase);
+    if (base != null) {
+      return getLatestRevisionForBaseChange(rw, permissionBackend, rsrc, base);
     }
-    return getLatestRevisionForBaseChange(rw, permissionBackend, rsrc, base);
+    if (isBaseRevisionInDestBranch(rw, inputBase, git, change.getDest())) {
+      // The requested base is a valid commit in the dest branch, which is not associated with any
+      // Gerrit change.
+      return ObjectId.fromString(inputBase);
+    }
+    throw new ResourceConflictException(
+        "base revision is missing from the destination branch: " + inputBase);
   }
 
   private ObjectId getDestRefTip(Repository git, BranchNameKey destRefKey)
@@ -487,9 +491,7 @@ public class RebaseUtil {
     ObjectId baseId = null;
     RevCommit commit = rw.parseCommit(patchSet.commitId());
 
-    if (commit.getParentCount() > 1) {
-      throw new UnprocessableEntityException("Cannot rebase a change with multiple parents.");
-    } else if (commit.getParentCount() == 0) {
+    if (commit.getParentCount() == 0) {
       throw new UnprocessableEntityException(
           "Cannot rebase a change without any parents (is this the initial commit?).");
     }
@@ -533,6 +535,18 @@ public class RebaseUtil {
       }
     }
     return baseId;
+  }
+
+  private boolean isBaseRevisionInDestBranch(
+      RevWalk rw, String expectedBaseSha1, Repository git, BranchNameKey destRefKey)
+      throws IOException, ResourceConflictException {
+    RevCommit potentialBaseCommit;
+    try {
+      potentialBaseCommit = rw.parseCommit(ObjectId.fromString(expectedBaseSha1));
+    } catch (InvalidObjectIdException | IOException e) {
+      return false;
+    }
+    return rw.isMergedInto(potentialBaseCommit, rw.parseCommit(getDestRefTip(git, destRefKey)));
   }
 
   public RebaseChangeOp getRebaseOp(

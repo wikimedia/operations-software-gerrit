@@ -28,7 +28,6 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.eclipse.jgit.lib.Constants.HEAD;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.hash.Hashing;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.RestResponse;
@@ -57,6 +56,7 @@ import com.google.gerrit.extensions.restapi.BinaryResult;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestApiException;
+import com.google.gerrit.server.restapi.change.ApplyPatchUtil;
 import com.google.inject.Inject;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.junit.TestRepository;
@@ -220,6 +220,25 @@ public class ApplyPatchIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void applyDecodedPatchConsistsOfBase64CharsOnly_success() throws Exception {
+    final String deletedFileName = "file_to_be_deleted";
+    final String deletedFileOriginalContent =
+        "The deletion patch of this file only contain valid Base64 chars.\n"
+            + "However, the patch is not Base64-encoded.\n";
+    final String deletedFileDiff =
+        "diff --git a/file_to_be_deleted b/file_to_be_deleted\n"
+            + "--- a/file_to_be_deleted\n"
+            + "+++ /dev/null\n";
+    initBaseWithFile(deletedFileName, deletedFileOriginalContent);
+    ApplyPatchPatchSetInput in = buildInput(deletedFileDiff);
+
+    ChangeInfo result = applyPatch(in);
+
+    DiffInfo diff = fetchDiffForFile(result, deletedFileName);
+    assertDiffForDeletedFile(diff, deletedFileName, deletedFileOriginalContent);
+  }
+
+  @Test
   public void applyGerritBasedPatchWithSingleFile_success() throws Exception {
     String head = getHead(repo(), HEAD).name();
     createBranchWithRevision(BranchNameKey.create(project, "branch"), head);
@@ -363,7 +382,7 @@ public class ApplyPatchIT extends AbstractDaemonTest {
                 + "\n[[[Original patch trimmed due to size. Decoded string size: "
                 + removePatchHeader(patch).length()
                 + ". Decoded string SHA1: "
-                + Hashing.sha1().hashString(removePatchHeader(patch), UTF_8)
+                + ApplyPatchUtil.sha1(removePatchHeader(patch))
                 + ".]]]"
                 + "\n\nChange-Id: "
                 + result.changeId
@@ -583,6 +602,24 @@ public class ApplyPatchIT extends AbstractDaemonTest {
             .changeId;
     ApplyPatchPatchSetInput in = buildInput(ADDED_FILE_DIFF);
     in.commitMessage = "custom commit message\n\nChange-Id: " + originalChangeId + "\n";
+
+    ChangeInfo result = gApi.changes().id(originalChangeId).applyPatch(in);
+
+    ChangeInfo info = get(result.changeId, CURRENT_REVISION, CURRENT_COMMIT);
+    assertThat(info.revisions.get(info.currentRevision).commit.message).isEqualTo(in.commitMessage);
+  }
+
+  @Test
+  public void longCommitMessage_providedMessageWithCorrectChangeId() throws Exception {
+    initDestBranch();
+    String originalChangeId =
+        gApi.changes()
+            .create(new ChangeInput(project.get(), DESTINATION_BRANCH, "Default commit message"))
+            .info()
+            .changeId;
+    ApplyPatchPatchSetInput in = buildInput(ADDED_FILE_DIFF);
+    in.commitMessage =
+        "Looooooooooooooooooong custom commit message.\n\nChange-Id: " + originalChangeId + "\n";
 
     ChangeInfo result = gApi.changes().id(originalChangeId).applyPatch(in);
 

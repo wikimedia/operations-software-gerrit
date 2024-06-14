@@ -18,7 +18,6 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
-import static com.google.common.truth.Truth8.assertThat;
 import static com.google.gerrit.entities.RefNames.changeMetaRef;
 import static com.google.gerrit.entities.RefNames.refsDraftComments;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.CC;
@@ -26,20 +25,19 @@ import static com.google.gerrit.server.notedb.ReviewerStateInternal.REMOVED;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.REVIEWER;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static com.google.gerrit.testing.TestActionRefUpdateContext.testRefAction;
-import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Comparator.comparing;
-import static org.eclipse.jgit.lib.Constants.OBJ_BLOB;
 import static org.mockito.Mockito.mock;
 
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.ImmutableTable;
 import com.google.common.collect.Iterables;
-import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Address;
@@ -56,6 +54,7 @@ import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.SubmissionId;
 import com.google.gerrit.entities.SubmitRecord;
 import com.google.gerrit.exceptions.StorageException;
+import com.google.gerrit.server.ChangeDraftUpdate;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.DraftCommentsReader;
 import com.google.gerrit.server.IdentifiedUser;
@@ -70,7 +69,6 @@ import com.google.inject.Inject;
 import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
 import org.eclipse.jgit.errors.ConfigInvalidException;
@@ -292,7 +290,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
     ChangeNotes notes = newNotes(c);
     assertThat(notes.getApprovals().all().keySet()).containsExactly(c.currentPatchSetId());
-    List<PatchSetApproval> psas = notes.getApprovals().all().get(c.currentPatchSetId());
+    ImmutableList<PatchSetApproval> psas = notes.getApprovals().all().get(c.currentPatchSetId());
     assertThat(psas).hasSize(2);
 
     assertThat(psas.get(0).patchSetId()).isEqualTo(c.currentPatchSetId());
@@ -325,7 +323,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     PatchSet.Id ps2 = c.currentPatchSetId();
 
     ChangeNotes notes = newNotes(c);
-    ListMultimap<PatchSet.Id, PatchSetApproval> psas = notes.getApprovals().all();
+    ImmutableListMultimap<PatchSet.Id, PatchSetApproval> psas = notes.getApprovals().all();
     assertThat(psas).hasSize(2);
 
     PatchSetApproval psa1 = Iterables.getOnlyElement(psas.get(ps1));
@@ -383,7 +381,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
     ChangeNotes notes = newNotes(c);
     assertThat(notes.getApprovals().all().keySet()).containsExactly(c.currentPatchSetId());
-    List<PatchSetApproval> psas = notes.getApprovals().all().get(c.currentPatchSetId());
+    ImmutableList<PatchSetApproval> psas = notes.getApprovals().all().get(c.currentPatchSetId());
     assertThat(psas).hasSize(2);
 
     assertThat(psas.get(0).patchSetId()).isEqualTo(c.currentPatchSetId());
@@ -606,7 +604,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
     ChangeNotes notes = newNotes(c);
     assertThat(notes.getApprovals().all().keySet()).containsExactly(c.currentPatchSetId());
-    List<PatchSetApproval> patchSetApprovals =
+    ImmutableList<PatchSetApproval> patchSetApprovals =
         notes.getApprovals().all().get(c.currentPatchSetId());
     assertThat(patchSetApprovals).hasSize(2);
     assertThat(
@@ -631,7 +629,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
     ChangeNotes notes = newNotes(c);
     assertThat(notes.getApprovals().all().keySet()).containsExactly(c.currentPatchSetId());
-    List<PatchSetApproval> patchSetApprovals =
+    ImmutableList<PatchSetApproval> patchSetApprovals =
         notes.getApprovals().all().get(c.currentPatchSetId());
     assertThat(patchSetApprovals).hasSize(2);
     assertThat(
@@ -1220,7 +1218,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     update.commit();
 
     ChangeNotes notes = newNotes(c);
-    List<PatchSetApproval> psas = notes.getApprovals().all().get(c.currentPatchSetId());
+    ImmutableList<PatchSetApproval> psas = notes.getApprovals().all().get(c.currentPatchSetId());
     assertThat(psas).hasSize(2);
     assertThat(psas.get(0).accountId()).isEqualTo(changeOwner.getAccount().id());
     assertThat(psas.get(1).accountId()).isEqualTo(otherUser.getAccount().id());
@@ -1258,7 +1256,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     update.commit();
 
     ChangeNotes notes = newNotes(c);
-    List<SubmitRecord> recs = notes.getSubmitRecords();
+    ImmutableList<SubmitRecord> recs = notes.getSubmitRecords();
     assertThat(recs).hasSize(2);
     assertThat(recs.get(0))
         .isEqualTo(
@@ -2009,9 +2007,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     update.commit();
 
     ChangeNotes notes = newNotes(c);
-    readNote(notes, commit);
-
-    Map<PatchSet.Id, PatchSet> patchSets = notes.getPatchSets();
+    ImmutableMap<PatchSet.Id, PatchSet> patchSets = notes.getPatchSets();
     assertThat(patchSets.get(psId1).pushCertificate()).isEmpty();
     assertThat(patchSets.get(psId2).pushCertificate()).hasValue(pushCert);
     assertThat(notes.getHumanComments()).isEmpty();
@@ -2068,7 +2064,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     }
 
     ChangeNotes notes = newNotes(c);
-    List<PatchSetApproval> psas = notes.getApprovals().all().get(c.currentPatchSetId());
+    ImmutableList<PatchSetApproval> psas = notes.getApprovals().all().get(c.currentPatchSetId());
     assertThat(psas).hasSize(2);
 
     assertThat(psas.get(0).accountId()).isEqualTo(changeOwner.getAccount().id());
@@ -2320,7 +2316,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
     ChangeNotes notes = newNotes(c);
 
-    List<ChangeMessage> cm = notes.getChangeMessages();
+    ImmutableList<ChangeMessage> cm = notes.getChangeMessages();
     assertThat(cm).hasSize(2);
     assertThat(cm.get(0).getMessage()).isEqualTo("First change message.\n");
     assertThat(cm.get(0).getAuthor()).isEqualTo(changeOwner.getAccount().id());
@@ -3472,13 +3468,11 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     // Re-add draft version of comment2 back to draft ref without updating
     // change ref. Simulates the case where deleting the draft failed
     // non-atomically after adding the published comment succeeded.
-    Optional<ChangeDraftNotesUpdate> draftUpdate =
-        ChangeDraftNotesUpdate.asChangeDraftNotesUpdate(
-            newUpdate(c, otherUser).createDraftUpdateIfNull());
-    if (draftUpdate.isPresent()) {
-      draftUpdate.get().putDraftComment(comment2);
+    ChangeDraftUpdate draftUpdate = newUpdate(c, otherUser).createDraftUpdateIfNull();
+    if (draftUpdate != null) {
+      draftUpdate.putDraftComment(comment2);
       try (NoteDbUpdateManager manager = updateManagerFactory.create(c.getProject(), otherUser)) {
-        manager.add(draftUpdate.get());
+        manager.add(draftUpdate);
         testRefAction(() -> manager.execute());
       }
     }
@@ -3548,7 +3542,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     }
 
     ChangeNotes notes = newNotes(c);
-    List<HumanComment> comments = notes.getHumanComments().get(commitId);
+    ImmutableList<HumanComment> comments = notes.getHumanComments().get(commitId);
     assertThat(comments).hasSize(2);
     assertThat(comments.get(0).message).isEqualTo("comment 1");
     assertThat(comments.get(1).message).isEqualTo("comment 2");
@@ -3680,7 +3674,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
   @Test
   public void putReviewerByEmail() throws Exception {
-    Address adr = Address.create("Foo Bar", "foo.bar@gerritcodereview.com");
+    Address adr = Address.create("Foo Bar", "foo.bar@example.com");
 
     Change c = newChange();
     ChangeUpdate update = newUpdate(c, changeOwner);
@@ -3693,7 +3687,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
   @Test
   public void putAndRemoveReviewerByEmail() throws Exception {
-    Address adr = Address.create("Foo Bar", "foo.bar@gerritcodereview.com");
+    Address adr = Address.create("Foo Bar", "foo.bar@example.com");
 
     Change c = newChange();
     ChangeUpdate update = newUpdate(c, changeOwner);
@@ -3710,7 +3704,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
   @Test
   public void putRemoveAndAddBackReviewerByEmail() throws Exception {
-    Address adr = Address.create("Foo Bar", "foo.bar@gerritcodereview.com");
+    Address adr = Address.create("Foo Bar", "foo.bar@example.com");
 
     Change c = newChange();
     ChangeUpdate update = newUpdate(c, changeOwner);
@@ -3731,8 +3725,8 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
   @Test
   public void putReviewerByEmailAndCcByEmail() throws Exception {
-    Address adrReviewer = Address.create("Foo Bar", "foo.bar@gerritcodereview.com");
-    Address adrCc = Address.create("Foo Bor", "foo.bar.2@gerritcodereview.com");
+    Address adrReviewer = Address.create("Foo Bar", "foo.bar@example.com");
+    Address adrCc = Address.create("Foo Bor", "foo.bar.2@example.com");
 
     Change c = newChange();
     ChangeUpdate update = newUpdate(c, changeOwner);
@@ -3753,7 +3747,7 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
   @Test
   public void putReviewerByEmailAndChangeToCc() throws Exception {
-    Address adr = Address.create("Foo Bar", "foo.bar@gerritcodereview.com");
+    Address adr = Address.create("Foo Bar", "foo.bar@example.com");
 
     Change c = newChange();
     ChangeUpdate update = newUpdate(c, changeOwner);
@@ -3809,8 +3803,8 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
 
   @Test
   public void pendingReviewers() throws Exception {
-    Address adr1 = Address.create("Foo Bar1", "foo.bar1@gerritcodereview.com");
-    Address adr2 = Address.create("Foo Bar2", "foo.bar2@gerritcodereview.com");
+    Address adr1 = Address.create("Foo Bar1", "foo.bar1@example.com");
+    Address adr2 = Address.create("Foo Bar2", "foo.bar2@example.com");
     Account.Id ownerId = changeOwner.getAccount().id();
     Account.Id otherUserId = otherUser.getAccount().id();
 
@@ -3979,11 +3973,6 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     assertThat(newNotes(c).getChange().currentPatchSetId().get()).isEqualTo(2);
   }
 
-  private String readNote(ChangeNotes notes, ObjectId noteId) throws Exception {
-    ObjectId dataId = notes.revisionNoteMap.noteMap.getNote(noteId).getData();
-    return new String(rw.getObjectReader().open(dataId, OBJ_BLOB).getCachedBytes(), UTF_8);
-  }
-
   @Nullable
   private ObjectId exactRefAllUsers(String refName) throws Exception {
     try (Repository allUsersRepo = repoManager.openRepository(allUsers)) {
@@ -4014,10 +4003,12 @@ public class ChangeNotesTest extends AbstractChangeNotesTest {
     TestChanges.incrementPatchSet(c);
   }
 
+  @CanIgnoreReturnValue
   private RevCommit incrementPatchSet(Change c) throws Exception {
     return incrementPatchSet(c, userFactory.create(c.getOwner()));
   }
 
+  @CanIgnoreReturnValue
   private RevCommit incrementPatchSet(Change c, IdentifiedUser user) throws Exception {
     incrementCurrentPatchSetFieldOnly(c);
     RevCommit commit = tr.commit().message("PS" + c.currentPatchSetId().get()).create();

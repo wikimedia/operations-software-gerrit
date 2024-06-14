@@ -43,7 +43,7 @@ import javax.servlet.http.HttpServletResponse;
 import org.eclipse.jgit.lib.Constants;
 
 class UrlModule extends ServletModule {
-  private AuthConfig authConfig;
+  private final AuthConfig authConfig;
 
   UrlModule(AuthConfig authConfig) {
     this.authConfig = authConfig;
@@ -73,6 +73,8 @@ class UrlModule extends ServletModule {
     serveRegex("^/register$").with(registerScreen(false));
     serveRegex("^/register/(.+)$").with(registerScreen(true));
     serveRegex("^(?:/c)?/([1-9][0-9]*)/?$").with(NumericChangeIdRedirectServlet.class);
+    serveRegex("^(?:/c)?/([1-9][0-9]*)/([1-9][0-9]*)/?$")
+        .with(NumericChangeIdRedirectServlet.class);
     serveRegex("^(?:/c)?/([1-9][0-9]*)/comment/\\w+/?$").with(NumericChangeIdRedirectServlet.class);
     serveRegex("^/p/(.*)$").with(queryProjectNew());
     serveRegex("^/r/(.+)/?$").with(DirectChangeByCommit.class);
@@ -86,7 +88,7 @@ class UrlModule extends ServletModule {
     serveRegex("^/(?:a/)?tools/(.*)$").with(ToolServlet.class);
 
     // Serve auth check. Mainly used by PolyGerrit for checking if a user is still logged in.
-    serveRegex("^/(?:a/)?auth-check$").with(AuthorizationCheckServlet.class);
+    serveRegex("^/(?:a/)?auth-check(\\.svg)?$").with(AuthorizationCheckServlet.class);
 
     // Bind servlets for REST root collections.
     // The '/plugins/' root collection is already handled by HttpPluginServlet

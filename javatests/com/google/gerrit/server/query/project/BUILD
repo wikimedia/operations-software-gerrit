@@ -37,7 +37,9 @@ junit_tests(
     deps = [
         ":abstract_query_tests",
         "//java/com/google/gerrit/index/project",
+        "//java/com/google/gerrit/server",
         "//java/com/google/gerrit/testing:gerrit-test-util",
+        "//lib:guava",
         "//lib:jgit",
         "//lib/guice",
     ],
@@ -53,7 +55,9 @@ junit_tests(
     deps = [
         ":abstract_query_tests",
         "//java/com/google/gerrit/index/project",
+        "//java/com/google/gerrit/server",
         "//java/com/google/gerrit/testing:gerrit-test-util",
+        "//lib:guava",
         "//lib:jgit",
         "//lib/guice",
     ],

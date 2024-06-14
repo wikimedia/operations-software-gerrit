@@ -404,11 +404,6 @@ public class RepoSequence implements Sequence {
   }
 
   @Override
-  public int getBatchSize() {
-    return batchSize;
-  }
-
-  @Override
   public int current() {
     counterLock.lock();
     try (Repository repo = repoManager.openRepository(projectName);
@@ -436,7 +431,8 @@ public class RepoSequence implements Sequence {
   @Override
   public int last() {
     if (counter == 0) {
-      next();
+      @SuppressWarnings("unused")
+      var unused = next();
     }
     return counter - 1;
   }

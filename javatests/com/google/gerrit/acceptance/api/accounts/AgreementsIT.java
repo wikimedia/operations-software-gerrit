@@ -127,7 +127,7 @@ public class AgreementsIT extends AbstractDaemonTest {
       assertThat(info.auth.useContributorAgreements).isTrue();
       assertThat(info.auth.contributorAgreements).hasSize(2);
       // Sort to get a stable assertion as the API does not guarantee ordering.
-      List<AgreementInfo> agreements =
+      ImmutableList<AgreementInfo> agreements =
           ImmutableList.sortedCopyOf(comparing(a -> a.name), info.auth.contributorAgreements);
       assertAgreement(agreements.get(0), caAutoVerify);
       assertAgreement(agreements.get(1), caNoAutoVerify);
@@ -187,8 +187,11 @@ public class AgreementsIT extends AbstractDaemonTest {
   public void listAgreementPermission() throws Exception {
     assume().that(isContributorAgreementsEnabled()).isTrue();
     requestScopeOperations.setApiUser(admin.id());
+
     // Allowed.
-    gApi.accounts().id(user.id().get()).listAgreements();
+    @SuppressWarnings("unused")
+    var unused = gApi.accounts().id(user.id().get()).listAgreements();
+
     requestScopeOperations.setApiUser(user.id());
 
     // Not allowed.
@@ -202,7 +205,7 @@ public class AgreementsIT extends AbstractDaemonTest {
     AuthException thrown =
         assertThrows(
             AuthException.class,
-            () -> gApi.accounts().id("admin").signAgreement(caAutoVerify.getName()));
+            () -> gApi.accounts().id(admin.id().get()).signAgreement(caAutoVerify.getName()));
     assertThat(thrown).hasMessageThat().contains("not allowed to enter contributor agreement");
   }
 
@@ -391,7 +394,9 @@ public class AgreementsIT extends AbstractDaemonTest {
   @GerritConfig(name = "auth.contributorAgreements", value = "true")
   public void anonymousAccessServerInfoEvenWithCLAs() throws Exception {
     requestScopeOperations.setApiUserAnonymous();
-    gApi.config().server().getInfo();
+
+    @SuppressWarnings("unused")
+    var unused = gApi.config().server().getInfo();
   }
 
   @Test

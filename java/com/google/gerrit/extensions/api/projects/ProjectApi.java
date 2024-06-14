@@ -14,6 +14,7 @@
 
 package com.google.gerrit.extensions.api.projects;
 
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.extensions.api.access.ProjectAccessInfo;
 import com.google.gerrit.extensions.api.access.ProjectAccessInput;
 import com.google.gerrit.extensions.api.config.AccessCheckInfo;
@@ -21,6 +22,7 @@ import com.google.gerrit.extensions.api.config.AccessCheckInput;
 import com.google.gerrit.extensions.common.BatchLabelInput;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.LabelDefinitionInfo;
+import com.google.gerrit.extensions.common.ListTagSortOption;
 import com.google.gerrit.extensions.common.ProjectInfo;
 import com.google.gerrit.extensions.common.SubmitRequirementInfo;
 import com.google.gerrit.extensions.restapi.NotImplementedException;
@@ -43,6 +45,7 @@ public interface ProjectApi {
 
   ProjectAccessInfo access() throws RestApiException;
 
+  @CanIgnoreReturnValue
   ProjectAccessInfo access(ProjectAccessInput p) throws RestApiException;
 
   ChangeInfo accessChange(ProjectAccessInput p) throws RestApiException;
@@ -53,6 +56,7 @@ public interface ProjectApi {
 
   ConfigInfo config() throws RestApiException;
 
+  @CanIgnoreReturnValue
   ConfigInfo config(ConfigInput in) throws RestApiException;
 
   Map<String, Set<String>> commitsIn(Collection<String> commits, Collection<String> refs)
@@ -69,9 +73,11 @@ public interface ProjectApi {
   abstract class ListRefsRequest<T extends RefInfo> {
     protected int limit;
     protected int start;
+    protected boolean descendingOrder;
     protected String substring;
     protected String regex;
     protected String nextPageToken;
+    protected ListTagSortOption sortBy = ListTagSortOption.REF;
 
     public abstract List<T> get() throws RestApiException;
 
@@ -82,6 +88,16 @@ public interface ProjectApi {
 
     public ListRefsRequest<T> withStart(int start) {
       this.start = start;
+      return this;
+    }
+
+    public ListRefsRequest<T> withDescendingOrder(boolean descendingOrder) {
+      this.descendingOrder = descendingOrder;
+      return this;
+    }
+
+    public ListRefsRequest<T> withSortBy(ListTagSortOption sortBy) {
+      this.sortBy = sortBy;
       return this;
     }
 
@@ -106,6 +122,14 @@ public interface ProjectApi {
 
     public int getStart() {
       return start;
+    }
+
+    public boolean getDescendingOrder() {
+      return descendingOrder;
+    }
+
+    public ListTagSortOption getSortBy() {
+      return sortBy;
     }
 
     public String getNextPageToken() {

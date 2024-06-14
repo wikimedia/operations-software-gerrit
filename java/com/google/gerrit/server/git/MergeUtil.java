@@ -27,6 +27,7 @@ import com.google.auto.factory.AutoFactory;
 import com.google.auto.factory.Provided;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterables;
@@ -240,6 +241,8 @@ public class MergeUtil {
     if (m.merge(mergeTip, originalCommit)) {
       filesWithGitConflicts = null;
       tree = m.getResultTreeId();
+      logger.atFine().log(
+          "CherryPick treeId=%s (no conflicts, inserter: %s)", tree.name(), m.getObjectInserter());
       if (tree.equals(mergeTip.getTree()) && !ignoreIdenticalTree) {
         throw new MergeIdenticalTreeException("identical tree");
       }
@@ -260,6 +263,32 @@ public class MergeUtil {
 
       // For merging with conflict markers we need a ResolveMerger, double-check that we have one.
       checkState(m instanceof ResolveMerger, "allow conflicts is not supported");
+
+      if (m.getResultTreeId() != null) {
+        // Merging with conflicts below uses the same DirCache instance that has been used by the
+        // Merger to attempt the merge without conflicts.
+        //
+        // The Merger uses the DirCache to do the updates, and in particular to write the result
+        // tree. DirCache caches a single DirCacheTree instance that is used to write the result
+        // tree, but it writes the result tree only if there were no conflicts.
+        //
+        // Merging with conflicts uses the same DirCache instance to write the tree with conflicts
+        // that has been used by the Merger. This means if the Merger unexpectedly wrote a result
+        // tree although there had been conflicts, then merging with conflicts uses the same
+        // DirCacheTree instance to write the tree with conflicts. However DirCacheTree#writeTree
+        // writes a tree only once and then that tree is cached. Further invocations of
+        // DirCacheTree#writeTree have no effect and return the previously created tree. This means
+        // merging with conflicts can only successfully create the tree with conflicts if the Merger
+        // didn't write a result tree yet. Hence this is checked here and we log a warning if the
+        // result tree was already written.
+        logger.atWarning().log(
+            "result tree has already been written: %s (merge: %s, conflicts: %s, failed: %s)",
+            m,
+            m.getResultTreeId().name(),
+            ((ResolveMerger) m).getUnmergedPaths(),
+            ((ResolveMerger) m).getFailingPaths());
+      }
+
       Map<String, MergeResult<? extends Sequence>> mergeResults =
           ((ResolveMerger) m).getMergeResults();
 
@@ -272,6 +301,8 @@ public class MergeUtil {
       tree =
           mergeWithConflicts(
               rw, inserter, dc, "HEAD", mergeTip, "CHANGE", originalCommit, mergeResults);
+      logger.atFine().log(
+          "AutoMerge treeId=%s (with conflicts, inserter: %s)", tree.name(), inserter);
     }
 
     CommitBuilder cherryPickCommit = new CommitBuilder();
@@ -283,6 +314,7 @@ public class MergeUtil {
     matchAuthorToCommitterDate(project, cherryPickCommit);
     CodeReviewCommit commit = rw.parseCommit(inserter.insert(cherryPickCommit));
     commit.setFilesWithGitConflicts(filesWithGitConflicts);
+    logger.atFine().log("CherryPick commitId=%s", commit.name());
     return commit;
   }
 
@@ -462,8 +494,32 @@ public class MergeUtil {
       tree = m.getResultTreeId();
     } else {
       List<String> conflicts = ImmutableList.of();
+      Map<String, ResolveMerger.MergeFailureReason> failed = ImmutableMap.of();
       if (m instanceof ResolveMerger) {
         conflicts = ((ResolveMerger) m).getUnmergedPaths();
+        failed = ((ResolveMerger) m).getFailingPaths();
+      }
+
+      if (m.getResultTreeId() != null) {
+        // Merging with conflicts below uses the same DirCache instance that has been used by the
+        // Merger to attempt the merge without conflicts.
+        //
+        // The Merger uses the DirCache to do the updates, and in particular to write the result
+        // tree. DirCache caches a single DirCacheTree instance that is used to write the result
+        // tree, but it writes the result tree only if there were no conflicts.
+        //
+        // Merging with conflicts uses the same DirCache instance to write the tree with conflicts
+        // that has been used by the Merger. This means if the Merger unexpectedly wrote a result
+        // tree although there had been conflicts, then merging with conflicts uses the same
+        // DirCacheTree instance to write the tree with conflicts. However DirCacheTree#writeTree
+        // writes a tree only once and then that tree is cached. Further invocations of
+        // DirCacheTree#writeTree have no effect and return the previously created tree. This means
+        // merging with conflicts can only successfully create the tree with conflicts if the Merger
+        // didn't write a result tree yet. Hence this is checked here and we log a warning if the
+        // result tree was already written.
+        logger.atWarning().log(
+            "result tree has already been written: %s (merge: %s, conflicts: %s, failed: %s)",
+            m, m.getResultTreeId().name(), conflicts, failed);
       }
 
       if (!allowConflicts) {
@@ -841,7 +897,14 @@ public class MergeUtil {
     }
   }
 
-  private static CodeReviewCommit failed(
+  /**
+   * Marks all commits that are reachable from the given commit {@code n} as failed by setting the
+   * provided {@code failure} status code on them.
+   *
+   * <p>If the same commits are retrieved from the same {@link CodeReviewRevWalk} instance later the
+   * status code that we set here can be read there.
+   */
+  private static void failed(
       CodeReviewRevWalk rw,
       CodeReviewCommit mergeTip,
       CodeReviewCommit n,
@@ -854,7 +917,6 @@ public class MergeUtil {
     while ((failed = rw.next()) != null) {
       failed.setStatusCode(failure);
     }
-    return failed;
   }
 
   public CodeReviewCommit writeMergeCommit(
@@ -993,6 +1055,12 @@ public class MergeUtil {
 
           @Override
           public void close() {}
+
+          @Override
+          public String toString() {
+            return String.format(
+                "%s (wrapped inserter: %s)", super.toString(), inserter.toString());
+          }
         },
         repoConfig);
   }

@@ -15,7 +15,6 @@
 package com.google.gerrit.server.config;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth8.assertThat;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.google.gerrit.server.ioutil.HostPlatform;
@@ -23,7 +22,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.NotDirectoryException;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import org.junit.Test;
 
 public class SitePathsTest {
@@ -92,7 +90,7 @@ public class SitePathsTest {
 
     final String pfx = HostPlatform.isWin32() ? "C:/" : "/";
     assertThat(site.resolve(pfx + "a")).isNotNull();
-    assertThat(site.resolve(pfx + "a")).isEqualTo(Paths.get(pfx + "a"));
+    assertThat(site.resolve(pfx + "a")).isEqualTo(Path.of(pfx + "a"));
   }
 
   private static Path random() throws IOException {

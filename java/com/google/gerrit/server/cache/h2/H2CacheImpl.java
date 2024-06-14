@@ -47,7 +47,6 @@ import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Calendar;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -56,9 +55,6 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
-import java.util.concurrent.Future;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -92,6 +88,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
   private final SqlStore<K, V> store;
   private final TypeLiteral<K> keyType;
   private final Cache<K, ValueHolder<V>> mem;
+  private final String cacheName;
 
   H2CacheImpl(
       Executor executor,
@@ -102,6 +99,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
     this.store = store;
     this.keyType = keyType;
     this.mem = mem;
+    this.cacheName = store.url.substring(store.url.lastIndexOf('/') + 1);
   }
 
   @Nullable
@@ -230,20 +228,14 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
     store.close();
   }
 
-  void prune(ScheduledExecutorService service) {
+  void prune() {
+    logger.atFine().log("Pruning cache %s...", cacheName);
     store.prune(mem);
+    logger.atFine().log("Finished pruning cache %s...", cacheName);
+  }
 
-    Calendar cal = Calendar.getInstance();
-    cal.set(Calendar.HOUR_OF_DAY, 01);
-    cal.set(Calendar.MINUTE, 0);
-    cal.set(Calendar.SECOND, 0);
-    cal.set(Calendar.MILLISECOND, 0);
-    cal.add(Calendar.DAY_OF_MONTH, 1);
-
-    long delay = cal.getTimeInMillis() - TimeUtil.nowMs();
-    @SuppressWarnings("unused")
-    Future<?> possiblyIgnoredError =
-        service.schedule(() -> prune(service), delay, TimeUnit.MILLISECONDS);
+  String getCacheName() {
+    return cacheName;
   }
 
   static class ValueHolder<V> {
@@ -431,7 +423,7 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
     @Nullable
     private BloomFilter<K> buildBloomFilter() {
       SqlHandle c = null;
-      try {
+      try (TraceTimer ignored = TraceContext.newTimer("Build bloom filter", Metadata.empty())) {
         c = acquire();
         if (estimatedSize <= 0) {
           try (PreparedStatement ps =
@@ -773,6 +765,8 @@ public class H2CacheImpl<K, V> extends AbstractLoadingCache<K, V> implements Per
             "ALTER TABLE data ADD COLUMN IF NOT EXISTS "
                 + "space BIGINT AS OCTET_LENGTH(k) + OCTET_LENGTH(v)");
         stmt.addBatch("ALTER TABLE data ADD COLUMN IF NOT EXISTS version INT DEFAULT 0 NOT NULL");
+        stmt.addBatch("CREATE INDEX IF NOT EXISTS version_key ON data(version, k)");
+        stmt.addBatch("CREATE INDEX IF NOT EXISTS accessed ON data(accessed)");
         stmt.executeBatch();
       }
     }

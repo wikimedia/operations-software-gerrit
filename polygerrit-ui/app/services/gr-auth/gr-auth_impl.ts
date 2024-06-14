@@ -6,21 +6,18 @@
 import {AuthRequestInit, Finalizable} from '../../types/types';
 import {fire} from '../../utils/event-util';
 import {getBaseUrl} from '../../utils/url-util';
-import {
-  AuthService,
-  AuthStatus,
-  AuthType,
-  DefaultAuthOptions,
-  GetTokenCallback,
-  Token,
-} from './gr-auth';
+import {AuthService} from './gr-auth';
 
-export const MAX_AUTH_CHECK_WAIT_TIME_MS = 1000 * 30; // 30s
-const MAX_GET_TOKEN_RETRIES = 2;
+const MAX_AUTH_CHECK_WAIT_TIME_MS = 1000 * 30; // 30s
 
-interface ValidToken extends Token {
-  access_token: string;
-  expires_at: string;
+const CREDS_EXPIRED_MSG = 'Credentials expired.';
+
+// visible for testing
+export enum AuthStatus {
+  UNDETERMINED = 0,
+  AUTHED = 1,
+  NOT_AUTHED = 2,
+  ERROR = 3,
 }
 
 interface AuthRequestInitWithHeaders extends AuthRequestInit {
@@ -34,45 +31,11 @@ interface AuthRequestInitWithHeaders extends AuthRequestInit {
  * Auth class.
  */
 export class Auth implements AuthService, Finalizable {
-  // TODO(dmfilippov): Remove Type and Status properties, expose AuthType and
-  // AuthStatus to API
-  static TYPE = {
-    XSRF_TOKEN: AuthType.XSRF_TOKEN,
-    ACCESS_TOKEN: AuthType.ACCESS_TOKEN,
-  };
-
-  static STATUS = {
-    UNDETERMINED: AuthStatus.UNDETERMINED,
-    AUTHED: AuthStatus.AUTHED,
-    NOT_AUTHED: AuthStatus.NOT_AUTHED,
-    ERROR: AuthStatus.ERROR,
-  };
-
-  static CREDS_EXPIRED_MSG = 'Credentials expired.';
-
   private authCheckPromise?: Promise<boolean>;
 
   private _last_auth_check_time: number = Date.now();
 
   private _status = AuthStatus.UNDETERMINED;
-
-  private retriesLeft = MAX_GET_TOKEN_RETRIES;
-
-  private cachedTokenPromise: Promise<Token | null> | null = null;
-
-  private type?: AuthType;
-
-  private defaultOptions: AuthRequestInit = {};
-
-  private getToken: GetTokenCallback;
-
-  constructor() {
-    this.getToken = () => Promise.resolve(this.cachedTokenPromise);
-  }
-
-  get baseUrl() {
-    return getBaseUrl();
-  }
 
   finalize() {}
 
@@ -85,7 +48,7 @@ export class Auth implements AuthService, Finalizable {
       Date.now() - this._last_auth_check_time > MAX_AUTH_CHECK_WAIT_TIME_MS
     ) {
       // Refetch after last check expired
-      this.authCheckPromise = fetch(`${this.baseUrl}/auth-check`)
+      this.authCheckPromise = fetch(`${getBaseUrl()}/auth-check`)
         .then(res => {
           // Make a call that requires loading the body of the request. This makes it so that the browser
           // can close the request even though callers of this method might only ever read headers.
@@ -99,10 +62,10 @@ export class Auth implements AuthService, Finalizable {
           // auth-check will return 204 if authed
           // treat the rest as unauthed
           if (res.status === 204) {
-            this._setStatus(Auth.STATUS.AUTHED);
+            this._setStatus(AuthStatus.AUTHED);
             return true;
           } else {
-            this._setStatus(Auth.STATUS.NOT_AUTHED);
+            this._setStatus(AuthStatus.NOT_AUTHED);
             return false;
           }
         })
@@ -127,35 +90,20 @@ export class Auth implements AuthService, Finalizable {
 
     if (this._status === AuthStatus.AUTHED) {
       fire(document, 'auth-error', {
-        message: Auth.CREDS_EXPIRED_MSG,
+        message: CREDS_EXPIRED_MSG,
         action: 'Refresh credentials',
       });
     }
     this._status = status;
   }
 
+  // visible for testing
   get status() {
     return this._status;
   }
 
   get isAuthed() {
-    return this._status === Auth.STATUS.AUTHED;
-  }
-
-  /**
-   * Enable cross-domain authentication using OAuth access token.
-   */
-  setup(getToken: GetTokenCallback, defaultOptions: DefaultAuthOptions) {
-    this.retriesLeft = MAX_GET_TOKEN_RETRIES;
-    if (getToken) {
-      this.type = AuthType.ACCESS_TOKEN;
-      this.cachedTokenPromise = null;
-      this.getToken = getToken;
-    }
-    this.defaultOptions = {};
-    if (defaultOptions) {
-      this.defaultOptions.credentials = defaultOptions.credentials;
-    }
+    return this._status === AuthStatus.AUTHED;
   }
 
   /**
@@ -164,16 +112,9 @@ export class Auth implements AuthService, Finalizable {
   fetch(url: string, options?: AuthRequestInit): Promise<Response> {
     const optionsWithHeaders: AuthRequestInitWithHeaders = {
       headers: new Headers(),
-      ...this.defaultOptions,
       ...options,
     };
-    if (this.type === AuthType.ACCESS_TOKEN) {
-      return this._getAccessToken().then(accessToken =>
-        this._fetchWithAccessToken(url, optionsWithHeaders, accessToken)
-      );
-    } else {
-      return this._fetchWithXsrfToken(url, optionsWithHeaders);
-    }
+    return this._fetchWithXsrfToken(url, optionsWithHeaders);
   }
 
   // private but used in test
@@ -191,23 +132,6 @@ export class Auth implements AuthService, Finalizable {
     return result;
   }
 
-  // private but used in test
-  _isTokenValid(token: Token | null): token is ValidToken {
-    if (!token) {
-      return false;
-    }
-    if (!token.access_token || !token.expires_at) {
-      return false;
-    }
-
-    const expiration = new Date(Number(token.expires_at) * 1000);
-    if (Date.now() >= expiration.getTime()) {
-      return false;
-    }
-
-    return true;
-  }
-
   private _fetchWithXsrfToken(
     url: string,
     options: AuthRequestInitWithHeaders
@@ -219,72 +143,6 @@ export class Auth implements AuthService, Finalizable {
       }
     }
     options.credentials = 'same-origin';
-    return this._ensureBodyLoaded(fetch(url, options));
-  }
-
-  private _getAccessToken(): Promise<string | null> {
-    if (!this.cachedTokenPromise) {
-      this.cachedTokenPromise = this.getToken();
-    }
-    return this.cachedTokenPromise.then(token => {
-      if (this._isTokenValid(token)) {
-        this.retriesLeft = MAX_GET_TOKEN_RETRIES;
-        return token.access_token;
-      }
-      if (this.retriesLeft > 0) {
-        this.retriesLeft--;
-        this.cachedTokenPromise = null;
-        return this._getAccessToken();
-      }
-      // Fall back to anonymous access.
-      return null;
-    });
-  }
-
-  private _fetchWithAccessToken(
-    url: string,
-    options: AuthRequestInitWithHeaders,
-    accessToken: string | null
-  ): Promise<Response> {
-    const params = [];
-
-    if (accessToken) {
-      params.push(`access_token=${accessToken}`);
-      const baseUrl = this.baseUrl;
-      const pathname = baseUrl
-        ? url.substring(url.indexOf(baseUrl) + baseUrl.length)
-        : url;
-      if (!pathname.startsWith('/a/')) {
-        url = url.replace(pathname, '/a' + pathname);
-      }
-    }
-
-    const method = options.method || 'GET';
-    let contentType = options.headers.get('Content-Type');
-
-    // For all requests with body, ensure json content type.
-    if (!contentType && options.body) {
-      contentType = 'application/json';
-    }
-
-    if (method !== 'GET') {
-      options.method = 'POST';
-      params.push(`$m=${method}`);
-      // If a request is not GET, and does not have a body, ensure text/plain
-      // content type.
-      if (!contentType) {
-        contentType = 'text/plain';
-      }
-    }
-
-    if (contentType) {
-      options.headers.set('Content-Type', 'text/plain');
-      params.push(`$ct=${encodeURIComponent(contentType)}`);
-    }
-
-    if (params.length) {
-      url = url + (url.indexOf('?') === -1 ? '?' : '&') + params.join('&');
-    }
     return this._ensureBodyLoaded(fetch(url, options));
   }
 

@@ -17,7 +17,6 @@ package com.google.gerrit.acceptance.api.accounts;
 import static com.google.common.truth.OptionalSubject.optionals;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
-import static com.google.common.truth.Truth8.assertThat;
 import static com.google.gerrit.entities.RefNames.REFS_EXTERNAL_IDS;
 import static com.google.gerrit.server.account.externalids.ExternalId.SCHEME_GOOGLE_OAUTH;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
@@ -29,6 +28,7 @@ import com.google.common.collect.Iterables;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.config.GerritConfig;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.common.UsedAt;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.client.AccountFieldName;
 import com.google.gerrit.server.IdentifiedUser;
@@ -41,6 +41,7 @@ import com.google.gerrit.server.account.AccountsUpdate;
 import com.google.gerrit.server.account.AuthRequest;
 import com.google.gerrit.server.account.AuthResult;
 import com.google.gerrit.server.account.SetInactiveFlag;
+import com.google.gerrit.server.account.externalids.DuplicateExternalIdKeyException;
 import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.account.externalids.ExternalIdFactory;
 import com.google.gerrit.server.account.externalids.ExternalIdKeyFactory;
@@ -52,11 +53,9 @@ import com.google.gerrit.server.ssh.SshKeyCache;
 import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.inject.Inject;
 import com.google.inject.util.Providers;
-import java.io.IOException;
 import java.util.Optional;
 import java.util.Set;
 import org.eclipse.jgit.api.Git;
-import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.junit.Test;
@@ -594,7 +593,7 @@ public class AccountManagerIT extends AbstractDaemonTest {
 
     AccountException thrown =
         assertThrows(AccountException.class, () -> accountManager.authenticate(whoOAuth));
-    assertThat(thrown).hasMessageThat().contains("Cannot assign external ID \"username:foo\" to");
+    assertThat(thrown).hasCauseThat().isInstanceOf(DuplicateExternalIdKeyException.class);
   }
 
   @Test
@@ -648,9 +647,7 @@ public class AccountManagerIT extends AbstractDaemonTest {
 
     AccountException thrown =
         assertThrows(AccountException.class, () -> accountManager.authenticate(whoOAuth));
-    assertThat(thrown)
-        .hasMessageThat()
-        .contains("Cannot assign external ID \"username:foo\" to account");
+    assertThat(thrown).hasCauseThat().isInstanceOf(DuplicateExternalIdKeyException.class);
   }
 
   @Test
@@ -799,25 +796,22 @@ public class AccountManagerIT extends AbstractDaemonTest {
         "Create Test Account",
         accountId,
         u -> u.addExternalId(externalIdFactory.create(mailExtIdKey, accountId)));
-
     accountManager.link(accountId, authRequestFactory.createForEmail(email1));
+    int initialCommits = countExternalIdsCommits();
 
-    try (Repository allUsersRepo = repoManager.openRepository(allUsers);
-        Git git = new Git(allUsersRepo)) {
-      int initialCommits = getCommitsInExternalIds(git, allUsersRepo);
+    accountManager.updateLink(accountId, authRequestFactory.createForEmail(email2));
 
-      accountManager.updateLink(accountId, authRequestFactory.createForEmail(email2));
-
-      int afterUpdateCommits = getCommitsInExternalIds(git, allUsersRepo);
-
-      assertThat(afterUpdateCommits).isEqualTo(initialCommits + 1);
-    }
+    int afterUpdateCommits = countExternalIdsCommits();
+    assertThat(afterUpdateCommits).isEqualTo(initialCommits + 1);
   }
 
-  private static int getCommitsInExternalIds(Git git, Repository allUsersRepo)
-      throws GitAPIException, IOException {
-    ObjectId refsMetaExternalIdsHead = allUsersRepo.exactRef(REFS_EXTERNAL_IDS).getObjectId();
-    return Iterables.size(git.log().add(refsMetaExternalIdsHead).call());
+  @UsedAt(UsedAt.Project.GOOGLE)
+  protected int countExternalIdsCommits() throws Exception {
+    try (Repository allUsersRepo = repoManager.openRepository(allUsers);
+        Git git = new Git(allUsersRepo)) {
+      ObjectId refsMetaExternalIdsHead = allUsersRepo.exactRef(REFS_EXTERNAL_IDS).getObjectId();
+      return Iterables.size(git.log().add(refsMetaExternalIdsHead).call());
+    }
   }
 
   private void assertNoSuchExternalIds(ExternalId.Key... extIdKeys) throws Exception {

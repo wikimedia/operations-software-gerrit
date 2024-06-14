@@ -28,7 +28,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit;
-import com.google.gerrit.entities.Change;
+import com.google.gerrit.acceptance.config.GerritConfig;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.api.projects.BranchInput;
@@ -36,15 +36,12 @@ import com.google.gerrit.extensions.client.SubmitType;
 import com.google.gerrit.extensions.common.TestSubmitRuleInfo;
 import com.google.gerrit.extensions.common.TestSubmitRuleInput;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
-import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.git.meta.VersionedMetaData;
 import com.google.gerrit.testing.ConfigSuite;
 import java.io.IOException;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.jgit.api.Git;
-import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ObjectId;
@@ -60,7 +57,7 @@ public class SubmitTypeRuleIT extends AbstractDaemonTest {
     return submitWholeTopicEnabledConfig();
   }
 
-  private class RulesPl extends VersionedMetaData {
+  private static class RulesPl extends VersionedMetaData {
     private String rule;
 
     @Override
@@ -69,33 +66,23 @@ public class SubmitTypeRuleIT extends AbstractDaemonTest {
     }
 
     @Override
-    protected void onLoad() throws IOException, ConfigInvalidException {
+    protected void onLoad() throws IOException {
       rule = readUTF8(RULES_PL_FILE);
     }
 
     @Override
-    protected boolean onSave(CommitBuilder commit) throws IOException, ConfigInvalidException {
-      TestSubmitRuleInput in = new TestSubmitRuleInput();
-      in.rule = rule;
-      try {
-        gApi.changes().id(testChangeId.get()).current().testSubmitType(in);
-      } catch (RestApiException e) {
-        throw new ConfigInvalidException("Invalid submit type rule", e);
-      }
-
+    protected boolean onSave(CommitBuilder commit) throws IOException {
       saveUTF8(RULES_PL_FILE, rule);
       return true;
     }
   }
 
   private AtomicInteger fileCounter;
-  private Change.Id testChangeId;
 
   @Before
   public void setUp() throws Exception {
     fileCounter = new AtomicInteger();
     gApi.projects().name(project.get()).branch("test").create(new BranchInput());
-    testChangeId = createChange("test", "test change").getChange().getId();
   }
 
   private void setRulesPl(String rule) throws Exception {
@@ -186,6 +173,21 @@ public class SubmitTypeRuleIT extends AbstractDaemonTest {
   }
 
   @Test
+  @GerritConfig(name = "rules.enable", value = "false")
+  public void submitType_rulesTakeNoEffectWhenDisabled() throws Exception {
+    PushOneCommit.Result r1 = createChange("master", "Default 1");
+    PushOneCommit.Result r2 = createChange("master", "FAST_FORWARD_ONLY 2");
+    PushOneCommit.Result r3 = createChange("master", "MERGE_IF_NECESSARY 3");
+
+    setRulesPl(SUBMIT_TYPE_FROM_SUBJECT);
+
+    // Rules take no effect
+    assertSubmitType(MERGE_IF_NECESSARY, r1.getChangeId());
+    assertSubmitType(MERGE_IF_NECESSARY, r2.getChangeId());
+    assertSubmitType(MERGE_IF_NECESSARY, r3.getChangeId());
+  }
+
+  @Test
   public void submitTypeIsUsedForSubmit() throws Exception {
     setRulesPl(SUBMIT_TYPE_FROM_SUBJECT);
 
@@ -194,7 +196,7 @@ public class SubmitTypeRuleIT extends AbstractDaemonTest {
     gApi.changes().id(r.getChangeId()).current().review(ReviewInput.approve());
     gApi.changes().id(r.getChangeId()).current().submit();
 
-    List<RevCommit> log = log("master", 1);
+    ImmutableList<RevCommit> log = log("master", 1);
     assertThat(log.get(0).getShortMessage()).isEqualTo("CHERRY_PICK 1");
     assertThat(log.get(0).name()).isNotEqualTo(r.getCommit().name());
     assertThat(log.get(0).getFullMessage()).contains("Change-Id: " + r.getChangeId());
@@ -223,7 +225,7 @@ public class SubmitTypeRuleIT extends AbstractDaemonTest {
 
     assertThat(log("master", 1).get(0).name()).isEqualTo(r1.getCommit().name());
 
-    List<RevCommit> branchLog = log("branch", 1);
+    ImmutableList<RevCommit> branchLog = log("branch", 1);
     assertThat(branchLog.get(0).getParents()).hasLength(2);
     assertThat(branchLog.get(0).getParent(1).name()).isEqualTo(r2.getCommit().name());
   }
@@ -285,7 +287,7 @@ public class SubmitTypeRuleIT extends AbstractDaemonTest {
     return info;
   }
 
-  private List<RevCommit> log(String commitish, int n) throws Exception {
+  private ImmutableList<RevCommit> log(String commitish, int n) throws Exception {
     try (Repository repo = repoManager.openRepository(project);
         Git git = new Git(repo)) {
       ObjectId id = repo.resolve(commitish);

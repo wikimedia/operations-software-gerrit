@@ -631,7 +631,10 @@ export class GrConfirmCherrypickDialog
           payload,
           handleError
         )
-        .then(() => {
+        .then(response => {
+          if (!response.ok) {
+            return;
+          }
           this.updateStatus(change, {status: ProgressStatus.SUCCESSFUL});
           const failedOrPending = Object.values(this.statuses).find(
             v => v.status !== ProgressStatus.SUCCESSFUL

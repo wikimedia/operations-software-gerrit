@@ -17,7 +17,6 @@ package com.google.gerrit.acceptance.api.group;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.MoreCollectors.onlyElement;
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth8.assertThat;
 import static com.google.gerrit.acceptance.GitUtil.deleteRef;
 import static com.google.gerrit.acceptance.GitUtil.fetch;
 import static com.google.gerrit.acceptance.api.group.GroupAssert.assertGroupInfo;
@@ -90,6 +89,8 @@ import com.google.gerrit.server.account.GroupBackend;
 import com.google.gerrit.server.account.GroupIncludeCache;
 import com.google.gerrit.server.account.GroupsSnapshotReader;
 import com.google.gerrit.server.account.ServiceUserClassifier;
+import com.google.gerrit.server.config.AllProjectsName;
+import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.group.PeriodicGroupIndexer;
 import com.google.gerrit.server.group.SystemGroupBackend;
 import com.google.gerrit.server.group.db.GroupDelta;
@@ -116,6 +117,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.junit.TestRepository;
@@ -153,6 +155,8 @@ public class GroupsIT extends AbstractDaemonTest {
   @Inject private ExtensionRegistry extensionRegistry;
   @Inject private GroupsSnapshotReader groupsSnapshotReader;
 
+  @Inject private ProjectResetter.Builder.Factory projectResetterFactory;
+
   @Override
   public Module createModule() {
     return new AbstractModule() {
@@ -166,17 +170,18 @@ public class GroupsIT extends AbstractDaemonTest {
 
   @After
   public void consistencyCheck() throws Exception {
-    if (description.getAnnotation(IgnoreGroupInconsistencies.class) == null) {
+    if (configRule.description().getAnnotation(IgnoreGroupInconsistencies.class) == null) {
       assertThat(consistencyChecker.check()).isEmpty();
     }
   }
 
   @Override
-  protected ProjectResetter.Config resetProjects() {
+  protected ProjectResetter.Config resetProjects(
+      AllProjectsName allProjects, AllUsersName allUsers) {
     // Don't reset All-Users since deleting users makes groups inconsistent (e.g. groups would
     // contain members that no longer exist) and as result of this the group consistency checker
     // that is executed after each test would fail.
-    return new ProjectResetter.Config().reset(allProjects, RefNames.REFS_CONFIG);
+    return new ProjectResetter.Config.Builder().reset(allProjects, RefNames.REFS_CONFIG).build();
   }
 
   @Test
@@ -292,7 +297,9 @@ public class GroupsIT extends AbstractDaemonTest {
     Account.Id accountId = accountOperations.newAccount().username(username).create();
 
     // Fill the cache for the observed account.
-    groupIncludeCache.getGroupsWithMember(accountId);
+    @SuppressWarnings("unused")
+    var unused = groupIncludeCache.getGroupsWithMember(accountId);
+
     AccountGroup.UUID groupUuid = groupOperations.newGroup().create();
 
     gApi.groups().id(groupUuid.get()).addMembers(username);
@@ -578,7 +585,8 @@ public class GroupsIT extends AbstractDaemonTest {
     Account.Id accountId = accountOperations.newAccount().create();
 
     // Fill the cache for the observed account.
-    groupIncludeCache.getGroupsWithMember(accountId);
+    @SuppressWarnings("unused")
+    var unused = groupIncludeCache.getGroupsWithMember(accountId);
 
     GroupInput groupInput = new GroupInput();
     groupInput.name = name("Users");
@@ -654,7 +662,7 @@ public class GroupsIT extends AbstractDaemonTest {
   @Test
   public void groupCannotBeCreatedWithNameOfAnotherGroup() throws Exception {
     String name = name("Users");
-    gApi.groups().create(name).get();
+    gApi.groups().create(name);
 
     assertThrows(ResourceConflictException.class, () -> gApi.groups().create(name));
   }
@@ -937,7 +945,7 @@ public class GroupsIT extends AbstractDaemonTest {
 
   @Test
   public void defaultGroupsCreated() throws Exception {
-    Iterable<String> names = gApi.groups().list().getAsMap().keySet();
+    Set<String> names = gApi.groups().list().getAsMap().keySet();
     assertThat(names)
         .containsAtLeast("Administrators", ServiceUserClassifier.SERVICE_USERS)
         .inOrder();
@@ -1348,9 +1356,12 @@ public class GroupsIT extends AbstractDaemonTest {
   public void cannotCreateGroupNamesBranch() throws Exception {
     // Use ProjectResetter to restore the group names ref
     try (ProjectResetter resetter =
-        projectResetter
+        projectResetterFactory
             .builder()
-            .build(new ProjectResetter.Config().reset(allUsers, RefNames.REFS_GROUPNAMES))) {
+            .build(
+                new ProjectResetter.Config.Builder()
+                    .reset(allUsers, RefNames.REFS_GROUPNAMES)
+                    .build())) {
       // Manually delete group names ref
       try (Repository repo = repoManager.openRepository(allUsers);
           RevWalk rw = new RevWalk(repo)) {
@@ -1482,7 +1493,7 @@ public class GroupsIT extends AbstractDaemonTest {
     GroupInput groupInput = new GroupInput();
     groupInput.name = name("contributors");
     groupInput.members = ImmutableList.of(user.username());
-    gApi.groups().create(groupInput).get();
+    gApi.groups().create(groupInput);
     restartAsSlave();
 
     requestScopeOperations.setApiUser(user.id());
@@ -1690,7 +1701,7 @@ public class GroupsIT extends AbstractDaemonTest {
   }
 
   private static void assertIncludes(List<GroupInfo> includes, String... expectedNames) {
-    List<String> names = includes.stream().map(i -> i.name).collect(toImmutableList());
+    ImmutableList<String> names = includes.stream().map(i -> i.name).collect(toImmutableList());
     assertThat(names).containsExactlyElementsIn(Arrays.asList(expectedNames));
     assertThat(names).isInOrder();
   }

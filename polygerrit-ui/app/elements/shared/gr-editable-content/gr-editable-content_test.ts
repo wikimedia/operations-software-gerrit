@@ -12,6 +12,24 @@ import {fixture, html, assert} from '@open-wc/testing';
 import {StorageService} from '../../../services/storage/gr-storage';
 import {storageServiceToken} from '../../../services/storage/gr-storage_impl';
 import {testResolver} from '../../../test/common-test-setup';
+import {GrDropdownList} from '../gr-dropdown-list/gr-dropdown-list';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
+import {
+  NumericChangeId,
+  RepoName,
+  RevisionPatchSetNum,
+} from '../../../api/rest-api';
+
+const emails = [
+  {
+    email: 'primary@example.com',
+    preferred: true,
+  },
+  {
+    email: 'secondary@example.com',
+    preferred: false,
+  },
+];
 
 suite('gr-editable-content tests', () => {
   let element: GrEditableContent;
@@ -168,6 +186,27 @@ suite('gr-editable-content tests', () => {
         queryAndAssert<GrButton>(element, 'gr-button[primary]').disabled
       );
     });
+
+    suite('in editMode', () => {
+      test('click opens edit url', async () => {
+        const setUrlStub = sinon.stub(testResolver(navigationToken), 'setUrl');
+        element.editMode = true;
+        element.changeNum = 42 as NumericChangeId;
+        element.repoName = 'Test Repo' as RepoName;
+        element.patchNum = '1' as RevisionPatchSetNum;
+        await element.updateComplete;
+        const editButton = queryAndAssert<GrButton>(
+          element,
+          'gr-button.edit-commit-message'
+        );
+        editButton.click();
+        assert.isTrue(setUrlStub.called);
+        assert.equal(
+          setUrlStub.lastCall.args[0],
+          '/c/Test+Repo/+/42/1//COMMIT_MSG,edit'
+        );
+      });
+    });
   });
 
   suite('storageKey and related behavior', () => {
@@ -231,6 +270,40 @@ suite('gr-editable-content tests', () => {
 
       assert.isTrue(eraseStub.called);
       assert.deepEqual([element.storageKey], eraseStub.lastCall.args);
+    });
+  });
+
+  suite('edit with committer email', () => {
+    test('hide email dropdown when user has one email', async () => {
+      element.emails = emails.slice(0, 1);
+      element.editing = true;
+      await element.updateComplete;
+      assert.notExists(query(element, '#editMessageEmailDropdown'));
+    });
+
+    test('show email dropdown when user has more than one email', async () => {
+      element.emails = emails;
+      element.editing = true;
+      await element.updateComplete;
+      const editMessageEmailDropdown = queryAndAssert(
+        element,
+        '#editMessageEmailDropdown'
+      );
+      assert.dom.equal(
+        editMessageEmailDropdown,
+        `<div class="email-dropdown" id="editMessageEmailDropdown">Committer Email
+        <gr-dropdown-list></gr-dropdown-list>
+        <span></span>
+        </div>`
+      );
+      const emailDropdown = queryAndAssert<GrDropdownList>(
+        editMessageEmailDropdown,
+        'gr-dropdown-list'
+      );
+      assert.deepEqual(
+        emailDropdown.items?.map(e => e.value),
+        emails.map(e => e.email)
+      );
     });
   });
 });

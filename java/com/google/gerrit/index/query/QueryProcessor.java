@@ -40,7 +40,6 @@ import com.google.gerrit.metrics.Description;
 import com.google.gerrit.metrics.Field;
 import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.metrics.Timer1;
-import com.google.gerrit.server.logging.CallerFinder;
 import com.google.gerrit.server.logging.Metadata;
 import java.util.ArrayList;
 import java.util.List;
@@ -83,7 +82,6 @@ public abstract class QueryProcessor<T> {
   private final IndexRewriter<T> rewriter;
   private final String limitField;
   private final IntSupplier userQueryLimit;
-  private final CallerFinder callerFinder;
 
   // This class is not generally thread-safe, but programmer error may result in it being shared
   // across threads. At least ensure the bit for checking if it's been used is threadsafe.
@@ -113,15 +111,9 @@ public abstract class QueryProcessor<T> {
     this.limitField = limitField;
     this.userQueryLimit = userQueryLimit;
     this.used = new AtomicBoolean(false);
-    this.callerFinder =
-        CallerFinder.builder()
-            .addTarget(InternalQuery.class)
-            .addTarget(QueryProcessor.class)
-            .matchSubClasses(true)
-            .skip(1)
-            .build();
   }
 
+  @CanIgnoreReturnValue
   public QueryProcessor<T> setStart(int n) {
     start = n;
     return this;
@@ -141,9 +133,16 @@ public abstract class QueryProcessor<T> {
    * @param enforce whether to enforce visibility.
    * @return this.
    */
+  @CanIgnoreReturnValue
   public QueryProcessor<T> enforceVisibility(boolean enforce) {
     enforceVisibility = enforce;
     return this;
+  }
+
+  /** Convenience method for API backward compatibility. */
+  @CanIgnoreReturnValue
+  public QueryProcessor<T> setUserProvidedLimit(int n) {
+    return setUserProvidedLimit(n, true);
   }
 
   /**
@@ -154,13 +153,20 @@ public abstract class QueryProcessor<T> {
    * account and choose the one that makes the most sense.
    *
    * @param n limit; zero or negative means no limit.
+   * @param applyDefaultLimit Should the default limit be applied, if n <= 0? For internal queries
+   *     this should be false. For API endpoints this should be true.
    * @return this.
    */
-  public QueryProcessor<T> setUserProvidedLimit(int n) {
+  @CanIgnoreReturnValue
+  public QueryProcessor<T> setUserProvidedLimit(int n, boolean applyDefaultLimit) {
     userProvidedLimit = n;
+    if (applyDefaultLimit && userProvidedLimit <= 0 && indexConfig.defaultLimit() > 0) {
+      userProvidedLimit = indexConfig.defaultLimit();
+    }
     return this;
   }
 
+  @CanIgnoreReturnValue
   public QueryProcessor<T> setNoLimit(boolean isNoLimit) {
     this.isNoLimit = isNoLimit;
     return this;
@@ -172,6 +178,7 @@ public abstract class QueryProcessor<T> {
     return this;
   }
 
+  @CanIgnoreReturnValue
   public QueryProcessor<T> setRequestedFields(Set<String> fields) {
     requestedFields = fields;
     return this;
@@ -226,9 +233,7 @@ public abstract class QueryProcessor<T> {
       return disabledResults(queryStrings, queries);
     }
 
-    logger.atFine().log(
-        "Executing %d %s index queries for %s",
-        cnt, schemaDef.getName(), callerFinder.findCallerLazy());
+    logger.atFine().log("Executing %d %s index queries", cnt, schemaDef.getName());
     List<QueryResult<T>> out;
     try {
       // Parse and rewrite all queries.
@@ -433,8 +438,6 @@ public abstract class QueryProcessor<T> {
     possibleLimits.add(getPermittedLimit());
     if (userProvidedLimit > 0) {
       possibleLimits.add(userProvidedLimit);
-    } else if (indexConfig.defaultLimit() > 0) {
-      possibleLimits.add(indexConfig.defaultLimit());
     }
     if (limitField != null) {
       Integer limitFromPredicate = LimitPredicate.getLimit(limitField, p);
@@ -465,8 +468,4 @@ public abstract class QueryProcessor<T> {
   }
 
   protected abstract String formatForLogging(T t);
-
-  protected abstract int getIndexSize();
-
-  protected abstract int getBatchSize();
 }

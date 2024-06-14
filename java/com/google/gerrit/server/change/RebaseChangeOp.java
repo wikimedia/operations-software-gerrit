@@ -23,7 +23,10 @@ import static java.util.Objects.requireNonNull;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.flogger.FluentLogger;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.Project;
@@ -43,6 +46,7 @@ import com.google.gerrit.server.git.GroupCollector;
 import com.google.gerrit.server.git.MergeUtil;
 import com.google.gerrit.server.git.MergeUtilFactory;
 import com.google.gerrit.server.notedb.ChangeNotes;
+import com.google.gerrit.server.patch.DiffNotAvailableException;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.InvalidChangeOperationException;
 import com.google.gerrit.server.project.NoSuchChangeException;
@@ -56,6 +60,7 @@ import com.google.gerrit.server.util.AccountTemplateUtil;
 import com.google.inject.assistedinject.Assisted;
 import com.google.inject.assistedinject.AssistedInject;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -80,6 +85,8 @@ import org.eclipse.jgit.revwalk.RevWalk;
  * RevWalk, org.eclipse.jgit.lib.ObjectInserter)}).
  */
 public class RebaseChangeOp implements BatchUpdateOp {
+  private static final FluentLogger logger = FluentLogger.forEnclosingClass();
+
   public interface Factory {
     RebaseChangeOp create(ChangeNotes notes, PatchSet originalPatchSet, ObjectId baseCommitId);
 
@@ -113,6 +120,7 @@ public class RebaseChangeOp implements BatchUpdateOp {
   private boolean matchAuthorToCommitterDate = false;
   private ImmutableListMultimap<String, String> validationOptions = ImmutableListMultimap.of();
   private String mergeStrategy;
+  private boolean verifyNeedsRebase = true;
 
   private CodeReviewCommit rebasedCommit;
   private PatchSet.Id rebasedPatchSetId;
@@ -193,26 +201,31 @@ public class RebaseChangeOp implements BatchUpdateOp {
     this.originalPatchSet = originalPatchSet;
   }
 
+  @CanIgnoreReturnValue
   public RebaseChangeOp setCommitterIdent(PersonIdent committerIdent) {
     this.committerIdent = committerIdent;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public RebaseChangeOp setValidate(boolean validate) {
     this.validate = validate;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public RebaseChangeOp setCheckAddPatchSetPermission(boolean checkAddPatchSetPermission) {
     this.checkAddPatchSetPermission = checkAddPatchSetPermission;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public RebaseChangeOp setFireRevisionCreated(boolean fireRevisionCreated) {
     this.fireRevisionCreated = fireRevisionCreated;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public RebaseChangeOp setForceContentMerge(boolean forceContentMerge) {
     this.forceContentMerge = forceContentMerge;
     return this;
@@ -226,16 +239,19 @@ public class RebaseChangeOp implements BatchUpdateOp {
    *
    * @see #setForceContentMerge(boolean)
    */
+  @CanIgnoreReturnValue
   public RebaseChangeOp setAllowConflicts(boolean allowConflicts) {
     this.allowConflicts = allowConflicts;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public RebaseChangeOp setDetailedCommitMessage(boolean detailedCommitMessage) {
     this.detailedCommitMessage = detailedCommitMessage;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public RebaseChangeOp setPostMessage(boolean postMessage) {
     this.postMessage = postMessage;
     return this;
@@ -247,21 +263,25 @@ public class RebaseChangeOp implements BatchUpdateOp {
    * cases, we already store the votes of the new patch-sets in SubmitStrategyOp#saveApprovals. We
    * should not also store the copied votes.
    */
+  @CanIgnoreReturnValue
   public RebaseChangeOp setStoreCopiedVotes(boolean storeCopiedVotes) {
     this.storeCopiedVotes = storeCopiedVotes;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public RebaseChangeOp setSendEmail(boolean sendEmail) {
     this.sendEmail = sendEmail;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public RebaseChangeOp setMatchAuthorToCommitterDate(boolean matchAuthorToCommitterDate) {
     this.matchAuthorToCommitterDate = matchAuthorToCommitterDate;
     return this;
   }
 
+  @CanIgnoreReturnValue
   public RebaseChangeOp setValidationOptions(
       ImmutableListMultimap<String, String> validationOptions) {
     requireNonNull(validationOptions, "validationOptions may not be null");
@@ -269,15 +289,22 @@ public class RebaseChangeOp implements BatchUpdateOp {
     return this;
   }
 
+  @CanIgnoreReturnValue
   public RebaseChangeOp setMergeStrategy(String strategy) {
     this.mergeStrategy = strategy;
+    return this;
+  }
+
+  @CanIgnoreReturnValue
+  public RebaseChangeOp setVerifyNeedsRebase(boolean verifyNeedsRebase) {
+    this.verifyNeedsRebase = verifyNeedsRebase;
     return this;
   }
 
   @Override
   public void updateRepo(RepoContext ctx)
       throws InvalidChangeOperationException, RestApiException, IOException, NoSuchChangeException,
-          PermissionBackendException {
+          PermissionBackendException, DiffNotAvailableException {
     // Ok that originalPatchSet was not read in a transaction, since we just
     // need its revision.
     RevWalk rw = ctx.getRevWalk();
@@ -351,6 +378,8 @@ public class RebaseChangeOp implements BatchUpdateOp {
       }
     }
 
+    logger.atFine().log(
+        "flushing inserter %s", ctx.getRevWalk().getObjectReader().getCreatedFromInserter());
     ctx.getRevWalk().getObjectReader().getCreatedFromInserter().flush();
     patchSetInserter.updateRepo(ctx);
   }
@@ -440,7 +469,7 @@ public class RebaseChangeOp implements BatchUpdateOp {
       throws ResourceConflictException, IOException {
     RevCommit parentCommit = original.getParent(0);
 
-    if (base.equals(parentCommit)) {
+    if (verifyNeedsRebase && base.equals(parentCommit)) {
       throw new ResourceConflictException("Change is already up to date.");
     }
 
@@ -467,10 +496,37 @@ public class RebaseChangeOp implements BatchUpdateOp {
     if (success) {
       filesWithGitConflicts = null;
       tree = merger.getResultTreeId();
+      logger.atFine().log(
+          "tree of rebased commit: %s (no conflicts, inserter: %s)",
+          tree.name(), merger.getObjectInserter());
     } else {
       List<String> conflicts = ImmutableList.of();
+      Map<String, ResolveMerger.MergeFailureReason> failed = ImmutableMap.of();
       if (merger instanceof ResolveMerger) {
         conflicts = ((ResolveMerger) merger).getUnmergedPaths();
+        failed = ((ResolveMerger) merger).getFailingPaths();
+      }
+
+      if (merger.getResultTreeId() != null) {
+        // Merging with conflicts below uses the same DirCache instance that has been used by the
+        // Merger to attempt the merge without conflicts.
+        //
+        // The Merger uses the DirCache to do the updates, and in particular to write the result
+        // tree. DirCache caches a single DirCacheTree instance that is used to write the result
+        // tree, but it writes the result tree only if there were no conflicts.
+        //
+        // Merging with conflicts uses the same DirCache instance to write the tree with conflicts
+        // that has been used by the Merger. This means if the Merger unexpectedly wrote a result
+        // tree although there had been conflicts, then merging with conflicts uses the same
+        // DirCacheTree instance to write the tree with conflicts. However DirCacheTree#writeTree
+        // writes a tree only once and then that tree is cached. Further invocations of
+        // DirCacheTree#writeTree have no effect and return the previously created tree. This means
+        // merging with conflicts can only successfully create the tree with conflicts if the Merger
+        // didn't write a result tree yet. Hence this is checked here and we log a warning if the
+        // result tree was already written.
+        logger.atWarning().log(
+            "result tree has already been written: %s (merger: %s, conflicts: %s, failed: %s)",
+            merger, merger.getResultTreeId().name(), conflicts, failed);
       }
 
       if (!allowConflicts || !(merger instanceof ResolveMerger)) {
@@ -489,6 +545,7 @@ public class RebaseChangeOp implements BatchUpdateOp {
               .map(Map.Entry::getKey)
               .collect(toImmutableSet());
 
+      logger.atFine().log("rebasing with conflicts");
       tree =
           MergeUtil.mergeWithConflicts(
               ctx.getRevWalk(),
@@ -499,11 +556,23 @@ public class RebaseChangeOp implements BatchUpdateOp {
               "BASE",
               ctx.getRevWalk().parseCommit(base),
               mergeResults);
+      logger.atFine().log(
+          "tree of rebased commit: %s (with conflicts, inserter: %s)",
+          tree.name(), ctx.getInserter());
+    }
+
+    List<ObjectId> parents = new ArrayList<>();
+    parents.add(base);
+    if (original.getParentCount() > 1) {
+      // If a merge commit is rebased add all other parents (parent 2 to N).
+      for (int parent = 1; parent < original.getParentCount(); parent++) {
+        parents.add(original.getParent(parent));
+      }
     }
 
     CommitBuilder cb = new CommitBuilder();
     cb.setTreeId(tree);
-    cb.setParentId(base);
+    cb.setParentIds(parents);
     cb.setAuthor(original.getAuthorIdent());
     cb.setMessage(commitMessage);
     if (committerIdent != null) {
@@ -523,6 +592,7 @@ public class RebaseChangeOp implements BatchUpdateOp {
     ObjectId objectId = ctx.getInserter().insert(cb);
     CodeReviewCommit commit = ((CodeReviewRevWalk) ctx.getRevWalk()).parseCommit(objectId);
     commit.setFilesWithGitConflicts(filesWithGitConflicts);
+    logger.atFine().log("rebased commit=%s", commit.name());
     return commit;
   }
 }

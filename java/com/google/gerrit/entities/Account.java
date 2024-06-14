@@ -19,7 +19,9 @@ import static com.google.gerrit.entities.RefNames.REFS_STARRED_CHANGES;
 import static com.google.gerrit.entities.RefNames.REFS_USERS;
 
 import com.google.auto.value.AutoValue;
+import com.google.common.base.MoreObjects;
 import com.google.common.primitives.Ints;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.extensions.client.DiffPreferencesInfo;
 import java.time.Instant;
@@ -160,6 +162,17 @@ public abstract class Account {
   public abstract String metaId();
 
   /**
+   * A unique tag which identifies the current version of the account.
+   *
+   * <p>It can be any non-empty string. For open-source gerrit it is the same as metaId; internally
+   * in google a different value is assigned.
+   *
+   * <p>The value can be null only during account updating/creation.
+   */
+  @Nullable
+  public abstract String uniqueTag();
+
+  /**
    * Create a new account.
    *
    * @param newId unique id, see Sequences#nextAccountId().
@@ -261,6 +274,7 @@ public abstract class Account {
 
     public abstract Builder setInactive(boolean inactive);
 
+    @CanIgnoreReturnValue
     public Builder setActive(boolean active) {
       return setInactive(!active);
     }
@@ -275,11 +289,30 @@ public abstract class Account {
 
     public abstract Builder setMetaId(@Nullable String metaId);
 
+    @Nullable
+    public abstract String uniqueTag();
+
+    public abstract Builder setUniqueTag(@Nullable String uniqueTag);
+
     public abstract Account build();
   }
 
   @Override
   public final String toString() {
     return getName();
+  }
+
+  public final String debugString() {
+    return MoreObjects.toStringHelper(this)
+        .add("id", id())
+        .add("registeredOn", registeredOn())
+        .add("fullName", fullName())
+        .add("displayName", displayName())
+        .add("preferredEmail", preferredEmail())
+        .add("inactive", inactive())
+        .add("status", status())
+        .add("metaId", metaId())
+        .add("uniqueTag", uniqueTag())
+        .toString();
   }
 }

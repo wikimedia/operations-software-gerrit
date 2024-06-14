@@ -14,6 +14,7 @@
 
 package com.google.gerrit.server.index;
 
+import static com.google.gerrit.server.index.change.ChangeField.CHANGENUM_SPEC;
 import static com.google.gerrit.server.index.change.ChangeField.CHANGE_SPEC;
 import static com.google.gerrit.server.index.change.ChangeField.NUMERIC_ID_STR_SPEC;
 import static com.google.gerrit.server.index.change.ChangeField.PROJECT_SPEC;
@@ -76,15 +77,23 @@ public final class IndexUtils {
     // Ensure we request enough fields to construct a ChangeData. We need both
     // change ID and project, which can either come via the Change field or
     // separate fields.
-    Set<String> fs = opts.fields();
+    ImmutableSet<String> fs = opts.fields();
     if (fs.contains(CHANGE_SPEC.getName())) {
       // A Change is always sufficient.
       return fs;
     }
-    if (fs.contains(PROJECT_SPEC.getName()) && fs.contains(NUMERIC_ID_STR_SPEC.getName())) {
+
+    Set<String> requiredFields =
+        CHANGENUM_SPEC.getName() != null
+            ? ImmutableSet.of(
+                NUMERIC_ID_STR_SPEC.getName(), PROJECT_SPEC.getName(), CHANGENUM_SPEC.getName())
+            : ImmutableSet.of(NUMERIC_ID_STR_SPEC.getName(), PROJECT_SPEC.getName());
+
+    if (fs.containsAll(requiredFields)) {
       return fs;
     }
-    return Sets.union(fs, ImmutableSet.of(NUMERIC_ID_STR_SPEC.getName(), PROJECT_SPEC.getName()));
+
+    return Sets.union(fs, ImmutableSet.copyOf(requiredFields));
   }
 
   /**
@@ -93,7 +102,7 @@ public final class IndexUtils {
    * is temporary and should be removed after the migration is done.
    */
   public static Set<String> groupFields(QueryOptions opts) {
-    Set<String> fs = opts.fields();
+    ImmutableSet<String> fs = opts.fields();
     return fs.contains(GroupField.UUID_FIELD_SPEC.getName())
         ? fs
         : Sets.union(fs, ImmutableSet.of(GroupField.UUID_FIELD_SPEC.getName()));
@@ -115,7 +124,7 @@ public final class IndexUtils {
    * doesn't support.
    */
   public static Set<String> projectFields(QueryOptions opts) {
-    Set<String> fs = opts.fields();
+    ImmutableSet<String> fs = opts.fields();
     return fs.contains(ProjectField.NAME_SPEC.getName())
         ? fs
         : Sets.union(fs, ImmutableSet.of(ProjectField.NAME_SPEC.getName()));

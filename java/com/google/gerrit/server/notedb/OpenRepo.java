@@ -19,6 +19,7 @@ import static com.google.common.base.Preconditions.checkState;
 import static java.util.Objects.requireNonNull;
 
 import com.google.common.collect.ListMultimap;
+import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.exceptions.StorageException;
@@ -31,6 +32,7 @@ import java.util.Collection;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.ObjectReader;
@@ -43,6 +45,8 @@ import org.eclipse.jgit.transport.ReceiveCommand;
  * objects that are jointly closed when invoking {@link #close}.
  */
 class OpenRepo implements AutoCloseable {
+  private static final FluentLogger logger = FluentLogger.forEnclosingClass();
+
   final Repository repo;
   final RevWalk rw;
   final ChainedReceiveCommands cmds;
@@ -106,12 +110,16 @@ class OpenRepo implements AutoCloseable {
 
   void flush() throws IOException {
     flushToFinalInserter();
+    logger.atFine().log("flushing inserter %s", finalIns);
     finalIns.flush();
   }
 
   void flushToFinalInserter() throws IOException {
     checkState(finalIns != null);
     for (InsertedObject obj : inMemIns.getInsertedObjects()) {
+      logger.atFine().log(
+          "copying %s object %s to final inserter %s",
+          Constants.typeString(obj.type()), obj.id().name(), finalIns);
       finalIns.insert(obj.type(), obj.data().toByteArray());
     }
     inMemIns.clear();

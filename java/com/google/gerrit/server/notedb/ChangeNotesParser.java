@@ -49,6 +49,7 @@ import com.google.common.base.Splitter;
 import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.ImmutableTable;
@@ -393,7 +394,8 @@ class ChangeNotesParser {
       return copiedApprovals;
     }
     List<PatchSetApproval> approvalsOnLatestPs = allApprovals.get(latestPs);
-    ListMultimap<Account.Id, PatchSetApproval> approvalsByUser = getApprovalsByUser(allApprovals);
+    ImmutableListMultimap<Account.Id, PatchSetApproval> approvalsByUser =
+        getApprovalsByUser(allApprovals);
     List<SubmitRecord.Label> submitRecordLabels =
         submitRecords.stream()
             .filter(r -> r.labels != null)
@@ -431,7 +433,7 @@ class ChangeNotesParser {
     return allApprovals.values().stream().anyMatch(approval -> approval.copied());
   }
 
-  private ListMultimap<Account.Id, PatchSetApproval> getApprovalsByUser(
+  private ImmutableListMultimap<Account.Id, PatchSetApproval> getApprovalsByUser(
       ListMultimap<PatchSet.Id, PatchSetApproval> allApprovals) {
     return allApprovals.values().stream()
         .collect(
@@ -442,10 +444,21 @@ class ChangeNotesParser {
   private List<ReviewerStatusUpdate> buildReviewerUpdates() {
     List<ReviewerStatusUpdate> result = new ArrayList<>();
     HashMap<Account.Id, ReviewerStateInternal> lastState = new HashMap<>();
+    HashMap<Address, ReviewerStateInternal> lastStateReviewerByEmail = new HashMap<>();
     for (ReviewerStatusUpdate u : Lists.reverse(reviewerUpdates)) {
-      if (!Objects.equals(ownerId, u.reviewer()) && lastState.get(u.reviewer()) != u.state()) {
-        result.add(u);
-        lastState.put(u.reviewer(), u.state());
+      if (u.reviewer().isPresent()) {
+        if (!Objects.equals(ownerId, u.reviewer().get())
+            && lastState.get(u.reviewer().get()) != u.state()) {
+          result.add(u);
+          lastState.put(u.reviewer().get(), u.state());
+        }
+      }
+
+      if (u.reviewerByEmail().isPresent()) {
+        if (lastStateReviewerByEmail.get(u.reviewerByEmail().get()) != u.state()) {
+          result.add(u);
+          lastStateReviewerByEmail.put(u.reviewerByEmail().get(), u.state());
+        }
       }
     }
     return result;
@@ -940,7 +953,7 @@ class ChangeNotesParser {
     revisionNoteMap =
         RevisionNoteMap.parse(
             changeNoteJson, reader, NoteMap.read(reader, tipCommit), HumanComment.Status.PUBLISHED);
-    Map<ObjectId, ChangeRevisionNote> rns = revisionNoteMap.revisionNotes;
+    ImmutableMap<ObjectId, ChangeRevisionNote> rns = revisionNoteMap.revisionNotes;
 
     for (Map.Entry<ObjectId, ChangeRevisionNote> e : rns.entrySet()) {
       for (HumanComment c : e.getValue().getEntities()) {
@@ -1233,7 +1246,8 @@ class ChangeNotesParser {
       throw invalidFooter(state.getFooterKey(), line);
     }
     Account.Id accountId = parseIdent(ident);
-    ReviewerStatusUpdate update = ReviewerStatusUpdate.create(ts, ownerId, accountId, state);
+    ReviewerStatusUpdate update =
+        ReviewerStatusUpdate.createForReviewer(ts, ownerId, accountId, state);
     reviewerUpdates.add(update);
     if (update.state() == ReviewerStateInternal.REMOVED) {
       removedReviewers.add(accountId);
@@ -1254,6 +1268,7 @@ class ChangeNotesParser {
       cie.initCause(e);
       throw cie;
     }
+    reviewerUpdates.add(ReviewerStatusUpdate.createForReviewerByEmail(ts, ownerId, adr, state));
     if (!reviewersByEmail.containsRow(adr)) {
       reviewersByEmail.put(adr, state, ts);
     }

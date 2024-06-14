@@ -163,8 +163,6 @@ public class RefAdvertisementIT extends AbstractDaemonTest {
   //    (c3_open)                            (c4_open)
   //
   private void setUpChanges() throws Exception {
-    gApi.projects().name(project.get()).branch("branch").create(new BranchInput());
-
     // First 2 changes are merged, which means the tags pointing to them are
     // visible.
     projectOperations
@@ -183,6 +181,9 @@ public class RefAdvertisementIT extends AbstractDaemonTest {
     metaRef1 = RefNames.changeMetaRef(cd1.getId());
 
     //   rcMaster (c1 master) <-- rcBranch (c2 branch)
+    BranchInput branchInput = new BranchInput();
+    branchInput.revision = mr.getCommit().getName();
+    gApi.projects().name(project.get()).branch("branch").create(branchInput);
     PushOneCommit.Result br =
         pushFactory.create(admin.newIdent(), testRepo).to("refs/for/branch%submit");
     br.assertOkStatus();
@@ -196,7 +197,7 @@ public class RefAdvertisementIT extends AbstractDaemonTest {
     //      \
     //    (c3_open)
     //
-    mr = pushFactory.create(admin.newIdent(), testRepo).to("refs/for/master");
+    mr = pushFactory.create(admin.newIdent(), testRepo).setParent(rcMaster).to("refs/for/master");
     mr.assertOkStatus();
     cd3 = mr.getChange();
     psRef3 = cd3.currentPatchSet().id().toRefName();
@@ -205,7 +206,7 @@ public class RefAdvertisementIT extends AbstractDaemonTest {
     //   rcMaster (c1 master) <-- rcBranch (c2 branch)
     //      \                        \
     //     (c3_open)                (c4_open)
-    br = pushFactory.create(admin.newIdent(), testRepo).to("refs/for/branch");
+    br = pushFactory.create(admin.newIdent(), testRepo).setParent(rcBranch).to("refs/for/branch");
     br.assertOkStatus();
     cd4 = br.getChange();
     psRef4 = cd4.currentPatchSet().id().toRefName();
@@ -1405,7 +1406,7 @@ public class RefAdvertisementIT extends AbstractDaemonTest {
             .to("refs/for/" + RefNames.REFS_USERS_SELF);
     mr.assertOkStatus();
 
-    List<String> expectedNonMetaRefs =
+    ImmutableList<String> expectedNonMetaRefs =
         ImmutableList.of(
             RefNames.refsUsers(admin.id()),
             RefNames.refsUsers(user.id()),
@@ -1547,7 +1548,7 @@ public class RefAdvertisementIT extends AbstractDaemonTest {
     return AccountGroup.uuid(gApi.groups().create(groupInput).get().id);
   }
 
-  private static Collection<String> names(Collection<Ref> refs) {
+  private static ImmutableList<String> names(Collection<Ref> refs) {
     return refs.stream().map(Ref::getName).collect(toImmutableList());
   }
 }

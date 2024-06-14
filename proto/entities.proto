@@ -31,7 +31,7 @@ message Change_Key {
 }
 
 // Serialized form of com.google.gerrit.entities.Change.
-// Next ID: 25
+// Next ID: 26
 message Change {
   required Change_Id change_id = 1;
   optional Change_Key change_key = 2;
@@ -50,6 +50,7 @@ message Change {
   optional bool review_started = 22;
   optional Change_Id revert_of = 23;
   optional PatchSet_Id cherry_pick_of = 24;
+  optional string server_id = 25;
 
   // Deleted fields, should not be reused:
   reserved 3;    // row_version
@@ -60,6 +61,31 @@ message Change {
   reserved 16;   // mergeable
   reserved 19;   // assignee
   reserved 101;  // note_db_state
+}
+
+// Serialized form of com.google.gerrit.extensions.common.ChangeInput.
+// Next ID: 19
+message ChangeInput {
+  optional string project = 1;
+  optional string branch = 2;
+  optional string subject = 3;
+  optional string topic = 4;
+  optional ChangeStatus status = 5;
+  optional bool is_private = 6;
+  optional bool work_in_progress = 7;
+  optional string base_change = 8;
+  optional string base_commit = 9;
+  optional bool new_branch = 10;
+  map<string, string> validation_options = 11;
+  map<string, string> custom_keyed_values = 12;
+  optional MergeInput merge = 13;
+  optional ApplyPatchInput patch = 14;
+  optional AccountInput author = 15;
+  repeated ListChangesOption response_format_options = 16;
+  optional NotifyHandling notify = 17 [default = ALL];
+  // The key is the string representation of the RecipientType enum.
+  // We use a string here because proto does not allow enum keys in maps.
+  map<string, NotifyInfo> notify_details = 18;
 }
 
 // Serialized form of com.google.gerrit.enities.ChangeMessage.
@@ -79,6 +105,97 @@ message ChangeMessage {
   optional PatchSet_Id patchset = 5;
   optional string tag = 6;
   optional Account_Id real_author = 7;
+}
+
+// Serialized form of com.google.gerrit.extensions.client.ChangeStatus.
+// Next ID: 3
+enum ChangeStatus {
+ NEW = 0;
+ MERGED = 1;
+ ABANDONED = 2;
+}
+
+// Serialized form of com.google.gerrit.extensions.common.MergeInput.
+// Next ID: 5
+message MergeInput {
+ optional string source = 1;
+ optional string source_branch = 2;
+ optional string strategy = 3;
+ optional bool allow_conflicts = 4;
+}
+
+// Serialized form of com.google.gerrit.extensions.api.changes.ApplyPatchInput.
+// Next ID: 2
+message ApplyPatchInput {
+ optional string patch = 1;
+}
+
+// Serialized form of com.google.gerrit.extensions.api.accounts.AccountInput.
+// Next ID: 8
+message AccountInput {
+ optional string username = 1;
+ optional string name = 2;
+ optional string display_name = 3;
+ optional string email = 4;
+ optional string ssh_key = 5;
+ optional string http_password = 6;
+ repeated string groups = 7;
+}
+
+// Serialized form of com.google.gerrit.extensions.client.ListChangesOption.
+// Next ID: 28
+enum ListChangesOption {
+  LABELS = 0;
+  CURRENT_REVISION = 1;
+  ALL_REVISIONS = 2;
+  CURRENT_COMMIT = 3;
+  ALL_COMMITS = 4;
+  CURRENT_FILES = 5;
+  ALL_FILES = 6;
+  DETAILED_ACCOUNTS = 7;
+  DETAILED_LABELS = 8;
+  MESSAGES = 9;
+  CURRENT_ACTIONS = 10;
+  REVIEWED = 11;
+  DRAFT_COMMENTS = 12;
+  DOWNLOAD_COMMANDS = 13;
+  WEB_LINKS = 14;
+  CHECK = 15;
+  CHANGE_ACTIONS = 16;
+  COMMIT_FOOTERS = 17;
+  PUSH_CERTIFICATES = 18;
+  REVIEWER_UPDATES = 19;
+  SUBMITTABLE = 20;
+  TRACKING_IDS = 21;
+  SKIP_MERGEABLE = 22;
+  SKIP_DIFFSTAT = 23;
+  SUBMIT_REQUIREMENTS = 24;
+  CUSTOM_KEYED_VALUES = 25;
+  STAR = 26;
+  PARENTS = 27;
+}
+
+// Serialized form of com.google.gerrit.extensions.api.changes.NotifyHandling.
+// Next ID: 4
+enum NotifyHandling {
+  NONE = 0;
+  OWNER = 1;
+  OWNER_REVIEWERS = 2;
+  ALL = 3;
+}
+
+// Serialized form of com.google.gerrit.extensions.api.changes.RecipientType.
+// Next ID: 3
+enum RecipientType {
+  TO = 0;
+  CC = 1;
+  BCC = 2;
+}
+
+// Serialized form of com.google.gerrit.extensions.api.changes.NotifyInfo.
+// Next ID: 2
+message NotifyInfo {
+  repeated string accounts = 1;
 }
 
 // Serialized form of com.google.gerrit.entities.PatchSet.Id.
@@ -310,4 +427,65 @@ message UserPreferences {
     optional bool show_base = 14;
   }
   optional EditPreferencesInfo edit_preferences_info = 3;
+}
+
+// Next Id: 13
+message HumanComment {
+  // Required. Note that the equivalent Java struct does not contain the change
+  // ID, so we keep the same format here.
+  optional int32 patchset_id = 1;
+  optional ObjectId dest_commit_id = 2;
+  // Required.
+  optional Account_Id account_id = 3;
+  optional Account_Id real_author = 4;
+
+  // Next Id: 5
+  message InFilePosition {
+    optional string file_path = 1;
+    enum Side {
+      // Should match the logic in
+      // http://google3/third_party/java_src/gerritcodereview/gerrit/java/com/google/gerrit/extensions/client/Side.java?rcl=579772037&l=24
+      PARENT = 0;
+      REVISION = 1;
+    }
+    // Default should match
+    // http://google3/third_party/java_src/gerritcodereview/gerrit/Documentation/rest-api-changes.txt?l=7423
+    optional Side side = 2 [default = REVISION];
+    message Range {
+      // 1-based
+      optional int32 start_line = 1;
+      // 0-based
+      optional int32 start_char = 2;
+      // 1-based
+      optional int32 end_line = 3;
+      // 0-based
+      optional int32 end_char = 4;
+    }
+    // If neither range nor line number set, the comment is on the file level. It is possible
+    // (though not required) for both values to be set. in this case, it is expected that the line
+    // number is identical to the range's end line.
+    optional Range position_range = 3;
+    // 1-based
+    optional int32 line_number = 4;
+  }
+
+  // If not set, the comment is on the patchset level.
+  optional InFilePosition in_file_position = 5;
+
+  // Required.
+  optional string comment_text = 6;
+  // Might be set by the user while creating the draft.
+  // See http://go/gerrit-rest-api-change#comment-info.
+  optional string tag = 7;
+  optional bool unresolved = 8 [default = false];
+
+  // Required.
+  optional string comment_uuid = 9;
+  // Required.
+  optional string parent_comment_uuid = 10;
+
+  // Required. Epoch millis.
+  optional fixed64 written_on_millis = 11;
+  // Required.
+  optional string server_id = 12;
 }

@@ -19,10 +19,8 @@ import static com.google.gerrit.entities.Patch.FileMode.REGULAR_FILE;
 import static java.util.Objects.requireNonNull;
 import static org.eclipse.jgit.lib.Constants.OBJ_BLOB;
 
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.flogger.FluentLogger;
 import com.google.common.io.ByteStreams;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.extensions.restapi.RawInput;
@@ -33,7 +31,6 @@ import java.util.Collections;
 import java.util.List;
 import org.eclipse.jgit.dircache.DirCacheEditor;
 import org.eclipse.jgit.dircache.DirCacheEntry;
-import org.eclipse.jgit.errors.InvalidObjectIdException;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
@@ -41,8 +38,6 @@ import org.eclipse.jgit.lib.Repository;
 
 /** A {@code TreeModification} which changes the content of a file. */
 public class ChangeFileContentModification implements TreeModification {
-  private static final FluentLogger logger = FluentLogger.forEnclosingClass();
-
   private final String filePath;
   private final RawInput newContent;
   private final Integer newGitFileMode;
@@ -73,8 +68,7 @@ public class ChangeFileContentModification implements TreeModification {
     return ImmutableSet.of(filePath);
   }
 
-  @VisibleForTesting
-  RawInput getNewContent() {
+  public RawInput getNewContent() {
     return newContent;
   }
 
@@ -121,15 +115,10 @@ public class ChangeFileContentModification implements TreeModification {
           ObjectId newBlobObjectId = createNewBlobAndGetItsId();
           dirCacheEntry.setObjectId(newBlobObjectId);
         }
-        // Previously, these two exceptions were swallowed. To improve the
-        // situation, we log them now. However, we should think of a better
-        // approach.
       } catch (IOException e) {
         String message =
             String.format("Could not change the content of %s", dirCacheEntry.getPathString());
-        logger.atSevere().withCause(e).log("%s", message);
-      } catch (InvalidObjectIdException e) {
-        logger.atSevere().withCause(e).log("Invalid object id in submodule link");
+        throw new IllegalStateException(message, e);
       }
     }
 

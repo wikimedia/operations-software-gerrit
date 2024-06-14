@@ -24,6 +24,7 @@ suite('gr-tooltip-content tests', () => {
         getBoundingClientRect() {
           return parentRect;
         },
+        clientWidth: parentRect.width,
       },
     };
   }
@@ -67,24 +68,41 @@ suite('gr-tooltip-content tests', () => {
   });
 
   test('normal position', () => {
-    sinon
-      .stub(element, 'getBoundingClientRect')
-      .callsFake(() => ({top: 100, left: 100, width: 200} as DOMRect));
+    sinon.stub(element, 'getBoundingClientRect').callsFake(
+      () =>
+        ({
+          top: 100,
+          left: 100,
+          width: 200,
+          right: 300,
+          height: 50,
+          bottom: 150,
+        } as DOMRect)
+    );
     const tooltip = makeTooltip(
       {height: 30, width: 50} as DOMRect,
       {top: 0, left: 0, width: 1000} as DOMRect
     ) as GrTooltip;
 
     element._positionTooltip(tooltip);
-    assert.equal(tooltip.arrowCenterOffset, '0');
+    assert.equal(tooltip.arrowCenterOffset, '0px');
     assert.equal(tooltip.style.left, '175px');
-    assert.equal(tooltip.style.top, '100px');
+    // 100 - tooltip height (30) - arrow height (7.2)
+    assert.equal(tooltip.style.top, '62.8px');
   });
 
   test('left side position', async () => {
-    sinon
-      .stub(element, 'getBoundingClientRect')
-      .callsFake(() => ({top: 100, left: 10, width: 50} as DOMRect));
+    sinon.stub(element, 'getBoundingClientRect').callsFake(
+      () =>
+        ({
+          top: 100,
+          left: 10,
+          width: 50,
+          right: 60,
+          height: 50,
+          bottom: 150,
+        } as DOMRect)
+    );
     const tooltip = makeTooltip(
       {height: 30, width: 120} as DOMRect,
       {top: 0, left: 0, width: 1000} as DOMRect
@@ -92,32 +110,52 @@ suite('gr-tooltip-content tests', () => {
 
     element._positionTooltip(tooltip);
     await element.updateComplete;
-    assert.isBelow(parseFloat(tooltip.arrowCenterOffset.replace(/px$/, '')), 0);
+    // Aligned with left edge
     assert.equal(tooltip.style.left, '0px');
-    assert.equal(tooltip.style.top, '100px');
+    // element center (35) - tooltip center (60)
+    assert.equal(tooltip.arrowCenterOffset, '-25px');
+    // 100 - tooltip height (30) - arrow height (7.2)
+    assert.equal(tooltip.style.top, '62.8px');
   });
 
   test('right side position', () => {
-    sinon
-      .stub(element, 'getBoundingClientRect')
-      .callsFake(() => ({top: 100, left: 950, width: 50} as DOMRect));
+    sinon.stub(element, 'getBoundingClientRect').callsFake(
+      () =>
+        ({
+          top: 100,
+          left: 950,
+          width: 50,
+          right: 1000,
+          height: 50,
+          bottom: 150,
+        } as DOMRect)
+    );
     const tooltip = makeTooltip(
       {height: 30, width: 120} as DOMRect,
       {top: 0, left: 0, width: 1000} as DOMRect
     ) as GrTooltip;
 
     element._positionTooltip(tooltip);
-    assert.isAbove(parseFloat(tooltip.arrowCenterOffset.replace(/px$/, '')), 0);
-    assert.equal(tooltip.style.left, '915px');
-    assert.equal(tooltip.style.top, '100px');
+    // Aligned with right edge: 1000 - tooltip width (120) - 1px pad
+    assert.equal(tooltip.style.left, '879px');
+    // element center (975) - tooltip center (939)
+    assert.equal(tooltip.arrowCenterOffset, '36px');
+    // 100 - tooltip height (30) - arrow height (7.2)
+    assert.equal(tooltip.style.top, '62.8px');
   });
 
   test('position to bottom', () => {
-    sinon
-      .stub(element, 'getBoundingClientRect')
-      .callsFake(
-        () => ({top: 100, left: 950, width: 50, height: 50} as DOMRect)
-      );
+    sinon.stub(element, 'getBoundingClientRect').callsFake(
+      () =>
+        ({
+          top: 100,
+          left: 950,
+          width: 50,
+          height: 50,
+          right: 1000,
+          bottom: 150,
+        } as DOMRect)
+    );
     const tooltip = makeTooltip(
       {height: 30, width: 120} as DOMRect,
       {top: 0, left: 0, width: 1000} as DOMRect
@@ -125,9 +163,40 @@ suite('gr-tooltip-content tests', () => {
 
     element.positionBelow = true;
     element._positionTooltip(tooltip);
-    assert.isAbove(parseFloat(tooltip.arrowCenterOffset.replace(/px$/, '')), 0);
-    assert.equal(tooltip.style.left, '915px');
+    // Aligned with right edge: 1000 - tooltip width (120) - 1px pad
+    assert.equal(tooltip.style.left, '879px');
+    // element center (975) - tooltip center (939)
+    assert.equal(tooltip.arrowCenterOffset, '36px');
+    // 150 + arrow height (7.2)
     assert.equal(tooltip.style.top, '157.2px');
+  });
+
+  test('automatic flip to bottom', () => {
+    sinon.stub(element, 'getBoundingClientRect').callsFake(
+      () =>
+        ({
+          // Not enough space for arrow
+          top: 30,
+          left: 950,
+          width: 50,
+          height: 50,
+          right: 1000,
+          bottom: 80,
+        } as DOMRect)
+    );
+    const tooltip = makeTooltip(
+      {height: 30, width: 120} as DOMRect,
+      {top: 0, left: 0, width: 1000} as DOMRect
+    ) as GrTooltip;
+
+    element.positionBelow = true;
+    element._positionTooltip(tooltip);
+    // Aligned with right edge: 1000 - tooltip width (120) - 1px pad
+    assert.equal(tooltip.style.left, '879px');
+    // element center (975) - tooltip center (939)
+    assert.equal(tooltip.arrowCenterOffset, '36px');
+    // 150 + arrow height (7.2)
+    assert.equal(tooltip.style.top, '87.2px');
   });
 
   test('hides tooltip when detached', async () => {
@@ -180,5 +249,62 @@ suite('gr-tooltip-content tests', () => {
     element._handleHideTooltip();
     await element.updateComplete;
     assert.isNotOk(element.tooltip);
+  });
+
+  suite('getTooltipParent', () => {
+    let divInDialog: HTMLDivElement;
+    let divInDialogShadow: ShadowRoot;
+    let div: HTMLDivElement;
+    let divShadow: ShadowRoot;
+    let dialog: HTMLDialogElement;
+
+    setup(() => {
+      divInDialog = document.createElement('div');
+      divInDialogShadow = divInDialog.attachShadow({mode: 'open'});
+      div = document.createElement('div');
+      divShadow = div.attachShadow({mode: 'open'});
+      dialog = document.createElement('dialog');
+      document.body.appendChild(div);
+      document.body.appendChild(dialog);
+      dialog.appendChild(divInDialog);
+    });
+
+    test('tooltip in the div', () => {
+      const el = document.createElement('gr-tooltip-content');
+      divShadow.appendChild(el);
+      const tooltipParent = el.getTooltipParent(el);
+      assert.strictEqual(
+        tooltipParent,
+        document.body,
+        'Tooltip expected to be attached to body'
+      );
+    });
+
+    test('tooltip in the dialog', () => {
+      const el = document.createElement('gr-tooltip-content');
+      dialog.appendChild(el);
+      const tooltipParent = el.getTooltipParent(el);
+      assert.strictEqual(
+        tooltipParent,
+        dialog,
+        'Tooltip expected to be attached to dialog'
+      );
+    });
+
+    test('tooltip in the div in the dialog', () => {
+      const el = document.createElement('gr-tooltip-content');
+      divInDialogShadow.appendChild(el);
+      const tooltipParent = el.getTooltipParent(el);
+      assert.strictEqual(
+        tooltipParent,
+        dialog,
+        'Tooltip expected to be attached to dialog'
+      );
+    });
+
+    teardown(() => {
+      document.body.removeChild(div);
+      document.body.removeChild(dialog);
+    });
   });
 });

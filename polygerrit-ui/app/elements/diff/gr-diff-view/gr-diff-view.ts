@@ -49,6 +49,7 @@ import {
   RevisionPatchSetNum,
   Comment,
   CommentMap,
+  DropdownLink,
 } from '../../../types/common';
 import {DiffInfo, DiffPreferencesInfo, WebLinkInfo} from '../../../types/diff';
 import {ParsedChangeInfo} from '../../../types/types';
@@ -105,12 +106,17 @@ import {
 } from '../../../models/change/files-model';
 import {isImageDiff} from '../../../utils/diff-util';
 import {formStyles} from '../../../styles/form-styles';
+import {NormalizedFileInfo} from '../../change/gr-file-list/gr-file-list';
+import {configModelToken} from '../../../models/config/config-model';
 
-const LOADING_BLAME = 'Loading blame...';
+const LOADING_BLAME = 'Loading blame information. This may take a while ...';
 const LOADED_BLAME = 'Blame loaded';
 
 // Time in which pressing n key again after the toast navigates to next file
 const NAVIGATE_TO_NEXT_FILE_TIMEOUT_MS = 5000;
+
+// Files larger than this cannot be downloaded.
+const FILE_DOWNLOAD_LIMIT_BYTES = 50 * 1000 * 1000;
 
 // visible for testing
 export interface Files {
@@ -195,11 +201,17 @@ export class GrDiffView extends LitElement {
 
   @state() path?: string;
 
+  @state() file?: NormalizedFileInfo;
+
   @state() private shownSidebar?: string;
 
   /** Allows us to react when the user switches to the DIFF view. */
   // Private but used in tests.
   @state() isActiveChildView = false;
+
+  // Whether to allow the "Show Blame button"
+  @state()
+  allowBlame = false;
 
   // Private but used in tests.
   @state()
@@ -253,6 +265,8 @@ export class GrDiffView extends LitElement {
   private readonly getShortcutsService = resolve(this, shortcutsServiceToken);
 
   private readonly getViewModel = resolve(this, changeViewModelToken);
+
+  private readonly getConfigModel = resolve(this, configModelToken);
 
   private throttledToggleFileReviewed?: (e: KeyboardEvent) => void;
 
@@ -415,6 +429,11 @@ export class GrDiffView extends LitElement {
     );
     subscribe(
       this,
+      () => this.getFilesModel().file$(this.getViewModel().diffPath$),
+      file => (this.file = file)
+    );
+    subscribe(
+      this,
       () => this.getViewModel().diffLine$,
       line => (this.focusLineNum = line)
     );
@@ -443,6 +462,13 @@ export class GrDiffView extends LitElement {
       ([path, files]) => {
         this.reviewed = !!path && !!files && files.includes(path);
       }
+    );
+
+    subscribe(
+      this,
+      () => this.getConfigModel().serverConfig$,
+      serverConfig =>
+        (this.allowBlame = serverConfig?.change.allow_blame ?? false)
     );
 
     // When user initially loads the diff view, we want to automatically mark
@@ -924,13 +950,12 @@ export class GrDiffView extends LitElement {
           <gr-endpoint-param
             name="onTrigger"
             .value=${(pluginName: string) => {
-              this.shownSidebar =
-                this.shownSidebar === pluginName ? undefined : pluginName;
+              const closeSidebar = this.shownSidebar === pluginName;
+              this.shownSidebar = closeSidebar ? undefined : pluginName;
               this.getUserModel().updatePreferences({
-                diff_page_sidebar:
-                  this.shownSidebar === pluginName
-                    ? 'NONE'
-                    : `plugin-${pluginName}`,
+                diff_page_sidebar: closeSidebar
+                  ? 'NONE'
+                  : `plugin-${pluginName}`,
               });
             }}
           ></gr-endpoint-param>
@@ -1022,6 +1047,7 @@ export class GrDiffView extends LitElement {
       <gr-patch-range-select
         id="rangeSelect"
         .filesWeblinks=${this.filesWeblinks}
+        .path=${this.path}
         @patch-range-change=${this.handlePatchChange}
       >
       </gr-patch-range-select>
@@ -1031,6 +1057,9 @@ export class GrDiffView extends LitElement {
           link=""
           down-arrow=""
           .items=${this.computeDownloadDropdownLinks()}
+          .disabledIds=${this.isTooLargeForDownload()
+            ? ['left-content', 'right-content']
+            : []}
           horizontal-align="left"
         >
           <span class="downloadTitle"> Download </span>
@@ -1040,26 +1069,9 @@ export class GrDiffView extends LitElement {
   }
 
   private renderRightControls() {
-    const blameLoaderClass =
-      !isMagicPath(this.path) && !isImageDiff(this.diff) ? 'show' : '';
-    const blameToggleLabel =
-      this.isBlameLoaded && !this.isBlameLoading ? 'Hide blame' : 'Show blame';
     const diffModeSelectorClass = !this.diff || this.diff.binary ? 'hide' : '';
     return html` <div class="rightControls">
-      ${this.renderSidebarTriggers()}
-      <span class="blameLoader ${blameLoaderClass}">
-        <gr-button
-          link=""
-          id="toggleBlame"
-          title=${this.createTitle(
-            Shortcut.TOGGLE_BLAME,
-            ShortcutSection.DIFFS
-          )}
-          ?disabled=${this.isBlameLoading}
-          @click=${this.toggleBlame}
-          >${blameToggleLabel}</gr-button
-        >
-      </span>
+      ${this.renderSidebarTriggers()} ${this.renderBlameButton()}
       ${when(
         this.computeCanEdit(),
         () => html`
@@ -1127,6 +1139,26 @@ export class GrDiffView extends LitElement {
         </span>
       </gr-endpoint-decorator>
     </div>`;
+  }
+
+  private renderBlameButton() {
+    if (!this.allowBlame) return;
+    const blameLoaderClass =
+      !isMagicPath(this.path) && !isImageDiff(this.diff) ? 'show' : '';
+    let blameToggleLabel = 'Loading blame ...';
+    if (!this.isBlameLoading) {
+      blameToggleLabel = this.isBlameLoaded ? 'Hide blame' : 'Show blame';
+    }
+    return html` <span class="blameLoader ${blameLoaderClass}">
+      <gr-button
+        link=""
+        id="toggleBlame"
+        title=${this.createTitle(Shortcut.TOGGLE_BLAME, ShortcutSection.DIFFS)}
+        ?disabled=${this.isBlameLoading}
+        @click=${this.toggleBlame}
+        >${blameToggleLabel}</gr-button
+      >
+    </span>`;
   }
 
   private renderDialogs() {
@@ -1608,14 +1640,18 @@ export class GrDiffView extends LitElement {
     this.updateUrlToDiffUrl(lineNumber as number, e.detail.side === Side.LEFT);
   }
 
+  private isTooLargeForDownload() {
+    return (this.file?.size ?? 0) > FILE_DOWNLOAD_LIMIT_BYTES;
+  }
+
   // Private but used in tests.
-  computeDownloadDropdownLinks() {
+  computeDownloadDropdownLinks(): DropdownLink[] {
     if (!this.change?.project) return [];
     if (!this.changeNum) return [];
     if (!this.patchRange) return [];
     if (!this.path) return [];
 
-    const links = [
+    const links: DropdownLink[] = [
       {
         url: this.computeDownloadPatchLink(
           this.change.project,
@@ -1627,34 +1663,45 @@ export class GrDiffView extends LitElement {
       },
     ];
 
-    if (this.diff && this.diff.meta_a) {
-      let leftPath = this.path;
-      if (this.diff.change_type === 'RENAMED') {
-        leftPath = this.diff.meta_a.name;
+    if (this.isTooLargeForDownload()) {
+      links.push({
+        id: 'left-content',
+        name: 'Left Content (Too Large)',
+      });
+      links.push({
+        id: 'right-content',
+        name: 'Right Content (Too Large)',
+      });
+    } else {
+      if (this.diff && this.diff.meta_a) {
+        let leftPath = this.path;
+        if (this.diff.change_type === 'RENAMED') {
+          leftPath = this.diff.meta_a.name;
+        }
+        links.push({
+          url: this.computeDownloadFileLink(
+            this.change.project,
+            this.changeNum,
+            this.patchRange,
+            leftPath,
+            true
+          ),
+          name: 'Left Content',
+        });
       }
-      links.push({
-        url: this.computeDownloadFileLink(
-          this.change.project,
-          this.changeNum,
-          this.patchRange,
-          leftPath,
-          true
-        ),
-        name: 'Left Content',
-      });
-    }
 
-    if (this.diff && this.diff.meta_b) {
-      links.push({
-        url: this.computeDownloadFileLink(
-          this.change.project,
-          this.changeNum,
-          this.patchRange,
-          this.path,
-          false
-        ),
-        name: 'Right Content',
-      });
+      if (this.diff && this.diff.meta_b) {
+        links.push({
+          url: this.computeDownloadFileLink(
+            this.change.project,
+            this.changeNum,
+            this.patchRange,
+            this.path,
+            false
+          ),
+          name: 'Right Content',
+        });
+      }
     }
 
     return links;
@@ -1739,12 +1786,13 @@ export class GrDiffView extends LitElement {
    * Otherwise hide it.
    */
   private toggleBlame() {
+    if (!this.allowBlame) return;
     assertIsDefined(this.diffHost, 'diffHost');
     if (this.isBlameLoaded) {
       this.diffHost.clearBlame();
-      return;
+    } else {
+      this.loadBlame();
     }
-    this.loadBlame();
   }
 
   private handleToggleHideAllCommentThreads() {

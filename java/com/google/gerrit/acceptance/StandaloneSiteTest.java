@@ -24,6 +24,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Streams;
 import com.google.common.io.ByteStreams;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.extensions.api.GerritApi;
 import com.google.gerrit.extensions.api.groups.GroupInput;
@@ -75,7 +76,8 @@ public abstract class StandaloneSiteTest {
 
       try {
         // ServerContext ctor is called multiple times but the group can be only created once
-        gApi.groups().id("Group");
+        @SuppressWarnings("unused")
+        var unused = gApi.groups().id("Group");
       } catch (ResourceNotFoundException e) {
         GroupInput in = new GroupInput();
         in.members = Collections.singletonList("admin");
@@ -211,11 +213,13 @@ public abstract class StandaloneSiteTest {
     runGerrit(Arrays.stream(multiArgs).flatMap(Streams::stream).toArray(String[]::new));
   }
 
+  @CanIgnoreReturnValue
   protected static String execute(
       ImmutableList<String> cmd, File dir, ImmutableMap<String, String> env) throws IOException {
     return execute(cmd, dir, env, null);
   }
 
+  @CanIgnoreReturnValue
   protected static String execute(
       ImmutableList<String> cmd,
       File dir,

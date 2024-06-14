@@ -21,6 +21,7 @@ import com.google.common.flogger.FluentLogger;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Project;
@@ -69,7 +70,19 @@ public class ChangeIndexer {
   public interface Factory {
     ChangeIndexer create(ListeningExecutorService executor, ChangeIndex index);
 
+    ChangeIndexer create(
+        ListeningExecutorService executor, ChangeIndex index, boolean notifyListeners);
+
+    ChangeIndexer create(
+        ListeningExecutorService executor,
+        ChangeIndex index,
+        StalenessChecker stalenessChecker,
+        boolean notifyListeners);
+
     ChangeIndexer create(ListeningExecutorService executor, ChangeIndexCollection indexes);
+
+    ChangeIndexer create(
+        ListeningExecutorService executor, ChangeIndexCollection indexes, boolean notifyListeners);
   }
 
   @Nullable private final ChangeIndexCollection indexes;
@@ -83,6 +96,7 @@ public class ChangeIndexer {
   private final StalenessChecker stalenessChecker;
   private final boolean autoReindexIfStale;
   private final IsFirstInsertForEntry isFirstInsertForEntry;
+  private final boolean notifyListeners;
 
   private final Map<Change.Id, IndexTask> queuedIndexTasks = new ConcurrentHashMap<>();
   private final Set<ReindexIfStaleTask> queuedReindexIfStaleTasks =
@@ -100,6 +114,33 @@ public class ChangeIndexer {
       @Assisted ListeningExecutorService executor,
       @Assisted ChangeIndex index,
       IsFirstInsertForEntry isFirstInsertForEntry) {
+    this(
+        cfg,
+        changeDataFactory,
+        notesFactory,
+        context,
+        indexedListeners,
+        stalenessChecker,
+        batchExecutor,
+        executor,
+        index,
+        true,
+        isFirstInsertForEntry);
+  }
+
+  @AssistedInject
+  ChangeIndexer(
+      @GerritServerConfig Config cfg,
+      ChangeData.Factory changeDataFactory,
+      ChangeNotes.Factory notesFactory,
+      ThreadLocalRequestContext context,
+      PluginSetContext<ChangeIndexedListener> indexedListeners,
+      StalenessChecker stalenessChecker,
+      @IndexExecutor(BATCH) ListeningExecutorService batchExecutor,
+      @Assisted ListeningExecutorService executor,
+      @Assisted ChangeIndex index,
+      @Assisted boolean notifyListeners,
+      IsFirstInsertForEntry isFirstInsertForEntry) {
     this.executor = executor;
     this.changeDataFactory = changeDataFactory;
     this.notesFactory = notesFactory;
@@ -111,6 +152,34 @@ public class ChangeIndexer {
     this.index = index;
     this.indexes = null;
     this.isFirstInsertForEntry = isFirstInsertForEntry;
+    this.notifyListeners = notifyListeners;
+  }
+
+  @AssistedInject
+  ChangeIndexer(
+      @GerritServerConfig Config cfg,
+      ChangeData.Factory changeDataFactory,
+      ChangeNotes.Factory notesFactory,
+      ThreadLocalRequestContext context,
+      PluginSetContext<ChangeIndexedListener> indexedListeners,
+      @IndexExecutor(BATCH) ListeningExecutorService batchExecutor,
+      IsFirstInsertForEntry isFirstInsertForEntry,
+      @Assisted ListeningExecutorService executor,
+      @Assisted ChangeIndex index,
+      @Assisted StalenessChecker stalenessChecker,
+      @Assisted boolean notifyListeners) {
+    this.executor = executor;
+    this.changeDataFactory = changeDataFactory;
+    this.notesFactory = notesFactory;
+    this.context = context;
+    this.indexedListeners = indexedListeners;
+    this.batchExecutor = batchExecutor;
+    this.autoReindexIfStale = autoReindexIfStale(cfg);
+    this.isFirstInsertForEntry = isFirstInsertForEntry;
+    this.index = index;
+    this.indexes = null;
+    this.stalenessChecker = stalenessChecker;
+    this.notifyListeners = notifyListeners;
   }
 
   @AssistedInject
@@ -125,6 +194,33 @@ public class ChangeIndexer {
       @Assisted ListeningExecutorService executor,
       @Assisted ChangeIndexCollection indexes,
       IsFirstInsertForEntry isFirstInsertForEntry) {
+    this(
+        cfg,
+        changeDataFactory,
+        notesFactory,
+        context,
+        indexedListeners,
+        stalenessChecker,
+        batchExecutor,
+        executor,
+        indexes,
+        true,
+        isFirstInsertForEntry);
+  }
+
+  @AssistedInject
+  ChangeIndexer(
+      @GerritServerConfig Config cfg,
+      ChangeData.Factory changeDataFactory,
+      ChangeNotes.Factory notesFactory,
+      ThreadLocalRequestContext context,
+      PluginSetContext<ChangeIndexedListener> indexedListeners,
+      StalenessChecker stalenessChecker,
+      @IndexExecutor(BATCH) ListeningExecutorService batchExecutor,
+      @Assisted ListeningExecutorService executor,
+      @Assisted ChangeIndexCollection indexes,
+      @Assisted boolean notifyListeners,
+      IsFirstInsertForEntry isFirstInsertForEntry) {
     this.executor = executor;
     this.changeDataFactory = changeDataFactory;
     this.notesFactory = notesFactory;
@@ -135,6 +231,7 @@ public class ChangeIndexer {
     this.autoReindexIfStale = autoReindexIfStale(cfg);
     this.index = null;
     this.indexes = indexes;
+    this.notifyListeners = notifyListeners;
     this.isFirstInsertForEntry = isFirstInsertForEntry;
   }
 
@@ -261,19 +358,27 @@ public class ChangeIndexer {
   }
 
   private void fireChangeScheduledForIndexingEvent(String projectName, int id) {
-    indexedListeners.runEach(l -> l.onChangeScheduledForIndexing(projectName, id));
+    if (notifyListeners) {
+      indexedListeners.runEach(l -> l.onChangeScheduledForIndexing(projectName, id));
+    }
   }
 
   private void fireChangeIndexedEvent(String projectName, int id) {
-    indexedListeners.runEach(l -> l.onChangeIndexed(projectName, id));
+    if (notifyListeners) {
+      indexedListeners.runEach(l -> l.onChangeIndexed(projectName, id));
+    }
   }
 
   private void fireChangeScheduledForDeletionFromIndexEvent(int id) {
-    indexedListeners.runEach(l -> l.onChangeScheduledForDeletionFromIndex(id));
+    if (notifyListeners) {
+      indexedListeners.runEach(l -> l.onChangeScheduledForDeletionFromIndex(id));
+    }
   }
 
   private void fireChangeDeletedFromIndexEvent(int id) {
-    indexedListeners.runEach(l -> l.onChangeDeleted(id));
+    if (notifyListeners) {
+      indexedListeners.runEach(l -> l.onChangeDeleted(id));
+    }
   }
 
   /**
@@ -349,12 +454,47 @@ public class ChangeIndexer {
    * @param id ID of the change to index.
    * @return future for reindexing the change; returns true if the change was stale.
    */
-  public ListenableFuture<Boolean> reindexIfStale(Project.NameKey project, Change.Id id) {
+  public ListenableFuture<Boolean> asyncReindexIfStale(Project.NameKey project, Change.Id id) {
     ReindexIfStaleTask task = new ReindexIfStaleTask(project, id);
     if (queuedReindexIfStaleTasks.add(task)) {
       return submit(task, batchExecutor);
     }
     return Futures.immediateFuture(false);
+  }
+
+  /**
+   * Synchronously check if a change is stale, and reindex if it is.
+   *
+   * @param cd the change data to be checked for staleness.
+   * @return true if the change was stale, false if it was up-to-date
+   */
+  public boolean reindexIfStale(ChangeData cd) {
+    return reindexIfStale(cd.project(), cd.getId());
+  }
+
+  /**
+   * Synchronously check if a change is stale, and reindex if it is.
+   *
+   * @param project the project to which the change belongs.
+   * @param id ID of the change to index.
+   * @return true if the change was stale, false if it was up-to-date
+   */
+  public boolean reindexIfStale(Project.NameKey project, Change.Id id) {
+    try {
+      StalenessCheckResult stalenessCheckResult = stalenessChecker.check(id);
+      if (stalenessCheckResult.isStale()) {
+        logger.atInfo().log("Reindexing stale document %s", stalenessCheckResult);
+        indexImpl(changeDataFactory.create(project, id));
+        return true;
+      }
+    } catch (Exception e) {
+      if (!isCausedByRepositoryNotFoundException(e)) {
+        throw e;
+      }
+      logger.atFine().log(
+          "Change %s belongs to deleted project %s, aborting reindexing the change.", id, project);
+    }
+    return false;
   }
 
   private void autoReindexIfStale(ChangeData cd) {
@@ -365,7 +505,7 @@ public class ChangeIndexer {
     if (autoReindexIfStale) {
       // Don't retry indefinitely; if this fails the change will be stale.
       @SuppressWarnings("unused")
-      Future<?> possiblyIgnoredError = reindexIfStale(project, id);
+      Future<?> possiblyIgnoredError = asyncReindexIfStale(project, id);
     }
   }
 
@@ -410,7 +550,8 @@ public class ChangeIndexer {
         try {
           return callImpl();
         } finally {
-          context.setContext(oldCtx);
+          @SuppressWarnings("unused")
+          var unused = context.setContext(oldCtx);
         }
       } catch (Exception e) {
         logger.atSevere().withCause(e).log("Failed to execute %s", this);
@@ -503,6 +644,7 @@ public class ChangeIndexer {
 
     @Nullable
     @Override
+    @CanIgnoreReturnValue
     public ChangeData call() {
       logger.atFine().log("Delete change %d from index.", id.get());
       // Don't bother setting a RequestContext to provide the DB.
@@ -543,22 +685,7 @@ public class ChangeIndexer {
     @Override
     public Boolean callImpl() throws Exception {
       remove();
-      try {
-        StalenessCheckResult stalenessCheckResult = stalenessChecker.check(id);
-        if (stalenessCheckResult.isStale()) {
-          logger.atInfo().log("Reindexing stale document %s", stalenessCheckResult);
-          indexImpl(changeDataFactory.create(project, id));
-          return true;
-        }
-      } catch (Exception e) {
-        if (!isCausedByRepositoryNotFoundException(e)) {
-          throw e;
-        }
-        logger.atFine().log(
-            "Change %s belongs to deleted project %s, aborting reindexing the change.",
-            id.get(), project.get());
-      }
-      return false;
+      return reindexIfStale(project, id);
     }
 
     @Override

@@ -28,6 +28,7 @@ import {
   PatchSetNum,
   Timestamp,
   UrlEncodedCommentId,
+  FixId,
 } from '../../../types/common';
 import {
   createComment,
@@ -38,7 +39,7 @@ import {
 import {ReplyToCommentEvent} from '../../../types/events';
 import {GrConfirmDeleteCommentDialog} from '../gr-confirm-delete-comment-dialog/gr-confirm-delete-comment-dialog';
 import {assertIsDefined} from '../../../utils/common-util';
-import {Modifier} from '../../../utils/dom-util';
+import {Key, Modifier} from '../../../utils/dom-util';
 import {SinonStubbedMember} from 'sinon';
 import {fixture, html, assert} from '@open-wc/testing';
 import {GrButton} from '../gr-button/gr-button';
@@ -47,6 +48,7 @@ import {
   CommentsModel,
   commentsModelToken,
 } from '../../../models/comments/comments-model';
+import {KnownExperimentId} from '../../../services/flags/flags';
 
 suite('gr-comment tests', () => {
   let element: GrComment;
@@ -316,11 +318,7 @@ suite('gr-comment tests', () => {
                   <div class="leftActions">
                     <div class="action resolve">
                       <label>
-                        <input
-                          checked=""
-                          id="resolvedCheckbox"
-                          type="checkbox"
-                        />
+                        <input id="resolvedCheckbox" type="checkbox" />
                         Resolved
                       </label>
                     </div>
@@ -422,11 +420,7 @@ suite('gr-comment tests', () => {
                   <div class="leftActions">
                     <div class="action resolve">
                       <label>
-                        <input
-                          checked=""
-                          id="resolvedCheckbox"
-                          type="checkbox"
-                        />
+                        <input id="resolvedCheckbox" type="checkbox" />
                         Resolved
                       </label>
                     </div>
@@ -602,6 +596,46 @@ suite('gr-comment tests', () => {
       assert.isTrue(spy.called);
     });
 
+    suite('ctrl+ENTER  ', () => {
+      test('saves comment', async () => {
+        const spy = sinon.stub(element, 'save');
+        element.messageText = 'is that the horse from horsing around??';
+        element.editing = true;
+        await element.updateComplete;
+        pressKey(
+          element.textarea!.textarea!.textarea,
+          Key.ENTER,
+          Modifier.CTRL_KEY
+        );
+        assert.isTrue(spy.called);
+      });
+      test('propagates on patchset comment', async () => {
+        const event = new KeyboardEvent('keydown', {
+          key: Key.ENTER,
+          ctrlKey: true,
+        });
+        const stopPropagationStub = sinon.stub(event, 'stopPropagation');
+        element.permanentEditingMode = true;
+        element.messageText = 'is that the horse from horsing around??';
+        element.editing = true;
+        await element.updateComplete;
+        element.dispatchEvent(event);
+        assert.isFalse(stopPropagationStub.called);
+      });
+      test('does not propagate on normal comment', async () => {
+        const event = new KeyboardEvent('keydown', {
+          key: Key.ENTER,
+          ctrlKey: true,
+        });
+        const stopPropagationStub = sinon.stub(event, 'stopPropagation');
+        element.messageText = 'is that the horse from horsing around??';
+        element.editing = true;
+        await element.updateComplete;
+        element.dispatchEvent(event);
+        assert.isTrue(stopPropagationStub.called);
+      });
+    });
+
     test('save', async () => {
       const savePromise = mockPromise<DraftInfo>();
       const stub = sinon.stub(commentsModel, 'saveDraft').returns(savePromise);
@@ -730,6 +764,21 @@ suite('gr-comment tests', () => {
       await element.updateComplete;
 
       await element.save();
+      assert.isTrue(discardStub.called);
+      assert.isFalse(saveStub.called);
+    });
+
+    test('converting to input for empty text calls discard()', async () => {
+      const saveStub = sinon.stub(commentsModel, 'saveDraft');
+      const discardStub = sinon.stub(commentsModel, 'discardDraft');
+      element.comment = createDraft();
+      element.editing = true;
+      await element.updateComplete;
+
+      element.messageText = '';
+      await element.updateComplete;
+
+      await element.convertToCommentInputAndOrDiscard();
       assert.isTrue(discardStub.called);
       assert.isFalse(saveStub.called);
     });
@@ -883,6 +932,156 @@ suite('gr-comment tests', () => {
         >
           <gr-icon icon="edit" id="icon" filled></gr-icon> Suggest edit
         </gr-button> `
+      );
+    });
+  });
+
+  suite('suggested fix', () => {
+    let element: GrComment;
+    const generatedFixSuggestion = {
+      description: 'prompt_to_edit',
+      fix_id: 'ml' as FixId,
+      replacements: [
+        {
+          path: 'google3/ts',
+          range: {
+            start_line: 83,
+            start_character: 0,
+            end_line: 83,
+            end_character: 0,
+          },
+          replacement: "import {useUtil} from '../../../utils/use_util';\n",
+        },
+        {
+          path: 'google3/ts',
+          range: {
+            start_line: 985,
+            start_character: 0,
+            end_line: 988,
+            end_character: 0,
+          },
+          replacement:
+            '        this.suggestionsProvider.supportedFileExtensions.includes(useUtil.getExtension(this.comment.path))) &&\n',
+        },
+      ],
+    };
+    setup(async () => {
+      stubFlags('isEnabled')
+        .withArgs(KnownExperimentId.ML_SUGGESTED_EDIT_V2)
+        .returns(true);
+    });
+
+    test('renders suggestions in comment', async () => {
+      const comment = {
+        ...createComment(),
+        author: {
+          name: 'MitoMr. Peanutbutter',
+          email: 'tenn1sballchaser@aol.com' as EmailAddress,
+        },
+        line: 5,
+        path: 'test',
+        savingState: SavingState.OK,
+        message: 'hello world',
+        fix_suggestions: [generatedFixSuggestion],
+      };
+      element = await fixture(
+        html`<gr-comment
+          .account=${account}
+          .showPatchset=${true}
+          .comment=${comment}
+          .initiallyCollapsed=${false}
+        ></gr-comment>`
+      );
+      element.editing = false;
+      await element.updateComplete;
+      assert.dom.equal(
+        queryAndAssert(element, 'gr-fix-suggestions'),
+        /* HTML */ '<gr-fix-suggestions> </gr-fix-suggestions>'
+      );
+    });
+
+    test('renders suggestions in draft', async () => {
+      const comment: DraftInfo = {
+        ...createDraft(),
+        author: {
+          name: 'Mr. Peanutbutter',
+          email: 'tenn1sballchaser@aol.com' as EmailAddress,
+        },
+        line: 5,
+        path: 'test',
+        savingState: SavingState.OK,
+        message: 'hello world',
+        fix_suggestions: [generatedFixSuggestion],
+      };
+      element = await fixture(
+        html`<gr-comment
+          .account=${account}
+          .showPatchset=${true}
+          .comment=${comment}
+          .initiallyCollapsed=${false}
+        ></gr-comment>`
+      );
+      element.editing = false;
+      await element.updateComplete;
+      assert.dom.equal(
+        queryAndAssert(element, 'gr-fix-suggestions'),
+        /* HTML */ '<gr-fix-suggestions> </gr-fix-suggestions>'
+      );
+    });
+
+    test('doesn`t render fix_suggestion when not in draft', async () => {
+      const comment: DraftInfo = {
+        ...createDraft(),
+        author: {
+          name: 'Mr. Peanutbutter',
+          email: 'tenn1sballchaser@aol.com' as EmailAddress,
+        },
+        line: 5,
+        path: 'test',
+        savingState: SavingState.OK,
+        message: 'hello world',
+      };
+      element = await fixture(
+        html`<gr-comment
+          .account=${account}
+          .showPatchset=${true}
+          .comment=${comment}
+          .initiallyCollapsed=${false}
+        ></gr-comment>`
+      );
+      element.editing = true;
+      await element.updateComplete;
+      assert.isUndefined(query(element, 'gr-suggestion-diff-preview'));
+    });
+
+    test('render suggestions in draft is in editing & generatedFixSuggestions is not empty', async () => {
+      const comment: DraftInfo = {
+        ...createDraft(),
+        author: {
+          name: 'Mr. Peanutbutter',
+          email: 'tenn1sballchaser@aol.com' as EmailAddress,
+        },
+        line: 5,
+        path: 'test',
+        savingState: SavingState.OK,
+        message: 'hello world',
+      };
+      element = await fixture(
+        html`<gr-comment
+          .account=${account}
+          .showPatchset=${true}
+          .comment=${comment}
+          .initiallyCollapsed=${false}
+        ></gr-comment>`
+      );
+      element.editing = true;
+      sinon.stub(element, 'showGeneratedSuggestion').returns(true);
+      element.generateSuggestion = true;
+      element.generatedFixSuggestion = generatedFixSuggestion;
+      await element.updateComplete;
+      assert.dom.equal(
+        queryAndAssert(element, 'gr-suggestion-diff-preview'),
+        /* HTML */ '<gr-suggestion-diff-preview id="suggestionDiffPreview"> </gr-suggestion-diff-preview>'
       );
     });
   });

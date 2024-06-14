@@ -45,6 +45,7 @@ import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.query.account.InternalAccountQuery;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
+import com.google.gerrit.server.query.group.InternalGroupQuery;
 import com.google.gerrit.server.update.RetryableAction.Action;
 import com.google.gerrit.server.update.RetryableAction.ActionType;
 import com.google.gerrit.server.update.RetryableChangeAction.ChangeAction;
@@ -188,6 +189,7 @@ public class RetryHelper {
   private final BatchUpdate.Factory updateFactory;
   private final Provider<InternalAccountQuery> internalAccountQuery;
   private final Provider<InternalChangeQuery> internalChangeQuery;
+  private final Provider<InternalGroupQuery> internalGroupQuery;
   private final PluginSetContext<ExceptionHook> exceptionHooks;
   private final Duration defaultTimeout;
   private final Map<String, Duration> defaultTimeouts;
@@ -202,13 +204,15 @@ public class RetryHelper {
       PluginSetContext<ExceptionHook> exceptionHooks,
       BatchUpdate.Factory updateFactory,
       Provider<InternalAccountQuery> internalAccountQuery,
-      Provider<InternalChangeQuery> internalChangeQuery) {
+      Provider<InternalChangeQuery> internalChangeQuery,
+      Provider<InternalGroupQuery> internalGroupQuery) {
     this(
         cfg,
         metrics,
         updateFactory,
         internalAccountQuery,
         internalChangeQuery,
+        internalGroupQuery,
         exceptionHooks,
         null);
   }
@@ -220,6 +224,7 @@ public class RetryHelper {
       BatchUpdate.Factory updateFactory,
       Provider<InternalAccountQuery> internalAccountQuery,
       Provider<InternalChangeQuery> internalChangeQuery,
+      Provider<InternalGroupQuery> internalGroupQuery,
       PluginSetContext<ExceptionHook> exceptionHooks,
       @Nullable Consumer<RetryerBuilder<?>> overwriteDefaultRetryerStrategySetup) {
     this.cfg = cfg;
@@ -227,6 +232,7 @@ public class RetryHelper {
     this.updateFactory = updateFactory;
     this.internalAccountQuery = internalAccountQuery;
     this.internalChangeQuery = internalChangeQuery;
+    this.internalGroupQuery = internalGroupQuery;
     this.exceptionHooks = exceptionHooks;
     this.defaultTimeout =
         Duration.ofMillis(
@@ -386,6 +392,22 @@ public class RetryHelper {
   }
 
   /**
+   * Creates an action for querying the group index that is executed with retrying when called.
+   *
+   * <p>The index query action gets a {@link InternalGroupQuery} provided that can be used to query
+   * the account index.
+   *
+   * @param actionName the name of the action, used as metric bucket
+   * @param indexQueryAction the action that should be executed
+   * @return the retryable action, callers need to call {@link RetryableIndexQueryAction#call()} to
+   *     execute the action
+   */
+  public <T> RetryableIndexQueryAction<InternalGroupQuery, T> groupIndexQuery(
+      String actionName, IndexQueryAction<T, InternalGroupQuery> indexQueryAction) {
+    return new RetryableIndexQueryAction<>(this, internalGroupQuery, actionName, indexQueryAction);
+  }
+
+  /**
    * Returns the default timeout for an action type.
    *
    * <p>The default timeout for an action type is defined by the 'retry.<action-type>.timeout'
@@ -454,17 +476,30 @@ public class RetryHelper {
               actionType,
               opts,
               t -> {
+                String actionName = opts.actionName().orElse("N/A");
+                String cause = formatCause(t);
+
+                // Do not retry if retrying was already done and failed.
+                if (Throwables.getCausalChain(t).stream()
+                    .anyMatch(RetryException.class::isInstance)) {
+                  return false;
+                }
+
                 // exceptionPredicate checks for temporary errors for which the operation should be
                 // retried (e.g. LockFailure). The retry has good chances to succeed.
                 if (exceptionPredicate.test(t)) {
+                  logger.atFine().withCause(t).log(
+                      "Retry: %s failed with possibly temporary error (cause = %s)",
+                      actionName, cause);
                   return true;
                 }
-
-                String actionName = opts.actionName().orElse("N/A");
 
                 // Exception hooks may identify additional exceptions for retry.
                 if (exceptionHooks.stream()
                     .anyMatch(h -> h.shouldRetry(actionType, actionName, t))) {
+                  logger.atFine().withCause(t).log(
+                      "Retry: %s failed with possibly temporary error (cause = %s)",
+                      actionName, cause);
                   return true;
                 }
 
@@ -480,7 +515,6 @@ public class RetryHelper {
                     return false;
                   }
 
-                  String cause = formatCause(t);
                   if (!TraceContext.isTracing()) {
                     String traceId = "retry-on-failure-" + new RequestId();
                     traceContext.addTag(RequestId.Type.TRACE_ID, traceId).forceLogging();
@@ -568,6 +602,9 @@ public class RetryHelper {
             actionType,
             opts.actionName().orElse("N/A"),
             listener.getOriginalCause().map(this::formatCause).orElse("_unknown"));
+
+        // Re-throw the RetryException so that retrying is not re-attempted on an outer level.
+        throw e;
       }
       if (e.getCause() != null) {
         Throwables.throwIfUnchecked(e.getCause());

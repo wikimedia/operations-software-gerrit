@@ -17,6 +17,7 @@ package com.google.gerrit.acceptance.server.mail;
 import static com.google.common.truth.Truth.assertThat;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.gerrit.acceptance.Sandboxed;
 import com.google.gerrit.acceptance.UseLocalDisk;
 import com.google.gerrit.acceptance.config.GerritConfig;
@@ -35,14 +36,14 @@ public class MailSenderIT extends AbstractMailIT {
   @Inject private SitePaths sitePaths;
 
   @Test
-  @GerritConfig(name = "sendemail.replyToAddress", value = "custom@gerritcodereview.com")
+  @GerritConfig(name = "sendemail.replyToAddress", value = "custom@example.com")
   @GerritConfig(name = "receiveemail.protocol", value = "POP3")
   public void outgoingMailHasCustomReplyToHeader() throws Exception {
     createChangeWithReview(user);
     // Check that the custom address was added as Reply-To
     assertThat(sender.getMessages()).hasSize(1);
-    Map<String, EmailHeader> headers = sender.getMessages().iterator().next().headers();
-    assertThat(headerString(headers, "Reply-To")).isEqualTo("custom@gerritcodereview.com");
+    ImmutableMap<String, EmailHeader> headers = sender.getMessages().iterator().next().headers();
+    assertThat(headerString(headers, "Reply-To")).isEqualTo("custom@example.com");
   }
 
   @Test
@@ -50,7 +51,7 @@ public class MailSenderIT extends AbstractMailIT {
     createChangeWithReview(user);
     // Check that the user's email was added as Reply-To
     assertThat(sender.getMessages()).hasSize(1);
-    Map<String, EmailHeader> headers = sender.getMessages().iterator().next().headers();
+    ImmutableMap<String, EmailHeader> headers = sender.getMessages().iterator().next().headers();
     assertThat(headerString(headers, "Reply-To")).contains(user.email());
   }
 
@@ -59,7 +60,7 @@ public class MailSenderIT extends AbstractMailIT {
     String changeId = createChangeWithReview(user);
     // Check that the mail has the expected headers
     assertThat(sender.getMessages()).hasSize(1);
-    Map<String, EmailHeader> headers = sender.getMessages().iterator().next().headers();
+    ImmutableMap<String, EmailHeader> headers = sender.getMessages().iterator().next().headers();
     String hostname = URI.create(canonicalWebUrl.get()).getHost();
     String listId = String.format("<gerrit-%s.%s>", project.get(), hostname);
     String unsubscribeLink = String.format("<%ssettings?usp=email>", canonicalWebUrl.get());

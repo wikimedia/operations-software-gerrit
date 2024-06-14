@@ -116,6 +116,7 @@ public class ChangeInfo {
   public Collection<ReviewerUpdateInfo> reviewerUpdates;
   public Collection<ChangeMessageInfo> messages;
 
+  public Integer currentRevisionNumber;
   public String currentRevision;
   public Map<String, RevisionInfo> revisions;
   public Boolean _moreChanges;

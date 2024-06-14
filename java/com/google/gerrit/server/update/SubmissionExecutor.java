@@ -22,12 +22,16 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 public class SubmissionExecutor {
-
+  private final BatchUpdates batchUpdates;
   private final ImmutableList<SubmissionListener> submissionListeners;
   private final boolean dryrun;
   private ImmutableList<BatchUpdateListener> additionalListeners = ImmutableList.of();
 
-  public SubmissionExecutor(boolean dryrun, ImmutableList<SubmissionListener> submissionListeners) {
+  public SubmissionExecutor(
+      BatchUpdates batchUpdates,
+      boolean dryrun,
+      ImmutableList<SubmissionListener> submissionListeners) {
+    this.batchUpdates = batchUpdates;
     this.dryrun = dryrun;
     this.submissionListeners = submissionListeners;
     if (dryrun) {
@@ -58,7 +62,7 @@ public class SubmissionExecutor {
                     .map(Optional::get)
                     .collect(Collectors.toList()))
             .build();
-    BatchUpdate.execute(updates, listeners, dryrun);
+    batchUpdates.execute(updates, listeners, dryrun);
   }
 
   /**

@@ -16,16 +16,22 @@ package com.google.gerrit.server.submit;
 
 import static com.google.common.base.MoreObjects.firstNonNull;
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.gerrit.server.experiments.ExperimentFeaturesConstants.GERRIT_BACKEND_FEATURE_ALWAYS_REJECT_IMPLICIT_MERGES_ON_MERGE;
+import static com.google.gerrit.server.experiments.ExperimentFeaturesConstants.GERRIT_BACKEND_FEATURE_CHECK_IMPLICIT_MERGES_ON_MERGE;
+import static com.google.gerrit.server.experiments.ExperimentFeaturesConstants.GERRIT_BACKEND_FEATURE_REJECT_IMPLICIT_MERGES_ON_MERGE;
+import static com.google.gerrit.server.project.ProjectCache.illegalState;
 import static com.google.gerrit.server.update.RetryableAction.ActionType.INDEX_QUERY;
 import static com.google.gerrit.server.update.context.RefUpdateContext.RefUpdateType.MERGE_CHANGE;
 import static java.util.Comparator.comparing;
 import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toSet;
 
 import com.github.rholder.retry.Attempt;
 import com.github.rholder.retry.RetryListener;
 import com.google.auto.value.AutoValue;
 import com.google.common.base.Joiner;
+import com.google.common.base.Stopwatch;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -33,8 +39,11 @@ import com.google.common.collect.ImmutableSetMultimap;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.MultimapBuilder;
 import com.google.common.collect.SetMultimap;
+import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.BooleanProjectConfig;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Change.Status;
@@ -63,6 +72,9 @@ import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.InternalUser;
 import com.google.gerrit.server.change.NotifyResolver;
+import com.google.gerrit.server.config.ConfigUtil;
+import com.google.gerrit.server.config.GerritServerConfig;
+import com.google.gerrit.server.experiments.ExperimentFeatures;
 import com.google.gerrit.server.git.CodeReviewCommit;
 import com.google.gerrit.server.git.MergeTip;
 import com.google.gerrit.server.git.validators.MergeValidationException;
@@ -73,6 +85,7 @@ import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.StoreSubmitRequirementsOp;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.NoSuchProjectException;
+import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.SubmitRuleOptions;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
@@ -80,6 +93,7 @@ import com.google.gerrit.server.submit.MergeOpRepoManager.OpenBranch;
 import com.google.gerrit.server.submit.MergeOpRepoManager.OpenRepo;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
+import com.google.gerrit.server.update.BatchUpdates;
 import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.update.RetryHelper;
 import com.google.gerrit.server.update.SubmissionExecutor;
@@ -93,23 +107,30 @@ import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.time.Instant;
+import java.util.AbstractMap.SimpleImmutableEntry;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.errors.IncorrectObjectTypeException;
+import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevWalk;
 
 /**
  * Merges changes in submission order into a single branch.
@@ -134,6 +155,8 @@ public class MergeOp implements AutoCloseable {
     private final ImmutableSetMultimap<BranchNameKey, Change.Id> byBranch;
     private final Map<Change.Id, CodeReviewCommit> commits;
     private final ListMultimap<Change.Id, String> problems;
+    private final Set<SimpleImmutableEntry<Project.NameKey, BranchNameKey>> implicitMergeProblems;
+
     private final boolean allowClosed;
 
     private CommitStatus(ChangeSet cs, boolean allowClosed) {
@@ -147,6 +170,7 @@ public class MergeOp implements AutoCloseable {
       byBranch = bb.build();
       commits = new HashMap<>();
       problems = MultimapBuilder.treeKeys(comparing(Change.Id::get)).arrayListValues(1).build();
+      implicitMergeProblems = new HashSet<>();
       this.allowClosed = allowClosed;
     }
 
@@ -181,8 +205,12 @@ public class MergeOp implements AutoCloseable {
       problems.put(id, msg);
     }
 
+    public void addImplicitMerge(Project.NameKey projectName, BranchNameKey branchName) {
+      implicitMergeProblems.add(new SimpleImmutableEntry<>(projectName, branchName));
+    }
+
     public boolean isOk() {
-      return problems.isEmpty();
+      return problems.isEmpty() && implicitMergeProblems.isEmpty();
     }
 
     public List<SubmitRecord> getSubmitRecords(Change.Id id) {
@@ -214,6 +242,21 @@ public class MergeOp implements AutoCloseable {
       for (Change.Id id : problems.keySet()) {
         ps.add("Change " + id + ": " + Joiner.on("; ").join(problems.get(id)));
       }
+      if (ps.isEmpty()) {
+        // An implicit merge can be also detected when there are another problems with changes(e.g.
+        // the parent change is deleted). It can confuse the user if gerrit reports both the correct
+        // problem and implicit merge problem at the same time - so report implicit merge problem
+        // only if no other problems are reported.
+        for (SimpleImmutableEntry<Project.NameKey, BranchNameKey> projectBranch :
+            implicitMergeProblems) {
+          // TODO(dmfilippov): Make message more clear to the user and add the exact change id.
+          ps.add(
+              String.format(
+                  "submit makes implicit merge to the branch %s of the project %s from some other "
+                      + "branch",
+                  projectBranch.getValue().shortName(), projectBranch.getKey().get()));
+        }
+      }
       throw new ResourceConflictException(msg + Joiner.on('\n').join(ps));
     }
 
@@ -234,6 +277,7 @@ public class MergeOp implements AutoCloseable {
 
   private final ChangeMessagesUtil cmUtil;
   private final BatchUpdate.Factory batchUpdateFactory;
+  private final BatchUpdates batchUpdates;
   private final InternalUser.Factory internalUserFactory;
   private final MergeSuperSet mergeSuperSet;
   private final MergeValidators.Factory mergeValidatorsFactory;
@@ -252,6 +296,11 @@ public class MergeOp implements AutoCloseable {
   // Changes that were updated by this MergeOp.
   private final Map<Change.Id, Change> updatedChanges;
 
+  private final ExperimentFeatures experimentFeatures;
+
+  private final ProjectCache projectCache;
+  private final long hasImplicitMergeTimeoutSeconds;
+
   private Instant ts;
   private SubmissionId submissionId;
   private IdentifiedUser caller;
@@ -260,7 +309,7 @@ public class MergeOp implements AutoCloseable {
   private CommitStatus commitStatus;
   private SubmitInput submitInput;
   private NotifyResolver.Result notify;
-  private Set<Project.NameKey> projects;
+  private ImmutableSet<Project.NameKey> projects;
   private boolean dryrun;
   private TopicMetrics topicMetrics;
 
@@ -268,6 +317,7 @@ public class MergeOp implements AutoCloseable {
   MergeOp(
       ChangeMessagesUtil cmUtil,
       BatchUpdate.Factory batchUpdateFactory,
+      BatchUpdates batchUpdates,
       InternalUser.Factory internalUserFactory,
       MergeSuperSet mergeSuperSet,
       MergeValidators.Factory mergeValidatorsFactory,
@@ -283,9 +333,13 @@ public class MergeOp implements AutoCloseable {
       RetryHelper retryHelper,
       ChangeData.Factory changeDataFactory,
       StoreSubmitRequirementsOp.Factory storeSubmitRequirementsOpFactory,
-      MergeMetrics mergeMetrics) {
+      MergeMetrics mergeMetrics,
+      ProjectCache projectCache,
+      ExperimentFeatures experimentFeatures,
+      @GerritServerConfig Config config) {
     this.cmUtil = cmUtil;
     this.batchUpdateFactory = batchUpdateFactory;
+    this.batchUpdates = batchUpdates;
     this.internalUserFactory = internalUserFactory;
     this.mergeSuperSet = mergeSuperSet;
     this.mergeValidatorsFactory = mergeValidatorsFactory;
@@ -302,6 +356,12 @@ public class MergeOp implements AutoCloseable {
     this.updatedChanges = new HashMap<>();
     this.storeSubmitRequirementsOpFactory = storeSubmitRequirementsOpFactory;
     this.mergeMetrics = mergeMetrics;
+    this.projectCache = projectCache;
+    this.experimentFeatures = experimentFeatures;
+    // Undocumented - experimental, can be removed.
+    hasImplicitMergeTimeoutSeconds =
+        ConfigUtil.getTimeUnit(
+            config, "change", null, "implicitMergeCalculationTimeout", 60, TimeUnit.SECONDS);
   }
 
   @Override
@@ -438,6 +498,7 @@ public class MergeOp implements AutoCloseable {
    * @throws IOException an error occurred reading from NoteDb.
    * @return the merged change
    */
+  @CanIgnoreReturnValue
   public Change merge(
       Change change,
       IdentifiedUser caller,
@@ -500,37 +561,40 @@ public class MergeOp implements AutoCloseable {
         }
 
         SubmissionExecutor submissionExecutor =
-            new SubmissionExecutor(dryrun, superprojectUpdateSubmissionListeners);
+            new SubmissionExecutor(batchUpdates, dryrun, superprojectUpdateSubmissionListeners);
         RetryTracker retryTracker = new RetryTracker();
-        retryHelper
-            .changeUpdate(
-                "integrateIntoHistory",
-                updateFactory -> {
-                  long attempt = retryTracker.lastAttemptNumber + 1;
-                  boolean isRetry = attempt > 1;
-                  if (isRetry) {
-                    logger.atFine().log("Retrying, attempt #%d; skipping merged changes", attempt);
-                    this.ts = TimeUtil.now();
-                    openRepoManager();
-                  }
-                  this.commitStatus = new CommitStatus(filteredNoteDbChangeSet, isRetry);
-                  if (checkSubmitRules) {
-                    logger.atFine().log("Checking submit rules and state");
-                    checkSubmitRulesAndState(filteredNoteDbChangeSet, isRetry);
-                  } else {
-                    logger.atFine().log("Bypassing submit rules");
-                    bypassSubmitRulesAndRequirements(filteredNoteDbChangeSet);
-                  }
-                  integrateIntoHistory(
-                      filteredNoteDbChangeSet, submissionExecutor, checkSubmitRules);
-                  return null;
-                })
-            .listener(retryTracker)
-            // Up to the entire submit operation is retried, including possibly many projects.
-            // Multiply the timeout by the number of projects we're actually attempting to
-            // submit. Times 2 to retry more persistently, to increase success rate.
-            .defaultTimeoutMultiplier(filteredNoteDbChangeSet.projects().size() * 2)
-            .call();
+        @SuppressWarnings("unused")
+        var unused =
+            retryHelper
+                .changeUpdate(
+                    "integrateIntoHistory",
+                    updateFactory -> {
+                      long attempt = retryTracker.lastAttemptNumber + 1;
+                      boolean isRetry = attempt > 1;
+                      if (isRetry) {
+                        logger.atFine().log(
+                            "Retrying, attempt #%d; skipping merged changes", attempt);
+                        this.ts = TimeUtil.now();
+                        openRepoManager();
+                      }
+                      this.commitStatus = new CommitStatus(filteredNoteDbChangeSet, isRetry);
+                      if (checkSubmitRules) {
+                        logger.atFine().log("Checking submit rules and state");
+                        checkSubmitRulesAndState(filteredNoteDbChangeSet, isRetry);
+                      } else {
+                        logger.atFine().log("Bypassing submit rules");
+                        bypassSubmitRulesAndRequirements(filteredNoteDbChangeSet);
+                      }
+                      integrateIntoHistory(
+                          filteredNoteDbChangeSet, submissionExecutor, checkSubmitRules);
+                      return null;
+                    })
+                .listener(retryTracker)
+                // Up to the entire submit operation is retried, including possibly many projects.
+                // Multiply the timeout by the number of projects we're actually attempting to
+                // submit. Times 2 to retry more persistently, to increase success rate.
+                .defaultTimeoutMultiplier(filteredNoteDbChangeSet.projects().size() * 2)
+                .call();
         submissionExecutor.afterExecutions(orm);
 
         if (projects > 1) {
@@ -754,7 +818,7 @@ public class MergeOp implements AutoCloseable {
       boolean dryrun)
       throws IntegrationConflictException, NoSuchProjectException, IOException {
     List<SubmitStrategy> strategies = new ArrayList<>();
-    Set<BranchNameKey> allBranches = updateOrderCalculator.getBranchesInOrder();
+    ImmutableSet<BranchNameKey> allBranches = updateOrderCalculator.getBranchesInOrder();
     Set<CodeReviewCommit> allCommits =
         toSubmit.values().stream().map(BranchBatch::commits).flatMap(Set::stream).collect(toSet());
 
@@ -767,7 +831,10 @@ public class MergeOp implements AutoCloseable {
         requireNonNull(
             submitting.submitType(),
             String.format("null submit type for %s; expected to previously fail fast", submitting));
-        Set<CodeReviewCommit> commitsToSubmit = submitting.commits();
+        ImmutableSet<CodeReviewCommit> commitsToSubmit = submitting.commits();
+        checkImplicitMerges(
+            branch, or.rw, submitting.commits(), submitting.submitType(), ob.oldTip);
+
         ob.mergeTip = new MergeTip(ob.oldTip, commitsToSubmit);
         SubmitStrategy strategy =
             submitStrategyFactory.create(
@@ -791,6 +858,202 @@ public class MergeOp implements AutoCloseable {
     }
 
     return strategies;
+  }
+
+  private void checkImplicitMerges(
+      BranchNameKey branch,
+      RevWalk rw,
+      Set<CodeReviewCommit> commitsToSubmit,
+      SubmitType submitType,
+      @Nullable RevCommit branchTip)
+      throws IOException {
+    if (branchTip == null) {
+      // The branch doesn't exist.
+      return;
+    }
+    Project.NameKey project = branch.project();
+    if (!experimentFeatures.isFeatureEnabled(
+        GERRIT_BACKEND_FEATURE_CHECK_IMPLICIT_MERGES_ON_MERGE, project)) {
+      return;
+    }
+    if (submitType == SubmitType.CHERRY_PICK || submitType == SubmitType.REBASE_ALWAYS) {
+      return;
+    }
+
+    boolean projectConfigRejectImplicitMerges =
+        projectCache
+            .get(project)
+            .orElseThrow(illegalState(project))
+            .is(BooleanProjectConfig.REJECT_IMPLICIT_MERGES);
+    boolean rejectImplicitMergesOnMerges =
+        experimentFeatures.isFeatureEnabled(
+                GERRIT_BACKEND_FEATURE_REJECT_IMPLICIT_MERGES_ON_MERGE, project)
+            && (experimentFeatures.isFeatureEnabled(
+                    GERRIT_BACKEND_FEATURE_ALWAYS_REJECT_IMPLICIT_MERGES_ON_MERGE, project)
+                || projectConfigRejectImplicitMerges);
+    try {
+      if (hasImplicitMerges(branch, rw, commitsToSubmit, branchTip)) {
+        if (rejectImplicitMergesOnMerges) {
+          commitStatus.addImplicitMerge(project, branch);
+        } else {
+          String allCommits =
+              commitsToSubmit.stream()
+                  .map(CodeReviewCommit::getId)
+                  .map(c -> ObjectId.toString(c))
+                  .collect(joining(", "));
+          logger.atWarning().log(
+              "Implicit merge was detected for the branch %s of the project %s. "
+                  + "Commits to be merged are: %s",
+              branch.shortName(), project, allCommits);
+        }
+      }
+    } catch (Exception e) {
+      if (rejectImplicitMergesOnMerges) {
+        throw e;
+      }
+      logger.atWarning().withCause(e).log("Error while checking for implicit merges");
+    }
+  }
+
+  private boolean isMergedInBranchAsSubmittedChange(RevCommit commit, BranchNameKey dest) {
+    List<ChangeData> changes = queryProvider.get().byBranchCommit(dest, commit.getId().getName());
+    for (ChangeData change : changes) {
+      if (change.change().isMerged()) {
+        logger.atFine().log(
+            "Dependency %s associated with merged change %s.", commit.getName(), change.getId());
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Checks if merging {@code commitsToSubmit} into the target branch leads to implicit merge.
+   *
+   * <p>All commits in the {@code commitsToSubmit} have {@code targetBranch} as a target. When
+   * multiple changes are submitted together, the {@code commitsToSubmit} contains transitive
+   * dependencies, not a single change (the method is never called for the cherry pick strategy
+   * because the strategy always submit a single change).
+   */
+  private boolean hasImplicitMerges(
+      BranchNameKey targetBranch,
+      RevWalk rw,
+      Set<CodeReviewCommit> commitsToSubmit,
+      RevCommit branchTip)
+      throws IOException {
+
+    // rootCommits - top level commits in chains. It is all commits which don't have children in
+    // the commitsToSubmit set (no commits have them as parents).
+    Set<CodeReviewCommit> rootCommits = new HashSet<>(commitsToSubmit);
+    Set<RevCommit> allParents = new HashSet<>();
+    for (CodeReviewCommit commit : commitsToSubmit) {
+      rw.parseBody(commit);
+      for (RevCommit parent : commit.getParents()) {
+        rootCommits.remove(parent);
+        allParents.add(parent);
+      }
+    }
+
+    // Calculate all "external" parents of commitsToSubmit - i.e. all parents which already
+    // present in the repository.
+    // targetBranchParents - all "external" parents which were merged into the targetBranch (
+    // they are reachable from the targetBranchTip).
+    Set<RevCommit> targetBranchParents = new HashSet<>();
+    int nonTargetBranchParentsCount = 0;
+    try {
+      for (RevCommit parent : Sets.difference(allParents, commitsToSubmit)) {
+        if (rw.isMergedInto(parent, branchTip)) {
+          targetBranchParents.add(parent);
+        } else {
+          // Special case: user created chain of changes and then submit first changes from the
+          // chain. It should be allowed for the user to submit remaining changes of the chain
+          // without rebasing them (otherwise votes can be lost).
+          // When a rebase... strategy is used in this scenario, submitting the first few changes of
+          // the chain creates new patchset(s), but all others changes are not rebased on top of new
+          // patchset(s). In this situation isMergedInto check is not enough and additional
+          // isMergedInBranchAsSubmittedChange check should be used.
+          if (isMergedInBranchAsSubmittedChange(parent, targetBranch)) {
+            targetBranchParents.add(parent);
+          } else {
+            nonTargetBranchParentsCount++;
+          }
+        }
+      }
+    } finally {
+      // It's unclear why resetting the RevWalk here is needed, but if we don't do this MergeSorter
+      // and RebaseSorter which are invoked later with the same RevWalk instance may fail while
+      // marking commits as uninteresting.
+      rw.reset();
+    }
+
+    if (nonTargetBranchParentsCount == 0) {
+      // All parents are in target branch, no implicit merge is possible.
+      return false;
+    }
+    // There are some parents not in the target branch.
+    if (rootCommits.size() == 1) {
+      // There is only one root commit - this is the case when a single chain of changes is
+      // submitted to the branch.
+      // If the target branch is not reachable from the root commit then it means that there is no
+      // explicit merge with the target branch and the merge operation will create an implicit merge
+      // (except if rebase is used; but for consistency between different strategies we reject
+      // merge even for rebase).
+      return targetBranchParents.isEmpty();
+    }
+    // There are multiple root commits - check that a target branch is reachable from each root
+    // commit. This situation means that multiple chain of changes are submitted (e.g. as a part
+    // of a single topic).
+    // reachableCommits contains pairs of commit: the first item in pair is always one of the root
+    // commits. The second item in pair - a commit reachable from this root (following parents).
+    // Loop implements breadth-search.
+    Deque<Entry<CodeReviewCommit, RevCommit>> reachableCommits =
+        new ArrayDeque<>(rootCommits.size());
+    rootCommits.forEach(commit -> reachableCommits.add(Map.entry(commit, commit)));
+    // Tracks all chains roots which can lead to implicit merge.
+    Set<CodeReviewCommit> implicitMergesRoots = new HashSet<>(rootCommits);
+    int iterationCount = 0;
+    Stopwatch sw = Stopwatch.createStarted();
+    while (!reachableCommits.isEmpty()) {
+      iterationCount++;
+      if (hasImplicitMergeTimeoutSeconds != 0
+          && sw.elapsed(TimeUnit.SECONDS) >= hasImplicitMergeTimeoutSeconds) {
+        String allCommits =
+            commitsToSubmit.stream()
+                .map(CodeReviewCommit::getId)
+                .map(c -> ObjectId.toString(c))
+                .collect(joining(", "));
+        logger.atWarning().log(
+            "Timeout during hasImplicitMerge calculation. Number of iterations: %s, commitsToSubmit: %s",
+            iterationCount, allCommits);
+        return true;
+      }
+      Entry<CodeReviewCommit, RevCommit> entry = reachableCommits.pop();
+      if (!implicitMergesRoots.contains(entry.getKey())) {
+        // We already know that from the given root (key in the entry) one of the
+        // targetBranchParents is reachable and this is not an implicit merge.
+        continue;
+      }
+      if (targetBranchParents.contains(entry.getValue())) {
+        // The target branch is reachable from the root. We don't need to process other items
+        // in the queue for this root.
+        implicitMergesRoots.remove(entry.getKey());
+        continue;
+      }
+      if (entry.getValue() == null) {
+        logger.atSevere().log("The entry value is null for the key %s", entry.getKey());
+      }
+      rw.parseBody(entry.getValue());
+      if (entry.getValue().getParents() == null) {
+        logger.atSevere().log(
+            "The entry value has null parents. The value is: %s", entry.getValue());
+      }
+      for (RevCommit parent : entry.getValue().getParents()) {
+        reachableCommits.push(Map.entry(entry.getKey(), parent));
+      }
+    }
+    // only commits which don't have parents in the targetBranch remains in the implicitMergesRoots.
+    // If there are at least one commit - this is an implicit merge.
+    return !implicitMergesRoots.isEmpty();
   }
 
   private Set<RevCommit> getAlreadyAccepted(OpenRepo or, CodeReviewCommit branchTip) {

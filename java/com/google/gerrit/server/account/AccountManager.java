@@ -26,6 +26,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.data.GlobalCapability;
 import com.google.gerrit.entities.AccessSection;
 import com.google.gerrit.entities.Account;
@@ -58,7 +59,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import org.eclipse.jgit.errors.ConfigInvalidException;
@@ -139,6 +139,7 @@ public class AccountManager {
    *     cannot be located, is unable to be activated or deactivated, or is inactive, or cannot be
    *     added to the admin group (only for the first account).
    */
+  @CanIgnoreReturnValue
   public AuthResult authenticate(AuthRequest who) throws AccountException, IOException {
     try {
       who = realm.authenticate(who);
@@ -364,7 +365,8 @@ public class AccountManager {
               + e.getDuplicateKey().get()
               + "\" to account "
               + newId
-              + "; external ID already in use.");
+              + "; external ID already in use.",
+          e);
     } finally {
       // If adding the account failed, it may be that it actually was the
       // first account. So we reset the 'check for first account'-guard, as
@@ -419,7 +421,7 @@ public class AccountManager {
       return;
     }
 
-    Set<ExternalId> existingExtIdsWithEmail = externalIds.byEmail(email);
+    ImmutableSet<ExternalId> existingExtIdsWithEmail = externalIds.byEmail(email);
     if (existingExtIdsWithEmail.isEmpty()) {
       return;
     }
@@ -463,6 +465,7 @@ public class AccountManager {
    * @throws AccountException the identity belongs to a different account, or it cannot be linked at
    *     this time.
    */
+  @CanIgnoreReturnValue
   public AuthResult link(Account.Id to, AuthRequest who)
       throws AccountException, IOException, ConfigInvalidException {
     Optional<ExternalId> optionalExtId = externalIds.get(who.getExternalIdKey());
@@ -504,6 +507,7 @@ public class AccountManager {
    * @throws AccountException the identity belongs to a different account, or it cannot be linked at
    *     this time.
    */
+  @CanIgnoreReturnValue
   public AuthResult updateLink(Account.Id to, AuthRequest who)
       throws AccountException, IOException, ConfigInvalidException {
     Optional<ExternalId> optionalExtId = externalIds.get(who.getExternalIdKey());
@@ -518,7 +522,7 @@ public class AccountManager {
             "Update External IDs on Update Link",
             to,
             (a, u) -> {
-              Set<ExternalId> filteredExtIdsByScheme =
+              ImmutableSet<ExternalId> filteredExtIdsByScheme =
                   a.externalIds().stream()
                       .filter(e -> e.key().isScheme(who.getExternalIdKey().scheme()))
                       .collect(toImmutableSet());

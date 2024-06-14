@@ -48,6 +48,7 @@ import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.LabelId;
 import com.google.gerrit.entities.LabelType;
 import com.google.gerrit.entities.Patch;
+import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.Permission;
 import com.google.gerrit.entities.RefNames;
@@ -138,7 +139,7 @@ public class AttentionSetIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void addUser() throws Exception {
+  public void addUser_updateReason() throws Exception {
     PushOneCommit.Result r = createChange();
     requestScopeOperations.setApiUser(user.id());
     int accountId =
@@ -149,19 +150,62 @@ public class AttentionSetIT extends AbstractDaemonTest {
             fakeClock.now(), admin.id(), AttentionSetUpdate.Operation.ADD, "first");
     assertThat(r.getChange().attentionSet()).containsExactly(expectedAttentionSetUpdate);
 
-    // Second add is ignored.
-    accountId =
-        change(r).addToAttentionSet(new AttentionSetInput(admin.email(), "second"))._accountId;
-    assertThat(accountId).isEqualTo(admin.id().get());
-    assertThat(r.getChange().attentionSet()).containsExactly(expectedAttentionSetUpdate);
-
-    // Only one email since the second add was ignored.
+    // Check that email was sent
     String emailBody = Iterables.getOnlyElement(sender.getMessages()).body();
     assertThat(emailBody)
         .contains(
             String.format(
                 "%s requires the attention of %s to this change.\n The reason is: first.",
                 user.fullName(), admin.fullName()));
+
+    // Update the reason
+    sender.clear();
+    accountId =
+        change(r).addToAttentionSet(new AttentionSetInput(admin.email(), "second"))._accountId;
+    assertThat(accountId).isEqualTo(admin.id().get());
+    expectedAttentionSetUpdate =
+        AttentionSetUpdate.createFromRead(
+            fakeClock.now(), admin.id(), AttentionSetUpdate.Operation.ADD, "second");
+    assertThat(r.getChange().attentionSet()).containsExactly(expectedAttentionSetUpdate);
+
+    // Check that email was sent
+    emailBody = Iterables.getOnlyElement(sender.getMessages()).body();
+    assertThat(emailBody)
+        .contains(
+            String.format(
+                "%s requires the attention of %s to this change.\n The reason is: second.",
+                user.fullName(), admin.fullName()));
+  }
+
+  @Test
+  public void addUser_addWithSameReasonIsIgnored() throws Exception {
+    PushOneCommit.Result r = createChange();
+    requestScopeOperations.setApiUser(user.id());
+    int accountId =
+        change(r).addToAttentionSet(new AttentionSetInput(admin.email(), "reason"))._accountId;
+    assertThat(accountId).isEqualTo(admin.id().get());
+    AttentionSetUpdate expectedAttentionSetUpdate =
+        AttentionSetUpdate.createFromRead(
+            fakeClock.now(), admin.id(), AttentionSetUpdate.Operation.ADD, "reason");
+    assertThat(r.getChange().attentionSet()).containsExactly(expectedAttentionSetUpdate);
+
+    // Check that email was sent
+    String emailBody = Iterables.getOnlyElement(sender.getMessages()).body();
+    assertThat(emailBody)
+        .contains(
+            String.format(
+                "%s requires the attention of %s to this change.\n The reason is: reason.",
+                user.fullName(), admin.fullName()));
+
+    // Second add with the same reason is ignored.
+    sender.clear();
+    accountId =
+        change(r).addToAttentionSet(new AttentionSetInput(admin.email(), "reason"))._accountId;
+    assertThat(accountId).isEqualTo(admin.id().get());
+    assertThat(r.getChange().attentionSet()).containsExactly(expectedAttentionSetUpdate);
+
+    // Check that no email was sent
+    assertThat(sender.getMessages()).isEmpty();
   }
 
   @Test
@@ -987,19 +1031,236 @@ public class AttentionSetIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void repliesAddsOwner() throws Exception {
+  public void repliesAddsOwner_voteAdded() throws Exception {
     PushOneCommit.Result r = createChange();
 
     requestScopeOperations.setApiUser(user.id());
+    change(r).current().review(ReviewInput.dislike());
 
-    ReviewInput reviewInput = new ReviewInput();
-    change(r).current().review(reviewInput);
-
+    // The change owner has been added to the attention set
     AttentionSetUpdate attentionSet =
         Iterables.getOnlyElement(getAttentionSetUpdatesForUser(r, admin));
     assertThat(attentionSet).hasAccountIdThat().isEqualTo(admin.id());
     assertThat(attentionSet).hasOperationThat().isEqualTo(AttentionSetUpdate.Operation.ADD);
     assertThat(attentionSet).hasReasonThat().isEqualTo("Someone else replied on the change");
+  }
+
+  @Test
+  public void repliesAddsOwner_voteCopied() throws Exception {
+    // Define a label with a copy condition that copies all votes.
+    try (ProjectConfigUpdate u = updateProject(project)) {
+      LabelType.Builder fooReview =
+          labelBuilder(
+                  "Foo-Review",
+                  value(1, "Looks good to me, but someone else must approve"),
+                  value(0, "No score"),
+                  value(-1, "I would prefer this is not submitted as is"))
+              .setCopyCondition("is:ANY");
+      u.getConfig().upsertLabelType(fooReview.build());
+      u.save();
+    }
+
+    // Allow voting on the label.
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            allowLabel("Foo-Review")
+                .ref(RefNames.REFS_HEADS + "*")
+                .group(REGISTERED_USERS)
+                .range(-1, 1))
+        .update();
+
+    // Create a change with 2 patch sets.
+    PushOneCommit.Result r = createChange();
+    PatchSet patchSet1 = r.getChange().currentPatchSet();
+    r = amendChange(r.getChangeId());
+    r.assertOkStatus();
+
+    // Apply a negative vote on the first patch set which is copied since the label has a copy
+    // condition that copies all votes
+    requestScopeOperations.setApiUser(user.id());
+    change(r).revision(patchSet1.number()).review(new ReviewInput().label("Foo-Review", -1));
+
+    // The change owner has been added to the attention set
+    AttentionSetUpdate attentionSet =
+        Iterables.getOnlyElement(getAttentionSetUpdatesForUser(r, admin));
+    assertThat(attentionSet).hasAccountIdThat().isEqualTo(admin.id());
+    assertThat(attentionSet).hasOperationThat().isEqualTo(AttentionSetUpdate.Operation.ADD);
+    assertThat(attentionSet).hasReasonThat().isEqualTo("Someone else replied on the change");
+  }
+
+  @Test
+  public void repliesDoesntAddOwner_voteNotCopied_userNotRemovedReasonUpdated() throws Exception {
+    // Define a label without any copy condition.
+    try (ProjectConfigUpdate u = updateProject(project)) {
+      LabelType.Builder fooReview =
+          labelBuilder(
+              "Foo-Review",
+              value(1, "Looks good to me, but someone else must approve"),
+              value(0, "No score"),
+              value(-1, "I would prefer this is not submitted as is"));
+      u.getConfig().upsertLabelType(fooReview.build());
+      u.save();
+    }
+
+    // Allow voting on the label.
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            allowLabel("Foo-Review")
+                .ref(RefNames.REFS_HEADS + "*")
+                .group(REGISTERED_USERS)
+                .range(-1, 1))
+        .update();
+
+    // Create a change with 2 patch sets.
+    PushOneCommit.Result r = createChange();
+    PatchSet patchSet1 = r.getChange().currentPatchSet();
+    r = amendChange(r.getChangeId());
+    r.assertOkStatus();
+
+    // Add user as a reviewer so that the user is in the attention set
+    change(r).addReviewer(user.email());
+    assertThat(getAttentionSetUpdatesForUser(r, user)).isNotEmpty();
+
+    // Apply a negative vote on the first patch set which is not copied since the label doesn't have
+    // a copy condition
+    requestScopeOperations.setApiUser(user.id());
+    change(r).revision(patchSet1.number()).review(new ReviewInput().label("Foo-Review", -1));
+
+    // The change owner has not been added to the attention set
+    assertThat(getAttentionSetUpdatesForUser(r, admin)).isEmpty();
+
+    // The reason for the user to be in the attention set has been updated
+    AttentionSetUpdate attentionSet =
+        Iterables.getOnlyElement(getAttentionSetUpdatesForUser(r, user));
+    assertThat(attentionSet).hasAccountIdThat().isEqualTo(user.id());
+    assertThat(attentionSet).hasOperationThat().isEqualTo(AttentionSetUpdate.Operation.ADD);
+    assertThat(attentionSet)
+        .hasReasonThat()
+        .isEqualTo("Some votes were not copied to the current patch set");
+  }
+
+  @Test
+  public void repliesDoesntAddOwner_voteNotCopied_userAdded() throws Exception {
+    // Define a label without any copy condition.
+    try (ProjectConfigUpdate u = updateProject(project)) {
+      LabelType.Builder fooReview =
+          labelBuilder(
+              "Foo-Review",
+              value(1, "Looks good to me, but someone else must approve"),
+              value(0, "No score"),
+              value(-1, "I would prefer this is not submitted as is"));
+      u.getConfig().upsertLabelType(fooReview.build());
+      u.save();
+    }
+
+    // Allow voting on the label.
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            allowLabel("Foo-Review")
+                .ref(RefNames.REFS_HEADS + "*")
+                .group(REGISTERED_USERS)
+                .range(-1, 1))
+        .update();
+
+    // Create a change with 2 patch sets.
+    PushOneCommit.Result r = createChange();
+    PatchSet patchSet1 = r.getChange().currentPatchSet();
+    r = amendChange(r.getChangeId());
+    r.assertOkStatus();
+
+    // User is not in the attention set yet
+    assertThat(getAttentionSetUpdatesForUser(r, user)).isEmpty();
+
+    // Apply a negative vote on the first patch set which is not copied since the label doesn't have
+    // a copy condition
+    requestScopeOperations.setApiUser(user.id());
+    change(r).revision(patchSet1.number()).review(new ReviewInput().label("Foo-Review", -1));
+
+    // The change owner has not been added to the attention set
+    assertThat(getAttentionSetUpdatesForUser(r, admin)).isEmpty();
+
+    // The user has been added to the attention set because the vote was not copied
+    AttentionSetUpdate attentionSet =
+        Iterables.getOnlyElement(getAttentionSetUpdatesForUser(r, user));
+    assertThat(attentionSet).hasAccountIdThat().isEqualTo(user.id());
+    assertThat(attentionSet).hasOperationThat().isEqualTo(AttentionSetUpdate.Operation.ADD);
+    assertThat(attentionSet)
+        .hasReasonThat()
+        .isEqualTo("Some votes were not copied to the current patch set");
+  }
+
+  @Test
+  public void repliesAddsOwner_changeMessagePosted() throws Exception {
+    PushOneCommit.Result r = createChange();
+
+    requestScopeOperations.setApiUser(user.id());
+    ReviewInput reviewInput = new ReviewInput();
+    reviewInput.message = "A message";
+    change(r).current().review(reviewInput);
+
+    // The change owner has been added to the attention set
+    AttentionSetUpdate attentionSet =
+        Iterables.getOnlyElement(getAttentionSetUpdatesForUser(r, admin));
+    assertThat(attentionSet).hasAccountIdThat().isEqualTo(admin.id());
+    assertThat(attentionSet).hasOperationThat().isEqualTo(AttentionSetUpdate.Operation.ADD);
+    assertThat(attentionSet).hasReasonThat().isEqualTo("Someone else replied on the change");
+  }
+
+  @Test
+  public void repliesAddsOwner_commentAdded() throws Exception {
+    PushOneCommit.Result r = createChange();
+
+    requestScopeOperations.setApiUser(user.id());
+    ReviewInput reviewInput = new ReviewInput();
+    ReviewInput.CommentInput comment = new ReviewInput.CommentInput();
+    comment.side = Side.REVISION;
+    comment.path = Patch.COMMIT_MSG;
+    comment.message = "comment";
+    reviewInput.comments = ImmutableMap.of(Patch.COMMIT_MSG, ImmutableList.of(comment));
+    change(r).current().review(reviewInput);
+
+    // The change owner has been added to the attention set
+    AttentionSetUpdate attentionSet =
+        Iterables.getOnlyElement(getAttentionSetUpdatesForUser(r, admin));
+    assertThat(attentionSet).hasAccountIdThat().isEqualTo(admin.id());
+    assertThat(attentionSet).hasOperationThat().isEqualTo(AttentionSetUpdate.Operation.ADD);
+    assertThat(attentionSet).hasReasonThat().isEqualTo("Someone else replied on the change");
+  }
+
+  @Test
+  public void repliesAddsOwner_markedAsReady() throws Exception {
+    PushOneCommit.Result r = createChange();
+    change(r).setWorkInProgress();
+
+    requestScopeOperations.setApiUser(accountCreator.admin2().id());
+    ReviewInput reviewInput = ReviewInput.create().setReady(true);
+    change(r).current().review(reviewInput);
+
+    // The change owner has been added to the attention set
+    AttentionSetUpdate attentionSet =
+        Iterables.getOnlyElement(getAttentionSetUpdatesForUser(r, admin));
+    assertThat(attentionSet).hasAccountIdThat().isEqualTo(admin.id());
+    assertThat(attentionSet).hasOperationThat().isEqualTo(AttentionSetUpdate.Operation.ADD);
+    assertThat(attentionSet).hasReasonThat().isEqualTo("Someone else replied on the change");
+  }
+
+  @Test
+  public void noOpRepliesDontAddOwner() throws Exception {
+    PushOneCommit.Result r = createChange();
+
+    // post a no-op reply (a reply that does neither add any vote, change message, comment nor
+    // changes the change to ready)
+    requestScopeOperations.setApiUser(user.id());
+    change(r).current().review(new ReviewInput());
+
+    // The change owner has not been added to the attention set
+    assertThat(getAttentionSetUpdatesForUser(r, admin)).isEmpty();
   }
 
   @Test
@@ -1076,18 +1337,16 @@ public class AttentionSetIT extends AbstractDaemonTest {
 
   @Test
   public void repliesAddsOwnerAndUploader() throws Exception {
-    // Create change with owner: admin
+    // Create change with admin as the owner and user as the uploader
     PushOneCommit.Result r = createChange();
     r = amendChangeWithUploader(r, project, user);
+    change(r).attention(user.email()).remove(new AttentionSetInput("reason"));
 
+    // Post a comment by another user
     TestAccount user2 = accountCreator.user2();
     requestScopeOperations.setApiUser(user2.id());
-
-    change(r).attention(user.email()).remove(new AttentionSetInput("reason"));
     ReviewInput reviewInput = new ReviewInput();
-    change(r).current().review(reviewInput);
-
-    reviewInput = new ReviewInput();
+    reviewInput.message = "A message";
     change(r).current().review(reviewInput);
 
     // Uploader added
@@ -1102,6 +1361,25 @@ public class AttentionSetIT extends AbstractDaemonTest {
     assertThat(attentionSet).hasAccountIdThat().isEqualTo(admin.id());
     assertThat(attentionSet).hasOperationThat().isEqualTo(AttentionSetUpdate.Operation.ADD);
     assertThat(attentionSet).hasReasonThat().isEqualTo("Someone else replied on the change");
+  }
+
+  @Test
+  public void noOpRepliesDontAddOwnerAndUploader() throws Exception {
+    // Create change with admin as the owner and user as the uploader
+    PushOneCommit.Result r = createChange();
+    r = amendChangeWithUploader(r, project, user);
+    change(r).attention(user.email()).remove(new AttentionSetInput("reason"));
+
+    // Post a no-op reply by another user (a reply that does neither add any vote, change message,
+    // comment nor changes the change to ready)
+    TestAccount user2 = accountCreator.user2();
+    requestScopeOperations.setApiUser(user2.id());
+    ReviewInput reviewInput = new ReviewInput();
+    change(r).current().review(reviewInput);
+
+    // Neither the change owner nor the uploader have been added to the attention set
+    assertThat(getAttentionSetUpdatesForUser(r, admin)).isEmpty();
+    assertThat(getAttentionSetUpdatesForUser(r, user)).isEmpty();
   }
 
   @Test
@@ -1339,7 +1617,9 @@ public class AttentionSetIT extends AbstractDaemonTest {
 
     requestScopeOperations.setApiUser(user.id());
 
-    change(r).current().review(new ReviewInput());
+    reviewInput = new ReviewInput();
+    reviewInput.message = "A message";
+    change(r).current().review(reviewInput);
 
     // Reviewer and CC not added since the uploader didn't reply to their comments
     assertThat(getAttentionSetUpdatesForUser(r, cc)).isEmpty();
@@ -1527,6 +1807,99 @@ public class AttentionSetIT extends AbstractDaemonTest {
     assertThat(attentionSet).hasAccountIdThat().isEqualTo(admin.id());
     assertThat(attentionSet).hasOperationThat().isEqualTo(AttentionSetUpdate.Operation.ADD);
     assertThat(attentionSet).hasReasonThat().isEqualTo("A robot voted negatively on a label");
+  }
+
+  @Test
+  public void robotReviewWithNegativeLabelOnOutdatedPatchSetAddsOwnerIfVoteWasCopied()
+      throws Exception {
+    // Define a label with a copy condition that copies all votes.
+    try (ProjectConfigUpdate u = updateProject(project)) {
+      LabelType.Builder fooReview =
+          labelBuilder(
+                  "Foo-Review",
+                  value(1, "Looks good to me, but someone else must approve"),
+                  value(0, "No score"),
+                  value(-1, "I would prefer this is not submitted as is"))
+              .setCopyCondition("is:ANY");
+      u.getConfig().upsertLabelType(fooReview.build());
+      u.save();
+    }
+
+    // Allow voting on the label.
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            allowLabel("Foo-Review")
+                .ref(RefNames.REFS_HEADS + "*")
+                .group(REGISTERED_USERS)
+                .range(-1, 1))
+        .update();
+
+    // Create a change with 2 patch sets.
+    PushOneCommit.Result r = createChange();
+    PatchSet patchSet1 = r.getChange().currentPatchSet();
+    r = amendChange(r.getChangeId());
+    r.assertOkStatus();
+
+    // Create a service user and apply a negative vote on the first patch set which is copied since
+    // the label has a copy condition that copies all votes
+    TestAccount robot =
+        accountCreator.create(
+            "robot2", "robot2@example.com", "Ro Bot", "Ro", ServiceUserClassifier.SERVICE_USERS);
+    requestScopeOperations.setApiUser(robot.id());
+    change(r).revision(patchSet1.number()).review(new ReviewInput().label("Foo-Review", -1));
+
+    // The change owner has been added to the attention set
+    AttentionSetUpdate attentionSet =
+        Iterables.getOnlyElement(getAttentionSetUpdatesForUser(r, admin));
+    assertThat(attentionSet).hasAccountIdThat().isEqualTo(admin.id());
+    assertThat(attentionSet).hasOperationThat().isEqualTo(AttentionSetUpdate.Operation.ADD);
+    assertThat(attentionSet).hasReasonThat().isEqualTo("A robot voted negatively on a label");
+  }
+
+  @Test
+  public void robotReviewWithNegativeLabelOnOutdatedPatchSetDoesntAddOwnerIfVoteWasNotCopied()
+      throws Exception {
+    // Define a label without any copy condition.
+    try (ProjectConfigUpdate u = updateProject(project)) {
+      LabelType.Builder fooReview =
+          labelBuilder(
+              "Foo-Review",
+              value(1, "Looks good to me, but someone else must approve"),
+              value(0, "No score"),
+              value(-1, "I would prefer this is not submitted as is"));
+      u.getConfig().upsertLabelType(fooReview.build());
+      u.save();
+    }
+
+    // Allow voting on the label.
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            allowLabel("Foo-Review")
+                .ref(RefNames.REFS_HEADS + "*")
+                .group(REGISTERED_USERS)
+                .range(-1, 1))
+        .update();
+
+    // Create a change with 2 patch sets.
+    PushOneCommit.Result r = createChange();
+    PatchSet patchSet1 = r.getChange().currentPatchSet();
+    r = amendChange(r.getChangeId());
+    r.assertOkStatus();
+
+    // Create a service user and apply a negative vote on the first patch set which is not copied
+    // since the label doesn't have a copy condition
+    TestAccount robot =
+        accountCreator.create(
+            "robot2", "robot2@example.com", "Ro Bot", "Ro", ServiceUserClassifier.SERVICE_USERS);
+    requestScopeOperations.setApiUser(robot.id());
+    change(r).revision(patchSet1.number()).review(new ReviewInput().label("Foo-Review", -1));
+
+    // The change owner has not been added to the attention set
+    assertThat(getAttentionSetUpdatesForUser(r, admin)).isEmpty();
   }
 
   @Test
@@ -1835,7 +2208,8 @@ public class AttentionSetIT extends AbstractDaemonTest {
     setEmailStrategyForUser(EmailStrategy.ATTENTION_SET_ONLY);
 
     // Ensure emails that don't relate to changes are still sent.
-    gApi.accounts().id(user.id().get()).generateHttpPassword();
+    @SuppressWarnings("unused")
+    var unused = gApi.accounts().id(user.id().get()).generateHttpPassword();
     assertThat(sender.getMessages()).isNotEmpty();
   }
 

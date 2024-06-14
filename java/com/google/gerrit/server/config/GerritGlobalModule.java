@@ -81,7 +81,6 @@ import com.google.gerrit.extensions.webui.TagWebLink;
 import com.google.gerrit.extensions.webui.TopMenu;
 import com.google.gerrit.extensions.webui.WebUiPlugin;
 import com.google.gerrit.server.AnonymousUser;
-import com.google.gerrit.server.ChangeDraftUpdate;
 import com.google.gerrit.server.CmdLineParserModule;
 import com.google.gerrit.server.CreateGroupPermissionSyncer;
 import com.google.gerrit.server.DeadlineChecker;
@@ -122,6 +121,7 @@ import com.google.gerrit.server.change.ChangeKindCacheImpl;
 import com.google.gerrit.server.change.ChangePluginDefinedInfoFactory;
 import com.google.gerrit.server.change.EmailNewPatchSet;
 import com.google.gerrit.server.change.FileInfoJsonModule;
+import com.google.gerrit.server.change.FilterIncludedIn;
 import com.google.gerrit.server.change.MergeabilityCacheImpl;
 import com.google.gerrit.server.change.ReviewerSuggestion;
 import com.google.gerrit.server.change.RevisionJson;
@@ -160,7 +160,7 @@ import com.google.gerrit.server.git.validators.RefOperationValidators;
 import com.google.gerrit.server.git.validators.UploadValidationListener;
 import com.google.gerrit.server.git.validators.UploadValidators;
 import com.google.gerrit.server.group.db.GroupDbModule;
-import com.google.gerrit.server.index.change.ReindexAfterRefUpdate;
+import com.google.gerrit.server.index.change.ReindexChangesAfterRefUpdate;
 import com.google.gerrit.server.logging.PerformanceLogger;
 import com.google.gerrit.server.mail.AutoReplyMailFilter;
 import com.google.gerrit.server.mail.ListMailFilter;
@@ -171,11 +171,11 @@ import com.google.gerrit.server.mail.send.MailSoySauceModule;
 import com.google.gerrit.server.mail.send.MailSoyTemplateProvider;
 import com.google.gerrit.server.mime.FileTypeRegistry;
 import com.google.gerrit.server.mime.MimeUtilFileTypeRegistry;
-import com.google.gerrit.server.notedb.ChangeDraftNotesUpdate;
 import com.google.gerrit.server.notedb.DeleteZombieCommentsRefs;
 import com.google.gerrit.server.notedb.NoteDbModule;
 import com.google.gerrit.server.notedb.StoreSubmitRequirementsOp;
 import com.google.gerrit.server.patch.DiffFileSizeValidator;
+import com.google.gerrit.server.patch.DiffOperationsForCommitValidation;
 import com.google.gerrit.server.patch.DiffOperationsImpl;
 import com.google.gerrit.server.patch.DiffValidator;
 import com.google.gerrit.server.patch.PatchListCacheImpl;
@@ -318,6 +318,7 @@ public class GerritGlobalModule extends FactoryModule {
     factory(ProjectOwnerGroupsProvider.Factory.class);
     factory(SubmitRuleEvaluator.Factory.class);
     factory(DeleteZombieCommentsRefs.Factory.class);
+    factory(DiffOperationsForCommitValidation.Factory.class);
 
     bind(AuthBackend.class).to(UniversalAuthBackend.class).in(SINGLETON);
     DynamicSet.setOf(binder(), AuthBackend.class);
@@ -396,7 +397,8 @@ public class GerritGlobalModule extends FactoryModule {
     DynamicSet.setOf(binder(), GarbageCollectorListener.class);
     DynamicSet.setOf(binder(), HeadUpdatedListener.class);
     DynamicSet.setOf(binder(), UsageDataPublishedListener.class);
-    DynamicSet.bind(binder(), GitBatchRefUpdateListener.class).to(ReindexAfterRefUpdate.class);
+    DynamicSet.bind(binder(), GitBatchRefUpdateListener.class)
+        .to(ReindexChangesAfterRefUpdate.class);
     DynamicSet.bind(binder(), GitReferenceUpdatedListener.class)
         .to(ProjectConfigEntry.UpdateChecker.class);
     DynamicSet.setOf(binder(), EventListener.class);
@@ -429,6 +431,7 @@ public class GerritGlobalModule extends FactoryModule {
     DynamicSet.bind(binder(), GerritConfigListener.class)
         .toInstance(SuggestReviewers.configListener());
     DynamicSet.setOf(binder(), ExternalIncludedIn.class);
+    DynamicSet.setOf(binder(), FilterIncludedIn.class);
     DynamicMap.mapOf(binder(), ProjectConfigEntry.class);
     DynamicSet.setOf(binder(), PluginPushOption.class);
     DynamicSet.setOf(binder(), PatchSetWebLink.class);
@@ -481,7 +484,6 @@ public class GerritGlobalModule extends FactoryModule {
     bind(CommentValidator.class)
         .annotatedWith(Exports.named(CommentCumulativeSizeValidator.class.getSimpleName()))
         .to(CommentCumulativeSizeValidator.class);
-    bind(ChangeDraftUpdate.ChangeDraftUpdateFactory.class).to(ChangeDraftNotesUpdate.Factory.class);
 
     DynamicMap.mapOf(binder(), DynamicOptions.DynamicBean.class);
     DynamicMap.mapOf(binder(), ChangeQueryBuilder.ChangeOperatorFactory.class);

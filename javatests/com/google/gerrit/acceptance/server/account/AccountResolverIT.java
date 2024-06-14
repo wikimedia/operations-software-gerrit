@@ -16,7 +16,6 @@ package com.google.gerrit.acceptance.server.account;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
-import static com.google.common.truth.Truth8.assertThat;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.google.common.base.Splitter;
@@ -106,7 +105,7 @@ public class AccountResolverIT extends AbstractDaemonTest {
     gApi.accounts().id(user.id().get()).setActive(false);
 
     requestScopeOperations.setApiUser(user.id());
-    assertThat(gApi.accounts().id("self").getActive()).isFalse();
+    assertThat(gApi.accounts().self().getActive()).isFalse();
 
     Result result = resolveAsResult("self");
     assertThat(result.asIdSet()).containsExactly(user.id());

@@ -15,7 +15,6 @@
 package com.google.gerrit.acceptance.ssh;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth8.assertThat;
 
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.UseSsh;
@@ -31,7 +30,7 @@ public class CreateProjectIT extends AbstractDaemonTest {
   @Test
   public void withValidGroupName() throws Exception {
     String newGroupName = "newGroup";
-    adminRestSession.put("/groups/" + newGroupName);
+    adminRestSession.put("/groups/" + newGroupName).assertCreated();
     String newProjectName = "newProject";
     adminSshSession.exec(
         "gerrit create-project --branch master --owner " + newGroupName + " " + newProjectName);
@@ -43,7 +42,7 @@ public class CreateProjectIT extends AbstractDaemonTest {
   @Test
   public void withInvalidGroupName() throws Exception {
     String newGroupName = "newGroup";
-    adminRestSession.put("/groups/" + newGroupName);
+    adminRestSession.put("/groups/" + newGroupName).assertCreated();
     String wrongGroupName = "newG";
     String newProjectName = "newProject";
     adminSshSession.exec(
@@ -56,7 +55,7 @@ public class CreateProjectIT extends AbstractDaemonTest {
   @Test
   public void withDotGit() throws Exception {
     String newGroupName = "newGroup";
-    adminRestSession.put("/groups/" + newGroupName);
+    adminRestSession.put("/groups/" + newGroupName).assertCreated();
     String newProjectName = name("newProject");
     adminSshSession.exec(
         "gerrit create-project --branch master --owner "
@@ -73,7 +72,7 @@ public class CreateProjectIT extends AbstractDaemonTest {
   @Test
   public void withTrailingSlash() throws Exception {
     String newGroupName = "newGroup";
-    adminRestSession.put("/groups/" + newGroupName);
+    adminRestSession.put("/groups/" + newGroupName).assertCreated();
     String newProjectName = name("newProject");
     adminSshSession.exec(
         "gerrit create-project --branch master --owner "

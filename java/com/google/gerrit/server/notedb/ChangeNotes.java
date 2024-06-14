@@ -219,6 +219,8 @@ public class ChangeNotes extends AbstractChangeNotes<ChangeNotes> {
      * requires using the Change index and should only be used when {@link
      * com.google.gerrit.entities.Project.NameKey} and the numeric change ID are not available.
      */
+    @UsedAt(UsedAt.Project.PLUGINS_ALL)
+    @Deprecated(since = "3.10", forRemoval = true)
     public List<ChangeNotes> createUsingIndexLookup(Collection<Change.Id> changeIds) {
       List<ChangeNotes> notes = new ArrayList<>();
       for (Change.Id changeId : changeIds) {
@@ -553,11 +555,12 @@ public class ChangeNotes extends AbstractChangeNotes<ChangeNotes> {
     return getDraftComments(author, null, null);
   }
 
-  public ImmutableList<HumanComment> getDraftComments(Account.Id author, Ref ref) {
+  public ImmutableList<HumanComment> getDraftComments(Account.Id author, @Nullable Ref ref) {
     return getDraftComments(author, null, ref);
   }
 
-  public ImmutableList<HumanComment> getDraftComments(Account.Id author, Change.Id virtualId) {
+  public ImmutableList<HumanComment> getDraftComments(
+      Account.Id author, @Nullable Change.Id virtualId) {
     return getDraftComments(author, virtualId, null);
   }
 

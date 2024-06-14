@@ -77,6 +77,7 @@ const LANGUAGE_MAP = new Map<string, string>([
   ['text/x-puppet', 'puppet'],
   ['text/x-python', 'python'],
   ['text/x-q', 'q'],
+  ['text/x-qml', 'qml'],
   ['text/x-ruby', 'ruby'],
   ['text/x-rustsrc', 'rust'],
   ['text/x-scala', 'scala'],
@@ -99,7 +100,7 @@ const LANGUAGE_MAP = new Map<string, string>([
   ['text/vbscript', 'vbscript'],
 ]);
 
-const CLASS_PREFIX = 'gr-diff gr-syntax gr-syntax-';
+const CLASS_PREFIX = 'gr-syntax gr-syntax-';
 
 const CLASS_SAFELIST = new Set<string>([
   'attr',

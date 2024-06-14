@@ -18,6 +18,7 @@ import static com.google.common.base.Preconditions.checkState;
 
 import com.google.auto.value.AutoValue;
 import com.google.common.collect.ImmutableSet;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.acceptance.testsuite.ThrowingFunction;
 import com.google.gerrit.entities.Account;
 import java.util.Optional;
@@ -41,50 +42,62 @@ public abstract class TestAccountCreation {
 
   abstract ThrowingFunction<TestAccountCreation, Account.Id> accountCreator();
 
-  public static Builder builder(ThrowingFunction<TestAccountCreation, Account.Id> accountCreator) {
-    return new AutoValue_TestAccountCreation.Builder()
-        .accountCreator(accountCreator)
-        .httpPassword("http-pass");
+  public static Builder builder(
+      ThrowingFunction<TestAccountCreation, Account.Id> accountCreator,
+      boolean arePasswordsAllowed) {
+    TestAccountCreation.Builder builder =
+        new AutoValue_TestAccountCreation.Builder().accountCreator(accountCreator);
+    if (arePasswordsAllowed) {
+      builder.httpPassword("http-pass");
+    }
+    return builder;
   }
 
   @AutoValue.Builder
   public abstract static class Builder {
     public abstract Builder fullname(String fullname);
 
+    @CanIgnoreReturnValue
     public Builder clearFullname() {
       return fullname("");
     }
 
     public abstract Builder httpPassword(String httpPassword);
 
+    @CanIgnoreReturnValue
     public Builder clearHttpPassword() {
       return httpPassword("");
     }
 
     public abstract Builder preferredEmail(String preferredEmail);
 
+    @CanIgnoreReturnValue
     public Builder clearPreferredEmail() {
       return preferredEmail("");
     }
 
     public abstract Builder username(String username);
 
+    @CanIgnoreReturnValue
     public Builder clearUsername() {
       return username("");
     }
 
     public abstract Builder status(String status);
 
+    @CanIgnoreReturnValue
     public Builder clearStatus() {
       return status("");
     }
 
     abstract Builder active(boolean active);
 
+    @CanIgnoreReturnValue
     public Builder active() {
       return active(true);
     }
 
+    @CanIgnoreReturnValue
     public Builder inactive() {
       return active(false);
     }
@@ -93,6 +106,7 @@ public abstract class TestAccountCreation {
 
     abstract ImmutableSet.Builder<String> secondaryEmailsBuilder();
 
+    @CanIgnoreReturnValue
     public Builder addSecondaryEmail(String secondaryEmail) {
       secondaryEmailsBuilder().add(secondaryEmail);
       return this;
@@ -103,6 +117,7 @@ public abstract class TestAccountCreation {
 
     abstract TestAccountCreation autoBuild();
 
+    @CanIgnoreReturnValue
     public Account.Id create() {
       TestAccountCreation accountCreation = autoBuild();
       if (accountCreation.preferredEmail().isPresent()) {

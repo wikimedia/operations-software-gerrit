@@ -147,7 +147,7 @@ public abstract class AbstractQueryProjectsTest extends GerritServerTests {
 
     Account.Id userId = createAccount("user", "User", "user@example.com", true);
     user = userFactory.create(userId);
-    requestContext.setContext(newRequestContext(userId));
+    setRequestContextForUser(userId);
     currentUserInfo = gApi.accounts().id(userId.get()).get();
 
     // All-Projects and All-Users are not indexed, index them now.
@@ -166,7 +166,8 @@ public abstract class AbstractQueryProjectsTest extends GerritServerTests {
   }
 
   protected void setAnonymous() {
-    requestContext.setContext(anonymousUser::get);
+    @SuppressWarnings("unused")
+    var unused = requestContext.setContext(anonymousUser::get);
   }
 
   @After
@@ -174,7 +175,8 @@ public abstract class AbstractQueryProjectsTest extends GerritServerTests {
     if (lifecycle != null) {
       lifecycle.stop();
     }
-    requestContext.setContext(null);
+    @SuppressWarnings("unused")
+    var unused = requestContext.setContext(null);
   }
 
   @Test
@@ -426,6 +428,12 @@ public abstract class AbstractQueryProjectsTest extends GerritServerTests {
     }
   }
 
+  private void setRequestContextForUser(Account.Id userId) {
+    @SuppressWarnings("unused")
+    var unused = requestContext.setContext(newRequestContext(userId));
+  }
+
+  @CanIgnoreReturnValue
   protected ProjectInfo createProject(String name) throws Exception {
     ProjectInput in = new ProjectInput();
     in.name = name;
@@ -440,6 +448,7 @@ public abstract class AbstractQueryProjectsTest extends GerritServerTests {
     return gApi.projects().create(in).get();
   }
 
+  @CanIgnoreReturnValue
   protected ProjectInfo createProjectWithDescription(String name, String description)
       throws Exception {
     ProjectInput in = new ProjectInput();
@@ -448,6 +457,7 @@ public abstract class AbstractQueryProjectsTest extends GerritServerTests {
     return gApi.projects().create(in).get();
   }
 
+  @CanIgnoreReturnValue
   protected ProjectInfo createProjectWithState(String name, ProjectState state) throws Exception {
     ProjectInfo info = createProject(name);
     ConfigInput config = new ConfigInput();
@@ -456,6 +466,7 @@ public abstract class AbstractQueryProjectsTest extends GerritServerTests {
     return info;
   }
 
+  @CanIgnoreReturnValue
   protected ProjectInfo createProjectRestrictedToRegisteredUsers(String name) throws Exception {
     createProject(name);
 
@@ -475,19 +486,22 @@ public abstract class AbstractQueryProjectsTest extends GerritServerTests {
     return gApi.projects().name(nameKey.get()).get();
   }
 
+  @CanIgnoreReturnValue
   protected List<ProjectInfo> assertQuery(Object query, ProjectInfo... projects) throws Exception {
     return assertQuery(newQuery(query), projects);
   }
 
+  @CanIgnoreReturnValue
   protected List<ProjectInfo> assertQuery(QueryRequest query, ProjectInfo... projects)
       throws Exception {
     return assertQuery(query, Arrays.asList(projects));
   }
 
+  @CanIgnoreReturnValue
   protected List<ProjectInfo> assertQuery(QueryRequest query, List<ProjectInfo> projects)
       throws Exception {
     List<ProjectInfo> result = query.get();
-    Iterable<String> names = names(result);
+    List<String> names = names(result);
     assertWithMessage(format(query, result, projects))
         .that(names)
         .containsExactlyElementsIn(names(projects))
@@ -552,11 +566,11 @@ public abstract class AbstractQueryProjectsTest extends GerritServerTests {
     return indexes.getSearchIndex().getSchema();
   }
 
-  protected static Iterable<String> names(ProjectInfo... projects) {
+  protected static List<String> names(ProjectInfo... projects) {
     return names(Arrays.asList(projects));
   }
 
-  protected static Iterable<String> names(List<ProjectInfo> projects) {
+  protected static List<String> names(List<ProjectInfo> projects) {
     return projects.stream().map(p -> p.name).collect(toList());
   }
 

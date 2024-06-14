@@ -18,6 +18,7 @@ import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toSet;
 
 import com.google.common.cache.Cache;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Sets;
 import com.google.gerrit.common.Die;
 import com.google.gerrit.extensions.config.FactoryModule;
@@ -44,6 +45,8 @@ import com.google.gerrit.server.index.change.ChangeSchemaDefinitions;
 import com.google.gerrit.server.index.options.AutoFlush;
 import com.google.gerrit.server.index.options.BuildBloomFilter;
 import com.google.gerrit.server.index.options.IsFirstInsertForEntry;
+import com.google.gerrit.server.notedb.NoteDbDraftCommentsModule;
+import com.google.gerrit.server.notedb.NoteDbStarredChangesModule;
 import com.google.gerrit.server.notedb.RepoSequence.RepoSequenceModule;
 import com.google.gerrit.server.plugins.PluginGuiceEnvironment;
 import com.google.gerrit.server.util.ReplicaUtil;
@@ -59,9 +62,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
@@ -97,6 +98,8 @@ public class Reindex extends SiteProgram {
   @Option(name = "--build-bloom-filter", usage = "Build bloom filter for H2 disk caches.")
   private boolean buildBloomFilter;
 
+  private Boolean reuseExistingDocumentsOption;
+
   private Injector dbInjector;
   private Injector sysInjector;
   private Injector cfgInjector;
@@ -104,6 +107,11 @@ public class Reindex extends SiteProgram {
 
   @Inject private Collection<IndexDefinition<?, ?, ?>> indexDefs;
   @Inject private DynamicMap<Cache<?, ?>> cacheMap;
+
+  @Option(name = "--reuse", usage = "Reindex only when existing index entry is stale")
+  public void setReuseExistingDocuments(boolean value) {
+    reuseExistingDocumentsOption = value;
+  }
 
   @Override
   public int run() throws Exception {
@@ -173,10 +181,10 @@ public class Reindex extends SiteProgram {
   }
 
   private Injector createSysInjector() {
-    Map<String, Integer> versions = new HashMap<>();
-    if (changesVersion != null) {
-      versions.put(ChangeSchemaDefinitions.INSTANCE.getName(), changesVersion);
-    }
+    ImmutableMap<String, Integer> versions =
+        changesVersion != null
+            ? ImmutableMap.of(ChangeSchemaDefinitions.INSTANCE.getName(), changesVersion)
+            : ImmutableMap.of();
     boolean replica = ReplicaUtil.isReplica(globalConfig);
     List<Module> modules = new ArrayList<>();
     modules.add(new WorkQueueModule());
@@ -194,7 +202,7 @@ public class Reindex extends SiteProgram {
         Class<?> clazz = Class.forName("com.google.gerrit.index.testing.FakeIndexModule");
         Method m =
             clazz.getMethod(
-                "singleVersionWithExplicitVersions", Map.class, int.class, boolean.class);
+                "singleVersionWithExplicitVersions", ImmutableMap.class, int.class, boolean.class);
         indexModule = (Module) m.invoke(null, versions, threads, replica);
       } catch (NoSuchMethodException
           | ClassNotFoundException
@@ -230,6 +238,8 @@ public class Reindex extends SiteProgram {
     modules.add(new AccountNoteDbWriteStorageModule());
     modules.add(new AccountNoteDbReadStorageModule());
     modules.add(new RepoSequenceModule());
+    modules.add(new NoteDbDraftCommentsModule());
+    modules.add(new NoteDbStarredChangesModule());
 
     return dbInjector.createChildInjector(
         ModuleOverloader.override(
@@ -255,9 +265,16 @@ public class Reindex extends SiteProgram {
     requireNonNull(
         index, () -> String.format("no active search index configured for %s", def.getName()));
     index.markReady(false);
-    index.deleteAll();
+    boolean reuseExistingDocuments =
+        reuseExistingDocumentsOption != null
+            ? reuseExistingDocumentsOption
+            : globalConfig.getBoolean("index", null, "reuseExistingDocuments", false);
 
-    SiteIndexer<K, V, I> siteIndexer = def.getSiteIndexer();
+    if (!reuseExistingDocuments) {
+      index.deleteAll();
+    }
+
+    SiteIndexer<K, V, I> siteIndexer = def.getSiteIndexer(reuseExistingDocuments);
     siteIndexer.setProgressOut(System.err);
     siteIndexer.setVerboseOut(verbose ? System.out : NullOutputStream.INSTANCE);
     SiteIndexer.Result result = siteIndexer.indexAll(index);

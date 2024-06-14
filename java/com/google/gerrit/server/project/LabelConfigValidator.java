@@ -24,16 +24,16 @@ import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.LabelFunction;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.client.ChangeKind;
+import com.google.gerrit.index.query.QueryParseException;
 import com.google.gerrit.server.events.CommitReceivedEvent;
+import com.google.gerrit.server.git.meta.VersionedConfigFile;
 import com.google.gerrit.server.git.validators.CommitValidationException;
 import com.google.gerrit.server.git.validators.CommitValidationListener;
 import com.google.gerrit.server.git.validators.CommitValidationMessage;
 import com.google.gerrit.server.git.validators.ValidationMessage;
 import com.google.gerrit.server.patch.DiffNotAvailableException;
-import com.google.gerrit.server.patch.DiffOperations;
-import com.google.gerrit.server.patch.DiffOptions;
-import com.google.gerrit.server.patch.filediff.FileDiffOutput;
-import com.google.inject.Inject;
+import com.google.gerrit.server.patch.gitdiff.ModifiedFile;
+import com.google.gerrit.server.query.approval.ApprovalQueryBuilder;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.List;
@@ -103,11 +103,10 @@ public class LabelConfigValidator implements CommitValidationListener {
           .put(KEY_COPY_ALL_SCORES_IF_LIST_OF_FILES_DID_NOT_CHANGE, "has:unchanged-files")
           .build();
 
-  private final DiffOperations diffOperations;
+  private final ApprovalQueryBuilder approvalQueryBuilder;
 
-  @Inject
-  public LabelConfigValidator(DiffOperations diffOperations) {
-    this.diffOperations = diffOperations;
+  public LabelConfigValidator(ApprovalQueryBuilder approvalQueryBuilder) {
+    this.approvalQueryBuilder = approvalQueryBuilder;
   }
 
   @Override
@@ -143,93 +142,25 @@ public class LabelConfigValidator implements CommitValidationListener {
       }
 
       // Load the old config
-      Optional<Config> oldConfig = loadOldConfig(receiveEvent);
+      @Nullable Config oldConfig = loadOldConfig(receiveEvent).orElse(null);
 
       for (String labelName : newConfig.getSubsections(ProjectConfig.LABEL)) {
-        for (String deprecatedFlag : DEPRECATED_FLAGS.keySet()) {
-          if (flagChangedOrNewlySet(newConfig, oldConfig.orElse(null), labelName, deprecatedFlag)) {
-            validationMessageBuilder.add(
-                new CommitValidationMessage(
-                    String.format(
-                        "Parameter '%s.%s.%s' is deprecated and cannot be set,"
-                            + " use '%s' in '%s.%s.%s' instead.",
-                        ProjectConfig.LABEL,
-                        labelName,
-                        deprecatedFlag,
-                        DEPRECATED_FLAGS.get(deprecatedFlag),
-                        ProjectConfig.LABEL,
-                        labelName,
-                        ProjectConfig.KEY_COPY_CONDITION),
-                    ValidationMessage.Type.ERROR));
-          }
-        }
-
-        if (copyValuesChangedOrNewlySet(newConfig, oldConfig.orElse(null), labelName)) {
-          validationMessageBuilder.add(
-              new CommitValidationMessage(
-                  String.format(
-                      "Parameter '%s.%s.%s' is deprecated and cannot be set,"
-                          + " use 'is:<copy-value>' in '%s.%s.%s' instead.",
-                      ProjectConfig.LABEL,
-                      labelName,
-                      KEY_COPY_VALUE,
-                      ProjectConfig.LABEL,
-                      labelName,
-                      ProjectConfig.KEY_COPY_CONDITION),
-                  ValidationMessage.Type.ERROR));
-        }
-
-        // Ban modifying label functions to any blocking function value
-        if (flagChangedOrNewlySet(
-            newConfig, oldConfig.orElse(null), labelName, ProjectConfig.KEY_FUNCTION)) {
-          String fnName =
-              newConfig.getString(ProjectConfig.LABEL, labelName, ProjectConfig.KEY_FUNCTION);
-          Optional<LabelFunction> labelFn = LabelFunction.parse(fnName);
-          if (labelFn.isPresent() && !isLabelFunctionAllowed(labelFn.get())) {
-            validationMessageBuilder.add(
-                new CommitValidationMessage(
-                    String.format(
-                        "Value '%s' of '%s.%s.%s' is not allowed and cannot be set."
-                            + " Label functions can only be set to {%s, %s, %s}."
-                            + " Use submit requirements instead of label functions.",
-                        fnName,
-                        ProjectConfig.LABEL,
-                        labelName,
-                        ProjectConfig.KEY_FUNCTION,
-                        LabelFunction.NO_BLOCK,
-                        LabelFunction.NO_OP,
-                        LabelFunction.PATCH_SET_LOCK),
-                    ValidationMessage.Type.ERROR));
-          }
-        }
-
-        // Ban deletions of label functions as well since the default is MaxWithBlock
-        if (flagDeleted(newConfig, oldConfig.orElse(null), labelName, ProjectConfig.KEY_FUNCTION)) {
-          validationMessageBuilder.add(
-              new CommitValidationMessage(
-                  String.format(
-                      "Cannot delete '%s.%s.%s'."
-                          + " Label functions can only be set to {%s, %s, %s}."
-                          + " Use submit requirements instead of label functions.",
-                      ProjectConfig.LABEL,
-                      labelName,
-                      ProjectConfig.KEY_FUNCTION,
-                      LabelFunction.NO_BLOCK,
-                      LabelFunction.NO_OP,
-                      LabelFunction.PATCH_SET_LOCK),
-                  ValidationMessage.Type.ERROR));
-        }
+        rejectSettingDeprecatedFlags(newConfig, oldConfig, labelName, validationMessageBuilder);
+        rejectSettingCopyValues(newConfig, oldConfig, labelName, validationMessageBuilder);
+        rejectSettingBlockingFunction(newConfig, oldConfig, labelName, validationMessageBuilder);
+        rejectDeletingFunction(newConfig, oldConfig, labelName, validationMessageBuilder);
+        rejectNonParseableCopyCondition(newConfig, oldConfig, labelName, validationMessageBuilder);
       }
 
       ImmutableList<CommitValidationMessage> validationMessages = validationMessageBuilder.build();
-      if (!validationMessages.isEmpty()) {
+      if (validationMessages.stream().anyMatch(CommitValidationMessage::isError)) {
         throw new CommitValidationException(
             String.format(
                 "invalid %s file in revision %s",
                 ProjectConfig.PROJECT_CONFIG, receiveEvent.commit.getName()),
             validationMessages);
       }
-      return ImmutableList.of();
+      return validationMessages;
     } catch (IOException | DiffNotAvailableException e) {
       String errorMessage =
           String.format(
@@ -243,6 +174,149 @@ public class LabelConfigValidator implements CommitValidationListener {
     }
   }
 
+  private void rejectSettingDeprecatedFlags(
+      Config newConfig,
+      @Nullable Config oldConfig,
+      String labelName,
+      ImmutableList.Builder<CommitValidationMessage> validationMessageBuilder) {
+    for (String deprecatedFlag : DEPRECATED_FLAGS.keySet()) {
+      if (flagChangedOrNewlySet(newConfig, oldConfig, labelName, deprecatedFlag)) {
+        validationMessageBuilder.add(
+            new CommitValidationMessage(
+                String.format(
+                    "Parameter '%s.%s.%s' is deprecated and cannot be set,"
+                        + " use '%s' in '%s.%s.%s' instead.",
+                    ProjectConfig.LABEL,
+                    labelName,
+                    deprecatedFlag,
+                    DEPRECATED_FLAGS.get(deprecatedFlag),
+                    ProjectConfig.LABEL,
+                    labelName,
+                    ProjectConfig.KEY_COPY_CONDITION),
+                ValidationMessage.Type.ERROR));
+      }
+    }
+  }
+
+  private void rejectSettingCopyValues(
+      Config newConfig,
+      @Nullable Config oldConfig,
+      String labelName,
+      ImmutableList.Builder<CommitValidationMessage> validationMessageBuilder) {
+    if (copyValuesChangedOrNewlySet(newConfig, oldConfig, labelName)) {
+      validationMessageBuilder.add(
+          new CommitValidationMessage(
+              String.format(
+                  "Parameter '%s.%s.%s' is deprecated and cannot be set,"
+                      + " use 'is:<copy-value>' in '%s.%s.%s' instead.",
+                  ProjectConfig.LABEL,
+                  labelName,
+                  KEY_COPY_VALUE,
+                  ProjectConfig.LABEL,
+                  labelName,
+                  ProjectConfig.KEY_COPY_CONDITION),
+              ValidationMessage.Type.ERROR));
+    }
+  }
+
+  private void rejectSettingBlockingFunction(
+      Config newConfig,
+      @Nullable Config oldConfig,
+      String labelName,
+      ImmutableList.Builder<CommitValidationMessage> validationMessageBuilder) {
+    if (flagChangedOrNewlySet(newConfig, oldConfig, labelName, ProjectConfig.KEY_FUNCTION)) {
+      String fnName =
+          newConfig.getString(ProjectConfig.LABEL, labelName, ProjectConfig.KEY_FUNCTION);
+      Optional<LabelFunction> labelFn = LabelFunction.parse(fnName);
+      if (labelFn.isPresent() && !isLabelFunctionAllowed(labelFn.get())) {
+        validationMessageBuilder.add(
+            new CommitValidationMessage(
+                String.format(
+                    "Value '%s' of '%s.%s.%s' is not allowed and cannot be set."
+                        + " Label functions can only be set to {%s, %s, %s}."
+                        + " Use submit requirements instead of label functions.",
+                    fnName,
+                    ProjectConfig.LABEL,
+                    labelName,
+                    ProjectConfig.KEY_FUNCTION,
+                    LabelFunction.NO_BLOCK,
+                    LabelFunction.NO_OP,
+                    LabelFunction.PATCH_SET_LOCK),
+                ValidationMessage.Type.ERROR));
+      }
+    }
+  }
+
+  private void rejectDeletingFunction(
+      Config newConfig,
+      @Nullable Config oldConfig,
+      String labelName,
+      ImmutableList.Builder<CommitValidationMessage> validationMessageBuilder) {
+    // Ban deletion of label function since the default is MaxWithBlock which is deprecated
+    if (flagDeleted(newConfig, oldConfig, labelName, ProjectConfig.KEY_FUNCTION)) {
+      validationMessageBuilder.add(
+          new CommitValidationMessage(
+              String.format(
+                  "Cannot delete '%s.%s.%s'."
+                      + " Label functions can only be set to {%s, %s, %s}."
+                      + " Use submit requirements instead of label functions.",
+                  ProjectConfig.LABEL,
+                  labelName,
+                  ProjectConfig.KEY_FUNCTION,
+                  LabelFunction.NO_BLOCK,
+                  LabelFunction.NO_OP,
+                  LabelFunction.PATCH_SET_LOCK),
+              ValidationMessage.Type.ERROR));
+    }
+  }
+
+  private void rejectNonParseableCopyCondition(
+      Config newConfig,
+      @Nullable Config oldConfig,
+      String labelName,
+      ImmutableList.Builder<CommitValidationMessage> validationMessageBuilder) {
+    if (flagChangedOrNewlySet(newConfig, oldConfig, labelName, ProjectConfig.KEY_COPY_CONDITION)) {
+      String copyCondition =
+          newConfig.getString(ProjectConfig.LABEL, labelName, ProjectConfig.KEY_COPY_CONDITION);
+      try {
+        @SuppressWarnings("unused")
+        var unused = approvalQueryBuilder.parse(copyCondition);
+      } catch (QueryParseException e) {
+        validationMessageBuilder.add(
+            new CommitValidationMessage(
+                String.format(
+                    "Cannot parse copy condition '%s' of label %s (parameter '%s.%s.%s'): %s",
+                    copyCondition,
+                    labelName,
+                    ProjectConfig.LABEL,
+                    labelName,
+                    ProjectConfig.KEY_COPY_CONDITION,
+                    e.getMessage()),
+                // if the old copy condition is not parseable allow updating it even if the new copy
+                // condition is also not parseable, only emit a warning in this case
+                hasUnparseableOldCopyCondition(oldConfig, labelName)
+                    ? ValidationMessage.Type.WARNING
+                    : ValidationMessage.Type.ERROR));
+      }
+    }
+  }
+
+  private boolean hasUnparseableOldCopyCondition(@Nullable Config oldConfig, String labelName) {
+    if (oldConfig == null) {
+      return false;
+    }
+
+    String oldCopyCondition =
+        oldConfig.getString(ProjectConfig.LABEL, labelName, ProjectConfig.KEY_COPY_CONDITION);
+    try {
+      @SuppressWarnings("unused")
+      var unused = approvalQueryBuilder.parse(oldCopyCondition);
+      return false;
+    } catch (QueryParseException e) {
+      return true;
+    }
+  }
+
   /**
    * Whether the given file was changed in the given revision.
    *
@@ -251,7 +325,7 @@ public class LabelConfigValidator implements CommitValidationListener {
    */
   private boolean isFileChanged(CommitReceivedEvent receiveEvent, String fileName)
       throws DiffNotAvailableException {
-    Map<String, FileDiffOutput> fileDiffOutputs;
+    Map<String, ModifiedFile> fileDiffOutputs;
     if (receiveEvent.commit.getParentCount() > 0) {
       // normal commit with one parent: use listModifiedFilesAgainstParent with parentNum = 1 to
       // compare against the only parent (using parentNum = 0 to compare against the default parent
@@ -260,23 +334,26 @@ public class LabelConfigValidator implements CommitValidationListener {
       // = 1 to compare against the first parent (using parentNum = 0 would compare against the
       // auto-merge)
       fileDiffOutputs =
-          diffOperations.listModifiedFilesAgainstParent(
-              receiveEvent.getProjectNameKey(), receiveEvent.commit, 1, DiffOptions.DEFAULTS);
+          receiveEvent.diffOperations.loadModifiedFilesAgainstParentIfNecessary(
+              receiveEvent.getProjectNameKey(),
+              receiveEvent.commit,
+              1,
+              /* enableRenameDetection= */ true);
     } else {
       // initial commit: must use listModifiedFilesAgainstParent with parentNum = 0
       fileDiffOutputs =
-          diffOperations.listModifiedFilesAgainstParent(
+          receiveEvent.diffOperations.loadModifiedFilesAgainstParentIfNecessary(
               receiveEvent.getProjectNameKey(),
               receiveEvent.commit,
               /* parentNum=*/ 0,
-              DiffOptions.DEFAULTS);
+              /* enableRenameDetection= */ true);
     }
     return fileDiffOutputs.keySet().contains(fileName);
   }
 
   private Config loadNewConfig(CommitReceivedEvent receiveEvent)
       throws IOException, ConfigInvalidException {
-    ProjectLevelConfig.Bare bareConfig = new ProjectLevelConfig.Bare(ProjectConfig.PROJECT_CONFIG);
+    VersionedConfigFile bareConfig = new VersionedConfigFile(ProjectConfig.PROJECT_CONFIG);
     bareConfig.load(receiveEvent.project.getNameKey(), receiveEvent.revWalk, receiveEvent.commit);
     return bareConfig.getConfig();
   }
@@ -288,8 +365,7 @@ public class LabelConfigValidator implements CommitValidationListener {
     }
 
     try {
-      ProjectLevelConfig.Bare bareConfig =
-          new ProjectLevelConfig.Bare(ProjectConfig.PROJECT_CONFIG);
+      VersionedConfigFile bareConfig = new VersionedConfigFile(ProjectConfig.PROJECT_CONFIG);
       bareConfig.load(
           receiveEvent.project.getNameKey(),
           receiveEvent.revWalk,

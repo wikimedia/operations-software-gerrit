@@ -16,7 +16,6 @@ package com.google.gerrit.acceptance.rest.change;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
-import static com.google.common.truth.Truth8.assertThat;
 import static com.google.gerrit.acceptance.PushOneCommit.FILE_NAME;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowCapability;
 import static com.google.gerrit.extensions.client.ListChangesOption.DETAILED_ACCOUNTS;
@@ -53,7 +52,6 @@ import com.google.gerrit.server.util.AccountTemplateUtil;
 import com.google.inject.Inject;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
@@ -180,7 +178,7 @@ public class ChangeMessagesIT extends AbstractDaemonTest {
         messageTemplate,
         Iterables.getLast(gApi.changes().id(changeId).get(MESSAGES).messages).message);
 
-    Collection<ChangeMessageInfo> listMessages = gApi.changes().id(changeId).messages();
+    List<ChangeMessageInfo> listMessages = gApi.changes().id(changeId).messages();
     assertThat(listMessages).hasSize(2);
     ChangeMessageInfo changeMessageApi = Iterables.getLast(gApi.changes().id(changeId).messages());
     assertMessage("Review by " + admin.getNameEmail(), changeMessageApi.message);

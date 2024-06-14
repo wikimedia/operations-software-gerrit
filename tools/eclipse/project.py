@@ -49,7 +49,7 @@ opts.add_argument('--name', help='name of the generated project',
 opts.add_argument('-b', '--batch', action='store_true',
                   dest='batch', help='Bazel batch option')
 opts.add_argument('-j', '--java', action='store',
-                  dest='java', help='Post Java 11')
+                  dest='java', help='Post Java 17')
 opts.add_argument('--bazel',
                   help=('name of the bazel executable. Defaults to using'
                         ' bazelisk if found, or bazel if bazelisk is not'
@@ -97,6 +97,7 @@ def _build_bazel_cmd(*args):
         cmd.append(arg)
     if custom_java:
         cmd.append('--config=java%s' % custom_java)
+    cmd.append('--remote_download_outputs=all')
     return cmd
 
 
@@ -238,8 +239,7 @@ def gen_classpath(ext):
             if p.endswith('libquery_parser.jar') or \
                p.endswith('libgerrit-prolog-common.jar') or \
                p.endswith('external/com_google_protobuf/java/core/libcore.jar') or \
-               p.endswith('external/com_google_protobuf/java/core/liblite.jar') or \
-               p.endswith('lucene-core-and-backward-codecs-merged_deploy.jar'):
+               p.endswith('external/com_google_protobuf/java/core/liblite.jar'):
                 lib.add(p)
             if proto_library.match(p) :
                 proto.add(p)

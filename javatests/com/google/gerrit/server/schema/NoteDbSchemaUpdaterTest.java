@@ -15,7 +15,6 @@
 package com.google.gerrit.server.schema;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth8.assertThat;
 import static com.google.gerrit.server.schema.NoteDbSchemaUpdater.requiredUpgrades;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
@@ -146,14 +145,16 @@ public class NoteDbSchemaUpdaterTest {
     }
 
     protected void seedGroupSequenceRef() {
-      new RepoSequence(
-              repoManager,
-              GitReferenceUpdated.DISABLED,
-              allUsersName,
-              Sequence.NAME_GROUPS,
-              () -> 1,
-              1)
-          .next();
+      @SuppressWarnings("unused")
+      var unused =
+          new RepoSequence(
+                  repoManager,
+                  GitReferenceUpdated.DISABLED,
+                  allUsersName,
+                  Sequence.NAME_GROUPS,
+                  () -> 1,
+                  1)
+              .next();
     }
 
     /** Test-specific setup. */

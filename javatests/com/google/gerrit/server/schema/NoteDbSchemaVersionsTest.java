@@ -16,7 +16,6 @@ package com.google.gerrit.server.schema;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth8.assertThat;
 import static com.google.gerrit.server.schema.NoteDbSchemaVersions.guessVersion;
 
 import com.google.common.collect.ImmutableList;
@@ -67,7 +66,8 @@ public class NoteDbSchemaVersionsTest {
   @Test
   public void schemaConstructors() throws Exception {
     for (int version : NoteDbSchemaVersions.ALL.keySet()) {
-      NoteDbSchemaVersions.get(NoteDbSchemaVersions.ALL, version);
+      @SuppressWarnings("unused")
+      var unused = NoteDbSchemaVersions.get(NoteDbSchemaVersions.ALL, version);
     }
   }
 }

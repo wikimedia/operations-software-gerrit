@@ -15,7 +15,6 @@
 package com.google.gerrit.acceptance.api.revision;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth8.assertThat;
 import static com.google.gerrit.acceptance.PushOneCommit.FILE_CONTENT;
 import static com.google.gerrit.acceptance.PushOneCommit.FILE_NAME;
 import static com.google.gerrit.acceptance.PushOneCommit.PATCH;
@@ -800,7 +799,7 @@ public class RevisionIT extends AbstractDaemonTest {
     TestCommitValidationListener testCommitValidationListener = new TestCommitValidationListener();
     try (Registration registration =
         extensionRegistry.newRegistration().add(testCommitValidationListener)) {
-      gApi.changes().id(r.getChangeId()).current().cherryPickAsInfo(in);
+      gApi.changes().id(r.getChangeId()).current().cherryPick(in);
       assertThat(testCommitValidationListener.receiveEvent.pushOptions)
           .containsExactly("key", "value");
     }
@@ -1694,7 +1693,8 @@ public class RevisionIT extends AbstractDaemonTest {
 
   @Test
   public void queryRevisionFiles() throws Exception {
-    Map<String, String> files = ImmutableMap.of("file1.txt", "content 1", "file2.txt", "content 2");
+    ImmutableMap<String, String> files =
+        ImmutableMap.of("file1.txt", "content 1", "file2.txt", "content 2");
     PushOneCommit.Result result =
         pushFactory.create(admin.newIdent(), testRepo, SUBJECT, files).to("refs/for/master");
     result.assertOkStatus();
@@ -1814,7 +1814,7 @@ public class RevisionIT extends AbstractDaemonTest {
   @Test
   @GerritConfig(name = "change.maxFileSizeDownload", value = "10")
   public void content_maxFileSizeDownload() throws Exception {
-    Map<String, String> files =
+    ImmutableMap<String, String> files =
         ImmutableMap.of("dir/file1.txt", " 9 bytes ", "dir/file2.txt", "11 bytes xx");
     PushOneCommit.Result result =
         pushFactory.create(admin.newIdent(), testRepo, SUBJECT, files).to("refs/for/master");
@@ -1854,7 +1854,7 @@ public class RevisionIT extends AbstractDaemonTest {
 
   @Test
   public void cannotGetContentOfDirectory() throws Exception {
-    Map<String, String> files = ImmutableMap.of("dir/file1.txt", "content 1");
+    ImmutableMap<String, String> files = ImmutableMap.of("dir/file1.txt", "content 1");
     PushOneCommit.Result result =
         pushFactory.create(admin.newIdent(), testRepo, SUBJECT, files).to("refs/for/master");
     result.assertOkStatus();
@@ -2236,7 +2236,7 @@ public class RevisionIT extends AbstractDaemonTest {
 
     // check that reviewer is notified.
     amendChange(r.getChangeId());
-    List<FakeEmailSender.Message> messages = sender.getMessages();
+    ImmutableList<FakeEmailSender.Message> messages = sender.getMessages();
     FakeEmailSender.Message m = Iterables.getOnlyElement(messages);
     assertThat(m.rcpt()).containsExactly(user.getNameEmail());
     assertThat(m.body()).contains("I'd like you to reexamine a change.");
@@ -2265,7 +2265,7 @@ public class RevisionIT extends AbstractDaemonTest {
 
     // check that watcher is notified
     amendChange(r.getChangeId());
-    List<FakeEmailSender.Message> messages = sender.getMessages();
+    ImmutableList<FakeEmailSender.Message> messages = sender.getMessages();
     FakeEmailSender.Message m = Iterables.getOnlyElement(messages);
     assertThat(m.rcpt()).containsExactly(user.getNameEmail());
     assertThat(m.body()).contains(admin.fullName() + " has uploaded a new patch set (#2).");
@@ -2583,7 +2583,7 @@ public class RevisionIT extends AbstractDaemonTest {
     ChangeInfo info = gApi.changes().id(changeId).get(DETAILED_LABELS);
     LabelInfo li = info.labels.get(label);
     assertThat(li).isNotNull();
-    int accountId = atrScope.get().getUser().getAccountId().get();
+    int accountId = localCtx.getContext().getUser().getAccountId().get();
     return li.all.stream().filter(a -> a._accountId == accountId).findFirst().get();
   }
 

@@ -1061,14 +1061,11 @@ suite('gr-change-view tests', () => {
     });
   });
 
-  test('reply button is not visible when logged out', async () => {
+  test('reply button is a login button when logged out', async () => {
     assertIsDefined(element.replyBtn);
     element.loggedIn = false;
     await element.updateComplete;
-    assert.equal(getComputedStyle(element.replyBtn).display, 'none');
-    element.loggedIn = true;
-    await element.updateComplete;
-    assert.notEqual(getComputedStyle(element.replyBtn).display, 'none');
+    assert.equal(element.replyBtn.textContent, 'Sign in');
   });
 
   test('download tap calls handleOpenDownloadDialog', () => {
@@ -1178,12 +1175,7 @@ suite('gr-change-view tests', () => {
     assert.isTrue(
       element.computeHideEditCommitMessage(true, false, mergedChanged)
     );
-    assert.isTrue(
-      element.computeHideEditCommitMessage(true, false, change, true)
-    );
-    assert.isFalse(
-      element.computeHideEditCommitMessage(true, false, change, false)
-    );
+    assert.isFalse(element.computeHideEditCommitMessage(true, false, change));
   });
 
   test('handleCommitMessageSave trims trailing whitespace', async () => {
@@ -1194,17 +1186,24 @@ suite('gr-change-view tests', () => {
       Promise.resolve(new Response(null, {status: 500}))
     );
     await element.updateComplete;
-    const mockEvent = (content: string) =>
-      new CustomEvent('', {detail: {content}});
+    const committerEmail = 'test@example.org';
+    const mockEvent = (content: string, committerEmail: string) =>
+      new CustomEvent('', {
+        detail: {content, committerEmail},
+      });
 
     assertIsDefined(element.commitMessageEditor);
-    element.handleCommitMessageSave(mockEvent('test \n  test '));
+    element.handleCommitMessageSave(
+      mockEvent('test \n  test ', committerEmail)
+    );
     assert.equal(putStub.lastCall.args[1], 'test\n  test');
     element.commitMessageEditor.disabled = false;
-    element.handleCommitMessageSave(mockEvent('  test\ntest'));
+    element.handleCommitMessageSave(mockEvent('  test\ntest', committerEmail));
     assert.equal(putStub.lastCall.args[1], '  test\ntest');
     element.commitMessageEditor.disabled = false;
-    element.handleCommitMessageSave(mockEvent('\n\n\n\n\n\n\n\n'));
+    element.handleCommitMessageSave(
+      mockEvent('\n\n\n\n\n\n\n\n', committerEmail)
+    );
     assert.equal(putStub.lastCall.args[1], '\n\n\n\n\n\n\n\n');
   });
 

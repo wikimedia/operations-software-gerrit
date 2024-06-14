@@ -16,7 +16,6 @@ package com.google.gerrit.server.query.account;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
-import static com.google.common.truth.Truth8.assertThat;
 import static com.google.common.truth.TruthJUnit.assume;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.util.stream.Collectors.toList;
@@ -25,6 +24,7 @@ import static org.junit.Assert.fail;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Streams;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Project;
@@ -179,7 +179,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
 
     Account.Id adminId = createAccount("admin", "Administrator", "admin@example.com", true);
     admin = userFactory.create(adminId);
-    requestContext.setContext(newRequestContext(adminId));
+    setRequestContextForUser(adminId);
     currentUserInfo = gApi.accounts().id(adminId.get()).get();
   }
 
@@ -191,7 +191,8 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
   }
 
   protected void setAnonymous() {
-    requestContext.setContext(anonymousUser::get);
+    @SuppressWarnings("unused")
+    var unused = requestContext.setContext(anonymousUser::get);
   }
 
   @After
@@ -199,7 +200,8 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     if (lifecycle != null) {
       lifecycle.stop();
     }
-    requestContext.setContext(null);
+    @SuppressWarnings("unused")
+    var unused = requestContext.setContext(null);
   }
 
   @Test
@@ -271,7 +273,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     addEmails(user1, secondaryEmail);
 
     AccountInfo user2 = newAccount("user");
-    requestContext.setContext(newRequestContext(Account.id(user2._accountId)));
+    setRequestContextForUser(Account.id(user2._accountId));
 
     assertQuery(preferredEmail, user1);
     assertQuery(secondaryEmail);
@@ -347,7 +349,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     AccountInfo user2 = newAccountWithFullName("jroe", "Jane Roe");
 
     AccountInfo user3 = newAccount("user");
-    requestContext.setContext(newRequestContext(Account.id(user3._accountId)));
+    setRequestContextForUser(Account.id(user3._accountId));
 
     assertQuery("notexisting");
     assertQuery("Not Existing");
@@ -403,7 +405,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     Project.NameKey p = createProject(name("p"));
 
     // Create the change as User1
-    requestContext.setContext(newRequestContext(Account.id(user1._accountId)));
+    setRequestContextForUser(Account.id(user1._accountId));
     ChangeInfo c = createPrivateChange(p);
     assertThat(c.owner).isEqualTo(user1);
 
@@ -412,19 +414,19 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     addReviewer(c.changeId, user3.email, ReviewerState.CC);
 
     // Request as the owner
-    requestContext.setContext(newRequestContext(Account.id(user1._accountId)));
+    setRequestContextForUser(Account.id(user1._accountId));
     assertQuery("cansee:" + c.changeId, user1, user2, user3);
 
     // Request as the reviewer
-    requestContext.setContext(newRequestContext(Account.id(user2._accountId)));
+    setRequestContextForUser(Account.id(user2._accountId));
     assertQuery("cansee:" + c.changeId, user1, user2, user3);
 
     // Request as the CC
-    requestContext.setContext(newRequestContext(Account.id(user3._accountId)));
+    setRequestContextForUser(Account.id(user3._accountId));
     assertQuery("cansee:" + c.changeId, user1, user2, user3);
 
     // Request as an account not in {owner, reviewer, CC}
-    requestContext.setContext(newRequestContext(Account.id(user4._accountId)));
+    setRequestContextForUser(Account.id(user4._accountId));
     BadRequestException exception =
         assertThrows(BadRequestException.class, () -> newQuery("cansee:" + c.changeId).get());
     assertThat(exception)
@@ -626,7 +628,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     String[] secondaryEmails = new String[] {"dfg@example.com", "hij@example.com"};
     addEmails(otherUser, secondaryEmails);
 
-    requestContext.setContext(newRequestContext(Account.id(user._accountId)));
+    setRequestContextForUser(Account.id(user._accountId));
 
     List<AccountInfo> result = newQuery(getDefaultSearch(otherUser)).withSuggest(true).get();
     assertThat(result.get(0).secondaryEmails).isNull();
@@ -667,8 +669,8 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     // we load AccountStates from the cache after reading documents from the index
     // which means we always read fresh data when matching.
     //
-    // Reindex document
-    gApi.accounts().id(user1.username).index();
+    // Reindex account document
+    gApi.accounts().id(user1._accountId).index();
     assertQuery("name:" + quote(user1.name));
     assertQuery("name:" + quote(newName), user1);
   }
@@ -870,6 +872,11 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     }
   }
 
+  private void setRequestContextForUser(Account.Id userId) {
+    @SuppressWarnings("unused")
+    var unused = requestContext.setContext(newRequestContext(userId));
+  }
+
   private void addEmails(AccountInfo account, String... emails) throws Exception {
     Account.Id id = Account.id(account._accountId);
     for (String email : emails) {
@@ -882,19 +889,22 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     return gApi.accounts().query(query.toString());
   }
 
+  @CanIgnoreReturnValue
   protected List<AccountInfo> assertQuery(Object query, AccountInfo... accounts) throws Exception {
     return assertQuery(newQuery(query), accounts);
   }
 
+  @CanIgnoreReturnValue
   protected List<AccountInfo> assertQuery(QueryRequest query, AccountInfo... accounts)
       throws Exception {
     return assertQuery(query, Arrays.asList(accounts));
   }
 
+  @CanIgnoreReturnValue
   protected List<AccountInfo> assertQuery(QueryRequest query, List<AccountInfo> accounts)
       throws Exception {
     List<AccountInfo> result = query.get();
-    Iterable<Integer> ids = ids(result);
+    List<Integer> ids = ids(result);
     assertWithMessage(format(query, result, accounts))
         .that(ids)
         .containsExactlyElementsIn(ids(accounts))
@@ -944,11 +954,11 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     return b.toString();
   }
 
-  protected static Iterable<Integer> ids(AccountInfo... accounts) {
+  protected static List<Integer> ids(AccountInfo... accounts) {
     return ids(Arrays.asList(accounts));
   }
 
-  protected static Iterable<Integer> ids(List<AccountInfo> accounts) {
+  protected static List<Integer> ids(List<AccountInfo> accounts) {
     return accounts.stream().map(a -> a._accountId).collect(toList());
   }
 

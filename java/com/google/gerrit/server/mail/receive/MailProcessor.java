@@ -22,6 +22,7 @@ import static java.util.stream.Collectors.toList;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.entities.Account;
@@ -167,14 +168,16 @@ public class MailProcessor {
    * @param message {@link MailMessage} to process
    */
   public void process(MailMessage message) throws RestApiException, UpdateException {
-    retryHelper
-        .changeUpdate(
-            "processCommentsReceivedByEmail",
-            buf -> {
-              processImpl(buf, message);
-              return null;
-            })
-        .call();
+    @SuppressWarnings("unused")
+    var unused =
+        retryHelper
+            .changeUpdate(
+                "processCommentsReceivedByEmail",
+                buf -> {
+                  processImpl(buf, message);
+                  return null;
+                })
+            .call();
   }
 
   private void processImpl(BatchUpdate.Factory buf, MailMessage message)
@@ -198,7 +201,7 @@ public class MailProcessor {
       return;
     }
 
-    Set<Account.Id> accountIds = emails.getAccountFor(metadata.author);
+    ImmutableSet<Account.Id> accountIds = emails.getAccountFor(metadata.author);
 
     if (accountIds.size() != 1) {
       logger.atSevere().log(
@@ -249,7 +252,7 @@ public class MailProcessor {
           queryProvider
               .get()
               .enforceVisibility(true)
-              .byLegacyChangeId(Change.id(metadata.changeNumber));
+              .byChangeNumber(Change.id(metadata.changeNumber));
       if (changeDataList.isEmpty()) {
         sendRejectionEmail(message, InboundEmailError.CHANGE_NOT_FOUND);
         return;
@@ -449,6 +452,7 @@ public class MailProcessor {
               (short) side.ordinal(),
               mailComment.getMessage(),
               false,
+              null,
               null);
 
       comment.tag = tag;

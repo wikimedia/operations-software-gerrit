@@ -875,6 +875,49 @@ The entries in the map are sorted by capability ID.
   }
 ----
 
+[[list-experiments]]
+=== List Experiments
+--
+'GET /config/server/experiments'
+--
+
+Lists the experiments that are available in the system.
+
+Requires the caller to have the link:access-control.html#capability_administrateServer[
+Administrate Server] global capability.
+
+As result a map of experiment names to link:#experiment-info[Experiment] entities is returned.
+
+The entries in the map are sorted by experiment name.
+
+.Request
+----
+  GET /config/server/experiments/ HTTP/1.0
+----
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    "GerritBackendFeature__allow_fix_suggestions_in_comments": {
+      "enabled": false
+    },
+    "GerritBackendFeature__attach_nonce_to_documentation": {
+      "enabled": true
+    }
+  }
+----
+
+It is possible to specify the following options:
+
+[[list-experiments-enabled-only]]
+--
+* `enabled-only`: If specified only enabled experiments are listed.
+--
+
 [[list-tasks]]
 === List Tasks
 --
@@ -931,7 +974,7 @@ command.
       "state": "SLEEPING",
       "start_time": "2014-06-11 12:58:51.508000000",
       "delay": 3287966,
-      "command": "Log File Compressor"
+      "command": "Log File Manager"
     }
   ]
 ----
@@ -1420,6 +1463,325 @@ Using this endpoint Gerrit admins can also index change(s) which are not visible
 When `delete_missing` is set to `true` changes to be reindexed which are missing in NoteDb
 will be deleted in the index.
 
+[[list-indexes]]
+=== List Indexes
+--
+'GET /config/server/indexes'
+--
+
+Lists the indexes used by Gerrit. It provides details about the index versions,
+which index version is used to search and which versions are written to.
+
+This endpoint requires the
+link:access-control.html#capability_maintainServer[Maintain Server]
+capability.
+
+.Request
+----
+  GET /config/server/indexes/ HTTP/1.0
+----
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  [
+    {
+      "name": "accounts",
+      "versions": {
+        "13": {
+          "write": true,
+          "search": true
+        }
+      }
+    },
+    {
+      "name": "changes",
+      "versions": {
+        "83": {
+          "write": true,
+          "search": true
+        },
+        "84": {
+          "write": true,
+          "search": false
+        }
+      }
+    },
+    {
+      "name": "groups",
+      "versions": {
+        "10": {
+          "write": true,
+          "search": true
+        }
+      }
+    },
+    {
+      "name": "projects",
+      "versions": {
+        "8": {
+          "write": true,
+          "search": true
+        }
+      }
+    }
+  [
+----
+
+=== Get Index
+--
+'GET /config/server/indexes/changes'
+--
+
+Get an index used by Gerrit. It provides details about the index versions, which
+index version is used to search and which versions are written to.
+
+.Request
+----
+  'GET /config/server/indexes/changes'
+----
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    "name": "changes",
+    "versions": {
+      "83": {
+        "write": true,
+        "search": true
+      },
+      "84": {
+        "write": true,
+        "search": false
+      }
+    }
+  }
+----
+
+=== List Index Versions
+--
+'GET /config/server/indexes/changes/versions'
+--
+
+Lists versions of an index used by Gerrit.
+
+.Request
+----
+  'GET /config/server/indexes/changes/versions'
+----
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    "83": {
+      "write": true,
+      "search": true
+    },
+    "84": {
+      "write": true,
+      "search": false
+    }
+  }
+----
+
+=== Get Index Version
+--
+'GET /config/server/indexes/changes/versions/85'
+--
+
+Get info about one version of an index used by Gerrit.
+
+.Request
+----
+  'GET /config/server/indexes/changes/versions/84'
+----
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    "write": true,
+    "search": false
+  }
+----
+
+[[snapshot-index]]
+=== Create Index Snapshot
+
+These endpoints allow Gerrit admins to create index snapshots.
+Created snapshots can be used as a backup of the index.
+
+It is possible to create a snapshot of all indexes, snapshot of one index or
+snapshot of one index version.
+
+The snapshots will be stored on the server at `$SITE/index/snapshots/$ID`.
+The `$ID` can be optionally provided in link:#snapshot-index-input[SnapshotIndex.Input]
+or will default to the current local time in ISO8601 format.
+
+Only snapshots of indexes that Gerrit currently writes to can be created.
+
+Note, that the creation of multiple snapshots, e.g. of different index
+versions, is not atomic. If a consistent state over multiple indexes is
+required, the server has to be put into read-only mode before creating
+the snapshot.
+
+==== Create Snapshot of All Indexes
+--
+'POST /config/server/snapshot.indexes HTTP/1.0'
+--
+
+.Request
+----
+  POST /config/server/snapshot.indexes HTTP/1.0
+  Content-Type: application/json; charset=UTF-8
+
+  {
+    "id": "snapshot-1"
+  }
+----
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    "id": "snapshot-1"
+  }
+----
+
+==== Create Snapshot of one Index
+--
+'POST /config/server/indexes/link:#index-name[\{index-name\}]/snapshot'
+--
+
+This creates a snapshot of all write index versions of the specified index.
+
+.Request
+----
+  POST /config/server/indexes/accounts/snapshot HTTP/1.0
+  Content-Type: application/json; charset=UTF-8
+
+  {
+    "id": "snapshot-1"
+  }
+----
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    "id": "snapshot-1"
+  }
+----
+
+==== Create Snapshot of one Index Version
+--
+'POST /config/server/indexes/link:#index-name[\{index-name\}]/versions/#index-version[\{index-version\}]/snapshot'
+--
+
+This creates a snapshot of one index version of the specified index.
+
+.Request
+----
+  POST /config/server/indexes/changes/versions/84/snapshot HTTP/1.0
+  Content-Type: application/json; charset=UTF-8
+
+  {
+    "id": "snapshot-1"
+  }
+----
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    "id": "snapshot-1"
+  }
+----
+
+=== Reindex an Index Version
+--
+'POST /config/server/indexes/link:#index-name[\{index-name\}]/versions/#index-version[\{index-version\}]/reindex'
+--
+
+This endpoint allows to trigger background reindexing of an index version.  It is
+also supported to specify whether to reuse existing up-to-date (non-stale) index
+documents and whether to notifyListeners or not.
+
+.Request
+----
+  POST /config/server/indexes/changes/versions/84/reindex HTTP/1.0
+  Content-Type: application/json; charset=UTF-8
+
+  {
+    "reuse": "true",
+    "notifyListeners": "false"
+  }
+----
+
+.Response
+----
+  HTTP/1.1 202 Accepted
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+----
+
+[[experiment-endpoints]]
+== Experiment Endpoints
+
+[[get-experiment]]
+=== Get Experiment
+--
+'GET /config/server/experiments/link:#experiment-name[\{experiment-name\}]
+--
+
+Retrieves the details of the experiment with the given name.
+
+Requires the caller to have the link:access-control.html#capability_administrateServer[
+Administrate Server] global capability.
+
+.Request
+----
+  GET /config/server/experiments/mGerritBackendFeature__attach_nonce_to_documentation HTTP/1.0
+----
+
+As response an link:#experiment-info[Experiment] entity is returned that
+describes the experiment.
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Disposition: attachment
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    "enabled": true
+  }
+----
 
 [[ids]]
 == IDs
@@ -1434,10 +1796,21 @@ plugin name: "<plugin-name>-<cache-name>".
 Gerrit core caches can optionally be prefixed with "gerrit":
 "gerrit-<cache-name>".
 
+[[experiment-name]]
+=== \{experiment-name\}
+The name of the experiment.
+
 [[task-id]]
 === \{task-id\}
 The ID of the task (hex string).
 
+[[index-name]]
+=== \{index-name\}
+The name of the index. Can be any of: "accounts", "changes", "groups", "projects".
+
+[[index-version]]
+=== \{index-version\}
+The version of the index. This is an integer.
 
 [[json-entities]]
 == JSON Entities
@@ -1760,6 +2133,16 @@ Missing if value was not previously configured.
 |`new_value`  |The new config value, picked up after reload.
 |======================
 
+[[experiment-info]]
+=== ExperimentInfo
+The `ExperimentInfo` entity contains information about an experiment.
+
+[options="header",cols="1,6"]
+|============================
+|Field Name |Description
+|`enabled`  |Whether the experiment is enabled.
+|============================
+
 [[download-info]]
 === DownloadInfo
 The `DownloadInfo` entity contains information about supported download
@@ -1787,6 +2170,9 @@ download scheme and its commands.
 |`url`               ||
 The URL of the download scheme, where '${project}' is used as
 placeholder for the project name.
+|`description`       |optional|
+An optional description of how the scheme works and maybe comparing
+it to other schemes, explaining the pros and cons of each option.
 |`is_auth_required`  |not set if `false`|
 Whether this download scheme requires authentication.
 |`is_auth_supported` |not set if `false`|
@@ -2066,6 +2452,19 @@ The list of submit requirement names that should be displayed as separate
 columns in the dashboard. If empty, the default is to display all submit
 requirements that are applicable for changes appearing in the dashboard.
 |=======================================
+
+[[snapshot-index-input]]
+=== SnapshotIndex.Input
+The `SnapshotIndex.Input` entity contains the parameters used to create an
+index snapshot.
+
+[options="header",cols="1,^1,5"]
+|=======================
+|Field Name ||Description
+|`id` | optional |
+A string ID that will be used as the folder name containing the
+snapshots. Defaults to current timestamp.
+|=======================
 
 [[sshd-info]]
 === SshdInfo

@@ -24,6 +24,7 @@ import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.util.stream.Collectors.toList;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -59,10 +60,12 @@ import com.google.gerrit.extensions.api.changes.ReviewInput.CommentInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput.DraftHandling;
 import com.google.gerrit.extensions.api.changes.ReviewInput.RobotCommentInput;
 import com.google.gerrit.extensions.api.changes.ReviewResult;
+import com.google.gerrit.extensions.api.changes.ReviewerInput;
 import com.google.gerrit.extensions.client.ListChangesOption;
 import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.client.Side;
 import com.google.gerrit.extensions.common.AccountInfo;
+import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.ChangeMessageInfo;
 import com.google.gerrit.extensions.common.RobotCommentInfo;
 import com.google.gerrit.extensions.config.FactoryModule;
@@ -92,6 +95,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -152,6 +156,10 @@ public class PostReviewIT extends AbstractDaemonTest {
       @Override
       public void configure() {
         CommentValidator mockCommentValidator = mock(CommentValidator.class);
+
+        // by default return no validation errors
+        when(mockCommentValidator.validateComments(any(), any())).thenReturn(ImmutableList.of());
+
         bind(CommentValidator.class)
             .annotatedWith(Exports.named(mockCommentValidator.getClass()))
             .toInstance(mockCommentValidator);
@@ -757,12 +765,46 @@ public class PostReviewIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void currentRevisionNumberIsSetOnReturnedChangeInfo() throws Exception {
+    PushOneCommit.Result r = createChange();
+    ChangeInfo changeInfo =
+        gApi.changes().id(r.getChangeId()).current().review(ReviewInput.dislike()).changeInfo;
+    assertThat(changeInfo.currentRevisionNumber).isEqualTo(1);
+    amendChange(r.getChangeId());
+    changeInfo =
+        gApi.changes().id(r.getChangeId()).current().review(ReviewInput.recommend()).changeInfo;
+    assertThat(changeInfo.currentRevisionNumber).isEqualTo(2);
+
+    // Check that the current revision number is also returned when list changes options are
+    // requested.
+    ReviewInput reviewInput = ReviewInput.approve();
+    reviewInput.responseFormatOptions =
+        ImmutableList.copyOf(EnumSet.allOf(ListChangesOption.class));
+    changeInfo = gApi.changes().id(r.getChangeId()).current().review(reviewInput).changeInfo;
+    assertThat(changeInfo.currentRevisionNumber).isEqualTo(2);
+  }
+
+  @Test
   public void submitRulesAreInvokedOnlyOnce() throws Exception {
     PushOneCommit.Result r = createChange();
 
     TestSubmitRule testSubmitRule = new TestSubmitRule();
     try (Registration registration = extensionRegistry.newRegistration().add(testSubmitRule)) {
       ReviewInput input = new ReviewInput().label(LabelId.CODE_REVIEW, 1);
+      gApi.changes().id(r.getChangeId()).current().review(input);
+    }
+
+    assertThat(testSubmitRule.count).isEqualTo(1);
+  }
+
+  @Test
+  public void submitRulesAreInvokedOnlyOnce_allOptionsSet() throws Exception {
+    PushOneCommit.Result r = createChange();
+
+    TestSubmitRule testSubmitRule = new TestSubmitRule();
+    try (Registration registration = extensionRegistry.newRegistration().add(testSubmitRule)) {
+      ReviewInput input = new ReviewInput().label(LabelId.CODE_REVIEW, 1);
+      input.responseFormatOptions = ImmutableList.copyOf(EnumSet.allOf(ListChangesOption.class));
       gApi.changes().id(r.getChangeId()).current().review(input);
     }
 
@@ -822,6 +864,41 @@ public class PostReviewIT extends AbstractDaemonTest {
     // * 1 batch event for adding user and user2 as reviewers
     assertThat(testReviewerAddedListener.receivedEvents).hasSize(1);
     assertThat(testReviewerAddedListener.getReviewerIds()).containsExactly(user.id(), user2.id());
+  }
+
+  @Test
+  public void rejectAddingReviewerIfReviewerUserIdentifierIsMissing() throws Exception {
+    PushOneCommit.Result r = createChange();
+
+    // Add reviewer with ReviewerInput where the 'reviewer' field is not set.
+    ReviewerInput reviewerInput = new ReviewerInput();
+    reviewerInput.state = ReviewerState.REVIEWER;
+
+    ReviewInput reviewInput = ReviewInput.create();
+    reviewInput.reviewers = ImmutableList.of(reviewerInput);
+
+    ReviewResult reviewResult = gApi.changes().id(r.getChangeId()).current().review(reviewInput);
+    assertThat(reviewResult.error).isEqualTo("error adding reviewer");
+    assertThat(reviewResult.reviewers.keySet()).containsExactly(reviewerInput.reviewer);
+    assertThat(reviewResult.reviewers.get(reviewerInput.reviewer).error)
+        .isEqualTo("reviewer user identifier is required");
+
+    // Add reviewer with ReviewerInput where the 'reviewer' field is set to an empty string.
+    reviewerInput.reviewer = "";
+    reviewResult = gApi.changes().id(r.getChangeId()).current().review(reviewInput);
+    assertThat(reviewResult.error).isEqualTo("error adding reviewer");
+    assertThat(reviewResult.reviewers.keySet()).containsExactly(reviewerInput.reviewer);
+    assertThat(reviewResult.reviewers.get(reviewerInput.reviewer).error)
+        .isEqualTo("reviewer user identifier is required");
+
+    // Add reviewer with ReviewerInput where the 'reviewer' field is set to an empty string after
+    // trimming it.
+    reviewerInput.reviewer = "   ";
+    reviewResult = gApi.changes().id(r.getChangeId()).current().review(reviewInput);
+    assertThat(reviewResult.error).isEqualTo("error adding reviewer");
+    assertThat(reviewResult.reviewers.keySet()).containsExactly(reviewerInput.reviewer);
+    assertThat(reviewResult.reviewers.get(reviewerInput.reviewer).error)
+        .isEqualTo("reviewer user identifier is required");
   }
 
   @Test

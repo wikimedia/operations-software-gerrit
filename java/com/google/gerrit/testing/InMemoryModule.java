@@ -16,11 +16,11 @@ package com.google.gerrit.testing;
 
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.util.concurrent.MoreExecutors.newDirectExecutorService;
-import static com.google.gerrit.server.Sequence.LightweightGroups;
 import static com.google.inject.Scopes.SINGLETON;
 
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.gerrit.acceptance.testsuite.group.GroupOperations;
 import com.google.gerrit.acceptance.testsuite.group.GroupOperationsImpl;
@@ -46,6 +46,7 @@ import com.google.gerrit.server.GerritPersonIdentProvider;
 import com.google.gerrit.server.LibModuleType;
 import com.google.gerrit.server.PluginUser;
 import com.google.gerrit.server.Sequence;
+import com.google.gerrit.server.Sequence.LightweightGroups;
 import com.google.gerrit.server.account.AccountCacheImpl;
 import com.google.gerrit.server.account.GroupBackend;
 import com.google.gerrit.server.account.storage.notedb.AccountNoteDbReadStorageModule;
@@ -101,6 +102,8 @@ import com.google.gerrit.server.index.group.GroupIndexCollection;
 import com.google.gerrit.server.index.group.GroupSchemaDefinitions;
 import com.google.gerrit.server.mail.EmailModule;
 import com.google.gerrit.server.mail.SignedTokenEmailTokenVerifier.SignedTokenEmailTokenVerifierModule;
+import com.google.gerrit.server.notedb.NoteDbDraftCommentsModule;
+import com.google.gerrit.server.notedb.NoteDbStarredChangesModule;
 import com.google.gerrit.server.notedb.RepoSequence.DisabledGitRefUpdatedRepoGroupsSequenceProvider;
 import com.google.gerrit.server.notedb.RepoSequence.RepoSequenceModule;
 import com.google.gerrit.server.patch.DiffExecutor;
@@ -132,7 +135,6 @@ import com.google.inject.util.Providers;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -199,10 +201,14 @@ public class InMemoryModule extends FactoryModule {
     bind(MetricMaker.class).to(DisabledMetricMaker.class);
 
     install(cfgInjector.getInstance(AccountCacheImpl.AccountCacheModule.class));
+    install(cfgInjector.getInstance(AccountCacheImpl.AccountCacheBindingModule.class));
+
     install(cfgInjector.getInstance(GerritGlobalModule.class));
     install(new AccountNoteDbWriteStorageModule());
     install(new AccountNoteDbReadStorageModule());
     install(new RepoSequenceModule());
+    install(new NoteDbDraftCommentsModule());
+    install(new NoteDbStarredChangesModule());
 
     AuthConfig authConfig = cfgInjector.getInstance(AuthConfig.class);
     install(new AuthModule(authConfig));
@@ -223,7 +229,7 @@ public class InMemoryModule extends FactoryModule {
 
     // It would be nice to use Jimfs for the SitePath, but the biggest blocker is that JGit does not
     // support Path-based Configs, only FileBasedConfig.
-    bind(Path.class).annotatedWith(SitePath.class).toInstance(Paths.get("."));
+    bind(Path.class).annotatedWith(SitePath.class).toInstance(Path.of("."));
     bind(Config.class).annotatedWith(GerritServerConfig.class).toInstance(cfg);
     bind(GerritOptions.class).toInstance(new GerritOptions(false, false));
     bind(AllProjectsConfigProvider.class).to(FileBasedAllProjectsConfigProvider.class);
@@ -381,7 +387,8 @@ public class InMemoryModule extends FactoryModule {
     try {
       Class<?> clazz = Class.forName(moduleClassName);
       Method m =
-          clazz.getMethod("singleVersionWithExplicitVersions", Map.class, int.class, boolean.class);
+          clazz.getMethod(
+              "singleVersionWithExplicitVersions", ImmutableMap.class, int.class, boolean.class);
       return (Module) m.invoke(null, getSingleSchemaVersions(), 0, ReplicaUtil.isReplica(cfg));
     } catch (ClassNotFoundException
         | SecurityException
@@ -394,13 +401,13 @@ public class InMemoryModule extends FactoryModule {
     }
   }
 
-  private Map<String, Integer> getSingleSchemaVersions() {
+  private ImmutableMap<String, Integer> getSingleSchemaVersions() {
     Map<String, Integer> singleVersions = new HashMap<>();
     putSchemaVersion(singleVersions, AccountSchemaDefinitions.INSTANCE);
     putSchemaVersion(singleVersions, ChangeSchemaDefinitions.INSTANCE);
     putSchemaVersion(singleVersions, GroupSchemaDefinitions.INSTANCE);
     putSchemaVersion(singleVersions, ProjectSchemaDefinitions.INSTANCE);
-    return singleVersions;
+    return ImmutableMap.copyOf(singleVersions);
   }
 
   private void putSchemaVersion(

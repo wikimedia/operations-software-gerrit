@@ -207,7 +207,7 @@ suite('gr-confirm-cherrypick-dialog tests', () => {
       await element.updateComplete;
       const executeChangeActionStub = stubRestApi(
         'executeChangeAction'
-      ).returns(Promise.resolve(new Response()));
+      ).resolves(new Response());
       queryAndAssert<GrDialog>(element, 'gr-dialog').confirmButton!.click();
       await element.updateComplete;
       const args = executeChangeActionStub.args[0];
@@ -228,7 +228,7 @@ suite('gr-confirm-cherrypick-dialog tests', () => {
       await element.updateComplete;
       const executeChangeActionStub = stubRestApi(
         'executeChangeAction'
-      ).returns(Promise.resolve(new Response()));
+      ).resolves(new Response());
       const checkboxes = queryAll<HTMLInputElement>(
         element,
         'input[type="checkbox"]'
@@ -247,7 +247,7 @@ suite('gr-confirm-cherrypick-dialog tests', () => {
       await element.updateComplete;
       const executeChangeActionStub = stubRestApi(
         'executeChangeAction'
-      ).returns(Promise.resolve(new Response()));
+      ).resolves(new Response());
       const checkboxes = queryAll<HTMLInputElement>(
         element,
         'input[type="checkbox"]'

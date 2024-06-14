@@ -15,10 +15,10 @@
 package com.google.gerrit.acceptance.api.project;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth8.assertThat;
 import static com.google.gerrit.acceptance.GitUtil.fetch;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.testsuite.change.IndexOperations;
@@ -37,7 +37,6 @@ import com.google.gerrit.server.index.project.StalenessChecker;
 import com.google.gerrit.server.project.ProjectConfig;
 import com.google.inject.Inject;
 import java.util.Collection;
-import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
@@ -69,7 +68,8 @@ public class ProjectIndexerIT extends AbstractDaemonTest {
     Iterable<byte[]> refState = result.get().getValue(ProjectField.REF_STATE_SPEC);
     assertThat(refState).isNotEmpty();
 
-    Map<Project.NameKey, Collection<RefState>> states = RefState.parseStates(refState).asMap();
+    ImmutableMap<Project.NameKey, Collection<RefState>> states =
+        RefState.parseStates(refState).asMap();
 
     fetch(testRepo, "refs/meta/config:refs/meta/config");
     Ref projectConfigRef = testRepo.getRepository().exactRef("refs/meta/config");

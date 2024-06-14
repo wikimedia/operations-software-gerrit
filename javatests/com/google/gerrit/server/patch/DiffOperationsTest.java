@@ -24,8 +24,11 @@ import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.patch.DiffOperationsTest.FileEntity.FileType;
+import com.google.gerrit.server.patch.diff.ModifiedFilesCacheImpl;
+import com.google.gerrit.server.patch.diff.ModifiedFilesCacheKey;
 import com.google.gerrit.server.patch.filediff.FileDiffOutput;
 import com.google.gerrit.server.patch.gitdiff.ModifiedFile;
+import com.google.gerrit.server.update.RepoView;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.gerrit.testing.InMemoryModule;
 import com.google.inject.Guice;
@@ -52,6 +55,7 @@ import org.junit.Test;
 public class DiffOperationsTest {
   @Inject private GitRepositoryManager repoManager;
   @Inject private DiffOperations diffOperations;
+  @Inject private ModifiedFilesCacheImpl modifiedFilesCacheImpl;
 
   private static final Project.NameKey testProjectName = Project.nameKey("test-project");
   private Repository repo;
@@ -120,7 +124,7 @@ public class DiffOperationsTest {
   }
 
   @Test
-  public void loadModifiedFiles() throws Exception {
+  public void loadModifiedFilesIfNecessary() throws Exception {
     ImmutableList<FileEntity> oldFiles =
         ImmutableList.of(
             new FileEntity(fileName1, fileContent1), new FileEntity(fileName2, fileContent2));
@@ -132,28 +136,133 @@ public class DiffOperationsTest {
             new FileEntity(fileName2, fileContent2 + "\nnew line here"));
     ObjectId newCommitId = createCommit(repo, oldCommitId, newFiles);
 
-    Repository repository = repoManager.openRepository(testProjectName);
-    ObjectReader objectReader = repository.newObjectReader();
-    RevWalk rw = new RevWalk(objectReader);
-    StoredConfig repoConfig = repository.getConfig();
+    try (Repository repository = repoManager.openRepository(testProjectName);
+        ObjectReader objectReader = repository.newObjectReader();
+        RevWalk rw = new RevWalk(objectReader)) {
+      StoredConfig repoConfig = repository.getConfig();
+      ModifiedFilesCacheKey cacheKey =
+          ModifiedFilesCacheKey.builder()
+              .project(testProjectName)
+              .aCommit(oldCommitId)
+              .bCommit(newCommitId)
+              .disableRenameDetection()
+              .build();
+      assertThat(modifiedFilesCacheImpl.getIfPresent(cacheKey)).isEmpty();
 
-    // This call loads modified files directly without going through the diff cache.
-    Map<String, ModifiedFile> modifiedFiles =
-        diffOperations.loadModifiedFiles(
-            testProjectName, newCommitId, oldCommitId, DiffOptions.DEFAULTS, rw, repoConfig);
+      // This call loads modified files directly without going through the diff cache.
+      Map<String, ModifiedFile> modifiedFiles =
+          diffOperations.loadModifiedFilesIfNecessary(
+              testProjectName,
+              oldCommitId,
+              newCommitId,
+              rw,
+              repoConfig,
+              /* enableRenameDetection= */ false);
 
-    assertThat(modifiedFiles)
-        .containsExactly(
-            fileName2,
-            ModifiedFile.builder()
-                .changeType(ChangeType.MODIFIED)
-                .oldPath(Optional.of(fileName2))
-                .newPath(Optional.of(fileName2))
-                .build());
+      ModifiedFile expectedModifiedFile =
+          ModifiedFile.builder()
+              .changeType(ChangeType.MODIFIED)
+              .oldPath(Optional.of(fileName2))
+              .newPath(Optional.of(fileName2))
+              .build();
+      assertThat(modifiedFiles).containsExactly(fileName2, expectedModifiedFile);
+      assertThat(modifiedFilesCacheImpl.getIfPresent(cacheKey))
+          .hasValue(ImmutableList.of(expectedModifiedFile));
+
+      // Check that calling loadModifiedFilesIfNecessary again retrieves the modified files from the
+      // cache, rather than loading them again.
+      Map<String, ModifiedFile> cachedModifiedFiles =
+          diffOperations.loadModifiedFilesIfNecessary(
+              testProjectName,
+              oldCommitId,
+              newCommitId,
+              /* revWalk= */ null, // makes the loading fail if attempted
+              repoConfig,
+              /* enableRenameDetection= */ false);
+      assertThat(cachedModifiedFiles).isEqualTo(modifiedFiles);
+    }
   }
 
   @Test
-  public void loadModifiedFiles_withSymlinkConvertedToRegularFile() throws Exception {
+  public void loadModifiedFilesIfNecessary_withRename() throws Exception {
+    ImmutableList<FileEntity> oldFiles = ImmutableList.of(new FileEntity(fileName1, fileContent1));
+    ObjectId oldCommitId = createCommit(repo, null, oldFiles);
+
+    ImmutableList<FileEntity> newFiles = ImmutableList.of(new FileEntity(fileName2, fileContent1));
+    ObjectId newCommitId = createCommit(repo, oldCommitId, newFiles);
+
+    try (Repository repository = repoManager.openRepository(testProjectName);
+        ObjectReader objectReader = repository.newObjectReader();
+        RevWalk rw = new RevWalk(objectReader)) {
+      StoredConfig repoConfig = repository.getConfig();
+
+      // load modified files without rename detection
+      ModifiedFilesCacheKey cacheKey =
+          ModifiedFilesCacheKey.builder()
+              .project(testProjectName)
+              .aCommit(oldCommitId)
+              .bCommit(newCommitId)
+              .disableRenameDetection()
+              .build();
+      assertThat(modifiedFilesCacheImpl.getIfPresent(cacheKey)).isEmpty();
+
+      Map<String, ModifiedFile> modifiedFiles =
+          diffOperations.loadModifiedFilesIfNecessary(
+              testProjectName,
+              oldCommitId,
+              newCommitId,
+              rw,
+              repoConfig,
+              /* enableRenameDetection= */ false);
+
+      ModifiedFile expectedDeletedFile =
+          ModifiedFile.builder()
+              .changeType(ChangeType.DELETED)
+              .oldPath(Optional.of(fileName1))
+              .build();
+      ModifiedFile expectedAddedFile =
+          ModifiedFile.builder()
+              .changeType(ChangeType.ADDED)
+              .newPath(Optional.of(fileName2))
+              .build();
+      assertThat(modifiedFiles)
+          .containsExactly(fileName1, expectedDeletedFile, fileName2, expectedAddedFile);
+      assertThat(modifiedFilesCacheImpl.getIfPresent(cacheKey))
+          .hasValue(ImmutableList.of(expectedDeletedFile, expectedAddedFile));
+
+      // load modified files with rename detection
+      cacheKey =
+          ModifiedFilesCacheKey.builder()
+              .project(testProjectName)
+              .aCommit(oldCommitId)
+              .bCommit(newCommitId)
+              .renameScore(DiffOperationsImpl.RENAME_SCORE)
+              .build();
+      assertThat(modifiedFilesCacheImpl.getIfPresent(cacheKey)).isEmpty();
+
+      modifiedFiles =
+          diffOperations.loadModifiedFilesIfNecessary(
+              testProjectName,
+              oldCommitId,
+              newCommitId,
+              rw,
+              repoConfig,
+              /* enableRenameDetection= */ true);
+
+      ModifiedFile expectedRenamedFile =
+          ModifiedFile.builder()
+              .changeType(ChangeType.RENAMED)
+              .oldPath(Optional.of(fileName1))
+              .newPath(Optional.of(fileName2))
+              .build();
+      assertThat(modifiedFiles).containsExactly(fileName2, expectedRenamedFile);
+      assertThat(modifiedFilesCacheImpl.getIfPresent(cacheKey))
+          .hasValue(ImmutableList.of(expectedRenamedFile));
+    }
+  }
+
+  @Test
+  public void loadModifiedFilesIfNecessary_withSymlinkConvertedToRegularFile() throws Exception {
     // Commit 1: Create a regular fileName1 with fileContent1
     ImmutableList<FileEntity> oldFiles = ImmutableList.of(new FileEntity(fileName1, fileContent1));
     ObjectId oldCommitId = createCommit(repo, null, oldFiles);
@@ -163,30 +272,32 @@ public class DiffOperationsTest {
         ImmutableList.of(new FileEntity(fileName1, "target", FileType.SYMLINK));
     ObjectId newCommitId = createCommit(repo, oldCommitId, newFiles);
 
-    Repository repository = repoManager.openRepository(testProjectName);
-    ObjectReader objectReader = repository.newObjectReader();
+    try (Repository repository = repoManager.openRepository(testProjectName);
+        ObjectReader objectReader = repository.newObjectReader();
+        RevWalk rw = new RevWalk(objectReader)) {
 
-    Map<String, ModifiedFile> modifiedFiles =
-        diffOperations.loadModifiedFiles(
-            testProjectName,
-            newCommitId,
-            oldCommitId,
-            DiffOptions.DEFAULTS,
-            new RevWalk(objectReader),
-            repository.getConfig());
+      Map<String, ModifiedFile> modifiedFiles =
+          diffOperations.loadModifiedFilesIfNecessary(
+              testProjectName,
+              newCommitId,
+              oldCommitId,
+              rw,
+              repository.getConfig(),
+              /* enableRenameDetection= */ false);
 
-    assertThat(modifiedFiles)
-        .containsExactly(
-            fileName1,
-            ModifiedFile.builder()
-                .changeType(ChangeType.REWRITE)
-                .oldPath(Optional.empty())
-                .newPath(Optional.of(fileName1))
-                .build());
+      assertThat(modifiedFiles)
+          .containsExactly(
+              fileName1,
+              ModifiedFile.builder()
+                  .changeType(ChangeType.REWRITE)
+                  .oldPath(Optional.empty())
+                  .newPath(Optional.of(fileName1))
+                  .build());
+    }
   }
 
   @Test
-  public void loadModifiedFilesAgainstParent() throws Exception {
+  public void loadModifiedFilesAgainstParentIfNecessary() throws Exception {
     ImmutableList<FileEntity> oldFiles =
         ImmutableList.of(
             new FileEntity(fileName1, fileContent1), new FileEntity(fileName2, fileContent2));
@@ -198,24 +309,116 @@ public class DiffOperationsTest {
             new FileEntity(fileName2, fileContent2 + "\nnew line here"));
     ObjectId newCommitId = createCommit(repo, oldCommitId, newFiles);
 
-    Repository repository = repoManager.openRepository(testProjectName);
-    ObjectReader objectReader = repository.newObjectReader();
-    RevWalk rw = new RevWalk(objectReader);
-    StoredConfig repoConfig = repository.getConfig();
+    try (Repository repository = repoManager.openRepository(testProjectName);
+        ObjectInserter ins = repository.newObjectInserter();
+        ObjectReader reader = ins.newReader();
+        RevWalk rw = new RevWalk(reader)) {
+      ModifiedFilesCacheKey cacheKey =
+          ModifiedFilesCacheKey.builder()
+              .project(testProjectName)
+              .aCommit(oldCommitId)
+              .bCommit(newCommitId)
+              .disableRenameDetection()
+              .build();
+      assertThat(modifiedFilesCacheImpl.getIfPresent(cacheKey)).isEmpty();
 
-    // This call loads modified files directly without going through the diff cache.
-    Map<String, ModifiedFile> modifiedFiles =
-        diffOperations.loadModifiedFilesAgainstParent(
-            testProjectName, newCommitId, /* parentNum=*/ 0, DiffOptions.DEFAULTS, rw, repoConfig);
+      // This call loads modified files directly without going through the diff cache.
+      Map<String, ModifiedFile> modifiedFiles =
+          diffOperations.loadModifiedFilesAgainstParentIfNecessary(
+              testProjectName,
+              newCommitId,
+              /* parentNum=*/ 0,
+              new RepoView(repository, rw, ins),
+              ins,
+              /* enableRenameDetection= */ false);
 
-    assertThat(modifiedFiles)
-        .containsExactly(
-            fileName2,
-            ModifiedFile.builder()
-                .changeType(ChangeType.MODIFIED)
-                .oldPath(Optional.of(fileName2))
-                .newPath(Optional.of(fileName2))
-                .build());
+      ModifiedFile expectedModifiedFile =
+          ModifiedFile.builder()
+              .changeType(ChangeType.MODIFIED)
+              .oldPath(Optional.of(fileName2))
+              .newPath(Optional.of(fileName2))
+              .build();
+      assertThat(modifiedFiles).containsExactly(fileName2, expectedModifiedFile);
+      assertThat(modifiedFilesCacheImpl.getIfPresent(cacheKey))
+          .hasValue(ImmutableList.of(expectedModifiedFile));
+    }
+  }
+
+  @Test
+  public void loadModifiedFilesAgainstParentIfNecessary_withRename() throws Exception {
+    ImmutableList<FileEntity> oldFiles = ImmutableList.of(new FileEntity(fileName1, fileContent1));
+    ObjectId oldCommitId = createCommit(repo, null, oldFiles);
+
+    ImmutableList<FileEntity> newFiles = ImmutableList.of(new FileEntity(fileName2, fileContent1));
+    ObjectId newCommitId = createCommit(repo, oldCommitId, newFiles);
+
+    try (Repository repository = repoManager.openRepository(testProjectName);
+        ObjectInserter ins = repository.newObjectInserter();
+        ObjectReader reader = ins.newReader();
+        RevWalk rw = new RevWalk(reader)) {
+      // load modified files without rename detection
+      ModifiedFilesCacheKey cacheKey =
+          ModifiedFilesCacheKey.builder()
+              .project(testProjectName)
+              .aCommit(oldCommitId)
+              .bCommit(newCommitId)
+              .disableRenameDetection()
+              .build();
+      assertThat(modifiedFilesCacheImpl.getIfPresent(cacheKey)).isEmpty();
+
+      Map<String, ModifiedFile> modifiedFiles =
+          diffOperations.loadModifiedFilesAgainstParentIfNecessary(
+              testProjectName,
+              newCommitId,
+              /* parentNum=*/ 0,
+              new RepoView(repository, rw, ins),
+              ins,
+              /* enableRenameDetection= */ false);
+
+      ModifiedFile expectedDeletedFile =
+          ModifiedFile.builder()
+              .changeType(ChangeType.DELETED)
+              .oldPath(Optional.of(fileName1))
+              .build();
+      ModifiedFile expectedAddedFile =
+          ModifiedFile.builder()
+              .changeType(ChangeType.ADDED)
+              .newPath(Optional.of(fileName2))
+              .build();
+      assertThat(modifiedFiles)
+          .containsExactly(fileName1, expectedDeletedFile, fileName2, expectedAddedFile);
+      assertThat(modifiedFilesCacheImpl.getIfPresent(cacheKey))
+          .hasValue(ImmutableList.of(expectedDeletedFile, expectedAddedFile));
+
+      // load modified files with rename detection
+      cacheKey =
+          ModifiedFilesCacheKey.builder()
+              .project(testProjectName)
+              .aCommit(oldCommitId)
+              .bCommit(newCommitId)
+              .renameScore(DiffOperationsImpl.RENAME_SCORE)
+              .build();
+      assertThat(modifiedFilesCacheImpl.getIfPresent(cacheKey)).isEmpty();
+
+      modifiedFiles =
+          diffOperations.loadModifiedFilesAgainstParentIfNecessary(
+              testProjectName,
+              newCommitId,
+              /* parentNum=*/ 0,
+              new RepoView(repository, rw, ins),
+              ins,
+              /* enableRenameDetection= */ true);
+
+      ModifiedFile expectedRenamedFile =
+          ModifiedFile.builder()
+              .changeType(ChangeType.RENAMED)
+              .oldPath(Optional.of(fileName1))
+              .newPath(Optional.of(fileName2))
+              .build();
+      assertThat(modifiedFiles).containsExactly(fileName2, expectedRenamedFile);
+      assertThat(modifiedFilesCacheImpl.getIfPresent(cacheKey))
+          .hasValue(ImmutableList.of(expectedRenamedFile));
+    }
   }
 
   static class FileEntity {

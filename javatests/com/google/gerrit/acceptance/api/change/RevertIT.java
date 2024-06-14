@@ -318,7 +318,7 @@ public class RevertIT extends AbstractDaemonTest {
     sender.clear();
     ChangeInfo revertChange = gApi.changes().id(r.getChangeId()).revert().get();
 
-    List<Message> messages = sender.getMessages();
+    ImmutableList<Message> messages = sender.getMessages();
     assertThat(messages).hasSize(2);
     assertThat(sender.getMessages(revertChange.changeId, "newchange")).hasSize(1);
     assertThat(sender.getMessages(r.getChangeId(), "revert")).hasSize(1);
@@ -335,7 +335,7 @@ public class RevertIT extends AbstractDaemonTest {
     // If notify input not specified, the endpoint overrides it to NONE
     RevertInput revertInput = createWipRevertInput();
     revertInput.notify = null;
-    gApi.changes().id(r.getChangeId()).revert(revertInput).get();
+    gApi.changes().id(r.getChangeId()).revert(revertInput);
     assertThat(sender.getMessages()).isEmpty();
   }
 
@@ -350,7 +350,7 @@ public class RevertIT extends AbstractDaemonTest {
     revertInput.notify = NotifyHandling.NONE;
 
     sender.clear();
-    gApi.changes().id(r.getChangeId()).revert(revertInput).get();
+    gApi.changes().id(r.getChangeId()).revert(revertInput);
     assertThat(sender.getMessages()).isEmpty();
   }
 
@@ -751,7 +751,7 @@ public class RevertIT extends AbstractDaemonTest {
     RevertSubmissionInfo revertChanges =
         gApi.changes().id(secondResult).revertSubmission(revertInput);
 
-    List<Message> messages = sender.getMessages();
+    ImmutableList<Message> messages = sender.getMessages();
 
     assertThat(messages).hasSize(4);
     assertThat(sender.getMessages(revertChanges.revertChanges.get(0).changeId, "newchange"))

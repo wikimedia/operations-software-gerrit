@@ -24,6 +24,7 @@ import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Comment;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.Project;
+import com.google.gerrit.server.CommentVerifier;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.InternalUser;
@@ -55,7 +56,7 @@ public abstract class AbstractChangeUpdate {
   private ObjectId result;
   boolean rootOnly;
 
-  AbstractChangeUpdate(
+  protected AbstractChangeUpdate(
       ChangeNotes notes,
       CurrentUser user,
       PersonIdent serverIdent,
@@ -65,11 +66,11 @@ public abstract class AbstractChangeUpdate {
     this.serverIdent = new PersonIdent(serverIdent, when);
     this.notes = notes;
     this.change = notes.getChange();
+    this.when = when;
     this.accountId = accountId(user);
     Account.Id realAccountId = accountId(user.getRealUser());
     this.realAccountId = realAccountId != null ? realAccountId : accountId;
     this.authorIdent = ident(noteUtil, serverIdent, user, when);
-    this.when = when;
   }
 
   AbstractChangeUpdate(
@@ -236,9 +237,14 @@ public abstract class AbstractChangeUpdate {
     setParentCommit(cb, curr);
     if (cb.getTreeId() == null) {
       if (curr.equals(z)) {
-        cb.setTreeId(emptyTree(ins)); // No parent, assume empty tree.
+        ObjectId emptyTreeId = emptyTree(ins);
+        logger.atFine().log("setting empty tree %s for new change meta commit", emptyTreeId.name());
+        cb.setTreeId(emptyTreeId); // No parent, assume empty tree.
       } else {
         RevCommit p = rw.parseCommit(curr);
+        logger.atFine().log(
+            "setting tree %s of previous commit %s for new change meta commit",
+            p.getTree().name(), p.name());
         cb.setTreeId(p.getTree()); // Copy tree from parent.
       }
     }
@@ -272,23 +278,12 @@ public abstract class AbstractChangeUpdate {
   }
 
   private static ObjectId emptyTree(ObjectInserter ins) throws IOException {
-    return ins.insert(Constants.OBJ_TREE, new byte[] {});
+    ObjectId treeId = ins.insert(Constants.OBJ_TREE, new byte[] {});
+    logger.atFine().log("inserted empty tree %s (inserter: %s)", treeId.name(), ins);
+    return treeId;
   }
 
-  void verifyComment(Comment c) {
-    checkArgument(c.getCommitId() != null, "commit ID required for comment: %s", c);
-    checkArgument(
-        c.author.getId().equals(getAccountId()),
-        "The author for the following comment does not match the author of this %s (%s): %s",
-        getClass().getSimpleName(),
-        getAccountId(),
-        c);
-    checkArgument(
-        c.getRealAuthor().getId().equals(realAccountId),
-        "The real author for the following comment does not match the real"
-            + " author of this %s (%s): %s",
-        getClass().getSimpleName(),
-        realAccountId,
-        c);
+  protected void verifyComment(Comment c) {
+    CommentVerifier.verify(c, accountId, realAccountId, authorIdent);
   }
 }

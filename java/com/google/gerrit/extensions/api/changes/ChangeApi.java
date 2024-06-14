@@ -17,6 +17,7 @@ package com.google.gerrit.extensions.api.changes;
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Sets;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.extensions.client.ListChangesOption;
 import com.google.gerrit.extensions.client.ReviewerState;
@@ -25,6 +26,7 @@ import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.ChangeInfoDifference;
 import com.google.gerrit.extensions.common.ChangeMessageInfo;
 import com.google.gerrit.extensions.common.CommentInfo;
+import com.google.gerrit.extensions.common.CommitMessageInfo;
 import com.google.gerrit.extensions.common.CommitMessageInput;
 import com.google.gerrit.extensions.common.MergePatchSetInput;
 import com.google.gerrit.extensions.common.PureRevertInfo;
@@ -135,6 +137,7 @@ public interface ChangeApi {
    *
    * @see Changes#id(String, int)
    */
+  @CanIgnoreReturnValue
   default ChangeApi revert() throws RestApiException {
     return revert(new RevertInput());
   }
@@ -144,17 +147,22 @@ public interface ChangeApi {
    *
    * @see Changes#id(String, int)
    */
+  @CanIgnoreReturnValue
   ChangeApi revert(RevertInput in) throws RestApiException;
 
+  @CanIgnoreReturnValue
   default RevertSubmissionInfo revertSubmission() throws RestApiException {
     return revertSubmission(new RevertInput());
   }
 
+  @CanIgnoreReturnValue
   RevertSubmissionInfo revertSubmission(RevertInput in) throws RestApiException;
 
   /** Create a merge patch set for the change. */
+  @CanIgnoreReturnValue
   ChangeInfo createMergePatchSet(MergePatchSetInput in) throws RestApiException;
 
+  @CanIgnoreReturnValue
   ChangeInfo applyPatch(ApplyPatchPatchSetInput in) throws RestApiException;
 
   default List<ChangeInfo> submittedTogether() throws RestApiException {
@@ -187,6 +195,7 @@ public interface ChangeApi {
    * @return a {@code RebaseChainInfo} contains the {@code ChangeInfo} data for the rebased the
    *     chain
    */
+  @CanIgnoreReturnValue
   default Response<RebaseChainInfo> rebaseChain() throws RestApiException {
     return rebaseChain(new RebaseInput());
   }
@@ -197,6 +206,7 @@ public interface ChangeApi {
    * @return a {@code RebaseChainInfo} contains the {@code ChangeInfo} data for the rebased the
    *     chain
    */
+  @CanIgnoreReturnValue
   Response<RebaseChainInfo> rebaseChain(RebaseInput in) throws RestApiException;
 
   /** Deletes a change. */
@@ -208,12 +218,14 @@ public interface ChangeApi {
 
   IncludedInInfo includedIn() throws RestApiException;
 
+  @CanIgnoreReturnValue
   default ReviewerResult addReviewer(String reviewer) throws RestApiException {
     ReviewerInput in = new ReviewerInput();
     in.reviewer = reviewer;
     return addReviewer(in);
   }
 
+  @CanIgnoreReturnValue
   ReviewerResult addReviewer(ReviewerInput in) throws RestApiException;
 
   SuggestedReviewersRequest suggestReviewers() throws RestApiException;
@@ -318,6 +330,8 @@ public interface ChangeApi {
    */
   ChangeEditApi edit() throws RestApiException;
 
+  CommitMessageInfo getMessage() throws RestApiException;
+
   /** Create a new patch set with a new commit message. */
   default void setMessage(String message) throws RestApiException {
     CommitMessageInput in = new CommitMessageInput();
@@ -356,6 +370,7 @@ public interface ChangeApi {
   AttentionSetApi attention(String id) throws RestApiException;
 
   /** Adds a user to the attention set. */
+  @CanIgnoreReturnValue
   AccountInfo addToAttentionSet(AttentionSetInput input) throws RestApiException;
 
   /**
@@ -470,9 +485,11 @@ public interface ChangeApi {
   void index() throws RestApiException;
 
   /** Check if this change is a pure revert of the change stored in revertOf. */
+  @CanIgnoreReturnValue
   PureRevertInfo pureRevert() throws RestApiException;
 
   /** Check if this change is a pure revert of claimedOriginal (SHA1 in 40 digit hex). */
+  @CanIgnoreReturnValue
   PureRevertInfo pureRevert(String claimedOriginal) throws RestApiException;
 
   /**
@@ -707,6 +724,11 @@ public interface ChangeApi {
         EnumSet<ListChangesOption> options,
         ImmutableListMultimap<String, String> pluginOptions)
         throws RestApiException {
+      throw new NotImplementedException();
+    }
+
+    @Override
+    public CommitMessageInfo getMessage() throws RestApiException {
       throw new NotImplementedException();
     }
 

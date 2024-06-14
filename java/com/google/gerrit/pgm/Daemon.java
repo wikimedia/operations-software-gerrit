@@ -52,7 +52,7 @@ import com.google.gerrit.pgm.http.jetty.JettyEnv;
 import com.google.gerrit.pgm.http.jetty.JettyModule;
 import com.google.gerrit.pgm.http.jetty.ProjectQoSFilter.ProjectQoSFilterModule;
 import com.google.gerrit.pgm.util.ErrorLogFile;
-import com.google.gerrit.pgm.util.LogFileCompressor.LogFileCompressorModule;
+import com.google.gerrit.pgm.util.LogFileManager.LogFileManagerModule;
 import com.google.gerrit.pgm.util.RuntimeShutdown;
 import com.google.gerrit.pgm.util.SiteProgram;
 import com.google.gerrit.server.DefaultRefLogIdentityProvider;
@@ -103,6 +103,8 @@ import com.google.gerrit.server.mail.SignedTokenEmailTokenVerifier.SignedTokenEm
 import com.google.gerrit.server.mail.receive.MailReceiver.MailReceiverModule;
 import com.google.gerrit.server.mail.send.SmtpEmailSender.SmtpEmailSenderModule;
 import com.google.gerrit.server.mime.MimeUtil2Module;
+import com.google.gerrit.server.notedb.NoteDbDraftCommentsModule;
+import com.google.gerrit.server.notedb.NoteDbStarredChangesModule;
 import com.google.gerrit.server.notedb.RepoSequence.RepoSequenceModule;
 import com.google.gerrit.server.patch.DiffExecutorModule;
 import com.google.gerrit.server.permissions.DefaultPermissionBackendModule;
@@ -272,7 +274,8 @@ public class Daemon extends SiteProgram {
     }
     if (doInit) {
       try {
-        new Init(getSitePath()).run();
+        @SuppressWarnings("unused")
+        var unused = new Init(getSitePath()).run();
       } catch (Exception e) {
         throw die("Init failed", e);
       }
@@ -447,7 +450,7 @@ public class Daemon extends SiteProgram {
     final List<Module> modules = new ArrayList<>();
     modules.add(NoteDbSchemaVersionCheck.module());
     modules.add(new DropWizardMetricMaker.RestModule());
-    modules.add(new LogFileCompressorModule());
+    modules.add(new LogFileManagerModule());
 
     // Index module shutdown must happen before work queue shutdown, otherwise
     // work queue can get stuck waiting on index futures that will never return.
@@ -466,11 +469,15 @@ public class Daemon extends SiteProgram {
     modules.add(new SysExecutorModule());
     modules.add(new DiffExecutorModule());
     modules.add(new MimeUtil2Module());
+
     modules.add(cfgInjector.getInstance(AccountCacheImpl.AccountCacheModule.class));
+    modules.add(cfgInjector.getInstance(AccountCacheImpl.AccountCacheBindingModule.class));
 
     modules.add(new AccountNoteDbWriteStorageModule());
     modules.add(new AccountNoteDbReadStorageModule());
     modules.add(new RepoSequenceModule());
+    modules.add(new NoteDbDraftCommentsModule());
+    modules.add(new NoteDbStarredChangesModule());
     modules.add(cfgInjector.getInstance(GerritGlobalModule.class));
     modules.add(new GerritApiModule());
     modules.add(new ProjectQueryBuilderModule());

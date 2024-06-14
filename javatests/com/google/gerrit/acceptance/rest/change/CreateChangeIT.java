@@ -51,6 +51,7 @@ import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.entities.Permission;
 import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.entities.converter.ChangeInputProtoConverter;
 import com.google.gerrit.extensions.api.accounts.AccountInput;
 import com.google.gerrit.extensions.api.changes.ApplyPatchInput;
 import com.google.gerrit.extensions.api.changes.ChangeApi;
@@ -82,14 +83,17 @@ import com.google.gerrit.server.events.CommitReceivedEvent;
 import com.google.gerrit.server.git.validators.CommitValidationException;
 import com.google.gerrit.server.git.validators.CommitValidationListener;
 import com.google.gerrit.server.git.validators.CommitValidationMessage;
+import com.google.gerrit.server.restapi.change.ApplyPatchUtil;
+import com.google.gerrit.server.restapi.change.CreateChange;
+import com.google.gerrit.server.restapi.change.CreateChange.CommitTreeSupplier;
 import com.google.gerrit.server.submit.ChangeAlreadyMergedException;
+import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.testing.FakeEmailSender.Message;
 import com.google.gson.stream.JsonReader;
 import com.google.inject.Inject;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
@@ -111,9 +115,13 @@ import org.junit.Test;
 
 @UseClockStep
 public class CreateChangeIT extends AbstractDaemonTest {
+  private static final ChangeInputProtoConverter CHANGE_INPUT_PROTO_CONVERTER =
+      ChangeInputProtoConverter.INSTANCE;
   @Inject private ProjectOperations projectOperations;
   @Inject private RequestScopeOperations requestScopeOperations;
   @Inject private ExtensionRegistry extensionRegistry;
+  @Inject private CreateChange createChangeImpl;
+  @Inject private BatchUpdate.Factory updateFactory;;
 
   @Before
   public void addNonCommitHead() throws Exception {
@@ -371,7 +379,7 @@ public class CreateChangeIT extends AbstractDaemonTest {
     requestScopeOperations.setApiUser(admin.id());
     assertCreateSucceeds(newChangeInput(ChangeStatus.NEW));
 
-    List<Message> messages = sender.getMessages();
+    ImmutableList<Message> messages = sender.getMessages();
     assertThat(messages).hasSize(1);
     Message m = messages.get(0);
     assertThat(m.rcpt()).containsExactly(user.getNameEmail());
@@ -564,7 +572,7 @@ public class CreateChangeIT extends AbstractDaemonTest {
 
   @Test
   public void createChangeWithParentCommit() throws Exception {
-    Map<String, PushOneCommit.Result> setup =
+    ImmutableMap<String, PushOneCommit.Result> setup =
         changeInTwoBranches("foo", "foo.txt", "bar", "bar.txt");
     ChangeInput input = newChangeInput(ChangeStatus.NEW);
     input.baseCommit = setup.get("master").getCommit().getId().name();
@@ -603,7 +611,7 @@ public class CreateChangeIT extends AbstractDaemonTest {
 
   @Test
   public void createChangeWithParentCommitOnWrongBranchFails() throws Exception {
-    Map<String, PushOneCommit.Result> setup =
+    ImmutableMap<String, PushOneCommit.Result> setup =
         changeInTwoBranches("foo", "foo.txt", "bar", "bar.txt");
     ChangeInput input = newChangeInput(ChangeStatus.NEW);
     input.branch = "foo";
@@ -638,7 +646,7 @@ public class CreateChangeIT extends AbstractDaemonTest {
 
   @Test
   public void createChangeWithoutAccessToParentCommitFails() throws Exception {
-    Map<String, PushOneCommit.Result> results =
+    ImmutableMap<String, PushOneCommit.Result> results =
         changeInTwoBranches("invisible-branch", "a.txt", "visible-branch", "b.txt");
     projectOperations
         .project(project)
@@ -1158,6 +1166,26 @@ public class CreateChangeIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void createChangeWithCommitTreeSupplier_success() throws Exception {
+    createBranch(BranchNameKey.create(project, "other"));
+    ChangeInput input = newChangeInput(ChangeStatus.NEW);
+    input.branch = "other";
+    input.subject = "custom commit message";
+    ApplyPatchInput applyPatchInput = new ApplyPatchInput();
+    applyPatchInput.patch = PATCH_INPUT;
+    CommitTreeSupplier commitTreeSupplier =
+        (repo, oi, in, mergeTip) ->
+            ApplyPatchUtil.applyPatch(repo, oi, applyPatchInput, mergeTip).getTreeId();
+
+    ChangeInfo info = assertCreateWithCommitTreeSupplierSucceeds(input, commitTreeSupplier);
+
+    DiffInfo diff = gApi.changes().id(info.id).current().file(PATCH_FILE_NAME).diff();
+    assertDiffForNewFile(diff, info.currentRevision, PATCH_FILE_NAME, PATCH_NEW_FILE_CONTENT);
+    assertThat(info.revisions.get(info.currentRevision).commit.message)
+        .isEqualTo("custom commit message\n\nChange-Id: " + info.changeId + "\n");
+  }
+
+  @Test
   @UseSystemTime
   public void sha1sOfTwoNewChangesDiffer() throws Exception {
     ChangeInput changeInput = newChangeInput(ChangeStatus.NEW);
@@ -1352,6 +1380,18 @@ public class CreateChangeIT extends AbstractDaemonTest {
     return out;
   }
 
+  private ChangeInfo assertCreateWithCommitTreeSupplierSucceeds(
+      ChangeInput input, CommitTreeSupplier commitTreeSupplier) throws Exception {
+    ChangeInfo res =
+        createChangeImpl
+            .execute(updateFactory, CHANGE_INPUT_PROTO_CONVERTER.toProto(input), commitTreeSupplier)
+            .value();
+    // The original result doesn't contain any revision data.
+    ChangeInfo out = gApi.changes().id(res.changeId).get(ALL_REVISIONS, CURRENT_COMMIT);
+    validateCreateSucceeds(input, out);
+    return out;
+  }
+
   private static <T> T readContentFromJson(RestResponse r, Class<T> clazz) throws Exception {
     try (JsonReader jsonReader = new JsonReader(r.getReader())) {
       return newGson().fromJson(jsonReader, clazz);
@@ -1470,7 +1510,7 @@ public class CreateChangeIT extends AbstractDaemonTest {
    * @param fileB name of file to commit to branchB
    * @return A {@code Map} of branchName => commit result.
    */
-  private Map<String, Result> changeInTwoBranches(
+  private ImmutableMap<String, Result> changeInTwoBranches(
       String branchA, String fileA, String branchB, String fileB) throws Exception {
     return changeInTwoBranches(
         branchA, "change A", fileA, "A content", branchB, "change B", fileB, "B content");
@@ -1489,7 +1529,7 @@ public class CreateChangeIT extends AbstractDaemonTest {
    * @param contentB file content to commit to branchB
    * @return A {@code Map} of branchName => commit result.
    */
-  private Map<String, Result> changeInTwoBranches(
+  private ImmutableMap<String, Result> changeInTwoBranches(
       String branchA,
       String subjectA,
       String fileA,

@@ -45,7 +45,7 @@ import com.google.gerrit.lifecycle.LifecycleManager;
 import com.google.gerrit.lifecycle.LifecycleModule;
 import com.google.gerrit.lucene.LuceneIndexModule;
 import com.google.gerrit.metrics.dropwizard.DropWizardMetricMaker;
-import com.google.gerrit.pgm.util.LogFileCompressor.LogFileCompressorModule;
+import com.google.gerrit.pgm.util.LogFileManager.LogFileManagerModule;
 import com.google.gerrit.server.DefaultRefLogIdentityProvider;
 import com.google.gerrit.server.LibModuleLoader;
 import com.google.gerrit.server.LibModuleType;
@@ -132,7 +132,6 @@ import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -176,7 +175,7 @@ public class WebAppInitializer extends GuiceServletContextListener implements Fi
     if (manager == null) {
       String path = System.getProperty(GERRIT_SITE_PATH);
       if (path != null) {
-        sitePath = Paths.get(path);
+        sitePath = Path.of(path);
       } else {
         throw new ProvisionException(GERRIT_SITE_PATH + " must be defined");
       }
@@ -303,7 +302,7 @@ public class WebAppInitializer extends GuiceServletContextListener implements Fi
   private Injector createSysInjector() {
     final List<Module> modules = new ArrayList<>();
     modules.add(new DropWizardMetricMaker.RestModule());
-    modules.add(new LogFileCompressorModule());
+    modules.add(new LogFileManagerModule());
     modules.add(new EventBrokerModule());
     modules.add(new JdbcAccountPatchReviewStoreModule(config));
     modules.add(cfgInjector.getInstance(GitRepositoryManagerModule.class));
@@ -311,7 +310,10 @@ public class WebAppInitializer extends GuiceServletContextListener implements Fi
     modules.add(new SysExecutorModule());
     modules.add(new DiffExecutorModule());
     modules.add(new MimeUtil2Module());
+
     modules.add(cfgInjector.getInstance(AccountCacheImpl.AccountCacheModule.class));
+    modules.add(cfgInjector.getInstance(AccountCacheImpl.AccountCacheBindingModule.class));
+
     modules.add(cfgInjector.getInstance(GerritGlobalModule.class));
     modules.add(new GerritApiModule());
     modules.add(new ProjectQueryBuilderModule());

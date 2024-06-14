@@ -7,28 +7,20 @@ load("@rules_java//java:defs.bzl", "java_package_configuration")
 
 exports_files(["nongoogle.bzl"])
 
-default_java_toolchain(
-    name = "error_prone_warnings_toolchain_java11",
-    configuration = NONPREBUILT_TOOLCHAIN_CONFIGURATION,
-    package_configuration = [
-        ":error_prone",
-    ],
-    source_version = "11",
-    target_version = "11",
-    visibility = ["//visibility:public"],
-)
-
-default_java_toolchain(
-    name = "error_prone_warnings_toolchain_java17",
+[default_java_toolchain(
+    name = "error_prone_warnings_toolchain_java" + VERSION,
     configuration = dict(),
-    java_runtime = "@bazel_tools//tools/jdk:remotejdk_17",
+    java_runtime = "@rules_java//toolchains:remotejdk_" + VERSION,
     package_configuration = [
         ":error_prone",
     ],
-    source_version = "17",
-    target_version = "17",
+    source_version = VERSION,
+    target_version = VERSION,
     visibility = ["//visibility:public"],
-)
+) for VERSION in [
+    "17",
+    "21",
+]]
 
 # Error Prone errors enabled by default; see ../.bazelrc for how this is
 # enabled. This warnings list is originally based on:
@@ -76,7 +68,7 @@ java_package_configuration(
         "-Xep:BadImport:ERROR",
         "-Xep:BadInstanceof:ERROR",
         "-Xep:BadShiftAmount:ERROR",
-        "-Xep:BanJNDI:OFF",
+        "-Xep:BanJNDI:WARN",
         "-Xep:BanSerializableRead:ERROR",
         "-Xep:BigDecimalEquals:ERROR",
         "-Xep:BigDecimalLiteralDouble:ERROR",
@@ -159,7 +151,7 @@ java_package_configuration(
         "-Xep:FloatingPointLiteralPrecision:ERROR",
         "-Xep:FloggerArgumentToString:ERROR",
         "-Xep:FloggerFormatString:ERROR",
-        "-Xep:FloggerLogString:OFF",
+        "-Xep:FloggerLogString:WARN",
         "-Xep:FloggerLogVarargs:ERROR",
         "-Xep:FloggerSplitLogStatement:ERROR",
         "-Xep:FloggerStringConcatenation:ERROR",
@@ -202,7 +194,7 @@ java_package_configuration(
         "-Xep:InjectOnConstructorOfAbstractClass:ERROR",
         "-Xep:InheritDoc:ERROR",
         "-Xep:InlineFormatString:ERROR",
-        "-Xep:InlineMeInliner:OFF",
+        "-Xep:InlineMeInliner:WARN",
         "-Xep:InlineMeSuggester:ERROR",
         "-Xep:InlineMeValidator:ERROR",
         "-Xep:InputStreamSlowMultibyteRead:ERROR",
@@ -290,7 +282,8 @@ java_package_configuration(
         "-Xep:MultipleParallelOrSequentialCalls:ERROR",
         "-Xep:MultipleUnaryOperatorsInMethodCall:ERROR",
         "-Xep:MustBeClosedChecker:ERROR",
-        "-Xep:MutableConstantField:OFF",
+        "-Xep:MutableConstantField:WARN",
+        "-Xep:MutableGuiceModule:ERROR",
         "-Xep:MutablePublicArray:ERROR",
         "-Xep:NCopiesOfChar:ERROR",
         "-Xep:NarrowingCompoundAssignment:ERROR",
@@ -332,6 +325,7 @@ java_package_configuration(
         "-Xep:PeriodTimeMath:ERROR",
         "-Xep:PreconditionsCheckNotNullRepeated:ERROR",
         "-Xep:PreconditionsInvalidPlaceholder:ERROR",
+        "-Xep:PreferredInterfaceType:ERROR",
         "-Xep:PrimitiveAtomicReference:ERROR",
         "-Xep:PrivateSecurityContractProtoAccess:ERROR",
         "-Xep:ProtectedMembersInFinalClass:ERROR",
@@ -343,7 +337,7 @@ java_package_configuration(
         "-Xep:ProtoTimestampGetSecondsGetNano:ERROR",
         "-Xep:ProtoTruthMixedDescriptors:ERROR",
         "-Xep:ProtocolBufferOrdinal:ERROR",
-        "-Xep:ProvidesMethodOutsideOfModule:OFF",
+        "-Xep:ProvidesMethodOutsideOfModule:WARN",
         "-Xep:RandomCast:ERROR",
         "-Xep:RandomModInteger:ERROR",
         "-Xep:ReachabilityFenceUsage:ERROR",

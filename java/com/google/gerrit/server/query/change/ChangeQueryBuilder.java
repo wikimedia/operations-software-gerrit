@@ -111,6 +111,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
@@ -143,7 +144,8 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
   public interface ChangeIsOperandFactory extends ChangeOperandFactory {}
 
-  private static final Pattern PAT_LEGACY_ID = Pattern.compile("^[1-9][0-9]*$");
+  private static final Pattern PAT_CHANGE_NUMBER = Pattern.compile("^[1-9][0-9]*$");
+  private static final Pattern PAT_PROJECT_CHANGE_NUM = Pattern.compile("^([^~]+)~([1-9][0-9]*)$");
   private static final Pattern PAT_CHANGE_ID = Pattern.compile(CHANGE_ID_PATTERN);
   private static final Pattern DEF_CHANGE =
       Pattern.compile("^(?:[1-9][0-9]*|(?:[^~]+~[^~]+~)?[iI][0-9a-f]{4,}.*)$");
@@ -164,6 +166,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
   public static final String FIELD_CHANGE = "change";
   public static final String FIELD_CHANGE_ID = "change_id";
+  public static final String FIELD_CHANGE_NUMBER = "changenumber";
   public static final String FIELD_COMMENT = "comment";
   public static final String FIELD_COMMENTBY = "commentby";
   public static final String FIELD_COMMIT = "commit";
@@ -586,6 +589,18 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
   @Operator
   public Predicate<ChangeData> change(String query) throws QueryParseException {
+    return getPredicateChangeData(query, changeId -> ChangePredicates.changeNumber(changeId, args));
+  }
+
+  // Keep using the index legacy document-id (legacy_id_str) for URLs queries like: "/q/123456",
+  // "/q/Iasdw2312321", "/q/project~123456"  that are expecting to always find a single element.
+  private Predicate<ChangeData> defaultSearch(String query) throws QueryParseException {
+    return getPredicateChangeData(query, ChangePredicates::idStr);
+  }
+
+  private Predicate<ChangeData> getPredicateChangeData(
+      String query, Function<Change.Id, Predicate<ChangeData>> changePredicateGetter)
+      throws QueryParseException {
     Optional<ChangeTriplet> triplet = ChangeTriplet.parse(query);
     if (triplet.isPresent()) {
       return Predicate.and(
@@ -593,10 +608,16 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
           branch(triplet.get().branch().branch()),
           ChangePredicates.idPrefix(parseChangeId(triplet.get().id().get())));
     }
-    if (PAT_LEGACY_ID.matcher(query).matches()) {
+
+    Matcher projectChangeNumber = PAT_PROJECT_CHANGE_NUM.matcher(query);
+    if (projectChangeNumber.matches()) {
+      return Predicate.and(
+          project(projectChangeNumber.group(1)),
+          ChangePredicates.idStr(projectChangeNumber.group(2)));
+    } else if (PAT_CHANGE_NUMBER.matcher(query).matches()) {
       Integer id = Ints.tryParse(query);
       if (id != null) {
-        return ChangePredicates.idStr(Change.id(id));
+        return changePredicateGetter.apply(Change.id(id));
       }
     } else if (PAT_CHANGE_ID.matcher(query).matches()) {
       return ChangePredicates.idPrefix(parseChangeId(query));
@@ -1221,7 +1242,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     if (isSelf(who)) {
       return isVisible();
     }
-    Set<Account.Id> accounts = null;
+    ImmutableSet<Account.Id> accounts = null;
     try {
       accounts = parseAccount(who);
     } catch (QueryParseException e) {
@@ -1280,7 +1301,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
   private Predicate<ChangeData> ownerDefaultField(String who)
       throws QueryParseException, IOException, ConfigInvalidException {
-    Set<Account.Id> accounts = parseAccountIgnoreVisibility(who);
+    ImmutableSet<Account.Id> accounts = parseAccountIgnoreVisibility(who);
     if (accounts.size() > MAX_ACCOUNTS_PER_DEFAULT_FIELD) {
       return Predicate.any();
     }
@@ -1442,7 +1463,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   @Operator
   public Predicate<ChangeData> from(String who)
       throws QueryParseException, IOException, ConfigInvalidException {
-    Set<Account.Id> ownerIds = parseAccountIgnoreVisibility(who);
+    ImmutableSet<Account.Id> ownerIds = parseAccountIgnoreVisibility(who);
     return Predicate.or(owner(ownerIds), commentby(ownerIds));
   }
 
@@ -1470,7 +1491,8 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     try {
       // [,user=<user>]
       if (inputArgs.keyValue.containsKey(ARG_ID_USER)) {
-        Set<Account.Id> accounts = parseAccount(inputArgs.keyValue.get(ARG_ID_USER).value());
+        ImmutableSet<Account.Id> accounts =
+            parseAccount(inputArgs.keyValue.get(ARG_ID_USER).value());
         if (accounts != null && accounts.size() > 1) {
           throw error(
               String.format(
@@ -1559,7 +1581,8 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     try {
       // [,user=<user>]
       if (inputArgs.keyValue.containsKey(ARG_ID_USER)) {
-        Set<Account.Id> accounts = parseAccount(inputArgs.keyValue.get(ARG_ID_USER).value());
+        ImmutableSet<Account.Id> accounts =
+            parseAccount(inputArgs.keyValue.get(ARG_ID_USER).value());
         if (accounts != null && accounts.size() > 1) {
           throw error(
               String.format(
@@ -1679,13 +1702,13 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     } else if (DEF_CHANGE.matcher(query).matches()) {
       List<Predicate<ChangeData>> predicates = Lists.newArrayListWithCapacity(2);
       try {
-        predicates.add(change(query));
+        predicates.add(defaultSearch(query));
       } catch (QueryParseException e) {
         // Skip.
       }
 
-      // For PAT_LEGACY_ID, it may also be the prefix of some commits.
-      if (query.length() >= 6 && PAT_LEGACY_ID.matcher(query).matches()) {
+      // For PAT_CHANGE_NUMBER, it may also be the prefix of some commits.
+      if (query.length() >= 6 && PAT_CHANGE_NUMBER.matcher(query).matches()) {
         predicates.add(commit(query));
       }
 
@@ -1785,7 +1808,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     return accounts;
   }
 
-  private Set<Account.Id> parseAccount(String who)
+  private ImmutableSet<Account.Id> parseAccount(String who)
       throws QueryParseException, IOException, ConfigInvalidException {
     try {
       return args.accountResolver.resolveAsUser(args.getUser(), who).asNonEmptyIdSet();
@@ -1797,7 +1820,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     }
   }
 
-  private Set<Account.Id> parseAccountIgnoreVisibility(String who)
+  private ImmutableSet<Account.Id> parseAccountIgnoreVisibility(String who)
       throws QueryRequiresAuthException, IOException, ConfigInvalidException {
     try {
       return args.accountResolver
@@ -1811,7 +1834,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
     }
   }
 
-  private Set<Account.Id> parseAccountIgnoreVisibility(
+  private ImmutableSet<Account.Id> parseAccountIgnoreVisibility(
       String who, java.util.function.Predicate<AccountState> activityFilter)
       throws QueryRequiresAuthException, IOException, ConfigInvalidException {
     try {
@@ -1849,12 +1872,12 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
   }
 
   private List<ChangeData> parseChangeData(String value) throws QueryParseException {
-    if (PAT_LEGACY_ID.matcher(value).matches()) {
+    if (PAT_CHANGE_NUMBER.matcher(value).matches()) {
       Optional<Change.Id> id = Change.Id.tryParse(value);
       if (!id.isPresent()) {
         throw error("Invalid change id " + value);
       }
-      return args.queryProvider.get().byLegacyChangeId(id.get());
+      return args.queryProvider.get().byChangeNumber(id.get());
     } else if (PAT_CHANGE_ID.matcher(value).matches()) {
       List<ChangeData> changes = args.queryProvider.get().byKeyPrefix(parseChangeId(value));
       if (changes.isEmpty()) {
@@ -1889,7 +1912,7 @@ public class ChangeQueryBuilder extends QueryBuilder<ChangeData, ChangeQueryBuil
 
     Predicate<ChangeData> reviewerPredicate = null;
     try {
-      Set<Account.Id> accounts = parseAccountIgnoreVisibility(who);
+      ImmutableSet<Account.Id> accounts = parseAccountIgnoreVisibility(who);
       if (!forDefaultField || accounts.size() <= MAX_ACCOUNTS_PER_DEFAULT_FIELD) {
         reviewerPredicate =
             Predicate.or(

@@ -98,7 +98,7 @@ public class SubmitRequirementsAdapterTest {
                 createLabel("Code-Review", Label.Status.OK),
                 createLabel("Verified", Label.Status.OK)));
 
-    List<SubmitRequirementResult> requirements =
+    ImmutableList<SubmitRequirementResult> requirements =
         SubmitRequirementsAdapter.createResult(
             submitRecord, labelTypes, psCommitId, /* isForced= */ false);
 
@@ -127,7 +127,7 @@ public class SubmitRequirementsAdapterTest {
                 createLabel("Code-Review", Label.Status.NEED),
                 createLabel("Verified", Label.Status.NEED)));
 
-    List<SubmitRequirementResult> requirements =
+    ImmutableList<SubmitRequirementResult> requirements =
         SubmitRequirementsAdapter.createResult(
             submitRecord, labelTypes, psCommitId, /* isForced= */ false);
 
@@ -159,7 +159,7 @@ public class SubmitRequirementsAdapterTest {
     // to indicate that all other records were forced, that's why we explicitly pass isForced=true
     // to the "submit requirements adapter". The resulting submit requirement result has a
     // status=FORCED.
-    List<SubmitRequirementResult> requirements =
+    ImmutableList<SubmitRequirementResult> requirements =
         SubmitRequirementsAdapter.createResult(
             submitRecord, labelTypes, psCommitId, /* isForced= */ true);
 
@@ -180,7 +180,7 @@ public class SubmitRequirementsAdapterTest {
             Status.NOT_READY,
             Arrays.asList(createLabel("ISA-Label", Label.Status.NEED)));
 
-    List<SubmitRequirementResult> requirements =
+    ImmutableList<SubmitRequirementResult> requirements =
         SubmitRequirementsAdapter.createResult(
             submitRecord, labelTypes, psCommitId, /* isForced= */ false);
 
@@ -201,7 +201,7 @@ public class SubmitRequirementsAdapterTest {
             Status.OK,
             Arrays.asList(createLabel("ISA-Label", Label.Status.OK)));
 
-    List<SubmitRequirementResult> requirements =
+    ImmutableList<SubmitRequirementResult> requirements =
         SubmitRequirementsAdapter.createResult(
             submitRecord, labelTypes, psCommitId, /* isForced= */ false);
 
@@ -222,7 +222,7 @@ public class SubmitRequirementsAdapterTest {
             Status.OK,
             Arrays.asList(createLabel("Non-Existing", Label.Status.OK)));
 
-    List<SubmitRequirementResult> requirements =
+    ImmutableList<SubmitRequirementResult> requirements =
         SubmitRequirementsAdapter.createResult(
             submitRecord, labelTypes, psCommitId, /* isForced= */ false);
 
@@ -239,7 +239,7 @@ public class SubmitRequirementsAdapterTest {
                 createLabel("Non-Existing", Label.Status.OK),
                 createLabel("Code-Review", Label.Status.OK)));
 
-    List<SubmitRequirementResult> requirements =
+    ImmutableList<SubmitRequirementResult> requirements =
         SubmitRequirementsAdapter.createResult(
             submitRecord, labelTypes, psCommitId, /* isForced= */ false);
 
@@ -258,7 +258,7 @@ public class SubmitRequirementsAdapterTest {
     SubmitRecord submitRecord =
         createSubmitRecord("gerrit~IgnoreSelfApprovalRule", Status.OK, Arrays.asList());
 
-    List<SubmitRequirementResult> requirements =
+    ImmutableList<SubmitRequirementResult> requirements =
         SubmitRequirementsAdapter.createResult(
             submitRecord, labelTypes, psCommitId, /* isForced= */ false);
 
@@ -276,7 +276,7 @@ public class SubmitRequirementsAdapterTest {
     SubmitRecord submitRecord =
         createSubmitRecord("gerrit~IgnoreSelfApprovalRule", Status.OK, /* labels= */ null);
 
-    List<SubmitRequirementResult> requirements =
+    ImmutableList<SubmitRequirementResult> requirements =
         SubmitRequirementsAdapter.createResult(
             submitRecord, labelTypes, psCommitId, /* isForced= */ false);
 
@@ -294,7 +294,7 @@ public class SubmitRequirementsAdapterTest {
     SubmitRecord submitRecord =
         createSubmitRecord("gerrit~IgnoreSelfApprovalRule", Status.NOT_READY, Arrays.asList());
 
-    List<SubmitRequirementResult> requirements =
+    ImmutableList<SubmitRequirementResult> requirements =
         SubmitRequirementsAdapter.createResult(
             submitRecord, labelTypes, psCommitId, /* isForced= */ false);
 
@@ -317,7 +317,7 @@ public class SubmitRequirementsAdapterTest {
                 createLabel("custom-label-1", Label.Status.NEED),
                 createLabel("custom-label-2", Label.Status.REJECT)));
 
-    List<SubmitRequirementResult> requirements =
+    ImmutableList<SubmitRequirementResult> requirements =
         SubmitRequirementsAdapter.createResult(
             submitRecord, labelTypes, psCommitId, /* isForced= */ false);
 
@@ -347,7 +347,7 @@ public class SubmitRequirementsAdapterTest {
                 createLabel("custom-pass-label-2", Label.Status.OK),
                 createLabel("custom-may-label-3", Label.Status.MAY)));
 
-    List<SubmitRequirementResult> requirements =
+    ImmutableList<SubmitRequirementResult> requirements =
         SubmitRequirementsAdapter.createResult(submitRecord, labelTypes, psCommitId, false);
 
     assertThat(requirements).hasSize(1);
@@ -369,7 +369,7 @@ public class SubmitRequirementsAdapterTest {
                 createLabel("custom-label-1", Label.Status.OK),
                 createLabel("custom-label-2", Label.Status.REJECT)));
 
-    List<SubmitRequirementResult> requirements =
+    ImmutableList<SubmitRequirementResult> requirements =
         SubmitRequirementsAdapter.createResult(
             submitRecord, labelTypes, psCommitId, /* isForced= */ false);
 

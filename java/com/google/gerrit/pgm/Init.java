@@ -143,7 +143,7 @@ public class Init extends BaseInit {
 
   @Override
   protected void afterInit(SiteRun run) throws Exception {
-    List<SchemaDefinitions<?>> schemaDefs =
+    ImmutableList<SchemaDefinitions<?>> schemaDefs =
         ImmutableList.of(
             AccountSchemaDefinitions.INSTANCE,
             ChangeSchemaDefinitions.INSTANCE,
@@ -302,7 +302,9 @@ public class Init extends BaseInit {
         .message(String.format("Init complete, reindexing %s with:", String.join(",", indices)));
     getConsoleUI().message(" reindex " + reindexArgs.stream().collect(joining(" ")));
     Reindex reindexPgm = new Reindex();
-    reindexPgm.main(reindexArgs.stream().toArray(String[]::new));
+
+    @SuppressWarnings("unused")
+    var unused = reindexPgm.main(reindexArgs.stream().toArray(String[]::new));
   }
 
   private static boolean nullOrEmpty(List<?> list) {

@@ -154,7 +154,7 @@ public class ChangeReviewersIT extends AbstractDaemonTest {
     assertReviewers(c, CC, user);
 
     // Verify email was sent to CCed account.
-    List<Message> messages = sender.getMessages();
+    ImmutableList<Message> messages = sender.getMessages();
     assertThat(messages).hasSize(1);
     Message m = messages.get(0);
     assertThat(m.rcpt()).containsExactly(user.getNameEmail());
@@ -232,7 +232,7 @@ public class ChangeReviewersIT extends AbstractDaemonTest {
     assertReviewers(c, CC, firstUsers);
 
     // Verify emails were sent to each of the group's accounts.
-    List<Message> messages = sender.getMessages();
+    ImmutableList<Message> messages = sender.getMessages();
     assertThat(messages).hasSize(1);
     Message m = messages.get(0);
     List<Address> expectedAddresses = new ArrayList<>(firstUsers.size());
@@ -444,7 +444,7 @@ public class ChangeReviewersIT extends AbstractDaemonTest {
     assertReviewers(c, CC, observer);
 
     // Verify emails were sent to added reviewers.
-    List<Message> messages = sender.getMessages();
+    ImmutableList<Message> messages = sender.getMessages();
     assertThat(messages).hasSize(2);
 
     Message m = messages.get(0);
@@ -542,7 +542,7 @@ public class ChangeReviewersIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void addReviewerToReviewerChangeInfo() throws Exception {
+  public void addReviewerToReviewerUpdateInfo() throws Exception {
     PushOneCommit.Result r = createChange();
     String changeId = r.getChangeId();
     ReviewerInput in = new ReviewerInput();
@@ -566,20 +566,20 @@ public class ChangeReviewersIT extends AbstractDaemonTest {
     assertThat(c.reviewerUpdates).hasSize(3);
 
     Iterator<ReviewerUpdateInfo> it = c.reviewerUpdates.iterator();
-    ReviewerUpdateInfo reviewerChange = it.next();
-    assertThat(reviewerChange.state).isEqualTo(CC);
-    assertThat(reviewerChange.reviewer._accountId).isEqualTo(user.id().get());
-    assertThat(reviewerChange.updatedBy._accountId).isEqualTo(admin.id().get());
+    ReviewerUpdateInfo reviewerUpdateInfo = it.next();
+    assertThat(reviewerUpdateInfo.state).isEqualTo(CC);
+    assertThat(reviewerUpdateInfo.reviewer._accountId).isEqualTo(user.id().get());
+    assertThat(reviewerUpdateInfo.updatedBy._accountId).isEqualTo(admin.id().get());
 
-    reviewerChange = it.next();
-    assertThat(reviewerChange.state).isEqualTo(REVIEWER);
-    assertThat(reviewerChange.reviewer._accountId).isEqualTo(user.id().get());
-    assertThat(reviewerChange.updatedBy._accountId).isEqualTo(admin.id().get());
+    reviewerUpdateInfo = it.next();
+    assertThat(reviewerUpdateInfo.state).isEqualTo(REVIEWER);
+    assertThat(reviewerUpdateInfo.reviewer._accountId).isEqualTo(user.id().get());
+    assertThat(reviewerUpdateInfo.updatedBy._accountId).isEqualTo(admin.id().get());
 
-    reviewerChange = it.next();
-    assertThat(reviewerChange.state).isEqualTo(REMOVED);
-    assertThat(reviewerChange.reviewer._accountId).isEqualTo(user.id().get());
-    assertThat(reviewerChange.updatedBy._accountId).isEqualTo(admin.id().get());
+    reviewerUpdateInfo = it.next();
+    assertThat(reviewerUpdateInfo.state).isEqualTo(REMOVED);
+    assertThat(reviewerUpdateInfo.reviewer._accountId).isEqualTo(user.id().get());
+    assertThat(reviewerUpdateInfo.updatedBy._accountId).isEqualTo(admin.id().get());
   }
 
   @Test

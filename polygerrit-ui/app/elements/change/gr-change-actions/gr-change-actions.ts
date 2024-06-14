@@ -42,6 +42,7 @@ import {
   ChangeActionDialog,
   ChangeInfo,
   CherryPickInput,
+  CommentThread,
   CommitId,
   InheritedBooleanInfo,
   isDetailedLabelInfo,
@@ -115,6 +116,9 @@ import {subscribe} from '../../lit/subscription-controller';
 import {userModelToken} from '../../../models/user/user-model';
 import {ParsedChangeInfo} from '../../../types/types';
 import {configModelToken} from '../../../models/config/config-model';
+import {readJSONResponsePayload} from '../../shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
+import {commentsModelToken} from '../../../models/comments/comments-model';
+import {when} from 'lit/directives/when.js';
 
 const ERR_BRANCH_EMPTY = 'The destination branch can’t be empty.';
 const ERR_COMMIT_EMPTY = 'The commit message can’t be empty.';
@@ -313,7 +317,6 @@ interface MenuAction {
 interface OverflowAction {
   type: ActionType;
   key: string;
-  overflow?: boolean;
 }
 
 interface ActionPriorityOverride {
@@ -366,18 +369,11 @@ export class GrChangeActions
 
   @query('#confirmDeleteEditDialog') confirmDeleteEditDialog?: GrDialog;
 
+  @query('#confirmPublishEditDialog') confirmPublishEditDialog?: GrDialog;
+
   @query('#moreActions') moreActions?: GrDropdown;
 
   @query('#secondaryActions') secondaryActions?: HTMLElement;
-
-  // TODO(TS): Ensure that ActionType, ChangeActions and RevisionActions
-  // properties are replaced with enums everywhere and remove them from
-  // the GrChangeActions class
-  ActionType = ActionType;
-
-  ChangeActions = ChangeActions;
-
-  RevisionActions = RevisionActions;
 
   @state() change?: ParsedChangeInfo;
 
@@ -396,21 +392,19 @@ export class GrChangeActions
 
   @state() changeStatus?: ChangeStatus;
 
+  @state() mergeable?: boolean;
+
   @state() commitNum?: CommitId;
 
   @state() latestPatchNum?: PatchSetNumber;
 
   @state() commitMessage = '';
 
-  @state() revisionActions: ActionNameToActionInfoMap = {};
-
-  @state() revisionSubmitAction?: ActionInfo | null;
-
-  @state() revisionRebaseAction?: ActionInfo | null;
+  // The unfiltered result of calling `restApiService.getChangeRevisionActions()`.
+  // The DOWNLOAD action is also added to it in `actionsChanged()`.
+  @state() revisionActions?: ActionNameToActionInfoMap;
 
   @state() privateByDefault?: InheritedBooleanInfo;
-
-  @state() loading = true;
 
   @state() actionLoadingMessage = '';
 
@@ -489,6 +483,10 @@ export class GrChangeActions
 
   @state() loggedIn = false;
 
+  @state() pluginsLoaded = false;
+
+  @state() threadsWithSuggestions?: CommentThread[];
+
   private readonly restApiService = getAppContext().restApiService;
 
   private readonly reporting = getAppContext().reportingService;
@@ -504,6 +502,8 @@ export class GrChangeActions
   private readonly getStorage = resolve(this, storageServiceToken);
 
   private readonly getNavigation = resolve(this, navigationToken);
+
+  private readonly getCommentsModel = resolve(this, commentsModelToken);
 
   constructor() {
     super();
@@ -539,6 +539,11 @@ export class GrChangeActions
     );
     subscribe(
       this,
+      () => this.getChangeModel().mergeable$,
+      x => (this.mergeable = x)
+    );
+    subscribe(
+      this,
       () => this.getChangeModel().editMode$,
       x => (this.editMode = x)
     );
@@ -564,8 +569,18 @@ export class GrChangeActions
     );
     subscribe(
       this,
+      () => this.getPluginLoader().pluginsModel.pluginsLoaded$,
+      x => (this.pluginsLoaded = x)
+    );
+    subscribe(
+      this,
       () => this.getConfigModel().repoConfig$,
       config => (this.privateByDefault = config?.private_by_default)
+    );
+    subscribe(
+      this,
+      () => this.getCommentsModel().threadsWithSuggestions$,
+      x => (this.threadsWithSuggestions = x)
     );
   }
 
@@ -575,7 +590,6 @@ export class GrChangeActions
       TargetElement.CHANGE_ACTIONS,
       this
     );
-    this.handleLoadingComplete();
   }
 
   static override get styles() {
@@ -620,6 +634,15 @@ export class GrChangeActions
         .hidden {
           display: none;
         }
+        .info {
+          background-color: var(--info-background);
+          padding: var(--spacing-l) var(--spacing-xl);
+          margin-bottom: var(--spacing-l);
+        }
+        .info gr-icon {
+          color: var(--selected-foreground);
+          margin-right: var(--spacing-xl);
+        }
         @media screen and (max-width: 50em) {
           #mainContent {
             flex-wrap: wrap;
@@ -653,7 +676,7 @@ export class GrChangeActions
         </span>
         <section
           id="primaryActions"
-          ?hidden=${this.loading ||
+          ?hidden=${this.isLoading() ||
           !this.topLevelActions ||
           !this.topLevelActions.length}
         >
@@ -663,7 +686,7 @@ export class GrChangeActions
         </section>
         <section
           id="secondaryActions"
-          ?hidden=${this.loading ||
+          ?hidden=${this.isLoading() ||
           !this.topLevelActions ||
           !this.topLevelActions.length}
         >
@@ -671,14 +694,14 @@ export class GrChangeActions
             this.renderUIAction(action)
           )}
         </section>
-        <gr-button ?hidden=${!this.loading}>Loading actions...</gr-button>
+        <gr-button ?hidden=${!this.isLoading()}>Loading actions...</gr-button>
         <gr-dropdown
           id="moreActions"
           link
           .verticalOffset=${32}
           .horizontalAlign=${'right'}
           @tap-item=${this.handleOverflowItemTap}
-          ?hidden=${this.loading ||
+          ?hidden=${this.isLoading() ||
           !this.menuActions ||
           !this.menuActions.length}
           .disabledIds=${this.disabledMenuActions}
@@ -698,9 +721,7 @@ export class GrChangeActions
             RevisionActions.REBASE
           )}
           .branch=${this.change?.branch}
-          .rebaseOnCurrent=${this.revisionRebaseAction
-            ? !!this.revisionRebaseAction.enabled
-            : null}
+          .rebaseOnCurrent=${!!this.revisionActions?.rebase?.enabled}
         ></gr-confirm-rebase-dialog>
         <gr-confirm-cherrypick-dialog
           id="confirmCherrypick"
@@ -740,7 +761,7 @@ export class GrChangeActions
         <gr-confirm-submit-dialog
           id="confirmSubmitDialog"
           class="confirmDialog"
-          .action=${this.revisionSubmitAction}
+          .action=${this.revisionActions?.submit}
           @cancel=${this.handleConfirmDialogCancel}
           @confirm=${this.handleSubmitConfirm}
         ></gr-confirm-submit-dialog>
@@ -786,6 +807,27 @@ export class GrChangeActions
           <div class="header" slot="header">Delete Change Edit</div>
           <div class="main" slot="main">
             Do you really want to delete the edit?
+          </div>
+        </gr-dialog>
+        <gr-dialog
+          id="confirmPublishEditDialog"
+          class="confirmDialog"
+          confirm-label="Publish"
+          confirm-on-enter=""
+          @cancel=${this.handleConfirmDialogCancel}
+          @confirm=${this.handlePublishEditConfirm}
+        >
+          <div class="header" slot="header">Publish Change Edit</div>
+          <div class="main" slot="main">
+            ${when(
+              this.numberOfThreadsWithSuggestions() > 0,
+              () => html`<p class="info">
+                <gr-icon id="icon" icon="info" small></gr-icon>
+                Heads Up! ${this.numberOfThreadsWithSuggestions()} comments have
+                suggestions you can apply before publishing
+              </p>`
+            )}
+            Do you really want to publish the edit?
           </div>
         </gr-dialog>
       </dialog>
@@ -834,7 +876,7 @@ export class GrChangeActions
     this.topLevelActions = this.allActionValues.filter(a => {
       if (this.hiddenActions.includes(a.__key)) return false;
       if (this.editMode) return EDIT_ACTIONS.has(a.__key);
-      return this.getActionOverflowIndex(a.__type, a.__key) === -1;
+      return !this.isOverflowAction(a.__type, a.__key);
     });
     this.topLevelPrimaryActions = this.topLevelActions.filter(
       action => action.__primary
@@ -843,31 +885,6 @@ export class GrChangeActions
       action => !action.__primary
     );
     this.menuActions = this.computeMenuActions();
-    this.revisionSubmitAction = this.getSubmitAction(this.revisionActions);
-    this.revisionRebaseAction = this.getRebaseAction(this.revisionActions);
-  }
-
-  private getSubmitAction(revisionActions: ActionNameToActionInfoMap) {
-    return this.getRevisionAction(revisionActions, 'submit');
-  }
-
-  private getRebaseAction(revisionActions: ActionNameToActionInfoMap) {
-    return this.getRevisionAction(revisionActions, 'rebase');
-  }
-
-  private getRevisionAction(
-    revisionActions: ActionNameToActionInfoMap,
-    actionName: string
-  ) {
-    if (!revisionActions) {
-      return undefined;
-    }
-    if (revisionActions[actionName] === undefined) {
-      // Return null to fire an event when revisionActions was loaded
-      // but doesn't contain actionName. undefined doesn't fire an event
-      return null;
-    }
-    return revisionActions[actionName];
   }
 
   reload() {
@@ -875,33 +892,29 @@ export class GrChangeActions
       return Promise.resolve();
     }
     const change = this.change;
-
-    this.loading = true;
+    this.revisionActions = undefined;
     return this.restApiService
       .getChangeRevisionActions(this.changeNum, this.latestPatchNum)
       .then(revisionActions => {
-        if (!revisionActions) {
-          return;
-        }
-
-        this.revisionActions = revisionActions;
+        this.revisionActions = revisionActions ?? {};
         this.sendShowRevisionActions({
           change: change as ChangeInfo,
-          revisionActions,
+          revisionActions: this.revisionActions,
         });
-        this.handleLoadingComplete();
       })
       .catch(err => {
         fireAlert(this, ERR_REVISION_ACTIONS);
-        this.loading = false;
         throw err;
       });
   }
 
-  private handleLoadingComplete() {
-    this.getPluginLoader()
-      .awaitPluginsLoaded()
-      .then(() => (this.loading = false));
+  private isLoading() {
+    return (
+      !this.pluginsLoaded ||
+      !this.change ||
+      this.mergeable === undefined ||
+      this.revisionActions === undefined
+    );
   }
 
   // private but used in test
@@ -942,22 +955,25 @@ export class GrChangeActions
     this.requestUpdate('additionalActions');
   }
 
+  // TODO: Rename to toggleOverflow().
   setActionOverflow(type: ActionType, key: string, overflow: boolean) {
     if (type !== ActionType.CHANGE && type !== ActionType.REVISION) {
       throw Error(`Invalid action type given: ${type}`);
     }
-    const index = this.getActionOverflowIndex(type, key);
-    const action: OverflowAction = {
-      type,
-      key,
-      overflow,
-    };
-    if (!overflow && index !== -1) {
-      this.overflowActions.splice(index, 1);
-      this.requestUpdate('overflowActions');
-    } else if (overflow) {
-      this.overflowActions.push(action);
-      this.requestUpdate('overflowActions');
+    const isCurrentlyOverflow = this.isOverflowAction(type, key);
+    if (overflow === isCurrentlyOverflow) {
+      return;
+    }
+
+    // remove from overflowActions
+    if (!overflow) {
+      this.overflowActions = this.overflowActions.filter(
+        action => action.type !== type || action.key !== key
+      );
+    }
+    // add to overflowActions
+    if (overflow) {
+      this.overflowActions = [...this.overflowActions, {type, key}];
     }
   }
 
@@ -1006,9 +1022,9 @@ export class GrChangeActions
   }
 
   getActionDetails(actionName: string) {
-    if (this.revisionActions[actionName]) {
+    if (this.revisionActions?.[actionName]) {
       return this.revisionActions[actionName];
-    } else if (this.actions[actionName]) {
+    } else if (this.actions?.[actionName]) {
       return this.actions[actionName];
     } else {
       return undefined;
@@ -1028,7 +1044,7 @@ export class GrChangeActions
     this.actionLoadingMessage = '';
     this.disabledMenuActions = [];
 
-    if (!this.revisionActions.download) {
+    if (this.revisionActions && !this.revisionActions.download) {
       this.revisionActions = {
         ...this.revisionActions,
         download: DOWNLOAD_ACTION,
@@ -1228,7 +1244,7 @@ export class GrChangeActions
   }
 
   private getActionValues(
-    actionsChange: ActionNameToActionInfoMap,
+    actionsChange: ActionNameToActionInfoMap | undefined,
     primariesChange: PrimaryActionKey[],
     additionalActionsChange: UIActionInfo[],
     type: ActionType
@@ -1524,7 +1540,7 @@ export class GrChangeActions
       default:
         this.fireAction(
           this.prependSlash(key),
-          assertUIActionInfo(this.revisionActions[key]),
+          assertUIActionInfo(this.revisionActions?.[key]),
           true
         );
     }
@@ -1568,7 +1584,7 @@ export class GrChangeActions
     const rebaseChain = !!e.detail.rebaseChain;
     this.fireAction(
       rebaseChain ? '/rebase:chain' : '/rebase',
-      assertUIActionInfo(this.revisionActions.rebase),
+      assertUIActionInfo(this.revisionActions?.rebase),
       rebaseChain ? false : true,
       payload,
       {
@@ -1604,7 +1620,7 @@ export class GrChangeActions
     el.hidden = true;
     this.fireAction(
       '/cherrypick',
-      assertUIActionInfo(this.revisionActions.cherrypick),
+      assertUIActionInfo(this.revisionActions?.cherrypick),
       true,
       {
         destination: el.branch,
@@ -1719,6 +1735,23 @@ export class GrChangeActions
     );
   }
 
+  private handlePublishEditConfirm() {
+    this.hideAllDialogs();
+
+    if (!this.actions.publishEdit) return;
+
+    // We need to make sure that all cached version of a change
+    // edit are deleted.
+    this.getStorage().eraseEditableContentItemsForChangeEdit(this.changeNum);
+
+    this.fireAction(
+      '/edit:publish',
+      assertUIActionInfo(this.actions.publishEdit),
+      false,
+      {notify: NotifyType.NONE}
+    );
+  }
+
   // private but used in test
   handleSubmitConfirm() {
     if (!this.canSubmitChange()) {
@@ -1727,13 +1760,13 @@ export class GrChangeActions
     this.hideAllDialogs();
     this.fireAction(
       '/submit',
-      assertUIActionInfo(this.revisionActions.submit),
+      assertUIActionInfo(this.revisionActions?.submit),
       true
     );
   }
 
-  private getActionOverflowIndex(type: string, key: string) {
-    return this.overflowActions.findIndex(
+  private isOverflowAction(type: string, key: string) {
+    return this.overflowActions.some(
       action => action.type === type && action.key === key
     );
   }
@@ -1751,8 +1784,7 @@ export class GrChangeActions
       buttonKey = ChangeActions.REVERT;
     }
 
-    // If the action appears in the overflow menu.
-    if (this.getActionOverflowIndex(action.__type, buttonKey) !== -1) {
+    if (this.isOverflowAction(action.__type, buttonKey)) {
       this.disabledMenuActions.push(buttonKey === '/' ? 'delete' : buttonKey);
       this.requestUpdate('disabledMenuActions');
       return () => {
@@ -1833,16 +1865,15 @@ export class GrChangeActions
   }
 
   // private but used in test
-  async handleResponse(action: UIActionInfo, response?: Response) {
-    if (!response) {
+  async handleResponse(action: UIActionInfo, response: Response | undefined) {
+    if (!response?.ok) {
       return;
     }
-    // response is guaranteed to be ok (due to semantics of rest-api methods)
-    const obj = await this.restApiService.getResponseObject(response);
     switch (action.__key) {
       case ChangeActions.REVERT: {
-        const revertChangeInfo: ChangeInfo = obj as unknown as ChangeInfo;
-        this.restApiService.setInProjectLookup(
+        const revertChangeInfo = (await readJSONResponsePayload(response))
+          .parsed as unknown as ChangeInfo;
+        this.restApiService.addRepoNameToCache(
           revertChangeInfo._number,
           revertChangeInfo.project
         );
@@ -1857,8 +1888,9 @@ export class GrChangeActions
         break;
       }
       case RevisionActions.CHERRYPICK: {
-        const cherrypickChangeInfo: ChangeInfo = obj as unknown as ChangeInfo;
-        this.restApiService.setInProjectLookup(
+        const cherrypickChangeInfo = (await readJSONResponsePayload(response))
+          .parsed as unknown as ChangeInfo;
+        this.restApiService.addRepoNameToCache(
           cherrypickChangeInfo._number,
           cherrypickChangeInfo.project
         );
@@ -1888,7 +1920,8 @@ export class GrChangeActions
         this.getChangeModel().navigateToChangeResetReload();
         break;
       case ChangeActions.REVERT_SUBMISSION: {
-        const revertSubmistionInfo = obj as unknown as RevertSubmissionInfo;
+        const revertSubmistionInfo = (await readJSONResponsePayload(response))
+          .parsed as unknown as RevertSubmissionInfo;
         if (
           !revertSubmistionInfo.revert_changes ||
           !revertSubmistionInfo.revert_changes.length
@@ -2072,18 +2105,8 @@ export class GrChangeActions
   }
 
   private handlePublishEditTap() {
-    if (!this.actions.publishEdit) return;
-
-    // We need to make sure that all cached version of a change
-    // edit are deleted.
-    this.getStorage().eraseEditableContentItemsForChangeEdit(this.changeNum);
-
-    this.fireAction(
-      '/edit:publish',
-      assertUIActionInfo(this.actions.publishEdit),
-      false,
-      {notify: NotifyType.NONE}
-    );
+    assertIsDefined(this.confirmPublishEditDialog, 'confirmPublishEditDialog');
+    this.showActionDialog(this.confirmPublishEditDialog);
   }
 
   private handleRebaseEditTap() {
@@ -2180,7 +2203,7 @@ export class GrChangeActions
   private computeMenuActions(): MenuAction[] {
     return this.allActionValues
       .filter(a => {
-        const overflow = this.getActionOverflowIndex(a.__type, a.__key) !== -1;
+        const overflow = this.isOverflowAction(a.__type, a.__key);
         return overflow && !this.hiddenActions.includes(a.__key);
       })
       .map(action => {
@@ -2239,6 +2262,11 @@ export class GrChangeActions
 
   private handleStopEditTap() {
     fireNoBubbleNoCompose(this, 'stop-edit-tap', {});
+  }
+
+  private numberOfThreadsWithSuggestions() {
+    if (!this.threadsWithSuggestions) return 0;
+    return this.threadsWithSuggestions.length;
   }
 }
 

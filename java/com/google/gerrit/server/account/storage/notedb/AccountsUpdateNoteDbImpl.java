@@ -49,7 +49,7 @@ import com.google.gerrit.server.config.VersionedDefaultPreferences;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
-import com.google.gerrit.server.index.change.ReindexAfterRefUpdate;
+import com.google.gerrit.server.index.account.ReindexAccountsAfterRefUpdate;
 import com.google.gerrit.server.update.RetryHelper;
 import com.google.gerrit.server.update.RetryableAction.Action;
 import com.google.gerrit.server.update.context.RefUpdateContext;
@@ -102,21 +102,24 @@ import org.eclipse.jgit.transport.ReceiveCommand;
  * branch (see {@link ExternalIdNotes}).
  *
  * <p>On updating an account the account is evicted from the account cache and reindexed. The
- * eviction from the account cache and the reindexing is done by the {@link ReindexAfterRefUpdate}
- * class which receives the event about updating the user branch that is triggered by this class.
+ * eviction from the account cache and the reindexing is done by the {@link
+ * ReindexAccountsAfterRefUpdate} class which receives the event about updating the user branch that
+ * is triggered by this class.
  *
  * <p>If external IDs are updated, the ExternalIdCache is automatically updated by {@link
  * ExternalIdNotes}. In addition {@link ExternalIdNotes} takes care about evicting and reindexing
  * corresponding accounts. This is needed because external ID updates don't touch the user branches.
- * Hence in this case the accounts are not evicted and reindexed via {@link ReindexAfterRefUpdate}.
+ * Hence, in this case the accounts are not evicted and reindexed via {@link
+ * ReindexAccountsAfterRefUpdate}.
  *
- * <p>Reindexing and flushing accounts from the account cache can be disabled by
+ * <p>Reindexing and flushing accounts from the account cache can be disabled by-
  *
  * <ul>
  *   <li>using {@link
  *       com.google.gerrit.server.account.storage.notedb.AccountsUpdateNoteDbImpl.FactoryNoReindex}
  *       and
- *   <li>binding {@link GitReferenceUpdated#DISABLED}
+ *   <li>binding {@link GitReferenceUpdated#DISABLED}, or avoid binding {@link
+ *       ReindexAccountsAfterRefUpdate}.
  * </ul>
  *
  * <p>If there are concurrent account updates which updating the user branch in NoteDb may fail with
@@ -156,7 +159,7 @@ public class AccountsUpdateNoteDbImpl extends AccountsUpdate {
     }
 
     @Override
-    public AccountsUpdate create(IdentifiedUser currentUser) {
+    public AccountsUpdateNoteDbImpl create(IdentifiedUser currentUser) {
       PersonIdent serverIdent = serverIdentProvider.get();
       return new AccountsUpdateNoteDbImpl(
           repoManager,
@@ -173,7 +176,7 @@ public class AccountsUpdateNoteDbImpl extends AccountsUpdate {
     }
 
     @Override
-    public AccountsUpdate createWithServerIdent() {
+    public AccountsUpdateNoteDbImpl createWithServerIdent() {
       PersonIdent serverIdent = serverIdentProvider.get();
       return new AccountsUpdateNoteDbImpl(
           repoManager,

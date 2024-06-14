@@ -169,17 +169,18 @@ suite('gr-router tests', () => {
     const unauthenticatedHandlers = [
       'handleBranchListRoute',
       'handleChangeIdQueryRoute',
+      'handleChangeNumberLegacyRoute',
       'handleChangeRoute',
       'handleCommentRoute',
       'handleCommentsRoute',
       'handleDiffRoute',
       'handleDefaultRoute',
+      'handleChangeLegacyRoute',
       'handleDocumentationRedirectRoute',
       'handleDocumentationSearchRoute',
       'handleDocumentationSearchRedirectRoute',
       'handleLegacyLinenum',
       'handleImproperlyEncodedPlusRoute',
-      'handlePassThroughRoute',
       'handleProjectDashboardRoute',
       'handleLegacyProjectDashboardRoute',
       'handleProjectsOldRoute',
@@ -261,7 +262,7 @@ suite('gr-router tests', () => {
     let urlPromise: MockPromise<string>;
 
     setup(() => {
-      stubRestApi('setInProjectLookup');
+      stubRestApi('addRepoNameToCache');
       urlPromise = mockPromise<string>();
       redirectStub = sinon
         .stub(router, 'redirect')
@@ -332,7 +333,7 @@ suite('gr-router tests', () => {
   suite('route handlers', () => {
     let redirectStub: sinon.SinonStub;
     let setStateStub: sinon.SinonStub;
-    let handlePassThroughRoute: sinon.SinonStub;
+    let windowReloadStub: sinon.SinonStub;
     let redirectToLoginStub: sinon.SinonStub;
 
     async function checkUrlToState<T extends ViewState>(
@@ -365,18 +366,12 @@ suite('gr-router tests', () => {
       assert.equal(redirectToLoginStub.lastCall.firstArg, toUrl);
     }
 
-    async function checkUrlNotMatched(url: string) {
-      handlePassThroughRoute.reset();
-      router.page.show(url);
-      await waitUntilCalled(handlePassThroughRoute, 'handlePassThroughRoute');
-    }
-
     setup(() => {
-      stubRestApi('setInProjectLookup');
+      stubRestApi('addRepoNameToCache');
       redirectStub = sinon.stub(router, 'redirect');
       redirectToLoginStub = sinon.stub(router, 'redirectToLogin');
       setStateStub = sinon.stub(router, 'setState');
-      handlePassThroughRoute = sinon.stub(router, 'handlePassThroughRoute');
+      windowReloadStub = sinon.stub(router, 'windowReload');
       router._testOnly_startRouter();
     });
 
@@ -443,7 +438,7 @@ suite('gr-router tests', () => {
       onExit!('', () => {}); // we left page;
 
       router.handleDefaultRoute();
-      assert.isTrue(handlePassThroughRoute.calledOnce);
+      assert.isTrue(windowReloadStub.calledOnce);
     });
 
     test('IMPROPERLY_ENCODED_PLUS', async () => {
@@ -854,6 +849,21 @@ suite('gr-router tests', () => {
     });
 
     suite('CHANGE* / DIFF*', () => {
+      test('CHANGE_NUMBER_LEGACY', async () => {
+        // CHANGE_NUMBER_LEGACY: /^\/(\d+)\/?/,
+        await checkRedirect('/12345', '/c/12345');
+      });
+
+      test('CHANGE_LEGACY', async () => {
+        // CHANGE_LEGACY: /^\/c\/(\d+)\/?(.*)$/,
+        stubRestApi('getRepoName').resolves('project' as RepoName);
+        await checkRedirect('/c/1234', '/c/project/+/1234/');
+        await checkRedirect(
+          '/c/1234/comment/6789',
+          '/c/project/+/1234/comment/6789'
+        );
+      });
+
       test('DIFF_LEGACY_LINENUM', async () => {
         await checkRedirect(
           '/c/1234/3..8/foo/bar@321',
@@ -1020,12 +1030,6 @@ suite('gr-router tests', () => {
           edit: true,
         });
       });
-    });
-
-    test('LOG_IN_OR_OUT pass through', async () => {
-      // LOG_IN_OR_OUT: /^\/log(in|out)(\/(.+))?$/,
-      await checkUrlNotMatched('/login/asdf');
-      await checkUrlNotMatched('/logout/asdf');
     });
 
     test('PLUGIN_SCREEN', async () => {

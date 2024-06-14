@@ -107,7 +107,7 @@ public class InMemoryRepositoryManager implements GitRepositoryManager {
               .addSpecialRef(RefNames::isSequenceRef, REPO_SEQ)
               .addSpecialRef(RefNames.HEAD::equals, HEAD_MODIFICATION)
               .addSpecialRef(RefNames::isRefsChanges, CHANGE_MODIFICATION, MERGE_CHANGE)
-              .addSpecialRef(RefNames::isAutoMergeRef, CHANGE_MODIFICATION)
+              .addSpecialRef(RefNames::isAutoMergeRef, CHANGE_MODIFICATION, MERGE_CHANGE)
               .addSpecialRef(RefNames::isRefsEdit, CHANGE_MODIFICATION, MERGE_CHANGE)
               .addSpecialRef(RefNames::isTagRef, TAG_MODIFICATION)
               .addSpecialRef(RefNames::isRejectCommitsRef, BAN_COMMIT)
@@ -253,7 +253,8 @@ public class InMemoryRepositoryManager implements GitRepositoryManager {
   @Override
   public synchronized Status getRepositoryStatus(NameKey name) {
     try {
-      get(name);
+      @SuppressWarnings("unused")
+      var unused = get(name);
       return Status.ACTIVE;
     } catch (RepositoryNotFoundException e) {
       return Status.NON_EXISTENT;

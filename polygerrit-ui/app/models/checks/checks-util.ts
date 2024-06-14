@@ -14,13 +14,13 @@ import {
   Replacement,
   RunStatus,
 } from '../../api/checks';
-import {PatchSetNumber, RevisionPatchSetNum} from '../../api/rest-api';
-import {CommentSide} from '../../constants/constants';
 import {
-  FixSuggestionInfo,
+  PatchSetNumber,
+  RevisionPatchSetNum,
   FixReplacementInfo,
-  DraftInfo,
-} from '../../types/common';
+} from '../../api/rest-api';
+import {CommentSide} from '../../constants/constants';
+import {FixSuggestionInfo, DraftInfo} from '../../types/common';
 import {OpenFixPreviewEventDetail} from '../../types/events';
 import {isDefined} from '../../types/types';
 import {PROVIDED_FIX_ID, createNew} from '../../utils/comment-util';
@@ -145,7 +145,7 @@ export function rectifyFix(
   if (replacements.length === 0) return undefined;
 
   return {
-    description: fix.description ?? `Fix provided by ${checkName}`,
+    description: fix.description || `Fix provided by ${checkName}`,
     fix_id: PROVIDED_FIX_ID,
     replacements,
   };
@@ -520,7 +520,6 @@ export function secondaryLinks(result?: CheckResultApi): Link[] {
 }
 
 export function computeIsExpandable(result?: CheckResultApi) {
-  if (!result?.summary) return false;
   const hasMessage = !!result?.message;
   const hasMultipleLinks = (result?.links ?? []).length > 1;
   const hasPointers = (result?.codePointers ?? []).length > 0;

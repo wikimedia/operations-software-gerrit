@@ -20,6 +20,8 @@ import static com.google.gerrit.acceptance.GitUtil.fetch;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
+import com.google.gerrit.acceptance.ExtensionRegistry;
+import com.google.gerrit.acceptance.ExtensionRegistry.Registration;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.common.Nullable;
@@ -29,15 +31,22 @@ import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.entities.SubmitRequirement;
 import com.google.gerrit.entities.SubmitRequirementExpression;
 import com.google.gerrit.extensions.api.changes.PublishChangeEditInput;
+import com.google.gerrit.extensions.api.projects.ConfigInfo;
+import com.google.gerrit.extensions.api.projects.ConfigInput;
+import com.google.gerrit.extensions.api.projects.ConfigValue;
 import com.google.gerrit.extensions.client.ChangeStatus;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.ChangeInput;
 import com.google.gerrit.git.ObjectIds;
+import com.google.gerrit.server.config.ProjectConfigEntry;
+import com.google.gerrit.server.git.validators.ValidationMessage;
 import com.google.gerrit.server.group.SystemGroupBackend;
 import com.google.gerrit.server.project.GroupList;
 import com.google.gerrit.server.project.LabelConfigValidator;
 import com.google.gerrit.server.project.ProjectConfig;
 import com.google.inject.Inject;
+import java.util.HashMap;
+import java.util.Map;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.AnyObjectId;
 import org.eclipse.jgit.lib.Repository;
@@ -51,6 +60,7 @@ public class ProjectConfigIT extends AbstractDaemonTest {
           + "  copyAllScoresOnTrivialRebase = true";
 
   @Inject private ProjectOperations projectOperations;
+  @Inject private ExtensionRegistry extensionRegistry;
 
   @Test
   public void noLabelValidationForNonRefsMetaConfigChange() throws Exception {
@@ -512,6 +522,119 @@ public class ProjectConfigIT extends AbstractDaemonTest {
             "ERROR: commit %s:   project.config: multiple definitions of description"
                 + " for submit requirement 'foo'",
             abbreviateName(r.getCommit())));
+  }
+
+  @Test
+  public void pluginConfigs_neverWriteDefaultValueToConfigFile() throws Exception {
+    String projectConfig = projectOperations.project(project).getConfig().toText();
+    assertThat(projectConfig).doesNotContain("myPlugin");
+
+    ProjectConfigEntry entry = new ProjectConfigEntry("enabled", "true");
+    try (Registration ignored =
+        extensionRegistry.newRegistration().add(entry, "test-config-entry")) {
+      // Default value is populated in API response
+      ConfigInfo configInfo = gApi.projects().name(project.get()).config();
+      assertThat(configInfo.pluginConfig.get("myPlugin").get("test-config-entry").value)
+          .isEqualTo("true");
+
+      // Set an unrelated parameter
+      ConfigInput input = new ConfigInput();
+      input.description = "New description";
+
+      gApi.projects().name(project.get()).config(input);
+
+      // The project config does not contain a section for the plugin
+      projectConfig = projectOperations.project(project).getConfig().toText();
+      assertThat(projectConfig).doesNotContain("myPlugin");
+      assertThat(projectConfig).contains("New description");
+
+      // Set the plugin config to the default value. Set an unrelated setting on the side.
+      Map<String, ConfigValue> val = new HashMap<>();
+      input.pluginConfigValues = new HashMap<>();
+      input.pluginConfigValues.put("myPlugin", val);
+      val.put("test-config-entry", new ConfigValue("true"));
+      input.description = "New description2";
+      gApi.projects().name(project.get()).config(input);
+
+      // The project config does not contain a section for the plugin
+      projectConfig = projectOperations.project(project).getConfig().toText();
+      assertThat(projectConfig).doesNotContain("myPlugin");
+      assertThat(projectConfig).contains("New description2");
+    }
+  }
+
+  @Test
+  public void pluginConfigs_persistNonDefaultConfig() throws Exception {
+    String projectConfig = projectOperations.project(project).getConfig().toText();
+    assertThat(projectConfig).doesNotContain("myPlugin");
+
+    ProjectConfigEntry entry = new ProjectConfigEntry("enabled", "true");
+    try (Registration ignored =
+        extensionRegistry.newRegistration().add(entry, "test-config-entry")) {
+      // Default value is populated in API response
+      ConfigInfo configInfo = gApi.projects().name(project.get()).config();
+      assertThat(configInfo.pluginConfig.get("myPlugin").get("test-config-entry").value)
+          .isEqualTo("true");
+
+      // Change value to non-default
+      ConfigInput input = new ConfigInput();
+      input.pluginConfigValues = new HashMap<>();
+      Map<String, ConfigValue> val = new HashMap<>();
+      input.pluginConfigValues.put("myPlugin", val);
+      val.put("test-config-entry", new ConfigValue("false"));
+      gApi.projects().name(project.get()).config(input);
+
+      // API response serves new setting
+      configInfo = gApi.projects().name(project.get()).config();
+      assertThat(configInfo.pluginConfig.get("myPlugin").get("test-config-entry").value)
+          .isEqualTo("false");
+
+      // The project config contains a section for the plugin
+      projectConfig = projectOperations.project(project).getConfig().toText();
+      assertThat(projectConfig).contains("myPlugin");
+    }
+  }
+
+  @Test
+  public void pluginConfigs_canUnsetPluginSetting() throws Exception {
+    String projectConfig = projectOperations.project(project).getConfig().toText();
+    assertThat(projectConfig).doesNotContain("myPlugin");
+
+    ProjectConfigEntry entry = new ProjectConfigEntry("enabled", "true");
+    try (Registration ignored =
+        extensionRegistry.newRegistration().add(entry, "test-config-entry")) {
+      // Default value is populated in API response
+      ConfigInfo configInfo = gApi.projects().name(project.get()).config();
+      assertThat(configInfo.pluginConfig.get("myPlugin").get("test-config-entry").value)
+          .isEqualTo("true");
+
+      // Change value to non-default
+      ConfigInput input = new ConfigInput();
+      input.pluginConfigValues = new HashMap<>();
+      Map<String, ConfigValue> val = new HashMap<>();
+      input.pluginConfigValues.put("myPlugin", val);
+      val.put("test-config-entry", new ConfigValue("false"));
+      gApi.projects().name(project.get()).config(input);
+
+      // API response serves new setting
+      configInfo = gApi.projects().name(project.get()).config();
+      assertThat(configInfo.pluginConfig.get("myPlugin").get("test-config-entry").value)
+          .isEqualTo("false");
+
+      // The project config contains a section for the plugin
+      projectConfig = projectOperations.project(project).getConfig().toText();
+      assertThat(projectConfig).contains("myPlugin");
+
+      // Reset value to default
+      val.put("test-config-entry", new ConfigValue("true"));
+      gApi.projects().name(project.get()).config(input);
+
+      projectConfig = projectOperations.project(project).getConfig().toText();
+      assertThat(projectConfig).doesNotContain("myPlugin");
+      configInfo = gApi.projects().name(project.get()).config();
+      assertThat(configInfo.pluginConfig.get("myPlugin").get("test-config-entry").value)
+          .isEqualTo("true");
+    }
   }
 
   @Test
@@ -1059,7 +1182,100 @@ public class ProjectConfigIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void setCopyCondition() throws Exception {
+  public void testSettingCopyCondition() throws Exception {
+    testChangingCopyCondition(/* initialCopyCondition= */ null, /* newCopyCondition= */ "is:ANY");
+  }
+
+  @Test
+  public void testRejectNonParseableCopyCondition_badSyntax() throws Exception {
+    testChangingCopyConditionExpectError(
+        /* initialCopyCondition= */ "is:ANY",
+        /* newCopyCondition= */ ":",
+        /* errorMessage= */ "Cannot parse copy condition ':' of label Foo (parameter"
+            + " 'label.Foo.copyCondition'): line 1:0 no viable alternative at input ':'");
+  }
+
+  @Test
+  public void testRejectNonParseableCopyCondition_unsupportedOperator() throws Exception {
+    testChangingCopyConditionExpectError(
+        /* initialCopyCondition= */ "is:ANY",
+        /* newCopyCondition= */ "foo:bar",
+        /* errorMessage= */ "Cannot parse copy condition 'foo:bar' of label Foo (parameter"
+            + " 'label.Foo.copyCondition'): unsupported operator foo:bar");
+  }
+
+  @Test
+  public void testFixNonParseableCopyCondition() throws Exception {
+    testChangingCopyCondition(/* initialCopyCondition= */ ":", /* newCopyCondition= */ "is:ANY");
+  }
+
+  @Test
+  public void testChangingCopyCondition() throws Exception {
+    testChangingCopyCondition(
+        /* initialCopyCondition= */ "is:ANY", /* newCopyCondition= */ "is:MAX");
+  }
+
+  @Test
+  public void testDeletingCopyCondition() throws Exception {
+    testChangingCopyCondition(/* initialCopyCondition= */ "is:ANY", /* newCopyCondition= */ null);
+  }
+
+  @Test
+  public void testDeletingNonParseableCopyCondition() throws Exception {
+    testChangingCopyCondition(/* initialCopyCondition= */ ":", /* newCopyCondition= */ null);
+  }
+
+  @Test
+  public void testChangingNonParseableCopyCondition() throws Exception {
+    testChangingCopyConditionExpectWarning(
+        /* initialCopyCondition= */ ":",
+        /* newCopyCondition= */ ":foo",
+        /* warningMessage= */ "Cannot parse copy condition ':foo' of label Foo (parameter"
+            + " 'label.Foo.copyCondition'): line 1:0 no viable alternative at input ':'");
+  }
+
+  private void testChangingCopyCondition(
+      String initialCopyCondition, @Nullable String newCopyCondition) throws Exception {
+    testChangingCopyCondition(
+        initialCopyCondition, newCopyCondition, /* type= */ null, /* message= */ null);
+  }
+
+  private void testChangingCopyConditionExpectError(
+      String initialCopyCondition, @Nullable String newCopyCondition, String errorMessage)
+      throws Exception {
+    testChangingCopyCondition(
+        initialCopyCondition, newCopyCondition, ValidationMessage.Type.ERROR, errorMessage);
+  }
+
+  private void testChangingCopyConditionExpectWarning(
+      String initialCopyCondition, @Nullable String newCopyCondition, String warningMessage)
+      throws Exception {
+    testChangingCopyCondition(
+        initialCopyCondition, newCopyCondition, ValidationMessage.Type.WARNING, warningMessage);
+  }
+
+  private void testChangingCopyCondition(
+      @Nullable String initialCopyCondition,
+      @Nullable String newCopyCondition,
+      @Nullable ValidationMessage.Type type,
+      @Nullable String message)
+      throws Exception {
+    if (initialCopyCondition != null) {
+      try (TestRepository<Repository> testRepo =
+          new TestRepository<>(repoManager.openRepository(project))) {
+        testRepo
+            .branch(RefNames.REFS_CONFIG)
+            .commit()
+            .add(
+                ProjectConfig.PROJECT_CONFIG,
+                String.format(
+                    "[label \"Foo\"]\n  %s = %s\n",
+                    ProjectConfig.KEY_COPY_CONDITION, initialCopyCondition))
+            .parent(projectOperations.project(project).getHead(RefNames.REFS_CONFIG))
+            .create();
+      }
+    }
+
     fetchRefsMetaConfig();
     PushOneCommit push =
         pushFactory.create(
@@ -1067,9 +1283,22 @@ public class ProjectConfigIT extends AbstractDaemonTest {
             testRepo,
             "Test Change",
             ProjectConfig.PROJECT_CONFIG,
-            String.format("[label \"Foo\"]\n  %s = is:ANY", ProjectConfig.KEY_COPY_CONDITION));
+            newCopyCondition == null
+                ? "[label \"Foo\"]\n"
+                : String.format(
+                    "[label \"Foo\"]\n  %s = %s\n",
+                    ProjectConfig.KEY_COPY_CONDITION, newCopyCondition));
     PushOneCommit.Result r = push.to(RefNames.REFS_CONFIG);
-    r.assertOkStatus();
+    if (!ValidationMessage.Type.ERROR.equals(type)) {
+      r.assertOkStatus();
+      return;
+    }
+    r.assertErrorStatus(
+        String.format(
+            "invalid %s file in revision %s", ProjectConfig.PROJECT_CONFIG, r.getCommit().name()));
+    if (message != null) {
+      r.assertMessage(message);
+    }
   }
 
   @Test

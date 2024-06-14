@@ -15,6 +15,7 @@
 package com.google.gerrit.server.restapi.group;
 
 import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.gerrit.entities.InternalGroup;
 import com.google.gerrit.extensions.client.ListGroupsOption;
@@ -115,13 +116,11 @@ public class QueryGroups implements RestReadView<TopLevelResource> {
       queryProcessor.setStart(start);
     }
 
-    if (limit != 0) {
-      queryProcessor.setUserProvidedLimit(limit);
-    }
+    queryProcessor.setUserProvidedLimit(limit, /* applyDefaultLimit */ true);
 
     try {
       QueryResult<InternalGroup> result = queryProcessor.query(queryBuilder.parse(query));
-      List<InternalGroup> groups = result.entities();
+      ImmutableList<InternalGroup> groups = result.entities();
 
       ArrayList<GroupInfo> groupInfos = Lists.newArrayListWithCapacity(groups.size());
       json.addOptions(options);

@@ -22,6 +22,7 @@ import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.testing.InMemoryModule;
@@ -44,11 +45,12 @@ public abstract class LuceneQueryChangesTest extends AbstractQueryChangesTest {
 
   @Test
   public void fullTextWithSpecialChars() throws Exception {
-    repo = createAndOpenProject("repo");
+    Project.NameKey project = Project.nameKey("repo");
+    repo = createAndOpenProject(project);
     RevCommit commit1 = repo.parseBody(repo.commit().message("foo_bar_foo").create());
-    Change change1 = insert("repo", newChangeForCommit(repo, commit1));
+    Change change1 = insert(project, newChangeForCommit(repo, commit1));
     RevCommit commit2 = repo.parseBody(repo.commit().message("one.two.three").create());
-    Change change2 = insert("repo", newChangeForCommit(repo, commit2));
+    Change change2 = insert(project, newChangeForCommit(repo, commit2));
 
     assertQuery("message:foo_ba");
     assertQuery("message:bar", change1);
@@ -60,6 +62,23 @@ public abstract class LuceneQueryChangesTest extends AbstractQueryChangesTest {
   }
 
   @Test
+  public void byChangeId() throws Exception {
+    Project.NameKey project = Project.nameKey("repo");
+    repo = createAndOpenProject(project);
+    RevCommit commit1 = repo.parseBody(repo.commit().message("foo_bar_foo").create());
+    Change change1 = insert(project, newChangeForCommit(repo, commit1));
+
+    assertQuery(String.format("change:%s", change1.getChangeId()), change1);
+    assertQuery(String.format("change:%s", change1.getId()), change1);
+    assertQuery(
+        String.format("change:%s~%s", change1.getProject(), change1.getChangeId()), change1);
+    assertQuery(
+        String.format(
+            "change:%s~%s~%s", change1.getProject(), change1.getDest().branch(), change1.getKey()),
+        change1);
+  }
+
+  @Test
   public void invalidQuery() throws Exception {
     BadRequestException thrown =
         assertThrows(BadRequestException.class, () -> newQuery("\\").get());
@@ -68,17 +87,18 @@ public abstract class LuceneQueryChangesTest extends AbstractQueryChangesTest {
 
   @Test
   public void openAndClosedChanges() throws Exception {
-    repo = createAndOpenProject("repo");
+    Project.NameKey project = Project.nameKey("repo");
+    repo = createAndOpenProject(project);
 
     // create 3 closed changes
-    Change change1 = insert("repo", newChangeWithStatus(repo, Change.Status.MERGED));
-    Change change2 = insert("repo", newChangeWithStatus(repo, Change.Status.MERGED));
-    Change change3 = insert("repo", newChangeWithStatus(repo, Change.Status.MERGED));
+    Change change1 = insert(project, newChangeWithStatus(repo, Change.Status.MERGED));
+    Change change2 = insert(project, newChangeWithStatus(repo, Change.Status.MERGED));
+    Change change3 = insert(project, newChangeWithStatus(repo, Change.Status.MERGED));
 
     // create 3 new changes
-    Change change4 = insert("repo", newChangeWithStatus(repo, Change.Status.NEW));
-    Change change5 = insert("repo", newChangeWithStatus(repo, Change.Status.NEW));
-    Change change6 = insert("repo", newChangeWithStatus(repo, Change.Status.NEW));
+    Change change4 = insert(project, newChangeWithStatus(repo, Change.Status.NEW));
+    Change change5 = insert(project, newChangeWithStatus(repo, Change.Status.NEW));
+    Change change6 = insert(project, newChangeWithStatus(repo, Change.Status.NEW));
 
     // Set queryLimit to 1
     projectOperations
@@ -94,8 +114,9 @@ public abstract class LuceneQueryChangesTest extends AbstractQueryChangesTest {
   @Test
   public void skipChangesNotVisible() throws Exception {
     // create 1 new change on a repo
-    repo = createAndOpenProject("repo");
-    Change visibleChange = insert("repo", newChangeWithStatus(repo, Change.Status.NEW));
+    Project.NameKey project = Project.nameKey("repo");
+    repo = createAndOpenProject(project);
+    Change visibleChange = insert(project, newChangeWithStatus(repo, Change.Status.NEW));
     Change[] expected = new Change[] {visibleChange};
 
     // pagination does not need to restart the datasource, the request is fulfilled
@@ -105,8 +126,8 @@ public abstract class LuceneQueryChangesTest extends AbstractQueryChangesTest {
     Account.Id user2 =
         accountManager.authenticate(authRequestFactory.createForUser("anotheruser")).getAccountId();
 
-    Change invisibleChange1 = insert("repo", newChangeWithStatus(repo, Change.Status.NEW), user2);
-    Change invisibleChange2 = insert("repo", newChangeWithStatus(repo, Change.Status.NEW), user2);
+    Change invisibleChange1 = insert(project, newChangeWithStatus(repo, Change.Status.NEW), user2);
+    Change invisibleChange2 = insert(project, newChangeWithStatus(repo, Change.Status.NEW), user2);
     gApi.changes().id(invisibleChange1.getKey().get()).setPrivate(true, null);
     gApi.changes().id(invisibleChange2.getKey().get()).setPrivate(true, null);
 

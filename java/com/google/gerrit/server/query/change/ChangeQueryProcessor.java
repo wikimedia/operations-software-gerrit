@@ -19,6 +19,7 @@ import static com.google.gerrit.server.query.change.ChangeQueryBuilder.FIELD_LIM
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.extensions.common.PluginDefinedInfo;
 import com.google.gerrit.extensions.registration.DynamicSet;
@@ -32,7 +33,6 @@ import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.DynamicOptions;
 import com.google.gerrit.server.DynamicOptions.DynamicBean;
-import com.google.gerrit.server.Sequences;
 import com.google.gerrit.server.account.AccountLimits;
 import com.google.gerrit.server.change.ChangePluginDefinedInfoFactory;
 import com.google.gerrit.server.change.PluginDefinedAttributesFactories;
@@ -64,7 +64,6 @@ public class ChangeQueryProcessor extends QueryProcessor<ChangeData>
   private final Map<String, DynamicBean> dynamicBeans = new HashMap<>();
   private final List<Extension<ChangePluginDefinedInfoFactory>>
       changePluginDefinedInfoFactoriesByPlugin = new ArrayList<>();
-  private final Sequences sequences;
   private final IndexConfig indexConfig;
 
   @Singleton
@@ -90,7 +89,6 @@ public class ChangeQueryProcessor extends QueryProcessor<ChangeData>
       IndexConfig indexConfig,
       ChangeIndexCollection indexes,
       ChangeIndexRewriter rewriter,
-      Sequences sequences,
       ChangeIsVisibleToPredicate.Factory changeIsVisibleToPredicateFactory,
       DynamicSet<ChangePluginDefinedInfoFactory> changePluginDefinedInfoFactories) {
     super(
@@ -103,7 +101,6 @@ public class ChangeQueryProcessor extends QueryProcessor<ChangeData>
         () -> limitsFactory.create(userProvider.get()).getQueryLimit());
     this.userProvider = userProvider;
     this.changeIsVisibleToPredicateFactory = changeIsVisibleToPredicateFactory;
-    this.sequences = sequences;
     this.indexConfig = indexConfig;
 
     changePluginDefinedInfoFactories
@@ -112,6 +109,7 @@ public class ChangeQueryProcessor extends QueryProcessor<ChangeData>
   }
 
   @Override
+  @CanIgnoreReturnValue
   public ChangeQueryProcessor enforceVisibility(boolean enforce) {
     super.enforceVisibility(enforce);
     return this;
@@ -168,16 +166,6 @@ public class ChangeQueryProcessor extends QueryProcessor<ChangeData>
   @Override
   protected String formatForLogging(ChangeData changeData) {
     return changeData.getId().toString();
-  }
-
-  @Override
-  protected int getIndexSize() {
-    return sequences.lastChangeId();
-  }
-
-  @Override
-  protected int getBatchSize() {
-    return sequences.changeBatchSize();
   }
 
   @Override

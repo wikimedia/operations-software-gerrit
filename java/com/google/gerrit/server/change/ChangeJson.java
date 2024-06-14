@@ -53,6 +53,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.Address;
@@ -62,7 +63,6 @@ import com.google.gerrit.entities.LegacySubmitRequirement;
 import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.entities.Project;
-import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.entities.SubmitRecord;
 import com.google.gerrit.entities.SubmitRecord.Status;
 import com.google.gerrit.entities.SubmitRequirementResult;
@@ -85,7 +85,6 @@ import com.google.gerrit.extensions.common.SubmitRecordInfo;
 import com.google.gerrit.extensions.common.SubmitRequirementResultInfo;
 import com.google.gerrit.extensions.common.TrackingIdInfo;
 import com.google.gerrit.extensions.restapi.Url;
-import com.google.gerrit.index.RefState;
 import com.google.gerrit.index.query.QueryResult;
 import com.google.gerrit.metrics.Description;
 import com.google.gerrit.metrics.Description.Units;
@@ -106,6 +105,9 @@ import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.TrackingFooters;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.index.change.ChangeField;
+import com.google.gerrit.server.logging.Metadata;
+import com.google.gerrit.server.logging.TraceContext;
+import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
 import com.google.gerrit.server.patch.PatchListNotAvailableException;
@@ -296,6 +298,7 @@ public class ChangeJson {
     logger.atFine().log("options = %s", options);
   }
 
+  @CanIgnoreReturnValue
   public ChangeJson fix(FixInput fix) {
     this.fix = fix;
     return this;
@@ -374,33 +377,47 @@ public class ChangeJson {
   }
 
   private static List<LegacySubmitRequirementInfo> requirementsFor(ChangeData cd) {
-    List<LegacySubmitRequirementInfo> reqInfos = new ArrayList<>();
-    for (SubmitRecord submitRecord : cd.submitRecords(SUBMIT_RULE_OPTIONS_STRICT)) {
-      if (submitRecord.requirements == null) {
-        continue;
+    try (TraceTimer timer =
+        TraceContext.newTimer(
+            "Get requirements", Metadata.builder().changeId(cd.change().getId().get()).build())) {
+      List<LegacySubmitRequirementInfo> reqInfos = new ArrayList<>();
+      for (SubmitRecord submitRecord : cd.submitRecords(SUBMIT_RULE_OPTIONS_STRICT)) {
+        if (submitRecord.requirements == null) {
+          continue;
+        }
+        for (LegacySubmitRequirement requirement : submitRecord.requirements) {
+          reqInfos.add(requirementToInfo(requirement, submitRecord.status));
+        }
       }
-      for (LegacySubmitRequirement requirement : submitRecord.requirements) {
-        reqInfos.add(requirementToInfo(requirement, submitRecord.status));
-      }
+      return reqInfos;
     }
-    return reqInfos;
   }
 
   private List<SubmitRecordInfo> submitRecordsFor(ChangeData cd) {
-    List<SubmitRecordInfo> submitRecordInfos = new ArrayList<>();
-    for (SubmitRecord record : cd.submitRecords(SUBMIT_RULE_OPTIONS_STRICT)) {
-      submitRecordInfos.add(submitRecordToInfo(record));
+    try (TraceTimer timer =
+        TraceContext.newTimer(
+            "Get submit records", Metadata.builder().changeId(cd.change().getId().get()).build())) {
+      List<SubmitRecordInfo> submitRecordInfos = new ArrayList<>();
+      for (SubmitRecord record : cd.submitRecords(SUBMIT_RULE_OPTIONS_STRICT)) {
+        submitRecordInfos.add(submitRecordToInfo(record));
+      }
+      return submitRecordInfos;
     }
-    return submitRecordInfos;
   }
 
   private List<SubmitRequirementResultInfo> submitRequirementsFor(ChangeData cd) {
-    List<SubmitRequirementResultInfo> reqInfos = new ArrayList<>();
-    cd.submitRequirementsIncludingLegacy().entrySet().stream()
-        .filter(entry -> !entry.getValue().isHidden())
-        .forEach(
-            entry -> reqInfos.add(SubmitRequirementsJson.toInfo(entry.getKey(), entry.getValue())));
-    return reqInfos;
+    try (TraceTimer timer =
+        TraceContext.newTimer(
+            "Get submit requirements",
+            Metadata.builder().changeId(cd.change().getId().get()).build())) {
+      List<SubmitRequirementResultInfo> reqInfos = new ArrayList<>();
+      cd.submitRequirementsIncludingLegacy().entrySet().stream()
+          .filter(entry -> !entry.getValue().isHidden())
+          .forEach(
+              entry ->
+                  reqInfos.add(SubmitRequirementsJson.toInfo(entry.getKey(), entry.getValue())));
+      return reqInfos;
+    }
   }
 
   private static LegacySubmitRequirementInfo requirementToInfo(
@@ -475,25 +492,30 @@ public class ChangeJson {
     }
   }
 
-  private void ensureLoaded(Iterable<ChangeData> all) {
+  private void ensureLoaded(Collection<ChangeData> all) {
     if (lazyLoad) {
-      for (ChangeData cd : all) {
-        // Mark all ChangeDatas as coming from the index, but allow backfilling data from NoteDb
-        cd.setStorageConstraint(ChangeData.StorageConstraint.INDEX_PRIMARY_NOTEDB_SECONDARY);
+      try (TraceTimer timer =
+          TraceContext.newTimer(
+              "Load change data for lazyLoad options",
+              Metadata.builder().resourceCount(all.size()).build())) {
+        for (ChangeData cd : all) {
+          // Mark all ChangeDatas as coming from the index, but allow backfilling data from NoteDb
+          cd.setStorageConstraint(ChangeData.StorageConstraint.INDEX_PRIMARY_NOTEDB_SECONDARY);
+        }
+        ChangeData.ensureChangeLoaded(all);
+        if (has(ALL_REVISIONS)) {
+          ChangeData.ensureAllPatchSetsLoaded(all);
+        } else if (has(CURRENT_REVISION) || has(MESSAGES)) {
+          ChangeData.ensureCurrentPatchSetLoaded(all);
+        }
+        if (has(REVIEWED) && userProvider.get().isIdentifiedUser()) {
+          ChangeData.ensureReviewedByLoadedForOpenChanges(all);
+        }
+        if (has(STAR) && userProvider.get().isIdentifiedUser()) {
+          ChangeData.ensureChangeServerId(all);
+        }
+        ChangeData.ensureCurrentApprovalsLoaded(all);
       }
-      ChangeData.ensureChangeLoaded(all);
-      if (has(ALL_REVISIONS)) {
-        ChangeData.ensureAllPatchSetsLoaded(all);
-      } else if (has(CURRENT_REVISION) || has(MESSAGES)) {
-        ChangeData.ensureCurrentPatchSetLoaded(all);
-      }
-      if (has(REVIEWED) && userProvider.get().isIdentifiedUser()) {
-        ChangeData.ensureReviewedByLoadedForOpenChanges(all);
-      }
-      if (has(STAR) && userProvider.get().isIdentifiedUser()) {
-        ChangeData.ensureChangeServerId(all);
-      }
-      ChangeData.ensureCurrentApprovalsLoaded(all);
     } else {
       for (ChangeData cd : all) {
         // Mark all ChangeDatas as coming from the index. Disallow using NoteDb
@@ -528,7 +550,8 @@ public class ChangeJson {
           }
           continue;
         }
-        ChangeInfo info = cache.get(cd.getId());
+        Change.Id cdUniqueId = cd.virtualId();
+        ChangeInfo info = cache.get(cdUniqueId);
         if (info != null && isCacheable) {
           changeInfos.add(info);
           continue;
@@ -540,7 +563,7 @@ public class ChangeJson {
           info = format(cd, Optional.empty(), false, pluginInfosByChange.get(cd.getId()));
           changeInfos.add(info);
           if (isCacheable) {
-            cache.put(Change.id(info._number), info);
+            cache.put(cdUniqueId, info);
           }
         } catch (RuntimeException e) {
           Optional<RequestCancelledException> requestCancelledException =
@@ -619,10 +642,12 @@ public class ChangeJson {
     if (has(CHECK)) {
       out.problems = checkerProvider.get().check(cd.notes(), fix).problems();
       // If any problems were fixed, the ChangeData needs to be reloaded.
-      for (ProblemInfo p : out.problems) {
-        if (p.status == ProblemInfo.Status.FIXED) {
+      if (out.problems.stream().anyMatch(p -> p.status == ProblemInfo.Status.FIXED)) {
+        try (TraceTimer timer =
+            TraceContext.newTimer(
+                "Reload change data after fixing a problem",
+                Metadata.builder().changeId(cd.change().getChangeId()).build())) {
           cd = changeDataFactory.create(cd.project(), cd.getId());
-          break;
         }
       }
     }
@@ -630,6 +655,7 @@ public class ChangeJson {
     Change in = cd.change();
     out.project = in.getProject().get();
     out.branch = in.getDest().shortName();
+    out.currentRevisionNumber = in.currentPatchSetId().get();
     out.topic = in.getTopic();
     if (!cd.attentionSet().isEmpty()) {
       out.removedFromAttentionSet =
@@ -679,28 +705,18 @@ public class ChangeJson {
     out.setCreated(in.getCreatedOn());
     out.setUpdated(in.getLastUpdatedOn());
     out._number = in.getId().get();
-    out.totalCommentCount = cd.totalCommentCount();
-    out.unresolvedCommentCount = cd.unresolvedCommentCount();
 
-    if (cd.getRefStates() != null) {
-      String metaName = RefNames.changeMetaRef(cd.getId());
-      Optional<RefState> metaState =
-          cd.getRefStates().values().stream().filter(r -> r.ref().equals(metaName)).findAny();
-
-      // metaState should always be there, but it doesn't hurt to be extra careful.
-      metaState.ifPresent(rs -> out.metaRevId = rs.id().getName());
+    try (TraceTimer timer =
+        TraceContext.newTimer(
+            "Count comments", Metadata.builder().changeId(cd.change().getId().get()).build())) {
+      out.totalCommentCount = cd.totalCommentCount();
+      out.unresolvedCommentCount = cd.unresolvedCommentCount();
     }
 
-    if (user.isIdentifiedUser()) {
-      if (cd.isStarred(user.getAccountId())) {
-        out.starred = true;
-      }
-    }
+    getMetaState(cd).ifPresent(id -> out.metaRevId = id.getName());
 
-    if (in.isNew() && has(REVIEWED) && user.isIdentifiedUser()) {
-      out.reviewed = cd.isReviewedBy(user.getAccountId()) ? true : null;
-    }
-
+    out.reviewed = isReviewedByCurrentUser(cd, user);
+    out.starred = isStarredByCurrentUser(cd, user);
     out.labels = labelsJson.labelsFor(accountLoader, cd, has(LABELS), has(DETAILED_LABELS));
     out.requirements = requirementsFor(cd);
     out.submitRecords = submitRecordsFor(cd);
@@ -747,7 +763,7 @@ public class ChangeJson {
 
     boolean needMessages = has(MESSAGES);
     boolean needRevisions = has(ALL_REVISIONS) || has(CURRENT_REVISION) || limitToPsId.isPresent();
-    Map<PatchSet.Id, PatchSet> src;
+    ImmutableMap<PatchSet.Id, PatchSet> src;
     if (needMessages || needRevisions) {
       src = loadPatchSets(cd, limitToPsId);
     } else {
@@ -777,11 +793,15 @@ public class ChangeJson {
     }
 
     if (has(TRACKING_IDS)) {
-      ListMultimap<String, String> set = trackingFooters.extract(cd.commitFooters());
-      out.trackingIds =
-          set.entries().stream()
-              .map(e -> new TrackingIdInfo(e.getKey(), e.getValue()))
-              .collect(toList());
+      try (TraceTimer timer =
+          TraceContext.newTimer(
+              "Get tracking IDs", Metadata.builder().changeId(cd.change().getId().get()).build())) {
+        ListMultimap<String, String> set = trackingFooters.extract(cd.commitFooters());
+        out.trackingIds =
+            set.entries().stream()
+                .map(e -> new TrackingIdInfo(e.getKey(), e.getValue()))
+                .collect(toList());
+      }
     }
 
     out.virtualIdNumber = cd.virtualId().get();
@@ -791,142 +811,206 @@ public class ChangeJson {
 
   private Map<ReviewerState, Collection<AccountInfo>> reviewerMap(
       ReviewerSet reviewers, ReviewerByEmailSet reviewersByEmail, boolean includeRemoved) {
-    Map<ReviewerState, Collection<AccountInfo>> reviewerMap = new HashMap<>();
-    for (ReviewerStateInternal state : ReviewerStateInternal.values()) {
-      if (!includeRemoved && state == ReviewerStateInternal.REMOVED) {
-        continue;
+    try (TraceTimer timer = TraceContext.newTimer("Get reviewer map", Metadata.empty())) {
+      Map<ReviewerState, Collection<AccountInfo>> reviewerMap = new HashMap<>();
+      for (ReviewerStateInternal state : ReviewerStateInternal.values()) {
+        if (!includeRemoved && state == ReviewerStateInternal.REMOVED) {
+          continue;
+        }
+        List<AccountInfo> reviewersByState = toAccountInfo(reviewers.byState(state));
+        reviewersByState.addAll(toAccountInfoByEmail(reviewersByEmail.byState(state)));
+        if (!reviewersByState.isEmpty()) {
+          reviewerMap.put(state.asReviewerState(), reviewersByState);
+        }
       }
-      Collection<AccountInfo> reviewersByState = toAccountInfo(reviewers.byState(state));
-      reviewersByState.addAll(toAccountInfoByEmail(reviewersByEmail.byState(state)));
-      if (!reviewersByState.isEmpty()) {
-        reviewerMap.put(state.asReviewerState(), reviewersByState);
-      }
+      return reviewerMap;
     }
-    return reviewerMap;
   }
 
   private List<ReviewerUpdateInfo> reviewerUpdates(ChangeData cd) {
-    List<ReviewerStatusUpdate> reviewerUpdates = cd.reviewerUpdates();
-    List<ReviewerUpdateInfo> result = new ArrayList<>(reviewerUpdates.size());
-    for (ReviewerStatusUpdate c : reviewerUpdates) {
-      ReviewerUpdateInfo change =
-          new ReviewerUpdateInfo(
-              c.date(),
-              accountLoader.get(c.updatedBy()),
-              accountLoader.get(c.reviewer()),
-              c.state().asReviewerState());
-      result.add(change);
+    try (TraceTimer timer =
+        TraceContext.newTimer(
+            "Get reviewer updates",
+            Metadata.builder().changeId(cd.change().getId().get()).build())) {
+      List<ReviewerStatusUpdate> reviewerUpdates = cd.reviewerUpdates();
+      List<ReviewerUpdateInfo> result = new ArrayList<>(reviewerUpdates.size());
+      for (ReviewerStatusUpdate c : reviewerUpdates) {
+        if (c.reviewer().isPresent()) {
+          result.add(
+              new ReviewerUpdateInfo(
+                  c.date(),
+                  accountLoader.get(c.updatedBy()),
+                  accountLoader.get(c.reviewer().get()),
+                  c.state().asReviewerState()));
+        }
+
+        if (c.reviewerByEmail().isPresent()) {
+          result.add(
+              new ReviewerUpdateInfo(
+                  c.date(),
+                  accountLoader.get(c.updatedBy()),
+                  toAccountInfoByEmail(c.reviewerByEmail().get()),
+                  c.state().asReviewerState()));
+        }
+      }
+      return result;
     }
-    return result;
   }
 
   private boolean submittable(ChangeData cd) {
-    return cd.submitRequirementsIncludingLegacy().values().stream()
-        .allMatch(SubmitRequirementResult::fulfilled);
+    try (TraceTimer timer =
+        TraceContext.newTimer(
+            "Compute submittability",
+            Metadata.builder().changeId(cd.change().getId().get()).build())) {
+      return cd.submitRequirementsIncludingLegacy().values().stream()
+          .allMatch(SubmitRequirementResult::fulfilled);
+    }
+  }
+
+  private Optional<ObjectId> getMetaState(ChangeData cd) {
+    try (TraceTimer timer =
+        TraceContext.newTimer(
+            "Get change meta ref",
+            Metadata.builder().changeId(cd.change().getId().get()).build())) {
+      return cd.metaRevision();
+    }
+  }
+
+  private Boolean isReviewedByCurrentUser(ChangeData cd, CurrentUser user) {
+    try (TraceTimer timer =
+        TraceContext.newTimer(
+            "Get reviewed by", Metadata.builder().changeId(cd.change().getId().get()).build())) {
+      return toBoolean(
+          cd.change().isNew()
+              && has(REVIEWED)
+              && user.isIdentifiedUser()
+              && cd.isReviewedBy(user.getAccountId()));
+    }
+  }
+
+  private Boolean isStarredByCurrentUser(ChangeData cd, CurrentUser user) {
+    try (TraceTimer timer =
+        TraceContext.newTimer(
+            "Get starred by", Metadata.builder().changeId(cd.change().getId().get()).build())) {
+      return toBoolean(user.isIdentifiedUser() && cd.isStarred(user.getAccountId()));
+    }
   }
 
   private void setSubmitter(ChangeData cd, ChangeInfo out) {
-    Optional<PatchSetApproval> s = cd.getSubmitApproval();
-    if (!s.isPresent()) {
-      return;
+    try (TraceTimer timer =
+        TraceContext.newTimer(
+            "Set submitter", Metadata.builder().changeId(cd.change().getId().get()).build())) {
+      Optional<PatchSetApproval> s = cd.getSubmitApproval();
+      if (!s.isPresent()) {
+        return;
+      }
+      out.setSubmitted(s.get().granted(), accountLoader.get(s.get().accountId()));
     }
-    out.setSubmitted(s.get().granted(), accountLoader.get(s.get().accountId()));
   }
 
   private ImmutableList<ChangeMessageInfo> messages(ChangeData cd) {
-    List<ChangeMessage> messages = cmUtil.byChange(cd.notes());
-    if (messages.isEmpty()) {
-      return ImmutableList.of();
-    }
+    try (TraceTimer timer =
+        TraceContext.newTimer(
+            "Get messages", Metadata.builder().changeId(cd.change().getId().get()).build())) {
+      List<ChangeMessage> messages = cmUtil.byChange(cd.notes());
+      if (messages.isEmpty()) {
+        return ImmutableList.of();
+      }
 
-    List<ChangeMessageInfo> result = Lists.newArrayListWithCapacity(messages.size());
-    for (ChangeMessage message : messages) {
-      result.add(createChangeMessageInfo(message, accountLoader));
+      List<ChangeMessageInfo> result = Lists.newArrayListWithCapacity(messages.size());
+      for (ChangeMessage message : messages) {
+        result.add(createChangeMessageInfo(message, accountLoader));
+      }
+      return ImmutableList.copyOf(result);
     }
-    return ImmutableList.copyOf(result);
   }
 
   private List<AccountInfo> removableReviewers(ChangeData cd, ChangeInfo out)
       throws PermissionBackendException {
-    // Although this is called removableReviewers, this method also determines
-    // which CCs are removable.
-    //
-    // For reviewers, we need to look at each approval, because the reviewer
-    // should only be considered removable if *all* of their approvals can be
-    // removed. First, add all reviewers with *any* removable approval to the
-    // "removable" set. Along the way, if we encounter a non-removable approval,
-    // add the reviewer to the "fixed" set. Before we return, remove all members
-    // of "fixed" from "removable", because not all of their approvals can be
-    // removed.
-    Collection<LabelInfo> labels = out.labels.values();
-    Set<Account.Id> fixed = Sets.newHashSetWithExpectedSize(labels.size());
-    Set<Account.Id> removable = new HashSet<>();
+    try (TraceTimer timer =
+        TraceContext.newTimer(
+            "Get removable reviewers",
+            Metadata.builder().changeId(cd.change().getId().get()).build())) {
+      // Although this is called removableReviewers, this method also determines
+      // which CCs are removable.
+      //
+      // For reviewers, we need to look at each approval, because the reviewer
+      // should only be considered removable if *all* of their approvals can be
+      // removed. First, add all reviewers with *any* removable approval to the
+      // "removable" set. Along the way, if we encounter a non-removable approval,
+      // add the reviewer to the "fixed" set. Before we return, remove all members
+      // of "fixed" from "removable", because not all of their approvals can be
+      // removed.
+      Collection<LabelInfo> labels = out.labels.values();
+      Set<Account.Id> fixed = Sets.newHashSetWithExpectedSize(labels.size());
+      Set<Account.Id> removable = new HashSet<>();
 
-    // Add all reviewers, which will later be removed if they are in the "fixed" set.
-    removable.addAll(
-        out.reviewers.getOrDefault(ReviewerState.REVIEWER, Collections.emptySet()).stream()
-            .filter(a -> a._accountId != null)
-            .map(a -> Account.id(a._accountId))
-            .collect(Collectors.toSet()));
+      // Add all reviewers, which will later be removed if they are in the "fixed" set.
+      removable.addAll(
+          out.reviewers.getOrDefault(ReviewerState.REVIEWER, Collections.emptySet()).stream()
+              .filter(a -> a._accountId != null)
+              .map(a -> Account.id(a._accountId))
+              .collect(Collectors.toSet()));
 
-    // Check if the user has the permission to remove a reviewer. This means we can bypass the
-    // testRemoveReviewer check for a specific reviewer in the loop saving potentially many
-    // permission checks.
-    boolean canRemoveAnyReviewer =
-        permissionBackend
-            .user(userProvider.get())
-            .change(cd)
-            .test(ChangePermission.REMOVE_REVIEWER);
-    for (LabelInfo label : labels) {
-      if (label.all == null) {
-        continue;
-      }
-      for (ApprovalInfo ai : label.all) {
-        Account.Id id = Account.id(ai._accountId);
-
-        if (!canRemoveAnyReviewer
-            && !removeReviewerControl.testRemoveReviewer(
-                cd, userProvider.get(), id, MoreObjects.firstNonNull(ai.value, 0))) {
-          fixed.add(id);
+      // Check if the user has the permission to remove a reviewer. This means we can bypass the
+      // testRemoveReviewer check for a specific reviewer in the loop saving potentially many
+      // permission checks.
+      boolean canRemoveAnyReviewer =
+          permissionBackend
+              .user(userProvider.get())
+              .change(cd)
+              .test(ChangePermission.REMOVE_REVIEWER);
+      for (LabelInfo label : labels) {
+        if (label.all == null) {
+          continue;
         }
-      }
-    }
-
-    // CCs are simpler than reviewers. They are removable if the ChangeControl
-    // would permit a non-negative approval by that account to be removed, in
-    // which case add them to removable. We don't need to add unremovable CCs to
-    // "fixed" because we only visit each CC once here.
-    Collection<AccountInfo> ccs = out.reviewers.get(ReviewerState.CC);
-    if (ccs != null) {
-      for (AccountInfo ai : ccs) {
-        if (ai._accountId != null) {
+        for (ApprovalInfo ai : label.all) {
           Account.Id id = Account.id(ai._accountId);
-          if (canRemoveAnyReviewer
-              || removeReviewerControl.testRemoveReviewer(cd, userProvider.get(), id, 0)) {
-            removable.add(id);
+
+          if (!canRemoveAnyReviewer
+              && !removeReviewerControl.testRemoveReviewer(
+                  cd, userProvider.get(), id, MoreObjects.firstNonNull(ai.value, 0))) {
+            fixed.add(id);
           }
         }
       }
-    }
 
-    // Subtract any reviewers with non-removable approvals from the "removable"
-    // set. This also subtracts any CCs that for some reason also hold
-    // unremovable approvals.
-    removable.removeAll(fixed);
-
-    List<AccountInfo> result = Lists.newArrayListWithCapacity(removable.size());
-    for (Account.Id id : removable) {
-      result.add(accountLoader.get(id));
-    }
-    // Reviewers added by email are always removable
-    for (Collection<AccountInfo> infos : out.reviewers.values()) {
-      for (AccountInfo info : infos) {
-        if (info._accountId == null) {
-          result.add(info);
+      // CCs are simpler than reviewers. They are removable if the ChangeControl
+      // would permit a non-negative approval by that account to be removed, in
+      // which case add them to removable. We don't need to add unremovable CCs to
+      // "fixed" because we only visit each CC once here.
+      Collection<AccountInfo> ccs = out.reviewers.get(ReviewerState.CC);
+      if (ccs != null) {
+        for (AccountInfo ai : ccs) {
+          if (ai._accountId != null) {
+            Account.Id id = Account.id(ai._accountId);
+            if (canRemoveAnyReviewer
+                || removeReviewerControl.testRemoveReviewer(cd, userProvider.get(), id, 0)) {
+              removable.add(id);
+            }
+          }
         }
       }
+
+      // Subtract any reviewers with non-removable approvals from the "removable"
+      // set. This also subtracts any CCs that for some reason also hold
+      // unremovable approvals.
+      removable.removeAll(fixed);
+
+      List<AccountInfo> result = Lists.newArrayListWithCapacity(removable.size());
+      for (Account.Id id : removable) {
+        result.add(accountLoader.get(id));
+      }
+      // Reviewers added by email are always removable
+      for (Collection<AccountInfo> infos : out.reviewers.values()) {
+        for (AccountInfo info : infos) {
+          if (info._accountId == null) {
+            result.add(info);
+          }
+        }
+      }
+      return result;
     }
-    return result;
   }
 
   private List<AccountInfo> toAccountInfo(Collection<Account.Id> accounts) {
@@ -936,39 +1020,47 @@ public class ChangeJson {
         .collect(toList());
   }
 
+  private AccountInfo toAccountInfoByEmail(Address address) {
+    return new AccountInfo(address.name(), address.email());
+  }
+
   private List<AccountInfo> toAccountInfoByEmail(Collection<Address> addresses) {
     return addresses.stream()
-        .map(a -> new AccountInfo(a.name(), a.email()))
+        .map(this::toAccountInfoByEmail)
         .sorted(AccountInfoComparator.ORDER_NULLS_FIRST)
         .collect(toList());
   }
 
-  private Map<PatchSet.Id, PatchSet> loadPatchSets(
+  private ImmutableMap<PatchSet.Id, PatchSet> loadPatchSets(
       ChangeData cd, Optional<PatchSet.Id> limitToPsId) {
-    Collection<PatchSet> src;
-    if (has(ALL_REVISIONS) || has(MESSAGES)) {
-      src = cd.patchSets();
-    } else {
-      PatchSet ps;
-      if (limitToPsId.isPresent()) {
-        ps = cd.patchSet(limitToPsId.get());
-        if (ps == null) {
-          throw new StorageException("missing patch set " + limitToPsId.get());
-        }
+    try (TraceTimer timer =
+        TraceContext.newTimer(
+            "Load patch sets", Metadata.builder().changeId(cd.change().getId().get()).build())) {
+      Collection<PatchSet> src;
+      if (has(ALL_REVISIONS) || has(MESSAGES)) {
+        src = cd.patchSets();
       } else {
-        ps = cd.currentPatchSet();
-        if (ps == null) {
-          throw new StorageException("missing current patch set for change " + cd.getId());
+        PatchSet ps;
+        if (limitToPsId.isPresent()) {
+          ps = cd.patchSet(limitToPsId.get());
+          if (ps == null) {
+            throw new StorageException("missing patch set " + limitToPsId.get());
+          }
+        } else {
+          ps = cd.currentPatchSet();
+          if (ps == null) {
+            throw new StorageException("missing current patch set for change " + cd.getId());
+          }
         }
+        src = Collections.singletonList(ps);
       }
-      src = Collections.singletonList(ps);
+      // Sort by patch set ID in increasing order to have a stable output.
+      ImmutableSortedMap.Builder<PatchSet.Id, PatchSet> map = ImmutableSortedMap.naturalOrder();
+      for (PatchSet patchSet : src) {
+        map.put(patchSet.id(), patchSet);
+      }
+      return map.build();
     }
-    // Sort by patch set ID in increasing order to have a stable output.
-    ImmutableSortedMap.Builder<PatchSet.Id, PatchSet> map = ImmutableSortedMap.naturalOrder();
-    for (PatchSet patchSet : src) {
-      map.put(patchSet.id(), patchSet);
-    }
-    return map.build();
   }
 
   /** Populate the 'starred' field. */
@@ -991,14 +1083,18 @@ public class ChangeJson {
     }
   }
 
-  private List<PluginDefinedInfo> getPluginInfos(ChangeData cd) {
+  private ImmutableList<PluginDefinedInfo> getPluginInfos(ChangeData cd) {
     return getPluginInfos(Collections.singleton(cd)).get(cd.getId());
   }
 
   private ImmutableListMultimap<Change.Id, PluginDefinedInfo> getPluginInfos(
       Collection<ChangeData> cds) {
     if (pluginDefinedInfosFactory.isPresent()) {
-      return pluginDefinedInfosFactory.get().createPluginDefinedInfos(cds);
+      try (TraceTimer timer =
+          TraceContext.newTimer(
+              "Get plugin infos", Metadata.builder().resourceCount(cds.size()).build())) {
+        return pluginDefinedInfosFactory.get().createPluginDefinedInfos(cds);
+      }
     }
     return ImmutableListMultimap.of();
   }
@@ -1022,5 +1118,10 @@ public class ChangeJson {
     info.subject = "***ERROR***";
     info.owner = new AccountInfo(c.getOwner().get());
     return Optional.of(info);
+  }
+
+  @Nullable
+  private static Boolean toBoolean(boolean value) {
+    return value ? true : null;
   }
 }

@@ -30,9 +30,10 @@ suite('gr-change-list-view tests', () => {
   });
 
   test('render', async () => {
-    element.changes = Array(25)
+    element.changes = Array(10)
       .fill(0)
       .map(_ => createChange());
+    element.changes[9]._more_changes = true;
     element.changesPerPage = 10;
     element.loading = false;
     await element.updateComplete;
@@ -43,7 +44,19 @@ suite('gr-change-list-view tests', () => {
         <div class="loading" hidden="">Loading...</div>
         <div>
           <gr-change-list> </gr-change-list>
-          <nav>Page 1</nav>
+          <nav>
+            <span>
+              <strong>1&nbsp;-&nbsp;10</strong>&nbsp;of&nbsp;<strong
+                >many</strong
+              >
+            </span>
+            <span disabled="" id="prevArrow">
+              <gr-icon aria-label="Older" icon="chevron_left"> </gr-icon>
+            </span>
+            <a href="/q/test-query,10" id="nextArrow">
+              <gr-icon aria-label="Newer" icon="chevron_right"> </gr-icon>
+            </a>
+          </nav>
         </div>
       `
     );
@@ -136,11 +149,13 @@ suite('gr-change-list-view tests', () => {
     element.offset = 0;
     element.loading = false;
     await element.updateComplete;
-    assert.isNotOk(query(element, '#prevArrow'));
+    assert.isTrue(
+      query<HTMLAnchorElement>(element, '#prevArrow')?.hasAttribute('disabled')
+    );
 
     element.offset = 5;
     await element.updateComplete;
-    assert.isOk(query(element, '#prevArrow'));
+    assert.isFalse(query(element, '#prevArrow')?.hasAttribute('disabled'));
   });
 
   test('nextArrow', async () => {
@@ -149,13 +164,13 @@ suite('gr-change-list-view tests', () => {
       .map(_ => ({...createChange(), _more_changes: true} as ChangeInfo));
     element.loading = false;
     await element.updateComplete;
-    assert.isOk(query(element, '#nextArrow'));
+    assert.isFalse(query(element, '#nextArrow')?.hasAttribute('disabled'));
 
     element.changes = Array(25)
       .fill(0)
       .map(_ => createChange());
     await element.updateComplete;
-    assert.isNotOk(query(element, '#nextArrow'));
+    assert.isTrue(query(element, '#nextArrow')?.hasAttribute('disabled'));
   });
 
   test('handleNextPage', async () => {

@@ -49,7 +49,6 @@ import {
   isDetailedLabelInfo,
   isReviewerAccountSuggestion,
   isReviewerGroupSuggestion,
-  ParsedJSON,
   ReviewerInput,
   ReviewInput,
   ReviewResult,
@@ -131,6 +130,10 @@ import {GrReviewerUpdatesParser} from '../../shared/gr-rest-api-interface/gr-rev
 import {formStyles} from '../../../styles/form-styles';
 import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {getDocUrl} from '../../../utils/url-util';
+import {
+  readJSONResponsePayload,
+  ResponsePayload,
+} from '../../shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
 
 export enum FocusTarget {
   ANY = 'any',
@@ -784,8 +787,11 @@ export class GrReplyDialog extends LitElement {
               name="change"
               .value=${this.change}
             ></gr-endpoint-param>
-            ${this.renderAttentionSummarySection()}
-            ${this.renderAttentionDetailsSection()}
+            ${when(
+              this.attentionExpanded,
+              () => this.renderAttentionDetailsSection(),
+              () => this.renderAttentionSummarySection()
+            )}
             <gr-endpoint-slot name="above-actions"></gr-endpoint-slot>
             ${this.renderActionsSection()}
           </gr-endpoint-decorator>
@@ -986,7 +992,6 @@ export class GrReplyDialog extends LitElement {
   }
 
   private renderAttentionSummarySection() {
-    if (this.attentionExpanded) return;
     return html`
       <section class="attention">
         <div class="attentionSummary">
@@ -1053,7 +1058,6 @@ export class GrReplyDialog extends LitElement {
   }
 
   private renderAttentionDetailsSection() {
-    if (!this.attentionExpanded) return;
     return html`
       <section class="attention-detail">
         <div class="attentionDetailsTitle">
@@ -1367,6 +1371,9 @@ export class GrReplyDialog extends LitElement {
     // timer will be ended.
     this.reporting.time(Timing.SEND_REPLY);
     const labels = this.getLabelScores().getLabelValues();
+    if (labels[StandardLabels.CODE_REVIEW] === 2) {
+      this.reporting.reportInteraction(Interaction.CODE_REVIEW_APPROVAL);
+    }
 
     const reviewInput: ReviewInput = {
       drafts: includeComments
@@ -1435,7 +1442,8 @@ export class GrReplyDialog extends LitElement {
     if (this.patchsetLevelGrComment) {
       this.patchsetLevelGrComment.disableAutoSaving = true;
       await this.restApiService.awaitPendingDiffDrafts();
-      const comment = this.patchsetLevelGrComment.convertToCommentInput();
+      const comment =
+        await this.patchsetLevelGrComment.convertToCommentInputAndOrDiscard();
       if (comment && comment.path && comment.message) {
         reviewInput.comments ??= {};
         reviewInput.comments[comment.path] ??= [];
@@ -1445,6 +1453,7 @@ export class GrReplyDialog extends LitElement {
 
     assertIsDefined(this.change, 'change');
     reviewInput.reviewers = this.computeReviewers();
+    this.reportStartReview(reviewInput);
 
     const errFn = (r?: Response | null) => this.handle400Error(r);
     this.getNavigation().blockNavigation('sending review');
@@ -1460,6 +1469,7 @@ export class GrReplyDialog extends LitElement {
         this.includeComments = true;
         fireNoBubble(this, 'send', {});
         fireIronAnnounce(this, 'Reply sent');
+        this.getPluginLoader().jsApiService.handleReplySent();
         return;
       })
       .then(result => result)
@@ -1472,6 +1482,31 @@ export class GrReplyDialog extends LitElement {
         // By this point in time the change has loaded, we're only waiting for the comments.
         this.reporting.timeEnd(Timing.SEND_REPLY);
       });
+  }
+
+  private reportStartReview(reviewInput: ReviewInput) {
+    const changeHasReviewers =
+      (this.change?.reviewers.REVIEWER ?? []).length > 0;
+    const newReviewersAdded =
+      (this.reviewersList?.additions() ?? []).length > 0;
+
+    // A review starts if either a WIP change is set to active with reviewers ...
+    const setActiveWithReviewers =
+      this.change?.work_in_progress &&
+      reviewInput.ready &&
+      // Setting a change active and *removing* all reviewers at the same time
+      // is an obscure corner case that we don't care about. :-)
+      (changeHasReviewers || newReviewersAdded);
+    // ... or if reviewers are added to an already active change that has no reviewers yet.
+    const isActiveAddReviewers =
+      !this.change?.work_in_progress &&
+      !reviewInput.work_in_progress &&
+      !changeHasReviewers &&
+      newReviewersAdded;
+
+    if (setActiveWithReviewers || isActiveAddReviewers) {
+      this.reporting.reportInteraction(Interaction.START_REVIEW);
+    }
   }
 
   focusOn(section?: FocusTarget) {
@@ -1514,26 +1549,29 @@ export class GrReplyDialog extends LitElement {
     //
     this.disabled = false;
 
-    // Using response.clone() here, because getResponseObject() and
+    // Using response.clone() here, because readJSONResponsePayload() and
     // potentially the generic error handler will want to call text() on the
     // response object, which can only be done once per object.
-    const jsonPromise = this.restApiService.getResponseObject(response.clone());
-    return jsonPromise.then((parsed: ParsedJSON) => {
-      const result = parsed as ReviewResult;
-      // Only perform custom error handling for 400s and a parsable
-      // ReviewResult response.
-      if (response.status === 400 && result && result.reviewers) {
-        const errors: string[] = [];
-        const addReviewers = Object.values(result.reviewers);
-        addReviewers.forEach(r => errors.push(r.error ?? 'no explanation'));
-        response = {
-          ...response,
-          ok: false,
-          text: () => Promise.resolve(errors.join(', ')),
-        };
-      }
-      fireServerError(response);
-    });
+    const jsonPromise = readJSONResponsePayload(response.clone());
+    return jsonPromise
+      .then((payload: ResponsePayload) => {
+        const result = payload.parsed as ReviewResult;
+        // Only perform custom error handling for 400s and a parsable
+        // ReviewResult response.
+        if (response.status === 400 && result.reviewers) {
+          const errors: string[] = [];
+          const addReviewers = Object.values(result.reviewers);
+          addReviewers.forEach(r => errors.push(r.error ?? 'no explanation'));
+          response = {
+            ...response,
+            ok: false,
+            text: () => Promise.resolve(errors.join(', ')),
+          };
+        }
+      })
+      .finally(() => {
+        fireServerError(response);
+      });
   }
 
   computeDraftsTitle(draftCommentThreads?: CommentThread[]) {
@@ -1685,8 +1723,10 @@ export class GrReplyDialog extends LitElement {
       ),
     ]);
     // Possibly expand if need be, never collapse as this is jarring to the user.
+    // For long account lists (10 or more), avoid automatic expansion.
     this.attentionExpanded =
-      this.attentionExpanded || this.computeShowAttentionTip(1);
+      this.attentionExpanded ||
+      (allAccountIds.length < 10 && this.computeShowAttentionTip(1));
   }
 
   computeShowAttentionTip(minimum: number) {

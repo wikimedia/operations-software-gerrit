@@ -86,7 +86,7 @@ public class QueryChangesIT extends AbstractDaemonTest {
     assertThat(result.get(0)).hasSize(2);
     assertThat(result.get(1)).hasSize(1);
 
-    List<Integer> firstResultIds =
+    ImmutableList<Integer> firstResultIds =
         ImmutableList.of(result.get(0).get(0)._number, result.get(0).get(1)._number);
     assertThat(firstResultIds).containsExactly(numericId1, numericId2);
     assertThat(result.get(1).get(0)._number).isEqualTo(numericId2);
@@ -97,7 +97,7 @@ public class QueryChangesIT extends AbstractDaemonTest {
   public void moreChangesIndicatorDoesNotWronglyCopyToUnrelatedChanges() throws Exception {
     String queryWithMoreChanges = "is:wip limit:1 repo:" + project.get();
     String queryWithNoMoreChanges = "is:open limit:10 repo:" + project.get();
-    createChange().getChangeId();
+    createChange();
     String cId2 = createChange().getChangeId();
     String cId3 = createChange().getChangeId();
     gApi.changes().id(cId2).setWorkInProgress();
@@ -160,8 +160,8 @@ public class QueryChangesIT extends AbstractDaemonTest {
   @SuppressWarnings("unchecked")
   public void withPagedResults() throws Exception {
     // Create 4 visible changes.
-    createChange(testRepo).getChange().getId().get();
-    createChange(testRepo).getChange().getId().get();
+    createChange(testRepo);
+    createChange(testRepo);
     int changeId3 = createChange(testRepo).getChange().getId().get();
     int changeId4 = createChange(testRepo).getChange().getId().get();
 
@@ -291,7 +291,7 @@ public class QueryChangesIT extends AbstractDaemonTest {
     assertThat(result.get(0)).hasSize(2);
     assertThat(result.get(1)).hasSize(1);
 
-    List<Integer> firstResultIds =
+    ImmutableList<Integer> firstResultIds =
         ImmutableList.of(result.get(0).get(0)._number, result.get(0).get(1)._number);
     assertThat(firstResultIds).containsExactly(numericId1, numericId2);
     assertThat(result.get(1).get(0)._number).isEqualTo(numericId2);
@@ -311,7 +311,7 @@ public class QueryChangesIT extends AbstractDaemonTest {
   @Test
   @SuppressWarnings("unchecked")
   public void skipVisibility_noReadPermission() throws Exception {
-    createChange().getChangeId();
+    createChange();
     requestScopeOperations.setApiUser(admin.id());
     QueryChanges queryChanges = queryChangesProvider.get();
 

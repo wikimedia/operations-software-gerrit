@@ -19,7 +19,6 @@ import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.pgm.init.BaseInit;
 import com.google.gerrit.pgm.init.PluginsDistribution;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.List;
 
 public final class SiteInitializer {
@@ -45,24 +44,29 @@ public final class SiteInitializer {
   public void init() {
     try {
       if (sitePath != null) {
-        Path site = Paths.get(sitePath);
+        Path site = Path.of(sitePath);
         logger.atInfo().log("Initializing site at %s", site.toRealPath().normalize());
-        new BaseInit(site, false, pluginsDistribution, pluginsToInstall).run();
+
+        @SuppressWarnings("unused")
+        var unused = new BaseInit(site, false, pluginsDistribution, pluginsToInstall).run();
+
         return;
       }
 
       String path = System.getProperty(GERRIT_SITE_PATH);
       Path site = null;
       if (!Strings.isNullOrEmpty(path)) {
-        site = Paths.get(path);
+        site = Path.of(path);
       }
 
       if (site == null && initPath != null) {
-        site = Paths.get(initPath);
+        site = Path.of(initPath);
       }
       if (site != null) {
         logger.atInfo().log("Initializing site at %s", site.toRealPath().normalize());
-        new BaseInit(site, false, pluginsDistribution, pluginsToInstall).run();
+
+        @SuppressWarnings("unused")
+        var unused = new BaseInit(site, false, pluginsDistribution, pluginsToInstall).run();
       }
     } catch (Exception e) {
       logger.atSevere().withCause(e).log("Site init failed");

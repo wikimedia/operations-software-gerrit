@@ -35,10 +35,10 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
-import com.google.common.collect.Multimap;
 import com.google.common.collect.Multimaps;
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.entities.Account;
 import com.google.gerrit.entities.AttentionSetUpdate;
@@ -70,6 +70,7 @@ import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.query.approval.ApprovalQueryBuilder;
 import com.google.gerrit.server.query.approval.UserInPredicate;
+import com.google.gerrit.server.update.RepoView;
 import com.google.gerrit.server.util.AccountTemplateUtil;
 import com.google.gerrit.server.util.LabelVote;
 import com.google.gerrit.server.util.ManualRequestContext;
@@ -89,8 +90,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.StringTokenizer;
-import org.eclipse.jgit.lib.Config;
-import org.eclipse.jgit.revwalk.RevWalk;
 
 /**
  * Utility functions to manipulate patchset approvals.
@@ -314,6 +313,7 @@ public class ApprovalsUtil {
    * @param user user adding approvals.
    * @param approvals approvals to add.
    */
+  @CanIgnoreReturnValue
   public Iterable<PatchSetApproval> addApprovalsForNewPatchSet(
       ChangeUpdate update,
       LabelTypes labelTypes,
@@ -394,20 +394,15 @@ public class ApprovalsUtil {
    *
    * @param notes the change notes
    * @param patchSet the newly created patch set
-   * @param revWalk {@link RevWalk} that can see the new patch set revision
-   * @param repoConfig the repo config
+   * @param repoView repo view
    * @param changeUpdate changeUpdate that is used to persist the copied approvals and update the
    *     attention set
    * @return the result of the approval copying
    */
   public ApprovalCopier.Result copyApprovalsToNewPatchSet(
-      ChangeNotes notes,
-      PatchSet patchSet,
-      RevWalk revWalk,
-      Config repoConfig,
-      ChangeUpdate changeUpdate) {
+      ChangeNotes notes, PatchSet patchSet, RepoView repoView, ChangeUpdate changeUpdate) {
     ApprovalCopier.Result approvalCopierResult =
-        approvalCopier.forPatchSet(notes, patchSet, revWalk, repoConfig);
+        approvalCopier.forPatchSet(notes, patchSet, repoView);
     approvalCopierResult
         .copiedApprovals()
         .forEach(approvalData -> changeUpdate.putCopiedApproval(approvalData.patchSetApproval()));
@@ -428,7 +423,7 @@ public class ApprovalsUtil {
       ChangeUpdate changeUpdate, ImmutableSet<PatchSetApproval> outdatedApprovals) {
     Set<AttentionSetUpdate> updates = new HashSet<>();
 
-    Multimap<Account.Id, PatchSetApproval> outdatedApprovalsByUser = ArrayListMultimap.create();
+    ListMultimap<Account.Id, PatchSetApproval> outdatedApprovalsByUser = ArrayListMultimap.create();
     outdatedApprovals.forEach(psa -> outdatedApprovalsByUser.put(psa.accountId(), psa));
     for (Map.Entry<Account.Id, Collection<PatchSetApproval>> e :
         outdatedApprovalsByUser.asMap().entrySet()) {
@@ -862,7 +857,8 @@ public class ApprovalsUtil {
    *     deleted labels.
    */
   public Iterable<PatchSetApproval> byPatchSet(ChangeNotes notes, PatchSet.Id psId) {
-    List<PatchSetApproval> approvalsNotNormalized = notes.load().getApprovals().all().get(psId);
+    ImmutableList<PatchSetApproval> approvalsNotNormalized =
+        notes.load().getApprovals().all().get(psId);
     return labelNormalizer.normalize(notes, approvalsNotNormalized).getNormalized();
   }
 

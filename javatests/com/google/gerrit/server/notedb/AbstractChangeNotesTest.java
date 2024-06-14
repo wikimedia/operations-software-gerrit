@@ -57,6 +57,8 @@ import com.google.gerrit.server.config.EnablePeerIPInReflogRecord;
 import com.google.gerrit.server.config.GerritImportedServerIds;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.GerritServerId;
+import com.google.gerrit.server.experiments.ConfigExperimentFeatures;
+import com.google.gerrit.server.experiments.ExperimentFeatures;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitModule;
 import com.google.gerrit.server.git.GitRepositoryManager;
@@ -186,6 +188,8 @@ public abstract class AbstractChangeNotesTest {
             install(new GitModule());
 
             install(new DefaultUrlFormatterModule());
+            install(new NoteDbDraftCommentsModule());
+            install(new NoteDbStarredChangesModule());
             install(NoteDbModule.forTest());
             install(new DefaultRefLogIdentityProvider.Module());
             bind(AllUsersName.class).toProvider(AllUsersNameProvider.class);
@@ -223,6 +227,7 @@ public abstract class AbstractChangeNotesTest {
             bind(PatchSetApprovalUuidGenerator.class).to(TestPatchSetApprovalUuidGenerator.class);
             bind(ChangeDraftUpdate.ChangeDraftUpdateFactory.class)
                 .to(ChangeDraftNotesUpdate.Factory.class);
+            bind(ExperimentFeatures.class).to(ConfigExperimentFeatures.class);
           }
         });
   }
@@ -231,7 +236,7 @@ public abstract class AbstractChangeNotesTest {
       throws RepositoryCaseMismatchException, RepositoryNotFoundException {
     AllUsersName allUsersName = injector.getInstance(AllUsersName.class);
 
-    repoManager.createRepository(allUsersName);
+    repoManager.createRepository(allUsersName).close();
 
     IdentifiedUser.GenericFactory identifiedUserFactory =
         injector.getInstance(IdentifiedUser.GenericFactory.class);
@@ -247,7 +252,11 @@ public abstract class AbstractChangeNotesTest {
   @After
   public void resetTime() {
     TestTimeUtil.useSystemTime();
-    System.setProperty("user.timezone", systemTimeZone);
+    if (systemTimeZone != null) {
+      System.setProperty("user.timezone", systemTimeZone);
+    } else {
+      System.clearProperty("user.timezone");
+    }
   }
 
   protected Change newChange(boolean workInProgress) throws Exception {
