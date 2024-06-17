@@ -29,6 +29,12 @@ import sys
 # if Gerrit core has submodules having a relative URL.
 UPSTREAM_GERRIT_URL = 'https://gerrit.googlesource.com/gerrit'
 
+# Plugins that lack tests and would thus always fail `bazel test`
+PLUGINS_WITHOUT_TESTS = [
+    'metrics-reporter-prometheus',
+    'metrics-reporter-jmx',
+    ]
+
 # Dependencies definitions which might be present in a plugin repository. In
 # order to build the plugin from the Gerrit source tree, those files have to be
 # copied from the plugin directory to Gerrit ./plugins/.
@@ -47,6 +53,13 @@ GERRIT_TARGETS = ['release']
 def phase(name):
     '''Helper to output some progress report'''
     print(f'\n========= [ {name.upper()} ] =========')
+
+
+def print_bold(msg):
+    if sys.stdout.isatty() or environ.get('FORCE_COLOR'):
+        print('\033[1m%s\033[0m' % msg)
+    else:
+        print(msg)
 
 
 @lru_cache(maxsize=1)
@@ -152,13 +165,25 @@ artifacts.extend([
 def build_plugin(path):
     '''bazel build a plugin after injecting the dependencies files'''
     name = os.path.basename(path)
-    print(f'\nBuilding {name}')
+    print_bold(f'\nBuilding {path}')
     for dep_file in PLUGIN_DEP_FILES:
         f_path = os.path.join(path, dep_file)
         if os.path.exists(f_path):
             print(f'Injecting {dep_file} in ./plugins')
             shutil.copy(f_path, 'plugins')
-    build_result = subprocess.run([bazel(), 'build', path], check=False)
+
+    result = subprocess.run([bazel(), 'build', path], check=False)
+
+    if result.returncode != 0:
+        print_bold(f'{name} failed to build')
+    elif name in PLUGINS_WITHOUT_TESTS:
+        print_bold(f'SKipping tests for {name}: marked as having no tests.')
+    else:
+        print_bold(f'\nTesting {path}')
+        result = subprocess.run([bazel(), 'test', '%s:all' % path],
+                                check=False)
+        if result.returncode != 0:
+            print_bold(f'{name} tests failed')
 
     # restore Gerrit ./plugins state
     for dep_file in PLUGIN_DEP_FILES:
@@ -171,16 +196,19 @@ def build_plugin(path):
             ['git', 'checkout', '--', path],
             check=False)
 
-    return build_result
+    return result
 
 
-phase('build extra plugins')
+phase('build and test extra plugins')
 
-if not all(
-    [build_plugin(path).returncode == 0
-     for path, module in submodules() if not module['is_relative']]
-):
-    print("Some plugin(s) failed to build")
+failed = [path for path, module in submodules()
+          if not module['is_relative']
+          and build_plugin(path).returncode != 0
+          ]
+
+if failed:
+    print_bold("Some plugin(s) failed to build or test:")
+    print("\n".join(failed), "\n")
     sys.exit(2)
 
 # Capture plugins .jar
