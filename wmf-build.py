@@ -18,6 +18,7 @@
 # https://wikitech.wikimedia.org/wiki/Gerrit/Upgrade
 
 from functools import lru_cache
+import json
 from os import environ
 import os.path
 import shlex
@@ -41,6 +42,7 @@ PLUGINS_WITHOUT_TESTS = [
 # copied from the plugin directory to Gerrit ./plugins/.
 PLUGIN_DEP_FILES = [
     'external_plugin_deps.bzl',
+    'external_package.json',
     ]
 
 # Bazel target for build Gerrit core
@@ -167,11 +169,21 @@ def build_plugin(path):
     '''bazel build a plugin after injecting the dependencies files'''
     name = os.path.basename(path)
     print_bold(f'\nBuilding {path}')
+    external_package_file = False
     for dep_file in PLUGIN_DEP_FILES:
         f_path = os.path.join(path, dep_file)
         if os.path.exists(f_path):
             print(f'Injecting {dep_file} in ./plugins')
             shutil.copy(f_path, 'plugins')
+            if dep_file == 'external_package.json':
+                external_package_file = f_path
+
+    if external_package_file:
+        print('Creating plugins/package.json from plugin dependencies')
+        with open(external_package_file) as f:
+            npm_deps = json.load(f)['dependencies']
+        with open('plugins/package.json', mode='w') as f:
+            json.dump({'dependencies': npm_deps}, f)
 
     result = subprocess.run([bazel(), 'build', path], check=False)
 
@@ -188,6 +200,9 @@ def build_plugin(path):
 
     # restore Gerrit ./plugins state
     for dep_file in PLUGIN_DEP_FILES:
+        if external_package_file and dep_file == 'external_package.json':
+            dep_file = 'package.json'
+
         path = os.path.join('plugins', dep_file)
         try:
             os.unlink(path)
@@ -195,6 +210,12 @@ def build_plugin(path):
             pass
         subprocess.run(
             ['git', 'checkout', '--', path],
+            check=False)
+
+    if external_package_file:
+        print('Restoring plugins/yarn.lock')
+        subprocess.run(
+            ['git', 'checkout', '--', 'plugins/yarn.lock'],
             check=False)
 
     return result
