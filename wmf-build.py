@@ -31,6 +31,7 @@ UPSTREAM_GERRIT_URL = 'https://gerrit.googlesource.com/gerrit'
 
 # Plugins that lack tests and would thus always fail `bazel test`
 PLUGINS_WITHOUT_TESTS = [
+    'image-diff',
     'metrics-reporter-prometheus',
     'metrics-reporter-jmx',
     ]
@@ -211,17 +212,32 @@ if failed:
     print("\n".join(failed), "\n")
     sys.exit(2)
 
-# Capture plugins .jar
-artifacts.extend([
-    os.path.join(log_dir, jar)
-    for path, module in submodules() if not module['is_relative']
-    for jar in [
-        os.path.join(os.path.basename(path) + '.jar')
-    ]
-    if shutil.copy(
-        os.path.join('bazel-bin', path, jar),
-        log_dir)
-])
+# Capture plugins .jar or .js
+artifacts = []
+errors = []
+for path, module in submodules():
+    if module['is_relative']:
+        # Skip modules bundled by upstream
+        continue
+
+    jar_file = os.path.basename(path) + '.jar'
+    js_file = os.path.basename(path) + '.js'
+    try:
+        shutil.copy(os.path.join('bazel-bin', path, jar_file), log_dir)
+        artifacts.append(jar_file)
+    except FileNotFoundError:
+        try:
+            shutil.copy(os.path.join('bazel-bin', path, js_file), log_dir)
+            artifacts.append(js_file)
+        except FileNotFoundError:
+            errors.append(path)
+
+if errors:
+    print('Could not find .jar or .js artifact for:')
+    print('\n'.join(errors))
+    print('\nAborting...')
+    sys.exit(1)
+
 print("Done building extra plugins")
 
 phase('Artifacts')
