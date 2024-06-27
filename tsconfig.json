@@ -3,6 +3,9 @@
     "typing/polymer.js",
     "plugins/*.js"
   ],
+  "exclude": [
+    "plugins/image-diff.js"
+  ],
   "compilerOptions": {
     "moduleResolution": "node",
     "esModuleInterop": true,
