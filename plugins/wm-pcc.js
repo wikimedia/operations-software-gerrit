@@ -115,7 +115,7 @@ class PCCProvider {
   /**
    * @param {ChangeMessageInfo} changeMessage
    * @param {ChangeData} change
-   * @return {CheckRun}
+   * @return {CheckRun[]}
    */
   parse(changeMessage, change) {
     if ( !PCCProvider.isUtilsPccReport(changeMessage) &&
@@ -126,7 +126,7 @@ class PCCProvider {
 
     const trigger = PCCProvider.isCIReport(changeMessage) ? 'CI' : 'utils/pcc';
     const jenkinsBuilds = PCCProvider.buildsFromMessage(changeMessage.message);
-    const checkResults = jenkinsBuilds.map(
+    const checkRuns = jenkinsBuilds.map(
       build => {
         /** @type {AugmentedCheckResult} */
         const checkResult = {
@@ -164,26 +164,34 @@ class PCCProvider {
           ],
           change: change,
         };
-        return checkResult;
+
+        let checkName;
+        if ( trigger === 'CI' ) {
+          // Split by version - T371407
+          checkName = `Puppet Compiler v${build.puppetVersion} [${trigger}]`;
+        } else {
+          checkName = `Puppet Compiler [${trigger}]`;
+        }
+
+        if ( typeof this.attempt[checkName] === 'undefined' ) {
+          this.attempt[checkName] = 1;
+        } else {
+          this.attempt[checkName] += 1;
+        }
+
+        /** @type {CheckRun} */
+        const checkRun = {
+          checkName: checkName,
+          attempt: this.attempt[checkName],
+          status: /** @type {RunStatus} */ ('COMPLETED'),
+          results: [ checkResult ],
+        };
+        return checkRun;
       }
+
     );
 
-    const checkName = `Puppet Compiler [${trigger}]`;
-    if ( typeof this.attempt[checkName] === 'undefined' ) {
-      this.attempt[checkName] = 1;
-    } else {
-      this.attempt[checkName] += 1;
-    }
-
-    /** @type {CheckRun} */
-    const checkRun = {
-      checkName: checkName,
-      attempt: this.attempt[checkName],
-      status: /** @type {RunStatus} */ ('COMPLETED'),
-      results: checkResults,
-    };
-
-    return checkRun;
+    return checkRuns;
   }
 
   /**
@@ -303,12 +311,12 @@ class PCCProvider {
       // browse runs from previous patchset which will invoke fetch() again
       // with a different ChangeData.patchsetNumber.
       m => m._revision_number === change.patchsetNumber
-    ).map(
+    ).flatMap(
       m => this.parse(m, change)
     ).filter( notUndefined => notUndefined );
 
     const hasRanPuppetCompiler = checkRuns.some(
-      run => run.checkName === 'Puppet Compiler [CI]' );
+      run => run.checkName.match( /^Puppet Compiler v\d+ \[CI\]/ ) );
 
     const compileCatalogueAction = {
       name: 'Compile catalogue',
