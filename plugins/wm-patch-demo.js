@@ -34,15 +34,14 @@
 class PatchDemoProvider {
 
   /**
-   * @param {string} response Raw text received from the API
+   * @param {Array<PatchDemoWiki>} instances JSON received from the API
    * @param {ChangeData} change
    * @return {FetchResponse}
    */
-  parse(response, change) {
-    /** @type {PatchDemoFindWikis} */
-    const instances = JSON.parse(response);
-
+  parse(instances, change) {
+    let isLegacyInstance = false;
     const checkResults = instances.map( instance => {
+      isLegacyInstance = instance.url.includes('legacy');
       let patchset;
       for (const patch of instance.patches) {
         if (change.changeNumber.toString() === patch.split(',')[0]) {
@@ -50,7 +49,7 @@ class PatchDemoProvider {
           break;
         }
       }
-      const deleteUrl = `https://patchdemo.wmflabs.org/delete.php?wiki=${instance.wiki}`;
+      const deleteUrl = isLegacyInstance ? `https://patchdemo-legacy.wmcloud.org/delete.php?wiki=${instance.wiki}` : `https://patchdemo.wmcloud.org/delete.php?wiki=${instance.wiki}`;
       const patchesList = '* ' + instance.patches.map( patch => {
         const [ changeNumber, patchNumber ] = patch.split(',');
         if ( changeNumber === change.changeNumber.toString() ) {
@@ -86,18 +85,35 @@ ${patchesList}
       };
       return checkResult;
     });
-
-    const checkRuns = (instances.length === 0) ? [] : [
-      {
+    const legacyResults = checkResults.filter(
+      res => res.links.some(
+        (/** @type {{ url: string | string[]; }} */ link) => link.url.includes('legacy')
+      )
+    );
+    const newResults = checkResults.filter( result => !legacyResults.includes( result ) );
+    const checkRuns = [];
+    if (legacyResults.length) {
+      checkRuns.push({
+        attempt: 1,
+        checkName: 'Legacy Patch demo',
+        checkDescription: 'MediaWiki instances spinned up with this change applied',
+        status: /** @type {RunStatus} */ ('COMPLETED'),
+        statusLink: 'https://patchdemo-legacy.wmcloud.org/',
+        statusDescription: `Found ${legacyResults.length} wikis for change ${change.changeNumber}`,
+        results: legacyResults
+      });
+    }
+    if (newResults.length) {
+      checkRuns.push({
         attempt: 1,
         checkName: 'Patch demo',
         checkDescription: 'MediaWiki instances spinned up with this change applied',
         status: /** @type {RunStatus} */ ('COMPLETED'),
-        statusLink: 'https://patchdemo.wmflabs.org/',
-        statusDescription: `Found ${instances.length} wikis for change ${change.changeNumber}`,
-        results: checkResults,
-      } ];
-
+        statusLink: 'https://patchdemo.wmcloud.org/',
+        statusDescription: `Found ${newResults.length} wikis for change ${change.changeNumber}`,
+        results: newResults
+      });
+    }
     return {
       responseCode: /** @type {ResponseCode} */ ('OK'),
       runs: checkRuns,
@@ -105,31 +121,30 @@ ${patchesList}
   }
 
   /**
-   *
    * @param {ChangeData} change
    * @return {Promise<FetchResponse>}
    */
   async fetch(change) {
-    const url = `https://patchdemo.wmflabs.org/api.php?action=findwikis&change=${change.changeNumber}`;
-    return fetch(url, { cache: 'no-store' })
-      .then(resp => {
-        if (!resp.ok) {
-          throw new Error('HTTP ' + resp.status);
-        }
-        return resp.text();
-      })
-      .then(resp => {
+    const legacyPatchDemoUrl = `https://patchdemo-legacy.wmcloud.org/api.php?action=findwikis&change=${change.changeNumber}`;
+    const newPatchDemoUrl = `https://patchdemo.wmcloud.org/api.php?action=findwikis&change=${change.changeNumber}`;
+
+    return Promise.all([
+      fetch(legacyPatchDemoUrl, { cache: 'no-store' }).then(resp => resp.ok ? resp.json() : ''),
+      fetch(newPatchDemoUrl, { cache: 'no-store' }).then(resp => resp.ok ? resp.json() : '')
+    ])
+      .then(([ legacyResponse, newResponse ]) => {
+        const wikis = legacyResponse.concat(newResponse);
         try {
-          return this.parse(resp, change);
+          return this.parse(wikis, change);
         } catch (parseError) {
-          console.error('[wm-patch-demo] failed to parse response: %s, from: %s', parseError, url);
+          console.error('[wm-patch-demo] Failed to parse response: %s. Wikis: %s', parseError, wikis);
           return {
             responseCode: /** @type {ResponseCode} */ ('OK'),
           };
         }
       })
       .catch( fetchError => {
-        console.error('[wm-patch-demo] failed to fetch: %s, from: %s', fetchError, url);
+        console.error('[wm-patch-demo] Failed to fetch: %s', fetchError);
         return {
           responseCode: /** @type {ResponseCode} */ ('OK'),
         };
