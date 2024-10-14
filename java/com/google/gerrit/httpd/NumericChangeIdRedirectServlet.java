@@ -14,6 +14,10 @@
 
 package com.google.gerrit.httpd;
 
+import static com.google.common.collect.ImmutableList.toImmutableList;
+
+import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableList;
 import com.google.gerrit.common.PageLinks;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
@@ -25,7 +29,6 @@ import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.List;
 import java.util.Optional;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
@@ -56,14 +59,12 @@ public class NumericChangeIdRedirectServlet extends HttpServlet {
   @Override
   protected void doGet(HttpServletRequest req, HttpServletResponse rsp) throws IOException {
     String uriPath = req.getPathInfo();
-    // Check if we are processing a comment url, like "/c/1/comment/ff3303fd_8341647b/".
-    int commentIdx = uriPath.indexOf("/comment");
-    String idString = commentIdx == -1 ? uriPath : uriPath.substring(0, commentIdx);
 
-    List<String> uriSegments = Arrays.stream(idString.split("/")).toList();
+    ImmutableList<String> uriSegments =
+        Arrays.stream(uriPath.split("/", 2)).collect(toImmutableList());
 
-    idString = uriSegments.get(0);
-    String psString = (uriSegments.size() > 1) ? uriSegments.get(1) : null;
+    String idString = uriSegments.get(0);
+    String finalSegment = (uriSegments.size() > 1) ? uriSegments.get(1) : null;
 
     Optional<Change.Id> id = Change.Id.tryParse(idString);
     if (id.isEmpty()) {
@@ -82,12 +83,10 @@ public class NumericChangeIdRedirectServlet extends HttpServlet {
     }
     String path =
         PageLinks.toChange(changeResource.getProject(), changeResource.getChange().getId());
-    if (commentIdx > -1) {
-      // path already contain a trailing /, hence we start from "commentIdx + 1"
-      path = path + uriPath.substring(commentIdx + 1);
-    } else if (psString != null) {
-      path += psString;
+    if (finalSegment != null) {
+      path += finalSegment;
     }
-    UrlModule.toGerrit(path, req, rsp);
+    String queryString = Strings.emptyToNull(req.getQueryString());
+    UrlModule.toGerrit(path + (queryString != null ? "?" + queryString : ""), req, rsp);
   }
 }
