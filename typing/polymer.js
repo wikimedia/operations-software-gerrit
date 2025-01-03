@@ -7,15 +7,6 @@
  */
 
 class PolymerElement {
-
-  ready() {}
-
-  set(
-    /** @type {string} */ path,
-    /** @type {any} */ value,
-    /** @type {object=} */ root,
-  ) {}
-
 }
 
 const Polymer = {
