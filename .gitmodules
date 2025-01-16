@@ -95,6 +95,7 @@
 [submodule "plugins/reviewers"]
 	path = plugins/reviewers
 	url = https://gerrit.googlesource.com/plugins/reviewers
+  branch = stable-3.10
 [submodule "plugins/zuul"]
 	path = plugins/zuul
 	url = https://gerrit.googlesource.com/plugins/zuul

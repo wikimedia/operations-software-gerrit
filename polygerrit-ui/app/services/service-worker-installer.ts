@@ -18,6 +18,7 @@ import {define} from '../models/dependency';
 import {Model} from '../models/base/model';
 import {Observable} from 'rxjs';
 import {select} from '../utils/observable-util';
+import {getBaseUrl} from '../utils/url-util';
 
 /** Type of incoming messages for ServiceWorker. */
 export enum ServiceWorkerMessageType {
@@ -79,13 +80,15 @@ export class ServiceWorkerInstaller extends Model<ServiceWorkerInstallerState> {
       ) {
         this.allowBrowserNotificationsPreference =
           prefs.allow_browser_notifications;
-        // flag can disable notifications similar to user setting
-        navigator.serviceWorker.controller?.postMessage({
-          type: ServiceWorkerMessageType.USER_PREFERENCE_CHANGE,
-          allowBrowserNotificationsPreference:
-            this.allowBrowserNotificationsPreference &&
-            this.flagsService.isEnabled(KnownExperimentId.PUSH_NOTIFICATIONS),
-        });
+        if (this.initialized) {
+          // flag can disable notifications similar to user setting
+          navigator.serviceWorker.controller?.postMessage({
+            type: ServiceWorkerMessageType.USER_PREFERENCE_CHANGE,
+            allowBrowserNotificationsPreference:
+              this.allowBrowserNotificationsPreference &&
+              this.flagsService.isEnabled(KnownExperimentId.PUSH_NOTIFICATIONS),
+          });
+        }
       }
     });
     Promise.all([
@@ -110,7 +113,7 @@ export class ServiceWorkerInstaller extends Model<ServiceWorkerInstallerState> {
       console.error('Service worker API not available');
       return;
     }
-    await registerServiceWorker('/service-worker.js');
+    await registerServiceWorker(`${getBaseUrl()}/service-worker.js`);
     const permission = Notification.permission;
     this.reportingService.reportLifeCycle(LifeCycle.NOTIFICATION_PERMISSION, {
       permission,
