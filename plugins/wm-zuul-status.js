@@ -151,13 +151,23 @@ class ZuulStatusChecksProvider {
   }
 
   /**
-   * Whether some previous check vanished from CI
+   * Whether some previous check for the given change has vanished from CI
    *
    * Note: this reset the internal state and must be called only once.
    *
+   * @param {ChangeData["changeNumber"]} changeNumber Number of the change being processed.
    * @return {boolean}
    */
-  hasCompletedCheck() {
+  hasCompletedCheck(changeNumber) {
+
+    // There can not be any completed check if we are on a new change - T394485
+    const isNewChange = changeNumber !== this.prevChangeNumber;
+    this.prevChangeNumber = changeNumber;
+    if ( isNewChange ) {
+      this.prevChecks = new Set();
+      return false;
+    }
+
     let completed = false;
     for (const prev of this.prevChecks) {
       if ( !this.curChecks.has(prev) ) {
@@ -392,9 +402,10 @@ class ZuulStatusChecksProvider {
       .then( statusJson => {
         const checkRuns = this.parse(statusJson);
 
-        if ( this.hasCompletedCheck() ) {
+        if ( this.hasCompletedCheck(change.changeNumber) ) {
           this.showAlertToReloadChange();
         }
+        this.prevChange = change.changeNumber;
 
         // TODO when there is no run ongoing, we should return to prevent
         // run/result from being updated. checkRuns should be an empty array

@@ -244,6 +244,29 @@ QUnit.module( '[wm-zuul-status]', () => {
       }
     );
 
+    QUnit.test( 'hasCompletedCheck() handles switch to another change', assert => {
+      // The previous change had tests ongoing
+      zuul.prevChangeNumber = 999;
+      zuul.prevChecks = new Set([ 'coverage', 'test' ]);
+
+      // The change navigated to has no tests currently running
+      zuul.curChecks = new Set([]);
+
+      assert.false(
+        zuul.hasCompletedCheck(42),
+        'nothing completed since we moved to a new change',
+      );
+      assert.strictEqual(
+        zuul.prevChangeNumber, 42,
+        'the previous change number has been updated',
+      );
+      assert.false(
+        zuul.hasCompletedCheck(42),
+        'jobs from previous change have been cleared',
+      );
+
+    } );
+
     const resultTagsTestCases = [
       // jobResult, expected
       [ null, { name: 'Pending', color: 'gray' } ],
