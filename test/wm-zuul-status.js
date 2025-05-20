@@ -180,6 +180,46 @@ QUnit.module( '[wm-zuul-status]', () => {
       assert.deepEqual(checkRun[1].results.length, 1);
     } );
 
+    QUnit.test( 'parse() resets current checks', assert => {
+      zuul.parse(
+        [
+          {
+            live: true,
+            id: '12345,99',
+            jobs: [
+              {
+                name: 'somejob',
+                pipeline: 'test',
+              }
+            ]
+          }
+        ]
+      );
+
+      assert.strictEqual(zuul.prevChecks.size, 0);
+      assert.true(zuul.curChecks.has('test'));
+
+      zuul.parse(
+        [
+          {
+            live: true,
+            id: '777,42',
+            jobs: [
+              {
+                name: 'somejob',
+                pipeline: 'gate-and-submit',
+              }
+            ]
+          }
+        ]
+      );
+      assert.strictEqual(zuul.prevChecks.size, 0);
+      assert.strictEqual(zuul.curChecks.size, 1);
+      assert.false(zuul.curChecks.has('test'));
+      assert.true(zuul.curChecks.has('gate-and-submit'));
+
+    } );
+
     QUnit.test( 'parse() finds CheckName from running build', assert => {
       const checkRun = zuul.parse(
         [

@@ -329,6 +329,7 @@ class ZuulStatusChecksProvider {
     // it is represented but is not being processed by Zuul.
     statusJson = statusJson.filter(status => status.live !== false);
 
+    this.curChecks = new Set();
     return statusJson.map(status => {
       // TODO the statusJson should be a TypeDef. Meanwhile explicitly cast the type
       const statusJobs = /** @type {ZuulJob[]} */ (status.jobs);
