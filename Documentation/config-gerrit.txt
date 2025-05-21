@@ -535,6 +535,22 @@ will be transmitted only over HTTPS protocol.
 +
 By default, `false`.
 
+[[auth.externalIdsRefExpiry]]auth.externalIdsRefExpiry::
++
+Define TTL value for memoizing the refs/meta/external-ids sha1 rather than opening
+the All-Users repo. This allows faster external-ids refs lookup.
++
+Values should use common unit suffixes to express their setting:
++
+* s, sec, second, seconds
+* m, min, minute, minutes
++
++ Setting this to `0` disables memoization.
++
+**Note** during the memoization time exterenal-ids modification are not visible by Gerrit.
++
+By default `0`.
+
 [[auth.emailFormat]]auth.emailFormat::
 +
 Optional format string to construct user email addresses out of
@@ -3509,10 +3525,18 @@ running. This is recommended as it prevents additional downtime during
 Gerrit version upgrades (avoiding the need for an offline reindex step
 using Reindex), but can add additional server load during the upgrade.
 +
-If set to `false`, there is no way to upgrade the index schema to take
-advantage of new search features without restarting the server.
+If set to `upgrade_and_reindex` or `true`, perform an online upgrade by
+enabling writes to both new and old index versions and start an online
+reindex. Once the new index versions are ready, they will be activated.
 +
-Defaults to `true`.
+If set to `no_reindex`, writes are done to both new and old index versions,
+but no online reindex is started. When this is set, users will have to
+fully populate the new index versions and activate them separately.
++
+If set to `skip` or `false`, there is no way to upgrade the index schema
+to take advantage of new search features without restarting the server.
++
+Defaults to `upgrade_and_reindex`.
 
 [[index.excludeProjectFromChangeReindex]]index.excludeProjectFromChangeReindex::
 +
@@ -5241,6 +5265,22 @@ Default is 0. A timeout of zero is interpreted as an infinite
 timeout. The connection will then block until established or
 an error occurs.
 
+[[sendemail.socketTimeout]]sendemail.socketTimeout::
++
+The socket timeout of opening a socket connected to a
+remote SMTP server.
++
+Values can be specified using standard time unit abbreviations
+('ms', 'sec', 'min', etc.).
+If no unit is specified, milliseconds is assumed.
++
+Default is 0. A timeout of zero is interpreted as an infinite
+timeout. With this config value set to a non-zero timeout,
+a read() call on the InputStream associated with this Socket
+will block for only this amount of time. Hence administrators
+may decide to set a value (greater than 0, for example set to
+'60s') according to the actual situation.
+
 [[sendemail.threadPoolSize]]sendemail.threadPoolSize::
 +
 Maximum size of thread pool in which the review comments
@@ -6423,10 +6463,19 @@ Gerrit uses the `$site_path/etc/jgit.config` file instead of the
 system-wide and user-global Git configuration for its runtime JGit
 configuration.
 
+[NOTE]
+When using a shared filesystem, such as NFS, the JGit settings need
+to be adjusted for being tolerant to the filesystem attributes caching.
+The example below shows a typical setting with an NFS v4 mount
+with default caching settings.
+
 Sample `etc/jgit.config` file:
 ----
 [core]
-  trustFolderStat = false
+    supportsAtomicFileCreation = false
+    trustFolderStat = false
+    trustLooseRefStat = after_open
+    trustPackedRefsStat = after_open
 ----
 
 [[jgit-gc]]

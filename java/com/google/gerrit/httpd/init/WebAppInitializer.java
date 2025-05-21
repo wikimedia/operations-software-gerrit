@@ -291,7 +291,7 @@ public class WebAppInitializer extends GuiceServletContextListener implements Fi
 
   private Injector createDbInjector() {
     final List<Module> modules = new ArrayList<>();
-    modules.add(new SchemaModule());
+    modules.add(cfgInjector.getInstance(SchemaModule.class));
     modules.add(NoteDbSchemaVersionCheck.module());
     modules.add(new AuthConfigModule());
     return cfgInjector.createChildInjector(
@@ -338,7 +338,7 @@ public class WebAppInitializer extends GuiceServletContextListener implements Fi
     modules.add(createIndexModule());
 
     modules.add(new PluginModule());
-    if (VersionManager.getOnlineUpgrade(config)) {
+    if (VersionManager.shouldPerformOnlineUpgrade(config)) {
       modules.add(new OnlineUpgraderModule());
     }
     modules.add(new OAuthRestModule());

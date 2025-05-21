@@ -1131,7 +1131,7 @@ class ReceiveCommits {
         bu.setNotify(magicBranch.getNotifyForNewChange());
       }
 
-      logger.atFine().log("Adding %d replace requests", newChanges.size());
+      logger.atFine().log("Adding %d replace requests", replaceByChange.size());
       for (ReplaceRequest replace : replaceByChange.values()) {
         replace.addOps(globalRevWalk, bu, replaceProgress);
         if (magicBranch != null) {
@@ -1492,7 +1492,7 @@ class ReceiveCommits {
   private void parseCreate(RevWalk globalRevWalk, ObjectInserter ins, ReceiveCommand cmd)
       throws PermissionBackendException, NoSuchProjectException, IOException {
     try (TraceTimer traceTimer = newTimer("parseCreate")) {
-      if (repo.resolve(cmd.getRefName()) != null) {
+      if (repo.findRef(cmd.getRefName()) != null) {
         reject(
             cmd,
             String.format("Cannot create ref '%s' because it already exists.", cmd.getRefName()));
