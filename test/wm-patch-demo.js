@@ -90,52 +90,6 @@ QUnit.module( '[wm-patch-demo]', () => {
         assert.propContains(actual, { runs: [] }, 'No wikis for change results in no runs');
       });
 
-      QUnit.test( 'processes findwikis API response when one instance is in legacy Patchdemo and the other is in new Patchdemo', assert => {
-        const change = { changeNumber: 1050046 };
-        const response = ([
-          {
-            wiki: 'a6f18f963b',
-            creator: 'WilliamMimura',
-            created: '2024-06-26 21:00:13',
-            patches: [
-              '1050046,2'
-            ],
-            url: 'https://patchdemo-legacy.wmcloud.org/wikis/a6f18f963b/w'
-          },
-        ],
-        [
-          {
-            wiki: '4fd2a6cca5',
-            creator: 'Jdlrobson',
-            created: '2024-09-03 22:10:14',
-            patches: [
-              '1050046,3'
-            ],
-            url: 'http://patchdemo.wmcloud.org/wikis/4fd2a6cca5/w/'
-          }
-        ]);
-
-        const actual = patchdemo.parse(response, change);
-        assert.propContains(actual, {
-          responseCode: 'OK',
-        });
-        assert.strictEqual(actual.runs.length, 1);
-        assert.strictEqual(
-          actual.runs[0].statusDescription,
-          'Found 1 wikis for change 1050046',
-        );
-        const results = actual.runs[0].results;
-        assert.strictEqual(results.length, 1);
-
-        results.forEach(result => {
-          assert.true(
-            result.message.includes('This change 1050046'),
-            'Wiki instance has the change applied',
-          );
-        });
-
-      });
-
     });
 
   } );

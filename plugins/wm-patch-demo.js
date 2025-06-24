@@ -39,9 +39,7 @@ class PatchDemoProvider {
    * @return {FetchResponse}
    */
   parse(instances, change) {
-    let isLegacyInstance = false;
     const checkResults = instances.map( instance => {
-      isLegacyInstance = instance.url.includes('legacy');
       let patchset;
       for (const patch of instance.patches) {
         if (change.changeNumber.toString() === patch.split(',')[0]) {
@@ -49,7 +47,7 @@ class PatchDemoProvider {
           break;
         }
       }
-      const deleteUrl = isLegacyInstance ? `https://patchdemo-legacy.wmcloud.org/delete.php?wiki=${instance.wiki}` : `https://patchdemo.wmcloud.org/delete.php?wiki=${instance.wiki}`;
+      const deleteUrl = `https://patchdemo.wmcloud.org/delete.php?wiki=${instance.wiki}`;
       const patchesList = '* ' + instance.patches.map( patch => {
         const [ changeNumber, patchNumber ] = patch.split(',');
         if ( changeNumber === change.changeNumber.toString() ) {
@@ -60,7 +58,7 @@ class PatchDemoProvider {
       } ).join('\n* ') + '\n';
 
       /** @type {CheckResult} */
-      const checkResult = {
+      return {
         category: /** @type {CheckResult["category"]} */ ('WARNING'),
         summary: `${instance.wiki} | PS${patchset} | ${instance.created}`,
         message: `Wiki \`${instance.wiki}\` created on ${instance.created} by ${instance.creator}
@@ -83,35 +81,18 @@ ${patchesList}
           },
         ]),
       };
-      return checkResult;
     });
-    const legacyResults = checkResults.filter(
-      res => res.links.some(
-        (/** @type {{ url: string | string[]; }} */ link) => link.url.includes('legacy')
-      )
-    );
-    const newResults = checkResults.filter( result => !legacyResults.includes( result ) );
+
     const checkRuns = [];
-    if (legacyResults.length) {
-      checkRuns.push({
-        attempt: 1,
-        checkName: 'Legacy Patch demo',
-        checkDescription: 'MediaWiki instances spinned up with this change applied',
-        status: /** @type {RunStatus} */ ('COMPLETED'),
-        statusLink: 'https://patchdemo-legacy.wmcloud.org/',
-        statusDescription: `Found ${legacyResults.length} wikis for change ${change.changeNumber}`,
-        results: legacyResults
-      });
-    }
-    if (newResults.length) {
+    if (checkResults.length) {
       checkRuns.push({
         attempt: 1,
         checkName: 'Patch demo',
         checkDescription: 'MediaWiki instances spinned up with this change applied',
         status: /** @type {RunStatus} */ ('COMPLETED'),
         statusLink: 'https://patchdemo.wmcloud.org/',
-        statusDescription: `Found ${newResults.length} wikis for change ${change.changeNumber}`,
-        results: newResults
+        statusDescription: `Found ${checkResults.length} wikis for change ${change.changeNumber}`,
+        results: checkResults,
       });
     }
     return {
@@ -125,15 +106,10 @@ ${patchesList}
    * @return {Promise<FetchResponse>}
    */
   async fetch(change) {
-    const legacyPatchDemoUrl = `https://patchdemo-legacy.wmcloud.org/api.php?action=findwikis&change=${change.changeNumber}`;
-    const newPatchDemoUrl = `https://patchdemo.wmcloud.org/api.php?action=findwikis&change=${change.changeNumber}`;
+    const patchDemoUrl = `https://patchdemo.wmcloud.org/api.php?action=findwikis&change=${change.changeNumber}`;
 
-    return Promise.all([
-      fetch(legacyPatchDemoUrl, { cache: 'no-store' }).then(resp => resp.ok ? resp.json() : ''),
-      fetch(newPatchDemoUrl, { cache: 'no-store' }).then(resp => resp.ok ? resp.json() : '')
-    ])
-      .then(([ legacyResponse, newResponse ]) => {
-        const wikis = legacyResponse.concat(newResponse);
+    return fetch(patchDemoUrl, { cache: 'no-store' }).then(resp => resp.ok ? resp.json() : '')
+      .then( wikis => {
         try {
           return this.parse(wikis, change);
         } catch (parseError) {
