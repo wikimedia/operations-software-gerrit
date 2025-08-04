@@ -23,19 +23,19 @@ QUnit.module( '[wm-zuul-status]', () => {
         assert.false(zuul.isInjectedPlugin());
       });
 
-      const hostnamesTestCases = {
-        '127.0.0.1': [ '127.0.0.1' ],
-        localhost: [ 'localhost' ],
-      };
+      const hostnamesTestCases = [
+        '127.0.0.1',
+        'localhost',
+      ];
 
       QUnit.test.each( 'recognizes Gerrit hostname', hostnamesTestCases,
-        ( assert, [ hostname ] ) => {
+        ( assert, hostname ) => {
           global.window = { location: { hostname: hostname } };
           assert.true(zuul.isInjectedPlugin());
         } );
 
       QUnit.test.each( 'recognizes script src', hostnamesTestCases,
-        ( assert, [ hostname ] ) => {
+        ( assert, hostname ) => {
           global.window = { location: { hostname: 'foo' } };
           global.document = { scripts: [
             { src: 'jquery.js' },
