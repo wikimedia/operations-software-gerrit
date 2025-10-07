@@ -100,6 +100,8 @@ class WikimediaMotdElement extends Polymer.Element {
 
 customElements.define(WikimediaMotdElement.is, WikimediaMotdElement);
 
-window.Gerrit.install(plugin => {
-  plugin.registerCustomComponent( 'banner', WikimediaMotdElement.is );
-});
+if ( false ) { // eslint-disable-line no-constant-condition
+  window.Gerrit.install(plugin => {
+    plugin.registerCustomComponent( 'banner', WikimediaMotdElement.is );
+  });
+}
