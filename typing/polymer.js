@@ -22,5 +22,5 @@ const Polymer = {
   Element: PolymerElement,
   // https://github.com/gajus/eslint-plugin-jsdoc/issues/533
   /* global TemplateStringsArray */
-  html: ( /** @type {TemplateStringsArray} */ x) => {},
+  html: ( /** @type {TemplateStringsArray} */ x, /** @type {any} */ ...values) => {},
 };

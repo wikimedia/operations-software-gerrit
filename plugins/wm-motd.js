@@ -1,3 +1,20 @@
+/** Whether to register the plugin. Values: true / false */
+const WM_MOTD_ENABLED = false;
+
+/** A key in local storage to store whether the banner has been dismissed */
+const WM_MOTD_STORAGE_KEY = 'wm-motd-2025-gerrit-switchover-20251006_dismiss';
+
+/** HTML message that is put inside the banner */
+const WM_MOTD_MESSAGE = Polymer.html`
+Gerrit will be under maintenance on
+<a href="https://zonestamp.toolforge.org/1759752000">
+Monday, 6 Oct 2025, 12:00–13:00 UTC
+</a>.
+During the maintenance, the system will be read-only
+(<a href="https://phabricator.wikimedia.org/T387833">T387833</a>).
+`;
+
+// Implementation
 class WikimediaMotdElement extends Polymer.Element {
 
   static get is() { return 'wm-motd'; }
@@ -56,12 +73,7 @@ class WikimediaMotdElement extends Polymer.Element {
 
     </style>
     <div id="banner" class$="[[_computeBannerClass(display)]]">
-      Gerrit will be under maintenance on
-      <a href="https://zonestamp.toolforge.org/1759752000">
-      Monday, 6 Oct 2025, 12:00–13:00 UTC
-      </a>.
-      During the maintenance, the system will be read-only
-      (<a href="https://phabricator.wikimedia.org/T387833">T387833</a>).
+      ${WM_MOTD_MESSAGE}
       <div id="dismisser">
         <gr-button
           on-click="_setDismiss"
@@ -75,11 +87,7 @@ class WikimediaMotdElement extends Polymer.Element {
 
   ready() {
     super.ready();
-    this.set('display', 'dismiss' !== window.localStorage.getItem(this._itemKey()));
-  }
-
-  _itemKey() {
-    return 'wm-motd-2025-gerrit-switchover-20251006_dismiss';
+    this.set('display', 'dismiss' !== window.localStorage.getItem(WM_MOTD_STORAGE_KEY));
   }
 
   /**
@@ -92,7 +100,7 @@ class WikimediaMotdElement extends Polymer.Element {
   }
 
   _setDismiss() {
-    window.localStorage.setItem(this._itemKey(), 'dismiss');
+    window.localStorage.setItem(WM_MOTD_STORAGE_KEY, 'dismiss');
     this.set('display', false);
   }
 
@@ -101,7 +109,8 @@ class WikimediaMotdElement extends Polymer.Element {
 customElements.define(WikimediaMotdElement.is, WikimediaMotdElement);
 
 window.Gerrit.install(plugin => {
-  if ( false ) { // eslint-disable-line no-constant-condition
+  // Only attach the element to the endpoint if we have the configuration set
+  if ( WM_MOTD_ENABLED ) {
     plugin.registerCustomComponent( 'banner', WikimediaMotdElement.is );
   }
 });
