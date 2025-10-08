@@ -61,7 +61,7 @@ class WikimediaMotdElement extends Polymer.Element {
       Monday, 6 Oct 2025, 12:00–13:00 UTC
       </a>.
       During the maintenance, the system will be read-only
-      (<a href="https://phabricator.wikimedia.org/T387833">T387833)<a>).
+      (<a href="https://phabricator.wikimedia.org/T387833">T387833</a>).
       <div id="dismisser">
         <gr-button
           on-click="_setDismiss"
