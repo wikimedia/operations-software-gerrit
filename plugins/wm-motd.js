@@ -14,13 +14,6 @@ Take the
 privacy statement
 </a>) to help identify areas for improvement and measure
 satisfaction within the Wikimedia developer community.
-<div id="dismisser">
-  <gr-button
-    on-click="_setDismiss"
-  >
-    Dismiss
-  </gr-button>
-</div>
 `;
 
 // Implementation
