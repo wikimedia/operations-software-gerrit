@@ -1,17 +1,26 @@
 /** Whether to register the plugin. Values: true / false */
-const WM_MOTD_ENABLED = false;
+const WM_MOTD_ENABLED = true;
 
 /** A key in local storage to store whether the banner has been dismissed */
-const WM_MOTD_STORAGE_KEY = 'wm-motd-2025-gerrit-switchover-20251006_dismiss';
+const WM_MOTD_STORAGE_KEY = 'wm-motd-2025-dev-survey_dismiss';
 
 /** HTML message that is put inside the banner */
 const WM_MOTD_MESSAGE = Polymer.html`
-Gerrit will be under maintenance on
-<a href="https://zonestamp.toolforge.org/1759752000">
-Monday, 6 Oct 2025, 12:00–13:00 UTC
-</a>.
-During the maintenance, the system will be read-only
-(<a href="https://phabricator.wikimedia.org/T387833">T387833</a>).
+Take the
+<a href="https://wikimediafoundation.limesurvey.net/552643">
+2025 Developer Satisfaction Survey
+</a>
+(<a href="https://foundation.wikimedia.org/wiki/Legal:Developer_Satisfaction_Survey_2025_Privacy_Statement">
+privacy statement
+</a>) to help identify areas for improvement and measure
+satisfaction within the Wikimedia developer community.
+<div id="dismisser">
+  <gr-button
+    on-click="_setDismiss"
+  >
+    Dismiss
+  </gr-button>
+</div>
 `;
 
 // Implementation
