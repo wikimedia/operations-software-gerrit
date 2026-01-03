@@ -44,7 +44,7 @@ window.Gerrit.install(plugin => {
       div.setAttribute('id', divId);
       const a = document.createElement('a');
       const url = 'https://schedule-deployment.toolforge.org/backport/';
-      const label = 'Schedule backport of this change';
+      const label = 'Schedule deployment of this change';
       a.href = url + element.change._number;
       a.appendChild(document.createTextNode(label));
       div.appendChild(a);
