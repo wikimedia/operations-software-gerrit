@@ -1,5 +1,5 @@
 /** Whether to register the plugin. Values: true / false */
-const WM_MOTD_ENABLED = true;
+const WM_MOTD_ENABLED = false;
 
 /** A key in local storage to store whether the banner has been dismissed */
 const WM_MOTD_STORAGE_KEY = 'wm-motd-2025-dev-survey_dismiss';
