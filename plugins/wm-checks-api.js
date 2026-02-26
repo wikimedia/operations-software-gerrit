@@ -603,6 +603,9 @@ class WikimediaChecksAnalyzer {
     case 'test':
       commentForZuul = 'recheck';
       break;
+    case 'codehealth':
+      commentForZuul = 'check codehealth';
+      break;
     case 'coverage':
       commentForZuul = 'check coverage';
       break;
