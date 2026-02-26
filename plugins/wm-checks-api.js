@@ -589,6 +589,17 @@ class WikimediaChecksAnalyzer {
     /** @type {string | undefined} */
     let commentForZuul;
     switch ( checkName ) {
+    // NOTE see getCheckName() for the returned name. Some bots have customized
+    // names, for Zuul that should be the pipeline name.
+    //
+    // The comment for Zuul can be found on the Zuul status page:
+    //
+    // https://integration.wikimedia.org/zuul/
+    //
+    // or in Zuul configuration:
+    //
+    // https://gerrit.wikimedia.org/g/integration/config/+/refs/heads/master/zuul/layout.yaml
+    //
     case 'test':
       commentForZuul = 'recheck';
       break;
