@@ -432,6 +432,8 @@ class ZuulProcessor extends BotProcessor {
         switch (p) {
         case 'mysql':
           return 'MySQL';
+        case 'selenium':
+          return 'Selenium';
         case 'sqlite':
           return 'Sqlite';
         }
