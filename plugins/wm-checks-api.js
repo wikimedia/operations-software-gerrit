@@ -694,6 +694,7 @@ class WikimediaChecksAnalyzer {
       checkRun.actions = [
         {
           name: 'Run',
+          tooltip: `Rerun '${checkName}' by commenting '${commentForZuul}' on your behalf`,
           callback: () => this.recheckActionCallback(
             change, checkName, commentForZuul),
         },
