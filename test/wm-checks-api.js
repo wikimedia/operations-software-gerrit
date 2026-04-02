@@ -529,6 +529,7 @@ QUnit.module( '[wm-checks-api]', () => {
           '- https://example.org/job/node14-docker/1/console : FAILURE in 11s',
           '- https://example.org/job/quibble-mysql-docker/2/console : SUCCESS in 12s (non-voting)',
           '- https://example.org/job/quibble-vendor-mysql-php83-selenium/2/console : SUCCESS in 12s (non-voting)',
+          '- https://example.org/job/mediawiki-core-vendor-postgres-php83/5/console : SUCCESS in 3s',
           '- https://example.org/job/tox-py39-sqlite-docker/3/console : FAILURE in 13s (non-voting)',
           '- https://example.org/job/diffConfig/7/console : SUCCESS Please carefully review. in 47s (non-voting)',
           '- https://example.org/job/diffConfig/7/console : FAILURE No change detected. in 52s (non-voting)',
@@ -579,6 +580,12 @@ QUnit.module( '[wm-checks-api]', () => {
 
         assert.propContains(zuulResults[4], {
           tags: [
+            { name: 'PostgreSQL' },
+          ]
+        } );
+
+        assert.propContains(zuulResults[5], {
+          tags: [
             {
               name: 'Python 3.9'
             },
@@ -594,18 +601,18 @@ QUnit.module( '[wm-checks-api]', () => {
         } );
       } );
       QUnit.test( 'non-voting failing job is WARNING', assert => {
-        assert.propContains(zuulResults[4], {
+        assert.propContains(zuulResults[5], {
           category: 'WARNING',
         } );
       } );
       QUnit.test( 'non-voting successful job with message', assert => {
-        assert.propContains(zuulResults[5], {
+        assert.propContains(zuulResults[6], {
           category: 'INFO',
           summary: 'diffConfig |  Please carefully review. | 47s',
         } );
       } );
       QUnit.test( 'non-voting failing job with message', assert => {
-        assert.propContains(zuulResults[6], {
+        assert.propContains(zuulResults[7], {
           category: 'WARNING',
           summary: 'diffConfig |  No change detected. | 52s',
         } );
