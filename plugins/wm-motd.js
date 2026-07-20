@@ -1,19 +1,15 @@
 /** Whether to register the plugin. Values: true / false */
-const WM_MOTD_ENABLED = false;
+const WM_MOTD_ENABLED = true;
 
 /** A key in local storage to store whether the banner has been dismissed */
-const WM_MOTD_STORAGE_KEY = 'wm-motd-2025-dev-survey_dismiss';
+const WM_MOTD_STORAGE_KEY = 'wm-motd-2026-new-key_dismiss';
 
 /** HTML message that is put inside the banner */
 const WM_MOTD_MESSAGE = Polymer.html`
-Take the
-<a href="https://wikimediafoundation.limesurvey.net/552643">
-2025 Developer Satisfaction Survey
-</a>
-(<a href="https://foundation.wikimedia.org/wiki/Legal:Developer_Satisfaction_Survey_2025_Privacy_Statement">
-privacy statement
-</a>) to help identify areas for improvement and measure
-satisfaction within the Wikimedia developer community.
+We have created a new SSH host key to replace the existing
+(<a href="https://phabricator.wikimedia.org/T240266">
+1024-bit RSA key
+</a>). The new key is: <b>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFp+VIoTbE8Js9fwRCUy9KnSAewDQa2f6Dwi77R7IqS7</b> and has been added to the known_hosts supplied by the wmf-laptop package. For a transitional period both keys will be valid in parallel. On August 4th we will invalidate the old key.
 `;
 
 // Implementation
