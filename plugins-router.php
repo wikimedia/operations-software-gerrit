@@ -33,7 +33,7 @@ header( 'Access-Control-Allow-Origin: *' );
 header( 'Access-Control-Allow-Headers: cache-control, x-test-origin' );
 
 # Browser requires MIME type to be explicitly set when using `import`
-$ext = pathinfo( $_SERVER['SCRIPT_FILENAME'], PATHINFO_EXTENSION );
+$ext = pathinfo( $_SERVER['SCRIPT_NAME'], PATHINFO_EXTENSION );
 if ( $ext === 'js' ) {
 	header( 'Content-Type: text/javascript' );
 }
