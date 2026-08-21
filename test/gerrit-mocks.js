@@ -7,6 +7,7 @@ class MockChecksPluginApi {
 // Mock for `plugin.hook(xxx).onAttached(callback)`
 class MockHookApi {
   onAttached( /** callback */ ) {}
+  onDetached( /** callback */ ) {}
 }
 // Mock for `plugin.restApi().post()`
 class MockRestPluginApi {
