@@ -25,12 +25,16 @@ QUnit.module( '[wm-wheres-my-code-running]', () => {
         className: '',
         children: [],
         styles: {},
+        attributes: {},
         firstChild: null
       };
       element.style = {
         setProperty: (name, value) => {
           element.styles[name] = value;
         }
+      };
+      element.setAttribute = (name, value) => {
+        element.attributes[name] = value;
       };
       element.appendChild = child => {
         element.children.push(child);
@@ -103,6 +107,17 @@ QUnit.module( '[wm-wheres-my-code-running]', () => {
       assert.deepEqual( plugin.chipsFor({ places: [] }), [] );
       assert.deepEqual( plugin.chipsFor({}), [] );
       assert.deepEqual( plugin.chipsFor(undefined), [] );
+    });
+
+    QUnit.test( 'a chip carries the branch its place runs', assert => {
+      // Whichever repository the change is in: the branch says which train the
+      // place is on, so a place behind reads differently from one alongside.
+      const chips = plugin.chipsFor({ places: [
+        { place: 'group0', verdict: 'live', branch: 'wmf/1.47.0-wmf.17' },
+        { place: 'group1', verdict: 'unknown', branch: 'wmf/1.47.0-wmf.16' }
+      ] });
+      assert.deepEqual( chips.map(c => c.title),
+        [ 'wmf/1.47.0-wmf.17', 'wmf/1.47.0-wmf.16' ] );
     });
 
     QUnit.test( 'a chip carries the color of its place', assert => {
@@ -318,6 +333,16 @@ QUnit.module( '[wm-wheres-my-code-running]', () => {
       assert.strictEqual( elements[0].styles.color, '#fefefe' );
       // Inline, because a document rule cannot reach into a shadow root.
       assert.strictEqual( elements[0].styles['border-radius'], '1em' );
+      assert.strictEqual( elements[0].attributes.title, undefined,
+        'a chip with no branch must carry no tooltip' );
+    });
+
+    QUnit.test( 'a branch becomes the title attribute', assert => {
+      const elements = plugin.chipElements([
+        { label: 'group0', style: { background: '#900', color: '#fff' },
+          title: 'wmf/1.47.0-wmf.17' }
+      ]);
+      assert.strictEqual( elements[0].attributes.title, 'wmf/1.47.0-wmf.17' );
     });
   });
 

@@ -14,6 +14,7 @@
  * @typedef {Object} PlaceVerdict
  * @property {string} place - Name of the place, such as group0
  * @property {string} verdict - live, not live, not deployed here, or unknown
+ * @property {string} branch - The MediaWiki branch this place runs
  *
  * @typedef {Object} Report
  * @property {Array<PlaceVerdict>} [places] - Empty for a change that is not merged
@@ -25,6 +26,7 @@
  * @typedef {Object} Chip
  * @property {string} label
  * @property {ChipStyle} style
+ * @property {string} [title] - Shown when hovering on the chip
  */
 
 const SERVICE_URL = 'https://wheres-my-code-running.toolforge.org/api/';
@@ -118,11 +120,16 @@ const chipsFor = report => {
   live.forEach(place => {
     chips.push({
       label: place.place,
-      style: PLACE_STYLE[place.place] || UNKNOWN_STYLE
+      style: PLACE_STYLE[place.place] || UNKNOWN_STYLE,
+      title: place.branch
     });
   });
   unknown.forEach(place => {
-    chips.push({ label: place.place + '?', style: UNKNOWN_STYLE });
+    chips.push({
+      label: place.place + '?',
+      style: UNKNOWN_STYLE,
+      title: place.branch
+    });
   });
   if (!live.length && !unknown.length) {
     chips.push({ label: 'Not deployed', style: NOWHERE_STYLE });
@@ -262,6 +269,9 @@ const chipElements = chips => chips.map(chip => {
   applyStyle(span, CHIP_LAYOUT);
   span.style.setProperty('background', chip.style.background);
   span.style.setProperty('color', chip.style.color);
+  if (chip.title) {
+    span.setAttribute('title', chip.title);
+  }
   span.appendChild(document.createTextNode(chip.label));
   return span;
 });
