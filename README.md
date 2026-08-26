@@ -57,6 +57,10 @@ change, which makes it a good one to borrow when testing something that acts on
 a merged change. The name Gerrit gives the plugin comes from the URL it asked
 for rather than from the file it receives.
 
+Borrow a path only while the plugin is not deployed. Once it is
+deployed, target its own path. Borrowing leaves the deployed copy
+loaded as well which will result in confusion.
+
 `composer serve:plugins` logs each request, so a plugin that fails to appear can
 be told apart from one that was never fetched.
 
