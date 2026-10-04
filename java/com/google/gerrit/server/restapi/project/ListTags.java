@@ -29,7 +29,9 @@ import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.server.CommonConverters;
 import com.google.gerrit.server.WebLinks;
+import com.google.gerrit.server.config.UntrustedRegex;
 import com.google.gerrit.server.git.GitRepositoryManager;
+import com.google.gerrit.server.ioutil.RegexCompiler;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackend.RefFilterOptions;
 import com.google.gerrit.server.permissions.PermissionBackendException;
@@ -60,6 +62,7 @@ public class ListTags implements RestReadView<ProjectResource> {
   private final PermissionBackend permissionBackend;
   private final WebLinks links;
   private final TagSorter tagSorter;
+  private final RegexCompiler regexCompiler;
 
   @Option(
       name = "--limit",
@@ -125,11 +128,13 @@ public class ListTags implements RestReadView<ProjectResource> {
       GitRepositoryManager repoManager,
       PermissionBackend permissionBackend,
       WebLinks webLinks,
-      TagSorter tagSorter) {
+      TagSorter tagSorter,
+      @UntrustedRegex RegexCompiler regexCompiler) {
     this.repoManager = repoManager;
     this.permissionBackend = permissionBackend;
     this.links = webLinks;
     this.tagSorter = tagSorter;
+    this.regexCompiler = regexCompiler;
   }
 
   public ListTags request(ListRefsRequest<TagInfo> request) {
@@ -168,7 +173,7 @@ public class ListTags implements RestReadView<ProjectResource> {
     }
 
     return Response.ok(
-        new RefFilter<>(Constants.R_TAGS, (TagInfo tag) -> tag.ref)
+        new RefFilter<>(Constants.R_TAGS, (TagInfo tag) -> tag.ref, regexCompiler)
             .start(start)
             .limit(limit)
             .subString(matchSubstring)

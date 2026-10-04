@@ -890,6 +890,7 @@ amount of RAM (in bytes) the administrator can dedicate to the cache.
 Default is 1024 for most caches, except:
 +
 * `"adv_bases"`: default is `4096`
+* `"change_notes"`: default is `10m` (10 MiB of memory)
 * `"git_modified_files"`: default is `10m` (10 MiB of memory)
 * `"modified_files"`: default is `10m` (10 MiB of memory)
 * `"git_file_diff"`: default is `10m` (10 MiB of memory)
@@ -996,6 +997,22 @@ cache `"default_preferences"`::
 Caches the server's default general, edit and diff preferences.
 +
 Default value is 1 to hold only the most current version in-memory.
+
+cache `"change_notes"`::
++
+Each item caches the parsed ChangeNotes for a single change with an immutable
+key (using the SHA-1 of the change meta ref the notes were parsed from). The
+sizing is an estimate in bytes of each ChangeNotes object, which varies based
+on the contents of the change (# of patch sets, # of reviewers, # of comments,
+etc).
++
+The `memoryLimit` of this cache should be set large enough to at least fit all
+changes being accessed (via web UI, SSH/REST APIs, and git) concurrently. That
+will help ensure there are no scenarios where a cache entry is loaded and then
+evicted before a single request is completed.
++
+The disk cache is disabled by default, but it can be enabled to help with cases
+where other recently loaded entries are accessed again.
 
 cache `"changes"`::
 +
@@ -1438,6 +1455,16 @@ Default is `true`.
 Allow blame on side by side diff. If set to `false`, blame cannot be used.
 +
 Default is `true`.
+
+[[change.backfillMergeSuperSet]]change.backfillMergeSuperSet::
++
+If set to `true`, the calculation of the merge super-set upon submission of a change
+can use the backfill of missing change data from a potentially stale index by reloading
+the change data from the repository instead of failing.
+When set to `true`, the submission of changes is reliable even when `index.indexChangesAsync = true`
+or when the reindexing happens asynchronously because of a multi-primary setup.
++
+Default is `false`.
 
 [[change.cacheAutomerge]]change.cacheAutomerge::
 +
@@ -2453,6 +2480,9 @@ entity in Gerrit maps to a local Git repository by creating
 the path string `"${basePath}/${project_name}.git"`.
 +
 If relative, the path is resolved relative to `'$site_path'`.
++
+Upon Gerrit installation (`init`), this defaults to `git` if not set (which
+resolves to `$site_path/git`). It is otherwise required to be set.
 
 [[gerrit.allProjects]]gerrit.allProjects::
 +
@@ -3454,6 +3484,8 @@ The max idle time is applied:
 +
 * When waiting for a new message to be received on a connection
 * When waiting for a new message to be sent on a connection
+* When a thread is blocked on a synchronous (blocking) wait for the
+  remote client to read data from Gerrit's HTTP response.
 
 +
 By default, 30 seconds.
@@ -3825,6 +3857,16 @@ link:https://lucene.apache.org/core/5_5_0/core/org/apache/lucene/index/Concurren
 Lucene documentation,role=external,window=_blank]
 +
 Defaults to -1 for (auto detection).
+
+[[index.name.persistInfoStream]]index.name.persistInfoStream::
++
+Enable Lucene's info stream logging. This can be useful when admins face ongoing
+indexing transactionality or persistence issues that are hard to debug without
+further information.
++
+NOTE: This could potentially add additional load on the system, especially if
+enabled for all indexes; appropriate tests should be carried out before enabling
+this option on a production system.
 
 [[index.name.enableAutoIOThrottle]]index.name.enableAutoIOThrottle::
 +
@@ -4301,9 +4343,7 @@ By default, unset/`false`.
 Defines how Gerrit authenticates with the server. When set to `GSSAPI`
 Gerrit will use Kerberos. To use kerberos the
 `java.security.auth.login.config` system property must point to a
-login to a JAAS configuration file and, if Java 6 is used, the system
-property `java.security.krb5.conf` must point to the appropriate
-krb5.ini file with references to the KDC.
+login to a JAAS configuration file.
 
 Typical jaas.conf.
 
@@ -4316,8 +4356,6 @@ KerberosLogin {
             renewTGT=`true`;
 };
 ----
-
-See Java documentation on how to create the krb5.ini file.
 
 Note the `renewTGT` property to make sure the TGT does not expire,
 and `useTicketCache` to use the TGT supplied by the operating system. As
@@ -4716,6 +4754,32 @@ the below configuration
 ----
 
 Gerrit will load `c-plugin` first, followed-up by `a-plugin` and `b-plugin` last.
+
+[[regex]]
+=== Section regex
+
+[[regex.allowedGroup]]regex.allowedGroup::
++
+List of groups whose members are allowed to provide regular expressions in
+requests to Gerrit or in configuration they create or update. This option may
+be specified more than once; membership in any listed group is sufficient.
++
+Defaults to allowing `Anonymous Users`, which means that everyone can supply
+regular expression operands. To block only anonymous users, set it to the
+system group `Registered Users`.
++
+The `Change Owner` system group is not supported because its membership depends
+on a specific change.
++
+The check applies to interactive change searches, including named queries
+expanded with `query:`, the `r=` parameter of the project, branch and tag
+listing APIs, `ssh ls-projects -r`, and new or changed submit requirement
+expressions, ACL ref patterns, and project notification filters. It does not
+apply when Gerrit evaluates regular expressions already stored in submit
+requirements, project watches, project notification filters or ACL ref patterns.
++
+This configuration is loaded at startup and cannot be hot-reloaded. Gerrit
+fails to start if any configured name cannot be resolved to a group.
 
 [[receive]]
 === Section receive

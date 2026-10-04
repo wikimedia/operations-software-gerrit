@@ -28,6 +28,8 @@ import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.UseClockStep;
+import com.google.gerrit.acceptance.UseLocalDisk;
+import com.google.gerrit.acceptance.config.GerritConfig;
 import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.entities.AccessSection;
@@ -36,6 +38,7 @@ import com.google.gerrit.extensions.api.projects.ProjectApi.ListRefsRequest;
 import com.google.gerrit.extensions.api.projects.TagApi;
 import com.google.gerrit.extensions.api.projects.TagInfo;
 import com.google.gerrit.extensions.api.projects.TagInput;
+import com.google.gerrit.extensions.client.ProjectState;
 import com.google.gerrit.extensions.common.ListTagSortOption;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
@@ -43,11 +46,14 @@ import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
+import com.google.gerrit.server.config.RegexAllowedGroupsProvider;
+import com.google.gerrit.server.permissions.RegexPermissionPolicy;
 import com.google.gerrit.server.project.ProjectConfig;
 import com.google.inject.Inject;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
+import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.junit.Before;
 import org.junit.Test;
@@ -56,6 +62,20 @@ import org.junit.Test;
 public class TagsIT extends AbstractDaemonTest {
   private static final ImmutableList<String> testTags =
       ImmutableList.of("tag-A", "tag-B", "tag-C", "tag-D", "tag-E", "tag-F", "tag-G", "tag-H");
+
+  @Test
+  @UseLocalDisk
+  @GerritConfig(
+      name = RegexAllowedGroupsProvider.SECTION + "." + RegexAllowedGroupsProvider.KEY,
+      value = "Project Owners")
+  public void regexRejectedForUserOutsideAllowedGroup() throws Exception {
+    requestScopeOperations.setApiUser(user.id());
+
+    BadRequestException thrown =
+        assertThrows(BadRequestException.class, () -> getTags().withRegex(".*").get());
+
+    assertThat(thrown).hasMessageThat().isEqualTo(RegexPermissionPolicy.NOT_PERMITTED_MESSAGE);
+  }
 
   private static final String SIGNED_ANNOTATION =
       "annotation\n"
@@ -180,7 +200,7 @@ public class TagsIT extends AbstractDaemonTest {
 
   @Test
   public void listTagsOfNonVisibleBranch() throws Exception {
-    grantTagPermissions();
+    grantLightweightTagPermissions();
     // Allow creating a new hidden branch
     projectOperations
         .project(project)
@@ -230,7 +250,7 @@ public class TagsIT extends AbstractDaemonTest {
 
   @Test
   public void lightweightTag() throws Exception {
-    grantTagPermissions();
+    grantLightweightTagPermissions();
 
     PushOneCommit push = pushFactory.create(admin.newIdent(), testRepo);
     PushOneCommit.Result r = push.to("refs/heads/master");
@@ -262,7 +282,7 @@ public class TagsIT extends AbstractDaemonTest {
 
   @Test
   public void annotatedTag() throws Exception {
-    grantTagPermissions();
+    grantAnnotatedTagPermissions();
 
     PushOneCommit push = pushFactory.create(admin.newIdent(), testRepo);
     PushOneCommit.Result r = push.to("refs/heads/master");
@@ -301,7 +321,7 @@ public class TagsIT extends AbstractDaemonTest {
 
   @Test
   public void createExistingTag() throws Exception {
-    grantTagPermissions();
+    grantLightweightTagPermissions();
 
     TagInput input = new TagInput();
     input.ref = "test";
@@ -365,8 +385,6 @@ public class TagsIT extends AbstractDaemonTest {
 
   @Test
   public void invalidTagName() throws Exception {
-    grantTagPermissions();
-
     TagInput input = new TagInput();
     input.ref = "refs/heads/test";
 
@@ -377,8 +395,6 @@ public class TagsIT extends AbstractDaemonTest {
 
   @Test
   public void invalidTagNameOnlySlashes() throws Exception {
-    grantTagPermissions();
-
     TagInput input = new TagInput();
     input.ref = "//";
 
@@ -389,8 +405,6 @@ public class TagsIT extends AbstractDaemonTest {
 
   @Test
   public void nonExistingBaseRevision() throws Exception {
-    grantTagPermissions();
-
     TagInput input = new TagInput();
     input.ref = "test";
     input.revision = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
@@ -404,8 +418,6 @@ public class TagsIT extends AbstractDaemonTest {
 
   @Test
   public void invalidBaseRevision() throws Exception {
-    grantTagPermissions();
-
     TagInput input = new TagInput();
     input.ref = "test";
     input.revision = "invalid\trevision";
@@ -419,8 +431,6 @@ public class TagsIT extends AbstractDaemonTest {
 
   @Test
   public void nonCommitRevision() throws Exception {
-    grantTagPermissions();
-
     TagInput input = new TagInput();
     input.ref = "test";
     input.revision =
@@ -435,7 +445,7 @@ public class TagsIT extends AbstractDaemonTest {
 
   @Test
   public void noBaseRevision() throws Exception {
-    grantTagPermissions();
+    grantLightweightTagPermissions();
 
     // If revision is not specified, the tag is created based on HEAD, which points to master.
     RevCommit expectedRevision = projectOperations.project(project).getHead("master");
@@ -451,7 +461,7 @@ public class TagsIT extends AbstractDaemonTest {
 
   @Test
   public void emptyBaseRevision() throws Exception {
-    grantTagPermissions();
+    grantLightweightTagPermissions();
 
     // If revision is not specified, the tag is created based on HEAD, which points to master.
     RevCommit expectedRevision = projectOperations.project(project).getHead("master");
@@ -467,7 +477,7 @@ public class TagsIT extends AbstractDaemonTest {
 
   @Test
   public void baseRevisionIsTrimmed() throws Exception {
-    grantTagPermissions();
+    grantLightweightTagPermissions();
 
     RevCommit revision = projectOperations.project(project).getHead("master");
 
@@ -478,6 +488,31 @@ public class TagsIT extends AbstractDaemonTest {
     TagInfo result = tag(input.ref).create(input).get();
     assertThat(result.ref).isEqualTo(R_TAGS + input.ref);
     assertThat(result.revision).isEqualTo(revision.name());
+  }
+
+  @Test
+  public void cannotCreateTagIfProjectIsReadOnly() throws Exception {
+    grantLightweightTagPermissions();
+    PushOneCommit push = pushFactory.create(admin.newIdent(), testRepo);
+    PushOneCommit.Result r = push.to("refs/heads/master");
+    r.assertOkStatus();
+
+    TagInput input = new TagInput();
+    input.ref = "v1.0";
+    gApi.projects().name(project.get()).tag(input.ref).create(input);
+
+    try (Repository repo = repoManager.openRepository(project)) {
+      try (ProjectConfigUpdate u = updateProject(project)) {
+        u.getConfig().updateProject(p -> p.setState(ProjectState.READ_ONLY));
+        u.save();
+      }
+    }
+
+    TagInput newTag = new TagInput();
+    newTag.ref = "v2.0";
+    assertThrows(
+        ResourceConflictException.class,
+        () -> gApi.projects().name(project.get()).tag(newTag.ref).create(newTag));
   }
 
   private void assertTagList(FluentIterable<String> expected, List<TagInfo> actual)
@@ -491,7 +526,7 @@ public class TagsIT extends AbstractDaemonTest {
   }
 
   private void createTags() throws Exception {
-    grantTagPermissions();
+    grantAnnotatedTagPermissions();
 
     String revision = pushTo("refs/heads/master").getCommit().name();
     TagInput input = new TagInput();
@@ -521,14 +556,19 @@ public class TagsIT extends AbstractDaemonTest {
     assertThrows(BadRequestException.class, () -> req.get());
   }
 
-  private void grantTagPermissions() throws Exception {
+  private void grantLightweightTagPermissions() throws Exception {
     projectOperations
         .project(project)
         .forUpdate()
         .add(allow(Permission.CREATE).ref(R_TAGS + "*").group(adminGroupUuid()))
-        .add(allow(Permission.DELETE).ref(R_TAGS + "").group(adminGroupUuid()))
+        .update();
+  }
+
+  private void grantAnnotatedTagPermissions() throws Exception {
+    projectOperations
+        .project(project)
+        .forUpdate()
         .add(allow(Permission.CREATE_TAG).ref(R_TAGS + "*").group(adminGroupUuid()))
-        .add(allow(Permission.CREATE_SIGNED_TAG).ref(R_TAGS + "*").group(adminGroupUuid()))
         .update();
   }
 

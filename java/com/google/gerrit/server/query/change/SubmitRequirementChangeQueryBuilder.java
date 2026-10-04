@@ -132,17 +132,17 @@ public class SubmitRequirementChangeQueryBuilder extends ChangeQueryBuilder {
 
   @Operator
   public Predicate<ChangeData> authoremail(String who) throws QueryParseException {
-    return new RegexAuthorEmailPredicate(who);
+    return new RegexAuthorEmailPredicate(who, args.regexCompiler);
   }
 
   @Operator
   public Predicate<ChangeData> committerEmail(String who) throws QueryParseException {
-    return new RegexCommitterEmailPredicate(who);
+    return new RegexCommitterEmailPredicate(who, args.regexCompiler);
   }
 
   @Operator
   public Predicate<ChangeData> uploaderEmail(String who) throws QueryParseException {
-    return regexUploaderEmailPredicateFactory.create(who);
+    return regexUploaderEmailPredicateFactory.create(who, args.regexCompiler);
   }
 
   @Operator

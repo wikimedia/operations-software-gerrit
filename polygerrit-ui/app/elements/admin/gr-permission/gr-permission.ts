@@ -44,6 +44,7 @@ import {
   ValueChangedEvent,
 } from '../../../types/events';
 import {throwingErrorCallback} from '../../shared/gr-rest-api-interface/gr-rest-apis/gr-rest-api-helper';
+import {repeat} from 'lit/directives/repeat.js';
 
 const MAX_AUTOCOMPLETE_RESULTS = 20;
 
@@ -232,6 +233,7 @@ export class GrPermission extends LitElement {
                     ?disabled=${!this.editing}
                     @change=${this.handleValueChange}
                     @click=${this.onTapExclusiveToggle}
+                    @tap=${this.onTapExclusiveToggle}
                   ></paper-toggle-button
                   >${this.computeExclusiveLabel(this.permission?.value)}
                 `
@@ -246,7 +248,9 @@ export class GrPermission extends LitElement {
           </div>
           <!-- end header -->
           <div class="rules">
-            ${this.rules?.map(
+            ${repeat(
+              this.rules ?? [],
+              rule => rule.id,
               (rule, index) => html`
                 <gr-rule-editor
                   .hasRange=${this.computeHasRange(this.name)}

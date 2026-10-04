@@ -33,6 +33,7 @@ import {LitElement, PropertyValues, html, css} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
 import {BindValueChangeEvent, ValueChangedEvent} from '../../../types/events';
 import {assertIsDefined, queryAndAssert} from '../../../utils/common-util';
+import {repeat} from 'lit/directives/repeat.js';
 
 const GLOBAL_NAME = 'GLOBAL_CAPABILITIES';
 
@@ -186,8 +187,10 @@ export class GrAccessSection extends LitElement {
           </div>
           <!-- end header -->
           <div class="sectionContent">
-            ${this.permissions?.map((permission, index) =>
-              this.renderPermission(permission, index)
+            ${repeat(
+              this.permissions ?? [],
+              perm => perm.id,
+              (permission, index) => this.renderPermission(permission, index)
             )}
             <div id="addPermission">
               Add permission:
@@ -367,6 +370,13 @@ export class GrAccessSection extends LitElement {
         value: {
           name: `Label ${labelName} (On Behalf Of)`,
           id: 'labelAs-' + labelName,
+        },
+      });
+      labelOptions.push({
+        id: 'removeLabel-' + labelName,
+        value: {
+          name: `Remove Label ${labelName}`,
+          id: 'removeLabel-' + labelName,
         },
       });
     }
