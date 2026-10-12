@@ -102,9 +102,6 @@
 [submodule "plugins/its-base"]
 	path = plugins/its-base
 	url = https://gerrit.googlesource.com/plugins/its-base
-[submodule "plugins/image-diff"]
-	path = plugins/image-diff
-	url = https://gerrit.googlesource.com/plugins/image-diff
 [submodule "plugins/readonly"]
 	path = plugins/readonly
 	url = https://gerrit.googlesource.com/plugins/readonly
