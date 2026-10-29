@@ -23,6 +23,7 @@ const LANGUAGE_MAP = new Map<string, string>([
   ['application/typescript', 'typescript'],
   ['application/xml', 'xml'],
   ['application/xquery', 'xquery'],
+  ['application/x-epp', 'epp'],
   ['application/x-erb', 'erb'],
   ['text/css', 'css'],
   ['text/html', 'html'],
@@ -66,6 +67,7 @@ const LANGUAGE_MAP = new Map<string, string>([
   ['text/x-markdown', 'markdown'],
   ['text/x-mathematica', 'mathematica'],
   ['text/x-nginx-conf', 'nginx'],
+  ['text/x-nix', 'nix'],
   ['text/x-nsis', 'nsis'],
   ['text/x-objectivec', 'objectivec'],
   ['text/x-ocaml', 'ocaml'],
@@ -96,6 +98,7 @@ const LANGUAGE_MAP = new Map<string, string>([
   ['text/x-vb', 'vb'],
   ['text/x-verilog', 'v'],
   ['text/x-vhdl', 'vhdl'],
+  ['text/x-vue', 'vue'],
   ['text/x-yaml', 'yaml'],
   ['text/vbscript', 'vbscript'],
 ]);

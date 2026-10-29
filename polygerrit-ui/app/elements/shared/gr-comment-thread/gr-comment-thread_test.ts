@@ -3,6 +3,7 @@
  * Copyright 2015 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import * as sinon from 'sinon';
 import '../../../test/common-test-setup';
 import './gr-comment-thread';
 import {sortComments} from '../../../utils/comment-util';
@@ -38,6 +39,11 @@ import {
   commentsModelToken,
 } from '../../../models/comments/comments-model';
 import {testResolver} from '../../../test/common-test-setup';
+import {
+  ChangeChildView,
+  changeViewModelToken,
+} from '../../../models/views/change';
+import {GerritView} from '../../../services/router/router-model';
 
 const c1: CommentInfo = {
   author: {name: 'Kermit'},
@@ -80,6 +86,12 @@ suite('gr-comment-thread tests', () => {
   let element: GrCommentThread;
 
   setup(async () => {
+    testResolver(changeViewModelToken).setState({
+      view: GerritView.CHANGE,
+      childView: ChangeChildView.OVERVIEW,
+      changeNum: 1 as NumericChangeId,
+      repo: 'test-repo-name' as RepoName,
+    });
     stubRestApi('getLoggedIn').returns(Promise.resolve(false));
     element = await fixture(html`<gr-comment-thread></gr-comment-thread>`);
     element.changeNum = 1 as NumericChangeId;

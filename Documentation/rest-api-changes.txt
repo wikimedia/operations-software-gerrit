@@ -2751,7 +2751,7 @@ Only the change owner, a project owner, or an administrator may fix changes.
   }
 ----
 
-[[set-work-in-pogress]]
+[[set-work-in-progress]]
 === Set Work-In-Progress
 --
 'POST /changes/link:#change-id[\{change-id\}]/wip'
@@ -3634,6 +3634,9 @@ As response "`204 No Content`" is returned.
 
 Rebases change edit on top of latest patch set.
 
+Optionally, input parameters may be specified in the request body as a
+link:#rebase-change-edit-input[RebaseChangeEditInput] entity.
+
 If one of the secondary emails associated with the user performing the operation was used as the
 committer email in the latest patch set, the same email will be used as the committer email in the
 new change edit commit; otherwise, the user's preferred email will be used.
@@ -3643,15 +3646,47 @@ new change edit commit; otherwise, the user's preferred email will be used.
   POST /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/edit:rebase HTTP/1.0
 ----
 
-When change was rebased on top of latest patch set, response
-"`204 No Content`" is returned. When change edit is already
-based on top of the latest patch set, the response
-"`409 Conflict`" is returned.
+When the change was rebased on top of latest patch set, the response code is
+"`200 OK`" and the rebased change edit is returned as an
+link:#edit-info[EditInfo] entity.
 
 .Response
 ----
-  HTTP/1.1 204 No Content
+  HTTP/1.1 200 OK
+  Content-Disposition: attachment
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    "commit": {
+      "parents": [
+        {
+          "commit": "1eee2c9d8f352483781e772f35dc586a69ff5646",
+        }
+      ],
+      "author": {
+        "name": "Shawn O. Pearce",
+        "email": "sop@google.com",
+        "date": "2012-04-24 18:08:08.000000000",
+        "tz": -420
+       },
+       "committer": {
+         "name": "Shawn O. Pearce",
+         "email": "sop@google.com",
+         "date": "2012-04-24 18:08:08.000000000",
+         "tz": -420
+       },
+       "subject": "Use an EventBus to manage star icons",
+       "message": "Use an EventBus to manage star icons\n\nImage widgets that need to ..."
+    },
+    "base_patch_set_number": s,
+    "base_revision": "c35558e0925e6985c91f3a16921537d5e572b7a3",
+    "ref": "refs/users/01/1000001/edit-76482/2"
+  }
 ----
+
+When the change edit is already based on top of the latest patch set, the
+response code is "`409 Conflict`".
 
 [[delete-edit]]
 === Delete Change Edit
@@ -3841,6 +3876,9 @@ describes the reviewer.
 --
 
 Adds one user or all members of one group as reviewer to the change.
+
+NOTE: Adding multiple reviewers at once is possible via the
+link:#set-review[Set Review] REST endpoint.
 
 The reviewer to be added to the change must be provided in the request
 body as a link:#reviewer-input[ReviewerInput] entity.
@@ -4081,9 +4119,16 @@ a reviewer is removed the reviewer itself is still listed on the change.
 If another user removed a user's vote, the user with the deleted vote will be
 added to the attention set.
 
+Note, removing votes is generally disallowed for merged changes as this could
+remove approvals that were necessary for the submission and it's confusing to
+see a merged change which doesn't have the necessary approvals to fulfill the
+submit requirements.
+
 The request returns:
  * '204 No Content' if the vote is deleted successfully;
  * '404 Not Found' when the vote to be deleted is zero or not present.
+ * '409 Conflict' when the change is merged and hence deleting votes is not
+   allowed
 
 .Request
 ----
@@ -5001,6 +5046,10 @@ for later processing by command line tools.
 If the `path` parameter is set, the returned content is a diff of the single
 file that the path refers to.
 
+If the `parent` parameter is set, the value is used as the 1-based index of the
+parent's position in the commit object and the returned content is a diff
+compared to that parent.
+
 [[get-mergeable]]
 === Get Mergeable
 --
@@ -5806,7 +5855,12 @@ is returned.
 Applies a list of <<fix-replacement-info,FixReplacementInfo>> loaded from the
 <<apply-provided-fix-input,ApplyProvidedFixInput>> entity. The fixes are passed as part of the request body. The
 application of the fixes creates a new change edit. `Apply Provided Fix` can only be applied on the current
-patchset.
+patchset. To apply a fix that was suggested to a non-current patchset, set `originalPatchsetForFix` to a patchset
+number where the fix was suggested. When `originalPatchsetForFix` is set, gerrit generates a patch (using
+`fix-replacement-info` and `originalPatchsetForFix`) and then tries to apply it to the current patchset.
+If it is not possible to apply a patch, an error is returned (see below for the list of errors).
+If the provided fix modifies the commit message and the message was changed between `originalPatchsetForFix`
+and the current patchset, the request is rejected..
 
 If one of the secondary emails associated with the user performing the operation was used as the
 committer email in the current patch set, the same email will be used as the committer email in the
@@ -6978,6 +7032,8 @@ A new commit will be created from the patch, and saved as a new patch set.
 The patch to be applied. Must be compatible with `git diff` output.
 For example, link:#get-patch[Get Patch] output.
 The patch must be provided as UTF-8 text, either directly or base64-encoded.
+|`allow_conflicts`    |optional|
+If true, tolerate conflicts and add conflict markers where required.
 |=================================
 
 [[applypatchpatchset-input]]
@@ -7214,12 +7270,10 @@ Only set if link:#submittable[requested].
 Number of inserted lines.
 |`deletions`          ||
 Number of deleted lines.
-|`total_comment_count`  |optional|
-Total number of inline comments across all patch sets. Not set if the current
-change index doesn't have the data.
-|`unresolved_comment_count`  |optional|
-Number of unresolved inline comment threads across all patch sets. Not set if
-the current change index doesn't have the data.
+|`total_comment_count`  ||
+Total number of inline comments across all patch sets.
+|`unresolved_comment_count`  ||
+Number of unresolved inline comment threads across all patch sets.
 |`_number`            ||
 The change number. (The underscore is just a relict of a prior
 attempt to deprecate the change number.)
@@ -7348,9 +7402,10 @@ markers to indicate the conflicts. +
 Only set if this change info is returned in response to a request that
 creates a new change or patch set and conflicts are allowed. In
 particular this field is only populated if the change info is returned
-by one of the following REST endpoints: link:#create-change[Create
-Change], link:#create-merge-patch-set-for-change[Create Merge Patch Set
-For Change], link:#cherry-pick[Cherry Pick Revision],
+by one of the following REST endpoints:link:#apply-patch[Apply Patch],
+link:#create-change[Create Change],
+link:#create-merge-patch-set-for-change[Create Merge Patch Set For Change],
+link:#cherry-pick[Cherry Pick Revision],
 link:rest-api-project.html#cherry-pick-commit[Cherry Pick Commit],
 link:#rebase-change[Rebase Change]
 |==================================
@@ -7725,7 +7780,8 @@ message of a change.
 message).
 |`full_message` |Full commit message of the change.
 |`footers`      |The footers from the commit message as a map of
-key-value pairs.
+key-value pairs. If there are multiple footers with the same key, only the last
+footer with that key is returned.
 |============================
 
 [[commit-message-input]]
@@ -8007,6 +8063,12 @@ provided as a map that maps the protocol name ("`git`", "`http`",
 |`files`                |optional|
 The files of the change edit as a map that maps the file names to
 link:#file-info[FileInfo] entities.
+|`contains_git_conflicts`  |optional, not set if `false`|
+Whether the change edit contains conflicts. +
+If `true`, some of the file contents of the change edit contain git conflict
+markers to indicate the conflicts. +
+Only set if this edit info is returned in response to a request that
+link:#rebase-edit[rebases the change edit] and conflicts are allowed.
 |===========================
 
 [[fetch-info]]
@@ -8465,6 +8527,21 @@ The `RangeInfo` entity stores the coordinates of a range.
 |`end`        | Last index.
 |===========================
 
+[[rebase-change-edit-input]]
+=== RebaseChangeEditInput
+The `RebaseChangeEditInput` entity contains information for rebasing a change edit.
+
+[options="header",cols="1,^1,5"]
+|====================================
+|Field Name             ||Description
+|`allow_conflicts`      |optional, defaults to false|
+If `true`, the rebase also succeeds if there are conflicts. +
+If there are conflicts the file contents of the rebased patch set contain
+git conflict markers to indicate the conflicts. +
+Callers can find out whether there were conflicts by checking the
+`contains_git_conflicts` field in the returned link:#edit-info[EditInfo].
+|====================================
+
 [[rebase-input]]
 === RebaseInput
 The `RebaseInput` entity contains information for changing parent when rebasing.
@@ -8889,7 +8966,8 @@ link:#list-changes[Query Changes].
 |===========================
 |Field Name    ||Description
 |`kind`        ||The change kind. Valid values are `REWORK`, `TRIVIAL_REBASE`,
-`MERGE_FIRST_PARENT_UPDATE`, `NO_CODE_CHANGE`, and `NO_CHANGE`.
+`TRIVIAL_REBASE_WITH_MESSAGE_UPDATE`, `MERGE_FIRST_PARENT_UPDATE`,
+`NO_CODE_CHANGE`, and `NO_CHANGE`.
 |`_number`     ||The patch set number, or `edit` if the patch set is an edit.
 |`created`     ||
 The link:rest-api.html#timestamp[timestamp] of when the patch set was

@@ -42,6 +42,7 @@ import com.google.gerrit.index.query.TooManyTermsInQueryException;
 import com.google.gerrit.server.query.change.AndChangeSource;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.ChangeDataSource;
+import com.google.gerrit.server.query.change.ChangeIndexPredicate;
 import com.google.gerrit.server.query.change.ChangeQueryBuilder;
 import com.google.gerrit.server.query.change.ChangeStatusPredicate;
 import com.google.gerrit.server.query.change.IsSubmittablePredicate;
@@ -182,10 +183,11 @@ public class ChangeIndexRewriter implements IndexRewriter<ChangeData> {
    * @param index index whose schema determines which fields are indexed.
    * @param opts other query options.
    * @param leafTerms number of leaf index query terms encountered so far.
-   * @return {@code null} if no part of this subtree can be queried in the index directly. {@code
-   *     in} if this subtree and all its children can be queried directly in the index. Otherwise, a
-   *     predicate that is semantically equivalent, with some of its subtrees wrapped to query the
-   *     index directly.
+   * @return {@code null} if no part of this subtree can be queried directly in the index, the
+   *     original predicate {@code in} if the entire subtree can, or a semantically equivalent
+   *     predicate with the indexed subtrees wrapped in index queries. When none of the children are
+   *     directly indexed, any existing {@link ChangeDataSource} children are preserved intact, as
+   *     can happen for a subtree of plugin data sources.
    * @throws QueryParseException if the underlying index implementation does not support this
    *     predicate.
    */
@@ -202,6 +204,13 @@ public class ChangeIndexRewriter implements IndexRewriter<ChangeData> {
       // should have already searched the predicate tree for limit predicates
       // and included that in their limit computation.
       return new LimitPredicate<>(ChangeQueryBuilder.FIELD_LIMIT, opts.limit());
+    } else if (in instanceof OrPredicate && in.getChildCount() == 0) {
+      ++leafTerms.value;
+      // An empty OrPredicate will never match anything, but will scan all
+      // changes unless handled here. Return the none() wrapped so it is a ChangeDataSource and a
+      // parent OrPredicate can still fold into an OrSource; a bare none() would force the
+      // top-level rewrite() fallback and(or(open,closed), in) and a full index scan.
+      return new IndexedChangeQuery(index, ChangeIndexPredicate.none(), opts);
     } else if (!isRewritePossible(in)) {
       if (in instanceof IndexPredicate) {
         throw new QueryParseException("Unsupported index predicate: " + in.toString());
@@ -236,6 +245,12 @@ public class ChangeIndexRewriter implements IndexRewriter<ChangeData> {
       }
     }
 
+    if (in instanceof AndPredicate && newChildren.stream().anyMatch(ChangeIndexRewriter::isNone)) {
+      ++leafTerms.value;
+      // Shortcut the AND none() and ensure we return a ChangeDataSource so an enclosing
+      // OrPredicate can be re-written as an OrSource.
+      return new IndexedChangeQuery(index, ChangeIndexPredicate.none(), opts);
+    }
     if (isIndexed.cardinality() == n) {
       return in; // All children are indexed, leave as-is for parent.
     } else if (notIndexed.cardinality() == n) {
@@ -271,6 +286,13 @@ public class ChangeIndexRewriter implements IndexRewriter<ChangeData> {
       ChangeIndex index,
       QueryOptions opts)
       throws QueryParseException {
+    if (isIndexed.isEmpty()) {
+      // A rewritten child may itself be a ChangeDataSource (for example, an OR of plugin
+      // datasources), while its sibling is a non-indexed ChangeDataSource. Keep that tree intact
+      // rather than adding a match-all index query, which could be selected ahead of the more
+      // selective datasource.
+      return copy(in, newChildren);
+    }
     if (isIndexed.cardinality() == 1) {
       int i = isIndexed.nextSetBit(0);
       Predicate<ChangeData> indexed = newChildren.remove(i);
@@ -326,6 +348,21 @@ public class ChangeIndexRewriter implements IndexRewriter<ChangeData> {
   private static boolean isRewritePossible(Predicate<ChangeData> p) {
     return p.getChildCount() > 0
         && (p instanceof AndPredicate || p instanceof OrPredicate || p instanceof NotPredicate);
+  }
+
+  /**
+   * Returns true if {@code p} is a none() predicate that matches no changes, whether bare or
+   * wrapped in an {@link IndexedChangeQuery}. The empty-OrPredicate and AndPredicate short-circuits
+   * wrap none() in an IndexedChangeQuery so it stays a {@link ChangeDataSource}, so both forms must
+   * be recognized here.
+   */
+  private static boolean isNone(Predicate<ChangeData> p) {
+    if (p.equals(ChangeIndexPredicate.none())) {
+      return true;
+    }
+    return p instanceof IndexedChangeQuery
+        && p.getChildCount() == 1
+        && p.getChild(0).equals(ChangeIndexPredicate.none());
   }
 
   @SuppressWarnings("ReferenceEquality")

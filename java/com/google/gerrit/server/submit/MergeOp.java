@@ -69,6 +69,7 @@ import com.google.gerrit.metrics.Description;
 import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.ChangeUtil;
+import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.InternalUser;
 import com.google.gerrit.server.change.NotifyResolver;
@@ -83,6 +84,8 @@ import com.google.gerrit.server.logging.RequestId;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.StoreSubmitRequirementsOp;
+import com.google.gerrit.server.permissions.ChangePermission;
+import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.NoSuchProjectException;
 import com.google.gerrit.server.project.ProjectCache;
@@ -112,6 +115,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Deque;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -151,6 +155,10 @@ public class MergeOp implements AutoCloseable {
       SUBMIT_RULE_OPTIONS.toBuilder().recomputeOnClosedChanges(true).build();
   private final boolean backfill;
 
+  /**
+   * For each individual change in merge set aggregates issues and other details throughout the
+   * merge process.
+   */
   public static class CommitStatus {
     private final ImmutableMap<Change.Id, ChangeData> changes;
     private final ImmutableSetMultimap<BranchNameKey, Change.Id> byBranch;
@@ -276,6 +284,11 @@ public class MergeOp implements AutoCloseable {
     }
   }
 
+  @FunctionalInterface
+  public interface PreMergeChecker {
+    Optional<AuthException> check(ChangeSet changeSet) throws PermissionBackendException;
+  }
+
   private final ChangeMessagesUtil cmUtil;
   private final BatchUpdate.Factory batchUpdateFactory;
   private final BatchUpdates batchUpdates;
@@ -293,6 +306,7 @@ public class MergeOp implements AutoCloseable {
   private final ChangeData.Factory changeDataFactory;
   private final StoreSubmitRequirementsOp.Factory storeSubmitRequirementsOpFactory;
   private final MergeMetrics mergeMetrics;
+  private final PermissionBackend permissionBackend;
 
   // Changes that were updated by this MergeOp.
   private final Map<Change.Id, Change> updatedChanges;
@@ -337,7 +351,8 @@ public class MergeOp implements AutoCloseable {
       MergeMetrics mergeMetrics,
       ProjectCache projectCache,
       ExperimentFeatures experimentFeatures,
-      @GerritServerConfig Config config) {
+      @GerritServerConfig Config config,
+      PermissionBackend permissionBackend) {
     this.cmUtil = cmUtil;
     this.batchUpdateFactory = batchUpdateFactory;
     this.batchUpdates = batchUpdates;
@@ -363,6 +378,7 @@ public class MergeOp implements AutoCloseable {
     hasImplicitMergeTimeoutSeconds =
         ConfigUtil.getTimeUnit(
             config, "change", null, "implicitMergeCalculationTimeout", 60, TimeUnit.SECONDS);
+    this.permissionBackend = permissionBackend;
     backfill = config.getBoolean("change", null, "backfillMergeSuperSet", false);
   }
 
@@ -373,6 +389,12 @@ public class MergeOp implements AutoCloseable {
     }
   }
 
+  /**
+   * Check that SRs are fulfilled or throw otherwise
+   *
+   * @param cd change that is being checked
+   * @throws ResourceConflictException the exception that is thrown if the SR is not fulfilled
+   */
   public static void checkSubmitRequirements(ChangeData cd) throws ResourceConflictException {
     PatchSet patchSet = cd.currentPatchSet();
     if (patchSet == null) {
@@ -427,32 +449,177 @@ public class MergeOp implements AutoCloseable {
     return cd.submitRecords(submitRuleOptions(/* allowClosed= */ false));
   }
 
-  private void checkSubmitRulesAndState(ChangeSet cs, boolean allowMerged)
-      throws ResourceConflictException {
-    checkArgument(
-        !cs.furtherHiddenChanges(), "checkSubmitRulesAndState called for topic with hidden change");
-    for (ChangeData cd : cs.changes()) {
-      try {
-        if (!cd.change().isNew()) {
-          if (!(cd.change().isMerged() && allowMerged)) {
-            commitStatus.problem(
-                cd.getId(), "Change " + cd.getId() + " is " + ChangeUtil.status(cd.change()));
-          }
-        } else if (cd.change().isWorkInProgress()) {
-          commitStatus.problem(cd.getId(), "Change " + cd.getId() + " is work in progress");
-        } else {
-          checkSubmitRequirements(cd);
-          mergeMetrics.countChangesThatWereSubmittedWithRebaserApproval(cd);
-        }
-      } catch (ResourceConflictException e) {
-        commitStatus.problem(cd.getId(), e.getMessage());
-      } catch (StorageException e) {
-        String msg = "Error checking submit rules for change";
-        logger.atWarning().withCause(e).log("%s %s", msg, cd.getId());
-        commitStatus.problem(cd.getId(), msg);
-      }
+  /** A problem preventing merge and change on which it occurred. */
+  @AutoValue
+  public abstract static class ChangeProblem {
+    public abstract Change.Id getChangeId();
+
+    public abstract String getProblem();
+
+    public static ChangeProblem create(Change.Id changeId, String problem) {
+      return new AutoValue_MergeOp_ChangeProblem(changeId, problem);
     }
+  }
+
+  private static void addProblemForChange(
+      Change.Id triggeringChangeId,
+      ChangeData cd,
+      boolean allowMerged,
+      PermissionBackend permissionBackend,
+      CurrentUser caller,
+      ImmutableList.Builder<ChangeProblem> problems) {
+    try {
+      Set<ChangePermission> can =
+          permissionBackend
+              .user(caller.getRealUser())
+              .change(cd)
+              .test(
+                  EnumSet.of(
+                      ChangePermission.READ, ChangePermission.SUBMIT, ChangePermission.SUBMIT_AS));
+      if (!can.contains(ChangePermission.READ)) {
+        // The READ permission should already be handled during generation of ChangeSet, however
+        // MergeSuperSetComputation is an interface and on API level doesn't guarantee that this
+        // have been verified for all changes. Additionally, this protects against potential
+        // issues due to staleness.
+        logger.atFine().log(
+            "Change %d cannot be submitted by user %s because it depends on change %d which the"
+                + "user cannot read",
+            triggeringChangeId.get(), caller.getRealUser().getLoggableName(), cd.getId().get());
+        problems.add(
+            ChangeProblem.create(
+                cd.getId(),
+                String.format(
+                    "Change %d depends on other hidden changes", triggeringChangeId.get())));
+        return;
+      }
+      if (!can.contains(ChangePermission.SUBMIT)) {
+        logger.atFine().log(
+            "Change %d cannot be submitted by user %s because it depends on change %d which the"
+                + "user cannot submit",
+            triggeringChangeId.get(), caller.getRealUser().getLoggableName(), cd.getId().get());
+        problems.add(
+            ChangeProblem.create(
+                cd.getId(),
+                String.format("Insufficient permission to submit change %d", cd.getId().get())));
+        return;
+      }
+      if (caller.isImpersonating()) {
+        if (!permissionBackend.user(caller).change(cd).test(ChangePermission.READ)) {
+          logger.atFine().log(
+              "Change %d cannot be submitted by user %s on behalf of user %s because it depends on"
+                  + " change %d which the on-behalf-of user does not have READ permission for",
+              triggeringChangeId.get(),
+              caller.getRealUser().getLoggableName(),
+              caller.getLoggableName(),
+              cd.getId().get());
+          problems.add(
+              ChangeProblem.create(
+                  cd.getId(),
+                  String.format(
+                      "On-behalf-of user %s lacks permission to read change %d",
+                      caller.getLoggableName(), cd.getId().get())));
+          return;
+        }
+        if (!can.contains(ChangePermission.SUBMIT_AS)) {
+          logger.atFine().log(
+              "Change %d cannot be submitted by user %s on behalf of user %s because it depends on"
+                  + " change %d which the user does not have SUBMIT_AS permission for",
+              triggeringChangeId.get(),
+              caller.getRealUser().getLoggableName(),
+              caller.getLoggableName(),
+              cd.getId().get());
+          problems.add(
+              ChangeProblem.create(
+                  cd.getId(),
+                  String.format(
+                      "Insufficient permission to submit change %d on behalf of user %s",
+                      cd.getId().get(), caller.getLoggableName())));
+          return;
+        }
+      }
+      if (!cd.change().isNew()) {
+        if (!(cd.change().isMerged() && allowMerged)) {
+          problems.add(
+              ChangeProblem.create(
+                  cd.getId(),
+                  String.format(
+                      "Change %d is %s", cd.getId().get(), ChangeUtil.status(cd.change()))));
+          return;
+        }
+      }
+      if (cd.change().isWorkInProgress()) {
+        problems.add(
+            ChangeProblem.create(
+                cd.getId(),
+                String.format("Change %d is marked work in progress", cd.getId().get())));
+        return;
+      }
+      try {
+        checkSubmitRequirements(cd);
+      } catch (ResourceConflictException e) {
+        // ResourceConflictException is thrown means submit requirement is not fulfilled.
+        problems.add(
+            ChangeProblem.create(
+                cd.getId(),
+                triggeringChangeId.equals(cd.getId())
+                    ? String.format("Change %s is not ready: %s", cd.getId(), e.getMessage())
+                    : String.format(
+                        "Change %s must be submitted with change %s but %s is not ready: %s",
+                        triggeringChangeId, cd.getId(), cd.getId(), e.getMessage())));
+      }
+    } catch (StorageException | PermissionBackendException e) {
+      String msg = "Error checking submit rules for change";
+      logger.atWarning().withCause(e).log("%s %s", msg, triggeringChangeId);
+      problems.add(ChangeProblem.create(cd.getId(), msg));
+    }
+  }
+
+  /**
+   * Returns a list of messages describing what prevents the current change from being submitted.
+   *
+   * <p>The method checks all changes in the {@code cs} for their current status, submitability and
+   * permissions and returns one change per change in the set that can't be submitted.
+   *
+   * @param triggeringChange Change for which merge/submit action was initiated
+   * @param cs Set of changes that the current change depends on
+   * @param allowMerged True if change being already merged is not a problem to be reported
+   * @param permissionBackend Interface for checking user ACLs
+   * @param caller the identity of the user that is recorded as the one performing the merge. In
+   *     case of impersonation {@code caller.getRealUser()} contains the user triggering the merge.
+   * @return List of problems preventing merge
+   */
+  public static ImmutableList<ChangeProblem> checkCommonSubmitProblems(
+      Change triggeringChange,
+      ChangeSet cs,
+      boolean allowMerged,
+      PermissionBackend permissionBackend,
+      CurrentUser caller) {
+    ImmutableList.Builder<ChangeProblem> problems = ImmutableList.builder();
+    if (cs.furtherHiddenChanges()) {
+      logger.atFine().log(
+          "Change %d cannot be submitted by user %s because it depends on hidden changes: %s",
+          triggeringChange.getId().get(),
+          caller.getRealUser().getLoggableName(),
+          cs.nonVisibleChanges());
+      problems.add(
+          ChangeProblem.create(
+              triggeringChange.getId(),
+              String.format(
+                  "Change %d depends on other hidden changes", triggeringChange.getId().get())));
+    }
+    for (ChangeData cd : cs.changes()) {
+      addProblemForChange(
+          triggeringChange.getId(), cd, allowMerged, permissionBackend, caller, problems);
+    }
+    return problems.build();
+  }
+
+  private void checkSubmitRulesAndState(Change triggeringChange, ChangeSet cs, boolean allowMerged)
+      throws ResourceConflictException {
+    checkCommonSubmitProblems(triggeringChange, cs, allowMerged, permissionBackend, caller).stream()
+        .forEach(cp -> commitStatus.problem(cp.getChangeId(), cp.getProblem()));
     commitStatus.maybeFailVerbose();
+    mergeMetrics.countChangesThatWereSubmittedWithRebaserApproval(cs);
   }
 
   private void bypassSubmitRulesAndRequirements(ChangeSet cs) {
@@ -492,21 +659,70 @@ public class MergeOp implements AutoCloseable {
    * integration strategy.
    *
    * @param change the change to be merged.
-   * @param caller the identity of the caller
-   * @param checkSubmitRules whether the prolog submit rules should be evaluated
+   * @param caller the identity of the user that is recorded as the one performing the merge. In
+   *     case of impersonation {@code caller.getRealUser()} contains the user triggering the merge.
+   * @param checkSubmitRules whether submit rules and submit requirements should be evaluated.
    * @param submitInput parameters regarding the merge
+   * @param dryrun if true, this includes calculating all projects affected by the submission,
+   *     checking for possible submission problems (ACLs, merge conflicts, etc) but not the merge
+   *     itself.
    * @throws RestApiException if an error occurred.
    * @throws PermissionBackendException if permissions can't be checked
    * @throws IOException an error occurred reading from NoteDb.
-   * @return the merged change
+   * @return the merged change or null if the change failed the preMergeChecker
    */
+  // TODO: dryrun was introduced in https://gerrit-review.git.corp.google.com/c/gerrit/+/82911 and
+  // has never been used. Consider removing it. Since it was never used  and this file has been
+  // through many refactorings since, it's likely that the implementation is broken.
   @CanIgnoreReturnValue
+  @Nullable
   public Change merge(
       Change change,
       IdentifiedUser caller,
       boolean checkSubmitRules,
       SubmitInput submitInput,
       boolean dryrun)
+      throws ConfigInvalidException,
+          PermissionBackendException,
+          UpdateException,
+          IOException,
+          RestApiException {
+    return merge(change, caller, checkSubmitRules, submitInput, dryrun, (cs) -> Optional.empty());
+  }
+
+  /**
+   * Merges the given change.
+   *
+   * <p>Depending on the server configuration, more changes may be affected, e.g. by submission of a
+   * topic or via superproject subscriptions. All affected changes are integrated using the projects
+   * integration strategy.
+   *
+   * @param change the change to be merged.
+   * @param caller the identity of the user that is recorded as the one performing the merge. In
+   *     case of impersonation {@code caller.getRealUser()} contains the user triggering the merge.
+   * @param checkSubmitRules whether submit rules and submit requirements should be evaluated.
+   * @param submitInput parameters regarding the merge
+   * @param dryrun if true, this includes calculating all projects affected by the submission,
+   *     checking for possible submission problems (ACLs, merge conflicts, etc) but not the merge
+   *     itself.
+   * @param preMergeChecker function for checking if the merge should continue or not
+   * @throws RestApiException if an error occurred.
+   * @throws PermissionBackendException if permissions can't be checked
+   * @throws IOException an error occurred reading from NoteDb.
+   * @return the merged change or null if the change failed the preMergeChecker
+   */
+  // TODO: dryrun was introduced in https://gerrit-review.git.corp.google.com/c/gerrit/+/82911 and
+  // has never been used. Consider removing it. Since it was never used  and this file has been
+  // through many refactorings since, it's likely that the implementation is broken.
+  @CanIgnoreReturnValue
+  @Nullable
+  public Change merge(
+      Change change,
+      IdentifiedUser caller,
+      boolean checkSubmitRules,
+      SubmitInput submitInput,
+      boolean dryrun,
+      PreMergeChecker preMergeChecker)
       throws RestApiException,
           UpdateException,
           IOException,
@@ -530,6 +746,10 @@ public class MergeOp implements AutoCloseable {
       try {
 
         ChangeSet indexBackedChangeSet = completeMergeChangeSetWithRetry(change);
+
+        if (preMergeChecker.check(indexBackedChangeSet).isPresent()) {
+          return null;
+        }
 
         if (indexBackedChangeSet.furtherHiddenChanges()) {
           throw new AuthException(
@@ -585,7 +805,7 @@ public class MergeOp implements AutoCloseable {
                       this.commitStatus = new CommitStatus(filteredNoteDbChangeSet, isRetry);
                       if (checkSubmitRules) {
                         logger.atFine().log("Checking submit rules and state");
-                        checkSubmitRulesAndState(filteredNoteDbChangeSet, isRetry);
+                        checkSubmitRulesAndState(change, filteredNoteDbChangeSet, isRetry);
                       } else {
                         logger.atFine().log("Bypassing submit rules");
                         bypassSubmitRulesAndRequirements(filteredNoteDbChangeSet);
@@ -636,7 +856,10 @@ public class MergeOp implements AutoCloseable {
                     Change reloadChange = change;
                     ChangeSet indexBackedMergeChangeSet =
                         mergeSuperSet.completeChangeSet(
-                            reloadChange, caller, /* includingTopicClosure= */ false, backfill);
+                            reloadChange,
+                            caller.getRealUser(),
+                            /* includingTopicClosure= */ false,
+                            backfill);
                     if (!indexBackedMergeChangeSet.ids().contains(reloadChange.getId())) {
                       // indexBackedChangeSet contains only open changes, if the change is missing
                       // in this set it might be that the change was concurrently submitted in the

@@ -3,6 +3,7 @@
  * Copyright 2017 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import * as sinon from 'sinon';
 import '../../../test/common-test-setup';
 import './gr-permission';
 import {GrPermission} from './gr-permission';
@@ -182,7 +183,11 @@ suite('gr-permission tests', () => {
       );
       assert.equal(
         element.computeGroupName(groups, 'bcd234' as GitRef),
-        'bcd234' as GroupName
+        'bcd234 (Group is unavailable)' as GroupName
+      );
+      assert.equal(
+        element.computeGroupName(groups, 'cde345' as GitRef),
+        'cde345 (Group is unavailable)' as GroupName
       );
     });
 

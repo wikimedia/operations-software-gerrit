@@ -3,6 +3,7 @@
  * Copyright 2019 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import * as sinon from 'sinon';
 import '../../../test/common-test-setup';
 import './gr-apply-fix-dialog';
 import {
@@ -162,25 +163,7 @@ suite('gr-apply-fix-dialog tests', () => {
       await open(TWO_FIXES);
       const button = getConfirmButton();
       assert.isTrue(button.hasAttribute('disabled'));
-      assert.equal(button.getAttribute('title'), '');
-    });
-
-    test('apply fix button is disabled on older patchset', async () => {
-      element.change = element.change = {
-        ...createParsedChange(),
-        revisions: createRevisions(2),
-        current_revision: getCurrentRevision(0),
-      };
-      element.latestPatchNum = element.change.revisions[
-        element.change.current_revision
-      ]._number as PatchSetNumber;
-      await open(TWO_FIXES);
-      const button = getConfirmButton();
-      assert.isTrue(button.hasAttribute('disabled'));
-      assert.equal(
-        button.getAttribute('title'),
-        'You cannot apply this fix because it is from a previous patchset'
-      );
+      assert.equal(button.getAttribute('title'), 'Fix is still loading ...');
     });
   });
 

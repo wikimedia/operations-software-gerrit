@@ -983,6 +983,68 @@ ConfigInfo] entity.
   }
 ----
 
+[[create-config-change]]
+=== Create Config Change for review.
+--
+'PUT /projects/link:#project-name[\{project-name\}]/config:review'
+--
+
+Sets the configuration of a project.
+
+This takes the same input as link:#set-config[Set Config], but creates a pending
+change for review. Like link:#create-change[Create Change], it returns
+a link:#change-info[ChangeInfo] entity describing the resulting change.
+
+.Request
+----
+  PUT /projects/myproject/config:review HTTP/1.0
+  Content-Type: application/json; charset=UTF-8
+
+  {
+    "description": "demo project",
+    "use_contributor_agreements": "FALSE",
+    "use_content_merge": "INHERIT",
+    "use_signed_off_by": "INHERIT",
+    "create_new_change_for_all_not_in_target": "INHERIT",
+    "enable_signed_push": "INHERIT",
+    "require_signed_push": "INHERIT",
+    "reject_implicit_merges": "INHERIT",
+    "require_change_id": "TRUE",
+    "max_object_size_limit": "10m",
+    "submit_type": "REBASE_IF_NECESSARY",
+    "state": "ACTIVE"
+  }
+----
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    "id": "testproj~refs%2Fmeta%2Fconfig~Ieaf185bf90a1fc3b58461e399385e158a20b31a2",
+    "project": "testproj",
+    "branch": "refs/meta/config",
+    "hashtags": [],
+    "change_id": "Ieaf185bf90a1fc3b58461e399385e158a20b31a2",
+    "subject": "Review access change",
+    "status": "NEW",
+    "created": "2017-09-07 14:31:11.852000000",
+    "updated": "2017-09-07 14:31:11.852000000",
+    "submit_type": "CHERRY_PICK",
+    "mergeable": true,
+    "insertions": 2,
+    "deletions": 0,
+    "unresolved_comment_count": 0,
+    "has_review_started": true,
+    "_number": 7,
+    "owner": {
+      "_account_id": 1000000
+    }
+  }
+----
+
 [[run-gc]]
 === Run GC
 --
@@ -2513,12 +2575,12 @@ Sort the returned tags in descending order.
   ]
 ----
 
-SortBy(sortby)::
+SortBy(sort-by)::
 Sort the returned tags by one of the supported sort options: ref (default), creation_time.
 +
 .Request
 ----
-  GET /projects/work%2Fmy-project/tags?sortby=creation_time HTTP/1.0
+  GET /projects/work%2Fmy-project/tags?sort-by=creation_time HTTP/1.0
 ----
 +
 .Response
@@ -3585,6 +3647,82 @@ If the label updates were done successfully the response is "`200 OK`".
   HTTP/1.1 200 OK
 ----
 
+[[create-labels-change]]
+=== Create Labels Change for review.
+--
+'POST /projects/link:#project-name[\{project-name\}]/labels:review'
+--
+
+Creates/updates/deletes multiple label definitions in this project at once.
+
+This takes the same input as link:#batch-update-labels[Batch Updates Labels],
+but creates a pending change for review. Like
+link:#create-change[Create Change], it returns a link:#change-info[ChangeInfo]
+entity describing the resulting change.
+
+.Request
+----
+  POST /projects/testproj/config:review HTTP/1.0
+  Content-Type: application/json; charset=UTF-8
+
+  {
+    "commit_message": "Update Labels",
+    "delete": [
+      "Old-Review",
+      "Unused-Review"
+    ],
+    "create": [
+      {
+        "name": "Foo-Review",
+        "values": {
+          " 0": "No score",
+          "-1": "I would prefer this is not submitted as is",
+          "-2": "This shall not be submitted",
+          "+1": "Looks good to me, but someone else must approve",
+          "+2": "Looks good to me, approved"
+      }
+    ],
+    "update:" {
+      "Bar-Review": {
+        "function": "MaxWithBlock"
+      },
+      "Baz-Review": {
+        "copy_condition": "is:MIN"
+      }
+    }
+  }
+----
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    "id": "testproj~refs%2Fmeta%2Fconfig~Ieaf185bf90a1fc3b58461e399385e158a20b31a2",
+    "project": "testproj",
+    "branch": "refs/meta/config",
+    "hashtags": [],
+    "change_id": "Ieaf185bf90a1fc3b58461e399385e158a20b31a2",
+    "subject": "Review access change",
+    "status": "NEW",
+    "created": "2017-09-07 14:31:11.852000000",
+    "updated": "2017-09-07 14:31:11.852000000",
+    "submit_type": "CHERRY_PICK",
+    "mergeable": true,
+    "insertions": 2,
+    "deletions": 0,
+    "unresolved_comment_count": 0,
+    "has_review_started": true,
+    "_number": 7,
+    "owner": {
+      "_account_id": 1000000
+    }
+  }
+----
+
+
 [[submit-requirement-endpoints]]
 == Submit Requirement Endpoints
 
@@ -3776,6 +3914,103 @@ If a submit requirement was deleted the response is "`204 No Content`".
 .Response
 ----
   HTTP/1.1 204 No Content
+----
+
+[[batch-update-submit-requirements]]
+=== Batch Update Submit Requirements
+--
+'POST /projects/link:#project-name[\{project-name\}]/submit_requirements/'
+--
+
+Creates/updates/deletes multiple submit requirements definitions in this project at once.
+
+The calling user must have write access to the `refs/meta/config` branch of the
+project.
+
+The updates must be specified in the request body as
+link:#batch-submit-requirement-input[BatchSubmitRequirementInput] entity.
+
+The updates are processed in the following order:
+
+1. submit requirements deletions
+2. submit requirements creations
+3. submit requirements updates
+
+.Request
+----
+  POST /projects/My-Project/submit_requirements/ HTTP/1.0
+  Content-Type: application/json; charset=UTF-8
+
+  {
+    "commit_message": "Update Submit Requirements",
+    "delete": [
+      "Old-Review",
+      "Unused-Review"
+    ]
+  }
+----
+
+If the submit requirements updates were done successfully the response is "`200 OK`".
+
+.Response
+----
+  HTTP/1.1 200 OK
+----
+
+[[create-submit-requirements-change]]
+=== Create Submit Requirements Change for review.
+--
+'POST /projects/link:#project-name[\{project-name\}]/submit_requirements:review'
+--
+
+Creates/updates/deletes multiple submit requirements definitions in this project at once.
+
+This takes the same input as link:#batch-update-submit-requirements[Batch Update Submit Requirements],
+but creates a pending change for review. Like
+link:#create-change[Create Change], it returns a link:#change-info[ChangeInfo]
+entity describing the resulting change.
+
+.Request
+----
+  POST /projects/testproj/submit_requirements:review HTTP/1.0
+  Content-Type: application/json; charset=UTF-8
+
+  {
+    "commit_message": "Update Submit Requirements",
+    "delete": [
+      "Old-Review",
+      "Unused-Review"
+    ]
+  }
+----
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  {
+    "id": "testproj~refs%2Fmeta%2Fconfig~Ieaf185bf90a1fc3b58461e399385e158a20b31a2",
+    "project": "testproj",
+    "branch": "refs/meta/config",
+    "hashtags": [],
+    "change_id": "Ieaf185bf90a1fc3b58461e399385e158a20b31a2",
+    "subject": "Review access change",
+    "status": "NEW",
+    "created": "2017-09-07 14:31:11.852000000",
+    "updated": "2017-09-07 14:31:11.852000000",
+    "submit_type": "CHERRY_PICK",
+    "mergeable": true,
+    "insertions": 2,
+    "deletions": 0,
+    "unresolved_comment_count": 0,
+    "has_review_started": true,
+    "_number": 7,
+    "owner": {
+      "_account_id": 1000000
+    }
+  }
 ----
 
 [[ids]]
@@ -4170,11 +4405,13 @@ of parameter names to values.
 Whether empty commits should be rejected when a change is merged.
 Can be `TRUE`, `FALSE` or `INHERIT`. +
 If not set, this setting is not updated.
-|commentlinks                              |optional|
+|`commentlinks`                              |optional|
 Map of commentlink names to link:#commentlink-input[CommentLinkInput]
 entities to add or update on the project. If the given commentlink
 already exists, it will be updated with the given values, otherwise
 it will be created. If the value is null, that entry is deleted.
+|`message`           |optional|
+A commit message for this change.
 |======================================================
 
 [[config-parameter-info]]
@@ -4518,6 +4755,27 @@ describe labels that should be created.
 |`update`        |optional|
 Map of label names to link:#label-definition-input[LabelDefinitionInput]
 entities that describe the updates that should be done for the labels.
+|=============================
+
+[[batch-submit-requirement-input]]
+=== BatchSubmitRequirementInput
+The `BatchSubmitRequirementInput` entity contains information for batch updating submit requirements
+definitions in a project.
+
+[options="header",cols="1,^2,4"]
+|=============================
+|Field Name      ||Description
+|`commit_message`|optional|
+Message that should be used to commit the submit requirements updates in the
+`project.config` file to the `refs/meta/config` branch.
+|`delete`        |optional|
+List of submit requirements that should be deleted.
+|`create`        |optional|
+List of link:#submit-requirement-input[SubmitRequirementInput] entities that
+describe submit requirements that should be created.
+|`update`        |optional|
+Map of label names to link:#submit-requirement-input[SubmitRequirementInput]
+entities that describe the updates that should be done for the submit requirements.
 |=============================
 
 [[project-access-input]]

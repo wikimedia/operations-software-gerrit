@@ -18,7 +18,6 @@ package com.google.gerrit.httpd.restapi;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
-import static com.google.common.flogger.LazyArgs.lazy;
 import static com.google.common.net.HttpHeaders.CONTENT_TYPE;
 import static java.math.RoundingMode.CEILING;
 import static java.nio.charset.StandardCharsets.ISO_8859_1;
@@ -40,14 +39,12 @@ import static javax.servlet.http.HttpServletResponse.SC_REQUEST_TIMEOUT;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
-import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.flogger.FluentLogger;
-import com.google.common.io.BaseEncoding;
 import com.google.common.io.CountingOutputStream;
 import com.google.common.math.IntMath;
 import com.google.common.net.HttpHeaders;
@@ -65,7 +62,6 @@ import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.BinaryResult;
 import com.google.gerrit.extensions.restapi.CacheControl;
 import com.google.gerrit.extensions.restapi.DefaultInput;
-import com.google.gerrit.extensions.restapi.ETagView;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.NeedsParams;
@@ -92,6 +88,7 @@ import com.google.gerrit.httpd.WebSession;
 import com.google.gerrit.httpd.restapi.ParameterParser.QueryParams;
 import com.google.gerrit.json.OutputFormat;
 import com.google.gerrit.server.AccessPath;
+import com.google.gerrit.server.AclInfoController;
 import com.google.gerrit.server.AnonymousUser;
 import com.google.gerrit.server.CancellationMetrics;
 import com.google.gerrit.server.CurrentUser;
@@ -110,12 +107,10 @@ import com.google.gerrit.server.cancellation.RequestStateProvider;
 import com.google.gerrit.server.change.ChangeFinder;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.group.GroupAuditService;
-import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.PerformanceLogContext;
 import com.google.gerrit.server.logging.PerformanceLogger;
 import com.google.gerrit.server.logging.RequestId;
 import com.google.gerrit.server.logging.TraceContext;
-import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
@@ -147,9 +142,9 @@ import com.google.inject.Injector;
 import com.google.inject.Provider;
 import com.google.inject.TypeLiteral;
 import com.google.inject.util.Providers;
+import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
-import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
 import java.io.FilterOutputStream;
 import java.io.IOException;
@@ -164,6 +159,7 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.sql.Timestamp;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
@@ -214,6 +210,7 @@ public class RestApiServlet extends HttpServlet {
   private static final int HEAP_EST_SIZE = 10 * 8 * 1024; // Presize 10 blocks.
   private static final String PLAIN_TEXT = "text/plain";
   private static final Pattern TYPE_SPLIT_PATTERN = Pattern.compile("[ ,;][ ,;]*");
+  private static final long ONE_KB = 1024;
 
   /**
    * Garbage prefix inserted before JSON output to prevent XSSI.
@@ -248,6 +245,7 @@ public class RestApiServlet extends HttpServlet {
     final DynamicMap<DynamicOptions.DynamicBean> dynamicBeans;
     final DeadlineChecker.Factory deadlineCheckerFactory;
     final CancellationMetrics cancellationMetrics;
+    final AclInfoController aclInfoController;
 
     @Inject
     Globals(
@@ -267,7 +265,8 @@ public class RestApiServlet extends HttpServlet {
         Injector injector,
         DynamicMap<DynamicOptions.DynamicBean> dynamicBeans,
         DeadlineChecker.Factory deadlineCheckerFactory,
-        CancellationMetrics cancellationMetrics) {
+        CancellationMetrics cancellationMetrics,
+        AclInfoController aclInfoController) {
       this.currentUser = currentUser;
       this.webSession = webSession;
       this.paramParser = paramParser;
@@ -286,6 +285,7 @@ public class RestApiServlet extends HttpServlet {
       this.dynamicBeans = dynamicBeans;
       this.deadlineCheckerFactory = deadlineCheckerFactory;
       this.cancellationMetrics = cancellationMetrics;
+      this.aclInfoController = aclInfoController;
     }
   }
 
@@ -334,6 +334,8 @@ public class RestApiServlet extends HttpServlet {
         List<IdString> path = splitPath(req);
         RequestInfo requestInfo = createRequestInfo(traceContext, req, requestUri, path);
         globals.requestListeners.runEach(l -> l.onRequest(requestInfo));
+
+        globals.aclInfoController.enableAclLoggingIfUserCanViewAccess(traceContext);
 
         // It's important that the PerformanceLogContext is closed before the response is sent to
         // the client. Only this way it is ensured that the invocation of the PerformanceLogger
@@ -499,7 +501,7 @@ public class RestApiServlet extends HttpServlet {
             checkRequiresCapability(viewData);
           }
 
-          if (notModified(req, traceContext, viewData, rsrc)) {
+          if (notModified(req, rsrc)) {
             logger.atFinest().log("REST call succeeded: %d", SC_NOT_MODIFIED);
             res.sendError(SC_NOT_MODIFIED);
             return;
@@ -523,7 +525,6 @@ public class RestApiServlet extends HttpServlet {
                       (RestReadView<RestResource>) viewData.view,
                       rsrc);
             } else if (viewData.view instanceof RestModifyView<?, ?>) {
-              @SuppressWarnings("unchecked")
               RestModifyView<RestResource, Object> m =
                   (RestModifyView<RestResource, Object>) viewData.view;
 
@@ -539,7 +540,6 @@ public class RestApiServlet extends HttpServlet {
                 }
               }
             } else if (viewData.view instanceof RestCollectionCreateView<?, ?, ?>) {
-              @SuppressWarnings("unchecked")
               RestCollectionCreateView<RestResource, RestResource, Object> m =
                   (RestCollectionCreateView<RestResource, RestResource, Object>) viewData.view;
 
@@ -554,7 +554,6 @@ public class RestApiServlet extends HttpServlet {
                 }
               }
             } else if (viewData.view instanceof RestCollectionDeleteMissingView<?, ?, ?>) {
-              @SuppressWarnings("unchecked")
               RestCollectionDeleteMissingView<RestResource, RestResource, Object> m =
                   (RestCollectionDeleteMissingView<RestResource, RestResource, Object>)
                       viewData.view;
@@ -570,7 +569,6 @@ public class RestApiServlet extends HttpServlet {
                 }
               }
             } else if (viewData.view instanceof RestCollectionModifyView<?, ?, ?>) {
-              @SuppressWarnings("unchecked")
               RestCollectionModifyView<RestResource, RestResource, Object> m =
                   (RestCollectionModifyView<RestResource, RestResource, Object>) viewData.view;
 
@@ -609,7 +607,7 @@ public class RestApiServlet extends HttpServlet {
 
             statusCode = response.statusCode();
             response.headers().forEach((k, v) -> res.setHeader(k, v));
-            configureCaching(req, res, traceContext, rsrc, viewData, response.caching());
+            configureCaching(req, res, rsrc, response.caching());
             res.setStatus(statusCode);
             logger.atFinest().log("REST call succeeded: %d", statusCode);
           }
@@ -636,9 +634,16 @@ public class RestApiServlet extends HttpServlet {
                 req, res, statusCode = SC_BAD_REQUEST, messageOr(e, "Bad Request"), e.caching(), e);
       } catch (AuthException e) {
         cause = Optional.of(e);
+
+        StringBuilder messageBuilder = new StringBuilder(messageOr(e, "Forbidden"));
+        globals
+            .aclInfoController
+            .getAclInfoMessage()
+            .ifPresent(aclInfo -> messageBuilder.append("\n\n").append(aclInfo));
+
         responseBytes =
             replyError(
-                req, res, statusCode = SC_FORBIDDEN, messageOr(e, "Forbidden"), e.caching(), e);
+                req, res, statusCode = SC_FORBIDDEN, messageBuilder.toString(), e.caching(), e);
       } catch (AmbiguousViewException e) {
         cause = Optional.of(e);
         responseBytes =
@@ -800,47 +805,6 @@ public class RestApiServlet extends HttpServlet {
       response.addHeader(X_GERRIT_UPDATED_REF, refUpdateFormat);
     }
     globals.webSession.get().resetRefUpdatedEvents();
-  }
-
-  private String getEtagWithRetry(
-      HttpServletRequest req,
-      TraceContext traceContext,
-      ViewData viewData,
-      ETagView<RestResource> view,
-      RestResource rsrc) {
-    try (TraceTimer ignored =
-        TraceContext.newTimer(
-            "RestApiServlet#getEtagWithRetry:view",
-            Metadata.builder().restViewName(getViewName(viewData)).build())) {
-      return invokeRestEndpointWithRetry(
-          req,
-          traceContext,
-          getViewName(viewData) + "#etag",
-          ActionType.REST_READ_REQUEST,
-          () -> view.getETag(rsrc));
-    } catch (Exception e) {
-      Throwables.throwIfUnchecked(e);
-      throw new IllegalStateException("Failed to get ETag for view", e);
-    }
-  }
-
-  @Nullable
-  private String getEtagWithRetry(
-      HttpServletRequest req, TraceContext traceContext, RestResource.HasETag rsrc) {
-    try (TraceTimer ignored =
-        TraceContext.newTimer(
-            "RestApiServlet#getEtagWithRetry:resource",
-            Metadata.builder().restViewName(rsrc.getClass().getSimpleName()).build())) {
-      return invokeRestEndpointWithRetry(
-          req,
-          traceContext,
-          rsrc.getClass().getSimpleName() + "#etag",
-          ActionType.REST_READ_REQUEST,
-          () -> rsrc.getETag());
-    } catch (Exception e) {
-      Throwables.throwIfUnchecked(e);
-      throw new IllegalStateException("Failed to get ETag for resource", e);
-    }
   }
 
   private RestResource parseResourceWithRetry(
@@ -1014,28 +978,9 @@ public class RestApiServlet extends HttpServlet {
     return defaultMessage;
   }
 
-  private boolean notModified(
-      HttpServletRequest req, TraceContext traceContext, ViewData viewData, RestResource rsrc) {
+  private boolean notModified(HttpServletRequest req, RestResource rsrc) {
     if (!isRead(req)) {
       return false;
-    }
-
-    RestView<RestResource> view = viewData.view;
-    if (view instanceof ETagView) {
-      String have = req.getHeader(HttpHeaders.IF_NONE_MATCH);
-      if (have != null) {
-        String eTag =
-            getEtagWithRetry(req, traceContext, viewData, (ETagView<RestResource>) view, rsrc);
-        return have.equals(eTag);
-      }
-    }
-
-    if (rsrc instanceof RestResource.HasETag) {
-      String have = req.getHeader(HttpHeaders.IF_NONE_MATCH);
-      if (!Strings.isNullOrEmpty(have)) {
-        String eTag = getEtagWithRetry(req, traceContext, (RestResource.HasETag) rsrc);
-        return have.equals(eTag);
-      }
     }
 
     if (rsrc instanceof RestResource.HasLastModified) {
@@ -1049,12 +994,7 @@ public class RestApiServlet extends HttpServlet {
   }
 
   private <R extends RestResource> void configureCaching(
-      HttpServletRequest req,
-      HttpServletResponse res,
-      TraceContext traceContext,
-      R rsrc,
-      ViewData viewData,
-      CacheControl cacheControl) {
+      HttpServletRequest req, HttpServletResponse res, R rsrc, CacheControl cacheControl) {
     setCacheHeaders(req, res, cacheControl);
     if (isRead(req)) {
       switch (cacheControl.getType()) {
@@ -1062,10 +1002,10 @@ public class RestApiServlet extends HttpServlet {
         default:
           break;
         case PRIVATE:
-          addResourceStateHeaders(req, res, traceContext, viewData, rsrc);
+          addResourceStateHeaders(res, rsrc);
           break;
         case PUBLIC:
-          addResourceStateHeaders(req, res, traceContext, viewData, rsrc);
+          addResourceStateHeaders(res, rsrc);
           break;
       }
     }
@@ -1097,23 +1037,7 @@ public class RestApiServlet extends HttpServlet {
     }
   }
 
-  private void addResourceStateHeaders(
-      HttpServletRequest req,
-      HttpServletResponse res,
-      TraceContext traceContext,
-      ViewData viewData,
-      RestResource rsrc) {
-    RestView<RestResource> view = viewData.view;
-    if (view instanceof ETagView) {
-      String eTag =
-          getEtagWithRetry(req, traceContext, viewData, (ETagView<RestResource>) view, rsrc);
-      res.setHeader(HttpHeaders.ETAG, eTag);
-    } else if (rsrc instanceof RestResource.HasETag) {
-      String eTag = getEtagWithRetry(req, traceContext, (RestResource.HasETag) rsrc);
-      if (!Strings.isNullOrEmpty(eTag)) {
-        res.setHeader(HttpHeaders.ETAG, eTag);
-      }
-    }
+  private void addResourceStateHeaders(HttpServletResponse res, RestResource rsrc) {
     if (rsrc instanceof RestResource.HasLastModified) {
       res.setDateHeader(
           HttpHeaders.LAST_MODIFIED,
@@ -1349,22 +1273,12 @@ public class RestApiServlet extends HttpServlet {
     w.write('\n');
     w.flush();
 
-    if (allowTracing) {
-      logger.atFinest().log(
-          "JSON response body:\n%s",
-          lazy(
-              () -> {
-                try {
-                  ByteArrayOutputStream debugOut = new ByteArrayOutputStream();
-                  buf.writeTo(debugOut, null);
-                  return debugOut.toString(UTF_8.name());
-                } catch (IOException e) {
-                  return "<JSON formatting failed>";
-                }
-              }));
+    BinaryResult binaryResult = asBinaryResult(buf);
+    if (allowTracing && binaryResult.getContentLength() <= ONE_KB) {
+      logger.atFinest().log("JSON response body:\n%s", binaryResult.asString());
     }
     return replyBinaryResult(
-        req, res, asBinaryResult(buf).setContentType(JSON_TYPE).setCharacterEncoding(UTF_8));
+        req, res, binaryResult.setContentType(JSON_TYPE).setCharacterEncoding(UTF_8));
   }
 
   private static Gson newGson(ListMultimap<String, String> config) {
@@ -1489,16 +1403,7 @@ public class RestApiServlet extends HttpServlet {
           new BinaryResult() {
             @Override
             public void writeTo(OutputStream out) throws IOException {
-              try (OutputStreamWriter w =
-                      new OutputStreamWriter(
-                          new FilterOutputStream(out) {
-                            @Override
-                            public void close() {
-                              // Do not close out, but only w and e.
-                            }
-                          },
-                          ISO_8859_1);
-                  OutputStream e = BaseEncoding.base64().encodingStream(w)) {
+              try (OutputStream e = base64EncodingStream(out)) {
                 src.writeTo(e);
               }
             }
@@ -1752,8 +1657,6 @@ public class RestApiServlet extends HttpServlet {
             clientProvidedDeadline ->
                 logger.atFine().log("%s = %s", X_GERRIT_DEADLINE, clientProvidedDeadline));
     logger.atFinest().log("Calling user: %s", globals.currentUser.get().getLoggableName());
-    logger.atFinest().log(
-        "Groups: %s", lazy(() -> globals.currentUser.get().getEffectiveGroups().getKnownGroups()));
   }
 
   private boolean isDelete(HttpServletRequest req) {
@@ -1975,11 +1878,36 @@ public class RestApiServlet extends HttpServlet {
     int maxSize = base64MaxSize(bin.getContentLength());
     int estSize = Math.min(base64MaxSize(HEAP_EST_SIZE), maxSize);
     TemporaryBuffer.Heap buf = heap(estSize, maxSize);
-    try (OutputStream encoded =
-        BaseEncoding.base64().encodingStream(new OutputStreamWriter(buf, ISO_8859_1))) {
+    try (OutputStream encoded = base64EncodingStream(buf)) {
       bin.writeTo(encoded);
     }
     return asBinaryResult(buf);
+  }
+
+  /**
+   * Returns a stream that writes the base64 encoding of its input to {@code out}.
+   *
+   * <p>Closing the returned stream writes the final padding and flushes {@code out}, but does not
+   * close it.
+   *
+   * <p>This deliberately does not use Guava's {@code BaseEncoding#encodingStream(Writer)}: that
+   * writes every encoded character individually to the {@link Writer}, and an {@link
+   * OutputStreamWriter} allocates a new buffer for each of those writes.
+   */
+  private static OutputStream base64EncodingStream(OutputStream out) {
+    OutputStream nonClosing =
+        new FilterOutputStream(out) {
+          @Override
+          public void write(byte[] b, int off, int len) throws IOException {
+            out.write(b, off, len);
+          }
+
+          @Override
+          public void close() throws IOException {
+            flush();
+          }
+        };
+    return new BufferedOutputStream(Base64.getEncoder().wrap(nonClosing));
   }
 
   private static BinaryResult compress(BinaryResult bin) throws IOException {

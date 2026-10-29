@@ -22,7 +22,6 @@ set -eu
 VERSION=${1:-1.24.0}
 
 
-TAG_PREFIX=google-java-format-
 
 case "$VERSION" in
 1.7)

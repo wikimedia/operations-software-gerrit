@@ -19,6 +19,7 @@ import com.google.gerrit.entities.SubmitRequirement;
 import com.google.gerrit.extensions.api.changes.ActionVisitor;
 import com.google.gerrit.extensions.config.CapabilityDefinition;
 import com.google.gerrit.extensions.config.DownloadScheme;
+import com.google.gerrit.extensions.config.ExternalIncludedIn;
 import com.google.gerrit.extensions.config.PluginProjectPermissionDefinition;
 import com.google.gerrit.extensions.events.AccountActivationListener;
 import com.google.gerrit.extensions.events.AccountIndexedListener;
@@ -44,8 +45,9 @@ import com.google.gerrit.extensions.webui.FileWebLink;
 import com.google.gerrit.extensions.webui.PatchSetWebLink;
 import com.google.gerrit.extensions.webui.ResolveConflictsWebLink;
 import com.google.gerrit.server.ExceptionHook;
+import com.google.gerrit.server.ServerStateProvider;
+import com.google.gerrit.server.account.AccountStateProvider;
 import com.google.gerrit.server.account.GroupBackend;
-import com.google.gerrit.server.change.ChangeETagComputation;
 import com.google.gerrit.server.change.FilterIncludedIn;
 import com.google.gerrit.server.change.ReviewerSuggestion;
 import com.google.gerrit.server.config.ProjectConfigEntry;
@@ -81,7 +83,6 @@ public class ExtensionRegistry {
   private final DynamicSet<SubmitRule> submitRules;
   private final DynamicSet<SubmitRequirement> submitRequirements;
   private final DynamicSet<ChangeMessageModifier> changeMessageModifiers;
-  private final DynamicSet<ChangeETagComputation> changeETagComputations;
   private final DynamicSet<ActionVisitor> actionVisitors;
   private final DynamicMap<DownloadScheme> downloadSchemes;
   private final DynamicSet<RefOperationValidationListener> refOperationValidationListeners;
@@ -90,6 +91,7 @@ public class ExtensionRegistry {
   private final DynamicSet<GitBatchRefUpdateListener> batchRefUpdateListeners;
   private final DynamicSet<FileHistoryWebLink> fileHistoryWebLinks;
   private final DynamicSet<FilterIncludedIn> filterIncludedIns;
+  private final DynamicSet<ExternalIncludedIn> externalIncludedIns;
   private final DynamicSet<PatchSetWebLink> patchSetWebLinks;
   private final DynamicSet<ResolveConflictsWebLink> resolveConflictsWebLinks;
   private final DynamicSet<EditWebLink> editWebLinks;
@@ -108,6 +110,8 @@ public class ExtensionRegistry {
   private final DynamicSet<OnPostReview> onPostReviews;
   private final DynamicSet<ReviewerAddedListener> reviewerAddedListeners;
   private final DynamicSet<ReviewerDeletedListener> reviewerDeletedListeners;
+  private final DynamicSet<ServerStateProvider> serverStateProviders;
+  private final DynamicSet<AccountStateProvider> accountStateProviders;
   private final DynamicSet<AttentionSetListener> attentionSetListeners;
 
   private final DynamicMap<ChangeHasOperandFactory> hasOperands;
@@ -128,7 +132,6 @@ public class ExtensionRegistry {
       DynamicSet<SubmitRule> submitRules,
       DynamicSet<SubmitRequirement> submitRequirements,
       DynamicSet<ChangeMessageModifier> changeMessageModifiers,
-      DynamicSet<ChangeETagComputation> changeETagComputations,
       DynamicSet<ActionVisitor> actionVisitors,
       DynamicMap<DownloadScheme> downloadSchemes,
       DynamicSet<RefOperationValidationListener> refOperationValidationListeners,
@@ -137,6 +140,7 @@ public class ExtensionRegistry {
       DynamicSet<GitBatchRefUpdateListener> batchRefUpdateListeners,
       DynamicSet<FileHistoryWebLink> fileHistoryWebLinks,
       DynamicSet<FilterIncludedIn> filterIncludedIns,
+      DynamicSet<ExternalIncludedIn> externalIncludedIns,
       DynamicSet<PatchSetWebLink> patchSetWebLinks,
       DynamicSet<ResolveConflictsWebLink> resolveConflictsWebLinks,
       DynamicSet<EditWebLink> editWebLinks,
@@ -156,6 +160,8 @@ public class ExtensionRegistry {
       DynamicSet<ReviewerDeletedListener> reviewerDeletedListeners,
       DynamicMap<ChangeHasOperandFactory> hasOperands,
       DynamicMap<ChangeIsOperandFactory> isOperands,
+      DynamicSet<ServerStateProvider> serverStateProviders,
+      DynamicSet<AccountStateProvider> accountStateProviders,
       DynamicSet<AttentionSetListener> attentionSetListeners,
       DynamicMap<ReviewerSuggestion> reviewerSuggestions) {
     this.accountIndexedListeners = accountIndexedListeners;
@@ -170,7 +176,6 @@ public class ExtensionRegistry {
     this.submitRules = submitRules;
     this.submitRequirements = submitRequirements;
     this.changeMessageModifiers = changeMessageModifiers;
-    this.changeETagComputations = changeETagComputations;
     this.actionVisitors = actionVisitors;
     this.downloadSchemes = downloadSchemes;
     this.refOperationValidationListeners = refOperationValidationListeners;
@@ -179,6 +184,7 @@ public class ExtensionRegistry {
     this.batchRefUpdateListeners = batchRefUpdateListeners;
     this.fileHistoryWebLinks = fileHistoryWebLinks;
     this.filterIncludedIns = filterIncludedIns;
+    this.externalIncludedIns = externalIncludedIns;
     this.patchSetWebLinks = patchSetWebLinks;
     this.editWebLinks = editWebLinks;
     this.fileWebLinks = fileWebLinks;
@@ -198,6 +204,8 @@ public class ExtensionRegistry {
     this.reviewerDeletedListeners = reviewerDeletedListeners;
     this.hasOperands = hasOperands;
     this.isOperands = isOperands;
+    this.serverStateProviders = serverStateProviders;
+    this.accountStateProviders = accountStateProviders;
     this.attentionSetListeners = attentionSetListeners;
     this.reviewerSuggestions = reviewerSuggestions;
   }
@@ -286,11 +294,6 @@ public class ExtensionRegistry {
     }
 
     @CanIgnoreReturnValue
-    public Registration add(ChangeETagComputation changeETagComputation) {
-      return add(changeETagComputations, changeETagComputation);
-    }
-
-    @CanIgnoreReturnValue
     public Registration add(ActionVisitor actionVisitor) {
       return add(actionVisitors, actionVisitor);
     }
@@ -328,6 +331,11 @@ public class ExtensionRegistry {
     @CanIgnoreReturnValue
     public Registration add(FilterIncludedIn filterIncludedIn) {
       return add(filterIncludedIns, filterIncludedIn);
+    }
+
+    @CanIgnoreReturnValue
+    public Registration add(ExternalIncludedIn externalIncludedIn) {
+      return add(externalIncludedIns, externalIncludedIn);
     }
 
     @CanIgnoreReturnValue
@@ -379,6 +387,16 @@ public class ExtensionRegistry {
     @CanIgnoreReturnValue
     public Registration add(WorkInProgressStateChangedListener workInProgressStateChangedListener) {
       return add(workInProgressStateChangedListeners, workInProgressStateChangedListener);
+    }
+
+    @CanIgnoreReturnValue
+    public Registration add(ServerStateProvider serverStateProvider) {
+      return add(serverStateProviders, serverStateProvider);
+    }
+
+    @CanIgnoreReturnValue
+    public Registration add(AccountStateProvider accountStateProvider) {
+      return add(accountStateProviders, accountStateProvider);
     }
 
     @CanIgnoreReturnValue

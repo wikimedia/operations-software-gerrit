@@ -72,6 +72,9 @@ public abstract class Timer1<F1> implements RegistrationHandle {
    */
   public Context<F1> start(F1 fieldValue) {
     RequestStateContext.abortIfCancelled();
+    if (!suppressLogging) {
+      logger.atFine().log("Starting timer %s (%s = %s)", name, field.name(), fieldValue);
+    }
     return new Context<>(this, fieldValue);
   }
 
@@ -83,7 +86,7 @@ public abstract class Timer1<F1> implements RegistrationHandle {
    * @param unit time unit of the value
    */
   public final void record(F1 fieldValue, long value, TimeUnit unit) {
-    long durationMs = unit.toMillis(value);
+    long durationNanos = unit.toNanos(value);
 
     Metadata.Builder metadataBuilder = Metadata.builder();
     field.metadataMapper().accept(metadataBuilder, fieldValue);
@@ -91,8 +94,10 @@ public abstract class Timer1<F1> implements RegistrationHandle {
 
     if (!suppressLogging) {
       LoggingContext.getInstance()
-          .addPerformanceLogRecord(() -> PerformanceLogRecord.create(name, durationMs, metadata));
-      logger.atFinest().log("%s (%s = %s) took %dms", name, field.name(), fieldValue, durationMs);
+          .addPerformanceLogRecord(
+              () -> PerformanceLogRecord.create(name, durationNanos, metadata));
+      logger.atFinest().log(
+          "%s (%s = %s) took %.2f ms", name, field.name(), fieldValue, durationNanos / 1000000.0);
     }
 
     doRecord(fieldValue, value, unit);

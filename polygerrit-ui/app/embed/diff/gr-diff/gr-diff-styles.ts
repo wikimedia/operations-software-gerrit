@@ -367,10 +367,22 @@ export const grDiffRowStyles = css`
   gr-diff-row td.sign.add.no-intraline-info,
   gr-diff-section tbody.delta.total gr-diff-row td.content.add div.contentText {
     background-color: var(--dark-add-highlight-color);
+    &:has(.is-out-of-focus-range) {
+      background-color: transparent;
+      .intraline {
+        background-color: transparent;
+      }
+    }
   }
   gr-diff-row td.content.add div.contentText,
   gr-diff-row td.sign.add {
     background-color: var(--light-add-highlight-color);
+    &:has(.is-out-of-focus-range) {
+      background-color: transparent;
+      .intraline {
+        background-color: transparent;
+      }
+    }
   }
   /* If there are no intraline info, consider everything changed */
   gr-diff-row td.content.remove div.contentText .intraline,
@@ -382,10 +394,16 @@ export const grDiffRowStyles = css`
     div.contentText,
   gr-diff-row td.sign.remove.no-intraline-info {
     background-color: var(--dark-remove-highlight-color);
+    &:has(.is-out-of-focus-range) {
+      background-color: transparent;
+    }
   }
   gr-diff-row td.content.remove div.contentText,
   gr-diff-row td.sign.remove {
     background-color: var(--light-remove-highlight-color);
+    &:has(.is-out-of-focus-range) {
+      background-color: transparent;
+    }
   }
   gr-diff-element table.responsive gr-diff-row td.content div.contentText {
     white-space: break-spaces;
@@ -670,8 +688,16 @@ export const grDiffSelectionStyles = css`
 
 // Styles related to the <gr-diff-text> component.
 export const grDiffTextStyles = css`
-  gr-diff-text .token-highlight {
+  /* The background color for tokens of the "token-highlight-layer". */
+  gr-diff-text hl.token-highlight {
     background-color: var(--token-highlighting-color, #fffd54);
+  }
+  /* We do not want token highlighting to override the "rangeHighlight"
+    color, so let's make sure that there are no "rangeHighlight" element
+    parents that wrap the "token-highlight" element.
+  */
+  gr-diff-text hl.rangeHighlight hl.token-highlight {
+    background-color: transparent;
   }
   /* Describes two states of semantic tokens: whenever a token has a
      definition that can be navigated to (navigable) and whenever

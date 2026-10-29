@@ -97,10 +97,11 @@ exist in NoteDb under refs/meta/group-names (like normal groups) but predefined
 groups are created on Gerrit site initialization and unique UUIDs are assigned
 to those groups. These UUIDs are different on different Gerrit sites.
 
-Gerrit comes with two predefined groups:
+Gerrit comes with three predefined groups:
 
-* Administrators
-* Service Users
+* link:#administrators[Administrators]
+* link:#service_users[Service Users]
+* link:#blocked_users[Blocked Users]
 
 
 [[administrators]]
@@ -137,6 +138,15 @@ users. This ensures that the interactive users can keep working when
 resources are tight.
 
 Before Gerrit 3.3, the 'Service Users' group was named 'Non-Interactive Users'.
+
+[[blocked_users]]
+=== Blocked Users
+
+This is a predefined group, created on Gerrit site initialization, for which
+the link:#category_read[Read] access right is globally blocked.
+
+link:#administrators[Administrators] can add spammers to this group in order to
+block them from accessing Gerrit so that they cannot post any further spam.
 
 == Account Groups
 
@@ -834,11 +844,16 @@ without having the `Remove Vote` access right assigned).
 
 Users without this access right can still remove their own votes.
 
+Note, removing votes is generally disallowed for merged changes as this could
+remove approvals that were necessary for the submission and it's confusing to
+see a merged change which doesn't have the necessary approvals to fulfill the
+submit requirements.
+
 [[category_remove_reviewer]]
 === Remove Reviewer
 
 This category permits users to remove other users from the list of
-reviewers on a change.
+reviewers on a change, including their votes.
 
 Change owners can always remove reviewers who have given a zero or positive
 score (even without having the `Remove Reviewer` access right assigned).
@@ -848,6 +863,11 @@ without having the `Remove Reviewer` access right assigned).
 
 Users without this access right can only remove themselves from the
 reviewer list on a change.
+
+Note, removing reviewers with non-zero votes is generally disallowed for merged
+changes as this could remove approvals that were necessary for the submission
+and it's confusing to see a merged change which doesn't have the necessary
+approvals to fulfill the submit requirements.
 
 
 [[category_review_labels]]
@@ -897,6 +917,9 @@ This category permits users who have also been granted the `Submit`
 permission to submit changes on behalf of another user, by using the
 `on_behalf_of` field in link:rest-api-changes.html#submit-input[SubmitInput]
 when link:rest-api-changes.html#submit-change[submitting using the REST API].
+
+The user in the `on_behalf_of` field, does not need to have `Submit` permission
+themselves, however they should be able to `read` the changes being submitted.
 
 Note that this permission is named `submitAs` in the `project.config`
 file.
@@ -1541,7 +1564,12 @@ link:cmd-stream-events.html[stream Gerrit events via ssh].
 
 Allow checking access rights for arbitrary (user, project) pairs,
 using the link:rest-api-projects.html#check-access[check.access]
-endpoint
+endpoint.
+
+In addition, when a request fails due to permission errors and the caller has
+this capability, ACL info is returned that contains information about the
+permissions rules that have been checked. This allows the user to understand
+which permissions rule caused request to be rejected.
 
 [[capability_viewAllAccounts]]
 === View All Accounts

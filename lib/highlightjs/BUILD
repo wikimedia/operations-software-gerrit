@@ -12,7 +12,9 @@ rollup_bundle(
     srcs = [
         "@ui_npm//highlight.js",
         "@ui_npm//highlightjs-closure-templates",
+        "@ui_npm//highlightjs-epp",
         "@ui_npm//highlightjs-structured-text",
+        "@ui_npm//highlightjs-vue",
     ],
     config_file = "rollup.config.js",
     entry_point = "index.js",

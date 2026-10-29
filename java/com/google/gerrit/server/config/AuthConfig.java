@@ -62,6 +62,7 @@ public class AuthConfig {
   private final String cookiePath;
   private final String cookieDomain;
   private final boolean cookieSecure;
+  private final boolean cookieHttpOnly;
   private final SignedToken emailReg;
   private final boolean allowRegisterNewEmail;
   private final boolean userNameCaseInsensitive;
@@ -92,6 +93,7 @@ public class AuthConfig {
     cookiePath = cfg.getString("auth", null, "cookiepath");
     cookieDomain = cfg.getString("auth", null, "cookiedomain");
     cookieSecure = cfg.getBoolean("auth", "cookiesecure", false);
+    cookieHttpOnly = cfg.getBoolean("auth", "cookiehttponly", true);
     trustContainerAuth = cfg.getBoolean("auth", "trustContainerAuth", false);
     enableRunAs = cfg.getBoolean("auth", null, "enableRunAs", true);
     gitBasicAuthPolicy = getBasicAuthPolicy(cfg);
@@ -220,6 +222,10 @@ public class AuthConfig {
 
   public boolean getCookieSecure() {
     return cookieSecure;
+  }
+
+  public boolean getCookieHttpOnly() {
+    return cookieHttpOnly;
   }
 
   public int getExternalIdsRefExpirySecs() {

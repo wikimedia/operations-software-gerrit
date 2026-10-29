@@ -152,7 +152,8 @@ As result a link:#server-info[ServerInfo] entity is returned.
     "gerrit": {
       "all_projects": "All-Projects",
       "all_users": "All-Users"
-      "doc_search": true
+      "doc_search": true,
+      "project_state_predicate_enabled": true
     },
     "sshd": {},
     "suggest": {
@@ -162,6 +163,27 @@ As result a link:#server-info[ServerInfo] entity is returned.
       "anonymous_coward_name": "Name of user not set"
     }
   }
+----
+
+[[account-deactivation]]
+=== AccountDeactivation
+--
+'POST /config/server/deactivate.stale.accounts'
+--
+Queues the link:config-gerrit.html#accountDeactivation[account deactivator] task.
+
+.Request
+----
+  POST /config/server/deactivate.stale.accounts HTTP/1.0
+----
+
+.Response
+----
+  HTTP/1.1 202 Accepted
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  "Account deactivator task added to work queue."
 ----
 
 [[check-consistency]]
@@ -1492,8 +1514,9 @@ capability.
       "name": "accounts",
       "versions": {
         "13": {
-          "write": true,
-          "search": true
+          "is_write": true,
+          "is_search": true,
+          "num_docs": 3250
         }
       }
     },
@@ -1501,12 +1524,14 @@ capability.
       "name": "changes",
       "versions": {
         "83": {
-          "write": true,
-          "search": true
+          "is_write": true,
+          "is_search": true,
+          "num_docs": 250000
         },
         "84": {
-          "write": true,
-          "search": false
+          "is_write": true,
+          "is_search": false,
+          "num_docs": 150000
         }
       }
     },
@@ -1514,8 +1539,9 @@ capability.
       "name": "groups",
       "versions": {
         "10": {
-          "write": true,
-          "search": true
+          "is_write": true,
+          "is_search": true,
+          "num_docs": 500
         }
       }
     },
@@ -1523,8 +1549,9 @@ capability.
       "name": "projects",
       "versions": {
         "8": {
-          "write": true,
-          "search": true
+          "is_write": true,
+          "is_search": true,
+          "num_docs": 90
         }
       }
     }
@@ -1554,12 +1581,14 @@ index version is used to search and which versions are written to.
     "name": "changes",
     "versions": {
       "83": {
-        "write": true,
-        "search": true
+        "is_write": true,
+        "is_search": true,
+        "num_docs": 250000
       },
       "84": {
-        "write": true,
-        "search": false
+        "is_write": true,
+        "is_search": false,
+        "num_docs": 150000
       }
     }
   }
@@ -1585,12 +1614,14 @@ Lists versions of an index used by Gerrit.
   )]}'
   {
     "83": {
-      "write": true,
-      "search": true
+      "is_write": true,
+      "is_search": true,
+      "num_docs": 250000
     },
     "84": {
-      "write": true,
-      "search": false
+      "is_write": true,
+      "is_search": false,
+      "num_docs": 150000
     }
   }
 ----
@@ -1614,8 +1645,9 @@ Get info about one version of an index used by Gerrit.
 
   )]}'
   {
-    "write": true,
-    "search": false
+    "is_write": true,
+    "is_search": false,
+    "num_docs": 150000
   }
 ----
 
@@ -1747,6 +1779,33 @@ documents and whether to notifyListeners or not.
   Content-Type: application/json; charset=UTF-8
 
   )]}'
+----
+
+[[cleanup.changes]]
+=== Cleanup of stale changes
+
+This endpoint allows Gerrit administrators to abandon changes older than some given
+time. This allows to run change cleanup manually outside of the configured schedule or
+if change cleanup has been deactivated.
+
+The change cleanup will run asynchronously.
+
+.Request
+----
+  POST /config/server/cleanup.changes HTTP/1.0
+  Content-Type: application/json; charset=UTF-8
+
+  {
+    "after": "3 months",
+    "if_mergeable": true,
+    "message": "Abandoning stale changes."
+  }
+----
+
+.Response
+----
+  HTTP/1.1 202 Accepted
+  Content-Disposition: attachment
 ----
 
 [[experiment-endpoints]]
@@ -2248,6 +2307,8 @@ Custom base URL where Gerrit server documentation is located.
 Gerrit base path even if this value is unset.)
 |`edit_gpg_keys`     |not set if `false`|
 Whether to enable the web UI for editing GPG keys.
+|`project_state_predicate_enabled` ||
+link:config-gerrit.html#gerrit.projectStatePredicateEnabled[Whether the instance supports filtering projects by state].
 |`report_bug_url`    |optional|
 link:config-gerrit.html#gerrit.reportBugUrl[URL to report bugs].
 |`instance_id`       |optional|
@@ -2347,6 +2408,21 @@ The maximal memory size. The value is returned with a unit abbreviation
 |`open_files`   |optional|
 The number of open files.
 |============================
+
+[[metadata-info]]
+=== MetadataInfo
+The `MetadataInfo` entity contains metadata provided by plugins.
+
+[options="header",cols="1,^2,4"]
+|==========================
+|Field Name   ||Description
+|`name`       ||The metadata name. Not guaranteed to be unique, e.g. multiple
+metadata entries with the same name may be returned.
+|`value`      |optional|The metadata value.
+|`description`|optional|A description of the metadata.
+|`web_links`  |optional|A list of web links as
+link:rest-api-changes.html#web-link-info[WebLinkInfo] entities.
+|==========================
 
 [[plugin-config-info]]
 === PluginConfigInfo
@@ -2451,6 +2527,9 @@ Located in `/static/gerrit-theme.js` by default.
 The list of submit requirement names that should be displayed as separate
 columns in the dashboard. If empty, the default is to display all submit
 requirements that are applicable for changes appearing in the dashboard.
+|`metadata`                ||
+Optional server metadata as a list of link:#metadata-info[MetadataInfo]
+entities. If and which metadata is provided depends on the Gerrit setup.
 |=======================================
 
 [[snapshot-index-input]]
@@ -2615,6 +2694,22 @@ link:config-gerrit.html#user.anonymousCoward[Username] that is
 displayed in the Gerrit Web UI and in e-mail notifications if the full
 name of the user is not set.
 |====================================
+
+[[clean-changes-input]]
+=== CleanChanges.Input
+The `CleanChanges.Input` entity is being used to configure a run
+of change cleanup.
+
+[options="header",cols="1,^1,5"]
+|=============================
+|Field Name||Description
+|`after`||Abandon all changes that weren't updated in the
+timespan given here
+|`if_mergeable`|default: `false`|Whether to also abandon changes
+that are mergeable
+|`message`|optional|Message to post to changes abandoned by the
+cleanup
+|=============================
 
 
 GERRIT

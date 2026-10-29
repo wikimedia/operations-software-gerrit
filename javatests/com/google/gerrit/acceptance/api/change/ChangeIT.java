@@ -111,7 +111,6 @@ import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.entities.Permission;
 import com.google.gerrit.entities.Project;
 import com.google.gerrit.entities.RefNames;
-import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.annotations.Exports;
 import com.google.gerrit.extensions.api.accounts.DeleteDraftCommentsInput;
 import com.google.gerrit.extensions.api.changes.AttentionSetInput;
@@ -172,8 +171,11 @@ import com.google.gerrit.server.account.AccountControl;
 import com.google.gerrit.server.change.ChangeJson;
 import com.google.gerrit.server.change.ChangeMessages;
 import com.google.gerrit.server.change.ChangeResource;
-import com.google.gerrit.server.change.testing.TestChangeETagComputation;
+import com.google.gerrit.server.events.CommitReceivedEvent;
 import com.google.gerrit.server.git.ChangeMessageModifier;
+import com.google.gerrit.server.git.validators.CommitValidationException;
+import com.google.gerrit.server.git.validators.CommitValidationListener;
+import com.google.gerrit.server.git.validators.CommitValidationMessage;
 import com.google.gerrit.server.group.SystemGroupBackend;
 import com.google.gerrit.server.index.change.ChangeIndex;
 import com.google.gerrit.server.index.change.ChangeIndexCollection;
@@ -193,6 +195,7 @@ import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.update.context.RefUpdateContext;
 import com.google.gerrit.server.util.AccountTemplateUtil;
 import com.google.gerrit.server.util.CommitMessageUtil;
+import com.google.gerrit.server.util.MagicBranch;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.gerrit.testing.FakeEmailSender.Message;
 import com.google.inject.AbstractModule;
@@ -1548,7 +1551,6 @@ public class ChangeIT extends AbstractDaemonTest {
   private void testAddReviewerViaPostReview(AddReviewerCaller addReviewer) throws Exception {
     PushOneCommit.Result r = createChange();
     ChangeResource rsrc = parseResource(r);
-    String oldETag = rsrc.getETag();
     Instant oldTs = rsrc.getChange().getLastUpdatedOn();
 
     addReviewer.call(r.getChangeId(), user.email());
@@ -1572,16 +1574,9 @@ public class ChangeIT extends AbstractDaemonTest {
     // Nobody was added as CC.
     assertThat(c.reviewers.get(CC)).isNull();
 
-    // Ensure ETag and lastUpdatedOn are updated.
+    // Ensure lastUpdatedOn is updated.
     rsrc = parseResource(r);
-    assertThat(rsrc.getETag()).isNotEqualTo(oldETag);
     assertThat(rsrc.getChange().getLastUpdatedOn()).isNotEqualTo(oldTs);
-
-    // Change status of reviewer and ensure ETag is updated.
-    oldETag = rsrc.getETag();
-    accountOperations.account(user.id()).forUpdate().status("new status").update();
-    rsrc = parseResource(r);
-    assertThat(rsrc.getETag()).isNotEqualTo(oldETag);
   }
 
   @Test
@@ -1664,7 +1659,6 @@ public class ChangeIT extends AbstractDaemonTest {
   public void addReviewerThatIsNotPerfectMatch() throws Exception {
     PushOneCommit.Result r = createChange();
     ChangeResource rsrc = parseResource(r);
-    String oldETag = rsrc.getETag();
     Instant oldTs = rsrc.getChange().getLastUpdatedOn();
 
     // create a group named "ab" with one user: testUser
@@ -1702,9 +1696,8 @@ public class ChangeIT extends AbstractDaemonTest {
     assertThat(reviewers).hasSize(1);
     assertThat(reviewers.iterator().next()._accountId).isEqualTo(accountIdOfTestUser.get());
 
-    // Ensure ETag and lastUpdatedOn are updated.
+    // Ensure lastUpdatedOn is updated.
     rsrc = parseResource(r);
-    assertThat(rsrc.getETag()).isNotEqualTo(oldETag);
     assertThat(rsrc.getChange().getLastUpdatedOn()).isNotEqualTo(oldTs);
   }
 
@@ -1713,7 +1706,6 @@ public class ChangeIT extends AbstractDaemonTest {
   public void addGroupAsReviewersWhenANotPerfectMatchedUserExists() throws Exception {
     PushOneCommit.Result r = createChange();
     ChangeResource rsrc = parseResource(r);
-    String oldETag = rsrc.getETag();
     Instant oldTs = rsrc.getChange().getLastUpdatedOn();
 
     // create a group named "kobe" with one user: lee
@@ -1763,9 +1755,8 @@ public class ChangeIT extends AbstractDaemonTest {
     assertThat(reviewers).hasSize(1);
     assertThat(reviewers.iterator().next()._accountId).isEqualTo(accountIdOfGroupUser.get());
 
-    // Ensure ETag and lastUpdatedOn are updated.
+    // Ensure lastUpdatedOn is updated.
     rsrc = parseResource(r);
-    assertThat(rsrc.getETag()).isNotEqualTo(oldETag);
     assertThat(rsrc.getChange().getLastUpdatedOn()).isNotEqualTo(oldTs);
   }
 
@@ -1814,7 +1805,6 @@ public class ChangeIT extends AbstractDaemonTest {
   public void addSelfAsReviewer() throws Exception {
     PushOneCommit.Result r = createChange();
     ChangeResource rsrc = parseResource(r);
-    String oldETag = rsrc.getETag();
     Instant oldTs = rsrc.getChange().getLastUpdatedOn();
 
     ReviewerInput in = new ReviewerInput();
@@ -1832,9 +1822,8 @@ public class ChangeIT extends AbstractDaemonTest {
     assertThat(reviewers).hasSize(1);
     assertThat(reviewers.iterator().next()._accountId).isEqualTo(user.id().get());
 
-    // Ensure ETag and lastUpdatedOn are updated.
+    // Ensure lastUpdatedOn is updated.
     rsrc = parseResource(r);
-    assertThat(rsrc.getETag()).isNotEqualTo(oldETag);
     assertThat(rsrc.getChange().getLastUpdatedOn()).isNotEqualTo(oldTs);
   }
 
@@ -1922,56 +1911,6 @@ public class ChangeIT extends AbstractDaemonTest {
     assertThat(reviewerIt.next()._accountId).isEqualTo(admin.id().get());
     assertThat(reviewerIt.next()._accountId).isEqualTo(user.id().get());
     assertThat(c.reviewers).doesNotContainKey(CC);
-  }
-
-  @Test
-  public void eTagChangesWhenOwnerUpdatesAccountStatus() throws Exception {
-    PushOneCommit.Result r = createChange();
-    ChangeResource rsrc = parseResource(r);
-    String oldETag = rsrc.getETag();
-
-    accountOperations.account(admin.id()).forUpdate().status("new status").update();
-    rsrc = parseResource(r);
-    assertThat(rsrc.getETag()).isNotEqualTo(oldETag);
-  }
-
-  @Test
-  public void pluginCanContributeToETagComputation() throws Exception {
-    PushOneCommit.Result r = createChange();
-    String oldETag = parseResource(r).getETag();
-
-    try (Registration registration =
-        extensionRegistry.newRegistration().add(TestChangeETagComputation.withETag("foo"))) {
-      assertThat(parseResource(r).getETag()).isNotEqualTo(oldETag);
-    }
-
-    assertThat(parseResource(r).getETag()).isEqualTo(oldETag);
-  }
-
-  @Test
-  public void returningNullFromETagComputationDoesNotBreakGerrit() throws Exception {
-    PushOneCommit.Result r = createChange();
-    String oldETag = parseResource(r).getETag();
-
-    try (Registration registration =
-        extensionRegistry.newRegistration().add(TestChangeETagComputation.withETag(null))) {
-      assertThat(parseResource(r).getETag()).isEqualTo(oldETag);
-    }
-  }
-
-  @Test
-  public void throwingExceptionFromETagComputationDoesNotBreakGerrit() throws Exception {
-    PushOneCommit.Result r = createChange();
-    String oldETag = parseResource(r).getETag();
-
-    try (Registration registration =
-        extensionRegistry
-            .newRegistration()
-            .add(
-                TestChangeETagComputation.withException(
-                    new StorageException("exception during test")))) {
-      assertThat(parseResource(r).getETag()).isEqualTo(oldETag);
-    }
   }
 
   @Test
@@ -2329,7 +2268,7 @@ public class ChangeIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void removeReviewerSelfFromMergedChangeNotPermitted() throws Exception {
+  public void removeReviewerSelfFromMergedChangeNotPossible() throws Exception {
     PushOneCommit.Result r = createChange();
     String changeId = r.getChangeId();
 
@@ -2341,11 +2280,11 @@ public class ChangeIT extends AbstractDaemonTest {
     gApi.changes().id(changeId).revision(r.getCommit().name()).submit();
 
     requestScopeOperations.setApiUser(user.id());
-    AuthException thrown =
+    ResourceConflictException thrown =
         assertThrows(
-            AuthException.class,
+            ResourceConflictException.class,
             () -> gApi.changes().id(r.getChangeId()).reviewer("self").remove());
-    assertThat(thrown).hasMessageThat().contains("remove reviewer not permitted");
+    assertThat(thrown).hasMessageThat().contains("cannot remove votes from merged change");
   }
 
   @Test
@@ -2530,7 +2469,25 @@ public class ChangeIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void deleteVoteAlwaysPermittedForSelfVotes() throws Exception {
+  public void deleteVoteFromMergedChangeNotPossible() throws Exception {
+    PushOneCommit.Result r = createChange();
+    approve(r.getChangeId());
+    gApi.changes().id(r.getChangeId()).current().submit();
+
+    requestScopeOperations.setApiUser(user.id());
+    ResourceConflictException thrown =
+        assertThrows(
+            ResourceConflictException.class,
+            () ->
+                gApi.changes()
+                    .id(r.getChangeId())
+                    .reviewer(admin.id().toString())
+                    .deleteVote(LabelId.CODE_REVIEW));
+    assertThat(thrown).hasMessageThat().contains("cannot remove votes from merged change");
+  }
+
+  @Test
+  public void deleteVoteFromOpenChangeAlwaysPermittedForSelfVotes() throws Exception {
     projectOperations
         .project(project)
         .forUpdate()
@@ -2551,7 +2508,7 @@ public class ChangeIT extends AbstractDaemonTest {
     String changeId = r.getChangeId();
 
     requestScopeOperations.setApiUser(user.id());
-    gApi.changes().id(changeId).revision(r.getCommit().name()).review(ReviewInput.approve());
+    approve(changeId);
 
     gApi.changes()
         .id(r.getChangeId())
@@ -2560,7 +2517,38 @@ public class ChangeIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void deleteVoteAlwaysPermittedForAdmin() throws Exception {
+  public void deleteVoteFromClosedChangeNotPossibleForSelfVotes() throws Exception {
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.SUBMIT).ref("refs/heads/*").group(REGISTERED_USERS))
+        .add(
+            allowLabel(LabelId.CODE_REVIEW)
+                .ref("refs/heads/*")
+                .group(REGISTERED_USERS)
+                .range(-2, 2))
+        .update();
+
+    PushOneCommit.Result r = createChange();
+    String changeId = r.getChangeId();
+
+    requestScopeOperations.setApiUser(user.id());
+    approve(changeId);
+    gApi.changes().id(changeId).current().submit();
+
+    ResourceConflictException thrown =
+        assertThrows(
+            ResourceConflictException.class,
+            () ->
+                gApi.changes()
+                    .id(r.getChangeId())
+                    .reviewer(user.id().toString())
+                    .deleteVote(LabelId.CODE_REVIEW));
+    assertThat(thrown).hasMessageThat().contains("cannot remove votes from merged change");
+  }
+
+  @Test
+  public void deleteVoteFromOpenChangeAlwaysPermittedForAdmin() throws Exception {
     projectOperations
         .project(project)
         .forUpdate()
@@ -2581,13 +2569,45 @@ public class ChangeIT extends AbstractDaemonTest {
     String changeId = r.getChangeId();
 
     requestScopeOperations.setApiUser(user.id());
-    gApi.changes().id(changeId).revision(r.getCommit().name()).review(ReviewInput.approve());
+    approve(changeId);
 
     requestScopeOperations.setApiUser(admin.id());
     gApi.changes()
         .id(r.getChangeId())
         .reviewer(user.id().toString())
         .deleteVote(LabelId.CODE_REVIEW);
+  }
+
+  @Test
+  public void deleteVoteFromMergedChangeNotPossibleForAdmin() throws Exception {
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            allowLabel(LabelId.CODE_REVIEW)
+                .ref("refs/heads/*")
+                .group(REGISTERED_USERS)
+                .range(-2, 2))
+        .update();
+
+    PushOneCommit.Result r = createChange();
+    String changeId = r.getChangeId();
+
+    requestScopeOperations.setApiUser(user.id());
+    approve(changeId);
+
+    requestScopeOperations.setApiUser(admin.id());
+    gApi.changes().id(changeId).current().submit();
+
+    ResourceConflictException thrown =
+        assertThrows(
+            ResourceConflictException.class,
+            () ->
+                gApi.changes()
+                    .id(r.getChangeId())
+                    .reviewer(user.id().toString())
+                    .deleteVote(LabelId.CODE_REVIEW));
+    assertThat(thrown).hasMessageThat().contains("cannot remove votes from merged change");
   }
 
   @Test
@@ -4044,6 +4064,24 @@ public class ChangeIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void getCommitMessageThatHasDuplicateFooters() throws Exception {
+    String subject = "Change Subject";
+    String changeId = "I" + ObjectId.toString(CommitMessageUtil.generateChangeId());
+    String commitMessage =
+        String.format(
+            "%s\n\nFirst Paragraph.\n\nSecond Paragraph\n\nFoo: Bar\nFoo: Baz\nChange-Id: %s\n",
+            subject, changeId);
+    changeOperations.newChange().project(project).commitMessage(commitMessage).create();
+
+    CommitMessageInfo commitMessageInfo = gApi.changes().id(changeId).getMessage();
+    assertThat(commitMessageInfo.subject).isEqualTo(subject);
+    assertThat(commitMessageInfo.fullMessage).isEqualTo(commitMessage);
+
+    // only the last "Foo" footer is returned
+    assertThat(commitMessageInfo.footers).containsExactly("Foo", "Baz", "Change-Id", changeId);
+  }
+
+  @Test
   public void changeCommitMessage() throws Exception {
     // Tests mutating the commit message as both the owner of the change and a regular user with
     // addPatchSet permission. Asserts that both cases succeed.
@@ -4213,6 +4251,24 @@ public class ChangeIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void changeCommitMessageInvokesCommitValidators() throws Exception {
+    PushOneCommit.Result r = createChange();
+    r.assertOkStatus();
+    assertThat(getCommitMessage(r.getChangeId()))
+        .isEqualTo("test commit\n\nChange-Id: " + r.getChangeId() + "\n");
+
+    requestScopeOperations.setApiUser(admin.id());
+    String newMessage = "modified commit message\nChange-Id: " + r.getChangeId() + "\n";
+
+    TestCommitValidationListener testCommitValidationListener = new TestCommitValidationListener();
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(testCommitValidationListener)) {
+      gApi.changes().id(r.getChangeId()).setMessage(newMessage);
+      assertThat(testCommitValidationListener.receiveEvent).isNotNull();
+    }
+  }
+
+  @Test
   public void fourByteEmoji() throws Exception {
     // U+1F601 GRINNING FACE WITH SMILING EYES
     String smile = new String(Character.toChars(0x1f601));
@@ -4299,6 +4355,68 @@ public class ChangeIT extends AbstractDaemonTest {
         .add(allow(Permission.SUBMIT).ref("refs/*").group(REGISTERED_USERS))
         .update();
     assertThrows(AuthException.class, () -> gApi.changes().id(r1.getChangeId()).current().submit());
+  }
+
+  @Test
+  @GerritConfig(name = "change.submitWholeTopic", value = "true")
+  public void submitTopicFailsWhenUpdateBySubmitMissingOnAnyBranch() throws Exception {
+    requestScopeOperations.setApiUser(admin.id());
+    String allowedSubmitBranch = "allowed-submit-branch";
+    String restrictedBranch = "restricted-branch";
+
+    Project.NameKey restrictedProject = createProjectOverAPI("restricted", allProjects, true, null);
+    createBranch(BranchNameKey.create(restrictedProject, restrictedBranch));
+
+    try (TestRepository<InMemoryRepository> testRestrictedRepo =
+        cloneProject(restrictedProject, admin)) {
+      createBranch(BranchNameKey.create(project, allowedSubmitBranch));
+      AccountGroup.UUID submitGroup = groupOperations.newGroup().create();
+      gApi.groups().id(submitGroup.get()).addMembers(admin.username());
+      String topic = "submit-topic";
+
+      projectOperations
+          .project(allProjects)
+          .forUpdate()
+          .add(block(Permission.SUBMIT).ref(RefNames.REFS_HEADS).group(submitGroup));
+      projectOperations
+          .project(restrictedProject)
+          .forUpdate()
+          .add(
+              block(Permission.SUBMIT)
+                  .ref(MagicBranch.NEW_CHANGE + RefNames.fullName(restrictedBranch))
+                  .group(submitGroup));
+      projectOperations
+          .project(project)
+          .forUpdate()
+          .add(
+              allow(Permission.SUBMIT)
+                  .ref(MagicBranch.NEW_CHANGE + RefNames.fullName(allowedSubmitBranch))
+                  .group(submitGroup))
+          .update();
+
+      PushOneCommit push1 =
+          pushFactory.create(
+              admin.newIdent(), testRestrictedRepo, "Subject", "file.txt", "content");
+      PushOneCommit.Result push1Res =
+          push1.to(MagicBranch.NEW_CHANGE + restrictedBranch + "%topic=" + topic);
+      push1Res.assertOkStatus();
+
+      PushOneCommit push2 =
+          pushFactory.create(admin.newIdent(), testRepo, "Subject", "file.txt", "content");
+      PushOneCommit.Result push2Res =
+          push2.to(MagicBranch.NEW_CHANGE + allowedSubmitBranch + "%topic=" + topic + ",submit");
+      push2Res.assertErrorStatus(
+          String.format(
+              "prohibited by Gerrit: not permitted: update by submit on %s",
+              RefNames.fullName(restrictedBranch)));
+
+      assertChangeNotSubmitted(push1Res.getChangeId());
+      assertChangeNotSubmitted(push2Res.getChangeId());
+    }
+  }
+
+  private void assertChangeNotSubmitted(String changeId) throws RestApiException {
+    assertThat(gApi.changes().id(changeId).get().status).isEqualTo(ChangeStatus.NEW);
   }
 
   @Test
@@ -4604,6 +4722,11 @@ public class ChangeIT extends AbstractDaemonTest {
     gApi.changes().id(change.getChangeId()).addReviewer(user.email());
 
     int number = gApi.changes().id(change.getChangeId()).get()._number;
+
+    // Note: Computing the description of some UI actions does access the index. If the index is
+    // disabled computing these descriptions fails. UiActions#describe catches and ignores these
+    // exceptions so that the request is still successful. In this case the description of the UI
+    // action is omitted in the response.
     try (AutoCloseable ignored = changeIndexOperations.disableReadsAndWrites()) {
       assertThat(gApi.changes().id(project.get(), number).get(options).changeId)
           .isEqualTo(change.getChangeId());
@@ -4984,5 +5107,16 @@ public class ChangeIT extends AbstractDaemonTest {
 
   private void voteLabel(String changeId, String labelName, int score) throws RestApiException {
     gApi.changes().id(changeId).current().review(new ReviewInput().label(labelName, score));
+  }
+
+  private static class TestCommitValidationListener implements CommitValidationListener {
+    public CommitReceivedEvent receiveEvent;
+
+    @Override
+    public List<CommitValidationMessage> onCommitReceived(CommitReceivedEvent receiveEvent)
+        throws CommitValidationException {
+      this.receiveEvent = receiveEvent;
+      return ImmutableList.of();
+    }
   }
 }

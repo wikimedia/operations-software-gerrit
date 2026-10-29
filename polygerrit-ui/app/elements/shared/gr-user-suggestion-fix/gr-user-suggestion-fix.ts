@@ -7,7 +7,7 @@ import '../../shared/gr-button/gr-button';
 import '../../shared/gr-icon/gr-icon';
 import '../../shared/gr-copy-clipboard/gr-copy-clipboard';
 import '../gr-suggestion-diff-preview/gr-suggestion-diff-preview';
-import {css, html, LitElement, nothing} from 'lit';
+import {css, html, LitElement, nothing, PropertyValues} from 'lit';
 import {customElement, state, query} from 'lit/decorators.js';
 import {fire} from '../../../utils/event-util';
 import {getDocUrl} from '../../../utils/url-util';
@@ -18,6 +18,8 @@ import {GrSuggestionDiffPreview} from '../gr-suggestion-diff-preview/gr-suggesti
 import {changeModelToken} from '../../../models/change/change-model';
 import {Comment, PatchSetNumber} from '../../../types/common';
 import {commentModelToken} from '../gr-comment-model/gr-comment-model';
+import {createUserFixSuggestion} from '../../../utils/comment-util';
+import {ChangeStatus} from '../../../api/rest-api';
 
 declare global {
   interface HTMLElementEventMap {
@@ -44,6 +46,12 @@ export class GrUserSuggestionsFix extends LitElement {
 
   @state() comment?: Comment;
 
+  @state() private previewLoaded = false;
+
+  @state() commentedText?: string;
+
+  @state() isChangeMerged = false;
+
   private readonly getConfigModel = resolve(this, configModelToken);
 
   private readonly getChangeModel = resolve(this, changeModelToken);
@@ -66,6 +74,16 @@ export class GrUserSuggestionsFix extends LitElement {
       this,
       () => this.getCommentModel().comment$,
       comment => (this.comment = comment)
+    );
+    subscribe(
+      this,
+      () => this.getCommentModel().commentedText$,
+      commentedText => (this.commentedText = commentedText)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().status$,
+      status => (this.isChangeMerged = status === ChangeStatus.MERGED)
     );
   }
 
@@ -92,8 +110,14 @@ export class GrUserSuggestionsFix extends LitElement {
   }
 
   override render() {
-    if (!this.textContent) return nothing;
+    if (!this.textContent || !this.comment || !this.commentedText)
+      return nothing;
     const code = this.textContent;
+    const fixSuggestions = createUserFixSuggestion(
+      this.comment,
+      this.commentedText,
+      code
+    );
     return html`<div class="header">
         <div class="title">
           <span>Suggested edit</span>
@@ -136,8 +160,19 @@ export class GrUserSuggestionsFix extends LitElement {
         </div>
       </div>
       <gr-suggestion-diff-preview
-        .suggestion=${this.textContent}
+        .patchSet=${this.comment?.patch_set}
+        .commentId=${this.comment?.id}
+        .fixSuggestionInfo=${fixSuggestions[0]}
+        .codeText=${code}
+        @preview-loaded=${() => (this.previewLoaded = true)}
       ></gr-suggestion-diff-preview>`;
+  }
+
+  override updated(changedProperties: PropertyValues) {
+    super.updated(changedProperties);
+    if (changedProperties.has('commentedText') && this.commentedText) {
+      this.previewLoaded = false;
+    }
   }
 
   handleShowFix() {
@@ -148,20 +183,21 @@ export class GrUserSuggestionsFix extends LitElement {
   async handleApplyFix() {
     if (!this.textContent) return;
     this.applyingFix = true;
-    await this.suggestionDiffPreview?.applyUserSuggestedFix();
+    await this.suggestionDiffPreview?.applyFix();
     this.applyingFix = false;
   }
 
   private isApplyEditDisabled() {
     if (this.comment?.patch_set === undefined) return true;
-    return this.comment.patch_set !== this.latestPatchNum;
+    if (this.isChangeMerged) return true;
+    return !this.previewLoaded;
   }
 
   private computeApplyEditTooltip() {
     if (this.comment?.patch_set === undefined) return '';
-    return this.comment.patch_set !== this.latestPatchNum
-      ? 'You cannot apply this fix because it is from a previous patchset'
-      : '';
+    if (this.isChangeMerged) return 'Change is already merged';
+    if (!this.previewLoaded) return 'Fix is still loading ...';
+    return '';
   }
 }
 

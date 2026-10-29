@@ -83,7 +83,7 @@ import com.google.gerrit.server.events.CommitReceivedEvent;
 import com.google.gerrit.server.git.validators.CommitValidationException;
 import com.google.gerrit.server.git.validators.CommitValidationListener;
 import com.google.gerrit.server.git.validators.CommitValidationMessage;
-import com.google.gerrit.server.restapi.change.ApplyPatchUtil;
+import com.google.gerrit.server.patch.ApplyPatchUtil;
 import com.google.gerrit.server.restapi.change.CreateChange;
 import com.google.gerrit.server.restapi.change.CreateChange.CommitTreeSupplier;
 import com.google.gerrit.server.submit.ChangeAlreadyMergedException;
@@ -122,7 +122,6 @@ public class CreateChangeIT extends AbstractDaemonTest {
   @Inject private ExtensionRegistry extensionRegistry;
   @Inject private CreateChange createChangeImpl;
   @Inject private BatchUpdate.Factory updateFactory;
-  ;
 
   @Before
   public void addNonCommitHead() throws Exception {
@@ -1175,7 +1174,7 @@ public class CreateChangeIT extends AbstractDaemonTest {
     ApplyPatchInput applyPatchInput = new ApplyPatchInput();
     applyPatchInput.patch = PATCH_INPUT;
     CommitTreeSupplier commitTreeSupplier =
-        (repo, oi, in, mergeTip) ->
+        (repo, oi, or, in, mergeTip) ->
             ApplyPatchUtil.applyPatch(repo, oi, applyPatchInput, mergeTip).getTreeId();
 
     ChangeInfo info = assertCreateWithCommitTreeSupplierSucceeds(input, commitTreeSupplier);
@@ -1184,6 +1183,52 @@ public class CreateChangeIT extends AbstractDaemonTest {
     assertDiffForNewFile(diff, info.currentRevision, PATCH_FILE_NAME, PATCH_NEW_FILE_CONTENT);
     assertThat(info.revisions.get(info.currentRevision).commit.message)
         .isEqualTo("custom commit message\n\nChange-Id: " + info.changeId + "\n");
+  }
+
+  @Test
+  public void changePatch_multipleParents_success() throws Exception {
+    changeInTwoBranches("branchA", "a.txt", "branchB", "b.txt");
+    ChangeInput in = newMergeChangeInput("branchA", "branchB", "");
+    ChangeInfo change = assertCreateSucceeds(in);
+
+    RestResponse patchResp =
+        userRestSession.get("/changes/" + change.id + "/revisions/current/patch?parent=1");
+    patchResp.assertOK();
+    assertThat(new String(Base64.decode(patchResp.getEntityContent()), UTF_8))
+        .contains("+B content");
+
+    patchResp = userRestSession.get("/changes/" + change.id + "/revisions/current/patch?parent=2");
+    patchResp.assertOK();
+    assertThat(new String(Base64.decode(patchResp.getEntityContent()), UTF_8))
+        .contains("+A content");
+  }
+
+  @Test
+  public void changePatch_multipleParents_failure() throws Exception {
+    changeInTwoBranches("branchA", "a.txt", "branchB", "b.txt");
+    ChangeInput in = newMergeChangeInput("branchA", "branchB", "");
+    ChangeInfo change = assertCreateSucceeds(in);
+
+    RestResponse patchResp =
+        userRestSession.get("/changes/" + change.id + "/revisions/current/patch");
+    // Maintaining historic logic of failing with 409 Conflict in this case.
+    patchResp.assertConflict();
+  }
+
+  @Test
+  public void changePatch_parent_badRequest() throws Exception {
+    changeInTwoBranches("branchA", "a.txt", "branchB", "b.txt");
+    ChangeInput in = newMergeChangeInput("branchA", "branchB", "");
+    ChangeInfo change = assertCreateSucceeds(in);
+
+    RestResponse patchResp =
+        userRestSession.get("/changes/" + change.id + "/revisions/current/patch?parent=3");
+    // Parent 3 does not exist.
+    patchResp.assertBadRequest();
+
+    patchResp = userRestSession.get("/changes/" + change.id + "/revisions/current/patch?parent=0");
+    // Parent 0 does not exist.
+    patchResp.assertBadRequest();
   }
 
   @Test

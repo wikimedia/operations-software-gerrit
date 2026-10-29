@@ -3,6 +3,7 @@
  * Copyright 2015 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import * as sinon from 'sinon';
 import '../../../test/common-test-setup';
 import '../../shared/gr-date-formatter/gr-date-formatter';
 import './gr-file-list';
@@ -60,6 +61,11 @@ import {testResolver} from '../../../test/common-test-setup';
 import {FileMode} from '../../../utils/file-util';
 import {SinonStubbedMember} from 'sinon';
 import {GrDiffCursor} from '../../../embed/diff/gr-diff-cursor/gr-diff-cursor';
+import {
+  ChangeChildView,
+  changeViewModelToken,
+} from '../../../models/views/change';
+import {GerritView} from '../../../services/router/router-model';
 
 suite('gr-diff a11y test', () => {
   test('audit', async () => {
@@ -78,6 +84,15 @@ function createFiles(
 suite('gr-file-list tests', () => {
   let element: GrFileList;
   let saveStub: sinon.SinonStub;
+
+  setup(async () => {
+    testResolver(changeViewModelToken).setState({
+      view: GerritView.CHANGE,
+      childView: ChangeChildView.OVERVIEW,
+      changeNum: 42 as NumericChangeId,
+      repo: 'gerrit' as RepoName,
+    });
+  });
 
   suite('basic tests', async () => {
     setup(async () => {
@@ -179,7 +194,7 @@ suite('gr-file-list tests', () => {
             <gr-file-status></gr-file-status>
           </div>
           <span class="path" role="gridcell">
-            <a class="pathLink">
+            <a class="pathLink" href="/c/gerrit/+/42/2/path/file0">
               <span class="fullFileName" title="path/file0">
                 <span class="newFilePath"> path/ </span>
                 <span class="fileName"> file0 </span>
@@ -299,7 +314,7 @@ suite('gr-file-list tests', () => {
         fileRows[0].querySelector('.path'),
         /* HTML */ `
           <span class="path" role="gridcell">
-            <a class="pathLink">
+            <a class="pathLink" href="/c/gerrit/+/42/2/path/file0">
               <span class="fullFileName" title="path/file0">
                 <span class="newFilePath"> path/ </span>
                 <span class="fileName"> file0 </span>
@@ -317,7 +332,7 @@ suite('gr-file-list tests', () => {
         fileRows[1].querySelector('.path'),
         /* HTML */ `
           <span class="path" role="gridcell">
-            <a class="pathLink">
+            <a class="pathLink" href="/c/gerrit/+/42/2/path/file1">
               <span class="fullFileName" title="path/file1">
                 <span class="matchingFilePath"> path/ </span>
                 <span class="fileName"> file1 </span>
@@ -677,25 +692,6 @@ suite('gr-file-list tests', () => {
       assert.isFalse(element.shouldHideChangeTotals(patchChange));
     });
 
-    test('formatBytes function', () => {
-      const table = {
-        '64': '+64 B',
-        '1023': '+1023 B',
-        '1024': '+1 KiB',
-        '4096': '+4 KiB',
-        '1073741824': '+1 GiB',
-        '-64': '-64 B',
-        '-1023': '-1023 B',
-        '-1024': '-1 KiB',
-        '-4096': '-4 KiB',
-        '-1073741824': '-1 GiB',
-        '0': '+/-0 B',
-      };
-      for (const [bytes, expected] of Object.entries(table)) {
-        assert.equal(element.formatBytes(Number(bytes)), expected);
-      }
-    });
-
     test('formatPercentage function', () => {
       const table = [
         {size: 100, delta: 100, display: ''},
@@ -947,10 +943,10 @@ suite('gr-file-list tests', () => {
         ];
         element.changeNum = 42 as NumericChangeId;
         element.basePatchNum = PARENT;
-        element.patchNum = 2 as RevisionPatchSetNum;
+        element.patchNum = 1 as RevisionPatchSetNum;
         element.change = {
           _number: 42 as NumericChangeId,
-          project: 'test-project',
+          project: 'gerrit',
         } as ParsedChangeInfo;
         element.fileCursor.setCursorAtIndex(0);
         await element.updateComplete;
@@ -1009,7 +1005,7 @@ suite('gr-file-list tests', () => {
         assert.equal(setUrlStub.callCount, 1);
         assert.equal(
           setUrlStub.lastCall.firstArg,
-          '/c/test-project/+/42/2/file_added_in_rev2.txt'
+          '/c/gerrit/+/42/1/file_added_in_rev2.txt'
         );
 
         pressKey(element, 'k');
@@ -1705,35 +1701,25 @@ suite('gr-file-list tests', () => {
 
   suite('diff url file list', () => {
     test('diff url', () => {
-      element.change = {
-        ...createParsedChange(),
-        _number: 1 as NumericChangeId,
-        project: 'gerrit' as RepoName,
-      };
-      element.basePatchNum = PARENT;
-      element.patchNum = 1 as RevisionPatchSetNum;
       const path = 'index.php';
+      element.patchNum = 1 as RevisionPatchSetNum;
       element.editMode = false;
-      assert.equal(element.computeDiffURL(path), '/c/gerrit/+/1/1/index.php');
+      assert.equal(element.computeDiffURL(path), '/c/gerrit/+/42/1/index.php');
     });
 
     test('diff url commit msg', () => {
-      element.change = {
-        ...createParsedChange(),
-        _number: 1 as NumericChangeId,
-        project: 'gerrit' as RepoName,
-      };
-      element.basePatchNum = PARENT;
-      element.patchNum = 1 as RevisionPatchSetNum;
-      element.editMode = false;
       const path = '/COMMIT_MSG';
-      assert.equal(element.computeDiffURL(path), '/c/gerrit/+/1/1//COMMIT_MSG');
+      element.editMode = false;
+      assert.equal(
+        element.computeDiffURL(path),
+        '/c/gerrit/+/42/1//COMMIT_MSG'
+      );
     });
 
     test('edit url', () => {
       element.change = {
         ...createParsedChange(),
-        _number: 1 as NumericChangeId,
+        _number: 42 as NumericChangeId,
         project: 'gerrit' as RepoName,
       };
       element.basePatchNum = PARENT;
@@ -1742,14 +1728,14 @@ suite('gr-file-list tests', () => {
       const path = 'index.php';
       assert.equal(
         element.computeDiffURL(path),
-        '/c/gerrit/+/1/1/index.php,edit'
+        '/c/gerrit/+/42/1/index.php,edit'
       );
     });
 
     test('edit url commit msg', () => {
       element.change = {
         ...createParsedChange(),
-        _number: 1 as NumericChangeId,
+        _number: 42 as NumericChangeId,
         project: 'gerrit' as RepoName,
       };
       element.basePatchNum = PARENT;
@@ -1758,7 +1744,7 @@ suite('gr-file-list tests', () => {
       const path = '/COMMIT_MSG';
       assert.equal(
         element.computeDiffURL(path),
-        '/c/gerrit/+/1/1//COMMIT_MSG,edit'
+        '/c/gerrit/+/42/1//COMMIT_MSG,edit'
       );
     });
   });

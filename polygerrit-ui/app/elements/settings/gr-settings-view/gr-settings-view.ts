@@ -38,7 +38,7 @@ import {
 import {GrSshEditor} from '../gr-ssh-editor/gr-ssh-editor';
 import {GrGpgEditor} from '../gr-gpg-editor/gr-gpg-editor';
 import {GrEmailEditor} from '../gr-email-editor/gr-email-editor';
-import {fireAlert, fireTitleChange} from '../../../utils/event-util';
+import {fire, fireAlert, fireTitleChange} from '../../../utils/event-util';
 import {getAppContext} from '../../../services/app-context';
 import {BindValueChangeEvent, ValueChangedEvent} from '../../../types/events';
 import {LitElement, css, html} from 'lit';
@@ -80,6 +80,9 @@ export class GrSettingsView extends LitElement {
 
   @query('#confirm-account-deletion')
   private deleteAccountConfirmationDialog?: HTMLDialogElement;
+
+  @query('#dump-account-state')
+  private dumpAccountStateConfirmationDialog?: HTMLDialogElement;
 
   @query('#watchedProjectsEditor', true)
   watchedProjectsEditor!: GrWatchedProjectsEditor;
@@ -139,6 +142,8 @@ export class GrSettingsView extends LitElement {
 
   @state() isDeletingAccount = false;
 
+  @state() accountState?: string;
+
   // private but used in test
   public _testOnly_loadingPromise?: Promise<void>;
 
@@ -190,7 +195,7 @@ export class GrSettingsView extends LitElement {
     const message = await this.restApiService.confirmEmail(this.emailToken);
     if (message) fireAlert(this, message);
     this.getViewModel().clearToken();
-    await this.emailEditor.loadData();
+    await this.getUserModel().loadEmails(true);
   }
 
   override connectedCallback() {
@@ -199,6 +204,15 @@ export class GrSettingsView extends LitElement {
     // we need to manually calling scrollIntoView when hash changed
     document.addEventListener('location-change', this.handleLocationChange);
     fireTitleChange('Settings');
+  }
+
+  private async getAccountState() {
+    const state = await this.restApiService.getAccountState();
+    if (state) {
+      this.accountState = JSON.stringify(state, null, 2);
+    } else {
+      this.accountState = 'ERROR: failed to get account state';
+    }
   }
 
   override firstUpdated() {
@@ -230,8 +244,6 @@ export class GrSettingsView extends LitElement {
       })
     );
 
-    promises.push(this.emailEditor.loadData());
-
     this._testOnly_loadingPromise = Promise.all(promises).then(() => {
       this.loading = false;
 
@@ -252,6 +264,7 @@ export class GrSettingsView extends LitElement {
       css`
         :host {
           color: var(--primary-text-color);
+          overflow: auto;
         }
         h2 {
           font-family: var(--header-font-family);
@@ -277,8 +290,18 @@ export class GrSettingsView extends LitElement {
           margin-bottom: var(--spacing-l);
           margin-right: var(--spacing-l);
         }
-        .delete-account-button {
+        .account-button {
           margin-left: var(--spacing-l);
+        }
+        .account-state-output {
+          width: 100vh;
+          max-width: calc(100% - var(--spacing-xl));
+          height: 50vh;
+          margin-bottom: var(--spacing-l);
+        }
+        .account-state-note {
+          width: 100vh;
+          max-width: calc(100% - var(--spacing-xl));
         }
         .confirm-account-deletion-main ul {
           list-style: disc inside;
@@ -340,6 +363,9 @@ export class GrSettingsView extends LitElement {
               @unsaved-changes-changed=${(e: ValueChangedEvent<boolean>) => {
                 this.accountInfoChanged = e.detail.value;
               }}
+              @account-detail-update=${() => {
+                fire(this, 'account-detail-update', {});
+              }}
             ></gr-account-info>
             <gr-button
               @click=${() => {
@@ -349,11 +375,18 @@ export class GrSettingsView extends LitElement {
               >Save changes</gr-button
             >
             <gr-button
-              class="delete-account-button"
+              class="account-button"
               @click=${() => {
                 this.confirmDeleteAccount();
               }}
               >Delete Account</gr-button
+            >
+            <gr-button
+              class="account-button"
+              @click=${() => {
+                this.dumpAccountState();
+              }}
+              >Dump Account State</gr-button
             >
             <dialog id="confirm-account-deletion">
               <gr-dialog
@@ -371,6 +404,27 @@ export class GrSettingsView extends LitElement {
                     <li>Deleting your account is not reversible.</li>
                     <li>Deleting your account will not delete your changes.</li>
                   </ul>
+                </div>
+              </gr-dialog>
+            </dialog>
+            <dialog id="dump-account-state">
+              <gr-dialog
+                cancel-label=""
+                @confirm=${() =>
+                  this.dumpAccountStateConfirmationDialog?.close()}
+                confirm-label="OK"
+                confirm-on-enter=""
+              >
+                <div slot="header">Account State:</div>
+                <div slot="main">
+                  <textarea class="account-state-output" readonly>
+${this.accountState}</textarea
+                  >
+                  <p class="account-state-note">
+                    Note: The account state may contain sensitive data (e.g.
+                    deadnames). Share it with others only on a need to know
+                    basis (e.g. for debugging account or permission issues).
+                  </p>
                 </div>
               </gr-dialog>
             </dialog>
@@ -437,7 +491,6 @@ export class GrSettingsView extends LitElement {
           </h2>
           <fieldset id="watchedProjects">
             <gr-watched-projects-editor
-              ?hasUnsavedChanges=${this.watchedProjectsChanged}
               @has-unsaved-changes-changed=${(
                 e: ValueChangedEvent<boolean>
               ) => {
@@ -463,7 +516,6 @@ export class GrSettingsView extends LitElement {
           <fieldset id="email">
             <gr-email-editor
               id="emailEditor"
-              ?hasUnsavedChanges=${this.emailsChanged}
               @has-unsaved-changes-changed=${(
                 e: ValueChangedEvent<boolean>
               ) => {
@@ -471,8 +523,8 @@ export class GrSettingsView extends LitElement {
               }}
             ></gr-email-editor>
             <gr-button
-              @click=${() => {
-                this.emailEditor.save();
+              @click=${async () => {
+                await this.emailEditor.save();
               }}
               ?disabled=${!this.emailsChanged}
               >Save changes</gr-button
@@ -605,7 +657,7 @@ export class GrSettingsView extends LitElement {
   };
 
   reloadAccountDetail() {
-    Promise.all([this.accountInfo.loadData(), this.emailEditor.loadData()]);
+    Promise.all([this.accountInfo.loadData()]);
   }
 
   // private but used in test
@@ -643,7 +695,7 @@ export class GrSettingsView extends LitElement {
     if (!this.isNewEmailValid(this.newEmail)) return;
 
     this.addingEmail = true;
-    this.restApiService.addAccountEmail(this.newEmail).then(response => {
+    this.restApiService.addAccountEmail(this.newEmail).then(async response => {
       this.addingEmail = false;
 
       // If it was unsuccessful.
@@ -653,6 +705,8 @@ export class GrSettingsView extends LitElement {
 
       this.lastSentVerificationEmail = this.newEmail;
       this.newEmail = '';
+
+      await this.getUserModel().loadEmails(true);
     });
   }
 
@@ -666,6 +720,11 @@ export class GrSettingsView extends LitElement {
     this.isDeletingAccount = false;
     this.deleteAccountConfirmationDialog?.close();
     this.getNavigation().setUrl(rootUrl());
+  }
+
+  private async dumpAccountState() {
+    await this.getAccountState();
+    this.dumpAccountStateConfirmationDialog?.showModal();
   }
 
   // private but used in test

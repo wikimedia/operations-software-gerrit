@@ -38,6 +38,7 @@ import com.google.gerrit.extensions.client.AccountFieldName;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.Sequences;
 import com.google.gerrit.server.ServerInitiated;
+import com.google.gerrit.server.account.AccountsUpdate.ConfigureStatelessDelta;
 import com.google.gerrit.server.account.externalids.DuplicateExternalIdKeyException;
 import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.account.externalids.ExternalIdFactory;
@@ -60,7 +61,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Consumer;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.Config;
 
@@ -269,7 +269,7 @@ public class AccountManager {
   private void update(AuthRequest who, ExternalId extId)
       throws IOException, ConfigInvalidException, AccountException {
     IdentifiedUser user = userFactory.create(extId.accountId());
-    List<Consumer<AccountDelta.Builder>> accountUpdates = new ArrayList<>();
+    List<ConfigureStatelessDelta> accountUpdates = new ArrayList<>();
 
     // If the email address was modified by the authentication provider,
     // update our records to match the changed email.
@@ -292,28 +292,49 @@ public class AccountManager {
       accountUpdates.add(a -> a.setFullName(who.getDisplayName()));
     }
 
-    if (!realm.allowsEdit(AccountFieldName.USER_NAME)
-        && who.getUserName().isPresent()
-        && !who.getUserName().equals(user.getUserName())) {
+    String backfilledUsername = null;
+    if (who.getUserName().isPresent() && !who.getUserName().equals(user.getUserName())) {
       if (user.getUserName().isPresent()) {
-        logger.atWarning().log(
-            "Not changing already set username %s to %s",
-            user.getUserName().get(), who.getUserName().get());
+        // Username renames on login are intentionally not supported; use PutUsername instead.
+        // Only warn when the realm owns usernames and would prevent an explicit rename anyway.
+        if (!realm.allowsEdit(AccountFieldName.USER_NAME)) {
+          logger.atWarning().log(
+              "Not changing already set username %s to %s",
+              user.getUserName().get(), who.getUserName().get());
+        }
       } else {
-        logger.atWarning().log("Not setting username to %s", who.getUserName().get());
+        backfilledUsername = who.getUserName().get();
+        ExternalId userNameExtId = createUsername(user.getAccountId(), backfilledUsername);
+        accountUpdates.add(u -> u.addExternalId(userNameExtId));
       }
     }
 
     if (!accountUpdates.isEmpty()) {
-      Optional<AccountState> updatedAccount =
-          accountsUpdateProvider
-              .get()
-              .update(
-                  "Update Account on Login",
-                  user.getAccountId(),
-                  AccountsUpdate.joinConsumers(accountUpdates));
-      if (!updatedAccount.isPresent()) {
-        throw new StorageException("Account " + user.getAccountId() + " has been deleted");
+      try {
+        Optional<AccountState> updatedAccount =
+            accountsUpdateProvider
+                .get()
+                .update(
+                    "Update Account on Login",
+                    user.getAccountId(),
+                    AccountsUpdate.joinDeltaConfigures(accountUpdates));
+        if (!updatedAccount.isPresent()) {
+          throw new StorageException("Account " + user.getAccountId() + " has been deleted");
+        }
+      } catch (DuplicateExternalIdKeyException e) {
+        throw new AccountException(
+            "Cannot assign external ID \""
+                + e.getDuplicateKey().get()
+                + "\" to account "
+                + user.getAccountId()
+                + "; external ID already in use.",
+            e);
+      }
+      if (backfilledUsername != null) {
+        sshKeyCache.evict(backfilledUsername);
+        logger.atInfo().log(
+            "Backfilled missing username external ID %s for account %s",
+            backfilledUsername, user.getAccountId());
       }
     }
   }

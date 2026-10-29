@@ -98,6 +98,8 @@ import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-load
 import {keyed} from 'lit/directives/keyed.js';
 import {repeat} from 'lit/directives/repeat.js';
 import {ifDefined} from 'lit/directives/if-defined.js';
+import {Shortcut} from '../../lit/shortcut-controller';
+import {shortcutsServiceToken} from '../../../services/shortcuts/shortcuts-service';
 
 const EMPTY_BLAME = 'No blame information for this diff.';
 
@@ -125,6 +127,7 @@ declare global {
     'line-selected': CustomEvent<LineSelectedEventDetail>;
     // Fired if being logged in is required.
     'show-auth-required': CustomEvent<{}>;
+    'reload-diff': CustomEvent<{path: string | undefined}>;
   }
 }
 
@@ -226,6 +229,8 @@ export class GrDiffHost extends LitElement {
 
   @state()
   private revisionImage?: Base64ImageFile;
+
+  private readonly getShortcutsService = resolve(this, shortcutsServiceToken);
 
   // Do not use, use diff instead through the getters and setters.
   // This is not a regular @state because we need to also send the
@@ -339,6 +344,11 @@ export class GrDiffHost extends LitElement {
     this.addEventListener('diff-context-expanded', event =>
       this.handleDiffContextExpanded(event)
     );
+    this.addEventListener('reload-diff', (e: CustomEvent) => {
+      if (e.detail.path === this.path) {
+        this.reload(false);
+      }
+    });
     subscribe(
       this,
       () => this.getBrowserModel().diffViewMode$,
@@ -491,6 +501,10 @@ export class GrDiffHost extends LitElement {
         .showNewlineWarningLeft=${showNewlineWarningLeft}
         .showNewlineWarningRight=${showNewlineWarningRight}
         .useNewImageDiffUi=${useNewImageDiffUi}
+        .binaryDiffHint=${` Download commit to view (shortcut:
+              ${this.getShortcutsService().getShortcut(
+                Shortcut.OPEN_DOWNLOAD_DIALOG
+              )})`}
       >
         ${repeat(
           this.threads,

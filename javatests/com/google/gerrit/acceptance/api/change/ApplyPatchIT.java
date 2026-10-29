@@ -56,7 +56,7 @@ import com.google.gerrit.extensions.restapi.BinaryResult;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.server.restapi.change.ApplyPatchUtil;
+import com.google.gerrit.server.patch.ApplyPatchUtil;
 import com.google.inject.Inject;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.junit.TestRepository;
@@ -79,6 +79,18 @@ public class ApplyPatchIT extends AbstractDaemonTest {
           + "+First added line\n"
           + "+Second added line\n"
           + "\\ No newline at end of file\n";
+
+  private static final String CONFLICTING_FILE_NAME = "conflicting_file.txt";
+  private static final String CONFLICTING_FILE_ORIGINAL_CONTENT =
+      "First original line\nSecond original line";
+  private static final String CONFLICTING_FILE_DIFF =
+      "diff --git a/conflicting_file.txt b/conflicting_file.txt\n"
+          + "--- a/conflicting_file.txt\n"
+          + "+++ b/conflicting_file.txt\n"
+          + "@@ -1,2 +1 @@\n"
+          + "-First original line\n"
+          + "-Third original line\n"
+          + "+Modified line\n";
 
   @Inject private ProjectOperations projectOperations;
   @Inject private RequestScopeOperations requestScopeOperations;
@@ -350,6 +362,36 @@ public class ApplyPatchIT extends AbstractDaemonTest {
     // Error in MODIFIED_FILE should not affect ADDED_FILE results.
     DiffInfo diff = fetchDiffForFile(result, ADDED_FILE_NAME);
     assertDiffForNewFile(diff, result.currentRevision, ADDED_FILE_NAME, ADDED_FILE_CONTENT);
+  }
+
+  @Test
+  public void applyPatchWithConflict_createsConflictMarkers() throws Exception {
+    initBaseWithFile(CONFLICTING_FILE_NAME, CONFLICTING_FILE_ORIGINAL_CONTENT);
+    String patch = CONFLICTING_FILE_DIFF;
+    ApplyPatchPatchSetInput in = buildInput(patch);
+    in.commitMessage = "subject";
+    in.patch.allowConflicts = true;
+
+    ChangeInfo result = applyPatch(in);
+    assertThat(
+            gApi.changes()
+                .id(result.id)
+                .current()
+                .file("conflicting_file.txt")
+                .content()
+                .asString())
+        .isEqualTo(
+            "<<<<<<< HEAD\n"
+                + "First original line\n"
+                + "Second original line\n"
+                + "=======\n"
+                + "Modified line\n"
+                + ">>>>>>> PATCH");
+    assertThat(gApi.changes().id(result.id).current().commit(false).message)
+        .contains(
+            "ATTENTION: Conflicts occurred while applying the patch.\n"
+                + "Please resolve conflict markers.");
+    assertThat(result.containsGitConflicts).isTrue();
   }
 
   @Test

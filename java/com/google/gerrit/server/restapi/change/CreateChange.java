@@ -37,7 +37,6 @@ import com.google.gerrit.entities.converter.ChangeInputProtoConverter;
 import com.google.gerrit.exceptions.InvalidMergeStrategyException;
 import com.google.gerrit.exceptions.MergeWithConflictsNotSupportedException;
 import com.google.gerrit.extensions.api.accounts.AccountInput;
-import com.google.gerrit.extensions.api.changes.ApplyPatchInput;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.client.ChangeStatus;
 import com.google.gerrit.extensions.client.ListChangesOption;
@@ -75,6 +74,7 @@ import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.MergeUtil;
 import com.google.gerrit.server.git.MergeUtilFactory;
 import com.google.gerrit.server.notedb.ChangeNotes;
+import com.google.gerrit.server.patch.ApplyPatchUtil;
 import com.google.gerrit.server.permissions.ChangePermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
@@ -115,6 +115,7 @@ import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.TreeFormatter;
 import org.eclipse.jgit.patch.PatchApplier;
+import org.eclipse.jgit.patch.PatchApplier.Result.Error;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.util.ChangeIdUtil;
@@ -206,7 +207,8 @@ public class CreateChange
   @FunctionalInterface
   public interface CommitTreeSupplier {
     @NonNull
-    ObjectId get(Repository repo, ObjectInserter oi, ChangeInput input, RevCommit mergeTip)
+    ObjectId get(
+        Repository repo, ObjectInserter oi, ObjectReader or, ChangeInput input, RevCommit mergeTip)
         throws IOException, RestApiException;
   }
 
@@ -455,6 +457,7 @@ public class CreateChange
         String commitMessage = getCommitMessage(input.subject, me);
 
         CodeReviewCommit c;
+        boolean hasGitConflicts = false;
         if (input.merge != null) {
           // create a merge commit
           c =
@@ -475,14 +478,38 @@ public class CreateChange
           }
         } else if (input.patch != null) {
           // create a commit with the given patch.
+          if (mergeTip == null) {
+            throw new BadRequestException("Cannot apply patch on top of an empty tree.");
+          }
+          PatchApplier.Result applyResult =
+              ApplyPatchUtil.applyPatch(git, oi, input.patch, mergeTip);
+          ObjectId treeId = applyResult.getTreeId();
+          logger.atFine().log("tree ID after applying patch: %s", treeId.name());
+          String appliedPatchCommitMessage =
+              getCommitMessage(
+                  ApplyPatchUtil.buildCommitMessage(
+                      input.subject,
+                      ImmutableList.of(),
+                      input.patch,
+                      ApplyPatchUtil.getResultPatch(git, reader, mergeTip, rw.lookupTree(treeId)),
+                      applyResult.getErrors()),
+                  me);
           c =
-              createCommitWithPatch(
-                  git, reader, oi, rw, mergeTip, input.patch, input.subject, author, committer, me);
+              rw.parseCommit(
+                  CommitUtil.createCommitWithTree(
+                      oi,
+                      author,
+                      committer,
+                      ImmutableList.of(mergeTip),
+                      appliedPatchCommitMessage,
+                      treeId));
+          hasGitConflicts = applyResult.getErrors().stream().anyMatch(Error::isGitConflict);
         } else if (commitTreeSupplier.isPresent()) {
           c =
               createCommitWithSuppliedTree(
                   git,
                   oi,
+                  reader,
                   rw,
                   mergeTip,
                   input,
@@ -539,7 +566,8 @@ public class CreateChange
           opts = ImmutableList.of();
         }
         ChangeInfo changeInfo = jsonFactory.create(opts).format(ins.getChange());
-        changeInfo.containsGitConflicts = !c.getFilesWithGitConflicts().isEmpty() ? true : null;
+        changeInfo.containsGitConflicts =
+            (!c.getFilesWithGitConflicts().isEmpty() || hasGitConflicts) ? true : null;
         return changeInfo;
       } catch (InvalidMergeStrategyException | MergeWithConflictsNotSupportedException e) {
         throw new BadRequestException(e.getMessage());
@@ -679,46 +707,10 @@ public class CreateChange
             oi, authorIdent, committerIdent, parents, commitMessage, treeId));
   }
 
-  private CodeReviewCommit createCommitWithPatch(
-      Repository repo,
-      ObjectReader reader,
-      ObjectInserter oi,
-      CodeReviewRevWalk rw,
-      RevCommit mergeTip,
-      ApplyPatchInput patch,
-      String subject,
-      PersonIdent authorIdent,
-      PersonIdent committerIdent,
-      IdentifiedUser me)
-      throws IOException, RestApiException {
-    if (mergeTip == null) {
-      throw new BadRequestException("Cannot apply patch on top of an empty tree.");
-    }
-    PatchApplier.Result applyResult = ApplyPatchUtil.applyPatch(repo, oi, patch, mergeTip);
-    ObjectId treeId = applyResult.getTreeId();
-    logger.atFine().log("tree ID after applying patch: %s", treeId.name());
-    String appliedPatchCommitMessage =
-        getCommitMessage(
-            ApplyPatchUtil.buildCommitMessage(
-                subject,
-                ImmutableList.of(),
-                patch.patch,
-                ApplyPatchUtil.getResultPatch(repo, reader, mergeTip, rw.lookupTree(treeId)),
-                applyResult.getErrors()),
-            me);
-    return rw.parseCommit(
-        CommitUtil.createCommitWithTree(
-            oi,
-            authorIdent,
-            committerIdent,
-            ImmutableList.of(mergeTip),
-            appliedPatchCommitMessage,
-            treeId));
-  }
-
   private static CodeReviewCommit createCommitWithSuppliedTree(
       Repository repo,
       ObjectInserter oi,
+      ObjectReader or,
       CodeReviewRevWalk rw,
       RevCommit mergeTip,
       ChangeInput input,
@@ -730,7 +722,7 @@ public class CreateChange
     if (mergeTip == null) {
       throw new BadRequestException("`CommitTreeSupplier` cannot be used on top of an empty tree.");
     }
-    ObjectId treeId = commitTreeSupplier.get(repo, oi, input, mergeTip);
+    ObjectId treeId = commitTreeSupplier.get(repo, oi, or, input, mergeTip);
     return rw.parseCommit(
         CommitUtil.createCommitWithTree(
             oi, authorIdent, committerIdent, ImmutableList.of(mergeTip), commitMessage, treeId));

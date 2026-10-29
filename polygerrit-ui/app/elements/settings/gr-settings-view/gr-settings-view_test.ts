@@ -3,6 +3,7 @@
  * Copyright 2016 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import * as sinon from 'sinon';
 import '../../../test/common-test-setup';
 import './gr-settings-view';
 import {GrSettingsView} from './gr-settings-view';
@@ -125,35 +126,68 @@ suite('gr-settings-view tests', () => {
             </gr-button>
             <gr-button
               aria-disabled="false"
-              class="delete-account-button"
+              class="account-button"
               role="button"
               tabindex="0"
             >
               Delete Account
             </gr-button>
+            <gr-button
+              aria-disabled="false"
+              class="account-button"
+              role="button"
+              tabindex="0"
+            >
+              Dump Account State
+            </gr-button>
             <dialog id="confirm-account-deletion">
-            <gr-dialog role="dialog">
-              <div
-                class="confirm-account-deletion-header"
-                slot="header"
+              <gr-dialog role="dialog">
+                <div
+                  class="confirm-account-deletion-header"
+                  slot="header"
+                >
+                Are you sure you wish to delete your account?
+                </div>
+                <div
+                  class="confirm-account-deletion-main"
+                  slot="main"
+                >
+                  <ul>
+                    <li>
+                      Deleting your account is not reversible.
+                    </li>
+                    <li>
+                      Deleting your account will not delete your changes.
+                    </li>
+                  </ul>
+                </div>
+              </gr-dialog>
+            </dialog>
+            <dialog id="dump-account-state">
+              <gr-dialog
+                cancel-label=""
+                confirm-label="OK"
+                confirm-on-enter=""
+                role="dialog"
               >
-              Are you sure you wish to delete your account?
-              </div>
-              <div
-                class="confirm-account-deletion-main"
-                slot="main"
-              >
-                <ul>
-                  <li>
-                    Deleting your account is not reversible.
-                  </li>
-                  <li>
-                    Deleting your account will not delete your changes.
-                  </li>
-                </ul>
-              </div>
-            </gr-dialog>
-          </dialog>
+                <div slot="header">
+                  Account State:
+                </div>
+                <div slot="main">
+                  <textarea
+                    class="account-state-output"
+                    readonly=""
+                  >
+                    <!----><!---->
+                  </textarea>
+                  <p class="account-state-note">
+                    Note: The account state may contain sensitive data (e.g.
+                    deadnames). Share it with others only on a need to know
+                    basis (e.g. for debugging account or permission issues).
+                  </p>
+                </div>
+              </gr-dialog>
+            </dialog>
           </fieldset>
           <gr-preferences id="preferences"> </gr-preferences>
           <h2 id="DiffPreferences">Diff Preferences</h2>
@@ -331,12 +365,6 @@ suite('gr-settings-view tests', () => {
     assert.isNotOk(element.lastSentVerificationEmail);
   });
 
-  test('emails are loaded without emailToken', () => {
-    const emailEditorLoadDataStub = sinon.stub(element.emailEditor, 'loadData');
-    element.firstUpdated();
-    assert.isTrue(emailEditorLoadDataStub.calledOnce);
-  });
-
   test('handleSaveChangeTable', () => {
     let newColumns = ['Owner', 'Project', 'Branch'];
     element.localChangeTableColumns = newColumns.slice(0);
@@ -387,10 +415,8 @@ suite('gr-settings-view tests', () => {
       value: string | PromiseLike<string | null> | null
     ) => void;
     let confirmEmailStub: sinon.SinonStub;
-    let emailEditorLoadDataStub: sinon.SinonStub;
 
     setup(() => {
-      emailEditorLoadDataStub = sinon.stub(element.emailEditor, 'loadData');
       confirmEmailStub = stubRestApi('confirmEmail').returns(
         new Promise(resolve => {
           resolveConfirm = resolve;
@@ -404,16 +430,6 @@ suite('gr-settings-view tests', () => {
     test('it is used to confirm email via rest API', () => {
       assert.isTrue(confirmEmailStub.calledOnce);
       assert.isTrue(confirmEmailStub.calledWith('foo'));
-    });
-
-    test('emails are not loaded initially', () => {
-      assert.isFalse(emailEditorLoadDataStub.called);
-    });
-
-    test('user emails are loaded after email confirmed', async () => {
-      resolveConfirm('bar');
-      await element._testOnly_loadingPromise;
-      assert.isTrue(emailEditorLoadDataStub.calledOnce);
     });
 
     test('show-alert is fired when email is confirmed', async () => {

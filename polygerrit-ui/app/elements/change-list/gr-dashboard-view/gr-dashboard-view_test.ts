@@ -3,6 +3,7 @@
  * Copyright 2017 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import * as sinon from 'sinon';
 import '../../../test/common-test-setup';
 import './gr-dashboard-view';
 import {GrDashboardView} from './gr-dashboard-view';
@@ -42,11 +43,11 @@ suite('gr-dashboard-view tests', () => {
   let element: GrDashboardView;
 
   let getChangesStub: SinonStubbedMember<
-    RestApiService['getChangesForMultipleQueries']
+    RestApiService['getChangesForDashboard']
   >;
 
   setup(async () => {
-    getChangesStub = stubRestApi('getChangesForMultipleQueries');
+    getChangesStub = stubRestApi('getChangesForDashboard');
     stubRestApi('getLoggedIn').returns(Promise.resolve(false));
     stubRestApi('getAccountDetails').returns(
       Promise.resolve({

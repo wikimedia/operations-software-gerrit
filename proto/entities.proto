@@ -125,9 +125,10 @@ message MergeInput {
 }
 
 // Serialized form of com.google.gerrit.extensions.api.changes.ApplyPatchInput.
-// Next ID: 2
+// Next ID: 3
 message ApplyPatchInput {
  optional string patch = 1;
+ optional bool allow_conflicts = 2;
 }
 
 // Serialized form of com.google.gerrit.extensions.api.accounts.AccountInput.
@@ -277,7 +278,7 @@ message Branch_NameKey {
 // Next ID: 2
 message ObjectId {
   // Hex string representation of the ID.
-  optional string name = 1;
+  optional string name = 1 [default="0000000000000000000000000000000000000000"];
 }
 
 // Serialized form of a continuation token used for pagination.
@@ -289,7 +290,7 @@ message PaginationToken {
 // Proto representation of the User preferences classes
 // Next ID: 4
 message UserPreferences {
-  // Next ID: 24
+  // Next ID: 26
   message GeneralPreferencesInfo {
     // Number of changes to show in a screen.
     optional int32 changes_per_page = 1 [default = 25];
@@ -368,6 +369,8 @@ message UserPreferences {
 
     repeated string change_table = 18;
     optional bool allow_browser_notifications = 19 [default = true];
+    optional bool allow_suggest_code_while_commenting = 24 [default = true];
+    optional bool allow_autocompleting_comments = 25 [default = true];
     optional string diff_page_sidebar = 23 [default = "NONE"];
   }
   optional GeneralPreferencesInfo general_preferences_info = 1;
@@ -453,11 +456,11 @@ message HumanComment {
     optional Side side = 2 [default = REVISION];
     message Range {
       // 1-based
-      optional int32 start_line = 1;
+      optional int32 start_line = 1 [default = 1];
       // 0-based
       optional int32 start_char = 2;
       // 1-based
-      optional int32 end_line = 3;
+      optional int32 end_line = 3 [default = 1];
       // 0-based
       optional int32 end_char = 4;
     }
@@ -466,7 +469,7 @@ message HumanComment {
     // number is identical to the range's end line.
     optional Range position_range = 3;
     // 1-based
-    optional int32 line_number = 4;
+    optional int32 line_number = 4 [default = 1];
   }
 
   // If not set, the comment is on the patchset level.

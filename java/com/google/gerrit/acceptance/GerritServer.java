@@ -26,6 +26,7 @@ import com.google.common.base.Ticker;
 import com.google.common.collect.ImmutableList;
 import com.google.gerrit.acceptance.AbstractDaemonTest.TestTicker;
 import com.google.gerrit.acceptance.FakeGroupAuditService.FakeGroupAuditServiceModule;
+import com.google.gerrit.acceptance.GrantDirectPushPermissionsOnStartup.GrantDirectPushPermissionsOnStartupModule;
 import com.google.gerrit.acceptance.ReindexGroupsAtStartup.ReindexGroupsAtStartupModule;
 import com.google.gerrit.acceptance.ReindexProjectsAtStartup.ReindexProjectsAtStartupModule;
 import com.google.gerrit.acceptance.config.ConfigAnnotationParser;
@@ -57,6 +58,7 @@ import com.google.gerrit.index.testing.FakeIndexModule;
 import com.google.gerrit.lucene.LuceneIndexModule;
 import com.google.gerrit.pgm.Daemon;
 import com.google.gerrit.pgm.Init;
+import com.google.gerrit.server.config.GerritOptions;
 import com.google.gerrit.server.config.GerritRuntime;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.SitePath;
@@ -524,12 +526,15 @@ public class GerritServer implements AutoCloseable {
             new AbstractModule() {
               @Override
               protected void configure() {
+                bind(GerritOptions.class).toInstance(GerritOptions.DEFAULT);
                 bind(GerritRuntime.class).toInstance(GerritRuntime.DAEMON);
               }
             },
             new ConfigExperimentFeaturesModule()));
     daemon.addAdditionalSysModuleForTesting(
-        new ReindexProjectsAtStartupModule(), new ReindexGroupsAtStartupModule());
+        new GrantDirectPushPermissionsOnStartupModule(),
+        new ReindexProjectsAtStartupModule(),
+        new ReindexGroupsAtStartupModule());
     daemon.start();
     return new GerritServer(desc, null, createTestInjector(daemon), Optional.of(daemon), null);
   }
@@ -554,7 +559,9 @@ public class GerritServer implements AutoCloseable {
       throws Exception {
     requireNonNull(site);
     daemon.addAdditionalSysModuleForTesting(
-        new ReindexProjectsAtStartupModule(), new ReindexGroupsAtStartupModule());
+        new GrantDirectPushPermissionsOnStartupModule(),
+        new ReindexProjectsAtStartupModule(),
+        new ReindexGroupsAtStartupModule());
     ExecutorService daemonService = Executors.newSingleThreadExecutor();
     String[] args =
         Stream.concat(

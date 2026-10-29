@@ -187,11 +187,12 @@ public class TraceContext implements AutoCloseable {
 
     private TraceTimer(String operation) {
       this(
-          () -> logger.atFine().log("Starting timer for %s", operation),
-          elapsedMs -> {
+          () -> logger.atFine().log("Starting timer %s", operation),
+          elapsedNanos -> {
             LoggingContext.getInstance()
-                .addPerformanceLogRecord(() -> PerformanceLogRecord.create(operation, elapsedMs));
-            logger.atFine().log("%s done (%d ms)", operation, elapsedMs);
+                .addPerformanceLogRecord(
+                    () -> PerformanceLogRecord.create(operation, elapsedNanos));
+            logger.atFine().log("timer %s took %.2f ms", operation, elapsedNanos / 1000000.0);
           });
     }
 
@@ -199,13 +200,14 @@ public class TraceContext implements AutoCloseable {
       this(
           () ->
               logger.atFine().log(
-                  "Starting timer for %s (%s)", operation, metadata.toStringForLoggingLazy()),
-          elapsedMs -> {
+                  "Starting timer %s (%s)", operation, metadata.toStringForLogging()),
+          elapsedNanos -> {
             LoggingContext.getInstance()
                 .addPerformanceLogRecord(
-                    () -> PerformanceLogRecord.create(operation, elapsedMs, metadata));
+                    () -> PerformanceLogRecord.create(operation, elapsedNanos, metadata));
             logger.atFine().log(
-                "%s (%s) done (%d ms)", operation, metadata.toStringForLoggingLazy(), elapsedMs);
+                "timer %s (%s) took %.2f ms",
+                operation, metadata.toStringForLogging(), elapsedNanos / 1000000.0);
           });
     }
 
@@ -219,7 +221,7 @@ public class TraceContext implements AutoCloseable {
     @Override
     public void close() {
       stopwatch.stop();
-      doneLogFn.accept(stopwatch.elapsed(TimeUnit.MILLISECONDS));
+      doneLogFn.accept(stopwatch.elapsed(TimeUnit.NANOSECONDS));
       RequestStateContext.abortIfCancelled();
     }
   }

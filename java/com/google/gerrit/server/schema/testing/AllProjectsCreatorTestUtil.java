@@ -54,14 +54,15 @@ public class AllProjectsCreatorTestUtil {
       ImmutableList.of(
           "[access \"refs/*\"]",
           "  read = group Administrators",
+          "  read = block group Blocked Users",
           "[access \"refs/for/*\"]",
           "  addPatchSet = group Registered Users",
-          "[access \"refs/for/refs/*\"]",
           "  push = group Registered Users",
           "  pushMerge = group Registered Users",
           "[access \"refs/heads/*\"]",
           "  read = group Anonymous Users",
-          "  revert = group Registered Users",
+          "  revert = group Administrators",
+          "  revert = group Project Owners",
           "  create = group Administrators",
           "  create = group Project Owners",
           "  editTopicName = +force group Administrators",
@@ -72,8 +73,6 @@ public class AllProjectsCreatorTestUtil {
           "  label-Code-Review = -2..+2 group Administrators",
           "  label-Code-Review = -2..+2 group Project Owners",
           "  label-Code-Review = -1..+1 group Registered Users",
-          "  push = group Administrators",
-          "  push = group Project Owners",
           "  submit = group Administrators",
           "  submit = group Project Owners",
           "[access \"refs/meta/config\"]",
@@ -82,8 +81,6 @@ public class AllProjectsCreatorTestUtil {
           "  create = group Project Owners",
           "  label-Code-Review = -2..+2 group Administrators",
           "  label-Code-Review = -2..+2 group Project Owners",
-          "  push = group Administrators",
-          "  push = group Project Owners",
           "  read = group Administrators",
           "  read = group Project Owners",
           "  submit = group Administrators",
@@ -108,6 +105,13 @@ public class AllProjectsCreatorTestUtil {
           "  value = 0 No score",
           "  value = +1 Looks good to me, but someone else must approve",
           "  value = +2 Looks good to me, approved");
+  private static final ImmutableList<String> DEFAULT_ALL_PROJECTS_SUBMIT_REQUIREMENT_SECTION =
+      ImmutableList.of(
+          "[submit-requirement \"No-Unresolved-Comments\"]",
+          "  description = Changes that have unresolved comments are not submittable.",
+          "  applicableIf = has:unresolved",
+          "  submittableIf = -has:unresolved",
+          "  canOverrideInChildProjects = false");
 
   public static String getDefaultAllProjectsWithAllDefaultSections() {
     return Streams.stream(
@@ -117,7 +121,8 @@ public class AllProjectsCreatorTestUtil {
                 DEFAULT_ALL_PROJECTS_SUBMIT_SECTION,
                 DEFAULT_ALL_PROJECTS_CAPABILITY_SECTION,
                 DEFAULT_ALL_PROJECTS_ACCESS_SECTION,
-                DEFAULT_ALL_PROJECTS_LABEL_SECTION))
+                DEFAULT_ALL_PROJECTS_LABEL_SECTION,
+                DEFAULT_ALL_PROJECTS_SUBMIT_REQUIREMENT_SECTION))
         .collect(Collectors.joining("\n"));
   }
 
@@ -127,6 +132,19 @@ public class AllProjectsCreatorTestUtil {
                 DEFAULT_ALL_PROJECTS_PROJECT_SECTION,
                 DEFAULT_ALL_PROJECTS_RECEIVE_SECTION,
                 DEFAULT_ALL_PROJECTS_SUBMIT_SECTION,
+                DEFAULT_ALL_PROJECTS_LABEL_SECTION,
+                DEFAULT_ALL_PROJECTS_SUBMIT_REQUIREMENT_SECTION))
+        .collect(Collectors.joining("\n"));
+  }
+
+  public static String getAllProjectsWithoutDefaultSubmitRequirements() {
+    return Streams.stream(
+            Iterables.concat(
+                DEFAULT_ALL_PROJECTS_PROJECT_SECTION,
+                DEFAULT_ALL_PROJECTS_RECEIVE_SECTION,
+                DEFAULT_ALL_PROJECTS_SUBMIT_SECTION,
+                DEFAULT_ALL_PROJECTS_CAPABILITY_SECTION,
+                DEFAULT_ALL_PROJECTS_ACCESS_SECTION,
                 DEFAULT_ALL_PROJECTS_LABEL_SECTION))
         .collect(Collectors.joining("\n"));
   }

@@ -34,18 +34,24 @@ public interface PerformanceLogger {
    * Record the execution time of an operation in a performance log.
    *
    * @param operation operation that was performed
-   * @param durationMs time that the execution of the operation took (in milliseconds)
+   * @param durationNanos time that the execution of the operation took (in nanoseconds)
    */
-  default void log(String operation, long durationMs, Instant endTime) {
-    log(operation, durationMs, endTime, Metadata.empty());
+  default void logNanos(String operation, long durationNanos, Instant endTime) {
+    logNanos(operation, durationNanos, endTime, Metadata.empty());
   }
 
   /**
    * Record the execution time of an operation in a performance log.
    *
    * @param operation operation that was performed
-   * @param durationMs time that the execution of the operation took (in milliseconds)
+   * @param durationNanos time that the execution of the operation took (in nanoseconds)
    * @param metadata metadata
    */
-  void log(String operation, long durationMs, Instant endTime, Metadata metadata);
+  void logNanos(String operation, long durationNanos, Instant endTime, Metadata metadata);
+
+  /**
+   * Called after all performance events of a request have been logged via {@link #logNanos(String,
+   * long, Instant)} or {@link #logNanos(String, long, Instant, Metadata)}.
+   */
+  default void done() {}
 }

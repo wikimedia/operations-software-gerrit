@@ -24,7 +24,7 @@ import {
 } from '../../../constants/constants';
 import {fire} from '../../../utils/event-util';
 import {RenderPreferences, LOST, DiffResponsiveMode} from '../../../api/diff';
-import {query, queryAll, state} from 'lit/decorators.js';
+import {property, query, queryAll, state} from 'lit/decorators.js';
 import {html, LitElement, nothing} from 'lit';
 import {when} from 'lit/directives/when.js';
 import {classMap} from 'lit/directives/class-map.js';
@@ -76,6 +76,10 @@ export class GrDiffElement extends LitElement {
   @state() columns: ColumnsToShow = NO_COLUMNS;
 
   @state() columnCount = 0;
+
+  // Extra message shown if files are binary to help users investigate contents.
+  @property({type: String})
+  binaryDiffHint = '';
 
   private getDiffModel = resolve(this, diffModelToken);
 
@@ -369,7 +373,7 @@ export class GrDiffElement extends LitElement {
       <tbody class="binary-diff">
         <tr>
           <td colspan=${this.columnCount}>
-            <span>Difference in binary files</span>
+            <span>Difference in binary files.${this.binaryDiffHint}</span>
           </td>
         </tr>
       </tbody>

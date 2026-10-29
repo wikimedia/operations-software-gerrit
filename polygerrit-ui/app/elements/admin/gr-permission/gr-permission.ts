@@ -463,7 +463,7 @@ export class GrPermission extends LitElement {
   ) {
     return groups && groups[groupId] && groups[groupId].name
       ? groups[groupId].name
-      : groupId;
+      : `${groupId} (Group is unavailable)`;
   }
 
   getGroupSuggestions(): Promise<AutocompleteSuggestion[]> {

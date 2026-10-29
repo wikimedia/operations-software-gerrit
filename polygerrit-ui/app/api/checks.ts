@@ -177,6 +177,13 @@ export declare interface CheckRun {
   checkLink?: string;
 
   /**
+   * Indicates that the check run is powered by Aritificial Intelligence. This
+   * allows the UI to add special treatment, e.g. an icon to be added to the
+   * check name. Defaults to `false`.
+   */
+  isAiPowered?: boolean;
+
+  /**
    * RUNNABLE:  Not run (yet). Mostly useful for runs that the user can trigger
    *            (see actions) and for indicating that a check was not run at a
    *            later attempt. Cannot contain results.
@@ -268,6 +275,12 @@ export declare interface Action {
   disabled?: boolean;
   callback: ActionCallback;
 }
+
+/**
+ * Action names that get special UI treatment.
+ */
+export const USEFUL = 'useful';
+export const NOT_USEFUL = 'not-useful';
 
 export type ActionCallback = (
   change: number,
@@ -427,6 +440,9 @@ export declare interface CheckResult {
    * per result, then further actions are put into an overflow menu. Sort order
    * is defined by the data provider.
    *
+   * The actions with the names 'useful' and 'not-useful' will get special UI
+   * treatment (clickable thumbs-up and thumbs-down icons).
+   *
    * Examples:
    * Acknowledge/Dismiss, Delete, Report a bug, Report as not useful,
    * Make blocking, Downgrade severity.
@@ -514,4 +530,5 @@ export enum LinkIcon {
   REPORT_BUG = 'report_bug',
   CODE = 'code',
   FILE_PRESENT = 'file_present',
+  VIEW_TIMELINE = 'view_timeline',
 }

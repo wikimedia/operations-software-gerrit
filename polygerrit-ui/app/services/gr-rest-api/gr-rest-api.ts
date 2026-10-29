@@ -10,6 +10,7 @@ import {
   AccountExternalIdInfo,
   AccountId,
   AccountInfo,
+  AccountStateInfo,
   ActionNameToActionInfoMap,
   Base64FileContent,
   BasePatchSetNum,
@@ -114,6 +115,13 @@ export interface RestApiService extends Finalizable {
   getConfig(noCache?: boolean): Promise<ServerInfo | undefined>;
   getLoggedIn(): Promise<boolean>;
   getPreferences(): Promise<PreferencesInfo | undefined>;
+
+  /**
+   * Fetch the account state of the current user.
+   * https://gerrit-review.googlesource.com/Documentation/rest-api-accounts.html#get-state
+   */
+  getAccountState(): Promise<AccountStateInfo | undefined>;
+
   getVersion(): Promise<string | undefined>;
   getAccount(): Promise<AccountDetailInfo | undefined>;
   getAccountCapabilities(
@@ -493,6 +501,12 @@ export interface RestApiService extends Finalizable {
     options?: string,
     errFn?: ErrorCallback
   ): Promise<ChangeInfo[] | undefined>;
+  getChangesForDashboard(
+    changesPerPage?: number,
+    query?: string[],
+    offset?: 'n,z' | number,
+    options?: string
+  ): Promise<ChangeInfo[][] | undefined>;
   getChangesForMultipleQueries(
     changesPerPage?: number,
     query?: string[],
@@ -542,6 +556,7 @@ export interface RestApiService extends Finalizable {
   invalidateReposCache(): void;
   invalidateAccountsCache(): void;
   invalidateAccountsDetailCache(): void;
+  invalidateAccountsEmailCache(): void;
   removeFromAttentionSet(
     changeNum: NumericChangeId,
     user: AccountId,
@@ -644,6 +659,10 @@ export interface RestApiService extends Finalizable {
   deleteRepoTags(repo: RepoName, ref: GitRef): Promise<Response>;
   deleteRepoBranches(repo: RepoName, ref: GitRef): Promise<Response>;
   saveRepoConfig(repo: RepoName, config: ConfigInput): Promise<Response>;
+  saveRepoConfigForReview(
+    repo: RepoName,
+    config: ConfigInput
+  ): Promise<ChangeInfo | undefined>;
 
   getRelatedChanges(
     changeNum: NumericChangeId,
@@ -719,8 +738,9 @@ export interface RestApiService extends Finalizable {
    */
   applyFixSuggestion(
     changeNum: NumericChangeId,
-    patchNum: PatchSetNum,
-    fixReplacementInfos: FixReplacementInfo[]
+    fixPatchNum: PatchSetNum,
+    fixReplacementInfos: FixReplacementInfo[],
+    targetPatchNum?: PatchSetNum
   ): Promise<Response>;
 
   /**

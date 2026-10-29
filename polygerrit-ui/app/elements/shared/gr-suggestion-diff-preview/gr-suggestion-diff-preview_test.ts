@@ -11,7 +11,10 @@ import {
   commentModelToken,
 } from '../gr-comment-model/gr-comment-model';
 import {wrapInProvider} from '../../../models/di-provider-element';
-import {createComment} from '../../../test/test-data-generators';
+import {
+  createComment,
+  createFixSuggestionInfo,
+} from '../../../test/test-data-generators';
 import {getAppContext} from '../../../services/app-context';
 import {GrSuggestionDiffPreview} from './gr-suggestion-diff-preview';
 import {stubFlags} from '../../../test/test-utils';
@@ -29,7 +32,8 @@ suite('gr-suggestion-diff-preview tests', () => {
         wrapInProvider(
           html`
             <gr-suggestion-diff-preview
-              .suggestion=${'Hello World'}
+              .codeText=${'Hello World'}
+              .fixSuggestionInfo=${createFixSuggestionInfo()}
             ></gr-suggestion-diff-preview>
           `,
           commentModelToken,
@@ -48,9 +52,8 @@ suite('gr-suggestion-diff-preview tests', () => {
 
   test('render diff', async () => {
     stubFlags('isEnabled').returns(true);
-    element.suggestion =
-      '  private handleClick(e: MouseEvent) {\ne.stopPropagation();\ne.preventDefault();';
-    element.previewLoadedFor =
+    element.previewLoadedFor = createFixSuggestionInfo();
+    element.codeText =
       '  private handleClick(e: MouseEvent) {\ne.stopPropagation();\ne.preventDefault();';
     element.preview = {
       filepath:
@@ -103,10 +106,12 @@ suite('gr-suggestion-diff-preview tests', () => {
     assert.shadowDom.equal(
       element,
       /* HTML */ `
-        <gr-diff
-          class="disable-context-control-buttons hide-line-length-indicator"
-        >
-        </gr-diff>
+        <div class="diff-container">
+          <gr-diff
+            class="disable-context-control-buttons hide-line-length-indicator"
+          >
+          </gr-diff>
+        </div>
       `,
       {ignoreAttributes: ['style']}
     );

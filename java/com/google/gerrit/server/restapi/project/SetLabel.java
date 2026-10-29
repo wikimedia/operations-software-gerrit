@@ -15,61 +15,37 @@
 package com.google.gerrit.server.restapi.project;
 
 import com.google.common.base.Strings;
-import com.google.common.collect.ImmutableList;
 import com.google.gerrit.entities.LabelType;
 import com.google.gerrit.extensions.common.LabelDefinitionInfo;
 import com.google.gerrit.extensions.common.LabelDefinitionInput;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
+import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.index.query.QueryParseException;
-import com.google.gerrit.server.CurrentUser;
-import com.google.gerrit.server.git.meta.MetaDataUpdate;
-import com.google.gerrit.server.git.validators.ProjectConfigRegexValidator;
-import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gerrit.server.permissions.ProjectPermission;
 import com.google.gerrit.server.project.LabelDefinitionJson;
 import com.google.gerrit.server.project.LabelResource;
-import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectConfig;
 import com.google.gerrit.server.query.approval.ApprovalQueryBuilder;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
-import java.util.Map;
 import java.util.Optional;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
 @Singleton
 public class SetLabel implements RestModifyView<LabelResource, LabelDefinitionInput> {
-  private final Provider<CurrentUser> user;
-  private final PermissionBackend permissionBackend;
-  private final MetaDataUpdate.User updateFactory;
-  private final ProjectConfig.Factory projectConfigFactory;
-  private final ProjectCache projectCache;
   private final ApprovalQueryBuilder approvalQueryBuilder;
-  private final ProjectConfigRegexValidator projectConfigRegexValidator;
+  private final RepoMetaDataUpdater repoMetaDataUpdater;
 
   @Inject
   public SetLabel(
-      Provider<CurrentUser> user,
-      PermissionBackend permissionBackend,
-      MetaDataUpdate.User updateFactory,
-      ProjectConfig.Factory projectConfigFactory,
-      ProjectCache projectCache,
-      ApprovalQueryBuilder approvalQueryBuilder,
-      ProjectConfigRegexValidator projectConfigRegexValidator) {
-    this.user = user;
-    this.permissionBackend = permissionBackend;
-    this.updateFactory = updateFactory;
-    this.projectConfigFactory = projectConfigFactory;
-    this.projectCache = projectCache;
+      ApprovalQueryBuilder approvalQueryBuilder, RepoMetaDataUpdater repoMetaDataUpdater) {
     this.approvalQueryBuilder = approvalQueryBuilder;
-    this.projectConfigRegexValidator = projectConfigRegexValidator;
+    this.repoMetaDataUpdater = repoMetaDataUpdater;
   }
 
   @Override
@@ -79,44 +55,24 @@ public class SetLabel implements RestModifyView<LabelResource, LabelDefinitionIn
           ResourceConflictException,
           PermissionBackendException,
           IOException,
-          ConfigInvalidException {
-    if (!user.get().isIdentifiedUser()) {
-      throw new AuthException("Authentication required");
-    }
-
-    permissionBackend
-        .currentUser()
-        .project(rsrc.getProject().getNameKey())
-        .check(ProjectPermission.WRITE_CONFIG);
-
+          ConfigInvalidException,
+          MethodNotAllowedException {
     if (input == null) {
       input = new LabelDefinitionInput();
     }
 
     LabelType labelType = rsrc.getLabelType();
 
-    try (MetaDataUpdate md = updateFactory.create(rsrc.getProject().getNameKey())) {
-      ProjectConfig config = projectConfigFactory.read(md);
-      boolean regexAllowed = projectConfigRegexValidator.isAllowed();
-      ImmutableList<Map.Entry<String, String>> existingLabelBranchRegexes =
-          regexAllowed ? ImmutableList.of() : config.getLabelBranchRegexes();
+    try (var configUpdater =
+        repoMetaDataUpdater.configUpdater(
+            rsrc.getProject().getNameKey(), input.commitMessage, "Update label")) {
+      ProjectConfig config = configUpdater.getConfig();
 
       if (updateLabel(config, labelType, input)) {
-        if (!regexAllowed) {
-          projectConfigRegexValidator.assertNoAdditionalRegexes(
-              existingLabelBranchRegexes, config.getLabelBranchRegexes());
-        }
-        if (input.commitMessage != null) {
-          md.setMessage(Strings.emptyToNull(input.commitMessage.trim()));
-        } else {
-          md.setMessage("Update label");
-        }
         String newName = Strings.nullToEmpty(input.name).trim();
         labelType =
             config.getLabelSections().get(newName.isEmpty() ? labelType.getName() : newName);
-
-        config.commit(md);
-        projectCache.evictAndReindex(rsrc.getProject().getProjectState().getProject());
+        configUpdater.commitConfigUpdate();
       }
     }
     return Response.ok(LabelDefinitionJson.format(rsrc.getProject().getNameKey(), labelType));

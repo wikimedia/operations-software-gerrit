@@ -46,8 +46,6 @@ import {
   ChangeChildView,
   ChangeViewModel,
   createChangeUrl,
-  createDiffUrl,
-  createEditUrl,
 } from '../views/change';
 import {NavigationService} from '../../elements/core/gr-navigation/gr-navigation';
 import {getRevertCreatedChangeIds} from '../../utils/message-util';
@@ -661,27 +659,13 @@ export class ChangeModel extends Model<ChangeState> {
     return this.getState().change;
   }
 
-  diffUrl(
-    diffView: {path: string; lineNum?: number},
-    patchNum = this.patchNum,
-    basePatchNum = this.basePatchNum
-  ) {
-    if (!this.change) return;
-    if (!this.patchNum) return;
-    return createDiffUrl({
-      change: this.change,
-      patchNum,
-      basePatchNum,
-      diffView,
-    });
-  }
-
   navigateToDiff(
     diffView: {path: string; lineNum?: number},
     patchNum = this.patchNum,
     basePatchNum = this.basePatchNum
   ) {
-    const url = this.diffUrl(diffView, patchNum, basePatchNum);
+    if (!patchNum) return;
+    const url = this.viewModel.diffUrl({diffView, patchNum, basePatchNum});
     if (!url) return;
     this.navigation.setUrl(url);
   }
@@ -719,18 +703,9 @@ export class ChangeModel extends Model<ChangeState> {
     this.navigation.setUrl(url);
   }
 
-  editUrl(editView: {path: string; lineNum?: number}) {
-    if (!this.change) return;
-    return createEditUrl({
-      changeNum: this.change._number,
-      repo: this.change.project,
-      patchNum: this.patchNum,
-      editView,
-    });
-  }
-
   navigateToEdit(editView: {path: string; lineNum?: number}) {
-    const url = this.editUrl(editView);
+    if (!this.patchNum) return;
+    const url = this.viewModel.editUrl({editView, patchNum: this.patchNum});
     if (!url) return;
     this.navigation.setUrl(url);
   }
@@ -743,27 +718,21 @@ export class ChangeModel extends Model<ChangeState> {
    *     has been loaded, and false if a newer patch has been uploaded in the
    *     meantime. The promise is rejected on network error.
    */
-  fetchChangeUpdates(change: ChangeInfo | ParsedChangeInfo) {
-    const knownLatest = computeLatestPatchNum(computeAllPatchSets(change));
-    return this.restApiService.getChangeDetail(change._number).then(detail => {
-      if (!detail) {
-        const error = new Error('Change detail not found.');
-        return Promise.reject(error);
-      }
-      const actualLatest = computeLatestPatchNum(computeAllPatchSets(detail));
-      if (!actualLatest || !knownLatest) {
-        const error = new Error('Unable to check for latest patchset.');
-        return Promise.reject(error);
-      }
-      return {
-        isLatest: actualLatest <= knownLatest,
-        newStatus: change.status !== detail.status ? detail.status : null,
-        newMessages:
-          (change.messages || []).length < (detail.messages || []).length
-            ? detail.messages![detail.messages!.length - 1]
-            : undefined,
-      };
-    });
+  async fetchChangeUpdates(change: ChangeInfo | ParsedChangeInfo) {
+    const knownLatest = change.current_revision_number;
+    const detail = await this.restApiService.getChange(change._number);
+    if (!detail) {
+      throw new Error('Change request failed.');
+    }
+    const actualLatest = detail.current_revision_number;
+    return {
+      isLatest: actualLatest <= knownLatest,
+      newStatus: change.status !== detail.status ? detail.status : null,
+      newMessages:
+        (change.messages || []).length < (detail.messages || []).length
+          ? detail.messages![detail.messages!.length - 1]
+          : undefined,
+    };
   }
 
   /**

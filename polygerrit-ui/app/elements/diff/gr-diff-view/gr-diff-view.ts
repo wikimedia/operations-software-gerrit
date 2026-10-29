@@ -92,7 +92,6 @@ import {ifDefined} from 'lit/directives/if-defined.js';
 import {when} from 'lit/directives/when.js';
 import {styleMap} from 'lit/directives/style-map.js';
 import {
-  createDiffUrl,
   ChangeChildView,
   changeViewModelToken,
 } from '../../../models/views/change';
@@ -1464,7 +1463,11 @@ export class GrDiffView extends LitElement {
     if (!newPath) return;
     if (newPath.up) return this.getChangeModel().changeUrl();
     if (!newPath.path) return;
-    return this.getChangeModel().diffUrl({path: newPath.path});
+    if (!this.patchNum) return;
+    return this.getViewModel().diffUrl({
+      diffView: {path: newPath.path},
+      patchNum: this.patchNum,
+    });
   }
 
   private goToEditFile() {
@@ -1511,20 +1514,14 @@ export class GrDiffView extends LitElement {
   }
 
   private updateUrlToDiffUrl(lineNum?: number, leftSide?: boolean) {
-    if (!this.change) return;
-    if (!this.patchNum) return;
-    if (!this.changeNum) return;
-    if (!this.path) return;
-    const url = createDiffUrl({
-      changeNum: this.changeNum,
-      repo: this.change.project,
-      patchNum: this.patchNum,
-      basePatchNum: this.basePatchNum,
+    if (!this.path || !this.patchNum) return;
+    const url = this.getViewModel().diffUrl({
       diffView: {
         path: this.path,
         lineNum,
         leftSide,
       },
+      patchNum: this.patchNum,
     });
     history.replaceState(null, '', url);
   }
@@ -1547,6 +1544,7 @@ export class GrDiffView extends LitElement {
     // on how much the change view was scrolled.
     // Hence, reset the scroll position here.
     document.documentElement.scrollTop = 0;
+    this.initCursor();
     this.reInitCursor();
     this.diffHost?.initLayers();
     this.classList.remove('hideComments');

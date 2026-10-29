@@ -198,7 +198,10 @@ export function createNewPatchsetLevel(
 }
 
 export function createNewReply(
-  replyingTo: CommentInfo,
+  replyingTo: Pick<
+    CommentInfo,
+    'id' | 'path' | 'patch_set' | 'line' | 'range' | 'side' | 'parent'
+  >,
   message: string,
   unresolved: boolean
 ): DraftInfo {
@@ -301,8 +304,8 @@ export function isUnresolved(thread: CommentThread): boolean {
 }
 
 export function isResolved(thread: CommentThread): boolean {
-  const lastUnresolved = getLastComment(thread)?.unresolved;
-  return !lastUnresolved ?? false;
+  const lastComment = getLastComment(thread);
+  return lastComment !== undefined ? !lastComment.unresolved : true;
 }
 
 export function isDraftThread(thread: CommentThread): boolean {
@@ -578,6 +581,11 @@ export function getContentInCommentRange(
   fileContent: string,
   comment: Comment
 ) {
+  if (comment.path === SpecialFilePath.COMMIT_MESSAGE) {
+    // We need to add 6 lines, because commit message diff is
+    // showing 6 lines of header that are not part of file content.
+    fileContent = '\n'.repeat(6) + fileContent;
+  }
   const lines = fileContent.split('\n');
   if (comment.range) {
     const range = comment.range;

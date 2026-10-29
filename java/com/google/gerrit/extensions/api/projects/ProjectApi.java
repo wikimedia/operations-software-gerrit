@@ -20,6 +20,7 @@ import com.google.gerrit.extensions.api.access.ProjectAccessInput;
 import com.google.gerrit.extensions.api.config.AccessCheckInfo;
 import com.google.gerrit.extensions.api.config.AccessCheckInput;
 import com.google.gerrit.extensions.common.BatchLabelInput;
+import com.google.gerrit.extensions.common.BatchSubmitRequirementInput;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.LabelDefinitionInfo;
 import com.google.gerrit.extensions.common.ListTagSortOption;
@@ -58,6 +59,9 @@ public interface ProjectApi {
 
   @CanIgnoreReturnValue
   ConfigInfo config(ConfigInput in) throws RestApiException;
+
+  @CanIgnoreReturnValue
+  ChangeInfo configReview(ConfigInput in) throws RestApiException;
 
   Map<String, Set<String>> commitsIn(Collection<String> commits, Collection<String> refs)
       throws RestApiException;
@@ -284,6 +288,25 @@ public interface ProjectApi {
    */
   void labels(BatchLabelInput input) throws RestApiException;
 
+  /** Same as {@link #labels(BatchLabelInput)}, but creates a change with required updates. */
+  @CanIgnoreReturnValue
+  ChangeInfo labelsReview(BatchLabelInput input) throws RestApiException;
+
+  /**
+   * Adds, updates and deletes submit requirements definitions in a batch.
+   *
+   * @param input input that describes additions, updates and deletions of submit requirements
+   */
+  void submitRequirements(BatchSubmitRequirementInput input) throws RestApiException;
+
+  /**
+   * Creates a change with required submit requirements updates.
+   *
+   * <p>See {@link #submitRequirements(BatchSubmitRequirementInput)} for details
+   */
+  @CanIgnoreReturnValue
+  ChangeInfo submitRequirementsReview(BatchSubmitRequirementInput input) throws RestApiException;
+
   /**
    * A default implementation which allows source compatibility when adding new methods to the
    * interface.
@@ -341,6 +364,11 @@ public interface ProjectApi {
 
     @Override
     public ConfigInfo config(ConfigInput in) throws RestApiException {
+      throw new NotImplementedException();
+    }
+
+    @Override
+    public ChangeInfo configReview(ConfigInput in) throws RestApiException {
       throw new NotImplementedException();
     }
 
@@ -487,6 +515,22 @@ public interface ProjectApi {
 
     @Override
     public void labels(BatchLabelInput input) throws RestApiException {
+      throw new NotImplementedException();
+    }
+
+    @Override
+    public ChangeInfo labelsReview(BatchLabelInput input) throws RestApiException {
+      throw new NotImplementedException();
+    }
+
+    @Override
+    public void submitRequirements(BatchSubmitRequirementInput input) throws RestApiException {
+      throw new NotImplementedException();
+    }
+
+    @Override
+    public ChangeInfo submitRequirementsReview(BatchSubmitRequirementInput input)
+        throws RestApiException {
       throw new NotImplementedException();
     }
   }

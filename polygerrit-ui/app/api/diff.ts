@@ -306,12 +306,12 @@ export declare interface CoverageRange {
   code_range: LineRange;
 }
 
-export interface FileRange {
+export declare interface FileRange {
   basePath?: string;
   path: string;
 }
 
-export interface PatchRange {
+export declare interface PatchRange {
   patchNum: RevisionPatchSetNum;
   basePatchNum: BasePatchSetNum;
 }
@@ -551,4 +551,14 @@ export declare interface GrDiffCursor {
     path?: string,
     intentionalMove?: boolean
   ): void;
+}
+
+/**
+ * Represents a list of ranges in a diff that should be focused.
+ *
+ * This is used to collapse diff chunks that are not in focus.
+ */
+export declare interface DiffRangesToFocus {
+  left: {start: number; end: number}[];
+  right: {start: number; end: number}[];
 }

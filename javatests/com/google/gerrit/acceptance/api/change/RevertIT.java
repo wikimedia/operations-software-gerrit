@@ -15,6 +15,7 @@
 package com.google.gerrit.acceptance.api.change;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
@@ -39,6 +40,7 @@ import com.google.gerrit.extensions.api.changes.ChangeApi;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.api.changes.RevertInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
+import com.google.gerrit.extensions.client.GeneralPreferencesInfo;
 import com.google.gerrit.extensions.client.ProjectState;
 import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.common.AccountInfo;
@@ -202,6 +204,7 @@ public class RevertIT extends AbstractDaemonTest {
         String.format("Created a revert of this change as %s", revertChange.changeId);
     assertThat(sourceMessages.get(3).message).isEqualTo(expectedMessage);
 
+    assertThat(revertChange.workInProgress).isNull();
     assertThat(revertChange.messages).hasSize(1);
     assertThat(revertChange.messages.iterator().next().message).isEqualTo("Uploaded patch set 1.");
     assertThat(revertChange.revertOf).isEqualTo(gApi.changes().id(r.getChangeId()).get()._number);
@@ -231,6 +234,36 @@ public class RevertIT extends AbstractDaemonTest {
     assertThat(sourceMessages).hasSize(4);
     assertThat(sourceMessages.get(3).message)
         .isEqualTo("Created a revert of this change as " + revertChange.changeId);
+  }
+
+  @Test
+  public void revertChangeWithWipByUserPreference() throws Exception {
+    GeneralPreferencesInfo generalPreferencesInfo = new GeneralPreferencesInfo();
+    generalPreferencesInfo.workInProgressByDefault = true;
+    gApi.accounts().id(admin.id().get()).setPreferences(generalPreferencesInfo);
+    requestScopeOperations.resetCurrentApiUser();
+
+    PushOneCommit.Result r = createChange();
+    gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).review(ReviewInput.approve());
+    gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).submit();
+    ChangeInfo revertChange = gApi.changes().id(r.getChangeId()).revert().get();
+    assertThat(revertChange.workInProgress).isTrue();
+  }
+
+  @Test
+  public void revertChangeOverrideWipByUserPreference() throws Exception {
+    GeneralPreferencesInfo generalPreferencesInfo = new GeneralPreferencesInfo();
+    generalPreferencesInfo.workInProgressByDefault = true;
+    gApi.accounts().id(admin.id().get()).setPreferences(generalPreferencesInfo);
+    requestScopeOperations.resetCurrentApiUser();
+
+    PushOneCommit.Result r = createChange();
+    gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).review(ReviewInput.approve());
+    gApi.changes().id(r.getChangeId()).revision(r.getCommit().name()).submit();
+    RevertInput revertInput = new RevertInput();
+    revertInput.workInProgress = false;
+    ChangeInfo revertChange = gApi.changes().id(r.getChangeId()).revert(revertInput).get();
+    assertThat(revertChange.workInProgress).isNull();
   }
 
   @Test
@@ -413,6 +446,12 @@ public class RevertIT extends AbstractDaemonTest {
   @Test
   @GerritConfig(name = "accounts.visibility", value = "SAME_GROUP")
   public void revertWithNonVisibleUsers() throws Exception {
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.REVERT).ref("refs/*").group(REGISTERED_USERS))
+        .update();
+
     // Define readable names for the users we use in this test.
     TestAccount reverter = user;
     TestAccount changeOwner = admin; // must be admin, since admin cloned testRepo

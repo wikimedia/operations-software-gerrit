@@ -41,8 +41,10 @@ import {fireReload} from '../../../utils/event-util';
 import {when} from 'lit/directives/when.js';
 import {Timing} from '../../../constants/reporting';
 import {changeModelToken} from '../../../models/change/change-model';
+import {getFileExtension} from '../../../utils/file-util';
+import {ChangeStatus} from '../../../api/rest-api';
 
-export interface FilePreview {
+export interface DiffPreview {
   filepath: string;
   preview: DiffInfo;
 }
@@ -54,12 +56,6 @@ export class GrApplyFixDialog extends LitElement {
 
   @query('#applyFixDialog')
   applyFixDialog?: GrDialog;
-
-  /** The currently observed dialog by `dialogOberserver`. */
-  observedDialog?: GrDialog;
-
-  /** The current observer observing the `observedDialog`. */
-  dialogObserver?: ResizeObserver;
 
   @query('#nextFix')
   nextFix?: GrButton;
@@ -79,7 +75,7 @@ export class GrApplyFixDialog extends LitElement {
   currentFix?: FixSuggestionInfo;
 
   @state()
-  currentPreviews: FilePreview[] = [];
+  currentPreviews: DiffPreview[] = [];
 
   @state()
   fixSuggestions?: FixSuggestionInfo[];
@@ -98,6 +94,8 @@ export class GrApplyFixDialog extends LitElement {
 
   @state()
   loading = false;
+
+  @state() isChangeMerged = false;
 
   @state()
   onCloseFixPreviewCallbacks: ((fixapplied: boolean) => void)[] = [];
@@ -153,6 +151,11 @@ export class GrApplyFixDialog extends LitElement {
       this,
       () => this.getChangeModel().latestPatchNum$,
       x => (this.latestPatchNum = x)
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().status$,
+      status => (this.isChangeMerged = status === ChangeStatus.MERGED)
     );
   }
 
@@ -210,10 +213,6 @@ export class GrApplyFixDialog extends LitElement {
     `;
   }
 
-  override disconnectedCallback() {
-    super.disconnectedCallback();
-  }
-
   private renderHeader() {
     return html`
       <div slot="header">${this.currentFix?.description ?? ''}</div>
@@ -232,7 +231,7 @@ export class GrApplyFixDialog extends LitElement {
     return html`<div slot="main">${items}</div>`;
   }
 
-  private renderDiff(preview: FilePreview) {
+  private renderDiff(preview: DiffPreview) {
     const diff = preview.preview;
     if (!anyLineTooLong(diff)) {
       this.syntaxLayer.process(diff);
@@ -248,13 +247,21 @@ export class GrApplyFixDialog extends LitElement {
   private renderFooter() {
     const fixCount = this.fixSuggestions?.length ?? 0;
     const reasonForDisabledApplyButton = this.computeTooltip();
-    if (fixCount < 2 && !reasonForDisabledApplyButton) return nothing;
-    return html`<div slot="footer" class="fix-picker">
-      ${when(fixCount >= 2, () =>
-        this.renderNavForMultipleSuggestedFixes(fixCount)
-      )}
-      ${this.renderWarning(reasonForDisabledApplyButton)}
-    </div>`;
+    const shouldRenderNav = fixCount >= 2;
+    const shouldRenderWarning = !!reasonForDisabledApplyButton;
+
+    if (!shouldRenderNav && !shouldRenderWarning) return nothing;
+
+    return html`
+      <div slot="footer" class="fix-picker">
+        ${when(shouldRenderNav, () =>
+          this.renderNavForMultipleSuggestedFixes(fixCount)
+        )}
+        ${when(shouldRenderWarning, () =>
+          this.renderWarning(reasonForDisabledApplyButton)
+        )}
+      </div>
+    `;
   }
 
   private renderNavForMultipleSuggestedFixes(fixCount: number) {
@@ -391,23 +398,22 @@ export class GrApplyFixDialog extends LitElement {
 
   private computeTooltip() {
     if (!this.change || !this.patchNum) return '';
-    return this.latestPatchNum !== this.patchNum
-      ? 'You cannot apply this fix because it is from a previous patchset'
-      : '';
+    if (this.isChangeMerged) return 'Change is already merged';
+    if (this.isApplyFixLoading) return 'Fix is still loading ...';
+    return '';
   }
 
   private computeDisableApplyFixButton() {
     if (!this.change || !this.patchNum) return true;
-    return this.patchNum !== this.latestPatchNum || this.isApplyFixLoading;
+    if (this.isChangeMerged) return true;
+    return this.isApplyFixLoading;
   }
 
   // visible for testing
   async handleApplyFix(e: Event) {
     if (e) e.stopPropagation();
 
-    const changeNum = this.changeNum;
-    const patchNum = this.patchNum;
-    const change = this.change;
+    const {changeNum, patchNum, change} = this;
     if (!changeNum || !patchNum || !change || !this.currentFix) {
       throw new Error('Not all required properties are set.');
     }
@@ -418,7 +424,8 @@ export class GrApplyFixDialog extends LitElement {
       res = await this.restApiService.applyFixSuggestion(
         changeNum,
         patchNum,
-        this.fixSuggestions[0].replacements
+        this.fixSuggestions[0].replacements,
+        this.latestPatchNum
       );
     } else {
       res = await this.restApiService.applyRobotFixSuggestion(
@@ -441,6 +448,9 @@ export class GrApplyFixDialog extends LitElement {
     this.reporting.timeEnd(Timing.APPLY_FIX_LOAD, {
       method: 'apply-fix-dialog',
       description: this.fixSuggestions?.[0].description,
+      fileExtension: getFileExtension(
+        this.fixSuggestions?.[0].replacements?.[0].path ?? ''
+      ),
     });
   }
 }

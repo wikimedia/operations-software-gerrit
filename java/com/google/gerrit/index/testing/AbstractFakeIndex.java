@@ -121,6 +121,13 @@ public abstract class AbstractFakeIndex<K, V, D> implements Index<K, V> {
     }
   }
 
+  @Override
+  public int numDocs() {
+    synchronized (indexedDocuments) {
+      return indexedDocuments.size();
+    }
+  }
+
   public int getQueryCount() {
     return queryCount;
   }

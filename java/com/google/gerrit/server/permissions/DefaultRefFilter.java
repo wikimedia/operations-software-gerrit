@@ -16,7 +16,6 @@ package com.google.gerrit.server.permissions;
 
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
-import static com.google.common.flogger.LazyArgs.lazy;
 import static com.google.gerrit.entities.RefNames.REFS_CONFIG;
 import static java.util.stream.Collectors.toCollection;
 
@@ -57,10 +56,10 @@ import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 
-class DefaultRefFilter {
+public class DefaultRefFilter {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
-  interface Factory {
+  public interface Factory {
     DefaultRefFilter create(ProjectControl projectControl);
   }
 
@@ -130,7 +129,6 @@ class DefaultRefFilter {
         "Filter refs for repository %s by visibility (options = %s, refs = %s)",
         projectState.getNameKey(), opts, refs);
     logger.atFinest().log("Calling user: %s", user.getLoggableName());
-    logger.atFinest().log("Groups: %s", lazy(() -> user.getEffectiveGroups().getKnownGroups()));
     logger.atFinest().log(
         "auth.skipFullRefEvaluationIfAllRefsAreVisible = %s",
         skipFullRefEvaluationIfAllRefsAreVisible);

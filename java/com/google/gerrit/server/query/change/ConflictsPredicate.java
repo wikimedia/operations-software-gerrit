@@ -15,7 +15,6 @@
 package com.google.gerrit.server.query.change;
 
 import static com.google.common.base.MoreObjects.firstNonNull;
-import static com.google.common.flogger.LazyArgs.lazy;
 import static com.google.gerrit.server.project.ProjectCache.noSuchProject;
 import static java.util.concurrent.TimeUnit.MINUTES;
 
@@ -38,7 +37,6 @@ import com.google.gerrit.server.query.change.ChangeQueryBuilder.Arguments;
 import com.google.gerrit.server.submit.SubmitDryRun;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -148,7 +146,7 @@ public class ConflictsPredicate {
             "Merge failure checking conflicts of change %s in %s (%s): %s",
             id,
             firstNonNull(otherProject, "unknown project"),
-            lazy(() -> finalOther != null ? finalOther.name() : "unknown commit"),
+            finalOther != null ? finalOther.name() : "unknown commit",
             e.getMessage());
         return false;
       }
@@ -166,7 +164,6 @@ public class ConflictsPredicate {
 
     private ObjectId testAgainst;
     private ProjectState projectState;
-    private Set<ObjectId> alreadyAccepted;
 
     ChangeDataCache(ChangeData cd, ProjectCache projectCache) {
       this.cd = cd;
@@ -185,13 +182,6 @@ public class ConflictsPredicate {
         projectState = projectCache.get(cd.project()).orElseThrow(noSuchProject(cd.project()));
       }
       return projectState;
-    }
-
-    Set<ObjectId> getAlreadyAccepted(Repository repo) throws IOException {
-      if (alreadyAccepted == null) {
-        alreadyAccepted = SubmitDryRun.getAlreadyAccepted(repo);
-      }
-      return alreadyAccepted;
     }
   }
 
@@ -224,6 +214,12 @@ public class ConflictsPredicate {
       ObjectId other = changeData.currentPatchSet().commitId();
       try (Repository repo = args.repoManager.openRepository(otherChange.getProject());
           CodeReviewCommit.CodeReviewRevWalk rw = CodeReviewCommit.newRevWalk(repo)) {
+        // Only check whether the other change itself conflicts with the tested change. Whether the
+        // other change's own dependencies are open or already merged is irrelevant for this, so
+        // treat its parents as already accepted. Since all ancestors of already accepted commits
+        // are excluded from the missing dependency check, no further commits, e.g. branch tips,
+        // need to be accepted.
+        Set<RevCommit> alreadyAccepted = getParents(rw, other);
         return !args.submitDryRun.run(
             null,
             changeData.submitTypeRecord().type,
@@ -232,30 +228,25 @@ public class ConflictsPredicate {
             otherChange.getDest(),
             changeDataCache.getTestAgainst(),
             other,
-            getAlreadyAccepted(repo, rw));
+            alreadyAccepted);
       } catch (NoSuchProjectException | IOException e) {
         warnWithOccasionalStackTrace(
             e,
             "Failure when loading conflicts of change %s in %s (%s): %s",
-            lazy(changeData::getId),
-            lazy(() -> firstNonNull(otherChange.getProject(), "unknown project")),
-            lazy(() -> other != null ? other.name() : "unknown commit"),
+            changeData.getId(),
+            firstNonNull(otherChange.getProject(), "unknown project"),
+            other != null ? other.name() : "unknown commit",
             e.getMessage());
         return false;
       }
     }
 
-    private Set<RevCommit> getAlreadyAccepted(Repository repo, RevWalk rw) {
+    private Set<RevCommit> getParents(RevWalk rw, ObjectId commitId) {
       try {
-        Set<RevCommit> accepted = new HashSet<>();
-        SubmitDryRun.addCommits(changeDataCache.getAlreadyAccepted(repo), rw, accepted);
-        ObjectId tip = changeDataCache.getTestAgainst();
-        if (tip != null) {
-          accepted.add(rw.parseCommit(tip));
-        }
-        return accepted;
-      } catch (StorageException | IOException e) {
-        throw new StorageException("Failed to determine already accepted commits.", e);
+        return SubmitDryRun.getParents(rw, commitId);
+      } catch (IOException e) {
+        throw new StorageException(
+            String.format("Failed to determine parents of commit %s.", commitId.name()), e);
       }
     }
   }

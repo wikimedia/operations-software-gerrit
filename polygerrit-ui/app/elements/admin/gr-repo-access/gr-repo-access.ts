@@ -74,6 +74,8 @@ export class GrRepoAccess extends LitElement {
   // private but used in test
   @state() canUpload?: boolean = false; // restAPI can return undefined
 
+  @state() disableSaveWithoutReview = true;
+
   // private but used in test
   @state() inheritFromFilter?: RepoName;
 
@@ -239,7 +241,7 @@ export class GrRepoAccess extends LitElement {
               id="saveBtn"
               class=${this.isOwner ? '' : 'invisible'}
               primary
-              ?disabled=${!this.modified}
+              ?disabled=${!this.modified || this.disableSaveWithoutReview}
               @click=${this.handleSave}
               >Save</gr-button
             >
@@ -344,6 +346,7 @@ export class GrRepoAccess extends LitElement {
         this.groups = res.groups;
         this.weblinks = res.config_web_links || [];
         this.canUpload = res.can_upload;
+        this.disableSaveWithoutReview = !!res.require_change_for_config_update;
         this.ownerOf = res.owner_of || [];
         this.isOwner = res.is_owner ?? false;
         return toSortedPermissionsArray(this.local);

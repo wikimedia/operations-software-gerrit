@@ -17,6 +17,9 @@ package com.google.gerrit.server.config;
 import static com.google.gerrit.server.config.ConfigUtil.loadSection;
 import static com.google.gerrit.server.config.ConfigUtil.mergeWithDefaults;
 import static com.google.gerrit.server.config.ConfigUtil.skipField;
+import static com.google.gerrit.server.config.UserPreferencesConverter.DiffPreferencesInfoConverter.DIFF_PREFERENCES_INFO_CONVERTER;
+import static com.google.gerrit.server.config.UserPreferencesConverter.EditPreferencesInfoConverter.EDIT_PREFERENCES_INFO_CONVERTER;
+import static com.google.gerrit.server.config.UserPreferencesConverter.GeneralPreferencesInfoConverter.GENERAL_PREFERENCES_INFO_CONVERTER;
 import static com.google.gerrit.server.git.UserConfigSections.CHANGE_TABLE;
 import static com.google.gerrit.server.git.UserConfigSections.CHANGE_TABLE_COLUMN;
 import static com.google.gerrit.server.git.UserConfigSections.KEY_ID;
@@ -317,13 +320,12 @@ public class PreferencesParserUtil {
   }
 
   /** Provides methods for parsing user configs */
-  public interface PreferencesParser<T> {
+  interface PreferencesParser<T> {
     T parse(Config cfg, @Nullable Config defaultConfig, @Nullable T input)
         throws ConfigInvalidException;
 
-    T parse(T cfg, @Nullable Config defaultConfig) throws ConfigInvalidException;
-
-    T fromUserPreferences(UserPreferences userPreferences);
+    T fromUserPreferences(UserPreferences userPreferences, @Nullable Config defaultCfg)
+        throws ConfigInvalidException;
 
     T getJavaDefaults();
   }
@@ -343,15 +345,10 @@ public class PreferencesParserUtil {
     }
 
     @Override
-    public GeneralPreferencesInfo parse(GeneralPreferencesInfo cfg, @Nullable Config defaultCfg)
-        throws ConfigInvalidException {
-      return PreferencesParserUtil.parseGeneralPreferences(cfg, defaultCfg);
-    }
-
-    @Override
-    public GeneralPreferencesInfo fromUserPreferences(UserPreferences p) {
-      return UserPreferencesConverter.GeneralPreferencesInfoConverter.fromProto(
-          p.getGeneralPreferencesInfo());
+    public GeneralPreferencesInfo fromUserPreferences(
+        UserPreferences p, @Nullable Config defaultCfg) throws ConfigInvalidException {
+      return PreferencesParserUtil.parseGeneralPreferences(
+          GENERAL_PREFERENCES_INFO_CONVERTER.fromProto(p.getGeneralPreferencesInfo()), defaultCfg);
     }
 
     @Override
@@ -374,15 +371,10 @@ public class PreferencesParserUtil {
     }
 
     @Override
-    public EditPreferencesInfo parse(EditPreferencesInfo cfg, @Nullable Config defaultCfg)
+    public EditPreferencesInfo fromUserPreferences(UserPreferences p, @Nullable Config defaultCfg)
         throws ConfigInvalidException {
-      return PreferencesParserUtil.parseEditPreferences(cfg, defaultCfg);
-    }
-
-    @Override
-    public EditPreferencesInfo fromUserPreferences(UserPreferences p) {
-      return UserPreferencesConverter.EditPreferencesInfoConverter.fromProto(
-          p.getEditPreferencesInfo());
+      return PreferencesParserUtil.parseEditPreferences(
+          EDIT_PREFERENCES_INFO_CONVERTER.fromProto(p.getEditPreferencesInfo()), defaultCfg);
     }
 
     @Override
@@ -405,15 +397,10 @@ public class PreferencesParserUtil {
     }
 
     @Override
-    public DiffPreferencesInfo parse(DiffPreferencesInfo cfg, @Nullable Config defaultCfg)
+    public DiffPreferencesInfo fromUserPreferences(UserPreferences p, @Nullable Config defaultCfg)
         throws ConfigInvalidException {
-      return PreferencesParserUtil.parseDiffPreferences(cfg, defaultCfg);
-    }
-
-    @Override
-    public DiffPreferencesInfo fromUserPreferences(UserPreferences p) {
-      return UserPreferencesConverter.DiffPreferencesInfoConverter.fromProto(
-          p.getDiffPreferencesInfo());
+      return PreferencesParserUtil.parseDiffPreferences(
+          DIFF_PREFERENCES_INFO_CONVERTER.fromProto(p.getDiffPreferencesInfo()), defaultCfg);
     }
 
     @Override

@@ -3,29 +3,33 @@
  * Copyright 2016 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import * as sinon from 'sinon';
 import '../../../test/common-test-setup';
 import './gr-email-editor';
 import {GrEmailEditor} from './gr-email-editor';
 import {spyRestApi, stubRestApi} from '../../../test/test-utils';
 import {fixture, html, assert} from '@open-wc/testing';
+import {EmailAddress} from '../../../api/rest-api';
 
 suite('gr-email-editor tests', () => {
   let element: GrEmailEditor;
+  let accountEmailStub: sinon.SinonStub;
 
   setup(async () => {
     const emails = [
-      {email: 'email@one.com'},
-      {email: 'email@two.com', preferred: true},
-      {email: 'email@three.com'},
+      {email: 'email@one.com' as EmailAddress},
+      {email: 'email@two.com' as EmailAddress, preferred: true},
+      {email: 'email@three.com' as EmailAddress},
     ];
 
-    stubRestApi('getAccountEmails').returns(Promise.resolve(emails));
+    accountEmailStub = stubRestApi('getAccountEmails').returns(
+      Promise.resolve(emails)
+    );
 
     element = await fixture<GrEmailEditor>(
       html`<gr-email-editor></gr-email-editor>`
     );
 
-    await element.loadData();
     await element.updateComplete;
   });
 
@@ -45,20 +49,17 @@ suite('gr-email-editor tests', () => {
             <tr>
               <td class="emailColumn">email@one.com</td>
               <td class="preferredControl">
-                <iron-input class="preferredRadio">
-                  <input
-                    class="preferredRadio"
-                    name="preferred"
-                    type="radio"
-                    value="email@one.com"
-                  />
-                </iron-input>
+                <input
+                  class="preferredRadio"
+                  name="preferred"
+                  type="radio"
+                  value="email@one.com"
+                />
               </td>
               <td>
                 <gr-button
                   aria-disabled="false"
                   class="remove-button"
-                  data-index="0"
                   role="button"
                   tabindex="0"
                 >
@@ -69,21 +70,17 @@ suite('gr-email-editor tests', () => {
             <tr>
               <td class="emailColumn">email@two.com</td>
               <td class="preferredControl">
-                <iron-input class="preferredRadio">
-                  <input
-                    checked=""
-                    class="preferredRadio"
-                    name="preferred"
-                    type="radio"
-                    value="email@two.com"
-                  />
-                </iron-input>
+                <input
+                  class="preferredRadio"
+                  name="preferred"
+                  type="radio"
+                  value="email@two.com"
+                />
               </td>
               <td>
                 <gr-button
                   aria-disabled="true"
                   class="remove-button"
-                  data-index="1"
                   disabled=""
                   role="button"
                   tabindex="-1"
@@ -95,20 +92,17 @@ suite('gr-email-editor tests', () => {
             <tr>
               <td class="emailColumn">email@three.com</td>
               <td class="preferredControl">
-                <iron-input class="preferredRadio">
-                  <input
-                    class="preferredRadio"
-                    name="preferred"
-                    type="radio"
-                    value="email@three.com"
-                  />
-                </iron-input>
+                <input
+                  class="preferredRadio"
+                  name="preferred"
+                  type="radio"
+                  value="email@three.com"
+                />
               </td>
               <td>
                 <gr-button
                   aria-disabled="false"
                   class="remove-button"
-                  data-index="2"
                   role="button"
                   tabindex="0"
                 >
@@ -123,6 +117,12 @@ suite('gr-email-editor tests', () => {
   });
 
   test('renders', () => {
+    const hasUnsavedChangesSpy = sinon.spy();
+    element.addEventListener(
+      'has-unsaved-changes-changed',
+      hasUnsavedChangesSpy
+    );
+
     const rows = element
       .shadowRoot!.querySelector('table')!
       .querySelectorAll('tbody tr');
@@ -144,15 +144,21 @@ suite('gr-email-editor tests', () => {
     );
     assert.isNotOk(rows[2].querySelector('gr-button')!.disabled);
 
-    assert.isFalse(element.hasUnsavedChanges);
+    assert.isFalse(hasUnsavedChangesSpy.called);
   });
 
   test('edit preferred', () => {
+    const hasUnsavedChangesSpy = sinon.spy();
+    element.addEventListener(
+      'has-unsaved-changes-changed',
+      hasUnsavedChangesSpy
+    );
+
     const radios = element
       .shadowRoot!.querySelector('table')!
       .querySelectorAll<HTMLInputElement>('input[type=radio]');
 
-    assert.isFalse(element.hasUnsavedChanges);
+    assert.isFalse(hasUnsavedChangesSpy.called);
     assert.isNotOk(element.newPreferred);
     assert.equal(element.emailsToRemove.length, 0);
     assert.equal(element.emails.length, 3);
@@ -162,7 +168,7 @@ suite('gr-email-editor tests', () => {
 
     radios[0].click();
 
-    assert.isTrue(element.hasUnsavedChanges);
+    assert.isTrue(hasUnsavedChangesSpy.called);
     assert.isOk(element.newPreferred);
     assert.equal(element.emailsToRemove.length, 0);
     assert.equal(element.emails.length, 3);
@@ -172,18 +178,24 @@ suite('gr-email-editor tests', () => {
   });
 
   test('delete email', () => {
+    const hasUnsavedChangesSpy = sinon.spy();
+    element.addEventListener(
+      'has-unsaved-changes-changed',
+      hasUnsavedChangesSpy
+    );
+
     const buttons = element
       .shadowRoot!.querySelector('table')!
       .querySelectorAll('gr-button');
 
-    assert.isFalse(element.hasUnsavedChanges);
+    assert.isFalse(hasUnsavedChangesSpy.called);
     assert.isNotOk(element.newPreferred);
     assert.equal(element.emailsToRemove.length, 0);
     assert.equal(element.emails.length, 3);
 
     buttons[2].click();
 
-    assert.isTrue(element.hasUnsavedChanges);
+    assert.isTrue(hasUnsavedChangesSpy.called);
     assert.isNotOk(element.newPreferred);
     assert.equal(element.emailsToRemove.length, 1);
     assert.equal(element.emails.length, 2);
@@ -192,6 +204,12 @@ suite('gr-email-editor tests', () => {
   });
 
   test('save changes', async () => {
+    const hasUnsavedChangesSpy = sinon.spy();
+    element.addEventListener(
+      'has-unsaved-changes-changed',
+      hasUnsavedChangesSpy
+    );
+
     const deleteEmailSpy = spyRestApi('deleteAccountEmail');
     const setPreferredSpy = spyRestApi('setPreferredAccountEmail');
 
@@ -199,7 +217,7 @@ suite('gr-email-editor tests', () => {
       .shadowRoot!.querySelector('table')!
       .querySelectorAll('tbody tr');
 
-    assert.isFalse(element.hasUnsavedChanges);
+    assert.isFalse(hasUnsavedChangesSpy.called);
     assert.isNotOk(element.newPreferred);
     assert.equal(element.emailsToRemove.length, 0);
     assert.equal(element.emails.length, 3);
@@ -208,16 +226,24 @@ suite('gr-email-editor tests', () => {
     rows[0].querySelector('gr-button')!.click();
     rows[2].querySelector<HTMLInputElement>('input[type=radio]')!.click();
 
-    assert.isTrue(element.hasUnsavedChanges);
+    assert.isTrue(hasUnsavedChangesSpy.called);
+    assert.isTrue(hasUnsavedChangesSpy.lastCall.args[0].detail.value);
     assert.equal(element.newPreferred, 'email@three.com');
     assert.equal(element.emailsToRemove.length, 1);
     assert.equal(element.emailsToRemove[0].email, 'email@one.com');
     assert.equal(element.emails.length, 2);
+
+    accountEmailStub.restore();
+
+    accountEmailStub = stubRestApi('getAccountEmails').returns(
+      Promise.resolve(element.emails)
+    );
 
     await element.save();
     assert.equal(deleteEmailSpy.callCount, 1);
     assert.equal(deleteEmailSpy.getCall(0).args[0], 'email@one.com');
     assert.isTrue(setPreferredSpy.called);
     assert.equal(setPreferredSpy.getCall(0).args[0], 'email@three.com');
+    assert.isFalse(hasUnsavedChangesSpy.lastCall.args[0].detail.value);
   });
 });

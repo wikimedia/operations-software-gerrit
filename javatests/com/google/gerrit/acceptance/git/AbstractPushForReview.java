@@ -1028,6 +1028,19 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
 
     // verify that the re-indexing was triggered for the change
     assertThat(query("has:edit")).hasSize(1);
+
+    // update the existing edit
+    r = amendChange(r.getChangeId(), "refs/for/master%edit");
+    r.assertOkStatus();
+    r.assertMessage(
+        canonicalWebUrl.get()
+            + "c/"
+            + project.get()
+            + "/+/"
+            + r.getChange().getId()
+            + " "
+            + editInfo.commit.subject
+            + " [EDIT]\n");
   }
 
   @Test
@@ -2658,6 +2671,58 @@ public abstract class AbstractPushForReview extends AbstractDaemonTest {
     assertThat(gApi.changes().query(q).get()).isEmpty();
     assertThat(gApi.projects().name(project.get()).branch(master).get().revision)
         .isEqualTo(Iterables.getLast(commits).name());
+  }
+
+  @Test
+  public void aclInfoIsReturnedIfPushFailsDueToAPermissionError() throws Exception {
+    String master = "refs/heads/master";
+
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.PUSH).ref(master).group(REGISTERED_USERS))
+        .update();
+
+    // without VIEW_ACCESS capability no ACL info is returned
+    TestRepository<?> userRepo = cloneProject(project, user);
+    userRepo
+        .branch("HEAD")
+        .commit()
+        .message("New Commit 1")
+        .author(user.newIdent())
+        .committer(user.newIdent())
+        .insertChangeId()
+        .create();
+    PushResult pushResult = pushHead(userRepo, master);
+    assertPushRejected(pushResult, master, "prohibited by Gerrit: not permitted: update");
+    assertThat(pushResult.getMessages()).doesNotContain("ACL info");
+
+    // with VIEW_ACCESS capability an ACL info is returned when the request fails due to a
+    // permission error
+    projectOperations
+        .allProjectsForUpdate()
+        .add(allowCapability(GlobalCapability.VIEW_ACCESS).group(REGISTERED_USERS))
+        .update();
+    pushResult = pushHead(userRepo, master);
+    assertPushRejected(pushResult, master, "prohibited by Gerrit: not permitted: update");
+    assertThat(pushResult.getMessages())
+        .contains(
+            String.format(
+                "ACL info:\n"
+                    + "* '%s' cannot perform 'push' with force=false on project '%s'"
+                    + " for ref '%s' because this permission is blocked",
+                user.username(), project, master));
+
+    // with VIEW_ACCESS capability no ACL info is returned when the request doesn't fail due to a
+    // permission error
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.PUSH).ref(master).group(REGISTERED_USERS))
+        .update();
+    pushResult = pushHead(userRepo, master);
+    assertPushOk(pushResult, master);
+    assertThat(pushResult.getMessages()).doesNotContain("ACL info");
   }
 
   private static class TestValidator implements CommitValidationListener {

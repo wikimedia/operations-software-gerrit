@@ -3,6 +3,7 @@
  * Copyright 2015 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import * as sinon from 'sinon';
 import '../../../test/common-test-setup';
 import './gr-diff-view';
 import {
@@ -140,9 +141,9 @@ suite('gr-diff-view tests', () => {
       stubRestApi('getDiffDrafts').returns(Promise.resolve({}));
       stubRestApi('getPortedComments').returns(Promise.resolve({}));
 
-      element = await fixture(html`<gr-diff-view></gr-diff-view>`);
       viewModel = testResolver(changeViewModelToken);
       viewModel.setState(createDiffViewState());
+      element = await fixture(html`<gr-diff-view></gr-diff-view>`);
       await waitUntil(() => element.changeNum === TEST_NUMERIC_CHANGE_ID);
       element.path = 'some/path.txt';
       element.change = createParsedChange();
@@ -191,16 +192,18 @@ suite('gr-diff-view tests', () => {
 
     test('renders', async () => {
       browserModel.setScreenWidth(0);
-      element.patchNum = 10 as RevisionPatchSetNum;
+      const patchNum = 10 as RevisionPatchSetNum;
+      element.patchNum = patchNum;
       element.basePatchNum = PARENT;
       const change = {
         ...createParsedChange(),
         _number: 42 as NumericChangeId,
         revisions: {
-          a: createRevision(10),
+          a: createRevision(patchNum),
         },
       };
       changeModel.updateStateChange(change);
+      viewModel.updateState({patchNum});
       element.files = getFilesFromFileList([
         'chell.go',
         'glados.txt',
@@ -965,6 +968,31 @@ suite('gr-diff-view tests', () => {
       assert.isFalse(reloadStub.called);
     });
 
+    test('initializePositions re-initializes cursor with focusLineNum', async () => {
+      element.focusLineNum = 10;
+      element.leftSide = false;
+      element.path = 'glados.txt';
+      element.patchNum = 1 as RevisionPatchSetNum;
+      element.basePatchNum = PARENT;
+      await element.updateComplete;
+
+      assertIsDefined(element.cursor);
+      assert.equal(element.cursor.initialLineNumber, 10);
+
+      // Simulate render consuming initialLineNumber
+      element.cursor.reInitCursor();
+      assert.isNull(element.cursor.initialLineNumber);
+
+      const moveToLineNumberSpy = sinon.spy(element.cursor, 'moveToLineNumber');
+
+      // Simulate view becoming active
+      element.isActiveChildView = true;
+      element.initializePositions();
+
+      // Should have re-initialized with proper line number
+      assert.isTrue(moveToLineNumberSpy.calledWith(10, Side.RIGHT));
+    });
+
     test('edit should redirect to edit page', async () => {
       element.loggedIn = true;
       element.path = 't.txt';
@@ -1187,14 +1215,16 @@ suite('gr-diff-view tests', () => {
       });
 
       test('prev/up/next links', async () => {
+        const patchNum = 10 as RevisionPatchSetNum;
         viewModel.setState({
           ...createDiffViewState(),
+          patchNum,
         });
         const change = {
           ...createParsedChange(),
           _number: 42 as NumericChangeId,
           revisions: {
-            a: createRevision(10),
+            a: createRevision(patchNum),
           },
         };
         changeModel.updateStateChange(change);

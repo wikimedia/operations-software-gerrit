@@ -3,6 +3,7 @@
  * Copyright 2017 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import * as sinon from 'sinon';
 import '../../../test/common-test-setup';
 import './gr-edit-controls';
 import {GrEditControls} from './gr-edit-controls';
@@ -32,6 +33,11 @@ import {
   changeModelToken,
 } from '../../../models/change/change-model';
 import {SinonStubbedMember} from 'sinon';
+import {
+  ChangeChildView,
+  changeViewModelToken,
+} from '../../../models/views/change';
+import {GerritView} from '../../../services/router/router-model';
 
 suite('gr-edit-controls tests', () => {
   let element: GrEditControls;
@@ -45,6 +51,13 @@ suite('gr-edit-controls tests', () => {
   >;
 
   setup(async () => {
+    testResolver(changeViewModelToken).setState({
+      view: GerritView.CHANGE,
+      childView: ChangeChildView.OVERVIEW,
+      changeNum: 42 as NumericChangeId,
+      repo: 'gerrit' as RepoName,
+    });
+
     element = await fixture<GrEditControls>(html`
       <gr-edit-controls></gr-edit-controls>
     `);
@@ -119,29 +132,9 @@ suite('gr-edit-controls tests', () => {
                 placeholder="Enter an existing or new full file path."
               >
               </gr-autocomplete>
-              <div contenteditable="true" id="dragDropArea">
-                <p>Drag and drop a file here</p>
-                <p>or</p>
-                <p>
-                  <iron-input>
-                    <input
-                      hidden=""
-                      id="fileUploadInput"
-                      multiple=""
-                      type="file"
-                    />
-                  </iron-input>
-                  <label for="fileUploadInput">
-                    <gr-button
-                      aria-disabled="false"
-                      id="fileUploadBrowse"
-                      role="button"
-                      tabindex="0"
-                    >
-                      Browse
-                    </gr-button>
-                  </label>
-                </p>
+              <div id="dragDropArea">
+                <p>Drag and drop your file here, or click to select</p>
+                <input hidden="" id="fileUploadInput" type="file" />
               </div>
             </div>
           </gr-dialog>
@@ -196,10 +189,8 @@ suite('gr-edit-controls tests', () => {
   });
 
   test('all actions exist', () => {
-    // We take 1 away from the total found, due to an extra button being
-    // added for the file uploads (browse).
     assert.equal(
-      queryAll<GrButton>(element, 'gr-button').length - 1,
+      queryAll<GrButton>(element, 'gr-button').length,
       element.actions.length
     );
   });

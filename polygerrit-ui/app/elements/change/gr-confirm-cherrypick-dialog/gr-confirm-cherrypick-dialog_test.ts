@@ -3,6 +3,7 @@
  * Copyright 2016 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import * as sinon from 'sinon';
 import '../../../test/common-test-setup';
 import './gr-confirm-cherrypick-dialog';
 import {
@@ -19,6 +20,7 @@ import {
   ChangeInfoId,
   ChangeStatus,
   CommitId,
+  EmailAddress,
   GitRef,
   HttpMethod,
   NumericChangeId,
@@ -67,11 +69,11 @@ const changes: ChangeInfo[] = [
 
 const emails = [
   {
-    email: 'primary@email.com',
+    email: 'primary@email.com' as EmailAddress,
     preferred: true,
   },
   {
-    email: 'secondary@email.com',
+    email: 'secondary@email.com' as EmailAddress,
     preferred: false,
   },
 ];

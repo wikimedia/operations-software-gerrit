@@ -24,6 +24,7 @@ import static com.google.gerrit.server.index.change.IndexedChangeQuery.convertOp
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static org.junit.Assert.assertEquals;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.gerrit.entities.Change;
 import com.google.gerrit.index.IndexConfig;
@@ -36,6 +37,7 @@ import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
 import com.google.gerrit.server.query.change.AndChangeSource;
 import com.google.gerrit.server.query.change.ChangeData;
+import com.google.gerrit.server.query.change.ChangeIndexPredicate;
 import com.google.gerrit.server.query.change.ChangeQueryBuilder;
 import com.google.gerrit.server.query.change.ChangeStatusPredicate;
 import com.google.gerrit.server.query.change.OrSource;
@@ -47,6 +49,7 @@ import org.junit.Test;
 
 public class ChangeIndexRewriterTest {
   private static final IndexConfig CONFIG = IndexConfig.createDefault();
+  private static final int MAX_INDEX_QUERY_TERMS = 4;
 
   private FakeChangeIndex index;
   private ChangeIndexCollection indexes;
@@ -59,7 +62,9 @@ public class ChangeIndexRewriterTest {
     indexes = new ChangeIndexCollection();
     indexes.setSearchIndex(index);
     queryBuilder = new FakeQueryBuilder(indexes);
-    rewrite = new ChangeIndexRewriter(indexes, IndexConfig.builder().maxTerms(3).build());
+    rewrite =
+        new ChangeIndexRewriter(
+            indexes, IndexConfig.builder().maxTerms(MAX_INDEX_QUERY_TERMS).build());
   }
 
   @Test
@@ -72,7 +77,7 @@ public class ChangeIndexRewriterTest {
   public void nonIndexPredicate() throws Exception {
     Predicate<ChangeData> in = parse("foo:a");
     Predicate<ChangeData> out = rewrite(in);
-    assertThat(AndChangeSource.class).isSameInstanceAs(out.getClass());
+    assertThat(out.getClass()).isSameInstanceAs(AndChangeSource.class);
     assertThat(out.getChildren())
         .containsExactly(
             query(
@@ -91,10 +96,24 @@ public class ChangeIndexRewriterTest {
   }
 
   @Test
+  public void indexedOrSourceSubexpressions() throws Exception {
+    Predicate<ChangeData> in = parse("(file:a bar:b) OR (file:c bar:d)");
+    Predicate<ChangeData> out = rewrite(in);
+    assertThat(out.getClass()).isSameInstanceAs(OrSource.class);
+    assertThat(out.getChildCount()).isEqualTo(2);
+    assertThat(out.getChild(0).getChildren())
+        .containsExactly(query(parse("file:a")), parse("bar:b"))
+        .inOrder();
+    assertThat(out.getChild(1).getChildren())
+        .containsExactly(query(parse("file:c")), parse("bar:d"))
+        .inOrder();
+  }
+
+  @Test
   public void nonIndexPredicates() throws Exception {
     Predicate<ChangeData> in = parse("foo:a OR foo:b");
     Predicate<ChangeData> out = rewrite(in);
-    assertThat(AndChangeSource.class).isSameInstanceAs(out.getClass());
+    assertThat(out.getClass()).isSameInstanceAs(AndChangeSource.class);
     assertThat(out.getChildren())
         .containsExactly(
             query(
@@ -123,10 +142,26 @@ public class ChangeIndexRewriterTest {
   }
 
   @Test
+  public void nonIndexAndWithRewrittenOrSourcePredicates() throws Exception {
+    Predicate<ChangeData> in = parse("baz:a (baz:b OR baz:c)");
+    Predicate<ChangeData> out = rewrite(in);
+
+    // The OR is rewritten into an OrSource while baz:a remains a non-indexed datasource. No
+    // indexed child exists, so the rewriter must not insert a match-all IndexedChangeQuery.
+    assertThat(out.getClass()).isSameInstanceAs(AndChangeSource.class);
+    assertThat(out.getChildCount()).isEqualTo(2);
+    assertThat(out.getChild(0)).isEqualTo(parse("baz:a"));
+    assertThat(out.getChild(1).getClass()).isSameInstanceAs(OrSource.class);
+    assertThat(out.getChild(1).getChildren())
+        .containsExactly(parse("baz:b"), parse("baz:c"))
+        .inOrder();
+  }
+
+  @Test
   public void oneIndexPredicate() throws Exception {
     Predicate<ChangeData> in = parse("foo:a file:b");
     Predicate<ChangeData> out = rewrite(in);
-    assertThat(AndChangeSource.class).isSameInstanceAs(out.getClass());
+    assertThat(out.getClass()).isSameInstanceAs(AndChangeSource.class);
     assertThat(out.getChildren()).containsExactly(query(parse("file:b")), parse("foo:a")).inOrder();
   }
 
@@ -181,10 +216,57 @@ public class ChangeIndexRewriterTest {
   }
 
   @Test
+  public void emptyOrPredicate() throws Exception {
+    Predicate<ChangeData> in = Predicate.or(ImmutableList.of());
+    assertThat(rewrite(in)).isEqualTo(query(ChangeIndexPredicate.none()));
+  }
+
+  @Test
+  public void emptyOrPredicateInsideAnd() throws Exception {
+    Predicate<ChangeData> fileA = parse("file:a");
+    Predicate<ChangeData> in = Predicate.and(fileA, Predicate.or(ImmutableList.of()));
+    assertThat(rewrite(in)).isEqualTo(query(ChangeIndexPredicate.none()));
+  }
+
+  @Test
+  public void noneChildInAndInsideOrStaysChangeDataSource() throws Exception {
+    // An AND with a none() child short-circuits to none(). When that AND is nested inside an OR,
+    // the none() must remain a ChangeDataSource so the OR folds into an OrSource. Otherwise the
+    // top-level rewrite() falls back to and(or(open,closed), in), degenerating into a full index
+    // scan.
+    Predicate<ChangeData> andWithNone =
+        Predicate.and(ChangeIndexPredicate.none(), parse("status:new"));
+    Predicate<ChangeData> in = Predicate.or(parse("file:a"), andWithNone);
+    Predicate<ChangeData> out = rewrite(in);
+    assertThat(out.getClass()).isSameInstanceAs(OrSource.class);
+    assertThat(out.getChildren())
+        .containsExactly(query(parse("file:a")), query(ChangeIndexPredicate.none()))
+        .inOrder();
+  }
+
+  @Test
+  public void emptyOrInAndInsideOrStaysChangeDataSource() throws Exception {
+    // An empty OrPredicate short-circuits to a none() wrapped in an IndexedChangeQuery, which is a
+    // ChangeDataSource. When it appears in an AND nested inside an OR, the AND still collapses to
+    // none() (isNone recognizes the wrapped form) and the enclosing OR folds into an OrSource,
+    // rather than triggering the top-level and(or(open,closed), in) full-index-scan fallback.
+    // (An empty OR directly inside an OR cannot be tested: OrPredicate flattens same-class
+    // children, so the empty child is absorbed before rewriting.)
+    Predicate<ChangeData> andWithEmptyOr =
+        Predicate.and(parse("status:new"), Predicate.or(ImmutableList.of()));
+    Predicate<ChangeData> in = Predicate.or(parse("file:a"), andWithEmptyOr);
+    Predicate<ChangeData> out = rewrite(in);
+    assertThat(out.getClass()).isSameInstanceAs(OrSource.class);
+    assertThat(out.getChildren())
+        .containsExactly(query(parse("file:a")), query(ChangeIndexPredicate.none()))
+        .inOrder();
+  }
+
+  @Test
   public void indexAndNonIndexPredicates() throws Exception {
     Predicate<ChangeData> in = parse("status:new bar:p file:a");
     Predicate<ChangeData> out = rewrite(in);
-    assertThat(AndChangeSource.class).isSameInstanceAs(out.getClass());
+    assertThat(out.getClass()).isSameInstanceAs(AndChangeSource.class);
     assertThat(out.getChildren())
         .containsExactly(query(andCardinal(parse("status:new"), parse("file:a"))), parse("bar:p"))
         .inOrder();
@@ -256,12 +338,12 @@ public class ChangeIndexRewriterTest {
 
   @Test
   public void tooManyTerms() throws Exception {
-    String q = "file:a OR file:b OR file:c";
+    String q = "file:a OR file:b OR file:c OR file:d";
     Predicate<ChangeData> in = parse(q);
     assertEquals(query(in), rewrite(in));
 
     QueryParseException thrown =
-        assertThrows(QueryParseException.class, () -> rewrite(parse(q + " OR file:d")));
+        assertThrows(QueryParseException.class, () -> rewrite(parse(q + " OR file:e")));
     assertThat(thrown).hasMessageThat().contains("too many terms in query");
   }
 

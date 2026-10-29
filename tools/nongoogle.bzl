@@ -7,6 +7,12 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 load("@bazel_tools//tools/build_defs/repo:utils.bzl", "maybe")
 load("//tools/bzl:maven_jar.bzl", "maven_jar")
 
+AUTO_COMMON_VERSION = "1.2.2"
+
+AUTO_FACTORY_VERSION = "1.0.1"
+
+AUTO_VALUE_VERSION = "1.10.4"
+
 GUAVA_VERSION = "33.0.0-jre"
 
 GUAVA_BIN_SHA1 = "161ba27964a62f241533807a46b8711b13c1d94b"
@@ -131,18 +137,18 @@ def declare_nongoogle_deps():
         sha1 = "cb2f351bf4463751201f43bb99865235d5ba07ca",
     )
 
-    SSHD_VERS = "2.12.0"
+    SSHD_VERS = "2.14.0"
 
     maven_jar(
         name = "sshd-osgi",
         artifact = "org.apache.sshd:sshd-osgi:" + SSHD_VERS,
-        sha1 = "32b8de1cbb722ba75bdf9898e0c41d42af00ce57",
+        sha1 = "6ef66228a088f8ac1383b2ff28f3102f80ebc01a",
     )
 
     maven_jar(
         name = "sshd-sftp",
         artifact = "org.apache.sshd:sshd-sftp:" + SSHD_VERS,
-        sha1 = "0f96f00a07b186ea62838a6a4122e8f4cad44df6",
+        sha1 = "c070ac920e72023ae9ab0a3f3a866bece284b470",
     )
 
     maven_jar(
@@ -160,7 +166,7 @@ def declare_nongoogle_deps():
     maven_jar(
         name = "sshd-mina",
         artifact = "org.apache.sshd:sshd-mina:" + SSHD_VERS,
-        sha1 = "8b202f7d4c0d7b714fd0c93a1352af52aa031149",
+        sha1 = "05e1293af53a196ac3c5a4b01dd88985e8672e9e",
     )
 
     maven_jar(
@@ -196,6 +202,36 @@ def declare_nongoogle_deps():
 
     # Google internal dependencies: these are developed at Google, so there is
     # no concern about version skew.
+
+    maven_jar(
+        name = "auto-common",
+        artifact = "com.google.auto:auto-common:" + AUTO_COMMON_VERSION,
+        sha1 = "9d38f10e22411681cf1d1ee3727e002af19f2c9e",
+    )
+
+    maven_jar(
+        name = "auto-factory",
+        artifact = "com.google.auto.factory:auto-factory:" + AUTO_FACTORY_VERSION,
+        sha1 = "f81ece06b6525085da217cd900116f44caafe877",
+    )
+
+    maven_jar(
+        name = "auto-service-annotations",
+        artifact = "com.google.auto.service:auto-service-annotations:" + AUTO_FACTORY_VERSION,
+        sha1 = "ac86dacc0eb9285ea9d42eee6aad8629ca3a7432",
+    )
+
+    maven_jar(
+        name = "auto-value",
+        artifact = "com.google.auto.value:auto-value:" + AUTO_VALUE_VERSION,
+        sha1 = "90f9629eaa123f88551cc26a64bc386967ee24cc",
+    )
+
+    maven_jar(
+        name = "auto-value-annotations",
+        artifact = "com.google.auto.value:auto-value-annotations:" + AUTO_VALUE_VERSION,
+        sha1 = "9679de8286eb0a151db6538ba297a8951c4a1224",
+    )
 
     maven_jar(
         name = "error-prone-annotations",
@@ -266,6 +302,12 @@ def declare_nongoogle_deps():
         name = "soy",
         artifact = "com.google.template:soy:2024-01-30",
         sha1 = "6e9ccb00926325c7a9293ed05a2eaf56ea15d60e",
+    )
+
+    maven_jar(
+        name = "gson",
+        artifact = "com.google.code.gson:gson:2.10.1",
+        sha1 = "b3add478d4382b78ea20b1671390a858002feb6c",
     )
 
     maven_jar(

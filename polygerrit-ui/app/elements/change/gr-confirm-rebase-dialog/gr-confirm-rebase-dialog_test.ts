@@ -3,6 +3,7 @@
  * Copyright 2016 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import * as sinon from 'sinon';
 import '../../../test/common-test-setup';
 import './gr-confirm-rebase-dialog';
 import {GrConfirmRebaseDialog, RebaseChange} from './gr-confirm-rebase-dialog';
@@ -174,7 +175,7 @@ suite('gr-confirm-rebase-dialog tests', () => {
     test('hide rebaseWithCommitterEmail dialog when committer has single email', async () => {
       element.committerEmailDropdownItems = [
         {
-          email: 'test1@example.com',
+          email: 'test1@example.com' as EmailAddress,
           preferred: true,
           pending_confirmation: true,
         },
@@ -186,12 +187,12 @@ suite('gr-confirm-rebase-dialog tests', () => {
     test('show rebaseWithCommitterEmail dialog when committer has more than one email', async () => {
       element.committerEmailDropdownItems = [
         {
-          email: 'test1@example.com',
+          email: 'test1@example.com' as EmailAddress,
           preferred: true,
           pending_confirmation: true,
         },
         {
-          email: 'test2@example.com',
+          email: 'test2@example.com' as EmailAddress,
           pending_confirmation: true,
         },
       ];
@@ -230,12 +231,12 @@ suite('gr-confirm-rebase-dialog tests', () => {
       };
       element.committerEmailDropdownItems = [
         {
-          email: 'currentuser1@example.com',
+          email: 'currentuser1@example.com' as EmailAddress,
           preferred: true,
           pending_confirmation: true,
         },
         {
-          email: 'currentuser2@example.com',
+          email: 'currentuser2@example.com' as EmailAddress,
           pending_confirmation: true,
         },
       ];
@@ -264,12 +265,12 @@ suite('gr-confirm-rebase-dialog tests', () => {
       };
       element.committerEmailDropdownItems = [
         {
-          email: 'uploader1@example.com',
+          email: 'uploader1@example.com' as EmailAddress,
           preferred: true,
           pending_confirmation: true,
         },
         {
-          email: 'uploader2@example.com',
+          email: 'uploader2@example.com' as EmailAddress,
           preferred: false,
           pending_confirmation: true,
         },

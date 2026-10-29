@@ -3,6 +3,7 @@
  * Copyright 2016 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import * as sinon from 'sinon';
 import '../../../test/common-test-setup';
 import './gr-editable-content';
 import {GrEditableContent} from './gr-editable-content';
@@ -15,18 +16,20 @@ import {testResolver} from '../../../test/common-test-setup';
 import {GrDropdownList} from '../gr-dropdown-list/gr-dropdown-list';
 import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {
+  EmailAddress,
   NumericChangeId,
   RepoName,
   RevisionPatchSetNum,
 } from '../../../api/rest-api';
+import {changeViewModelToken} from '../../../models/views/change';
 
 const emails = [
   {
-    email: 'primary@example.com',
+    email: 'primary@example.com' as EmailAddress,
     preferred: true,
   },
   {
-    email: 'secondary@example.com',
+    email: 'secondary@example.com' as EmailAddress,
     preferred: false,
   },
 ];
@@ -189,6 +192,11 @@ suite('gr-editable-content tests', () => {
 
     suite('in editMode', () => {
       test('click opens edit url', async () => {
+        const editUrlStub = sinon.stub(
+          testResolver(changeViewModelToken),
+          'editUrl'
+        );
+        editUrlStub.returns('fakeUrl');
         const setUrlStub = sinon.stub(testResolver(navigationToken), 'setUrl');
         element.editMode = true;
         element.changeNum = 42 as NumericChangeId;
@@ -201,10 +209,7 @@ suite('gr-editable-content tests', () => {
         );
         editButton.click();
         assert.isTrue(setUrlStub.called);
-        assert.equal(
-          setUrlStub.lastCall.args[0],
-          '/c/Test+Repo/+/42/1//COMMIT_MSG,edit'
-        );
+        assert.equal(setUrlStub.lastCall.args[0], 'fakeUrl');
       });
     });
   });

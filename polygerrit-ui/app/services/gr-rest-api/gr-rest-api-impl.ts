@@ -18,6 +18,7 @@ import {
   AccountExternalIdInfo,
   AccountId,
   AccountInfo,
+  AccountStateInfo,
   ActionNameToActionInfoMap,
   Base64File,
   Base64FileContent,
@@ -345,6 +346,22 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
       anonymizedUrl: '/projects/*/config',
       reportServerError: true,
     });
+  }
+
+  saveRepoConfigForReview(
+    repo: RepoName,
+    config: ConfigInput
+  ): Promise<ChangeInfo | undefined> {
+    const url = `/projects/${encodeURIComponent(repo)}/config:review`;
+    return this._restApiHelper.fetchJSON({
+      fetchOptions: getFetchOptions({
+        method: HttpMethod.PUT,
+        body: config,
+      }),
+      url,
+      anonymizedUrl: '/projects/*/config',
+      reportServerError: true,
+    }) as unknown as Promise<ChangeInfo | undefined>;
   }
 
   runRepoGC(repo: RepoName): Promise<Response> {
@@ -1042,6 +1059,13 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     });
   }
 
+  getAccountState(): Promise<AccountStateInfo | undefined> {
+    return this._restApiHelper.fetchJSON({
+      url: '/accounts/self/state',
+      reportUrlAsIs: true,
+    }) as Promise<AccountStateInfo | undefined>;
+  }
+
   getWatchedProjects() {
     return this._restApiHelper.fetchCacheJSON({
       url: '/accounts/self/watched.projects',
@@ -1106,6 +1130,42 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
       reportUrlAsIs: true,
     };
     return request;
+  }
+
+  /**
+   * Depending on an experiment this will either use `getChangesForMultipleQueries()`, which
+   * makes just one request to the REST API. Or it will fan out into multiple parallel
+   * requests and call `getChanges()` for each query.
+   */
+  async getChangesForDashboard(
+    changesPerPage?: number,
+    queries?: string[],
+    offset?: 'n,z' | number,
+    options?: string
+  ): Promise<ChangeInfo[][] | undefined> {
+    // CAUTION: Before actually enabling this experiment for everyone we will have to also change
+    // the prefetched query in the backend. As is the experiment may help improving the
+    // DashboardDisplayed metric, but it will definitely make the *Startup*DashboardDisplayed
+    // latency worse.
+    const parallelRequests = this.flagService.isEnabled(
+      KnownExperimentId.PARALLEL_DASHBOARD_REQUESTS
+    );
+    if (parallelRequests && queries && queries.length > 1) {
+      const requestPromises = queries.map(query =>
+        this.getChanges(changesPerPage, query, offset, options)
+      );
+      return Promise.all(requestPromises).then(results => {
+        if (results.includes(undefined)) return undefined;
+        return results as ChangeInfo[][];
+      });
+    } else {
+      return this.getChangesForMultipleQueries(
+        changesPerPage,
+        queries,
+        offset,
+        options
+      );
+    }
   }
 
   /**
@@ -1268,6 +1328,10 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     if (window.DEFAULT_DETAIL_HEXES && window.DEFAULT_DETAIL_HEXES.changePage) {
       return window.DEFAULT_DETAIL_HEXES.changePage;
     }
+    // Kept as a fallback in case DEFAULT_DETAIL_HEXES is not set in index file
+    // (e.g PolyGerritIndexHtml.soy)
+    // We expect that DEFAULT_DETAIL_HEXES is always set and we are
+    // using same hex as preloaded queries
     return listChangesOptionsToHex(...(await this.getChangeOptions()));
   }
 
@@ -1276,7 +1340,6 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
 
     // This list MUST be kept in sync with
     // ChangeIT#changeDetailsDoesNotRequireIndex and IndexPreloadingUtil#CHANGE_DETAIL_OPTIONS
-    // This list MUST be kept in sync with getResponseFormatOptions
     const options = [
       ListChangesOption.ALL_COMMITS,
       ListChangesOption.ALL_REVISIONS,
@@ -1296,35 +1359,6 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     }
     if (config?.receive?.enable_signed_push) {
       options.push(ListChangesOption.PUSH_CERTIFICATES);
-    }
-    return options;
-  }
-
-  async getResponseFormatOptions(): Promise<string[]> {
-    const config = await this.getConfig(false);
-
-    // This list MUST be kept in sync with
-    // ChangeIT#changeDetailsDoesNotRequireIndex and IndexPreloadingUtil#CHANGE_DETAIL_OPTIONS
-    // This list MUST be kept in sync with getChangeOptions
-    const options = [
-      'ALL_COMMITS',
-      'ALL_REVISIONS',
-      'CHANGE_ACTIONS',
-      'DETAILED_LABELS',
-      'DETAILED_ACCOUNTS',
-      'DOWNLOAD_COMMANDS',
-      'MESSAGES',
-      'REVIEWER_UPDATES',
-      'SUBMITTABLE',
-      'WEB_LINKS',
-      'SKIP_DIFFSTAT',
-      'SUBMIT_REQUIREMENTS',
-    ];
-    if (this.flagService.isEnabled(KnownExperimentId.REVISION_PARENTS_DATA)) {
-      options.push('PARENTS');
-    }
-    if (config?.receive?.enable_signed_push) {
-      options.push('PUSH_CERTIFICATES');
     }
     return options;
   }
@@ -1592,6 +1626,10 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
 
   invalidateAccountsDetailCache() {
     this._restApiHelper.invalidateFetchPromisesPrefix('/accounts/self/detail');
+  }
+
+  invalidateAccountsEmailCache() {
+    this._restApiHelper.invalidateFetchPromisesPrefix('/accounts/self/emails');
   }
 
   getGroups(filter: string, groupsPerPage: number, offset?: number) {
@@ -2042,6 +2080,20 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     });
   }
 
+  getSaveReviewChangeOptions(): string[] {
+    const options = [
+      'CHANGE_ACTIONS',
+      'DETAILED_LABELS',
+      'DETAILED_ACCOUNTS',
+      'MESSAGES',
+      'REVIEWER_UPDATES',
+      'SUBMITTABLE',
+      'SKIP_DIFFSTAT',
+      'SUBMIT_REQUIREMENTS',
+    ];
+    return options;
+  }
+
   async saveChangeReview(
     changeNum: NumericChangeId,
     patchNum: PatchSetNum,
@@ -2050,7 +2102,7 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
     fetchDetail?: boolean
   ): Promise<ReviewResult | undefined> {
     if (fetchDetail) {
-      review.response_format_options = await this.getResponseFormatOptions();
+      review.response_format_options = this.getSaveReviewChangeOptions();
     }
     const promises: [Promise<void>, Promise<string>] = [
       this.awaitPendingDiffDrafts(),
@@ -2320,15 +2372,28 @@ export class GrRestApiServiceImpl implements RestApiService, Finalizable {
 
   async applyFixSuggestion(
     changeNum: NumericChangeId,
-    patchNum: PatchSetNum,
-    fixReplacementInfos: FixReplacementInfo[]
+    fixPatchNum: PatchSetNum,
+    fixReplacementInfos: FixReplacementInfo[],
+    targetPatchNum?: PatchSetNum
   ): Promise<Response> {
-    const url = await this._changeBaseURL(changeNum, patchNum);
+    const url = await this._changeBaseURL(
+      changeNum,
+      targetPatchNum ?? fixPatchNum
+    );
+    const body: {
+      fix_replacement_infos: FixReplacementInfo[];
+      original_patchset_for_fix?: PatchSetNum;
+    } = {
+      fix_replacement_infos: fixReplacementInfos,
+    };
+    if (targetPatchNum !== undefined && targetPatchNum !== fixPatchNum) {
+      body.original_patchset_for_fix = fixPatchNum;
+    }
     return this._restApiHelper.fetch({
       fetchOptions: getFetchOptions({
         method: HttpMethod.POST,
         headers: {Accept: 'application/json'},
-        body: {fix_replacement_infos: fixReplacementInfos},
+        body,
       }),
       url: `${url}/fix:apply`,
       anonymizedUrl: `${ANONYMIZED_REVISION_BASE_URL}/fix:apply`,

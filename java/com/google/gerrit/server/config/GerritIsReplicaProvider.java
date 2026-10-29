@@ -17,7 +17,6 @@ package com.google.gerrit.server.config;
 import com.google.gerrit.server.util.ReplicaUtil;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
-import com.google.inject.Singleton;
 import org.eclipse.jgit.lib.Config;
 
 /**
@@ -25,17 +24,18 @@ import org.eclipse.jgit.lib.Config;
  *
  * <p>The returned boolean indicates whether Gerrit is run as a read-only replica.
  */
-@Singleton
 public final class GerritIsReplicaProvider implements Provider<Boolean> {
   private final Config config;
+  private final boolean replicaOption;
 
   @Inject
-  public GerritIsReplicaProvider(@GerritServerConfig Config config) {
+  public GerritIsReplicaProvider(@GerritServerConfig Config config, GerritOptions opts) {
     this.config = config;
+    this.replicaOption = opts.replica();
   }
 
   @Override
   public Boolean get() {
-    return ReplicaUtil.isReplica(config);
+    return replicaOption || ReplicaUtil.isReplica(config);
   }
 }

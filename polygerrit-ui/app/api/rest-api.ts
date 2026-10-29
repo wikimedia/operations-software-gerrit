@@ -174,6 +174,7 @@ export enum ReviewerState {
 export enum RevisionKind {
   REWORK = 'REWORK',
   TRIVIAL_REBASE = 'TRIVIAL_REBASE',
+  TRIVIAL_REBASE_WITH_MESSAGE_UPDATE = 'TRIVIAL_REBASE_WITH_MESSAGE_UPDATE',
   MERGE_FIRST_PARENT_UPDATE = 'MERGE_FIRST_PARENT_UPDATE',
   NO_CODE_CHANGE = 'NO_CODE_CHANGE',
   NO_CHANGE = 'NO_CHANGE',
@@ -398,6 +399,7 @@ export declare interface ChangeInfo {
   pending_reviewers?: AccountInfo[];
   reviewer_updates?: ReviewerUpdateInfo[];
   messages?: ChangeMessageInfo[];
+  current_revision_number: PatchSetNumber;
   current_revision?: CommitId;
   revisions?: {[revisionId: string]: RevisionInfo};
   tracking_ids?: TrackingIdInfo[];
@@ -523,7 +525,7 @@ export declare interface ConfigInfo {
  * The CommentInfo entity contains information about an inline comment.
  * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#comment-info
  */
-export interface CommentInfo {
+export declare interface CommentInfo {
   id: UrlEncodedCommentId;
   updated: Timestamp;
   // TODO(TS): Make this required. Every comment must have patch_set set.
@@ -614,7 +616,7 @@ export declare interface ConfigParameterInfoBase {
  * The ContextLine entity contains the line number and line text of a single line of the source file content.
  * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#context-line
  */
-export interface ContextLine {
+export declare interface ContextLine {
   line_number: number;
   context_line: string;
 }
@@ -672,6 +674,16 @@ export declare interface DownloadSchemeInfo {
 export type EmailAddress = BrandType<string, '_emailAddress'>;
 
 /**
+ * The EmailInfo entity contains information about an email address of a user
+ * https://gerrit-review.googlesource.com/Documentation/rest-api-accounts.html#email-info
+ */
+export declare interface EmailInfo {
+  email: EmailAddress;
+  preferred?: boolean;
+  pending_confirmation?: boolean;
+}
+
+/**
  * The FetchInfo entity contains information about how to fetch a patchset via
  * a certain protocol.
  * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#fetch-info
@@ -709,6 +721,7 @@ export declare interface GerritInfo {
   doc_search: boolean;
   doc_url?: string;
   edit_gpg_keys?: boolean;
+  project_state_predicate_enabled: boolean;
   report_bug_url?: string;
   // The following property is missed in doc
   primary_weblink_name?: string;
@@ -1076,8 +1089,6 @@ export declare interface ServerInfo {
   change: ChangeConfigInfo;
   download: DownloadInfo;
   gerrit: GerritInfo;
-  // docs mentions index property, but it doesn't exists in Java class
-  // index: IndexConfigInfo;
   note_db_enabled?: boolean;
   plugin: PluginConfigInfo;
   receive?: ReceiveInfo;
@@ -1086,6 +1097,7 @@ export declare interface ServerInfo {
   user: UserConfigInfo;
   default_theme?: string;
   submit_requirement_dashboard_columns?: string[];
+  metadata?: MetadataInfo[];
 }
 
 /**
@@ -1095,6 +1107,17 @@ export declare interface ServerInfo {
  * in the ServerInfo entity means that SSHD is enabled on the server.
  */
 export type SshdInfo = {};
+
+/**
+ * The MetadataInfo entity contains contains metadata provided by plugins.
+ * https://gerrit-review.googlesource.com/Documentation/rest-api-config.html#metadata-info
+ */
+export declare interface MetadataInfo {
+  name: string;
+  value?: string;
+  description?: string;
+  web_links?: WebLinkInfo[];
+}
 
 // Timestamps are given in UTC and have the format
 // "'yyyy-mm-dd hh:mm:ss.fffffffff'"
@@ -1301,7 +1324,7 @@ export type UrlEncodedCommentId = BrandType<string, '_urlEncodedCommentId'>;
  * The FixSuggestionInfo entity represents a suggested fix
  * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#fix-suggestion-info
  */
-export interface FixSuggestionInfoInput {
+export declare interface FixSuggestionInfoInput {
   description: string;
   replacements: FixReplacementInfo[];
 }
@@ -1310,7 +1333,7 @@ export interface FixSuggestionInfoInput {
  * The FixReplacementInfo entity describes how the content of a file should be replaced by another content
  * https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#fix-replacement-info
  */
-export interface FixReplacementInfo {
+export declare interface FixReplacementInfo {
   path: string;
   range: CommentRange;
   replacement: string;
@@ -1318,8 +1341,9 @@ export interface FixReplacementInfo {
 // The UUID of the suggested fix.
 export type FixId = BrandType<string, '_fixId'>;
 
-export interface FixSuggestionInfo extends FixSuggestionInfoInput {
+export declare interface FixSuggestionInfo extends FixSuggestionInfoInput {
   fix_id: FixId;
   description: string;
   replacements: FixReplacementInfo[];
+  log_probability?: number;
 }

@@ -3,6 +3,7 @@
  * Copyright 2015 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import * as sinon from 'sinon';
 import '../../../test/common-test-setup';
 import './gr-comment';
 import {AUTO_SAVE_DEBOUNCE_DELAY_MS, GrComment} from './gr-comment';
@@ -48,7 +49,6 @@ import {
   CommentsModel,
   commentsModelToken,
 } from '../../../models/comments/comments-model';
-import {KnownExperimentId} from '../../../services/flags/flags';
 import {GrSuggestionDiffPreview} from '../gr-suggestion-diff-preview/gr-suggestion-diff-preview';
 
 suite('gr-comment tests', () => {
@@ -343,6 +343,8 @@ suite('gr-comment tests', () => {
                     >
                       Edit
                     </gr-button>
+                    <gr-endpoint-slot name="draft-actions-end">
+                    </gr-endpoint-slot>
                   </div>
                 </div>
               </div>
@@ -407,15 +409,16 @@ suite('gr-comment tests', () => {
                 </div>
               </div>
               <div class="body">
-                <gr-textarea
+                <gr-suggestion-textarea
                   autocomplete="on"
+                  autocompletehint=""
                   class="code editMessage"
                   code=""
                   id="editTextarea"
                   rows="4"
                   text="This is the test comment message."
                 >
-                </gr-textarea>
+                </gr-suggestion-textarea>
                 <gr-endpoint-slot name="above-actions"></gr-endpoint-slot>
                 <div class="actions">
                   <div class="leftActions">
@@ -445,6 +448,8 @@ suite('gr-comment tests', () => {
                     >
                       Save
                     </gr-button>
+                    <gr-endpoint-slot name="draft-actions-end">
+                    </gr-endpoint-slot>
                   </div>
                 </div>
               </div>
@@ -593,7 +598,7 @@ suite('gr-comment tests', () => {
       element.messageText = 'is that the horse from horsing around??';
       element.editing = true;
       await element.updateComplete;
-      pressKey(element.textarea!.textarea!.textarea, 's', Modifier.CTRL_KEY);
+      pressKey(element.textarea!, 's', Modifier.CTRL_KEY);
       assert.isTrue(spy.called);
     });
 
@@ -603,11 +608,7 @@ suite('gr-comment tests', () => {
         element.messageText = 'is that the horse from horsing around??';
         element.editing = true;
         await element.updateComplete;
-        pressKey(
-          element.textarea!.textarea!.textarea,
-          Key.ENTER,
-          Modifier.CTRL_KEY
-        );
+        pressKey(element.textarea!, Key.ENTER, Modifier.CTRL_KEY);
         assert.isTrue(spy.called);
       });
       test('propagates on patchset comment', async () => {
@@ -896,6 +897,44 @@ suite('gr-comment tests', () => {
     });
   });
 
+  suite('handleTextChangedForAutocomplete', () => {
+    test('foo -> foo with asdf', async () => {
+      const ctx = {draftContent: 'foo', commentCompletion: 'asdf'};
+      element.autocompleteHint = ctx;
+      element.autocompleteCache.set(ctx);
+      element.messageText = 'foo';
+      element.handleTextChangedForAutocomplete();
+      assert.equal(element.autocompleteHint.commentCompletion, 'asdf');
+    });
+
+    test('foo -> bar with asdf', async () => {
+      const ctx = {draftContent: 'foo', commentCompletion: 'asdf'};
+      element.autocompleteHint = ctx;
+      element.autocompleteCache.set(ctx);
+      element.messageText = 'bar';
+      element.handleTextChangedForAutocomplete();
+      assert.isUndefined(element.autocompleteHint);
+    });
+
+    test('foo -> foofoo with asdf', async () => {
+      const ctx = {draftContent: 'foo', commentCompletion: 'asdf'};
+      element.autocompleteHint = ctx;
+      element.autocompleteCache.set(ctx);
+      element.messageText = 'foofoo';
+      element.handleTextChangedForAutocomplete();
+      assert.isUndefined(element.autocompleteHint);
+    });
+
+    test('foo -> foofoo with foomore', async () => {
+      const ctx = {draftContent: 'foo', commentCompletion: 'foomore'};
+      element.autocompleteHint = ctx;
+      element.autocompleteCache.set(ctx);
+      element.messageText = 'foofoo';
+      element.handleTextChangedForAutocomplete();
+      assert.equal(element.autocompleteHint.commentCompletion, 'more');
+    });
+  });
+
   suite('suggest edit', () => {
     let element: GrComment;
     setup(async () => {
@@ -966,11 +1005,6 @@ suite('gr-comment tests', () => {
         },
       ],
     };
-    setup(async () => {
-      stubFlags('isEnabled')
-        .withArgs(KnownExperimentId.ML_SUGGESTED_EDIT_V2)
-        .returns(true);
-    });
 
     test('renders suggestions in comment', async () => {
       const comment = {
@@ -1119,6 +1153,9 @@ suite('gr-comment tests', () => {
           '#suggestionDiffPreview'
         );
         suggestionDiffPreview.previewed = true;
+        suggestionDiffPreview.previewLoadedFor = generatedFixSuggestion;
+        await element.updateComplete;
+        await element.waitPreviewForGeneratedSuggestion();
         await element.updateComplete;
         element.save();
         await element.updateComplete;

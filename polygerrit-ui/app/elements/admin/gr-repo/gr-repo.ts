@@ -9,8 +9,9 @@ import '../../plugins/gr-endpoint-param/gr-endpoint-param';
 import '../../shared/gr-button/gr-button';
 import '../../shared/gr-download-commands/gr-download-commands';
 import '../../shared/gr-select/gr-select';
-import '../../shared/gr-textarea/gr-textarea';
+import '../../shared/gr-suggestion-textarea/gr-suggestion-textarea';
 import '../gr-repo-plugin-config/gr-repo-plugin-config';
+import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {
   ConfigInfo,
   RepoName,
@@ -20,6 +21,7 @@ import {
   MaxObjectSizeLimitInfo,
   PluginParameterToConfigParameterInfoMap,
   DownloadSchemeInfo,
+  ServerInfo,
 } from '../../../types/common';
 import {
   InheritedBooleanInfoConfiguredValue,
@@ -39,11 +41,16 @@ import {BindValueChangeEvent} from '../../../types/events';
 import {deepClone} from '../../../utils/deep-util';
 import {LitElement, PropertyValues, css, html, nothing} from 'lit';
 import {customElement, property, state} from 'lit/decorators.js';
+import {createChangeUrl} from '../../../models/views/change';
 import {when} from 'lit/directives/when.js';
 import {subscribe} from '../../lit/subscription-controller';
 import {createSearchUrl} from '../../../models/views/search';
 import {userModelToken} from '../../../models/user/user-model';
 import {resolve} from '../../../models/dependency';
+import {configModelToken} from '../../../models/config/config-model';
+import {GrButton} from '../../shared/gr-button/gr-button';
+import {KnownExperimentId} from '../../../services/flags/flags';
+import {computeMainCodeBrowserWeblink} from '../../../utils/weblink-util';
 
 const STATES = {
   active: {value: RepoState.ACTIVE, label: 'Active'},
@@ -101,6 +108,11 @@ export class GrRepo extends LitElement {
   // private but used in test
   @state() readOnly = true;
 
+  @state() showSaveForReviewButton = false;
+
+  // private but used in test
+  @state() disableSaveWithoutReview = true;
+
   @state() private states = Object.values(STATES);
 
   @state() private originalConfig?: ConfigInfo;
@@ -110,13 +122,21 @@ export class GrRepo extends LitElement {
   // private but used in test
   @state() schemesObj?: SchemesInfoMap;
 
+  @state() serverConfig?: ServerInfo;
+
   @state() private weblinks: WebLinkInfo[] = [];
 
   @state() private pluginConfigChanged = false;
 
+  private readonly flagsService = getAppContext().flagsService;
+
   private readonly getUserModel = resolve(this, userModelToken);
 
   private readonly restApiService = getAppContext().restApiService;
+
+  private readonly getNavigation = resolve(this, navigationToken);
+
+  private readonly getConfigModel = resolve(this, configModelToken);
 
   constructor() {
     super();
@@ -129,6 +149,11 @@ export class GrRepo extends LitElement {
           this.selectedScheme = prefs.download_scheme.toLowerCase();
         }
       }
+    );
+    subscribe(
+      this,
+      () => this.getConfigModel().serverConfig$,
+      config => (this.serverConfig = config)
     );
   }
 
@@ -170,8 +195,8 @@ export class GrRepo extends LitElement {
           <h1 id="Title" class="heading-1">${this.repo}</h1>
           <hr />
           <div>
-            <a href=${this.weblinks?.[0]?.url}
-              ><gr-button link ?disabled=${!this.weblinks?.[0]?.url}
+            <a href=${this.getWebLink()?.url}
+              ><gr-button link ?disabled=${!this.getWebLink()?.url}
                 >Browse</gr-button
               ></a
             ><a href=${this.computeChangesUrl(this.repo)}
@@ -195,9 +220,19 @@ export class GrRepo extends LitElement {
                 ${this.renderDescription()} ${this.renderRepoOptions()}
                 ${this.renderPluginConfig()}
                 <gr-button
-                  ?disabled=${this.readOnly || !configChanged}
+                  id="saveBtn"
+                  ?disabled=${this.readOnly ||
+                  this.disableSaveWithoutReview ||
+                  !configChanged}
                   @click=${this.handleSaveRepoConfig}
                   >Save changes</gr-button
+                >
+                <gr-button
+                  id="saveReviewBtn"
+                  ?disabled=${this.readOnly || !configChanged}
+                  ?hidden=${!this.showSaveForReviewButton}
+                  @click=${this.handleSaveRepoConfigForReview}
+                  >Save for review</gr-button
                 >
               </fieldset>
               <gr-endpoint-decorator name="repo-config">
@@ -244,7 +279,7 @@ export class GrRepo extends LitElement {
     return html`
       <h3 id="Description" class="heading-3">Description</h3>
       <fieldset>
-        <gr-textarea
+        <gr-suggestion-textarea
           id="descriptionInput"
           class="description"
           autocomplete="on"
@@ -254,7 +289,7 @@ export class GrRepo extends LitElement {
           ?disabled=${this.readOnly}
           .text=${this.repoConfig.description ?? ''}
           @text-changed=${this.handleDescriptionTextChanged}
-        ></gr-textarea>
+        ></gr-suggestion-textarea>
       </fieldset>
     `;
   }
@@ -781,6 +816,11 @@ export class GrRepo extends LitElement {
 
             // If the user is not an owner, is_owner is not a property.
             this.readOnly = !access[repo]?.is_owner;
+            this.showSaveForReviewButton = this.flagsService.isEnabled(
+              KnownExperimentId.SAVE_PROJECT_CONFIG_FOR_REVIEW
+            );
+            this.disableSaveWithoutReview =
+              !!access[repo]?.require_change_for_config_update;
           });
         }
       })
@@ -815,7 +855,7 @@ export class GrRepo extends LitElement {
         config.max_object_size_limit.configured_value = '';
       }
       this.repoConfig = config;
-      this.originalConfig = deepClone(config) as ConfigInfo;
+      this.originalConfig = deepClone<ConfigInfo>(config);
       this.loading = false;
     };
     promises.push(repoConfigHelper());
@@ -852,6 +892,10 @@ export class GrRepo extends LitElement {
         value: 'FALSE',
       },
     ];
+  }
+
+  private getWebLink() {
+    return computeMainCodeBrowserWeblink(this.weblinks, this.serverConfig);
   }
 
   private formatSubmitTypeSelect(repoConfig?: ConfigInfo) {
@@ -920,9 +964,35 @@ export class GrRepo extends LitElement {
       this.repo,
       this.formatRepoConfigForSave(this.repoConfig)
     );
-    this.originalConfig = deepClone(this.repoConfig) as ConfigInfo;
+    this.originalConfig = deepClone<ConfigInfo>(this.repoConfig);
     this.pluginConfigChanged = false;
     return;
+  }
+
+  async handleSaveRepoConfigForReview(e: Event) {
+    if (!this.repoConfig || !this.repo)
+      return Promise.reject(new Error('undefined repoConfig or repo'));
+    const button = e && (e.target as GrButton);
+    if (button) {
+      button.loading = true;
+    }
+
+    return this.restApiService
+      .saveRepoConfigForReview(
+        this.repo,
+        this.formatRepoConfigForSave(this.repoConfig)
+      )
+      .then(change => {
+        // Don't navigate on server error.
+        if (change) {
+          this.getNavigation().setUrl(createChangeUrl({change}));
+        }
+      })
+      .finally(() => {
+        if (button) {
+          button.loading = false;
+        }
+      });
   }
 
   private isEdited(

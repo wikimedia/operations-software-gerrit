@@ -16,7 +16,7 @@ import {
   isServiceUser,
 } from '../../../utils/account-util';
 import {ChangeInfo, AccountInfo, ServerInfo} from '../../../types/common';
-import {assertIsDefined, hasOwnProperty} from '../../../utils/common-util';
+import {hasOwnProperty} from '../../../utils/common-util';
 import {fire} from '../../../utils/event-util';
 import {isInvolved} from '../../../utils/change-util';
 import {LitElement, css, html, TemplateResult} from 'lit';
@@ -25,16 +25,16 @@ import {classMap} from 'lit/directives/class-map.js';
 import {getRemovedByIconClickReason} from '../../../utils/attention-set-util';
 import {ifDefined} from 'lit/directives/if-defined.js';
 import {createSearchUrl} from '../../../models/views/search';
-import {accountsModelToken} from '../../../models/accounts-model/accounts-model';
+import {accountsModelToken} from '../../../models/accounts/accounts-model';
 import {resolve} from '../../../models/dependency';
+import {configModelToken} from '../../../models/config/config-model';
+import {userModelToken} from '../../../models/user/user-model';
+import {subscribe} from '../../lit/subscription-controller';
 
 @customElement('gr-account-label')
 export class GrAccountLabel extends LitElement {
   @property({type: Object})
   account?: AccountInfo;
-
-  @property({type: Object})
-  _selfAccount?: AccountInfo;
 
   /**
    * Optional ChangeInfo object, typically comes from the change page or
@@ -71,9 +71,6 @@ export class GrAccountLabel extends LitElement {
   @property({type: Boolean})
   hideAvatar = false;
 
-  @state()
-  _config?: ServerInfo;
-
   @property({type: Boolean, reflect: true})
   selectionChipStyle = false;
 
@@ -98,11 +95,23 @@ export class GrAccountLabel extends LitElement {
   @property({type: Boolean, reflect: true})
   avatarShown = false;
 
+  // Private but used in tests.
+  @state()
+  selfAccount?: AccountInfo;
+
+  // Private but used in tests.
+  @state()
+  config?: ServerInfo;
+
   readonly reporting = getAppContext().reportingService;
 
   private readonly restApiService = getAppContext().restApiService;
 
   private readonly getAccountsModel = resolve(this, accountsModelToken);
+
+  private readonly getConfigModel = resolve(this, configModelToken);
+
+  private readonly getUserModel = resolve(this, userModelToken);
 
   static override get styles() {
     return [
@@ -193,33 +202,40 @@ export class GrAccountLabel extends LitElement {
     ];
   }
 
-  override async updated() {
-    assertIsDefined(this.account, 'account');
+  override updated() {
+    this.computeDetailedAccount();
+  }
+
+  private async computeDetailedAccount() {
+    if (!this.account) return;
+    // If this.account is already a detailed object, then there is no need to fill it.
     if (isDetailedAccount(this.account)) return;
     const account = await this.getAccountsModel().fillDetails(this.account);
-    if (!isDetailedAccount(account)) return;
-    // AccountInfo returned by fillDetails has the email property set
-    // to the primary email of the account. This poses a problem in
-    // cases where a secondary email is used as the committer or author
-    // email. Therefore, only fill in the *missing* properties.
     if (
       account &&
+      // If we were not able to get a detailed object, then there is no point in updating the
+      // account.
+      isDetailedAccount(account) &&
       account !== this.account &&
       (!this.account._account_id ||
         account._account_id === this.account._account_id)
     ) {
+      // AccountInfo returned by fillDetails has the email property set
+      // to the primary email of the account. This poses a problem in
+      // cases where a secondary email is used as the committer or author
+      // email. Therefore, only fill in the *missing* properties.
       this.account = {...account, ...this.account};
     }
   }
 
   override render() {
-    const {account, change, highlightAttention, forceAttention, _config} = this;
+    const {account, change, highlightAttention, forceAttention, config} = this;
     if (!account) return;
     this.attentionIconShown =
       forceAttention ||
       this.hasUnforcedAttention(highlightAttention, account, change);
     this.deselected = !this.selected;
-    const hasAvatars = !!_config?.plugin?.has_avatars;
+    const hasAvatars = !!config?.plugin?.has_avatars;
     this.avatarShown = !this.hideAvatar && hasAvatars;
 
     return html`
@@ -239,7 +255,7 @@ export class GrAccountLabel extends LitElement {
                 account,
                 change,
                 false,
-                this._selfAccount
+                this.selfAccount
               )}
               title=${this.computeAttentionIconTitle(
                 highlightAttention,
@@ -247,7 +263,7 @@ export class GrAccountLabel extends LitElement {
                 change,
                 forceAttention,
                 this.selected,
-                this._selfAccount
+                this.selfAccount
               )}
             >
               <gr-button
@@ -260,7 +276,7 @@ export class GrAccountLabel extends LitElement {
                   account,
                   change,
                   this.selected,
-                  this._selfAccount
+                  this.selfAccount
                 )}
               >
                 <div>
@@ -292,7 +308,7 @@ export class GrAccountLabel extends LitElement {
               class="name"
               part="gr-account-label-text"
             >
-              ${this.computeName(account, this.firstName, this._config)}
+              ${this.computeName(account, this.firstName, this.config)}
             </span>
             ${this.renderAccountStatusPlugins()}
           </span>
@@ -303,12 +319,16 @@ export class GrAccountLabel extends LitElement {
 
   constructor() {
     super();
-    this.restApiService.getConfig().then(config => {
-      this._config = config;
-    });
-    this.restApiService.getAccount().then(account => {
-      this._selfAccount = account;
-    });
+    subscribe(
+      this,
+      () => this.getConfigModel().serverConfig$,
+      x => (this.config = x)
+    );
+    subscribe(
+      this,
+      () => this.getUserModel().account$,
+      x => (this.selfAccount = x)
+    );
     this.addEventListener('attention-set-updated', () => {
       // For re-evaluation of everything that depends on 'change'.
       if (this.change) this.change = {...this.change};
@@ -387,7 +407,7 @@ export class GrAccountLabel extends LitElement {
 
     // We are deliberately updating the UI before making the API call. It is a
     // risk that we are taking to achieve a better UX for 99.9% of the cases.
-    const reason = getRemovedByIconClickReason(this._selfAccount, this._config);
+    const reason = getRemovedByIconClickReason(this.selfAccount, this.config);
     if (this.change.attention_set)
       delete this.change.attention_set[this.account._account_id];
     // For re-evaluation of everything that depends on 'change'.
@@ -413,7 +433,7 @@ export class GrAccountLabel extends LitElement {
     const targetId = this.account._account_id;
     const ownerId =
       (this.change && this.change.owner && this.change.owner._account_id) || -1;
-    const selfId = this._selfAccount?._account_id || -1;
+    const selfId = this.selfAccount?._account_id || -1;
     const reviewers =
       this.change && this.change.reviewers && this.change.reviewers.REVIEWER
         ? [...this.change.reviewers.REVIEWER]

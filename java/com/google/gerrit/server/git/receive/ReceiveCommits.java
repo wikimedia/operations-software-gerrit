@@ -19,7 +19,6 @@ import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableListMultimap.toImmutableListMultimap;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
-import static com.google.common.flogger.LazyArgs.lazy;
 import static com.google.gerrit.entities.RefNames.REFS_CHANGES;
 import static com.google.gerrit.entities.RefNames.isConfigRef;
 import static com.google.gerrit.entities.RefNames.isRefsUsersSelf;
@@ -38,6 +37,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toList;
+import static javax.servlet.http.HttpServletResponse.SC_INTERNAL_SERVER_ERROR;
 import static org.eclipse.jgit.lib.Constants.R_HEADS;
 import static org.eclipse.jgit.transport.ReceiveCommand.Result.NOT_ATTEMPTED;
 import static org.eclipse.jgit.transport.ReceiveCommand.Result.OK;
@@ -107,11 +107,13 @@ import com.google.gerrit.metrics.Counter3;
 import com.google.gerrit.metrics.Description;
 import com.google.gerrit.metrics.Field;
 import com.google.gerrit.metrics.MetricMaker;
+import com.google.gerrit.server.AclInfoController;
 import com.google.gerrit.server.CancellationMetrics;
 import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.CreateGroupPermissionSyncer;
 import com.google.gerrit.server.DeadlineChecker;
 import com.google.gerrit.server.DraftCommentsReader;
+import com.google.gerrit.server.ExceptionHook;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.InvalidDeadlineException;
 import com.google.gerrit.server.PatchSetUtil;
@@ -121,6 +123,8 @@ import com.google.gerrit.server.RequestInfo;
 import com.google.gerrit.server.RequestListener;
 import com.google.gerrit.server.Sequences;
 import com.google.gerrit.server.account.AccountResolver;
+import com.google.gerrit.server.account.AccountResolver.UnresolvableAccountException;
+import com.google.gerrit.server.account.ServiceUserClassifier;
 import com.google.gerrit.server.approval.ApprovalsUtil;
 import com.google.gerrit.server.cancellation.RequestCancelledException;
 import com.google.gerrit.server.cancellation.RequestStateContext;
@@ -145,6 +149,7 @@ import com.google.gerrit.server.git.MultiProgressMonitor.Task;
 import com.google.gerrit.server.git.ReceivePackInitializer;
 import com.google.gerrit.server.git.TagCache;
 import com.google.gerrit.server.git.ValidationError;
+import com.google.gerrit.server.git.receive.RejectionReason.MetricBucket;
 import com.google.gerrit.server.git.validators.CommentCountValidator;
 import com.google.gerrit.server.git.validators.CommentSizeValidator;
 import com.google.gerrit.server.git.validators.CommitValidationMessage;
@@ -180,6 +185,7 @@ import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
 import com.google.gerrit.server.restapi.change.ReplyAttentionSetUpdates;
+import com.google.gerrit.server.submit.ChangeSet;
 import com.google.gerrit.server.submit.MergeOp;
 import com.google.gerrit.server.submit.MergeOpRepoManager;
 import com.google.gerrit.server.update.BatchUpdate;
@@ -230,6 +236,7 @@ import java.util.TreeSet;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.logging.Level;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
@@ -333,6 +340,7 @@ class ReceiveCommits {
   private static class Metrics {
     private final Counter0 psRevisionMissing;
     private final Counter3<String, String, String> pushCount;
+    private final Counter3<String, String, Integer> rejectCount;
 
     @Inject
     Metrics(MetricMaker metricMaker) {
@@ -357,6 +365,19 @@ class ReceiveCommits {
                       "The type of the update (CREATE, UPDATE, CREATE/UPDATE,"
                           + " UPDATE_NONFASTFORWARD, DELETE).")
                   .build());
+      rejectCount =
+          metricMaker.newCounter(
+              "receivecommits/reject_count",
+              new Description("number of rejected pushes"),
+              Field.ofString("kind", (metadataBuilder, fieldValue) -> {})
+                  .description("The push kind (direct vs. magic).")
+                  .build(),
+              Field.ofString("reason", (metadataBuilder, fieldValue) -> {})
+                  .description("The rejection reason.")
+                  .build(),
+              Field.ofInteger("status", (metadataBuilder, fieldValue) -> {})
+                  .description("The HTTP status code.")
+                  .build());
     }
   }
 
@@ -366,11 +387,13 @@ class ReceiveCommits {
 
   // Injected fields.
   private final AccountResolver accountResolver;
+  private final AclInfoController aclInfoController;
   private final AllProjectsName allProjectsName;
   private final BatchUpdate.Factory batchUpdateFactory;
   private final BatchUpdates batchUpdates;
   private final CancellationMetrics cancellationMetrics;
   private final ChangeEditUtil editUtil;
+  private final PluginSetContext<ExceptionHook> exceptionHooks;
   private final ChangeIndexer indexer;
   private final ChangeInserter.Factory changeInserterFactory;
   private final ChangeNotes.Factory notesFactory;
@@ -395,7 +418,6 @@ class ReceiveCommits {
   private final DynamicSet<PerformanceLogger> performanceLoggers;
   private final PermissionBackend permissionBackend;
   private final ProjectCache projectCache;
-  private final Provider<InternalChangeQuery> queryProvider;
   private final Provider<MergeOp> mergeOpProvider;
   private final Provider<MergeOpRepoManager> ormProvider;
   private final ReceiveConfig receiveConfig;
@@ -408,6 +430,7 @@ class ReceiveCommits {
   private final Sequences seq;
   private final SetHashtagsOp.Factory hashtagsFactory;
   private final SetTopicOp.Factory setTopicFactory;
+  private final ServiceUserClassifier serviceUserClassifier;
   private final ImmutableList<SubmissionListener> superprojectUpdateSubmissionListeners;
   private final TagCache tagCache;
   private final ProjectConfig.Factory projectConfigFactory;
@@ -434,6 +457,8 @@ class ReceiveCommits {
   /** Multimap of error text to refnames that produced that error. */
   private final ListMultimap<String, String> errors;
 
+  private final LinkedHashMap<ReceiveCommand, RejectionReason> rejectionReasons;
+
   private final ListMultimap<String, String> pushOptions;
   private final ReceivePackRefCache receivePackRefCache;
   private final Map<Change.Id, ReplaceRequest> replaceByChange;
@@ -456,6 +481,7 @@ class ReceiveCommits {
   @Inject
   ReceiveCommits(
       AccountResolver accountResolver,
+      AclInfoController aclInfoController,
       AllProjectsName allProjectsName,
       BatchUpdate.Factory batchUpdateFactory,
       BatchUpdates batchUpdates,
@@ -463,6 +489,7 @@ class ReceiveCommits {
       ProjectConfig.Factory projectConfigFactory,
       @GerritServerConfig Config config,
       ChangeEditUtil editUtil,
+      PluginSetContext<ExceptionHook> exceptionHooks,
       ChangeIndexer indexer,
       ChangeInserter.Factory changeInserterFactory,
       ChangeNotes.Factory notesFactory,
@@ -486,7 +513,6 @@ class ReceiveCommits {
       DynamicSet<PerformanceLogger> performanceLoggers,
       PermissionBackend permissionBackend,
       ProjectCache projectCache,
-      Provider<InternalChangeQuery> queryProvider,
       Provider<MergeOp> mergeOpProvider,
       Provider<MergeOpRepoManager> ormProvider,
       PublishCommentsOp.Factory publishCommentsOp,
@@ -499,6 +525,7 @@ class ReceiveCommits {
       Sequences seq,
       SetHashtagsOp.Factory hashtagsFactory,
       SetTopicOp.Factory setTopicFactory,
+      ServiceUserClassifier serviceUserClassifier,
       @SuperprojectUpdateOnSubmission
           ImmutableList<SubmissionListener> superprojectUpdateSubmissionListeners,
       TagCache tagCache,
@@ -514,6 +541,7 @@ class ReceiveCommits {
       throws IOException {
     // Injected fields.
     this.accountResolver = accountResolver;
+    this.aclInfoController = aclInfoController;
     this.allProjectsName = allProjectsName;
     this.batchUpdateFactory = batchUpdateFactory;
     this.batchUpdates = batchUpdates;
@@ -530,8 +558,10 @@ class ReceiveCommits {
     this.deadlineCheckerFactory = deadlineCheckerFactory;
     this.diffOperationsForCommitValidationFactory = diffOperationsForCommitValidationFactory;
     this.editUtil = editUtil;
+    this.exceptionHooks = exceptionHooks;
     this.hashtagsFactory = hashtagsFactory;
     this.setTopicFactory = setTopicFactory;
+    this.serviceUserClassifier = serviceUserClassifier;
     this.indexer = indexer;
     this.initializers = initializers;
     this.mergeOpProvider = mergeOpProvider;
@@ -548,7 +578,6 @@ class ReceiveCommits {
     this.psUtil = psUtil;
     this.performanceLoggers = performanceLoggers;
     this.publishCommentsOp = publishCommentsOp;
-    this.queryProvider = queryProvider;
     this.receiveConfig = receiveConfig;
     this.refValidatorsFactory = refValidatorsFactory;
     this.replaceOpFactory = replaceOpFactory;
@@ -579,6 +608,7 @@ class ReceiveCommits {
 
     // Collections populated during processing.
     errors = MultimapBuilder.linkedHashKeys().arrayListValues().build();
+    rejectionReasons = new LinkedHashMap<>();
     messages = new ConcurrentLinkedQueue<>();
     pushOptions = LinkedListMultimap.create();
     replaceByChange = new LinkedHashMap<>();
@@ -683,6 +713,8 @@ class ReceiveCommits {
       requestListeners.runEach(l -> l.onRequest(requestInfo));
       traceContext.addTag(RequestId.Type.RECEIVE_ID, new RequestId(project.getNameKey().get()));
 
+      aclInfoController.enableAclLoggingIfUserCanViewAccess(traceContext);
+
       // Log the push options here, rather than in parsePushOptions(), so that they are included
       // into the trace if tracing is enabled.
       logger.atFine().log("push options: %s", receivePack.getPushOptions());
@@ -697,9 +729,12 @@ class ReceiveCommits {
               .addRequestStateProvider(
                   deadlineCheckerFactory.create(start, requestInfo, clientProvidedDeadlineValue))) {
         processCommandsUnsafe(commands, progress);
-        rejectRemaining(commands, INTERNAL_SERVER_ERROR);
+        rejectRemaining(
+            commands,
+            RejectionReason.create(MetricBucket.INTERNAL_SERVER_ERROR, INTERNAL_SERVER_ERROR));
       } catch (InvalidDeadlineException e) {
-        rejectRemaining(commands, e.getMessage());
+        rejectRemaining(
+            commands, RejectionReason.create(MetricBucket.INVALID_DEADLINE, e.getMessage()));
       } catch (RuntimeException e) {
         Optional<RequestCancelledException> requestCancelledException =
             RequestCancelledException.getFromCausalChain(e);
@@ -715,7 +750,21 @@ class ReceiveCommits {
               String.format(
                   " (%s)", requestCancelledException.get().getCancellationMessage().get()));
         }
-        rejectRemaining(commands, msg.toString());
+
+        MetricBucket metricBucket = MetricBucket.INTERNAL_SERVER_ERROR;
+        switch (requestCancelledException.get().getCancellationReason()) {
+          case CLIENT_CLOSED_REQUEST:
+            metricBucket = MetricBucket.CLIENT_CLOSED_REQUEST;
+            break;
+          case CLIENT_PROVIDED_DEADLINE_EXCEEDED:
+            metricBucket = MetricBucket.CLIENT_PROVIDED_DEADLINE_EXCEEDED;
+            break;
+          case SERVER_DEADLINE_EXCEEDED:
+            metricBucket = MetricBucket.SERVER_DEADLINE_EXCEEDED;
+            break;
+        }
+
+        rejectRemaining(commands, RejectionReason.create(metricBucket, msg.toString()));
       }
 
       // This sends error messages before the 'done' string of the progress monitor is sent.
@@ -723,12 +772,54 @@ class ReceiveCommits {
       // successfully.
       sendErrorMessages();
 
+      // If there was a permission issue send ACL infos to the client (if ACL logging was turned
+      // on).
+      if (rejectionReasons.values().stream()
+          .map(RejectionReason::statusCode)
+          .anyMatch(statusCode -> statusCode == 403)) {
+        aclInfoController.getAclInfoMessage().ifPresent(this::addMessage);
+      }
+
       commandProgress.end();
       loggingTags = traceContext.getTags();
       logger.atFine().log("Processing commands done.");
+    } catch (PermissionBackendException | RuntimeException e) {
+      String formattedCause = getFormattedCause(e).orElse(e.getClass().getSimpleName());
+      int statusCode =
+          getStatus(e).map(ExceptionHook.Status::statusCode).orElse(SC_INTERNAL_SERVER_ERROR);
+      logger.at(statusCode < SC_INTERNAL_SERVER_ERROR ? Level.INFO : Level.SEVERE).withCause(e).log(
+          "ReceiveCommits failed due to %s", formattedCause);
+      String pushKind = "magic or direct push";
+      if (serviceUserClassifier.isServiceUser(user.getAccountId())) {
+        pushKind += " by service user";
+      }
+      metrics.rejectCount.increment(pushKind, formattedCause, statusCode);
+
+      // Re-throw any RuntimeException as they are.
+      Throwables.throwIfUnchecked(e);
+
+      // Wrap any checked exception (e.g. PermissionBackendException) into a StorageException, which
+      // is an unchecked exception, as we cannot throw checked exceptions from this method.
+      throw new StorageException(e);
     }
     progress.end();
     return result.build();
+  }
+
+  private Optional<String> getFormattedCause(Throwable t) {
+    return exceptionHooks.stream()
+        .map(h -> h.formatCause(t))
+        .filter(Optional::isPresent)
+        .map(Optional::get)
+        .findFirst();
+  }
+
+  private Optional<ExceptionHook.Status> getStatus(Throwable err) {
+    return exceptionHooks.stream()
+        .map(h -> h.getStatus(err))
+        .filter(Optional::isPresent)
+        .map(Optional::get)
+        .findFirst();
   }
 
   // Process as many commands as possible, but may leave some commands in state NOT_ATTEMPTED.
@@ -736,12 +827,13 @@ class ReceiveCommits {
       Collection<ReceiveCommand> commands, MultiProgressMonitor progress) {
     logger.atFine().log("Calling user: %s, commands: %d", user.getLoggableName(), commands.size());
 
-    // If the list of groups is large, the log entry may get dropped, so separate out.
-    logger.atFine().log("Groups: %s", lazy(() -> user.getEffectiveGroups().getKnownGroups()));
-
     if (!projectState.getProject().getState().permitsWrite()) {
       for (ReceiveCommand cmd : commands) {
-        reject(cmd, "prohibited by Gerrit: project state does not permit write");
+        reject(
+            cmd,
+            RejectionReason.create(
+                MetricBucket.PROJECT_NOT_WRITABLE,
+                "prohibited by Gerrit: project state does not permit write"));
       }
       return;
     }
@@ -763,7 +855,11 @@ class ReceiveCommits {
       }
 
       if (!magicCommands.isEmpty() && !regularCommands.isEmpty()) {
-        rejectRemaining(commands, "cannot combine normal pushes and magic pushes");
+        rejectRemaining(
+            commands,
+            RejectionReason.create(
+                MetricBucket.CANNOT_COMBINE_NORMAL_AND_MAGIC_PUSHES,
+                "cannot combine normal pushes and magic pushes"));
         return;
       }
 
@@ -796,7 +892,8 @@ class ReceiveCommits {
           if (first) {
             first = false;
           } else {
-            reject(cmd, "duplicate request");
+            reject(
+                cmd, RejectionReason.create(MetricBucket.DUPLICATE_REQUEST, "duplicate request"));
           }
         }
       } catch (PermissionBackendException | NoSuchProjectException | IOException err) {
@@ -832,7 +929,7 @@ class ReceiveCommits {
 
       logger.atFine().log(
           "Command results: %s",
-          lazy(() -> commands.stream().map(ReceiveCommits::commandToString).collect(joining(","))));
+          commands.stream().map(ReceiveCommits::commandToString).collect(joining(",")));
     }
   }
 
@@ -1085,10 +1182,15 @@ class ReceiveCommits {
           }
         } catch (ResourceConflictException e) {
           addError(e.getMessage());
-          reject(magicBranchCmd, "conflict");
+          reject(magicBranchCmd, RejectionReason.create(MetricBucket.CONFLICT, "conflict"));
+        } catch (UnresolvableAccountException e) {
+          logger.atFine().log("Rejecting because account cannot be resolved: %s", e.getMessage());
+          reject(
+              magicBranchCmd,
+              RejectionReason.create(MetricBucket.ACCOUNT_NOT_FOUND, e.getMessage()));
         } catch (BadRequestException | UnprocessableEntityException | AuthException e) {
           logger.atFine().withCause(e).log("Rejecting due to client error");
-          reject(magicBranchCmd, e.getMessage());
+          reject(magicBranchCmd, RejectionReason.create(MetricBucket.CLIENT_ERROR, e.getMessage()));
         } catch (RestApiException | IOException | UpdateException e) {
           throw new StorageException("Can't insert change/patch set for " + project.getName(), e);
         }
@@ -1098,7 +1200,7 @@ class ReceiveCommits {
             submit(newChanges, replaceByChange.values());
           } catch (ResourceConflictException e) {
             addError(e.getMessage());
-            reject(magicBranchCmd, "conflict");
+            reject(magicBranchCmd, RejectionReason.create(MetricBucket.CONFLICT, "conflict"));
           } catch (RestApiException
               | StorageException
               | UpdateException
@@ -1106,7 +1208,9 @@ class ReceiveCommits {
               | ConfigInvalidException
               | PermissionBackendException e) {
             logger.atSevere().withCause(e).log("Error submitting changes to %s", project.getName());
-            reject(magicBranchCmd, "error during submit");
+            reject(
+                magicBranchCmd,
+                RejectionReason.create(MetricBucket.SUBMIT_ERROR, "error during submit"));
           }
         }
       }
@@ -1183,8 +1287,8 @@ class ReceiveCommits {
         magicBranchCmd.setResult(OK);
       }
       for (ReplaceRequest replace : replaceByChange.values()) {
-        String rejectMessage = replace.getRejectMessage();
-        if (rejectMessage == null) {
+        Optional<RejectionReason> rejectionReason = replace.getRejectionReason();
+        if (!rejectionReason.isPresent()) {
           if (replace.inputCommand.getResult() == NOT_ATTEMPTED) {
             // Not necessarily the magic branch, so need to set OK on the original
             // value.
@@ -1192,7 +1296,7 @@ class ReceiveCommits {
           }
         } else {
           logger.atFine().log("Rejecting due to message from ReplaceOp");
-          reject(replace.inputCommand, rejectMessage);
+          reject(replace.inputCommand, rejectionReason.get());
         }
       }
     }
@@ -1297,7 +1401,7 @@ class ReceiveCommits {
       }
 
       if (!Repository.isValidRefName(cmd.getRefName()) || cmd.getRefName().contains("//")) {
-        reject(cmd, "not valid ref");
+        reject(cmd, RejectionReason.create(MetricBucket.INVALID_REF, "not valid ref"));
         return;
       }
       if (RefNames.isNoteDbMetaRef(cmd.getRefName())) {
@@ -1315,14 +1419,20 @@ class ReceiveCommits {
           // NoteDb refs.
           reject(
               cmd,
-              "NoteDb update requires -o "
-                  + NoteDbPushOption.OPTION_NAME
-                  + "="
-                  + NoteDbPushOption.ALLOW.value());
+              RejectionReason.create(
+                  MetricBucket.NOTEDB_UPDATE_WITHOUT_ALLOW_OPTION,
+                  "NoteDb update requires -o "
+                      + NoteDbPushOption.OPTION_NAME
+                      + "="
+                      + NoteDbPushOption.ALLOW.value()));
           return;
         }
         if (!permissionBackend.user(user).test(GlobalPermission.ACCESS_DATABASE)) {
-          reject(cmd, "NoteDb update requires access database permission");
+          reject(
+              cmd,
+              RejectionReason.create(
+                  MetricBucket.NOTEDB_UPDATE_WITHOUT_ACCESS_DATABASE_PERMISSION,
+                  "NoteDb update requires access database permission"));
           return;
         }
       }
@@ -1345,7 +1455,11 @@ class ReceiveCommits {
           break;
 
         default:
-          reject(cmd, "prohibited by Gerrit: unknown command type " + cmd.getType());
+          reject(
+              cmd,
+              RejectionReason.create(
+                  MetricBucket.UNKNOWN_COMMAND_TYPE,
+                  "prohibited by Gerrit: unknown command type " + cmd.getType()));
           return;
       }
 
@@ -1367,9 +1481,11 @@ class ReceiveCommits {
       if (!permissions.test(ProjectPermission.WRITE_CONFIG)) {
         reject(
             cmd,
-            String.format(
-                "must be either project owner or have %s permission",
-                ProjectPermission.WRITE_CONFIG.describeForException()));
+            RejectionReason.create(
+                MetricBucket.PROJECT_CONFIG_UPDATE_NOT_ALLOWED,
+                String.format(
+                    "must be either project owner or have %s permission",
+                    ProjectPermission.WRITE_CONFIG.describeForException())));
         return;
       }
 
@@ -1385,7 +1501,11 @@ class ReceiveCommits {
               for (ValidationError err : cfg.getValidationErrors()) {
                 addError("  " + err.getMessage());
               }
-              reject(cmd, "invalid project configuration");
+              reject(
+                  cmd,
+                  RejectionReason.create(
+                      MetricBucket.INVALID_PROJECT_CONFIGURATION_UPDATE,
+                      "invalid project configuration"));
               logger.atSevere().log(
                   "User %s tried to push invalid project configuration %s for %s",
                   user.getLoggableName(), cmd.getNewId().name(), project.getName());
@@ -1396,7 +1516,11 @@ class ReceiveCommits {
             if (oldParent == null) {
               // update of the 'All-Projects' project
               if (newParent != null) {
-                reject(cmd, "invalid project configuration: root project cannot have parent");
+                reject(
+                    cmd,
+                    RejectionReason.create(
+                        MetricBucket.INVALID_PROJECT_CONFIGURATION_UPDATE,
+                        "invalid project configuration: root project cannot have parent"));
                 return;
               }
             } else {
@@ -1407,25 +1531,40 @@ class ReceiveCommits {
                       .project(project.getNameKey())
                       .test(ProjectPermission.WRITE_CONFIG)) {
                     reject(
-                        cmd, "invalid project configuration: only project owners can set parent");
+                        cmd,
+                        RejectionReason.create(
+                            MetricBucket.PROJECT_CONFIG_UPDATE_NOT_ALLOWED,
+                            "invalid project configuration: only project owners can set parent"));
                     return;
                   }
                 } else {
                   if (!permissionBackend.user(user).test(GlobalPermission.ADMINISTRATE_SERVER)) {
-                    reject(cmd, "invalid project configuration: only Gerrit admin can set parent");
+                    reject(
+                        cmd,
+                        RejectionReason.create(
+                            MetricBucket.PROJECT_CONFIG_UPDATE_NOT_ALLOWED,
+                            "invalid project configuration: only Gerrit admin can set parent"));
                     return;
                   }
                 }
               }
 
               if (!projectCache.get(newParent).isPresent()) {
-                reject(cmd, "invalid project configuration: parent does not exist");
+                reject(
+                    cmd,
+                    RejectionReason.create(
+                        MetricBucket.INVALID_PROJECT_CONFIGURATION_UPDATE,
+                        "invalid project configuration: parent does not exist"));
                 return;
               }
             }
             validatePluginConfig(cmd, cfg);
           } catch (Exception e) {
-            reject(cmd, "invalid project configuration");
+            reject(
+                cmd,
+                RejectionReason.create(
+                    MetricBucket.INVALID_PROJECT_CONFIGURATION_UPDATE,
+                    "invalid project configuration"));
             logger.atSevere().withCause(e).log(
                 "User %s tried to push invalid project configuration %s for %s",
                 user.getLoggableName(), cmd.getNewId().name(), project.getName());
@@ -1439,8 +1578,10 @@ class ReceiveCommits {
         default:
           reject(
               cmd,
-              "prohibited by Gerrit: don't know how to handle config update of type "
-                  + cmd.getType());
+              RejectionReason.create(
+                  MetricBucket.UNKNOWN_COMMAND_TYPE,
+                  "prohibited by Gerrit: don't know how to handle config update of type "
+                      + cmd.getType()));
       }
     }
   }
@@ -1469,10 +1610,12 @@ class ReceiveCommits {
           && !configEntry.isEditable(projectState)) {
         reject(
             cmd,
-            String.format(
-                "invalid project configuration: Not allowed to set parameter"
-                    + " '%s' of plugin '%s' on project '%s'.",
-                e.getExportName(), e.getPluginName(), project.getName()));
+            RejectionReason.create(
+                MetricBucket.INVALID_PROJECT_CONFIGURATION_UPDATE,
+                String.format(
+                    "invalid project configuration: Not allowed to set parameter"
+                        + " '%s' of plugin '%s' on project '%s'.",
+                    e.getExportName(), e.getPluginName(), project.getName())));
         continue;
       }
 
@@ -1481,10 +1624,12 @@ class ReceiveCommits {
           && !configEntry.getPermittedValues().contains(value)) {
         reject(
             cmd,
-            String.format(
-                "invalid project configuration: The value '%s' is "
-                    + "not permitted for parameter '%s' of plugin '%s'.",
-                value, e.getExportName(), e.getPluginName()));
+            RejectionReason.create(
+                MetricBucket.INVALID_PROJECT_CONFIGURATION_UPDATE,
+                String.format(
+                    "invalid project configuration: The value '%s' is "
+                        + "not permitted for parameter '%s' of plugin '%s'.",
+                    value, e.getExportName(), e.getPluginName())));
       }
     }
   }
@@ -1495,7 +1640,10 @@ class ReceiveCommits {
       if (repo.findRef(cmd.getRefName()) != null) {
         reject(
             cmd,
-            String.format("Cannot create ref '%s' because it already exists.", cmd.getRefName()));
+            RejectionReason.create(
+                MetricBucket.CANNOT_CREATE_REF_BECAUSE_IT_ALREADY_EXISTS,
+                String.format(
+                    "Cannot create ref '%s' because it already exists.", cmd.getRefName())));
         return;
       }
       RevObject obj;
@@ -1523,7 +1671,10 @@ class ReceiveCommits {
         rejectProhibited(cmd, denied);
         return;
       } catch (ResourceConflictException denied) {
-        reject(cmd, "prohibited by Gerrit: " + denied.getMessage());
+        reject(
+            cmd,
+            RejectionReason.create(
+                MetricBucket.CONFLICT, "prohibited by Gerrit: " + denied.getMessage()));
         return;
       }
 
@@ -1541,7 +1692,8 @@ class ReceiveCommits {
       Optional<AuthException> err = checkRefPermission(cmd, RefPermission.UPDATE);
       if (!err.isPresent()) {
         if (isHead(cmd) && !isCommit(globalRevWalk, cmd)) {
-          reject(cmd, "head must point to commit");
+          reject(
+              cmd, RejectionReason.create(MetricBucket.INVALID_HEAD, "head must point to commit"));
           return;
         }
         if (validRefOperation(cmd)) {
@@ -1571,7 +1723,7 @@ class ReceiveCommits {
     if (obj instanceof RevCommit) {
       return true;
     }
-    reject(cmd, "not a commit");
+    reject(cmd, RejectionReason.create(MetricBucket.NOT_A_COMMIT, "not a commit"));
     return false;
   }
 
@@ -1580,10 +1732,16 @@ class ReceiveCommits {
       logger.atFine().log("Deleting %s", cmd);
       if (cmd.getRefName().startsWith(REFS_CHANGES)) {
         errors.put(CANNOT_DELETE_CHANGES, cmd.getRefName());
-        reject(cmd, "cannot delete changes");
+        reject(
+            cmd,
+            RejectionReason.create(MetricBucket.CANNOT_DELETE_CHANGES, "cannot delete changes"));
       } else if (isConfigRef(cmd.getRefName())) {
         errors.put(CANNOT_DELETE_CONFIG, cmd.getRefName());
-        reject(cmd, "cannot delete project configuration");
+        reject(
+            cmd,
+            RejectionReason.create(
+                MetricBucket.CANNOT_DELETE_PROJECT_CONFIGURATION,
+                "cannot delete project configuration"));
       }
 
       Optional<AuthException> err = checkRefPermission(cmd, RefPermission.DELETE);
@@ -1592,6 +1750,19 @@ class ReceiveCommits {
         var unused = validRefOperation(cmd);
       } else {
         rejectProhibited(cmd, err.get());
+      }
+      if (ObjectId.zeroId().equals(cmd.getOldId())) {
+        // Git CLI sends DELETE 0..0 0...0 when the server doesn't send the deleted ref during
+        // negotiation. The server usually doesn't send it when ref doesn't exist or when it
+        // is not visible to a caller - so the message that the ref doesn't exist should be ok
+        // here.
+        // Without this check, such delete always fails with the "internal error" message, caused
+        // by the checkArgument in the  ChainedReceiveCommands#add.
+        reject(
+            cmd,
+            RejectionReason.create(
+                MetricBucket.REF_NOT_FOUND,
+                String.format("The ref %s doesn't exist", cmd.getRefName())));
       }
     }
   }
@@ -1645,18 +1816,18 @@ class ReceiveCommits {
     reject(cmd, prohibited(err, cmd.getRefName()));
   }
 
-  private static String prohibited(AuthException e, String alreadyDisplayedResource) {
-    String msg = e.getMessage();
+  private static RejectionReason prohibited(AuthException e, String alreadyDisplayedResource) {
     if (e instanceof PermissionDeniedException) {
       PermissionDeniedException pde = (PermissionDeniedException) e;
       if (pde.getResource().isPresent()
           && pde.getResource().get().equals(alreadyDisplayedResource)) {
         // Avoid repeating resource name if exactly the given name was already displayed by the
         // generic git push machinery.
-        msg = PermissionDeniedException.MESSAGE_PREFIX + pde.describePermission();
+        return RejectionReason.create(pde);
       }
     }
-    return "prohibited by Gerrit: " + msg;
+    return RejectionReason.create(
+        MetricBucket.PROHIBITED, "prohibited by Gerrit: " + e.getMessage());
   }
 
   static class MagicBranchInput {
@@ -2007,7 +2178,7 @@ class ReceiveCommits {
       } catch (CmdLineException e) {
         if (!magicBranch.cmdLineParser.wasHelpRequestedByOption()) {
           logger.atFine().log("Invalid branch syntax");
-          reject(cmd, e.getMessage());
+          reject(cmd, RejectionReason.create(MetricBucket.INVALID_BRANCH_SYNTAX, e.getMessage()));
           return;
         }
         ref = null; // never happens
@@ -2016,14 +2187,20 @@ class ReceiveCommits {
       if (magicBranch.skipValidation) {
         reject(
             cmd,
-            String.format(
-                "\"--%s\" option is only supported for direct push", PUSH_OPTION_SKIP_VALIDATION));
+            RejectionReason.create(
+                MetricBucket.CANNOT_SKIP_VALIDATION_FOR_MAGIC_PUSH,
+                String.format(
+                    "\"--%s\" option is only supported for direct push",
+                    PUSH_OPTION_SKIP_VALIDATION)));
         return;
       }
 
       if (magicBranch.topic != null && magicBranch.topic.length() > ChangeUtil.TOPIC_MAX_LENGTH) {
         reject(
-            cmd, String.format("topic length exceeds the limit (%d)", ChangeUtil.TOPIC_MAX_LENGTH));
+            cmd,
+            RejectionReason.create(
+                MetricBucket.TOPIC_TOO_LARGE,
+                String.format("topic length exceeds the limit (%d)", ChangeUtil.TOPIC_MAX_LENGTH)));
       }
 
       if (magicBranch.cmdLineParser.wasHelpRequestedByOption()) {
@@ -2045,7 +2222,7 @@ class ReceiveCommits {
         }
 
         addMessage(w.toString());
-        reject(cmd, "see help");
+        reject(cmd, RejectionReason.create(MetricBucket.HELP_REQUESTED, "see help"));
         return;
       }
       if (projectState.isAllUsers() && RefNames.REFS_USERS_SELF.equals(ref)) {
@@ -2063,9 +2240,11 @@ class ReceiveCommits {
         logger.atFine().log("Ref %s not found", ref);
         if (ref.startsWith(Constants.R_HEADS)) {
           String n = ref.substring(Constants.R_HEADS.length());
-          reject(cmd, "branch " + n + " not found");
+          reject(
+              cmd,
+              RejectionReason.create(MetricBucket.BRANCH_NOT_FOUND, "branch " + n + " not found"));
         } else {
-          reject(cmd, ref + " not found");
+          reject(cmd, RejectionReason.create(MetricBucket.REF_NOT_FOUND, ref + " not found"));
         }
         return;
       }
@@ -2083,7 +2262,11 @@ class ReceiveCommits {
       }
 
       if (magicBranch.isPrivate && magicBranch.removePrivate) {
-        reject(cmd, "the options 'private' and 'remove-private' are mutually exclusive");
+        reject(
+            cmd,
+            RejectionReason.create(
+                MetricBucket.INVALID_OPTION,
+                "the options 'private' and 'remove-private' are mutually exclusive"));
         return;
       }
 
@@ -2096,26 +2279,32 @@ class ReceiveCommits {
           magicBranch.isPrivate || (privateByDefault && !magicBranch.removePrivate);
 
       if (receiveConfig.disablePrivateChanges && setChangeAsPrivate) {
-        reject(cmd, "private changes are disabled");
+        reject(
+            cmd,
+            RejectionReason.create(MetricBucket.INVALID_OPTION, "private changes are disabled"));
         return;
       }
 
       if (magicBranch.workInProgress && magicBranch.ready) {
-        reject(cmd, "the options 'wip' and 'ready' are mutually exclusive");
+        reject(
+            cmd,
+            RejectionReason.create(
+                MetricBucket.INVALID_OPTION,
+                "the options 'wip' and 'ready' are mutually exclusive"));
         return;
       }
       if (magicBranch.publishComments && magicBranch.noPublishComments) {
         reject(
-            cmd, "the options 'publish-comments' and 'no-publish-comments' are mutually exclusive");
+            cmd,
+            RejectionReason.create(
+                MetricBucket.INVALID_OPTION,
+                "the options 'publish-comments' and 'no-publish-comments' are mutually exclusive"));
         return;
       }
 
-      if (magicBranch.submit) {
-        err = checkRefPermission(magicBranch.perm, RefPermission.UPDATE_BY_SUBMIT);
-        if (err.isPresent()) {
-          rejectProhibited(cmd, err.get());
-          return;
-        }
+      if (magicBranch.submit
+          && checkCanUpdateBySubmit(magicBranch.cmd, magicBranch.perm).isPresent()) {
+        return;
       }
 
       RevCommit tip;
@@ -2133,17 +2322,25 @@ class ReceiveCommits {
       try {
         if (magicBranch.merged) {
           if (magicBranch.base != null) {
-            reject(cmd, "cannot use merged with base");
+            reject(
+                cmd,
+                RejectionReason.create(MetricBucket.INVALID_OPTION, "cannot use merged with base"));
             return;
           }
           Ref refTip = receivePackRefCache.exactRef(magicBranch.dest.branch());
           if (refTip == null) {
-            reject(cmd, magicBranch.dest.branch() + " not found");
+            reject(
+                cmd,
+                RejectionReason.create(
+                    MetricBucket.BRANCH_NOT_FOUND, magicBranch.dest.branch() + " not found"));
             return;
           }
           RevCommit branchTip = globalRevWalk.parseCommit(refTip.getObjectId());
           if (!globalRevWalk.isMergedInto(tip, branchTip)) {
-            reject(cmd, "not merged into branch");
+            reject(
+                cmd,
+                RejectionReason.create(
+                    MetricBucket.NOT_MERGED_INTO_BRANCH, "not merged into branch"));
             return;
           }
         }
@@ -2165,10 +2362,11 @@ class ReceiveCommits {
             try {
               magicBranch.baseCommit.add(globalRevWalk.parseCommit(id));
             } catch (IncorrectObjectTypeException notCommit) {
-              reject(cmd, "base must be a commit");
+              reject(
+                  cmd, RejectionReason.create(MetricBucket.INVALID_BASE, "base must be a commit"));
               return;
             } catch (MissingObjectException e) {
-              reject(cmd, "base not found");
+              reject(cmd, RejectionReason.create(MetricBucket.INVALID_BASE, "base not found"));
               return;
             } catch (IOException e) {
               throw new StorageException(
@@ -2190,7 +2388,10 @@ class ReceiveCommits {
             // branch does not exist yet. This allows to push initial code for review to an empty
             // repository and to review an initial project configuration.
             if (!ref.equals(readHEAD(repo)) && !ref.equals(RefNames.REFS_CONFIG)) {
-              reject(cmd, magicBranch.dest.branch() + " not found");
+              reject(
+                  cmd,
+                  RejectionReason.create(
+                      MetricBucket.BRANCH_NOT_FOUND, magicBranch.dest.branch() + " not found"));
               return;
             }
           }
@@ -2244,7 +2445,8 @@ class ReceiveCommits {
           globalRevWalk.markStart(tip);
           globalRevWalk.markStart(h);
           if (globalRevWalk.next() == null) {
-            reject(cmd, "no common ancestry");
+            reject(
+                cmd, RejectionReason.create(MetricBucket.NO_COMMON_ANCESTRY, "no common ancestry"));
             return false;
           }
         } finally {
@@ -2287,15 +2489,17 @@ class ReceiveCommits {
       if (change.isClosed()) {
         reject(
             cmd,
-            changeFormatter.changeClosed(
-                ChangeReportFormatter.Input.builder().setChange(change).build()));
+            RejectionReason.create(
+                MetricBucket.CHANGE_IS_CLOSED,
+                changeFormatter.changeClosed(
+                    ChangeReportFormatter.Input.builder().setChange(change).build())));
         return false;
       }
 
       ReplaceRequest req =
           new ReplaceRequest(globalRevWalk, change.getId(), newCommit, cmd, checkMergedInto);
       if (replaceByChange.containsKey(req.ontoChange)) {
-        reject(cmd, "duplicate request");
+        reject(cmd, RejectionReason.create(MetricBucket.DUPLICATE_REQUEST, "duplicate request"));
         return false;
       }
 
@@ -2428,7 +2632,10 @@ class ReceiveCommits {
             logger.atFine().log("%d changes exceeds limit of %d", n, maxBatchChanges);
             reject(
                 magicBranch.cmd,
-                "the number of pushed changes in a batch exceeds the max limit " + maxBatchChanges);
+                RejectionReason.create(
+                    MetricBucket.TOO_MANY_CHANGES,
+                    "the number of pushed changes in a batch exceeds the max limit "
+                        + maxBatchChanges));
             return ImmutableList.of();
           }
 
@@ -2471,8 +2678,10 @@ class ReceiveCommits {
           if (newChangeForAllNotInTarget && c.getParentCount() > 1) {
             reject(
                 magicBranch.cmd,
-                "Pushing merges in commit chains with 'all not in target' is not allowed,\n"
-                    + "to override please set the base manually");
+                RejectionReason.create(
+                    MetricBucket.CANNOT_PUSH_MERGE_WITH_NEW_CHANGE_FOR_ALL_NOT_IN_TARGET,
+                    "Pushing merges in commit chains with 'all not in target' is not allowed,\n"
+                        + "to override please set the base manually"));
             logger.atFine().log("Rejecting merge commit %s with newChangeForAllNotInTarget", name);
             // TODO(dborowitz): Should we early return here?
           }
@@ -2500,7 +2709,10 @@ class ReceiveCommits {
 
           if (newChangeIds.contains(p.changeKey)) {
             logger.atFine().log("Multiple commits with Change-Id %s", p.changeKey);
-            reject(magicBranch.cmd, SAME_CHANGE_ID_IN_MULTIPLE_CHANGES);
+            reject(
+                magicBranch.cmd,
+                RejectionReason.create(
+                    MetricBucket.DUPLICATE_CHANGE_ID, SAME_CHANGE_ID_IN_MULTIPLE_CHANGES));
             return ImmutableList.of();
           }
 
@@ -2516,7 +2728,10 @@ class ReceiveCommits {
             // a different Change-Id. In practice, we should never see
             // this error message as Change-Id should be unique per branch.
             //
-            reject(magicBranch.cmd, p.changeKey.get() + " has duplicates");
+            reject(
+                magicBranch.cmd,
+                RejectionReason.create(
+                    MetricBucket.DUPLICATE_CHANGE, p.changeKey.get() + " has duplicates"));
             return ImmutableList.of();
           }
 
@@ -2530,7 +2745,11 @@ class ReceiveCommits {
               if (pending.size() == 1) {
                 // There are no commits left to check, all commits in pending were already
                 // current PatchSet of the corresponding target changes.
-                reject(magicBranch.cmd, "commit(s) already exists (as current patchset)");
+                reject(
+                    magicBranch.cmd,
+                    RejectionReason.create(
+                        MetricBucket.COMMIT_ALREADY_EXISTS_IN_CHANGE,
+                        "commit(s) already exists (as current patchset)"));
               } else {
                 // Commit is already current PatchSet.
                 // Remove from pending and try next commit.
@@ -2547,7 +2766,9 @@ class ReceiveCommits {
 
           if (changes.isEmpty()) {
             if (!isValidChangeId(p.changeKey.get())) {
-              reject(magicBranch.cmd, "invalid Change-Id");
+              reject(
+                  magicBranch.cmd,
+                  RejectionReason.create(MetricBucket.INVALID_CHANGE_ID, "invalid Change-Id"));
               return ImmutableList.of();
             }
 
@@ -2555,7 +2776,11 @@ class ReceiveCommits {
             // double check against the existing refs
             if (foundInExistingPatchSets(receivePackRefCache.patchSetIdsFromObjectId(p.commit))) {
               if (pending.size() == 1) {
-                reject(magicBranch.cmd, "commit(s) already exists (as current patchset)");
+                reject(
+                    magicBranch.cmd,
+                    RejectionReason.create(
+                        MetricBucket.COMMIT_ALREADY_EXISTS_IN_CHANGE,
+                        "commit(s) already exists (as current patchset)"));
                 return ImmutableList.of();
               }
               itr.remove();
@@ -2575,11 +2800,15 @@ class ReceiveCommits {
       }
 
       if (newChanges.isEmpty() && replaceByChange.isEmpty()) {
-        reject(magicBranch.cmd, "no new changes");
+        reject(
+            magicBranch.cmd, RejectionReason.create(MetricBucket.NO_NEW_CHANGES, "no new changes"));
         return ImmutableList.of();
       }
       if (!newChanges.isEmpty() && magicBranch.edit) {
-        reject(magicBranch.cmd, "edit is not supported for new changes");
+        reject(
+            magicBranch.cmd,
+            RejectionReason.create(
+                MetricBucket.CANNOT_EDIT_NEW_CHANGE, "edit is not supported for new changes"));
         return ImmutableList.copyOf(newChanges);
       }
 
@@ -2685,7 +2914,9 @@ class ReceiveCommits {
                           + c.getShortMessage(),
                       ValidationMessage.Type.ERROR));
             }
-            reject(magicBranch.cmd, "implicit merges detected");
+            reject(
+                magicBranch.cmd,
+                RejectionReason.create(MetricBucket.IMPLICIT_MERGE, "implicit merges detected"));
           }
         }
       }
@@ -2736,18 +2967,27 @@ class ReceiveCommits {
 
   private ChangeLookup lookupByChangeKey(RevCommit c, Change.Key key) {
     try (TraceTimer traceTimer = newTimer("lookupByChangeKey")) {
-      List<ChangeData> byBranchKeyExactMatch =
-          queryProvider.get().byBranchKey(magicBranch.dest, key).stream()
-              .filter(cd -> cd.change().getKey().equals(key))
-              .collect(toList());
-      return new ChangeLookup(c, key, byBranchKeyExactMatch);
+      List<ChangeData> byBranchKey =
+          retryHelper
+              .changeIndexQuery(
+                  "lookupByChangeKey",
+                  q ->
+                      q.byBranchKey(magicBranch.dest, key).stream()
+                          .filter(cd -> cd.change().getKey().equals(key))
+                          .collect(toList()))
+              .call();
+      return new ChangeLookup(c, key, byBranchKey);
     }
   }
 
   private ChangeLookup lookupByCommit(RevCommit c) {
     try (TraceTimer traceTimer = newTimer("lookupByCommit")) {
-      return new ChangeLookup(
-          c, null, queryProvider.get().byBranchCommit(magicBranch.dest, c.getName()));
+      List<ChangeData> byBranchCommit =
+          retryHelper
+              .changeIndexQuery(
+                  "lookupByCommit", q -> q.byBranchCommit(magicBranch.dest, c.getName()))
+              .call();
+      return new ChangeLookup(c, null, byBranchCommit);
     }
   }
 
@@ -2899,9 +3139,38 @@ class ReceiveCommits {
         submitInput.notifyDetails.put(
             RecipientType.BCC,
             new NotifyInfo(magicBranch.notifyBcc.stream().map(Object::toString).collect(toList())));
-        op.merge(tipChange, user, false, submitInput, false);
+        op.merge(
+            tipChange,
+            user,
+            false,
+            submitInput,
+            false,
+            this::checkUpdateChangesBySubmitPermissions);
       }
     }
+  }
+
+  private Optional<AuthException> checkUpdateChangesBySubmitPermissions(
+      ChangeSet changeSetForSubmission) throws PermissionBackendException {
+    PermissionBackend.WithUser withUserPerm = permissionBackend.user(user);
+    for (BranchNameKey changeBranch : changeSetForSubmission.changesByBranch().keys()) {
+      Optional<AuthException> err =
+          checkCanUpdateBySubmit(
+              magicBranch.cmd,
+              withUserPerm.project(changeBranch.project()).ref(changeBranch.branch()));
+      if (err.isPresent()) {
+        return err;
+      }
+    }
+    return Optional.empty();
+  }
+
+  private Optional<AuthException> checkCanUpdateBySubmit(
+      ReceiveCommand cmd, PermissionBackend.ForRef forChangeDest)
+      throws PermissionBackendException {
+    Optional<AuthException> err = checkRefPermission(forChangeDest, RefPermission.UPDATE_BY_SUBMIT);
+    err.ifPresent(e -> rejectProhibited(cmd, e));
+    return err;
   }
 
   private void preparePatchSetsForReplace(
@@ -3047,7 +3316,10 @@ class ReceiveCommits {
         throws IOException, PermissionBackendException {
       try (TraceTimer traceTimer = newTimer("validateNewPatchSetNoteDb")) {
         if (notes == null) {
-          reject(inputCommand, "change " + ontoChange + " not found");
+          reject(
+              inputCommand,
+              RejectionReason.create(
+                  MetricBucket.CHANGE_NOT_FOUND, "change " + ontoChange + " not found"));
           return false;
         }
 
@@ -3065,7 +3337,10 @@ class ReceiveCommits {
                       .limit(100) // Enough for "normal" changes.
                       .map(PatchSet.Id::getId)
                       .collect(Collectors.toList())));
-          reject(inputCommand, "change " + ontoChange + " missing revisions");
+          reject(
+              inputCommand,
+              RejectionReason.create(
+                  MetricBucket.MISSING_REVISION, "change " + ontoChange + " missing revisions"));
           return false;
         }
 
@@ -3073,24 +3348,36 @@ class ReceiveCommits {
 
         // Not allowed to create a new patch set if the current patch set is locked.
         if (psUtil.isPatchSetLocked(notes)) {
-          reject(inputCommand, "cannot add patch set to " + ontoChange + ".");
+          reject(
+              inputCommand,
+              RejectionReason.create(
+                  MetricBucket.PATCH_SET_LOCKED, "cannot add patch set to " + ontoChange + "."));
           return false;
         }
 
         if (!permissions.change(notes).test(ChangePermission.ADD_PATCH_SET)) {
-          reject(inputCommand, "cannot add patch set to " + ontoChange + ".");
+          reject(
+              inputCommand,
+              RejectionReason.create(
+                  MetricBucket.CANNOT_ADD_PATCH_SET,
+                  "cannot add patch set to " + ontoChange + "."));
           return false;
         }
 
         if (change.isClosed()) {
-          reject(inputCommand, "change " + ontoChange + " closed");
+          reject(
+              inputCommand,
+              RejectionReason.create(
+                  MetricBucket.CHANGE_IS_CLOSED, "change " + ontoChange + " closed"));
           return false;
         } else if (revisions.containsKey(newCommit)) {
           reject(
               inputCommand,
-              String.format(
-                  "commit %s already exists in change %s",
-                  newCommit.name().substring(0, 10), change.getId()));
+              RejectionReason.create(
+                  MetricBucket.COMMIT_ALREADY_EXISTS_IN_CHANGE,
+                  String.format(
+                      "commit %s already exists in change %s",
+                      newCommit.name().substring(0, 10), change.getId())));
           return false;
         }
 
@@ -3101,8 +3388,10 @@ class ReceiveCommits {
           //  without the option to turn that off.
           reject(
               inputCommand,
-              "commit already exists (in the project): "
-                  + existingPatchSetsWithSameCommit.get(0).toRefName());
+              RejectionReason.create(
+                  MetricBucket.COMMIT_ALREADY_EXISTS_IN_PROJECT,
+                  "commit already exists (in the project): "
+                      + existingPatchSetsWithSameCommit.get(0).toRefName()));
           return false;
         }
 
@@ -3112,7 +3401,10 @@ class ReceiveCommits {
             // very common error due to users making a new commit rather than
             // amending when trying to address review comments.
             if (globalRevWalk.isMergedInto(prior, newCommit)) {
-              reject(inputCommand, SAME_CHANGE_ID_IN_MULTIPLE_CHANGES);
+              reject(
+                  inputCommand,
+                  RejectionReason.create(
+                      MetricBucket.DUPLICATE_CHANGE_ID, SAME_CHANGE_ID_IN_MULTIPLE_CHANGES));
               return false;
             }
           }
@@ -3130,7 +3422,11 @@ class ReceiveCommits {
           && !user.getAccountId().equals(change.getOwner())) {
         if (!permissions.test(ProjectPermission.WRITE_CONFIG)) {
           if (!permissions.change(notes).test(ChangePermission.TOGGLE_WORK_IN_PROGRESS_STATE)) {
-            reject(inputCommand, ONLY_USERS_WITH_TOGGLE_WIP_STATE_PERM_CAN_MODIFY_WIP);
+            reject(
+                inputCommand,
+                RejectionReason.create(
+                    MetricBucket.CANNOT_TOGGLE_WIP,
+                    ONLY_USERS_WITH_TOGGLE_WIP_STATE_PERM_CAN_MODIFY_WIP));
           }
         }
       }
@@ -3197,7 +3493,10 @@ class ReceiveCommits {
             // replace edit
             cmd =
                 new ReceiveCommand(
-                    edit.get().getEditCommit(), newCommitId, edit.get().getRefName());
+                    edit.get().getEditCommit(),
+                    newCommitId,
+                    edit.get().getRefName(),
+                    ReceiveCommand.Type.UPDATE_NONFASTFORWARD);
           } else {
             // delete old edit ref on rebase
             prev =
@@ -3295,9 +3594,8 @@ class ReceiveCommits {
       }
     }
 
-    @Nullable
-    String getRejectMessage() {
-      return replaceOp != null ? replaceOp.getRejectMessage() : null;
+    Optional<RejectionReason> getRejectionReason() {
+      return replaceOp != null ? replaceOp.getRejectionReason() : Optional.empty();
     }
 
     Optional<String> getOutdatedApprovalsMessage() {
@@ -3392,7 +3690,7 @@ class ReceiveCommits {
         messages.addAll(refValidators.validateForRefOperation());
       } catch (RefOperationValidationException e) {
         messages.addAll(e.getMessages());
-        reject(cmd, e.getMessage());
+        reject(cmd, RejectionReason.create(MetricBucket.REJECTED_BY_VALIDATOR, e.getMessage()));
         return false;
       }
 
@@ -3417,7 +3715,11 @@ class ReceiveCommits {
               && pushOptions.containsKey(PUSH_OPTION_SKIP_VALIDATION);
       if (skipValidation) {
         if (projectState.is(BooleanProjectConfig.USE_SIGNED_OFF_BY)) {
-          reject(cmd, "requireSignedOffBy prevents option " + PUSH_OPTION_SKIP_VALIDATION);
+          reject(
+              cmd,
+              RejectionReason.create(
+                  MetricBucket.SIGNED_OFF_BY_REQUIRED,
+                  "requireSignedOffBy prevents option " + PUSH_OPTION_SKIP_VALIDATION));
           return;
         }
 
@@ -3428,7 +3730,11 @@ class ReceiveCommits {
           return;
         }
         if (!Iterables.isEmpty(rejectCommits)) {
-          reject(cmd, "reject-commits prevents " + PUSH_OPTION_SKIP_VALIDATION);
+          reject(
+              cmd,
+              RejectionReason.create(
+                  MetricBucket.BANNED_COMMIT,
+                  "reject-commits prevents " + PUSH_OPTION_SKIP_VALIDATION));
         }
       }
 
@@ -3452,8 +3758,11 @@ class ReceiveCommits {
             logger.atFine().log("Number of new commits exceeds limit of %d", limit);
             reject(
                 cmd,
-                String.format(
-                    "more than %d commits, and %s not set", limit, PUSH_OPTION_SKIP_VALIDATION));
+                RejectionReason.create(
+                    MetricBucket.TOO_MANY_COMMITS,
+                    String.format(
+                        "more than %d commits, and %s not set",
+                        limit, PUSH_OPTION_SKIP_VALIDATION)));
             return;
           }
           if (!receivePackRefCache.patchSetIdsFromObjectId(c).isEmpty()) {
@@ -3694,17 +4003,26 @@ class ReceiveCommits {
     return TraceContext.newTimer(clazz.getSimpleName() + "#" + name, metadataBuilder.build());
   }
 
-  private static void reject(ReceiveCommand cmd, String why) {
-    logger.atFine().log("Rejecting command '%s': %s", cmd, why);
-    cmd.setResult(REJECTED_OTHER_REASON, why);
+  private void reject(ReceiveCommand cmd, RejectionReason reason) {
+    logger.atFine().log("Rejecting command '%s': %s", cmd, reason.why());
+
+    String pushKind = (MagicBranch.isMagicBranch(cmd.getRefName()) ? "magic push" : "direct push");
+    if (serviceUserClassifier.isServiceUser(user.getAccountId())) {
+      pushKind += " by service user";
+    }
+    metrics.rejectCount.increment(pushKind, reason.metricBucket(), reason.statusCode());
+
+    cmd.setResult(REJECTED_OTHER_REASON, reason.why());
+
+    rejectionReasons.put(cmd, reason);
   }
 
-  private static void rejectRemaining(Collection<ReceiveCommand> commands, String why) {
-    rejectRemaining(commands.stream(), why);
+  private void rejectRemaining(Collection<ReceiveCommand> commands, RejectionReason reason) {
+    rejectRemaining(commands.stream(), reason);
   }
 
-  private static void rejectRemaining(Stream<ReceiveCommand> commands, String why) {
-    commands.filter(cmd -> cmd.getResult() == NOT_ATTEMPTED).forEach(cmd -> reject(cmd, why));
+  private void rejectRemaining(Stream<ReceiveCommand> commands, RejectionReason reason) {
+    commands.filter(cmd -> cmd.getResult() == NOT_ATTEMPTED).forEach(cmd -> reject(cmd, reason));
   }
 
   private static boolean isHead(ReceiveCommand cmd) {

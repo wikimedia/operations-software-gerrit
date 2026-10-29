@@ -591,6 +591,7 @@ public class AccountResolver {
           .add(new BySelf())
           .add(new ByExactAccountId())
           .add(new ByEmail())
+          .add(new ByUsername())
           .build();
 
   private final AccountCache accountCache;
@@ -747,6 +748,13 @@ public class AccountResolver {
   public Result resolveIgnoreVisibility(String input) throws ConfigInvalidException, IOException {
     return searchImpl(
         input, searchers, self.get(), this::allVisiblePredicate, AccountResolver::isActive);
+  }
+
+  @UsedAt(UsedAt.Project.PLUGIN_REVIEWERS)
+  public Result resolveExactIgnoreVisibility(String input)
+      throws ConfigInvalidException, IOException {
+    return searchImpl(
+        input, exactSearchers, self.get(), this::allVisiblePredicate, AccountResolver::isActive);
   }
 
   public Result resolveAsUserIgnoreVisibility(CurrentUser asUser, String input)

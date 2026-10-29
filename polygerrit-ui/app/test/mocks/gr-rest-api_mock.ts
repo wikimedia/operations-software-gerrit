@@ -9,6 +9,7 @@ import {
   AccountDetailInfo,
   AccountExternalIdInfo,
   AccountInfo,
+  AccountStateInfo,
   ServerInfo,
   ProjectInfo,
   AccountCapabilityInfo,
@@ -199,6 +200,9 @@ export const grRestApiMock: RestApiService = {
   getAccountSSHKeys(): Promise<SshKeyInfo[] | undefined> {
     return Promise.resolve([]);
   },
+  getAccountState(): Promise<AccountStateInfo | undefined> {
+    throw new Error('getAccountState() not implemented by RestApiMock.');
+  },
   getAccountStatus(): Promise<string | undefined> {
     return Promise.resolve('');
   },
@@ -254,6 +258,9 @@ export const grRestApiMock: RestApiService = {
     return Promise.resolve([]);
   },
   getChanges() {
+    return Promise.resolve([]);
+  },
+  getChangesForDashboard() {
     return Promise.resolve([]);
   },
   getChangesForMultipleQueries() {
@@ -442,6 +449,7 @@ export const grRestApiMock: RestApiService = {
   invalidateGroupsCache(): void {},
   invalidateReposCache(): void {},
   invalidateAccountsDetailCache(): void {},
+  invalidateAccountsEmailCache(): void {},
   probePath(): Promise<boolean> {
     return Promise.resolve(true);
   },
@@ -517,6 +525,9 @@ export const grRestApiMock: RestApiService = {
   },
   saveRepoConfig(): Promise<Response> {
     return Promise.resolve(new Response());
+  },
+  saveRepoConfigForReview(): Promise<ChangeInfo | undefined> {
+    throw new Error('saveRepoConfigForReview() not implemented by mock.');
   },
   saveWatchedProjects(): Promise<ProjectWatchInfo[] | undefined> {
     return Promise.resolve([]);

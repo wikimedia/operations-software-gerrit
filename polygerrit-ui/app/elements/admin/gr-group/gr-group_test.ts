@@ -3,6 +3,7 @@
  * Copyright 2017 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import * as sinon from 'sinon';
 import '../../../test/common-test-setup';
 import './gr-group';
 import {GrGroup} from './gr-group';
@@ -97,14 +98,14 @@ suite('gr-group tests', () => {
                 <h3 class="heading-3">Description</h3>
                 <fieldset>
                   <div>
-                    <gr-textarea
+                    <gr-suggestion-textarea
                       autocomplete="on"
                       class="description monospace"
                       disabled=""
                       monospace=""
                       rows="4"
                     >
-                    </gr-textarea>
+                    </gr-suggestion-textarea>
                   </div>
                   <span class="value">
                     <gr-button
@@ -306,16 +307,16 @@ suite('gr-group tests', () => {
 
     assert.isDefined(element.groupId);
 
-    // Test that loading shows instead of filling
-    // in group details
+    // Test that loading is set to false to avoid infinite spinner.
     await element.loadGroup();
-    assert.isTrue(
+    await element.updateComplete;
+    assert.isFalse(
       queryAndAssert<HTMLDivElement>(element, '#loading').classList.contains(
         'loading'
       )
     );
 
-    assert.isTrue(element.loading);
+    assert.isFalse(element.loading);
   });
 
   test('test fire event', async () => {

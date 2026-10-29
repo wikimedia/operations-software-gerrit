@@ -10,7 +10,7 @@ import '../gr-button/gr-button';
 import '../gr-dialog/gr-dialog';
 import '../gr-formatted-text/gr-formatted-text';
 import '../gr-icon/gr-icon';
-import '../gr-textarea/gr-textarea';
+import '../gr-suggestion-textarea/gr-suggestion-textarea';
 import '../gr-tooltip-content/gr-tooltip-content';
 import '../gr-confirm-delete-comment-dialog/gr-confirm-delete-comment-dialog';
 import '../gr-account-label/gr-account-label';
@@ -20,7 +20,7 @@ import {getAppContext} from '../../../services/app-context';
 import {css, html, LitElement, nothing, PropertyValues} from 'lit';
 import {customElement, property, query, state} from 'lit/decorators.js';
 import {provide, resolve} from '../../../models/dependency';
-import {GrTextarea} from '../gr-textarea/gr-textarea';
+import {GrSuggestionTextarea} from '../gr-suggestion-textarea/gr-suggestion-textarea';
 import {
   AccountDetailInfo,
   DraftInfo,
@@ -79,8 +79,11 @@ import {
   commentModelToken,
 } from '../gr-comment-model/gr-comment-model';
 import {formStyles} from '../../../styles/form-styles';
-import {Interaction} from '../../../constants/reporting';
-import {Suggestion, SuggestionsProvider} from '../../../api/suggestions';
+import {Interaction, Timing} from '../../../constants/reporting';
+import {
+  AutocompleteCommentResponse,
+  SuggestionsProvider,
+} from '../../../api/suggestions';
 import {when} from 'lit/directives/when.js';
 import {getDocUrl} from '../../../utils/url-util';
 import {configModelToken} from '../../../models/config/config-model';
@@ -88,11 +91,18 @@ import {getFileExtension} from '../../../utils/file-util';
 import {storageServiceToken} from '../../../services/storage/gr-storage_impl';
 import {deepEqual} from '../../../utils/deep-util';
 import {GrSuggestionDiffPreview} from '../gr-suggestion-diff-preview/gr-suggestion-diff-preview';
-import {waitUntil} from '../../../utils/async-util';
+import {noAwait, waitUntil} from '../../../utils/async-util';
+import {
+  AutocompleteCache,
+  AutocompletionContext,
+} from '../../../utils/autocomplete-cache';
+import {HintAppliedEventDetail, HintShownEventDetail} from '../../../api/embed';
+import {levenshteinDistance} from '../../../utils/string-util';
 
 // visible for testing
 export const AUTO_SAVE_DEBOUNCE_DELAY_MS = 2000;
 export const GENERATE_SUGGESTION_DEBOUNCE_DELAY_MS = 500;
+export const AUTOCOMPLETE_DEBOUNCE_DELAY_MS = 200;
 export const ENABLE_GENERATE_SUGGESTION_STORAGE_KEY =
   'enableGenerateSuggestionStorageKeyForCommentWithId-';
 
@@ -143,7 +153,7 @@ export class GrComment extends LitElement {
    */
 
   @query('#editTextarea')
-  textarea?: GrTextarea;
+  textarea?: GrSuggestionTextarea;
 
   @query('#container')
   container?: HTMLElement;
@@ -219,6 +229,19 @@ export class GrComment extends LitElement {
   @state()
   messageText = '';
 
+  /**
+   * An hint for autocompleting the comment message from plugin suggestion
+   * providers.
+   */
+  @state() autocompleteHint?: AutocompletionContext;
+
+  private autocompleteAcceptedHints: string[] = [];
+
+  /** Based on user preferences. */
+  @state() autocompleteEnabled = true;
+
+  readonly autocompleteCache = new AutocompleteCache();
+
   /* The 'dirty' state of !comment.unresolved, which will be saved on demand. */
   @state()
   unresolved = true;
@@ -227,10 +250,11 @@ export class GrComment extends LitElement {
   generateSuggestion = true;
 
   @state()
-  generatedSuggestion?: Suggestion;
+  generatedFixSuggestion: FixSuggestionInfo | undefined =
+    this.comment?.fix_suggestions?.[0];
 
   @state()
-  generatedFixSuggestion: FixSuggestionInfo | undefined =
+  previewedGeneratedFixSuggestion: FixSuggestionInfo | undefined =
     this.comment?.fix_suggestions?.[0];
 
   @state()
@@ -300,6 +324,12 @@ export class GrComment extends LitElement {
   private generateSuggestionTrigger$ = new Subject();
 
   /**
+   * This is triggered when the user types into the editing textarea. We then
+   * debounce it and call autocompleteComment().
+   */
+  private autocompleteTrigger$ = new Subject();
+
+  /**
    * Set to the content of DraftInfo when entering editing mode.
    * Only used for "Cancel".
    */
@@ -349,9 +379,6 @@ export class GrComment extends LitElement {
     this.addEventListener('open-user-suggest-preview', e => {
       this.handleShowFix(e.detail.code);
     });
-    this.addEventListener('add-generated-suggestion', e => {
-      this.handleAddGeneratedSuggestion(e.detail.code);
-    });
     this.messagePlaceholder = 'Mention others with @';
     subscribe(
       this,
@@ -392,47 +419,50 @@ export class GrComment extends LitElement {
       () => this.getConfigModel().docsBaseUrl$,
       docsBaseUrl => (this.docsBaseUrl = docsBaseUrl)
     );
-    if (
-      this.flagsService.isEnabled(KnownExperimentId.ML_SUGGESTED_EDIT) ||
-      this.flagsService.isEnabled(KnownExperimentId.ML_SUGGESTED_EDIT_V2)
-    ) {
-      subscribe(
-        this,
-        () =>
-          this.generateSuggestionTrigger$.pipe(
-            debounceTime(GENERATE_SUGGESTION_DEBOUNCE_DELAY_MS)
-          ),
-        () => {
-          this.generateSuggestEdit();
+    subscribe(
+      this,
+      () => this.getPluginLoader().pluginsModel.suggestionsPlugins$,
+      // We currently support results from only 1 provider.
+      suggestionsPlugins =>
+        (this.suggestionsProvider = suggestionsPlugins?.[0]?.provider)
+    );
+    subscribe(
+      this,
+      () =>
+        this.autocompleteTrigger$.pipe(
+          debounceTime(AUTOCOMPLETE_DEBOUNCE_DELAY_MS)
+        ),
+      () => {
+        this.autocompleteComment();
+      }
+    );
+    subscribe(
+      this,
+      () =>
+        this.generateSuggestionTrigger$.pipe(
+          debounceTime(GENERATE_SUGGESTION_DEBOUNCE_DELAY_MS)
+        ),
+      () => {
+        this.generateSuggestEdit();
+      }
+    );
+    subscribe(
+      this,
+      () => this.getUserModel().preferences$,
+      prefs => {
+        this.autocompleteEnabled = !!prefs.allow_autocompleting_comments;
+        if (
+          this.generateSuggestion !==
+          !!prefs.allow_suggest_code_while_commenting
+        ) {
+          this.generateSuggestion = !!prefs.allow_suggest_code_while_commenting;
         }
-      );
-      subscribe(
-        this,
-        () => this.getUserModel().preferences$,
-        prefs => {
-          if (
-            this.generateSuggestion !==
-            !!prefs.allow_suggest_code_while_commenting
-          ) {
-            this.generateSuggestion =
-              !!prefs.allow_suggest_code_while_commenting;
-          }
-        }
-      );
-    }
+      }
+    );
   }
 
   override connectedCallback() {
     super.connectedCallback();
-    this.getPluginLoader()
-      .awaitPluginsLoaded()
-      .then(() => {
-        const suggestionsPlugins =
-          this.getPluginLoader().pluginsModel.getState().suggestionsPlugins;
-        // We currently support results from only 1 provider.
-        this.suggestionsProvider = suggestionsPlugins?.[0]?.provider;
-      });
-
     if (this.comment?.id) {
       const generateSuggestionStoredContent =
         this.getStorage().getEditableContentItem(
@@ -650,6 +680,10 @@ export class GrComment extends LitElement {
           /* Making up for the 2px reduced height above. */
           top: 1px;
         }
+        gr-suggestion-diff-preview,
+        gr-fix-suggestions {
+          margin-top: var(--spacing-s);
+        }
       `,
     ];
   }
@@ -864,7 +898,7 @@ export class GrComment extends LitElement {
   private renderEditingTextarea() {
     if (!this.editing || this.collapsed) return;
     return html`
-      <gr-textarea
+      <gr-suggestion-textarea
         id="editTextarea"
         class="editMessage"
         autocomplete="on"
@@ -872,17 +906,95 @@ export class GrComment extends LitElement {
         rows="4"
         .placeholder=${this.messagePlaceholder}
         text=${this.messageText}
-        @text-changed=${(e: ValueChangedEvent) => {
-          // TODO: This is causing a re-render of <gr-comment> on every key
-          // press. Try to avoid always setting `this.messageText` or at least
-          // debounce it. Most of the code can just inspect the current value
-          // of the textare instead of needing a dedicated property.
-          this.messageText = e.detail.value;
-          this.autoSaveTrigger$.next();
-          this.generateSuggestionTrigger$.next();
-        }}
-      ></gr-textarea>
+        autocompleteHint=${this.autocompleteHint?.commentCompletion ?? ''}
+        @text-changed=${this.handleTextChanged}
+        @hintShown=${this.handleHintShown}
+        @hintApplied=${this.handleHintApplied}
+      ></gr-suggestion-textarea>
     `;
+  }
+
+  private handleHintShown(e: CustomEvent<HintShownEventDetail>) {
+    const context = this.autocompleteCache.get(e.detail.oldValue);
+    if (context?.commentCompletion !== e.detail.hint) return;
+
+    this.reportHintInteraction(
+      Interaction.COMMENT_COMPLETION_SUGGESTION_SHOWN,
+      context
+    );
+  }
+
+  private handleHintApplied(e: CustomEvent<HintAppliedEventDetail>) {
+    const context = this.autocompleteCache.get(e.detail.oldValue);
+    if (context?.commentCompletion !== e.detail.hint) return;
+
+    this.autocompleteAcceptedHints.push(e.detail.hint);
+    this.reportHintInteraction(
+      Interaction.COMMENT_COMPLETION_SUGGESTION_ACCEPTED,
+      context
+    );
+  }
+
+  private reportHintInteractionSaved() {
+    if (this.autocompleteAcceptedHints.length === 0) return;
+    const content = this.messageText.trimEnd();
+    const acceptedHintsConcatenated = this.autocompleteAcceptedHints.join('');
+    const numExtraCharacters =
+      content.length - acceptedHintsConcatenated.length;
+    let distance = levenshteinDistance(acceptedHintsConcatenated, content);
+    if (numExtraCharacters > 0) {
+      distance -= numExtraCharacters;
+    }
+    const context = {
+      ...this.createAutocompletionBaseContext(),
+      similarCharacters: acceptedHintsConcatenated.length - distance,
+      maxSimilarCharacters: acceptedHintsConcatenated.length,
+      acceptedSuggestionsCount: this.autocompleteAcceptedHints.length,
+      totalAcceptedCharacters: acceptedHintsConcatenated.length,
+      savedDraftLength: content.length,
+    };
+    this.reportHintInteraction(
+      Interaction.COMMENT_COMPLETION_SAVE_DRAFT,
+      context
+    );
+  }
+
+  private reportHintInteraction(
+    interaction: Interaction,
+    context: Partial<AutocompletionContext>
+  ) {
+    context = {
+      ...context,
+      draftContent: '[REDACTED]',
+      commentCompletion: '[REDACTED]',
+    };
+    this.reporting.reportInteraction(interaction, context);
+  }
+
+  private handleTextChanged(e: ValueChangedEvent) {
+    const oldValue = this.messageText;
+    const newValue = e.detail.value;
+    if (oldValue === newValue) return;
+    // TODO: This is causing a re-render of <gr-comment> on every key
+    // press. Try to avoid always setting `this.messageText` or at least
+    // debounce it. Most of the code can just inspect the current value
+    // of the textare instead of needing a dedicated property.
+    this.messageText = newValue;
+
+    this.handleTextChangedForAutocomplete();
+    this.autoSaveTrigger$.next();
+    this.generateSuggestionTrigger$.next();
+  }
+
+  // visible for testing
+  handleTextChangedForAutocomplete() {
+    const cachedHint = this.autocompleteCache.get(this.messageText);
+    if (cachedHint) {
+      this.autocompleteHint = cachedHint;
+    } else {
+      this.autocompleteHint = undefined;
+      this.autocompleteTrigger$.next();
+    }
   }
 
   private renderCommentMessage() {
@@ -902,6 +1014,7 @@ export class GrComment extends LitElement {
   private renderCopyLinkIcon() {
     // Only show the icon when the thread contains a published comment.
     if (!this.comment?.in_reply_to && isDraft(this.comment)) return;
+    if (this.editing) return;
     return html`
       <gr-icon
         icon="link"
@@ -945,6 +1058,7 @@ export class GrComment extends LitElement {
         ${this.renderDiscardButton()} ${this.renderEditButton()}
         ${this.renderCancelButton()} ${this.renderSaveButton()}
         ${this.renderCopyLinkIcon()}
+        <gr-endpoint-slot name="draft-actions-end"></gr-endpoint-slot>
       </div>
     `;
   }
@@ -959,10 +1073,6 @@ export class GrComment extends LitElement {
     }
     assertIsDefined(this.comment, 'comment');
     if (hasUserSuggestion(this.comment)) return nothing;
-    // TODO(milutin): remove this check once suggesting on commit message is
-    // fixed. Currently diff line doesn't match commit message line, because
-    // of metadata in diff, which aren't in content api request.
-    if (this.comment.path === SpecialFilePath.COMMIT_MESSAGE) return nothing;
     return html`<gr-button
       link
       class="action suggestEdit"
@@ -1032,8 +1142,6 @@ export class GrComment extends LitElement {
   // private but used in test
   showGeneratedSuggestion() {
     return (
-      (this.flagsService.isEnabled(KnownExperimentId.ML_SUGGESTED_EDIT) ||
-        this.flagsService.isEnabled(KnownExperimentId.ML_SUGGESTED_EDIT_V2)) &&
       this.suggestionsProvider &&
       this.editing &&
       !this.permanentEditingMode &&
@@ -1064,17 +1172,26 @@ export class GrComment extends LitElement {
     if (this.generatedFixSuggestion) {
       return html`<gr-suggestion-diff-preview
         id="suggestionDiffPreview"
-        .fixSuggestionInfo=${this.generatedFixSuggestion}
-      ></gr-suggestion-diff-preview>`;
-    } else if (this.generatedSuggestion) {
-      return html`<gr-suggestion-diff-preview
-        .showAddSuggestionButton=${true}
-        .suggestion=${this.generatedSuggestion?.replacement}
         .uuid=${this.generatedSuggestionId}
+        .fixSuggestionInfo=${this.generatedFixSuggestion}
+        .patchSet=${this.comment?.patch_set}
+        .commentId=${this.comment?.id}
       ></gr-suggestion-diff-preview>`;
     } else {
       return nothing;
     }
+  }
+
+  // visible for testing
+  async waitPreviewForGeneratedSuggestion() {
+    const generatedFixSuggestion = this.generatedFixSuggestion;
+    if (!generatedFixSuggestion) return;
+    await waitUntil(
+      () =>
+        !!this.suggestionDiffPreview?.previewed &&
+        this.suggestionDiffPreview?.previewLoadedFor === generatedFixSuggestion
+    );
+    this.previewedGeneratedFixSuggestion = generatedFixSuggestion;
   }
 
   private renderGenerateSuggestEditButton() {
@@ -1101,14 +1218,8 @@ export class GrComment extends LitElement {
               if (this.generateSuggestion) {
                 this.generateSuggestionTrigger$.next();
               } else {
-                if (
-                  this.flagsService.isEnabled(
-                    KnownExperimentId.ML_SUGGESTED_EDIT_V2
-                  )
-                ) {
-                  this.generatedFixSuggestion = undefined;
-                  this.autoSaveTrigger$.next();
-                }
+                this.generatedFixSuggestion = undefined;
+                this.autoSaveTrigger$.next();
               }
               this.reporting.reportInteraction(
                 this.generateSuggestion
@@ -1117,9 +1228,7 @@ export class GrComment extends LitElement {
               );
             }}
           />
-          ${this.flagsService.isEnabled(KnownExperimentId.ML_SUGGESTED_EDIT_V2)
-            ? 'Attach AI-suggested fix'
-            : 'Generate Suggestion'}
+          Attach AI-suggested fix
           ${when(
             this.suggestionLoading,
             () => html`<span class="loadingSpin"></span>`,
@@ -1148,83 +1257,14 @@ export class GrComment extends LitElement {
     if (!this.generateSuggestion) {
       return '';
     }
-    if (this.generatedSuggestion || this.generatedFixSuggestion) {
+    if (this.generatedFixSuggestion) {
       return '(1)';
     } else {
       return '(0)';
     }
   }
 
-  private handleAddGeneratedSuggestion(code: string) {
-    const addNewLine = this.messageText.length !== 0;
-    this.addedGeneratedSuggestion = `${
-      addNewLine ? '\n' : ''
-    }${USER_SUGGESTION_START_PATTERN}${code}${'\n```'}`;
-    this.messageText += this.addedGeneratedSuggestion;
-  }
-
-  private generateSuggestEdit() {
-    if (this.flagsService.isEnabled(KnownExperimentId.ML_SUGGESTED_EDIT_V2)) {
-      this.generateSuggestEdit_v2();
-    } else if (
-      this.flagsService.isEnabled(KnownExperimentId.ML_SUGGESTED_EDIT)
-    ) {
-      this.generateSuggestEdit_v1();
-    }
-  }
-
-  private async generateSuggestEdit_v1() {
-    const suggestionsProvider = this.suggestionsProvider;
-    const changeInfo = this.getChangeModel().getChange();
-    if (
-      !suggestionsProvider?.suggestCode ||
-      !this.showGeneratedSuggestion() ||
-      !this.generateSuggestion ||
-      !changeInfo ||
-      !this.comment ||
-      !this.comment.patch_set ||
-      !this.comment.path ||
-      this.messageText.length === 0
-    )
-      return;
-    this.generatedSuggestionId = uuid();
-    this.reporting.reportInteraction(Interaction.GENERATE_SUGGESTION_REQUEST, {
-      uuid: this.generatedSuggestionId,
-      type: 'suggest-code',
-      commentId: this.comment.id,
-    });
-    this.suggestionLoading = true;
-    let suggestionResponse;
-    try {
-      suggestionResponse = await suggestionsProvider.suggestCode({
-        prompt: this.messageText,
-        changeInfo: changeInfo as ChangeInfo,
-        patchsetNumber: this.comment?.patch_set,
-        filePath: this.comment.path,
-        range: this.comment.range,
-        lineNumber: this.comment.line,
-      });
-    } finally {
-      this.suggestionLoading = false;
-    }
-
-    if (!suggestionResponse) return;
-    // TODO(milutin): The suggestionResponse can contain multiple suggestion
-    // options. We pick the first one for now. In future we shouldn't ignore
-    // other suggestions.
-    this.reporting.reportInteraction(Interaction.GENERATE_SUGGESTION_RESPONSE, {
-      uuid: this.generatedSuggestionId,
-      type: 'suggest-code',
-      response: suggestionResponse.responseCode,
-      numSuggestions: suggestionResponse.suggestions.length,
-      hasNewRange: suggestionResponse.suggestions?.[0]?.newRange !== undefined,
-    });
-    const suggestion = suggestionResponse.suggestions?.[0];
-    if (!suggestion?.replacement) return;
-    this.generatedSuggestion = suggestion;
-  }
-
-  private async generateSuggestEdit_v2() {
+  private async generateSuggestEdit() {
     const suggestionsProvider = this.suggestionsProvider;
     const changeInfo = this.getChangeModel().getChange();
     if (
@@ -1243,6 +1283,7 @@ export class GrComment extends LitElement {
       uuid: this.generatedSuggestionId,
       type: 'suggest-fix',
       commentId: this.comment.id,
+      fileExtension: getFileExtension(this.comment.path ?? ''),
     });
     this.suggestionLoading = true;
     let suggestionResponse;
@@ -1266,14 +1307,19 @@ export class GrComment extends LitElement {
     this.reporting.reportInteraction(Interaction.GENERATE_SUGGESTION_RESPONSE, {
       uuid: this.generatedSuggestionId,
       type: 'suggest-fix',
+      commentId: this.comment.id,
       response: suggestionResponse.responseCode,
       numSuggestions: suggestionResponse.fix_suggestions.length,
+      fileExtension: getFileExtension(this.comment.path ?? ''),
+      logProbability: suggestionResponse.fix_suggestions?.[0].log_probability,
     });
     const suggestion = suggestionResponse.fix_suggestions?.[0];
     if (!suggestion?.replacements || suggestion.replacements.length === 0) {
       return;
     }
     this.generatedFixSuggestion = suggestion;
+    noAwait(this.waitPreviewForGeneratedSuggestion());
+
     try {
       await waitUntil(() => this.getFixSuggestions() !== undefined);
       this.autoSaveTrigger$.next();
@@ -1281,6 +1327,82 @@ export class GrComment extends LitElement {
       // Error is ok in some cases like quick save by user.
       console.warn(error);
     }
+  }
+
+  private async autocompleteComment() {
+    const enabled = this.flagsService.isEnabled(
+      KnownExperimentId.COMMENT_AUTOCOMPLETION
+    );
+    const suggestionsProvider = this.suggestionsProvider;
+    const change = this.getChangeModel().getChange();
+    if (
+      !enabled ||
+      !this.autocompleteEnabled ||
+      !suggestionsProvider?.autocompleteComment ||
+      !change ||
+      !this.comment?.patch_set ||
+      !this.comment.path ||
+      this.messageText.length === 0
+    ) {
+      return;
+    }
+    const commentText = this.messageText;
+    this.reporting.time(Timing.COMMENT_COMPLETION);
+    const response = await suggestionsProvider.autocompleteComment({
+      id: id(this.comment),
+      commentText,
+      changeInfo: change as ChangeInfo,
+      patchsetNumber: this.comment?.patch_set,
+      filePath: this.comment.path,
+      range: this.comment.range,
+      lineNumber: this.comment.line,
+    });
+    const elapsed = this.reporting.timeEnd(Timing.COMMENT_COMPLETION);
+    const context = this.createAutocompletionContext(
+      commentText,
+      response,
+      elapsed
+    );
+    this.reportHintInteraction(
+      Interaction.COMMENT_COMPLETION_SUGGESTION_FETCHED,
+      {...context, hasDraftChanged: this.messageText !== commentText}
+    );
+    if (!response?.completion) return;
+    // Note that we are setting the cache value for `commentText` and getting the value
+    // for `this.messageText`.
+    this.autocompleteCache.set(context);
+    this.autocompleteHint = this.autocompleteCache.get(this.messageText);
+  }
+
+  private createAutocompletionBaseContext(): Partial<AutocompletionContext> {
+    return {
+      commentId: id(this.comment!),
+      commentNumber: this.comments?.length ?? 0,
+      filePath: this.comment!.path,
+      fileExtension: getFileExtension(this.comment!.path ?? ''),
+    };
+  }
+
+  private createAutocompletionContext(
+    draftContent: string,
+    response: AutocompleteCommentResponse,
+    requestDurationMs: number
+  ): AutocompletionContext {
+    const commentCompletion = response.completion ?? '';
+    return {
+      ...this.createAutocompletionBaseContext(),
+
+      draftContent,
+      draftContentLength: draftContent.length,
+      commentCompletion,
+      commentCompletionLength: commentCompletion.length,
+
+      isFullCommentPrediction: draftContent.length === 0,
+      draftInSyncWithSuggestionLength: 0,
+      modelVersion: response.modelVersion ?? '',
+      outcome: response.outcome,
+      requestDurationMs,
+    };
   }
 
   private renderRobotActions() {
@@ -1377,16 +1499,8 @@ export class GrComment extends LitElement {
         whenVisible(this, () => this.textarea?.putCursorAtEnd());
       }
     }
-    if (
-      changed.has('changeNum') ||
-      changed.has('comment') ||
-      changed.has('generatedSuggestion')
-    ) {
-      if (
-        !this.changeNum ||
-        !this.comment ||
-        (!hasUserSuggestion(this.comment) && !this.generatedSuggestion)
-      )
+    if (changed.has('changeNum') || changed.has('comment')) {
+      if (!this.changeNum || !this.comment || !hasUserSuggestion(this.comment))
         return;
       (async () => {
         this.commentedText = await this.commentModel.getCommentedCode(
@@ -1441,6 +1555,9 @@ export class GrComment extends LitElement {
     assert(isDraft(this.comment), 'only drafts are editable');
     if (this.editing) return;
     this.editing = true;
+    // For quickly opening and closing the comment, the suggestion diff preview
+    // might not have time to load and preview.
+    noAwait(this.waitPreviewForGeneratedSuggestion());
   }
 
   // TODO: Move this out of gr-comment. gr-comment should not have a comments
@@ -1680,7 +1797,6 @@ export class GrComment extends LitElement {
     } else {
       // No need to make a backend call when nothing has changed.
       while (this.somethingToSave()) {
-        this.trackGeneratedSuggestionEdit();
         this.comment = await this.rawSave({showToast: true});
         if (isError(this.comment)) return;
       }
@@ -1709,6 +1825,7 @@ export class GrComment extends LitElement {
     if (this.isFixSuggestionChanged()) {
       draft.fix_suggestions = this.getFixSuggestions();
     }
+    this.reportHintInteractionSaved();
     return this.getCommentsModel().saveDraft(draft, options.showToast);
   }
 
@@ -1717,20 +1834,14 @@ export class GrComment extends LitElement {
   }
 
   getFixSuggestions(): FixSuggestionInfo[] | undefined {
-    if (!this.flagsService.isEnabled(KnownExperimentId.ML_SUGGESTED_EDIT_V2))
-      return undefined;
     if (!this.generateSuggestion) return undefined;
     if (!this.generatedFixSuggestion) return undefined;
     // Disable fix suggestions when the comment already has a user suggestion
     if (this.comment && hasUserSuggestion(this.comment)) return undefined;
     // we ignore fixSuggestions until they are previewed.
-    if (
-      this.suggestionDiffPreview &&
-      !this.suggestionDiffPreview?.previewed &&
-      !this.suggestionLoading
-    )
-      return undefined;
-    return [this.generatedFixSuggestion];
+    if (this.previewedGeneratedFixSuggestion)
+      return [this.previewedGeneratedFixSuggestion];
+    return undefined;
   }
 
   private handleToggleResolved() {
@@ -1774,23 +1885,6 @@ export class GrComment extends LitElement {
       this.confirmDeleteDialog.message
     );
     this.closeDeleteCommentModal();
-  }
-
-  private trackGeneratedSuggestionEdit() {
-    const hasUserSuggestion = this.messageText.includes(
-      USER_SUGGESTION_START_PATTERN
-    );
-    const wasGeneratedSuggestionEdited =
-      this.addedGeneratedSuggestion &&
-      hasUserSuggestion &&
-      !this.messageText.includes(this.addedGeneratedSuggestion);
-    if (wasGeneratedSuggestionEdited) {
-      this.reporting.reportInteraction(Interaction.GENERATE_SUGGESTION_EDITED, {
-        uuid: this.generatedSuggestionId,
-        commentId: this.comment?.id ?? '',
-      });
-      this.addedGeneratedSuggestion = undefined;
-    }
   }
 }
 

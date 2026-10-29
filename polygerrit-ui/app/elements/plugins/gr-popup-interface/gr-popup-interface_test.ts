@@ -3,6 +3,7 @@
  * Copyright 2017 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import * as sinon from 'sinon';
 import '../../../test/common-test-setup';
 import '../../shared/gr-js-api-interface/gr-js-api-interface';
 import {GrPopupInterface} from './gr-popup-interface';
@@ -70,8 +71,7 @@ suite('gr-popup-interface tests', () => {
       assert.isOk(instance._getElement());
       assert.isTrue(instance._getElement()!.opened);
       instance.close();
-      assert.isOk(instance._getElement());
-      assert.isFalse(instance._getElement()!.opened);
+      assert.isNull(instance._getElement());
     });
   });
 
@@ -89,8 +89,7 @@ suite('gr-popup-interface tests', () => {
       assert.isOk(instance._getElement());
       assert.isTrue(instance._getElement()!.opened);
       instance.close();
-      assert.isOk(instance._getElement());
-      assert.isFalse(instance._getElement()!.opened);
+      assert.isNull(instance._getElement());
     });
   });
 });

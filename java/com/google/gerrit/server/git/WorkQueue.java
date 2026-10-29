@@ -40,15 +40,19 @@ import java.lang.reflect.Field;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Delayed;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
+import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.RunnableScheduledFuture;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -56,8 +60,11 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.eclipse.jgit.lib.Config;
 
 /** Delayed execution of tasks using a background thread pool. */
@@ -87,6 +94,54 @@ public class WorkQueue {
     void onStart(Task<?> task);
 
     void onStop(Task<?> task);
+  }
+
+  /**
+   * Register a TaskParker from a plugin like this:
+   *
+   * <p>bind(TaskListener.class).annotatedWith(Exports.named("MyParker")).to(MyParker.class);
+   */
+  public interface TaskParker extends TaskListener {
+    class NoOp extends TaskListener.NoOp implements TaskParker {
+      @Override
+      public boolean isReadyToStart(Task<?> task) {
+        return true;
+      }
+
+      @Override
+      public void onNotReadyToStart(Task<?> task) {}
+    }
+
+    /**
+     * Determine whether a {@link Task} is ready to run or whether it should get parked.
+     *
+     * <p>Tasks that are not ready to run will get parked and will not run until all {@link
+     * TaskParker}s return {@code true} from this method for the {@link Task}. This method may be
+     * called more than once, but will always be followed by a call to {@link
+     * #onNotReadyToStart(Task)} before being called again.
+     *
+     * <p>Resources should be acquired in this method via non-blocking means to avoid delaying the
+     * executor from calling {@link #onNotReadyToStart(Task)} on other {@link TaskParker}s holding
+     * resources.
+     *
+     * @param task the {@link Task} being considered for starting/parking
+     * @return a boolean indicating if the given {@link Task} is ready to run ({@code true}) or
+     *     should be parked ({@code false})
+     */
+    boolean isReadyToStart(Task<?> task);
+
+    /**
+     * This method will be called after this {@link TaskParker} returns {@code true} from {@link
+     * #isReadyToStart(Task)} and another {@link TaskParker} returns {@code false}, thus preventing
+     * the start.
+     *
+     * <p>Implementors should use this method to free any resources acquired in {@link
+     * #isReadyToStart(Task)} based on the expectation that the task would start. Those resources
+     * can be re-acquired when {@link #isReadyToStart(Task)} is called again later.
+     *
+     * @param task the {@link Task} that was prevented from starting by another {@link TaskParker}
+     */
+    void onNotReadyToStart(Task<?> task);
   }
 
   public static class Lifecycle implements LifecycleListener {
@@ -289,9 +344,100 @@ public class WorkQueue {
 
   /** An isolated queue. */
   private class Executor extends ScheduledThreadPoolExecutor {
+    private class ParkedTask implements Comparable<ParkedTask>, AutoCloseable {
+      private final CancellableCountDownLatch latch = new CancellableCountDownLatch(1);
+      private final Task<?> task;
+      private final Long priority = priorityGenerator.getAndIncrement();
+      private final AtomicBoolean isParked = new AtomicBoolean(true);
+
+      public ParkedTask(Task<?> task) {
+        this.task = task;
+        task.runningState.set(Task.State.PARKED);
+        incrementCorePoolSizeBy(1);
+      }
+
+      @Override
+      public int compareTo(ParkedTask o) {
+        return priority.compareTo(o.priority);
+      }
+
+      /**
+       * Cancel a parked {@link Task}.
+       *
+       * <p>Tasks awaiting in {@link #onStart(Task)} to be un-parked can be interrupted using this
+       * method.
+       */
+      public void cancel() {
+        close();
+        latch.cancel();
+      }
+
+      public boolean isEqualTo(Task<?> task) {
+        return this.task.taskId == task.taskId;
+      }
+
+      public void await() {
+        try {
+          latch.await();
+        } catch (InterruptedException e) {
+          logger.atSevere().withCause(e).log("Parked Task(%s) Interrupted", task);
+          parked.remove(this);
+        }
+      }
+
+      public void unpark() {
+        close();
+        latch.countDown();
+      }
+
+      @Override
+      public void close() {
+        if (isParked.compareAndSet(true, false)) {
+          incrementCorePoolSizeBy(-1);
+        }
+      }
+    }
+
+    private class CancellableCountDownLatch extends CountDownLatch {
+      protected volatile boolean cancelled = false;
+
+      public CancellableCountDownLatch(int count) {
+        super(count);
+      }
+
+      /**
+       * Unblocks threads which are waiting until the latch has counted down to zero.
+       *
+       * <p>If the current count is zero, then this method returns immediately.
+       *
+       * <p>If the current count is greater than zero, then it decrements until the count reaches
+       * zero and causes all threads waiting on the latch using {@link CountDownLatch#await()} to
+       * throw an {@link InterruptedException}.
+       */
+      public void cancel() {
+        if (getCount() == 0) {
+          return;
+        }
+        this.cancelled = true;
+        while (getCount() > 0) {
+          countDown();
+        }
+      }
+
+      @Override
+      public void await() throws InterruptedException {
+        super.await();
+        if (cancelled) {
+          throw new InterruptedException();
+        }
+      }
+    }
+
     private final ConcurrentHashMap<Integer, Task<?>> all;
     private final ConcurrentHashMap<Runnable, Long> nanosPeriodByRunnable;
     private final String queueName;
+    private final AtomicLong priorityGenerator = new AtomicLong();
+    private final PriorityBlockingQueue<ParkedTask> parked = new PriorityBlockingQueue<>();
     private final List<RegistrationHandle> metricsRegistrationHandles;
 
     Executor(int corePoolSize, final String queueName) {
@@ -516,7 +662,14 @@ public class WorkQueue {
     }
 
     void remove(Task<?> task) {
-      all.remove(task.getTaskId(), task);
+      boolean isRemoved = all.remove(task.getTaskId(), task);
+      if (isRemoved && !listeners.isEmpty()) {
+        cancelIfParked(task);
+      }
+    }
+
+    void cancelIfParked(Task<?> task) {
+      parked.stream().filter(p -> p.isEqualTo(task)).findFirst().ifPresent(ParkedTask::cancel);
     }
 
     Task<?> getTask(int id) {
@@ -531,12 +684,83 @@ public class WorkQueue {
       return all.values();
     }
 
+    public void waitUntilReadyToStart(Task<?> task) {
+      if (!listeners.isEmpty() && !isReadyToStart(task)) {
+        try (ParkedTask parkedTask = new ParkedTask(task)) {
+          parked.offer(parkedTask);
+          parkedTask.await();
+        }
+      }
+    }
+
     public void onStart(Task<?> task) {
       listeners.runEach(extension -> extension.get().onStart(task));
     }
 
     public void onStop(Task<?> task) {
       listeners.runEach(extension -> extension.get().onStop(task));
+      updateParked();
+    }
+
+    protected boolean isReadyToStart(Task<?> task) {
+      MutableBoolean isReady = new MutableBoolean(true);
+      Set<TaskParker> readyParkers = new HashSet<>();
+      listeners.runEach(
+          extension -> {
+            if (isReady.isTrue()) {
+              TaskListener listener = extension.get();
+              if (listener instanceof TaskParker) {
+                TaskParker parker = (TaskParker) listener;
+                if (parker.isReadyToStart(task)) {
+                  readyParkers.add(parker);
+                } else {
+                  isReady.setFalse();
+                }
+              }
+            }
+          });
+
+      if (isReady.isFalse()) {
+        listeners.runEach(
+            extension -> {
+              TaskListener listener = extension.get();
+              if (readyParkers.contains(listener)) {
+                ((TaskParker) listener).onNotReadyToStart(task);
+              }
+            });
+      }
+      return isReady.getValue();
+    }
+
+    public void updateParked() {
+      List<ParkedTask> notReady = new ArrayList<>();
+      ParkedTask ready;
+
+      while ((ready = parked.poll()) != null) {
+        if (Task.State.CANCELLED.equals(ready.task.getState())) {
+          ready.cancel(); // In case a cancelled task is polled before cleanup
+        } else if (isReadyToStart(ready.task)) {
+          break;
+        } else if (Task.State.CANCELLED.equals(ready.task.getState())) {
+          ready.cancel(); // In case the task is cancelled while evaluating isReadyToStart
+        } else {
+          notReady.add(ready);
+        }
+      }
+      parked.addAll(notReady);
+
+      if (ready != null) {
+        ready.unpark();
+      }
+    }
+
+    public synchronized void incrementCorePoolSizeBy(int i) {
+      super.setCorePoolSize(getCorePoolSize() + i);
+    }
+
+    @Override
+    public synchronized void setCorePoolSize(int s) {
+      super.setCorePoolSize(s);
     }
   }
 
@@ -584,13 +808,14 @@ public class WorkQueue {
       // Ordered like this so ordinal matches the order we would
       // prefer to see tasks sorted in: done before running,
       // stopping before running, running before starting,
-      // starting before ready, ready before sleeping.
+      // starting before parked, parked before ready, ready before sleeping.
       //
       DONE,
       CANCELLED,
       STOPPING,
       RUNNING,
       STARTING,
+      PARKED,
       READY,
       SLEEPING,
       OTHER
@@ -722,12 +947,14 @@ public class WorkQueue {
 
     @Override
     public void run() {
-      if (runningState.compareAndSet(null, State.STARTING)) {
+      if (runningState.compareAndSet(null, State.READY)) {
         String oldThreadName = Thread.currentThread().getName();
         try {
+          Thread.currentThread().setName(oldThreadName + "[" + this + "]");
+          executor.waitUntilReadyToStart(this); // Transitions to PARKED while not ready to start
+          runningState.set(State.STARTING);
           executor.onStart(this);
           runningState.set(State.RUNNING);
-          Thread.currentThread().setName(oldThreadName + "[" + this + "]");
           task.run();
         } finally {
           Thread.currentThread().setName(oldThreadName);
@@ -740,7 +967,7 @@ public class WorkQueue {
             executor.remove(this);
           }
         }
-      } else {
+      } else if (isPeriodic() && !isDone()) {
         Future<?> unusedFuture = executor.schedule(this, nanosPeriod / 3, TimeUnit.NANOSECONDS);
       }
     }

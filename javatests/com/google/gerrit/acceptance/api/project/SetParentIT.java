@@ -25,8 +25,10 @@ import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.entities.Permission;
 import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
+import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
 import com.google.gerrit.server.config.AllProjectsNameProvider;
@@ -89,12 +91,16 @@ public class SetParentIT extends AbstractDaemonTest {
 
     gApi.projects().name(project.get()).parent(parent);
     assertThat(gApi.projects().name(project.get()).parent()).isEqualTo(parent);
+    assertLastCommitAuthorAndShortMessage(
+        RefNames.REFS_CONFIG, "Administrator", String.format("Changed parent to %s.", parent));
 
     // When the parent name is not explicitly set, it should be
     // set to "All-Projects".
     gApi.projects().name(project.get()).parent(null);
     assertThat(gApi.projects().name(project.get()).parent())
         .isEqualTo(AllProjectsNameProvider.DEFAULT);
+    assertLastCommitAuthorAndShortMessage(
+        RefNames.REFS_CONFIG, "Administrator", "Changed parent to All-Projects.");
   }
 
   @Test
@@ -168,5 +174,17 @@ public class SetParentIT extends AbstractDaemonTest {
         assertThrows(
             BadRequestException.class, () -> gApi.projects().name(allUsers.get()).parent(parent));
     assertThat(thrown).hasMessageThat().contains("All-Users must inherit from All-Projects");
+  }
+
+  @Test
+  @GerritConfig(name = "gerrit.requireChangeForConfigUpdate", value = "true")
+  public void requireChangeForConfigUpdate_postParentRejected() {
+    String parent = projectOperations.newProject().create().get();
+
+    MethodNotAllowedException e =
+        assertThrows(
+            MethodNotAllowedException.class,
+            () -> gApi.projects().name(project.get()).parent(parent));
+    assertThat(e.getMessage()).contains("Updating project config without review is disabled");
   }
 }

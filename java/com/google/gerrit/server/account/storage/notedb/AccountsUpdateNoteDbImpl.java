@@ -61,7 +61,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.Consumer;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import org.eclipse.jgit.errors.ConfigInvalidException;
@@ -83,8 +82,9 @@ import org.eclipse.jgit.transport.ReceiveCommand;
  * com.google.gerrit.server.account.AccountsUpdate.ConfigureDeltaFromState}. The account updater
  * reads the current {@link AccountState} and prepares updates to the account by calling setters on
  * the provided {@link com.google.gerrit.server.account.AccountDelta.Builder}. If the current
- * account state is of no interest the caller may also provide a {@link Consumer} for {@link
- * com.google.gerrit.server.account.AccountDelta.Builder} instead of the account updater.
+ * account state is of no interest the caller may also provide a {@link
+ * com.google.gerrit.server.account.AccountsUpdate.ConfigureStatelessDelta} instead of the account
+ * updater.
  *
  * <p>The provided commit message is used for the update of the user branch. Using a precise and
  * unique commit message allows to identify the code from which an update was made when looking at a
@@ -272,7 +272,7 @@ public class AccountsUpdateNoteDbImpl extends AccountsUpdate {
       PersonIdent committerIdent,
       Runnable afterReadRevision,
       Runnable beforeCommit) {
-    super(committerIdent, currentUser);
+    super(committerIdent, currentUser, externalIds);
     this.repoManager = requireNonNull(repoManager, "repoManager");
     this.gitRefUpdated = requireNonNull(gitRefUpdated, "gitRefUpdated");
     this.allUsersName = requireNonNull(allUsersName, "allUsersName");
@@ -286,7 +286,8 @@ public class AccountsUpdateNoteDbImpl extends AccountsUpdate {
   }
 
   @Override
-  public AccountState insert(String message, Account.Id accountId, ConfigureDeltaFromState init)
+  public AccountState insert(
+      String message, Account.Id accountId, ConfigureDeltaFromStateAndContext init)
       throws IOException, ConfigInvalidException {
     return execute(
             ImmutableList.of(
@@ -295,7 +296,7 @@ public class AccountsUpdateNoteDbImpl extends AccountsUpdate {
                   Account account = accountConfig.getNewAccount(committerIdent.getWhenAsInstant());
                   AccountState accountState = AccountState.forAccount(account);
                   AccountDelta.Builder deltaBuilder = AccountDelta.builder();
-                  init.configure(accountState, deltaBuilder);
+                  configureDelta(init, accountState, deltaBuilder);
 
                   AccountDelta accountDelta = deltaBuilder.build();
                   accountConfig.setAccountDelta(accountDelta);
@@ -315,8 +316,7 @@ public class AccountsUpdateNoteDbImpl extends AccountsUpdate {
   public void delete(String message, Account.Id accountId)
       throws IOException, ConfigInvalidException {
     ImmutableSet<ExternalId> accountExternalIds = externalIds.byAccount(accountId);
-    Consumer<AccountDelta.Builder> delta =
-        deltaBuilder -> deltaBuilder.deleteAccount(accountExternalIds);
+    ConfigureStatelessDelta delta = deltaBuilder -> deltaBuilder.deleteAccount(accountExternalIds);
     update(message, accountId, delta);
   }
 
@@ -332,7 +332,7 @@ public class AccountsUpdateNoteDbImpl extends AccountsUpdate {
       }
 
       AccountDelta.Builder deltaBuilder = AccountDelta.builder();
-      updateArguments.configureDeltaFromState.configure(accountState.get(), deltaBuilder);
+      configureDelta(updateArguments.configureDelta, accountState.get(), deltaBuilder);
 
       AccountDelta delta = deltaBuilder.build();
       updateExternalIdNotes(
@@ -380,7 +380,8 @@ public class AccountsUpdateNoteDbImpl extends AccountsUpdate {
   }
 
   @Override
-  protected ImmutableList<Optional<AccountState>> executeUpdates(List<UpdateArguments> updates)
+  @VisibleForTesting
+  public ImmutableList<Optional<AccountState>> executeUpdates(List<UpdateArguments> updates)
       throws ConfigInvalidException, IOException {
     return execute(updates.stream().map(this::createExecutableUpdate).collect(toImmutableList()));
   }

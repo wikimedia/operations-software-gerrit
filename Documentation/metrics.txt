@@ -73,6 +73,36 @@ The following metrics are reported.
 ** `cancellation_type`:
    The cancellation type (graceful or forceful).
 
+[[performance]]
+=== Performance
+
+* `performance/operations`: Latency of performing operations
+  (what's the latency of an operation)
+** `operation_name`:
+   The operation that was performed.
+** `request`:
+   The request for which the operation was performed (format = '<request-type>
+   <redacted-request-uri>').
+** `plugin`:
+   The name of the plugin that performed the operation.
+* `performance/operations_count`: Number of performed operations
+** `operation_name`:
+   The operation that was performed.
+** `request`:
+   The request for which the operation was performed (format = '<request-type>
+   <redacted-request-uri>').
+** `plugin`:
+   The name of the plugin that performed the operation.
+* `performance/operations-per-endpoint`: Per endpoint latency of performing operations
+   (how much latency does calling an operation contribute to the latency of an endpoint)
+** `operation_name`:
+   The operation that was performed.
+** `request`:
+   The request for which the operation was performed (format = '<request-type>
+   <redacted-request-uri>').
+** `plugin`:
+   The name of the plugin that performed the operation.
+
 === Pushes
 
 * `receivecommits/changes`: histogram of number of changes processed in a single
@@ -98,6 +128,16 @@ The following metrics are reported.
 ** `type`:
    The type of the update (CREATE, UPDATE, CREATE/UPDATE, UPDATE_NONFASTFORWARD,
    DELETE).
+* `receivecommits/reject_count`: number of rejected pushes
+** `kind`:
+   The push kind ('magic push'/'magic push by service user' if it was a push for
+   code review, 'direct push'/'direct push by service user' if it was a direct
+   push, 'magic push by service, 'magic or direct push'/'magic or direct push by
+   service user' if the push kind couldn't be detected).
+** `reason`:
+   The rejection reason.
+** `status`:
+   The HTTP status code.
 
 === Process
 

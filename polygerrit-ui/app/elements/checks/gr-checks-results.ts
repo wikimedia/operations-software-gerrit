@@ -24,8 +24,10 @@ import {
   Category,
   Link,
   LinkIcon,
+  NOT_USEFUL,
   RunStatus,
   Tag,
+  USEFUL,
 } from '../../api/checks';
 import {sharedStyles} from '../../styles/shared-styles';
 import {CheckRun, RunResult, runResult} from '../../models/checks/checks-model';
@@ -48,6 +50,7 @@ import {
   secondaryLinks,
   tooltipForLink,
   computeIsExpandable,
+  rectifyFix,
 } from '../../models/checks/checks-util';
 import {assertIsDefined, assert, unique} from '../../utils/common-util';
 import {modifierPressed, whenVisible} from '../../utils/dom-util';
@@ -58,6 +61,7 @@ import {ChecksTabState, ValueChangedEvent} from '../../types/events';
 import {
   DropdownLink,
   LabelNameToInfoMap,
+  PARENT,
   PatchSetNumber,
 } from '../../types/common';
 import {spinnerStyles} from '../../styles/gr-spinner-styles';
@@ -78,7 +82,8 @@ import {getAppContext} from '../../services/app-context';
 import {when} from 'lit/directives/when.js';
 import {DropdownItem} from '../shared/gr-dropdown-list/gr-dropdown-list';
 import './gr-checks-attempt';
-import {createDiffUrl, changeViewModelToken} from '../../models/views/change';
+import './gr-checks-fix-preview';
+import {changeViewModelToken} from '../../models/views/change';
 import {formStyles} from '../../styles/form-styles';
 
 /**
@@ -472,9 +477,11 @@ export class GrResultRow extends LitElement {
     this.toggleExpanded();
   }
 
-  private toggleExpanded() {
+  /** Toggles the expanded state, or if `setExpanded` is provided sets it to the desired state. */
+  toggleExpanded(setExpanded?: boolean) {
     if (!this.isExpandable) return;
-    this.isExpanded = !this.isExpanded;
+    this.isExpanded =
+      setExpanded === undefined ? !this.isExpanded : setExpanded;
     this.reporting.reportInteraction(Interaction.CHECKS_RESULT_ROW_TOGGLE, {
       expanded: this.isExpanded,
       checkName: this.result?.checkName,
@@ -558,9 +565,14 @@ export class GrResultRow extends LitElement {
   }
 
   private renderActions() {
-    const actions = [...(this.result?.actions ?? [])];
-    const fixAction = createFixAction(this, this.result);
-    if (fixAction) actions.unshift(fixAction);
+    const actions = [...(this.result?.actions ?? [])].filter(
+      action => action.name !== USEFUL && action.name !== NOT_USEFUL
+    );
+    let fixAction: Action | undefined = undefined;
+    if (!this.isExpanded) {
+      fixAction = createFixAction(this, this.result);
+      if (fixAction) actions.unshift(fixAction);
+    }
     if (actions.length === 0) return;
     const overflowItems = actions.slice(2).map(action => {
       return {...action, id: action.name};
@@ -626,14 +638,19 @@ export class GrResultRow extends LitElement {
 }
 
 @customElement('gr-result-expanded')
-class GrResultExpanded extends LitElement {
+export class GrResultExpanded extends LitElement {
   @property({attribute: false})
   result?: RunResult;
 
   @property({type: Boolean})
   hideCodePointers = false;
 
+  @state()
+  notUsefulLabel = 'Was this helpful?';
+
   private getChangeModel = resolve(this, changeModelToken);
+
+  private readonly getViewModel = resolve(this, changeViewModelToken);
 
   static override get styles() {
     return [
@@ -651,6 +668,22 @@ class GrResultExpanded extends LitElement {
         }
         .message {
           padding: var(--spacing-m) 0;
+        }
+        gr-checks-fix-preview {
+          margin: var(--spacing-l) 0;
+          max-width: 800px;
+        }
+        .useful {
+          display: flex;
+          justify-content: flex-end;
+          align-items: center;
+          margin: var(--spacing-s) 0;
+        }
+        .useful .title {
+          margin-right: var(--spacing-s);
+        }
+        .useful gr-checks-action {
+          display: block;
         }
       `,
     ];
@@ -676,6 +709,7 @@ class GrResultExpanded extends LitElement {
           .content=${this.result.message ?? ''}
         ></gr-formatted-text>
       </gr-endpoint-decorator>
+      ${this.renderFix()} ${this.renderNotUseful()}
     `;
   }
 
@@ -712,16 +746,15 @@ class GrResultExpanded extends LitElement {
       if (start) rangeText += `#${start}`;
       if (end && start !== end) rangeText += `-${end}`;
       const change = this.getChangeModel().getChange();
-      assertIsDefined(change);
+      if (!change) return undefined;
       const path = pointer.path;
-      const patchset = this.result?.patchset as PatchSetNumber | undefined;
+      const patchset = this.result?.patchset as PatchSetNumber;
       const line = pointer?.range?.start_line;
       return {
         icon: LinkIcon.CODE,
         tooltip: `${path}${rangeText}`,
-        url: createDiffUrl({
-          changeNum: change._number,
-          repo: change.project,
+        url: this.getViewModel().diffUrl({
+          basePatchNum: PARENT,
           patchNum: patchset,
           checksPatchset: patchset,
           diffView: {path, lineNum: line},
@@ -732,6 +765,40 @@ class GrResultExpanded extends LitElement {
     return links.map(
       link => html`<div class="links">${this.renderLink(link, false)}</div>`
     );
+  }
+
+  private renderFix() {
+    const fixSuggestionInfo = rectifyFix(
+      this.result?.fixes?.[0],
+      this.result?.checkName
+    );
+    if (!fixSuggestionInfo) return;
+    return html`
+      <gr-checks-fix-preview
+        .fixSuggestionInfo=${fixSuggestionInfo}
+        .patchSet=${this.result?.patchset}
+      ></gr-checks-fix-preview>
+    `;
+  }
+
+  private renderNotUseful() {
+    const actions = this.result?.actions ?? [];
+    const useful = actions.find(a => a.name === USEFUL);
+    const notUseful = actions.find(a => a.name === NOT_USEFUL);
+    if (!useful || !notUseful) return;
+    return html`
+      <div class="useful">
+        <div class="title">${this.notUsefulLabel}</div>
+        <gr-checks-action
+          @click=${() => (this.notUsefulLabel = 'Thanks!')}
+          .action=${useful}
+        ></gr-checks-action>
+        <gr-checks-action
+          @click=${() => (this.notUsefulLabel = 'Sorry about that')}
+          .action=${notUseful}
+        ></gr-checks-action>
+      </div>
+    `;
   }
 
   private renderLink(link?: Link, targetBlank = true) {
@@ -808,6 +875,10 @@ export class GrChecksResults extends LitElement {
   /** Maintains the state of which result sections should show all results. */
   @state()
   isShowAll: Map<Category, boolean> = new Map();
+
+  /** Maintains the state of which result sections has all results expanded. */
+  @state()
+  allResultsExpanded: Map<Category, boolean> = new Map();
 
   /**
    * This is the current state of whether a section is expanded or not. As long
@@ -978,6 +1049,9 @@ export class GrChecksResults extends LitElement {
           padding: var(--spacing-s) var(--spacing-m);
         }
         .categoryHeader {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
           margin-top: var(--spacing-l);
           margin-left: var(--spacing-l);
           cursor: default;
@@ -1101,6 +1175,8 @@ export class GrChecksResults extends LitElement {
       // moment before trying to find a child element in it.
       setTimeout(() => {
         if (el) (el as HTMLElement).focus();
+        // If the target element is a <gr-result-row>, then expand it.
+        (el as GrResultRow)?.toggleExpanded(true);
         // <gr-result-row> has display:contents and cannot be scrolled into view
         // itself. Thus we are preferring to scroll the first child into view.
         el = el?.shadowRoot?.firstElementChild ?? el;
@@ -1392,6 +1468,8 @@ export class GrChecksResults extends LitElement {
     const expandedClass = expanded ? 'expanded' : 'collapsed';
 
     const isShowAll = this.isShowAll.get(category) ?? false;
+    const allExpanded = this.allResultsExpanded.get(category) ?? false;
+    const hasExpandableResults = filtered.some(computeIsExpandable);
     const resultCount = filtered.length;
     const empty = resultCount === 0 ? 'empty' : '';
     const resultLimit = isShowAll ? 1000 : 20;
@@ -1403,28 +1481,40 @@ export class GrChecksResults extends LitElement {
     );
     const icon = iconFor(category);
     return html`
-      <div class=${expandedClass}>
-        <h3
-          class="categoryHeader ${catString} ${empty} heading-3"
+      <div class="${expandedClass} ${catString}">
+        <div
+          class="categoryHeader ${catString} ${empty}"
           @click=${() => this.toggleExpanded(category)}
         >
-          <gr-icon
-            class="expandIcon"
-            icon=${expanded ? 'expand_less' : 'expand_more'}
-          ></gr-icon>
-          <div class="statusIconWrapper">
+          <h3 class="left heading-3">
             <gr-icon
-              icon=${icon.name}
-              ?filled=${icon.filled}
-              class="statusIcon ${catString}"
+              class="expandIcon"
+              icon=${expanded ? 'expand_less' : 'expand_more'}
             ></gr-icon>
-            <span class="title">${catString}</span>
-            <span class="count">${this.renderCount(all, filtered)}</span>
-            <paper-tooltip offset="5"
-              >${CATEGORY_TOOLTIPS.get(category)}</paper-tooltip
+            <div class="statusIconWrapper">
+              <gr-icon
+                icon=${icon.name}
+                ?filled=${icon.filled}
+                class="statusIcon ${catString}"
+              ></gr-icon>
+              <span class="title">${catString}</span>
+              <span class="count">${this.renderCount(all, filtered)}</span>
+              <paper-tooltip offset="5"
+                >${CATEGORY_TOOLTIPS.get(category)}</paper-tooltip
+              >
+            </div>
+          </h3>
+          <div class="right">
+            <gr-button
+              link
+              ?hidden=${!expanded || !hasExpandableResults}
+              @click=${(e: MouseEvent) =>
+                this.toggleResultsExpanded(e, category)}
+            >
+              ${allExpanded ? 'Collapse All' : 'Expand All'}</gr-button
             >
           </div>
-        </h3>
+        </div>
         ${when(expanded, () =>
           this.renderResults(
             all,
@@ -1456,6 +1546,24 @@ export class GrChecksResults extends LitElement {
         </td>
       </tr>
     `;
+  }
+
+  toggleResultsExpanded(e: MouseEvent, category: Category) {
+    e.preventDefault();
+    // Clicking the header row would otherwise collapse the entire section.
+    e.stopPropagation();
+    const catString = category.toString().toLowerCase();
+    const current = this.allResultsExpanded.get(category) ?? false;
+    const desired = !current;
+    this.allResultsExpanded.set(category, desired);
+    // this.allResultsExpanded stays the same object, but changes its content
+    this.requestUpdate();
+    const rows = this.shadowRoot!.querySelectorAll<GrResultRow>(
+      `.${catString} gr-result-row`
+    );
+    for (const row of rows) {
+      row.toggleExpanded(desired);
+    }
   }
 
   toggleShowAll(category: Category) {

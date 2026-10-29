@@ -57,6 +57,9 @@ export class GrPreferences extends LitElement {
   @query('#allowSuggestCodeWhileCommenting')
   allowSuggestCodeWhileCommenting?: HTMLInputElement;
 
+  @query('#allowAiCommentAutocompletion')
+  allowAiCommentAutocompletion?: HTMLInputElement;
+
   @query('#defaultBaseForMergesSelect')
   defaultBaseForMergesSelect!: HTMLInputElement;
 
@@ -121,18 +124,13 @@ export class GrPreferences extends LitElement {
       () => this.getConfigModel().docsBaseUrl$,
       docsBaseUrl => (this.docsBaseUrl = docsBaseUrl)
     );
-  }
-
-  override connectedCallback() {
-    super.connectedCallback();
-    this.getPluginLoader()
-      .awaitPluginsLoaded()
-      .then(() => {
-        const suggestionsPlugins =
-          this.getPluginLoader().pluginsModel.getState().suggestionsPlugins;
-        // We currently support results from only 1 provider.
-        this.suggestionsProvider = suggestionsPlugins?.[0]?.provider;
-      });
+    subscribe(
+      this,
+      () => this.getPluginLoader().pluginsModel.suggestionsPlugins$,
+      // We currently support results from only 1 provider.
+      suggestionsPlugins =>
+        (this.suggestionsProvider = suggestionsPlugins?.[0]?.provider)
+    );
   }
 
   static override get styles() {
@@ -284,6 +282,7 @@ export class GrPreferences extends LitElement {
           </section>
           ${this.renderBrowserNotifications()}
           ${this.renderGenerateSuggestionWhenCommenting()}
+          ${this.renderAiCommentAutocompletion()}
           ${this.renderDefaultBaseForMerges()}
           <section>
             <label class="title" for="relativeDateInChangeTable"
@@ -480,11 +479,7 @@ export class GrPreferences extends LitElement {
   // When the experiment is over, move this back to render(),
   // removing this function.
   private renderGenerateSuggestionWhenCommenting() {
-    if (
-      !this.flagsService.isEnabled(KnownExperimentId.ML_SUGGESTED_EDIT) ||
-      !this.suggestionsProvider
-    )
-      return nothing;
+    if (!this.suggestionsProvider) return nothing;
     return html`
       <section id="allowSuggestCodeWhileCommentingSection">
         <div class="title">
@@ -511,6 +506,37 @@ export class GrPreferences extends LitElement {
             @change=${() => {
               this.prefs!.allow_suggest_code_while_commenting =
                 this.allowSuggestCodeWhileCommenting!.checked;
+              this.requestUpdate();
+            }}
+          />
+        </span>
+      </section>
+    `;
+  }
+
+  // When the experiment is over, move this back to render(),
+  // removing this function.
+  private renderAiCommentAutocompletion() {
+    if (
+      !this.flagsService.isEnabled(KnownExperimentId.COMMENT_AUTOCOMPLETION) ||
+      !this.suggestionsProvider
+    )
+      return nothing;
+    return html`
+      <section id="allowAiCommentAutocompletionSection">
+        <div class="title">
+          <label for="allowAiCommentAutocompletion"
+            >AI suggested text completions while commenting</label
+          >
+        </div>
+        <span class="value">
+          <input
+            id="allowAiCommentAutocompletion"
+            type="checkbox"
+            ?checked=${this.prefs?.allow_autocompleting_comments}
+            @change=${() => {
+              this.prefs!.allow_autocompleting_comments =
+                this.allowAiCommentAutocompletion!.checked;
               this.requestUpdate();
             }}
           />
@@ -565,6 +591,8 @@ export class GrPreferences extends LitElement {
         Boolean(this.prefs?.allow_browser_notifications) ||
       Boolean(this.originalPrefs?.allow_suggest_code_while_commenting) !==
         Boolean(this.prefs?.allow_suggest_code_while_commenting) ||
+      Boolean(this.originalPrefs?.allow_autocompleting_comments) !==
+        Boolean(this.prefs?.allow_autocompleting_comments) ||
       this.originalPrefs?.default_base_for_merges !==
         this.prefs?.default_base_for_merges ||
       Boolean(this.originalPrefs?.relative_date_in_change_table) !==

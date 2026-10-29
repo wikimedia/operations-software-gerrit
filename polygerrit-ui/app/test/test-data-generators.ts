@@ -98,6 +98,8 @@ import {ChangeComments} from '../elements/diff/gr-comment-api/gr-comment-api';
 import {EditRevisionInfo, ParsedChangeInfo} from '../types/types';
 import {
   DetailedLabelInfo,
+  FixReplacementInfo,
+  PatchSetNumber,
   QuickLabelInfo,
   SubmitRequirementExpressionInfo,
   SubmitRequirementResultInfo,
@@ -428,6 +430,7 @@ export function createChange(partial: Partial<ChangeInfo> = {}): ChangeInfo {
     owner: createAccountWithId(),
     // This is documented as optional, but actually always set.
     reviewers: createReviewers(),
+    current_revision_number: 1 as PatchSetNumber,
     ...partial,
   };
 }
@@ -488,6 +491,7 @@ export function createGerritInfo(): GerritInfo {
     all_projects: 'All-Projects',
     all_users: 'All-Users',
     doc_search: false,
+    project_state_predicate_enabled: true,
   };
 }
 
@@ -685,6 +689,27 @@ export function createContextGroup(options: {offset?: number; count?: number}) {
   });
 }
 
+export function createContextGroupWithDelta() {
+  return new GrDiffGroup({
+    type: GrDiffGroupType.CONTEXT_CONTROL,
+    contextGroups: [
+      new GrDiffGroup({
+        type: GrDiffGroupType.DELTA,
+        lines: [
+          new GrDiffLine(GrDiffLineType.REMOVE, 8),
+          new GrDiffLine(GrDiffLineType.ADD, 0, 10),
+          new GrDiffLine(GrDiffLineType.REMOVE, 9),
+          new GrDiffLine(GrDiffLineType.ADD, 0, 11),
+          new GrDiffLine(GrDiffLineType.REMOVE, 10),
+          new GrDiffLine(GrDiffLineType.ADD, 0, 12),
+          new GrDiffLine(GrDiffLineType.REMOVE, 11),
+          new GrDiffLine(GrDiffLineType.ADD, 0, 13),
+        ],
+      }),
+    ],
+  });
+}
+
 export function createBlame(): BlameInfo {
   return {
     author: 'test-author',
@@ -710,6 +735,7 @@ export function createPreferences(): PreferencesInfo {
     email_strategy: EmailStrategy.ENABLED,
     allow_browser_notifications: true,
     allow_suggest_code_while_commenting: true,
+    allow_autocompleting_comments: true,
   };
 }
 
@@ -1205,4 +1231,12 @@ export function createDetailedLabelInfo(): DetailedLabelInfo {
 
 export function createQuickLabelInfo(): QuickLabelInfo {
   return {};
+}
+
+export function createFixReplacementInfo(): FixReplacementInfo {
+  return {
+    path: 'test/path',
+    range: createRange(),
+    replacement: 'replacement',
+  };
 }

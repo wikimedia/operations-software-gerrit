@@ -54,6 +54,8 @@ import org.eclipse.jgit.lib.Repository;
 // confusing and could stand to be reworked. Another smell is that this is an interface only for
 // testing purposes.
 public class SchemaCreatorImpl implements SchemaCreator {
+  public static final String BLOCKED_USERS = "Blocked Users";
+
   private final GitRepositoryManager repoManager;
   private final AllProjectsCreator allProjectsCreator;
   private final AllUsersCreator allUsersCreator;
@@ -92,11 +94,13 @@ public class SchemaCreatorImpl implements SchemaCreator {
     try (RefUpdateContext ctx = RefUpdateContext.open(RefUpdateType.INIT_REPO)) {
       GroupReference admins = createGroupReference("Administrators");
       GroupReference serviceUsers = createGroupReference(ServiceUserClassifier.SERVICE_USERS);
+      GroupReference blockedUsers = createGroupReference(BLOCKED_USERS);
 
       AllProjectsInput allProjectsInput =
           AllProjectsInput.builder()
               .administratorsGroup(admins)
               .serviceUsersGroup(serviceUsers)
+              .blockedUsersGroup(blockedUsers)
               .build();
       allProjectsCreator.create(allProjectsInput);
       // We have to create the All-Users repository before we can use it to store the groups in it.
@@ -104,7 +108,8 @@ public class SchemaCreatorImpl implements SchemaCreator {
 
       try (Repository allUsersRepo = repoManager.openRepository(allUsersName)) {
         createAdminsGroup(allUsersRepo, admins);
-        createBatchUsersGroup(allUsersRepo, serviceUsers, admins.getUUID());
+        createServiceUsersGroup(allUsersRepo, serviceUsers, admins.getUUID());
+        createBlockedUsersGroup(allUsersRepo, blockedUsers, admins.getUUID());
       }
     }
   }
@@ -127,13 +132,27 @@ public class SchemaCreatorImpl implements SchemaCreator {
     createGroup(allUsersRepo, groupCreation, groupDelta);
   }
 
-  private void createBatchUsersGroup(
+  private void createServiceUsersGroup(
       Repository allUsersRepo, GroupReference groupReference, AccountGroup.UUID adminsGroupUuid)
       throws IOException, ConfigInvalidException {
     InternalGroupCreation groupCreation = getGroupCreation(groupReference);
     GroupDelta groupDelta =
         GroupDelta.builder()
             .setDescription("Users who perform batch actions on Gerrit")
+            .setOwnerGroupUUID(adminsGroupUuid)
+            .setVisibleToAll(true)
+            .build();
+
+    createGroup(allUsersRepo, groupCreation, groupDelta);
+  }
+
+  private void createBlockedUsersGroup(
+      Repository allUsersRepo, GroupReference groupReference, AccountGroup.UUID adminsGroupUuid)
+      throws IOException, ConfigInvalidException {
+    InternalGroupCreation groupCreation = getGroupCreation(groupReference);
+    GroupDelta groupDelta =
+        GroupDelta.builder()
+            .setDescription("Blocked users. Add spammers to this group.")
             .setOwnerGroupUUID(adminsGroupUuid)
             .build();
 

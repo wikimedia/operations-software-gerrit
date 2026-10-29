@@ -43,6 +43,7 @@ import {
   RenderPreferences,
   GrDiff as GrDiffApi,
   DisplayLine,
+  DiffRangesToFocus,
   LineNumber,
   ContentLoadNeededEventDetail,
   DiffContextExpandedExternalDetail,
@@ -73,6 +74,7 @@ import {
   grDiffTextStyles,
 } from './gr-diff-styles';
 import {GrCoverageLayer} from '../gr-coverage-layer/gr-coverage-layer';
+import {GrFocusLayer} from '../gr-focus-layer/gr-focus-layer';
 import {
   GrAnnotationImpl,
   getStringLength,
@@ -182,6 +184,13 @@ export class GrDiff extends LitElement implements GrDiffApi {
   @property({type: Object})
   lineOfInterest?: DisplayLine;
 
+  @property({type: Object})
+  diffRangesToFocus?: DiffRangesToFocus;
+
+  // Extra message shown if files are binary to help users investigate contents.
+  @property({type: String})
+  binaryDiffHint = '';
+
   /**
    * True when diff is changed, until the content is done rendering.
    * Use getter/setter loading instead of this.
@@ -262,6 +271,8 @@ export class GrDiff extends LitElement implements GrDiffApi {
   private coverageLayerLeft = new GrCoverageLayer(Side.LEFT);
 
   private coverageLayerRight = new GrCoverageLayer(Side.RIGHT);
+
+  private focusLayer = new GrFocusLayer();
 
   private rangeLayer = new GrRangedCommentLayer();
 
@@ -360,7 +371,8 @@ export class GrDiff extends LitElement implements GrDiffApi {
       changedProperties.has('showNewlineWarningLeft') ||
       changedProperties.has('showNewlineWarningRight') ||
       changedProperties.has('prefs') ||
-      changedProperties.has('lineOfInterest')
+      changedProperties.has('lineOfInterest') ||
+      changedProperties.has('diffRangesToFocus')
     ) {
       if (this.diff && this.prefs) {
         const renderPrefs = {...(this.renderPrefs ?? {})};
@@ -386,6 +398,7 @@ export class GrDiff extends LitElement implements GrDiffApi {
           renderPrefs,
           diffPrefs: this.prefs,
           lineOfInterest: this.lineOfInterest,
+          diffRangesToFocus: this.diffRangesToFocus,
         });
       }
     }
@@ -426,6 +439,9 @@ export class GrDiff extends LitElement implements GrDiffApi {
     if (changedProperties.has('lineOfInterest')) {
       this.lineOfInterestChanged();
     }
+    if (changedProperties.has('diffRangesToFocus')) {
+      this.updateFocusRanges(this.diffRangesToFocus);
+    }
   }
 
   protected override async getUpdateComplete(): Promise<boolean> {
@@ -447,7 +463,9 @@ export class GrDiff extends LitElement implements GrDiffApi {
   }
 
   override render() {
-    return html`<gr-diff-element></gr-diff-element>`;
+    return html`<gr-diff-element
+      .binaryDiffHint=${this.binaryDiffHint}
+    ></gr-diff-element>`;
   }
 
   private addSelectionListeners() {
@@ -699,6 +717,10 @@ export class GrDiff extends LitElement implements GrDiffApi {
     this.coverageLayerRight.setRanges(rs.filter(r => r?.side === Side.RIGHT));
   }
 
+  private updateFocusRanges(rs?: DiffRangesToFocus) {
+    this.focusLayer.setRanges(rs);
+  }
+
   private onDiffContextExpanded = (
     e: CustomEvent<DiffContextExpandedEventDetail>
   ) => {
@@ -725,6 +747,7 @@ export class GrDiff extends LitElement implements GrDiffApi {
       this.rangeLayer,
       this.coverageLayerLeft,
       this.coverageLayerRight,
+      this.focusLayer,
     ];
     this.layersChanged();
   }

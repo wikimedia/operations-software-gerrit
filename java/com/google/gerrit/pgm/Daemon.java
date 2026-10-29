@@ -63,6 +63,7 @@ import com.google.gerrit.server.StartupChecks.StartupChecksModule;
 import com.google.gerrit.server.account.AccountCacheImpl;
 import com.google.gerrit.server.account.AccountDeactivator.AccountDeactivatorModule;
 import com.google.gerrit.server.account.InternalAccountDirectory.InternalAccountDirectoryModule;
+import com.google.gerrit.server.account.externalids.storage.notedb.ExternalIdCacheImpl;
 import com.google.gerrit.server.account.externalids.storage.notedb.ExternalIdCaseSensitivityMigrator;
 import com.google.gerrit.server.account.storage.notedb.AccountNoteDbReadStorageModule;
 import com.google.gerrit.server.account.storage.notedb.AccountNoteDbWriteStorageModule;
@@ -73,7 +74,6 @@ import com.google.gerrit.server.audit.AuditModule;
 import com.google.gerrit.server.cache.h2.H2CacheModule;
 import com.google.gerrit.server.cache.mem.DefaultMemoryCacheModule;
 import com.google.gerrit.server.change.AttentionSetOwnerAdder.AttentionSetOwnerAdderModule;
-import com.google.gerrit.server.change.ChangeCleanupRunner.ChangeCleanupRunnerModule;
 import com.google.gerrit.server.config.AuthConfig;
 import com.google.gerrit.server.config.AuthConfigModule;
 import com.google.gerrit.server.config.CanonicalWebUrlModule;
@@ -92,15 +92,16 @@ import com.google.gerrit.server.events.StreamEventsApiListener.StreamEventsApiLi
 import com.google.gerrit.server.git.ChangesByProjectCache;
 import com.google.gerrit.server.git.GarbageCollectionModule;
 import com.google.gerrit.server.git.WorkQueue.WorkQueueModule;
-import com.google.gerrit.server.group.PeriodicGroupIndexer.PeriodicGroupIndexerModule;
 import com.google.gerrit.server.index.AbstractIndexModule;
 import com.google.gerrit.server.index.IndexModule;
 import com.google.gerrit.server.index.OnlineUpgrader.OnlineUpgraderModule;
 import com.google.gerrit.server.index.VersionManager;
 import com.google.gerrit.server.index.options.AutoFlush;
+import com.google.gerrit.server.index.scheduler.PeriodicIndexScheduler;
 import com.google.gerrit.server.mail.EmailModule;
 import com.google.gerrit.server.mail.SignedTokenEmailTokenVerifier.SignedTokenEmailTokenVerifierModule;
 import com.google.gerrit.server.mail.receive.MailReceiver.MailReceiverModule;
+import com.google.gerrit.server.mail.send.FromAddressGeneratorProvider;
 import com.google.gerrit.server.mail.send.SmtpEmailSender.SmtpEmailSenderModule;
 import com.google.gerrit.server.mime.MimeUtil2Module;
 import com.google.gerrit.server.notedb.NoteDbDraftCommentsModule;
@@ -110,8 +111,9 @@ import com.google.gerrit.server.patch.DiffExecutorModule;
 import com.google.gerrit.server.permissions.DefaultPermissionBackendModule;
 import com.google.gerrit.server.plugins.PluginGuiceEnvironment;
 import com.google.gerrit.server.plugins.PluginModule;
-import com.google.gerrit.server.project.DefaultProjectNameLockManager.DefaultProjectNameLockManagerModule;
+import com.google.gerrit.server.project.DefaultLockManager.DefaultLockManagerModule;
 import com.google.gerrit.server.restapi.RestApiModule;
+import com.google.gerrit.server.restapi.config.CleanupChangesModule;
 import com.google.gerrit.server.schema.JdbcAccountPatchReviewStore.JdbcAccountPatchReviewStoreModule;
 import com.google.gerrit.server.schema.NoteDbSchemaVersionCheck;
 import com.google.gerrit.server.securestore.DefaultSecureStore;
@@ -383,11 +385,11 @@ public class Daemon extends SiteProgram {
   @VisibleForTesting
   public void start() throws IOException {
     if (dbInjector == null) {
-      dbInjector = createDbInjector(true /* enableMetrics */);
+      dbInjector =
+          createDbInjector(true /* enableMetrics */, new GerritOptions(headless, replica, devCdn));
     }
     cfgInjector = createCfgInjector();
     config = cfgInjector.getInstance(Key.get(Config.class, GerritServerConfig.class));
-    config.setBoolean("container", null, "replica", replica);
     indexType = IndexModule.getIndexType(cfgInjector);
     sysInjector = createSysInjector();
     sysInjector.getInstance(PluginGuiceEnvironment.class).setDbCfgInjector(dbInjector, cfgInjector);
@@ -475,7 +477,10 @@ public class Daemon extends SiteProgram {
 
     modules.add(new AccountNoteDbWriteStorageModule());
     modules.add(new AccountNoteDbReadStorageModule());
+    modules.add(new ExternalIdCacheImpl.ExternalIdCacheModule());
+    modules.add(new ExternalIdCacheImpl.ExternalIdCacheBindingModule());
     modules.add(new RepoSequenceModule());
+    modules.add(new FromAddressGeneratorProvider.UserAddressGenModule());
     modules.add(new NoteDbDraftCommentsModule());
     modules.add(new NoteDbStarredChangesModule());
     modules.add(cfgInjector.getInstance(GerritGlobalModule.class));
@@ -543,7 +548,6 @@ public class Daemon extends SiteProgram {
         new AbstractModule() {
           @Override
           protected void configure() {
-            bind(GerritOptions.class).toInstance(new GerritOptions(headless, replica, devCdn));
             if (inMemoryTest) {
               bind(String.class)
                   .annotatedWith(SecureStoreClassName.class)
@@ -553,15 +557,14 @@ public class Daemon extends SiteProgram {
           }
         });
     modules.add(new GarbageCollectionModule());
-    if (replica) {
-      modules.add(new PeriodicGroupIndexerModule());
-    } else {
+    modules.add(new PeriodicIndexScheduler.Module());
+    if (!replica) {
       modules.add(new AccountDeactivatorModule());
       modules.add(new AttentionSetOwnerAdderModule());
-      modules.add(new ChangeCleanupRunnerModule());
+      modules.add(new CleanupChangesModule());
     }
     modules.add(new LocalMergeSuperSetComputationModule());
-    modules.add(new DefaultProjectNameLockManagerModule());
+    modules.add(new DefaultLockManagerModule());
 
     List<Module> libModules =
         LibModuleLoader.loadModules(cfgInjector, LibModuleType.SYS_MODULE_TYPE);

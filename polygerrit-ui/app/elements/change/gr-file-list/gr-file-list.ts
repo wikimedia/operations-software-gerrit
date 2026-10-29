@@ -80,13 +80,16 @@ import {classMap} from 'lit/directives/class-map.js';
 import {incrementalRepeat} from '../../lit/incremental-repeat';
 import {ifDefined} from 'lit/directives/if-defined.js';
 import {
-  createDiffUrl,
-  createEditUrl,
   createChangeUrl,
+  changeViewModelToken,
 } from '../../../models/views/change';
 import {userModelToken} from '../../../models/user/user-model';
 import {pluginLoaderToken} from '../../shared/gr-js-api-interface/gr-plugin-loader';
-import {FileMode, fileModeToString} from '../../../utils/file-util';
+import {
+  FileMode,
+  fileModeToString,
+  formatBytes,
+} from '../../../utils/file-util';
 import {ChecksIcon, iconFor} from '../../../models/checks/checks-util';
 
 export const DEFAULT_NUM_FILES_SHOWN = 200;
@@ -212,7 +215,7 @@ export class GrFileList extends LitElement {
   diffViewMode?: DiffViewMode;
 
   @property({type: Boolean})
-  editMode?: boolean;
+  editMode = false;
 
   private _filesExpanded = FilesExpandedState.NONE;
 
@@ -274,6 +277,9 @@ export class GrFileList extends LitElement {
   @state()
   cleanlyMergedOldPaths: string[] = [];
 
+  // Private but used in tests.
+  patchChange?: PatchChange;
+
   private cancelForEachDiff?: () => void;
 
   @state()
@@ -312,6 +318,8 @@ export class GrFileList extends LitElement {
   shortcutsController = new ShortcutController(this);
 
   private readonly getNavigation = resolve(this, navigationToken);
+
+  private readonly getViewModel = resolve(this, changeViewModelToken);
 
   // private but used in test
   fileCursor = new GrCursorManager();
@@ -890,6 +898,7 @@ export class GrFileList extends LitElement {
       this.updateDiffPreferences();
     }
     if (changedProperties.has('files')) {
+      this.patchChange = undefined;
       this.filesChanged();
       this.numFilesShown = Math.min(this.files.length, DEFAULT_NUM_FILES_SHOWN);
       fire(this, 'files-shown-changed', {length: this.numFilesShown});
@@ -1421,7 +1430,7 @@ export class GrFileList extends LitElement {
           class=${ifDefined(this.computeBinaryClass(file.size_delta))}
           ?hidden=${!file.binary}
         >
-          ${this.formatBytes(file.size_delta)}
+          ${formatBytes(file.size_delta)}
           ${this.formatPercentage(file.size, file.size_delta)}
         </span>
       </div>
@@ -1638,8 +1647,8 @@ export class GrFileList extends LitElement {
 
   private renderBinaryTotals(patchChange: PatchChange) {
     if (this.shouldHideBinaryChangeTotals(patchChange)) return nothing;
-    const deltaInserted = this.formatBytes(patchChange.size_delta_inserted);
-    const deltaDeleted = this.formatBytes(patchChange.size_delta_deleted);
+    const deltaInserted = formatBytes(patchChange.size_delta_inserted);
+    const deltaDeleted = formatBytes(patchChange.size_delta_deleted);
     return html`
       <div class="row totalChanges">
         <div class="total-stats">
@@ -1817,11 +1826,12 @@ export class GrFileList extends LitElement {
 
   // Private but used in tests.
   calculatePatchChange(): PatchChange {
+    if (this.patchChange) return this.patchChange;
     const magicFilesExcluded = this.files.filter(
       file => !isMagicPath(file.__path)
     );
 
-    return magicFilesExcluded.reduce((acc, obj) => {
+    this.patchChange = magicFilesExcluded.reduce((acc, obj) => {
       const inserted = obj.lines_inserted ? obj.lines_inserted : 0;
       const deleted = obj.lines_deleted ? obj.lines_deleted : 0;
       const total_size = obj.size && obj.binary ? obj.size : 0;
@@ -1838,6 +1848,7 @@ export class GrFileList extends LitElement {
         total_size: acc.total_size + total_size,
       };
     }, createDefaultPatchChange());
+    return this.patchChange;
   }
 
   private toggleHideAllCommentsAndCodePointers() {
@@ -2187,15 +2198,13 @@ export class GrFileList extends LitElement {
   // Private but used in tests.
   openCursorFile() {
     const diff = this.diffCursor?.getTargetDiffElement();
-    if (!this.change || !diff || !this.patchRange || !diff.path) {
-      throw new Error('change, diff and patchRange must be all set and valid');
+    if (!this.change || !diff || !this.patchNum || !diff.path) {
+      throw new Error('change, diff and pacthNum must be all set and valid');
     }
     this.getNavigation().setUrl(
-      createDiffUrl({
-        change: this.change,
-        patchNum: this.patchRange.patchNum,
-        basePatchNum: this.patchRange.basePatchNum,
+      this.getViewModel().diffUrl({
         diffView: {path: diff.path},
+        patchNum: this.patchNum,
       })
     );
   }
@@ -2208,15 +2217,13 @@ export class GrFileList extends LitElement {
     if (!this.files[this.fileCursor.index]) {
       return;
     }
-    if (!this.change || !this.patchRange) {
+    if (!this.change || !this.patchNum) {
       throw new Error('change and patchRange must be set');
     }
     this.getNavigation().setUrl(
-      createDiffUrl({
-        change: this.change,
-        patchNum: this.patchRange.patchNum,
-        basePatchNum: this.patchRange.basePatchNum,
+      this.getViewModel().diffUrl({
         diffView: {path: this.files[this.fileCursor.index].__path},
+        patchNum: this.patchNum,
       })
     );
   }
@@ -2234,45 +2241,22 @@ export class GrFileList extends LitElement {
     );
   }
 
+  /** Returns an edit or diff URL depending on `editMode`. */
   // Private but used in tests
-  computeDiffURL(path?: string) {
-    if (
-      this.change === undefined ||
-      this.patchRange?.patchNum === undefined ||
-      path === undefined ||
-      this.editMode === undefined
-    ) {
-      return;
-    }
+  computeDiffURL(path?: string): string | undefined {
+    if (path === undefined) return;
+    if (this.patchNum === undefined) return;
+
     if (this.editMode && path !== SpecialFilePath.MERGE_LIST) {
-      return createEditUrl({
-        changeNum: this.change._number,
-        repo: this.change.project,
-        patchNum: this.patchRange.patchNum,
+      return this.getViewModel().editUrl({
+        patchNum: this.patchNum,
         editView: {path},
       });
     }
-    return createDiffUrl({
-      changeNum: this.change._number,
-      repo: this.change.project,
-      patchNum: this.patchRange.patchNum,
-      basePatchNum: this.patchRange.basePatchNum,
+    return this.getViewModel().diffUrl({
       diffView: {path},
+      patchNum: this.patchNum,
     });
-  }
-
-  // Private but used in tests.
-  formatBytes(bytes?: number) {
-    if (!bytes) return '+/-0 B';
-    const bits = 1024;
-    const decimals = 1;
-    const sizes = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB', 'ZiB', 'YiB'];
-    const exponent = Math.floor(Math.log(Math.abs(bytes)) / Math.log(bits));
-    const prepend = bytes > 0 ? '+' : '';
-    const value = parseFloat(
-      (bytes / Math.pow(bits, exponent)).toFixed(decimals)
-    );
-    return `${prepend}${value} ${sizes[exponent]}`;
   }
 
   // Private but used in tests.

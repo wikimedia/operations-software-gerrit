@@ -10,10 +10,7 @@ COMMONMARK_VERSION = "0.21.0"
 GREENMAIL_VERS = "1.5.5"
 MAIL_VERS = "1.6.0"
 MIME4J_VERS = "0.8.1"
-OW2_VERS = "9.2"
-AUTO_COMMON_VERSION = "1.2.1"
-AUTO_FACTORY_VERSION = "1.0.1"
-AUTO_VALUE_VERSION = "1.10.4"
+OW2_VERS = "9.7"
 AUTO_VALUE_GSON_VERSION = "1.3.1"
 PROLOG_VERS = "1.4.4"
 PROLOG_REPO = GERRIT
@@ -21,9 +18,9 @@ GITILES_VERS = "1.5.0"
 GITILES_REPO = GERRIT
 
 # When updating Bouncy Castle, also update it in bazlets.
-BC_VERS = "1.72"
+BC_VERS = "1.74"
 HTTPCOMP_VERS = "4.5.14"
-JETTY_VERS = "9.4.53.v20231009"
+JETTY_VERS = "9.4.57.v20241219"
 BYTE_BUDDY_VERSION = "1.14.9"
 ROARING_BITMAP_VERSION = "0.9.44"
 
@@ -87,12 +84,6 @@ def java_dependencies():
         artifact = "com.googlecode.javaewah:JavaEWAH:1.1.12",
         attach_source = False,
         sha1 = "9feecc2b24d6bc9ff865af8d082f192238a293eb",
-    )
-
-    maven_jar(
-        name = "gson",
-        artifact = "com.google.code.gson:gson:2.9.0",
-        sha1 = "8a1167e089096758b49f9b34066ef98b2f4b37aa",
     )
 
     maven_jar(
@@ -255,61 +246,31 @@ def java_dependencies():
     maven_jar(
         name = "ow2-asm",
         artifact = "org.ow2.asm:asm:" + OW2_VERS,
-        sha1 = "81a03f76019c67362299c40e0ba13405f5467bff",
+        sha1 = "073d7b3086e14beb604ced229c302feff6449723",
     )
 
     maven_jar(
         name = "ow2-asm-analysis",
         artifact = "org.ow2.asm:asm-analysis:" + OW2_VERS,
-        sha1 = "7487dd756daf96cab9986e44b9d7bcb796a61c10",
+        sha1 = "e4a258b7eb96107106c0599f0061cfc1832fe07a",
     )
 
     maven_jar(
         name = "ow2-asm-commons",
         artifact = "org.ow2.asm:asm-commons:" + OW2_VERS,
-        sha1 = "f4d7f0fc9054386f2893b602454d48e07d4fbead",
+        sha1 = "e86dda4696d3c185fcc95d8d311904e7ce38a53f",
     )
 
     maven_jar(
         name = "ow2-asm-tree",
         artifact = "org.ow2.asm:asm-tree:" + OW2_VERS,
-        sha1 = "d96c99a30f5e1a19b0e609dbb19a44d8518ac01e",
+        sha1 = "e446a17b175bfb733b87c5c2560ccb4e57d69f1a",
     )
 
     maven_jar(
         name = "ow2-asm-util",
         artifact = "org.ow2.asm:asm-util:" + OW2_VERS,
-        sha1 = "fbc178fc5ba3dab50fd7e8a5317b8b647c8e8946",
-    )
-
-    maven_jar(
-        name = "auto-common",
-        artifact = "com.google.auto:auto-common:" + AUTO_COMMON_VERSION,
-        sha1 = "f6da26895f759010f5f170c8044e84c1b17ef83e",
-    )
-
-    maven_jar(
-        name = "auto-factory",
-        artifact = "com.google.auto.factory:auto-factory:" + AUTO_FACTORY_VERSION,
-        sha1 = "f81ece06b6525085da217cd900116f44caafe877",
-    )
-
-    maven_jar(
-        name = "auto-service-annotations",
-        artifact = "com.google.auto.service:auto-service-annotations:" + AUTO_FACTORY_VERSION,
-        sha1 = "ac86dacc0eb9285ea9d42eee6aad8629ca3a7432",
-    )
-
-    maven_jar(
-        name = "auto-value",
-        artifact = "com.google.auto.value:auto-value:" + AUTO_VALUE_VERSION,
-        sha1 = "90f9629eaa123f88551cc26a64bc386967ee24cc",
-    )
-
-    maven_jar(
-        name = "auto-value-annotations",
-        artifact = "com.google.auto.value:auto-value-annotations:" + AUTO_VALUE_VERSION,
-        sha1 = "9679de8286eb0a151db6538ba297a8951c4a1224",
+        sha1 = "c0655519f24d92af2202cb681cd7c1569df6ead6",
     )
 
     maven_jar(
@@ -423,25 +384,25 @@ def java_dependencies():
     maven_jar(
         name = "bcprov",
         artifact = "org.bouncycastle:bcprov-jdk18on:" + BC_VERS,
-        sha1 = "d8dc62c28a3497d29c93fee3e71c00b27dff41b4",
+        sha1 = "8753dedf57165efdb1a7a69a90fe49a77353efb9",
     )
 
     maven_jar(
         name = "bcpg",
         artifact = "org.bouncycastle:bcpg-jdk18on:" + BC_VERS,
-        sha1 = "1a36a1740d07869161f6f0d01fae8d72dd1d8320",
+        sha1 = "08af7527e1e13b4fcfc55ff81b99becd12f319c7",
     )
 
     maven_jar(
         name = "bcpkix",
         artifact = "org.bouncycastle:bcpkix-jdk18on:" + BC_VERS,
-        sha1 = "bb3fdb5162ccd5085e8d7e57fada4d8eaa571f5a",
+        sha1 = "a197fb87f0697c1925e7248865ee84516fdb6d9c",
     )
 
     maven_jar(
         name = "bcutil",
         artifact = "org.bouncycastle:bcutil-jdk18on:" + BC_VERS,
-        sha1 = "41f19a69ada3b06fa48781120d8bebe1ba955c77",
+        sha1 = "929723bc9ef128aadba955929f701393bc6a153b",
     )
 
     maven_jar(
@@ -490,50 +451,49 @@ def java_dependencies():
     maven_jar(
         name = "jetty-servlet",
         artifact = "org.eclipse.jetty:jetty-servlet:" + JETTY_VERS,
-        sha1 = "6670d6a54cdcaedd8090e8cf420fd5dd7d08e859",
+        sha1 = "3e648eebddbf5ad0c0f7698e50c6a69c4a77fd95",
     )
 
     maven_jar(
         name = "jetty-security",
         artifact = "org.eclipse.jetty:jetty-security:" + JETTY_VERS,
-        sha1 = "6fbc8ebe9046954dc2f51d4ba69c8f8344b05f7f",
+        sha1 = "2b545f68d45b947fdc6e279a0e8ae3630ec10e05",
     )
 
     maven_jar(
         name = "jetty-server",
         artifact = "org.eclipse.jetty:jetty-server:" + JETTY_VERS,
-        sha1 = "8b0e761a0b359db59dae77c00b4213b0586cb994",
+        sha1 = "ad3baf52b98b4a32f5714fe2e58ac0e502b4e4d8",
     )
 
     maven_jar(
         name = "jetty-jmx",
         artifact = "org.eclipse.jetty:jetty-jmx:" + JETTY_VERS,
-        sha1 = "f0392f756b59f65ea7d6be41bf7a2f7b2c7c98d5",
+        sha1 = "10d4f95fb162608be238c54ab7dfef28721227c0",
     )
 
     maven_jar(
         name = "jetty-http",
         artifact = "org.eclipse.jetty:jetty-http:" + JETTY_VERS,
-        sha1 = "87faf21eb322753f0527bcb88c43e67044786369",
+        sha1 = "c7a3a9c599346708894cf355e03105937f45f427",
     )
 
     maven_jar(
         name = "jetty-io",
         artifact = "org.eclipse.jetty:jetty-io:" + JETTY_VERS,
-        sha1 = "70cf7649b27c964ad29bfddf58f3bfe0d30346cf",
+        sha1 = "bd0ca6e5c4314972cd91f427fa09dedfe3b84ff5",
     )
 
     maven_jar(
         name = "jetty-util",
         artifact = "org.eclipse.jetty:jetty-util:" + JETTY_VERS,
-        sha1 = "f72bb4f687b4454052c6f06528ba9910714df947",
+        sha1 = "7bf7ea75644ac064199e1e32c66ccd312239f2dc",
     )
 
     maven_jar(
         name = "jetty-util-ajax",
         artifact = "org.eclipse.jetty:jetty-util-ajax:" + JETTY_VERS,
-        sha1 = "4d20f6206eb7747293697c5f64c2dc5bf4bd54a4",
-        src_sha1 = "1aed8017c3c8a449323901639de6b4eb3b1f02ea",
+        sha1 = "7b5f144a3d0cbfcac62f2fcb9e14ffa765048f0e",
     )
 
     maven_jar(

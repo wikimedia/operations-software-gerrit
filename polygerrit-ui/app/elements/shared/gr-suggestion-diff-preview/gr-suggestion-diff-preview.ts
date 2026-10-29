@@ -7,7 +7,12 @@ import '../../../embed/diff/gr-diff/gr-diff';
 import {css, html, LitElement, nothing, PropertyValues} from 'lit';
 import {customElement, property, state} from 'lit/decorators.js';
 import {getAppContext} from '../../../services/app-context';
-import {Comment, EDIT, BasePatchSetNum, RepoName} from '../../../types/common';
+import {
+  EDIT,
+  BasePatchSetNum,
+  PatchSetNumber,
+  RepoName,
+} from '../../../types/common';
 import {anyLineTooLong} from '../../../utils/diff-util';
 import {
   DiffLayer,
@@ -22,27 +27,17 @@ import {highlightServiceToken} from '../../../services/highlight/highlight-servi
 import {FixSuggestionInfo, NumericChangeId} from '../../../api/rest-api';
 import {changeModelToken} from '../../../models/change/change-model';
 import {subscribe} from '../../lit/subscription-controller';
-import {FilePreview} from '../../diff/gr-apply-fix-dialog/gr-apply-fix-dialog';
+import {DiffPreview} from '../../diff/gr-apply-fix-dialog/gr-apply-fix-dialog';
 import {userModelToken} from '../../../models/user/user-model';
-import {createUserFixSuggestion} from '../../../utils/comment-util';
-import {commentModelToken} from '../gr-comment-model/gr-comment-model';
 import {navigationToken} from '../../core/gr-navigation/gr-navigation';
 import {fire} from '../../../utils/event-util';
-import {Interaction, Timing} from '../../../constants/reporting';
+import {Timing} from '../../../constants/reporting';
 import {createChangeUrl} from '../../../models/views/change';
+import {getFileExtension} from '../../../utils/file-util';
 
-declare global {
-  interface HTMLElementEventMap {
-    'add-generated-suggestion': AddGeneratedSuggestionEvent;
-  }
+export interface PreviewLoadedDetail {
+  previewLoadedFor?: string | FixSuggestionInfo;
 }
-
-export type AddGeneratedSuggestionEvent =
-  CustomEvent<OpenUserSuggestionPreviewEventDetail>;
-export interface OpenUserSuggestionPreviewEventDetail {
-  code: string;
-}
-
 /**
  * Diff preview for
  * 1. code block suggestion vs commented Text
@@ -53,43 +48,56 @@ export interface OpenUserSuggestionPreviewEventDetail {
  */
 @customElement('gr-suggestion-diff-preview')
 export class GrSuggestionDiffPreview extends LitElement {
+  // Optional. Used as backup when preview is not loaded.
   @property({type: String})
-  suggestion?: string;
+  codeText?: string;
 
+  // Required.
   @property({type: Object})
   fixSuggestionInfo?: FixSuggestionInfo;
 
-  @property({type: Boolean})
-  showAddSuggestionButton = false;
-
+  // Used to determine if the preview has been loaded
+  // this is identical to previewLoadedFor !== undefined and can be removed
   @property({type: Boolean, attribute: 'previewed', reflect: true})
   previewed = false;
 
+  // Optional. Used in logging.
   @property({type: String})
   uuid?: string;
 
-  @state()
-  comment?: Comment;
+  @property({type: Number})
+  patchSet?: BasePatchSetNum;
 
-  @state()
-  commentedText?: string;
+  // Optional. Used in logging.
+  @property({type: String})
+  commentId?: string;
 
   @state()
   layers: DiffLayer[] = [];
 
+  /**
+   * The fix suggestion info that the preview is loaded for.
+   *
+   * This is used to determine if the preview has been loaded for the same
+   * fix suggestion info currently in gr-comment.
+   */
   @state()
-  previewLoadedFor?: string | FixSuggestionInfo;
+  public previewLoadedFor?: FixSuggestionInfo;
 
   @state() repo?: RepoName;
+
+  @state() hasEdit = false;
 
   @state()
   changeNum?: NumericChangeId;
 
   @state()
-  preview?: FilePreview;
+  preview?: DiffPreview;
 
   @state()
   diffPrefs?: DiffPreferencesInfo;
+
+  @state() latestPatchNum?: PatchSetNumber;
 
   @state()
   renderPrefs: RenderPreferences = {
@@ -105,8 +113,6 @@ export class GrSuggestionDiffPreview extends LitElement {
   private readonly restApiService = getAppContext().restApiService;
 
   private readonly getUserModel = resolve(this, userModelToken);
-
-  private readonly getCommentModel = resolve(this, commentModelToken);
 
   private readonly getNavigation = resolve(this, navigationToken);
 
@@ -124,22 +130,25 @@ export class GrSuggestionDiffPreview extends LitElement {
     );
     subscribe(
       this,
+      () => this.getChangeModel().revisions$,
+      revisions =>
+        (this.hasEdit = Object.values(revisions).some(
+          info => info._number === EDIT
+        ))
+    );
+    subscribe(
+      this,
+      () => this.getChangeModel().latestPatchNum$,
+      x => (this.latestPatchNum = x)
+    );
+    subscribe(
+      this,
       () => this.getUserModel().diffPreferences$,
       diffPreferences => {
         if (!diffPreferences) return;
         this.diffPrefs = diffPreferences;
         this.syntaxLayer.setEnabled(!!this.diffPrefs.syntax_highlighting);
       }
-    );
-    subscribe(
-      this,
-      () => this.getCommentModel().comment$,
-      comment => (this.comment = comment)
-    );
-    subscribe(
-      this,
-      () => this.getCommentModel().commentedText$,
-      commentedText => (this.commentedText = commentedText)
     );
     subscribe(
       this,
@@ -151,8 +160,15 @@ export class GrSuggestionDiffPreview extends LitElement {
   static override get styles() {
     return [
       css`
+        :host {
+          display: block;
+        }
         .buttons {
           text-align: right;
+        }
+        .diff-container {
+          border: 1px solid var(--border-color);
+          border-top: none;
         }
         code {
           max-width: var(--gr-formatted-text-prose-max-width, none);
@@ -176,40 +192,22 @@ export class GrSuggestionDiffPreview extends LitElement {
   }
 
   override updated(changed: PropertyValues) {
-    if (changed.has('commentedText') || changed.has('comment')) {
-      if (this.previewLoadedFor !== this.suggestion) {
-        this.fetchFixPreview();
-      }
-    }
-
-    if (changed.has('changeNum') || changed.has('comment')) {
-      if (this.previewLoadedFor !== this.fixSuggestionInfo) {
-        this.fetchfixSuggestionInfoPreview();
-      }
+    if (
+      changed.has('fixSuggestionInfo') ||
+      changed.has('changeNum') ||
+      changed.has('patchSet')
+    ) {
+      this.fetchFixPreview();
     }
   }
 
   override render() {
-    if (!this.suggestion && !this.fixSuggestionInfo) return nothing;
-    const code = this.suggestion;
+    if (!this.fixSuggestionInfo) return nothing;
     return html`
       ${when(
         this.previewLoadedFor,
         () => this.renderDiff(),
-        () => html`<code>${code}</code>`
-      )}
-      ${when(
-        this.showAddSuggestionButton,
-        () =>
-          html`<div class="buttons">
-            <gr-button
-              link
-              class="action add-suggestion"
-              @click=${this.handleAddGeneratedSuggestion}
-            >
-              Add suggestion to comment
-            </gr-button>
-          </div>`
+        () => html`<code>${this.codeText}</code>`
       )}
     `;
   }
@@ -220,96 +218,47 @@ export class GrSuggestionDiffPreview extends LitElement {
     if (!anyLineTooLong(diff)) {
       this.syntaxLayer.process(diff);
     }
-    return html`<gr-diff
-      .prefs=${this.overridePartialDiffPrefs()}
-      .path=${this.preview.filepath}
-      .diff=${diff}
-      .layers=${this.layers}
-      .renderPrefs=${this.renderPrefs}
-      .viewMode=${DiffViewMode.UNIFIED}
-    ></gr-diff>`;
+    return html`<div class="diff-container">
+      <gr-diff
+        .prefs=${this.overridePartialDiffPrefs()}
+        .path=${this.preview.filepath}
+        .diff=${diff}
+        .layers=${this.layers}
+        .renderPrefs=${this.renderPrefs}
+        .viewMode=${DiffViewMode.UNIFIED}
+      ></gr-diff>
+    </div>`;
   }
 
   private async fetchFixPreview() {
-    if (
-      !this.changeNum ||
-      !this.comment?.patch_set ||
-      !this.suggestion ||
-      !this.commentedText
-    )
-      return;
-    const fixSuggestions = createUserFixSuggestion(
-      this.comment,
-      this.commentedText,
-      this.suggestion
-    );
+    if (!this.changeNum || !this.patchSet || !this.fixSuggestionInfo) return;
+
     this.reporting.time(Timing.PREVIEW_FIX_LOAD);
     const res = await this.restApiService.getFixPreview(
       this.changeNum,
-      this.comment?.patch_set,
-      fixSuggestions[0].replacements
-    );
-    if (!res) return;
-    const currentPreviews = Object.keys(res).map(key => {
-      return {filepath: key, preview: res[key]};
-    });
-    this.reporting.timeEnd(Timing.PREVIEW_FIX_LOAD, {
-      uuid: this.uuid,
-    });
-    if (currentPreviews.length > 0) {
-      this.preview = currentPreviews[0];
-      this.previewLoadedFor = this.suggestion;
-    }
-
-    return res;
-  }
-
-  private async fetchfixSuggestionInfoPreview() {
-    if (
-      this.suggestion ||
-      !this.changeNum ||
-      !this.comment?.patch_set ||
-      !this.fixSuggestionInfo
-    )
-      return;
-
-    this.previewed = false;
-    this.reporting.time(Timing.PREVIEW_FIX_LOAD);
-    const res = await this.restApiService.getFixPreview(
-      this.changeNum,
-      this.comment?.patch_set,
+      this.patchSet,
       this.fixSuggestionInfo.replacements
     );
-
     if (!res) return;
     const currentPreviews = Object.keys(res).map(key => {
       return {filepath: key, preview: res[key]};
     });
     this.reporting.timeEnd(Timing.PREVIEW_FIX_LOAD, {
       uuid: this.uuid,
+      commentId: this.commentId ?? '',
     });
     if (currentPreviews.length > 0) {
       this.preview = currentPreviews[0];
       this.previewLoadedFor = this.fixSuggestionInfo;
       this.previewed = true;
+
+      fire(this, 'preview-loaded', {
+        previewLoadedFor: this.fixSuggestionInfo,
+      });
     }
 
     return res;
   }
-
-  /**
-   * Applies a fix (fix_suggestion in comment) previewed in
-   * `suggestion-diff-preview`, navigating to the new change URL with the EDIT
-   * patchset.
-   *
-   * Similar code flow is in gr-apply-fix-dialog.handleApplyFix
-   * Used in gr-fix-suggestions
-   */
-  public applyFixSuggestion() {
-    if (this.suggestion || !this.fixSuggestionInfo) return;
-    this.applyFix(this.fixSuggestionInfo);
-  }
-
   /**
    * Applies a fix (codeblock in comment message) previewed in
    * `suggestion-diff-preview`, navigating to the new change URL with the EDIT
@@ -318,31 +267,27 @@ export class GrSuggestionDiffPreview extends LitElement {
    * Similar code flow is in gr-apply-fix-dialog.handleApplyFix
    * Used in gr-user-suggestion-fix
    */
-  public applyUserSuggestedFix() {
-    if (!this.comment || !this.suggestion || !this.commentedText) return;
 
-    const fixSuggestions = createUserFixSuggestion(
-      this.comment,
-      this.commentedText,
-      this.suggestion
-    );
-    this.applyFix(fixSuggestions[0]);
-  }
-
-  private async applyFix(fixSuggestion: FixSuggestionInfo) {
+  public async applyFix() {
     const changeNum = this.changeNum;
-    const basePatchNum = this.comment?.patch_set as BasePatchSetNum;
+    const basePatchNum = this.patchSet;
+    const fixSuggestion = this.fixSuggestionInfo;
     if (!changeNum || !basePatchNum || !fixSuggestion) return;
 
     this.reporting.time(Timing.APPLY_FIX_LOAD);
     const res = await this.restApiService.applyFixSuggestion(
       changeNum,
       basePatchNum,
-      fixSuggestion.replacements
+      fixSuggestion.replacements,
+      this.latestPatchNum
     );
     this.reporting.timeEnd(Timing.APPLY_FIX_LOAD, {
       method: '1-click',
       description: fixSuggestion.description,
+      fileExtension: getFileExtension(
+        fixSuggestion?.replacements?.[0].path ?? ''
+      ),
+      commentId: this.commentId ?? '',
     });
     if (res?.ok) {
       this.getNavigation().setUrl(
@@ -351,8 +296,10 @@ export class GrSuggestionDiffPreview extends LitElement {
           repo: this.repo!,
           patchNum: EDIT,
           basePatchNum,
+          forceReload: !this.hasEdit,
         })
       );
+      fire(this, 'reload-diff', {path: fixSuggestion.replacements[0].path});
       fire(this, 'apply-user-suggestion', {});
     }
   }
@@ -366,18 +313,13 @@ export class GrSuggestionDiffPreview extends LitElement {
       line_wrapping: true,
     };
   }
-
-  handleAddGeneratedSuggestion() {
-    if (!this.suggestion) return;
-    this.reporting.reportInteraction(Interaction.GENERATE_SUGGESTION_ADDED, {
-      uuid: this.uuid,
-    });
-    fire(this, 'add-generated-suggestion', {code: this.suggestion});
-  }
 }
 
 declare global {
   interface HTMLElementTagNameMap {
     'gr-suggestion-diff-preview': GrSuggestionDiffPreview;
+  }
+  interface HTMLElementEventMap {
+    'preview-loaded': CustomEvent<PreviewLoadedDetail>;
   }
 }

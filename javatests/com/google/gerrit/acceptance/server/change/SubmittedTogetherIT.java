@@ -16,8 +16,10 @@ package com.google.gerrit.acceptance.server.change;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.gerrit.acceptance.GitUtil.pushHead;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block;
 import static com.google.gerrit.extensions.api.changes.SubmittedTogetherOption.NON_VISIBLE_CHANGES;
+import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.google.common.collect.ImmutableList;
@@ -33,6 +35,7 @@ import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.entities.Permission;
 import com.google.gerrit.entities.Project;
+import com.google.gerrit.extensions.api.changes.SubmitInput;
 import com.google.gerrit.extensions.api.changes.SubmittedTogetherInfo;
 import com.google.gerrit.extensions.api.groups.GroupInput;
 import com.google.gerrit.extensions.client.ChangeStatus;
@@ -42,6 +45,7 @@ import com.google.gerrit.extensions.common.FileInfo;
 import com.google.gerrit.extensions.common.GroupInfo;
 import com.google.gerrit.extensions.common.RevisionInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
+import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.testing.ConfigSuite;
 import com.google.inject.Inject;
 import java.util.EnumSet;
@@ -347,6 +351,167 @@ public class SubmittedTogetherIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void permissionToSubmitForSomeChangesInTopic() throws Exception {
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.SUBMIT).ref("refs/heads/testbranch").group(REGISTERED_USERS))
+        .update();
+
+    createBranch(BranchNameKey.create(getProject(), "testbranch"));
+    RevCommit initialHead = projectOperations.project(project).getHead("master");
+    // Create two independent commits and push.
+    RevCommit c1_1 = commitBuilder().add("a.txt", "1").message("subject: 1").create();
+    String id1 = getChangeId(c1_1);
+    pushHead(testRepo, "refs/for/master%topic=" + name("connectingTopic"), false);
+
+    testRepo.reset(initialHead);
+    RevCommit c2_1 = commitBuilder().add("b.txt", "2").message("subject: 2").create();
+    String id2 = getChangeId(c2_1);
+    pushHead(testRepo, "refs/for/testbranch%topic=" + name("connectingTopic"), false);
+
+    approve(id1);
+    approve(id2);
+    if (isSubmitWholeTopicEnabled()) {
+      ResourceConflictException e =
+          assertThrows(ResourceConflictException.class, () -> submit(id1));
+      assertThat(e.getMessage())
+          .contains(
+              String.format(
+                  "Insufficient permission to submit change %d",
+                  gApi.changes().id(id2).get()._number));
+    } else {
+      submit(id1);
+    }
+  }
+
+  @Test
+  public void permissionToSubmitAsForSomeChangesInTopic() throws Exception {
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.SUBMIT_AS).ref("refs/heads/master").group(REGISTERED_USERS))
+        .add(block(Permission.SUBMIT_AS).ref("refs/heads/testbranch").group(REGISTERED_USERS))
+        .update();
+
+    createBranch(BranchNameKey.create(getProject(), "testbranch"));
+    RevCommit initialHead = projectOperations.project(project).getHead("master");
+    // Create two independent commits and push.
+    RevCommit c1_1 = commitBuilder().add("a.txt", "1").message("subject: 1").create();
+    String id1 = getChangeId(c1_1);
+    pushHead(testRepo, "refs/for/master%topic=" + name("connectingTopic"), false);
+
+    testRepo.reset(initialHead);
+    RevCommit c2_1 = commitBuilder().add("b.txt", "2").message("subject: 2").create();
+    String id2 = getChangeId(c2_1);
+    pushHead(testRepo, "refs/for/testbranch%topic=" + name("connectingTopic"), false);
+
+    approve(id1);
+    approve(id2);
+    SubmitInput in = new SubmitInput();
+    in.onBehalfOf = accountCreator.user2().email();
+    if (isSubmitWholeTopicEnabled()) {
+      ResourceConflictException e =
+          assertThrows(
+              ResourceConflictException.class, () -> gApi.changes().id(id1).current().submit(in));
+      assertThat(e.getMessage())
+          .contains(
+              String.format(
+                  "Insufficient permission to submit change %d on behalf of user %s",
+                  gApi.changes().id(id2).get()._number, accountCreator.user2().username()));
+    } else {
+      gApi.changes().id(id1).current().submit(in);
+      assertMerged(id1);
+      assertNotMerged(id2);
+    }
+  }
+
+  @Test
+  public void submitAs_onBehalfOfUserNoReadPermissionToSomeChanges() throws Exception {
+    GroupInfo newGroup = createGroupForUser(accountCreator.user2());
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            block(Permission.READ)
+                .ref("refs/heads/testbranch")
+                .group(AccountGroup.uuid(newGroup.id)))
+        .add(allow(Permission.SUBMIT_AS).ref("refs/heads/*").group(REGISTERED_USERS))
+        .update();
+
+    createBranch(BranchNameKey.create(getProject(), "testbranch"));
+    RevCommit initialHead = projectOperations.project(project).getHead("master");
+    // Create two independent commits and push.
+    RevCommit c1_1 = commitBuilder().add("a.txt", "1").message("subject: 1").create();
+    String id1 = getChangeId(c1_1);
+    pushHead(testRepo, "refs/for/master%topic=" + name("connectingTopic"), false);
+
+    testRepo.reset(initialHead);
+    RevCommit c2_1 = commitBuilder().add("b.txt", "2").message("subject: 2").create();
+    String id2 = getChangeId(c2_1);
+    pushHead(testRepo, "refs/for/testbranch%topic=" + name("connectingTopic"), false);
+
+    approve(id1);
+    approve(id2);
+    SubmitInput in = new SubmitInput();
+    in.onBehalfOf = accountCreator.user2().email();
+    if (isSubmitWholeTopicEnabled()) {
+      ResourceConflictException e =
+          assertThrows(
+              ResourceConflictException.class, () -> gApi.changes().id(id1).current().submit(in));
+      assertThat(e.getMessage())
+          .contains(
+              String.format(
+                  "On-behalf-of user %s lacks permission to read change %d",
+                  accountCreator.user2().username(), gApi.changes().id(id2).get()._number));
+    } else {
+      gApi.changes().id(id1).current().submit(in);
+      assertMerged(id1);
+      assertNotMerged(id2);
+    }
+  }
+
+  @Test
+  public void submitAs_succeeds() throws Exception {
+    GroupInfo newGroup = createGroupForUser(accountCreator.user2());
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            block(Permission.SUBMIT)
+                .ref("refs/heads/testbranch")
+                .group(AccountGroup.uuid(newGroup.id)))
+        .add(allow(Permission.SUBMIT_AS).ref("refs/heads/*").group(REGISTERED_USERS))
+        .update();
+
+    createBranch(BranchNameKey.create(getProject(), "testbranch"));
+    RevCommit initialHead = projectOperations.project(project).getHead("master");
+    // Create two independent commits and push.
+    RevCommit c1_1 = commitBuilder().add("a.txt", "1").message("subject: 1").create();
+    String id1 = getChangeId(c1_1);
+    pushHead(testRepo, "refs/for/master%topic=" + name("connectingTopic"), false);
+
+    testRepo.reset(initialHead);
+    RevCommit c2_1 = commitBuilder().add("b.txt", "2").message("subject: 2").create();
+    String id2 = getChangeId(c2_1);
+    pushHead(testRepo, "refs/for/testbranch%topic=" + name("connectingTopic"), false);
+
+    approve(id1);
+    approve(id2);
+    SubmitInput in = new SubmitInput();
+    in.onBehalfOf = accountCreator.user2().email();
+    if (isSubmitWholeTopicEnabled()) {
+      gApi.changes().id(id1).current().submit(in);
+      assertMerged(id1);
+      assertMerged(id2);
+    } else {
+      gApi.changes().id(id1).current().submit(in);
+      assertMerged(id1);
+      assertNotMerged(id2);
+    }
+  }
+
+  @Test
   @GerritConfig(name = "change.submitWholeTopic", value = "true")
   public void mergedChangesDoNotExposeNonVisibleChanges() throws Exception {
     TestAccount readBlockedUser = accountCreator.user2();
@@ -409,5 +574,9 @@ public class SubmittedTogetherIT extends AbstractDaemonTest {
 
   private void assertMerged(String changeId) throws Exception {
     assertThat(gApi.changes().id(changeId).get().status).isEqualTo(ChangeStatus.MERGED);
+  }
+
+  private void assertNotMerged(String changeId) throws Exception {
+    assertThat(gApi.changes().id(changeId).get().status).isEqualTo(ChangeStatus.NEW);
   }
 }

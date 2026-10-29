@@ -54,6 +54,8 @@ export function iconForLink(linkIcon?: LinkIcon): ChecksIcon {
       return {name: 'code'};
     case LinkIcon.FILE_PRESENT:
       return {name: 'file_present'};
+    case LinkIcon.VIEW_TIMELINE:
+      return {name: 'view_timeline'};
     default:
       // We don't throw an assertion error here, because plugins don't have to
       // be written in TypeScript, so we may encounter arbitrary strings for
@@ -136,16 +138,18 @@ export function createFixAction(
 
 export function rectifyFix(
   fix: Fix | undefined,
-  checkName: string
+  checkName: string | undefined
 ): FixSuggestionInfo | undefined {
-  if (!fix?.replacements) return undefined;
+  if (!fix?.replacements || !checkName) return undefined;
   const replacements = fix.replacements
     .map(rectifyReplacement)
     .filter(isDefined);
   if (replacements.length === 0) return undefined;
 
   return {
-    description: fix.description || `Fix provided by ${checkName}`,
+    description: [fix.description, `Fix provided by ${checkName}`]
+      .filter(Boolean)
+      .join(' - '),
     fix_id: PROVIDED_FIX_ID,
     replacements,
   };

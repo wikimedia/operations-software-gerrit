@@ -90,8 +90,6 @@ export enum Timing {
   CHECKS_LOAD = 'ChecksLoad',
   // Webvitals - Cumulative Layout Shift (CLS): measures visual stability
   CLS = 'CLS',
-  // WebVitals - First Input Delay (FID): measures interactivity
-  FID = 'FID',
   // WebVitals - Largest Contentful Paint (LCP): measures loading performance.
   LCP = 'LCP',
   // WebVitals - Interaction to Next Paint (INP): measures responsiveness
@@ -102,6 +100,8 @@ export enum Timing {
   APPLY_FIX_LOAD = 'ApplyFixLoad',
   // Time to copy target to clipboard
   COPY_TO_CLIPBOARD = 'CopyToClipboard',
+  // Time to autocomplete a comment
+  COMMENT_COMPLETION = 'CommentCompletion',
 }
 
 export enum Interaction {
@@ -131,6 +131,8 @@ export enum Interaction {
   CHECKS_RUNS_PANEL_TOGGLE = 'checks-runs-panel-toggle',
   CHECKS_RUNS_SELECTED_TRIGGERED = 'checks-runs-selected-triggered',
   CHECKS_STATS = 'checks-stats',
+  COMMENTS_STATS = 'comments-stats',
+  THREADS_STATS = 'threads-stats',
   CHANGE_ACTION_FIRED = 'change-action-fired',
   BUTTON_CLICK = 'button-click',
   LINK_CLICK = 'link-click',
@@ -147,6 +149,8 @@ export enum Interaction {
   // User disabled generating suggestions
   GENERATE_SUGGESTION_DISABLED = 'generate_suggestion_disabled',
   GENERATE_SUGGESTION_EDITED = 'generate_suggestion_edited',
+  GENERATE_SUGGESTION_COLLAPSED = 'generate_suggestion_collapsed',
+  GENERATE_SUGGESTION_EXPANDED = 'generate_suggestion_expanded',
   START_REVIEW = 'start-review',
   CODE_REVIEW_APPROVAL = 'code-review-approval',
   FILE_LIST_DIFF_COLLAPSED = 'file-list-diff-collapsed',
@@ -156,4 +160,9 @@ export enum Interaction {
   // The very first reporting event with `ChangeId` set when visiting a change
   // related page. Can be used as a starting point for user journeys.
   CHANGE_ID_CHANGED = 'change-id-changed',
+
+  COMMENT_COMPLETION_SUGGESTION_SHOWN = 'comment-completion-suggestion-shown',
+  COMMENT_COMPLETION_SUGGESTION_ACCEPTED = 'comment-completion-suggestion-accepted',
+  COMMENT_COMPLETION_SAVE_DRAFT = 'comment-completion-save-draft',
+  COMMENT_COMPLETION_SUGGESTION_FETCHED = 'comment-completion-suggestion-fetched',
 }

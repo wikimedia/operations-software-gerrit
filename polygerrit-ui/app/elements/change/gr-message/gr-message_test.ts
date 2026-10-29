@@ -3,6 +3,7 @@
  * Copyright 2016 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import * as sinon from 'sinon';
 import '../../../test/common-test-setup';
 import './gr-message';
 import {
@@ -49,8 +50,8 @@ suite('gr-message tests', () => {
 
   suite('when admin and logged in', () => {
     setup(async () => {
-      stubRestApi('getIsAdmin').returns(Promise.resolve(true));
       element = await fixture<GrMessage>(html`<gr-message></gr-message>`);
+      element.isAdmin = true;
     });
 
     test('can see delete button', async () => {

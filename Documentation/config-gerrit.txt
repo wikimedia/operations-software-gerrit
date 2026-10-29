@@ -535,6 +535,13 @@ will be transmitted only over HTTPS protocol.
 +
 By default, `false`.
 
+[[auth.cookieHttpOnly]]auth.cookieHttpOnly::
++
+Sets "httpOnly" flag of the authentication cookie. If `true`, cookie
+values can't be accessed by client side scripts.
++
+By default, `true`.
+
 [[auth.externalIdsRefExpiry]]auth.externalIdsRefExpiry::
 +
 Define TTL value for memoizing the refs/meta/external-ids sha1 rather than opening
@@ -1762,7 +1769,7 @@ responses.  This allows for fast polls, often under 8 milliseconds.
 With a configured 30 second delay a server with 4900 active users will
 typically need to dedicate 1 CPU to the update check.  4900 users
 divided by an average delay of 30 seconds is 163 requests arriving per
-second.  If requests are served at \~6 ms response time, 1 CPU is
+second.  If requests are served at ~6 ms response time, 1 CPU is
 necessary to keep up with the update request traffic.  On a smaller
 user base of 500 active users, the default 30 second delay is only 17
 requests per second and requires ~10% CPU.
@@ -2654,6 +2661,18 @@ the **list is limited** by the global capability
 link:access-control.html#capability_queryLimit[queryLimit]
 which is defaulted to 500 entries.
 
+[[gerrit.projectStatePredicateEnabled]]
++
+Indicates whether the link:rest-api-projects.html[/projects/] REST API endpoint
+supports filtering projects by state. The value is exposed in
+link:rest-api-config.html[/config/server/info] REST API endpoint.
++
+Instances having a custom implementation of ProjectQueryBuilder might have
+disabled the `state` predicate in which case the setting should be set to
+`false`.
++
+Default: `true`.
+
 [[gerrit.primaryWeblinkName]]gerrit.primaryWeblinkName::
 +
 Name of the link:dev-plugins.html#links-to-external-tools[Weblink] that should
@@ -2801,6 +2820,13 @@ If this value is not set, all changes imported from other Gerrit servers will be
 ignored.
 +
 By default empty.
+
+[[gerrit.requireChangeForConfigUpdate]]gerrit.requireChangeForConfigUpdate::
++
+If true, all attempts to update a project config directly using any REST API are rejected.
+Instead, users should always use APIs which create a config change (for review).
++
+By default `false`.
 
 [[gerrit.serverId]]gerrit.serverId::
 +
@@ -3727,8 +3753,76 @@ immediately available after the write request.
 +
 Defaults to `false`.
 
+[[scheduledIndexer]]
+=== Section scheduledIndexer
+
+This section configures periodic indexing. Periodic indexing can be run
+on both primaries and replicas.
+
+Scheduled indexer is supported for projects, groups and accounts indexes.
+
+The default values for the following options may be different for the groups
+index on replicas. Check the
+link:#scheduledIndexer.groups[scheduledIndexer.groups] section for more info.
+
+[[scheduledIndexer.name.runOnStartup]]scheduledIndexer.<name>.runOnStartup::
++
+Whether the scheduled indexer should run once immediately on startup.
+If set to `true` the server startup is blocked until indexing finishes.
++
+Defaults to `false`.
+
+[[scheduledIndexer.name.enabled]]scheduledIndexer.<name>.enabled::
++
+Whether the periodic scheduled indexer is enabled.
++
+Defaults to `false`.
+
+[[scheduledIndexer.name.startTime]]scheduledIndexer.<name>.startTime::
++
+The link:#schedule-configuration-startTime[start time] for running
+the scheduled indexer.
++
+Defaults to `00:00`.
+
+[[scheduledIndexer.name.interval]]scheduledIndexer.<name>.interval::
++
+The link:#schedule-configuration-interval[interval] for running
+the scheduled indexer.
++
+Defaults to `5m`.
+
+link:#schedule-configuration-examples[Schedule examples] can be found
+in the link:#schedule-configuration[Schedule Configuration] section.
+
+
+[[scheduledIndexer.groups]]
+==== Subsection scheduledIndexer.groups
+
+Periodic groups reindexing will be scheduled by default on replicas if there is
+no explicit `scheduledIndexer.groups` configuration.
+
+Replication to replicas happens on Git level so that Gerrit is not aware
+of incoming replication events. But replicas need an updated group index
+to resolve memberships of users for ACL validation. To keep the group
+index in replicas up-to-date the Gerrit replica periodically scans the
+group refs in the All-Users repository to reindex groups if they are
+stale.
+
+[[scheduledIndexer.groups.enabled]]scheduledIndexer.groups.enabled::
++
+Whether the scheduled indexer is enabled. If the scheduled indexer is disabled
+you may need to implement other means to keep the groups index on replicas
+up-to-date.
+Whether the periodic scheduled indexer is enabled.
++
+Defaults to `true` for replicas, `false` for primaries.
+
+
 [[index.scheduledIndexer]]
 ==== Subsection index.scheduledIndexer
+
+*(DEPRECATED)* Use the link:#scheduledIndexer[scheduledIndexer section] instead.
 
 This section configures periodic indexing. Periodic indexing is
 intended to run only on replicas and only updates the group index.
@@ -4958,7 +5052,7 @@ be specified using standard time unit abbreviations ('ms', 'sec',
 'min', etc.).
 +
 After the timeout is exceeded the task processing the receive gets a
-cancellation signal that allows the tast to finish gracefully.
+cancellation signal that allows the task to finish gracefully.
 link:#receive.cancellationTimeout[receive.cancellationTimeout]
 defines how much time the task has to react to the cancellation signal
 before it is focefully cancelled.
@@ -5018,6 +5112,7 @@ form:
 ----
 +
 Example:
++
 ----
   Link: https://gerrit-review.googlesource.com/id/I78e884a944cedb5144f661a057e4829c8f84e933
 ----
@@ -5210,6 +5305,22 @@ work to parallelize it.
 When set to 0, a direct executor will be used.
 +
 By default, 25 which means that formatting happens in the caller thread.
+
+[[performance]]
+=== Section performance
+
+[[performance.metric]]
+==== Subsection performance.metric
+
+Section to control for which operations latency and counts should be recorded
+in the link:metrics.html#performance[performance metrics].
+
+[[performance.metric.operation]]performance.metric.operation::
++
+Name of a Gerrit operation for which latency and counts should be recorded in
+the link:metrics.html#performance[performance metrics].
++
+The operation name must match the operation name that is used with TraceTimer.
 
 [[receiveemail]]
 === Section receiveemail
@@ -5515,7 +5626,6 @@ in the link:http://data.iana.org/TLD/[IANA list,role=external,window=_blank].
 +
 Defaults to an empty list, meaning no additional TLDs are allowed.
 
-
 [[sendemail.addInstanceNameInSubject]]sendemail.addInstanceNameInSubject::
 +
 When set to `true`, Gerrit will add its short name to the email subject, allowing recipients to quickly identify
@@ -5524,6 +5634,15 @@ what Gerrit instance the email came from.
 The short name can be customized via the gerrit.instanceName option.
 +
 Defaults to `false`.
+
+[[sendemail.includeThreadIndexHeader]]sendemail.includeThreadIndexHeader::
++
+When set to `true`, Gerrit will add the `Thread-Index` header to change emails
+the same as it does with the `References` header. The `Thread-Index` header is
+used by Microsoft email clients, so it's recommended to keep this `true` when
+users read emails from Gerrit using those clients.
++
+Defaults to `true`.
 
 
 [[site]]
@@ -5995,9 +6114,15 @@ By default, `false`.
 
 There can be multiple `tracing.<trace-id>` subsections to configure
 automatic tracing of requests. To be traced a request must match all
-conditions of one `tracing.<trace-id>` subsection. The subsection name
-is used as trace ID. Using this trace ID administrators can find
-matching log entries.
+conditions of one `tracing.<trace-id>` subsection. A `tracing.<trace-id>`
+subsection must specify at least one of `requestUriPattern`, `account` and
+`projectPattern`, or otherwise it is ignored. The subsection name is used as
+trace ID. Using this trace ID administrators can find matching log entries.
+
+[WARNING] Tracing requests can make them more expensive. To avoid performance
+issues trace configs should match as little requests as possible and only be
+added temporarily. Enabling tracing for too many requests can severely impact
+the performance and the availability of the server.
 
 [[tracing.traceid.requestType]]tracing.<trace-id>.requestType::
 +
@@ -6041,6 +6166,7 @@ the request parameters.
 May be specified multiple times.
 +
 Example:
++
 ----
   requestQueryStringPattern = .*limit=.*
 ----
@@ -6056,6 +6182,7 @@ format '<header-name>=<header-value>'.
 May be specified multiple times.
 +
 Example:
++
 ----
   requestQueryStringPattern = User-Agent=foo-.*
 ----
@@ -6279,7 +6406,7 @@ The link:#schedule-configuration-interval[interval] for running
 account deactivations.
 
 Note that the task will only be scheduled if the
-link:#autoUpdateAccountActiveStatus[auth.autoUpdateAccountActiveStatus]
+link:#auth.autoUpdateAccountActiveStatus[auth.autoUpdateAccountActiveStatus]
 is set to `true`.
 
 link:#schedule-configuration-examples[Schedule examples] can be found

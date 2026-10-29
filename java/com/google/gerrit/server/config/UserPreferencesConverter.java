@@ -17,12 +17,14 @@ package com.google.gerrit.server.config;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.converter.SafeProtoConverter;
 import com.google.gerrit.extensions.client.DiffPreferencesInfo;
 import com.google.gerrit.extensions.client.EditPreferencesInfo;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo;
 import com.google.gerrit.extensions.client.MenuItem;
 import com.google.gerrit.proto.Entities.UserPreferences;
 import com.google.protobuf.Message;
+import com.google.protobuf.Parser;
 import com.google.protobuf.ProtocolMessageEnum;
 import java.util.function.Function;
 
@@ -33,8 +35,13 @@ import java.util.function.Function;
  * equivalents in Spanner.
  */
 public final class UserPreferencesConverter {
-  public static final class GeneralPreferencesInfoConverter {
-    public static UserPreferences.GeneralPreferencesInfo toProto(GeneralPreferencesInfo info) {
+  public enum GeneralPreferencesInfoConverter
+      implements
+          SafeProtoConverter<UserPreferences.GeneralPreferencesInfo, GeneralPreferencesInfo> {
+    GENERAL_PREFERENCES_INFO_CONVERTER;
+
+    @Override
+    public UserPreferences.GeneralPreferencesInfo toProto(GeneralPreferencesInfo info) {
       UserPreferences.GeneralPreferencesInfo.Builder builder =
           UserPreferences.GeneralPreferencesInfo.newBuilder();
       builder = setIfNotNull(builder, builder::setChangesPerPage, info.changesPerPage);
@@ -112,11 +119,20 @@ public final class UserPreferencesConverter {
       builder =
           setIfNotNull(
               builder, builder::setAllowBrowserNotifications, info.allowBrowserNotifications);
+      builder =
+          setIfNotNull(
+              builder,
+              builder::setAllowSuggestCodeWhileCommenting,
+              info.allowSuggestCodeWhileCommenting);
+      builder =
+          setIfNotNull(
+              builder, builder::setAllowAutocompletingComments, info.allowAutocompletingComments);
       builder = setIfNotNull(builder, builder::setDiffPageSidebar, info.diffPageSidebar);
       return builder.build();
     }
 
-    public static GeneralPreferencesInfo fromProto(UserPreferences.GeneralPreferencesInfo proto) {
+    @Override
+    public GeneralPreferencesInfo fromProto(UserPreferences.GeneralPreferencesInfo proto) {
       GeneralPreferencesInfo res = new GeneralPreferencesInfo();
       res.changesPerPage = proto.hasChangesPerPage() ? proto.getChangesPerPage() : null;
       res.downloadScheme = proto.hasDownloadScheme() ? proto.getDownloadScheme() : null;
@@ -173,8 +189,19 @@ public final class UserPreferencesConverter {
       res.changeTable = proto.getChangeTableCount() != 0 ? proto.getChangeTableList() : null;
       res.allowBrowserNotifications =
           proto.hasAllowBrowserNotifications() ? proto.getAllowBrowserNotifications() : null;
+      res.allowSuggestCodeWhileCommenting =
+          proto.hasAllowSuggestCodeWhileCommenting()
+              ? proto.getAllowSuggestCodeWhileCommenting()
+              : null;
+      res.allowAutocompletingComments =
+          proto.hasAllowAutocompletingComments() ? proto.getAllowAutocompletingComments() : null;
       res.diffPageSidebar = proto.hasDiffPageSidebar() ? proto.getDiffPageSidebar() : null;
       return res;
+    }
+
+    @Override
+    public Parser<UserPreferences.GeneralPreferencesInfo> getParser() {
+      return UserPreferences.GeneralPreferencesInfo.parser();
     }
 
     private static UserPreferences.GeneralPreferencesInfo.MenuItem menuItemToProto(
@@ -201,11 +228,23 @@ public final class UserPreferencesConverter {
           proto.hasId() ? proto.getId().trim() : null);
     }
 
-    private GeneralPreferencesInfoConverter() {}
+    @Override
+    public Class<UserPreferences.GeneralPreferencesInfo> getProtoClass() {
+      return UserPreferences.GeneralPreferencesInfo.class;
+    }
+
+    @Override
+    public Class<GeneralPreferencesInfo> getEntityClass() {
+      return GeneralPreferencesInfo.class;
+    }
   }
 
-  public static final class DiffPreferencesInfoConverter {
-    public static UserPreferences.DiffPreferencesInfo toProto(DiffPreferencesInfo info) {
+  public enum DiffPreferencesInfoConverter
+      implements SafeProtoConverter<UserPreferences.DiffPreferencesInfo, DiffPreferencesInfo> {
+    DIFF_PREFERENCES_INFO_CONVERTER;
+
+    @Override
+    public UserPreferences.DiffPreferencesInfo toProto(DiffPreferencesInfo info) {
       UserPreferences.DiffPreferencesInfo.Builder builder =
           UserPreferences.DiffPreferencesInfo.newBuilder();
       builder = setIfNotNull(builder, builder::setContext, info.context);
@@ -241,7 +280,8 @@ public final class UserPreferencesConverter {
       return builder.build();
     }
 
-    public static DiffPreferencesInfo fromProto(UserPreferences.DiffPreferencesInfo proto) {
+    @Override
+    public DiffPreferencesInfo fromProto(UserPreferences.DiffPreferencesInfo proto) {
       DiffPreferencesInfo res = new DiffPreferencesInfo();
       res.context = proto.hasContext() ? proto.getContext() : null;
       res.tabSize = proto.hasTabSize() ? proto.getTabSize() : null;
@@ -276,11 +316,28 @@ public final class UserPreferencesConverter {
       return res;
     }
 
-    private DiffPreferencesInfoConverter() {}
+    @Override
+    public Parser<UserPreferences.DiffPreferencesInfo> getParser() {
+      return UserPreferences.DiffPreferencesInfo.parser();
+    }
+
+    @Override
+    public Class<UserPreferences.DiffPreferencesInfo> getProtoClass() {
+      return UserPreferences.DiffPreferencesInfo.class;
+    }
+
+    @Override
+    public Class<DiffPreferencesInfo> getEntityClass() {
+      return DiffPreferencesInfo.class;
+    }
   }
 
-  public static final class EditPreferencesInfoConverter {
-    public static UserPreferences.EditPreferencesInfo toProto(EditPreferencesInfo info) {
+  public enum EditPreferencesInfoConverter
+      implements SafeProtoConverter<UserPreferences.EditPreferencesInfo, EditPreferencesInfo> {
+    EDIT_PREFERENCES_INFO_CONVERTER;
+
+    @Override
+    public UserPreferences.EditPreferencesInfo toProto(EditPreferencesInfo info) {
       UserPreferences.EditPreferencesInfo.Builder builder =
           UserPreferences.EditPreferencesInfo.newBuilder();
       builder = setIfNotNull(builder, builder::setTabSize, info.tabSize);
@@ -300,7 +357,8 @@ public final class UserPreferencesConverter {
       return builder.build();
     }
 
-    public static EditPreferencesInfo fromProto(UserPreferences.EditPreferencesInfo proto) {
+    @Override
+    public EditPreferencesInfo fromProto(UserPreferences.EditPreferencesInfo proto) {
       EditPreferencesInfo res = new EditPreferencesInfo();
       res.tabSize = proto.hasTabSize() ? proto.getTabSize() : null;
       res.lineLength = proto.hasLineLength() ? proto.getLineLength() : null;
@@ -320,7 +378,20 @@ public final class UserPreferencesConverter {
       return res;
     }
 
-    private EditPreferencesInfoConverter() {}
+    @Override
+    public Parser<UserPreferences.EditPreferencesInfo> getParser() {
+      return UserPreferences.EditPreferencesInfo.parser();
+    }
+
+    @Override
+    public Class<UserPreferences.EditPreferencesInfo> getProtoClass() {
+      return UserPreferences.EditPreferencesInfo.class;
+    }
+
+    @Override
+    public Class<EditPreferencesInfo> getEntityClass() {
+      return EditPreferencesInfo.class;
+    }
   }
 
   private static <ValueT, BuilderT extends Message.Builder> BuilderT setIfNotNull(

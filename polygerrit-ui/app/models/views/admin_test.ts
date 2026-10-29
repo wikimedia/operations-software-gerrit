@@ -3,6 +3,7 @@
  * Copyright 2022 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import * as sinon from 'sinon';
 import {assert} from '@open-wc/testing';
 import '../../test/common-test-setup';
 import {assertRouteFalse, assertRouteState} from '../../test/test-utils';
@@ -53,6 +54,11 @@ suite('admin links', () => {
     if (expected.pluginListShown) {
       assert.equal(res.links[2].name, 'Plugins');
       assert.isNotOk(res.links[2].subsection);
+    }
+
+    if (expected.serverInfoShown) {
+      assert.equal(res.links[3].name, 'Server Info');
+      assert.isNotOk(res.links[3].subsection);
     }
 
     if (expected.projectPageShown) {
@@ -116,6 +122,7 @@ suite('admin links', () => {
         groupListShown: false,
         groupPageShown: false,
         pluginListShown: false,
+        serverInfoShown: false,
       };
     });
 
@@ -162,7 +169,7 @@ suite('admin links', () => {
 
     setup(() => {
       expected = {
-        totalLength: 2,
+        totalLength: 3,
         pluginListShown: false,
       };
       capabilityStub.returns(Promise.resolve({}));
@@ -203,9 +210,10 @@ suite('admin links', () => {
     setup(() => {
       capabilityStub.returns(Promise.resolve({viewPlugins: true}));
       expected = {
-        totalLength: 3,
+        totalLength: 4,
         groupListShown: true,
         pluginListShown: true,
+        serverInfoShown: true,
       };
     });
 
@@ -312,7 +320,7 @@ suite('admin links', () => {
       ];
       menuLinkStub.returns(generatedLinks);
       expected = Object.assign(expected, {
-        totalLength: 4,
+        totalLength: 5,
         pluginGeneratedLinks: generatedLinks,
       });
       await testAdminLinks(account, options, expected);
@@ -339,7 +347,7 @@ suite('admin links', () => {
       ];
       menuLinkStub.returns(generatedLinks);
       expected = Object.assign(expected, {
-        totalLength: 3,
+        totalLength: 4,
         pluginGeneratedLinks: [generatedLinks[0]],
       });
       await testAdminLinks(account, options, expected);
