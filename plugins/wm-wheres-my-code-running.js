@@ -6,11 +6,6 @@
 'use strict';
 
 /**
- * @typedef { import("@gerritcodereview/typescript-api/hook").PluginElement } PluginElement
- * @typedef { import("@gerritcodereview/typescript-api/hook").HookApi<PluginElement> } ElementHook
- */
-
-/**
  * @typedef {Object} PlaceVerdict
  * @property {string} place - Name of the place, such as group0
  * @property {string} verdict - live, not live, not deployed here, or unknown
@@ -316,8 +311,6 @@ const drawAsRow = (block, content, width) => {
 
 window.Gerrit.install(plugin => {
   const blockId = 'wm-wheres-my-code-running';
-
-  /** @type {ElementHook} */
   const domHook = plugin.hook('change-metadata-item');
 
   domHook.onAttached(async element => {

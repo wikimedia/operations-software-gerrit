@@ -5,13 +5,8 @@
  */
 'use strict';
 
-/**
- * @typedef { import("@gerritcodereview/typescript-api/hook").PluginElement } PluginElement
- * @typedef { import("@gerritcodereview/typescript-api/hook").HookApi<PluginElement> } ElementHook
- */
 window.Gerrit.install(plugin => {
   const divId = 'wm-schedule-deployment';
-  /** @type {ElementHook} */
   const domHook = plugin.hook('commit-container');
   const repoApi = plugin.restApi();
   domHook.onAttached(async element => {
